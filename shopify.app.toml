@@ -1,12 +1,10 @@
-# Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
-
-client_id = "4fa079750cc5d3cd505727b0c47ce940"
-name = "shop-floor-command-center"
+client_id = "00f3c6ab3b24a3dcd552cd526cc8b79b"
+name = "Shop Floor Command Center"
 application_url = "https://shop-floor-command-center.onrender.com"
 embedded = true
 
 [build]
-automatically_update_urls_on_dev = true
+automatically_update_urls_on_dev = false
 
 [webhooks]
 api_version = "2026-07"
