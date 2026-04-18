@@ -2,7 +2,7 @@
 
 client_id = "4fa079750cc5d3cd505727b0c47ce940"
 name = "shop-floor-command-center"
-application_url = "https://example.com"
+application_url = "https://shop-floor-command-center.onrender.com"
 embedded = true
 
 [build]
@@ -21,11 +21,10 @@ api_version = "2026-07"
   uri = "/webhooks/app/scopes_update"
 
 [access_scopes]
-# Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
-scopes = "write_products,write_metaobjects,write_metaobject_definitions"
+scopes = "write_products,read_products,write_metafields,read_metafields,read_metaobject_definitions,write_metaobject_definitions,read_metaobjects,write_metaobjects"
 
 [auth]
-redirect_urls = [ "https://example.com/api/auth" ]
+redirect_urls = [ "https://shop-floor-command-center.onrender.com/auth/callback" ]
 
 [product.metafields.app.demo_info]
 type = "single_line_text_field"
