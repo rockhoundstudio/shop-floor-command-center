@@ -19,6 +19,7 @@ import {
   Tooltip,
   Icon,
   Grid,
+  Divider,
 } from "@shopify/polaris";
 import { QuestionCircleIcon } from "@shopify/polaris-icons";
 
@@ -326,6 +327,7 @@ export default function MetaInjector() {
   const [selected, setSelected] = useState(null);
   const [checkedIds, setCheckedIds] = useState([]);
   const [form, setForm] = useState({});
+  const [bulkForm, setBulkForm] = useState({});
   const [tabIndex, setTabIndex] = useState(0);
   const [payload, setPayload] = useState("");
   const [mindatName, setMindatName] = useState("");
@@ -343,11 +345,12 @@ export default function MetaInjector() {
     setTabIndex(1);
   };
 
-  const handleDropdownChange = (fieldKey, value) => {
+  const handleDropdownChange = (fieldKey, value, isBulk) => {
     if (value === "__add__") {
       setAddingNew({ ...addingNew, [fieldKey]: true });
     } else {
-      setForm({ ...form, [fieldKey]: value });
+      if (isBulk) setBulkForm({ ...bulkForm, [fieldKey]: value });
+      else setForm({ ...form, [fieldKey]: value });
     }
   };
 
@@ -376,8 +379,8 @@ export default function MetaInjector() {
     const fd = new FormData();
     fd.append("intent", "bulk");
     fd.append("ids", JSON.stringify(checkedIds));
-    Object.keys(TAXONOMY).forEach((k) => fd.append(k, form[k] || ""));
-    TEXT_FIELDS.forEach(({ key }) => fd.append(key, form[key] || ""));
+    Object.keys(TAXONOMY).forEach((k) => fd.append(k, bulkForm[k] || ""));
+    TEXT_FIELDS.forEach(({ key }) => fd.append(key, bulkForm[key] || ""));
     fetcher.submit(fd, { method: "post" });
   };
 
@@ -425,15 +428,16 @@ export default function MetaInjector() {
     { id: "mindat", content: "🌍 Mindat" },
   ];
 
-  function TaxonomyField({ fieldKey }) {
+  function TaxonomyField({ fieldKey, isBulk }) {
     const config = TAXONOMY[fieldKey];
+    const currentForm = isBulk ? bulkForm : form;
     return (
       <BlockStack gap="200">
         <Select
           label={<LabelWithHelp label={config.label} help={config.help} />}
           options={config.options}
-          value={form[fieldKey] || ""}
-          onChange={(v) => handleDropdownChange(fieldKey, v)}
+          value={currentForm[fieldKey] || ""}
+          onChange={(v) => handleDropdownChange(fieldKey, v, isBulk)}
         />
         {addingNew[fieldKey] && (
           <InlineStack gap="200">
@@ -444,12 +448,8 @@ export default function MetaInjector() {
               placeholder={`New ${config.label} name...`}
               autoComplete="off"
             />
-            <Button onClick={() => handleAddTaxonomy(fieldKey)} variant="primary">
-              Save
-            </Button>
-            <Button onClick={() => setAddingNew({ ...addingNew, [fieldKey]: false })}>
-              Cancel
-            </Button>
+            <Button onClick={() => handleAddTaxonomy(fieldKey)} variant="primary">Save</Button>
+            <Button onClick={() => setAddingNew({ ...addingNew, [fieldKey]: false })}>Cancel</Button>
           </InlineStack>
         )}
       </BlockStack>
@@ -508,7 +508,7 @@ export default function MetaInjector() {
                       <Text variant="headingMd">{selected.title}</Text>
                       <FormLayout>
                         {Object.keys(TAXONOMY).map((fieldKey) => (
-                          <TaxonomyField key={fieldKey} fieldKey={fieldKey} />
+                          <TaxonomyField key={fieldKey} fieldKey={fieldKey} isBulk={false} />
                         ))}
                         {TEXT_FIELDS.map((f) => (
                           <TextField
@@ -556,55 +556,68 @@ export default function MetaInjector() {
               )}
 
               {tabIndex === 3 && (
-                <BlockStack gap="400">
-                  <InlineStack gap="200">
-                    <Button onClick={() => setCheckedIds(allChecked ? [] : allIds)}>
-                      {allChecked ? "Deselect All" : "Select All"}
-                    </Button>
-                    <Text>{checkedIds.length} selected</Text>
-                  </InlineStack>
-                  <BlockStack gap="200">
-                    {products.map((p) => (
-                      <InlineStack key={p.id} gap="200" blockAlign="center">
-                        <Checkbox
-                          label=""
-                          checked={checkedIds.includes(p.id)}
-                          onChange={(checked) => {
-                            if (checked) setCheckedIds([...checkedIds, p.id]);
-                            else setCheckedIds(checkedIds.filter((id) => id !== p.id));
-                          }}
-                        />
-                        <img
-                          src={p.featuredImage?.url || ""}
-                          alt={p.title}
-                          style={{ width: "40px", height: "40px", objectFit: "cover", borderRadius: "4px" }}
-                        />
-                        <Text>{p.title}</Text>
-                      </InlineStack>
-                    ))}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "24px" }}>
+                  <BlockStack gap="300">
+                    <InlineStack gap="200">
+                      <Button onClick={() => setCheckedIds(allChecked ? [] : allIds)}>
+                        {allChecked ? "Deselect All" : "Select All"}
+                      </Button>
+                      <Text>{checkedIds.length} selected</Text>
+                    </InlineStack>
+                    <div style={{ maxHeight: "600px", overflowY: "auto" }}>
+                      <BlockStack gap="200">
+                        {products.map((p) => (
+                          <InlineStack key={p.id} gap="200" blockAlign="center">
+                            <Checkbox
+                              label=""
+                              checked={checkedIds.includes(p.id)}
+                              onChange={(checked) => {
+                                if (checked) setCheckedIds([...checkedIds, p.id]);
+                                else setCheckedIds(checkedIds.filter((id) => id !== p.id));
+                              }}
+                            />
+                            <img
+                              src={p.featuredImage?.url || ""}
+                              alt={p.title}
+                              style={{ width: "48px", height: "48px", objectFit: "cover", borderRadius: "6px" }}
+                            />
+                            <Text variant="bodySm">{p.title}</Text>
+                          </InlineStack>
+                        ))}
+                      </BlockStack>
+                    </div>
                   </BlockStack>
-                  <FormLayout>
-                    {Object.keys(TAXONOMY).map((fieldKey) => (
-                      <TaxonomyField key={fieldKey} fieldKey={fieldKey} />
-                    ))}
-                    {TEXT_FIELDS.map((f) => (
-                      <TextField
-                        key={f.key}
-                        label={<LabelWithHelp label={f.label} help={f.help} />}
-                        value={form[f.key] || ""}
-                        onChange={(v) => setForm({ ...form, [f.key]: v })}
-                        placeholder={f.placeholder}
-                        autoComplete="off"
-                      />
-                    ))}
-                  </FormLayout>
-                  <Button variant="primary" onClick={handleBulk} disabled={checkedIds.length === 0} loading={fetcher.state === "submitting"}>
-                    Apply to {checkedIds.length} Stone(s)
-                  </Button>
-                  {fetcher.data?.ok && fetcher.data?.intent === "bulk" && (
-                    <Banner tone="success">Bulk save complete!</Banner>
-                  )}
-                </BlockStack>
+
+                  <BlockStack gap="300">
+                    <Text variant="headingMd">Apply to {checkedIds.length} Stone(s)</Text>
+                    <FormLayout>
+                      {Object.keys(TAXONOMY).map((fieldKey) => (
+                        <TaxonomyField key={fieldKey} fieldKey={fieldKey} isBulk={true} />
+                      ))}
+                      {TEXT_FIELDS.map((f) => (
+                        <TextField
+                          key={f.key}
+                          label={<LabelWithHelp label={f.label} help={f.help} />}
+                          value={bulkForm[f.key] || ""}
+                          onChange={(v) => setBulkForm({ ...bulkForm, [f.key]: v })}
+                          placeholder={f.placeholder}
+                          autoComplete="off"
+                        />
+                      ))}
+                    </FormLayout>
+                    <Button
+                      variant="primary"
+                      onClick={handleBulk}
+                      disabled={checkedIds.length === 0}
+                      loading={fetcher.state === "submitting"}
+                    >
+                      Apply to {checkedIds.length} Stone(s)
+                    </Button>
+                    {fetcher.data?.ok && fetcher.data?.intent === "bulk" && (
+                      <Banner tone="success">Bulk save complete!</Banner>
+                    )}
+                  </BlockStack>
+                </div>
               )}
 
               {tabIndex === 4 && (
