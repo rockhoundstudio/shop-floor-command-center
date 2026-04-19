@@ -260,6 +260,64 @@ function completenessLabel(metafields) {
   return `${filled}/${TEXT_FIELDS.length} fields`;
 }
 
+function MindatVerifier({ product }) {
+  const [status, setStatus] = useState(null);
+  const [results, setResults] = useState(null);
+
+  const COMPARE_FIELDS = [
+    { key: "hardness", mindatKey: "hardness", label: "Hardness" },
+    { key: "where_found", mindatKey: "localities", label: "Where Found" },
+    { key: "geological_age", mindatKey: "geological_age", label: "Geological Age" },
+  ];
+
+  const verify = async () => {
+    setStatus("loading");
+    try {
+      const res = await fetch(
+        `https://api.mindat.org/minerals/?name=${encodeURIComponent(product.title)}&format=json`,
+        { headers: { Authorization: "Token YOUR_MINDAT_API_TOKEN" } }
+      );
+      const data = await res.json();
+      const mineral = data.results?.[0];
+      if (!mineral) { setStatus("notfound"); return; }
+      const compared = COMPARE_FIELDS.map(({ key, mindatKey, label }) => ({
+        label,
+        store: product.metafields[key] || "—",
+        mindat: mineral[mindatKey] || "—",
+        match:
+          (product.metafields[key] || "").toLowerCase().trim() ===
+          (mineral[mindatKey] || "").toLowerCase().trim(),
+      }));
+      setResults(compared);
+      setStatus("done");
+    } catch {
+      setStatus("error");
+    }
+  };
+
+  return (
+    <BlockStack gap="200">
+      <Button size="slim" onClick={verify} loading={status === "loading"}>
+        🔍 Verify vs Mindat
+      </Button>
+      {status === "notfound" && <Text tone="caution">Not found on Mindat.</Text>}
+      {status === "error" && <Text tone="critical">Lookup failed — check API token.</Text>}
+      {status === "done" && results && (
+        <BlockStack gap="100">
+          {results.map((r) => (
+            <InlineStack key={r.label} align="space-between">
+              <Text variant="bodySm">{r.label}</Text>
+              <Text variant="bodySm" tone={r.match ? "success" : "critical"}>
+                {r.match ? "✓" : "✗"} Store: {r.store} | Mindat: {r.mindat}
+              </Text>
+            </InlineStack>
+          ))}
+        </BlockStack>
+      )}
+    </BlockStack>
+  );
+}
+
 export default function MetaInjector() {
   const { products } = useLoaderData();
   const fetcher = useFetcher();
@@ -274,7 +332,6 @@ export default function MetaInjector() {
   const [mindatStatus, setMindatStatus] = useState(null);
   const [addingNew, setAddingNew] = useState({});
   const [newName, setNewName] = useState({});
-  const [dynamicOptions, setDynamicOptions] = useState({});
 
   const filtered = products.filter((p) =>
     p.title.toLowerCase().includes(search.toLowerCase())
@@ -304,12 +361,6 @@ export default function MetaInjector() {
     fetcher.submit(fd, { method: "post" });
     setAddingNew({ ...addingNew, [fieldKey]: false });
     setNewName({ ...newName, [fieldKey]: "" });
-  };
-
-  const getOptions = (fieldKey) => {
-    const base = TAXONOMY[fieldKey].options.filter((o) => o.value !== "__add__");
-    const extra = (dynamicOptions[fieldKey] || []);
-    return [...base, ...extra, { label: "+ Add New", value: "__add__" }];
   };
 
   const handleSave = () => {
@@ -374,13 +425,13 @@ export default function MetaInjector() {
     { id: "mindat", content: "🌍 Mindat" },
   ];
 
-  const TaxonomyField = ({ fieldKey }) => {
+  function TaxonomyField({ fieldKey }) {
     const config = TAXONOMY[fieldKey];
     return (
       <BlockStack gap="200">
         <Select
           label={<LabelWithHelp label={config.label} help={config.help} />}
-          options={getOptions(fieldKey)}
+          options={config.options}
           value={form[fieldKey] || ""}
           onChange={(v) => handleDropdownChange(fieldKey, v)}
         />
@@ -403,7 +454,7 @@ export default function MetaInjector() {
         )}
       </BlockStack>
     );
-  };
+  }
 
   return (
     <Page title="Meta Injector 🪨">
@@ -483,15 +534,23 @@ export default function MetaInjector() {
               )}
 
               {tabIndex === 2 && (
-                <BlockStack gap="300">
-                  <Text variant="headingMd">Metafield Status Report</Text>
+                <BlockStack gap="400">
+                  <Text variant="headingMd">Metafield Verification Report</Text>
+                  <Banner tone="info">
+                    Compares your store metafields against Mindat.org data. Requires Mindat API token.
+                  </Banner>
                   {products.map((p) => (
-                    <InlineStack key={p.id} align="space-between">
-                      <Text>{p.title}</Text>
-                      <Badge tone={completeness(p.metafields)}>
-                        {completenessLabel(p.metafields)}
-                      </Badge>
-                    </InlineStack>
+                    <Card key={p.id}>
+                      <BlockStack gap="200">
+                        <InlineStack align="space-between">
+                          <Text variant="bodyMd" fontWeight="bold">{p.title}</Text>
+                          <Badge tone={completeness(p.metafields)}>
+                            {completenessLabel(p.metafields)}
+                          </Badge>
+                        </InlineStack>
+                        <MindatVerifier product={p} />
+                      </BlockStack>
+                    </Card>
                   ))}
                 </BlockStack>
               )}
@@ -552,8 +611,7 @@ export default function MetaInjector() {
                 <BlockStack gap="400">
                   <Text variant="headingMd">Paste one JSON metafield object per line.</Text>
                   <Banner tone="info">
-                    For metaobject fields use: "type": "list.metaobject_reference" and "value": "[\"gid://shopify/Metaobject/...\"]"
-                    Injected in batches of 2.
+                    For metaobject fields use type: "list.metaobject_reference" and value: "[\"gid://shopify/Metaobject/...\"]". Injected in batches of 2.
                   </Banner>
                   <TextField
                     label="GID Payload"
