@@ -6,9 +6,6 @@ import {
   Layout,
   Card,
   TextField,
-  ResourceList,
-  ResourceItem,
-  Thumbnail,
   Text,
   BlockStack,
   InlineStack,
@@ -18,7 +15,98 @@ import {
   Tabs,
   FormLayout,
   Banner,
+  Select,
+  Tooltip,
+  Icon,
+  Grid,
 } from "@shopify/polaris";
+import { QuestionCircleIcon } from "@shopify/polaris-icons";
+
+const TAXONOMY = {
+  crystal_system: {
+    label: "Crystal Structure",
+    namespace: "shopify",
+    key: "crystal-system",
+    help: "The geometric arrangement of atoms in the mineral",
+    options: [
+      { label: "-- Select --", value: "" },
+      { label: "Monoclinic", value: "gid://shopify/Metaobject/151951212795" },
+      { label: "Trigonal", value: "gid://shopify/Metaobject/154252116219" },
+      { label: "Hexagonal", value: "gid://shopify/Metaobject/154307625211" },
+      { label: "Triclinic", value: "gid://shopify/Metaobject/154308706555" },
+      { label: "+ Add New", value: "__add__" },
+    ],
+    metaobjectType: "crystal-system",
+  },
+  mineral_class: {
+    label: "Mineral Class",
+    namespace: "shopify",
+    key: "mineral-class",
+    help: "Scientific classification based on chemical composition",
+    options: [
+      { label: "-- Select --", value: "" },
+      { label: "Silicates", value: "gid://shopify/Metaobject/151951278331" },
+      { label: "Oxides", value: "gid://shopify/Metaobject/155431371003" },
+      { label: "Carbonates", value: "gid://shopify/Metaobject/156128313595" },
+      { label: "+ Add New", value: "__add__" },
+    ],
+    metaobjectType: "mineral-class",
+  },
+  rock_formation: {
+    label: "Rock Formation",
+    namespace: "shopify",
+    key: "rock-formation",
+    help: "The geological process that formed this rock",
+    options: [
+      { label: "-- Select --", value: "" },
+      { label: "Metamorphic", value: "gid://shopify/Metaobject/151951343867" },
+      { label: "Igneous", value: "gid://shopify/Metaobject/154251985147" },
+      { label: "Sedimentary", value: "gid://shopify/Metaobject/154307657979" },
+      { label: "+ Add New", value: "__add__" },
+    ],
+    metaobjectType: "rock-formation",
+  },
+  geological_era: {
+    label: "Geological Era",
+    namespace: "shopify",
+    key: "geological-era",
+    help: "The time period when this rock was formed",
+    options: [
+      { label: "-- Select --", value: "" },
+      { label: "Precambrian", value: "gid://shopify/Metaobject/151951245563" },
+      { label: "Paleozoic", value: "gid://shopify/Metaobject/156128379131" },
+      { label: "Mesozoic", value: "gid://shopify/Metaobject/154252083451" },
+      { label: "Cenozoic", value: "gid://shopify/Metaobject/154307854587" },
+      { label: "+ Add New", value: "__add__" },
+    ],
+    metaobjectType: "geological-era",
+  },
+  rock_composition: {
+    label: "Rock Composition",
+    namespace: "shopify",
+    key: "rock-composition",
+    help: "The primary rock or mineral matrix",
+    options: [
+      { label: "-- Select --", value: "" },
+      { label: "Granite", value: "gid://shopify/Metaobject/151951311099" },
+      { label: "Obsidian", value: "gid://shopify/Metaobject/155431338235" },
+      { label: "Andesite", value: "gid://shopify/Metaobject/156128411899" },
+      { label: "Schist", value: "gid://shopify/Metaobject/156128477435" },
+      { label: "+ Add New", value: "__add__" },
+    ],
+    metaobjectType: "rock-composition",
+  },
+};
+
+const TEXT_FIELDS = [
+  { key: "hardness", label: "Hardness", help: "Mohs hardness scale 1 (softest) to 10 (hardest)", placeholder: "e.g. 7, 6.5-7, Mohs scale" },
+  { key: "where_found", label: "Where Found", help: "Geographic origin or collection location", placeholder: "e.g. Brazil, Madagascar, Pacific Northwest" },
+  { key: "geological_age", label: "Geological Age", help: "Estimated age or geological time period", placeholder: "e.g. 65 million years, Cretaceous period" },
+  { key: "character_marks", label: "Character Marks", help: "Natural imperfections, inclusions, or unique features", placeholder: "e.g. Natural inclusion, iron vein, surface scratch" },
+  { key: "stone_story", label: "Stone Story", help: "The narrative history or provenance of this stone", placeholder: "e.g. Found near volcanic ridge in Eastern Oregon..." },
+  { key: "rescued_by", label: "Rescued By", help: "Who collected or rescued this stone", placeholder: "e.g. Bob, field collected 2023" },
+  { key: "origin_location", label: "Origin Location", help: "Specific location where the stone was found", placeholder: "e.g. Yakima Valley, WA" },
+];
 
 export const loader = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
@@ -29,17 +117,9 @@ export const loader = async ({ request }) => {
           node {
             id
             title
-            featuredImage {
-              url
-              altText
-            }
+            featuredImage { url altText }
             metafields(first: 20, namespace: "geology") {
-              edges {
-                node {
-                  key
-                  value
-                }
-              }
+              edges { node { key value } }
             }
           }
         }
@@ -63,36 +143,69 @@ export const action = async ({ request }) => {
 
   if (intent === "save" || intent === "bulk") {
     const ids = JSON.parse(formData.get("ids"));
-    const fields = {
-      crystal_structure: formData.get("crystal_structure"),
-      mineral_class: formData.get("mineral_class"),
-      rock_formation: formData.get("rock_formation"),
-      geological_era: formData.get("geological_era"),
-      rock_composition: formData.get("rock_composition"),
-      hardness: formData.get("hardness"),
-      where_found: formData.get("where_found"),
-      geological_age: formData.get("geological_age"),
-    };
-    const metafields = ids.flatMap((id) =>
-      Object.entries(fields)
-        .filter(([, v]) => v)
-        .map(([key, value]) => ({
-          ownerId: id,
-          namespace: "geology",
-          key,
-          value,
-          type: "single_line_text_field",
-        }))
-    );
-    await admin.graphql(`
-      mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
-        metafieldsSet(metafields: $metafields) {
-          metafields { key value }
+    const metafields = [];
+    ids.forEach((ownerId) => {
+      Object.keys(TAXONOMY).forEach((fieldKey) => {
+        const val = formData.get(fieldKey);
+        if (val && val !== "__add__") {
+          metafields.push({
+            ownerId,
+            namespace: "shopify",
+            key: TAXONOMY[fieldKey].key,
+            value: `["${val}"]`,
+            type: "list.metaobject_reference",
+          });
+        }
+      });
+      TEXT_FIELDS.forEach(({ key }) => {
+        const val = formData.get(key);
+        if (val) {
+          metafields.push({
+            ownerId,
+            namespace: "geology",
+            key,
+            value: val,
+            type: "single_line_text_field",
+          });
+        }
+      });
+    });
+    const batchSize = 6;
+    for (let i = 0; i < metafields.length; i += batchSize) {
+      const batch = metafields.slice(i, i + batchSize);
+      await admin.graphql(`
+        mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
+          metafieldsSet(metafields: $metafields) {
+            metafields { key value }
+            userErrors { field message }
+          }
+        }
+      `, { variables: { metafields: batch } });
+    }
+    return { ok: true, intent };
+  }
+
+  if (intent === "addTaxonomy") {
+    const metaobjectType = formData.get("metaobjectType");
+    const name = formData.get("name");
+    const result = await admin.graphql(`
+      mutation metaobjectCreate($metaobject: MetaobjectCreateInput!) {
+        metaobjectCreate(metaobject: $metaobject) {
+          metaobject { id fields { key value } }
           userErrors { field message }
         }
       }
-    `, { variables: { metafields } });
-    return { ok: true, intent };
+    `, {
+      variables: {
+        metaobject: {
+          type: metaobjectType,
+          fields: [{ key: "name", value: name }],
+        },
+      },
+    });
+    const json = await result.json();
+    const newObj = json.data?.metaobjectCreate?.metaobject;
+    return { ok: true, intent: "addTaxonomy", newId: newObj?.id, name, metaobjectType };
   }
 
   if (intent === "inject") {
@@ -102,7 +215,10 @@ export const action = async ({ request }) => {
     for (const line of lines) {
       try { metafields.push(JSON.parse(line)); } catch {}
     }
-    if (metafields.length > 0) {
+    const batchSize = 2;
+    let injected = 0;
+    for (let i = 0; i < metafields.length; i += batchSize) {
+      const batch = metafields.slice(i, i + batchSize);
       await admin.graphql(`
         mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
           metafieldsSet(metafields: $metafields) {
@@ -110,37 +226,38 @@ export const action = async ({ request }) => {
             userErrors { field message }
           }
         }
-      `, { variables: { metafields } });
+      `, { variables: { metafields: batch } });
+      injected += batch.length;
     }
-    return { ok: true, injected: metafields.length };
+    return { ok: true, injected };
   }
 
   return { ok: false };
 };
 
-const FIELDS = [
-  { key: "crystal_structure", label: "Crystal Structure" },
-  { key: "mineral_class", label: "Mineral Class" },
-  { key: "rock_formation", label: "Rock Formation" },
-  { key: "geological_era", label: "Geological Era" },
-  { key: "rock_composition", label: "Rock Composition" },
-  { key: "hardness", label: "Hardness" },
-  { key: "where_found", label: "Where Found" },
-  { key: "geological_age", label: "Geological Age" },
-];
+function LabelWithHelp({ label, help }) {
+  return (
+    <InlineStack gap="100" blockAlign="center">
+      <Text>{label}</Text>
+      <Tooltip content={help}>
+        <Icon source={QuestionCircleIcon} tone="subdued" />
+      </Tooltip>
+    </InlineStack>
+  );
+}
 
 function completeness(metafields) {
-  const filled = FIELDS.filter((f) => metafields[f.key]).length;
-  if (filled === 8) return "success";
+  const filled = TEXT_FIELDS.filter((f) => metafields[f.key]).length;
+  if (filled === TEXT_FIELDS.length) return "success";
   if (filled === 0) return "critical";
   return "warning";
 }
 
 function completenessLabel(metafields) {
-  const filled = FIELDS.filter((f) => metafields[f.key]).length;
-  if (filled === 8) return "Complete";
+  const filled = TEXT_FIELDS.filter((f) => metafields[f.key]).length;
+  if (filled === TEXT_FIELDS.length) return "Complete";
   if (filled === 0) return "Empty";
-  return `${filled}/8 fields`;
+  return `${filled}/${TEXT_FIELDS.length} fields`;
 }
 
 export default function MetaInjector() {
@@ -155,6 +272,9 @@ export default function MetaInjector() {
   const [payload, setPayload] = useState("");
   const [mindatName, setMindatName] = useState("");
   const [mindatStatus, setMindatStatus] = useState(null);
+  const [addingNew, setAddingNew] = useState({});
+  const [newName, setNewName] = useState({});
+  const [dynamicOptions, setDynamicOptions] = useState({});
 
   const filtered = products.filter((p) =>
     p.title.toLowerCase().includes(search.toLowerCase())
@@ -166,11 +286,38 @@ export default function MetaInjector() {
     setTabIndex(1);
   };
 
+  const handleDropdownChange = (fieldKey, value) => {
+    if (value === "__add__") {
+      setAddingNew({ ...addingNew, [fieldKey]: true });
+    } else {
+      setForm({ ...form, [fieldKey]: value });
+    }
+  };
+
+  const handleAddTaxonomy = (fieldKey) => {
+    const name = newName[fieldKey];
+    if (!name) return;
+    const fd = new FormData();
+    fd.append("intent", "addTaxonomy");
+    fd.append("metaobjectType", TAXONOMY[fieldKey].metaobjectType);
+    fd.append("name", name);
+    fetcher.submit(fd, { method: "post" });
+    setAddingNew({ ...addingNew, [fieldKey]: false });
+    setNewName({ ...newName, [fieldKey]: "" });
+  };
+
+  const getOptions = (fieldKey) => {
+    const base = TAXONOMY[fieldKey].options.filter((o) => o.value !== "__add__");
+    const extra = (dynamicOptions[fieldKey] || []);
+    return [...base, ...extra, { label: "+ Add New", value: "__add__" }];
+  };
+
   const handleSave = () => {
     const fd = new FormData();
     fd.append("intent", "save");
     fd.append("ids", JSON.stringify([selected.id]));
-    FIELDS.forEach((f) => fd.append(f.key, form[f.key] || ""));
+    Object.keys(TAXONOMY).forEach((k) => fd.append(k, form[k] || ""));
+    TEXT_FIELDS.forEach(({ key }) => fd.append(key, form[key] || ""));
     fetcher.submit(fd, { method: "post" });
   };
 
@@ -178,7 +325,8 @@ export default function MetaInjector() {
     const fd = new FormData();
     fd.append("intent", "bulk");
     fd.append("ids", JSON.stringify(checkedIds));
-    FIELDS.forEach((f) => fd.append(f.key, form[f.key] || ""));
+    Object.keys(TAXONOMY).forEach((k) => fd.append(k, form[k] || ""));
+    TEXT_FIELDS.forEach(({ key }) => fd.append(key, form[key] || ""));
     fetcher.submit(fd, { method: "post" });
   };
 
@@ -200,11 +348,6 @@ export default function MetaInjector() {
       const mineral = data.results?.[0];
       if (mineral) {
         setForm({
-          crystal_structure: mineral.crystal_system || "",
-          mineral_class: mineral.mineral_class || "",
-          rock_formation: mineral.rock_formation || "",
-          geological_era: mineral.geological_era || "",
-          rock_composition: mineral.chemical_formula || "",
           hardness: mineral.hardness || "",
           where_found: mineral.localities || "",
           geological_age: mineral.geological_age || "",
@@ -219,6 +362,9 @@ export default function MetaInjector() {
     }
   };
 
+  const allIds = products.map((p) => p.id);
+  const allChecked = checkedIds.length === products.length;
+
   const tabs = [
     { id: "grid", content: "🪨 Products" },
     { id: "form", content: "✏️ Edit Stone" },
@@ -228,12 +374,44 @@ export default function MetaInjector() {
     { id: "mindat", content: "🌍 Mindat" },
   ];
 
+  const TaxonomyField = ({ fieldKey }) => {
+    const config = TAXONOMY[fieldKey];
+    return (
+      <BlockStack gap="200">
+        <Select
+          label={<LabelWithHelp label={config.label} help={config.help} />}
+          options={getOptions(fieldKey)}
+          value={form[fieldKey] || ""}
+          onChange={(v) => handleDropdownChange(fieldKey, v)}
+        />
+        {addingNew[fieldKey] && (
+          <InlineStack gap="200">
+            <TextField
+              label=""
+              value={newName[fieldKey] || ""}
+              onChange={(v) => setNewName({ ...newName, [fieldKey]: v })}
+              placeholder={`New ${config.label} name...`}
+              autoComplete="off"
+            />
+            <Button onClick={() => handleAddTaxonomy(fieldKey)} variant="primary">
+              Save
+            </Button>
+            <Button onClick={() => setAddingNew({ ...addingNew, [fieldKey]: false })}>
+              Cancel
+            </Button>
+          </InlineStack>
+        )}
+      </BlockStack>
+    );
+  };
+
   return (
     <Page title="Meta Injector 🪨">
       <Layout>
         <Layout.Section>
           <Card>
             <Tabs tabs={tabs} selected={tabIndex} onSelect={setTabIndex}>
+
               {tabIndex === 0 && (
                 <BlockStack gap="400">
                   <TextField
@@ -245,32 +423,31 @@ export default function MetaInjector() {
                     onClearButtonClick={() => setSearch("")}
                     autoComplete="off"
                   />
-                  <ResourceList
-                    resourceName={{ singular: "stone", plural: "stones" }}
-                    items={filtered}
-                    renderItem={(product) => (
-                      <ResourceItem
-                        id={product.id}
-                        onClick={() => handleSelect(product)}
-                        media={
-                          <Thumbnail
-                            source={product.featuredImage?.url || ""}
-                            alt={product.featuredImage?.altText || product.title}
-                            size="medium"
+                  <Grid>
+                    {filtered.map((product) => (
+                      <Grid.Cell key={product.id} columnSpan={{ xs: 6, sm: 4, md: 3, lg: 3 }}>
+                        <div
+                          onClick={() => handleSelect(product)}
+                          style={{ cursor: "pointer", border: "1px solid #e1e3e5", borderRadius: "8px", overflow: "hidden", textAlign: "center" }}
+                        >
+                          <img
+                            src={product.featuredImage?.url || "https://cdn.shopify.com/s/files/1/0533/2089/files/placeholder-images-image_medium.png"}
+                            alt={product.title}
+                            style={{ width: "100%", height: "140px", objectFit: "cover" }}
                           />
-                        }
-                      >
-                        <InlineStack align="space-between">
-                          <Text variant="bodyMd" fontWeight="bold">{product.title}</Text>
-                          <Badge tone={completeness(product.metafields)}>
-                            {completenessLabel(product.metafields)}
-                          </Badge>
-                        </InlineStack>
-                      </ResourceItem>
-                    )}
-                  />
+                          <div style={{ padding: "8px" }}>
+                            <Text variant="bodySm" fontWeight="bold">{product.title}</Text>
+                            <Badge tone={completeness(product.metafields)}>
+                              {completenessLabel(product.metafields)}
+                            </Badge>
+                          </div>
+                        </div>
+                      </Grid.Cell>
+                    ))}
+                  </Grid>
                 </BlockStack>
               )}
+
               {tabIndex === 1 && (
                 <BlockStack gap="400">
                   {!selected ? (
@@ -279,13 +456,18 @@ export default function MetaInjector() {
                     <>
                       <Text variant="headingMd">{selected.title}</Text>
                       <FormLayout>
-                        {FIELDS.map((f) => (
+                        {Object.keys(TAXONOMY).map((fieldKey) => (
+                          <TaxonomyField key={fieldKey} fieldKey={fieldKey} />
+                        ))}
+                        {TEXT_FIELDS.map((f) => (
                           <TextField
                             key={f.key}
-                            label={f.label}
+                            label={<LabelWithHelp label={f.label} help={f.help} />}
                             value={form[f.key] || ""}
                             onChange={(v) => setForm({ ...form, [f.key]: v })}
+                            placeholder={f.placeholder}
                             autoComplete="off"
+                            multiline={f.key === "stone_story" ? 4 : undefined}
                           />
                         ))}
                       </FormLayout>
@@ -299,6 +481,7 @@ export default function MetaInjector() {
                   )}
                 </BlockStack>
               )}
+
               {tabIndex === 2 && (
                 <BlockStack gap="300">
                   <Text variant="headingMd">Metafield Status Report</Text>
@@ -312,39 +495,51 @@ export default function MetaInjector() {
                   ))}
                 </BlockStack>
               )}
+
               {tabIndex === 3 && (
                 <BlockStack gap="400">
-                  <Text variant="headingMd">Select stones then apply values to all at once.</Text>
+                  <InlineStack gap="200">
+                    <Button onClick={() => setCheckedIds(allChecked ? [] : allIds)}>
+                      {allChecked ? "Deselect All" : "Select All"}
+                    </Button>
+                    <Text>{checkedIds.length} selected</Text>
+                  </InlineStack>
                   <BlockStack gap="200">
                     {products.map((p) => (
-                      <Checkbox
-                        key={p.id}
-                        label={p.title}
-                        checked={checkedIds.includes(p.id)}
-                        onChange={(checked) => {
-                          if (checked) setCheckedIds([...checkedIds, p.id]);
-                          else setCheckedIds(checkedIds.filter((id) => id !== p.id));
-                        }}
-                      />
+                      <InlineStack key={p.id} gap="200" blockAlign="center">
+                        <Checkbox
+                          label=""
+                          checked={checkedIds.includes(p.id)}
+                          onChange={(checked) => {
+                            if (checked) setCheckedIds([...checkedIds, p.id]);
+                            else setCheckedIds(checkedIds.filter((id) => id !== p.id));
+                          }}
+                        />
+                        <img
+                          src={p.featuredImage?.url || ""}
+                          alt={p.title}
+                          style={{ width: "40px", height: "40px", objectFit: "cover", borderRadius: "4px" }}
+                        />
+                        <Text>{p.title}</Text>
+                      </InlineStack>
                     ))}
                   </BlockStack>
                   <FormLayout>
-                    {FIELDS.map((f) => (
+                    {Object.keys(TAXONOMY).map((fieldKey) => (
+                      <TaxonomyField key={fieldKey} fieldKey={fieldKey} />
+                    ))}
+                    {TEXT_FIELDS.map((f) => (
                       <TextField
                         key={f.key}
-                        label={f.label}
+                        label={<LabelWithHelp label={f.label} help={f.help} />}
                         value={form[f.key] || ""}
                         onChange={(v) => setForm({ ...form, [f.key]: v })}
+                        placeholder={f.placeholder}
                         autoComplete="off"
                       />
                     ))}
                   </FormLayout>
-                  <Button
-                    variant="primary"
-                    onClick={handleBulk}
-                    disabled={checkedIds.length === 0}
-                    loading={fetcher.state === "submitting"}
-                  >
+                  <Button variant="primary" onClick={handleBulk} disabled={checkedIds.length === 0} loading={fetcher.state === "submitting"}>
                     Apply to {checkedIds.length} Stone(s)
                   </Button>
                   {fetcher.data?.ok && fetcher.data?.intent === "bulk" && (
@@ -352,15 +547,20 @@ export default function MetaInjector() {
                   )}
                 </BlockStack>
               )}
+
               {tabIndex === 4 && (
                 <BlockStack gap="400">
                   <Text variant="headingMd">Paste one JSON metafield object per line.</Text>
+                  <Banner tone="info">
+                    For metaobject fields use: "type": "list.metaobject_reference" and "value": "[\"gid://shopify/Metaobject/...\"]"
+                    Injected in batches of 2.
+                  </Banner>
                   <TextField
                     label="GID Payload"
                     value={payload}
                     onChange={setPayload}
                     multiline={8}
-                    placeholder={`{"ownerId":"gid://shopify/Product/123","namespace":"geology","key":"hardness","value":"7","type":"single_line_text_field"}`}
+                    placeholder={`{"ownerId":"gid://shopify/Product/123","namespace":"shopify","key":"mineral-class","value":"[\\"gid://shopify/Metaobject/151951278331\\"]","type":"list.metaobject_reference"}`}
                     autoComplete="off"
                   />
                   <Button variant="primary" onClick={handleInject} loading={fetcher.state === "submitting"}>
@@ -371,6 +571,7 @@ export default function MetaInjector() {
                   )}
                 </BlockStack>
               )}
+
               {tabIndex === 5 && (
                 <BlockStack gap="400">
                   <Text variant="headingMd">Pull verified geological data from Mindat.org.</Text>
@@ -384,18 +585,13 @@ export default function MetaInjector() {
                   <Button variant="primary" onClick={handleMindat} loading={mindatStatus === "loading"}>
                     🌍 Lookup
                   </Button>
-                  {mindatStatus === "found" && (
-                    <Banner tone="success">Found! Fields pre-filled — switch to Edit Stone to review and save.</Banner>
-                  )}
-                  {mindatStatus === "notfound" && (
-                    <Banner tone="warning">No results found for "{mindatName}".</Banner>
-                  )}
-                  {mindatStatus === "error" && (
-                    <Banner tone="critical">Lookup failed. Check your Mindat API token.</Banner>
-                  )}
+                  {mindatStatus === "found" && <Banner tone="success">Found! Fields pre-filled — switch to Edit Stone to review and save.</Banner>}
+                  {mindatStatus === "notfound" && <Banner tone="warning">No results found for "{mindatName}".</Banner>}
+                  {mindatStatus === "error" && <Banner tone="critical">Lookup failed. Check your Mindat API token.</Banner>}
                   <Banner tone="info">Requires a Mindat.org API token. Token not yet configured.</Banner>
                 </BlockStack>
               )}
+
             </Tabs>
           </Card>
         </Layout.Section>
