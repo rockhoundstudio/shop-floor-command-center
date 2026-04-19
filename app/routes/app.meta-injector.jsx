@@ -19,7 +19,6 @@ import {
   Tooltip,
   Icon,
   Grid,
-  Divider,
 } from "@shopify/polaris";
 import { QuestionCircleIcon } from "@shopify/polaris-icons";
 
@@ -109,6 +108,39 @@ const TEXT_FIELDS = [
   { key: "origin_location", label: "Origin Location", help: "Specific location where the stone was found", placeholder: "e.g. Yakima Valley, WA" },
 ];
 
+// Extract plain text from HTML description
+function stripHtml(html) {
+  return html ? html.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim() : "";
+}
+
+// Try to extract values from product description text
+function parseDescription(text) {
+  const result = {};
+  const lower = text.toLowerCase();
+
+  // Color/pattern
+  const colorMatch = text.match(/colou?r[:\s]+([^\n,.]+)/i);
+  if (colorMatch) result.color_pattern = colorMatch[1].trim();
+
+  // Measurements/dimensions
+  const sizeMatch = text.match(/(\d+[\d\s.x×*by]+\d+\s*(mm|cm|in|inch)?)/i);
+  if (sizeMatch) result.measurements = sizeMatch[1].trim();
+
+  // Weight
+  const weightMatch = text.match(/(\d+\.?\d*\s*(g|gram|oz|lb))/i);
+  if (weightMatch) result.weight = weightMatch[1].trim();
+
+  // Where found / origin
+  const originMatch = text.match(/(found in|origin[:\s]+|from\s+)([^\n,.]+)/i);
+  if (originMatch) result.origin_location = originMatch[2].trim();
+
+  // Character marks
+  const markMatch = text.match(/(inclusion|vein|crack|mark|scratch|pattern)[:\s]+([^\n,.]+)/i);
+  if (markMatch) result.character_marks = markMatch[0].trim();
+
+  return result;
+}
+
 export const loader = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
   const response = await admin.graphql(`
@@ -118,6 +150,7 @@ export const loader = async ({ request }) => {
           node {
             id
             title
+            descriptionHtml
             featuredImage { url altText }
             metafields(first: 20, namespace: "geology") {
               edges { node { key value } }
@@ -130,6 +163,7 @@ export const loader = async ({ request }) => {
   const data = await response.json();
   const products = data.data.products.edges.map(({ node }) => ({
     ...node,
+    description: stripHtml(node.descriptionHtml),
     metafields: Object.fromEntries(
       node.metafields.edges.map(({ node: mf }) => [mf.key, mf.value])
     ),
@@ -330,6 +364,8 @@ export default function MetaInjector() {
   const [bulkForm, setBulkForm] = useState({});
   const [tabIndex, setTabIndex] = useState(0);
   const [payload, setPayload] = useState("");
+  const [injectProduct, setInjectProduct] = useState("");
+  const [injectStatus, setInjectStatus] = useState(null);
   const [mindatName, setMindatName] = useState("");
   const [mindatStatus, setMindatStatus] = useState(null);
   const [addingNew, setAddingNew] = useState({});
@@ -382,6 +418,67 @@ export default function MetaInjector() {
     Object.keys(TAXONOMY).forEach((k) => fd.append(k, bulkForm[k] || ""));
     TEXT_FIELDS.forEach(({ key }) => fd.append(key, bulkForm[key] || ""));
     fetcher.submit(fd, { method: "post" });
+  };
+
+  const handleAutoInject = async () => {
+    if (!injectProduct) return;
+    setInjectStatus("loading");
+    const product = products.find((p) => p.id === injectProduct);
+    if (!product) { setInjectStatus("error"); return; }
+
+    // Parse description for physical data
+    const descData = parseDescription(product.description || "");
+
+    // Query Mindat for geological data
+    let mindatData = {};
+    try {
+      const res = await fetch(
+        `https://api.mindat.org/minerals/?name=${encodeURIComponent(product.title)}&format=json`,
+        { headers: { Authorization: "Token YOUR_MINDAT_API_TOKEN" } }
+      );
+      const data = await res.json();
+      const mineral = data.results?.[0];
+      if (mineral) {
+        mindatData = {
+          hardness: mineral.hardness || "",
+          where_found: mineral.localities || "",
+          geological_age: mineral.geological_age || "",
+        };
+      }
+    } catch {}
+
+    // Build JSON payload lines
+    const lines = [];
+
+    // Text fields from Mindat + description
+    const textData = { ...descData, ...mindatData };
+    TEXT_FIELDS.forEach(({ key }) => {
+      if (textData[key]) {
+        lines.push(JSON.stringify({
+          ownerId: product.id,
+          namespace: "geology",
+          key,
+          value: textData[key],
+          type: "single_line_text_field",
+        }));
+      }
+    });
+
+    // Taxonomy fields — leave as placeholders for user to review
+    Object.keys(TAXONOMY).forEach((fieldKey) => {
+      const config = TAXONOMY[fieldKey];
+      lines.push(JSON.stringify({
+        ownerId: product.id,
+        namespace: "shopify",
+        key: config.key,
+        value: `["REPLACE_WITH_GID"]`,
+        type: "list.metaobject_reference",
+        _note: `Select correct ${config.label} GID from dropdown`,
+      }));
+    });
+
+    setPayload(lines.join("\n"));
+    setInjectStatus("ready");
   };
 
   const handleInject = () => {
@@ -622,19 +719,44 @@ export default function MetaInjector() {
 
               {tabIndex === 4 && (
                 <BlockStack gap="400">
-                  <Text variant="headingMd">Paste one JSON metafield object per line.</Text>
-                  <Banner tone="info">
-                    For metaobject fields use type: "list.metaobject_reference" and value: "[\"gid://shopify/Metaobject/...\"]". Injected in batches of 2.
-                  </Banner>
+                  <Text variant="headingMd">Auto-build payload from product + Mindat</Text>
+                  <Select
+                    label="Select a stone"
+                    options={[
+                      { label: "-- Pick a stone --", value: "" },
+                      ...products.map((p) => ({ label: p.title, value: p.id })),
+                    ]}
+                    value={injectProduct}
+                    onChange={setInjectProduct}
+                  />
+                  <Button
+                    variant="primary"
+                    onClick={handleAutoInject}
+                    loading={injectStatus === "loading"}
+                    disabled={!injectProduct}
+                  >
+                    🔄 Build Payload
+                  </Button>
+                  {injectStatus === "ready" && (
+                    <Banner tone="success">Payload built from description + Mindat — review and edit below, then inject.</Banner>
+                  )}
+                  {injectStatus === "error" && (
+                    <Banner tone="critical">Could not build payload. Check product and Mindat token.</Banner>
+                  )}
                   <TextField
-                    label="GID Payload"
+                    label="JSON Payload (one object per line — edit before injecting)"
                     value={payload}
                     onChange={setPayload}
-                    multiline={8}
+                    multiline={12}
                     placeholder={`{"ownerId":"gid://shopify/Product/123","namespace":"shopify","key":"mineral-class","value":"[\\"gid://shopify/Metaobject/151951278331\\"]","type":"list.metaobject_reference"}`}
                     autoComplete="off"
                   />
-                  <Button variant="primary" onClick={handleInject} loading={fetcher.state === "submitting"}>
+                  <Button
+                    variant="primary"
+                    onClick={handleInject}
+                    loading={fetcher.state === "submitting"}
+                    disabled={!payload}
+                  >
                     💉 Inject
                   </Button>
                   {fetcher.data?.injected !== undefined && (
