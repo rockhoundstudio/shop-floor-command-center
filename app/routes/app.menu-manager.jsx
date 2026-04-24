@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
-import { data } from "react-router";
-import { useActionData, useSubmit, useNavigation, useFetcher } from "react-router";
+import { json } from "@remix-run/node";
+import { useActionData, useSubmit, useNavigation, useFetcher } from "@remix-run/react";
 import {
   Page,
   Layout,
@@ -12,7 +12,6 @@ import {
   InlineStack,
   Box,
   Divider,
-  Badge,
   Spinner
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
@@ -30,14 +29,14 @@ export const loader = async ({ request }) => {
       }
     `);
     const result = await response.json();
-    return data({
+    return json({
       pages: result.data.pages.edges.map(e => e.node),
       collections: result.data.collections.edges.map(e => e.node),
       blogs: result.data.blogs.edges.map(e => e.node),
     });
   }
 
-  return data({});
+  return json({});
 };
 
 export const action = async ({ request }) => {
@@ -61,12 +60,12 @@ export const action = async ({ request }) => {
     const result = await response.json();
 
     if (result.data.menuUpdate.userErrors.length > 0) {
-      return data({ status: "error", message: result.data.menuUpdate.userErrors[0].message });
+      return json({ status: "error", message: result.data.menuUpdate.userErrors[0].message });
     }
 
-    return data({ status: "success", message: "Menu successfully torqued down and saved!" });
+    return json({ status: "success", message: "Menu successfully torqued down and saved!" });
   } catch (error) {
-    return data({ status: "error", message: "Engine fault: Failed to reach Shopify API." });
+    return json({ status: "error", message: "Engine fault: Failed to reach Shopify API." });
   }
 };
 
