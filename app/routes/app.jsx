@@ -20,7 +20,6 @@ export default function App() {
         <ui-nav-menu>
           <a href="/app" rel="home">Home</a>
           <a href="/app/meta-injector">Meta Injector</a>
-          <a href="/app/menu-manager">Menu Manager</a>
         </ui-nav-menu>
         <Outlet />
       </AppProvider>
