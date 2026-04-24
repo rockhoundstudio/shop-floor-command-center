@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { data } from "react-router";
-import { useActionData, useSubmit, useNavigation } from "react-router";
+import { useActionData, useSubmit, useNavigation, useFetcher } from "react-router";
 import {
   Page,
   Layout,
@@ -11,13 +11,33 @@ import {
   Text,
   InlineStack,
   Box,
-  Divider
+  Divider,
+  Badge,
+  Spinner
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 
 export const loader = async ({ request }) => {
-  await authenticate.admin(request);
-  return {};
+  const { admin } = await authenticate.admin(request);
+  const url = new URL(request.url);
+
+  if (url.searchParams.get("scan") === "true") {
+    const response = await admin.graphql(`#graphql
+      query scanStore {
+        pages(first: 50) { edges { node { id title handle } } }
+        collections(first: 50) { edges { node { id title handle } } }
+        blogs(first: 10) { edges { node { id title handle } } }
+      }
+    `);
+    const result = await response.json();
+    return data({
+      pages: result.data.pages.edges.map(e => e.node),
+      collections: result.data.collections.edges.map(e => e.node),
+      blogs: result.data.blogs.edges.map(e => e.node),
+    });
+  }
+
+  return data({});
 };
 
 export const action = async ({ request }) => {
@@ -31,22 +51,11 @@ export const action = async ({ request }) => {
       `#graphql
       mutation menuUpdate($id: ID!, $menu: MenuInput!) {
         menuUpdate(id: $id, menu: $menu) {
-          menu {
-            id
-            title
-          }
-          userErrors {
-            field
-            message
-          }
+          menu { id title }
+          userErrors { field message }
         }
       }`,
-      {
-        variables: {
-          id: menuGid,
-          menu: { items: payload }
-        }
-      }
+      { variables: { id: menuGid, menu: { items: payload } } }
     );
 
     const result = await response.json();
@@ -61,35 +70,42 @@ export const action = async ({ request }) => {
   }
 };
 
+const MAIN_MENU_GID = "gid://shopify/Menu/252615295227";
+const FOOTER_MENU_GID = "gid://shopify/Menu/251808547067";
+
+const blueprintMain = [
+  { title: "All Stone", url: "/collections/all", items: [
+    { title: "Available Case Files", url: "/collections/all" },
+    { title: "The Private Collection", url: "/collections/all" }
+  ]},
+  { title: "All Tales", url: "/blogs/the-rockhound-logbook", items: [
+    { title: "Stories from the Bench", url: "/blogs/the-rockhound-logbook/tagged/stories-from-the-bench" },
+    { title: "The Community Archive", url: "/blogs/the-rockhound-logbook/tagged/the-community-archive" }
+  ]},
+  { title: "Rescue Your Memory", url: "/pages/memories-in-stone", items: [] }
+];
+
+const blueprintFooter = [
+  { title: "About the Makers", url: "/pages/our-story", items: [] },
+  { title: "Search the Archive", url: "/search", items: [] },
+  { title: "FAQ & Practical Testing", url: "/pages/frequently-asked-questions", items: [] },
+  { title: "Standard Specs", url: "/pages/standard-specs", items: [] }
+];
+
 export default function MenuManager() {
   const actionData = useActionData();
   const submit = useSubmit();
   const navigation = useNavigation();
+  const fetcher = useFetcher();
   const isSaving = navigation.state === "submitting";
+  const isScanning = fetcher.state === "loading";
 
-  const [selectedMenu, setSelectedMenu] = useState("gid://shopify/Menu/252615295227");
+  const [selectedMenu, setSelectedMenu] = useState(MAIN_MENU_GID);
   const [statusState, setStatusState] = useState("unsaved");
-
-  const initialMainMenu = [
-    { title: "All Stone", url: "/collections/all", items: [
-        { title: "Available Case Files", url: "/collections/all" },
-        { title: "The Private Collection", url: "/collections/all" }
-    ]},
-    { title: "All Tales", url: "/blogs/the-rockhound-logbook", items: [
-        { title: "Stories from the Bench", url: "/blogs/the-rockhound-logbook/tagged/stories-from-the-bench" },
-        { title: "The Community Archive", url: "/blogs/the-rockhound-logbook/tagged/the-community-archive" }
-    ]},
-    { title: "Rescue Your Memory", url: "/pages/memories-in-stone", items: [] }
-  ];
-
-  const initialFooterMenu = [
-    { title: "About the Makers", url: "/pages/our-story" },
-    { title: "Search the Archive", url: "/search" },
-    { title: "FAQ & Practical Testing", url: "/pages/frequently-asked-questions" },
-    { title: "Standard Specs", url: "/pages/standard-specs" }
-  ];
-
-  const [menuItems, setMenuItems] = useState(initialMainMenu);
+  const [menuItems, setMenuItems] = useState(blueprintMain);
+  const [scanResults, setScanResults] = useState(null);
+  const [showAutoBuildPreview, setShowAutoBuildPreview] = useState(false);
+  const [autoBuildTarget, setAutoBuildTarget] = useState(null);
 
   const getStatusBanner = () => {
     if (statusState === "saved") return { bg: "#0b5b3c", color: "#ffffff", text: "SAVED" };
@@ -103,10 +119,17 @@ export default function MenuManager() {
     if (actionData?.status === "error") setStatusState("error");
   }, [actionData]);
 
+  useEffect(() => {
+    if (fetcher.data && fetcher.data.pages) {
+      setScanResults(fetcher.data);
+    }
+  }, [fetcher.data]);
+
   const handleMenuChange = (value) => {
     setSelectedMenu(value);
-    setMenuItems(value === "gid://shopify/Menu/252615295227" ? initialMainMenu : initialFooterMenu);
+    setMenuItems(value === MAIN_MENU_GID ? blueprintMain : blueprintFooter);
     setStatusState("unsaved");
+    setShowAutoBuildPreview(false);
   };
 
   const handleSave = () => {
@@ -116,16 +139,37 @@ export default function MenuManager() {
     submit(formData, { method: "post" });
   };
 
+  const handleScan = () => {
+    fetcher.load("?scan=true");
+  };
+
+  const handleAutoBuild = (menuGid) => {
+    setAutoBuildTarget(menuGid);
+    setShowAutoBuildPreview(true);
+    setSelectedMenu(menuGid);
+    setMenuItems(menuGid === MAIN_MENU_GID ? blueprintMain : blueprintFooter);
+    setStatusState("unsaved");
+  };
+
+  const handleConfirmAutoBuild = () => {
+    const formData = new FormData();
+    formData.append("menuGid", autoBuildTarget);
+    formData.append("menuPayload", JSON.stringify(
+      autoBuildTarget === MAIN_MENU_GID ? blueprintMain : blueprintFooter
+    ));
+    submit(formData, { method: "post" });
+    setShowAutoBuildPreview(false);
+  };
+
   return (
     <Page title="Rockhound Menu Manager">
       <Layout>
         <Layout.Section>
 
+          {/* STATUS BANNER */}
           <Box padding="400" background="bg-surface" borderRadius="200" shadow="100">
             <InlineStack align="space-between" blockAlign="center">
-              <Text as="h1" variant="heading2xl" fontWeight="bold">
-                Dashboard Status
-              </Text>
+              <Text as="h1" variant="heading2xl" fontWeight="bold">Dashboard Status</Text>
               <div style={{ backgroundColor: statusConfig.bg, color: statusConfig.color, padding: "12px 24px", borderRadius: "8px", fontWeight: "bold", fontSize: "18px", border: "2px solid #000" }}>
                 {statusConfig.text}
               </div>
@@ -136,8 +180,97 @@ export default function MenuManager() {
               </Box>
             )}
           </Box>
-          <br/>
+          <br />
 
+          {/* SCAN STORE */}
+          <Card padding="600">
+            <BlockStack gap="500">
+              <Text as="h2" variant="headingXl" fontWeight="bold">Store Scanner</Text>
+              <Text as="p" variant="bodyLg">Scan your live store to see all pages, collections, and blogs available to wire into the navigation web.</Text>
+
+              <Button size="large" variant="primary" onClick={handleScan} loading={isScanning}>
+                <span style={{ fontSize: "18px", fontWeight: "bold" }}>SCAN STORE</span>
+              </Button>
+
+              {scanResults && (
+                <BlockStack gap="400">
+                  <Divider />
+                  <Text as="h3" variant="headingLg" fontWeight="bold">Scan Results</Text>
+
+                  <Box padding="300" background="bg-surface-secondary" borderRadius="100">
+                    <Text as="h4" variant="headingMd" fontWeight="bold">Pages ({scanResults.pages.length})</Text>
+                    <BlockStack gap="100">
+                      {scanResults.pages.map(p => (
+                        <Text key={p.id} as="p" variant="bodyLg">📄 {p.title} — /pages/{p.handle}</Text>
+                      ))}
+                    </BlockStack>
+                  </Box>
+
+                  <Box padding="300" background="bg-surface-secondary" borderRadius="100">
+                    <Text as="h4" variant="headingMd" fontWeight="bold">Collections ({scanResults.collections.length})</Text>
+                    <BlockStack gap="100">
+                      {scanResults.collections.map(c => (
+                        <Text key={c.id} as="p" variant="bodyLg">🗂 {c.title} — /collections/{c.handle}</Text>
+                      ))}
+                    </BlockStack>
+                  </Box>
+
+                  <Box padding="300" background="bg-surface-secondary" borderRadius="100">
+                    <Text as="h4" variant="headingMd" fontWeight="bold">Blogs ({scanResults.blogs.length})</Text>
+                    <BlockStack gap="100">
+                      {scanResults.blogs.map(b => (
+                        <Text key={b.id} as="p" variant="bodyLg">📝 {b.title} — /blogs/{b.handle}</Text>
+                      ))}
+                    </BlockStack>
+                  </Box>
+                </BlockStack>
+              )}
+            </BlockStack>
+          </Card>
+          <br />
+
+          {/* AUTO-BUILD */}
+          <Card padding="600">
+            <BlockStack gap="500">
+              <Text as="h2" variant="headingXl" fontWeight="bold">Auto-Build from Blueprint</Text>
+              <Text as="p" variant="bodyLg">Automatically wire the full navigation dwell web from the Rockhound blueprint. Preview before saving.</Text>
+
+              <InlineStack gap="400">
+                <Button size="large" variant="primary" onClick={() => handleAutoBuild(MAIN_MENU_GID)}>
+                  <span style={{ fontSize: "18px", fontWeight: "bold" }}>BUILD MAIN MENU</span>
+                </Button>
+                <Button size="large" variant="primary" onClick={() => handleAutoBuild(FOOTER_MENU_GID)}>
+                  <span style={{ fontSize: "18px", fontWeight: "bold" }}>BUILD FOOTER MENU</span>
+                </Button>
+              </InlineStack>
+
+              {showAutoBuildPreview && (
+                <BlockStack gap="400">
+                  <Divider />
+                  <div style={{ backgroundColor: "#ffd700", padding: "12px 20px", borderRadius: "8px", border: "2px solid #000" }}>
+                    <Text as="p" variant="headingLg" fontWeight="bold">⚠ PREVIEW — Review before saving</Text>
+                  </div>
+                  <BlockStack gap="200">
+                    {(autoBuildTarget === MAIN_MENU_GID ? blueprintMain : blueprintFooter).map((item, i) => (
+                      <Box key={i} padding="300" background="bg-surface-secondary" borderRadius="100">
+                        <Text as="h3" variant="headingLg" fontWeight="bold">{item.title}</Text>
+                        <Text as="p" variant="bodyLg">{item.url}</Text>
+                        {item.items && item.items.map((sub, j) => (
+                          <Text key={j} as="p" variant="bodyMd">↳ {sub.title} — {sub.url}</Text>
+                        ))}
+                      </Box>
+                    ))}
+                  </BlockStack>
+                  <Button size="large" variant="primary" tone="success" onClick={handleConfirmAutoBuild} loading={isSaving}>
+                    <span style={{ fontSize: "20px", fontWeight: "bold" }}>✅ CONFIRM & SAVE TO SHOPIFY</span>
+                  </Button>
+                </BlockStack>
+              )}
+            </BlockStack>
+          </Card>
+          <br />
+
+          {/* MANUAL EDITOR */}
           <Card padding="600">
             <BlockStack gap="500">
               <Text as="h2" variant="headingXl" fontWeight="bold">Select Engine Mount</Text>
@@ -145,8 +278,8 @@ export default function MenuManager() {
               <Select
                 label={<Text as="span" variant="headingLg" fontWeight="bold">Choose Menu to Edit</Text>}
                 options={[
-                  { label: "Main Menu (Header)", value: "gid://shopify/Menu/252615295227" },
-                  { label: "Footer Menu", value: "gid://shopify/Menu/251808547067" },
+                  { label: "Main Menu (Header)", value: MAIN_MENU_GID },
+                  { label: "Footer Menu", value: FOOTER_MENU_GID },
                 ]}
                 onChange={handleMenuChange}
                 value={selectedMenu}
@@ -189,19 +322,14 @@ export default function MenuManager() {
               </Box>
 
               <Box paddingBlockStart="500">
-                <Button
-                  size="large"
-                  variant="primary"
-                  onClick={handleSave}
-                  loading={isSaving}
-                  fullWidth
-                >
+                <Button size="large" variant="primary" onClick={handleSave} loading={isSaving} fullWidth>
                   <span style={{ fontSize: "20px", fontWeight: "bold" }}>SAVE MENU WIRING</span>
                 </Button>
               </Box>
 
             </BlockStack>
           </Card>
+
         </Layout.Section>
       </Layout>
     </Page>
