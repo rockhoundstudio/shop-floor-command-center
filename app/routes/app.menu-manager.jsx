@@ -61,6 +61,9 @@ function buildGqlItems(items, depth = 0) {
   });
 }
 
+const MAIN_MENU_GID = "gid://shopify/Menu/252615295227";
+const FOOTER_MENU_GID = "gid://shopify/Menu/251808547067";
+
 export const action = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
   const formData = await request.formData();
@@ -69,11 +72,12 @@ export const action = async ({ request }) => {
 
   try {
     const itemsGql = buildGqlItems(payload).join(", ");
+    const menuTitle = menuGid === MAIN_MENU_GID ? "Main menu" : "Footer menu";
 
     const response = await admin.graphql(
       `#graphql
       mutation {
-        menuUpdate(id: "${menuGid}", menu: { items: [${itemsGql}] }) {
+        menuUpdate(id: "${menuGid}", title: "${menuTitle}", items: [${itemsGql}]) {
           menu { id title }
           userErrors { field message }
         }
@@ -96,9 +100,6 @@ export const action = async ({ request }) => {
     return data({ status: "error", message: "Engine fault: " + error.message });
   }
 };
-
-const MAIN_MENU_GID = "gid://shopify/Menu/252615295227";
-const FOOTER_MENU_GID = "gid://shopify/Menu/251808547067";
 
 const blueprintMain = [
   { title: "All Stone", url: "/collections/all", items: [
