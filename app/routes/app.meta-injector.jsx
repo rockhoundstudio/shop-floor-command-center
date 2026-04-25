@@ -121,13 +121,24 @@ const STONE_TYPES = [
   "limestone","dolomite","chert","flint","pumice","scoria","tuff",
 ];
 
+// --- THE HARDWIRED GID MAP ---
+const COLLECTION_GIDS = {
+  "The 3,000-Mile Run": "gid://shopify/Collection/452913135867",
+  "Richardson's Rock Ranch": "gid://shopify/Collection/452912972027",
+  "The Gallery": "gid://shopify/Collection/452886495483",
+  "The Yakima Canyon Collection": "gid://shopify/Collection/452884922619",
+  "Wearable Art": "gid://shopify/Collection/452823482619",
+  "Small Batches / The Vault": "gid://shopify/Collection/452658528507",
+  "Touch Stones & Mile Stones": "gid://shopify/Collection/452655775995",
+};
+
 const ORIGIN_KEYWORDS = {
-  "Yakima Canyon": "gid://shopify/Collection/452884922619",
-  "Yakima": "gid://shopify/Collection/452884922619",
-  "Richardson": "gid://shopify/Collection/452912972027",
-  "Rock Ranch": "gid://shopify/Collection/452912972027",
-  "3,000-Mile": "gid://shopify/Collection/452913135867",
-  "3000 Mile": "gid://shopify/Collection/452913135867",
+  "Yakima Canyon": COLLECTION_GIDS["The Yakima Canyon Collection"],
+  "Yakima": COLLECTION_GIDS["The Yakima Canyon Collection"],
+  "Richardson": COLLECTION_GIDS["Richardson's Rock Ranch"],
+  "Rock Ranch": COLLECTION_GIDS["Richardson's Rock Ranch"],
+  "3,000-Mile": COLLECTION_GIDS["The 3,000-Mile Run"],
+  "3000 Mile": COLLECTION_GIDS["The 3,000-Mile Run"],
 };
 
 function stripHtml(html) {
@@ -175,14 +186,14 @@ function suggestCollections(product, existingCollections) {
   const originText = (meta.origin_location || meta.where_found || "").toLowerCase() + " " + combined;
   for (const [keyword, collId] of Object.entries(ORIGIN_KEYWORDS)) {
     if (originText.includes(keyword.toLowerCase())) {
-      const coll = existingCollections.find((c) => c.id === collId);
-      if (coll) suggestions.push({ name: coll.title, id: collId, reason: `Origin: ${keyword}` });
+      // Hardwired assignment using the correct GID
+      suggestions.push({ name: keyword, id: collId, reason: `Origin: ${keyword}` });
     }
   }
 
   // Wearable Art
   if (/pendant|bracelet|ring|wearable|necklace|earring/.test(combined)) {
-    suggestions.push({ name: "Wearable Art", id: "gid://shopify/Collection/452823482619", reason: "Wearable keyword found" });
+    suggestions.push({ name: "Wearable Art", id: COLLECTION_GIDS["Wearable Art"], reason: "Wearable keyword found" });
   }
 
   // Freeforms
@@ -207,7 +218,7 @@ function suggestCollections(product, existingCollections) {
 
   // Touch Stones & Mile Stones — stone story present
   if (meta.stone_story) {
-    suggestions.push({ name: "Touch Stones & Mile Stones", id: "gid://shopify/Collection/452655775995", reason: "Stone story present" });
+    suggestions.push({ name: "Touch Stones & Mile Stones", id: COLLECTION_GIDS["Touch Stones & Mile Stones"], reason: "Stone story present" });
   }
 
   return suggestions;
