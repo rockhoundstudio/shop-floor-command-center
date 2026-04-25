@@ -103,9 +103,9 @@ export const action = async ({ request }) => {
 
 const blueprintMain = [
   { title: "Home", url: "/", items: [] },
-  { title: "All Stone", url: "/collections/all", items: [
-    { title: "Available Case Files", url: "/collections/all" },
-    { title: "The Private Collection", url: "/collections/all" }
+  { title: "All Stone", url: "/collections/all-collections", items: [
+    { title: "Available Case Files", url: "/collections/all-collections" },
+    { title: "The Private Collection", url: "/collections/all-collections" }
   ]},
   { title: "All Tales", url: "/blogs/the-rockhound-logbook", items: [
     { title: "Stories from the Bench", url: "/blogs/the-rockhound-logbook/tagged/stories-from-the-bench" },
@@ -115,7 +115,7 @@ const blueprintMain = [
 ];
 
 const blueprintFooter = [
-  { title: "About the Makers", url: "/pages/our-story", items: [] },
+  { title: "About the Makers", url: "/pages/about", items: [] },
   { title: "Search the Archive", url: "/search", items: [] },
   { title: "FAQ & Practical Testing", url: "/pages/frequently-asked-questions", items: [] },
   { title: "Standard Specs", url: "/pages/standard-specs", items: [] }
