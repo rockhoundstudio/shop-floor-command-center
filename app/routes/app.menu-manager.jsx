@@ -20,19 +20,29 @@ export const loader = async ({ request }) => {
   const url = new URL(request.url);
 
   if (url.searchParams.get("scan") === "true") {
-    const response = await admin.graphql(`#graphql
-      query scanStore {
-        pages(first: 50) { edges { node { id title handle } } }
-        collections(first: 50) { edges { node { id title handle } } }
-        blogs(first: 10) { edges { node { id title handle } } }
+    try {
+      const response = await admin.graphql(`#graphql
+        query scanStore {
+          pages(first: 50) { edges { node { id title handle } } }
+          collections(first: 50) { edges { node { id title handle } } }
+          blogs(first: 10) { edges { node { id title handle } } }
+        }
+      `);
+      const result = await response.json();
+
+      if (!result?.data) {
+        return data({ success: false, error: "GraphQL returned empty data" });
       }
-    `);
-    const result = await response.json();
-    return data({
-      pages: result.data.pages.edges.map(e => e.node),
-      collections: result.data.collections.edges.map(e => e.node),
-      blogs: result.data.blogs.edges.map(e => e.node),
-    });
+
+      return data({
+        success: true,
+        pages: result.data.pages.edges.map(e => e.node),
+        collections: result.data.collections.edges.map(e => e.node),
+        blogs: result.data.blogs.edges.map(e => e.node),
+      });
+    } catch (err) {
+      return data({ success: false, error: "GraphQL failed: " + err.message });
+    }
   }
 
   return data({});
@@ -102,6 +112,7 @@ export default function MenuManager() {
   const [statusState, setStatusState] = useState("unsaved");
   const [menuItems, setMenuItems] = useState(blueprintMain);
   const [scanResults, setScanResults] = useState(null);
+  const [scanError, setScanError] = useState(null);
   const [showAutoBuildPreview, setShowAutoBuildPreview] = useState(false);
   const [autoBuildTarget, setAutoBuildTarget] = useState(null);
 
@@ -118,8 +129,12 @@ export default function MenuManager() {
   }, [actionData]);
 
   useEffect(() => {
-    if (fetcher.data && fetcher.data.pages) {
+    if (fetcher.data?.success === true && fetcher.data.pages) {
       setScanResults(fetcher.data);
+      setScanError(null);
+    } else if (fetcher.data?.success === false) {
+      setScanError(fetcher.data.error || "Unknown scan error");
+      setScanResults(null);
     }
   }, [fetcher.data]);
 
@@ -138,7 +153,7 @@ export default function MenuManager() {
   };
 
   const handleScan = () => {
-    fetcher.load("?scan=true");
+    fetcher.load("/app/menu-manager?scan=true");
   };
 
   const handleAutoBuild = (menuGid) => {
@@ -190,33 +205,39 @@ export default function MenuManager() {
                 <span style={{ fontSize: "18px", fontWeight: "bold" }}>SCAN STORE</span>
               </Button>
 
+              {scanError && (
+                <Box padding="300" background="bg-surface-secondary" borderRadius="100">
+                  <Text as="p" variant="bodyLg" fontWeight="bold" tone="critical">⚠ Scan failed: {scanError}</Text>
+                </Box>
+              )}
+
               {scanResults && (
                 <BlockStack gap="400">
                   <Divider />
                   <Text as="h3" variant="headingLg" fontWeight="bold">Scan Results</Text>
 
                   <Box padding="300" background="bg-surface-secondary" borderRadius="100">
-                    <Text as="h4" variant="headingMd" fontWeight="bold">Pages ({scanResults.pages.length})</Text>
+                    <Text as="h4" variant="headingMd" fontWeight="bold">Pages ({scanResults.pages?.length ?? 0})</Text>
                     <BlockStack gap="100">
-                      {scanResults.pages.map(p => (
+                      {(scanResults.pages ?? []).map(p => (
                         <Text key={p.id} as="p" variant="bodyLg">📄 {p.title} — /pages/{p.handle}</Text>
                       ))}
                     </BlockStack>
                   </Box>
 
                   <Box padding="300" background="bg-surface-secondary" borderRadius="100">
-                    <Text as="h4" variant="headingMd" fontWeight="bold">Collections ({scanResults.collections.length})</Text>
+                    <Text as="h4" variant="headingMd" fontWeight="bold">Collections ({scanResults.collections?.length ?? 0})</Text>
                     <BlockStack gap="100">
-                      {scanResults.collections.map(c => (
+                      {(scanResults.collections ?? []).map(c => (
                         <Text key={c.id} as="p" variant="bodyLg">🗂 {c.title} — /collections/{c.handle}</Text>
                       ))}
                     </BlockStack>
                   </Box>
 
                   <Box padding="300" background="bg-surface-secondary" borderRadius="100">
-                    <Text as="h4" variant="headingMd" fontWeight="bold">Blogs ({scanResults.blogs.length})</Text>
+                    <Text as="h4" variant="headingMd" fontWeight="bold">Blogs ({scanResults.blogs?.length ?? 0})</Text>
                     <BlockStack gap="100">
-                      {scanResults.blogs.map(b => (
+                      {(scanResults.blogs ?? []).map(b => (
                         <Text key={b.id} as="p" variant="bodyLg">📝 {b.title} — /blogs/{b.handle}</Text>
                       ))}
                     </BlockStack>
