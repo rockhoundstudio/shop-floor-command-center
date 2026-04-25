@@ -55,7 +55,7 @@ function buildGqlItems(items, depth = 0) {
       : null;
     const title = item.title.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
     const url = item.url.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-    const fields = [`title: "${title}"`, `url: "${url}"`];
+    const fields = [`title: "${title}"`, `type: HTTP`, `url: "${url}"`];
     if (children) fields.push(children);
     return `{ ${fields.join(", ")} }`;
   });
