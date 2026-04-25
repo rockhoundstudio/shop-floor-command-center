@@ -58,6 +58,23 @@ function getMenuItemType(url) {
   return "HTTP";
 }
 
+function friendlyError(message) {
+  if (!message) return message;
+  if (message.toLowerCase().includes("collection not found") ||
+      message.toLowerCase().includes("couldn't create link") && message.toLowerCase().includes("collection")) {
+    return "⚠ Collection must be created in Meta Injector first before it can be added to a menu.";
+  }
+  if (message.toLowerCase().includes("page not found") ||
+      message.toLowerCase().includes("couldn't create link") && message.toLowerCase().includes("page")) {
+    return "⚠ Page not found — create it in Shopify Admin first before adding to a menu.";
+  }
+  if (message.toLowerCase().includes("blog not found") ||
+      message.toLowerCase().includes("couldn't create link") && message.toLowerCase().includes("blog")) {
+    return "⚠ Blog not found — create it in Shopify Admin first before adding to a menu.";
+  }
+  return message;
+}
+
 function buildGqlItems(items, depth = 0) {
   return items.map(item => {
     const children = item.items && item.items.length > 0 && depth === 0
@@ -103,7 +120,8 @@ export const action = async ({ request }) => {
     }
 
     if (result.data.menuUpdate.userErrors.length > 0) {
-      return data({ status: "error", message: result.data.menuUpdate.userErrors[0].message });
+      const raw = result.data.menuUpdate.userErrors[0].message;
+      return data({ status: "error", message: friendlyError(raw) });
     }
 
     return data({ status: "success", message: "Menu successfully torqued down and saved!" });
