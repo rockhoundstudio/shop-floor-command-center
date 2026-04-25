@@ -48,6 +48,16 @@ export const loader = async ({ request }) => {
   return data({});
 };
 
+function getMenuItemType(url) {
+  if (url === "/") return "FRONTPAGE";
+  if (url === "/search") return "SEARCH";
+  if (url.startsWith("/collections/")) return "COLLECTION";
+  if (url.startsWith("/pages/")) return "PAGE";
+  if (url.startsWith("/blogs/")) return "BLOG";
+  if (url.startsWith("/products/")) return "PRODUCT";
+  return "HTTP";
+}
+
 function buildGqlItems(items, depth = 0) {
   return items.map(item => {
     const children = item.items && item.items.length > 0 && depth === 0
@@ -55,7 +65,8 @@ function buildGqlItems(items, depth = 0) {
       : null;
     const title = item.title.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
     const url = item.url.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-    const fields = [`title: "${title}"`, `url: "${url}"`];
+    const type = getMenuItemType(item.url);
+    const fields = [`title: "${title}"`, `url: "${url}"`, `type: ${type}`];
     if (children) fields.push(children);
     return `{ ${fields.join(", ")} }`;
   });
@@ -162,7 +173,7 @@ export default function MenuManager() {
   const [autoBuildTarget, setAutoBuildTarget] = useState(null);
   const [verifyResults, setVerifyResults] = useState(null);
   const [errorLog, setErrorLog] = useState([]);
-  const [addTarget, setAddTarget] = useState({});
+  const [addedItems, setAddedItems] = useState({});
 
   const currentItems = selectedMenu === MAIN_MENU_GID ? mainItems : footerItems;
   const setCurrentItems = selectedMenu === MAIN_MENU_GID ? setMainItems : setFooterItems;
@@ -190,6 +201,7 @@ export default function MenuManager() {
     if (fetcher.data?.success === true && fetcher.data.pages) {
       setScanResults(fetcher.data);
       setScanError(null);
+      setAddedItems({});
     } else if (fetcher.data?.success === false) {
       const errMsg = fetcher.data.error || "Unknown scan error";
       setScanError(errMsg);
@@ -245,12 +257,15 @@ export default function MenuManager() {
   };
 
   const handleAddToMenu = (title, url, menuGid) => {
+    const key = menuGid + "|" + url;
+    if (addedItems[key]) return;
     const newItem = { title, url, items: [] };
     if (menuGid === MAIN_MENU_GID) {
       setMainItems(prev => [...prev, newItem]);
     } else {
       setFooterItems(prev => [...prev, newItem]);
     }
+    setAddedItems(prev => ({ ...prev, [key]: true }));
     setStatusState("unsaved");
     setVerifyResults(null);
   };
@@ -287,28 +302,44 @@ export default function MenuManager() {
   const renderScanSection = (label, items, prefix) => (
     <Box padding="300" background="bg-surface-secondary" borderRadius="100">
       <Text as="h4" variant="headingMd" fontWeight="bold">{label} ({items?.length ?? 0})</Text>
-      <BlockStack gap="200">
-        {(items ?? []).map(item => (
-          <InlineStack key={item.id} align="space-between" blockAlign="center">
-            <Text as="p" variant="bodyLg">{item.title} — {prefix}{item.handle}</Text>
-            <InlineStack gap="200">
-              <Select
-                label=""
-                labelHidden
-                options={menuOptions}
-                onChange={(val) => setAddTarget(prev => ({ ...prev, [item.id]: val }))}
-                value={addTarget[item.id] || MAIN_MENU_GID}
-              />
-              <Button
-                size="large"
-                variant="primary"
-                onClick={() => handleAddToMenu(item.title, prefix + item.handle, addTarget[item.id] || MAIN_MENU_GID)}
-              >
-                <span style={{ fontSize: "15px", fontWeight: "bold" }}>+ ADD</span>
-              </Button>
-            </InlineStack>
-          </InlineStack>
-        ))}
+      <BlockStack gap="300">
+        {(items ?? []).map(item => {
+          const url = prefix + item.handle;
+          const addedMain = addedItems[MAIN_MENU_GID + "|" + url];
+          const addedFooter = addedItems[FOOTER_MENU_GID + "|" + url];
+          return (
+            <Box key={item.id} padding="200" background="bg-surface" borderRadius="100">
+              <BlockStack gap="200">
+                <Text as="p" variant="bodyLg" fontWeight="bold">{item.title}</Text>
+                <Text as="p" variant="bodyMd" tone="subdued">{url}</Text>
+                <InlineStack gap="300">
+                  <Button
+                    size="large"
+                    variant="primary"
+                    tone={addedMain ? "success" : undefined}
+                    onClick={() => handleAddToMenu(item.title, url, MAIN_MENU_GID)}
+                    disabled={!!addedMain}
+                  >
+                    <span style={{ fontSize: "15px", fontWeight: "bold" }}>
+                      {addedMain ? "✅ Added to Main" : "+ ADD TO MAIN"}
+                    </span>
+                  </Button>
+                  <Button
+                    size="large"
+                    variant="primary"
+                    tone={addedFooter ? "success" : undefined}
+                    onClick={() => handleAddToMenu(item.title, url, FOOTER_MENU_GID)}
+                    disabled={!!addedFooter}
+                  >
+                    <span style={{ fontSize: "15px", fontWeight: "bold" }}>
+                      {addedFooter ? "✅ Added to Footer" : "+ ADD TO FOOTER"}
+                    </span>
+                  </Button>
+                </InlineStack>
+              </BlockStack>
+            </Box>
+          );
+        })}
       </BlockStack>
     </Box>
   );
@@ -339,8 +370,7 @@ export default function MenuManager() {
             <BlockStack gap="500">
               <Text as="h2" variant="headingXl" fontWeight="bold">Store Scanner</Text>
               <Text as="p" variant="bodyLg">
-                Scan your live store to see all pages, collections, and blogs.
-                Use ADD to append any item directly to Main or Footer menu.
+                Scan your live store. Hit ADD TO MAIN or ADD TO FOOTER next to any item to wire it in.
               </Text>
 
               <Button size="large" variant="primary" onClick={handleScan} loading={isScanning}>
@@ -356,7 +386,7 @@ export default function MenuManager() {
               {scanResults && (
                 <BlockStack gap="400">
                   <Divider />
-                  <Text as="h3" variant="headingLg" fontWeight="bold">Scan Results — click ADD to wire into a menu</Text>
+                  <Text as="h3" variant="headingLg" fontWeight="bold">Scan Results</Text>
                   {renderScanSection("Pages", scanResults.pages, "/pages/")}
                   {renderScanSection("Collections", scanResults.collections, "/collections/")}
                   {renderScanSection("Blogs", scanResults.blogs, "/blogs/")}
@@ -491,15 +521,13 @@ export default function MenuManager() {
                           <Text as="h3" variant="headingLg" fontWeight="bold">{item.title}</Text>
                           <Text as="p" variant="bodyLg">{item.url}</Text>
                         </BlockStack>
-                        <InlineStack gap="300">
-                          <Button
-                            size="large"
-                            tone="critical"
-                            onClick={() => handleRemoveItem(index)}
-                          >
-                            Remove
-                          </Button>
-                        </InlineStack>
+                        <Button
+                          size="large"
+                          tone="critical"
+                          onClick={() => handleRemoveItem(index)}
+                        >
+                          Remove
+                        </Button>
                       </InlineStack>
 
                       {item.items && item.items.length > 0 && (
