@@ -55,7 +55,7 @@ function buildGqlItems(items, depth = 0) {
       : null;
     const title = item.title.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
     const url = item.url.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-    const fields = [`title: "${title}"`, `type: HTTP`, `url: "${url}"`];
+    const fields = [`title: "${title}"`, `url: "${url}"`];
     if (children) fields.push(children);
     return `{ ${fields.join(", ")} }`;
   });
@@ -120,6 +120,30 @@ const blueprintFooter = [
   { title: "Standard Specs", url: "/pages/standard-specs", items: [] }
 ];
 
+// All URLs from both blueprints flattened
+function getAllBlueprintUrls() {
+  const all = [];
+  [...blueprintMain, ...blueprintFooter].forEach(item => {
+    all.push({ title: item.title, url: item.url });
+    (item.items || []).forEach(sub => all.push({ title: sub.title, url: sub.url }));
+  });
+  return all;
+}
+
+// Build a set of known valid URL paths from scan results
+function buildValidUrlSet(scanResults) {
+  const valid = new Set();
+  valid.add("/search");
+  (scanResults.pages || []).forEach(p => valid.add("/pages/" + p.handle));
+  (scanResults.collections || []).forEach(c => valid.add("/collections/" + c.handle));
+  (scanResults.blogs || []).forEach(b => valid.add("/blogs/" + b.handle));
+  return valid;
+}
+
+function getNow() {
+  return new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
 export default function MenuManager() {
   const actionData = useActionData();
   const submit = useSubmit();
@@ -135,6 +159,12 @@ export default function MenuManager() {
   const [scanError, setScanError] = useState(null);
   const [showAutoBuildPreview, setShowAutoBuildPreview] = useState(false);
   const [autoBuildTarget, setAutoBuildTarget] = useState(null);
+  const [verifyResults, setVerifyResults] = useState(null);
+  const [errorLog, setErrorLog] = useState([]);
+
+  const addError = (type, message) => {
+    setErrorLog(prev => [{ time: getNow(), type, message }, ...prev].slice(0, 50));
+  };
 
   const getStatusBanner = () => {
     if (statusState === "saved") return { bg: "#0b5b3c", color: "#ffffff", text: "SAVED" };
@@ -145,7 +175,10 @@ export default function MenuManager() {
 
   useEffect(() => {
     if (actionData?.status === "success") setStatusState("saved");
-    if (actionData?.status === "error") setStatusState("error");
+    if (actionData?.status === "error") {
+      setStatusState("error");
+      addError("SAVE", actionData.message);
+    }
   }, [actionData]);
 
   useEffect(() => {
@@ -153,8 +186,10 @@ export default function MenuManager() {
       setScanResults(fetcher.data);
       setScanError(null);
     } else if (fetcher.data?.success === false) {
-      setScanError(fetcher.data.error || "Unknown scan error");
+      const errMsg = fetcher.data.error || "Unknown scan error";
+      setScanError(errMsg);
       setScanResults(null);
+      addError("SCAN", errMsg);
     }
   }, [fetcher.data]);
 
@@ -163,6 +198,7 @@ export default function MenuManager() {
     setMenuItems(value === MAIN_MENU_GID ? blueprintMain : blueprintFooter);
     setStatusState("unsaved");
     setShowAutoBuildPreview(false);
+    setVerifyResults(null);
   };
 
   const handleSave = () => {
@@ -174,6 +210,7 @@ export default function MenuManager() {
 
   const handleScan = () => {
     fetcher.load("/app/menu-manager?scan=true");
+    setVerifyResults(null);
   };
 
   const handleAutoBuild = (menuGid) => {
@@ -182,6 +219,7 @@ export default function MenuManager() {
     setSelectedMenu(menuGid);
     setMenuItems(menuGid === MAIN_MENU_GID ? blueprintMain : blueprintFooter);
     setStatusState("unsaved");
+    setVerifyResults(null);
   };
 
   const handleConfirmAutoBuild = () => {
@@ -193,6 +231,31 @@ export default function MenuManager() {
     submit(formData, { method: "post" });
     setShowAutoBuildPreview(false);
   };
+
+  const handleVerify = () => {
+    if (!scanResults) {
+      addError("VERIFY", "Run SCAN STORE first before verifying.");
+      return;
+    }
+    const validUrls = buildValidUrlSet(scanResults);
+    const allUrls = getAllBlueprintUrls();
+    const results = allUrls.map(item => {
+      // Blog tagged URLs: check if the base blog path exists
+      let urlToCheck = item.url;
+      if (urlToCheck.includes("/tagged/")) {
+        urlToCheck = urlToCheck.split("/tagged/")[0];
+      }
+      const ok = validUrls.has(urlToCheck);
+      return { title: item.title, url: item.url, ok };
+    });
+    setVerifyResults(results);
+    const failures = results.filter(r => !r.ok);
+    if (failures.length > 0) {
+      addError("VERIFY", failures.length + " URL(s) not found in store: " + failures.map(f => f.url).join(", "));
+    }
+  };
+
+  const allVerifyPassed = verifyResults && verifyResults.every(r => r.ok);
 
   return (
     <Page title="Rockhound Menu Manager">
@@ -262,6 +325,70 @@ export default function MenuManager() {
                       ))}
                     </BlockStack>
                   </Box>
+                </BlockStack>
+              )}
+            </BlockStack>
+          </Card>
+          <br />
+
+          {/* VERIFY BLUEPRINT */}
+          <Card padding="600">
+            <BlockStack gap="500">
+              <Text as="h2" variant="headingXl" fontWeight="bold">Blueprint Verifier</Text>
+              <Text as="p" variant="bodyLg">
+                Cross-checks every URL in the Main and Footer blueprints against your live store scan.
+                Run SCAN STORE first, then hit VERIFY.
+              </Text>
+
+              <Button
+                size="large"
+                variant="primary"
+                tone={allVerifyPassed ? "success" : undefined}
+                onClick={handleVerify}
+                disabled={!scanResults}
+              >
+                <span style={{ fontSize: "18px", fontWeight: "bold" }}>
+                  {allVerifyPassed ? "✅ ALL URLS VERIFIED" : "🔍 VERIFY BLUEPRINT"}
+                </span>
+              </Button>
+
+              {!scanResults && (
+                <Text as="p" variant="bodyMd" tone="subdued">Run SCAN STORE above to enable verification.</Text>
+              )}
+
+              {verifyResults && (
+                <BlockStack gap="300">
+                  <Divider />
+                  <Text as="h3" variant="headingLg" fontWeight="bold">
+                    Verification Results — {verifyResults.filter(r => r.ok).length}/{verifyResults.length} passed
+                  </Text>
+                  {verifyResults.map((r, i) => (
+                    <Box
+                      key={i}
+                      padding="300"
+                      borderRadius="100"
+                      background={r.ok ? "bg-surface-secondary" : "bg-surface-secondary"}
+                    >
+                      <InlineStack align="space-between" blockAlign="center">
+                        <BlockStack gap="050">
+                          <Text as="p" variant="bodyLg" fontWeight="bold">{r.title}</Text>
+                          <Text as="p" variant="bodyMd">{r.url}</Text>
+                        </BlockStack>
+                        <div style={{
+                          backgroundColor: r.ok ? "#0b5b3c" : "#8b0000",
+                          color: "#ffffff",
+                          padding: "6px 16px",
+                          borderRadius: "6px",
+                          fontWeight: "bold",
+                          fontSize: "16px",
+                          minWidth: "80px",
+                          textAlign: "center"
+                        }}>
+                          {r.ok ? "✅ OK" : "❌ 404"}
+                        </div>
+                      </InlineStack>
+                    </Box>
+                  ))}
                 </BlockStack>
               )}
             </BlockStack>
@@ -365,6 +492,47 @@ export default function MenuManager() {
                   <span style={{ fontSize: "20px", fontWeight: "bold" }}>💾 SAVE WIRING TO SHOPIFY</span>
                 </Button>
               </Box>
+            </BlockStack>
+          </Card>
+          <br />
+
+          {/* ERROR LOG */}
+          <Card padding="600">
+            <BlockStack gap="400">
+              <InlineStack align="space-between" blockAlign="center">
+                <Text as="h2" variant="headingXl" fontWeight="bold">Error Log</Text>
+                <Button size="large" tone="critical" onClick={() => setErrorLog([])}>
+                  <span style={{ fontSize: "16px", fontWeight: "bold" }}>CLEAR LOG</span>
+                </Button>
+              </InlineStack>
+
+              {errorLog.length === 0 ? (
+                <Box padding="300" background="bg-surface-secondary" borderRadius="100">
+                  <Text as="p" variant="bodyLg" tone="subdued">No errors recorded this session.</Text>
+                </Box>
+              ) : (
+                <BlockStack gap="200">
+                  {errorLog.map((entry, i) => (
+                    <Box key={i} padding="300" borderRadius="100" background="bg-surface-secondary">
+                      <InlineStack gap="400" blockAlign="start">
+                        <div style={{
+                          backgroundColor: "#8b0000",
+                          color: "#ffffff",
+                          padding: "4px 12px",
+                          borderRadius: "4px",
+                          fontWeight: "bold",
+                          fontSize: "14px",
+                          whiteSpace: "nowrap"
+                        }}>
+                          {entry.type}
+                        </div>
+                        <div style={{ color: "#888", fontSize: "14px", whiteSpace: "nowrap" }}>{entry.time}</div>
+                        <Text as="p" variant="bodyLg">{entry.message}</Text>
+                      </InlineStack>
+                    </Box>
+                  ))}
+                </BlockStack>
+              )}
             </BlockStack>
           </Card>
 
