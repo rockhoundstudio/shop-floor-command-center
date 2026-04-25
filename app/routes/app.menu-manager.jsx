@@ -54,6 +54,15 @@ export const action = async ({ request }) => {
   const payload = JSON.parse(formData.get("menuPayload"));
   const menuGid = formData.get("menuGid");
 
+  const buildItems = (items) =>
+    items.map(item => ({
+      title: item.title,
+      url: item.url,
+      ...(item.items && item.items.length > 0
+        ? { items: item.items.map(child => ({ title: child.title, url: child.url })) }
+        : {}),
+    }));
+
   try {
     const response = await admin.graphql(
       `#graphql
@@ -63,10 +72,15 @@ export const action = async ({ request }) => {
           userErrors { field message }
         }
       }`,
-      { variables: { id: menuGid, menu: { items: payload } } }
+      { variables: { id: menuGid, menu: { items: buildItems(payload) } } }
     );
 
     const result = await response.json();
+    console.log("menuUpdate result:", JSON.stringify(result, null, 2));
+
+    if (!result?.data?.menuUpdate) {
+      return data({ status: "error", message: "No response: " + JSON.stringify(result) });
+    }
 
     if (result.data.menuUpdate.userErrors.length > 0) {
       return data({ status: "error", message: result.data.menuUpdate.userErrors[0].message });
@@ -74,7 +88,7 @@ export const action = async ({ request }) => {
 
     return data({ status: "success", message: "Menu successfully torqued down and saved!" });
   } catch (error) {
-    return data({ status: "error", message: "Engine fault: Failed to reach Shopify API." });
+    return data({ status: "error", message: "Engine fault: " + error.message });
   }
 };
 
@@ -341,11 +355,10 @@ export default function MenuManager() {
               </Box>
 
               <Box paddingBlockStart="500">
-                <Button size="large" variant="primary" onClick={handleSave} loading={isSaving} fullWidth>
-                  <span style={{ fontSize: "20px", fontWeight: "bold" }}>SAVE MENU WIRING</span>
+                <Button size="large" variant="primary" tone="success" onClick={handleSave} loading={isSaving}>
+                  <span style={{ fontSize: "20px", fontWeight: "bold" }}>💾 SAVE WIRING TO SHOPIFY</span>
                 </Button>
               </Box>
-
             </BlockStack>
           </Card>
 
