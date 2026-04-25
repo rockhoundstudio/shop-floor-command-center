@@ -48,31 +48,36 @@ export const loader = async ({ request }) => {
   return data({});
 };
 
+function buildGqlItems(items, depth = 0) {
+  return items.map(item => {
+    const children = item.items && item.items.length > 0 && depth === 0
+      ? `items: [${buildGqlItems(item.items, depth + 1).join(", ")}]`
+      : null;
+    const title = item.title.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+    const url = item.url.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+    const fields = [`title: "${title}"`, `url: "${url}"`];
+    if (children) fields.push(children);
+    return `{ ${fields.join(", ")} }`;
+  });
+}
+
 export const action = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
   const formData = await request.formData();
   const payload = JSON.parse(formData.get("menuPayload"));
   const menuGid = formData.get("menuGid");
 
-  const buildItems = (items) =>
-    items.map(item => ({
-      title: item.title,
-      url: item.url,
-      ...(item.items && item.items.length > 0
-        ? { items: item.items.map(child => ({ title: child.title, url: child.url })) }
-        : {}),
-    }));
-
   try {
+    const itemsGql = buildGqlItems(payload).join(", ");
+
     const response = await admin.graphql(
       `#graphql
-      mutation menuUpdate($id: ID!, $items: [MenuItemInput!]!) {
-        menuUpdate(id: $id, menu: { items: $items }) {
+      mutation {
+        menuUpdate(id: "${menuGid}", menu: { items: [${itemsGql}] }) {
           menu { id title }
           userErrors { field message }
         }
-      }`,
-      { variables: { id: menuGid, items: buildItems(payload) } }
+      }`
     );
 
     const result = await response.json();
