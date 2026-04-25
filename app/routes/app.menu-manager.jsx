@@ -102,6 +102,7 @@ export const action = async ({ request }) => {
 };
 
 const blueprintMain = [
+  { title: "Home", url: "/", items: [] },
   { title: "All Stone", url: "/collections/all", items: [
     { title: "Available Case Files", url: "/collections/all" },
     { title: "The Private Collection", url: "/collections/all" }
@@ -120,7 +121,6 @@ const blueprintFooter = [
   { title: "Standard Specs", url: "/pages/standard-specs", items: [] }
 ];
 
-// All URLs from both blueprints flattened
 function getAllBlueprintUrls() {
   const all = [];
   [...blueprintMain, ...blueprintFooter].forEach(item => {
@@ -130,9 +130,9 @@ function getAllBlueprintUrls() {
   return all;
 }
 
-// Build a set of known valid URL paths from scan results
 function buildValidUrlSet(scanResults) {
   const valid = new Set();
+  valid.add("/");
   valid.add("/search");
   (scanResults.pages || []).forEach(p => valid.add("/pages/" + p.handle));
   (scanResults.collections || []).forEach(c => valid.add("/collections/" + c.handle));
@@ -240,7 +240,6 @@ export default function MenuManager() {
     const validUrls = buildValidUrlSet(scanResults);
     const allUrls = getAllBlueprintUrls();
     const results = allUrls.map(item => {
-      // Blog tagged URLs: check if the base blog path exists
       let urlToCheck = item.url;
       if (urlToCheck.includes("/tagged/")) {
         urlToCheck = urlToCheck.split("/tagged/")[0];
@@ -363,12 +362,7 @@ export default function MenuManager() {
                     Verification Results — {verifyResults.filter(r => r.ok).length}/{verifyResults.length} passed
                   </Text>
                   {verifyResults.map((r, i) => (
-                    <Box
-                      key={i}
-                      padding="300"
-                      borderRadius="100"
-                      background={r.ok ? "bg-surface-secondary" : "bg-surface-secondary"}
-                    >
+                    <Box key={i} padding="300" borderRadius="100" background="bg-surface-secondary">
                       <InlineStack align="space-between" blockAlign="center">
                         <BlockStack gap="050">
                           <Text as="p" variant="bodyLg" fontWeight="bold">{r.title}</Text>
