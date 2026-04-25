@@ -101,7 +101,7 @@ export const action = async ({ request }) => {
   }
 };
 
-const blueprintMain = [
+const defaultBlueprintMain = [
   { title: "Home", url: "/", items: [] },
   { title: "All Stone", url: "/collections/all-collections", items: [
     { title: "Available Case Files", url: "/collections/all-collections" },
@@ -114,16 +114,16 @@ const blueprintMain = [
   { title: "Rescue Your Memory", url: "/pages/memories-in-stone", items: [] }
 ];
 
-const blueprintFooter = [
+const defaultBlueprintFooter = [
   { title: "About the Makers", url: "/pages/about", items: [] },
   { title: "Search the Archive", url: "/search", items: [] },
   { title: "FAQ & Practical Testing", url: "/pages/frequently-asked-questions", items: [] },
   { title: "Standard Specs", url: "/pages/standard-specs", items: [] }
 ];
 
-function getAllBlueprintUrls() {
+function getAllBlueprintUrls(main, footer) {
   const all = [];
-  [...blueprintMain, ...blueprintFooter].forEach(item => {
+  [...main, ...footer].forEach(item => {
     all.push({ title: item.title, url: item.url });
     (item.items || []).forEach(sub => all.push({ title: sub.title, url: sub.url }));
   });
@@ -154,13 +154,18 @@ export default function MenuManager() {
 
   const [selectedMenu, setSelectedMenu] = useState(MAIN_MENU_GID);
   const [statusState, setStatusState] = useState("unsaved");
-  const [menuItems, setMenuItems] = useState(blueprintMain);
+  const [mainItems, setMainItems] = useState(defaultBlueprintMain);
+  const [footerItems, setFooterItems] = useState(defaultBlueprintFooter);
   const [scanResults, setScanResults] = useState(null);
   const [scanError, setScanError] = useState(null);
   const [showAutoBuildPreview, setShowAutoBuildPreview] = useState(false);
   const [autoBuildTarget, setAutoBuildTarget] = useState(null);
   const [verifyResults, setVerifyResults] = useState(null);
   const [errorLog, setErrorLog] = useState([]);
+  const [addTarget, setAddTarget] = useState({});
+
+  const currentItems = selectedMenu === MAIN_MENU_GID ? mainItems : footerItems;
+  const setCurrentItems = selectedMenu === MAIN_MENU_GID ? setMainItems : setFooterItems;
 
   const addError = (type, message) => {
     setErrorLog(prev => [{ time: getNow(), type, message }, ...prev].slice(0, 50));
@@ -195,7 +200,6 @@ export default function MenuManager() {
 
   const handleMenuChange = (value) => {
     setSelectedMenu(value);
-    setMenuItems(value === MAIN_MENU_GID ? blueprintMain : blueprintFooter);
     setStatusState("unsaved");
     setShowAutoBuildPreview(false);
     setVerifyResults(null);
@@ -204,7 +208,7 @@ export default function MenuManager() {
   const handleSave = () => {
     const formData = new FormData();
     formData.append("menuGid", selectedMenu);
-    formData.append("menuPayload", JSON.stringify(menuItems));
+    formData.append("menuPayload", JSON.stringify(currentItems));
     submit(formData, { method: "post" });
   };
 
@@ -217,19 +221,38 @@ export default function MenuManager() {
     setAutoBuildTarget(menuGid);
     setShowAutoBuildPreview(true);
     setSelectedMenu(menuGid);
-    setMenuItems(menuGid === MAIN_MENU_GID ? blueprintMain : blueprintFooter);
     setStatusState("unsaved");
     setVerifyResults(null);
   };
 
   const handleConfirmAutoBuild = () => {
+    if (autoBuildTarget === MAIN_MENU_GID) setMainItems(defaultBlueprintMain);
+    else setFooterItems(defaultBlueprintFooter);
     const formData = new FormData();
     formData.append("menuGid", autoBuildTarget);
     formData.append("menuPayload", JSON.stringify(
-      autoBuildTarget === MAIN_MENU_GID ? blueprintMain : blueprintFooter
+      autoBuildTarget === MAIN_MENU_GID ? defaultBlueprintMain : defaultBlueprintFooter
     ));
     submit(formData, { method: "post" });
     setShowAutoBuildPreview(false);
+  };
+
+  const handleRemoveItem = (index) => {
+    const updated = currentItems.filter((_, i) => i !== index);
+    setCurrentItems(updated);
+    setStatusState("unsaved");
+    setVerifyResults(null);
+  };
+
+  const handleAddToMenu = (title, url, menuGid) => {
+    const newItem = { title, url, items: [] };
+    if (menuGid === MAIN_MENU_GID) {
+      setMainItems(prev => [...prev, newItem]);
+    } else {
+      setFooterItems(prev => [...prev, newItem]);
+    }
+    setStatusState("unsaved");
+    setVerifyResults(null);
   };
 
   const handleVerify = () => {
@@ -238,7 +261,7 @@ export default function MenuManager() {
       return;
     }
     const validUrls = buildValidUrlSet(scanResults);
-    const allUrls = getAllBlueprintUrls();
+    const allUrls = getAllBlueprintUrls(mainItems, footerItems);
     const results = allUrls.map(item => {
       let urlToCheck = item.url;
       if (urlToCheck.includes("/tagged/")) {
@@ -255,6 +278,40 @@ export default function MenuManager() {
   };
 
   const allVerifyPassed = verifyResults && verifyResults.every(r => r.ok);
+
+  const menuOptions = [
+    { label: "Main Menu (Header)", value: MAIN_MENU_GID },
+    { label: "Footer Menu", value: FOOTER_MENU_GID },
+  ];
+
+  const renderScanSection = (label, items, prefix) => (
+    <Box padding="300" background="bg-surface-secondary" borderRadius="100">
+      <Text as="h4" variant="headingMd" fontWeight="bold">{label} ({items?.length ?? 0})</Text>
+      <BlockStack gap="200">
+        {(items ?? []).map(item => (
+          <InlineStack key={item.id} align="space-between" blockAlign="center">
+            <Text as="p" variant="bodyLg">{item.title} — {prefix}{item.handle}</Text>
+            <InlineStack gap="200">
+              <Select
+                label=""
+                labelHidden
+                options={menuOptions}
+                onChange={(val) => setAddTarget(prev => ({ ...prev, [item.id]: val }))}
+                value={addTarget[item.id] || MAIN_MENU_GID}
+              />
+              <Button
+                size="large"
+                variant="primary"
+                onClick={() => handleAddToMenu(item.title, prefix + item.handle, addTarget[item.id] || MAIN_MENU_GID)}
+              >
+                <span style={{ fontSize: "15px", fontWeight: "bold" }}>+ ADD</span>
+              </Button>
+            </InlineStack>
+          </InlineStack>
+        ))}
+      </BlockStack>
+    </Box>
+  );
 
   return (
     <Page title="Rockhound Menu Manager">
@@ -281,7 +338,10 @@ export default function MenuManager() {
           <Card padding="600">
             <BlockStack gap="500">
               <Text as="h2" variant="headingXl" fontWeight="bold">Store Scanner</Text>
-              <Text as="p" variant="bodyLg">Scan your live store to see all pages, collections, and blogs available to wire into the navigation web.</Text>
+              <Text as="p" variant="bodyLg">
+                Scan your live store to see all pages, collections, and blogs.
+                Use ADD to append any item directly to Main or Footer menu.
+              </Text>
 
               <Button size="large" variant="primary" onClick={handleScan} loading={isScanning}>
                 <span style={{ fontSize: "18px", fontWeight: "bold" }}>SCAN STORE</span>
@@ -296,34 +356,10 @@ export default function MenuManager() {
               {scanResults && (
                 <BlockStack gap="400">
                   <Divider />
-                  <Text as="h3" variant="headingLg" fontWeight="bold">Scan Results</Text>
-
-                  <Box padding="300" background="bg-surface-secondary" borderRadius="100">
-                    <Text as="h4" variant="headingMd" fontWeight="bold">Pages ({scanResults.pages?.length ?? 0})</Text>
-                    <BlockStack gap="100">
-                      {(scanResults.pages ?? []).map(p => (
-                        <Text key={p.id} as="p" variant="bodyLg">📄 {p.title} — /pages/{p.handle}</Text>
-                      ))}
-                    </BlockStack>
-                  </Box>
-
-                  <Box padding="300" background="bg-surface-secondary" borderRadius="100">
-                    <Text as="h4" variant="headingMd" fontWeight="bold">Collections ({scanResults.collections?.length ?? 0})</Text>
-                    <BlockStack gap="100">
-                      {(scanResults.collections ?? []).map(c => (
-                        <Text key={c.id} as="p" variant="bodyLg">🗂 {c.title} — /collections/{c.handle}</Text>
-                      ))}
-                    </BlockStack>
-                  </Box>
-
-                  <Box padding="300" background="bg-surface-secondary" borderRadius="100">
-                    <Text as="h4" variant="headingMd" fontWeight="bold">Blogs ({scanResults.blogs?.length ?? 0})</Text>
-                    <BlockStack gap="100">
-                      {(scanResults.blogs ?? []).map(b => (
-                        <Text key={b.id} as="p" variant="bodyLg">📝 {b.title} — /blogs/{b.handle}</Text>
-                      ))}
-                    </BlockStack>
-                  </Box>
+                  <Text as="h3" variant="headingLg" fontWeight="bold">Scan Results — click ADD to wire into a menu</Text>
+                  {renderScanSection("Pages", scanResults.pages, "/pages/")}
+                  {renderScanSection("Collections", scanResults.collections, "/collections/")}
+                  {renderScanSection("Blogs", scanResults.blogs, "/blogs/")}
                 </BlockStack>
               )}
             </BlockStack>
@@ -335,7 +371,7 @@ export default function MenuManager() {
             <BlockStack gap="500">
               <Text as="h2" variant="headingXl" fontWeight="bold">Blueprint Verifier</Text>
               <Text as="p" variant="bodyLg">
-                Cross-checks every URL in the Main and Footer blueprints against your live store scan.
+                Cross-checks every URL in both menus against your live store scan.
                 Run SCAN STORE first, then hit VERIFY.
               </Text>
 
@@ -393,7 +429,7 @@ export default function MenuManager() {
           <Card padding="600">
             <BlockStack gap="500">
               <Text as="h2" variant="headingXl" fontWeight="bold">Auto-Build from Blueprint</Text>
-              <Text as="p" variant="bodyLg">Automatically wire the full navigation dwell web from the Rockhound blueprint. Preview before saving.</Text>
+              <Text as="p" variant="bodyLg">Reset either menu back to the Rockhound blueprint. Preview before saving.</Text>
 
               <InlineStack gap="400">
                 <Button size="large" variant="primary" onClick={() => handleAutoBuild(MAIN_MENU_GID)}>
@@ -411,7 +447,7 @@ export default function MenuManager() {
                     <Text as="p" variant="headingLg" fontWeight="bold">⚠ PREVIEW — Review before saving</Text>
                   </div>
                   <BlockStack gap="200">
-                    {(autoBuildTarget === MAIN_MENU_GID ? blueprintMain : blueprintFooter).map((item, i) => (
+                    {(autoBuildTarget === MAIN_MENU_GID ? defaultBlueprintMain : defaultBlueprintFooter).map((item, i) => (
                       <Box key={i} padding="300" background="bg-surface-secondary" borderRadius="100">
                         <Text as="h3" variant="headingLg" fontWeight="bold">{item.title}</Text>
                         <Text as="p" variant="bodyLg">{item.url}</Text>
@@ -437,10 +473,7 @@ export default function MenuManager() {
 
               <Select
                 label={<Text as="span" variant="headingLg" fontWeight="bold">Choose Menu to Edit</Text>}
-                options={[
-                  { label: "Main Menu (Header)", value: MAIN_MENU_GID },
-                  { label: "Footer Menu", value: FOOTER_MENU_GID },
-                ]}
+                options={menuOptions}
                 onChange={handleMenuChange}
                 value={selectedMenu}
               />
@@ -451,7 +484,7 @@ export default function MenuManager() {
 
               <Box padding="400" borderColor="border" borderWidth="025" borderRadius="200">
                 <BlockStack gap="400">
-                  {menuItems.map((item, index) => (
+                  {currentItems.map((item, index) => (
                     <Box key={index} padding="300" background="bg-surface-secondary" borderRadius="100">
                       <InlineStack align="space-between">
                         <BlockStack gap="100">
@@ -459,8 +492,13 @@ export default function MenuManager() {
                           <Text as="p" variant="bodyLg">{item.url}</Text>
                         </BlockStack>
                         <InlineStack gap="300">
-                          <Button size="large" onClick={() => setStatusState("unsaved")}>Edit</Button>
-                          <Button size="large" tone="critical" onClick={() => setStatusState("unsaved")}>Delete</Button>
+                          <Button
+                            size="large"
+                            tone="critical"
+                            onClick={() => handleRemoveItem(index)}
+                          >
+                            Remove
+                          </Button>
                         </InlineStack>
                       </InlineStack>
 
@@ -470,7 +508,6 @@ export default function MenuManager() {
                             {item.items.map((subItem, subIndex) => (
                               <InlineStack key={subIndex} align="space-between" blockAlign="center">
                                 <Text as="p" variant="headingMd" fontWeight="bold">↳ {subItem.title} ({subItem.url})</Text>
-                                <Button size="large" onClick={() => setStatusState("unsaved")}>Edit</Button>
                               </InlineStack>
                             ))}
                           </BlockStack>
