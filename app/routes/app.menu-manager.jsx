@@ -66,13 +66,13 @@ export const action = async ({ request }) => {
   try {
     const response = await admin.graphql(
       `#graphql
-      mutation menuUpdate($id: ID!, $menu: MenuInput!) {
-        menuUpdate(id: $id, menu: $menu) {
+      mutation menuUpdate($id: ID!, $items: [MenuItemInput!]!) {
+        menuUpdate(id: $id, menu: { items: $items }) {
           menu { id title }
           userErrors { field message }
         }
       }`,
-      { variables: { id: menuGid, menu: { items: buildItems(payload) } } }
+      { variables: { id: menuGid, items: buildItems(payload) } }
     );
 
     const result = await response.json();
