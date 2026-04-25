@@ -176,7 +176,6 @@ export default function MenuManager() {
   const [addedItems, setAddedItems] = useState({});
 
   const currentItems = selectedMenu === MAIN_MENU_GID ? mainItems : footerItems;
-  const setCurrentItems = selectedMenu === MAIN_MENU_GID ? setMainItems : setFooterItems;
 
   const addError = (type, message) => {
     setErrorLog(prev => [{ time: getNow(), type, message }, ...prev].slice(0, 50));
@@ -250,8 +249,11 @@ export default function MenuManager() {
   };
 
   const handleRemoveItem = (index) => {
-    const updated = currentItems.filter((_, i) => i !== index);
-    setCurrentItems(updated);
+    if (selectedMenu === MAIN_MENU_GID) {
+      setMainItems(prev => prev.filter((_, i) => i !== index));
+    } else {
+      setFooterItems(prev => prev.filter((_, i) => i !== index));
+    }
     setStatusState("unsaved");
     setVerifyResults(null);
   };
@@ -510,7 +512,9 @@ export default function MenuManager() {
 
               <Divider />
 
-              <Text as="h2" variant="headingXl" fontWeight="bold">Current Wiring (Preview)</Text>
+              <Text as="h2" variant="headingXl" fontWeight="bold">
+                Current Wiring — {selectedMenu === MAIN_MENU_GID ? "Main Menu" : "Footer Menu"} ({currentItems.length} items)
+              </Text>
 
               <Box padding="400" borderColor="border" borderWidth="025" borderRadius="200">
                 <BlockStack gap="400">
