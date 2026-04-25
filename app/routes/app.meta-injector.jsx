@@ -12,7 +12,6 @@ import {
   Button,
   Checkbox,
   Badge,
-  Tabs,
   FormLayout,
   Banner,
   Select,
@@ -20,8 +19,11 @@ import {
   Icon,
   Grid,
   Modal,
+  Box,
+  Popover,
+  ActionList,
 } from "@shopify/polaris";
-import { QuestionCircleIcon } from "@shopify/polaris-icons";
+import { QuestionCircleIcon, MenuIcon } from "@shopify/polaris-icons";
 
 const TAXONOMY = {
   crystal_system: {
@@ -705,7 +707,12 @@ export default function MetaInjector() {
   const [checkedIds, setCheckedIds] = useState([]);
   const [form, setForm] = useState({});
   const [bulkForm, setBulkForm] = useState({});
+  
+  // Tab index and Menu state
   const [tabIndex, setTabIndex] = useState(0);
+  const [menuActive, setMenuActive] = useState(false);
+  const toggleMenu = () => setMenuActive((active) => !active);
+
   const [payload, setPayload] = useState("");
   const [injectProduct, setInjectProduct] = useState("");
   const [injectStatus, setInjectStatus] = useState(null);
@@ -874,204 +881,233 @@ export default function MetaInjector() {
       <Layout>
         <Layout.Section>
           <Card>
-            <Tabs tabs={tabs} selected={tabIndex} onSelect={setTabIndex}>
-
-              {tabIndex === 0 && (
-                <BlockStack gap="400">
-                  <TextField
-                    label="Search stones"
-                    value={search}
-                    onChange={setSearch}
-                    placeholder="Type a stone name..."
-                    clearButton
-                    onClearButtonClick={() => setSearch("")}
-                    autoComplete="off"
+            <BlockStack gap="400">
+              
+              {/* THE HAMBURGER MENU */}
+              <InlineStack>
+                <Popover
+                  active={menuActive}
+                  activator={
+                    <Button onClick={toggleMenu} icon={MenuIcon} size="large">
+                      <span style={{ marginLeft: "8px", fontWeight: "bold" }}>
+                        {tabs[tabIndex].content}
+                      </span>
+                    </Button>
+                  }
+                  onClose={toggleMenu}
+                >
+                  <ActionList
+                    actionRole="menuitem"
+                    items={tabs.map((tab, index) => ({
+                      content: tab.content,
+                      onAction: () => {
+                        setTabIndex(index);
+                        setMenuActive(false);
+                      },
+                    }))}
                   />
-                  <Grid>
-                    {filtered.map((product) => (
-                      <Grid.Cell key={product.id} columnSpan={{ xs: 6, sm: 4, md: 3, lg: 3 }}>
-                        <div
-                          onClick={() => handleSelect(product)}
-                          style={{ cursor: "pointer", border: "1px solid #e1e3e5", borderRadius: "8px", overflow: "hidden", textAlign: "center" }}
-                        >
-                          <img
-                            src={product.featuredImage?.url || "https://cdn.shopify.com/s/files/1/0533/2089/files/placeholder-images-image_medium.png"}
-                            alt={product.title}
-                            style={{ width: "100%", height: "140px", objectFit: "cover" }}
-                          />
-                          <div style={{ padding: "8px" }}>
-                            <Text variant="bodySm" fontWeight="bold">{product.title}</Text>
-                            <Badge tone={completeness(product.metafields)}>{completenessLabel(product.metafields)}</Badge>
-                          </div>
-                        </div>
-                      </Grid.Cell>
-                    ))}
-                  </Grid>
-                </BlockStack>
-              )}
+                </Popover>
+              </InlineStack>
 
-              {tabIndex === 1 && (
-                <BlockStack gap="400">
-                  {!selected ? (
-                    <Banner tone="info">Select a stone from the Products tab to edit its metafields.</Banner>
-                  ) : (
-                    <>
-                      <Text variant="headingMd">{selected.title}</Text>
+              {/* THE WORKBENCH AREA */}
+              <Box>
+                {tabIndex === 0 && (
+                  <BlockStack gap="400">
+                    <TextField
+                      label="Search stones"
+                      value={search}
+                      onChange={setSearch}
+                      placeholder="Type a stone name..."
+                      clearButton
+                      onClearButtonClick={() => setSearch("")}
+                      autoComplete="off"
+                    />
+                    <Grid>
+                      {filtered.map((product) => (
+                        <Grid.Cell key={product.id} columnSpan={{ xs: 6, sm: 4, md: 3, lg: 3 }}>
+                          <div
+                            onClick={() => handleSelect(product)}
+                            style={{ cursor: "pointer", border: "1px solid #e1e3e5", borderRadius: "8px", overflow: "hidden", textAlign: "center" }}
+                          >
+                            <img
+                              src={product.featuredImage?.url || "https://cdn.shopify.com/s/files/1/0533/2089/files/placeholder-images-image_medium.png"}
+                              alt={product.title}
+                              style={{ width: "100%", height: "140px", objectFit: "cover" }}
+                            />
+                            <div style={{ padding: "8px" }}>
+                              <Text variant="bodySm" fontWeight="bold">{product.title}</Text>
+                              <Badge tone={completeness(product.metafields)}>{completenessLabel(product.metafields)}</Badge>
+                            </div>
+                          </div>
+                        </Grid.Cell>
+                      ))}
+                    </Grid>
+                  </BlockStack>
+                )}
+
+                {tabIndex === 1 && (
+                  <BlockStack gap="400">
+                    {!selected ? (
+                      <Banner tone="info">Select a stone from the Products tab to edit its metafields.</Banner>
+                    ) : (
+                      <>
+                        <Text variant="headingMd">{selected.title}</Text>
+                        <FormLayout>
+                          {Object.keys(TAXONOMY).map((fieldKey) => (
+                            <TaxonomyField key={fieldKey} fieldKey={fieldKey} isBulk={false} />
+                          ))}
+                          {TEXT_FIELDS.map((f) => (
+                            <TextField
+                              key={f.key}
+                              label={<LabelWithHelp label={f.label} help={f.help} />}
+                              value={form[f.key] || ""}
+                              onChange={(v) => setForm({ ...form, [f.key]: v })}
+                              placeholder={f.placeholder}
+                              autoComplete="off"
+                              multiline={f.key === "stone_story" ? 4 : undefined}
+                            />
+                          ))}
+                        </FormLayout>
+                        <Button variant="primary" onClick={handleSave} loading={fetcher.state === "submitting"}>
+                          Save Stone
+                        </Button>
+                        {fetcher.data?.ok && fetcher.data?.intent === "save" && (
+                          <Banner tone="success">Stone saved successfully!</Banner>
+                        )}
+                      </>
+                    )}
+                  </BlockStack>
+                )}
+
+                {tabIndex === 2 && (
+                  <BlockStack gap="400">
+                    <Text variant="headingMd">Metafield Verification Report</Text>
+                    <Banner tone="info">Compares your store metafields against Mindat.org data. Requires Mindat API token.</Banner>
+                    {products.map((p) => (
+                      <Card key={p.id}>
+                        <BlockStack gap="200">
+                          <InlineStack align="space-between">
+                            <Text variant="bodyMd" fontWeight="bold">{p.title}</Text>
+                            <Badge tone={completeness(p.metafields)}>{completenessLabel(p.metafields)}</Badge>
+                          </InlineStack>
+                          <MindatVerifier product={p} />
+                        </BlockStack>
+                      </Card>
+                    ))}
+                  </BlockStack>
+                )}
+
+                {tabIndex === 3 && (
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "24px" }}>
+                    <BlockStack gap="300">
+                      <InlineStack gap="200">
+                        <Button onClick={() => setCheckedIds(allChecked ? [] : allIds)}>
+                          {allChecked ? "Deselect All" : "Select All"}
+                        </Button>
+                        <Text>{checkedIds.length} selected</Text>
+                      </InlineStack>
+                      <div style={{ maxHeight: "600px", overflowY: "auto" }}>
+                        <BlockStack gap="200">
+                          {products.map((p) => (
+                            <InlineStack key={p.id} gap="200" blockAlign="center">
+                              <Checkbox
+                                label=""
+                                checked={checkedIds.includes(p.id)}
+                                onChange={(checked) => {
+                                  if (checked) setCheckedIds([...checkedIds, p.id]);
+                                  else setCheckedIds(checkedIds.filter((id) => id !== p.id));
+                                }}
+                              />
+                              <img src={p.featuredImage?.url || ""} alt={p.title} style={{ width: "48px", height: "48px", objectFit: "cover", borderRadius: "6px" }} />
+                              <Text variant="bodySm">{p.title}</Text>
+                            </InlineStack>
+                          ))}
+                        </BlockStack>
+                      </div>
+                    </BlockStack>
+                    <BlockStack gap="300">
+                      <Text variant="headingMd">Apply to {checkedIds.length} Stone(s)</Text>
                       <FormLayout>
                         {Object.keys(TAXONOMY).map((fieldKey) => (
-                          <TaxonomyField key={fieldKey} fieldKey={fieldKey} isBulk={false} />
+                          <TaxonomyField key={fieldKey} fieldKey={fieldKey} isBulk={true} />
                         ))}
                         {TEXT_FIELDS.map((f) => (
                           <TextField
                             key={f.key}
                             label={<LabelWithHelp label={f.label} help={f.help} />}
-                            value={form[f.key] || ""}
-                            onChange={(v) => setForm({ ...form, [f.key]: v })}
+                            value={bulkForm[f.key] || ""}
+                            onChange={(v) => setBulkForm({ ...bulkForm, [f.key]: v })}
                             placeholder={f.placeholder}
                             autoComplete="off"
-                            multiline={f.key === "stone_story" ? 4 : undefined}
                           />
                         ))}
                       </FormLayout>
-                      <Button variant="primary" onClick={handleSave} loading={fetcher.state === "submitting"}>
-                        Save Stone
+                      <Button variant="primary" onClick={handleBulk} disabled={checkedIds.length === 0} loading={fetcher.state === "submitting"}>
+                        Apply to {checkedIds.length} Stone(s)
                       </Button>
-                      {fetcher.data?.ok && fetcher.data?.intent === "save" && (
-                        <Banner tone="success">Stone saved successfully!</Banner>
+                      {fetcher.data?.ok && fetcher.data?.intent === "bulk" && (
+                        <Banner tone="success">Bulk save complete!</Banner>
                       )}
-                    </>
-                  )}
-                </BlockStack>
-              )}
+                    </BlockStack>
+                  </div>
+                )}
 
-              {tabIndex === 2 && (
-                <BlockStack gap="400">
-                  <Text variant="headingMd">Metafield Verification Report</Text>
-                  <Banner tone="info">Compares your store metafields against Mindat.org data. Requires Mindat API token.</Banner>
-                  {products.map((p) => (
-                    <Card key={p.id}>
-                      <BlockStack gap="200">
-                        <InlineStack align="space-between">
-                          <Text variant="bodyMd" fontWeight="bold">{p.title}</Text>
-                          <Badge tone={completeness(p.metafields)}>{completenessLabel(p.metafields)}</Badge>
-                        </InlineStack>
-                        <MindatVerifier product={p} />
-                      </BlockStack>
-                    </Card>
-                  ))}
-                </BlockStack>
-              )}
-
-              {tabIndex === 3 && (
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "24px" }}>
-                  <BlockStack gap="300">
-                    <InlineStack gap="200">
-                      <Button onClick={() => setCheckedIds(allChecked ? [] : allIds)}>
-                        {allChecked ? "Deselect All" : "Select All"}
-                      </Button>
-                      <Text>{checkedIds.length} selected</Text>
-                    </InlineStack>
-                    <div style={{ maxHeight: "600px", overflowY: "auto" }}>
-                      <BlockStack gap="200">
-                        {products.map((p) => (
-                          <InlineStack key={p.id} gap="200" blockAlign="center">
-                            <Checkbox
-                              label=""
-                              checked={checkedIds.includes(p.id)}
-                              onChange={(checked) => {
-                                if (checked) setCheckedIds([...checkedIds, p.id]);
-                                else setCheckedIds(checkedIds.filter((id) => id !== p.id));
-                              }}
-                            />
-                            <img src={p.featuredImage?.url || ""} alt={p.title} style={{ width: "48px", height: "48px", objectFit: "cover", borderRadius: "6px" }} />
-                            <Text variant="bodySm">{p.title}</Text>
-                          </InlineStack>
-                        ))}
-                      </BlockStack>
-                    </div>
-                  </BlockStack>
-                  <BlockStack gap="300">
-                    <Text variant="headingMd">Apply to {checkedIds.length} Stone(s)</Text>
-                    <FormLayout>
-                      {Object.keys(TAXONOMY).map((fieldKey) => (
-                        <TaxonomyField key={fieldKey} fieldKey={fieldKey} isBulk={true} />
-                      ))}
-                      {TEXT_FIELDS.map((f) => (
-                        <TextField
-                          key={f.key}
-                          label={<LabelWithHelp label={f.label} help={f.help} />}
-                          value={bulkForm[f.key] || ""}
-                          onChange={(v) => setBulkForm({ ...bulkForm, [f.key]: v })}
-                          placeholder={f.placeholder}
-                          autoComplete="off"
-                        />
-                      ))}
-                    </FormLayout>
-                    <Button variant="primary" onClick={handleBulk} disabled={checkedIds.length === 0} loading={fetcher.state === "submitting"}>
-                      Apply to {checkedIds.length} Stone(s)
+                {tabIndex === 4 && (
+                  <BlockStack gap="400">
+                    <Text variant="headingMd">Auto-build payload from product + Mindat</Text>
+                    <Select
+                      label="Select a stone"
+                      options={[{ label: "-- Pick a stone --", value: "" }, ...products.map((p) => ({ label: p.title, value: p.id }))]}
+                      value={injectProduct}
+                      onChange={setInjectProduct}
+                    />
+                    <Button variant="primary" onClick={handleAutoInject} loading={injectStatus === "loading"} disabled={!injectProduct}>
+                      🔄 Build Payload
                     </Button>
-                    {fetcher.data?.ok && fetcher.data?.intent === "bulk" && (
-                      <Banner tone="success">Bulk save complete!</Banner>
+                    {injectStatus === "ready" && <Banner tone="success">Payload built — review and edit below, then inject.</Banner>}
+                    {injectStatus === "error" && <Banner tone="critical">Could not build payload. Check product and Mindat token.</Banner>}
+                    <TextField
+                      label="JSON Payload (one object per line — edit before injecting)"
+                      value={payload}
+                      onChange={setPayload}
+                      multiline={12}
+                      autoComplete="off"
+                    />
+                    <Button variant="primary" onClick={handleInject} loading={fetcher.state === "submitting"} disabled={!payload}>
+                      💉 Inject
+                    </Button>
+                    {fetcher.data?.injected !== undefined && (
+                      <Banner tone="success">Injected {fetcher.data.injected} metafield(s) successfully!</Banner>
                     )}
                   </BlockStack>
-                </div>
-              )}
+                )}
 
-              {tabIndex === 4 && (
-                <BlockStack gap="400">
-                  <Text variant="headingMd">Auto-build payload from product + Mindat</Text>
-                  <Select
-                    label="Select a stone"
-                    options={[{ label: "-- Pick a stone --", value: "" }, ...products.map((p) => ({ label: p.title, value: p.id }))]}
-                    value={injectProduct}
-                    onChange={setInjectProduct}
-                  />
-                  <Button variant="primary" onClick={handleAutoInject} loading={injectStatus === "loading"} disabled={!injectProduct}>
-                    🔄 Build Payload
-                  </Button>
-                  {injectStatus === "ready" && <Banner tone="success">Payload built — review and edit below, then inject.</Banner>}
-                  {injectStatus === "error" && <Banner tone="critical">Could not build payload. Check product and Mindat token.</Banner>}
-                  <TextField
-                    label="JSON Payload (one object per line — edit before injecting)"
-                    value={payload}
-                    onChange={setPayload}
-                    multiline={12}
-                    autoComplete="off"
-                  />
-                  <Button variant="primary" onClick={handleInject} loading={fetcher.state === "submitting"} disabled={!payload}>
-                    💉 Inject
-                  </Button>
-                  {fetcher.data?.injected !== undefined && (
-                    <Banner tone="success">Injected {fetcher.data.injected} metafield(s) successfully!</Banner>
-                  )}
-                </BlockStack>
-              )}
+                {tabIndex === 5 && (
+                  <BlockStack gap="400">
+                    <Text variant="headingMd">Pull verified geological data from Mindat.org.</Text>
+                    <TextField
+                      label="Stone name"
+                      value={mindatName}
+                      onChange={setMindatName}
+                      placeholder="e.g. Amethyst"
+                      autoComplete="off"
+                    />
+                    <Button variant="primary" onClick={handleMindat} loading={mindatStatus === "loading"}>
+                      🌍 Lookup
+                    </Button>
+                    {mindatStatus === "found" && <Banner tone="success">Found! Fields pre-filled — switch to Edit Stone to review and save.</Banner>}
+                    {mindatStatus === "notfound" && <Banner tone="warning">No results found for "{mindatName}".</Banner>}
+                    {mindatStatus === "error" && <Banner tone="critical">Lookup failed. Check your Mindat API token.</Banner>}
+                    <Banner tone="info">Requires a Mindat.org API token. Token not yet configured.</Banner>
+                  </BlockStack>
+                )}
 
-              {tabIndex === 5 && (
-                <BlockStack gap="400">
-                  <Text variant="headingMd">Pull verified geological data from Mindat.org.</Text>
-                  <TextField
-                    label="Stone name"
-                    value={mindatName}
-                    onChange={setMindatName}
-                    placeholder="e.g. Amethyst"
-                    autoComplete="off"
-                  />
-                  <Button variant="primary" onClick={handleMindat} loading={mindatStatus === "loading"}>
-                    🌍 Lookup
-                  </Button>
-                  {mindatStatus === "found" && <Banner tone="success">Found! Fields pre-filled — switch to Edit Stone to review and save.</Banner>}
-                  {mindatStatus === "notfound" && <Banner tone="warning">No results found for "{mindatName}".</Banner>}
-                  {mindatStatus === "error" && <Banner tone="critical">Lookup failed. Check your Mindat API token.</Banner>}
-                  <Banner tone="info">Requires a Mindat.org API token. Token not yet configured.</Banner>
-                </BlockStack>
-              )}
+                {tabIndex === 6 && (
+                  <CollectionsTab products={products} collections={collections} fetcher={fetcher} />
+                )}
+              </Box>
 
-              {tabIndex === 6 && (
-                <CollectionsTab products={products} collections={collections} fetcher={fetcher} />
-              )}
-
-            </Tabs>
+            </BlockStack>
           </Card>
         </Layout.Section>
       </Layout>
@@ -1082,5 +1118,3 @@ export default function MetaInjector() {
 export function ErrorBoundary() {
   return <div>Something went wrong loading Meta Injector.</div>;
 }
-.  
- 
