@@ -1,11 +1,5 @@
-MindatAPI documentation (ReDoc)(Swagger)
-Log in
-The Mindat API is currently in beta testing. While access is free for all, please note that the data provided is not yet licensed for redistribution and is for private, non-commercial use only. Once launched, the data will be available under an open access license, but, please always check the terms of use of the license before reusing this data.
-
 Api Root
-
-Api Root
-GET /v1/
+GET /v1/?format=api
 HTTP 401 Unauthorized
 Allow: GET, HEAD, OPTIONS
 Content-Type: application/json
