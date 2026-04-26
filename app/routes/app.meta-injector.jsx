@@ -1138,5 +1138,6 @@ export default function MetaInjector() {
 
 export function ErrorBoundary() {
   return <div>Something went wrong loading Meta Injector.</div>;
-}.  
- 
+} 
+ 
+ 
