@@ -37,6 +37,17 @@ export default function Index() {
           </div>
         </Link>
 
+        <Link to="/app/collection-manager" style={{
+          display: "block", padding: "32px 40px", backgroundColor: "#1a1a3a",
+          color: "#fff", borderRadius: "12px", textDecoration: "none",
+          fontSize: "22px", fontWeight: "bold", minWidth: "220px"
+        }}>
+          📁 Collection Manager
+          <div style={{ fontSize: "14px", fontWeight: "normal", marginTop: "8px", color: "#aaa" }}>
+            Organize and manage your store collections
+          </div>
+        </Link>
+
       </div>
     </div>
   );
