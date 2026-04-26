@@ -285,17 +285,17 @@ function scanProduct(product) {
   const l2 = {};
   if (!l1.stone_type) {
     for (const s of STONE_TYPES) {
-      if (combined.includes(s)) { l2.stone_type = s; break; }
+      if (new RegExp(`\\b${s}\\b`, 'i').test(combined)) { l2.stone_type = s; break; }
     }
   }
   if (!l1.color) {
     for (const c of COLOR_KEYWORDS) {
-      if (combined.includes(c)) { l2.color = c; break; }
+      if (new RegExp(`\\b${c}\\b`, 'i').test(combined)) { l2.color = c; break; }
     }
   }
   if (!l1.cut_shape) {
     for (const c of CUT_KEYWORDS) {
-      if (combined.includes(c)) { l2.cut_shape = c; break; }
+      if (new RegExp(`\\b${c}\\b`, 'i').test(combined)) { l2.cut_shape = c; break; }
     }
   }
   if (!l1.origin_location) {
@@ -303,17 +303,17 @@ function scanProduct(product) {
       if (combined.includes(kw.toLowerCase())) { l2.origin_location = kw; break; }
     }
     if (!l2.origin_location) {
-      const originMatch = combined.match(/(found in|origin[:\s]+|from\s+)([a-z\s,]+)/i);
-      if (originMatch) l2.origin_location = originMatch[2].trim();
+      const originMatch = combined.match(/(?:found in|origin[:\s]+|from\s+)([a-z\s,]{3,30})(?:\.|\n|<|$)/i);
+      if (originMatch) l2.origin_location = originMatch[1].trim();
     }
   }
   if (!l1.hardness) {
-    const hMatch = combined.match(/(\d+\.?\d*\s*[-–]\s*\d+\.?\d*|\d+\.?\d*)\s*(mohs)?/i);
+    const hMatch = combined.match(/(?:hardness|mohs)[\s:]*(\d+\.?\d*\s*[-–]\s*\d+\.?\d*|\d+\.?\d*)/i);
     if (hMatch) l2.hardness = hMatch[1].trim();
   }
   if (!l1.crystal_system) {
     for (const c of CRYSTAL_KEYWORDS) {
-      if (combined.includes(c)) { l2.crystal_system = c.charAt(0).toUpperCase()+c.slice(1); break; }
+      if (new RegExp(`\\b${c}\\b`, 'i').test(combined)) { l2.crystal_system = c.charAt(0).toUpperCase()+c.slice(1); break; }
     }
   }
   
@@ -324,8 +324,8 @@ function scanProduct(product) {
   const fields = ["stone_type","color","origin_location","cut_shape","hardness","crystal_system"];
   fields.forEach((f) => {
     if (l1[f]) result[f] = { value: l1[f], source: "metafield" };
-    else if (l2[f]) result[f] = { value: l2[f], source: "parsed" };
     else if (l3[f]) result[f] = { value: l3[f], source: "lookup" };
+    else if (l2[f]) result[f] = { value: l2[f], source: "parsed" };
     else result[f] = { value: "", source: "manual" };
   });
   
