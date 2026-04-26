@@ -31,6 +31,14 @@ const TAXONOMY = {
     key: "crystal-system",
     help: "The geometric arrangement of atoms in the mineral",
     metaobjectType: "crystal-system",
+    options: [
+      { label: "-- Select --", value: "" },
+      { label: "Monoclinic", value: "gid://shopify/Metaobject/151951212795" },
+      { label: "Trigonal", value: "gid://shopify/Metaobject/154252116219" },
+      { label: "Hexagonal", value: "gid://shopify/Metaobject/154307625211" },
+      { label: "Triclinic", value: "gid://shopify/Metaobject/154308706555" },
+      { label: "+ Add New", value: "__add__" },
+    ],
   },
   mineral_class: {
     label: "Mineral Class",
@@ -38,6 +46,13 @@ const TAXONOMY = {
     key: "mineral-class",
     help: "Scientific classification based on chemical composition",
     metaobjectType: "mineral-class",
+    options: [
+      { label: "-- Select --", value: "" },
+      { label: "Silicates", value: "gid://shopify/Metaobject/151951278331" },
+      { label: "Oxides", value: "gid://shopify/Metaobject/155431371003" },
+      { label: "Carbonates", value: "gid://shopify/Metaobject/156128313595" },
+      { label: "+ Add New", value: "__add__" },
+    ],
   },
   rock_formation: {
     label: "Rock Formation",
@@ -45,6 +60,13 @@ const TAXONOMY = {
     key: "rock-formation",
     help: "The geological process that formed this rock",
     metaobjectType: "rock-formation",
+    options: [
+      { label: "-- Select --", value: "" },
+      { label: "Metamorphic", value: "gid://shopify/Metaobject/151951343867" },
+      { label: "Igneous", value: "gid://shopify/Metaobject/154251985147" },
+      { label: "Sedimentary", value: "gid://shopify/Metaobject/154307657979" },
+      { label: "+ Add New", value: "__add__" },
+    ],
   },
   geological_era: {
     label: "Geological Era",
@@ -52,6 +74,14 @@ const TAXONOMY = {
     key: "geological-era",
     help: "The time period when this rock was formed",
     metaobjectType: "geological-era",
+    options: [
+      { label: "-- Select --", value: "" },
+      { label: "Precambrian", value: "gid://shopify/Metaobject/151951245563" },
+      { label: "Paleozoic", value: "gid://shopify/Metaobject/156128379131" },
+      { label: "Mesozoic", value: "gid://shopify/Metaobject/154252083451" },
+      { label: "Cenozoic", value: "gid://shopify/Metaobject/154307854587" },
+      { label: "+ Add New", value: "__add__" },
+    ],
   },
   rock_composition: {
     label: "Rock Composition",
@@ -59,6 +89,14 @@ const TAXONOMY = {
     key: "rock-composition",
     help: "The primary rock or mineral matrix",
     metaobjectType: "rock-composition",
+    options: [
+      { label: "-- Select --", value: "" },
+      { label: "Granite", value: "gid://shopify/Metaobject/151951311099" },
+      { label: "Obsidian", value: "gid://shopify/Metaobject/155431338235" },
+      { label: "Andesite", value: "gid://shopify/Metaobject/156128411899" },
+      { label: "Schist", value: "gid://shopify/Metaobject/156128477435" },
+      { label: "+ Add New", value: "__add__" },
+    ],
   },
 };
 
@@ -81,54 +119,6 @@ const STONE_TYPES = [
   "granite","basalt","rhyolite","andesite","schist","slate","sandstone",
   "limestone","dolomite","chert","flint","pumice","scoria","tuff",
 ];
-
-const GEM_DATABASE = {
-  "agate":{hardness:"6.5-7",crystal_system:"Trigonal",luster:"Waxy"},
-  "amethyst":{hardness:"7",crystal_system:"Trigonal",luster:"Vitreous"},
-  "jasper":{hardness:"6.5-7",crystal_system:"Trigonal",luster:"Waxy"},
-  "obsidian":{hardness:"5-5.5",crystal_system:"Amorphous",luster:"Vitreous"},
-  "quartz":{hardness:"7",crystal_system:"Trigonal",luster:"Vitreous"},
-  "chalcedony":{hardness:"6.5-7",crystal_system:"Trigonal",luster:"Waxy"},
-  "opal":{hardness:"5.5-6.5",crystal_system:"Amorphous",luster:"Vitreous"},
-  "turquoise":{hardness:"5-6",crystal_system:"Triclinic",luster:"Waxy"},
-  "malachite":{hardness:"3.5-4",crystal_system:"Monoclinic",luster:"Vitreous"},
-  "azurite":{hardness:"3.5-4",crystal_system:"Monoclinic",luster:"Vitreous"},
-  "labradorite":{hardness:"6-6.5",crystal_system:"Triclinic",luster:"Vitreous"},
-  "moonstone":{hardness:"6-6.5",crystal_system:"Monoclinic",luster:"Pearly"},
-  "sunstone":{hardness:"6-6.5",crystal_system:"Triclinic",luster:"Vitreous"},
-  "garnet":{hardness:"6.5-7.5",crystal_system:"Cubic",luster:"Vitreous"},
-  "ruby":{hardness:"9",crystal_system:"Trigonal",luster:"Vitreous"},
-  "sapphire":{hardness:"9",crystal_system:"Trigonal",luster:"Vitreous"},
-  "emerald":{hardness:"7.5-8",crystal_system:"Hexagonal",luster:"Vitreous"},
-  "topaz":{hardness:"8",crystal_system:"Orthorhombic",luster:"Vitreous"},
-  "tourmaline":{hardness:"7-7.5",crystal_system:"Trigonal",luster:"Vitreous"},
-  "citrine":{hardness:"7",crystal_system:"Trigonal",luster:"Vitreous"},
-  "onyx":{hardness:"6.5-7",crystal_system:"Trigonal",luster:"Waxy"},
-  "carnelian":{hardness:"6.5-7",crystal_system:"Trigonal",luster:"Waxy"},
-  "rhodonite":{hardness:"5.5-6.5",crystal_system:"Triclinic",luster:"Vitreous"},
-  "sodalite":{hardness:"5.5-6",crystal_system:"Cubic",luster:"Vitreous"},
-  "lapis":{hardness:"5-6",crystal_system:"Cubic",luster:"Waxy"},
-  "pyrite":{hardness:"6-6.5",crystal_system:"Cubic",luster:"Metallic"},
-  "hematite":{hardness:"5-6",crystal_system:"Trigonal",luster:"Metallic"},
-  "calcite":{hardness:"3",crystal_system:"Trigonal",luster:"Vitreous"},
-  "fluorite":{hardness:"4",crystal_system:"Cubic",luster:"Vitreous"},
-  "selenite":{hardness:"2",crystal_system:"Monoclinic",luster:"Pearly"},
-  "serpentine":{hardness:"3-6",crystal_system:"Monoclinic",luster:"Waxy"},
-  "petrified wood":{hardness:"6.5-7",crystal_system:"Trigonal",luster:"Waxy"},
-  "granite":{hardness:"6-7",crystal_system:"Cubic",luster:"Vitreous"},
-  "basalt":{hardness:"5-6",crystal_system:"Amorphous",luster:"Dull"},
-  "rhyolite":{hardness:"6-7",crystal_system:"Amorphous",luster:"Waxy"},
-  "sandstone":{hardness:"6-7",crystal_system:"Amorphous",luster:"Dull"},
-  "marble":{hardness:"3-4",crystal_system:"Trigonal",luster:"Waxy"},
-  "slate":{hardness:"3-4",crystal_system:"Monoclinic",luster:"Dull"},
-  "flint":{hardness:"7",crystal_system:"Trigonal",luster:"Waxy"},
-  "chert":{hardness:"7",crystal_system:"Trigonal",luster:"Waxy"},
-  "gypsum":{hardness:"2",crystal_system:"Monoclinic",luster:"Pearly"},
-  "dolomite":{hardness:"3.5-4",crystal_system:"Trigonal",luster:"Vitreous"},
-  "limestone":{hardness:"3",crystal_system:"Trigonal",luster:"Dull"},
-  "andesite":{hardness:"5-6",crystal_system:"Amorphous",luster:"Dull"},
-  "schist":{hardness:"4-5",crystal_system:"Monoclinic",luster:"Pearly"},
-};
 
 const COLOR_KEYWORDS = ["red","blue","green","purple","yellow","orange","pink","black","white","grey","gray","brown","cream","gold","silver","multicolor","banded","spotted","lavender","violet","teal","indigo","amber","copper","rose","ivory"];
 
@@ -228,7 +218,7 @@ function suggestCollections(product, existingCollections) {
   return suggestions;
 }
 
-function scanProduct(product) {
+function scanProduct(product, dynamicGemDatabase) {
   const result = {};
   const title = (product.title || "").toLowerCase();
   const desc = (product.description || "").toLowerCase();
@@ -280,7 +270,7 @@ function scanProduct(product) {
   }
   
   const stoneKey = (l1.stone_type || l2.stone_type || "").toLowerCase();
-  const gem = stoneKey ? GEM_DATABASE[stoneKey] : null;
+  const gem = stoneKey && dynamicGemDatabase ? dynamicGemDatabase[stoneKey] : null;
   const l3 = gem ? { hardness: gem.hardness, crystal_system: gem.crystal_system } : {};
   
   const fields = ["stone_type","color","origin_location","cut_shape","hardness","crystal_system"];
@@ -340,6 +330,7 @@ export const loader = async ({ request }) => {
           rockForm: metaobjects(type: "rock-formation", first: 50) { edges { node { id handle fields { key value } } } }
           geoEra: metaobjects(type: "geological-era", first: 50) { edges { node { id handle fields { key value } } } }
           rockComp: metaobjects(type: "rock-composition", first: 50) { edges { node { id handle fields { key value } } } }
+          gemDict: metaobjects(type: "gem_dictionary", first: 100) { edges { node { fields { key value } } } }
         }
       `)
     ]);
@@ -379,11 +370,24 @@ export const loader = async ({ request }) => {
        rock_composition: parseMetaobjects(taxonomiesData.data?.rockComp?.edges || []),
     };
 
-    return data({ products, collections, dynamicTaxonomy });
+    // The Shopify Vault: Build the dynamic GEM Database from your Metaobjects
+    const dynamicGemDatabase = {};
+    (taxonomiesData.data?.gemDict?.edges || []).forEach(({ node }) => {
+      const getVal = (k) => node.fields.find(f => f.key === k)?.value;
+      const name = getVal('stone_name')?.toLowerCase();
+      if (name) {
+        dynamicGemDatabase[name] = { 
+          hardness: getVal('mohs_hardness'), 
+          crystal_system: getVal('crystal_system') 
+        };
+      }
+    });
+
+    return data({ products, collections, dynamicTaxonomy, dynamicGemDatabase });
 
   } catch (error) {
     console.error("🚨 FATAL LOADER ERROR:", error);
-    return data({ products: [], collections: [], dynamicTaxonomy: {} });
+    return data({ products: [], collections: [], dynamicTaxonomy: {}, dynamicGemDatabase: {} });
   }
 };
 
@@ -878,7 +882,7 @@ function CollectionsTab({ products, collections, fetcher }) {
 }
 
 export default function MetaInjector() {
-  const { products, collections, dynamicTaxonomy } = useLoaderData();
+  const { products, collections, dynamicTaxonomy, dynamicGemDatabase } = useLoaderData();
   const fetcher = useFetcher();
 
   const [search, setSearch] = useState("");
@@ -908,13 +912,16 @@ export default function MetaInjector() {
   );
 
   const getGidFromLabel = (fieldKey, label) => {
-    if (!label || !dynamicTaxonomy[fieldKey]) return label;
-    const option = dynamicTaxonomy[fieldKey].find(o => o.label.toLowerCase() === label.toLowerCase());
+    if (!label) return label;
+    let option = (dynamicTaxonomy?.[fieldKey] || []).find(o => o.label.toLowerCase() === label.toLowerCase());
+    if (!option && TAXONOMY[fieldKey]?.options) {
+      option = TAXONOMY[fieldKey].options.find(o => o.label.toLowerCase() === label.toLowerCase());
+    }
     return option ? option.value : label;
   };
 
   const handleSelect = (product) => {
-    const result = scanProduct(product);
+    const result = scanProduct(product, dynamicGemDatabase);
     setScanResult(result);
     setScannedProduct(product);
     setSelected(product);
@@ -944,7 +951,7 @@ export default function MetaInjector() {
   const handleScanDismiss = () => { setScanResult(null); setScannedProduct(null); };
 
   const handleScanAll = () => {
-    const results = products.map((p) => ({ product: p, scan: scanProduct(p) }));
+    const results = products.map((p) => ({ product: p, scan: scanProduct(p, dynamicGemDatabase) }));
     setScanAllResults(results);
     setScanResult(null);
     setScannedProduct(null);
@@ -1093,9 +1100,19 @@ export default function MetaInjector() {
   const renderTaxonomyField = (fieldKey, isBulk) => {
     const config = TAXONOMY[fieldKey];
     const currentForm = isBulk ? bulkForm : form;
-    const options = [
+    
+    // Combine dynamic and hardcoded options to prevent blanks
+    const dynamicOpts = dynamicTaxonomy?.[fieldKey] || [];
+    const hardcodedOpts = config.options.filter(o => o.value !== "" && o.value !== "__add__");
+    
+    // Create a unique set of options based on label
+    const combinedMap = new Map();
+    hardcodedOpts.forEach(o => combinedMap.set(o.label.toLowerCase(), o));
+    dynamicOpts.forEach(o => combinedMap.set(o.label.toLowerCase(), o));
+
+    const finalOptions = [
       { label: "-- Select --", value: "" },
-      ...(dynamicTaxonomy[fieldKey] || []),
+      ...Array.from(combinedMap.values()).sort((a,b) => a.label.localeCompare(b.label)),
       { label: "+ Add New", value: "__add__" }
     ];
 
@@ -1103,7 +1120,7 @@ export default function MetaInjector() {
       <BlockStack gap="200" key={fieldKey}>
         <Select
           label={<LabelWithHelp label={config.label} help={config.help} />}
-          options={options}
+          options={finalOptions}
           value={currentForm[fieldKey] || ""}
           onChange={(v) => handleDropdownChange(fieldKey, v, isBulk)}
         />
