@@ -139,164 +139,6 @@ const ORIGIN_KEYWORDS = {
   "3000 Mile": COLLECTION_GIDS["The 3,000-Mile Run"],
 };
 
-const GEM_DATABASE = {
-  "agate": { hardness: "6.5-7", crystal_system: "Trigonal", luster: "Waxy" },
-  "amethyst": { hardness: "7", crystal_system: "Trigonal", luster: "Vitreous" },
-  "jasper": { hardness: "6.5-7", crystal_system: "Trigonal", luster: "Waxy" },
-  "obsidian": { hardness: "5-5.5", crystal_system: "Amorphous", luster: "Vitreous" },
-  "quartz": { hardness: "7", crystal_system: "Trigonal", luster: "Vitreous" },
-  "chalcedony": { hardness: "6.5-7", crystal_system: "Trigonal", luster: "Waxy" },
-  "opal": { hardness: "5.5-6.5", crystal_system: "Amorphous", luster: "Vitreous" },
-  "turquoise": { hardness: "5-6", crystal_system: "Triclinic", luster: "Waxy" },
-  "malachite": { hardness: "3.5-4", crystal_system: "Monoclinic", luster: "Vitreous" },
-  "azurite": { hardness: "3.5-4", crystal_system: "Monoclinic", luster: "Vitreous" },
-  "labradorite": { hardness: "6-6.5", crystal_system: "Triclinic", luster: "Vitreous" },
-  "moonstone": { hardness: "6-6.5", crystal_system: "Monoclinic", luster: "Pearly" },
-  "sunstone": { hardness: "6-6.5", crystal_system: "Triclinic", luster: "Vitreous" },
-  "garnet": { hardness: "6.5-7.5", crystal_system: "Cubic", luster: "Vitreous" },
-  "ruby": { hardness: "9", crystal_system: "Trigonal", luster: "Vitreous" },
-  "sapphire": { hardness: "9", crystal_system: "Trigonal", luster: "Vitreous" },
-  "emerald": { hardness: "7.5-8", crystal_system: "Hexagonal", luster: "Vitreous" },
-  "topaz": { hardness: "8", crystal_system: "Orthorhombic", luster: "Vitreous" },
-  "tourmaline": { hardness: "7-7.5", crystal_system: "Trigonal", luster: "Vitreous" },
-  "citrine": { hardness: "7", crystal_system: "Trigonal", luster: "Vitreous" },
-  "onyx": { hardness: "6.5-7", crystal_system: "Trigonal", luster: "Waxy" },
-  "carnelian": { hardness: "6.5-7", crystal_system: "Trigonal", luster: "Waxy" },
-  "rhodonite": { hardness: "5.5-6.5", crystal_system: "Triclinic", luster: "Vitreous" },
-  "sodalite": { hardness: "5.5-6", crystal_system: "Cubic", luster: "Vitreous" },
-  "lapis": { hardness: "5-6", crystal_system: "Cubic", luster: "Waxy" },
-  "pyrite": { hardness: "6-6.5", crystal_system: "Cubic", luster: "Metallic" },
-  "hematite": { hardness: "5-6", crystal_system: "Trigonal", luster: "Metallic" },
-  "calcite": { hardness: "3", crystal_system: "Trigonal", luster: "Vitreous" },
-  "fluorite": { hardness: "4", crystal_system: "Cubic", luster: "Vitreous" },
-  "selenite": { hardness: "2", crystal_system: "Monoclinic", luster: "Pearly" },
-  "serpentine": { hardness: "3-6", crystal_system: "Monoclinic", luster: "Waxy" },
-  "petrified wood": { hardness: "6.5-7", crystal_system: "Trigonal", luster: "Waxy" },
-  "granite": { hardness: "6-7", crystal_system: "Cubic", luster: "Vitreous" },
-  "basalt": { hardness: "5-6", crystal_system: "Amorphous", luster: "Dull" },
-  "rhyolite": { hardness: "6-7", crystal_system: "Amorphous", luster: "Waxy" },
-  "sandstone": { hardness: "6-7", crystal_system: "Amorphous", luster: "Dull" },
-  "marble": { hardness: "3-4", crystal_system: "Trigonal", luster: "Waxy" },
-  "slate": { hardness: "3-4", crystal_system: "Monoclinic", luster: "Dull" },
-  "flint": { hardness: "7", crystal_system: "Trigonal", luster: "Waxy" },
-  "chert": { hardness: "7", crystal_system: "Trigonal", luster: "Waxy" },
-  "gypsum": { hardness: "2", crystal_system: "Monoclinic", luster: "Pearly" },
-  "dolomite": { hardness: "3.5-4", crystal_system: "Trigonal", luster: "Vitreous" },
-  "limestone": { hardness: "3", crystal_system: "Trigonal", luster: "Dull" },
-  "andesite": { hardness: "5-6", crystal_system: "Amorphous", luster: "Dull" },
-  "schist": { hardness: "4-5", crystal_system: "Monoclinic", luster: "Pearly" },
-};
-
-const COLOR_KEYWORDS = [
-  "red","blue","green","purple","yellow","orange","pink","black","white",
-  "grey","gray","brown","cream","gold","silver","multicolor","banded","spotted",
-  "lavender","violet","teal","indigo","amber","copper","rose","ivory",
-];
-
-const CUT_KEYWORDS = [
-  "freeform","cabochon","tumbled","raw","rough","polished","slab","sphere",
-  "point","tower","cluster","geode","nodule","egg","heart","palm stone","worry stone",
-];
-
-const CRYSTAL_KEYWORDS = [
-  "cubic","hexagonal","trigonal","monoclinic","triclinic","orthorhombic","tetragonal","amorphous",
-];
-
-function scanProduct(product) {
-  const result = {};
-  const title = (product.title || "").toLowerCase();
-  const desc = (product.description || "").toLowerCase();
-  const combined = title + " " + desc;
-  const mf = product.metafields || {};
-
-  // Layer 1: existing metafields
-  const l1 = {
-    hardness: mf.hardness || null,
-    origin_location: mf.origin_location || mf.where_found || null,
-    color: mf.color_pattern || null,
-    cut_shape: mf.cut_shape || null,
-    stone_type: mf.stone_type || null,
-    crystal_system: mf.crystal_system || null,
-  };
-
-  // Layer 2: parse title + description
-  const l2 = {};
-  if (!l1.stone_type) {
-    for (const s of STONE_TYPES) {
-      if (combined.includes(s)) { l2.stone_type = s; break; }
-    }
-  }
-  if (!l1.color) {
-    for (const c of COLOR_KEYWORDS) {
-      if (combined.includes(c)) { l2.color = c; break; }
-    }
-  }
-  if (!l1.cut_shape) {
-    for (const c of CUT_KEYWORDS) {
-      if (combined.includes(c)) { l2.cut_shape = c; break; }
-    }
-  }
-  if (!l1.origin_location) {
-    for (const kw of Object.keys(ORIGIN_KEYWORDS)) {
-      if (combined.includes(kw.toLowerCase())) { l2.origin_location = kw; break; }
-    }
-    if (!l2.origin_location) {
-      const originMatch = combined.match(/(found in|origin[:\s]+|from\s+)([a-z\s,]+)/i);
-      if (originMatch) l2.origin_location = originMatch[2].trim();
-    }
-  }
-  if (!l1.hardness) {
-    const hMatch = combined.match(/(\d+\.?\d*\s*[-–]\s*\d+\.?\d*|\d+\.?\d*)\s*(mohs)?/i);
-    if (hMatch) l2.hardness = hMatch[1].trim();
-  }
-  if (!l1.crystal_system) {
-    for (const c of CRYSTAL_KEYWORDS) {
-      if (combined.includes(c)) {
-        l2.crystal_system = c.charAt(0).toUpperCase() + c.slice(1);
-        break;
-      }
-    }
-  }
-
-  // Layer 3: GEM_DATABASE lookup
-  const stoneKey = (l1.stone_type || l2.stone_type || "").toLowerCase();
-  const gem = stoneKey ? GEM_DATABASE[stoneKey] : null;
-  const l3 = gem ? { hardness: gem.hardness, crystal_system: gem.crystal_system } : {};
-
-  const fields = ["stone_type", "color", "origin_location", "cut_shape", "hardness", "crystal_system"];
-  fields.forEach((f) => {
-    if (l1[f]) result[f] = { value: l1[f], source: "metafield" };
-    else if (l2[f]) result[f] = { value: l2[f], source: "parsed" };
-    else if (l3[f]) result[f] = { value: l3[f], source: "lookup" };
-    else result[f] = { value: "", source: "manual" };
-  });
-
-  return result;
-}
-
-const SOURCE_BADGE_TONE = {
-  metafield: "info",
-  parsed: "success",
-  lookup: "attention",
-  manual: "warning",
-};
-
-const SOURCE_BADGE_LABEL = {
-  metafield: "metafield",
-  parsed: "parsed",
-  lookup: "lookup",
-  manual: "⚠️ manual",
-};
-
-const SCAN_FIELD_LABELS = {
-  stone_type: "Stone Type",
-  color: "Color",
-  origin_location: "Origin",
-  cut_shape: "Cut Shape",
-  hardness: "Hardness",
-  crystal_system: "Crystal System",
-};
-
 function stripHtml(html) {
   return html ? html.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim() : "";
 }
@@ -346,18 +188,23 @@ function suggestCollections(product, existingCollections) {
   if (/pendant|bracelet|ring|wearable|necklace|earring/.test(combined)) {
     suggestions.push({ name: "Wearable Art", id: COLLECTION_GIDS["Wearable Art"], reason: "Wearable keyword found" });
   }
+
   if (combined.includes("freeform")) {
     suggestions.push({ name: "Freeforms", reason: '"freeform" found in title/description' });
   }
+
   if (combined.includes("custom cut") || combined.includes("custom-cut")) {
     suggestions.push({ name: "Custom Cuts", reason: '"custom cut" found' });
   }
+
   if (combined.includes("display")) {
     suggestions.push({ name: "Display", reason: '"display" found' });
   }
+
   if (/hardware|setting|bezel/.test(combined)) {
     suggestions.push({ name: "Hardware and Settings", reason: "Hardware keyword found" });
   }
+
   if (meta.stone_story) {
     suggestions.push({ name: "Touch Stones & Mile Stones", id: COLLECTION_GIDS["Touch Stones & Mile Stones"], reason: "Stone story present" });
   }
@@ -367,6 +214,7 @@ function suggestCollections(product, existingCollections) {
 
 export const loader = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
+
   try {
     const [productsRes, collectionsRes] = await Promise.all([
       admin.graphql(`
@@ -421,6 +269,7 @@ export const loader = async ({ request }) => {
       .filter((c) => c.handle !== "all-collections" && c.title !== "all collections");
 
     return data({ products, collections });
+
   } catch (error) {
     console.error("🚨 FATAL LOADER ERROR:", error);
     return data({ products: [], collections: [] });
@@ -435,6 +284,7 @@ export const action = async ({ request }) => {
   if (intent === "save" || intent === "bulk") {
     const ids = JSON.parse(formData.get("ids"));
     const metafields = [];
+    
     ids.forEach((ownerId) => {
       Object.keys(TAXONOMY).forEach((fieldKey) => {
         const val = formData.get(fieldKey);
@@ -453,6 +303,7 @@ export const action = async ({ request }) => {
         }
       });
     });
+    
     const batchSize = 6;
     for (let i = 0; i < metafields.length; i += batchSize) {
       await admin.graphql(`
@@ -599,59 +450,6 @@ function completenessLabel(metafields) {
   return `${filled}/${TEXT_FIELDS.length} fields`;
 }
 
-function ScanPreviewCard({ product, scanResult, onConfirm, onDismiss, loading }) {
-  const fields = ["stone_type", "color", "origin_location", "cut_shape", "hardness", "crystal_system"];
-  const hasManual = fields.some((f) => scanResult[f]?.source === "manual");
-  return (
-    <Card>
-      <BlockStack gap="400">
-        <InlineStack gap="300" blockAlign="center">
-          <img
-            src={product.featuredImage?.url || "https://cdn.shopify.com/s/files/1/0533/2089/files/placeholder-images-image_medium.png"}
-            alt={product.title}
-            style={{ width: "56px", height: "56px", objectFit: "cover", borderRadius: "6px" }}
-          />
-          <BlockStack gap="100">
-            <Text variant="headingMd">{product.title}</Text>
-            <Text variant="bodySm" tone="subdued">Scan preview — review before writing to Shopify</Text>
-          </BlockStack>
-        </InlineStack>
-
-        {hasManual && (
-          <Banner tone="warning">
-            Some fields could not be detected (shown as ⚠️ manual). You can still inject — fill them in Edit Stone afterward.
-          </Banner>
-        )}
-
-        <div style={{ display: "grid", gridTemplateColumns: "160px 1fr 120px", gap: "6px 12px", alignItems: "center" }}>
-          <Text variant="bodySm" fontWeight="semibold" tone="subdued">Field</Text>
-          <Text variant="bodySm" fontWeight="semibold" tone="subdued">Value</Text>
-          <Text variant="bodySm" fontWeight="semibold" tone="subdued">Source</Text>
-          {fields.map((f) => {
-            const { value, source } = scanResult[f];
-            return (
-              <>
-                <Text key={f + "_label"} variant="bodySm" fontWeight="semibold">{SCAN_FIELD_LABELS[f]}</Text>
-                <Text key={f + "_value"} variant="bodySm">{value || "—"}</Text>
-                <span key={f + "_badge"}>
-                  <Badge tone={SOURCE_BADGE_TONE[source]}>{SOURCE_BADGE_LABEL[source]}</Badge>
-                </span>
-              </>
-            );
-          })}
-        </div>
-
-        <InlineStack gap="300">
-          <Button variant="primary" onClick={onConfirm} loading={loading}>
-            Inject All Fields
-          </Button>
-          <Button onClick={onDismiss}>Dismiss</Button>
-        </InlineStack>
-      </BlockStack>
-    </Card>
-  );
-}
-
 function MindatVerifier({ product }) {
   const [status, setStatus] = useState(null);
   const [results, setResults] = useState(null);
@@ -704,7 +502,7 @@ function MindatVerifier({ product }) {
 }
 
 function ProductCollectionCard({ product, collections }) {
-  const fetcher = useFetcher();
+  const fetcher = useFetcher(); 
   const [manualAssign, setManualAssign] = useState("");
 
   const handleAssign = (productId, collectionId) => {
@@ -739,7 +537,8 @@ function ProductCollectionCard({ product, collections }) {
             <Text variant="bodySm" fontWeight="semibold">Suggested:</Text>
             {suggestions.map((s, i) => {
               const targetCollectionId = s.id || collections.find((c) => c.title === s.name)?.id;
-              const isAlreadyAssigned = product.currentCollections.some((c) => c.id === targetCollectionId);
+              const isAlreadyAssigned = product.currentCollections.some(c => c.id === targetCollectionId);
+
               return (
                 <InlineStack key={i} gap="200" blockAlign="center">
                   <Badge tone="info">{s.name}</Badge>
@@ -873,7 +672,12 @@ function CollectionsTab({ products, collections, fetcher }) {
               {editId === c.id ? (
                 <>
                   <div style={{ flex: 1 }}>
-                    <TextField label="" value={editTitle} onChange={setEditTitle} autoComplete="off" />
+                    <TextField
+                      label=""
+                      value={editTitle}
+                      onChange={setEditTitle}
+                      autoComplete="off"
+                    />
                   </div>
                   <Button variant="primary" onClick={() => handleEdit(c.id)}>Save</Button>
                   <Button onClick={() => setEditId(null)}>Cancel</Button>
@@ -931,6 +735,7 @@ export default function MetaInjector() {
   const [checkedIds, setCheckedIds] = useState([]);
   const [form, setForm] = useState({});
   const [bulkForm, setBulkForm] = useState({});
+  
   const [tabIndex, setTabIndex] = useState(0);
   const [menuActive, setMenuActive] = useState(false);
   const toggleMenu = () => setMenuActive((active) => !active);
@@ -943,66 +748,14 @@ export default function MetaInjector() {
   const [addingNew, setAddingNew] = useState({});
   const [newName, setNewName] = useState({});
 
-  // Scan state
-  const [scanResult, setScanResult] = useState(null);
-  const [scannedProduct, setScannedProduct] = useState(null);
-  const [scanAllResults, setScanAllResults] = useState(null);
-
   const filtered = products.filter((p) =>
     p.title.toLowerCase().includes(search.toLowerCase())
   );
 
   const handleSelect = (product) => {
-    const result = scanProduct(product);
-    setScanResult(result);
-    setScannedProduct(product);
     setSelected(product);
-    // Pre-fill form with scan results
-    const prefilled = {};
-    Object.entries(result).forEach(([k, v]) => { if (v.value) prefilled[k] = v.value; });
-    setForm({ ...product.metafields, ...prefilled });
-    // Stay on tab 0 to show preview card
-  };
-
-  const handleScanConfirm = () => {
-    if (!scannedProduct) return;
-    const fd = new FormData();
-    fd.append("intent", "save");
-    fd.append("ids", JSON.stringify([scannedProduct.id]));
-    Object.keys(TAXONOMY).forEach((k) => fd.append(k, form[k] || ""));
-    TEXT_FIELDS.forEach(({ key }) => fd.append(key, form[key] || ""));
-    fetcher.submit(fd, { method: "post" });
-    setScanResult(null);
-    setScannedProduct(null);
+    setForm({ ...product.metafields });
     setTabIndex(1);
-  };
-
-  const handleScanDismiss = () => {
-    setScanResult(null);
-    setScannedProduct(null);
-  };
-
-  const handleScanAll = () => {
-    const results = products.map((p) => ({ product: p, scan: scanProduct(p) }));
-    setScanAllResults(results);
-    setScanResult(null);
-    setScannedProduct(null);
-  };
-
-  const handleInjectAll = () => {
-    const lines = [];
-    scanAllResults.forEach(({ product: p, scan }) => {
-      Object.entries(scan).forEach(([key, { value }]) => {
-        if (value && TEXT_FIELDS.find((f) => f.key === key)) {
-          lines.push(JSON.stringify({ ownerId: p.id, namespace: "geology", key, value, type: "single_line_text_field" }));
-        }
-      });
-    });
-    const fd = new FormData();
-    fd.append("intent", "inject");
-    fd.append("payload", lines.join("\n"));
-    fetcher.submit(fd, { method: "post" });
-    setScanAllResults(null);
   };
 
   const handleDropdownChange = (fieldKey, value, isBulk) => {
@@ -1156,6 +909,7 @@ export default function MetaInjector() {
         <Layout.Section>
           <Card>
             <BlockStack gap="400">
+              
               <InlineStack>
                 <Popover
                   active={menuActive}
@@ -1172,7 +926,10 @@ export default function MetaInjector() {
                     actionRole="menuitem"
                     items={tabs.map((tab, index) => ({
                       content: tab.content,
-                      onAction: () => { setTabIndex(index); setMenuActive(false); },
+                      onAction: () => {
+                        setTabIndex(index);
+                        setMenuActive(false);
+                      },
                     }))}
                   />
                 </Popover>
@@ -1190,67 +947,197 @@ export default function MetaInjector() {
                       onClearButtonClick={() => setSearch("")}
                       autoComplete="off"
                     />
-
-                    <InlineStack gap="300" blockAlign="center">
-                      <Button variant="primary" onClick={handleScanAll}>🔍 Scan All {products.length} Products</Button>
-                      {scanAllResults && (
-                        <Text tone="caution">
-                          ⚠️ {scanAllResults.filter((r) => Object.values(r.scan).some((f) => f.source === "manual")).length} products need manual input
-                        </Text>
-                      )}
-                      {scanAllResults && (
-                        <Button onClick={() => setScanAllResults(null)}>Clear</Button>
-                      )}
-                    </InlineStack>
-
-                    {scanAllResults && (
-                      <Card>
-                        <BlockStack gap="300">
-                          <Text variant="headingMd">Scan All Results — {scanAllResults.length} products</Text>
-                          <div style={{ overflowX: "auto" }}>
-                            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
-                              <thead>
-                                <tr style={{ background: "#f6f6f7" }}>
-                                  {["Product", "Stone Type", "Color", "Origin", "Cut Shape", "Hardness", "Crystal System", "Status"].map((h) => (
-                                    <th key={h} style={{ padding: "8px 10px", textAlign: "left", borderBottom: "1px solid #e1e3e5", whiteSpace: "nowrap" }}>{h}</th>
-                                  ))}
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {scanAllResults.map(({ product: p, scan }) => {
-                                  const allFound = Object.values(scan).every((f) => f.source !== "manual");
-                                  return (
-                                    <tr key={p.id} style={{ borderBottom: "1px solid #f1f1f1" }}>
-                                      <td style={{ padding: "8px 10px", fontWeight: "600" }}>{p.title}</td>
-                                      {["stone_type", "color", "origin_location", "cut_shape", "hardness", "crystal_system"].map((f) => (
-                                        <td key={f} style={{ padding: "8px 10px", color: scan[f].source === "manual" ? "#b98900" : "#202223" }}>
-                                          {scan[f].value || "—"}
-                                        </td>
-                                      ))}
-                                      <td style={{ padding: "8px 10px", fontSize: "16px" }}>{allFound ? "✅" : "⚠️"}</td>
-                                    </tr>
-                                  );
-                                })}
-                              </tbody>
-                            </table>
+                    <Grid>
+                      {filtered.map((product) => (
+                        <Grid.Cell key={product.id} columnSpan={{ xs: 6, sm: 4, md: 3, lg: 3 }}>
+                          <div
+                            onClick={() => handleSelect(product)}
+                            style={{ cursor: "pointer", border: "1px solid #e1e3e5", borderRadius: "8px", overflow: "hidden", textAlign: "center" }}
+                          >
+                            <img
+                              src={product.featuredImage?.url || "https://cdn.shopify.com/s/files/1/0533/2089/files/placeholder-images-image_medium.png"}
+                              alt={product.title}
+                              style={{ width: "100%", height: "140px", objectFit: "cover" }}
+                            />
+                            <div style={{ padding: "8px" }}>
+                              <Text variant="bodySm" fontWeight="bold">{product.title}</Text>
+                              <Badge tone={completeness(product.metafields)}>{completenessLabel(product.metafields)}</Badge>
+                            </div>
                           </div>
-                          <InlineStack gap="300">
-                            <Button variant="primary" onClick={handleInjectAll} loading={fetcher.state === "submitting"}>
-                              Inject All
-                            </Button>
-                            <Button onClick={() => setScanAllResults(null)}>Dismiss</Button>
+                        </Grid.Cell>
+                      ))}
+                    </Grid>
+                  </BlockStack>
+                )}
+
+                {tabIndex === 1 && (
+                  <BlockStack gap="400">
+                    {!selected ? (
+                      <Banner tone="info">Select a stone from the Products tab to edit its metafields.</Banner>
+                    ) : (
+                      <>
+                        <Text variant="headingMd">{selected.title}</Text>
+                        <FormLayout>
+                          {Object.keys(TAXONOMY).map((fieldKey) => renderTaxonomyField(fieldKey, false))}
+                          {TEXT_FIELDS.map((f) => (
+                            <TextField
+                              key={f.key}
+                              label={<LabelWithHelp label={f.label} help={f.help} />}
+                              value={form[f.key] || ""}
+                              onChange={(v) => setForm({ ...form, [f.key]: v })}
+                              placeholder={f.placeholder}
+                              autoComplete="off"
+                              multiline={f.key === "stone_story" ? 4 : undefined}
+                            />
+                          ))}
+                        </FormLayout>
+                        <Button variant="primary" onClick={handleSave} loading={fetcher.state === "submitting"}>
+                          Save Stone
+                        </Button>
+                        {fetcher.data?.ok && fetcher.data?.intent === "save" && (
+                          <Banner tone="success">Stone saved successfully!</Banner>
+                        )}
+                      </>
+                    )}
+                  </BlockStack>
+                )}
+
+                {tabIndex === 2 && (
+                  <BlockStack gap="400">
+                    <Text variant="headingMd">Metafield Verification Report</Text>
+                    <Banner tone="info">Compares your store metafields against Mindat.org data. Requires Mindat API token.</Banner>
+                    {products.map((p) => (
+                      <Card key={p.id}>
+                        <BlockStack gap="200">
+                          <InlineStack align="space-between">
+                            <Text variant="bodyMd" fontWeight="bold">{p.title}</Text>
+                            <Badge tone={completeness(p.metafields)}>{completenessLabel(p.metafields)}</Badge>
                           </InlineStack>
-                          {fetcher.data?.injected !== undefined && (
-                            <Banner tone="success">Injected {fetcher.data.injected} metafield(s) successfully!</Banner>
-                          )}
+                          <MindatVerifier product={p} />
                         </BlockStack>
                       </Card>
-                    )}
+                    ))}
+                  </BlockStack>
+                )}
 
-                    {scanResult && scannedProduct && !scanAllResults && (
-                      <ScanPreviewCard
-                        product={scannedProduct}
-                        scanResult={scanResult}
-                        onConfirm={handleScanConfirm}
-                        onDismiss={handleScanDismiss}
-                        loading={fetcher.state === "*_
+                {tabIndex === 3 && (
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "24px" }}>
+                    <BlockStack gap="300">
+                      <InlineStack gap="200">
+                        <Button onClick={() => setCheckedIds(allChecked ? [] : allIds)}>
+                          {allChecked ? "Deselect All" : "Select All"}
+                        </Button>
+                        <Text>{checkedIds.length} selected</Text>
+                      </InlineStack>
+                      <div style={{ maxHeight: "600px", overflowY: "auto" }}>
+                        <BlockStack gap="200">
+                          {filtered.map((p) => (
+                            <InlineStack key={p.id} gap="200" blockAlign="center">
+                              <Checkbox
+                                label=""
+                                checked={checkedIds.includes(p.id)}
+                                onChange={(checked) => {
+                                  if (checked) setCheckedIds([...checkedIds, p.id]);
+                                  else setCheckedIds(checkedIds.filter((id) => id !== p.id));
+                                }}
+                              />
+                              <img src={p.featuredImage?.url || ""} alt={p.title} style={{ width: "48px", height: "48px", objectFit: "cover", borderRadius: "6px" }} />
+                              <Text variant="bodySm">{p.title}</Text>
+                            </InlineStack>
+                          ))}
+                        </BlockStack>
+                      </div>
+                    </BlockStack>
+                    <BlockStack gap="300">
+                      <Text variant="headingMd">Apply to {checkedIds.length} Stone(s)</Text>
+                      <FormLayout>
+                        {Object.keys(TAXONOMY).map((fieldKey) => renderTaxonomyField(fieldKey, true))}
+                        {TEXT_FIELDS.map((f) => (
+                          <TextField
+                            key={f.key}
+                            label={<LabelWithHelp label={f.label} help={f.help} />}
+                            value={bulkForm[f.key] || ""}
+                            onChange={(v) => setBulkForm({ ...bulkForm, [f.key]: v })}
+                            placeholder={f.placeholder}
+                            autoComplete="off"
+                          />
+                        ))}
+                      </FormLayout>
+                      <Button variant="primary" onClick={handleBulk} disabled={checkedIds.length === 0} loading={fetcher.state === "submitting"}>
+                        Apply to {checkedIds.length} Stone(s)
+                      </Button>
+                      {fetcher.data?.ok && fetcher.data?.intent === "bulk" && (
+                        <Banner tone="success">Bulk save complete!</Banner>
+                      )}
+                    </BlockStack>
+                  </div>
+                )}
+
+                {tabIndex === 4 && (
+                  <BlockStack gap="400">
+                    <Text variant="headingMd">Auto-build payload from product + Mindat</Text>
+                    <Select
+                      label="Select a stone"
+                      options={[{ label: "-- Pick a stone --", value: "" }, ...products.map((p) => ({ label: p.title, value: p.id }))]}
+                      value={injectProduct}
+                      onChange={setInjectProduct}
+                    />
+                    <Button variant="primary" onClick={handleAutoInject} loading={injectStatus === "loading"} disabled={!injectProduct}>
+                      🔄 Build Payload
+                    </Button>
+                    {injectStatus === "ready" && <Banner tone="success">Payload built — review and edit below, then inject.</Banner>}
+                    {injectStatus === "error" && <Banner tone="critical">Could not build payload. Check product and Mindat token.</Banner>}
+                    <TextField
+                      label="JSON Payload (one object per line — edit before injecting)"
+                      value={payload}
+                      onChange={setPayload}
+                      multiline={12}
+                      autoComplete="off"
+                    />
+                    <Button variant="primary" onClick={handleInject} loading={fetcher.state === "submitting"} disabled={!payload}>
+                      💉 Inject
+                    </Button>
+                    {fetcher.data?.injected !== undefined && (
+                      <Banner tone="success">Injected {fetcher.data.injected} metafield(s) successfully!</Banner>
+                    )}
+                  </BlockStack>
+                )}
+
+                {tabIndex === 5 && (
+                  <BlockStack gap="400">
+                    <Text variant="headingMd">Pull verified geological data from Mindat.org.</Text>
+                    <TextField
+                      label="Stone name"
+                      value={mindatName}
+                      onChange={setMindatName}
+                      placeholder="e.g. Amethyst"
+                      autoComplete="off"
+                    />
+                    <Button variant="primary" onClick={handleMindat} loading={mindatStatus === "loading"}>
+                      🌍 Lookup
+                    </Button>
+                    {mindatStatus === "found" && <Banner tone="success">Found! Fields pre-filled — switch to Edit Stone to review and save.</Banner>}
+                    {mindatStatus === "notfound" && <Banner tone="warning">No results found for "{mindatName}".</Banner>}
+                    {mindatStatus === "error" && <Banner tone="critical">Lookup failed. Check your Mindat API token.</Banner>}
+                    <Banner tone="info">Requires a Mindat.org API token. Token not yet configured.</Banner>
+                  </BlockStack>
+                )}
+
+                {tabIndex === 6 && (
+                  <CollectionsTab products={products} collections={collections} fetcher={fetcher} />
+                )}
+              </Box>
+
+            </BlockStack>
+          </Card>
+        </Layout.Section>
+      </Layout>
+    </Page>
+  );
+}
+
+export function ErrorBoundary() {
+  return <div>Something went wrong loading Meta Injector.</div>;
+} 
+ 
+ 
