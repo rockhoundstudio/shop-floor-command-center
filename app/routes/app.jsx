@@ -19,9 +19,6 @@ export default function App() {
       <AppProvider embedded apiKey={apiKey}>
         <ui-nav-menu>
           <a href="/app" rel="home">Home</a>
-          <a href="/app/meta-injector">Meta Injector</a>
-          <a href="/app/menu-manager">Menu Manager</a>
-          <a href="/app/collections">Collection Creator</a>
         </ui-nav-menu>
         <Outlet />
       </AppProvider>
