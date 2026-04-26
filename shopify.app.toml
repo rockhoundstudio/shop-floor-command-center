@@ -18,7 +18,7 @@ api_version = "2026-07"
   uri = "/webhooks/app/scopes_update"
 
 [access_scopes]
-scopes = "write_products,read_products,read_metaobject_definitions,write_metaobject_definitions,read_metaobjects,write_metaobjects,read_content,write_content,write_online_store_navigation"
+scopes = "write_products,read_products,read_metaobject_definitions,write_metaobject_definitions,read_metaobjects,write_metaobjects,read_content,write_content,read_online_store_navigation,write_online_store_navigation"
 
 [auth]
 redirect_urls = [ "https://shop-floor-command-center.onrender.com/auth/callback" ]
