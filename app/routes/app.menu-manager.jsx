@@ -3,7 +3,7 @@ import { useLoaderData, useFetcher, data } from "react-router";
 import { authenticate } from "../shopify.server";
 import {
   Page, Layout, Card, Text, BlockStack, InlineStack, Button, 
-  TextField, Badge, Banner, Box, Icon, Modal, Select
+  TextField, Badge, Banner, Box, Icon, Select
 } from "@shopify/polaris";
 import { PlusIcon, DeleteIcon, AlertTriangleIcon, CheckCircleIcon, MagicIcon } from "@shopify/polaris-icons";
 
@@ -76,7 +76,7 @@ export default function MenuManager() {
   const [menuTitle, setMenuTitle] = useState("");
   const [scanned, setScanned] = useState(false);
 
-  // Build the dropdown options for Janyce so she never has to type a link
+  // Build the dropdown options for Janyce
   const linkOptions = [
     { label: "✏️ Type Custom Link...", value: "custom" },
     { label: "🏠 Home Page", value: "/" },
@@ -143,27 +143,37 @@ export default function MenuManager() {
   return (
     <Page title="Menu Maker 🗂️" subtitle="Prestige V11 Mega-Menu Factory" backAction={{ content: "Command Center", url: "/app" }}>
       <Layout>
+        
+        {/* LEFT COLUMN */}
         <Layout.Section variant="oneThird">
-          <Card>
-            <BlockStack gap="300">
-              <Text variant="headingMd">Your Menus</Text>
-              {menus.map((menu) => (
-                <Box key={menu.id} padding="200" background={activeMenu?.id === menu.id ? "bg-surface-active" : "bg-surface"}
-                  borderWidth="025" borderColor="border" borderRadius="100" onClick={() => handleSelectMenu(menu)}
-                  style={{ cursor: "pointer" }}>
-                  <InlineStack align="space-between" blockAlign="center">
-                    <Text fontWeight={activeMenu?.id === menu.id ? "bold" : "regular"}>{menu.title}</Text>
-                    <Badge tone="info">{menu.items.length} Links</Badge>
-                  </InlineStack>
-                </Box>
-              ))}
+          <BlockStack gap="400">
+            <Card>
+              <BlockStack gap="300">
+                <Text variant="headingMd">Your Menus</Text>
+                {menus.map((menu) => (
+                  <Box key={menu.id} padding="200" background={activeMenu?.id === menu.id ? "bg-surface-active" : "bg-surface"}
+                    borderWidth="025" borderColor="border" borderRadius="100" onClick={() => handleSelectMenu(menu)}
+                    style={{ cursor: "pointer" }}>
+                    <InlineStack align="space-between" blockAlign="center">
+                      <Text fontWeight={activeMenu?.id === menu.id ? "bold" : "regular"}>{menu.title}</Text>
+                      <Badge tone="info">{menu.items.length} Links</Badge>
+                    </InlineStack>
+                  </Box>
+                ))}
+              </BlockStack>
             </Card>
             {fetcher.data?.message && <Banner tone="success">{fetcher.data.message}</Banner>}
-          </Layout.Section>
+          </BlockStack>
+        </Layout.Section>
 
+        {/* RIGHT COLUMN */}
         <Layout.Section>
           {!activeMenu ? (
-            <Card><Box padding="800" textAlign="center"><Text variant="headingLg" tone="subdued">Select a menu on the left to start editing.</Text></Box></Card>
+            <Card>
+              <Box padding="800" textAlign="center">
+                <Text variant="headingLg" tone="subdued">Select a menu on the left to start editing.</Text>
+              </Box>
+            </Card>
           ) : (
             <BlockStack gap="400">
               
