@@ -30,14 +30,6 @@ const TAXONOMY = {
     namespace: "shopify",
     key: "crystal-system",
     help: "The geometric arrangement of atoms in the mineral",
-    options: [
-      { label: "-- Select --", value: "" },
-      { label: "Monoclinic", value: "gid://shopify/Metaobject/151951212795" },
-      { label: "Trigonal", value: "gid://shopify/Metaobject/154252116219" },
-      { label: "Hexagonal", value: "gid://shopify/Metaobject/154307625211" },
-      { label: "Triclinic", value: "gid://shopify/Metaobject/154308706555" },
-      { label: "+ Add New", value: "__add__" },
-    ],
     metaobjectType: "crystal-system",
   },
   mineral_class: {
@@ -45,13 +37,6 @@ const TAXONOMY = {
     namespace: "shopify",
     key: "mineral-class",
     help: "Scientific classification based on chemical composition",
-    options: [
-      { label: "-- Select --", value: "" },
-      { label: "Silicates", value: "gid://shopify/Metaobject/151951278331" },
-      { label: "Oxides", value: "gid://shopify/Metaobject/155431371003" },
-      { label: "Carbonates", value: "gid://shopify/Metaobject/156128313595" },
-      { label: "+ Add New", value: "__add__" },
-    ],
     metaobjectType: "mineral-class",
   },
   rock_formation: {
@@ -59,13 +44,6 @@ const TAXONOMY = {
     namespace: "shopify",
     key: "rock-formation",
     help: "The geological process that formed this rock",
-    options: [
-      { label: "-- Select --", value: "" },
-      { label: "Metamorphic", value: "gid://shopify/Metaobject/151951343867" },
-      { label: "Igneous", value: "gid://shopify/Metaobject/154251985147" },
-      { label: "Sedimentary", value: "gid://shopify/Metaobject/154307657979" },
-      { label: "+ Add New", value: "__add__" },
-    ],
     metaobjectType: "rock-formation",
   },
   geological_era: {
@@ -73,14 +51,6 @@ const TAXONOMY = {
     namespace: "shopify",
     key: "geological-era",
     help: "The time period when this rock was formed",
-    options: [
-      { label: "-- Select --", value: "" },
-      { label: "Precambrian", value: "gid://shopify/Metaobject/151951245563" },
-      { label: "Paleozoic", value: "gid://shopify/Metaobject/156128379131" },
-      { label: "Mesozoic", value: "gid://shopify/Metaobject/154252083451" },
-      { label: "Cenozoic", value: "gid://shopify/Metaobject/154307854587" },
-      { label: "+ Add New", value: "__add__" },
-    ],
     metaobjectType: "geological-era",
   },
   rock_composition: {
@@ -88,14 +58,6 @@ const TAXONOMY = {
     namespace: "shopify",
     key: "rock-composition",
     help: "The primary rock or mineral matrix",
-    options: [
-      { label: "-- Select --", value: "" },
-      { label: "Granite", value: "gid://shopify/Metaobject/151951311099" },
-      { label: "Obsidian", value: "gid://shopify/Metaobject/155431338235" },
-      { label: "Andesite", value: "gid://shopify/Metaobject/156128411899" },
-      { label: "Schist", value: "gid://shopify/Metaobject/156128477435" },
-      { label: "+ Add New", value: "__add__" },
-    ],
     metaobjectType: "rock-composition",
   },
 };
@@ -340,7 +302,7 @@ export const loader = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
 
   try {
-    const [productsRes, collectionsRes] = await Promise.all([
+    const [productsRes, collectionsRes, taxonomiesRes] = await Promise.all([
       admin.graphql(`
         query {
           products(first: 100) {
@@ -371,13 +333,24 @@ export const loader = async ({ request }) => {
           }
         }
       `),
+      admin.graphql(`
+        query {
+          crystal: metaobjects(type: "crystal-system", first: 50) { edges { node { id handle fields { key value } } } }
+          mineral: metaobjects(type: "mineral-class", first: 50) { edges { node { id handle fields { key value } } } }
+          rockForm: metaobjects(type: "rock-formation", first: 50) { edges { node { id handle fields { key value } } } }
+          geoEra: metaobjects(type: "geological-era", first: 50) { edges { node { id handle fields { key value } } } }
+          rockComp: metaobjects(type: "rock-composition", first: 50) { edges { node { id handle fields { key value } } } }
+        }
+      `)
     ]);
 
     const productsData = await productsRes.json();
     const collectionsData = await collectionsRes.json();
+    const taxonomiesData = await taxonomiesRes.json();
 
     if (productsData.errors) console.error("🚨 GraphQL Products Error:", JSON.stringify(productsData.errors, null, 2));
     if (collectionsData.errors) console.error("🚨 GraphQL Collections Error:", JSON.stringify(collectionsData.errors, null, 2));
+    if (taxonomiesData.errors) console.error("🚨 GraphQL Taxonomies Error:", JSON.stringify(taxonomiesData.errors, null, 2));
 
     const products = (productsData.data?.products?.edges || []).map(({ node }) => ({
       ...node,
@@ -392,11 +365,25 @@ export const loader = async ({ request }) => {
       .map(({ node }) => node)
       .filter((c) => c.handle !== "all-collections" && c.title !== "all collections");
 
-    return data({ products, collections });
+    const parseMetaobjects = (edges) => edges.map(({node}) => {
+       const nameField = node.fields.find(f => f.key === 'name');
+       const label = nameField ? nameField.value : (node.handle || node.id);
+       return { label, value: node.id };
+    }).sort((a,b) => a.label.localeCompare(b.label));
+
+    const dynamicTaxonomy = {
+       crystal_system: parseMetaobjects(taxonomiesData.data?.crystal?.edges || []),
+       mineral_class: parseMetaobjects(taxonomiesData.data?.mineral?.edges || []),
+       rock_formation: parseMetaobjects(taxonomiesData.data?.rockForm?.edges || []),
+       geological_era: parseMetaobjects(taxonomiesData.data?.geoEra?.edges || []),
+       rock_composition: parseMetaobjects(taxonomiesData.data?.rockComp?.edges || []),
+    };
+
+    return data({ products, collections, dynamicTaxonomy });
 
   } catch (error) {
     console.error("🚨 FATAL LOADER ERROR:", error);
-    return data({ products: [], collections: [] });
+    return data({ products: [], collections: [], dynamicTaxonomy: {} });
   }
 };
 
@@ -891,7 +878,7 @@ function CollectionsTab({ products, collections, fetcher }) {
 }
 
 export default function MetaInjector() {
-  const { products, collections } = useLoaderData();
+  const { products, collections, dynamicTaxonomy } = useLoaderData();
   const fetcher = useFetcher();
 
   const [search, setSearch] = useState("");
@@ -920,13 +907,24 @@ export default function MetaInjector() {
     p.title.toLowerCase().includes(search.toLowerCase())
   );
 
+  const getGidFromLabel = (fieldKey, label) => {
+    if (!label || !dynamicTaxonomy[fieldKey]) return label;
+    const option = dynamicTaxonomy[fieldKey].find(o => o.label.toLowerCase() === label.toLowerCase());
+    return option ? option.value : label;
+  };
+
   const handleSelect = (product) => {
     const result = scanProduct(product);
     setScanResult(result);
     setScannedProduct(product);
     setSelected(product);
+    
     const prefilled = {};
-    Object.entries(result).forEach(([k,v]) => { if (v.value) prefilled[k] = v.value; });
+    Object.entries(result).forEach(([k,v]) => { 
+      if (v.value) {
+         prefilled[k] = TAXONOMY[k] ? getGidFromLabel(k, v.value) : v.value;
+      } 
+    });
     setForm({ ...product.metafields, ...prefilled });
   };
 
@@ -956,8 +954,15 @@ export default function MetaInjector() {
     const lines = [];
     scanAllResults.forEach(({product:p, scan}) => {
       Object.entries(scan).forEach(([key,{value}]) => {
-        if (value && TEXT_FIELDS.find((f) => f.key === key)) {
+        if (!value) return;
+        
+        if (TEXT_FIELDS.find((f) => f.key === key)) {
           lines.push(JSON.stringify({ownerId:p.id,namespace:"geology",key,value,type:"single_line_text_field"}));
+        } else if (TAXONOMY[key]) {
+          const gid = getGidFromLabel(key, value);
+          if (gid && gid.startsWith("gid://")) {
+            lines.push(JSON.stringify({ownerId:p.id,namespace:"shopify",key:TAXONOMY[key].key,value:`["${gid}"]`,type:"list.metaobject_reference"}));
+          }
         }
       });
     });
@@ -1088,11 +1093,17 @@ export default function MetaInjector() {
   const renderTaxonomyField = (fieldKey, isBulk) => {
     const config = TAXONOMY[fieldKey];
     const currentForm = isBulk ? bulkForm : form;
+    const options = [
+      { label: "-- Select --", value: "" },
+      ...(dynamicTaxonomy[fieldKey] || []),
+      { label: "+ Add New", value: "__add__" }
+    ];
+
     return (
       <BlockStack gap="200" key={fieldKey}>
         <Select
           label={<LabelWithHelp label={config.label} help={config.help} />}
-          options={config.options}
+          options={options}
           value={currentForm[fieldKey] || ""}
           onChange={(v) => handleDropdownChange(fieldKey, v, isBulk)}
         />
