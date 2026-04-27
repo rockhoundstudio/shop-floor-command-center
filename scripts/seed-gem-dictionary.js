@@ -3,150 +3,229 @@ import pg from 'pg';
 
 const { Client } = pg;
 
-const SHOP = "qda81g-v1.myshopify.com";
-const DB_URL = "postgresql://shop_floor_db_6m6m_user:agFKlV4RhxTFC0L3IVGOhELpXQOmC7ph@dpg-d7hverhkh4rs73amn1q0-a.oregon-postgres.render.com/shop_floor_db_6m6m";
-const GRAPHQL_URL = `https://${SHOP}/admin/api/2025-01/graphql.json`;
+const SHOP = process.env.SHOPIFY_SHOP || 'qda81g-v1.myshopify.com';
+const DATABASE_URL = process.env.DATABASE_URL;
+const METAOBJECT_TYPE = "gem_dictionary";
 
-// 1. The Master Gem Dictionary
-const gemDictionary = [
-  { name: "Jasper (Yakima)", class: "Silicates", crystal: "Trigonal", hardness: "6.5–7", origins: ["Yakima Canyon WA", "Oregon"], notes: "Untreated typical.", story: "Shaped by ancient pressure." },
-  { name: "Jasper (Picture)", class: "Silicates", crystal: "Trigonal", hardness: "6.5–7", origins: ["Yakima Canyon WA", "Oregon"], notes: "Untreated typical.", story: "A painting made by the earth." },
-  { name: "Jasper (Brecciated)", class: "Silicates", crystal: "Trigonal", hardness: "6.5–7", origins: ["Yakima River WA", "Oregon"], notes: "Untreated typical.", story: "Broken and reborn." },
-  { name: "Agate (Botswana)", class: "Silicates", crystal: "Trigonal", hardness: "6.5–7", origins: ["Botswana"], notes: "Untreated typical.", story: "Banded by ancient seas." },
-  { name: "Agate (Montana)", class: "Silicates", crystal: "Trigonal", hardness: "6.5–7", origins: ["Yellowstone River MT"], notes: "Untreated typical.", story: "Carried by glacial melt." },
-  { name: "Chalcedony (Drusy)", class: "Silicates", crystal: "Trigonal", hardness: "6.5–7", origins: ["Pacific Northwest"], notes: "Untreated typical.", story: "Crystallized in silence." },
-  { name: "Labradorite", class: "Silicates", crystal: "Triclinic", hardness: "6–6.5", origins: ["Madagascar"], notes: "Untreated typical.", story: "The aurora you can hold." },
-  { name: "Serpentine", class: "Silicates", crystal: "Monoclinic", hardness: "3–5", origins: ["Pacific Northwest"], notes: "Untreated typical.", story: "Born from the ocean floor." },
-  { name: "Obsidian (Fire)", class: "Silicates", crystal: "Amorphous", hardness: "5–5.5", origins: ["Oregon"], notes: "Untreated.", story: "Forged in volcanic fire." },
-  { name: "Snow Quartz", class: "Silicates", crystal: "Trigonal", hardness: "7", origins: ["Worldwide"], notes: "Untreated typical.", story: "Clarity in frozen form." },
-  { name: "Clear Quartz", class: "Silicates", crystal: "Trigonal", hardness: "7", origins: ["Brazil"], notes: "Untreated typical.", story: "Pure light made solid." },
-  { name: "Rose Quartz", class: "Silicates", crystal: "Trigonal", hardness: "7", origins: ["Madagascar"], notes: "Untreated typical.", story: "Soft as dawn." },
-  { name: "Smoky Quartz", class: "Silicates", crystal: "Trigonal", hardness: "7", origins: ["Brazil"], notes: "Natural irradiation.", story: "Smoke frozen in crystal." },
-  { name: "Amethyst", class: "Silicates", crystal: "Trigonal", hardness: "7", origins: ["Uruguay"], notes: "Can fade in sunlight.", story: "The royal purple of clarity." },
-  { name: "Citrine", class: "Silicates", crystal: "Trigonal", hardness: "7", origins: ["Brazil"], notes: "Heat-treated amethyst.", story: "Sunlight crystallized." },
-  { name: "Aventurine", class: "Silicates", crystal: "Trigonal", hardness: "6.5–7", origins: ["India"], notes: "Untreated typical.", story: "A thousand tiny mirrors." },
-  { name: "Tiger's Eye", class: "Silicates", crystal: "Trigonal", hardness: "6.5–7", origins: ["South Africa"], notes: "Untreated typical.", story: "The eye of the earth." },
-  { name: "Carnelian", class: "Silicates", crystal: "Trigonal", hardness: "6.5–7", origins: ["India"], notes: "Often heat treated.", story: "Fire in the hand." },
-  { name: "Chrysoprase", class: "Silicates", crystal: "Trigonal", hardness: "6.5–7", origins: ["Australia"], notes: "Untreated typical.", story: "Green from nickel." },
-  { name: "Bloodstone", class: "Silicates", crystal: "Trigonal", hardness: "6.5–7", origins: ["India"], notes: "Untreated typical.", story: "Green marked by red." },
-  { name: "Onyx", class: "Silicates", crystal: "Trigonal", hardness: "6.5–7", origins: ["Brazil"], notes: "Often dyed.", story: "Pure black." },
-  { name: "Blue Lace Agate", class: "Silicates", crystal: "Trigonal", hardness: "6.5–7", origins: ["Namibia"], notes: "Untreated typical.", story: "Sky layered in stone." },
-  { name: "Moss Agate", class: "Silicates", crystal: "Trigonal", hardness: "6.5–7", origins: ["India"], notes: "Untreated typical.", story: "A forest inside a stone." },
-  { name: "Dendritic Agate", class: "Silicates", crystal: "Trigonal", hardness: "6.5–7", origins: ["Brazil"], notes: "Untreated typical.", story: "Winter trees etched." },
-  { name: "Moonstone", class: "Silicates", crystal: "Monoclinic", hardness: "6–6.5", origins: ["Sri Lanka"], notes: "Untreated typical.", story: "The moon's light." },
-  { name: "Sunstone (Oregon)", class: "Silicates", crystal: "Triclinic", hardness: "6–6.5", origins: ["Plush OR"], notes: "Untreated.", story: "Copper fire." },
-  { name: "Amazonite", class: "Silicates", crystal: "Triclinic", hardness: "6–6.5", origins: ["Colorado"], notes: "Untreated typical.", story: "Cool and ancient." },
-  { name: "Almandine Garnet", class: "Silicates", crystal: "Cubic", hardness: "7–7.5", origins: ["India"], notes: "Untreated typical.", story: "Deep red." },
-  { name: "Pyrope Garnet", class: "Silicates", crystal: "Cubic", hardness: "7–7.5", origins: ["South Africa"], notes: "Untreated typical.", story: "Blood red." },
-  { name: "Emerald", class: "Silicates", crystal: "Hexagonal", hardness: "7.5–8", origins: ["Colombia"], notes: "Oiling universal.", story: "The green of life." },
-  { name: "Aquamarine", class: "Silicates", crystal: "Hexagonal", hardness: "7.5–8", origins: ["Brazil"], notes: "Heat treatment common.", story: "The sea frozen." },
-  { name: "Morganite", class: "Silicates", crystal: "Hexagonal", hardness: "7.5–8", origins: ["Brazil"], notes: "Heat treatment common.", story: "Peach and pink." },
-  { name: "Ruby", class: "Oxides", crystal: "Trigonal", hardness: "9", origins: ["Myanmar"], notes: "Heat treatment universal.", story: "The king of gems." },
-  { name: "Sapphire (Blue)", class: "Oxides", crystal: "Trigonal", hardness: "9", origins: ["Sri Lanka"], notes: "Heat treatment common.", story: "The blue of deep sky." },
-  { name: "Sapphire (Montana)", class: "Oxides", crystal: "Trigonal", hardness: "9", origins: ["Montana"], notes: "Often untreated.", story: "Montana sky in a stone." },
-  { name: "Black Tourmaline", class: "Silicates", crystal: "Trigonal", hardness: "7–7.5", origins: ["Brazil"], notes: "Untreated typical.", story: "The grounding stone." },
-  { name: "Watermelon Tourmaline", class: "Silicates", crystal: "Trigonal", hardness: "7–7.5", origins: ["Brazil"], notes: "Untreated typical.", story: "Pink and green." },
-  { name: "Nephrite Jade", class: "Silicates", crystal: "Monoclinic", hardness: "6–6.5", origins: ["British Columbia"], notes: "Untreated typical.", story: "The toughest stone." },
-  { name: "Malachite", class: "Carbonates", crystal: "Monoclinic", hardness: "3.5–4", origins: ["Congo"], notes: "Toxic dust.", story: "Banded green copper." },
-  { name: "Turquoise", class: "Phosphates", crystal: "Triclinic", hardness: "5–6", origins: ["Arizona"], notes: "Stabilization common.", story: "Sky stone of the desert." },
-  { name: "Pyrite", class: "Sulfides", crystal: "Cubic", hardness: "6–6.5", origins: ["Spain"], notes: "Untreated.", story: "Fool's gold." },
-  { name: "Petrified Wood (PNW)", class: "Silicates", crystal: "Trigonal", hardness: "6.5–7", origins: ["Washington"], notes: "Untreated.", story: "A forest turned to stone." },
-  { name: "Thunderegg", class: "Silicates", crystal: "Trigonal", hardness: "6.5–7", origins: ["Oregon"], notes: "Untreated.", story: "Oregon's state rock." }
-];
+if (!DATABASE_URL) {
+  console.error("ðŸš¨ DATABASE_URL is missing from .env");
+  process.exit(1);
+}
 
-const CREATE_METAOBJECT_MUTATION = `
-  mutation metaobjectCreate($metaobject: MetaobjectCreateInput!) {
-    metaobjectCreate(metaobject: $metaobject) {
-      metaobject { id handle }
-      userErrors { field message }
-    }
-  }
-`;
+// Clean product titles to extract the base stone name
+function extractStoneName(title) {
+  const ignoreWords = /\b(ring|pendant|necklace|bracelet|earrings|cabochon|slab|freeform|rough|raw|tumbled|sphere|tower|point|cluster|geode)\b/gi;
+  return title.replace(ignoreWords, "").replace(/[-â€“â€”]/g, "").replace(/\s{2,}/g, " ").trim();
+}
 
-const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+// Strip HTML from descriptions
+function stripHtml(html) {
+  return html ? html.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim() : "";
+}
 
-async function run() {
-  console.log(`\n?? Searching database for access token belonging to ${SHOP}...`);
+// Parse description for fallback data
+function parseDescription(text) {
+  const result = {};
+  const originMatch = text.match(/(?:found in|origin[:\s]+|from\s+)([A-Z][a-zA-Z\s,]+)/);
+  if (originMatch) result.typical_origins = originMatch[1].trim();
+  
+  const hardnessMatch = text.match(/(?:mohs|hardness)[\s:]*([\d.-]+)/i);
+  if (hardnessMatch) result.mohs_hardness = hardnessMatch[1].trim();
 
+  return result;
+}
+
+// 1. Get Access Token from Render PostgreSQL
+async function getAccessToken() {
+  console.log(`ðŸ” Connecting to Render PostgreSQL to find token for ${SHOP}...`);
   const client = new Client({
-    connectionString: DB_URL,
+    connectionString: DATABASE_URL,
     ssl: { rejectUnauthorized: false }
   });
 
-  await client.connect();
-
-  let token = null;
-
   try {
-    // Try Prisma's 'Session' table first, then fallback to 'sessions'
+    await client.connect();
+    
+    // Try Prisma default table name first, fallback to shopify_sessions
     let res;
     try {
-      res = await client.query(`SELECT * FROM "Session" WHERE shop = $1 LIMIT 1`, [SHOP]);
+      res = await client.query(`SELECT "accessToken" FROM "session" WHERE shop = $1 ORDER BY "updatedAt" DESC LIMIT 1`, [SHOP]);
     } catch (e) {
-      res = await client.query(`SELECT * FROM sessions WHERE shop = $1 LIMIT 1`, [SHOP]);
+      res = await client.query(`SELECT "accessToken" FROM shopify_sessions WHERE shop = $1 ORDER BY updated_at DESC LIMIT 1`, [SHOP]);
     }
 
-    if (res && res.rows.length > 0) {
-      token = res.rows[0].accessToken || res.rows[0].access_token;
+    if (res.rows.length === 0) {
+      console.error(`ðŸš¨ No active session found in the DB for shop: ${SHOP}`);
+      process.exit(1);
     }
-  } catch (err) {
-    console.error("?? Database query failed:", err.message);
+
+    console.log(`âœ… Access token successfully retrieved.`);
+    return res.rows[0].accessToken || res.rows[0].access_token;
+  } catch (error) {
+    console.error("ðŸš¨ Database connection error:", error.message);
     process.exit(1);
   } finally {
     await client.end();
   }
-
-  if (!token) {
-    console.error(`?? No access token found in the database for ${SHOP}. Ensure the app is installed on the store!`);
-    process.exit(1);
-  }
-
-  console.log("?? Token acquired successfully! Starting injection...\n");
-
-  for (const gem of gemDictionary) {
-    const variables = {
-      metaobject: {
-        type: "gem_dictionary",
-        fields: [
-          { key: "stone_name", value: gem.name },
-          { key: "mineral_class", value: gem.class },
-          { key: "crystal_system", value: gem.crystal },
-          { key: "mohs_hardness", value: gem.hardness },
-          { key: "typical_origins", value: JSON.stringify(gem.origins) },
-          { key: "treatment_notes", value: gem.notes },
-          { key: "story_seed", value: gem.story }
-        ]
-      }
-    };
-
-    try {
-      const response = await fetch(GRAPHQL_URL, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Shopify-Access-Token": token
-        },
-        body: JSON.stringify({ query: CREATE_METAOBJECT_MUTATION, variables })
-      });
-
-      const result = await response.json();
-      
-      if (result.errors) {
-        console.error(`? Network error for ${gem.name}:`, result.errors[0].message);
-      } else if (result.data?.metaobjectCreate?.userErrors?.length > 0) {
-        console.error(`?? Shopify rejected ${gem.name}:`, result.data.metaobjectCreate.userErrors[0].message);
-      } else {
-        console.log(`? Injected: ${gem.name}`);
-      }
-      
-    } catch (error) {
-      console.error(`?? Crash on ${gem.name}:`, error.message);
-    }
-
-    await delay(300);
-  }
-  
-  console.log("\n?? Vault seeding complete! Your AI Scanner is fully loaded.");
 }
 
-run();
+// 2. Fetch All Products from Shopify
+async function fetchAllProducts(token) {
+  const endpoint = `https://${SHOP}/admin/api/2024-01/graphql.json`;
+  let products = [];
+  let hasNextPage = true;
+  let cursor = null;
+
+  console.log(`\nðŸ“¦ Fetching products from ${SHOP}...`);
+
+  while (hasNextPage) {
+    const query = `
+      query getProducts($cursor: String) {
+        products(first: 50, after: $cursor) {
+          pageInfo { hasNextPage endCursor }
+          edges {
+            node {
+              title
+              descriptionHtml
+              tags
+              geologyMetafields: metafields(first: 10, namespace: "geology") {
+                edges { node { key value } }
+              }
+              shopifyMetafields: metafields(first: 10, namespace: "shopify") {
+                edges { node { key value } }
+              }
+            }
+          }
+        }
+      }
+    `;
+
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': token },
+      body: JSON.stringify({ query, variables: { cursor } })
+    });
+
+    const { data, errors } = await response.json();
+    if (errors) throw new Error(JSON.stringify(errors));
+
+    const pageInfo = data.products.pageInfo;
+    products = products.concat(data.products.edges.map(e => e.node));
+    
+    hasNextPage = pageInfo.hasNextPage;
+    cursor = pageInfo.endCursor;
+  }
+
+  console.log(`âœ… Fetched ${products.length} products.`);
+  return products;
+}
+
+// 3. Create Metaobject in Shopify
+async function createMetaobject(token, gemData) {
+  const endpoint = `https://${SHOP}/admin/api/2024-01/graphql.json`;
+  
+  const fields = Object.entries(gemData).map(([key, value]) => ({
+    key,
+    value: value ? String(value).trim() : ""
+  })).filter(f => f.value !== ""); // Only send fields that have data. Do not fabricate.
+
+  const mutation = `
+    mutation CreateGemMetaobject($metaobject: MetaobjectCreateInput!) {
+      metaobjectCreate(metaobject: $metaobject) {
+        metaobject { handle }
+        userErrors { field message }
+      }
+    }
+  `;
+
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': token },
+    body: JSON.stringify({
+      query: mutation,
+      variables: {
+        metaobject: { type: METAOBJECT_TYPE, capabilities: { publishable: { status: "ACTIVE" } }, fields }
+      }
+    })
+  });
+
+  const { data, errors } = await response.json();
+  if (errors) throw new Error(JSON.stringify(errors));
+  
+  const userErrors = data?.metaobjectCreate?.userErrors || [];
+  if (userErrors.length > 0) throw new Error(userErrors.map(e => e.message).join(", "));
+  
+  return data.metaobjectCreate.metaobject.handle;
+}
+
+// Main Execution Flow
+(async () => {
+  try {
+    const token = await getAccessToken();
+    const products = await fetchAllProducts(token);
+    
+    const uniqueGems = new Map();
+
+    console.log(`\nðŸ§  Extracting and deduplicating gem data...`);
+
+    for (const p of products) {
+      const stoneName = extractStoneName(p.title);
+      if (!stoneName || stoneName.length < 3) continue;
+
+      // Extract Metafields
+      const mf = {};
+      const allMetafields = [...(p.geologyMetafields?.edges||[]), ...(p.shopifyMetafields?.edges||[])];
+      allMetafields.forEach(({ node }) => {
+        mf[node.key] = node.value.replace(/\[|\]|"/g, ""); // Clean GID lists if any
+      });
+
+      const parsedDesc = parseDescription(stripHtml(p.descriptionHtml));
+
+      // Build the Gem Object based on strict schema
+      const gemEntry = {
+        stone_name: stoneName,
+        mineral_class: mf['mineral-class'] || mf['mineral_class'] || "",
+        crystal_system: mf['crystal-system'] || mf['crystal_system'] || "",
+        mohs_hardness: mf['hardness'] || parsedDesc.mohs_hardness || "",
+        typical_origins: mf['origin_location'] || mf['where_found'] || parsedDesc.typical_origins || "",
+        treatment_notes: "", // Rarely stored in standard product metafields, leaving blank
+        story_seed: mf['stone_story'] || ""
+      };
+
+      // Deduplicate: If we already have this stone, merge any missing data
+      if (uniqueGems.has(stoneName.toLowerCase())) {
+        const existing = uniqueGems.get(stoneName.toLowerCase());
+        Object.keys(gemEntry).forEach(key => {
+          if (!existing[key] && gemEntry[key]) {
+            existing[key] = gemEntry[key];
+          }
+        });
+      } else {
+        uniqueGems.set(stoneName.toLowerCase(), gemEntry);
+      }
+    }
+
+    console.log(`âœ… Found ${uniqueGems.size} unique stones. Beginning Metaobject creation...\n`);
+
+    let successCount = 0;
+    let errorCount = 0;
+
+    for (const [key, gemData] of uniqueGems.entries()) {
+      try {
+        const handle = await createMetaobject(token, gemData);
+        console.log(`âœ… Created: ${gemData.stone_name} -> ${handle}`);
+        successCount++;
+      } catch (e) {
+        console.error(`âŒ Failed: ${gemData.stone_name} - ${e.message}`);
+        errorCount++;
+      }
+      // Throttle API calls
+      await new Promise(res => setTimeout(res, 300));
+    }
+
+    console.log(`\nðŸŽ‰ Process complete. ${successCount} created, ${errorCount} failed.`);
+
+  } catch (err) {
+    console.error("\nðŸš¨ FATAL ERROR:", err);
+  }
+})();

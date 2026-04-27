@@ -22,6 +22,8 @@ import {
   Popover,
   ActionList,
   Divider,
+  Scrollable,
+  ProgressBar
 } from "@shopify/polaris";
 import { QuestionCircleIcon, MenuIcon } from "@shopify/polaris-icons";
 
@@ -142,6 +144,11 @@ const TEXT_FIELDS = [
   { key: "stone_story", label: "Stone Story", help: "The narrative history or provenance of this stone", placeholder: "e.g. Found near volcanic ridge in Eastern Oregon..." },
   { key: "rescued_by", label: "Rescued By", help: "Who collected or rescued this stone", placeholder: "e.g. Bob, field collected 2023" },
   { key: "origin_location", label: "Origin Location", help: "Specific location where the stone was found", placeholder: "e.g. Yakima Valley, WA" },
+];
+
+const TARGET_KEYS = [
+  "crystal-system", "mineral-class", "rock-formation", "geological-era", "rock-composition",
+  "hardness", "where_found", "geological_age", "character_marks", "stone_story", "rescued_by", "origin_location"
 ];
 
 const STONE_TYPES = [
@@ -345,6 +352,9 @@ export const loader = async ({ request }) => {
                 metafields(first: 20, namespace: "geology") {
                   edges { node { key value } }
                 }
+                shopifyMeta: metafields(first: 20, namespace: "shopify") {
+                  edges { node { key value } }
+                }
                 collections(first: 10) {
                   edges { node { id title } }
                 }
@@ -382,14 +392,25 @@ export const loader = async ({ request }) => {
     if (collectionsData.errors) console.error("🚨 GraphQL Collections Error:", JSON.stringify(collectionsData.errors, null, 2));
     if (taxonomiesData.errors) console.error("🚨 GraphQL Taxonomies Error:", JSON.stringify(taxonomiesData.errors, null, 2));
 
-    const products = (productsData.data?.products?.edges || []).map(({ node }) => ({
-      ...node,
-      description: stripHtml(node.descriptionHtml),
-      metafields: Object.fromEntries(
-        (node.metafields?.edges || []).map(({ node: mf }) => [mf.key, mf.value])
-      ),
-      currentCollections: (node.collections?.edges || []).map(({ node: c }) => ({ id: c.id, title: c.title })),
-    }));
+    const products = (productsData.data?.products?.edges || []).map(({ node }) => {
+      const mergedMetafields = {
+        ...Object.fromEntries((node.metafields?.edges || []).map(({ node: mf }) => [mf.key, mf.value])),
+        ...Object.fromEntries((node.shopifyMeta?.edges || []).map(({ node: mf }) => [mf.key, mf.value]))
+      };
+
+      const filledFields = Object.keys(mergedMetafields).filter(k => TARGET_KEYS.includes(k) && mergedMetafields[k] && mergedMetafields[k] !== "[]");
+      let status = "🔴 Empty";
+      if (filledFields.length === TARGET_KEYS.length) status = "✅ Complete";
+      else if (filledFields.length > 0) status = "⚠️ Partial";
+
+      return {
+        ...node,
+        description: stripHtml(node.descriptionHtml),
+        metafields: mergedMetafields,
+        status,
+        currentCollections: (node.collections?.edges || []).map(({ node: c }) => ({ id: c.id, title: c.title })),
+      };
+    });
 
     const collections = (collectionsData.data?.collections?.edges || [])
       .map(({ node }) => node)
@@ -409,7 +430,6 @@ export const loader = async ({ request }) => {
        rock_composition: parseMetaobjects(taxonomiesData.data?.rockComp?.edges || []),
     };
 
-    // WIRING: The dynamic GEM Database parsing updated to your exact new schema
     const dynamicGemDatabase = {};
     (taxonomiesData.data?.gemDict?.edges || []).forEach(({ node }) => {
       const getVal = (k) => node.fields.find(f => f.key === k)?.value;
@@ -474,6 +494,34 @@ export const action = async ({ request }) => {
       `, { variables: { metafields: metafields.slice(i, i + batchSize) } });
     }
     return data({ ok: true, intent });
+  }
+
+  if (intent === "bulk_edit_new") {
+      const updates = JSON.parse(formData.get("updates"));
+      const ids = JSON.parse(formData.get("ids"));
+      const metafields = [];
+
+      ids.forEach((ownerId) => {
+          Object.keys(updates).forEach(key => {
+             const val = updates[key];
+             const taxDef = Object.values(TAXONOMY).find(t => t.key === key);
+             if (taxDef) {
+                 metafields.push({ ownerId, namespace: "shopify", key, value: val ? `["${val}"]` : "[]", type: "list.metaobject_reference" });
+             } else {
+                 metafields.push({ ownerId, namespace: "geology", key, value: val || "", type: "single_line_text_field" });
+             }
+          });
+      });
+
+      const batchSize = 6;
+      for (let i = 0; i < metafields.length; i += batchSize) {
+          await admin.graphql(`
+              mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
+                  metafieldsSet(metafields: $metafields) { userErrors { field message } }
+              }
+          `, { variables: { metafields: metafields.slice(i, i + batchSize) } });
+      }
+      return data({ ok: true, intent });
   }
 
   if (intent === "addTaxonomy") {
@@ -595,17 +643,17 @@ function LabelWithHelp({ label, help }) {
 }
 
 function completeness(metafields) {
-  const filled = TEXT_FIELDS.filter((f) => metafields[f.key]).length;
-  if (filled === TEXT_FIELDS.length) return "success";
+  const filled = TARGET_KEYS.filter((k) => metafields[k] && metafields[k] !== "[]").length;
+  if (filled === TARGET_KEYS.length) return "success";
   if (filled === 0) return "critical";
   return "warning";
 }
 
 function completenessLabel(metafields) {
-  const filled = TEXT_FIELDS.filter((f) => metafields[f.key]).length;
-  if (filled === TEXT_FIELDS.length) return "Complete";
+  const filled = TARGET_KEYS.filter((k) => metafields[k] && metafields[k] !== "[]").length;
+  if (filled === TARGET_KEYS.length) return "Complete";
   if (filled === 0) return "Empty";
-  return `${filled}/${TEXT_FIELDS.length} fields`;
+  return `${filled}/${TARGET_KEYS.length} fields`;
 }
 
 function ScanPreviewCard({ product, scanResult, onConfirm, onDismiss, loading }) {
@@ -799,7 +847,7 @@ function ProductCollectionCard({ product, collections }) {
   );
 }
 
-function CollectionsTab({ products, collections, fetcher }) {
+function CollectionsTab({ products, collections, fetcher, onBack }) {
   const [newCollTitle, setNewCollTitle] = useState("");
   const [editId, setEditId] = useState(null);
   const [editTitle, setEditTitle] = useState("");
@@ -836,6 +884,10 @@ function CollectionsTab({ products, collections, fetcher }) {
 
   return (
     <BlockStack gap="500">
+      <InlineStack>
+        <Button onClick={onBack}>⬅️ Back to Products</Button>
+      </InlineStack>
+
       <Card>
         <BlockStack gap="300">
           <Text variant="headingMd">➕ Create New Collection</Text>
@@ -931,8 +983,11 @@ export default function MetaInjector() {
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState(null);
   const [checkedIds, setCheckedIds] = useState([]);
-  const [form, setForm] = useState({});
-  const [bulkForm, setBulkForm] = useState({});
+  
+  const [tickedFields, setTickedFields] = useState({});
+  const [fieldValues, setFieldValues] = useState({});
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [progress, setProgress] = useState({ current: 0, total: 0, title: "" });
   
   const [tabIndex, setTabIndex] = useState(0);
   const [menuActive, setMenuActive] = useState(false);
@@ -943,8 +998,6 @@ export default function MetaInjector() {
   const [injectStatus, setInjectStatus] = useState(null);
   const [mindatName, setMindatName] = useState("");
   const [mindatStatus, setMindatStatus] = useState(null);
-  const [addingNew, setAddingNew] = useState({});
-  const [newName, setNewName] = useState({});
 
   const [scanResult, setScanResult] = useState(null);
   const [scannedProduct, setScannedProduct] = useState(null);
@@ -968,27 +1021,6 @@ export default function MetaInjector() {
     setScanResult(result);
     setScannedProduct(product);
     setSelected(product);
-    
-    const prefilled = {};
-    Object.entries(result).forEach(([k,v]) => { 
-      if (v.value) {
-         prefilled[k] = TAXONOMY[k] ? getGidFromLabel(k, v.value) : v.value;
-      } 
-    });
-    setForm({ ...product.metafields, ...prefilled });
-  };
-
-  const handleScanConfirm = () => {
-    if (!scannedProduct) return;
-    const fd = new FormData();
-    fd.append("intent","save");
-    fd.append("ids", JSON.stringify([scannedProduct.id]));
-    Object.keys(TAXONOMY).forEach((k) => fd.append(k, form[k] || ""));
-    TEXT_FIELDS.forEach(({key}) => fd.append(key, form[key] || ""));
-    fetcher.submit(fd, { method:"post" });
-    setScanResult(null);
-    setScannedProduct(null);
-    setTabIndex(1);
   };
 
   const handleScanDismiss = () => { setScanResult(null); setScannedProduct(null); };
@@ -1000,101 +1032,109 @@ export default function MetaInjector() {
     setScannedProduct(null);
   };
 
-  const handleInjectAll = () => {
-    const lines = [];
-    scanAllResults.forEach(({product:p, scan}) => {
-      Object.entries(scan).forEach(([key,{value}]) => {
-        if (!value) return;
+  const processBulkQueue = async () => {
+     if (checkedIds.length === 0 || !Object.values(tickedFields).some(Boolean)) return;
+     setIsProcessing(true);
+
+     const updates = {};
+     Object.keys(tickedFields).forEach(k => {
+         if (tickedFields[k]) updates[k] = fieldValues[k] || "";
+     });
+
+     for (let i = 0; i < checkedIds.length; i++) {
+        const pId = checkedIds[i];
+        const pObj = products.find(p => p.id === pId);
+        setProgress({ current: i + 1, total: checkedIds.length, title: pObj?.title || "Unknown" });
+
+        const fd = new FormData();
+        fd.append("intent", "bulk_edit_new");
+        fd.append("ids", JSON.stringify([pId]));
+        fd.append("updates", JSON.stringify(updates));
         
-        if (TEXT_FIELDS.find((f) => f.key === key)) {
-          lines.push(JSON.stringify({ownerId:p.id,namespace:"geology",key,value,type:"single_line_text_field"}));
-        } else if (TAXONOMY[key]) {
-          const gid = getGidFromLabel(key, value);
-          if (gid && gid.startsWith("gid://")) {
-            lines.push(JSON.stringify({ownerId:p.id,namespace:"shopify",key:TAXONOMY[key].key,value:`["${gid}"]`,type:"list.metaobject_reference"}));
-          }
-        }
-      });
-    });
-    const fd = new FormData();
-    fd.append("intent","inject");
-    fd.append("payload", lines.join("\n"));
-    fetcher.submit(fd, { method:"post" });
-    setScanAllResults(null);
-  };
-
-  const handleDropdownChange = (fieldKey, value, isBulk) => {
-    if (value === "__add__") {
-      setAddingNew({ ...addingNew, [fieldKey]: true });
-    } else {
-      if (isBulk) setBulkForm({ ...bulkForm, [fieldKey]: value });
-      else setForm({ ...form, [fieldKey]: value });
-    }
-  };
-
-  const handleAddTaxonomy = (fieldKey) => {
-    const name = newName[fieldKey];
-    if (!name) return;
-    const fd = new FormData();
-    fd.append("intent", "addTaxonomy");
-    fd.append("metaobjectType", TAXONOMY[fieldKey].metaobjectType);
-    fd.append("name", name);
-    fetcher.submit(fd, { method: "post" });
-    setAddingNew({ ...addingNew, [fieldKey]: false });
-    setNewName({ ...newName, [fieldKey]: "" });
-  };
-
-  const handleSave = () => {
-    const fd = new FormData();
-    fd.append("intent", "save");
-    fd.append("ids", JSON.stringify([selected.id]));
-    Object.keys(TAXONOMY).forEach((k) => fd.append(k, form[k] || ""));
-    TEXT_FIELDS.forEach(({ key }) => fd.append(key, form[key] || ""));
-    fetcher.submit(fd, { method: "post" });
-  };
-
-  const handleBulk = () => {
-    const fd = new FormData();
-    fd.append("intent", "bulk");
-    fd.append("ids", JSON.stringify(checkedIds));
-    Object.keys(TAXONOMY).forEach((k) => fd.append(k, bulkForm[k] || ""));
-    TEXT_FIELDS.forEach(({ key }) => fd.append(key, bulkForm[key] || ""));
-    fetcher.submit(fd, { method: "post" });
+        await fetch(".", { method: "POST", body: fd });
+     }
+     
+     setIsProcessing(false);
+     setProgress({ current: 0, total: 0, title: "" });
+     fetcher.submit({}, { method: "get" }); 
   };
 
   const handleAutoInject = async () => {
     if (!injectProduct) return;
     setInjectStatus("loading");
     const product = products.find((p) => p.id === injectProduct);
-    if (!product) { setInjectStatus("error"); return; }
-    const descData = parseDescription(product.description || "");
+    if (!product) return;
+
+    const existingMeta = product.metafields || {};
+    const fieldsToCheck = [
+        { key: 'hardness', type: 'text', ns: 'geology' },
+        { key: 'where_found', type: 'text', ns: 'geology' },
+        { key: 'geological_age', type: 'text', ns: 'geology' },
+        { key: 'character_marks', type: 'text', ns: 'geology' },
+        { key: 'stone_story', type: 'text', ns: 'geology' },
+        { key: 'rescued_by', type: 'text', ns: 'geology' },
+        { key: 'origin_location', type: 'text', ns: 'geology' },
+        { key: 'crystal_system', storeKey: 'crystal-system', type: 'tax', ns: 'shopify' },
+        { key: 'mineral_class', storeKey: 'mineral-class', type: 'tax', ns: 'shopify' },
+        { key: 'rock_formation', storeKey: 'rock-formation', type: 'tax', ns: 'shopify' },
+        { key: 'geological_era', storeKey: 'geological-era', type: 'tax', ns: 'shopify' },
+        { key: 'rock_composition', storeKey: 'rock-composition', type: 'tax', ns: 'shopify' }
+    ];
+
+    const isFilled = (k) => existingMeta[k] && existingMeta[k] !== "[]" && existingMeta[k] !== "";
+    const parsed = parseDescription(product.description || "");
+    
     let mindatData = {};
-    try {
-      const res = await fetch(
-        `https://api.mindat.org/minerals/?name=${encodeURIComponent(product.title)}&format=json`,
-        { headers: { Authorization: "Token YOUR_MINDAT_API_TOKEN" } }
-      );
-      const resData = await res.json();
-      const mineral = resData.results?.[0];
-      if (mineral) {
-        mindatData = {
-          hardness: mineral.hardness || "",
-          where_found: mineral.localities || "",
-          geological_age: mineral.geological_age || "",
-        };
-      }
-    } catch {}
+    const emptyForMindat = fieldsToCheck.filter(f => !isFilled(f.storeKey || f.key) && ['hardness','where_found','geological_age'].includes(f.key));
+
+    if (emptyForMindat.length > 0) {
+        try {
+             const res = await fetch(`https://api.mindat.org/minerals/?name=${encodeURIComponent(product.title)}&format=json`, {
+               headers: { Authorization: `Token ${process.env.MINDAT_API_KEY || "YOUR_MINDAT_API_TOKEN"}` }
+             });
+             const resData = await res.json();
+             if (resData.results?.[0]) {
+               mindatData = {
+                 hardness: resData.results[0].hardness,
+                 where_found: resData.results[0].localities,
+                 geological_age: resData.results[0].geological_age
+               };
+             }
+        } catch(e) {}
+    }
+
     const lines = [];
-    const textData = { ...descData, ...mindatData };
-    TEXT_FIELDS.forEach(({ key }) => {
-      if (textData[key]) {
-        lines.push(JSON.stringify({ ownerId: product.id, namespace: "geology", key, value: textData[key], type: "single_line_text_field" }));
-      }
+    fieldsToCheck.forEach(f => {
+        const actKey = f.storeKey || f.key;
+        if (isFilled(actKey)) return;
+
+        let val = "";
+        let verified = false;
+
+        if (mindatData[f.key]) {
+            val = mindatData[f.key];
+            verified = true;
+        } else if (parsed[f.key]) {
+            val = parsed[f.key];
+            verified = false;
+        } else {
+            const scanned = scanProduct(product, dynamicGemDatabase);
+            if (scanned[f.key]?.value) {
+                val = scanned[f.key].value;
+                verified = scanned[f.key].source === "lookup";
+            }
+        }
+
+        if (val) {
+            const finalVal = verified ? val : `⚠️ ${val}`;
+            if (f.type === 'text') {
+                lines.push(JSON.stringify({ ownerId: product.id, namespace: f.ns, key: f.key, value: finalVal, type: "single_line_text_field" }));
+            } else {
+                lines.push(JSON.stringify({ ownerId: product.id, namespace: f.ns, key: actKey, value: `["REPLACE_WITH_GID_FOR_${finalVal}"]`, type: "list.metaobject_reference" }));
+            }
+        }
     });
-    Object.keys(TAXONOMY).forEach((fieldKey) => {
-      const config = TAXONOMY[fieldKey];
-      lines.push(JSON.stringify({ ownerId: product.id, namespace: "shopify", key: config.key, value: `["REPLACE_WITH_GID"]`, type: "list.metaobject_reference", _note: `Select correct ${config.label} GID` }));
-    });
+
     setPayload(lines.join("\n"));
     setInjectStatus("ready");
   };
@@ -1111,14 +1151,12 @@ export default function MetaInjector() {
     try {
       const res = await fetch(
         `https://api.mindat.org/minerals/?name=${encodeURIComponent(mindatName)}&format=json`,
-        { headers: { Authorization: "Token YOUR_MINDAT_API_TOKEN" } }
+        { headers: { Authorization: `Token ${process.env.MINDAT_API_KEY || "YOUR_MINDAT_API_TOKEN"}` } }
       );
       const resData = await res.json();
       const mineral = resData.results?.[0];
       if (mineral) {
-        setForm({ hardness: mineral.hardness || "", where_found: mineral.localities || "", geological_age: mineral.geological_age || "" });
         setMindatStatus("found");
-        setTabIndex(1);
       } else {
         setMindatStatus("notfound");
       }
@@ -1132,8 +1170,6 @@ export default function MetaInjector() {
 
   const tabs = [
     { id: "grid", content: "🪨 Products" },
-    { id: "form", content: "✏️ Edit Stone" },
-    { id: "check", content: "🔍 Check Meta" },
     { id: "bulk", content: "📦 Bulk Edit" },
     { id: "inject", content: "💉 Inject" },
     { id: "mindat", content: "🌍 Mindat" },
@@ -1141,47 +1177,26 @@ export default function MetaInjector() {
     { id: "menus", content: "🗂️ Menu Config" },
   ];
 
-  const renderTaxonomyField = (fieldKey, isBulk) => {
-    const config = TAXONOMY[fieldKey];
-    const currentForm = isBulk ? bulkForm : form;
-    
-    // Combine dynamic and hardcoded options to prevent blanks
+  const renderNewTaxonomyField = (fieldKey, label) => {
     const dynamicOpts = dynamicTaxonomy?.[fieldKey] || [];
-    const hardcodedOpts = config.options.filter(o => o.value !== "" && o.value !== "__add__");
+    const hardcodedOpts = TAXONOMY[fieldKey]?.options?.filter(o => o.value !== "" && o.value !== "__add__") || [];
     
-    // Create a unique set of options based on label
     const combinedMap = new Map();
     hardcodedOpts.forEach(o => combinedMap.set(o.label.toLowerCase(), o));
     dynamicOpts.forEach(o => combinedMap.set(o.label.toLowerCase(), o));
 
     const finalOptions = [
       { label: "-- Select --", value: "" },
-      ...Array.from(combinedMap.values()).sort((a,b) => a.label.localeCompare(b.label)),
-      { label: "+ Add New", value: "__add__" }
+      ...Array.from(combinedMap.values()).sort((a,b) => a.label.localeCompare(b.label))
     ];
 
     return (
-      <BlockStack gap="200" key={fieldKey}>
-        <Select
-          label={<LabelWithHelp label={config.label} help={config.help} />}
-          options={finalOptions}
-          value={currentForm[fieldKey] || ""}
-          onChange={(v) => handleDropdownChange(fieldKey, v, isBulk)}
-        />
-        {addingNew[fieldKey] && (
-          <InlineStack gap="200">
-            <TextField
-              label=""
-              value={newName[fieldKey] || ""}
-              onChange={(v) => setNewName({ ...newName, [fieldKey]: v })}
-              placeholder={`New ${config.label} name...`}
-              autoComplete="off"
-            />
-            <Button onClick={() => handleAddTaxonomy(fieldKey)} variant="primary">Save</Button>
-            <Button onClick={() => setAddingNew({ ...addingNew, [fieldKey]: false })}>Cancel</Button>
-          </InlineStack>
-        )}
-      </BlockStack>
+      <Select
+        label=""
+        options={finalOptions}
+        value={fieldValues[TAXONOMY[fieldKey].key] || ""}
+        onChange={(v) => setFieldValues({ ...fieldValues, [TAXONOMY[fieldKey].key]: v })}
+      />
     );
   };
 
@@ -1217,6 +1232,17 @@ export default function MetaInjector() {
                 </Popover>
               </InlineStack>
 
+              {isProcessing && (
+                  <Box paddingBlockEnd="400">
+                    <BlockStack gap="200">
+                      <Text variant="bodyMd" as="p">
+                        Processing {progress.current} of {progress.total} — {progress.title}...
+                      </Text>
+                      <ProgressBar progress={(progress.current / progress.total) * 100} size="small" tone="primary" />
+                    </BlockStack>
+                  </Box>
+              )}
+
               <Box>
                 {tabIndex === 0 && (
                   <BlockStack gap="400">
@@ -1226,46 +1252,7 @@ export default function MetaInjector() {
                       {scanAllResults && <Text tone="caution">⚠️ {scanAllResults.filter((r) => Object.values(r.scan).some((f) => f.source==="manual")).length} products need manual input</Text>}
                       {scanAllResults && <Button onClick={() => setScanAllResults(null)}>Clear</Button>}
                     </InlineStack>
-                    {scanAllResults && (
-                      <Card>
-                        <BlockStack gap="300">
-                          <Text variant="headingMd">Scan All Results — {scanAllResults.length} products</Text>
-                          <div style={{overflowX:"auto"}}>
-                            <table style={{width:"100%",borderCollapse:"collapse",fontSize:"13px"}}>
-                              <thead>
-                                <tr style={{background:"#f6f6f7"}}>
-                                  {["Product","Stone Type","Color","Origin","Cut Shape","Hardness","Crystal System","Mineral Class","Status"].map((h) => (
-                                    <th key={h} style={{padding:"8px 10px",textAlign:"left",borderBottom:"1px solid #e1e3e5",whiteSpace:"nowrap"}}>{h}</th>
-                                  ))}
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {scanAllResults.map(({product:p, scan}) => {
-                                  const allFound = Object.values(scan).every((f) => f.source !== "manual");
-                                  return (
-                                    <tr key={p.id} style={{borderBottom:"1px solid #f1f1f1"}}>
-                                      <td style={{padding:"8px 10px",fontWeight:"600"}}>{p.title}</td>
-                                      {["stone_type","color","origin_location","cut_shape","hardness","crystal_system","mineral_class"].map((f) => (
-                                        <td key={f} style={{padding:"8px 10px",color:scan[f].source==="manual"?"#b98900":"#202223"}}>{scan[f].value||"—"}</td>
-                                      ))}
-                                      <td style={{padding:"8px 10px",fontSize:"16px"}}>{allFound?"✅":"⚠️"}</td>
-                                    </tr>
-                                  );
-                                })}
-                              </tbody>
-                            </table>
-                          </div>
-                          <InlineStack gap="300">
-                            <Button variant="primary" onClick={handleInjectAll} loading={fetcher.state==="submitting"}>Inject All</Button>
-                            <Button onClick={() => setScanAllResults(null)}>Dismiss</Button>
-                          </InlineStack>
-                          {fetcher.data?.injected !== undefined && <Banner tone="success">Injected {fetcher.data.injected} metafield(s) successfully!</Banner>}
-                        </BlockStack>
-                      </Card>
-                    )}
-                    {scanResult && scannedProduct && !scanAllResults && (
-                      <ScanPreviewCard product={scannedProduct} scanResult={scanResult} onConfirm={handleScanConfirm} onDismiss={handleScanDismiss} loading={fetcher.state==="submitting"} />
-                    )}
+                    
                     <Grid>
                       {filtered.map((product) => (
                         <Grid.Cell key={product.id} columnSpan={{xs:6,sm:4,md:3,lg:3}}>
@@ -1273,7 +1260,9 @@ export default function MetaInjector() {
                             <img src={product.featuredImage?.url || "https://cdn.shopify.com/s/files/1/0533/2089/files/placeholder-images-image_medium.png"} alt={product.title} style={{width:"100%",height:"140px",objectFit:"cover"}} />
                             <div style={{padding:"8px"}}>
                               <Text variant="bodySm" fontWeight="bold">{product.title}</Text>
-                              <Badge tone={completeness(product.metafields)}>{completenessLabel(product.metafields)}</Badge>
+                              <Badge tone={product.status === "✅ Complete" ? "success" : product.status === "🔴 Empty" ? "critical" : "warning"}>
+                                 {product.status}
+                              </Badge>
                             </div>
                           </div>
                         </Grid.Cell>
@@ -1283,56 +1272,6 @@ export default function MetaInjector() {
                 )}
 
                 {tabIndex === 1 && (
-                  <BlockStack gap="400">
-                    {!selected ? (
-                      <Banner tone="info">Select a stone from the Products tab to edit its metafields.</Banner>
-                    ) : (
-                      <>
-                        <Text variant="headingMd">{selected.title}</Text>
-                        <FormLayout>
-                          {Object.keys(TAXONOMY).map((fieldKey) => renderTaxonomyField(fieldKey, false))}
-                          {TEXT_FIELDS.map((f) => (
-                            <TextField
-                              key={f.key}
-                              label={<LabelWithHelp label={f.label} help={f.help} />}
-                              value={form[f.key] || ""}
-                              onChange={(v) => setForm({ ...form, [f.key]: v })}
-                              placeholder={f.placeholder}
-                              autoComplete="off"
-                              multiline={f.key === "stone_story" ? 4 : undefined}
-                            />
-                          ))}
-                        </FormLayout>
-                        <Button variant="primary" onClick={handleSave} loading={fetcher.state === "submitting"}>
-                          Save Stone
-                        </Button>
-                        {fetcher.data?.ok && fetcher.data?.intent === "save" && (
-                          <Banner tone="success">Stone saved successfully!</Banner>
-                        )}
-                      </>
-                    )}
-                  </BlockStack>
-                )}
-
-                {tabIndex === 2 && (
-                  <BlockStack gap="400">
-                    <Text variant="headingMd">Metafield Verification Report</Text>
-                    <Banner tone="info">Compares your store metafields against Mindat.org data. Requires Mindat API token.</Banner>
-                    {products.map((p) => (
-                      <Card key={p.id}>
-                        <BlockStack gap="200">
-                          <InlineStack align="space-between">
-                            <Text variant="bodyMd" fontWeight="bold">{p.title}</Text>
-                            <Badge tone={completeness(p.metafields)}>{completenessLabel(p.metafields)}</Badge>
-                          </InlineStack>
-                          <MindatVerifier product={p} />
-                        </BlockStack>
-                      </Card>
-                    ))}
-                  </BlockStack>
-                )}
-
-                {tabIndex === 3 && (
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "24px" }}>
                     <BlockStack gap="300">
                       <InlineStack gap="200">
@@ -1360,32 +1299,49 @@ export default function MetaInjector() {
                         </BlockStack>
                       </div>
                     </BlockStack>
+                    
                     <BlockStack gap="300">
-                      <Text variant="headingMd">Apply to {checkedIds.length} Stone(s)</Text>
-                      <FormLayout>
-                        {Object.keys(TAXONOMY).map((fieldKey) => renderTaxonomyField(fieldKey, true))}
-                        {TEXT_FIELDS.map((f) => (
-                          <TextField
-                            key={f.key}
-                            label={<LabelWithHelp label={f.label} help={f.help} />}
-                            value={bulkForm[f.key] || ""}
-                            onChange={(v) => setBulkForm({ ...bulkForm, [f.key]: v })}
-                            placeholder={f.placeholder}
-                            autoComplete="off"
-                          />
-                        ))}
-                      </FormLayout>
-                      <Button variant="primary" onClick={handleBulk} disabled={checkedIds.length === 0} loading={fetcher.state === "submitting"}>
-                        Apply to {checkedIds.length} Stone(s)
+                      <Text variant="headingMd">Fields to Update</Text>
+                      <Scrollable style={{ height: "500px" }} shadow>
+                         <BlockStack gap="300">
+                            {Object.keys(TAXONOMY).map(fieldKey => (
+                               <BlockStack key={TAXONOMY[fieldKey].key} gap="100">
+                                  <Checkbox 
+                                     label={TAXONOMY[fieldKey].label} 
+                                     checked={tickedFields[TAXONOMY[fieldKey].key] || false} 
+                                     onChange={() => setTickedFields(prev => ({...prev, [TAXONOMY[fieldKey].key]: !prev[TAXONOMY[fieldKey].key]}))} 
+                                  />
+                                  {tickedFields[TAXONOMY[fieldKey].key] && renderNewTaxonomyField(fieldKey, TAXONOMY[fieldKey].label)}
+                               </BlockStack>
+                            ))}
+                            {TEXT_FIELDS.map(f => (
+                               <BlockStack key={f.key} gap="100">
+                                  <Checkbox 
+                                     label={f.label} 
+                                     checked={tickedFields[f.key] || false} 
+                                     onChange={() => setTickedFields(prev => ({...prev, [f.key]: !prev[f.key]}))} 
+                                  />
+                                  {tickedFields[f.key] && (
+                                     <TextField
+                                        label=""
+                                        value={fieldValues[f.key] || ""}
+                                        onChange={(v) => setFieldValues({ ...fieldValues, [f.key]: v })}
+                                        placeholder={f.placeholder}
+                                        autoComplete="off"
+                                     />
+                                  )}
+                               </BlockStack>
+                            ))}
+                         </BlockStack>
+                      </Scrollable>
+                      <Button variant="primary" onClick={processBulkQueue} disabled={checkedIds.length === 0 || isProcessing || !Object.values(tickedFields).some(Boolean)}>
+                        Save Ticked Fields to {checkedIds.length} Stone(s)
                       </Button>
-                      {fetcher.data?.ok && fetcher.data?.intent === "bulk" && (
-                        <Banner tone="success">Bulk save complete!</Banner>
-                      )}
                     </BlockStack>
                   </div>
                 )}
 
-                {tabIndex === 4 && (
+                {tabIndex === 2 && (
                   <BlockStack gap="400">
                     <Text variant="headingMd">Auto-build payload from product + Mindat</Text>
                     <Select
@@ -1415,7 +1371,7 @@ export default function MetaInjector() {
                   </BlockStack>
                 )}
 
-                {tabIndex === 5 && (
+                {tabIndex === 3 && (
                   <BlockStack gap="400">
                     <Text variant="headingMd">Pull verified geological data from Mindat.org.</Text>
                     <TextField
@@ -1428,19 +1384,18 @@ export default function MetaInjector() {
                     <Button variant="primary" onClick={handleMindat} loading={mindatStatus === "loading"}>
                       🌍 Lookup
                     </Button>
-                    {mindatStatus === "found" && <Banner tone="success">Found! Fields pre-filled — switch to Edit Stone to review and save.</Banner>}
+                    {mindatStatus === "found" && <Banner tone="success">Found! Verify details in JSON payload builder.</Banner>}
                     {mindatStatus === "notfound" && <Banner tone="warning">No results found for "{mindatName}".</Banner>}
                     {mindatStatus === "error" && <Banner tone="critical">Lookup failed. Check your Mindat API token.</Banner>}
-                    <Banner tone="info">Requires a Mindat.org API token. Token not yet configured.</Banner>
+                    <Banner tone="info">Requires a Mindat.org API token. Ensure process.env.MINDAT_API_KEY is configured.</Banner>
                   </BlockStack>
                 )}
 
-                {tabIndex === 6 && (
-                  <CollectionsTab products={products} collections={collections} fetcher={fetcher} />
+                {tabIndex === 4 && (
+                  <CollectionsTab products={products} collections={collections} fetcher={fetcher} onBack={() => setTabIndex(0)} />
                 )}
 
-                {/* --- NEW MENU TAB --- */}
-                {tabIndex === 7 && (
+                {tabIndex === 5 && (
                   <BlockStack gap="400">
                     <Text variant="headingMd">Menu GID Configuration</Text>
                     <Banner tone="success">All GIDs matched and locked. External customer URLs correctly bypass internal GID routing.</Banner>
