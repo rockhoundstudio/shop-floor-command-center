@@ -392,6 +392,7 @@ export const loader = async ({ request }) => {
     if (collectionsData.errors) console.error("🚨 GraphQL Collections Error:", JSON.stringify(collectionsData.errors, null, 2));
     if (taxonomiesData.errors) console.error("🚨 GraphQL Taxonomies Error:", JSON.stringify(taxonomiesData.errors, null, 2));
 
+    // PAGE LOAD AUTO-SCAN is fulfilled here: checking existing metafields immediately to apply badges.
     const products = (productsData.data?.products?.edges || []).map(({ node }) => {
       const mergedMetafields = {
         ...Object.fromEntries((node.metafields?.edges || []).map(({ node: mf }) => [mf.key, mf.value])),
@@ -408,6 +409,7 @@ export const loader = async ({ request }) => {
         description: stripHtml(node.descriptionHtml),
         metafields: mergedMetafields,
         status,
+        filledCount: filledFields.length,
         currentCollections: (node.collections?.edges || []).map(({ node: c }) => ({ id: c.id, title: c.title })),
       };
     });
@@ -709,7 +711,7 @@ function MindatVerifier({ product }) {
     try {
       const res = await fetch(
         `https://api.mindat.org/minerals/?name=${encodeURIComponent(product.title)}&format=json`,
-        { headers: { Authorization: "Token YOUR_MINDAT_API_TOKEN" } }
+        { headers: { Authorization: `Token ${process.env.MINDAT_API_KEY}` } }
       );
       const resData = await res.json();
       const mineral = resData.results?.[0];
@@ -1007,15 +1009,6 @@ export default function MetaInjector() {
     p.title.toLowerCase().includes(search.toLowerCase())
   );
 
-  const getGidFromLabel = (fieldKey, label) => {
-    if (!label) return label;
-    let option = (dynamicTaxonomy?.[fieldKey] || []).find(o => o.label.toLowerCase() === label.toLowerCase());
-    if (!option && TAXONOMY[fieldKey]?.options) {
-      option = TAXONOMY[fieldKey].options.find(o => o.label.toLowerCase() === label.toLowerCase());
-    }
-    return option ? option.value : label;
-  };
-
   const handleSelect = (product) => {
     const result = scanProduct(product, dynamicGemDatabase);
     setScanResult(result);
@@ -1044,6 +1037,7 @@ export default function MetaInjector() {
      for (let i = 0; i < checkedIds.length; i++) {
         const pId = checkedIds[i];
         const pObj = products.find(p => p.id === pId);
+        
         setProgress({ current: i + 1, total: checkedIds.length, title: pObj?.title || "Unknown" });
 
         const fd = new FormData();
@@ -1090,7 +1084,7 @@ export default function MetaInjector() {
     if (emptyForMindat.length > 0) {
         try {
              const res = await fetch(`https://api.mindat.org/minerals/?name=${encodeURIComponent(product.title)}&format=json`, {
-               headers: { Authorization: `Token ${process.env.MINDAT_API_KEY || "YOUR_MINDAT_API_TOKEN"}` }
+               headers: { Authorization: `Token ${process.env.MINDAT_API_KEY}` }
              });
              const resData = await res.json();
              if (resData.results?.[0]) {
@@ -1151,7 +1145,7 @@ export default function MetaInjector() {
     try {
       const res = await fetch(
         `https://api.mindat.org/minerals/?name=${encodeURIComponent(mindatName)}&format=json`,
-        { headers: { Authorization: `Token ${process.env.MINDAT_API_KEY || "YOUR_MINDAT_API_TOKEN"}` } }
+        { headers: { Authorization: `Token ${process.env.MINDAT_API_KEY}` } }
       );
       const resData = await res.json();
       const mineral = resData.results?.[0];
@@ -1234,12 +1228,14 @@ export default function MetaInjector() {
 
               {isProcessing && (
                   <Box paddingBlockEnd="400">
-                    <BlockStack gap="200">
-                      <Text variant="bodyMd" as="p">
-                        Processing {progress.current} of {progress.total} — {progress.title}...
-                      </Text>
-                      <ProgressBar progress={(progress.current / progress.total) * 100} size="small" tone="primary" />
-                    </BlockStack>
+                    <Banner tone="info">
+                      <BlockStack gap="200">
+                        <Text variant="bodyMd" as="p">
+                          Processing {progress.current} of {progress.total} — {progress.title}...
+                        </Text>
+                        <ProgressBar progress={(progress.current / progress.total) * 100} size="small" tone="primary" />
+                      </BlockStack>
+                    </Banner>
                   </Box>
               )}
 
@@ -1261,7 +1257,7 @@ export default function MetaInjector() {
                             <div style={{padding:"8px"}}>
                               <Text variant="bodySm" fontWeight="bold">{product.title}</Text>
                               <Badge tone={product.status === "✅ Complete" ? "success" : product.status === "🔴 Empty" ? "critical" : "warning"}>
-                                 {product.status}
+                                 {product.status} ({product.filledCount}/{TARGET_KEYS.length})
                               </Badge>
                             </div>
                           </div>
@@ -1301,9 +1297,9 @@ export default function MetaInjector() {
                     </BlockStack>
                     
                     <BlockStack gap="300">
-                      <Text variant="headingMd">Fields to Update</Text>
+                      <Text variant="headingMd">Fields to Update (Ticks ONLY update ticked fields)</Text>
                       <Scrollable style={{ height: "500px" }} shadow>
-                         <BlockStack gap="300">
+                         <BlockStack gap="300" padding="200">
                             {Object.keys(TAXONOMY).map(fieldKey => (
                                <BlockStack key={TAXONOMY[fieldKey].key} gap="100">
                                   <Checkbox 
