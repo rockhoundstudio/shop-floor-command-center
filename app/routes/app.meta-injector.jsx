@@ -20,7 +20,6 @@ import {
   Box,
   Divider
 } from "@shopify/polaris";
-import { authenticate } from "../shopify.server";
 
 const METAFIELD_NAMESPACE = "custom";
 const METAFIELDS = [
