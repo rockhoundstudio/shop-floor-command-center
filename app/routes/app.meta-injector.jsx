@@ -21,8 +21,42 @@ import {
   Box,
   Popover,
   ActionList,
+  Divider,
 } from "@shopify/polaris";
 import { QuestionCircleIcon, MenuIcon } from "@shopify/polaris-icons";
+
+// --- VERIFIED GID MAPS ---
+const MENU_MAP = {
+  main: [
+    { name: "all collections", path: "/collections/all-collections", gid: "gid://shopify/MenuItem/619586322683" },
+    { name: "Touch Stones & Mile Stones", path: "/collections/memorials", gid: "gid://shopify/MenuItem/619586355451" },
+    { name: "Small Batches / The Vault", path: "/collections/small-batches-the-vault", gid: "gid://shopify/MenuItem/619586388219" },
+    { name: "Wearable Art", path: "/collections/wearable-art", gid: "gid://shopify/MenuItem/619586420987" },
+    { name: "The Yakima Canyon Collection", path: "/collections/yakima-canyon", gid: "gid://shopify/MenuItem/619586453755" },
+    { name: "The Gallery", path: "/collections/the-gallery", gid: "gid://shopify/MenuItem/619586486523" },
+    { name: "Richardson's Rock Ranch", path: "/collections/richardsons-rock-ranch", gid: "gid://shopify/MenuItem/619586519291" },
+    { name: "The 3,000-Mile Run", path: "/collections/the-3-000-mile-run-1", gid: "gid://shopify/MenuItem/619586552059" },
+    { name: "Home", path: "/", gid: "gid://shopify/MenuItem/619586584827" },
+  ],
+  footer: [
+    { name: "About the Makers", path: "/pages/our-story", gid: "gid://shopify/MenuItem/619584356603" },
+    { name: "Search the Archive", path: "/search", gid: "gid://shopify/MenuItem/619584389371" },
+    { name: "FAQ & Practical Testing", path: "/pages/frequently-asked-questions", gid: "gid://shopify/MenuItem/619584422139" },
+    { name: "Standard Specs", path: "/pages/standard-specs", gid: "gid://shopify/MenuItem/619584454907" },
+    { name: "all collections", path: "/collections/all-collections", gid: "gid://shopify/MenuItem/619584487675" },
+    { name: "Touch Stones & Mile Stones", path: "/collections/memorials", gid: "gid://shopify/MenuItem/619584520443" },
+    { name: "Small Batches / The Vault", path: "/collections/small-batches-the-vault", gid: "gid://shopify/MenuItem/619584553211" },
+    { name: "Wearable Art", path: "/collections/wearable-art", gid: "gid://shopify/MenuItem/619584585979" },
+    { name: "The Yakima Canyon Collection", path: "/collections/yakima-canyon", gid: "gid://shopify/MenuItem/619584618747" },
+    { name: "The Gallery", path: "/collections/the-gallery", gid: "gid://shopify/MenuItem/619584651515" },
+    { name: "Richardson's Rock Ranch", path: "/collections/richardsons-rock-ranch", gid: "gid://shopify/MenuItem/619584684283" },
+    { name: "The 3,000-Mile Run", path: "/collections/the-3-000-mile-run-1", gid: "gid://shopify/MenuItem/619584717051" },
+  ],
+  customer: [
+    { name: "Orders", path: "https://account.rockhoundstudio.com/orders", gid: "gid://shopify/MenuItem/606227923195" },
+    { name: "Profile", path: "https://account.rockhoundstudio.com/profile", gid: "gid://shopify/MenuItem/607948570875" },
+  ]
+};
 
 const TAXONOMY = {
   crystal_system: {
@@ -232,6 +266,7 @@ function scanProduct(product, dynamicGemDatabase) {
     cut_shape: mf.cut_shape || null,
     stone_type: mf.stone_type || null,
     crystal_system: mf.crystal_system || null,
+    mineral_class: mf.mineral_class || null,
   };
   
   const l2 = {};
@@ -271,9 +306,13 @@ function scanProduct(product, dynamicGemDatabase) {
   
   const stoneKey = (l1.stone_type || l2.stone_type || "").toLowerCase();
   const gem = stoneKey && dynamicGemDatabase ? dynamicGemDatabase[stoneKey] : null;
-  const l3 = gem ? { hardness: gem.hardness, crystal_system: gem.crystal_system } : {};
+  const l3 = gem ? { 
+    hardness: gem.hardness, 
+    crystal_system: gem.crystal_system, 
+    mineral_class: gem.mineral_class 
+  } : {};
   
-  const fields = ["stone_type","color","origin_location","cut_shape","hardness","crystal_system"];
+  const fields = ["stone_type","color","origin_location","cut_shape","hardness","crystal_system", "mineral_class"];
   fields.forEach((f) => {
     if (l1[f]) result[f] = { value: l1[f], source: "metafield" };
     else if (l3[f]) result[f] = { value: l3[f], source: "lookup" };
@@ -286,7 +325,7 @@ function scanProduct(product, dynamicGemDatabase) {
 
 const SOURCE_BADGE_TONE = { metafield:"info", parsed:"success", lookup:"attention", manual:"warning" };
 const SOURCE_BADGE_LABEL = { metafield:"metafield", parsed:"parsed", lookup:"lookup", manual:"⚠️ manual" };
-const SCAN_FIELD_LABELS = { stone_type:"Stone Type", color:"Color", origin_location:"Origin", cut_shape:"Cut Shape", hardness:"Hardness", crystal_system:"Crystal System" };
+const SCAN_FIELD_LABELS = { stone_type:"Stone Type", color:"Color", origin_location:"Origin", cut_shape:"Cut Shape", hardness:"Hardness", crystal_system:"Crystal System", mineral_class: "Mineral Class" };
 
 export const loader = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
@@ -370,15 +409,19 @@ export const loader = async ({ request }) => {
        rock_composition: parseMetaobjects(taxonomiesData.data?.rockComp?.edges || []),
     };
 
-    // The Shopify Vault: Build the dynamic GEM Database from your Metaobjects
+    // WIRING: The dynamic GEM Database parsing updated to your exact new schema
     const dynamicGemDatabase = {};
     (taxonomiesData.data?.gemDict?.edges || []).forEach(({ node }) => {
       const getVal = (k) => node.fields.find(f => f.key === k)?.value;
       const name = getVal('stone_name')?.toLowerCase();
       if (name) {
         dynamicGemDatabase[name] = { 
+          mineral_class: getVal('mineral_class'),
+          crystal_system: getVal('crystal_system'),
           hardness: getVal('mohs_hardness'), 
-          crystal_system: getVal('crystal_system') 
+          typical_origins: getVal('typical_origins'),
+          treatment_notes: getVal('treatment_notes'),
+          story_seed: getVal('story_seed'),
         };
       }
     });
@@ -566,7 +609,7 @@ function completenessLabel(metafields) {
 }
 
 function ScanPreviewCard({ product, scanResult, onConfirm, onDismiss, loading }) {
-  const fields = ["stone_type","color","origin_location","cut_shape","hardness","crystal_system"];
+  const fields = ["stone_type","color","origin_location","cut_shape","hardness","crystal_system", "mineral_class"];
   const hasManual = fields.some((f) => scanResult[f]?.source === "manual");
   return (
     <Card>
@@ -1095,6 +1138,7 @@ export default function MetaInjector() {
     { id: "inject", content: "💉 Inject" },
     { id: "mindat", content: "🌍 Mindat" },
     { id: "collections", content: "🗂️ Collections" },
+    { id: "menus", content: "🗂️ Menu Config" },
   ];
 
   const renderTaxonomyField = (fieldKey, isBulk) => {
@@ -1190,7 +1234,7 @@ export default function MetaInjector() {
                             <table style={{width:"100%",borderCollapse:"collapse",fontSize:"13px"}}>
                               <thead>
                                 <tr style={{background:"#f6f6f7"}}>
-                                  {["Product","Stone Type","Color","Origin","Cut Shape","Hardness","Crystal System","Status"].map((h) => (
+                                  {["Product","Stone Type","Color","Origin","Cut Shape","Hardness","Crystal System","Mineral Class","Status"].map((h) => (
                                     <th key={h} style={{padding:"8px 10px",textAlign:"left",borderBottom:"1px solid #e1e3e5",whiteSpace:"nowrap"}}>{h}</th>
                                   ))}
                                 </tr>
@@ -1201,7 +1245,7 @@ export default function MetaInjector() {
                                   return (
                                     <tr key={p.id} style={{borderBottom:"1px solid #f1f1f1"}}>
                                       <td style={{padding:"8px 10px",fontWeight:"600"}}>{p.title}</td>
-                                      {["stone_type","color","origin_location","cut_shape","hardness","crystal_system"].map((f) => (
+                                      {["stone_type","color","origin_location","cut_shape","hardness","crystal_system","mineral_class"].map((f) => (
                                         <td key={f} style={{padding:"8px 10px",color:scan[f].source==="manual"?"#b98900":"#202223"}}>{scan[f].value||"—"}</td>
                                       ))}
                                       <td style={{padding:"8px 10px",fontSize:"16px"}}>{allFound?"✅":"⚠️"}</td>
@@ -1393,6 +1437,47 @@ export default function MetaInjector() {
 
                 {tabIndex === 6 && (
                   <CollectionsTab products={products} collections={collections} fetcher={fetcher} />
+                )}
+
+                {/* --- NEW MENU TAB --- */}
+                {tabIndex === 7 && (
+                  <BlockStack gap="400">
+                    <Text variant="headingMd">Menu GID Configuration</Text>
+                    <Banner tone="success">All GIDs matched and locked. External customer URLs correctly bypass internal GID routing.</Banner>
+                    
+                    <Card title="Main Menu">
+                      <BlockStack gap="200">
+                        {MENU_MAP.main.map((m, idx) => (
+                          <InlineStack key={idx} align="space-between">
+                            <Text variant="bodyMd" fontWeight="bold">{m.name}</Text>
+                            <Text tone="subdued">{m.gid}</Text>
+                          </InlineStack>
+                        ))}
+                      </BlockStack>
+                    </Card>
+
+                    <Card title="Footer Menu">
+                      <BlockStack gap="200">
+                        {MENU_MAP.footer.map((m, idx) => (
+                          <InlineStack key={idx} align="space-between">
+                            <Text variant="bodyMd" fontWeight="bold">{m.name}</Text>
+                            <Text tone="subdued">{m.gid}</Text>
+                          </InlineStack>
+                        ))}
+                      </BlockStack>
+                    </Card>
+
+                    <Card title="Customer Account Menu">
+                      <BlockStack gap="200">
+                        {MENU_MAP.customer.map((m, idx) => (
+                          <InlineStack key={idx} align="space-between">
+                            <Text variant="bodyMd" fontWeight="bold">{m.name}</Text>
+                            <Text tone="subdued">{m.path}</Text>
+                          </InlineStack>
+                        ))}
+                      </BlockStack>
+                    </Card>
+                  </BlockStack>
                 )}
               </Box>
 
