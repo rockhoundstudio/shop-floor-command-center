@@ -1,229 +1,261 @@
-import { useState, useEffect } from "react";
-import { useFetcher } from "react-router";
+import { useState } from "react";
+import { useLoaderData, data } from "react-router";
+import { authenticate } from "../shopify.server";
 import {
-  Card, TextField, Text, BlockStack, InlineStack, Button, 
-  Checkbox, Scrollable, ProgressBar, Box, Select, Banner
+  Page,
+  Layout,
+  Card,
+  Button,
+  Box,
+  Popover,
+  ActionList,
+  Divider,
 } from "@shopify/polaris";
-import { TARGET_KEYS, FIELD_LABELS } from "../utils/metaScan";
+import { MenuIcon } from "@shopify/polaris-icons";
 
-export default function MetaCore({ products, mode }) {
-  const fetcher = useFetcher();
-  
-  const [checkedIds, setCheckedIds] = useState([]);
-  const [tickedFields, setTickedFields] = useState({});
-  const [fieldValues, setFieldValues] = useState({});
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [progress, setProgress] = useState({ current: 0, total: 0, title: "" });
-  
-  const [injectProduct, setInjectProduct] = useState("");
-  const [payload, setPayload] = useState("");
-  const [mindatName, setMindatName] = useState("");
+import ProductsTab from "../components/meta/ProductsTab";
+import MetaCore from "../components/meta/MetaCore";
+import CollectionsTab from "../components/meta/CollectionsTab";
+import { TARGET_KEYS, stripHtml, evaluateProductStatus, parseDescription } from "../utils/metaScan";
 
-  const processBulkQueue = async () => {
-    if (checkedIds.length === 0 || !Object.values(tickedFields).some(Boolean)) return;
-    setIsProcessing(true);
+export const loader = async ({ request }) => {
+  const { admin } = await authenticate.admin(request);
+  try {
+    const [productsRes, collectionsRes] = await Promise.all([
+      admin.graphql(`
+        query {
+          products(first: 100) {
+            edges {
+              node {
+                id
+                title
+                descriptionHtml
+                featuredImage { url altText }
+                metafields(first: 50, namespace: "custom") {
+                  edges { node { key value } }
+                }
+                collections(first: 10) {
+                  edges { node { id title } }
+                }
+              }
+            }
+          }
+        }
+      `),
+      admin.graphql(`
+        query {
+          collections(first: 50) {
+            edges { node { id title handle } }
+          }
+        }
+      `)
+    ]);
 
-    const updates = {};
-    TARGET_KEYS.forEach(k => {
-      if (tickedFields[k]) updates[k] = fieldValues[k] || "";
+    const pData = await productsRes.json();
+    const cData = await collectionsRes.json();
+
+    const products = (pData.data?.products?.edges || []).map(({ node }) => {
+      const mfs = Object.fromEntries((node.metafields?.edges || []).map(({ node: mf }) => [mf.key, mf.value]));
+      const { status, filledCount } = evaluateProductStatus(mfs);
+
+      return {
+        ...node,
+        description: stripHtml(node.descriptionHtml),
+        metafields: mfs,
+        status,
+        filledCount,
+        currentCollections: (node.collections?.edges || []).map(({ node: c }) => ({ id: c.id, title: c.title })),
+      };
     });
 
-    for (let i = 0; i < checkedIds.length; i++) {
-      const pId = checkedIds[i];
-      const pObj = products.find(p => p.id === pId);
-      
-      setProgress({ current: i + 1, total: checkedIds.length, title: pObj?.title || "Unknown" });
+    const collections = (cData.data?.collections?.edges || [])
+      .map(({ node }) => node)
+      .filter((c) => c.handle !== "all-collections");
 
-      const fd = new FormData();
-      fd.append("intent", "bulk_edit_new");
-      fd.append("ids", JSON.stringify([pId]));
-      fd.append("updates", JSON.stringify(updates));
-      
-      await fetch(".", { method: "POST", body: fd });
+    return data({ products, collections });
+  } catch (error) {
+    return data({ products: [], collections: [] });
+  }
+};
+
+export const action = async ({ request }) => {
+  const { admin } = await authenticate.admin(request);
+  const formData = await request.formData();
+  const intent = formData.get("intent");
+
+  if (intent === "bulk_edit_new") {
+    const updates = JSON.parse(formData.get("updates"));
+    const ids = JSON.parse(formData.get("ids"));
+    const metafields = [];
+
+    ids.forEach((ownerId) => {
+      Object.keys(updates).forEach(key => {
+        metafields.push({
+          ownerId,
+          namespace: "custom",
+          key,
+          value: updates[key] || "",
+          type: "single_line_text_field"
+        });
+      });
+    });
+
+    if (metafields.length > 0) {
+      await admin.graphql(`
+        mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
+          metafieldsSet(metafields: $metafields) { userErrors { message } }
+        }
+      `, { variables: { metafields } });
     }
-    
-    setIsProcessing(false);
-    setProgress({ current: 0, total: 0, title: "" });
-    fetcher.submit({}, { method: "get" }); 
-  };
+    return data({ ok: true });
+  }
 
-  useEffect(() => {
-    if (fetcher.data?.payload !== undefined) {
-      setPayload(fetcher.data.payload);
+  if (intent === "build_payload") {
+    const productId = formData.get("productId");
+    const title = formData.get("title");
+    const description = formData.get("description");
+    const existingMeta = JSON.parse(formData.get("existingMeta"));
+
+    const parsedData = parseDescription(description);
+    let mindatData = {};
+
+    try {
+      const res = await fetch(`https://api.mindat.org/minerals/?name=${encodeURIComponent(title)}&format=json`, {
+        headers: { Authorization: `Token ${process.env.MINDAT_API_KEY}` }
+      });
+      if (res.ok) {
+        const json = await res.json();
+        if (json.results?.[0]) {
+          mindatData = {
+            hardness: json.results[0].hardness,
+            where_found: json.results[0].localities,
+            geological_age: json.results[0].geological_age,
+            crystal_structure: json.results[0].crystal_system,
+            mineral_class: json.results[0].mineral_class
+          };
+        }
+      }
+    } catch (e) {}
+
+    const payloadLines = [];
+    TARGET_KEYS.forEach(key => {
+      if (existingMeta[key] && existingMeta[key].trim() !== "") return;
+
+      let val = mindatData[key] || parsedData[key];
+      let isVerified = !!mindatData[key];
+
+      if (val) {
+        const finalVal = isVerified ? val : `⚠️ ${val}`;
+        payloadLines.push(JSON.stringify({
+          ownerId: productId,
+          namespace: "custom",
+          key,
+          value: finalVal,
+          type: "single_line_text_field"
+        }));
+      }
+    });
+
+    return data({ ok: true, payload: payloadLines.join("\n") });
+  }
+
+  if (intent === "inject") {
+    const payload = formData.get("payload");
+    const lines = payload.split("\n").filter(Boolean);
+    const metafields = [];
+    for (const line of lines) {
+      try { metafields.push(JSON.parse(line)); } catch {}
     }
-  }, [fetcher.data]);
-
-  if (mode === "bulk") {
-    const allChecked = products.length > 0 && checkedIds.length === products.length;
-
-    return (
-      <BlockStack gap="400">
-        {isProcessing && (
-          <Banner tone="info">
-            <BlockStack gap="200">
-              <Text variant="bodyMd" as="p">
-                Processing {progress.current} of {progress.total} — {progress.title}...
-              </Text>
-              <ProgressBar progress={(progress.current / progress.total) * 100} size="small" tone="primary" />
-            </BlockStack>
-          </Banner>
-        )}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "24px" }}>
-          <BlockStack gap="300">
-            <InlineStack gap="200" blockAlign="center">
-              <Button onClick={() => setCheckedIds(allChecked ? [] : products.map(p => p.id))}>
-                {allChecked ? "Deselect All" : "Select All"}
-              </Button>
-              <Text>{checkedIds.length} selected</Text>
-            </InlineStack>
-            <Card padding="0">
-              <Scrollable style={{ height: "600px" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left" }}>
-                   <tbody>
-                      {products.map((p) => (
-                        <tr key={p.id} style={{ borderBottom: "1px solid #ebebeb", cursor: "pointer" }} onClick={() => {
-                            if (checkedIds.includes(p.id)) setCheckedIds(checkedIds.filter(id => id !== p.id));
-                            else setCheckedIds([...checkedIds, p.id]);
-                        }}>
-                          <td style={{ padding: "8px 12px", width: "40px" }} onClick={e => e.stopPropagation()}>
-                            <Checkbox
-                              label=""
-                              checked={checkedIds.includes(p.id)}
-                              onChange={(checked) => {
-                                if (checked) setCheckedIds([...checkedIds, p.id]);
-                                else setCheckedIds(checkedIds.filter((id) => id !== p.id));
-                              }}
-                            />
-                          </td>
-                          <td style={{ padding: "8px" }}>
-                            <InlineStack gap="300" blockAlign="center">
-                              <img src={p.featuredImage?.url || ""} style={{ width: "32px", height: "32px", objectFit: "cover", borderRadius: "4px" }} />
-                              <Text variant="bodySm" fontWeight="500">{p.title}</Text>
-                            </InlineStack>
-                          </td>
-                        </tr>
-                      ))}
-                   </tbody>
-                </table>
-              </Scrollable>
-            </Card>
-          </BlockStack>
-          
-          <BlockStack gap="300">
-            <Banner tone="info">Tick a box to open the input. Only ticked fields will be written.</Banner>
-            <Card padding="0">
-              <Scrollable style={{ height: "550px" }}>
-                 <BlockStack gap="300" padding="400">
-                    {TARGET_KEYS.map(key => (
-                       <BlockStack key={key} gap="100">
-                          <Checkbox 
-                             label={FIELD_LABELS[key]} 
-                             checked={tickedFields[key] || false} 
-                             onChange={() => setTickedFields(prev => ({...prev, [key]: !prev[key]}))} 
-                          />
-                          {tickedFields[key] && (
-                              <TextField
-                                 label=""
-                                 value={fieldValues[key] || ""}
-                                 onChange={(v) => setFieldValues({ ...fieldValues, [key]: v })}
-                                 placeholder={`Enter ${FIELD_LABELS[key]}...`}
-                                 autoComplete="off"
-                              />
-                          )}
-                       </BlockStack>
-                    ))}
-                 </BlockStack>
-              </Scrollable>
-            </Card>
-            <Button variant="primary" onClick={processBulkQueue} disabled={checkedIds.length === 0 || isProcessing || !Object.values(tickedFields).some(Boolean)}>
-              Save Ticked Fields to {checkedIds.length} Stone(s)
-            </Button>
-          </BlockStack>
-        </div>
-      </BlockStack>
-    );
+    for (let i = 0; i < metafields.length; i += 10) {
+      await admin.graphql(`
+        mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
+          metafieldsSet(metafields: $metafields) { userErrors { message } }
+        }
+      `, { variables: { metafields: metafields.slice(i, i + 10) } });
+    }
+    return data({ ok: true, injected: metafields.length });
   }
 
-  if (mode === "inject") {
-    return (
-      <BlockStack gap="400">
-        <Text variant="headingMd">Auto-build payload from product + Mindat</Text>
-        <Select
-          label="Select a stone"
-          options={[{ label: "-- Pick a stone --", value: "" }, ...products.map((p) => ({ label: p.title, value: p.id }))]}
-          value={injectProduct}
-          onChange={setInjectProduct}
-        />
-        <Button variant="primary" onClick={() => {
-          const product = products.find((p) => p.id === injectProduct);
-          if (!product) return;
-          const fd = new FormData();
-          fd.append("intent", "build_payload");
-          fd.append("productId", product.id);
-          fd.append("title", product.title);
-          fd.append("description", product.description);
-          fd.append("existingMeta", JSON.stringify(product.metafields));
-          fetcher.submit(fd, { method: "post" });
-        }} loading={fetcher.state === "submitting" && fetcher.formData?.get("intent") === "build_payload"} disabled={!injectProduct}>
-          🔄 Build Payload
-        </Button>
-        {fetcher.data?.payload !== undefined && <Banner tone="success">Payload built — review and edit below, then inject.</Banner>}
-        <TextField
-          label="JSON Payload (one object per line — edit before injecting)"
-          value={payload}
-          onChange={setPayload}
-          multiline={12}
-          autoComplete="off"
-        />
-        <Button variant="primary" onClick={() => {
-          const fd = new FormData();
-          fd.append("intent", "inject");
-          fd.append("payload", payload);
-          fetcher.submit(fd, { method: "post" });
-        }} loading={fetcher.state === "submitting" && fetcher.formData?.get("intent") === "inject"} disabled={!payload}>
-          💉 Inject
-        </Button>
-        {fetcher.data?.injected !== undefined && (
-          <Banner tone="success">Injected {fetcher.data.injected} metafield(s) successfully!</Banner>
-        )}
-      </BlockStack>
-    );
+  if (intent === "mindat_lookup") {
+    const query = formData.get("query");
+    try {
+      const res = await fetch(`https://api.mindat.org/minerals/?name=${encodeURIComponent(query)}&format=json`, {
+        headers: { Authorization: `Token ${process.env.MINDAT_API_KEY}` }
+      });
+      if (res.ok) {
+        const json = await res.json();
+        if (json.results?.[0]) return data({ ok: true, found: true, result: json.results[0] });
+      }
+    } catch (e) {}
+    return data({ ok: true, found: false });
   }
 
-  if (mode === "mindat") {
-    return (
-      <BlockStack gap="400">
-        <Text variant="headingMd">Pull verified geological data from Mindat.org.</Text>
-        <TextField
-          label="Stone name"
-          value={mindatName}
-          onChange={setMindatName}
-          placeholder="e.g. Amethyst"
-          autoComplete="off"
-        />
-        <Button variant="primary" onClick={() => {
-          const fd = new FormData();
-          fd.append("intent", "mindat_lookup");
-          fd.append("query", mindatName);
-          fetcher.submit(fd, { method: "post" });
-        }} loading={fetcher.state === "submitting" && fetcher.formData?.get("intent") === "mindat_lookup"}>
-          🌍 Lookup
-        </Button>
-        {fetcher.data?.intent === "mindat_lookup" && fetcher.data?.found && (
-           <Banner tone="success">
-              <Text>Found Results!</Text>
-              <Text>Hardness: {fetcher.data.result.hardness || "N/A"}</Text>
-              <Text>Where Found: {fetcher.data.result.localities || "N/A"}</Text>
-              <Text>Geological Age: {fetcher.data.result.geological_age || "N/A"}</Text>
-           </Banner>
-        )}
-        {fetcher.data?.intent === "mindat_lookup" && !fetcher.data?.found && (
-           <Banner tone="warning">No results found for "{mindatName}".</Banner>
-        )}
-        <Banner tone="info">Requires a Mindat.org API token mapped to process.env.MINDAT_API_KEY.</Banner>
-      </BlockStack>
-    );
+  if (intent === "createCollection") {
+    const title = formData.get("title");
+    await admin.graphql(`mutation collectionCreate($input: CollectionInput!) { collectionCreate(input: $input) { userErrors { message } } }`, { variables: { input: { title } } });
+    return data({ ok: true });
   }
 
-  return null;
+  if (intent === "deleteCollection") {
+    const id = formData.get("id");
+    await admin.graphql(`mutation collectionDelete($input: CollectionDeleteInput!) { collectionDelete(input: $input) { userErrors { message } } }`, { variables: { input: { id } } });
+    return data({ ok: true });
+  }
+
+  if (intent === "assignCollection") {
+    const productId = formData.get("productId");
+    const collectionId = formData.get("collectionId");
+    await admin.graphql(`mutation collectionAddProducts($id: ID!, $productIds: [ID!]!) { collectionAddProducts(id: $id, productIds: $productIds) { userErrors { message } } }`, { variables: { id: collectionId, productIds: [productId] } });
+    return data({ ok: true });
+  }
+
+  return data({ ok: false });
+};
+
+export default function MetaInjector() {
+  const { products, collections } = useLoaderData();
+  const [tabIndex, setTabIndex] = useState(0);
+  const [menuActive, setMenuActive] = useState(false);
+
+  const tabs = [
+    { id: "products", content: "🪨 Products" },
+    { id: "bulk", content: "📦 Bulk Edit" },
+    { id: "inject", content: "💉 Inject" },
+    { id: "mindat", content: "🌍 Mindat" },
+    { id: "collections", content: "🗂️ Collections" }
+  ];
+
+  return (
+    <Page title="Shop Floor Command Center" fullWidth>
+      <Layout>
+        <Layout.Section>
+          <Card padding="0">
+            <Box padding="400">
+              <Popover
+                active={menuActive}
+                activator={<Button onClick={() => setMenuActive(!menuActive)} icon={MenuIcon} size="large">{tabs[tabIndex].content}</Button>}
+                onClose={() => setMenuActive(false)}
+              >
+                <ActionList
+                  actionRole="menuitem"
+                  items={tabs.map((tab, index) => ({
+                    content: tab.content,
+                    onAction: () => { setTabIndex(index); setMenuActive(false); },
+                  }))}
+                />
+              </Popover>
+            </Box>
+            <Divider />
+            <Box padding="400">
+              {tabIndex === 0 && <ProductsTab products={products} />}
+              {tabIndex === 1 && <MetaCore products={products} mode="bulk" />}
+              {tabIndex === 2 && <MetaCore products={products} mode="inject" />}
+              {tabIndex === 3 && <MetaCore products={products} mode="mindat" />}
+              {tabIndex === 4 && <CollectionsTab products={products} collections={collections} onBack={() => setTabIndex(0)} />}
+            </Box>
+          </Card>
+        </Layout.Section>
+      </Layout>
+    </Page>
+  );
 }
