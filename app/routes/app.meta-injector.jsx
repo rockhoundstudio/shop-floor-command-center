@@ -4,7 +4,7 @@ import {
   Card, TextField, Text, BlockStack, InlineStack, Button, 
   Checkbox, Scrollable, ProgressBar, Box, Select, Banner
 } from "@shopify/polaris";
-import { TARGET_KEYS, FIELD_LABELS } from "../../utils/metaScan";
+import { TARGET_KEYS, FIELD_LABELS } from "../utils/metaScan";
 
 export default function MetaCore({ products, mode }) {
   const fetcher = useFetcher();
