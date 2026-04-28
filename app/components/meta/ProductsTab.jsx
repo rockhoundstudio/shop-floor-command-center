@@ -1,6 +1,6 @@
-import { TextField, BlockStack, Card, Text, Badge, Grid, Box, Button, Banner, InlineStack } from "@shopify/polaris";
+import { TextField, BlockStack, Card, Text, Badge, Grid, Button, Banner, InlineStack } from "@shopify/polaris";
 import { useState } from "react";
-import { useFetcher } from "@remix-run/react";
+import { useFetcher } from "react-router";
 import { TARGET_KEYS, FIELD_LABELS } from "../../utils/metaScan";
 
 export default function ProductsTab({ products = [] }) {
