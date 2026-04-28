@@ -1,4 +1,4 @@
-import { TextField, BlockStack, Card, Text, Badge, Grid, Button, Banner, InlineStack } from "@shopify/polaris";
+import { TextField, BlockStack, Card, Text, Badge, Grid, Button, Banner, InlineStack, Spinner } from "@shopify/polaris";
 import { useState } from "react";
 import { useFetcher } from "react-router";
 import { TARGET_KEYS, FIELD_LABELS } from "../../utils/metaScan";
@@ -7,7 +7,8 @@ export default function ProductsTab({ products = [] }) {
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState(null);
   const [fieldValues, setFieldValues] = useState({});
-  const fetcher = useFetcher();
+  const saveFetcher  = useFetcher();
+  const autoFetcher  = useFetcher();
 
   const filtered = products.filter(p =>
     p.title.toLowerCase().includes(search.toLowerCase())
@@ -18,11 +19,8 @@ export default function ProductsTab({ products = [] }) {
     TARGET_KEYS.forEach(key => {
       initial[key] = product.metafields?.[key] || "";
     });
-
-    // Pre-populate from Shopify product data if metafield is empty
     if (!initial.official_name) initial.official_name = product.title || "";
     if (!initial.stone_story)   initial.stone_story   = product.description || "";
-
     setFieldValues(initial);
     setSelected(product);
   }
@@ -35,16 +33,40 @@ export default function ProductsTab({ products = [] }) {
       value: fieldValues[key] || "",
       type: "single_line_text_field",
     }));
-
-    fetcher.submit(
+    saveFetcher.submit(
       { intent: "saveMetafields", metafields: JSON.stringify(metafields) },
       { method: "post", action: "/app/meta-injector" }
     );
   }
 
-  const isSaving = fetcher.state !== "idle";
-  const saveSuccess = fetcher.state === "idle" && fetcher.data?.success;
-  const saveError   = fetcher.state === "idle" && fetcher.data?.error;
+  function handleAutoFill() {
+    autoFetcher.submit(
+      {
+        intent: "autoFill",
+        title: selected.title,
+        description: selected.description || "",
+        existingMeta: JSON.stringify(fieldValues),
+      },
+      { method: "post", action: "/app/meta-injector" }
+    );
+  }
+
+  // Apply auto-fill results when they come back
+  if (autoFetcher.state === "idle" && autoFetcher.data?.merged) {
+    const merged = autoFetcher.data.merged;
+    // Only apply if we haven't already applied this result
+    const hasNew = Object.keys(merged).some(k => merged[k] !== fieldValues[k]);
+    if (hasNew) {
+      setFieldValues(prev => ({ ...prev, ...merged }));
+      autoFetcher.data = null; // clear to prevent re-apply loop
+    }
+  }
+
+  const isSaving   = saveFetcher.state !== "idle";
+  const isAutoFill = autoFetcher.state !== "idle";
+  const saveSuccess = saveFetcher.state === "idle" && saveFetcher.data?.success;
+  const saveError   = saveFetcher.state === "idle" && saveFetcher.data?.error;
+  const conflicts   = autoFetcher.data?.conflicts || [];
 
   // ── EDIT STONE VIEW ──────────────────────────────────────────────
   if (selected) {
@@ -53,34 +75,42 @@ export default function ProductsTab({ products = [] }) {
 
         {/* Sticky header */}
         <div style={{
-          position: "sticky",
-          top: 0,
-          zIndex: 10,
-          background: "#fff",
-          paddingBottom: "12px",
-          borderBottom: "1px solid #e1e3e5",
-          marginBottom: "16px"
+          position: "sticky", top: 0, zIndex: 10,
+          background: "#fff", paddingBottom: "12px",
+          borderBottom: "1px solid #e1e3e5", marginBottom: "16px"
         }}>
           <InlineStack align="space-between" blockAlign="center">
             <Button variant="plain" onClick={() => setSelected(null)}>
-              ← Back to Products
+              ← Back
             </Button>
             <Text variant="headingMd" fontWeight="bold">{selected.title}</Text>
-            <Button
-              variant="primary"
-              onClick={handleSave}
-              loading={isSaving}
-              disabled={isSaving}
-            >
-              Save Stone
-            </Button>
+            <InlineStack gap="200">
+              <Button
+                onClick={handleAutoFill}
+                loading={isAutoFill}
+                disabled={isAutoFill || isSaving}
+              >
+                🔍 Auto-Fill
+              </Button>
+              <Button
+                variant="primary"
+                onClick={handleSave}
+                loading={isSaving}
+                disabled={isSaving || isAutoFill}
+              >
+                Save Stone
+              </Button>
+            </InlineStack>
           </InlineStack>
 
-          {saveSuccess && (
-            <Banner tone="success">Metafields saved successfully.</Banner>
-          )}
-          {saveError && (
-            <Banner tone="critical">Save failed: {fetcher.data.error}</Banner>
+          {saveSuccess && <Banner tone="success">Saved successfully.</Banner>}
+          {saveError   && <Banner tone="critical">Save failed: {saveFetcher.data.error}</Banner>}
+
+          {conflicts.length > 0 && (
+            <Banner tone="warning">
+              {conflicts.length} conflict{conflicts.length > 1 ? "s" : ""} found — Mindat data used.{" "}
+              {conflicts.map(c => `${FIELD_LABELS[c.key] || c.key}: library="${c.library}" vs mindat="${c.mindat}"`).join(" | ")}
+            </Banner>
           )}
         </div>
 
@@ -105,7 +135,7 @@ export default function ProductsTab({ products = [] }) {
     );
   }
 
-  // ── PRODUCTS GRID VIEW ───────────────────────────────────────────
+  // ── PRODUCTS GRID ────────────────────────────────────────────────
   return (
     <BlockStack gap="400">
       <TextField
@@ -117,17 +147,14 @@ export default function ProductsTab({ products = [] }) {
         clearButton
         onClearButtonClick={() => setSearch("")}
       />
-      {filtered.length === 0 && (
-        <Text tone="subdued">No products match your search.</Text>
-      )}
+      {filtered.length === 0 && <Text tone="subdued">No products match your search.</Text>}
       <Grid>
         {filtered.map((p) => (
           <Grid.Cell key={p.id} columnSpan={{ xs: 6, sm: 4, md: 3, lg: 3 }}>
             <div
               onClick={() => openEditor(p)}
               style={{ cursor: "pointer" }}
-              role="button"
-              tabIndex={0}
+              role="button" tabIndex={0}
               onKeyDown={e => e.key === "Enter" && openEditor(p)}
             >
               <Card padding="200">

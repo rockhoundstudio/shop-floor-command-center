@@ -2,15 +2,7 @@ import { useState } from "react";
 import { useLoaderData, data } from "react-router";
 import { authenticate } from "../shopify.server";
 import {
-  Page,
-  Layout,
-  Card,
-  Button,
-  Box,
-  Popover,
-  ActionList,
-  Divider,
-  Banner,
+  Page, Layout, Card, Button, Box, Popover, ActionList, Divider, Banner,
 } from "@shopify/polaris";
 import { MenuIcon } from "@shopify/polaris-icons";
 
@@ -18,6 +10,7 @@ import ProductsTab from "../components/meta/ProductsTab";
 import MetaCore from "../components/meta/MetaCore";
 import CollectionsTab from "../components/meta/CollectionsTab";
 import { TARGET_KEYS, stripHtml, evaluateProductStatus, parseDescription } from "../utils/metaScan";
+import { lookupStone } from "../utils/geoLibrary";
 
 export const loader = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
@@ -28,9 +21,7 @@ export const loader = async ({ request }) => {
           products(first: 100) {
             edges {
               node {
-                id
-                title
-                descriptionHtml
+                id title descriptionHtml
                 featuredImage { url altText }
                 customMeta: metafields(first: 100, namespace: "custom") {
                   edges { node { key value } }
@@ -67,7 +58,6 @@ export const loader = async ({ request }) => {
       );
       const mfs = { ...customMfs, ...shopifyMfs };
       const { status, filledCount } = evaluateProductStatus(mfs);
-
       return {
         ...node,
         description: stripHtml(node.descriptionHtml),
@@ -93,12 +83,85 @@ export const action = async ({ request }) => {
   const formData = await request.formData();
   const intent = formData.get("intent");
 
+  // ── AUTO FILL ────────────────────────────────────────────────────
+  if (intent === "autoFill") {
+    const title       = formData.get("title");
+    const description = formData.get("description");
+    const existingRaw = formData.get("existingMeta");
+    const existing    = existingRaw ? JSON.parse(existingRaw) : {};
+
+    // Step 1 — parse description
+    const parsed = parseDescription(description);
+
+    // Step 2 — geo library lookup
+    const library = lookupStone(title) || {};
+
+    // Step 3 — Mindat lookup
+    let mindat = {};
+    try {
+      const res = await fetch(
+        `https://api.mindat.org/minerals/?name=${encodeURIComponent(title)}&format=json`,
+        { headers: { Authorization: `Token ${process.env.MINDAT_API_KEY}` } }
+      );
+      if (res.ok) {
+        const json = await res.json();
+        if (json.results?.[0]) {
+          const m = json.results[0];
+          mindat = {
+            moh_hardness:      m.hardness        || "",
+            where_found:       m.localities       || "",
+            geological_age:    m.geological_age   || "",
+            crystal_structure: m.crystal_system   || "",
+            mineral_class:     m.mineral_class    || "",
+            chemical_formula:  m.formula          || "",
+            specific_gravity:  m.specific_gravity || "",
+            luster:            m.luster           || "",
+            cleavage:          m.cleavage         || "",
+            fracture_pattern:  m.fracture         || "",
+            diaphaneity:       m.transparency     || "",
+          };
+          // Remove empty mindat fields
+          Object.keys(mindat).forEach(k => { if (!mindat[k]) delete mindat[k]; });
+        }
+      }
+    } catch (e) {}
+
+    // Step 4 — merge: existing wins, then library, then parsed desc, then mindat
+    // Flag source: ✅ = mindat confirmed, ⚠️ = library/parsed (unconfirmed)
+    const merged = {};
+    const conflicts = [];
+
+    TARGET_KEYS.forEach(key => {
+      if (existing[key] && String(existing[key]).trim() !== "") {
+        merged[key] = existing[key]; // keep existing
+        return;
+      }
+
+      const libVal    = library[key]  || "";
+      const parsedVal = parsed[key]   || "";
+      const mindatVal = mindat[key]   || "";
+
+      if (mindatVal) {
+        // Mindat has data — check if library agrees
+        if (libVal && libVal !== mindatVal) {
+          conflicts.push({ key, library: libVal, mindat: mindatVal });
+        }
+        merged[key] = `✅ ${mindatVal}`;
+      } else if (libVal) {
+        merged[key] = `⚠️ ${libVal}`;
+      } else if (parsedVal) {
+        merged[key] = `⚠️ ${parsedVal}`;
+      }
+    });
+
+    return data({ ok: true, merged, conflicts });
+  }
+
+  // ── SAVE METAFIELDS ──────────────────────────────────────────────
   if (intent === "saveMetafields") {
     const metafields = JSON.parse(formData.get("metafields"));
     const chunks = [];
-    for (let i = 0; i < metafields.length; i += 10) {
-      chunks.push(metafields.slice(i, i + 10));
-    }
+    for (let i = 0; i < metafields.length; i += 10) chunks.push(metafields.slice(i, i + 10));
     for (const chunk of chunks) {
       const res = await admin.graphql(`
         mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
@@ -107,30 +170,21 @@ export const action = async ({ request }) => {
       `, { variables: { metafields: chunk } });
       const json = await res.json();
       const errors = json.data?.metafieldsSet?.userErrors || [];
-      if (errors.length > 0) {
-        return data({ success: false, error: errors[0].message });
-      }
+      if (errors.length > 0) return data({ success: false, error: errors[0].message });
     }
     return data({ success: true });
   }
 
+  // ── BULK EDIT ────────────────────────────────────────────────────
   if (intent === "bulk_edit_new") {
     const updates = JSON.parse(formData.get("updates"));
     const ids = JSON.parse(formData.get("ids"));
     const metafields = [];
-
     ids.forEach((ownerId) => {
       Object.keys(updates).forEach(key => {
-        metafields.push({
-          ownerId,
-          namespace: "custom",
-          key,
-          value: updates[key] || "",
-          type: "single_line_text_field"
-        });
+        metafields.push({ ownerId, namespace: "custom", key, value: updates[key] || "", type: "single_line_text_field" });
       });
     });
-
     if (metafields.length > 0) {
       await admin.graphql(`
         mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
@@ -141,15 +195,14 @@ export const action = async ({ request }) => {
     return data({ ok: true });
   }
 
+  // ── BUILD PAYLOAD ────────────────────────────────────────────────
   if (intent === "build_payload") {
-    const productId = formData.get("productId");
-    const title = formData.get("title");
-    const description = formData.get("description");
+    const productId    = formData.get("productId");
+    const title        = formData.get("title");
+    const description  = formData.get("description");
     const existingMeta = JSON.parse(formData.get("existingMeta"));
-
-    const parsedData = parseDescription(description);
+    const parsedData   = parseDescription(description);
     let mindatData = {};
-
     try {
       const res = await fetch(`https://api.mindat.org/minerals/?name=${encodeURIComponent(title)}&format=json`, {
         headers: { Authorization: `Token ${process.env.MINDAT_API_KEY}` }
@@ -158,46 +211,35 @@ export const action = async ({ request }) => {
         const json = await res.json();
         if (json.results?.[0]) {
           mindatData = {
-            moh_hardness: json.results[0].hardness,
-            where_found: json.results[0].localities,
-            geological_age: json.results[0].geological_age,
-            crystal_structure: json.results[0].crystal_system,
+            moh_hardness: json.results[0].hardness, where_found: json.results[0].localities,
+            geological_age: json.results[0].geological_age, crystal_structure: json.results[0].crystal_system,
             mineral_class: json.results[0].mineral_class
           };
         }
       }
     } catch (e) {}
-
     const payloadLines = [];
     TARGET_KEYS.forEach(key => {
       const existing = existingMeta[key];
       if (existing && String(existing).trim() !== "") return;
-
       let val = mindatData[key] || parsedData[key];
       let isVerified = !!mindatData[key];
-
       if (val) {
-        const finalVal = isVerified ? val : `⚠️ ${val}`;
         payloadLines.push(JSON.stringify({
-          ownerId: productId,
-          namespace: "custom",
-          key,
-          value: finalVal,
-          type: "single_line_text_field"
+          ownerId: productId, namespace: "custom", key,
+          value: isVerified ? val : `⚠️ ${val}`, type: "single_line_text_field"
         }));
       }
     });
-
     return data({ ok: true, payload: payloadLines.join("\n") });
   }
 
+  // ── INJECT ───────────────────────────────────────────────────────
   if (intent === "inject") {
     const payload = formData.get("payload");
     const lines = payload.split("\n").filter(Boolean);
     const metafields = [];
-    for (const line of lines) {
-      try { metafields.push(JSON.parse(line)); } catch {}
-    }
+    for (const line of lines) { try { metafields.push(JSON.parse(line)); } catch {} }
     for (let i = 0; i < metafields.length; i += 10) {
       await admin.graphql(`
         mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
@@ -208,6 +250,7 @@ export const action = async ({ request }) => {
     return data({ ok: true, injected: metafields.length });
   }
 
+  // ── MINDAT LOOKUP ────────────────────────────────────────────────
   if (intent === "mindat_lookup") {
     const query = formData.get("query");
     try {
@@ -222,18 +265,17 @@ export const action = async ({ request }) => {
     return data({ ok: true, found: false });
   }
 
+  // ── COLLECTIONS ──────────────────────────────────────────────────
   if (intent === "createCollection") {
     const title = formData.get("title");
     await admin.graphql(`mutation collectionCreate($input: CollectionInput!) { collectionCreate(input: $input) { userErrors { message } } }`, { variables: { input: { title } } });
     return data({ ok: true });
   }
-
   if (intent === "deleteCollection") {
     const id = formData.get("id");
     await admin.graphql(`mutation collectionDelete($input: CollectionDeleteInput!) { collectionDelete(input: $input) { userErrors { message } } }`, { variables: { input: { id } } });
     return data({ ok: true });
   }
-
   if (intent === "assignCollection") {
     const productId = formData.get("productId");
     const collectionId = formData.get("collectionId");
@@ -250,10 +292,10 @@ export default function MetaInjector() {
   const [menuActive, setMenuActive] = useState(false);
 
   const tabs = [
-    { id: "products", content: "🪨 Products" },
-    { id: "bulk", content: "📦 Bulk Edit" },
-    { id: "inject", content: "💉 Inject" },
-    { id: "mindat", content: "🌍 Mindat" },
+    { id: "products",    content: "🪨 Products" },
+    { id: "bulk",        content: "📦 Bulk Edit" },
+    { id: "inject",      content: "💉 Inject" },
+    { id: "mindat",      content: "🌍 Mindat" },
     { id: "collections", content: "🗂️ Collections" }
   ];
 
@@ -261,9 +303,7 @@ export default function MetaInjector() {
     <Page title="Shop Floor Command Center" fullWidth>
       <Layout>
         <Layout.Section>
-          {loaderError && (
-            <Banner tone="critical">Loader error: {loaderError}</Banner>
-          )}
+          {loaderError && <Banner tone="critical">Loader error: {loaderError}</Banner>}
           <Card padding="0">
             <Box padding="400">
               <Popover
