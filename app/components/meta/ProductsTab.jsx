@@ -2,33 +2,36 @@ import { TextField, BlockStack, Card, Text, Badge, Grid, Box } from "@shopify/po
 import { useState } from "react";
 import { TARGET_KEYS } from "../../utils/metaScan";
 
-export default function ProductsTab({ products }) {
+export default function ProductsTab({ products = [] }) {
   const [search, setSearch] = useState("");
   const filtered = products.filter(p => p.title.toLowerCase().includes(search.toLowerCase()));
 
   return (
     <BlockStack gap="400">
-      <TextField 
-        label="Search Shop Floor" 
-        value={search} 
-        onChange={setSearch} 
-        autoComplete="off" 
+      <TextField
+        label="Search Shop Floor"
+        value={search}
+        onChange={setSearch}
+        autoComplete="off"
         placeholder="Search gemstone title..."
-        clearButton 
-        onClearButtonClick={() => setSearch("")} 
+        clearButton
+        onClearButtonClick={() => setSearch("")}
       />
+      {filtered.length === 0 && (
+        <Text tone="subdued">No products match your search.</Text>
+      )}
       <Grid>
         {filtered.map((p) => (
           <Grid.Cell key={p.id} columnSpan={{ xs: 6, sm: 4, md: 3, lg: 3 }}>
             <Card padding="200">
               <BlockStack gap="200">
-                <Box style={{ height: "140px", background: "#f1f1f1", borderRadius: "4px", overflow: "hidden" }}>
-                  <img 
-                    src={p.featuredImage?.url || "https://cdn.shopify.com/s/files/1/0533/2089/files/placeholder-images-image_medium.png"} 
-                    style={{ width: "100%", height: "100%", objectFit: "cover" }} 
-                    alt={p.title} 
+                <div style={{ height: "140px", background: "#f1f1f1", borderRadius: "4px", overflow: "hidden" }}>
+                  <img
+                    src={p.featuredImage?.url || "https://cdn.shopify.com/s/files/1/0533/2089/files/placeholder-images-image_medium.png"}
+                    style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                    alt={p.title}
                   />
-                </Box>
+                </div>
                 <Text variant="bodySm" fontWeight="bold" truncate>{p.title}</Text>
                 <Badge tone={p.status === "✅ Complete" ? "success" : p.status === "🔴 Empty" ? "critical" : "warning"}>
                   {p.status}

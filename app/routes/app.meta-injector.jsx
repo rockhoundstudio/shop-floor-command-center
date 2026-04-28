@@ -10,6 +10,7 @@ import {
   Popover,
   ActionList,
   Divider,
+  Banner,
 } from "@shopify/polaris";
 import { MenuIcon } from "@shopify/polaris-icons";
 
@@ -31,7 +32,10 @@ export const loader = async ({ request }) => {
                 title
                 descriptionHtml
                 featuredImage { url altText }
-                metafields(first: 50, namespace: "custom") {
+                customMeta: metafields(first: 100, namespace: "custom") {
+                  edges { node { key value } }
+                }
+                shopifyMeta: metafields(first: 100, namespace: "shopify") {
                   edges { node { key value } }
                 }
                 collections(first: 10) {
@@ -55,7 +59,13 @@ export const loader = async ({ request }) => {
     const cData = await collectionsRes.json();
 
     const products = (pData.data?.products?.edges || []).map(({ node }) => {
-      const mfs = Object.fromEntries((node.metafields?.edges || []).map(({ node: mf }) => [mf.key, mf.value]));
+      const customMfs = Object.fromEntries(
+        (node.customMeta?.edges || []).map(({ node: mf }) => [mf.key, mf.value])
+      );
+      const shopifyMfs = Object.fromEntries(
+        (node.shopifyMeta?.edges || []).map(({ node: mf }) => [mf.key, mf.value])
+      );
+      const mfs = { ...customMfs, ...shopifyMfs };
       const { status, filledCount } = evaluateProductStatus(mfs);
 
       return {
@@ -72,9 +82,9 @@ export const loader = async ({ request }) => {
       .map(({ node }) => node)
       .filter((c) => c.handle !== "all-collections");
 
-    return data({ products, collections });
+    return data({ products, collections, loaderError: null });
   } catch (error) {
-    return data({ products: [], collections: [] });
+    return data({ products: [], collections: [], loaderError: error.message });
   }
 };
 
@@ -127,7 +137,7 @@ export const action = async ({ request }) => {
         const json = await res.json();
         if (json.results?.[0]) {
           mindatData = {
-            hardness: json.results[0].hardness,
+            moh_hardness: json.results[0].hardness,
             where_found: json.results[0].localities,
             geological_age: json.results[0].geological_age,
             crystal_structure: json.results[0].crystal_system,
@@ -139,7 +149,8 @@ export const action = async ({ request }) => {
 
     const payloadLines = [];
     TARGET_KEYS.forEach(key => {
-      if (existingMeta[key] && existingMeta[key].trim() !== "") return;
+      const existing = existingMeta[key];
+      if (existing && String(existing).trim() !== "") return;
 
       let val = mindatData[key] || parsedData[key];
       let isVerified = !!mindatData[key];
@@ -213,7 +224,7 @@ export const action = async ({ request }) => {
 };
 
 export default function MetaInjector() {
-  const { products, collections } = useLoaderData();
+  const { products, collections, loaderError } = useLoaderData();
   const [tabIndex, setTabIndex] = useState(0);
   const [menuActive, setMenuActive] = useState(false);
 
@@ -229,6 +240,9 @@ export default function MetaInjector() {
     <Page title="Shop Floor Command Center" fullWidth>
       <Layout>
         <Layout.Section>
+          {loaderError && (
+            <Banner tone="critical">Loader error: {loaderError}</Banner>
+          )}
           <Card padding="0">
             <Box padding="400">
               <Popover

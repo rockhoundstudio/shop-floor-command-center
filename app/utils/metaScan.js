@@ -1,31 +1,71 @@
 export const TARGET_KEYS = [
-  "crystal_structure",
+  "official_name",
   "mineral_class",
-  "rock_formation",
-  "geological_era",
+  "crystal_structure",
+  "luster",
+  "chemical_formula",
   "rock_composition",
-  "hardness",
-  "where_found",
+  "specific_gravity",
+  "refractive_index",
+  "moh_hardness",
+  "fracture_pattern",
+  "cleavage",
+  "tenacity",
+  "origin_location",
   "geological_age",
-  "character_marks",
-  "stone_story",
+  "geological_era",
+  "rock_formation",
+  "where_found",
+  "gps_coordinates",
   "rescued_by",
-  "origin_location"
+  "date_of_discovery",
+  "primary_color",
+  "secondary_colors",
+  "diaphaneity",
+  "character_marks",
+  "cut_type",
+  "carat_weight",
+  "dimensions",
+  "polishing_compound",
+  "stone_story",
+  "rarity_score",
+  "legacy_status",
+  "bench_notes"
 ];
 
 export const FIELD_LABELS = {
+  official_name:     "Official Name",
+  mineral_class:     "Mineral Class",
   crystal_structure: "Crystal Structure",
-  mineral_class: "Mineral Class",
-  rock_formation: "Rock Formation",
-  geological_era: "Geological Era",
-  rock_composition: "Rock Composition",
-  hardness: "Hardness",
-  where_found: "Where Found",
-  geological_age: "Geological Age",
-  character_marks: "Character Marks",
-  stone_story: "Stone Story",
-  rescued_by: "Rescued By",
-  origin_location: "Origin Location"
+  luster:            "Luster",
+  chemical_formula:  "Chemical Formula",
+  rock_composition:  "Rock Composition",
+  specific_gravity:  "Specific Gravity",
+  refractive_index:  "Refractive Index",
+  moh_hardness:      "Mohs Hardness",
+  fracture_pattern:  "Fracture Pattern",
+  cleavage:          "Cleavage",
+  tenacity:          "Tenacity",
+  origin_location:   "Origin Location",
+  geological_age:    "Geological Age",
+  geological_era:    "Geological Era",
+  rock_formation:    "Rock Formation",
+  where_found:       "Where Found",
+  gps_coordinates:   "GPS Coordinates",
+  rescued_by:        "Rescued By",
+  date_of_discovery: "Date of Discovery",
+  primary_color:     "Primary Color",
+  secondary_colors:  "Secondary Colors",
+  diaphaneity:       "Diaphaneity (Opacity)",
+  character_marks:   "Character Marks",
+  cut_type:          "Cut Type",
+  carat_weight:      "Carat Weight",
+  dimensions:        "Dimensions (mm)",
+  polishing_compound:"Polishing Compound",
+  stone_story:       "Stone Story",
+  rarity_score:      "Rarity Score",
+  legacy_status:     "Legacy Status",
+  bench_notes:       "Bench Notes"
 };
 
 export function stripHtml(html) {
@@ -43,15 +83,16 @@ export function parseDescription(text) {
   if (markMatch) result.character_marks = markMatch[0].trim();
 
   const hardnessMatch = text.match(/(?:hardness|mohs)[\s:]*(\d+\.?\d*\s*[-–]\s*\d+\.?\d*|\d+\.?\d*)/i);
-  if (hardnessMatch) result.hardness = hardnessMatch[1].trim();
+  if (hardnessMatch) result.moh_hardness = hardnessMatch[1].trim();
 
   return result;
 }
 
 export function evaluateProductStatus(metafieldsObj) {
-  const filledCount = TARGET_KEYS.filter(
-    k => metafieldsObj[k] !== undefined && metafieldsObj[k] !== null && metafieldsObj[k].trim() !== ""
-  ).length;
+  const filledCount = TARGET_KEYS.filter(k => {
+    const val = metafieldsObj[k];
+    return val !== undefined && val !== null && String(val).trim() !== "";
+  }).length;
 
   let status = "🔴 Empty";
   if (filledCount === TARGET_KEYS.length) {
