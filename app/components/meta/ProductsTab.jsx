@@ -18,6 +18,11 @@ export default function ProductsTab({ products = [] }) {
     TARGET_KEYS.forEach(key => {
       initial[key] = product.metafields?.[key] || "";
     });
+
+    // Pre-populate from Shopify product data if metafield is empty
+    if (!initial.official_name) initial.official_name = product.title || "";
+    if (!initial.stone_story)   initial.stone_story   = product.description || "";
+
     setFieldValues(initial);
     setSelected(product);
   }
@@ -39,49 +44,64 @@ export default function ProductsTab({ products = [] }) {
 
   const isSaving = fetcher.state !== "idle";
   const saveSuccess = fetcher.state === "idle" && fetcher.data?.success;
-  const saveError = fetcher.state === "idle" && fetcher.data?.error;
+  const saveError   = fetcher.state === "idle" && fetcher.data?.error;
 
   // ── EDIT STONE VIEW ──────────────────────────────────────────────
   if (selected) {
     return (
-      <BlockStack gap="400">
-        <InlineStack align="space-between" blockAlign="center">
-          <Button variant="plain" onClick={() => setSelected(null)}>
-            ← Back to Products
-          </Button>
-          <Text variant="headingMd" fontWeight="bold">{selected.title}</Text>
-          <Button
-            variant="primary"
-            onClick={handleSave}
-            loading={isSaving}
-            disabled={isSaving}
-          >
-            Save Stone
-          </Button>
-        </InlineStack>
+      <div style={{ display: "flex", flexDirection: "column", height: "80vh" }}>
 
-        {saveSuccess && (
-          <Banner tone="success">Metafields saved successfully.</Banner>
-        )}
-        {saveError && (
-          <Banner tone="critical">Save failed: {fetcher.data.error}</Banner>
-        )}
+        {/* Sticky header */}
+        <div style={{
+          position: "sticky",
+          top: 0,
+          zIndex: 10,
+          background: "#fff",
+          paddingBottom: "12px",
+          borderBottom: "1px solid #e1e3e5",
+          marginBottom: "16px"
+        }}>
+          <InlineStack align="space-between" blockAlign="center">
+            <Button variant="plain" onClick={() => setSelected(null)}>
+              ← Back to Products
+            </Button>
+            <Text variant="headingMd" fontWeight="bold">{selected.title}</Text>
+            <Button
+              variant="primary"
+              onClick={handleSave}
+              loading={isSaving}
+              disabled={isSaving}
+            >
+              Save Stone
+            </Button>
+          </InlineStack>
 
-        <Card>
-          <BlockStack gap="300">
-            {TARGET_KEYS.map(key => (
-              <TextField
-                key={key}
-                label={FIELD_LABELS[key] || key}
-                value={fieldValues[key] || ""}
-                onChange={val => setFieldValues(prev => ({ ...prev, [key]: val }))}
-                autoComplete="off"
-                multiline={["description", "story_seed", "treatment_notes"].includes(key) ? 3 : undefined}
-              />
-            ))}
-          </BlockStack>
-        </Card>
-      </BlockStack>
+          {saveSuccess && (
+            <Banner tone="success">Metafields saved successfully.</Banner>
+          )}
+          {saveError && (
+            <Banner tone="critical">Save failed: {fetcher.data.error}</Banner>
+          )}
+        </div>
+
+        {/* Scrollable fields */}
+        <div style={{ overflowY: "auto", flex: 1, paddingRight: "8px" }}>
+          <Card>
+            <BlockStack gap="300">
+              {TARGET_KEYS.map(key => (
+                <TextField
+                  key={key}
+                  label={FIELD_LABELS[key] || key}
+                  value={fieldValues[key] || ""}
+                  onChange={val => setFieldValues(prev => ({ ...prev, [key]: val }))}
+                  autoComplete="off"
+                  multiline={["stone_story", "bench_notes", "character_marks", "rock_composition"].includes(key) ? 3 : undefined}
+                />
+              ))}
+            </BlockStack>
+          </Card>
+        </div>
+      </div>
     );
   }
 
