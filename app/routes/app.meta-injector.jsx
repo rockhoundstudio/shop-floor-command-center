@@ -93,6 +93,27 @@ export const action = async ({ request }) => {
   const formData = await request.formData();
   const intent = formData.get("intent");
 
+  if (intent === "saveMetafields") {
+    const metafields = JSON.parse(formData.get("metafields"));
+    const chunks = [];
+    for (let i = 0; i < metafields.length; i += 10) {
+      chunks.push(metafields.slice(i, i + 10));
+    }
+    for (const chunk of chunks) {
+      const res = await admin.graphql(`
+        mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
+          metafieldsSet(metafields: $metafields) { userErrors { message } }
+        }
+      `, { variables: { metafields: chunk } });
+      const json = await res.json();
+      const errors = json.data?.metafieldsSet?.userErrors || [];
+      if (errors.length > 0) {
+        return data({ success: false, error: errors[0].message });
+      }
+    }
+    return data({ success: true });
+  }
+
   if (intent === "bulk_edit_new") {
     const updates = JSON.parse(formData.get("updates"));
     const ids = JSON.parse(formData.get("ids"));
