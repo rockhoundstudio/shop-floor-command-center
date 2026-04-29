@@ -1,4 +1,4 @@
-import { json } from "@remix-run/node";
+import { data } from "react-router";
 import { authenticate } from "../shopify.server";
 
 export const action = async ({ request }) => {
@@ -25,6 +25,6 @@ export const action = async ({ request }) => {
     { variables: { metafields: setMetafields } }
   );
 
-  const data = await response.json();
-  return json(data);
+  const result = await response.json();
+  return data(result);
 };
