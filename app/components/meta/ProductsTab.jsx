@@ -86,7 +86,7 @@ export default function ProductsTab({ products = [] }) {
 
       try {
         // Step 1 — auto-fill via server action
-        const autoRes = await fetch("/app/meta-injector?_data=routes%2Fapp.meta-injector", {
+        const autoRes = await fetch("/app/meta-injector", {
           method: "POST",
           headers: { "Content-Type": "application/x-www-form-urlencoded" },
           body: new URLSearchParams({
@@ -96,7 +96,16 @@ export default function ProductsTab({ products = [] }) {
             existingMeta: JSON.stringify(p.metafields || {}),
           }),
         });
-        const autoData = await autoRes.json();
+
+        let autoData;
+        const autoText = await autoRes.text();
+        try {
+          autoData = JSON.parse(autoText);
+        } catch {
+          setBulkErrors(prev => [...prev, `${p.title} — server returned HTML, not JSON`]);
+          setBulkProgress(i + 1);
+          continue;
+        }
 
         if (!autoData?.merged) {
           setBulkErrors(prev => [...prev, `${p.title} — no geo data found`]);
@@ -107,7 +116,7 @@ export default function ProductsTab({ products = [] }) {
         // Step 2 — merge with existing
         const merged = { ...p.metafields, ...autoData.merged };
 
-        // Step 3 — save metafields
+        // Step 3 — save metafields via dedicated API route
         const metafields = TARGET_KEYS.map(key => ({
           ownerId: p.id,
           namespace: "custom",
@@ -116,18 +125,25 @@ export default function ProductsTab({ products = [] }) {
           type: "single_line_text_field",
         }));
 
-        const saveRes = await fetch("/app/meta-injector?_data=routes%2Fapp.meta-injector", {
+        const saveRes = await fetch("/app/meta-injector-api", {
           method: "POST",
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          body: new URLSearchParams({
-            intent: "saveMetafields",
-            metafields: JSON.stringify(metafields),
-          }),
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ productId: p.id, metafields }),
         });
-        const saveData = await saveRes.json();
 
-        if (!saveData?.success) {
-          setBulkErrors(prev => [...prev, `${p.title} — save failed`]);
+        let saveData;
+        const saveText = await saveRes.text();
+        try {
+          saveData = JSON.parse(saveText);
+        } catch {
+          setBulkErrors(prev => [...prev, `${p.title} — save returned HTML, not JSON`]);
+          setBulkProgress(i + 1);
+          continue;
+        }
+
+        const userErrors = saveData?.data?.metafieldsSet?.userErrors || [];
+        if (userErrors.length > 0) {
+          setBulkErrors(prev => [...prev, `${p.title} — ${userErrors.map(e => e.message).join(", ")}`]);
         }
 
       } catch (err) {
@@ -135,8 +151,6 @@ export default function ProductsTab({ products = [] }) {
       }
 
       setBulkProgress(i + 1);
-
-      // Small delay to avoid hammering the server
       await new Promise(r => setTimeout(r, 300));
     }
 
@@ -207,7 +221,6 @@ export default function ProductsTab({ products = [] }) {
   return (
     <BlockStack gap="400">
 
-      {/* Search */}
       <TextField
         label="Search Shop Floor"
         value={search}
@@ -218,7 +231,6 @@ export default function ProductsTab({ products = [] }) {
         onClearButtonClick={() => setSearch("")}
       />
 
-      {/* Bulk Auto-Fill Panel */}
       <Card>
         <BlockStack gap="300">
           <InlineStack align="space-between" blockAlign="center">
@@ -262,7 +274,6 @@ export default function ProductsTab({ products = [] }) {
         </BlockStack>
       </Card>
 
-      {/* Product Grid */}
       {filtered.length === 0 && <Text tone="subdued">No products match your search.</Text>}
       <Grid>
         {filtered.map((p) => (
@@ -296,4 +307,3 @@ export default function ProductsTab({ products = [] }) {
     </BlockStack>
   );
 }
-
