@@ -54,9 +54,12 @@ export const loader = async ({ request }) => {
         (node.customMeta?.edges || []).map(({ node: mf }) => [mf.key, mf.value])
       );
       const shopifyMfs = Object.fromEntries(
-        (node.shopifyMeta?.edges || []).map(({ node: mf }) => [mf.key, mf.value])
+        (node.shopifyMeta?.edges || []).map(({ node: mf }) => [
+          mf.key.replace(/-/g, "_"), mf.value
+        ])
       );
-      const mfs = { ...customMfs, ...shopifyMfs };
+      // custom wins over shopify
+      const mfs = { ...shopifyMfs, ...customMfs };
       const { status, filledCount } = evaluateProductStatus(mfs);
       return {
         ...node,
@@ -83,20 +86,15 @@ export const action = async ({ request }) => {
   const formData = await request.formData();
   const intent = formData.get("intent");
 
-  // ── AUTO FILL ────────────────────────────────────────────────────
   if (intent === "autoFill") {
     const title       = formData.get("title");
     const description = formData.get("description");
     const existingRaw = formData.get("existingMeta");
     const existing    = existingRaw ? JSON.parse(existingRaw) : {};
 
-    // Step 1 — parse description
     const parsed = parseDescription(description);
-
-    // Step 2 — geo library lookup
     const library = lookupStone(title) || {};
 
-    // Step 3 — Mindat lookup
     let mindat = {};
     try {
       const res = await fetch(
@@ -120,29 +118,24 @@ export const action = async ({ request }) => {
             fracture_pattern:  m.fracture         || "",
             diaphaneity:       m.transparency     || "",
           };
-          // Remove empty mindat fields
           Object.keys(mindat).forEach(k => { if (!mindat[k]) delete mindat[k]; });
         }
       }
     } catch (e) {}
 
-    // Step 4 — merge: existing wins, then library, then parsed desc, then mindat
-    // Flag source: ✅ = mindat confirmed, ⚠️ = library/parsed (unconfirmed)
     const merged = {};
     const conflicts = [];
 
     TARGET_KEYS.forEach(key => {
       if (existing[key] && String(existing[key]).trim() !== "") {
-        merged[key] = existing[key]; // keep existing
+        merged[key] = existing[key];
         return;
       }
-
       const libVal    = library[key]  || "";
       const parsedVal = parsed[key]   || "";
       const mindatVal = mindat[key]   || "";
 
       if (mindatVal) {
-        // Mindat has data — check if library agrees
         if (libVal && libVal !== mindatVal) {
           conflicts.push({ key, library: libVal, mindat: mindatVal });
         }
@@ -157,7 +150,6 @@ export const action = async ({ request }) => {
     return data({ ok: true, merged, conflicts });
   }
 
-  // ── SAVE METAFIELDS ──────────────────────────────────────────────
   if (intent === "saveMetafields") {
     const metafields = JSON.parse(formData.get("metafields"));
     const chunks = [];
@@ -175,7 +167,6 @@ export const action = async ({ request }) => {
     return data({ success: true });
   }
 
-  // ── BULK EDIT ────────────────────────────────────────────────────
   if (intent === "bulk_edit_new") {
     const updates = JSON.parse(formData.get("updates"));
     const ids = JSON.parse(formData.get("ids"));
@@ -195,7 +186,6 @@ export const action = async ({ request }) => {
     return data({ ok: true });
   }
 
-  // ── BUILD PAYLOAD ────────────────────────────────────────────────
   if (intent === "build_payload") {
     const productId    = formData.get("productId");
     const title        = formData.get("title");
@@ -234,7 +224,6 @@ export const action = async ({ request }) => {
     return data({ ok: true, payload: payloadLines.join("\n") });
   }
 
-  // ── INJECT ───────────────────────────────────────────────────────
   if (intent === "inject") {
     const payload = formData.get("payload");
     const lines = payload.split("\n").filter(Boolean);
@@ -250,7 +239,6 @@ export const action = async ({ request }) => {
     return data({ ok: true, injected: metafields.length });
   }
 
-  // ── MINDAT LOOKUP ────────────────────────────────────────────────
   if (intent === "mindat_lookup") {
     const query = formData.get("query");
     try {
@@ -265,7 +253,6 @@ export const action = async ({ request }) => {
     return data({ ok: true, found: false });
   }
 
-  // ── COLLECTIONS ──────────────────────────────────────────────────
   if (intent === "createCollection") {
     const title = formData.get("title");
     await admin.graphql(`mutation collectionCreate($input: CollectionInput!) { collectionCreate(input: $input) { userErrors { message } } }`, { variables: { input: { title } } });
