@@ -1,14 +1,16 @@
 import { TextField, BlockStack, Card, Text, Badge, Grid, Button, Banner, InlineStack, ProgressBar } from "@shopify/polaris";
 import { useState, useRef } from "react";
 import { useFetcher } from "react-router";
+import { useAppBridge } from "@shopify/app-bridge-react";
 import { TARGET_KEYS, FIELD_LABELS } from "../../utils/metaScan";
 
 export default function ProductsTab({ products = [] }) {
+  const shopify = useAppBridge();
+
   const [search, setSearch]       = useState("");
   const [selected, setSelected]   = useState(null);
   const [fieldValues, setFieldValues] = useState({});
 
-  // Bulk state
   const [bulkRunning, setBulkRunning]   = useState(false);
   const [bulkProgress, setBulkProgress] = useState(0);
   const [bulkTotal, setBulkTotal]       = useState(0);
@@ -60,7 +62,6 @@ export default function ProductsTab({ products = [] }) {
     );
   }
 
-  // Apply auto-fill results when they come back
   if (autoFetcher.state === "idle" && autoFetcher.data?.merged) {
     const merged = autoFetcher.data.merged;
     const hasNew = Object.keys(merged).some(k => merged[k] !== fieldValues[k]);
@@ -70,7 +71,6 @@ export default function ProductsTab({ products = [] }) {
     }
   }
 
-  // ── BULK AUTO-FILL ALL ───────────────────────────────────────────
   async function handleBulkFill() {
     bulkAbort.current = false;
     setBulkRunning(true);
@@ -85,12 +85,10 @@ export default function ProductsTab({ products = [] }) {
       const p = products[i];
 
       try {
-        // Step 1 — auto-fill via server action
-        const autoRes = await fetch("/app/meta-injector", {
+        const autoRes = await shopify.fetch("/app/meta-injector-autofill", {
           method: "POST",
           headers: { "Content-Type": "application/x-www-form-urlencoded" },
           body: new URLSearchParams({
-            intent: "autoFill",
             title: p.title,
             description: p.description || "",
             existingMeta: JSON.stringify(p.metafields || {}),
@@ -102,7 +100,7 @@ export default function ProductsTab({ products = [] }) {
         try {
           autoData = JSON.parse(autoText);
         } catch {
-          setBulkErrors(prev => [...prev, `${p.title} — server returned HTML, not JSON`]);
+          setBulkErrors(prev => [...prev, `${p.title} — autofill returned HTML`]);
           setBulkProgress(i + 1);
           continue;
         }
@@ -113,10 +111,8 @@ export default function ProductsTab({ products = [] }) {
           continue;
         }
 
-        // Step 2 — merge with existing
         const merged = { ...p.metafields, ...autoData.merged };
 
-        // Step 3 — save metafields via dedicated API route
         const metafields = TARGET_KEYS.map(key => ({
           ownerId: p.id,
           namespace: "custom",
@@ -125,7 +121,7 @@ export default function ProductsTab({ products = [] }) {
           type: "single_line_text_field",
         }));
 
-        const saveRes = await fetch("/app/meta-injector-api", {
+        const saveRes = await shopify.fetch("/app/meta-injector-api", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ productId: p.id, metafields }),
@@ -136,7 +132,7 @@ export default function ProductsTab({ products = [] }) {
         try {
           saveData = JSON.parse(saveText);
         } catch {
-          setBulkErrors(prev => [...prev, `${p.title} — save returned HTML, not JSON`]);
+          setBulkErrors(prev => [...prev, `${p.title} — save returned HTML`]);
           setBulkProgress(i + 1);
           continue;
         }
@@ -158,13 +154,12 @@ export default function ProductsTab({ products = [] }) {
     setBulkDone(true);
   }
 
-  const isSaving   = saveFetcher.state !== "idle";
-  const isAutoFill = autoFetcher.state !== "idle";
+  const isSaving    = saveFetcher.state !== "idle";
+  const isAutoFill  = autoFetcher.state !== "idle";
   const saveSuccess = saveFetcher.state === "idle" && saveFetcher.data?.success;
   const saveError   = saveFetcher.state === "idle" && saveFetcher.data?.error;
   const conflicts   = autoFetcher.data?.conflicts || [];
 
-  // ── EDIT STONE VIEW ──────────────────────────────────────────────
   if (selected) {
     return (
       <div style={{ display: "flex", flexDirection: "column", height: "80vh" }}>
@@ -217,7 +212,6 @@ export default function ProductsTab({ products = [] }) {
     );
   }
 
-  // ── PRODUCTS GRID ────────────────────────────────────────────────
   return (
     <BlockStack gap="400">
 
