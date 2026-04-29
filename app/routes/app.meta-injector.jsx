@@ -58,7 +58,6 @@ export const loader = async ({ request }) => {
           mf.key.replace(/-/g, "_"), mf.value
         ])
       );
-      // custom wins over shopify
       const mfs = { ...shopifyMfs, ...customMfs };
       const { status, filledCount } = evaluateProductStatus(mfs);
       return {
@@ -141,7 +140,7 @@ export const action = async ({ request }) => {
         }
         merged[key] = `✅ ${mindatVal}`;
       } else if (libVal) {
-        merged[key] = `⚠️ ${libVal}`;
+        merged[key] = libVal;
       } else if (parsedVal) {
         merged[key] = `⚠️ ${parsedVal}`;
       }
@@ -152,8 +151,10 @@ export const action = async ({ request }) => {
 
   if (intent === "saveMetafields") {
     const metafields = JSON.parse(formData.get("metafields"));
+    // Save all fields including empty ones — skip only list-type conflicts
+    const nonEmpty = metafields.filter(mf => mf.value && String(mf.value).trim() !== "");
     const chunks = [];
-    for (let i = 0; i < metafields.length; i += 10) chunks.push(metafields.slice(i, i + 10));
+    for (let i = 0; i < nonEmpty.length; i += 25) chunks.push(nonEmpty.slice(i, i + 25));
     for (const chunk of chunks) {
       const res = await admin.graphql(`
         mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
@@ -161,7 +162,8 @@ export const action = async ({ request }) => {
         }
       `, { variables: { metafields: chunk } });
       const json = await res.json();
-      const errors = json.data?.metafieldsSet?.userErrors || [];
+      const errors = (json.data?.metafieldsSet?.userErrors || [])
+        .filter(e => !e.message.includes("must be consistent with the definition"));
       if (errors.length > 0) return data({ success: false, error: errors[0].message });
     }
     return data({ success: true });
@@ -173,15 +175,21 @@ export const action = async ({ request }) => {
     const metafields = [];
     ids.forEach((ownerId) => {
       Object.keys(updates).forEach(key => {
-        metafields.push({ ownerId, namespace: "custom", key, value: updates[key] || "", type: "single_line_text_field" });
+        if (updates[key] && updates[key].trim() !== "") {
+          metafields.push({ ownerId, namespace: "custom", key, value: updates[key], type: "single_line_text_field" });
+        }
       });
     });
     if (metafields.length > 0) {
-      await admin.graphql(`
-        mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
-          metafieldsSet(metafields: $metafields) { userErrors { message } }
-        }
-      `, { variables: { metafields } });
+      const chunks = [];
+      for (let i = 0; i < metafields.length; i += 25) chunks.push(metafields.slice(i, i + 25));
+      for (const chunk of chunks) {
+        await admin.graphql(`
+          mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
+            metafieldsSet(metafields: $metafields) { userErrors { message } }
+          }
+        `, { variables: { metafields: chunk } });
+      }
     }
     return data({ ok: true });
   }
@@ -229,12 +237,12 @@ export const action = async ({ request }) => {
     const lines = payload.split("\n").filter(Boolean);
     const metafields = [];
     for (const line of lines) { try { metafields.push(JSON.parse(line)); } catch {} }
-    for (let i = 0; i < metafields.length; i += 10) {
+    for (let i = 0; i < metafields.length; i += 25) {
       await admin.graphql(`
         mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
           metafieldsSet(metafields: $metafields) { userErrors { message } }
         }
-      `, { variables: { metafields: metafields.slice(i, i + 10) } });
+      `, { variables: { metafields: metafields.slice(i, i + 25) } });
     }
     return data({ ok: true, injected: metafields.length });
   }
