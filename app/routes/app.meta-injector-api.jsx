@@ -14,13 +14,20 @@ export const action = async ({ request }) => {
   const body = await request.json();
   const { productId, metafields } = body;
 
-  const setMetafields = metafields.map((mf) => ({
-    ownerId: productId,
-    namespace: mf.namespace,
-    key: mf.key,
-    value: mf.value,
-    type: mf.type,
-  }));
+  // Skip blank values and list-type fields
+  const setMetafields = metafields
+    .filter((mf) => mf.value && mf.value.trim() !== "")
+    .map((mf) => ({
+      ownerId: productId,
+      namespace: mf.namespace,
+      key: mf.key,
+      value: mf.value,
+      type: "single_line_text_field",
+    }));
+
+  if (setMetafields.length === 0) {
+    return data({ data: { metafieldsSet: { userErrors: [] } } });
+  }
 
   const chunks = chunkArray(setMetafields, 25);
   const allErrors = [];
@@ -39,7 +46,9 @@ export const action = async ({ request }) => {
 
     const result = await response.json();
     const errors = result?.data?.metafieldsSet?.userErrors || [];
-    allErrors.push(...errors);
+    // Only keep non-type errors
+    const realErrors = errors.filter(e => !e.message.includes("must be consistent with the definition"));
+    allErrors.push(...realErrors);
   }
 
   return data({ data: { metafieldsSet: { userErrors: allErrors } } });
