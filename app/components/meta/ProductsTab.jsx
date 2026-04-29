@@ -1,14 +1,23 @@
-import { TextField, BlockStack, Card, Text, Badge, Grid, Button, Banner, InlineStack, Spinner } from "@shopify/polaris";
-import { useState } from "react";
+import { TextField, BlockStack, Card, Text, Badge, Grid, Button, Banner, InlineStack, ProgressBar } from "@shopify/polaris";
+import { useState, useRef } from "react";
 import { useFetcher } from "react-router";
 import { TARGET_KEYS, FIELD_LABELS } from "../../utils/metaScan";
 
 export default function ProductsTab({ products = [] }) {
-  const [search, setSearch] = useState("");
-  const [selected, setSelected] = useState(null);
+  const [search, setSearch]       = useState("");
+  const [selected, setSelected]   = useState(null);
   const [fieldValues, setFieldValues] = useState({});
-  const saveFetcher  = useFetcher();
-  const autoFetcher  = useFetcher();
+
+  // Bulk state
+  const [bulkRunning, setBulkRunning]   = useState(false);
+  const [bulkProgress, setBulkProgress] = useState(0);
+  const [bulkTotal, setBulkTotal]       = useState(0);
+  const [bulkDone, setBulkDone]         = useState(false);
+  const [bulkErrors, setBulkErrors]     = useState([]);
+  const bulkAbort = useRef(false);
+
+  const saveFetcher = useFetcher();
+  const autoFetcher = useFetcher();
 
   const filtered = products.filter(p =>
     p.title.toLowerCase().includes(search.toLowerCase())
@@ -54,12 +63,85 @@ export default function ProductsTab({ products = [] }) {
   // Apply auto-fill results when they come back
   if (autoFetcher.state === "idle" && autoFetcher.data?.merged) {
     const merged = autoFetcher.data.merged;
-    // Only apply if we haven't already applied this result
     const hasNew = Object.keys(merged).some(k => merged[k] !== fieldValues[k]);
     if (hasNew) {
       setFieldValues(prev => ({ ...prev, ...merged }));
-      autoFetcher.data = null; // clear to prevent re-apply loop
+      autoFetcher.data = null;
     }
+  }
+
+  // ── BULK AUTO-FILL ALL ───────────────────────────────────────────
+  async function handleBulkFill() {
+    bulkAbort.current = false;
+    setBulkRunning(true);
+    setBulkDone(false);
+    setBulkErrors([]);
+    setBulkProgress(0);
+    setBulkTotal(products.length);
+
+    for (let i = 0; i < products.length; i++) {
+      if (bulkAbort.current) break;
+
+      const p = products[i];
+
+      try {
+        // Step 1 — auto-fill via server action
+        const autoRes = await fetch("/app/meta-injector", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            intent: "autoFill",
+            title: p.title,
+            description: p.description || "",
+            existingMeta: JSON.stringify(p.metafields || {}),
+          }),
+        });
+        const autoData = await autoRes.json();
+
+        if (!autoData?.merged) {
+          setBulkErrors(prev => [...prev, `${p.title} — no geo data found`]);
+          setBulkProgress(i + 1);
+          continue;
+        }
+
+        // Step 2 — merge with existing
+        const merged = { ...p.metafields, ...autoData.merged };
+
+        // Step 3 — save metafields
+        const metafields = TARGET_KEYS.map(key => ({
+          ownerId: p.id,
+          namespace: "custom",
+          key,
+          value: merged[key] || "",
+          type: "single_line_text_field",
+        }));
+
+        const saveRes = await fetch("/app/meta-injector", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            intent: "saveMetafields",
+            metafields: JSON.stringify(metafields),
+          }),
+        });
+        const saveData = await saveRes.json();
+
+        if (!saveData?.success) {
+          setBulkErrors(prev => [...prev, `${p.title} — save failed`]);
+        }
+
+      } catch (err) {
+        setBulkErrors(prev => [...prev, `${p.title} — error: ${err.message}`]);
+      }
+
+      setBulkProgress(i + 1);
+
+      // Small delay to avoid hammering the server
+      await new Promise(r => setTimeout(r, 300));
+    }
+
+    setBulkRunning(false);
+    setBulkDone(true);
   }
 
   const isSaving   = saveFetcher.state !== "idle";
@@ -72,32 +154,19 @@ export default function ProductsTab({ products = [] }) {
   if (selected) {
     return (
       <div style={{ display: "flex", flexDirection: "column", height: "80vh" }}>
-
-        {/* Sticky header */}
         <div style={{
           position: "sticky", top: 0, zIndex: 10,
           background: "#fff", paddingBottom: "12px",
           borderBottom: "1px solid #e1e3e5", marginBottom: "16px"
         }}>
           <InlineStack align="space-between" blockAlign="center">
-            <Button variant="plain" onClick={() => setSelected(null)}>
-              ← Back
-            </Button>
+            <Button variant="plain" onClick={() => setSelected(null)}>← Back</Button>
             <Text variant="headingMd" fontWeight="bold">{selected.title}</Text>
             <InlineStack gap="200">
-              <Button
-                onClick={handleAutoFill}
-                loading={isAutoFill}
-                disabled={isAutoFill || isSaving}
-              >
+              <Button onClick={handleAutoFill} loading={isAutoFill} disabled={isAutoFill || isSaving}>
                 🔍 Auto-Fill
               </Button>
-              <Button
-                variant="primary"
-                onClick={handleSave}
-                loading={isSaving}
-                disabled={isSaving || isAutoFill}
-              >
+              <Button variant="primary" onClick={handleSave} loading={isSaving} disabled={isSaving || isAutoFill}>
                 Save Stone
               </Button>
             </InlineStack>
@@ -108,13 +177,12 @@ export default function ProductsTab({ products = [] }) {
 
           {conflicts.length > 0 && (
             <Banner tone="warning">
-              {conflicts.length} conflict{conflicts.length > 1 ? "s" : ""} found — Mindat data used.{" "}
+              {conflicts.length} conflict{conflicts.length > 1 ? "s" : ""} — Mindat data used.{" "}
               {conflicts.map(c => `${FIELD_LABELS[c.key] || c.key}: library="${c.library}" vs mindat="${c.mindat}"`).join(" | ")}
             </Banner>
           )}
         </div>
 
-        {/* Scrollable fields */}
         <div style={{ overflowY: "auto", flex: 1, paddingRight: "8px" }}>
           <Card>
             <BlockStack gap="300">
@@ -138,6 +206,8 @@ export default function ProductsTab({ products = [] }) {
   // ── PRODUCTS GRID ────────────────────────────────────────────────
   return (
     <BlockStack gap="400">
+
+      {/* Search */}
       <TextField
         label="Search Shop Floor"
         value={search}
@@ -147,6 +217,52 @@ export default function ProductsTab({ products = [] }) {
         clearButton
         onClearButtonClick={() => setSearch("")}
       />
+
+      {/* Bulk Auto-Fill Panel */}
+      <Card>
+        <BlockStack gap="300">
+          <InlineStack align="space-between" blockAlign="center">
+            <BlockStack gap="100">
+              <Text variant="headingSm" fontWeight="bold">⚡ Auto-Fill All Products</Text>
+              <Text variant="bodySm" tone="subdued">
+                Fills geological data for all {products.length} products using geo library. Skips fields already filled.
+              </Text>
+            </BlockStack>
+            <InlineStack gap="200">
+              {bulkRunning && (
+                <Button tone="critical" onClick={() => { bulkAbort.current = true; }}>
+                  Stop
+                </Button>
+              )}
+              <Button
+                variant="primary"
+                onClick={handleBulkFill}
+                loading={bulkRunning}
+                disabled={bulkRunning}
+              >
+                {bulkRunning ? `Filling ${bulkProgress} / ${bulkTotal}…` : "Auto-Fill All"}
+              </Button>
+            </InlineStack>
+          </InlineStack>
+
+          {bulkRunning && (
+            <BlockStack gap="100">
+              <ProgressBar progress={bulkTotal > 0 ? Math.round((bulkProgress / bulkTotal) * 100) : 0} size="small" />
+              <Text variant="bodyXs" tone="subdued">{bulkProgress} of {bulkTotal} products processed</Text>
+            </BlockStack>
+          )}
+
+          {bulkDone && !bulkRunning && (
+            <Banner tone={bulkErrors.length > 0 ? "warning" : "success"}>
+              {bulkErrors.length === 0
+                ? `All ${bulkTotal} products filled successfully. Reload to see updated field counts.`
+                : `Done with ${bulkErrors.length} issue(s): ${bulkErrors.join(" | ")}`}
+            </Banner>
+          )}
+        </BlockStack>
+      </Card>
+
+      {/* Product Grid */}
       {filtered.length === 0 && <Text tone="subdued">No products match your search.</Text>}
       <Grid>
         {filtered.map((p) => (
