@@ -1,6 +1,6 @@
 import { data } from "react-router";
 import { authenticate } from "../shopify.server";
-import { geoLibrary } from "../utils/geoLibrary";
+import geoLibrary from "../utils/geoLibrary";
 import { TARGET_KEYS } from "../utils/metaScan";
 
 export const action = async ({ request }) => {
