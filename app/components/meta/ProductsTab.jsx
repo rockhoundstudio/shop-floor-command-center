@@ -25,6 +25,11 @@ export default function ProductsTab({ products = [] }) {
     p.title.toLowerCase().includes(search.toLowerCase())
   );
 
+  async function getAuthHeaders() {
+    const token = await shopify.idToken();
+    return { "Authorization": `Bearer ${token}` };
+  }
+
   function openEditor(product) {
     const initial = {};
     TARGET_KEYS.forEach(key => {
@@ -79,15 +84,20 @@ export default function ProductsTab({ products = [] }) {
     setBulkProgress(0);
     setBulkTotal(products.length);
 
+    const authHeaders = await getAuthHeaders();
+
     for (let i = 0; i < products.length; i++) {
       if (bulkAbort.current) break;
 
       const p = products[i];
 
       try {
-        const autoRes = await shopify.fetch("/app/meta-injector-autofill", {
+        const autoRes = await fetch("/app/meta-injector-autofill", {
           method: "POST",
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            ...authHeaders,
+          },
           body: new URLSearchParams({
             title: p.title,
             description: p.description || "",
@@ -121,9 +131,12 @@ export default function ProductsTab({ products = [] }) {
           type: "single_line_text_field",
         }));
 
-        const saveRes = await shopify.fetch("/app/meta-injector-api", {
+        const saveRes = await fetch("/app/meta-injector-api", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...authHeaders,
+          },
           body: JSON.stringify({ productId: p.id, metafields }),
         });
 
