@@ -86,7 +86,7 @@ export default function ProductsTab({ products = [] }) {
 
       try {
         // Step 1 — auto-fill via server action
-        const autoRes = await fetch("/app/meta-injector", {
+        const autoRes = await fetch("/app/meta-injector?_data=routes%2Fapp.meta-injector", {
           method: "POST",
           headers: { "Content-Type": "application/x-www-form-urlencoded" },
           body: new URLSearchParams({
@@ -116,7 +116,7 @@ export default function ProductsTab({ products = [] }) {
           type: "single_line_text_field",
         }));
 
-        const saveRes = await fetch("/app/meta-injector", {
+        const saveRes = await fetch("/app/meta-injector?_data=routes%2Fapp.meta-injector", {
           method: "POST",
           headers: { "Content-Type": "application/x-www-form-urlencoded" },
           body: new URLSearchParams({
@@ -296,3 +296,4 @@ export default function ProductsTab({ products = [] }) {
     </BlockStack>
   );
 }
+
