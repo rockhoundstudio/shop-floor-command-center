@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useLoaderData, data } from "react-router";
 import { authenticate } from "../shopify.server";
 import {
@@ -91,36 +91,39 @@ export const action = async ({ request }) => {
     const existingRaw = formData.get("existingMeta");
     const existing    = existingRaw ? JSON.parse(existingRaw) : {};
 
-    const parsed = parseDescription(description);
+    const parsed  = parseDescription(description);
     const library = lookupStone(title) || {};
 
     let mindat = {};
+    let mindatError = null;
     try {
+      if (!process.env.MINDAT_API_KEY) throw new Error("MINDAT_API_KEY not set");
       const res = await fetch(
         `https://api.mindat.org/minerals/?name=${encodeURIComponent(title)}&format=json`,
         { headers: { Authorization: `Token ${process.env.MINDAT_API_KEY}` } }
       );
-      if (res.ok) {
-        const json = await res.json();
-        if (json.results?.[0]) {
-          const m = json.results[0];
-          mindat = {
-            moh_hardness:      m.hardness        || "",
-            where_found:       m.localities       || "",
-            geological_age:    m.geological_age   || "",
-            crystal_structure: m.crystal_system   || "",
-            mineral_class:     m.mineral_class    || "",
-            chemical_formula:  m.formula          || "",
-            specific_gravity:  m.specific_gravity || "",
-            luster:            m.luster           || "",
-            cleavage:          m.cleavage         || "",
-            fracture_pattern:  m.fracture         || "",
-            diaphaneity:       m.transparency     || "",
-          };
-          Object.keys(mindat).forEach(k => { if (!mindat[k]) delete mindat[k]; });
-        }
+      if (!res.ok) throw new Error(`Mindat HTTP ${res.status}`);
+      const json = await res.json();
+      if (json.results?.[0]) {
+        const m = json.results[0];
+        mindat = {
+          moh_hardness:      m.hardness        || "",
+          where_found:       m.localities       || "",
+          geological_age:    m.geological_age   || "",
+          crystal_structure: m.crystal_system   || "",
+          mineral_class:     m.mineral_class    || "",
+          chemical_formula:  m.formula          || "",
+          specific_gravity:  m.specific_gravity || "",
+          luster:            m.luster           || "",
+          cleavage:          m.cleavage         || "",
+          fracture_pattern:  m.fracture         || "",
+          diaphaneity:       m.transparency     || "",
+        };
+        Object.keys(mindat).forEach(k => { if (!mindat[k]) delete mindat[k]; });
       }
-    } catch (e) {}
+    } catch (e) {
+      mindatError = e.message;
+    }
 
     const merged = {};
     const conflicts = [];
@@ -146,12 +149,11 @@ export const action = async ({ request }) => {
       }
     });
 
-    return data({ ok: true, merged, conflicts });
+    return data({ ok: true, merged, conflicts, mindatError });
   }
 
   if (intent === "saveMetafields") {
     const metafields = JSON.parse(formData.get("metafields"));
-    // Save all fields including empty ones — skip only list-type conflicts
     const nonEmpty = metafields.filter(mf => mf.value && String(mf.value).trim() !== "");
     const chunks = [];
     for (let i = 0; i < nonEmpty.length; i += 25) chunks.push(nonEmpty.slice(i, i + 25));
@@ -194,49 +196,15 @@ export const action = async ({ request }) => {
     return data({ ok: true });
   }
 
-  if (intent === "build_payload") {
-    const productId    = formData.get("productId");
-    const title        = formData.get("title");
-    const description  = formData.get("description");
-    const existingMeta = JSON.parse(formData.get("existingMeta"));
-    const parsedData   = parseDescription(description);
-    let mindatData = {};
-    try {
-      const res = await fetch(`https://api.mindat.org/minerals/?name=${encodeURIComponent(title)}&format=json`, {
-        headers: { Authorization: `Token ${process.env.MINDAT_API_KEY}` }
-      });
-      if (res.ok) {
-        const json = await res.json();
-        if (json.results?.[0]) {
-          mindatData = {
-            moh_hardness: json.results[0].hardness, where_found: json.results[0].localities,
-            geological_age: json.results[0].geological_age, crystal_structure: json.results[0].crystal_system,
-            mineral_class: json.results[0].mineral_class
-          };
-        }
-      }
-    } catch (e) {}
-    const payloadLines = [];
-    TARGET_KEYS.forEach(key => {
-      const existing = existingMeta[key];
-      if (existing && String(existing).trim() !== "") return;
-      let val = mindatData[key] || parsedData[key];
-      let isVerified = !!mindatData[key];
-      if (val) {
-        payloadLines.push(JSON.stringify({
-          ownerId: productId, namespace: "custom", key,
-          value: isVerified ? val : `⚠️ ${val}`, type: "single_line_text_field"
-        }));
-      }
-    });
-    return data({ ok: true, payload: payloadLines.join("\n") });
-  }
-
   if (intent === "inject") {
     const payload = formData.get("payload");
     const lines = payload.split("\n").filter(Boolean);
     const metafields = [];
-    for (const line of lines) { try { metafields.push(JSON.parse(line)); } catch {} }
+    let skipped = 0;
+    for (const line of lines) {
+      try { metafields.push(JSON.parse(line)); }
+      catch { skipped++; }
+    }
     for (let i = 0; i < metafields.length; i += 25) {
       await admin.graphql(`
         mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
@@ -244,7 +212,7 @@ export const action = async ({ request }) => {
         }
       `, { variables: { metafields: metafields.slice(i, i + 25) } });
     }
-    return data({ ok: true, injected: metafields.length });
+    return data({ ok: true, injected: metafields.length, skipped });
   }
 
   if (intent === "mindat_lookup") {

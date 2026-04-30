@@ -7,8 +7,8 @@ import { TARGET_KEYS, FIELD_LABELS } from "../../utils/metaScan";
 export default function ProductsTab({ products = [] }) {
   const shopify = useAppBridge();
 
-  const [search, setSearch]       = useState("");
-  const [selected, setSelected]   = useState(null);
+  const [search, setSearch]           = useState("");
+  const [selected, setSelected]       = useState(null);
   const [fieldValues, setFieldValues] = useState({});
 
   const [bulkRunning, setBulkRunning]   = useState(false);
@@ -16,7 +16,8 @@ export default function ProductsTab({ products = [] }) {
   const [bulkTotal, setBulkTotal]       = useState(0);
   const [bulkDone, setBulkDone]         = useState(false);
   const [bulkErrors, setBulkErrors]     = useState([]);
-  const bulkAbort = useRef(false);
+  const bulkAbort  = useRef(false);
+  const mergedApplied = useRef(false);
 
   const saveFetcher = useFetcher();
   const autoFetcher = useFetcher();
@@ -39,6 +40,7 @@ export default function ProductsTab({ products = [] }) {
     if (!initial.stone_story)   initial.stone_story   = product.description || "";
     setFieldValues(initial);
     setSelected(product);
+    mergedApplied.current = false;
   }
 
   function handleSave() {
@@ -56,6 +58,7 @@ export default function ProductsTab({ products = [] }) {
   }
 
   function handleAutoFill() {
+    mergedApplied.current = false;
     autoFetcher.submit(
       {
         intent: "autoFill",
@@ -67,12 +70,12 @@ export default function ProductsTab({ products = [] }) {
     );
   }
 
-  if (autoFetcher.state === "idle" && autoFetcher.data?.merged) {
+  if (autoFetcher.state === "idle" && autoFetcher.data?.merged && !mergedApplied.current) {
     const merged = autoFetcher.data.merged;
     const hasNew = Object.keys(merged).some(k => merged[k] !== fieldValues[k]);
     if (hasNew) {
+      mergedApplied.current = true;
       setFieldValues(prev => ({ ...prev, ...merged }));
-      autoFetcher.data = null;
     }
   }
 
@@ -92,13 +95,14 @@ export default function ProductsTab({ products = [] }) {
       const p = products[i];
 
       try {
-        const autoRes = await fetch("/app/meta-injector-autofill", {
+        const autoRes = await fetch("/app/meta-injector", {
           method: "POST",
           headers: {
             "Content-Type": "application/x-www-form-urlencoded",
             ...authHeaders,
           },
           body: new URLSearchParams({
+            intent: "autoFill",
             title: p.title,
             description: p.description || "",
             existingMeta: JSON.stringify(p.metafields || {}),
@@ -115,7 +119,12 @@ export default function ProductsTab({ products = [] }) {
           continue;
         }
 
-        if (!autoData?.merged) {
+        // Surface Mindat errors
+        if (autoData?.mindatError) {
+          setBulkErrors(prev => [...prev, `⚠️ Mindat error on "${p.title}": ${autoData.mindatError}`]);
+        }
+
+        if (!autoData?.merged || Object.keys(autoData.merged).length === 0) {
           setBulkErrors(prev => [...prev, `${p.title} — no geo data found`]);
           setBulkProgress(i + 1);
           continue;
@@ -172,6 +181,7 @@ export default function ProductsTab({ products = [] }) {
   const saveSuccess = saveFetcher.state === "idle" && saveFetcher.data?.success;
   const saveError   = saveFetcher.state === "idle" && saveFetcher.data?.error;
   const conflicts   = autoFetcher.data?.conflicts || [];
+  const mindatError = autoFetcher.data?.mindatError;
 
   if (selected) {
     return (
@@ -196,6 +206,7 @@ export default function ProductsTab({ products = [] }) {
 
           {saveSuccess && <Banner tone="success">Saved successfully.</Banner>}
           {saveError   && <Banner tone="critical">Save failed: {saveFetcher.data.error}</Banner>}
+          {mindatError && <Banner tone="warning">Mindat unavailable: {mindatError}. Filled from geo library only.</Banner>}
 
           {conflicts.length > 0 && (
             <Banner tone="warning">
@@ -227,7 +238,6 @@ export default function ProductsTab({ products = [] }) {
 
   return (
     <BlockStack gap="400">
-
       <TextField
         label="Search Shop Floor"
         value={search}
@@ -244,7 +254,7 @@ export default function ProductsTab({ products = [] }) {
             <BlockStack gap="100">
               <Text variant="headingSm" fontWeight="bold">⚡ Auto-Fill All Products</Text>
               <Text variant="bodySm" tone="subdued">
-                Fills geological data for all {products.length} products using geo library. Skips fields already filled.
+                Fills geological data for all {products.length} products using geo library + Mindat. Skips fields already filled.
               </Text>
             </BlockStack>
             <InlineStack gap="200">

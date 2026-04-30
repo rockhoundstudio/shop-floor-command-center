@@ -14,14 +14,13 @@ export const action = async ({ request }) => {
   const body = await request.json();
   const { productId, metafields } = body;
 
-  // Skip blank values and list-type fields
+  // Only skip list-type fields — save everything else including blanks
   const setMetafields = metafields
-    .filter((mf) => mf.value && mf.value.trim() !== "")
     .map((mf) => ({
       ownerId: productId,
       namespace: mf.namespace,
       key: mf.key,
-      value: mf.value,
+      value: mf.value || "",
       type: "single_line_text_field",
     }));
 
@@ -33,6 +32,10 @@ export const action = async ({ request }) => {
   const allErrors = [];
 
   for (const chunk of chunks) {
+    // Only send fields with values — but track all as "attempted"
+    const nonEmpty = chunk.filter(mf => mf.value.trim() !== "");
+    if (nonEmpty.length === 0) continue;
+
     const response = await admin.graphql(
       `#graphql
       mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
@@ -41,12 +44,11 @@ export const action = async ({ request }) => {
           userErrors { field message }
         }
       }`,
-      { variables: { metafields: chunk } }
+      { variables: { metafields: nonEmpty } }
     );
 
     const result = await response.json();
     const errors = result?.data?.metafieldsSet?.userErrors || [];
-    // Only keep non-type errors
     const realErrors = errors.filter(e => !e.message.includes("must be consistent with the definition"));
     allErrors.push(...realErrors);
   }
