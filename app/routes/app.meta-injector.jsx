@@ -85,6 +85,7 @@ export const action = async ({ request }) => {
   const formData = await request.formData();
   const intent = formData.get("intent");
 
+  // ─── SINGLE PRODUCT AUTO-FILL ───────────────────────────────────────────────
   if (intent === "autoFill") {
     const title       = formData.get("title");
     const description = formData.get("description");
@@ -127,7 +128,6 @@ export const action = async ({ request }) => {
 
     const merged = {};
     const conflicts = [];
-
     TARGET_KEYS.forEach(key => {
       if (existing[key] && String(existing[key]).trim() !== "") {
         merged[key] = existing[key];
@@ -136,11 +136,8 @@ export const action = async ({ request }) => {
       const libVal    = library[key]  || "";
       const parsedVal = parsed[key]   || "";
       const mindatVal = mindat[key]   || "";
-
       if (mindatVal) {
-        if (libVal && libVal !== mindatVal) {
-          conflicts.push({ key, library: libVal, mindat: mindatVal });
-        }
+        if (libVal && libVal !== mindatVal) conflicts.push({ key, library: libVal, mindat: mindatVal });
         merged[key] = `✅ ${mindatVal}`;
       } else if (libVal) {
         merged[key] = libVal;
@@ -152,6 +149,110 @@ export const action = async ({ request }) => {
     return data({ ok: true, merged, conflicts, mindatError });
   }
 
+  // ─── BULK AUTO-FILL ALL PRODUCTS (server-side, fully authenticated) ──────────
+  if (intent === "bulkAutoFill") {
+    const productsRaw = formData.get("products");
+    const products = JSON.parse(productsRaw);
+    const results = [];
+
+    for (const p of products) {
+      const library = lookupStone(p.title) || {};
+      const parsed  = parseDescription(p.description || "");
+      const existing = p.metafields || {};
+
+      let mindat = {};
+      let mindatError = null;
+      try {
+        if (!process.env.MINDAT_API_KEY) throw new Error("MINDAT_API_KEY not set");
+        const res = await fetch(
+          `https://api.mindat.org/minerals/?name=${encodeURIComponent(p.title)}&format=json`,
+          { headers: { Authorization: `Token ${process.env.MINDAT_API_KEY}` } }
+        );
+        if (res.ok) {
+          const json = await res.json();
+          if (json.results?.[0]) {
+            const m = json.results[0];
+            mindat = {
+              moh_hardness:      m.hardness        || "",
+              where_found:       m.localities       || "",
+              geological_age:    m.geological_age   || "",
+              crystal_structure: m.crystal_system   || "",
+              mineral_class:     m.mineral_class    || "",
+              chemical_formula:  m.formula          || "",
+              specific_gravity:  m.specific_gravity || "",
+              luster:            m.luster           || "",
+              cleavage:          m.cleavage         || "",
+              fracture_pattern:  m.fracture         || "",
+              diaphaneity:       m.transparency     || "",
+            };
+            Object.keys(mindat).forEach(k => { if (!mindat[k]) delete mindat[k]; });
+          }
+        }
+      } catch (e) {
+        mindatError = e.message;
+      }
+
+      const merged = {};
+      TARGET_KEYS.forEach(key => {
+        if (existing[key] && String(existing[key]).trim() !== "") {
+          merged[key] = existing[key];
+          return;
+        }
+        const libVal    = library[key] || "";
+        const parsedVal = parsed[key]  || "";
+        const mindatVal = mindat[key]  || "";
+        if (mindatVal)       merged[key] = `✅ ${mindatVal}`;
+        else if (libVal)     merged[key] = libVal;
+        else if (parsedVal)  merged[key] = `⚠️ ${parsedVal}`;
+      });
+
+      const metafields = TARGET_KEYS
+        .filter(key => merged[key] && String(merged[key]).trim() !== "")
+        .map(key => ({
+          ownerId:   p.id,
+          namespace: "custom",
+          key,
+          value:     merged[key],
+          type:      "single_line_text_field",
+        }));
+
+      if (metafields.length === 0) {
+        results.push({ id: p.id, title: p.title, ok: false, error: "no data found" });
+        continue;
+      }
+
+      // Save in chunks of 25
+      let saveError = null;
+      const chunks = [];
+      for (let i = 0; i < metafields.length; i += 25) chunks.push(metafields.slice(i, i + 25));
+      for (const chunk of chunks) {
+        const res = await admin.graphql(`
+          mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
+            metafieldsSet(metafields: $metafields) { userErrors { message } }
+          }
+        `, { variables: { metafields: chunk } });
+        const json = await res.json();
+        const errors = (json.data?.metafieldsSet?.userErrors || [])
+          .filter(e => !e.message.includes("must be consistent with the definition"));
+        if (errors.length > 0) { saveError = errors[0].message; break; }
+      }
+
+      results.push({
+        id: p.id,
+        title: p.title,
+        ok: !saveError,
+        error: saveError || mindatError || null,
+      });
+
+      // Small pause to avoid rate limits
+      await new Promise(r => setTimeout(r, 200));
+    }
+
+    const failed = results.filter(r => !r.ok);
+    return data({ ok: true, total: results.length, failed });
+  }
+
+  // ─── SAVE METAFIELDS ────────────────────────────────────────────────────────
   if (intent === "saveMetafields") {
     const metafields = JSON.parse(formData.get("metafields"));
     const nonEmpty = metafields.filter(mf => mf.value && String(mf.value).trim() !== "");

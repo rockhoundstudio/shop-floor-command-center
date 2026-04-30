@@ -1,5 +1,5 @@
 import { TextField, BlockStack, Card, Text, Badge, Grid, Button, Banner, InlineStack, ProgressBar } from "@shopify/polaris";
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef } from "react";
 import { useFetcher } from "react-router";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { TARGET_KEYS, FIELD_LABELS } from "../../utils/metaScan";
@@ -10,17 +10,11 @@ export default function ProductsTab({ products = [] }) {
   const [search, setSearch]           = useState("");
   const [selected, setSelected]       = useState(null);
   const [fieldValues, setFieldValues] = useState({});
+  const mergedApplied                 = useRef(false);
 
-  const [bulkRunning, setBulkRunning]   = useState(false);
-  const [bulkProgress, setBulkProgress] = useState(0);
-  const [bulkTotal, setBulkTotal]       = useState(0);
-  const [bulkDone, setBulkDone]         = useState(false);
-  const [bulkErrors, setBulkErrors]     = useState([]);
-  const bulkAbort     = useRef(false);
-  const mergedApplied = useRef(false);
-
-  const saveFetcher = useFetcher();
-  const autoFetcher = useFetcher();
+  const saveFetcher  = useFetcher();
+  const autoFetcher  = useFetcher();
+  const bulkFetcher  = useFetcher();
 
   const filtered = products.filter(p =>
     p.title.toLowerCase().includes(search.toLowerCase())
@@ -74,103 +68,31 @@ export default function ProductsTab({ products = [] }) {
     }
   }
 
-  async function handleBulkFill() {
-    bulkAbort.current = false;
-    setBulkRunning(true);
-    setBulkDone(false);
-    setBulkErrors([]);
-    setBulkProgress(0);
-    setBulkTotal(products.length);
-
-    for (let i = 0; i < products.length; i++) {
-      if (bulkAbort.current) break;
-
-      const p = products[i];
-
-      try {
-        // Step 1: autoFill via fetcher (uses Remix session auth — no HTML redirects)
-        const autoResult = await submitFetcher({
-          intent: "autoFill",
-          title: p.title,
-          description: p.description || "",
-          existingMeta: JSON.stringify(p.metafields || {}),
-        }, "/app/meta-injector");
-
-        if (!autoResult) {
-          setBulkErrors(prev => [...prev, `${p.title} — autofill failed`]);
-          setBulkProgress(i + 1);
-          continue;
-        }
-
-        if (autoResult?.mindatError) {
-          setBulkErrors(prev => [...prev, `Mindat error on "${p.title}": ${autoResult.mindatError}`]);
-        }
-
-        if (!autoResult?.merged || Object.keys(autoResult.merged).length === 0) {
-          setBulkErrors(prev => [...prev, `${p.title} — no geo data found`]);
-          setBulkProgress(i + 1);
-          continue;
-        }
-
-        const merged = { ...p.metafields, ...autoResult.merged };
-
-        // Step 2: save via fetcher
-        const metafields = TARGET_KEYS.map(key => ({
-          ownerId: p.id,
-          namespace: "custom",
-          key,
-          value: merged[key] || "",
-          type: "single_line_text_field",
-        }));
-
-        const saveResult = await submitFetcher({
-          intent: "saveMetafields",
-          metafields: JSON.stringify(metafields),
-        }, "/app/meta-injector");
-
-        if (saveResult?.error) {
-          setBulkErrors(prev => [...prev, `${p.title} — save error: ${saveResult.error}`]);
-        }
-
-      } catch (err) {
-        setBulkErrors(prev => [...prev, `${p.title} — error: ${err.message}`]);
-      }
-
-      setBulkProgress(i + 1);
-      await new Promise(r => setTimeout(r, 300));
-    }
-
-    setBulkRunning(false);
-    setBulkDone(true);
+  // Bulk fill — one server-side call, fully authenticated
+  function handleBulkFill() {
+    const payload = products.map(p => ({
+      id:          p.id,
+      title:       p.title,
+      description: p.description || "",
+      metafields:  p.metafields  || {},
+    }));
+    bulkFetcher.submit(
+      { intent: "bulkAutoFill", products: JSON.stringify(payload) },
+      { method: "post", action: "/app/meta-injector" }
+    );
   }
 
-  // Helper: submit a form to a route and return the JSON response
-  function submitFetcher(fields, action) {
-    return new Promise((resolve) => {
-      const form = new FormData();
-      Object.entries(fields).forEach(([k, v]) => form.append(k, v));
-
-      const params = new URLSearchParams();
-      Object.entries(fields).forEach(([k, v]) => params.append(k, v));
-
-      fetch(action, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: params,
-        credentials: "same-origin",
-      })
-        .then(res => res.json())
-        .then(resolve)
-        .catch(() => resolve(null));
-    });
-  }
-
-  const isSaving    = saveFetcher.state !== "idle";
-  const isAutoFill  = autoFetcher.state !== "idle";
+  const isSaving    = saveFetcher.state  !== "idle";
+  const isAutoFill  = autoFetcher.state  !== "idle";
+  const isBulk      = bulkFetcher.state  !== "idle";
   const saveSuccess = saveFetcher.state === "idle" && saveFetcher.data?.success;
   const saveError   = saveFetcher.state === "idle" && saveFetcher.data?.error;
-  const conflicts   = autoFetcher.data?.conflicts || [];
+  const conflicts   = autoFetcher.data?.conflicts  || [];
   const mindatError = autoFetcher.data?.mindatError;
+
+  const bulkDone    = bulkFetcher.state === "idle" && bulkFetcher.data?.ok;
+  const bulkFailed  = bulkFetcher.data?.failed     || [];
+  const bulkTotal   = bulkFetcher.data?.total       || 0;
 
   if (selected) {
     return (
@@ -246,35 +168,25 @@ export default function ProductsTab({ products = [] }) {
                 Fills geological data for all {products.length} products using geo library + Mindat. Skips fields already filled.
               </Text>
             </BlockStack>
-            <InlineStack gap="200">
-              {bulkRunning && (
-                <Button tone="critical" onClick={() => { bulkAbort.current = true; }}>
-                  Stop
-                </Button>
-              )}
-              <Button
-                variant="primary"
-                onClick={handleBulkFill}
-                loading={bulkRunning}
-                disabled={bulkRunning}
-              >
-                {bulkRunning ? `Filling ${bulkProgress} / ${bulkTotal}…` : "Auto-Fill All"}
-              </Button>
-            </InlineStack>
+            <Button
+              variant="primary"
+              onClick={handleBulkFill}
+              loading={isBulk}
+              disabled={isBulk}
+            >
+              {isBulk ? "Filling all products…" : "Auto-Fill All"}
+            </Button>
           </InlineStack>
 
-          {bulkRunning && (
-            <BlockStack gap="100">
-              <ProgressBar progress={bulkTotal > 0 ? Math.round((bulkProgress / bulkTotal) * 100) : 0} size="small" />
-              <Text variant="bodyXs" tone="subdued">{bulkProgress} of {bulkTotal} products processed</Text>
-            </BlockStack>
+          {isBulk && (
+            <Banner tone="info">Running — this may take 1–2 minutes for all products. Do not close the tab.</Banner>
           )}
 
-          {bulkDone && !bulkRunning && (
-            <Banner tone={bulkErrors.length > 0 ? "warning" : "success"}>
-              {bulkErrors.length === 0
+          {bulkDone && (
+            <Banner tone={bulkFailed.length > 0 ? "warning" : "success"}>
+              {bulkFailed.length === 0
                 ? `All ${bulkTotal} products filled successfully. Reload to see updated field counts.`
-                : `Done with ${bulkErrors.length} issue(s): ${bulkErrors.join(" | ")}`}
+                : `Done — ${bulkTotal - bulkFailed.length} filled, ${bulkFailed.length} issue(s): ${bulkFailed.map(f => `${f.title} (${f.error})`).join(" | ")}`}
             </Banner>
           )}
         </BlockStack>
