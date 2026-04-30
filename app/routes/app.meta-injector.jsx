@@ -100,7 +100,7 @@ export const action = async ({ request }) => {
     try {
       if (!process.env.MINDAT_API_KEY) throw new Error("MINDAT_API_KEY not set");
       const res = await fetch(
-        `https://api.mindat.org/minerals/?name=${encodeURIComponent(title)}&format=json`,
+        `https://api.mindat.org/geomaterials/?name=${encodeURIComponent(title)}&format=json`,
         { headers: { Authorization: `Token ${process.env.MINDAT_API_KEY}` } }
       );
       if (!res.ok) throw new Error(`Mindat HTTP ${res.status}`);
@@ -156,8 +156,8 @@ export const action = async ({ request }) => {
     const results = [];
 
     for (const p of products) {
-      const library = lookupStone(p.title) || {};
-      const parsed  = parseDescription(p.description || "");
+      const library  = lookupStone(p.title) || {};
+      const parsed   = parseDescription(p.description || "");
       const existing = p.metafields || {};
 
       let mindat = {};
@@ -165,7 +165,7 @@ export const action = async ({ request }) => {
       try {
         if (!process.env.MINDAT_API_KEY) throw new Error("MINDAT_API_KEY not set");
         const res = await fetch(
-          `https://api.mindat.org/minerals/?name=${encodeURIComponent(p.title)}&format=json`,
+          `https://api.mindat.org/geomaterials/?name=${encodeURIComponent(p.title)}&format=json`,
           { headers: { Authorization: `Token ${process.env.MINDAT_API_KEY}` } }
         );
         if (res.ok) {
@@ -201,9 +201,9 @@ export const action = async ({ request }) => {
         const libVal    = library[key] || "";
         const parsedVal = parsed[key]  || "";
         const mindatVal = mindat[key]  || "";
-        if (mindatVal)       merged[key] = `✅ ${mindatVal}`;
-        else if (libVal)     merged[key] = libVal;
-        else if (parsedVal)  merged[key] = `⚠️ ${parsedVal}`;
+        if (mindatVal)      merged[key] = `✅ ${mindatVal}`;
+        else if (libVal)    merged[key] = libVal;
+        else if (parsedVal) merged[key] = `⚠️ ${parsedVal}`;
       });
 
       const metafields = TARGET_KEYS
@@ -221,7 +221,6 @@ export const action = async ({ request }) => {
         continue;
       }
 
-      // Save in chunks of 25
       let saveError = null;
       const chunks = [];
       for (let i = 0; i < metafields.length; i += 25) chunks.push(metafields.slice(i, i + 25));
@@ -244,7 +243,6 @@ export const action = async ({ request }) => {
         error: saveError || mindatError || null,
       });
 
-      // Small pause to avoid rate limits
       await new Promise(r => setTimeout(r, 200));
     }
 
@@ -319,9 +317,10 @@ export const action = async ({ request }) => {
   if (intent === "mindat_lookup") {
     const query = formData.get("query");
     try {
-      const res = await fetch(`https://api.mindat.org/minerals/?name=${encodeURIComponent(query)}&format=json`, {
-        headers: { Authorization: `Token ${process.env.MINDAT_API_KEY}` }
-      });
+      const res = await fetch(
+        `https://api.mindat.org/geomaterials/?name=${encodeURIComponent(query)}&format=json`,
+        { headers: { Authorization: `Token ${process.env.MINDAT_API_KEY}` } }
+      );
       if (res.ok) {
         const json = await res.json();
         if (json.results?.[0]) return data({ ok: true, found: true, result: json.results[0] });
