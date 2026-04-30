@@ -16,7 +16,7 @@ export default function ProductsTab({ products = [] }) {
   const [bulkTotal, setBulkTotal]       = useState(0);
   const [bulkDone, setBulkDone]         = useState(false);
   const [bulkErrors, setBulkErrors]     = useState([]);
-  const bulkAbort  = useRef(false);
+  const bulkAbort     = useRef(false);
   const mergedApplied = useRef(false);
 
   const saveFetcher = useFetcher();
@@ -25,11 +25,6 @@ export default function ProductsTab({ products = [] }) {
   const filtered = products.filter(p =>
     p.title.toLowerCase().includes(search.toLowerCase())
   );
-
-  async function getAuthHeaders() {
-    const token = await shopify.idToken();
-    return { "Authorization": `Bearer ${token}` };
-  }
 
   function openEditor(product) {
     const initial = {};
@@ -87,7 +82,8 @@ export default function ProductsTab({ products = [] }) {
     setBulkProgress(0);
     setBulkTotal(products.length);
 
-    const authHeaders = await getAuthHeaders();
+    // Use App Bridge authenticated fetch — handles session token automatically
+    const authFetch = shopify.authenticatedFetch();
 
     for (let i = 0; i < products.length; i++) {
       if (bulkAbort.current) break;
@@ -95,12 +91,9 @@ export default function ProductsTab({ products = [] }) {
       const p = products[i];
 
       try {
-        const autoRes = await fetch("/app/meta-injector", {
+        const autoRes = await authFetch("/app/meta-injector", {
           method: "POST",
-          headers: {
-            "Content-Type": "application/x-www-form-urlencoded",
-            ...authHeaders,
-          },
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
           body: new URLSearchParams({
             intent: "autoFill",
             title: p.title,
@@ -119,7 +112,6 @@ export default function ProductsTab({ products = [] }) {
           continue;
         }
 
-        // Surface Mindat errors
         if (autoData?.mindatError) {
           setBulkErrors(prev => [...prev, `⚠️ Mindat error on "${p.title}": ${autoData.mindatError}`]);
         }
@@ -140,12 +132,9 @@ export default function ProductsTab({ products = [] }) {
           type: "single_line_text_field",
         }));
 
-        const saveRes = await fetch("/app/meta-injector-api", {
+        const saveRes = await authFetch("/app/meta-injector-api", {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...authHeaders,
-          },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ productId: p.id, metafields }),
         });
 
