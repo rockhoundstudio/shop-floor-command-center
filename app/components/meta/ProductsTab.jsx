@@ -1,5 +1,5 @@
 import { TextField, BlockStack, Card, Text, Badge, Grid, Button, Banner, InlineStack, ProgressBar } from "@shopify/polaris";
-import { useState, useRef } from "react";
+import { useState, useRef, useCallback } from "react";
 import { useFetcher } from "react-router";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { TARGET_KEYS, FIELD_LABELS } from "../../utils/metaScan";
@@ -88,44 +88,33 @@ export default function ProductsTab({ products = [] }) {
       const p = products[i];
 
       try {
-        const token = await shopify.idToken();
+        // Step 1: autoFill via fetcher (uses Remix session auth — no HTML redirects)
+        const autoResult = await submitFetcher({
+          intent: "autoFill",
+          title: p.title,
+          description: p.description || "",
+          existingMeta: JSON.stringify(p.metafields || {}),
+        }, "/app/meta-injector");
 
-        const autoRes = await fetch("/app/meta-injector", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/x-www-form-urlencoded",
-            "Authorization": `Bearer ${token}`,
-          },
-          body: new URLSearchParams({
-            intent: "autoFill",
-            title: p.title,
-            description: p.description || "",
-            existingMeta: JSON.stringify(p.metafields || {}),
-          }),
-        });
-
-        let autoData;
-        const autoText = await autoRes.text();
-        try {
-          autoData = JSON.parse(autoText);
-        } catch {
-          setBulkErrors(prev => [...prev, `${p.title} — autofill returned HTML`]);
+        if (!autoResult) {
+          setBulkErrors(prev => [...prev, `${p.title} — autofill failed`]);
           setBulkProgress(i + 1);
           continue;
         }
 
-        if (autoData?.mindatError) {
-          setBulkErrors(prev => [...prev, `Mindat error on "${p.title}": ${autoData.mindatError}`]);
+        if (autoResult?.mindatError) {
+          setBulkErrors(prev => [...prev, `Mindat error on "${p.title}": ${autoResult.mindatError}`]);
         }
 
-        if (!autoData?.merged || Object.keys(autoData.merged).length === 0) {
+        if (!autoResult?.merged || Object.keys(autoResult.merged).length === 0) {
           setBulkErrors(prev => [...prev, `${p.title} — no geo data found`]);
           setBulkProgress(i + 1);
           continue;
         }
 
-        const merged = { ...p.metafields, ...autoData.merged };
+        const merged = { ...p.metafields, ...autoResult.merged };
 
+        // Step 2: save via fetcher
         const metafields = TARGET_KEYS.map(key => ({
           ownerId: p.id,
           namespace: "custom",
@@ -134,30 +123,13 @@ export default function ProductsTab({ products = [] }) {
           type: "single_line_text_field",
         }));
 
-        const saveToken = await shopify.idToken();
+        const saveResult = await submitFetcher({
+          intent: "saveMetafields",
+          metafields: JSON.stringify(metafields),
+        }, "/app/meta-injector");
 
-        const saveRes = await fetch("/app/meta-injector-api", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${saveToken}`,
-          },
-          body: JSON.stringify({ productId: p.id, metafields }),
-        });
-
-        let saveData;
-        const saveText = await saveRes.text();
-        try {
-          saveData = JSON.parse(saveText);
-        } catch {
-          setBulkErrors(prev => [...prev, `${p.title} — save returned HTML`]);
-          setBulkProgress(i + 1);
-          continue;
-        }
-
-        const userErrors = saveData?.data?.metafieldsSet?.userErrors || [];
-        if (userErrors.length > 0) {
-          setBulkErrors(prev => [...prev, `${p.title} — ${userErrors.map(e => e.message).join(", ")}`]);
+        if (saveResult?.error) {
+          setBulkErrors(prev => [...prev, `${p.title} — save error: ${saveResult.error}`]);
         }
 
       } catch (err) {
@@ -170,6 +142,27 @@ export default function ProductsTab({ products = [] }) {
 
     setBulkRunning(false);
     setBulkDone(true);
+  }
+
+  // Helper: submit a form to a route and return the JSON response
+  function submitFetcher(fields, action) {
+    return new Promise((resolve) => {
+      const form = new FormData();
+      Object.entries(fields).forEach(([k, v]) => form.append(k, v));
+
+      const params = new URLSearchParams();
+      Object.entries(fields).forEach(([k, v]) => params.append(k, v));
+
+      fetch(action, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: params,
+        credentials: "same-origin",
+      })
+        .then(res => res.json())
+        .then(resolve)
+        .catch(() => resolve(null));
+    });
   }
 
   const isSaving    = saveFetcher.state !== "idle";
