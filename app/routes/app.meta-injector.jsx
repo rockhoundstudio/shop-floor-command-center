@@ -95,35 +95,43 @@ export const action = async ({ request }) => {
     const parsed  = parseDescription(description);
     const library = lookupStone(title) || {};
 
+    // Require official_name to query Mindat
+    const stoneName = existing.official_name ? String(existing.official_name).trim() : null;
+
     let mindat = {};
     let mindatError = null;
-    try {
-      if (!process.env.MINDAT_API_KEY) throw new Error("MINDAT_API_KEY not set");
-      const res = await fetch(
-        `https://api.mindat.org/geomaterials/?name=${encodeURIComponent(title)}&format=json`,
-        { headers: { Authorization: `Token ${process.env.MINDAT_API_KEY}` } }
-      );
-      if (!res.ok) throw new Error(`Mindat HTTP ${res.status}`);
-      const json = await res.json();
-      if (json.results?.[0]) {
-        const m = json.results[0];
-        mindat = {
-          moh_hardness:      m.hardness        || "",
-          where_found:       m.localities       || "",
-          geological_age:    m.geological_age   || "",
-          crystal_structure: m.crystal_system   || "",
-          mineral_class:     m.mineral_class    || "",
-          chemical_formula:  m.formula          || "",
-          specific_gravity:  m.specific_gravity || "",
-          luster:            m.luster           || "",
-          cleavage:          m.cleavage         || "",
-          fracture_pattern:  m.fracture         || "",
-          diaphaneity:       m.transparency     || "",
-        };
-        Object.keys(mindat).forEach(k => { if (!mindat[k]) delete mindat[k]; });
+
+    if (!stoneName) {
+      mindatError = "Stone must be identified before auto-fill. Please set the Official Name field first.";
+    } else {
+      try {
+        if (!process.env.MINDAT_API_KEY) throw new Error("MINDAT_API_KEY not set");
+        const res = await fetch(
+          `https://api.mindat.org/geomaterial_search/?q=${encodeURIComponent(stoneName)}&format=json`,
+          { headers: { Authorization: `Token ${process.env.MINDAT_API_KEY}` } }
+        );
+        if (!res.ok) throw new Error(`Mindat HTTP ${res.status}`);
+        const json = await res.json();
+        if (json.results?.[0]) {
+          const m = json.results[0];
+          mindat = {
+            moh_hardness:      m.hardness        || "",
+            where_found:       m.localities       || "",
+            geological_age:    m.geological_age   || "",
+            crystal_structure: m.crystal_system   || "",
+            mineral_class:     m.mineral_class    || "",
+            chemical_formula:  m.formula          || "",
+            specific_gravity:  m.specific_gravity || "",
+            luster:            m.luster           || "",
+            cleavage:          m.cleavage         || "",
+            fracture_pattern:  m.fracture         || "",
+            diaphaneity:       m.transparency     || "",
+          };
+          Object.keys(mindat).forEach(k => { if (!mindat[k]) delete mindat[k]; });
+        }
+      } catch (e) {
+        mindatError = e.message;
       }
-    } catch (e) {
-      mindatError = e.message;
     }
 
     const merged = {};
@@ -149,7 +157,7 @@ export const action = async ({ request }) => {
     return data({ ok: true, merged, conflicts, mindatError });
   }
 
-  // ─── BULK AUTO-FILL ALL PRODUCTS (server-side, fully authenticated) ──────────
+  // ─── BULK AUTO-FILL ALL PRODUCTS ────────────────────────────────────────────
   if (intent === "bulkAutoFill") {
     const productsRaw = formData.get("products");
     const products = JSON.parse(productsRaw);
@@ -160,12 +168,19 @@ export const action = async ({ request }) => {
       const parsed   = parseDescription(p.description || "");
       const existing = p.metafields || {};
 
+      // Require official_name — skip stone if missing
+      const stoneName = existing.official_name ? String(existing.official_name).trim() : null;
+      if (!stoneName) {
+        results.push({ id: p.id, title: p.title, ok: false, error: "Stone must be identified first — set Official Name" });
+        continue;
+      }
+
       let mindat = {};
       let mindatError = null;
       try {
         if (!process.env.MINDAT_API_KEY) throw new Error("MINDAT_API_KEY not set");
         const res = await fetch(
-          `https://api.mindat.org/geomaterials/?name=${encodeURIComponent(p.title)}&format=json`,
+          `https://api.mindat.org/geomaterial_search/?q=${encodeURIComponent(stoneName)}&format=json`,
           { headers: { Authorization: `Token ${process.env.MINDAT_API_KEY}` } }
         );
         if (res.ok) {
@@ -316,9 +331,10 @@ export const action = async ({ request }) => {
 
   if (intent === "mindat_lookup") {
     const query = formData.get("query");
+    if (!query || !query.trim()) return data({ ok: true, found: false });
     try {
       const res = await fetch(
-        `https://api.mindat.org/geomaterials/?name=${encodeURIComponent(query)}&format=json`,
+        `https://api.mindat.org/geomaterial_search/?q=${encodeURIComponent(query.trim())}&format=json`,
         { headers: { Authorization: `Token ${process.env.MINDAT_API_KEY}` } }
       );
       if (res.ok) {
