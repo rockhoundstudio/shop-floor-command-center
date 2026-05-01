@@ -109,24 +109,28 @@ export const action = async ({ request }) => {
       try {
         if (!process.env.MINDAT_API_KEY) throw new Error("MINDAT_API_KEY not set");
         const res = await fetch(
-          `https://api.mindat.org/geomaterial_search/?q=${encodeURIComponent(stoneName)}&format=json`,
+          `https://api.mindat.org/geomaterials/?name=${encodeURIComponent(stoneName)}&format=json`,
           { headers: { Authorization: `Token ${process.env.MINDAT_API_KEY}` } }
         );
         if (!res.ok) throw new Error(`Mindat HTTP ${res.status}`);
         const json = await res.json();
         if (json.results?.[0]) {
           const m = json.results[0];
+          
+          const hardnessStr = m.hardness_min ? (m.hardness_max && m.hardness_max !== m.hardness_min ? `${m.hardness_min}-${m.hardness_max}` : `${m.hardness_min}`) : "";
+          const gravityStr = m.density_min ? (m.density_max && m.density_max !== m.density_min ? `${m.density_min}-${m.density_max}` : `${m.density_min}`) : "";
+
           mindat = {
-            moh_hardness:      m.hardness        || "",
-            where_found:       m.localities       || "",
-            geological_age:    m.geological_age   || "",
+            moh_hardness:      hardnessStr,
+            where_found:       "", 
+            geological_age:    "", 
             crystal_structure: m.crystal_system   || "",
             chemical_formula:  m.formula          || "",
-            specific_gravity:  m.specific_gravity || "",
-            luster:            m.luster           || "",
+            specific_gravity:  gravityStr,
+            luster:            m.lustre           || "",
             cleavage:          m.cleavage         || "",
             fracture_pattern:  m.fracture         || "",
-            diaphaneity:       m.transparency     || "",
+            diaphaneity:       m.diaphaneity      || "",
           };
           Object.keys(mindat).forEach(k => { if (!mindat[k]) delete mindat[k]; });
         }
@@ -181,24 +185,28 @@ export const action = async ({ request }) => {
       try {
         if (!process.env.MINDAT_API_KEY) throw new Error("MINDAT_API_KEY not set");
         const res = await fetch(
-          `https://api.mindat.org/geomaterial_search/?q=${encodeURIComponent(stoneName)}&format=json`,
+          `https://api.mindat.org/geomaterials/?name=${encodeURIComponent(stoneName)}&format=json`,
           { headers: { Authorization: `Token ${process.env.MINDAT_API_KEY}` } }
         );
         if (res.ok) {
           const json = await res.json();
           if (json.results?.[0]) {
             const m = json.results[0];
+
+            const hardnessStr = m.hardness_min ? (m.hardness_max && m.hardness_max !== m.hardness_min ? `${m.hardness_min}-${m.hardness_max}` : `${m.hardness_min}`) : "";
+            const gravityStr = m.density_min ? (m.density_max && m.density_max !== m.density_min ? `${m.density_min}-${m.density_max}` : `${m.density_min}`) : "";
+
             mindat = {
-              moh_hardness:      m.hardness        || "",
-              where_found:       m.localities       || "",
-              geological_age:    m.geological_age   || "",
+              moh_hardness:      hardnessStr,
+              where_found:       "",
+              geological_age:    "",
               crystal_structure: m.crystal_system   || "",
               chemical_formula:  m.formula          || "",
-              specific_gravity:  m.specific_gravity || "",
-              luster:            m.luster           || "",
+              specific_gravity:  gravityStr,
+              luster:            m.lustre           || "",
               cleavage:          m.cleavage         || "",
               fracture_pattern:  m.fracture         || "",
-              diaphaneity:       m.transparency     || "",
+              diaphaneity:       m.diaphaneity      || "",
             };
             Object.keys(mindat).forEach(k => { if (!mindat[k]) delete mindat[k]; });
           }
@@ -341,7 +349,7 @@ export const action = async ({ request }) => {
     if (!query || !query.trim()) return data({ ok: true, found: false });
     try {
       const res = await fetch(
-        `https://api.mindat.org/geomaterial_search/?q=${encodeURIComponent(query.trim())}&format=json`,
+        `https://api.mindat.org/geomaterials/?name=${encodeURIComponent(query.trim())}&format=json`,
         { headers: { Authorization: `Token ${process.env.MINDAT_API_KEY}` } }
       );
       if (res.ok) {
