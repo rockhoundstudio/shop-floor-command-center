@@ -3,7 +3,7 @@ import { useFetcher } from "react-router";
 import {
   Card, TextField, Text, BlockStack, InlineStack, Button,
   Checkbox, Scrollable, ProgressBar, Box, Select, Banner,
-  Divider, ActionList
+  Divider, ActionList, Spinner
 } from "@shopify/polaris";
 import { TARGET_KEYS, FIELD_LABELS } from "../../utils/metaScan";
 
@@ -40,6 +40,7 @@ const SEO_DICTIONARY = {
 
 export default function MetaCore({ products = [], mode }) {
   const fetcher = useFetcher();
+  const autoFillFetcher = useFetcher();
 
   const [checkedIds, setCheckedIds] = useState([]);
   const [tickedFields, setTickedFields] = useState({});
@@ -48,6 +49,7 @@ export default function MetaCore({ products = [], mode }) {
   const [progress, setProgress] = useState({ current: 0, total: 0, title: "" });
   const [customInputs, setCustomInputs] = useState({});
   const [ooakText, setOoakText] = useState("");
+  const [autoFillBanner, setAutoFillBanner] = useState(null);
 
   const [injectProduct, setInjectProduct] = useState("");
   const [payload, setPayload] = useState("");
@@ -61,6 +63,46 @@ export default function MetaCore({ products = [], mode }) {
     }
     return options;
   };
+
+  // Auto-Fill: fires for first selected stone, pre-populates fields
+  const handleAutoFill = () => {
+    if (checkedIds.length === 0) return;
+    const firstId = checkedIds[0];
+    const product = products.find(p => p.id === firstId);
+    if (!product) return;
+    setAutoFillBanner(null);
+    const fd = new FormData();
+    fd.append("intent", "autoFill");
+    fd.append("title", product.title);
+    fd.append("description", product.description || "");
+    fd.append("existingMeta", JSON.stringify(product.metafields || {}));
+    autoFillFetcher.submit(fd, { method: "post" });
+  };
+
+  // When Auto-Fill returns, pre-populate fields and tick them
+  useEffect(() => {
+    if (!autoFillFetcher.data?.merged) return;
+    const merged = autoFillFetcher.data.merged;
+    const newValues = {};
+    const newTicked = {};
+    TARGET_KEYS.forEach(key => {
+      if (merged[key] && String(merged[key]).trim() !== "") {
+        newValues[key] = merged[key];
+        newTicked[key] = true;
+      }
+    });
+    setFieldValues(prev => ({ ...prev, ...newValues }));
+    setTickedFields(prev => ({ ...prev, ...newTicked }));
+    const conflicts = autoFillFetcher.data.conflicts || [];
+    const mindatError = autoFillFetcher.data.mindatError;
+    if (mindatError) {
+      setAutoFillBanner({ tone: "warning", msg: `Mindat unavailable (${mindatError}) — geoLibrary used.` });
+    } else if (conflicts.length > 0) {
+      setAutoFillBanner({ tone: "warning", msg: `${conflicts.length} conflict(s) found — Mindat values used. Review fields marked ✅.` });
+    } else {
+      setAutoFillBanner({ tone: "success", msg: "Fields pre-filled! Review, adjust, then hit Apply." });
+    }
+  }, [autoFillFetcher.data]);
 
   const processBulkQueue = async () => {
     if (checkedIds.length === 0 || !Object.values(tickedFields).some(Boolean)) return;
@@ -104,6 +146,7 @@ export default function MetaCore({ products = [], mode }) {
   if (mode === "bulk") {
     const allChecked = checkedIds.length === products.length && products.length > 0;
     const indeterminate = checkedIds.length > 0 && checkedIds.length < products.length;
+    const isSuggesting = autoFillFetcher.state === "submitting";
 
     return (
       <BlockStack gap="400">
@@ -153,9 +196,30 @@ export default function MetaCore({ products = [], mode }) {
 
           {/* RIGHT COLUMN: Smart Questionnaire */}
           <BlockStack gap="300">
+            {/* Auto-Fill Button */}
+            <InlineStack gap="300" blockAlign="center">
+              <Button
+                variant="primary"
+                onClick={handleAutoFill}
+                disabled={checkedIds.length === 0 || isSuggesting}
+                icon={isSuggesting ? <Spinner size="small" /> : null}
+              >
+                {isSuggesting ? "Fetching suggestions..." : "🔍 Suggest Values from First Selected Stone"}
+              </Button>
+              {checkedIds.length > 1 && (
+                <Text tone="subdued" variant="bodySm">Suggestions based on: {products.find(p => p.id === checkedIds[0])?.title?.substring(0, 30)}...</Text>
+              )}
+            </InlineStack>
+
+            {autoFillBanner && (
+              <Banner tone={autoFillBanner.tone} onDismiss={() => setAutoFillBanner(null)}>
+                {autoFillBanner.msg}
+              </Banner>
+            )}
+
             <Banner tone="info">Fields are mapped to 2026 SEO trends. Values adapt to the Official Name.</Banner>
             <Card padding="0">
-              <Scrollable style={{ height: "550px" }}>
+              <Scrollable style={{ height: "500px" }}>
                 <BlockStack gap="400" padding="400">
 
                   {/* Section 1: Free Text */}
