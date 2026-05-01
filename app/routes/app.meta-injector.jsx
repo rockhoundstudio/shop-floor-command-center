@@ -295,18 +295,35 @@ export const action = async ({ request }) => {
     return data({ success: true });
   }
 
+  // ─── THE NEW SMART BULK EDIT (WITH OOAK APPEND) ───────────────────────────
   if (intent === "bulk_edit_new") {
     const updates = JSON.parse(formData.get("updates"));
     const ids = JSON.parse(formData.get("ids"));
+    const ooakText = formData.get("ooakText") || "";
+    const currentStories = JSON.parse(formData.get("currentStories") || "{}");
+    
     const metafields = [];
+    
     ids.forEach((ownerId) => {
+      // Standard dropdown updates
       Object.keys(updates).forEach(key => {
         if (SKIP_KEYS.has(key)) return;
         if (updates[key] && updates[key].trim() !== "") {
           metafields.push({ ownerId, namespace: "custom", key, value: updates[key], type: "single_line_text_field" });
         }
       });
+
+      // OOAK Append - safely attaches to existing stories to preserve crossovers
+      if (ooakText && ooakText.trim() !== "") {
+        const baseStory = currentStories[ownerId] || "";
+        const combinedStory = baseStory 
+          ? `${baseStory} | ✨ Unique Features: ${ooakText}` 
+          : `✨ Unique Features: ${ooakText}`;
+        
+        metafields.push({ ownerId, namespace: "custom", key: "stone_story", value: combinedStory, type: "single_line_text_field" });
+      }
     });
+
     if (metafields.length > 0) {
       const chunks = [];
       for (let i = 0; i < metafields.length; i += 25) chunks.push(metafields.slice(i, i + 25));
