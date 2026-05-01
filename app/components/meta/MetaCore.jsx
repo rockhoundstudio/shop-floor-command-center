@@ -6,6 +6,7 @@ import {
   Divider, ActionList
 } from "@shopify/polaris";
 import { TARGET_KEYS, FIELD_LABELS } from "../../utils/metaScan";
+import { lookupStone } from "../../utils/geoLibrary";
 
 const DROPDOWN_FIELDS = ["luster", "diaphaneity", "fracture_pattern", "cleavage", "crystal_structure", "rock_formation", "mineral_class", "geological_era", "tenacity"];
 const FREE_TEXT_FIELDS = ["official_name", "origin_location", "rescued_by", "stone_story", "bench_notes", "dimensions", "carat_weight", "cut_type", "moh_hardness", "specific_gravity"];
@@ -48,6 +49,7 @@ export default function MetaCore({ products = [], mode }) {
   const [progress, setProgress] = useState({ current: 0, total: 0, title: "" });
   const [customInputs, setCustomInputs] = useState({});
   const [ooakText, setOoakText] = useState("");
+  const [isSuggesting, setIsSuggesting] = useState(false);
 
   const [injectProduct, setInjectProduct] = useState("");
   const [payload, setPayload] = useState("");
@@ -60,6 +62,47 @@ export default function MetaCore({ products = [], mode }) {
       options = SEO_DICTIONARY[fieldKey][currentStone];
     }
     return options;
+  };
+
+  const autoSuggestFields = () => {
+    if (checkedIds.length === 0) return;
+    setIsSuggesting(true);
+
+    const firstStoneId = checkedIds[0];
+    const firstStone = products.find(p => p.id === firstStoneId);
+    
+    if (!firstStone) {
+      setIsSuggesting(false);
+      return;
+    }
+
+    const libraryData = lookupStone(firstStone.title) || {};
+    const suggestedName = libraryData.official_name || firstStone.metafields?.official_name || "";
+    
+    const newValues = { ...fieldValues };
+    const newTicked = { ...tickedFields };
+
+    const applySuggestion = (key, value) => {
+      if (value) {
+        newValues[key] = value;
+        newTicked[key] = true;
+      }
+    };
+
+    applySuggestion("official_name", suggestedName);
+    applySuggestion("crystal_structure", libraryData.crystal_structure);
+    applySuggestion("luster", libraryData.luster);
+    applySuggestion("diaphaneity", libraryData.diaphaneity);
+    applySuggestion("fracture_pattern", libraryData.fracture_pattern);
+    applySuggestion("cleavage", libraryData.cleavage);
+    applySuggestion("rock_formation", libraryData.rock_formation);
+    applySuggestion("mineral_class", libraryData.mineral_class);
+    applySuggestion("moh_hardness", libraryData.moh_hardness);
+    applySuggestion("specific_gravity", libraryData.specific_gravity);
+
+    setFieldValues(newValues);
+    setTickedFields(newTicked);
+    setIsSuggesting(false);
   };
 
   const processBulkQueue = async () => {
@@ -236,9 +279,20 @@ export default function MetaCore({ products = [], mode }) {
               </Scrollable>
             </Card>
 
-            <Button variant="primary" size="large" onClick={processBulkQueue} disabled={checkedIds.length === 0 || isProcessing}>
-              Apply SEO Updates to {checkedIds.length} Stone(s)
-            </Button>
+            <BlockStack gap="300">
+              <Button 
+                onClick={autoSuggestFields} 
+                disabled={checkedIds.length === 0 || isSuggesting}
+                icon={() => <span>🪄</span>}
+              >
+                {isSuggesting ? "Suggesting..." : "Auto-Suggest SEO Fields"}
+              </Button>
+
+              <Button variant="primary" size="large" onClick={processBulkQueue} disabled={checkedIds.length === 0 || isProcessing}>
+                Apply SEO Updates to {checkedIds.length} Stone(s)
+              </Button>
+            </BlockStack>
+            
           </BlockStack>
         </div>
       </BlockStack>
