@@ -2,9 +2,41 @@ import { useState, useEffect } from "react";
 import { useFetcher } from "react-router";
 import {
   Card, TextField, Text, BlockStack, InlineStack, Button,
-  Checkbox, Scrollable, ProgressBar, Box, Select, Banner
+  Checkbox, Scrollable, ProgressBar, Box, Select, Banner,
+  Divider, ActionList
 } from "@shopify/polaris";
 import { TARGET_KEYS, FIELD_LABELS } from "../../utils/metaScan";
+
+const DROPDOWN_FIELDS = ["luster", "diaphaneity", "fracture_pattern", "cleavage", "crystal_structure", "rock_formation", "mineral_class", "geological_era", "tenacity"];
+const FREE_TEXT_FIELDS = ["official_name", "origin_location", "rescued_by", "stone_story", "bench_notes", "dimensions", "carat_weight", "cut_type", "moh_hardness", "specific_gravity"];
+
+const SEO_DICTIONARY = {
+  luster: {
+    global: ["Vitreous (Glassy)", "Waxy", "Resinous", "Silky", "Pearly", "Dull / Earthy", "Submetallic"],
+    labradorite: ["Labradorescent (Schiller)", "Vitreous", "Pearly on cleavages"],
+    obsidian: ["Vitreous (Glassy)", "Sheen (Gold/Silver)", "Chatoyant"],
+  },
+  diaphaneity: {
+    global: ["Opaque", "Translucent", "Transparent", "Semi-Translucent"],
+    agate: ["Highly Translucent", "Banded Translucent", "Semi-Translucent"],
+  },
+  fracture_pattern: {
+    global: ["Conchoidal (Shell-like)", "Uneven", "Splintery", "Hackly", "Granular"],
+  },
+  cleavage: {
+    global: ["None (Perfect for cabbing)", "Indistinct", "Perfect in one direction", "Good"],
+    labradorite: ["Perfect in two directions (Requires care)"],
+  },
+  crystal_structure: {
+    global: ["Trigonal", "Cryptocrystalline", "Amorphous (Non-crystalline)", "Monoclinic", "Triclinic", "Orthorhombic"],
+  },
+  rock_formation: {
+    global: ["Igneous (Volcanic)", "Sedimentary", "Metamorphic", "Hydrothermal Vein", "Pegmatite"],
+  },
+  mineral_class: {
+    global: ["Silicate", "Tectosilicate", "Oxide", "Carbonate", "Sulfate", "Phosphate"],
+  },
+};
 
 export default function MetaCore({ products = [], mode }) {
   const fetcher = useFetcher();
@@ -14,10 +46,21 @@ export default function MetaCore({ products = [], mode }) {
   const [fieldValues, setFieldValues] = useState({});
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState({ current: 0, total: 0, title: "" });
+  const [customInputs, setCustomInputs] = useState({});
+  const [ooakText, setOoakText] = useState("");
 
   const [injectProduct, setInjectProduct] = useState("");
   const [payload, setPayload] = useState("");
   const [mindatName, setMindatName] = useState("");
+
+  const getOptionsForField = (fieldKey) => {
+    const currentStone = (fieldValues["official_name"] || "").toLowerCase();
+    let options = SEO_DICTIONARY[fieldKey]?.global || [];
+    if (currentStone && SEO_DICTIONARY[fieldKey]?.[currentStone]) {
+      options = SEO_DICTIONARY[fieldKey][currentStone];
+    }
+    return options;
+  };
 
   const processBulkQueue = async () => {
     if (checkedIds.length === 0 || !Object.values(tickedFields).some(Boolean)) return;
@@ -25,20 +68,25 @@ export default function MetaCore({ products = [], mode }) {
 
     const updates = {};
     TARGET_KEYS.forEach(k => {
-      if (tickedFields[k]) updates[k] = fieldValues[k] || "";
+      if (tickedFields[k]) {
+        updates[k] = fieldValues[k] === "__custom__" ? (customInputs[k] || "") : (fieldValues[k] || "");
+      }
     });
+    if (ooakText && updates["stone_story"]) {
+      updates["stone_story"] = updates["stone_story"] + " " + ooakText;
+    } else if (ooakText) {
+      updates["stone_story"] = ooakText;
+    }
 
     for (let i = 0; i < checkedIds.length; i++) {
       const pId = checkedIds[i];
       const pObj = products.find(p => p.id === pId);
-
       setProgress({ current: i + 1, total: checkedIds.length, title: pObj?.title || "Unknown" });
 
       const fd = new FormData();
       fd.append("intent", "bulk_edit_new");
       fd.append("ids", JSON.stringify([pId]));
       fd.append("updates", JSON.stringify(updates));
-
       await fetcher.submit(fd, { method: "post" });
     }
 
@@ -54,7 +102,8 @@ export default function MetaCore({ products = [], mode }) {
   }, [fetcher.data]);
 
   if (mode === "bulk") {
-    const allChecked = products.length > 0 && checkedIds.length === products.length;
+    const allChecked = checkedIds.length === products.length && products.length > 0;
+    const indeterminate = checkedIds.length > 0 && checkedIds.length < products.length;
 
     return (
       <BlockStack gap="400">
@@ -68,75 +117,127 @@ export default function MetaCore({ products = [], mode }) {
             </BlockStack>
           </Banner>
         )}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "24px" }}>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1.5fr", gap: "24px" }}>
+          {/* LEFT COLUMN: Product Selection */}
           <BlockStack gap="300">
-            <InlineStack gap="200" blockAlign="center">
-              <Button onClick={() => setCheckedIds(allChecked ? [] : products.map(p => p.id))}>
-                {allChecked ? "Deselect All" : "Select All"}
-              </Button>
-              <Text>{checkedIds.length} selected</Text>
-            </InlineStack>
             <Card padding="0">
-              <Scrollable style={{ height: "600px" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left" }}>
-                  <tbody>
-                    {products.map((p) => (
-                      <tr key={p.id} style={{ borderBottom: "1px solid #ebebeb", cursor: "pointer" }} onClick={() => {
-                        if (checkedIds.includes(p.id)) setCheckedIds(checkedIds.filter(id => id !== p.id));
-                        else setCheckedIds([...checkedIds, p.id]);
-                      }}>
-                        <td style={{ padding: "8px 12px", width: "40px" }} onClick={e => e.stopPropagation()}>
-                          <Checkbox
-                            label=""
-                            checked={checkedIds.includes(p.id)}
-                            onChange={(checked) => {
-                              if (checked) setCheckedIds([...checkedIds, p.id]);
-                              else setCheckedIds(checkedIds.filter((id) => id !== p.id));
-                            }}
-                          />
-                        </td>
-                        <td style={{ padding: "8px" }}>
-                          <InlineStack gap="300" blockAlign="center">
-                            <img src={p.featuredImage?.url || ""} style={{ width: "32px", height: "32px", objectFit: "cover", borderRadius: "4px" }} />
-                            <Text variant="bodySm" fontWeight="500">{p.title}</Text>
-                          </InlineStack>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <Box padding="300">
+                <Checkbox
+                  label={`Select All (${products.length})`}
+                  checked={indeterminate ? "indeterminate" : allChecked}
+                  onChange={(checked) => setCheckedIds(checked ? products.map(p => p.id) : [])}
+                />
+              </Box>
+              <Divider />
+              <Scrollable style={{ height: "550px" }}>
+                <ActionList
+                  actionRole="menuitem"
+                  items={products.map(p => ({
+                    content: (
+                      <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                        <Checkbox checked={checkedIds.includes(p.id)} onChange={() => {}} label="" />
+                        <span style={{ fontSize: "13px", fontWeight: checkedIds.includes(p.id) ? "bold" : "normal" }}>
+                          {p.title.length > 40 ? p.title.substring(0, 40) + "..." : p.title}
+                        </span>
+                      </div>
+                    ),
+                    onAction: () => setCheckedIds(prev =>
+                      prev.includes(p.id) ? prev.filter(id => id !== p.id) : [...prev, p.id]
+                    ),
+                  }))}
+                />
               </Scrollable>
             </Card>
           </BlockStack>
 
+          {/* RIGHT COLUMN: Smart Questionnaire */}
           <BlockStack gap="300">
-            <Banner tone="info">Tick a box to open the input. Only ticked fields will be written.</Banner>
+            <Banner tone="info">Fields are mapped to 2026 SEO trends. Values adapt to the Official Name.</Banner>
             <Card padding="0">
               <Scrollable style={{ height: "550px" }}>
-                <BlockStack gap="300" padding="400">
-                  {TARGET_KEYS.map(key => (
-                    <BlockStack key={key} gap="100">
-                      <Checkbox
-                        label={FIELD_LABELS[key]}
-                        checked={tickedFields[key] || false}
-                        onChange={() => setTickedFields(prev => ({ ...prev, [key]: !prev[key] }))}
-                      />
-                      {tickedFields[key] && (
-                        <TextField
-                          label=""
-                          value={fieldValues[key] || ""}
-                          onChange={(v) => setFieldValues({ ...fieldValues, [key]: v })}
-                          placeholder={`Enter ${FIELD_LABELS[key]}...`}
-                          autoComplete="off"
+                <BlockStack gap="400" padding="400">
+
+                  {/* Section 1: Free Text */}
+                  <Text variant="headingSm" tone="subdued">CORE IDENTIFICATION (FREE TEXT)</Text>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+                    {FREE_TEXT_FIELDS.map(key => (
+                      <BlockStack key={key} gap="100">
+                        <Checkbox
+                          label={FIELD_LABELS[key] || key}
+                          checked={tickedFields[key] || false}
+                          onChange={() => setTickedFields(prev => ({ ...prev, [key]: !prev[key] }))}
                         />
-                      )}
-                    </BlockStack>
-                  ))}
+                        {tickedFields[key] && (
+                          <TextField
+                            label=""
+                            value={fieldValues[key] || ""}
+                            onChange={(v) => setFieldValues({ ...fieldValues, [key]: v })}
+                            autoComplete="off"
+                          />
+                        )}
+                      </BlockStack>
+                    ))}
+                  </div>
+
+                  <Divider />
+
+                  {/* Section 2: Smart Dropdowns */}
+                  <Text variant="headingSm" tone="subdued">GEOLOGY & SEO (SMART SELECT)</Text>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+                    {DROPDOWN_FIELDS.map(key => (
+                      <BlockStack key={key} gap="100" style={{ background: "#f9fafb", padding: "8px", borderRadius: "6px" }}>
+                        <Checkbox
+                          label={FIELD_LABELS[key] || key}
+                          checked={tickedFields[key] || false}
+                          onChange={() => setTickedFields(prev => ({ ...prev, [key]: !prev[key] }))}
+                        />
+                        {tickedFields[key] && (
+                          <BlockStack gap="200">
+                            <select
+                              style={{ width: "100%", padding: "8px", borderRadius: "4px", border: "1px solid #c9cccf" }}
+                              value={fieldValues[key] || ""}
+                              onChange={(e) => setFieldValues({ ...fieldValues, [key]: e.target.value })}
+                            >
+                              <option value="">-- Select --</option>
+                              {getOptionsForField(key).map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                              <option value="__custom__">+ Add Custom...</option>
+                            </select>
+                            {fieldValues[key] === "__custom__" && (
+                              <TextField
+                                label="Enter custom term"
+                                value={customInputs[key] || ""}
+                                onChange={(v) => setCustomInputs({ ...customInputs, [key]: v })}
+                                autoComplete="off"
+                              />
+                            )}
+                          </BlockStack>
+                        )}
+                      </BlockStack>
+                    ))}
+                  </div>
+
+                  <Divider />
+
+                  {/* Section 3: OOAK */}
+                  <BlockStack gap="200" style={{ background: "#fff8e6", padding: "12px", borderRadius: "8px", border: "1px solid #e1b878" }}>
+                    <Text variant="headingSm">✨ OOAK Special Features</Text>
+                    <Text variant="bodySm" tone="subdued">Text entered here appends to the Stone Story without overwriting it.</Text>
+                    <TextField
+                      label=""
+                      value={ooakText}
+                      onChange={setOoakText}
+                      multiline={3}
+                      placeholder="e.g. Features a striking hematite inclusion resembling a lightning bolt..."
+                    />
+                  </BlockStack>
+
                 </BlockStack>
               </Scrollable>
             </Card>
-            <Button variant="primary" onClick={processBulkQueue} disabled={checkedIds.length === 0 || isProcessing || !Object.values(tickedFields).some(Boolean)}>
-              Save Ticked Fields to {checkedIds.length} Stone(s)
+
+            <Button variant="primary" size="large" onClick={processBulkQueue} disabled={checkedIds.length === 0 || isProcessing}>
+              Apply SEO Updates to {checkedIds.length} Stone(s)
             </Button>
           </BlockStack>
         </div>
