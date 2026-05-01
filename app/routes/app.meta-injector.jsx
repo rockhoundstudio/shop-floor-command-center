@@ -12,6 +12,9 @@ import CollectionsTab from "../components/meta/CollectionsTab";
 import { TARGET_KEYS, stripHtml, evaluateProductStatus, parseDescription } from "../utils/metaScan";
 import { lookupStone } from "../utils/geoLibrary";
 
+// ─── FIELDS THAT ARE list.metaobject_reference — never write as plain text ───
+const SKIP_KEYS = new Set(["mineral_class", "rock_composition"]);
+
 export const loader = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
   try {
@@ -95,7 +98,6 @@ export const action = async ({ request }) => {
     const parsed  = parseDescription(description);
     const library = lookupStone(title) || {};
 
-    // Require official_name to query Mindat
     const stoneName = existing.official_name ? String(existing.official_name).trim() : null;
 
     let mindat = {};
@@ -119,7 +121,6 @@ export const action = async ({ request }) => {
             where_found:       m.localities       || "",
             geological_age:    m.geological_age   || "",
             crystal_structure: m.crystal_system   || "",
-            mineral_class:     m.mineral_class    || "",
             chemical_formula:  m.formula          || "",
             specific_gravity:  m.specific_gravity || "",
             luster:            m.luster           || "",
@@ -137,6 +138,7 @@ export const action = async ({ request }) => {
     const merged = {};
     const conflicts = [];
     TARGET_KEYS.forEach(key => {
+      if (SKIP_KEYS.has(key)) return;
       if (existing[key] && String(existing[key]).trim() !== "") {
         merged[key] = existing[key];
         return;
@@ -168,7 +170,6 @@ export const action = async ({ request }) => {
       const parsed   = parseDescription(p.description || "");
       const existing = p.metafields || {};
 
-      // Require official_name — skip stone if missing
       const stoneName = existing.official_name ? String(existing.official_name).trim() : null;
       if (!stoneName) {
         results.push({ id: p.id, title: p.title, ok: false, error: "Stone must be identified first — set Official Name" });
@@ -192,7 +193,6 @@ export const action = async ({ request }) => {
               where_found:       m.localities       || "",
               geological_age:    m.geological_age   || "",
               crystal_structure: m.crystal_system   || "",
-              mineral_class:     m.mineral_class    || "",
               chemical_formula:  m.formula          || "",
               specific_gravity:  m.specific_gravity || "",
               luster:            m.luster           || "",
@@ -209,6 +209,7 @@ export const action = async ({ request }) => {
 
       const merged = {};
       TARGET_KEYS.forEach(key => {
+        if (SKIP_KEYS.has(key)) return;
         if (existing[key] && String(existing[key]).trim() !== "") {
           merged[key] = existing[key];
           return;
@@ -222,7 +223,7 @@ export const action = async ({ request }) => {
       });
 
       const metafields = TARGET_KEYS
-        .filter(key => merged[key] && String(merged[key]).trim() !== "")
+        .filter(key => !SKIP_KEYS.has(key) && merged[key] && String(merged[key]).trim() !== "")
         .map(key => ({
           ownerId:   p.id,
           namespace: "custom",
@@ -268,7 +269,8 @@ export const action = async ({ request }) => {
   // ─── SAVE METAFIELDS ────────────────────────────────────────────────────────
   if (intent === "saveMetafields") {
     const metafields = JSON.parse(formData.get("metafields"));
-    const nonEmpty = metafields.filter(mf => mf.value && String(mf.value).trim() !== "");
+    const nonEmpty = metafields
+      .filter(mf => !SKIP_KEYS.has(mf.key) && mf.value && String(mf.value).trim() !== "");
     const chunks = [];
     for (let i = 0; i < nonEmpty.length; i += 25) chunks.push(nonEmpty.slice(i, i + 25));
     for (const chunk of chunks) {
@@ -291,6 +293,7 @@ export const action = async ({ request }) => {
     const metafields = [];
     ids.forEach((ownerId) => {
       Object.keys(updates).forEach(key => {
+        if (SKIP_KEYS.has(key)) return;
         if (updates[key] && updates[key].trim() !== "") {
           metafields.push({ ownerId, namespace: "custom", key, value: updates[key], type: "single_line_text_field" });
         }
@@ -316,7 +319,11 @@ export const action = async ({ request }) => {
     const metafields = [];
     let skipped = 0;
     for (const line of lines) {
-      try { metafields.push(JSON.parse(line)); }
+      try {
+        const mf = JSON.parse(line);
+        if (!SKIP_KEYS.has(mf.key)) metafields.push(mf);
+        else skipped++;
+      }
       catch { skipped++; }
     }
     for (let i = 0; i < metafields.length; i += 25) {
