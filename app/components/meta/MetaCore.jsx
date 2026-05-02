@@ -2,46 +2,52 @@ import { useState, useEffect } from "react";
 import { useFetcher } from "react-router";
 import {
   Card, TextField, Text, BlockStack, InlineStack, Button,
-  Checkbox, Scrollable, ProgressBar, Box, Select, Banner,
-  Divider, ActionList
+  Checkbox, Scrollable, Box, Select, Banner,
+  Divider, ActionList, Icon, Badge
 } from "@shopify/polaris";
+import { SearchIcon } from "@shopify/polaris-icons";
 import { TARGET_KEYS, FIELD_LABELS } from "../../utils/metaScan";
-import { lookupStone } from "../../utils/geoLibrary";
+import { lookupStone, STONE_LIBRARY } from "../../utils/geoLibrary";
 
 const DROPDOWN_FIELDS = ["luster", "diaphaneity", "fracture_pattern", "cleavage", "crystal_structure", "rock_formation", "mineral_class", "geological_era", "tenacity"];
-const FREE_TEXT_FIELDS = ["official_name", "origin_location", "rescued_by", "stone_story", "bench_notes", "dimensions", "carat_weight", "cut_type", "moh_hardness", "specific_gravity"];
+const FREE_TEXT_FIELDS = ["origin_location", "rescued_by", "stone_story", "bench_notes", "dimensions", "carat_weight", "cut_type", "moh_hardness", "specific_gravity"];
 
 const SEO_DICTIONARY = {
   luster: {
-    global: ["Vitreous (Glassy)", "Waxy", "Resinous", "Silky", "Pearly", "Dull / Earthy", "Submetallic"],
-    labradorite: ["Labradorescent (Schiller)", "Vitreous", "Pearly on cleavages"],
-    obsidian: ["Vitreous (Glassy)", "Sheen (Gold/Silver)", "Chatoyant"],
+    global: ["Vitreous", "Waxy", "Resinous", "Silky", "Pearly", "Dull", "Submetallic"],
+    labradorite: ["Labradorescent", "Vitreous", "Pearly"],
+    obsidian: ["Vitreous", "Sheen", "Chatoyant"],
   },
   diaphaneity: {
     global: ["Opaque", "Translucent", "Transparent", "Semi-Translucent"],
     agate: ["Highly Translucent", "Banded Translucent", "Semi-Translucent"],
   },
   fracture_pattern: {
-    global: ["Conchoidal (Shell-like)", "Uneven", "Splintery", "Hackly", "Granular"],
+    global: ["Conchoidal", "Uneven", "Splintery", "Hackly", "Granular"],
   },
   cleavage: {
-    global: ["None (Perfect for cabbing)", "Indistinct", "Perfect in one direction", "Good"],
-    labradorite: ["Perfect in two directions (Requires care)"],
+    global: ["None", "Indistinct", "Perfect", "Good"],
+    labradorite: ["Perfect in two directions"],
   },
   crystal_structure: {
-    global: ["Trigonal", "Cryptocrystalline", "Amorphous (Non-crystalline)", "Monoclinic", "Triclinic", "Orthorhombic"],
+    global: ["Trigonal", "Cryptocrystalline", "Amorphous", "Monoclinic", "Triclinic", "Orthorhombic", "Hexagonal"],
   },
   rock_formation: {
-    global: ["Igneous (Volcanic)", "Sedimentary", "Metamorphic", "Hydrothermal Vein", "Pegmatite"],
+    global: ["Igneous", "Sedimentary", "Metamorphic"],
   },
   mineral_class: {
-    global: ["Silicate", "Tectosilicate", "Oxide", "Carbonate", "Sulfate", "Phosphate"],
+    global: ["Silicates", "Oxides", "Carbonates", "Sulfates", "Phosphates"],
   },
 };
+
+const availableStones = typeof STONE_LIBRARY !== 'undefined' 
+  ? Object.keys(STONE_LIBRARY).sort() 
+  : ["Agate", "Jasper", "Obsidian", "Labradorite", "Quartz", "Amethyst", "Tiger's Eye"];
 
 export default function MetaCore({ products = [], mode }) {
   const fetcher = useFetcher();
 
+  // --- BULK EDIT STATE ---
   const [checkedIds, setCheckedIds] = useState([]);
   const [tickedFields, setTickedFields] = useState({});
   const [fieldValues, setFieldValues] = useState({});
@@ -49,17 +55,25 @@ export default function MetaCore({ products = [], mode }) {
   const [customInputs, setCustomInputs] = useState({});
   const [ooakText, setOoakText] = useState("");
   const [isSuggesting, setIsSuggesting] = useState(false);
+  const [productSearch, setProductSearch] = useState("");
 
+  // --- INJECT STATE ---
   const [injectProduct, setInjectProduct] = useState("");
   const [payload, setPayload] = useState("");
 
+  // --- MINDAT EXPLORER STATE ---
+  const [mindatQuery, setMindatQuery] = useState("");
+
   const getOptionsForField = (fieldKey) => {
-    const currentStone = (fieldValues["official_name"] || "").toLowerCase();
-    let options = SEO_DICTIONARY[fieldKey]?.global || [];
+    const currentStone = fieldValues["official_name"] === "__custom__" 
+      ? (customInputs["official_name"] || "").toLowerCase()
+      : (fieldValues["official_name"] || "").toLowerCase();
+      
+    let opts = SEO_DICTIONARY[fieldKey]?.global || [];
     if (currentStone && SEO_DICTIONARY[fieldKey]?.[currentStone]) {
-      options = SEO_DICTIONARY[fieldKey][currentStone];
+      opts = SEO_DICTIONARY[fieldKey][currentStone];
     }
-    return options;
+    return opts;
   };
 
   const autoSuggestFields = async () => {
@@ -69,8 +83,14 @@ export default function MetaCore({ products = [], mode }) {
     const firstStone = products.find(p => p.id === checkedIds[0]);
     if (!firstStone) { setIsSuggesting(false); return; }
 
-    // THIS IS THE FIX: It now looks at the text box on your screen first!
-    let suggestedName = fieldValues["official_name"] || firstStone.metafields?.official_name || firstStone.title;
+    // Check if they are using a custom typed name, otherwise use the dropdown value
+    let suggestedName = fieldValues["official_name"] === "__custom__" 
+      ? customInputs["official_name"] 
+      : fieldValues["official_name"];
+
+    if (!suggestedName) {
+      suggestedName = firstStone.metafields?.official_name || firstStone.title;
+    }
     
     const libraryData = lookupStone(suggestedName) || {};
     if (libraryData.official_name) suggestedName = libraryData.official_name;
@@ -81,12 +101,12 @@ export default function MetaCore({ products = [], mode }) {
 
     const applySuggestion = (key, value) => {
       if (!value) return;
-      const options = getOptionsForField(key);
+      const opts = getOptionsForField(key);
       
-      if (options.length === 0 || FREE_TEXT_FIELDS.includes(key)) {
+      if (opts.length === 0 || FREE_TEXT_FIELDS.includes(key)) {
          newValues[key] = value;
       } else {
-         const match = options.find(opt => opt.toLowerCase().includes(value.toLowerCase()) || value.toLowerCase().includes(opt.toLowerCase()));
+         const match = opts.find(opt => opt.toLowerCase().includes(value.toLowerCase()) || value.toLowerCase().includes(opt.toLowerCase()));
          if (match) {
            newValues[key] = match;
          } else {
@@ -97,7 +117,6 @@ export default function MetaCore({ products = [], mode }) {
       newTicked[key] = true;
     };
 
-    // 1. Fetch from Mindat API
     const fd = new FormData();
     fd.append("intent", "mindat_lookup");
     fd.append("query", suggestedName);
@@ -122,8 +141,11 @@ export default function MetaCore({ products = [], mode }) {
         console.error("Mindat fetch failed");
     }
 
-    // 2. Apply Local GeoLibrary Overrides
-    applySuggestion("official_name", suggestedName);
+    if (fieldValues["official_name"] !== "__custom__") {
+      newValues["official_name"] = suggestedName;
+    }
+    newTicked["official_name"] = true;
+    
     if (libraryData.crystal_structure) applySuggestion("crystal_structure", libraryData.crystal_structure);
     if (libraryData.luster) applySuggestion("luster", libraryData.luster);
     if (libraryData.diaphaneity) applySuggestion("diaphaneity", libraryData.diaphaneity);
@@ -180,56 +202,110 @@ export default function MetaCore({ products = [], mode }) {
     }
   }, [fetcher.data]);
 
+  const filteredProducts = products.filter(p => p.title.toLowerCase().includes(productSearch.toLowerCase()));
+
+  // ==========================================
+  // VIEW 1: BULK EDIT
+  // ==========================================
   if (mode === "bulk") {
-    const allChecked = checkedIds.length === products.length && products.length > 0;
-    const indeterminate = checkedIds.length > 0 && checkedIds.length < products.length;
+    const allChecked = checkedIds.length === filteredProducts.length && filteredProducts.length > 0;
+    const indeterminate = checkedIds.length > 0 && checkedIds.length < filteredProducts.length;
 
     return (
       <BlockStack gap="400">
-        {isProcessing && <Banner tone="info">Saving data to Shopify...</Banner>}
+        {isProcessing && <Banner tone="info">Saving data to Shopify. This may take a moment...</Banner>}
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1.5fr", gap: "24px" }}>
-          {/* LEFT COLUMN: Product Selection */}
+          
           <BlockStack gap="300">
             <Card padding="0">
-              <Box padding="300">
-                <Checkbox
-                  label={`Select All (${products.length})`}
-                  checked={indeterminate ? "indeterminate" : allChecked}
-                  onChange={(checked) => setCheckedIds(checked ? products.map(p => p.id) : [])}
-                />
+              <Box padding="300" borderBlockEndWidth="025" borderColor="border">
+                <BlockStack gap="300">
+                  <TextField
+                    value={productSearch}
+                    onChange={setProductSearch}
+                    placeholder="Search products..."
+                    prefix={<Icon source={SearchIcon} />}
+                    autoComplete="off"
+                    clearButton
+                    onClearButtonClick={() => setProductSearch("")}
+                  />
+                  <Checkbox
+                    label={`Select All Visible (${filteredProducts.length})`}
+                    checked={indeterminate ? "indeterminate" : allChecked}
+                    onChange={(checked) => setCheckedIds(checked ? filteredProducts.map(p => p.id) : [])}
+                  />
+                </BlockStack>
               </Box>
-              <Divider />
               <Scrollable style={{ height: "550px" }}>
-                <ActionList
-                  actionRole="menuitem"
-                  items={products.map(p => ({
-                    content: (
-                      <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                        <Checkbox checked={checkedIds.includes(p.id)} onChange={() => {}} label="" />
-                        <span style={{ fontSize: "13px", fontWeight: checkedIds.includes(p.id) ? "bold" : "normal" }}>
-                          {p.title.length > 40 ? p.title.substring(0, 40) + "..." : p.title}
-                        </span>
-                      </div>
-                    ),
-                    onAction: () => setCheckedIds(prev =>
-                      prev.includes(p.id) ? prev.filter(id => id !== p.id) : [...prev, p.id]
-                    ),
-                  }))}
-                />
+                {filteredProducts.length === 0 ? (
+                  <Box padding="400"><Text tone="subdued" alignment="center">No products found.</Text></Box>
+                ) : (
+                  <ActionList
+                    actionRole="menuitem"
+                    items={filteredProducts.map(p => ({
+                      content: (
+                        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                          <Checkbox checked={checkedIds.includes(p.id)} onChange={() => {}} label="" />
+                          <span style={{ fontSize: "13px", fontWeight: checkedIds.includes(p.id) ? "bold" : "normal" }}>
+                            {p.title.length > 40 ? p.title.substring(0, 40) + "..." : p.title}
+                          </span>
+                        </div>
+                      ),
+                      onAction: () => setCheckedIds(prev =>
+                        prev.includes(p.id) ? prev.filter(id => id !== p.id) : [...prev, p.id]
+                      ),
+                    }))}
+                  />
+                )}
               </Scrollable>
             </Card>
           </BlockStack>
 
-          {/* RIGHT COLUMN: Smart Questionnaire */}
           <BlockStack gap="300">
-            <Banner tone="info">Fields are mapped to 2026 SEO trends. Values adapt to the Official Name.</Banner>
+            <Banner tone="info">Fields are mapped to Shopify Metaobjects. Values adapt to the Official Name.</Banner>
             <Card padding="0">
               <Scrollable style={{ height: "550px" }}>
                 <BlockStack gap="400" padding="400">
 
-                  {/* Section 1: Free Text */}
-                  <Text variant="headingSm" tone="subdued">CORE IDENTIFICATION (FREE TEXT)</Text>
+                  <Text variant="headingSm" tone="subdued">CORE IDENTIFICATION</Text>
+                  
+                  {/* UPDATED: Official Name Dropdown with "Add Custom" logic */}
+                  <BlockStack gap="200" style={{ background: "#e4f0f6", padding: "12px", borderRadius: "6px", border: "1px solid #005bd3" }}>
+                    <Checkbox
+                      label="Official Name (Required for Mindat)"
+                      checked={tickedFields["official_name"] || false}
+                      onChange={() => setTickedFields(prev => ({ ...prev, official_name: !prev.official_name }))}
+                    />
+                    {tickedFields["official_name"] && (
+                      <BlockStack gap="200">
+                        <select
+                          style={{ width: "100%", padding: "8px", borderRadius: "4px", border: "1px solid #c9cccf", fontSize: "14px", fontWeight: "bold" }}
+                          value={fieldValues["official_name"] || ""}
+                          onChange={(e) => setFieldValues({ ...fieldValues, official_name: e.target.value })}
+                        >
+                          <option value="">-- Select Valid Mindat Stone --</option>
+                          {availableStones.map(stone => (
+                            <option key={stone} value={stone}>{stone}</option>
+                          ))}
+                          <option value="__custom__">➕ Add New Stone...</option>
+                        </select>
+                        
+                        {/* This text box appears if they select "+ Add New Stone" */}
+                        {fieldValues["official_name"] === "__custom__" && (
+                          <TextField
+                            label="Type new stone name"
+                            value={customInputs["official_name"] || ""}
+                            onChange={(v) => setCustomInputs({ ...customInputs, official_name: v })}
+                            autoComplete="off"
+                            placeholder="e.g. Rhodochrosite"
+                            helpText="Mindat will attempt to look this up when you Auto-Suggest."
+                          />
+                        )}
+                      </BlockStack>
+                    )}
+                  </BlockStack>
+
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
                     {FREE_TEXT_FIELDS.map(key => (
                       <BlockStack key={key} gap="100">
@@ -252,7 +328,6 @@ export default function MetaCore({ products = [], mode }) {
 
                   <Divider />
 
-                  {/* Section 2: Smart Dropdowns */}
                   <Text variant="headingSm" tone="subdued">GEOLOGY & SEO (SMART SELECT)</Text>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
                     {DROPDOWN_FIELDS.map(key => (
@@ -289,7 +364,6 @@ export default function MetaCore({ products = [], mode }) {
 
                   <Divider />
 
-                  {/* Section 3: OOAK */}
                   <BlockStack gap="200" style={{ background: "#fff8e6", padding: "12px", borderRadius: "8px", border: "1px solid #e1b878" }}>
                     <Text variant="headingSm">✨ OOAK Special Features</Text>
                     <Text variant="bodySm" tone="subdued">Text entered here appends to the Stone Story without overwriting it.</Text>
@@ -298,7 +372,7 @@ export default function MetaCore({ products = [], mode }) {
                       value={ooakText}
                       onChange={setOoakText}
                       multiline={3}
-                      placeholder="e.g. Features a striking hematite inclusion resembling a lightning bolt..."
+                      placeholder="e.g. Features a striking hematite inclusion..."
                     />
                   </BlockStack>
 
@@ -307,16 +381,11 @@ export default function MetaCore({ products = [], mode }) {
             </Card>
 
             <BlockStack gap="300">
-              <Button 
-                onClick={autoSuggestFields} 
-                disabled={checkedIds.length === 0 || isSuggesting}
-                icon={() => <span>🪄</span>}
-              >
+              <Button onClick={autoSuggestFields} disabled={checkedIds.length === 0 || isSuggesting} icon={() => <span>🪄</span>}>
                 {isSuggesting ? "Fetching from Mindat..." : "Auto-Suggest SEO Fields"}
               </Button>
-
               <Button variant="primary" size="large" onClick={processBulkQueue} disabled={checkedIds.length === 0 || isProcessing}>
-                Apply SEO Updates to {checkedIds.length} Stone(s)
+                Apply Updates to {checkedIds.length} Stone(s)
               </Button>
             </BlockStack>
             
@@ -326,6 +395,9 @@ export default function MetaCore({ products = [], mode }) {
     );
   }
 
+  // ==========================================
+  // VIEW 2: INJECT PAYLOAD
+  // ==========================================
   if (mode === "inject") {
     const product = products.find((p) => p.id === injectProduct);
 
@@ -369,6 +441,74 @@ export default function MetaCore({ products = [], mode }) {
         {fetcher.data?.injected !== undefined && (
           <Banner tone="success">Injected {fetcher.data.injected} metafield(s) successfully!</Banner>
         )}
+      </BlockStack>
+    );
+  }
+
+  // ==========================================
+  // VIEW 3: MINDAT EXPLORER
+  // ==========================================
+  if (mode === "mindat") {
+    const isFetchingMindat = fetcher.state === "submitting" && fetcher.formData?.get("intent") === "mindat_lookup";
+    const mindatResult = fetcher.data?.intent === "mindat_lookup" ? fetcher.data : null;
+
+    return (
+      <BlockStack gap="400">
+        <Text variant="headingMd">🌍 Mindat Database Explorer</Text>
+        <Text variant="bodyMd" tone="subdued">Query the live Mindat API to research geological data before adding it to your library.</Text>
+        
+        <Card>
+          <BlockStack gap="400">
+            <InlineStack gap="300" blockAlign="end">
+              <div style={{ flex: 1 }}>
+                <TextField
+                  label="Search Mineral/Rock Name"
+                  value={mindatQuery}
+                  onChange={setMindatQuery}
+                  placeholder="e.g., Lapis Lazuli, Quartz, Obsidian..."
+                  autoComplete="off"
+                  prefix={<Icon source={SearchIcon} />}
+                />
+              </div>
+              <Button 
+                variant="primary" 
+                onClick={() => {
+                  const fd = new FormData();
+                  fd.append("intent", "mindat_lookup");
+                  fd.append("query", mindatQuery.trim());
+                  fetcher.submit(fd, { method: "post" });
+                }} 
+                disabled={!mindatQuery.trim()}
+                loading={isFetchingMindat}
+              >
+                Search Database
+              </Button>
+            </InlineStack>
+
+            {mindatResult && (
+              <Box paddingBlockStart="400">
+                <Divider />
+                <Box paddingBlockStart="400">
+                  {mindatResult.found ? (
+                    <BlockStack gap="300">
+                      <InlineStack align="space-between" blockAlign="center">
+                        <Text variant="headingSm">Results for "{mindatQuery}"</Text>
+                        <Badge tone="success">Match Found</Badge>
+                      </InlineStack>
+                      <div style={{ background: "#202124", color: "#e8eaed", padding: "16px", borderRadius: "8px", overflowX: "auto", fontFamily: "monospace", fontSize: "13px" }}>
+                        <pre style={{ margin: 0 }}>
+                          {JSON.stringify(mindatResult.result, null, 2)}
+                        </pre>
+                      </div>
+                    </BlockStack>
+                  ) : (
+                    <Banner tone="warning">No results found for "{mindatQuery}". Try a different spelling or a broader mineral family.</Banner>
+                  )}
+                </Box>
+              </Box>
+            )}
+          </BlockStack>
+        </Card>
       </BlockStack>
     );
   }

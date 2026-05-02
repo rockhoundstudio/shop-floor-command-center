@@ -1,12 +1,14 @@
 import { 
   TextField, BlockStack, Card, Text, Badge, Grid, Button, Banner, 
   InlineStack, ProgressBar, Page, Layout, Select, Box, ButtonGroup, 
-  ResourceList, ResourceItem, Thumbnail 
+  ResourceList, ResourceItem, Thumbnail, Autocomplete, Icon
 } from "@shopify/polaris";
-import { useState, useRef } from "react";
+import { SearchIcon } from "@shopify/polaris-icons";
+import { useState, useRef, useMemo, useCallback } from "react";
 import { useFetcher } from "react-router";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { TARGET_KEYS, FIELD_LABELS } from "../../utils/metaScan";
+import { STONE_LIBRARY } from "../../utils/geoLibrary"; // We need this to populate the dropdown
 
 export default function ProductsTab({ products = [] }) {
   const shopify = useAppBridge();
@@ -14,14 +16,19 @@ export default function ProductsTab({ products = [] }) {
   // --- UI STATE ---
   const [viewMode, setViewMode] = useState("list"); 
   const [search, setSearch] = useState("");
-  const [selected, setSelected] = useState(null); // Which product is open in the editor
+  const [selected, setSelected] = useState(null);
 
   // --- DATA STATE ---
   const [fieldValues, setFieldValues] = useState({});
   const [baseFields, setBaseFields] = useState({ title: "", description: "", status: "DRAFT", price: "0.00", inventory: "1" });
   const mergedApplied = useRef(false);
 
-  // --- FETCHERS (The Engine) ---
+  // --- AUTOCOMPLETE STATE (For Official Name) ---
+  const [inputValue, setInputValue] = useState("");
+  const [options, setOptions] = useState([]);
+  const stoneNames = useMemo(() => Object.keys(STONE_LIBRARY).map(name => ({ value: name, label: name })), []);
+
+  // --- FETCHERS ---
   const saveFetcher  = useFetcher();
   const autoFetcher  = useFetcher();
   const bulkFetcher  = useFetcher();
@@ -30,20 +37,23 @@ export default function ProductsTab({ products = [] }) {
 
   // --- FUNCTIONS ---
   function openEditor(product) {
-    // 1. Load Metafields
     const initial = {};
     TARGET_KEYS.forEach(key => {
       initial[key] = product.metafields?.[key] || "";
     });
-    if (!initial.official_name) initial.official_name = product.title || "";
+    
+    // Set up the Official Name state for the dropdown
+    const existingName = initial.official_name || product.title || "";
+    initial.official_name = existingName;
+    setInputValue(existingName); // Pre-fill the dropdown text box
+    
     if (!initial.stone_story)   initial.stone_story   = product.description || "";
     
-    // 2. Load Base Shopify Data (for the UI)
     setBaseFields({
       title: product.title || "",
       description: product.description || "",
       status: product.status || "DRAFT",
-      price: product.price || "0.00", // Fallbacks until fully wired to Shopify GraphQL
+      price: product.price || "0.00", 
       inventory: "1" 
     });
 
@@ -52,13 +62,33 @@ export default function ProductsTab({ products = [] }) {
     mergedApplied.current = false;
   }
 
+  // Handle Dropdown typing
+  const updateText = useCallback((value) => {
+    setInputValue(value);
+    setFieldValues(prev => ({ ...prev, official_name: value }));
+    if (value === "") {
+      setOptions(stoneNames);
+      return;
+    }
+    const filterRegex = new RegExp(value, 'i');
+    const resultOptions = stoneNames.filter((option) => option.label.match(filterRegex));
+    setOptions(resultOptions);
+  }, [stoneNames]);
+
+  // Handle Dropdown selection
+  const updateSelection = useCallback((selectedArr) => {
+    const selectedValue = selectedArr[0];
+    setInputValue(selectedValue);
+    setFieldValues(prev => ({ ...prev, official_name: selectedValue }));
+  }, []);
+
   function handleSave() {
     const metafields = TARGET_KEYS.map(key => ({
       ownerId: selected.id,
-      namespace: "custom",
+      namespace: "custom", // The backend will fix namespace for taxonomies
       key,
       value: fieldValues[key] || "",
-      type: "single_line_text_field",
+      type: "single_line_text_field", // Backend will fix type for taxonomies
     }));
     saveFetcher.submit(
       { intent: "saveMetafields", metafields: JSON.stringify(metafields) },
@@ -73,7 +103,7 @@ export default function ProductsTab({ products = [] }) {
         intent: "autoFill",
         title: baseFields.title,
         description: baseFields.description || "",
-        existingMeta: JSON.stringify(fieldValues),
+        existingMeta: JSON.stringify(fieldValues), // This now has the selected Official Name
       },
       { method: "post", action: "/app/meta-injector" }
     );
@@ -139,7 +169,6 @@ export default function ProductsTab({ products = [] }) {
           )}
 
           <Layout>
-            {/* LEFT COLUMN: Dyslexia-Optimized Reading Path */}
             <Layout.Section>
               <BlockStack gap="500">
                 
@@ -169,7 +198,6 @@ export default function ProductsTab({ products = [] }) {
                     </InlineStack>
                     <Box padding="400" background="bg-surface-secondary" borderRadius="100" borderColor="border" borderWidth="025">
                       <InlineStack gap="400" wrap={false} blockAlign="center">
-                        {/* Real Featured Image from data if it exists, else placeholder */}
                         <div style={{ width: '120px', height: '120px', background: "#fff", borderRadius: '8px', overflow: 'hidden', border: '1px solid #e1e3e5' }}>
                           <img src={selected.featuredImage?.url || "https://cdn.shopify.com/s/files/1/0533/2089/files/placeholder-images-image_medium.png"} style={{ width: "100%", height: "100%", objectFit: "cover" }} alt="Hero" />
                         </div>
@@ -184,8 +212,28 @@ export default function ProductsTab({ products = [] }) {
                 <Card roundedAbove="sm">
                   <BlockStack gap="400">
                     <Text as="h2" variant="headingSm">Lapidary Data (Meta Injector)</Text>
+                    
+                    {/* The New Autocomplete Dropdown for Official Name */}
+                    <Box paddingBlockEnd="400" borderBlockEndWidth="025" borderColor="border">
+                       <Autocomplete
+                        options={options}
+                        selected={[fieldValues.official_name]}
+                        onSelect={updateSelection}
+                        textField={
+                          <Autocomplete.TextField
+                            onChange={updateText}
+                            label="Official Name (Required for Mindat)"
+                            value={inputValue}
+                            prefix={<Icon source={SearchIcon} tone="base" />}
+                            placeholder="e.g. Jasper, Plume Agate, Obsidian..."
+                            autoComplete="off"
+                          />
+                        }
+                      />
+                    </Box>
+
                     <BlockStack gap="300">
-                      {TARGET_KEYS.map(key => (
+                      {TARGET_KEYS.filter(key => key !== "official_name").map(key => (
                         <TextField
                           key={key}
                           label={FIELD_LABELS[key] || key}
@@ -258,7 +306,6 @@ export default function ProductsTab({ products = [] }) {
         </ButtonGroup>
       </InlineStack>
 
-      {/* Existing Search & Bulk Editor Box */}
       <TextField
         value={search} onChange={setSearch} autoComplete="off" placeholder="Search gemstone title..."
         clearButton onClearButtonClick={() => setSearch("")} prefix="🔍"
@@ -288,7 +335,6 @@ export default function ProductsTab({ products = [] }) {
 
       {filtered.length === 0 && <Text tone="subdued">No products match your search.</Text>}
 
-      {/* Grid or List Render */}
       {viewMode === "list" ? (
         <Card padding="0">
           <ResourceList
@@ -298,7 +344,7 @@ export default function ProductsTab({ products = [] }) {
                 <InlineStack align="space-between">
                   <Text variant="bodyMd" fontWeight="bold">{p.title}</Text>
                   <Badge tone={p.status === "✅ Complete" ? "success" : p.status === "🔴 Empty" ? "critical" : "warning"}>
-                    {p.filledCount} / {TARGET_KEYS.length} Metafields
+                    {p.status}
                   </Badge>
                 </InlineStack>
               </ResourceItem>
