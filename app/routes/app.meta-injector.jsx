@@ -18,14 +18,19 @@ import { TAXONOMY_GIDS, wrapGid } from "../utils/taxonomyMap";
 
 // ─── TAXONOMY FORMATTER ─────────────────────────────────────────────────────
 function formatMetafieldValue(key, value) {
-  const cleanValue = String(value).replace(/[✅⚠️]/g, "").trim(); 
-  const safeKey = key.replace(/-/g, "_"); 
-  
+  const cleanValue = String(value).replace(/[✅⚠️]/g, "").trim();
+  const safeKey = key.replace(/-/g, "_");
+
   if (TAXONOMY_GIDS[safeKey] && TAXONOMY_GIDS[safeKey][cleanValue]) {
     return {
       value: wrapGid(TAXONOMY_GIDS[safeKey][cleanValue]),
-      type: "list.metaobject_reference" 
+      type: "list.metaobject_reference"
     };
+  }
+
+  // If this key belongs to taxonomy but value isn't in the map, skip it
+  if (TAXONOMY_GIDS[safeKey]) {
+    return null;
   }
 
   return {
@@ -119,11 +124,11 @@ export const action = async ({ request }) => {
   const formData = await request.formData();
   const intent = formData.get("intent");
 
-  // ─── BULK SEED OFFICIAL NAMES (FROM JSON) ──────────────────────────────────
+  // ─── BULK SEED OFFICIAL NAMES ───────────────────────────────────────────────
   if (intent === "seed_names") {
     const idsRaw = formData.get("ids");
     const ids = JSON.parse(idsRaw);
-    
+
     let officialNames = {};
     try {
       const filePath = path.join(process.cwd(), "app", "data", "officialNames.json");
@@ -175,12 +180,8 @@ export const action = async ({ request }) => {
     const library = lookupStone(title) || {};
 
     let stoneName = existing.official_name ? String(existing.official_name).trim() : null;
-    if (!stoneName && library.official_name) {
-      stoneName = library.official_name;
-    }
-    if (!stoneName && title) {
-      stoneName = title;
-    }
+    if (!stoneName && library.official_name) stoneName = library.official_name;
+    if (!stoneName && title) stoneName = title;
 
     let mindat = {};
     let mindatError = null;
@@ -210,13 +211,13 @@ export const action = async ({ request }) => {
             const gravityStr = m.density_min ? (m.density_max && m.density_max !== m.density_min ? `${m.density_min}-${m.density_max}` : `${m.density_min}`) : "";
 
             mindat = {
-              moh_hardness:      hardnessStr,
-              crystal_system:    m.crystal_system   || "",
-              specific_gravity:  gravityStr,
-              luster:            m.lustre           || "",
-              cleavage:          m.cleavage         || "",
-              fracture_pattern:  m.fracture         || "",
-              diaphaneity:       m.diaphaneity      || "",
+              moh_hardness:     hardnessStr,
+              crystal_system:   m.crystal_system || "",
+              specific_gravity: gravityStr,
+              luster:           m.lustre         || "",
+              cleavage:         m.cleavage       || "",
+              fracture_pattern: m.fracture       || "",
+              diaphaneity:      m.diaphaneity    || "",
             };
             Object.keys(mindat).forEach(k => { if (!mindat[k]) delete mindat[k]; });
 
@@ -234,7 +235,7 @@ export const action = async ({ request }) => {
 
     const merged = {};
     const conflicts = [];
-    
+
     if (stoneName && !existing["official_name"]) {
       merged["official_name"] = stoneName;
     }
@@ -244,9 +245,9 @@ export const action = async ({ request }) => {
         merged[key] = existing[key];
         return;
       }
-      const libVal    = library[key]  || "";
-      const parsedVal = parsed[key]   || "";
-      const mindatVal = mindat[key]   || "";
+      const libVal    = library[key] || "";
+      const parsedVal = parsed[key]  || "";
+      const mindatVal = mindat[key]  || "";
       if (mindatVal) {
         if (libVal && libVal !== mindatVal) conflicts.push({ key, library: libVal, mindat: mindatVal });
         merged[key] = `✅ ${mindatVal}`;
@@ -272,12 +273,8 @@ export const action = async ({ request }) => {
       const existing = p.metafields || {};
 
       let stoneName = existing.official_name ? String(existing.official_name).trim() : null;
-      if (!stoneName && library.official_name) {
-        stoneName = library.official_name;
-      }
-      if (!stoneName && p.title) {
-        stoneName = p.title;
-      }
+      if (!stoneName && library.official_name) stoneName = library.official_name;
+      if (!stoneName && p.title) stoneName = p.title;
 
       if (!stoneName) {
         results.push({ id: p.id, title: p.title, ok: false, error: "Could not identify stone." });
@@ -293,7 +290,7 @@ export const action = async ({ request }) => {
         });
 
         if (cachedStone) {
-           mindat = JSON.parse(cachedStone.data);
+          mindat = JSON.parse(cachedStone.data);
         } else {
           if (!process.env.MINDAT_API_KEY) throw new Error("MINDAT_API_KEY not set");
           const res = await fetch(
@@ -308,13 +305,13 @@ export const action = async ({ request }) => {
               const gravityStr = m.density_min ? (m.density_max && m.density_max !== m.density_min ? `${m.density_min}-${m.density_max}` : `${m.density_min}`) : "";
 
               mindat = {
-                moh_hardness:      hardnessStr,
-                crystal_system:    m.crystal_system   || "",
-                specific_gravity:  gravityStr,
-                luster:            m.lustre           || "",
-                cleavage:          m.cleavage         || "",
-                fracture_pattern:  m.fracture         || "",
-                diaphaneity:       m.diaphaneity      || "",
+                moh_hardness:     hardnessStr,
+                crystal_system:   m.crystal_system || "",
+                specific_gravity: gravityStr,
+                luster:           m.lustre         || "",
+                cleavage:         m.cleavage       || "",
+                fracture_pattern: m.fracture       || "",
+                diaphaneity:      m.diaphaneity    || "",
               };
               Object.keys(mindat).forEach(k => { if (!mindat[k]) delete mindat[k]; });
 
@@ -350,10 +347,9 @@ export const action = async ({ request }) => {
         .filter(key => merged[key] && String(merged[key]).trim() !== "")
         .map(key => {
           let finalValue = merged[key];
-          if (key === "stone_story") {
-            finalValue = autoLinkStory(finalValue);
-          }
+          if (key === "stone_story") finalValue = autoLinkStory(finalValue);
           const formatted = formatMetafieldValue(key, finalValue);
+          if (!formatted) return null;
           return {
             ownerId:   p.id,
             namespace: TAXONOMY_GIDS[key.replace(/-/g, "_")] ? "shopify" : "custom",
@@ -361,7 +357,7 @@ export const action = async ({ request }) => {
             value:     formatted.value,
             type:      formatted.type,
           };
-        });
+        }).filter(Boolean);
 
       if (metafields.length === 0) {
         results.push({ id: p.id, title: p.title, ok: false, error: "no data found" });
@@ -384,7 +380,7 @@ export const action = async ({ request }) => {
       }
 
       results.push({ id: p.id, title: p.title, ok: !saveError, error: saveError || mindatError || null, merged });
-      await new Promise(r => setTimeout(r, 200)); 
+      await new Promise(r => setTimeout(r, 200));
     }
 
     const failed = results.filter(r => !r.ok);
@@ -394,17 +390,16 @@ export const action = async ({ request }) => {
   // ─── SAVE METAFIELDS (MANUAL EDITS) ─────────────────────────────────────────
   if (intent === "saveMetafields") {
     const rawMetafields = JSON.parse(formData.get("metafields"));
-    
+
     const processedMetafields = rawMetafields
       .filter(mf => mf.value && String(mf.value).trim() !== "")
       .map(mf => {
         const safeKey = mf.key.replace(/-/g, "_");
         let finalValue = mf.value;
-        if (safeKey === "stone_story") {
-          finalValue = autoLinkStory(finalValue);
-        }
+        if (safeKey === "stone_story") finalValue = autoLinkStory(finalValue);
 
         const formatted = formatMetafieldValue(safeKey, finalValue);
+        if (!formatted) return null;
         return {
           ownerId:   mf.ownerId,
           namespace: TAXONOMY_GIDS[safeKey] ? "shopify" : "custom",
@@ -412,7 +407,7 @@ export const action = async ({ request }) => {
           value:     formatted.value,
           type:      formatted.type,
         };
-      });
+      }).filter(Boolean);
 
     const chunks = [];
     for (let i = 0; i < processedMetafields.length; i += 25) chunks.push(processedMetafields.slice(i, i + 25));
@@ -430,15 +425,15 @@ export const action = async ({ request }) => {
     return data({ ok: true, success: true, message: "Metafields locked to Shopify." });
   }
 
-  // ─── THE NEW SMART BULK EDIT (WITH OOAK APPEND) ───────────────────────────
+  // ─── BULK EDIT ───────────────────────────────────────────────────────────────
   if (intent === "bulk_edit_new") {
     const updates = JSON.parse(formData.get("updates"));
     const ids = JSON.parse(formData.get("ids"));
     const ooakText = formData.get("ooakText") || "";
     const currentStories = JSON.parse(formData.get("currentStories") || "{}");
-    
+
     const metafields = [];
-    
+
     ids.forEach((ownerId) => {
       Object.keys(updates).forEach(key => {
         if (updates[key] && updates[key].trim() !== "") {
@@ -447,22 +442,22 @@ export const action = async ({ request }) => {
           if (safeKey === "stone_story") finalValue = autoLinkStory(finalValue);
 
           const formatted = formatMetafieldValue(safeKey, finalValue);
-          metafields.push({ 
-            ownerId, 
-            namespace: TAXONOMY_GIDS[safeKey] ? "shopify" : "custom", 
-            key: TAXONOMY_GIDS[safeKey] ? key.replace(/_/g, "-") : key, 
-            value: formatted.value, 
-            type: formatted.type 
+          if (!formatted) return;
+          metafields.push({
+            ownerId,
+            namespace: TAXONOMY_GIDS[safeKey] ? "shopify" : "custom",
+            key: TAXONOMY_GIDS[safeKey] ? key.replace(/_/g, "-") : key,
+            value: formatted.value,
+            type: formatted.type
           });
         }
       });
 
       if (ooakText && ooakText.trim() !== "") {
         const baseStory = currentStories[ownerId] || "";
-        const combinedStory = baseStory 
-          ? `${baseStory} | ✨ Unique Features: ${ooakText}` 
+        const combinedStory = baseStory
+          ? `${baseStory} | ✨ Unique Features: ${ooakText}`
           : `✨ Unique Features: ${ooakText}`;
-        
         const linkedStory = autoLinkStory(combinedStory);
         metafields.push({ ownerId, namespace: "custom", key: "stone_story", value: linkedStory, type: "single_line_text_field" });
       }
@@ -509,7 +504,7 @@ export default function MetaInjector() {
   const tabs = [
     { id: "products",    content: "🪨 Products" },
     { id: "bulk",        content: "📦 Bulk Edit" },
-    { id: "inject",      content: "💉 QA & Inject" }, 
+    { id: "inject",      content: "💉 QA & Inject" },
     { id: "mindat",      content: "🌍 Mindat" },
     { id: "collections", content: "🗂️ Collections" }
   ];
