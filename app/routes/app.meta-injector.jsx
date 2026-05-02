@@ -166,6 +166,10 @@ export const action = async ({ request }) => {
     if (!stoneName && library.official_name) {
       stoneName = library.official_name;
     }
+    // FIX 1A: Fallback to title if name is still missing
+    if (!stoneName && title) {
+      stoneName = title;
+    }
 
     let mindat = {};
     let mindatError = null;
@@ -185,7 +189,7 @@ export const action = async ({ request }) => {
           if (!process.env.MINDAT_API_KEY) throw new Error("MINDAT_API_KEY not set");
           const res = await fetch(
             `https://api.mindat.org/geomaterials/?name=${encodeURIComponent(stoneName)}&format=json`,
-            { headers: { Authorization: `Token ${process.env.MINDAT_API_KEY}` } }
+            { headers: { Authorization: `Bearer ${process.env.MINDAT_API_KEY}` } } // FIX 1B: Token changed to Bearer
           );
           if (!res.ok) throw new Error(`Mindat HTTP ${res.status}`);
           const json = await res.json();
@@ -260,6 +264,10 @@ export const action = async ({ request }) => {
       if (!stoneName && library.official_name) {
         stoneName = library.official_name;
       }
+      // FIX 2A: Fallback to title
+      if (!stoneName && p.title) {
+        stoneName = p.title;
+      }
 
       if (!stoneName) {
         results.push({ id: p.id, title: p.title, ok: false, error: "Could not identify stone." });
@@ -280,7 +288,7 @@ export const action = async ({ request }) => {
           if (!process.env.MINDAT_API_KEY) throw new Error("MINDAT_API_KEY not set");
           const res = await fetch(
             `https://api.mindat.org/geomaterials/?name=${encodeURIComponent(stoneName)}&format=json`,
-            { headers: { Authorization: `Token ${process.env.MINDAT_API_KEY}` } }
+            { headers: { Authorization: `Bearer ${process.env.MINDAT_API_KEY}` } } // FIX 2B: Token changed to Bearer
           );
           if (res.ok) {
             const json = await res.json();
@@ -409,7 +417,8 @@ export const action = async ({ request }) => {
         .filter(e => !e.message.includes("must be consistent with the definition"));
       if (errors.length > 0) return data({ success: false, error: errors[0].message });
     }
-    return data({ success: true });
+    // FIX 3: Add ok: true and success: true so frontend banners will display
+    return data({ ok: true, success: true, message: "Metafields locked to Shopify." });
   }
 
   // ─── THE NEW SMART BULK EDIT (WITH OOAK APPEND) ───────────────────────────
@@ -470,7 +479,7 @@ export const action = async ({ request }) => {
     try {
       const res = await fetch(
         `https://api.mindat.org/geomaterials/?name=${encodeURIComponent(query.trim())}&format=json`,
-        { headers: { Authorization: `Token ${process.env.MINDAT_API_KEY}` } }
+        { headers: { Authorization: `Bearer ${process.env.MINDAT_API_KEY}` } } // Applied Bearer fix here too for consistency
       );
       if (res.ok) {
         const json = await res.json();

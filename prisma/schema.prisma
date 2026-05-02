@@ -26,3 +26,12 @@ model Session {
   refreshToken        String?
   refreshTokenExpires DateTime?
 }
+
+// 🚀 NEW: Caching table for the Mindat API
+model StoneCache {
+  id        String   @id @default(cuid())
+  stoneName String   @unique
+  data      String   // Stores the JSON data from Mindat
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
