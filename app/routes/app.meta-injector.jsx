@@ -166,7 +166,6 @@ export const action = async ({ request }) => {
     if (!stoneName && library.official_name) {
       stoneName = library.official_name;
     }
-    // FIX 1A: Fallback to title if name is still missing
     if (!stoneName && title) {
       stoneName = title;
     }
@@ -175,7 +174,7 @@ export const action = async ({ request }) => {
     let mindatError = null;
 
     if (!stoneName) {
-      mindatError = "missing_name"; // 🐛 FIXED: Graceful bypass instead of error
+      mindatError = "missing_name";
     } else {
       try {
         const normalizedName = stoneName.toLowerCase().trim();
@@ -188,8 +187,8 @@ export const action = async ({ request }) => {
         } else {
           if (!process.env.MINDAT_API_KEY) throw new Error("MINDAT_API_KEY not set");
           const res = await fetch(
-            `https://api.mindat.org/geomaterials/?name=${encodeURIComponent(stoneName)}&format=json`,
-            { headers: { Authorization: `Bearer ${process.env.MINDAT_API_KEY}` } } // FIX 1B: Token changed to Bearer
+            `https://api.mindat.org/v1/geomaterials/?name=${encodeURIComponent(stoneName)}&format=json`,
+            { headers: { Authorization: `Token ${process.env.MINDAT_API_KEY}` } }
           );
           if (!res.ok) throw new Error(`Mindat HTTP ${res.status}`);
           const json = await res.json();
@@ -264,7 +263,6 @@ export const action = async ({ request }) => {
       if (!stoneName && library.official_name) {
         stoneName = library.official_name;
       }
-      // FIX 2A: Fallback to title
       if (!stoneName && p.title) {
         stoneName = p.title;
       }
@@ -287,8 +285,8 @@ export const action = async ({ request }) => {
         } else {
           if (!process.env.MINDAT_API_KEY) throw new Error("MINDAT_API_KEY not set");
           const res = await fetch(
-            `https://api.mindat.org/geomaterials/?name=${encodeURIComponent(stoneName)}&format=json`,
-            { headers: { Authorization: `Bearer ${process.env.MINDAT_API_KEY}` } } // FIX 2B: Token changed to Bearer
+            `https://api.mindat.org/v1/geomaterials/?name=${encodeURIComponent(stoneName)}&format=json`,
+            { headers: { Authorization: `Token ${process.env.MINDAT_API_KEY}` } }
           );
           if (res.ok) {
             const json = await res.json();
@@ -373,12 +371,12 @@ export const action = async ({ request }) => {
         if (errors.length > 0) { saveError = errors[0].message; break; }
       }
 
-      results.push({ id: p.id, title: p.title, ok: !saveError, error: saveError || mindatError || null });
+      results.push({ id: p.id, title: p.title, ok: !saveError, error: saveError || mindatError || null, merged });
       await new Promise(r => setTimeout(r, 200)); 
     }
 
     const failed = results.filter(r => !r.ok);
-    return data({ ok: true, total: results.length, failed });
+    return data({ ok: true, total: results.length, failed, results });
   }
 
   // ─── SAVE METAFIELDS (MANUAL EDITS) ─────────────────────────────────────────
@@ -417,7 +415,6 @@ export const action = async ({ request }) => {
         .filter(e => !e.message.includes("must be consistent with the definition"));
       if (errors.length > 0) return data({ success: false, error: errors[0].message });
     }
-    // FIX 3: Add ok: true and success: true so frontend banners will display
     return data({ ok: true, success: true, message: "Metafields locked to Shopify." });
   }
 
@@ -478,8 +475,8 @@ export const action = async ({ request }) => {
     if (!query || !query.trim()) return data({ ok: true, found: false });
     try {
       const res = await fetch(
-        `https://api.mindat.org/geomaterials/?name=${encodeURIComponent(query.trim())}&format=json`,
-        { headers: { Authorization: `Bearer ${process.env.MINDAT_API_KEY}` } } // Applied Bearer fix here too for consistency
+        `https://api.mindat.org/v1/geomaterials/?name=${encodeURIComponent(query.trim())}&format=json`,
+        { headers: { Authorization: `Token ${process.env.MINDAT_API_KEY}` } }
       );
       if (res.ok) {
         const json = await res.json();
@@ -497,7 +494,6 @@ export default function MetaInjector() {
   const [tabIndex, setTabIndex] = useState(0);
   const [menuActive, setMenuActive] = useState(false);
 
-  // 🐛 FIXED: Added "QA & Inject" to the menu tabs so you can see the dashboard
   const tabs = [
     { id: "products",    content: "🪨 Products" },
     { id: "bulk",        content: "📦 Bulk Edit" },
