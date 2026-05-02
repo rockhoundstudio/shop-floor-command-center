@@ -1,14 +1,21 @@
 import { 
   TextField, BlockStack, Card, Text, Badge, Grid, Button, Banner, 
-  InlineStack, ProgressBar, Page, Layout, Select, Box, ButtonGroup, 
-  ResourceList, ResourceItem, Thumbnail, Autocomplete, Icon
+  InlineStack, Page, Layout, Select, Box, ButtonGroup, 
+  ResourceList, ResourceItem, Thumbnail
 } from "@shopify/polaris";
-import { SearchIcon } from "@shopify/polaris-icons";
-import { useState, useRef, useMemo, useCallback } from "react";
+import { useState, useRef } from "react";
 import { useFetcher } from "react-router";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { TARGET_KEYS, FIELD_LABELS } from "../../utils/metaScan";
-import { STONE_LIBRARY } from "../../utils/geoLibrary"; // We need this to populate the dropdown
+
+const availableStones = [
+  "Agate", "Amethyst", "Aventurine", "Azurite", "Bloodstone", "Carnelian",
+  "Chalcedony", "Chrysocolla", "Fluorite", "Garnet", "Hematite", "Howlite",
+  "Jade", "Jasper", "Labradorite", "Lapis Lazuli", "Malachite", "Moonstone",
+  "Obsidian", "Onyx", "Opal", "Pyrite", "Quartz", "Rhodochrosite",
+  "Rhodonite", "Rose Quartz", "Serpentine", "Smoky Quartz", "Sodalite",
+  "Sunstone", "Tiger's Eye", "Tourmaline", "Turquoise"
+];
 
 export default function ProductsTab({ products = [] }) {
   const shopify = useAppBridge();
@@ -20,13 +27,9 @@ export default function ProductsTab({ products = [] }) {
 
   // --- DATA STATE ---
   const [fieldValues, setFieldValues] = useState({});
+  const [customName, setCustomName] = useState(""); // For the "+ Add New" option
   const [baseFields, setBaseFields] = useState({ title: "", description: "", status: "DRAFT", price: "0.00", inventory: "1" });
   const mergedApplied = useRef(false);
-
-  // --- AUTOCOMPLETE STATE (For Official Name) ---
-  const [inputValue, setInputValue] = useState("");
-  const [options, setOptions] = useState([]);
-  const stoneNames = useMemo(() => Object.keys(STONE_LIBRARY).map(name => ({ value: name, label: name })), []);
 
   // --- FETCHERS ---
   const saveFetcher  = useFetcher();
@@ -42,12 +45,17 @@ export default function ProductsTab({ products = [] }) {
       initial[key] = product.metafields?.[key] || "";
     });
     
-    // Set up the Official Name state for the dropdown
     const existingName = initial.official_name || product.title || "";
-    initial.official_name = existingName;
-    setInputValue(existingName); // Pre-fill the dropdown text box
     
-    if (!initial.stone_story)   initial.stone_story   = product.description || "";
+    // Check if the existing name is in our standard list, otherwise set it to custom
+    if (existingName && !availableStones.includes(existingName)) {
+      initial.official_name = "__custom__";
+      setCustomName(existingName);
+    } else {
+      initial.official_name = existingName;
+    }
+    
+    if (!initial.stone_story) initial.stone_story = product.description || "";
     
     setBaseFields({
       title: product.title || "",
@@ -62,33 +70,13 @@ export default function ProductsTab({ products = [] }) {
     mergedApplied.current = false;
   }
 
-  // Handle Dropdown typing
-  const updateText = useCallback((value) => {
-    setInputValue(value);
-    setFieldValues(prev => ({ ...prev, official_name: value }));
-    if (value === "") {
-      setOptions(stoneNames);
-      return;
-    }
-    const filterRegex = new RegExp(value, 'i');
-    const resultOptions = stoneNames.filter((option) => option.label.match(filterRegex));
-    setOptions(resultOptions);
-  }, [stoneNames]);
-
-  // Handle Dropdown selection
-  const updateSelection = useCallback((selectedArr) => {
-    const selectedValue = selectedArr[0];
-    setInputValue(selectedValue);
-    setFieldValues(prev => ({ ...prev, official_name: selectedValue }));
-  }, []);
-
   function handleSave() {
     const metafields = TARGET_KEYS.map(key => ({
       ownerId: selected.id,
-      namespace: "custom", // The backend will fix namespace for taxonomies
+      namespace: "custom", 
       key,
-      value: fieldValues[key] || "",
-      type: "single_line_text_field", // Backend will fix type for taxonomies
+      value: key === "official_name" && fieldValues[key] === "__custom__" ? customName : (fieldValues[key] || ""),
+      type: "single_line_text_field", 
     }));
     saveFetcher.submit(
       { intent: "saveMetafields", metafields: JSON.stringify(metafields) },
@@ -98,12 +86,14 @@ export default function ProductsTab({ products = [] }) {
 
   function handleAutoFill() {
     mergedApplied.current = false;
+    const finalName = fieldValues.official_name === "__custom__" ? customName : fieldValues.official_name;
+    
     autoFetcher.submit(
       {
         intent: "autoFill",
         title: baseFields.title,
         description: baseFields.description || "",
-        existingMeta: JSON.stringify(fieldValues), // This now has the selected Official Name
+        existingMeta: JSON.stringify({ ...fieldValues, official_name: finalName }),
       },
       { method: "post", action: "/app/meta-injector" }
     );
@@ -157,7 +147,6 @@ export default function ProductsTab({ products = [] }) {
       >
         <BlockStack gap="600">
           
-          {/* Engine Banners */}
           {saveSuccess && <Banner tone="success">Saved successfully to Shopify.</Banner>}
           {saveError   && <Banner tone="critical">Save failed: {saveFetcher.data?.error}</Banner>}
           {mindatError && <Banner tone="warning">Mindat unavailable: {mindatError}. Filled from geo library only.</Banner>}
@@ -208,28 +197,35 @@ export default function ProductsTab({ products = [] }) {
                   </BlockStack>
                 </Card>
 
-                {/* THE 24 METAFIELDS LOGIC MAPPED IN */}
                 <Card roundedAbove="sm">
                   <BlockStack gap="400">
                     <Text as="h2" variant="headingSm">Lapidary Data (Meta Injector)</Text>
                     
-                    {/* The New Autocomplete Dropdown for Official Name */}
                     <Box paddingBlockEnd="400" borderBlockEndWidth="025" borderColor="border">
-                       <Autocomplete
-                        options={options}
-                        selected={[fieldValues.official_name]}
-                        onSelect={updateSelection}
-                        textField={
-                          <Autocomplete.TextField
-                            onChange={updateText}
-                            label="Official Name (Required for Mindat)"
-                            value={inputValue}
-                            prefix={<Icon source={SearchIcon} tone="base" />}
-                            placeholder="e.g. Jasper, Plume Agate, Obsidian..."
+                       <BlockStack gap="200">
+                        <Text variant="bodyMd" fontWeight="bold">Official Name (Required for Mindat)</Text>
+                        <select
+                          style={{ width: "100%", padding: "8px", borderRadius: "4px", border: "1px solid #c9cccf", fontSize: "14px" }}
+                          value={fieldValues["official_name"] || ""}
+                          onChange={(e) => setFieldValues({ ...fieldValues, official_name: e.target.value })}
+                        >
+                          <option value="">-- Select Valid Mindat Stone --</option>
+                          {availableStones.map(stone => (
+                            <option key={stone} value={stone}>{stone}</option>
+                          ))}
+                          <option value="__custom__">➕ Add New Stone...</option>
+                        </select>
+                        
+                        {fieldValues["official_name"] === "__custom__" && (
+                          <TextField
+                            label="Type new stone name"
+                            value={customName}
+                            onChange={setCustomName}
                             autoComplete="off"
+                            placeholder="e.g. Rhodochrosite"
                           />
-                        }
-                      />
+                        )}
+                      </BlockStack>
                     </Box>
 
                     <BlockStack gap="300">
