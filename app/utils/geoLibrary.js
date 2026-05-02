@@ -8,7 +8,7 @@ const GEO_LIBRARY = {
   "yakima jasper": {
     official_name:     "Yakima River Jasper",
     mineral_class:     "Silicates — Tectosilicates (Chalcedony group)",
-    crystal_structure: "Trigonal — microcrystalline",
+    crystal_system: "Trigonal — microcrystalline",
     luster:            "Waxy to dull",
     chemical_formula:  "SiO₂",
     rock_composition:  "Microcrystalline quartz with iron oxide and volcanic mineral inclusions",
@@ -31,7 +31,7 @@ const GEO_LIBRARY = {
   "picture jasper": {
     official_name:     "Picture Jasper",
     mineral_class:     "Silicates — Tectosilicates (Chalcedony group)",
-    crystal_structure: "Trigonal — microcrystalline",
+    crystal_system: "Trigonal — microcrystalline",
     luster:            "Waxy",
     chemical_formula:  "SiO₂",
     rock_composition:  "Microcrystalline quartz with clay, iron oxide, and silica banding",
@@ -54,7 +54,7 @@ const GEO_LIBRARY = {
   "brecciated jasper": {
     official_name:     "Brecciated Jasper",
     mineral_class:     "Silicates — Tectosilicates (Chalcedony group)",
-    crystal_structure: "Trigonal — microcrystalline",
+    crystal_system: "Trigonal — microcrystalline",
     luster:            "Waxy",
     chemical_formula:  "SiO₂",
     rock_composition:  "Angular jasper fragments re-cemented by silica or hematite matrix",
@@ -77,7 +77,7 @@ const GEO_LIBRARY = {
   "emerald green jasper": {
     official_name:     "Green Jasper",
     mineral_class:     "Silicates — Tectosilicates (Chalcedony group)",
-    crystal_structure: "Trigonal — microcrystalline",
+    crystal_system: "Trigonal — microcrystalline",
     luster:            "Waxy",
     chemical_formula:  "SiO₂",
     rock_composition:  "Microcrystalline quartz colored by chlorite or celadonite inclusions",
@@ -100,7 +100,7 @@ const GEO_LIBRARY = {
   "jasper": {
     official_name:     "Jasper",
     mineral_class:     "Silicates — Tectosilicates (Chalcedony group)",
-    crystal_structure: "Trigonal — microcrystalline",
+    crystal_system: "Trigonal — microcrystalline",
     luster:            "Waxy to dull",
     chemical_formula:  "SiO₂",
     rock_composition:  "Microcrystalline quartz with mineral impurities (iron oxides, clay, ash)",
@@ -123,7 +123,7 @@ const GEO_LIBRARY = {
   "botswana agate": {
     official_name:     "Botswana Agate",
     mineral_class:     "Silicates — Tectosilicates (Chalcedony group)",
-    crystal_structure: "Trigonal — microcrystalline (banded)",
+    crystal_system: "Trigonal — microcrystalline (banded)",
     luster:            "Waxy",
     chemical_formula:  "SiO₂",
     rock_composition:  "Banded microcrystalline quartz with alternating silica layers",
@@ -146,7 +146,7 @@ const GEO_LIBRARY = {
   "montana agate": {
     official_name:     "Montana Moss Agate",
     mineral_class:     "Silicates — Tectosilicates (Chalcedony group)",
-    crystal_structure: "Trigonal — microcrystalline",
+    crystal_system: "Trigonal — microcrystalline",
     luster:            "Waxy to vitreous",
     chemical_formula:  "SiO₂",
     rock_composition:  "Translucent chalcedony with manganese oxide dendritic inclusions",
@@ -169,7 +169,7 @@ const GEO_LIBRARY = {
   "thunder agate": {
     official_name:     "Thunder Agate",
     mineral_class:     "Silicates — Tectosilicates (Chalcedony group)",
-    crystal_structure: "Trigonal — microcrystalline (banded)",
+    crystal_system: "Trigonal — microcrystalline (banded)",
     luster:            "Waxy to vitreous",
     chemical_formula:  "SiO₂",
     rock_composition:  "Banded agate and chalcedony fill within rhyolitic thunderegg nodule",
@@ -192,7 +192,7 @@ const GEO_LIBRARY = {
   "jaspagate": {
     official_name:     "Jaspagate",
     mineral_class:     "Silicates — Tectosilicates (Chalcedony group)",
-    crystal_structure: "Trigonal — microcrystalline",
+    crystal_system: "Trigonal — microcrystalline",
     luster:            "Waxy",
     chemical_formula:  "SiO₂",
     rock_composition:  "Transitional microcrystalline quartz — opaque jasper grading into translucent agate",
@@ -215,7 +215,7 @@ const GEO_LIBRARY = {
   "agate": {
     official_name:     "Agate",
     mineral_class:     "Silicates — Tectosilicates (Chalcedony group)",
-    crystal_structure: "Trigonal — microcrystalline (banded)",
+    crystal_system: "Trigonal — microcrystalline (banded)",
     luster:            "Waxy to vitreous",
     chemical_formula:  "SiO₂",
     rock_composition:  "Banded microcrystalline quartz formed in volcanic vesicles",
@@ -238,7 +238,7 @@ const GEO_LIBRARY = {
   "chalcedony": {
     official_name:     "Chalcedony",
     mineral_class:     "Silicates — Tectosilicates",
-    crystal_structure: "Trigonal — microcrystalline",
+    crystal_system: "Trigonal — microcrystalline",
     luster:            "Waxy to dull",
     chemical_formula:  "SiO₂",
     rock_composition:  "Microcrystalline quartz — base material for agate, jasper, and flint",
@@ -261,7 +261,7 @@ const GEO_LIBRARY = {
   "labradorite": {
     official_name:     "Labradorite",
     mineral_class:     "Silicates — Tectosilicates (Feldspar group — Plagioclase series)",
-    crystal_structure: "Triclinic — prismatic",
+    crystal_system: "Triclinic — prismatic",
     luster:            "Vitreous to pearly with labradorescence",
     chemical_formula:  "(Ca,Na)(Al,Si)₄O₈ — 50–70% anorthite",
     rock_composition:  "Calcium-sodium feldspar with alternating albite and anorthite lamellae",
@@ -284,7 +284,7 @@ const GEO_LIBRARY = {
   "fire obsidian": {
     official_name:     "Fire Obsidian",
     mineral_class:     "Volcanic glass — Mineraloid",
-    crystal_structure: "Amorphous — no crystal structure",
+    crystal_system: "Amorphous — no crystal structure",
     luster:            "Vitreous with iridescent schiller",
     chemical_formula:  "SiO₂ (~70%) with Fe₃O₄ nanolayers",
     rock_composition:  "Rhyolitic volcanic glass with magnetite nanoparticle interference layers",
@@ -306,7 +306,7 @@ const GEO_LIBRARY = {
   "obsidian": {
     official_name:     "Obsidian",
     mineral_class:     "Volcanic glass — Mineraloid",
-    crystal_structure: "Amorphous — no crystal structure",
+    crystal_system: "Amorphous — no crystal structure",
     luster:            "Vitreous",
     chemical_formula:  "SiO₂ (~70%) with MgO and Fe₃O₄",
     rock_composition:  "Rhyolitic volcanic glass — rapidly quenched lava",
@@ -329,7 +329,7 @@ const GEO_LIBRARY = {
   "serpentine": {
     official_name:     "Serpentine",
     mineral_class:     "Silicates — Phyllosilicates (Serpentine group)",
-    crystal_structure: "Monoclinic — platy to fibrous",
+    crystal_system: "Monoclinic — platy to fibrous",
     luster:            "Waxy to greasy",
     chemical_formula:  "Mg₃Si₂O₅(OH)₄",
     rock_composition:  "Hydrated magnesium silicate — altered ultramafic rock (peridotite/dunite)",
@@ -347,12 +347,13 @@ const GEO_LIBRARY = {
     rarity_score:      "Common — gem-grade uncommon",
     stone_story:       "Serpentine forms deep in the earth's mantle and is thrust to the surface by tectonic forces — a stone from the planet's interior, carrying the chemistry of the deep earth.",
   },
-
+  // ── THUNDEREGG ────────────────────────────────────────────────────
+  "thunderegg": {
   // ── SNOW QUARTZ ───────────────────────────────────────────────────
   "snow quartz": {
     official_name:     "Snow Quartz (Milky Quartz)",
     mineral_class:     "Silicates — Tectosilicates",
-    crystal_structure: "Trigonal — hexagonal prisms",
+    crystal_system: "Trigonal — hexagonal prisms",
     luster:            "Waxy to vitreous",
     chemical_formula:  "SiO₂",
     rock_composition:  "Crystalline quartz with microscopic fluid and gas inclusions causing opacity",
@@ -375,7 +376,7 @@ const GEO_LIBRARY = {
   "quartz": {
     official_name:     "Quartz",
     mineral_class:     "Silicates — Tectosilicates",
-    crystal_structure: "Trigonal — hexagonal prisms with pyramidal terminations",
+    crystal_system: "Trigonal — hexagonal prisms with pyramidal terminations",
     luster:            "Vitreous",
     chemical_formula:  "SiO₂",
     rock_composition:  "Crystalline silicon dioxide — second most abundant mineral in earth's crust",
@@ -398,7 +399,7 @@ const GEO_LIBRARY = {
   "gneiss": {
     official_name:     "Gneiss",
     mineral_class:     "Metamorphic rock — Quartz, Feldspar, Mica, Hornblende",
-    crystal_structure: "N/A — polymineralic foliated rock",
+    crystal_system: "N/A — polymineralic foliated rock",
     luster:            "Vitreous to pearly",
     chemical_formula:  "N/A — variable composition",
     rock_composition:  "Banded quartz, feldspar, and mica with foliation from high-grade metamorphism",
@@ -421,7 +422,7 @@ const GEO_LIBRARY = {
   "siltstone": {
     official_name:     "Siltstone",
     mineral_class:     "Sedimentary rock — Quartz, Feldspar, Clay minerals",
-    crystal_structure: "N/A — clastic sedimentary rock",
+    crystal_system: "N/A — clastic sedimentary rock",
     luster:            "Dull to silky",
     chemical_formula:  "N/A — variable",
     rock_composition:  "Compacted silt particles (0.002–0.063mm) — quartz, feldspar, clay minerals",
@@ -444,7 +445,7 @@ const GEO_LIBRARY = {
   "variscite": {
     official_name:     "Variscite",
     mineral_class:     "Phosphates — Variscite group",
-    crystal_structure: "Orthorhombic — tabular crystals, usually massive",
+    crystal_system: "Orthorhombic — tabular crystals, usually massive",
     luster:            "Waxy to vitreous",
     chemical_formula:  "AlPO₄·2H₂O",
     rock_composition:  "Hydrated aluminum phosphate — formed by phosphate-rich water reacting with aluminum minerals",
@@ -467,7 +468,7 @@ const GEO_LIBRARY = {
   "feldspar": {
     official_name:     "Feldspar",
     mineral_class:     "Silicates — Tectosilicates (Feldspar group)",
-    crystal_structure: "Triclinic or Monoclinic — prismatic",
+    crystal_system: "Triclinic or Monoclinic — prismatic",
     luster:            "Vitreous to pearly",
     chemical_formula:  "KAlSi₃O₈ / NaAlSi₃O₈ / CaAl₂Si₂O₈",
     rock_composition:  "Framework silicate — most abundant mineral group in earth's crust",
@@ -490,7 +491,7 @@ const GEO_LIBRARY = {
   "dalmatian stone": {
     official_name:     "Dalmatian Stone (Dalmatian Jasper)",
     mineral_class:     "Igneous rock — Feldspar, Quartz, Arfvedsonite, Hornblende",
-    crystal_structure: "N/A — polymineralic igneous rock",
+    crystal_system: "N/A — polymineralic igneous rock",
     luster:            "Dull to vitreous",
     chemical_formula:  "N/A — variable",
     rock_composition:  "Pale feldspar and quartz matrix with black arfvedsonite or tourmaline phenocrysts",
@@ -509,11 +510,10 @@ const GEO_LIBRARY = {
     stone_story:       "Dalmatian stone's bold black spots are crystals of arfvedsonite set in pale feldspar — a playful pattern born from slow-cooling magma deep in the earth.",
   },
 
-  // ── THUNDEREGG ────────────────────────────────────────────────────
-  "thunderegg": {
+
     official_name:     "Thunderegg",
     mineral_class:     "Volcanic nodule — Agate / Chalcedony / Jasper interior",
-    crystal_structure: "Trigonal — microcrystalline interior fill",
+    crystal_system: "Trigonal — microcrystalline interior fill",
     luster:            "Dull exterior — waxy to vitreous interior",
     chemical_formula:  "SiO₂ interior fill",
     rock_composition:  "Rhyolitic ash flow tuff exterior with silica-filled interior cavity",
@@ -536,7 +536,7 @@ const GEO_LIBRARY = {
   "conglomerate": {
     official_name:     "River Conglomerate",
     mineral_class:     "Sedimentary rock — mixed clastic composition",
-    crystal_structure: "N/A — clastic sedimentary rock",
+    crystal_system: "N/A — clastic sedimentary rock",
     luster:            "Dull to waxy",
     chemical_formula:  "N/A — variable",
     rock_composition:  "Rounded gravel clasts of mixed lithology cemented by silica or calcite matrix",
