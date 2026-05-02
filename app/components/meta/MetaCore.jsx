@@ -66,6 +66,65 @@ export default function MetaCore({ products = [], mode }) {
 
   const [mindatQuery, setMindatQuery] = useState("");
 
+  // 🚀 NEW: Auto-populate fields when exactly ONE stone is selected
+  useEffect(() => {
+    if (checkedIds.length === 1) {
+      const p = products.find(prod => prod.id === checkedIds[0]);
+      if (!p) return;
+
+      const mfs = p.metafields || {};
+      const newVals = {};
+      const newTicked = {};
+      const newCustom = {};
+
+      const offName = mfs["official_name"] ? String(mfs["official_name"]).replace(/[✅⚠️]/g, "").trim() : "";
+      if (offName) {
+        newTicked["official_name"] = true;
+        if (availableStones.includes(offName)) {
+          newVals["official_name"] = offName;
+        } else {
+          newVals["official_name"] = "__custom__";
+          newCustom["official_name"] = offName;
+        }
+      }
+
+      const getOpts = (key, stoneName) => {
+        let opts = SEO_DICTIONARY[key]?.global || [];
+        if (stoneName && SEO_DICTIONARY[key]?.[stoneName.toLowerCase()]) {
+          opts = SEO_DICTIONARY[key][stoneName.toLowerCase()];
+        }
+        return opts;
+      };
+
+      TARGET_KEYS.forEach(key => {
+        if (key === "official_name") return;
+        const rawVal = mfs[key];
+        if (!rawVal) return;
+        
+        const cleanVal = String(rawVal).replace(/[✅⚠️]/g, "").trim();
+        newTicked[key] = true;
+
+        if (FREE_TEXT_FIELDS.includes(key)) {
+          newVals[key] = cleanVal;
+        } else if (DROPDOWN_FIELDS.includes(key)) {
+          const opts = getOpts(key, offName);
+          const match = opts.find(o => o.toLowerCase() === cleanVal.toLowerCase());
+          if (match) {
+            newVals[key] = match;
+          } else {
+            newVals[key] = "__custom__";
+            newCustom[key] = cleanVal;
+          }
+        }
+      });
+
+      setFieldValues(newVals);
+      setCustomInputs(newCustom);
+      setTickedFields(newTicked);
+      setOoakText(""); 
+    }
+  }, [checkedIds, products]);
+
   const getOptionsForField = (fieldKey) => {
     const currentStone = fieldValues["official_name"] === "__custom__" 
       ? (customInputs["official_name"] || "").toLowerCase()
@@ -93,7 +152,6 @@ export default function MetaCore({ products = [], mode }) {
       suggestedName = firstStone.metafields?.official_name || firstStone.title;
     }
 
-    // 🐛 FIXED: Completely abort Mindat fetch if name is still empty to prevent crash
     if (!suggestedName || suggestedName.trim() === "") {
       setIsSuggesting(false);
       return; 
@@ -226,348 +284,4 @@ export default function MetaCore({ products = [], mode }) {
           
           <BlockStack gap="300">
             <Card padding="0">
-              <Box padding="300" borderBlockEndWidth="025" borderColor="border">
-                <BlockStack gap="300">
-                  <TextField
-                    value={productSearch}
-                    onChange={setProductSearch}
-                    placeholder="Search products..."
-                    prefix={<Icon source={SearchIcon} />}
-                    autoComplete="off"
-                    clearButton
-                    onClearButtonClick={() => setProductSearch("")}
-                  />
-                  <Checkbox
-                    label={`Select All Visible (${filteredProducts.length})`}
-                    checked={indeterminate ? "indeterminate" : allChecked}
-                    onChange={(checked) => setCheckedIds(checked ? filteredProducts.map(p => p.id) : [])}
-                  />
-                </BlockStack>
-              </Box>
-              <Scrollable style={{ height: "550px" }}>
-                {filteredProducts.length === 0 ? (
-                  <Box padding="400"><Text tone="subdued" alignment="center">No products found.</Text></Box>
-                ) : (
-                  <ActionList
-                    actionRole="menuitem"
-                    items={filteredProducts.map(p => ({
-                      content: (
-                        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                          <Checkbox checked={checkedIds.includes(p.id)} onChange={() => {}} label="" />
-                          <span style={{ fontSize: "13px", fontWeight: checkedIds.includes(p.id) ? "bold" : "normal" }}>
-                            {p.title.length > 40 ? p.title.substring(0, 40) + "..." : p.title}
-                          </span>
-                        </div>
-                      ),
-                      onAction: () => setCheckedIds(prev =>
-                        prev.includes(p.id) ? prev.filter(id => id !== p.id) : [...prev, p.id]
-                      ),
-                    }))}
-                  />
-                )}
-              </Scrollable>
-            </Card>
-          </BlockStack>
-
-          <BlockStack gap="300">
-            <Banner tone="info">Fields are mapped to Shopify Metaobjects. Values adapt to the Official Name.</Banner>
-            <Card padding="0">
-              <Scrollable style={{ height: "550px" }}>
-                <BlockStack gap="400" padding="400">
-
-                  <Text variant="headingSm" tone="subdued">CORE IDENTIFICATION</Text>
-                  
-                  <BlockStack gap="200" style={{ background: "#e4f0f6", padding: "12px", borderRadius: "6px", border: "1px solid #005bd3" }}>
-                    <Checkbox
-                      label="Official Name (Required for Mindat)"
-                      checked={tickedFields["official_name"] || false}
-                      onChange={() => setTickedFields(prev => ({ ...prev, official_name: !prev.official_name }))}
-                    />
-                    {tickedFields["official_name"] && (
-                      <BlockStack gap="200">
-                        <select
-                          style={{ width: "100%", padding: "8px", borderRadius: "4px", border: "1px solid #c9cccf", fontSize: "14px", fontWeight: "bold" }}
-                          value={fieldValues["official_name"] || ""}
-                          onChange={(e) => setFieldValues({ ...fieldValues, official_name: e.target.value })}
-                        >
-                          <option value="">-- Select Valid Mindat Stone --</option>
-                          {availableStones.map(stone => (
-                            <option key={stone} value={stone}>{stone}</option>
-                          ))}
-                          <option value="__custom__">➕ Add New Stone...</option>
-                        </select>
-                        
-                        {fieldValues["official_name"] === "__custom__" && (
-                          <TextField
-                            label="Type new stone name"
-                            value={customInputs["official_name"] || ""}
-                            onChange={(v) => setCustomInputs({ ...customInputs, official_name: v })}
-                            autoComplete="off"
-                            placeholder="e.g. Rhodochrosite"
-                            helpText="Mindat will attempt to look this up when you Auto-Suggest."
-                          />
-                        )}
-                      </BlockStack>
-                    )}
-                  </BlockStack>
-
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
-                    {FREE_TEXT_FIELDS.map(key => (
-                      <BlockStack key={key} gap="100">
-                        <Checkbox
-                          label={FIELD_LABELS[key] || key}
-                          checked={tickedFields[key] || false}
-                          onChange={() => setTickedFields(prev => ({ ...prev, [key]: !prev[key] }))}
-                        />
-                        {tickedFields[key] && (
-                          <TextField
-                            label=""
-                            value={fieldValues[key] || ""}
-                            onChange={(v) => setFieldValues({ ...fieldValues, [key]: v })}
-                            autoComplete="off"
-                          />
-                        )}
-                      </BlockStack>
-                    ))}
-                  </div>
-
-                  <Divider />
-
-                  <Text variant="headingSm" tone="subdued">GEOLOGY & SEO (SMART SELECT)</Text>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
-                    {DROPDOWN_FIELDS.map(key => (
-                      <BlockStack key={key} gap="100" style={{ background: "#f9fafb", padding: "8px", borderRadius: "6px" }}>
-                        <Checkbox
-                          label={FIELD_LABELS[key] || key}
-                          checked={tickedFields[key] || false}
-                          onChange={() => setTickedFields(prev => ({ ...prev, [key]: !prev[key] }))}
-                        />
-                        {tickedFields[key] && (
-                          <BlockStack gap="200">
-                            <select
-                              style={{ width: "100%", padding: "8px", borderRadius: "4px", border: "1px solid #c9cccf" }}
-                              value={fieldValues[key] || ""}
-                              onChange={(e) => setFieldValues({ ...fieldValues, [key]: e.target.value })}
-                            >
-                              <option value="">-- Select --</option>
-                              {getOptionsForField(key).map(opt => <option key={opt} value={opt}>{opt}</option>)}
-                              <option value="__custom__">+ Add Custom...</option>
-                            </select>
-                            {fieldValues[key] === "__custom__" && (
-                              <TextField
-                                label="Enter custom term"
-                                value={customInputs[key] || ""}
-                                onChange={(v) => setCustomInputs({ ...customInputs, [key]: v })}
-                                autoComplete="off"
-                              />
-                            )}
-                          </BlockStack>
-                        )}
-                      </BlockStack>
-                    ))}
-                  </div>
-
-                  <Divider />
-
-                  <BlockStack gap="200" style={{ background: "#fff8e6", padding: "12px", borderRadius: "8px", border: "1px solid #e1b878" }}>
-                    <Text variant="headingSm">✨ OOAK Special Features</Text>
-                    <Text variant="bodySm" tone="subdued">Text entered here appends to the Stone Story without overwriting it.</Text>
-                    <TextField
-                      label=""
-                      value={ooakText}
-                      onChange={setOoakText}
-                      multiline={3}
-                      placeholder="e.g. Features a striking hematite inclusion..."
-                    />
-                  </BlockStack>
-
-                </BlockStack>
-              </Scrollable>
-            </Card>
-
-            <BlockStack gap="300">
-              <Button onClick={autoSuggestFields} disabled={checkedIds.length === 0 || isSuggesting} icon={() => <span>🪄</span>}>
-                {isSuggesting ? "Fetching from Mindat..." : "Auto-Suggest SEO Fields"}
-              </Button>
-              <Button variant="primary" size="large" onClick={processBulkQueue} disabled={checkedIds.length === 0 || isProcessing}>
-                Apply Updates to {checkedIds.length} Stone(s)
-              </Button>
-            </BlockStack>
-            
-          </BlockStack>
-        </div>
-      </BlockStack>
-    );
-  }
-
-  // ==========================================
-  // VIEW 2: INJECT PAYLOAD (With Dashboard)
-  // ==========================================
-  if (mode === "inject") {
-    const product = products.find((p) => p.id === injectProduct);
-
-    return (
-      <BlockStack gap="400">
-        <Text variant="headingMd">Auto-build payload from product + Mindat</Text>
-        <Select
-          label="Select a stone to review its Metafield Health"
-          options={[{ label: "-- Pick a stone --", value: "" }, ...products.map((p) => ({ label: p.title, value: p.id }))]}
-          value={injectProduct}
-          onChange={setInjectProduct}
-        />
-
-        {/* 🚀 NEW: METAFIELD HEALTH CHECK DASHBOARD */}
-        {product && (
-          <Card roundedAbove="sm">
-            <BlockStack gap="400">
-              <InlineStack align="space-between" blockAlign="center">
-                <Text as="h2" variant="headingSm">Live Shopify Data</Text>
-                <Badge tone={product.filledCount === TARGET_KEYS.length ? "success" : "warning"}>
-                  {product.filledCount} / {TARGET_KEYS.length} Complete
-                </Badge>
-              </InlineStack>
-              <Divider />
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '12px' }}>
-                {TARGET_KEYS.map(key => {
-                   const val = product.metafields?.[key];
-                   const isEmpty = !val || String(val).trim() === "";
-                   const isWarning = String(val).includes("⚠️");
-                   
-                   let statusTone = "critical";
-                   let statusIcon = "❌";
-                   let displayVal = "(empty)";
-
-                   if (!isEmpty) {
-                     if (isWarning) {
-                       statusTone = "attention";
-                       statusIcon = "⚠️";
-                       displayVal = String(val).replace("⚠️", "").trim();
-                     } else {
-                       statusTone = "success";
-                       statusIcon = "✅";
-                       displayVal = String(val).replace("✅", "").trim();
-                     }
-                   }
-
-                   return (
-                     <div key={key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f4f6f8', padding: '6px 12px', borderRadius: '6px' }}>
-                       <Text variant="bodySm" fontWeight="bold" tone="subdued">{FIELD_LABELS[key] || key}</Text>
-                       <InlineStack gap="200" blockAlign="center" wrap={false}>
-                         <div style={{ maxWidth: '110px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', textAlign: 'right' }}>
-                           <Text variant="bodySm" tone={isEmpty ? "subdued" : "base"}>{displayVal}</Text>
-                         </div>
-                         <Badge tone={statusTone} size="small">{statusIcon}</Badge>
-                       </InlineStack>
-                     </div>
-                   );
-                })}
-              </div>
-            </BlockStack>
-          </Card>
-        )}
-
-        <Button variant="primary" onClick={() => {
-          if (!product) return;
-          const fd = new FormData();
-          fd.append("intent", "build_payload");
-          fd.append("productId", product.id);
-          fd.append("title", product.title);
-          fd.append("description", product.description);
-          fd.append("existingMeta", JSON.stringify(product.metafields));
-          fetcher.submit(fd, { method: "post" });
-        }} loading={fetcher.state === "submitting" && fetcher.formData?.get("intent") === "build_payload"} disabled={!injectProduct}>
-          🔄 Build JSON Payload
-        </Button>
-        {fetcher.data?.payload !== undefined && <Banner tone="success">Payload built — review and edit below, then inject.</Banner>}
-        <TextField
-          label="JSON Payload (one object per line — edit before injecting)"
-          value={payload}
-          onChange={setPayload}
-          multiline={12}
-          autoComplete="off"
-        />
-        <Button variant="primary" onClick={() => {
-          const fd = new FormData();
-          fd.append("intent", "inject");
-          fd.append("payload", payload);
-          fetcher.submit(fd, { method: "post" });
-        }} loading={fetcher.state === "submitting" && fetcher.formData?.get("intent") === "inject"} disabled={!payload}>
-          💉 Inject Directly to Shopify
-        </Button>
-        {fetcher.data?.injected !== undefined && (
-          <Banner tone="success">Injected {fetcher.data.injected} metafield(s) successfully!</Banner>
-        )}
-      </BlockStack>
-    );
-  }
-
-  // ==========================================
-  // VIEW 3: MINDAT EXPLORER
-  // ==========================================
-  if (mode === "mindat") {
-    const isFetchingMindat = fetcher.state === "submitting" && fetcher.formData?.get("intent") === "mindat_lookup";
-    const mindatResult = fetcher.data?.intent === "mindat_lookup" ? fetcher.data : null;
-
-    return (
-      <BlockStack gap="400">
-        <Text variant="headingMd">🌍 Mindat Database Explorer</Text>
-        <Text variant="bodyMd" tone="subdued">Query the live Mindat API to research geological data before adding it to your library.</Text>
-        
-        <Card>
-          <BlockStack gap="400">
-            <InlineStack gap="300" blockAlign="end">
-              <div style={{ flex: 1 }}>
-                <TextField
-                  label="Search Mineral/Rock Name"
-                  value={mindatQuery}
-                  onChange={setMindatQuery}
-                  placeholder="e.g., Lapis Lazuli, Quartz, Obsidian..."
-                  autoComplete="off"
-                  prefix={<Icon source={SearchIcon} />}
-                />
-              </div>
-              <Button 
-                variant="primary" 
-                onClick={() => {
-                  const fd = new FormData();
-                  fd.append("intent", "mindat_lookup");
-                  fd.append("query", mindatQuery.trim());
-                  fetcher.submit(fd, { method: "post" });
-                }} 
-                disabled={!mindatQuery.trim()}
-                loading={isFetchingMindat}
-              >
-                Search Database
-              </Button>
-            </InlineStack>
-
-            {mindatResult && (
-              <Box paddingBlockStart="400">
-                <Divider />
-                <Box paddingBlockStart="400">
-                  {mindatResult.found ? (
-                    <BlockStack gap="300">
-                      <InlineStack align="space-between" blockAlign="center">
-                        <Text variant="headingSm">Results for "{mindatQuery}"</Text>
-                        <Badge tone="success">Match Found</Badge>
-                      </InlineStack>
-                      <div style={{ background: "#202124", color: "#e8eaed", padding: "16px", borderRadius: "8px", overflowX: "auto", fontFamily: "monospace", fontSize: "13px" }}>
-                        <pre style={{ margin: 0 }}>
-                          {JSON.stringify(mindatResult.result, null, 2)}
-                        </pre>
-                      </div>
-                    </BlockStack>
-                  ) : (
-                    <Banner tone="warning">No results found for "{mindatQuery}". Try a different spelling or a broader mineral family.</Banner>
-                  )}
-                </Box>
-              </Box>
-            )}
-          </BlockStack>
-        </Card>
-      </BlockStack>
-    );
-  }
-
-  return null;
-}
+              <Box padding="300" border

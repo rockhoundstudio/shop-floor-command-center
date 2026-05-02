@@ -488,9 +488,11 @@ export default function MetaInjector() {
   const [tabIndex, setTabIndex] = useState(0);
   const [menuActive, setMenuActive] = useState(false);
 
+  // 🐛 FIXED: Added "QA & Inject" to the menu tabs so you can see the dashboard
   const tabs = [
     { id: "products",    content: "🪨 Products" },
     { id: "bulk",        content: "📦 Bulk Edit" },
+    { id: "inject",      content: "💉 QA & Inject" }, 
     { id: "mindat",      content: "🌍 Mindat" },
     { id: "collections", content: "🗂️ Collections" }
   ];
@@ -520,8 +522,9 @@ export default function MetaInjector() {
             <Box padding="400">
               {tabIndex === 0 && <ProductsTab products={products} />}
               {tabIndex === 1 && <MetaCore products={products} mode="bulk" />}
-              {tabIndex === 2 && <MetaCore products={products} mode="mindat" />}
-              {tabIndex === 3 && <CollectionsTab products={products} collections={collections} onBack={() => setTabIndex(0)} />}
+              {tabIndex === 2 && <MetaCore products={products} mode="inject" />}
+              {tabIndex === 3 && <MetaCore products={products} mode="mindat" />}
+              {tabIndex === 4 && <CollectionsTab products={products} collections={collections} onBack={() => setTabIndex(0)} />}
             </Box>
           </Card>
         </Layout.Section>
