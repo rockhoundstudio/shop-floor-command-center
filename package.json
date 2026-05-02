@@ -2,7 +2,7 @@
   "name": "shop-floor-command-center",
   "private": true,
   "scripts": {
-    "build": "npx prisma generate && npx prisma db push && react-router build",
+    "build": "react-router build",
     "dev": "shopify app dev",
     "config:link": "shopify app config link",
     "generate": "shopify app generate",
