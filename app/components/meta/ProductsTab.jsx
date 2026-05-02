@@ -1,7 +1,7 @@
 import { 
   TextField, BlockStack, Card, Text, Badge, Grid, Button, Banner, 
   InlineStack, Page, Layout, Select, Box, ButtonGroup, 
-  ResourceList, ResourceItem, Thumbnail
+  ResourceList, ResourceItem, Thumbnail, Divider
 } from "@shopify/polaris";
 import { useState, useRef } from "react";
 import { useFetcher } from "react-router";
@@ -27,7 +27,7 @@ export default function ProductsTab({ products = [] }) {
 
   // --- DATA STATE ---
   const [fieldValues, setFieldValues] = useState({});
-  const [customName, setCustomName] = useState(""); // For the "+ Add New" option
+  const [customName, setCustomName] = useState(""); 
   const [baseFields, setBaseFields] = useState({ title: "", description: "", status: "DRAFT", price: "0.00", inventory: "1" });
   const mergedApplied = useRef(false);
 
@@ -35,6 +35,7 @@ export default function ProductsTab({ products = [] }) {
   const saveFetcher  = useFetcher();
   const autoFetcher  = useFetcher();
   const bulkFetcher  = useFetcher();
+  const seedFetcher  = useFetcher();
 
   const filtered = products.filter(p => p.title.toLowerCase().includes(search.toLowerCase()));
 
@@ -46,8 +47,6 @@ export default function ProductsTab({ products = [] }) {
     });
     
     const existingName = initial.official_name || product.title || "";
-    
-    // Check if the existing name is in our standard list, otherwise set it to custom
     if (existingName && !availableStones.includes(existingName)) {
       initial.official_name = "__custom__";
       setCustomName(existingName);
@@ -117,6 +116,16 @@ export default function ProductsTab({ products = [] }) {
     }));
     bulkFetcher.submit(
       { intent: "bulkAutoFill", products: JSON.stringify(payload) },
+      { method: "post", action: "/app/meta-injector" }
+    );
+  }
+
+  function handleSeed() {
+    seedFetcher.submit(
+      { 
+        intent: "seed_names", 
+        ids: JSON.stringify(products.map(p => p.id)) 
+      },
       { method: "post", action: "/app/meta-injector" }
     );
   }
@@ -308,16 +317,36 @@ export default function ProductsTab({ products = [] }) {
       />
 
       <Card>
-        <BlockStack gap="300">
+        <BlockStack gap="400">
+          
+          {/* SEEDER ROW */}
           <InlineStack align="space-between" blockAlign="center">
             <BlockStack gap="100">
-              <Text variant="headingSm" fontWeight="bold">⚡ Auto-Fill All Products</Text>
-              <Text variant="bodySm" tone="subdued">Fills geological data for all {products.length} products using geo library + Mindat.</Text>
+              <Text variant="headingSm" fontWeight="bold">🌱 1. Seed Official Names</Text>
+              <Text variant="bodySm" tone="subdued">Matches GIDs from officialNames.json and saves them safely to Shopify.</Text>
             </BlockStack>
-            <Button variant="primary" onClick={handleBulkFill} loading={isBulk} disabled={isBulk}>
+            <Button onClick={handleSeed} loading={seedFetcher.state !== "idle"} disabled={seedFetcher.state !== "idle" || isBulk}>
+              Seed Official Names
+            </Button>
+          </InlineStack>
+          
+          {seedFetcher.data?.ok && seedFetcher.state === "idle" && (
+            <Banner tone="success">Seeded {seedFetcher.data.seededCount} of {products.length} products successfully.</Banner>
+          )}
+
+          <Divider />
+
+          {/* BULK AUTO-FILL ROW */}
+          <InlineStack align="space-between" blockAlign="center">
+            <BlockStack gap="100">
+              <Text variant="headingSm" fontWeight="bold">⚡ 2. Auto-Fill All Products</Text>
+              <Text variant="bodySm" tone="subdued">Uses the seeded Official Names to pull geological data from Mindat.</Text>
+            </BlockStack>
+            <Button variant="primary" onClick={handleBulkFill} loading={isBulk} disabled={isBulk || seedFetcher.state !== "idle"}>
               {isBulk ? "Filling all products…" : "Auto-Fill All"}
             </Button>
           </InlineStack>
+          
           {isBulk && <Banner tone="info">Running — this may take 1–2 minutes. Do not close the tab.</Banner>}
           {bulkDone && (
             <Banner tone={bulkFailed.length > 0 ? "warning" : "success"}>
@@ -326,6 +355,7 @@ export default function ProductsTab({ products = [] }) {
                 : `Done — ${bulkTotal - bulkFailed.length} filled, ${bulkFailed.length} issue(s).`}
             </Banner>
           )}
+
         </BlockStack>
       </Card>
 

@@ -2,6 +2,8 @@ import { useState, useRef } from "react";
 import { useLoaderData, data } from "react-router";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
+import fs from "fs";
+import path from "path";
 import {
   Page, Layout, Card, Button, Box, Popover, ActionList, Divider, Banner,
 } from "@shopify/polaris";
@@ -10,8 +12,6 @@ import { MenuIcon } from "@shopify/polaris-icons";
 import ProductsTab from "../components/meta/ProductsTab";
 import MetaCore from "../components/meta/MetaCore";
 import CollectionsTab from "../components/meta/CollectionsTab";
-
-// 🐛 Added autoLinkStory to the imports!
 import { TARGET_KEYS, stripHtml, evaluateProductStatus, parseDescription, autoLinkStory } from "../utils/metaScan";
 import { lookupStone } from "../utils/geoLibrary";
 import { TAXONOMY_GIDS, wrapGid } from "../utils/taxonomyMap";
@@ -107,9 +107,53 @@ export const action = async ({ request }) => {
   const formData = await request.formData();
   const intent = formData.get("intent");
 
+  // ─── BULK SEED OFFICIAL NAMES (FROM JSON) ──────────────────────────────────
+  if (intent === "seed_names") {
+    const idsRaw = formData.get("ids");
+    const ids = JSON.parse(idsRaw);
+    
+    let officialNames = {};
+    try {
+      const filePath = path.join(process.cwd(), "app", "data", "officialNames.json");
+      officialNames = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    } catch (e) {
+      return data({ ok: false, error: "Could not read officialNames.json map." });
+    }
+
+    const metafields = [];
+    let seededCount = 0;
+
+    ids.forEach(id => {
+      const mappedName = officialNames[id];
+      if (mappedName) {
+        metafields.push({
+          ownerId: id,
+          namespace: "custom",
+          key: "official_name",
+          value: mappedName,
+          type: "single_line_text_field",
+        });
+        seededCount++;
+      }
+    });
+
+    if (metafields.length > 0) {
+      const chunks = [];
+      for (let i = 0; i < metafields.length; i += 25) chunks.push(metafields.slice(i, i + 25));
+      for (const chunk of chunks) {
+        await admin.graphql(`
+          mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
+            metafieldsSet(metafields: $metafields) { userErrors { message } }
+          }
+        `, { variables: { metafields: chunk } });
+      }
+    }
+
+    return data({ ok: true, seededCount });
+  }
+
   // ─── SINGLE PRODUCT AUTO-FILL ───────────────────────────────────────────────
   if (intent === "autoFill") {
-    // [Logic remains identical for autoFill data generation...]
     const title       = formData.get("title");
     const description = formData.get("description");
     const existingRaw = formData.get("existingMeta");
@@ -127,7 +171,7 @@ export const action = async ({ request }) => {
     let mindatError = null;
 
     if (!stoneName) {
-      mindatError = "Could not identify stone from title. Please set Official Name.";
+      mindatError = "Could not identify stone. Please set Official Name.";
     } else {
       try {
         const normalizedName = stoneName.toLowerCase().trim();
@@ -152,7 +196,7 @@ export const action = async ({ request }) => {
 
             mindat = {
               moh_hardness:      hardnessStr,
-              crystal_system:    m.crystal_system   || "", // Fixed key
+              crystal_system:    m.crystal_system   || "",
               specific_gravity:  gravityStr,
               luster:            m.lustre           || "",
               cleavage:          m.cleavage         || "",
@@ -203,7 +247,6 @@ export const action = async ({ request }) => {
 
   // ─── BULK AUTO-FILL ALL PRODUCTS ────────────────────────────────────────────
   if (intent === "bulkAutoFill") {
-    // [Logic remains identical to previous version, ensuring crystal_system is passed]
     const productsRaw = formData.get("products");
     const products = JSON.parse(productsRaw);
     const results = [];
@@ -289,7 +332,6 @@ export const action = async ({ request }) => {
         .filter(key => merged[key] && String(merged[key]).trim() !== "")
         .map(key => {
           let finalValue = merged[key];
-          // 🚀 MAGIC: Auto-link the story before it goes to Shopify!
           if (key === "stone_story") {
             finalValue = autoLinkStory(finalValue);
           }
@@ -340,8 +382,6 @@ export const action = async ({ request }) => {
       .map(mf => {
         const safeKey = mf.key.replace(/-/g, "_");
         let finalValue = mf.value;
-        
-        // 🚀 MAGIC: Auto-link manual edits too!
         if (safeKey === "stone_story") {
           finalValue = autoLinkStory(finalValue);
         }
@@ -386,11 +426,7 @@ export const action = async ({ request }) => {
         if (updates[key] && updates[key].trim() !== "") {
           const safeKey = key.replace(/-/g, "_");
           let finalValue = updates[key];
-          
-          // 🚀 MAGIC: Auto-link Bulk Edits!
-          if (safeKey === "stone_story") {
-            finalValue = autoLinkStory(finalValue);
-          }
+          if (safeKey === "stone_story") finalValue = autoLinkStory(finalValue);
 
           const formatted = formatMetafieldValue(safeKey, finalValue);
           metafields.push({ 
@@ -409,9 +445,7 @@ export const action = async ({ request }) => {
           ? `${baseStory} | ✨ Unique Features: ${ooakText}` 
           : `✨ Unique Features: ${ooakText}`;
         
-        // 🚀 MAGIC: Auto-link OOAK appended stories!
         const linkedStory = autoLinkStory(combinedStory);
-
         metafields.push({ ownerId, namespace: "custom", key: "stone_story", value: linkedStory, type: "single_line_text_field" });
       }
     });
