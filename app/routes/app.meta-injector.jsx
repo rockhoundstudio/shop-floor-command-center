@@ -1,6 +1,7 @@
 import { useState, useRef } from "react";
 import { useLoaderData, data } from "react-router";
 import { authenticate } from "../shopify.server";
+import prisma from "../db.server"; // <--- NEW: Connecting your Database
 import {
   Page, Layout, Card, Button, Box, Popover, ActionList, Divider, Banner,
 } from "@shopify/polaris";
@@ -88,7 +89,7 @@ export const action = async ({ request }) => {
   const formData = await request.formData();
   const intent = formData.get("intent");
 
-  // ─── SINGLE PRODUCT AUTO-FILL ───────────────────────────────────────────────
+  // ─── SINGLE PRODUCT AUTO-FILL (NOW WITH DATABASE CACHING) ───────────────
   if (intent === "autoFill") {
     const title       = formData.get("title");
     const description = formData.get("description");
@@ -107,32 +108,57 @@ export const action = async ({ request }) => {
       mindatError = "Stone must be identified before auto-fill. Please set the Official Name field first.";
     } else {
       try {
-        if (!process.env.MINDAT_API_KEY) throw new Error("MINDAT_API_KEY not set");
-        const res = await fetch(
-          `https://api.mindat.org/geomaterials/?name=${encodeURIComponent(stoneName)}&format=json`,
-          { headers: { Authorization: `Token ${process.env.MINDAT_API_KEY}` } }
-        );
-        if (!res.ok) throw new Error(`Mindat HTTP ${res.status}`);
-        const json = await res.json();
-        if (json.results?.[0]) {
-          const m = json.results[0];
-          
-          const hardnessStr = m.hardness_min ? (m.hardness_max && m.hardness_max !== m.hardness_min ? `${m.hardness_min}-${m.hardness_max}` : `${m.hardness_min}`) : "";
-          const gravityStr = m.density_min ? (m.density_max && m.density_max !== m.density_min ? `${m.density_min}-${m.density_max}` : `${m.density_min}`) : "";
+        const normalizedName = stoneName.toLowerCase().trim();
+        
+        // 1. CHECK THE DATABASE CACHE FIRST
+        const cachedStone = await prisma.stoneCache.findUnique({
+          where: { stoneName: normalizedName }
+        });
 
-          mindat = {
-            moh_hardness:      hardnessStr,
-            where_found:       "", 
-            geological_age:    "", 
-            crystal_structure: m.crystal_system   || "",
-            chemical_formula:  m.formula          || "",
-            specific_gravity:  gravityStr,
-            luster:            m.lustre           || "",
-            cleavage:          m.cleavage         || "",
-            fracture_pattern:  m.fracture         || "",
-            diaphaneity:       m.diaphaneity      || "",
-          };
-          Object.keys(mindat).forEach(k => { if (!mindat[k]) delete mindat[k]; });
+        if (cachedStone) {
+          console.log(`[Cache Hit] Pulled ${normalizedName} from local DB!`);
+          mindat = JSON.parse(cachedStone.data);
+        } else {
+          // 2. IF NOT IN DB, CALL MINDAT
+          console.log(`[Cache Miss] Asking Mindat for ${normalizedName}...`);
+          if (!process.env.MINDAT_API_KEY) throw new Error("MINDAT_API_KEY not set");
+          const res = await fetch(
+            `https://api.mindat.org/geomaterials/?name=${encodeURIComponent(stoneName)}&format=json`,
+            { headers: { Authorization: `Token ${process.env.MINDAT_API_KEY}` } }
+          );
+          if (!res.ok) throw new Error(`Mindat HTTP ${res.status}`);
+          const json = await res.json();
+          if (json.results?.[0]) {
+            const m = json.results[0];
+            
+            const hardnessStr = m.hardness_min ? (m.hardness_max && m.hardness_max !== m.hardness_min ? `${m.hardness_min}-${m.hardness_max}` : `${m.hardness_min}`) : "";
+            const gravityStr = m.density_min ? (m.density_max && m.density_max !== m.density_min ? `${m.density_min}-${m.density_max}` : `${m.density_min}`) : "";
+
+            mindat = {
+              moh_hardness:      hardnessStr,
+              where_found:       "", 
+              geological_age:    "", 
+              crystal_structure: m.crystal_system   || "",
+              chemical_formula:  m.formula          || "",
+              specific_gravity:  gravityStr,
+              luster:            m.lustre           || "",
+              cleavage:          m.cleavage         || "",
+              fracture_pattern:  m.fracture         || "",
+              diaphaneity:       m.diaphaneity      || "",
+            };
+            Object.keys(mindat).forEach(k => { if (!mindat[k]) delete mindat[k]; });
+
+            // 3. SAVE THE MINDAT RESULTS TO THE DATABASE FOR NEXT TIME
+            if (Object.keys(mindat).length > 0) {
+              await prisma.stoneCache.create({
+                data: {
+                  stoneName: normalizedName,
+                  data: JSON.stringify(mindat)
+                }
+              });
+              console.log(`[Cache Saved] ${normalizedName} permanently saved to DB.`);
+            }
+          }
         }
       } catch (e) {
         mindatError = e.message;
@@ -163,7 +189,7 @@ export const action = async ({ request }) => {
     return data({ ok: true, merged, conflicts, mindatError });
   }
 
-  // ─── BULK AUTO-FILL ALL PRODUCTS ────────────────────────────────────────────
+  // ─── BULK AUTO-FILL (NOW WITH DATABASE CACHING) ─────────────────────────
   if (intent === "bulkAutoFill") {
     const productsRaw = formData.get("products");
     const products = JSON.parse(productsRaw);
@@ -183,32 +209,54 @@ export const action = async ({ request }) => {
       let mindat = {};
       let mindatError = null;
       try {
-        if (!process.env.MINDAT_API_KEY) throw new Error("MINDAT_API_KEY not set");
-        const res = await fetch(
-          `https://api.mindat.org/geomaterials/?name=${encodeURIComponent(stoneName)}&format=json`,
-          { headers: { Authorization: `Token ${process.env.MINDAT_API_KEY}` } }
-        );
-        if (res.ok) {
-          const json = await res.json();
-          if (json.results?.[0]) {
-            const m = json.results[0];
+        const normalizedName = stoneName.toLowerCase().trim();
+        
+        // 1. CHECK DB CACHE
+        const cachedStone = await prisma.stoneCache.findUnique({
+          where: { stoneName: normalizedName }
+        });
 
-            const hardnessStr = m.hardness_min ? (m.hardness_max && m.hardness_max !== m.hardness_min ? `${m.hardness_min}-${m.hardness_max}` : `${m.hardness_min}`) : "";
-            const gravityStr = m.density_min ? (m.density_max && m.density_max !== m.density_min ? `${m.density_min}-${m.density_max}` : `${m.density_min}`) : "";
+        if (cachedStone) {
+           mindat = JSON.parse(cachedStone.data);
+        } else {
+           // 2. CALL MINDAT IF NOT IN DB
+          if (!process.env.MINDAT_API_KEY) throw new Error("MINDAT_API_KEY not set");
+          const res = await fetch(
+            `https://api.mindat.org/geomaterials/?name=${encodeURIComponent(stoneName)}&format=json`,
+            { headers: { Authorization: `Token ${process.env.MINDAT_API_KEY}` } }
+          );
+          if (res.ok) {
+            const json = await res.json();
+            if (json.results?.[0]) {
+              const m = json.results[0];
 
-            mindat = {
-              moh_hardness:      hardnessStr,
-              where_found:       "",
-              geological_age:    "",
-              crystal_structure: m.crystal_system   || "",
-              chemical_formula:  m.formula          || "",
-              specific_gravity:  gravityStr,
-              luster:            m.lustre           || "",
-              cleavage:          m.cleavage         || "",
-              fracture_pattern:  m.fracture         || "",
-              diaphaneity:       m.diaphaneity      || "",
-            };
-            Object.keys(mindat).forEach(k => { if (!mindat[k]) delete mindat[k]; });
+              const hardnessStr = m.hardness_min ? (m.hardness_max && m.hardness_max !== m.hardness_min ? `${m.hardness_min}-${m.hardness_max}` : `${m.hardness_min}`) : "";
+              const gravityStr = m.density_min ? (m.density_max && m.density_max !== m.density_min ? `${m.density_min}-${m.density_max}` : `${m.density_min}`) : "";
+
+              mindat = {
+                moh_hardness:      hardnessStr,
+                where_found:       "",
+                geological_age:    "",
+                crystal_structure: m.crystal_system   || "",
+                chemical_formula:  m.formula          || "",
+                specific_gravity:  gravityStr,
+                luster:            m.lustre           || "",
+                cleavage:          m.cleavage         || "",
+                fracture_pattern:  m.fracture         || "",
+                diaphaneity:       m.diaphaneity      || "",
+              };
+              Object.keys(mindat).forEach(k => { if (!mindat[k]) delete mindat[k]; });
+
+              // 3. SAVE TO DB FOR THE NEXT LOOP ITERATION
+              if (Object.keys(mindat).length > 0) {
+                await prisma.stoneCache.create({
+                  data: {
+                    stoneName: normalizedName,
+                    data: JSON.stringify(mindat)
+                  }
+                });
+              }
+            }
           }
         }
       } catch (e) {
@@ -305,7 +353,6 @@ export const action = async ({ request }) => {
     const metafields = [];
     
     ids.forEach((ownerId) => {
-      // Standard dropdown updates
       Object.keys(updates).forEach(key => {
         if (SKIP_KEYS.has(key)) return;
         if (updates[key] && updates[key].trim() !== "") {
@@ -313,7 +360,6 @@ export const action = async ({ request }) => {
         }
       });
 
-      // OOAK Append - safely attaches to existing stories to preserve crossovers
       if (ooakText && ooakText.trim() !== "") {
         const baseStory = currentStories[ownerId] || "";
         const combinedStory = baseStory 
