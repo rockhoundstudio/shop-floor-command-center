@@ -1,32 +1,212 @@
 {
-  "gid://shopify/Product/9226409410811": "Jasper",
-  "gid://shopify/Product/9226449813755": "Agate",
-  "gid://shopify/Product/9226462232827": "Jasper",
-  "gid://shopify/Product/9226849616123": "Jasper",
-  "gid://shopify/Product/9226851385595": "Jasper",
-  "gid://shopify/Product/9226853351675": "Agate",
-  "gid://shopify/Product/9226859315451": "Jasper",
-  "gid://shopify/Product/9226864165115": "Chalcedony",
-  "gid://shopify/Product/9227359879419": "Jasper",
-  "gid://shopify/Product/9227360895227": "Siltstone",
-  "gid://shopify/Product/9227361091835": "Agate",
-  "gid://shopify/Product/9227361681659": "Conglomerate",
-  "gid://shopify/Product/9227361911035": "Jasper",
-  "gid://shopify/Product/9227362435323": "Labradorite",
-  "gid://shopify/Product/9227363254523": "Jasper",
-  "gid://shopify/Product/9227363582203": "Labradorite",
-  "gid://shopify/Product/9227363713275": "Gneiss",
-  "gid://shopify/Product/9227364335867": "Labradorite",
-  "gid://shopify/Product/9227366564091": "Labradorite",
-  "gid://shopify/Product/9227387273467": "Labradorite",
-  "gid://shopify/Product/9227389796603": "Labradorite",
-  "gid://shopify/Product/9227404804347": "Quartz",
-  "gid://shopify/Product/9227505271035": "Labradorite",
-  "gid://shopify/Product/9249103380731": "Obsidian",
-  "gid://shopify/Product/9249166196987": "Agate",
-  "gid://shopify/Product/9249170555131": "Agate",
-  "gid://shopify/Product/9249209942267": "Labradorite",
-  "gid://shopify/Product/9249266860283": "Variscite",
-  "gid://shopify/Product/9249274593531": "Jasper",
-  "gid://shopify/Product/9254148112635": "Agate"
+  "gid://shopify/Product/9226409410811": {
+    "official_name": "Jasper",
+    "mineral_class": "gid://shopify/Metaobject/151951278331",
+    "rock_formation": "gid://shopify/Metaobject/154307657979",
+    "geological_era": "gid://shopify/Metaobject/154307854587",
+    "crystal_system": "gid://shopify/Metaobject/154252116219"
+  },
+  "gid://shopify/Product/9226449813755": {
+    "official_name": "Agate",
+    "mineral_class": "gid://shopify/Metaobject/151951278331",
+    "rock_formation": "gid://shopify/Metaobject/154307657979",
+    "geological_era": "gid://shopify/Metaobject/154307854587",
+    "crystal_system": "gid://shopify/Metaobject/154252116219"
+  },
+  "gid://shopify/Product/9226462232827": {
+    "official_name": "Jasper",
+    "mineral_class": "gid://shopify/Metaobject/151951278331",
+    "rock_formation": "gid://shopify/Metaobject/154307657979",
+    "geological_era": "gid://shopify/Metaobject/154307854587",
+    "crystal_system": "gid://shopify/Metaobject/154252116219"
+  },
+  "gid://shopify/Product/9226849616123": {
+    "official_name": "Jasper",
+    "mineral_class": "gid://shopify/Metaobject/151951278331",
+    "rock_formation": "gid://shopify/Metaobject/154307657979",
+    "geological_era": "gid://shopify/Metaobject/154307854587",
+    "crystal_system": "gid://shopify/Metaobject/154252116219"
+  },
+  "gid://shopify/Product/9226851385595": {
+    "official_name": "Jasper",
+    "mineral_class": "gid://shopify/Metaobject/151951278331",
+    "rock_formation": "gid://shopify/Metaobject/154307657979",
+    "geological_era": "gid://shopify/Metaobject/154307854587",
+    "crystal_system": "gid://shopify/Metaobject/154252116219"
+  },
+  "gid://shopify/Product/9226853351675": {
+    "official_name": "Agate",
+    "mineral_class": "gid://shopify/Metaobject/151951278331",
+    "rock_formation": "gid://shopify/Metaobject/154307657979",
+    "geological_era": "gid://shopify/Metaobject/154307854587",
+    "crystal_system": "gid://shopify/Metaobject/154252116219"
+  },
+  "gid://shopify/Product/9226859315451": {
+    "official_name": "Jasper",
+    "mineral_class": "gid://shopify/Metaobject/151951278331",
+    "rock_formation": "gid://shopify/Metaobject/154307657979",
+    "geological_era": "gid://shopify/Metaobject/154307854587",
+    "crystal_system": "gid://shopify/Metaobject/154252116219"
+  },
+  "gid://shopify/Product/9226864165115": {
+    "official_name": "Chalcedony",
+    "mineral_class": "gid://shopify/Metaobject/151951278331",
+    "rock_formation": "gid://shopify/Metaobject/154307657979",
+    "geological_era": "gid://shopify/Metaobject/154307854587",
+    "crystal_system": "gid://shopify/Metaobject/154252116219"
+  },
+  "gid://shopify/Product/9227359879419": {
+    "official_name": "Jasper",
+    "mineral_class": "gid://shopify/Metaobject/151951278331",
+    "rock_formation": "gid://shopify/Metaobject/154307657979",
+    "geological_era": "gid://shopify/Metaobject/154307854587",
+    "crystal_system": "gid://shopify/Metaobject/154252116219"
+  },
+  "gid://shopify/Product/9227360895227": {
+    "official_name": "Siltstone",
+    "mineral_class": "gid://shopify/Metaobject/151951278331",
+    "rock_formation": "gid://shopify/Metaobject/154307657979",
+    "geological_era": "gid://shopify/Metaobject/154252083451",
+    "crystal_system": "gid://shopify/Metaobject/151951212795"
+  },
+  "gid://shopify/Product/9227361091835": {
+    "official_name": "Agate",
+    "mineral_class": "gid://shopify/Metaobject/151951278331",
+    "rock_formation": "gid://shopify/Metaobject/154307657979",
+    "geological_era": "gid://shopify/Metaobject/154307854587",
+    "crystal_system": "gid://shopify/Metaobject/154252116219"
+  },
+  "gid://shopify/Product/9227361681659": {
+    "official_name": "Conglomerate",
+    "mineral_class": "gid://shopify/Metaobject/151951278331",
+    "rock_formation": "gid://shopify/Metaobject/154307657979",
+    "geological_era": "gid://shopify/Metaobject/154252083451",
+    "crystal_system": "gid://shopify/Metaobject/151951212795"
+  },
+  "gid://shopify/Product/9227361911035": {
+    "official_name": "Jasper",
+    "mineral_class": "gid://shopify/Metaobject/151951278331",
+    "rock_formation": "gid://shopify/Metaobject/154307657979",
+    "geological_era": "gid://shopify/Metaobject/154307854587",
+    "crystal_system": "gid://shopify/Metaobject/154252116219"
+  },
+  "gid://shopify/Product/9227362435323": {
+    "official_name": "Labradorite",
+    "mineral_class": "gid://shopify/Metaobject/151951278331",
+    "rock_formation": "gid://shopify/Metaobject/151951343867",
+    "geological_era": "gid://shopify/Metaobject/151951245563",
+    "crystal_system": "gid://shopify/Metaobject/154308706555"
+  },
+  "gid://shopify/Product/9227363254523": {
+    "official_name": "Jasper",
+    "mineral_class": "gid://shopify/Metaobject/151951278331",
+    "rock_formation": "gid://shopify/Metaobject/154307657979",
+    "geological_era": "gid://shopify/Metaobject/154307854587",
+    "crystal_system": "gid://shopify/Metaobject/154252116219"
+  },
+  "gid://shopify/Product/9227363582203": {
+    "official_name": "Labradorite",
+    "mineral_class": "gid://shopify/Metaobject/151951278331",
+    "rock_formation": "gid://shopify/Metaobject/151951343867",
+    "geological_era": "gid://shopify/Metaobject/151951245563",
+    "crystal_system": "gid://shopify/Metaobject/154308706555"
+  },
+  "gid://shopify/Product/9227363713275": {
+    "official_name": "Gneiss",
+    "mineral_class": "gid://shopify/Metaobject/151951278331",
+    "rock_formation": "gid://shopify/Metaobject/151951343867",
+    "geological_era": "gid://shopify/Metaobject/151951245563",
+    "crystal_system": "gid://shopify/Metaobject/151951212795"
+  },
+  "gid://shopify/Product/9227364335867": {
+    "official_name": "Labradorite",
+    "mineral_class": "gid://shopify/Metaobject/151951278331",
+    "rock_formation": "gid://shopify/Metaobject/151951343867",
+    "geological_era": "gid://shopify/Metaobject/151951245563",
+    "crystal_system": "gid://shopify/Metaobject/154308706555"
+  },
+  "gid://shopify/Product/9227366564091": {
+    "official_name": "Labradorite",
+    "mineral_class": "gid://shopify/Metaobject/151951278331",
+    "rock_formation": "gid://shopify/Metaobject/151951343867",
+    "geological_era": "gid://shopify/Metaobject/151951245563",
+    "crystal_system": "gid://shopify/Metaobject/154308706555"
+  },
+  "gid://shopify/Product/9227387273467": {
+    "official_name": "Labradorite",
+    "mineral_class": "gid://shopify/Metaobject/151951278331",
+    "rock_formation": "gid://shopify/Metaobject/151951343867",
+    "geological_era": "gid://shopify/Metaobject/151951245563",
+    "crystal_system": "gid://shopify/Metaobject/154308706555"
+  },
+  "gid://shopify/Product/9227389796603": {
+    "official_name": "Labradorite",
+    "mineral_class": "gid://shopify/Metaobject/151951278331",
+    "rock_formation": "gid://shopify/Metaobject/151951343867",
+    "geological_era": "gid://shopify/Metaobject/151951245563",
+    "crystal_system": "gid://shopify/Metaobject/154308706555"
+  },
+  "gid://shopify/Product/9227404804347": {
+    "official_name": "Quartz",
+    "mineral_class": "gid://shopify/Metaobject/151951278331",
+    "rock_formation": "gid://shopify/Metaobject/154251985147",
+    "geological_era": "gid://shopify/Metaobject/151951245563",
+    "crystal_system": "gid://shopify/Metaobject/154252116219"
+  },
+  "gid://shopify/Product/9227505271035": {
+    "official_name": "Labradorite",
+    "mineral_class": "gid://shopify/Metaobject/151951278331",
+    "rock_formation": "gid://shopify/Metaobject/151951343867",
+    "geological_era": "gid://shopify/Metaobject/151951245563",
+    "crystal_system": "gid://shopify/Metaobject/154308706555"
+  },
+  "gid://shopify/Product/9249103380731": {
+    "official_name": "Obsidian",
+    "mineral_class": "gid://shopify/Metaobject/155431371003",
+    "rock_formation": "gid://shopify/Metaobject/154251985147",
+    "geological_era": "gid://shopify/Metaobject/154307854587",
+    "crystal_system": "gid://shopify/Metaobject/151951212795"
+  },
+  "gid://shopify/Product/9249166196987": {
+    "official_name": "Agate",
+    "mineral_class": "gid://shopify/Metaobject/151951278331",
+    "rock_formation": "gid://shopify/Metaobject/154307657979",
+    "geological_era": "gid://shopify/Metaobject/154307854587",
+    "crystal_system": "gid://shopify/Metaobject/154252116219"
+  },
+  "gid://shopify/Product/9249170555131": {
+    "official_name": "Agate",
+    "mineral_class": "gid://shopify/Metaobject/151951278331",
+    "rock_formation": "gid://shopify/Metaobject/154307657979",
+    "geological_era": "gid://shopify/Metaobject/154307854587",
+    "crystal_system": "gid://shopify/Metaobject/154252116219"
+  },
+  "gid://shopify/Product/9249209942267": {
+    "official_name": "Labradorite",
+    "mineral_class": "gid://shopify/Metaobject/151951278331",
+    "rock_formation": "gid://shopify/Metaobject/151951343867",
+    "geological_era": "gid://shopify/Metaobject/151951245563",
+    "crystal_system": "gid://shopify/Metaobject/154308706555"
+  },
+  "gid://shopify/Product/9249266860283": {
+    "official_name": "Variscite",
+    "mineral_class": "gid://shopify/Metaobject/151951278331",
+    "rock_formation": "gid://shopify/Metaobject/154307657979",
+    "geological_era": "gid://shopify/Metaobject/154307854587",
+    "crystal_system": "gid://shopify/Metaobject/151951212795"
+  },
+  "gid://shopify/Product/9249274593531": {
+    "official_name": "Jasper",
+    "mineral_class": "gid://shopify/Metaobject/151951278331",
+    "rock_formation": "gid://shopify/Metaobject/154307657979",
+    "geological_era": "gid://shopify/Metaobject/154307854587",
+    "crystal_system": "gid://shopify/Metaobject/154252116219"
+  },
+  "gid://shopify/Product/9254148112635": {
+    "official_name": "Agate",
+    "mineral_class": "gid://shopify/Metaobject/151951278331",
+    "rock_formation": "gid://shopify/Metaobject/154307657979",
+    "geological_era": "gid://shopify/Metaobject/154307854587",
+    "crystal_system": "gid://shopify/Metaobject/154252116219"
+  }
 }
