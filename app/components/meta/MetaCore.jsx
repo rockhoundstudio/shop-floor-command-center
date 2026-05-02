@@ -60,12 +60,12 @@ export default function MetaCore({ products = [], mode }) {
   const [ooakText, setOoakText] = useState("");
   const [isSuggesting, setIsSuggesting] = useState(false);
   const [productSearch, setProductSearch] = useState("");
+  const [saveStatus, setSaveStatus] = useState(null); // null | "success" | "error"
 
   const [injectProduct, setInjectProduct] = useState("");
   const [payload, setPayload] = useState("");
 
   const [mindatQuery, setMindatQuery] = useState("");
-  // FIX: track last searched query separately so result display is stable
   const [mindatSearched, setMindatSearched] = useState("");
 
   useEffect(() => {
@@ -122,7 +122,7 @@ export default function MetaCore({ products = [], mode }) {
       setFieldValues(newVals);
       setCustomInputs(newCustom);
       setTickedFields(newTicked);
-      setOoakText(""); 
+      setOoakText("");
     }
   }, [checkedIds, products]);
 
@@ -229,6 +229,7 @@ export default function MetaCore({ products = [], mode }) {
   const processBulkQueue = async () => {
     if (checkedIds.length === 0 || (!Object.values(tickedFields).some(Boolean) && !ooakText)) return;
     setIsProcessing(true);
+    setSaveStatus(null);
 
     const updates = {};
     TARGET_KEYS.forEach(k => {
@@ -253,13 +254,19 @@ export default function MetaCore({ products = [], mode }) {
     fd.append("currentStories", JSON.stringify(currentStories));
 
     try {
-      await fetch("?index", { method: "POST", body: fd });
+      const res = await fetch("?index", { method: "POST", body: fd });
+      const data = await res.json();
+      if (data.ok) {
+        setSaveStatus("success");
+      } else {
+        setSaveStatus("error");
+      }
     } catch (e) {
       console.error("Save failed", e);
+      setSaveStatus("error");
     }
 
     setIsProcessing(false);
-    window.location.reload();
   };
 
   useEffect(() => {
@@ -279,7 +286,40 @@ export default function MetaCore({ products = [], mode }) {
 
     return (
       <BlockStack gap="400">
-        {isProcessing && <Banner tone="info">Saving data to Shopify. This may take a moment...</Banner>}
+
+        {/* ── TOP ACTION BAR ── */}
+        <InlineStack gap="300" blockAlign="center">
+          <Button
+            onClick={autoSuggestFields}
+            disabled={checkedIds.length === 0 || isSuggesting}
+            icon={() => <span>🪄</span>}
+          >
+            {isSuggesting ? "Fetching from Mindat..." : "Auto-Suggest SEO Fields"}
+          </Button>
+          <Button
+            variant="primary"
+            size="large"
+            onClick={processBulkQueue}
+            disabled={checkedIds.length === 0 || isProcessing}
+          >
+            {isProcessing ? "Saving..." : `Apply Updates to ${checkedIds.length} Stone(s)`}
+          </Button>
+        </InlineStack>
+
+        {/* ── SAVE STATUS BANNERS ── */}
+        {saveStatus === "success" && (
+          <Banner tone="success" onDismiss={() => setSaveStatus(null)}>
+            Saved successfully to Shopify!
+          </Banner>
+        )}
+        {saveStatus === "error" && (
+          <Banner tone="critical" onDismiss={() => setSaveStatus(null)}>
+            Save failed. Check your connection and try again.
+          </Banner>
+        )}
+        {isProcessing && (
+          <Banner tone="info">Saving data to Shopify. This may take a moment...</Banner>
+        )}
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1.5fr", gap: "24px" }}>
           
@@ -443,16 +483,6 @@ export default function MetaCore({ products = [], mode }) {
                 </BlockStack>
               </Scrollable>
             </Card>
-
-            <BlockStack gap="300">
-              <Button onClick={autoSuggestFields} disabled={checkedIds.length === 0 || isSuggesting} icon={() => <span>🪄</span>}>
-                {isSuggesting ? "Fetching from Mindat..." : "Auto-Suggest SEO Fields"}
-              </Button>
-              <Button variant="primary" size="large" onClick={processBulkQueue} disabled={checkedIds.length === 0 || isProcessing}>
-                Apply Updates to {checkedIds.length} Stone(s)
-              </Button>
-            </BlockStack>
-            
           </BlockStack>
         </div>
       </BlockStack>
@@ -564,7 +594,6 @@ export default function MetaCore({ products = [], mode }) {
   // ==========================================
   if (mode === "mindat") {
     const isFetchingMindat = fetcher.state === "submitting";
-    // FIX: removed intent check — just use ok/found directly from fetcher.data
     const hasResult = fetcher.state === "idle" && fetcher.data?.ok !== undefined && mindatSearched !== "";
 
     return (
