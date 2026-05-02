@@ -7,7 +7,7 @@ import {
 } from "@shopify/polaris";
 import { SearchIcon } from "@shopify/polaris-icons";
 import { TARGET_KEYS, FIELD_LABELS } from "../../utils/metaScan";
-import { lookupStone, STONE_LIBRARY } from "../../utils/geoLibrary";
+import { lookupStone } from "../../utils/geoLibrary"; // 🐛 FIXED: Removed STONE_LIBRARY import
 
 const DROPDOWN_FIELDS = ["luster", "diaphaneity", "fracture_pattern", "cleavage", "crystal_structure", "rock_formation", "mineral_class", "geological_era", "tenacity"];
 const FREE_TEXT_FIELDS = ["origin_location", "rescued_by", "stone_story", "bench_notes", "dimensions", "carat_weight", "cut_type", "moh_hardness", "specific_gravity"];
@@ -40,9 +40,15 @@ const SEO_DICTIONARY = {
   },
 };
 
-const availableStones = typeof STONE_LIBRARY !== 'undefined' 
-  ? Object.keys(STONE_LIBRARY).sort() 
-  : ["Agate", "Jasper", "Obsidian", "Labradorite", "Quartz", "Amethyst", "Tiger's Eye"];
+// 🐛 FIXED: Using the safe hardcoded array so the compiler doesn't crash
+const availableStones = [
+  "Agate", "Amethyst", "Aventurine", "Azurite", "Bloodstone", "Carnelian",
+  "Chalcedony", "Chrysocolla", "Fluorite", "Garnet", "Hematite", "Howlite",
+  "Jade", "Jasper", "Labradorite", "Lapis Lazuli", "Malachite", "Moonstone",
+  "Obsidian", "Onyx", "Opal", "Pyrite", "Quartz", "Rhodochrosite",
+  "Rhodonite", "Rose Quartz", "Serpentine", "Smoky Quartz", "Sodalite",
+  "Sunstone", "Tiger's Eye", "Tourmaline", "Turquoise"
+];
 
 export default function MetaCore({ products = [], mode }) {
   const fetcher = useFetcher();
@@ -83,7 +89,6 @@ export default function MetaCore({ products = [], mode }) {
     const firstStone = products.find(p => p.id === checkedIds[0]);
     if (!firstStone) { setIsSuggesting(false); return; }
 
-    // Check if they are using a custom typed name, otherwise use the dropdown value
     let suggestedName = fieldValues["official_name"] === "__custom__" 
       ? customInputs["official_name"] 
       : fieldValues["official_name"];
@@ -270,7 +275,6 @@ export default function MetaCore({ products = [], mode }) {
 
                   <Text variant="headingSm" tone="subdued">CORE IDENTIFICATION</Text>
                   
-                  {/* UPDATED: Official Name Dropdown with "Add Custom" logic */}
                   <BlockStack gap="200" style={{ background: "#e4f0f6", padding: "12px", borderRadius: "6px", border: "1px solid #005bd3" }}>
                     <Checkbox
                       label="Official Name (Required for Mindat)"
@@ -291,7 +295,6 @@ export default function MetaCore({ products = [], mode }) {
                           <option value="__custom__">➕ Add New Stone...</option>
                         </select>
                         
-                        {/* This text box appears if they select "+ Add New Stone" */}
                         {fieldValues["official_name"] === "__custom__" && (
                           <TextField
                             label="Type new stone name"
