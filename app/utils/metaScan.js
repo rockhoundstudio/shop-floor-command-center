@@ -1,7 +1,9 @@
+// --- THE 31 TARGET METAFIELD KEYS ---
+// Updated May 1, 2026: Fixed crystal_system, added 8 new OOAK/Taxonomy fields.
 export const TARGET_KEYS = [
   "official_name",
   "mineral_class",
-  "crystal_structure",
+  "crystal_system",     // 🐛 FIXED: Was 'crystal_structure'
   "luster",
   "rock_composition",
   "specific_gravity",
@@ -20,15 +22,22 @@ export const TARGET_KEYS = [
   "character_marks",
   "cut_type",
   "carat_weight",
-  "dimensions",
+  "dimensions_mm",      // 🐛 FIXED: Was 'dimensions'
   "stone_story",
-  "bench_notes"
+  "bench_notes",
+  "story_theme",        // 🆕 NEW
+  "origin_page_handle", // 🆕 NEW
+  "treatment_status",   // 🆕 NEW
+  "surface_finish",     // 🆕 NEW
+  "stone_shape",        // 🆕 NEW
+  "is_ooak",            // 🆕 NEW
+  "custom_product"      // 🆕 NEW
 ];
 
 export const FIELD_LABELS = {
   official_name:     "Official Name",
   mineral_class:     "Mineral Class",
-  crystal_structure: "Crystal Structure",
+  crystal_system:    "Crystal System",
   luster:            "Luster",
   rock_composition:  "Rock Composition",
   specific_gravity:  "Specific Gravity",
@@ -47,9 +56,16 @@ export const FIELD_LABELS = {
   character_marks:   "Character Marks",
   cut_type:          "Cut Type",
   carat_weight:      "Carat Weight",
-  dimensions:        "Dimensions (mm)",
+  dimensions_mm:     "Dimensions (mm)",
   stone_story:       "Stone Story",
-  bench_notes:       "Bench Notes"
+  bench_notes:       "Bench Notes",
+  story_theme:       "Story Theme",
+  origin_page_handle:"Origin Page Handle",
+  treatment_status:  "Treatment Status",
+  surface_finish:    "Surface Finish",
+  stone_shape:       "Stone Shape",
+  is_ooak:           "Is OOAK (One-of-a-Kind)",
+  custom_product:    "Custom Product"
 };
 
 export function stripHtml(html) {
@@ -68,7 +84,7 @@ export function parseDescription(text) {
   if (hardnessMatch) result.moh_hardness = hardnessMatch[1].trim();
 
   const dimMatch = t.match(/(\d+\.?\d*\s*[xX×]\s*\d+\.?\d*(?:\s*[xX×]\s*\d+\.?\d*)?)\s*mm/i);
-  if (dimMatch) result.dimensions = dimMatch[1].replace(/\s/g, "") + " mm";
+  if (dimMatch) result.dimensions_mm = dimMatch[1].replace(/\s/g, "") + " mm";
 
   const caratMatch = t.match(/(\d+\.?\d*)\s*(?:ct|carat|carats)/i);
   if (caratMatch) result.carat_weight = caratMatch[1] + " ct";
@@ -111,4 +127,49 @@ export function evaluateProductStatus(metafieldsObj) {
   }
 
   return { status, filledCount };
+}
+
+// ==========================================
+// 🚀 SEO WIKIPEDIA AUTO-LINKER ENGINE
+// ==========================================
+// This dictionary maps lapidary terminology directly to your Shopify blog URLs.
+export const SEO_DICTIONARY_LINKS = {
+  "plume agate": "/blogs/rock-knowledge/plume-agate",
+  "botswana agate": "/blogs/rock-knowledge/botswana-agate",
+  "agate": "/blogs/rock-knowledge/agate",
+  "jasper": "/blogs/rock-knowledge/jasper",
+  "obsidian": "/blogs/rock-knowledge/obsidian",
+  "labradorite": "/blogs/rock-knowledge/labradorite",
+  "metamorphic": "/blogs/rock-knowledge/metamorphic-rocks",
+  "igneous": "/blogs/rock-knowledge/igneous-rocks",
+  "sedimentary": "/blogs/rock-knowledge/sedimentary-rocks",
+  "silicate": "/blogs/rock-knowledge/silicates",
+  "cabochon": "/blogs/lapidary-process/what-is-a-cabochon",
+  "mohs scale": "/blogs/rock-knowledge/mohs-hardness-scale",
+  "drusy": "/blogs/rock-knowledge/drusy-crystals",
+  "druzy": "/blogs/rock-knowledge/drusy-crystals"
+};
+
+/**
+ * Scans a Stone Story and safely injects HTML <a> tags for SEO terms 
+ * without breaking existing HTML or double-linking words.
+ */
+export function autoLinkStory(text) {
+  if (!text) return "";
+  let linkedText = text;
+  
+  // Sort keys by length descending so "botswana agate" matches before just "agate"
+  const terms = Object.keys(SEO_DICTIONARY_LINKS).sort((a, b) => b.length - a.length);
+  
+  terms.forEach(term => {
+    // Regex looks for the exact word boundary, ignores case, and ensures it's NOT already inside an <a> tag
+    const regex = new RegExp(`(?<!<a[^>]*>)\\b(${term})\\b(?![^<]*</a>)`, "gi");
+    
+    linkedText = linkedText.replace(regex, (match) => {
+      // Wraps the matched word in a link pointing to your blog
+      return `<a href="${SEO_DICTIONARY_LINKS[term]}" title="Learn more about ${match}" target="_blank" style="text-decoration: underline;">${match}</a>`;
+    });
+  });
+  
+  return linkedText;
 }
