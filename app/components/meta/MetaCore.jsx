@@ -69,7 +69,9 @@ export default function MetaCore({ products = [], mode }) {
     const firstStone = products.find(p => p.id === checkedIds[0]);
     if (!firstStone) { setIsSuggesting(false); return; }
 
-    let suggestedName = firstStone.metafields?.official_name || firstStone.title;
+    // THIS IS THE FIX: It now looks at the text box on your screen first!
+    let suggestedName = fieldValues["official_name"] || firstStone.metafields?.official_name || firstStone.title;
+    
     const libraryData = lookupStone(suggestedName) || {};
     if (libraryData.official_name) suggestedName = libraryData.official_name;
 
