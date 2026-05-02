@@ -1,7 +1,7 @@
 import { useState, useRef } from "react";
 import { useLoaderData, data } from "react-router";
 import { authenticate } from "../shopify.server";
-import prisma from "../db.server"; // <--- NEW: Connecting your Database
+import prisma from "../db.server";
 import {
   Page, Layout, Card, Button, Box, Popover, ActionList, Divider, Banner,
 } from "@shopify/polaris";
@@ -12,9 +12,27 @@ import MetaCore from "../components/meta/MetaCore";
 import CollectionsTab from "../components/meta/CollectionsTab";
 import { TARGET_KEYS, stripHtml, evaluateProductStatus, parseDescription } from "../utils/metaScan";
 import { lookupStone } from "../utils/geoLibrary";
+import { TAXONOMY_GIDS, wrapGid } from "../utils/taxonomyMap"; // <--- NEW: Importing the Master Dictionary
 
-// ─── FIELDS THAT ARE list.metaobject_reference — never write as plain text ───
-const SKIP_KEYS = new Set(["mineral_class", "rock_composition"]);
+// ─── TAXONOMY FORMATTER ─────────────────────────────────────────────────────
+// This checks if a key is in our dictionary. If it is, it converts the English
+// text (e.g., "Silicates") into the wrapped GID (e.g., '["gid://shopify/..."]').
+function formatMetafieldValue(key, value) {
+  const cleanValue = String(value).replace(/[✅⚠️]/g, "").trim(); // Strip emojis from autofill
+  const safeKey = key.replace(/-/g, "_"); // Normalize key for dictionary lookup
+  
+  if (TAXONOMY_GIDS[safeKey] && TAXONOMY_GIDS[safeKey][cleanValue]) {
+    return {
+      value: wrapGid(TAXONOMY_GIDS[safeKey][cleanValue]),
+      type: "list.metaobject_reference" // The strict welding rule
+    };
+  }
+
+  return {
+    value: String(value).trim(),
+    type: "single_line_text_field"
+  };
+}
 
 export const loader = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
@@ -89,7 +107,7 @@ export const action = async ({ request }) => {
   const formData = await request.formData();
   const intent = formData.get("intent");
 
-  // ─── SINGLE PRODUCT AUTO-FILL (NOW WITH DATABASE CACHING) ───────────────
+  // ─── SINGLE PRODUCT AUTO-FILL ───────────────────────────────────────────────
   if (intent === "autoFill") {
     const title       = formData.get("title");
     const description = formData.get("description");
@@ -110,17 +128,13 @@ export const action = async ({ request }) => {
       try {
         const normalizedName = stoneName.toLowerCase().trim();
         
-        // 1. CHECK THE DATABASE CACHE FIRST
         const cachedStone = await prisma.stoneCache.findUnique({
           where: { stoneName: normalizedName }
         });
 
         if (cachedStone) {
-          console.log(`[Cache Hit] Pulled ${normalizedName} from local DB!`);
           mindat = JSON.parse(cachedStone.data);
         } else {
-          // 2. IF NOT IN DB, CALL MINDAT
-          console.log(`[Cache Miss] Asking Mindat for ${normalizedName}...`);
           if (!process.env.MINDAT_API_KEY) throw new Error("MINDAT_API_KEY not set");
           const res = await fetch(
             `https://api.mindat.org/geomaterials/?name=${encodeURIComponent(stoneName)}&format=json`,
@@ -148,7 +162,6 @@ export const action = async ({ request }) => {
             };
             Object.keys(mindat).forEach(k => { if (!mindat[k]) delete mindat[k]; });
 
-            // 3. SAVE THE MINDAT RESULTS TO THE DATABASE FOR NEXT TIME
             if (Object.keys(mindat).length > 0) {
               await prisma.stoneCache.create({
                 data: {
@@ -156,7 +169,6 @@ export const action = async ({ request }) => {
                   data: JSON.stringify(mindat)
                 }
               });
-              console.log(`[Cache Saved] ${normalizedName} permanently saved to DB.`);
             }
           }
         }
@@ -168,7 +180,6 @@ export const action = async ({ request }) => {
     const merged = {};
     const conflicts = [];
     TARGET_KEYS.forEach(key => {
-      if (SKIP_KEYS.has(key)) return;
       if (existing[key] && String(existing[key]).trim() !== "") {
         merged[key] = existing[key];
         return;
@@ -189,7 +200,7 @@ export const action = async ({ request }) => {
     return data({ ok: true, merged, conflicts, mindatError });
   }
 
-  // ─── BULK AUTO-FILL (NOW WITH DATABASE CACHING) ─────────────────────────
+  // ─── BULK AUTO-FILL ALL PRODUCTS ────────────────────────────────────────────
   if (intent === "bulkAutoFill") {
     const productsRaw = formData.get("products");
     const products = JSON.parse(productsRaw);
@@ -211,7 +222,6 @@ export const action = async ({ request }) => {
       try {
         const normalizedName = stoneName.toLowerCase().trim();
         
-        // 1. CHECK DB CACHE
         const cachedStone = await prisma.stoneCache.findUnique({
           where: { stoneName: normalizedName }
         });
@@ -219,7 +229,6 @@ export const action = async ({ request }) => {
         if (cachedStone) {
            mindat = JSON.parse(cachedStone.data);
         } else {
-           // 2. CALL MINDAT IF NOT IN DB
           if (!process.env.MINDAT_API_KEY) throw new Error("MINDAT_API_KEY not set");
           const res = await fetch(
             `https://api.mindat.org/geomaterials/?name=${encodeURIComponent(stoneName)}&format=json`,
@@ -247,7 +256,6 @@ export const action = async ({ request }) => {
               };
               Object.keys(mindat).forEach(k => { if (!mindat[k]) delete mindat[k]; });
 
-              // 3. SAVE TO DB FOR THE NEXT LOOP ITERATION
               if (Object.keys(mindat).length > 0) {
                 await prisma.stoneCache.create({
                   data: {
@@ -265,7 +273,6 @@ export const action = async ({ request }) => {
 
       const merged = {};
       TARGET_KEYS.forEach(key => {
-        if (SKIP_KEYS.has(key)) return;
         if (existing[key] && String(existing[key]).trim() !== "") {
           merged[key] = existing[key];
           return;
@@ -279,14 +286,17 @@ export const action = async ({ request }) => {
       });
 
       const metafields = TARGET_KEYS
-        .filter(key => !SKIP_KEYS.has(key) && merged[key] && String(merged[key]).trim() !== "")
-        .map(key => ({
-          ownerId:   p.id,
-          namespace: "custom",
-          key,
-          value:     merged[key],
-          type:      "single_line_text_field",
-        }));
+        .filter(key => merged[key] && String(merged[key]).trim() !== "")
+        .map(key => {
+          const formatted = formatMetafieldValue(key, merged[key]);
+          return {
+            ownerId:   p.id,
+            namespace: TAXONOMY_GIDS[key.replace(/-/g, "_")] ? "shopify" : "custom",
+            key:       TAXONOMY_GIDS[key.replace(/-/g, "_")] ? key.replace(/_/g, "-") : key,
+            value:     formatted.value,
+            type:      formatted.type,
+          };
+        });
 
       if (metafields.length === 0) {
         results.push({ id: p.id, title: p.title, ok: false, error: "no data found" });
@@ -324,11 +334,24 @@ export const action = async ({ request }) => {
 
   // ─── SAVE METAFIELDS ────────────────────────────────────────────────────────
   if (intent === "saveMetafields") {
-    const metafields = JSON.parse(formData.get("metafields"));
-    const nonEmpty = metafields
-      .filter(mf => !SKIP_KEYS.has(mf.key) && mf.value && String(mf.value).trim() !== "");
+    const rawMetafields = JSON.parse(formData.get("metafields"));
+    
+    const processedMetafields = rawMetafields
+      .filter(mf => mf.value && String(mf.value).trim() !== "")
+      .map(mf => {
+        const safeKey = mf.key.replace(/-/g, "_");
+        const formatted = formatMetafieldValue(safeKey, mf.value);
+        return {
+          ownerId:   mf.ownerId,
+          namespace: TAXONOMY_GIDS[safeKey] ? "shopify" : "custom",
+          key:       TAXONOMY_GIDS[safeKey] ? mf.key.replace(/_/g, "-") : mf.key,
+          value:     formatted.value,
+          type:      formatted.type,
+        };
+      });
+
     const chunks = [];
-    for (let i = 0; i < nonEmpty.length; i += 25) chunks.push(nonEmpty.slice(i, i + 25));
+    for (let i = 0; i < processedMetafields.length; i += 25) chunks.push(processedMetafields.slice(i, i + 25));
     for (const chunk of chunks) {
       const res = await admin.graphql(`
         mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
@@ -353,13 +376,22 @@ export const action = async ({ request }) => {
     const metafields = [];
     
     ids.forEach((ownerId) => {
+      // Standard dropdown updates
       Object.keys(updates).forEach(key => {
-        if (SKIP_KEYS.has(key)) return;
         if (updates[key] && updates[key].trim() !== "") {
-          metafields.push({ ownerId, namespace: "custom", key, value: updates[key], type: "single_line_text_field" });
+          const safeKey = key.replace(/-/g, "_");
+          const formatted = formatMetafieldValue(safeKey, updates[key]);
+          metafields.push({ 
+            ownerId, 
+            namespace: TAXONOMY_GIDS[safeKey] ? "shopify" : "custom", 
+            key: TAXONOMY_GIDS[safeKey] ? key.replace(/_/g, "-") : key, 
+            value: formatted.value, 
+            type: formatted.type 
+          });
         }
       });
 
+      // OOAK Append - safely attaches to existing stories to preserve crossovers
       if (ooakText && ooakText.trim() !== "") {
         const baseStory = currentStories[ownerId] || "";
         const combinedStory = baseStory 
@@ -392,8 +424,8 @@ export const action = async ({ request }) => {
     for (const line of lines) {
       try {
         const mf = JSON.parse(line);
-        if (!SKIP_KEYS.has(mf.key)) metafields.push(mf);
-        else skipped++;
+        // We removed SKIP_KEYS, so everything gets injected normally
+        metafields.push(mf);
       }
       catch { skipped++; }
     }
