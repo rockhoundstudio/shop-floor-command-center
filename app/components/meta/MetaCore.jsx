@@ -65,8 +65,9 @@ export default function MetaCore({ products = [], mode }) {
   const [payload, setPayload] = useState("");
 
   const [mindatQuery, setMindatQuery] = useState("");
+  // FIX: track last searched query separately so result display is stable
+  const [mindatSearched, setMindatSearched] = useState("");
 
-  // 🚀 NEW: Auto-populate fields when exactly ONE stone is selected
   useEffect(() => {
     if (checkedIds.length === 1) {
       const p = products.find(prod => prod.id === checkedIds[0]);
@@ -474,7 +475,6 @@ export default function MetaCore({ products = [], mode }) {
           onChange={setInjectProduct}
         />
 
-        {/* 🚀 METAFIELD HEALTH CHECK DASHBOARD */}
         {product && (
           <Card roundedAbove="sm">
             <BlockStack gap="400">
@@ -563,8 +563,9 @@ export default function MetaCore({ products = [], mode }) {
   // VIEW 3: MINDAT EXPLORER
   // ==========================================
   if (mode === "mindat") {
-    const isFetchingMindat = fetcher.state === "submitting" && fetcher.formData?.get("intent") === "mindat_lookup";
-    const mindatResult = fetcher.data?.intent === "mindat_lookup" ? fetcher.data : null;
+    const isFetchingMindat = fetcher.state === "submitting";
+    // FIX: removed intent check — just use ok/found directly from fetcher.data
+    const hasResult = fetcher.state === "idle" && fetcher.data?.ok !== undefined && mindatSearched !== "";
 
     return (
       <BlockStack gap="400">
@@ -587,10 +588,11 @@ export default function MetaCore({ products = [], mode }) {
               <Button 
                 variant="primary" 
                 onClick={() => {
+                  setMindatSearched(mindatQuery.trim());
                   const fd = new FormData();
                   fd.append("intent", "mindat_lookup");
                   fd.append("query", mindatQuery.trim());
-                  fetcher.submit(fd, { method: "post" });
+                  fetcher.submit(fd, { method: "post", action: "/app/meta-injector" });
                 }} 
                 disabled={!mindatQuery.trim()}
                 loading={isFetchingMindat}
@@ -599,24 +601,24 @@ export default function MetaCore({ products = [], mode }) {
               </Button>
             </InlineStack>
 
-            {mindatResult && (
+            {hasResult && (
               <Box paddingBlockStart="400">
                 <Divider />
                 <Box paddingBlockStart="400">
-                  {mindatResult.found ? (
+                  {fetcher.data.found ? (
                     <BlockStack gap="300">
                       <InlineStack align="space-between" blockAlign="center">
-                        <Text variant="headingSm">Results for "{mindatQuery}"</Text>
+                        <Text variant="headingSm">Results for "{mindatSearched}"</Text>
                         <Badge tone="success">Match Found</Badge>
                       </InlineStack>
                       <div style={{ background: "#202124", color: "#e8eaed", padding: "16px", borderRadius: "8px", overflowX: "auto", fontFamily: "monospace", fontSize: "13px" }}>
                         <pre style={{ margin: 0 }}>
-                          {JSON.stringify(mindatResult.result, null, 2)}
+                          {JSON.stringify(fetcher.data.result, null, 2)}
                         </pre>
                       </div>
                     </BlockStack>
                   ) : (
-                    <Banner tone="warning">No results found for "{mindatQuery}". Try a different spelling or a broader mineral family.</Banner>
+                    <Banner tone="warning">No results found for "{mindatSearched}". Try a different spelling or a broader mineral family.</Banner>
                   )}
                 </Box>
               </Box>
