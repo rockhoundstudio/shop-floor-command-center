@@ -28,6 +28,10 @@ function formatMetafieldValue(key, value) {
       type: "list.metaobject_reference"
     };
   }
+  // If this key belongs to taxonomy but value isn't in the map, skip it
+  if (TAXONOMY_GIDS[safeKey]) {
+    return null;
+  }
   return {
     value: String(value).trim(),
     type: "single_line_text_field"
@@ -46,14 +50,13 @@ export default function ProductsTab({ products = [] }) {
   const [baseFields, setBaseFields] = useState({ title: "", description: "", status: "DRAFT", price: "0.00", inventory: "1" });
   const mergedApplied = useRef(false);
 
-  // NEW: track bulk save state
-  const [bulkSaveStatus, setBulkSaveStatus] = useState(null); // null | "saving" | "done" | "error"
+  const [bulkSaveStatus, setBulkSaveStatus] = useState(null);
   const [bulkSaveCount, setBulkSaveCount] = useState(0);
 
-  const saveFetcher  = useFetcher();
-  const autoFetcher  = useFetcher();
-  const bulkFetcher  = useFetcher();
-  const seedFetcher  = useFetcher();
+  const saveFetcher     = useFetcher();
+  const autoFetcher     = useFetcher();
+  const bulkFetcher     = useFetcher();
+  const seedFetcher     = useFetcher();
   const bulkSaveFetcher = useFetcher();
 
   const filtered = products.filter(p => p.title.toLowerCase().includes(search.toLowerCase()));
@@ -96,6 +99,7 @@ export default function ProductsTab({ products = [] }) {
           ? customName
           : fieldValues[key] || "";
         const formatted = formatMetafieldValue(safeKey, rawValue);
+        if (!formatted) return null;
         return {
           ownerId:   selected.id,
           namespace: TAXONOMY_GIDS[safeKey] ? "shopify" : "custom",
@@ -103,7 +107,7 @@ export default function ProductsTab({ products = [] }) {
           value:     formatted.value,
           type:      formatted.type,
         };
-      });
+      }).filter(Boolean);
 
     saveFetcher.submit(
       { intent: "saveMetafields", metafields: JSON.stringify(metafields) },
@@ -149,14 +153,12 @@ export default function ProductsTab({ products = [] }) {
     );
   }
 
-  // NEW: Save All — fires after bulk fill completes
   function handleBulkSave() {
     const results = bulkFetcher.data?.results || [];
     if (!results.length) return;
 
     setBulkSaveStatus("saving");
 
-    // Build one flat metafields array for all products
     const allMetafields = [];
     results.forEach(({ id, merged }) => {
       if (!merged) return;
@@ -165,6 +167,7 @@ export default function ProductsTab({ products = [] }) {
         if (!val || String(val).trim() === "") return;
         const safeKey = key.replace(/-/g, "_");
         const formatted = formatMetafieldValue(safeKey, val);
+        if (!formatted) return;
         allMetafields.push({
           ownerId:   id,
           namespace: TAXONOMY_GIDS[safeKey] ? "shopify" : "custom",
@@ -183,7 +186,6 @@ export default function ProductsTab({ products = [] }) {
     );
   }
 
-  // Watch bulkSaveFetcher for completion
   if (bulkSaveFetcher.state === "idle" && bulkSaveStatus === "saving") {
     if (bulkSaveFetcher.data?.success) setBulkSaveStatus("done");
     if (bulkSaveFetcher.data?.error)   setBulkSaveStatus("error");
@@ -199,18 +201,18 @@ export default function ProductsTab({ products = [] }) {
     );
   }
 
-  const isSaving    = saveFetcher.state  !== "idle";
-  const isAutoFill  = autoFetcher.state  !== "idle";
-  const isBulk      = bulkFetcher.state  !== "idle";
+  const isSaving     = saveFetcher.state  !== "idle";
+  const isAutoFill   = autoFetcher.state  !== "idle";
+  const isBulk       = bulkFetcher.state  !== "idle";
   const isBulkSaving = bulkSaveFetcher.state !== "idle";
-  const saveSuccess = saveFetcher.state === "idle" && saveFetcher.data?.success;
-  const saveError   = saveFetcher.state === "idle" && saveFetcher.data?.error;
-  const conflicts   = autoFetcher.data?.conflicts  || [];
-  const mindatError = autoFetcher.data?.mindatError;
+  const saveSuccess  = saveFetcher.state === "idle" && saveFetcher.data?.success;
+  const saveError    = saveFetcher.state === "idle" && saveFetcher.data?.error;
+  const conflicts    = autoFetcher.data?.conflicts  || [];
+  const mindatError  = autoFetcher.data?.mindatError;
 
-  const bulkDone    = bulkFetcher.state === "idle" && bulkFetcher.data?.ok;
-  const bulkFailed  = bulkFetcher.data?.failed     || [];
-  const bulkTotal   = bulkFetcher.data?.total      || 0;
+  const bulkDone   = bulkFetcher.state === "idle" && bulkFetcher.data?.ok;
+  const bulkFailed = bulkFetcher.data?.failed || [];
+  const bulkTotal  = bulkFetcher.data?.total  || 0;
 
   if (selected) {
     return (
@@ -423,7 +425,6 @@ export default function ProductsTab({ products = [] }) {
             </Banner>
           )}
 
-          {/* NEW: Save All button — only shows after bulk fill completes */}
           {bulkDone && bulkSaveStatus !== "done" && (
             <>
               <Divider />
