@@ -171,7 +171,7 @@ export const action = async ({ request }) => {
     let mindatError = null;
 
     if (!stoneName) {
-      mindatError = "Could not identify stone. Please set Official Name.";
+      mindatError = "missing_name"; // 🐛 FIXED: Graceful bypass instead of error
     } else {
       try {
         const normalizedName = stoneName.toLowerCase().trim();

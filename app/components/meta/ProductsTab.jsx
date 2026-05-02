@@ -20,18 +20,15 @@ const availableStones = [
 export default function ProductsTab({ products = [] }) {
   const shopify = useAppBridge();
 
-  // --- UI STATE ---
   const [viewMode, setViewMode] = useState("list"); 
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState(null);
 
-  // --- DATA STATE ---
   const [fieldValues, setFieldValues] = useState({});
   const [customName, setCustomName] = useState(""); 
   const [baseFields, setBaseFields] = useState({ title: "", description: "", status: "DRAFT", price: "0.00", inventory: "1" });
   const mergedApplied = useRef(false);
 
-  // --- FETCHERS ---
   const saveFetcher  = useFetcher();
   const autoFetcher  = useFetcher();
   const bulkFetcher  = useFetcher();
@@ -39,7 +36,6 @@ export default function ProductsTab({ products = [] }) {
 
   const filtered = products.filter(p => p.title.toLowerCase().includes(search.toLowerCase()));
 
-  // --- FUNCTIONS ---
   function openEditor(product) {
     const initial = {};
     TARGET_KEYS.forEach(key => {
@@ -130,7 +126,6 @@ export default function ProductsTab({ products = [] }) {
     );
   }
 
-  // --- STATUS TRACKERS ---
   const isSaving    = saveFetcher.state  !== "idle";
   const isAutoFill  = autoFetcher.state  !== "idle";
   const isBulk      = bulkFetcher.state  !== "idle";
@@ -143,12 +138,7 @@ export default function ProductsTab({ products = [] }) {
   const bulkFailed  = bulkFetcher.data?.failed     || [];
   const bulkTotal   = bulkFetcher.data?.total      || 0;
 
-  // ==========================================
-  // VIEW 1: THE DETAIL EDITOR (Single Stone)
-  // ==========================================
   if (selected) {
-    const currentFilledCount = TARGET_KEYS.filter(k => fieldValues[k] && String(fieldValues[k]).trim() !== "").length;
-
     return (
       <Page 
         backAction={{ content: 'Back to Shop Floor', onAction: () => setSelected(null) }}
@@ -160,7 +150,15 @@ export default function ProductsTab({ products = [] }) {
           
           {saveSuccess && <Banner tone="success">Saved successfully to Shopify.</Banner>}
           {saveError   && <Banner tone="critical">Save failed: {saveFetcher.data?.error}</Banner>}
-          {mindatError && <Banner tone="warning">Mindat unavailable: {mindatError}. Filled from geo library only.</Banner>}
+          
+          {/* 🐛 FIXED: Graceful bypass message if official_name is empty */}
+          {mindatError === "missing_name" && (
+            <Banner tone="warning">Mindat skipped: Please select an Official Name first to fetch geological data.</Banner>
+          )}
+          {mindatError && mindatError !== "missing_name" && (
+            <Banner tone="critical">Mindat API Error: {mindatError}. Filled from local geo library only.</Banner>
+          )}
+
           {conflicts.length > 0 && (
             <Banner tone="warning">
               {conflicts.length} conflict{conflicts.length > 1 ? "s" : ""} — Mindat data prioritized.{" "}
@@ -171,55 +169,6 @@ export default function ProductsTab({ products = [] }) {
           <Layout>
             <Layout.Section>
               <BlockStack gap="500">
-
-                {/* 🚀 NEW: METAFIELD HEALTH CHECK DASHBOARD */}
-                <Card roundedAbove="sm">
-                  <BlockStack gap="400">
-                    <InlineStack align="space-between" blockAlign="center">
-                      <Text as="h2" variant="headingSm">Metafield Health Check</Text>
-                      <Badge tone={currentFilledCount === TARGET_KEYS.length ? "success" : "warning"}>
-                        {currentFilledCount} / {TARGET_KEYS.length} Complete
-                      </Badge>
-                    </InlineStack>
-                    <Divider />
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '12px' }}>
-                      {TARGET_KEYS.map(key => {
-                         const val = fieldValues[key];
-                         const isEmpty = !val || String(val).trim() === "";
-                         const isWarning = String(val).includes("⚠️");
-                         
-                         let statusTone = "critical";
-                         let statusIcon = "❌";
-                         let displayVal = "(empty)";
-
-                         if (!isEmpty) {
-                           if (isWarning) {
-                             statusTone = "attention";
-                             statusIcon = "⚠️";
-                             displayVal = String(val).replace("⚠️", "").trim();
-                           } else {
-                             statusTone = "success";
-                             statusIcon = "✅";
-                             displayVal = String(val).replace("✅", "").trim();
-                           }
-                         }
-
-                         return (
-                           <div key={key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f4f6f8', padding: '6px 12px', borderRadius: '6px' }}>
-                             <Text variant="bodySm" fontWeight="bold" tone="subdued">{FIELD_LABELS[key] || key}</Text>
-                             <InlineStack gap="200" blockAlign="center" wrap={false}>
-                               <div style={{ maxWidth: '110px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', textAlign: 'right' }}>
-                                 <Text variant="bodySm" tone={isEmpty ? "subdued" : "base"}>{displayVal}</Text>
-                               </div>
-                               <Badge tone={statusTone} size="small">{statusIcon}</Badge>
-                             </InlineStack>
-                           </div>
-                         );
-                      })}
-                    </div>
-                  </BlockStack>
-                </Card>
-                
                 <Card roundedAbove="sm">
                   <BlockStack gap="500">
                     <TextField 
@@ -348,9 +297,6 @@ export default function ProductsTab({ products = [] }) {
     );
   }
 
-  // ==========================================
-  // VIEW 2: THE MASTER GALLERY (Inventory)
-  // ==========================================
   return (
     <BlockStack gap="400">
       <InlineStack align="space-between" blockAlign="center">
@@ -369,7 +315,6 @@ export default function ProductsTab({ products = [] }) {
       <Card>
         <BlockStack gap="400">
           
-          {/* SEEDER ROW */}
           <InlineStack align="space-between" blockAlign="center">
             <BlockStack gap="100">
               <Text variant="headingSm" fontWeight="bold">🌱 1. Seed Official Names</Text>
@@ -386,7 +331,6 @@ export default function ProductsTab({ products = [] }) {
 
           <Divider />
 
-          {/* BULK AUTO-FILL ROW */}
           <InlineStack align="space-between" blockAlign="center">
             <BlockStack gap="100">
               <Text variant="headingSm" fontWeight="bold">⚡ 2. Auto-Fill All Products</Text>

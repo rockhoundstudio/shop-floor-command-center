@@ -7,10 +7,10 @@ import {
 } from "@shopify/polaris";
 import { SearchIcon } from "@shopify/polaris-icons";
 import { TARGET_KEYS, FIELD_LABELS } from "../../utils/metaScan";
-import { lookupStone } from "../../utils/geoLibrary"; // 🐛 FIXED: Removed STONE_LIBRARY import
+import { lookupStone } from "../../utils/geoLibrary"; 
 
-const DROPDOWN_FIELDS = ["luster", "diaphaneity", "fracture_pattern", "cleavage", "crystal_structure", "rock_formation", "mineral_class", "geological_era", "tenacity"];
-const FREE_TEXT_FIELDS = ["origin_location", "rescued_by", "stone_story", "bench_notes", "dimensions", "carat_weight", "cut_type", "moh_hardness", "specific_gravity"];
+const DROPDOWN_FIELDS = ["luster", "diaphaneity", "fracture_pattern", "cleavage", "crystal_system", "rock_formation", "mineral_class", "geological_era", "tenacity"];
+const FREE_TEXT_FIELDS = ["origin_location", "rescued_by", "stone_story", "bench_notes", "dimensions_mm", "carat_weight", "cut_type", "moh_hardness", "specific_gravity"];
 
 const SEO_DICTIONARY = {
   luster: {
@@ -29,7 +29,7 @@ const SEO_DICTIONARY = {
     global: ["None", "Indistinct", "Perfect", "Good"],
     labradorite: ["Perfect in two directions"],
   },
-  crystal_structure: {
+  crystal_system: {
     global: ["Trigonal", "Cryptocrystalline", "Amorphous", "Monoclinic", "Triclinic", "Orthorhombic", "Hexagonal"],
   },
   rock_formation: {
@@ -40,7 +40,6 @@ const SEO_DICTIONARY = {
   },
 };
 
-// 🐛 FIXED: Using the safe hardcoded array so the compiler doesn't crash
 const availableStones = [
   "Agate", "Amethyst", "Aventurine", "Azurite", "Bloodstone", "Carnelian",
   "Chalcedony", "Chrysocolla", "Fluorite", "Garnet", "Hematite", "Howlite",
@@ -53,7 +52,6 @@ const availableStones = [
 export default function MetaCore({ products = [], mode }) {
   const fetcher = useFetcher();
 
-  // --- BULK EDIT STATE ---
   const [checkedIds, setCheckedIds] = useState([]);
   const [tickedFields, setTickedFields] = useState({});
   const [fieldValues, setFieldValues] = useState({});
@@ -63,11 +61,9 @@ export default function MetaCore({ products = [], mode }) {
   const [isSuggesting, setIsSuggesting] = useState(false);
   const [productSearch, setProductSearch] = useState("");
 
-  // --- INJECT STATE ---
   const [injectProduct, setInjectProduct] = useState("");
   const [payload, setPayload] = useState("");
 
-  // --- MINDAT EXPLORER STATE ---
   const [mindatQuery, setMindatQuery] = useState("");
 
   const getOptionsForField = (fieldKey) => {
@@ -95,6 +91,12 @@ export default function MetaCore({ products = [], mode }) {
 
     if (!suggestedName) {
       suggestedName = firstStone.metafields?.official_name || firstStone.title;
+    }
+
+    // 🐛 FIXED: Completely abort Mindat fetch if name is still empty to prevent crash
+    if (!suggestedName || suggestedName.trim() === "") {
+      setIsSuggesting(false);
+      return; 
     }
     
     const libraryData = lookupStone(suggestedName) || {};
@@ -136,7 +138,7 @@ export default function MetaCore({ products = [], mode }) {
           
           applySuggestion("moh_hardness", hardness);
           applySuggestion("specific_gravity", density);
-          applySuggestion("crystal_structure", m.crystal_system);
+          applySuggestion("crystal_system", m.crystal_system);
           applySuggestion("luster", m.lustre);
           applySuggestion("cleavage", m.cleavage);
           applySuggestion("fracture_pattern", m.fracture);
@@ -151,7 +153,7 @@ export default function MetaCore({ products = [], mode }) {
     }
     newTicked["official_name"] = true;
     
-    if (libraryData.crystal_structure) applySuggestion("crystal_structure", libraryData.crystal_structure);
+    if (libraryData.crystal_system) applySuggestion("crystal_system", libraryData.crystal_system);
     if (libraryData.luster) applySuggestion("luster", libraryData.luster);
     if (libraryData.diaphaneity) applySuggestion("diaphaneity", libraryData.diaphaneity);
     if (libraryData.fracture_pattern) applySuggestion("fracture_pattern", libraryData.fracture_pattern);
@@ -399,7 +401,7 @@ export default function MetaCore({ products = [], mode }) {
   }
 
   // ==========================================
-  // VIEW 2: INJECT PAYLOAD
+  // VIEW 2: INJECT PAYLOAD (With Dashboard)
   // ==========================================
   if (mode === "inject") {
     const product = products.find((p) => p.id === injectProduct);
@@ -408,11 +410,62 @@ export default function MetaCore({ products = [], mode }) {
       <BlockStack gap="400">
         <Text variant="headingMd">Auto-build payload from product + Mindat</Text>
         <Select
-          label="Select a stone"
+          label="Select a stone to review its Metafield Health"
           options={[{ label: "-- Pick a stone --", value: "" }, ...products.map((p) => ({ label: p.title, value: p.id }))]}
           value={injectProduct}
           onChange={setInjectProduct}
         />
+
+        {/* 🚀 NEW: METAFIELD HEALTH CHECK DASHBOARD */}
+        {product && (
+          <Card roundedAbove="sm">
+            <BlockStack gap="400">
+              <InlineStack align="space-between" blockAlign="center">
+                <Text as="h2" variant="headingSm">Live Shopify Data</Text>
+                <Badge tone={product.filledCount === TARGET_KEYS.length ? "success" : "warning"}>
+                  {product.filledCount} / {TARGET_KEYS.length} Complete
+                </Badge>
+              </InlineStack>
+              <Divider />
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '12px' }}>
+                {TARGET_KEYS.map(key => {
+                   const val = product.metafields?.[key];
+                   const isEmpty = !val || String(val).trim() === "";
+                   const isWarning = String(val).includes("⚠️");
+                   
+                   let statusTone = "critical";
+                   let statusIcon = "❌";
+                   let displayVal = "(empty)";
+
+                   if (!isEmpty) {
+                     if (isWarning) {
+                       statusTone = "attention";
+                       statusIcon = "⚠️";
+                       displayVal = String(val).replace("⚠️", "").trim();
+                     } else {
+                       statusTone = "success";
+                       statusIcon = "✅";
+                       displayVal = String(val).replace("✅", "").trim();
+                     }
+                   }
+
+                   return (
+                     <div key={key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f4f6f8', padding: '6px 12px', borderRadius: '6px' }}>
+                       <Text variant="bodySm" fontWeight="bold" tone="subdued">{FIELD_LABELS[key] || key}</Text>
+                       <InlineStack gap="200" blockAlign="center" wrap={false}>
+                         <div style={{ maxWidth: '110px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', textAlign: 'right' }}>
+                           <Text variant="bodySm" tone={isEmpty ? "subdued" : "base"}>{displayVal}</Text>
+                         </div>
+                         <Badge tone={statusTone} size="small">{statusIcon}</Badge>
+                       </InlineStack>
+                     </div>
+                   );
+                })}
+              </div>
+            </BlockStack>
+          </Card>
+        )}
+
         <Button variant="primary" onClick={() => {
           if (!product) return;
           const fd = new FormData();
@@ -423,7 +476,7 @@ export default function MetaCore({ products = [], mode }) {
           fd.append("existingMeta", JSON.stringify(product.metafields));
           fetcher.submit(fd, { method: "post" });
         }} loading={fetcher.state === "submitting" && fetcher.formData?.get("intent") === "build_payload"} disabled={!injectProduct}>
-          🔄 Build Payload
+          🔄 Build JSON Payload
         </Button>
         {fetcher.data?.payload !== undefined && <Banner tone="success">Payload built — review and edit below, then inject.</Banner>}
         <TextField
@@ -439,7 +492,7 @@ export default function MetaCore({ products = [], mode }) {
           fd.append("payload", payload);
           fetcher.submit(fd, { method: "post" });
         }} loading={fetcher.state === "submitting" && fetcher.formData?.get("intent") === "inject"} disabled={!payload}>
-          💉 Inject
+          💉 Inject Directly to Shopify
         </Button>
         {fetcher.data?.injected !== undefined && (
           <Banner tone="success">Injected {fetcher.data.injected} metafield(s) successfully!</Banner>
