@@ -6,6 +6,7 @@ import {
   Divider, ActionList
 } from "@shopify/polaris";
 import { TARGET_KEYS, FIELD_LABELS } from "../../utils/metaScan";
+import { lookupStone } from "../../utils/geoLibrary";
 
 const DROPDOWN_FIELDS = ["luster", "diaphaneity", "fracture_pattern", "cleavage", "crystal_structure", "rock_formation", "mineral_class", "geological_era", "tenacity"];
 const FREE_TEXT_FIELDS = ["official_name", "origin_location", "rescued_by", "stone_story", "bench_notes", "dimensions", "carat_weight", "cut_type", "moh_hardness", "specific_gravity"];
@@ -40,20 +41,17 @@ const SEO_DICTIONARY = {
 
 export default function MetaCore({ products = [], mode }) {
   const fetcher = useFetcher();
-  const autoFillFetcher = useFetcher();
 
   const [checkedIds, setCheckedIds] = useState([]);
   const [tickedFields, setTickedFields] = useState({});
   const [fieldValues, setFieldValues] = useState({});
   const [isProcessing, setIsProcessing] = useState(false);
-  const [progress, setProgress] = useState({ current: 0, total: 0, title: "" });
   const [customInputs, setCustomInputs] = useState({});
   const [ooakText, setOoakText] = useState("");
-  const [autoFillBanner, setAutoFillBanner] = useState(null);
+  const [isSuggesting, setIsSuggesting] = useState(false);
 
   const [injectProduct, setInjectProduct] = useState("");
   const [payload, setPayload] = useState("");
-  const [mindatName, setMindatName] = useState("");
 
   const getOptionsForField = (fieldKey) => {
     const currentStone = (fieldValues["official_name"] || "").toLowerCase();
@@ -64,46 +62,82 @@ export default function MetaCore({ products = [], mode }) {
     return options;
   };
 
-  const handleAutoFill = () => {
+  const autoSuggestFields = async () => {
     if (checkedIds.length === 0) return;
-    const firstId = checkedIds[0];
-    const product = products.find(p => p.id === firstId);
-    if (!product) return;
-    setAutoFillBanner(null);
+    setIsSuggesting(true);
+
+    const firstStone = products.find(p => p.id === checkedIds[0]);
+    if (!firstStone) { setIsSuggesting(false); return; }
+
+    let suggestedName = firstStone.metafields?.official_name || firstStone.title;
+    const libraryData = lookupStone(suggestedName) || {};
+    if (libraryData.official_name) suggestedName = libraryData.official_name;
+
+    const newValues = { ...fieldValues };
+    const newTicked = { ...tickedFields };
+    const newCustom = { ...customInputs };
+
+    const applySuggestion = (key, value) => {
+      if (!value) return;
+      const options = getOptionsForField(key);
+      
+      if (options.length === 0 || FREE_TEXT_FIELDS.includes(key)) {
+         newValues[key] = value;
+      } else {
+         const match = options.find(opt => opt.toLowerCase().includes(value.toLowerCase()) || value.toLowerCase().includes(opt.toLowerCase()));
+         if (match) {
+           newValues[key] = match;
+         } else {
+           newValues[key] = "__custom__";
+           newCustom[key] = value;
+         }
+      }
+      newTicked[key] = true;
+    };
+
+    // 1. Fetch from Mindat API
     const fd = new FormData();
-    fd.append("intent", "autoFill");
-    fd.append("title", product.title);
-    fd.append("description", product.description || "");
-    fd.append("existingMeta", JSON.stringify(product.metafields || {}));
-    autoFillFetcher.submit(fd, { method: "post" });
+    fd.append("intent", "mindat_lookup");
+    fd.append("query", suggestedName);
+    
+    try {
+      const res = await fetch("?index", { method: "POST", body: fd });
+      const data = await res.json();
+      if (data.ok && data.found) {
+          const m = data.result;
+          const hardness = m.hardness_min ? (m.hardness_max && m.hardness_max !== m.hardness_min ? `${m.hardness_min}-${m.hardness_max}` : `${m.hardness_min}`) : "";
+          const density = m.density_min ? (m.density_max && m.density_max !== m.density_min ? `${m.density_min}-${m.density_max}` : `${m.density_min}`) : "";
+          
+          applySuggestion("moh_hardness", hardness);
+          applySuggestion("specific_gravity", density);
+          applySuggestion("crystal_structure", m.crystal_system);
+          applySuggestion("luster", m.lustre);
+          applySuggestion("cleavage", m.cleavage);
+          applySuggestion("fracture_pattern", m.fracture);
+          applySuggestion("diaphaneity", m.diaphaneity);
+      }
+    } catch (e) {
+        console.error("Mindat fetch failed");
+    }
+
+    // 2. Apply Local GeoLibrary Overrides
+    applySuggestion("official_name", suggestedName);
+    if (libraryData.crystal_structure) applySuggestion("crystal_structure", libraryData.crystal_structure);
+    if (libraryData.luster) applySuggestion("luster", libraryData.luster);
+    if (libraryData.diaphaneity) applySuggestion("diaphaneity", libraryData.diaphaneity);
+    if (libraryData.fracture_pattern) applySuggestion("fracture_pattern", libraryData.fracture_pattern);
+    if (libraryData.cleavage) applySuggestion("cleavage", libraryData.cleavage);
+    if (libraryData.rock_formation) applySuggestion("rock_formation", libraryData.rock_formation);
+    if (libraryData.mineral_class) applySuggestion("mineral_class", libraryData.mineral_class);
+
+    setFieldValues(newValues);
+    setCustomInputs(newCustom);
+    setTickedFields(newTicked);
+    setIsSuggesting(false);
   };
 
-  useEffect(() => {
-    if (!autoFillFetcher.data?.merged) return;
-    const merged = autoFillFetcher.data.merged;
-    const newValues = {};
-    const newTicked = {};
-    TARGET_KEYS.forEach(key => {
-      if (merged[key] && String(merged[key]).trim() !== "") {
-        newValues[key] = merged[key];
-        newTicked[key] = true;
-      }
-    });
-    setFieldValues(prev => ({ ...prev, ...newValues }));
-    setTickedFields(prev => ({ ...prev, ...newTicked }));
-    const conflicts = autoFillFetcher.data.conflicts || [];
-    const mindatError = autoFillFetcher.data.mindatError;
-    if (mindatError) {
-      setAutoFillBanner({ tone: "warning", msg: `Mindat unavailable (${mindatError}) — geoLibrary used.` });
-    } else if (conflicts.length > 0) {
-      setAutoFillBanner({ tone: "warning", msg: `${conflicts.length} conflict(s) found — Mindat values used. Review fields marked ✅.` });
-    } else {
-      setAutoFillBanner({ tone: "success", msg: "Fields pre-filled! Review, adjust, then hit Apply." });
-    }
-  }, [autoFillFetcher.data]);
-
   const processBulkQueue = async () => {
-    if (checkedIds.length === 0 || !Object.values(tickedFields).some(Boolean)) return;
+    if (checkedIds.length === 0 || (!Object.values(tickedFields).some(Boolean) && !ooakText)) return;
     setIsProcessing(true);
 
     const updates = {};
@@ -112,27 +146,30 @@ export default function MetaCore({ products = [], mode }) {
         updates[k] = fieldValues[k] === "__custom__" ? (customInputs[k] || "") : (fieldValues[k] || "");
       }
     });
-    if (ooakText && updates["stone_story"]) {
-      updates["stone_story"] = updates["stone_story"] + " " + ooakText;
-    } else if (ooakText) {
-      updates["stone_story"] = ooakText;
+
+    const currentStories = {};
+    if (ooakText) {
+      checkedIds.forEach(id => {
+        const product = products.find(p => p.id === id);
+        currentStories[id] = product?.metafields?.stone_story || "";
+      });
     }
 
-    for (let i = 0; i < checkedIds.length; i++) {
-      const pId = checkedIds[i];
-      const pObj = products.find(p => p.id === pId);
-      setProgress({ current: i + 1, total: checkedIds.length, title: pObj?.title || "Unknown" });
+    const fd = new FormData();
+    fd.append("intent", "bulk_edit_new");
+    fd.append("ids", JSON.stringify(checkedIds));
+    fd.append("updates", JSON.stringify(updates));
+    fd.append("ooakText", ooakText || "");
+    fd.append("currentStories", JSON.stringify(currentStories));
 
-      const fd = new FormData();
-      fd.append("intent", "bulk_edit_new");
-      fd.append("ids", JSON.stringify([pId]));
-      fd.append("updates", JSON.stringify(updates));
-      await fetcher.submit(fd, { method: "post" });
+    try {
+      await fetch("?index", { method: "POST", body: fd });
+    } catch (e) {
+      console.error("Save failed", e);
     }
 
     setIsProcessing(false);
-    setProgress({ current: 0, total: 0, title: "" });
-    fetcher.submit({}, { method: "get" });
+    window.location.reload();
   };
 
   useEffect(() => {
@@ -144,23 +181,13 @@ export default function MetaCore({ products = [], mode }) {
   if (mode === "bulk") {
     const allChecked = checkedIds.length === products.length && products.length > 0;
     const indeterminate = checkedIds.length > 0 && checkedIds.length < products.length;
-    const isSuggesting = autoFillFetcher.state === "submitting";
 
     return (
       <BlockStack gap="400">
-        {isProcessing && (
-          <Banner tone="info">
-            <BlockStack gap="200">
-              <Text variant="bodyMd" as="p">
-                Processing {progress.current} of {progress.total} — {progress.title}...
-              </Text>
-              <ProgressBar progress={(progress.current / progress.total) * 100} size="small" tone="primary" />
-            </BlockStack>
-          </Banner>
-        )}
+        {isProcessing && <Banner tone="info">Saving data to Shopify...</Banner>}
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1.5fr", gap: "24px" }}>
-          {/* LEFT COLUMN */}
+          {/* LEFT COLUMN: Product Selection */}
           <BlockStack gap="300">
             <Card padding="0">
               <Box padding="300">
@@ -192,35 +219,14 @@ export default function MetaCore({ products = [], mode }) {
             </Card>
           </BlockStack>
 
-          {/* RIGHT COLUMN */}
+          {/* RIGHT COLUMN: Smart Questionnaire */}
           <BlockStack gap="300">
-            <InlineStack gap="300" blockAlign="center">
-              <Button
-                variant="primary"
-                onClick={handleAutoFill}
-                disabled={checkedIds.length === 0 || isSuggesting}
-                loading={isSuggesting}
-              >
-                {isSuggesting ? "Fetching suggestions..." : "🔍 Suggest Values from First Selected Stone"}
-              </Button>
-              {checkedIds.length > 1 && (
-                <Text tone="subdued" variant="bodySm">
-                  Suggestions based on: {products.find(p => p.id === checkedIds[0])?.title?.substring(0, 30)}...
-                </Text>
-              )}
-            </InlineStack>
-
-            {autoFillBanner && (
-              <Banner tone={autoFillBanner.tone} onDismiss={() => setAutoFillBanner(null)}>
-                {autoFillBanner.msg}
-              </Banner>
-            )}
-
             <Banner tone="info">Fields are mapped to 2026 SEO trends. Values adapt to the Official Name.</Banner>
             <Card padding="0">
-              <Scrollable style={{ height: "500px" }}>
+              <Scrollable style={{ height: "550px" }}>
                 <BlockStack gap="400" padding="400">
 
+                  {/* Section 1: Free Text */}
                   <Text variant="headingSm" tone="subdued">CORE IDENTIFICATION (FREE TEXT)</Text>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
                     {FREE_TEXT_FIELDS.map(key => (
@@ -244,6 +250,7 @@ export default function MetaCore({ products = [], mode }) {
 
                   <Divider />
 
+                  {/* Section 2: Smart Dropdowns */}
                   <Text variant="headingSm" tone="subdued">GEOLOGY & SEO (SMART SELECT)</Text>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
                     {DROPDOWN_FIELDS.map(key => (
@@ -280,6 +287,7 @@ export default function MetaCore({ products = [], mode }) {
 
                   <Divider />
 
+                  {/* Section 3: OOAK */}
                   <BlockStack gap="200" style={{ background: "#fff8e6", padding: "12px", borderRadius: "8px", border: "1px solid #e1b878" }}>
                     <Text variant="headingSm">✨ OOAK Special Features</Text>
                     <Text variant="bodySm" tone="subdued">Text entered here appends to the Stone Story without overwriting it.</Text>
@@ -296,9 +304,20 @@ export default function MetaCore({ products = [], mode }) {
               </Scrollable>
             </Card>
 
-            <Button variant="primary" size="large" onClick={processBulkQueue} disabled={checkedIds.length === 0 || isProcessing}>
-              Apply SEO Updates to {checkedIds.length} Stone(s)
-            </Button>
+            <BlockStack gap="300">
+              <Button 
+                onClick={autoSuggestFields} 
+                disabled={checkedIds.length === 0 || isSuggesting}
+                icon={() => <span>🪄</span>}
+              >
+                {isSuggesting ? "Fetching from Mindat..." : "Auto-Suggest SEO Fields"}
+              </Button>
+
+              <Button variant="primary" size="large" onClick={processBulkQueue} disabled={checkedIds.length === 0 || isProcessing}>
+                Apply SEO Updates to {checkedIds.length} Stone(s)
+              </Button>
+            </BlockStack>
+            
           </BlockStack>
         </div>
       </BlockStack>
@@ -352,41 +371,5 @@ export default function MetaCore({ products = [], mode }) {
     );
   }
 
-  if (mode === "mindat") {
-    return (
-      <BlockStack gap="400">
-        <Text variant="headingMd">Pull verified geological data from Mindat.org.</Text>
-        <TextField
-          label="Stone name"
-          value={mindatName}
-          onChange={setMindatName}
-          placeholder="e.g. Amethyst"
-          autoComplete="off"
-        />
-        <Button variant="primary" onClick={() => {
-          const fd = new FormData();
-          fd.append("intent", "mindat_lookup");
-          fd.append("query", mindatName);
-          fetcher.submit(fd, { method: "post" });
-        }} loading={fetcher.state === "submitting" && fetcher.formData?.get("intent") === "mindat_lookup"}>
-          🌍 Lookup
-        </Button>
-        {fetcher.data?.found === true && (
-          <Banner tone="success">
-            <Text>Found Results!</Text>
-            <Text>Hardness: {fetcher.data.result?.hardness || "N/A"}</Text>
-            <Text>Where Found: {fetcher.data.result?.localities || "N/A"}</Text>
-            <Text>Geological Age: {fetcher.data.result?.geological_age || "N/A"}</Text>
-          </Banner>
-        )}
-        {fetcher.data?.found === false && (
-          <Banner tone="warning">No results found for "{mindatName}".</Banner>
-        )}
-        <Banner tone="info">Requires a Mindat.org API token mapped to process.env.MINDAT_API_KEY.</Banner>
-      </BlockStack>
-    );
-  }
-
   return null;
 }
-
