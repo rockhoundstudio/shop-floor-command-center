@@ -3,7 +3,7 @@ import { useFetcher } from "react-router";
 import {
   Card, TextField, Text, BlockStack, InlineStack, Button,
   Checkbox, Scrollable, ProgressBar, Box, Select, Banner,
-  Divider, ActionList, Spinner
+  Divider, ActionList
 } from "@shopify/polaris";
 import { TARGET_KEYS, FIELD_LABELS } from "../../utils/metaScan";
 
@@ -64,7 +64,6 @@ export default function MetaCore({ products = [], mode }) {
     return options;
   };
 
-  // Auto-Fill: fires for first selected stone, pre-populates fields
   const handleAutoFill = () => {
     if (checkedIds.length === 0) return;
     const firstId = checkedIds[0];
@@ -79,7 +78,6 @@ export default function MetaCore({ products = [], mode }) {
     autoFillFetcher.submit(fd, { method: "post" });
   };
 
-  // When Auto-Fill returns, pre-populate fields and tick them
   useEffect(() => {
     if (!autoFillFetcher.data?.merged) return;
     const merged = autoFillFetcher.data.merged;
@@ -162,7 +160,7 @@ export default function MetaCore({ products = [], mode }) {
         )}
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1.5fr", gap: "24px" }}>
-          {/* LEFT COLUMN: Product Selection */}
+          {/* LEFT COLUMN */}
           <BlockStack gap="300">
             <Card padding="0">
               <Box padding="300">
@@ -194,20 +192,21 @@ export default function MetaCore({ products = [], mode }) {
             </Card>
           </BlockStack>
 
-          {/* RIGHT COLUMN: Smart Questionnaire */}
+          {/* RIGHT COLUMN */}
           <BlockStack gap="300">
-            {/* Auto-Fill Button */}
             <InlineStack gap="300" blockAlign="center">
               <Button
                 variant="primary"
                 onClick={handleAutoFill}
                 disabled={checkedIds.length === 0 || isSuggesting}
-                icon={isSuggesting ? <Spinner size="small" /> : null}
+                loading={isSuggesting}
               >
                 {isSuggesting ? "Fetching suggestions..." : "🔍 Suggest Values from First Selected Stone"}
               </Button>
               {checkedIds.length > 1 && (
-                <Text tone="subdued" variant="bodySm">Suggestions based on: {products.find(p => p.id === checkedIds[0])?.title?.substring(0, 30)}...</Text>
+                <Text tone="subdued" variant="bodySm">
+                  Suggestions based on: {products.find(p => p.id === checkedIds[0])?.title?.substring(0, 30)}...
+                </Text>
               )}
             </InlineStack>
 
@@ -222,7 +221,6 @@ export default function MetaCore({ products = [], mode }) {
               <Scrollable style={{ height: "500px" }}>
                 <BlockStack gap="400" padding="400">
 
-                  {/* Section 1: Free Text */}
                   <Text variant="headingSm" tone="subdued">CORE IDENTIFICATION (FREE TEXT)</Text>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
                     {FREE_TEXT_FIELDS.map(key => (
@@ -246,7 +244,6 @@ export default function MetaCore({ products = [], mode }) {
 
                   <Divider />
 
-                  {/* Section 2: Smart Dropdowns */}
                   <Text variant="headingSm" tone="subdued">GEOLOGY & SEO (SMART SELECT)</Text>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
                     {DROPDOWN_FIELDS.map(key => (
@@ -283,7 +280,6 @@ export default function MetaCore({ products = [], mode }) {
 
                   <Divider />
 
-                  {/* Section 3: OOAK */}
                   <BlockStack gap="200" style={{ background: "#fff8e6", padding: "12px", borderRadius: "8px", border: "1px solid #e1b878" }}>
                     <Text variant="headingSm">✨ OOAK Special Features</Text>
                     <Text variant="bodySm" tone="subdued">Text entered here appends to the Stone Story without overwriting it.</Text>
@@ -393,3 +389,4 @@ export default function MetaCore({ products = [], mode }) {
 
   return null;
 }
+
