@@ -7,32 +7,54 @@ import { useState, useRef } from "react";
 import { useFetcher } from "react-router";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { TARGET_KEYS, FIELD_LABELS } from "../../utils/metaScan";
+import { TAXONOMY_GIDS, wrapGid } from "../../utils/taxonomyMap";
 
 const availableStones = [
   "Agate", "Amethyst", "Aventurine", "Azurite", "Bloodstone", "Carnelian",
-  "Chalcedony", "Chrysocolla", "Fluorite", "Garnet", "Hematite", "Howlite",
-  "Jade", "Jasper", "Labradorite", "Lapis Lazuli", "Malachite", "Moonstone",
-  "Obsidian", "Onyx", "Opal", "Pyrite", "Quartz", "Rhodochrosite",
-  "Rhodonite", "Rose Quartz", "Serpentine", "Smoky Quartz", "Sodalite",
-  "Sunstone", "Tiger's Eye", "Tourmaline", "Turquoise"
+  "Chalcedony", "Chrysocolla", "Conglomerate", "Fluorite", "Garnet",
+  "Gneiss", "Hematite", "Howlite", "Jade", "Jasper", "Labradorite",
+  "Lapis Lazuli", "Malachite", "Moonstone", "Obsidian", "Onyx", "Opal",
+  "Pyrite", "Quartz", "Rhodochrosite", "Rhodonite", "Rose Quartz",
+  "Serpentine", "Siltstone", "Smoky Quartz", "Sodalite", "Sunstone",
+  "Tiger's Eye", "Tourmaline", "Turquoise", "Variscite"
 ];
+
+function formatMetafieldValue(key, value) {
+  const cleanValue = String(value).replace(/[✅⚠️]/g, "").trim();
+  const safeKey = key.replace(/-/g, "_");
+  if (TAXONOMY_GIDS[safeKey] && TAXONOMY_GIDS[safeKey][cleanValue]) {
+    return {
+      value: wrapGid(TAXONOMY_GIDS[safeKey][cleanValue]),
+      type: "list.metaobject_reference"
+    };
+  }
+  return {
+    value: String(value).trim(),
+    type: "single_line_text_field"
+  };
+}
 
 export default function ProductsTab({ products = [] }) {
   const shopify = useAppBridge();
 
-  const [viewMode, setViewMode] = useState("list"); 
+  const [viewMode, setViewMode] = useState("list");
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState(null);
 
   const [fieldValues, setFieldValues] = useState({});
-  const [customName, setCustomName] = useState(""); 
+  const [customName, setCustomName] = useState("");
   const [baseFields, setBaseFields] = useState({ title: "", description: "", status: "DRAFT", price: "0.00", inventory: "1" });
   const mergedApplied = useRef(false);
+
+  // NEW: track bulk save state
+  const [bulkSaveStatus, setBulkSaveStatus] = useState(null); // null | "saving" | "done" | "error"
+  const [bulkSaveCount, setBulkSaveCount] = useState(0);
 
   const saveFetcher  = useFetcher();
   const autoFetcher  = useFetcher();
   const bulkFetcher  = useFetcher();
   const seedFetcher  = useFetcher();
+  const bulkSaveFetcher = useFetcher();
 
   const filtered = products.filter(p => p.title.toLowerCase().includes(search.toLowerCase()));
 
@@ -41,7 +63,7 @@ export default function ProductsTab({ products = [] }) {
     TARGET_KEYS.forEach(key => {
       initial[key] = product.metafields?.[key] || "";
     });
-    
+
     const existingName = initial.official_name || product.title || "";
     if (existingName && !availableStones.includes(existingName)) {
       initial.official_name = "__custom__";
@@ -49,15 +71,15 @@ export default function ProductsTab({ products = [] }) {
     } else {
       initial.official_name = existingName;
     }
-    
+
     if (!initial.stone_story) initial.stone_story = product.description || "";
-    
+
     setBaseFields({
       title: product.title || "",
       description: product.description || "",
       status: product.status || "DRAFT",
-      price: product.price || "0.00", 
-      inventory: "1" 
+      price: product.price || "0.00",
+      inventory: "1"
     });
 
     setFieldValues(initial);
@@ -66,13 +88,23 @@ export default function ProductsTab({ products = [] }) {
   }
 
   function handleSave() {
-    const metafields = TARGET_KEYS.map(key => ({
-      ownerId: selected.id,
-      namespace: "custom", 
-      key,
-      value: key === "official_name" && fieldValues[key] === "__custom__" ? customName : (fieldValues[key] || ""),
-      type: "single_line_text_field", 
-    }));
+    const metafields = TARGET_KEYS
+      .filter(key => fieldValues[key] && String(fieldValues[key]).trim() !== "")
+      .map(key => {
+        const safeKey = key.replace(/-/g, "_");
+        const rawValue = key === "official_name" && fieldValues[key] === "__custom__"
+          ? customName
+          : fieldValues[key] || "";
+        const formatted = formatMetafieldValue(safeKey, rawValue);
+        return {
+          ownerId:   selected.id,
+          namespace: TAXONOMY_GIDS[safeKey] ? "shopify" : "custom",
+          key:       TAXONOMY_GIDS[safeKey] ? key.replace(/_/g, "-") : key,
+          value:     formatted.value,
+          type:      formatted.type,
+        };
+      });
+
     saveFetcher.submit(
       { intent: "saveMetafields", metafields: JSON.stringify(metafields) },
       { method: "post", action: "/app/meta-injector" }
@@ -82,7 +114,6 @@ export default function ProductsTab({ products = [] }) {
   function handleAutoFill() {
     mergedApplied.current = false;
     const finalName = fieldValues.official_name === "__custom__" ? customName : fieldValues.official_name;
-    
     autoFetcher.submit(
       {
         intent: "autoFill",
@@ -104,6 +135,8 @@ export default function ProductsTab({ products = [] }) {
   }
 
   function handleBulkFill() {
+    setBulkSaveStatus(null);
+    setBulkSaveCount(0);
     const payload = products.map(p => ({
       id:          p.id,
       title:       p.title,
@@ -116,11 +149,51 @@ export default function ProductsTab({ products = [] }) {
     );
   }
 
+  // NEW: Save All — fires after bulk fill completes
+  function handleBulkSave() {
+    const results = bulkFetcher.data?.results || [];
+    if (!results.length) return;
+
+    setBulkSaveStatus("saving");
+
+    // Build one flat metafields array for all products
+    const allMetafields = [];
+    results.forEach(({ id, merged }) => {
+      if (!merged) return;
+      TARGET_KEYS.forEach(key => {
+        const val = merged[key];
+        if (!val || String(val).trim() === "") return;
+        const safeKey = key.replace(/-/g, "_");
+        const formatted = formatMetafieldValue(safeKey, val);
+        allMetafields.push({
+          ownerId:   id,
+          namespace: TAXONOMY_GIDS[safeKey] ? "shopify" : "custom",
+          key:       TAXONOMY_GIDS[safeKey] ? key.replace(/_/g, "-") : key,
+          value:     formatted.value,
+          type:      formatted.type,
+        });
+      });
+    });
+
+    setBulkSaveCount(results.length);
+
+    bulkSaveFetcher.submit(
+      { intent: "saveMetafields", metafields: JSON.stringify(allMetafields) },
+      { method: "post", action: "/app/meta-injector" }
+    );
+  }
+
+  // Watch bulkSaveFetcher for completion
+  if (bulkSaveFetcher.state === "idle" && bulkSaveStatus === "saving") {
+    if (bulkSaveFetcher.data?.success) setBulkSaveStatus("done");
+    if (bulkSaveFetcher.data?.error)   setBulkSaveStatus("error");
+  }
+
   function handleSeed() {
     seedFetcher.submit(
-      { 
-        intent: "seed_names", 
-        ids: JSON.stringify(products.map(p => p.id)) 
+      {
+        intent: "seed_names",
+        ids: JSON.stringify(products.map(p => p.id))
       },
       { method: "post", action: "/app/meta-injector" }
     );
@@ -129,6 +202,7 @@ export default function ProductsTab({ products = [] }) {
   const isSaving    = saveFetcher.state  !== "idle";
   const isAutoFill  = autoFetcher.state  !== "idle";
   const isBulk      = bulkFetcher.state  !== "idle";
+  const isBulkSaving = bulkSaveFetcher.state !== "idle";
   const saveSuccess = saveFetcher.state === "idle" && saveFetcher.data?.success;
   const saveError   = saveFetcher.state === "idle" && saveFetcher.data?.error;
   const conflicts   = autoFetcher.data?.conflicts  || [];
@@ -140,18 +214,17 @@ export default function ProductsTab({ products = [] }) {
 
   if (selected) {
     return (
-      <Page 
+      <Page
         backAction={{ content: 'Back to Shop Floor', onAction: () => setSelected(null) }}
         title={baseFields.title || "Edit Stone"}
         primaryAction={{ content: 'Save Stone', onAction: handleSave, loading: isSaving, disabled: isAutoFill }}
         secondaryActions={[{ content: '🔍 Auto-Fill (Mindat)', onAction: handleAutoFill, loading: isAutoFill, disabled: isSaving }]}
       >
         <BlockStack gap="600">
-          
+
           {saveSuccess && <Banner tone="success">Saved successfully to Shopify.</Banner>}
           {saveError   && <Banner tone="critical">Save failed: {saveFetcher.data?.error}</Banner>}
-          
-          {/* 🐛 FIXED: Graceful bypass message if official_name is empty */}
+
           {mindatError === "missing_name" && (
             <Banner tone="warning">Mindat skipped: Please select an Official Name first to fetch geological data.</Banner>
           )}
@@ -171,18 +244,18 @@ export default function ProductsTab({ products = [] }) {
               <BlockStack gap="500">
                 <Card roundedAbove="sm">
                   <BlockStack gap="500">
-                    <TextField 
-                      label="Product Title" 
-                      value={baseFields.title} 
-                      onChange={val => setBaseFields(p => ({...p, title: val}))} 
-                      autoComplete="off" 
+                    <TextField
+                      label="Product Title"
+                      value={baseFields.title}
+                      onChange={val => setBaseFields(p => ({...p, title: val}))}
+                      autoComplete="off"
                     />
-                    <TextField 
-                      label="Public Description & Story" 
-                      value={baseFields.description} 
-                      onChange={val => setBaseFields(p => ({...p, description: val}))} 
-                      multiline={8} 
-                      autoComplete="off" 
+                    <TextField
+                      label="Public Description & Story"
+                      value={baseFields.description}
+                      onChange={val => setBaseFields(p => ({...p, description: val}))}
+                      multiline={8}
+                      autoComplete="off"
                     />
                   </BlockStack>
                 </Card>
@@ -208,9 +281,9 @@ export default function ProductsTab({ products = [] }) {
                 <Card roundedAbove="sm">
                   <BlockStack gap="400">
                     <Text as="h2" variant="headingSm">Lapidary Data (Meta Injector)</Text>
-                    
+
                     <Box paddingBlockEnd="400" borderBlockEndWidth="025" borderColor="border">
-                       <BlockStack gap="200">
+                      <BlockStack gap="200">
                         <Text variant="bodyMd" fontWeight="bold">Official Name (Required for Mindat)</Text>
                         <select
                           style={{ width: "100%", padding: "8px", borderRadius: "4px", border: "1px solid #c9cccf", fontSize: "14px" }}
@@ -223,7 +296,7 @@ export default function ProductsTab({ products = [] }) {
                           ))}
                           <option value="__custom__">➕ Add New Stone...</option>
                         </select>
-                        
+
                         {fieldValues["official_name"] === "__custom__" && (
                           <TextField
                             label="Type new stone name"
@@ -254,38 +327,37 @@ export default function ProductsTab({ products = [] }) {
               </BlockStack>
             </Layout.Section>
 
-            {/* RIGHT COLUMN: Quick Toggles */}
             <Layout.Section variant="oneThird">
               <BlockStack gap="500">
                 <Card roundedAbove="sm">
                   <BlockStack gap="400">
-                    <Select 
-                      label="Store Status" 
-                      options={[{label: 'Active (Live)', value: 'ACTIVE'}, {label: 'Draft (Hidden)', value: 'DRAFT'}]} 
-                      value={baseFields.status} 
-                      onChange={val => setBaseFields(p => ({...p, status: val}))} 
+                    <Select
+                      label="Store Status"
+                      options={[{label: 'Active (Live)', value: 'ACTIVE'}, {label: 'Draft (Hidden)', value: 'DRAFT'}]}
+                      value={baseFields.status}
+                      onChange={val => setBaseFields(p => ({...p, status: val}))}
                     />
                   </BlockStack>
                 </Card>
                 <Card roundedAbove="sm">
                   <BlockStack gap="400">
-                    <TextField 
-                      label="Price" 
-                      type="number" 
-                      value={baseFields.price} 
-                      onChange={val => setBaseFields(p => ({...p, price: val}))} 
-                      autoComplete="off" prefix="$" 
+                    <TextField
+                      label="Price"
+                      type="number"
+                      value={baseFields.price}
+                      onChange={val => setBaseFields(p => ({...p, price: val}))}
+                      autoComplete="off" prefix="$"
                     />
                   </BlockStack>
                 </Card>
                 <Card roundedAbove="sm">
                   <BlockStack gap="400">
-                    <TextField 
-                      label="Available Inventory" 
-                      type="number" 
-                      value={baseFields.inventory} 
-                      onChange={val => setBaseFields(p => ({...p, inventory: val}))} 
-                      autoComplete="off" 
+                    <TextField
+                      label="Available Inventory"
+                      type="number"
+                      value={baseFields.inventory}
+                      onChange={val => setBaseFields(p => ({...p, inventory: val}))}
+                      autoComplete="off"
                     />
                   </BlockStack>
                 </Card>
@@ -314,7 +386,7 @@ export default function ProductsTab({ products = [] }) {
 
       <Card>
         <BlockStack gap="400">
-          
+
           <InlineStack align="space-between" blockAlign="center">
             <BlockStack gap="100">
               <Text variant="headingSm" fontWeight="bold">🌱 1. Seed Official Names</Text>
@@ -324,7 +396,7 @@ export default function ProductsTab({ products = [] }) {
               Seed Official Names
             </Button>
           </InlineStack>
-          
+
           {seedFetcher.data?.ok && seedFetcher.state === "idle" && (
             <Banner tone="success">Seeded {seedFetcher.data.seededCount} of {products.length} products successfully.</Banner>
           )}
@@ -340,14 +412,44 @@ export default function ProductsTab({ products = [] }) {
               {isBulk ? "Filling all products…" : "Auto-Fill All"}
             </Button>
           </InlineStack>
-          
+
           {isBulk && <Banner tone="info">Running — this may take 1–2 minutes. Do not close the tab.</Banner>}
+
           {bulkDone && (
             <Banner tone={bulkFailed.length > 0 ? "warning" : "success"}>
               {bulkFailed.length === 0
                 ? `All ${bulkTotal} products filled successfully.`
                 : `Done — ${bulkTotal - bulkFailed.length} filled, ${bulkFailed.length} issue(s).`}
             </Banner>
+          )}
+
+          {/* NEW: Save All button — only shows after bulk fill completes */}
+          {bulkDone && bulkSaveStatus !== "done" && (
+            <>
+              <Divider />
+              <InlineStack align="space-between" blockAlign="center">
+                <BlockStack gap="100">
+                  <Text variant="headingSm" fontWeight="bold">💾 3. Save All to Shopify</Text>
+                  <Text variant="bodySm" tone="subdued">Writes the filled data permanently to Shopify metafields.</Text>
+                </BlockStack>
+                <Button
+                  variant="primary"
+                  tone="success"
+                  onClick={handleBulkSave}
+                  loading={isBulkSaving}
+                  disabled={isBulkSaving}
+                >
+                  {isBulkSaving ? "Saving to Shopify…" : "Save All to Shopify"}
+                </Button>
+              </InlineStack>
+            </>
+          )}
+
+          {bulkSaveStatus === "done" && (
+            <Banner tone="success">✅ All {bulkSaveCount} products saved to Shopify successfully.</Banner>
+          )}
+          {bulkSaveStatus === "error" && (
+            <Banner tone="critical">Save failed: {bulkSaveFetcher.data?.error}</Banner>
           )}
 
         </BlockStack>
