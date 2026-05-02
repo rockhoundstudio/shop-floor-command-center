@@ -1,9 +1,8 @@
 // --- THE 31 TARGET METAFIELD KEYS ---
-// Updated May 1, 2026: Fixed crystal_system, added 8 new OOAK/Taxonomy fields.
 export const TARGET_KEYS = [
   "official_name",
   "mineral_class",
-  "crystal_system",     // 🐛 FIXED: Was 'crystal_structure'
+  "crystal_system",     
   "luster",
   "rock_composition",
   "specific_gravity",
@@ -22,16 +21,16 @@ export const TARGET_KEYS = [
   "character_marks",
   "cut_type",
   "carat_weight",
-  "dimensions_mm",      // 🐛 FIXED: Was 'dimensions'
+  "dimensions_mm",      
   "stone_story",
   "bench_notes",
-  "story_theme",        // 🆕 NEW
-  "origin_page_handle", // 🆕 NEW
-  "treatment_status",   // 🆕 NEW
-  "surface_finish",     // 🆕 NEW
-  "stone_shape",        // 🆕 NEW
-  "is_ooak",            // 🆕 NEW
-  "custom_product"      // 🆕 NEW
+  "story_theme",        
+  "origin_page_handle", 
+  "treatment_status",   
+  "surface_finish",     
+  "stone_shape",        
+  "is_ooak",            
+  "custom_product"      
 ];
 
 export const FIELD_LABELS = {
@@ -130,9 +129,8 @@ export function evaluateProductStatus(metafieldsObj) {
 }
 
 // ==========================================
-// 🚀 SEO WIKIPEDIA AUTO-LINKER ENGINE
+// 🚀 COMPILER-SAFE WIKIPEDIA AUTO-LINKER
 // ==========================================
-// This dictionary maps lapidary terminology directly to your Shopify blog URLs.
 export const SEO_DICTIONARY_LINKS = {
   "plume agate": "/blogs/rock-knowledge/plume-agate",
   "botswana agate": "/blogs/rock-knowledge/botswana-agate",
@@ -150,24 +148,22 @@ export const SEO_DICTIONARY_LINKS = {
   "druzy": "/blogs/rock-knowledge/drusy-crystals"
 };
 
-/**
- * Scans a Stone Story and safely injects HTML <a> tags for SEO terms 
- * without breaking existing HTML or double-linking words.
- */
 export function autoLinkStory(text) {
   if (!text) return "";
   let linkedText = text;
   
-  // Sort keys by length descending so "botswana agate" matches before just "agate"
   const terms = Object.keys(SEO_DICTIONARY_LINKS).sort((a, b) => b.length - a.length);
   
   terms.forEach(term => {
-    // Regex looks for the exact word boundary, ignores case, and ensures it's NOT already inside an <a> tag
-    const regex = new RegExp(`(?<!<a[^>]*>)\\b(${term})\\b(?![^<]*</a>)`, "gi");
+    // SAFE REGEX: Looks for an existing link OR our target word.
+    // Compilers have zero issues parsing this structure.
+    const regex = new RegExp(`(<a\\b[^>]*>(?:.*?)<\\/a>)|(\\b${term}\\b)`, "gi");
     
-    linkedText = linkedText.replace(regex, (match) => {
-      // Wraps the matched word in a link pointing to your blog
-      return `<a href="${SEO_DICTIONARY_LINKS[term]}" title="Learn more about ${match}" target="_blank" style="text-decoration: underline;">${match}</a>`;
+    linkedText = linkedText.replace(regex, (match, existingLink, word) => {
+      // If it's already a link, leave it entirely alone
+      if (existingLink) return existingLink;
+      // Otherwise, turn the word into a link
+      return `<a href="${SEO_DICTIONARY_LINKS[term]}" title="Learn more about ${word}" target="_blank" style="text-decoration: underline;">${word}</a>`;
     });
   });
   
