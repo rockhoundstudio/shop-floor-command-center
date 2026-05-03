@@ -6,7 +6,7 @@ import {
   Divider, ActionList, Icon, Badge
 } from "@shopify/polaris";
 import { SearchIcon } from "@shopify/polaris-icons";
-import { TARGET_KEYS, FIELD_LABELS } from "../../utils/metaScan";
+import { TARGET_KEYS, FIELD_LABELS, MANUAL_KEYS } from "../../utils/metaScan";
 import { lookupStone } from "../../utils/geoLibrary"; 
 
 const DROPDOWN_FIELDS = ["luster", "diaphaneity", "fracture_pattern", "cleavage", "crystal_system", "rock_formation", "mineral_class", "geological_era", "tenacity", "rock_composition"];
@@ -67,6 +67,18 @@ const SEO_DICTIONARY = {
   }
 };
 
+const SEED_OPTIONS = {
+  story_theme: ["River Find", "Road Trip", "Rescue", "Canyon Run", "First Cut", "Commission", "Ranch Find", "Mine Pull"],
+  cut_type: ["Oval", "Teardrop", "Marquise", "Freeform", "Cabochon", "Round", "Cushion", "Trillion", "Heart", "Pear"],
+  stone_shape: ["Oval", "Teardrop", "Marquise", "Freeform", "Round", "Rectangular", "Irregular", "Heart"],
+  surface_finish: ["High Polish", "Matte", "Raw", "Satin", "Semi-Polish"],
+  treatment_status: ["Untreated — Natural", "Stabilized", "Dyed", "Heated", "Irradiated", "Coated"],
+  primary_color: ["Red", "Orange", "Yellow", "Green", "Blue", "Purple", "Pink", "Brown", "Black", "White", "Grey", "Multicolor", "Cream", "Gold", "Silver"],
+  secondary_colors: ["Red", "Orange", "Yellow", "Green", "Blue", "Purple", "Pink", "Brown", "Black", "White", "Grey", "Multicolor", "Cream", "Gold", "Silver"],
+  luster: ["Vitreous", "Waxy", "Resinous", "Silky", "Pearly", "Dull", "Adamantine", "Subvitreous"],
+  diaphaneity: ["Opaque", "Translucent", "Transparent", "Sub-translucent"]
+};
+
 const availableStones = [
   "Agate", "Amethyst", "Aventurine", "Azurite", "Bloodstone", "Carnelian",
   "Chalcedony", "Chrysocolla", "Fluorite", "Garnet", "Hematite", "Howlite",
@@ -91,6 +103,13 @@ export default function MetaCore({ products = [], mode }) {
   const [productSearch, setProductSearch] = useState("");
   const [saveStatus, setSaveStatus] = useState(null); 
 
+  // Vocabulary UI States
+  const [vocabulary, setVocabulary] = useState({});
+  const [showCustomInput, setShowCustomInput] = useState({});
+
+  const vocabFetcher    = useFetcher();
+  const addCustomFetcher = useFetcher();
+
   // QA & Inject Tab State
   const [injectProduct, setInjectProduct] = useState("");
   const [payload, setPayload] = useState("");
@@ -98,6 +117,19 @@ export default function MetaCore({ products = [], mode }) {
 
   const [mindatQuery, setMindatQuery] = useState("");
   const [mindatSearched, setMindatSearched] = useState("");
+
+  // Trigger Vocabulary Load
+  useEffect(() => {
+    if (mode === "bulk" && vocabFetcher.state === "idle" && !vocabFetcher.data) {
+      vocabFetcher.submit({ intent: "loadVocabulary" }, { method: "post", action: "/app/meta-injector" });
+    }
+  }, [mode, vocabFetcher]);
+
+  useEffect(() => {
+    if (vocabFetcher.data?.vocabulary) {
+      setVocabulary(vocabFetcher.data.vocabulary);
+    }
+  }, [vocabFetcher.data]);
 
   useEffect(() => {
     if (checkedIds.length === 1) {
@@ -484,7 +516,7 @@ export default function MetaCore({ products = [], mode }) {
               <Scrollable style={{ height: "550px" }}>
                 <BlockStack gap="400" padding="400">
 
-                  <Text variant="headingSm" tone="subdued">CORE IDENTIFICATION</Text>
+                  <Text variant="headingSm" tone="subdued">LAPIDARY DATA (MANUAL FIELDS)</Text>
                   
                   <BlockStack gap="200" style={{ background: "#e4f0f6", padding: "12px", borderRadius: "6px", border: "1px solid #005bd3" }}>
                     <Checkbox
@@ -527,59 +559,134 @@ export default function MetaCore({ products = [], mode }) {
                   </BlockStack>
 
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
-                    {FREE_TEXT_FIELDS.map(key => (
-                      <BlockStack key={key} gap="100">
-                        <Checkbox
-                          label={FIELD_LABELS[key] || key}
-                          checked={tickedFields[key] || false}
-                          onChange={() => setTickedFields(prev => ({ ...prev, [key]: !prev[key] }))}
-                        />
-                        {tickedFields[key] && (
-                          <TextField
-                            label=""
-                            value={fieldValues[key] || ""}
-                            onChange={(v) => setFieldValues({ ...fieldValues, [key]: v })}
-                            autoComplete="off"
-                          />
-                        )}
-                      </BlockStack>
-                    ))}
-                  </div>
+                    {MANUAL_KEYS.filter(key => key !== "official_name").map(key => {
+                      if (SEED_OPTIONS[key]) {
+                        const opts = [...new Set([...(SEED_OPTIONS[key] || []), ...(vocabulary[key] || [])])];
+                        const isMulti = key === "secondary_colors";
 
-                  <Divider />
+                        const currentVal = fieldValues[key] === "__custom__" ? "" : (fieldValues[key] || "");
+                        const selectOptions = isMulti 
+                          ? [{label: "-- Add Color --", value: ""}, ...opts.map(o => ({label: o, value: o}))]
+                          : [{label: "-- Select --", value: ""}, ...opts.map(o => ({label: o, value: o}))];
 
-                  <Text variant="headingSm" tone="subdued">GEOLOGY & SEO (SMART SELECT)</Text>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
-                    {DROPDOWN_FIELDS.map(key => (
-                      <BlockStack key={key} gap="100" style={{ background: "#f9fafb", padding: "8px", borderRadius: "6px" }}>
-                        <Checkbox
-                          label={FIELD_LABELS[key] || key}
-                          checked={tickedFields[key] || false}
-                          onChange={() => setTickedFields(prev => ({ ...prev, [key]: !prev[key] }))}
-                        />
-                        {tickedFields[key] && (
-                          <BlockStack gap="200">
-                            <select
-                              style={{ width: "100%", padding: "8px", borderRadius: "4px", border: "1px solid #c9cccf" }}
-                              value={fieldValues[key] || ""}
-                              onChange={(e) => setFieldValues({ ...fieldValues, [key]: e.target.value })}
-                            >
-                              <option value="">-- Select --</option>
-                              {getOptionsForField(key).map(opt => <option key={opt} value={opt}>{opt}</option>)}
-                              <option value="__custom__">+ Add Custom...</option>
-                            </select>
-                            {fieldValues[key] === "__custom__" && (
+                        if (!isMulti && currentVal && !opts.includes(currentVal)) {
+                          selectOptions.push({ label: currentVal, value: currentVal });
+                        }
+
+                        return (
+                          <BlockStack key={key} gap="100" style={{ background: "#f9fafb", padding: "8px", borderRadius: "6px" }}>
+                            <Checkbox
+                              label={FIELD_LABELS[key] || key}
+                              checked={tickedFields[key] || false}
+                              onChange={() => setTickedFields(prev => ({ ...prev, [key]: !prev[key] }))}
+                            />
+                            {tickedFields[key] && (
+                              <BlockStack gap="200">
+                                <InlineStack gap="300" blockAlign="start" wrap={false}>
+                                  <div style={{ flex: 1 }}>
+                                    {!isMulti ? (
+                                      <Select
+                                        labelHidden
+                                        label={FIELD_LABELS[key] || key}
+                                        options={selectOptions}
+                                        value={currentVal}
+                                        onChange={(v) => setFieldValues(prev => ({...prev, [key]: v}))}
+                                      />
+                                    ) : (
+                                      <BlockStack gap="200">
+                                        <Select
+                                          labelHidden
+                                          label="Add Color"
+                                          options={selectOptions}
+                                          value=""
+                                          onChange={(v) => {
+                                            if (!v) return;
+                                            const curr = fieldValues[key] ? fieldValues[key].split(",").map(s => s.trim()).filter(Boolean) : [];
+                                            if (!curr.includes(v)) curr.push(v);
+                                            setFieldValues(prev => ({...prev, [key]: curr.join(", ")}));
+                                          }}
+                                        />
+                                        <TextField
+                                          labelHidden
+                                          label={FIELD_LABELS[key] || key}
+                                          value={fieldValues[key] || ""}
+                                          onChange={val => setFieldValues(prev => ({ ...prev, [key]: val }))}
+                                          autoComplete="off"
+                                          helpText="Comma-separated list"
+                                        />
+                                      </BlockStack>
+                                    )}
+                                  </div>
+                                  <Button onClick={() => setShowCustomInput(p => ({...p, [key]: !p[key]}))}>
+                                    {showCustomInput[key] ? "Cancel" : "➕ Add Custom"}
+                                  </Button>
+                                </InlineStack>
+
+                                {showCustomInput[key] && (
+                                  <div style={{ paddingLeft: "8px", borderLeft: "2px solid #e1e3e5", marginTop: "4px" }}>
+                                    <InlineStack gap="300" blockAlign="center" wrap={false}>
+                                      <div style={{ flex: 1 }}>
+                                        <TextField
+                                          labelHidden
+                                          label="New custom value"
+                                          placeholder="Enter new custom option..."
+                                          value={customInputs[key] || ""}
+                                          onChange={v => setCustomInputs(p => ({...p, [key]: v}))}
+                                          autoComplete="off"
+                                        />
+                                      </div>
+                                      <Button variant="primary" onClick={() => {
+                                        const v = customInputs[key]?.trim();
+                                        if (v) {
+                                          addCustomFetcher.submit({ intent: "saveVocabularyEntry", field_key: key, new_value: v }, { method: "post", action: "/app/meta-injector" });
+                                          setVocabulary(prev => {
+                                            const curr = prev[key] || [];
+                                            if (!curr.includes(v)) return { ...prev, [key]: [...curr, v] };
+                                            return prev;
+                                          });
+
+                                          if (isMulti) {
+                                             const currVals = fieldValues[key] ? fieldValues[key].split(",").map(s => s.trim()).filter(Boolean) : [];
+                                             if (!currVals.includes(v)) currVals.push(v);
+                                             setFieldValues(prev => ({...prev, [key]: currVals.join(", ")}));
+                                          } else {
+                                             setFieldValues(prev => ({...prev, [key]: v}));
+                                          }
+                                          setShowCustomInput(p => ({...p, [key]: false}));
+                                          setCustomInputs(p => ({...p, [key]: ""}));
+                                        }
+                                      }}>
+                                        Save & Select
+                                      </Button>
+                                    </InlineStack>
+                                  </div>
+                                )}
+                              </BlockStack>
+                            )}
+                          </BlockStack>
+                        );
+                      } else {
+                        return (
+                          <BlockStack key={key} gap="100">
+                            <Checkbox
+                              label={FIELD_LABELS[key] || key}
+                              checked={tickedFields[key] || false}
+                              onChange={() => setTickedFields(prev => ({ ...prev, [key]: !prev[key] }))}
+                            />
+                            {tickedFields[key] && (
                               <TextField
-                                label="Enter custom term"
-                                value={customInputs[key] || ""}
-                                onChange={(v) => setCustomInputs({ ...customInputs, [key]: v })}
+                                labelHidden
+                                label={FIELD_LABELS[key] || key}
+                                value={fieldValues[key] || ""}
+                                onChange={val => setFieldValues(prev => ({ ...prev, [key]: val }))}
                                 autoComplete="off"
+                                multiline={["stone_story", "bench_notes", "character_marks", "rock_composition"].includes(key) ? 3 : undefined}
                               />
                             )}
                           </BlockStack>
-                        )}
-                      </BlockStack>
-                    ))}
+                        );
+                      }
+                    })}
                   </div>
 
                   <Divider />
