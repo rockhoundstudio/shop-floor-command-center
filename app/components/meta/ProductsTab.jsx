@@ -9,6 +9,11 @@ import { useAppBridge } from "@shopify/app-bridge-react";
 import { TARGET_KEYS, FIELD_LABELS } from "../../utils/metaScan";
 import { TAXONOMY_GIDS, wrapGid } from "../../utils/taxonomyMap";
 
+// Synchronized with backend engine
+const LIST_TEXT_FIELDS = [
+  "character_marks"
+];
+
 const availableStones = [
   "Agate", "Amethyst", "Aventurine", "Azurite", "Bloodstone", "Carnelian",
   "Chalcedony", "Chrysocolla", "Conglomerate", "Fluorite", "Garnet",
@@ -22,6 +27,7 @@ const availableStones = [
 function formatMetafieldValue(key, value) {
   const cleanValue = String(value).replace(/[✅⚠️]/g, "").trim();
   const safeKey = key.replace(/-/g, "_");
+  
   if (TAXONOMY_GIDS[safeKey] && TAXONOMY_GIDS[safeKey][cleanValue]) {
     return {
       value: wrapGid(TAXONOMY_GIDS[safeKey][cleanValue]),
@@ -32,9 +38,13 @@ function formatMetafieldValue(key, value) {
   if (TAXONOMY_GIDS[safeKey]) {
     return null;
   }
+  
+  // Apply List Field Formatting matching the backend
+  const isListField = LIST_TEXT_FIELDS.includes(safeKey);
+
   return {
-    value: String(value).trim(),
-    type: "single_line_text_field"
+    value: isListField ? JSON.stringify([String(value).trim()]) : String(value).trim(),
+    type: isListField ? "list.single_line_text_field" : "single_line_text_field"
   };
 }
 
