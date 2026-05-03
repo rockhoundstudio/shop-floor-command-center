@@ -13,9 +13,15 @@ import { TARGET_KEYS, stripHtml, evaluateProductStatus, parseDescription, autoLi
 import { lookupStone } from "../utils/geoLibrary";
 import { TAXONOMY_GIDS, wrapGid } from "../utils/taxonomyMap";
 
-// ─── LIST FIELDS CONFIGURATION ──────────────────────────────────────────────
+// ─── LIST & BOOLEAN CONFIGURATION ───────────────────────────────────────────
 const LIST_TEXT_FIELDS = [
-  "character_marks"
+  "character_marks",
+  "stone_story"
+];
+
+const BOOLEAN_FIELDS = [
+  "is_ooak",
+  "custom_product"
 ];
 
 // ─── TAXONOMY FORMATTER ─────────────────────────────────────────────────────
@@ -33,10 +39,24 @@ function formatMetafieldValue(originalKey, value) {
   }
 
   const isListField = LIST_TEXT_FIELDS.includes(mapKey);
+  const isBooleanField = BOOLEAN_FIELDS.includes(mapKey);
+
+  let finalValue = String(value).trim();
+  let finalType = "single_line_text_field";
+
+  if (isListField) {
+    finalValue = JSON.stringify([finalValue]);
+    finalType = "list.single_line_text_field";
+  } else if (isBooleanField) {
+    // Converts "true", "yes", "1" to standard Shopify booleans
+    const truthy = ["true", "yes", "1"];
+    finalValue = truthy.some(t => finalValue.toLowerCase().includes(t)) ? "true" : "false";
+    finalType = "boolean";
+  }
 
   return {
-    value: isListField ? JSON.stringify([String(value).trim()]) : String(value).trim(),
-    type: isListField ? "list.single_line_text_field" : "single_line_text_field",
+    value: finalValue,
+    type: finalType,
     namespace: "custom",
     key: mapKey
   };
@@ -52,7 +72,6 @@ function extractShopifyError(errors, chunk) {
     }
   } catch (e) {}
   
-  // Dump the raw JSON error and the exact keys in this chunk directly to the UI
   return `[FIELD: ${failingKey}] ${errors[0].message} | RAW: ${JSON.stringify(errors)} | CHUNK: [${chunk.map(c => c.key).join(", ")}]`;
 }
 
