@@ -16,12 +16,11 @@ import { TARGET_KEYS, stripHtml, evaluateProductStatus, parseDescription, autoLi
 import { lookupStone } from "../utils/geoLibrary";
 import { TAXONOMY_GIDS, wrapGid } from "../utils/taxonomyMap";
 
-// ─── TAXONOMY FORMATTER (FIX #3: No more Custom black holes) ───────────────
+// ─── TAXONOMY FORMATTER ─────────────────────────────────────────────────────
 function formatMetafieldValue(originalKey, value) {
   const cleanValue = String(value).replace(/[✅⚠️]/g, "").trim();
   const safeKey = originalKey.replace(/-/g, "_");
 
-  // If it's a known Shopify taxonomy field AND the value matches exactly
   if (TAXONOMY_GIDS[safeKey] && TAXONOMY_GIDS[safeKey][cleanValue]) {
     return {
       value: wrapGid(TAXONOMY_GIDS[safeKey][cleanValue]),
@@ -31,8 +30,6 @@ function formatMetafieldValue(originalKey, value) {
     };
   }
 
-  // If it gets here, it's either a strictly custom field OR a custom override 
-  // for a taxonomy field. We route it to the "custom" namespace to prevent API rejection.
   return {
     value: String(value).trim(),
     type: "single_line_text_field",
@@ -130,7 +127,7 @@ export const action = async ({ request }) => {
 
   console.log("[RS-DIAG] Entry intent received:", JSON.stringify(intent, null, 2));
 
-  // ─── QA & INJECT VIEW HANDLERS (FIX #2: Missing backend endpoints wired) ────
+  // ─── QA & INJECT VIEW HANDLERS ──────────────────────────────────────────────
   if (intent === "build_payload") {
     const productId = formData.get("productId");
     const existingMeta = JSON.parse(formData.get("existingMeta") || "{}");
@@ -486,12 +483,17 @@ export const action = async ({ request }) => {
     return data({ ok: true, success: true, message: "Metafields locked to Shopify." });
   }
 
-  // ─── BULK EDIT (FIX #1: Strict Error Catching) ───────────────────────────────
+  // ─── BULK EDIT ───────────────────────────────────────────────────────────────
   if (intent === "bulk_edit_new") {
     const updates = JSON.parse(formData.get("updates"));
     const ids = JSON.parse(formData.get("ids"));
     const ooakText = formData.get("ooakText") || "";
     const currentStories = JSON.parse(formData.get("currentStories") || "{}");
+
+    // ── DIPSTICK IN ──
+    console.log("[RS-DIAG] bulk_edit_new - Received Updates Object:", JSON.stringify(updates, null, 2));
+    console.log("[RS-DIAG] bulk_edit_new - Received IDs Count:", ids.length);
+    console.log("[RS-DIAG] bulk_edit_new - OOAK Text:", ooakText);
 
     const metafields = [];
 
@@ -525,6 +527,19 @@ export const action = async ({ request }) => {
       }
     });
 
+    console.log("[RS-DIAG] bulk_edit_new - Processed Metafields Array Count:", metafields.length);
+    if (metafields.length > 0) {
+      console.log("[RS-DIAG] bulk_edit_new - Sample of what is being sent to Shopify:", JSON.stringify(metafields.slice(0, 3), null, 2));
+    }
+
+    // ── HARD STOP IF EMPTY ──
+    if (metafields.length === 0) {
+      return data({ 
+        ok: false, 
+        error: "Empty Payload: The boxes were checked, but no text or valid dropdown selections were found to save." 
+      });
+    }
+
     if (metafields.length > 0) {
       const chunks = [];
       for (let i = 0; i < metafields.length; i += 25) chunks.push(metafields.slice(i, i + 25));
@@ -540,9 +555,8 @@ export const action = async ({ request }) => {
           const errors = (json.data?.metafieldsSet?.userErrors || [])
             .filter(e => !e.message.includes("must be consistent with the definition"));
           
-          // HARD STOP on error. Return ok: false so UI turns red.
           if (errors.length > 0) {
-            console.log("[RS-DIAG] bulk_edit_new failed:", errors);
+            console.log("[RS-DIAG] bulk_edit_new API Error:", errors);
             return data({ ok: false, error: errors[0].message });
           }
         } catch (e) {
