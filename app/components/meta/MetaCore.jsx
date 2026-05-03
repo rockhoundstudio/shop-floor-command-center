@@ -64,8 +64,10 @@ export default function MetaCore({ products = [], mode }) {
   const [productSearch, setProductSearch] = useState("");
   const [saveStatus, setSaveStatus] = useState(null); 
 
+  // QA & Inject Tab State
   const [injectProduct, setInjectProduct] = useState("");
   const [payload, setPayload] = useState("");
+  const [qaEdits, setQaEdits] = useState({});
 
   const [mindatQuery, setMindatQuery] = useState("");
   const [mindatSearched, setMindatSearched] = useState("");
@@ -129,10 +131,36 @@ export default function MetaCore({ products = [], mode }) {
     }
   }, [checkedIds, products]);
 
-  const getOptionsForField = (fieldKey) => {
-    const currentStone = fieldValues["official_name"] === "__custom__" 
-      ? (customInputs["official_name"] || "").toLowerCase()
-      : (fieldValues["official_name"] || "").toLowerCase();
+  // Load selected product's exact data into QA Edit State
+  useEffect(() => {
+    if (injectProduct) {
+      const p = products.find(prod => prod.id === injectProduct);
+      if (p) {
+        const cleanedMeta = {};
+        if (p.metafields?.official_name) {
+          cleanedMeta["official_name"] = String(p.metafields.official_name).replace(/[✅⚠️]/g, "").trim();
+        }
+        TARGET_KEYS.forEach(k => {
+          cleanedMeta[k] = p.metafields?.[k] ? String(p.metafields[k]).replace(/[✅⚠️]/g, "").trim() : "";
+        });
+        setQaEdits(cleanedMeta);
+      }
+    } else {
+      setQaEdits({});
+      setPayload("");
+    }
+  }, [injectProduct, products]);
+
+  const handleQaEdit = (key, val) => {
+    setQaEdits(prev => ({ ...prev, [key]: val }));
+  };
+
+  const getOptionsForField = (fieldKey, explicitStoneName) => {
+    const currentStone = explicitStoneName !== undefined
+      ? explicitStoneName.toLowerCase()
+      : (fieldValues["official_name"] === "__custom__" 
+        ? (customInputs["official_name"] || "").toLowerCase()
+        : (fieldValues["official_name"] || "").toLowerCase());
       
     let opts = SEO_DICTIONARY[fieldKey]?.global || [];
     if (currentStone && SEO_DICTIONARY[fieldKey]?.[currentStone]) {
@@ -152,6 +180,16 @@ export default function MetaCore({ products = [], mode }) {
       }
     }
   }, [saveFetcher.state, saveFetcher.data, isProcessing]);
+
+  // --- TRIGGER ENGINE: Auto Populate on Selection ---
+  const triggerAutoSuggest = (stoneName) => {
+    if (!stoneName || stoneName.trim() === "") return;
+    setIsSuggesting(true);
+    const fd = new FormData();
+    fd.append("intent", "mindat_lookup");
+    fd.append("query", stoneName);
+    suggestFetcher.submit(fd, { method: "POST", action: "/app/meta-injector" });
+  };
 
   // --- HANDLE MINDAT SUGGESTION RESPONSE ---
   useEffect(() => {
@@ -235,10 +273,8 @@ export default function MetaCore({ products = [], mode }) {
 
   const autoSuggestFields = () => {
     if (checkedIds.length === 0) return;
-    setIsSuggesting(true);
-
     const firstStone = products.find(p => p.id === checkedIds[0]);
-    if (!firstStone) { setIsSuggesting(false); return; }
+    if (!firstStone) return;
 
     let suggestedName = fieldValues["official_name"] === "__custom__" 
       ? customInputs["official_name"] 
@@ -247,17 +283,7 @@ export default function MetaCore({ products = [], mode }) {
     if (!suggestedName) {
       suggestedName = firstStone.metafields?.official_name || firstStone.title;
     }
-
-    if (!suggestedName || suggestedName.trim() === "") {
-      setIsSuggesting(false);
-      return; 
-    }
-    
-    const fd = new FormData();
-    fd.append("intent", "mindat_lookup");
-    fd.append("query", suggestedName);
-    
-    suggestFetcher.submit(fd, { method: "POST", action: "/app/meta-injector" });
+    triggerAutoSuggest(suggestedName);
   };
 
   const processBulkQueue = () => {
@@ -266,6 +292,12 @@ export default function MetaCore({ products = [], mode }) {
     setSaveStatus(null);
 
     const updates = {};
+
+    // Explicitly add official_name payload hook
+    if (tickedFields["official_name"]) {
+      updates["official_name"] = fieldValues["official_name"] === "__custom__" ? (customInputs["official_name"] || "") : (fieldValues["official_name"] || "");
+    }
+
     TARGET_KEYS.forEach(k => {
       if (tickedFields[k]) {
         updates[k] = fieldValues[k] === "__custom__" ? (customInputs[k] || "") : (fieldValues[k] || "");
@@ -287,6 +319,25 @@ export default function MetaCore({ products = [], mode }) {
     fd.append("ooakText", ooakText || "");
     fd.append("currentStories", JSON.stringify(currentStories));
 
+    saveFetcher.submit(fd, { method: "POST", action: "/app/meta-injector" });
+  };
+
+  // Direct Save Action for QA Edit Tab
+  const saveDirectQa = () => {
+    setIsProcessing(true);
+    setSaveStatus(null);
+
+    const payloadObj = Object.keys(qaEdits)
+      .map(k => ({
+        ownerId: injectProduct,
+        key: k,
+        value: qaEdits[k]
+      }))
+      .filter(mf => mf.value.trim() !== "");
+
+    const fd = new FormData();
+    fd.append("intent", "saveMetafields");
+    fd.append("metafields", JSON.stringify(payloadObj));
     saveFetcher.submit(fd, { method: "POST", action: "/app/meta-injector" });
   };
 
@@ -408,7 +459,13 @@ export default function MetaCore({ products = [], mode }) {
                         <select
                           style={{ width: "100%", padding: "8px", borderRadius: "4px", border: "1px solid #c9cccf", fontSize: "14px", fontWeight: "bold" }}
                           value={fieldValues["official_name"] || ""}
-                          onChange={(e) => setFieldValues({ ...fieldValues, official_name: e.target.value })}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setFieldValues({ ...fieldValues, official_name: val });
+                            if (val !== "__custom__" && val !== "") {
+                              triggerAutoSuggest(val);
+                            }
+                          }}
                         >
                           <option value="">-- Select Valid Mindat Stone --</option>
                           {availableStones.map(stone => (
@@ -518,71 +575,136 @@ export default function MetaCore({ products = [], mode }) {
 
     return (
       <BlockStack gap="400">
-        <Text variant="headingMd">Auto-build payload from product + Mindat</Text>
+        <Text variant="headingMd">QA / Direct Editor</Text>
         <Select
-          label="Select a stone to review its Metafield Health"
+          label="Select a stone to review and edit its Metafield Data"
           options={[{ label: "-- Pick a stone --", value: "" }, ...products.map((p) => ({ label: p.title, value: p.id }))]}
           value={injectProduct}
           onChange={setInjectProduct}
         />
 
+        {saveStatus === "success" && (
+          <Banner tone="success" onDismiss={() => setSaveStatus(null)}>
+            Direct Edits Saved successfully to Shopify!
+          </Banner>
+        )}
+        {saveStatus === "error" && (
+          <Banner tone="critical" onDismiss={() => setSaveStatus(null)}>
+            Save failed. Check your connection and try again.
+          </Banner>
+        )}
+
         {product && (
           <Card roundedAbove="sm">
             <BlockStack gap="400">
               <InlineStack align="space-between" blockAlign="center">
-                <Text as="h2" variant="headingSm">Live Shopify Data</Text>
-                <Badge tone={product.filledCount === TARGET_KEYS.length ? "success" : "warning"}>
-                  {product.filledCount} / {TARGET_KEYS.length} Complete
-                </Badge>
+                <Text as="h2" variant="headingSm">QA Edit Data</Text>
+                <InlineStack gap="300" blockAlign="center">
+                  <Badge tone={product.filledCount === TARGET_KEYS.length ? "success" : "warning"}>
+                    {product.filledCount} / {TARGET_KEYS.length} Complete
+                  </Badge>
+                  <Button variant="primary" onClick={saveDirectQa} loading={isProcessing}>
+                    Save Direct to Shopify
+                  </Button>
+                </InlineStack>
               </InlineStack>
               <Divider />
+              
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '12px' }}>
-                {TARGET_KEYS.map(key => {
-                   const val = product.metafields?.[key];
-                   const isEmpty = !val || String(val).trim() === "";
-                   const isWarning = String(val).includes("⚠️");
-                   
-                   let statusTone = "critical";
-                   let statusIcon = "❌";
-                   let displayVal = "(empty)";
+                
+                {/* Official Name Field (Explicit) */}
+                <div style={{ background: '#f4f6f8', padding: '12px', borderRadius: '6px' }}>
+                  <BlockStack gap="100">
+                    <InlineStack align="space-between">
+                      <Text variant="bodySm" fontWeight="bold" tone="subdued">Official Name</Text>
+                      <Badge tone={qaEdits["official_name"] ? "success" : "attention"}>{qaEdits["official_name"] ? "✅" : "⚠️"}</Badge>
+                    </InlineStack>
+                    <Select
+                      label=""
+                      options={[
+                        {label: "-- Pick a stone --", value: ""},
+                        ...availableStones.map(s => ({label: s, value: s})),
+                        {label: "Custom Value...", value: "__custom__"}
+                      ]}
+                      value={availableStones.includes(qaEdits["official_name"]) ? qaEdits["official_name"] : (qaEdits["official_name"] ? "__custom__" : "")}
+                      onChange={(v) => { if (v !== "__custom__") handleQaEdit("official_name", v); }}
+                    />
+                    {(!availableStones.includes(qaEdits["official_name"]) && qaEdits["official_name"]) || qaEdits["official_name"] === "__custom__" ? (
+                      <TextField
+                        label=""
+                        value={qaEdits["official_name"] || ""}
+                        onChange={(v) => handleQaEdit("official_name", v)}
+                        autoComplete="off"
+                        placeholder="Custom Official Name"
+                      />
+                    ) : null}
+                  </BlockStack>
+                </div>
 
-                   if (!isEmpty) {
-                     if (isWarning) {
-                       statusTone = "attention";
-                       statusIcon = "⚠️";
-                       displayVal = String(val).replace("⚠️", "").trim();
-                     } else {
-                       statusTone = "success";
-                       statusIcon = "✅";
-                       displayVal = String(val).replace("✅", "").trim();
-                     }
-                   }
+                {/* Target Keys Array */}
+                {TARGET_KEYS.filter(k => k !== 'official_name').map(key => {
+                  const options = DROPDOWN_FIELDS.includes(key) ? getOptionsForField(key, qaEdits["official_name"] || "") : [];
+                  const isCustomDropdown = DROPDOWN_FIELDS.includes(key) && qaEdits[key] && !options.includes(qaEdits[key]);
 
-                   return (
-                     <div key={key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f4f6f8', padding: '6px 12px', borderRadius: '6px' }}>
-                       <Text variant="bodySm" fontWeight="bold" tone="subdued">{FIELD_LABELS[key] || key}</Text>
-                       <InlineStack gap="200" blockAlign="center" wrap={false}>
-                         <div style={{ maxWidth: '110px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', textAlign: 'right' }}>
-                           <Text variant="bodySm" tone={isEmpty ? "subdued" : "base"}>{displayVal}</Text>
-                         </div>
-                         <Badge tone={statusTone} size="small">{statusIcon}</Badge>
-                       </InlineStack>
-                     </div>
-                   );
+                  return (
+                    <div key={key} style={{ background: '#f4f6f8', padding: '12px', borderRadius: '6px' }}>
+                      <BlockStack gap="100">
+                        <InlineStack align="space-between">
+                          <Text variant="bodySm" fontWeight="bold" tone="subdued">{FIELD_LABELS[key] || key}</Text>
+                          <Badge tone={qaEdits[key] ? "success" : "attention"}>{qaEdits[key] ? "✅" : "⚠️"}</Badge>
+                        </InlineStack>
+                        
+                        {DROPDOWN_FIELDS.includes(key) ? (
+                          <BlockStack gap="200">
+                            <Select
+                              label=""
+                              options={[
+                                {label: "-- Select --", value: ""}, 
+                                ...options.map(o => ({label: o, value: o})),
+                                {label: "+ Custom Value...", value: "__custom__"}
+                              ]}
+                              value={isCustomDropdown ? "__custom__" : (qaEdits[key] || "")}
+                              onChange={(v) => { if (v !== "__custom__") handleQaEdit(key, v); }}
+                            />
+                            {isCustomDropdown && (
+                              <TextField
+                                label=""
+                                value={qaEdits[key] || ""}
+                                onChange={(v) => handleQaEdit(key, v)}
+                                autoComplete="off"
+                                placeholder="Custom dropdown value"
+                              />
+                            )}
+                          </BlockStack>
+                        ) : (
+                          <TextField
+                            label=""
+                            value={qaEdits[key] || ""}
+                            onChange={(v) => handleQaEdit(key, v)}
+                            autoComplete="off"
+                            multiline={key === "stone_story" || key === "bench_notes" ? 2 : false}
+                          />
+                        )}
+                      </BlockStack>
+                    </div>
+                  );
                 })}
               </div>
             </BlockStack>
           </Card>
         )}
 
-        <Button variant="primary" onClick={() => {
+        <Divider />
+        <Text variant="headingSm" tone="subdued">Advanced: JSON Payload Injector</Text>
+
+        <Button onClick={() => {
           if (!product) return;
           const fd = new FormData();
           fd.append("intent", "build_payload");
           fd.append("productId", product.id);
           fd.append("title", product.title);
           fd.append("description", product.description);
-          fd.append("existingMeta", JSON.stringify(product.metafields));
+          fd.append("existingMeta", JSON.stringify(qaEdits)); // Uses your live QA edits!
           fetcher.submit(fd, { method: "post", action: "/app/meta-injector" });
         }} loading={fetcher.state === "submitting" && fetcher.formData?.get("intent") === "build_payload"} disabled={!injectProduct}>
           🔄 Build JSON Payload
