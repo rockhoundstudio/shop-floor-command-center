@@ -20,15 +20,15 @@ import { TAXONOMY_GIDS, wrapGid } from "../utils/taxonomyMap";
 function formatMetafieldValue(originalKey, value) {
   const cleanValue = String(value).replace(/[✅⚠️]/g, "").trim();
   
-  // Convert to dash format to perfectly match taxonomyMap.js keys
-  const dictionaryKey = originalKey.replace(/_/g, "-");
+  // The taxonomyMap.js uses underscores (e.g., mineral_class)
+  const mapKey = originalKey.replace(/-/g, "_");
 
-  if (TAXONOMY_GIDS[dictionaryKey] && TAXONOMY_GIDS[dictionaryKey][cleanValue]) {
+  if (TAXONOMY_GIDS[mapKey] && TAXONOMY_GIDS[mapKey][cleanValue]) {
     return {
-      value: wrapGid(TAXONOMY_GIDS[dictionaryKey][cleanValue]),
+      value: wrapGid(TAXONOMY_GIDS[mapKey][cleanValue]),
       type: "list.metaobject_reference",
       namespace: "shopify",
-      key: dictionaryKey
+      key: originalKey.replace(/_/g, "-") // Shopify requires dashes (e.g., mineral-class)
     };
   }
 
@@ -37,7 +37,7 @@ function formatMetafieldValue(originalKey, value) {
     value: String(value).trim(),
     type: "single_line_text_field",
     namespace: "custom",
-    key: originalKey.replace(/-/g, "_")
+    key: mapKey
   };
 }
 
@@ -93,7 +93,7 @@ export const loader = async ({ request }) => {
         Object.entries(rawMfs).map(([k, v]) => {
           let finalVal = String(v);
           
-          // 1. Unpack the JSON array first (Sidekick's fix)
+          // 1. Unpack the JSON array first
           if (finalVal.startsWith("[") && finalVal.endsWith("]")) {
             try {
               const parsed = JSON.parse(finalVal);
@@ -102,11 +102,9 @@ export const loader = async ({ request }) => {
           }
 
           // 2. Translate the clean ID back to English
-          // Convert key to dash format to look up in TAXONOMY_GIDS
-          const dictionaryKey = k.replace(/_/g, "-");
-          if (TAXONOMY_GIDS[dictionaryKey]) {
-            for (const [word, mappedGid] of Object.entries(TAXONOMY_GIDS[dictionaryKey])) {
-              // Now matching against the full gid string from your map
+          const mapKey = k.replace(/-/g, "_");
+          if (TAXONOMY_GIDS[mapKey]) {
+            for (const [word, mappedGid] of Object.entries(TAXONOMY_GIDS[mapKey])) {
               if (finalVal.includes(String(mappedGid))) {
                 finalVal = word;
                 break;
@@ -141,7 +139,6 @@ export const loader = async ({ request }) => {
 
 export const action = async ({ request }) => {
   const { admin, session } = await authenticate.admin(request);
-  
   const formData = await request.formData();
   const intent = formData.get("intent");
 
@@ -153,11 +150,11 @@ export const action = async ({ request }) => {
     const payloadObj = Object.keys(existingMeta)
       .filter(k => existingMeta[k] && String(existingMeta[k]).trim() !== "")
       .map(k => {
-        const dictionaryKey = k.replace(/_/g, "-");
+        const mapKey = k.replace(/-/g, "_");
         return {
           ownerId: productId,
-          namespace: TAXONOMY_GIDS[dictionaryKey] ? "shopify" : "custom",
-          key: TAXONOMY_GIDS[dictionaryKey] ? dictionaryKey : k.replace(/-/g, "_"),
+          namespace: TAXONOMY_GIDS[mapKey] ? "shopify" : "custom",
+          key: TAXONOMY_GIDS[mapKey] ? k.replace(/_/g, "-") : mapKey,
           value: String(existingMeta[k]).replace(/[✅⚠️]/g, "").trim()
         };
       });
@@ -196,9 +193,7 @@ export const action = async ({ request }) => {
           }
         `, { variables: { metafields: chunk } });
         const json = await res.json();
-        const errors = (json.data?.metafieldsSet?.userErrors || [])
-          .filter(e => !e.message.includes("must be consistent with the definition"));
-        
+        const errors = json.data?.metafieldsSet?.userErrors || [];
         if (errors.length > 0) return data({ ok: false, error: errors[0].message });
       }
       return data({ ok: true, injected: metafields.length });
@@ -207,275 +202,12 @@ export const action = async ({ request }) => {
     }
   }
 
-  // ─── BULK SEED OFFICIAL NAMES ───────────────────────────────────────────────
-  if (intent === "seed_names") {
-    const idsRaw = formData.get("ids");
-    const ids = JSON.parse(idsRaw);
-
-    let officialNames = {};
-    try {
-      const filePath = path.join(process.cwd(), "app", "data", "officialNames.json");
-      officialNames = JSON.parse(fs.readFileSync(filePath, "utf8"));
-    } catch (e) {
-      return data({ ok: false, error: "Could not read officialNames.json map." });
-    }
-
-    const metafields = [];
-    let seededCount = 0;
-
-    ids.forEach(id => {
-      const mappedName = officialNames[id];
-      if (mappedName) {
-        metafields.push({
-          ownerId: id,
-          namespace: "custom",
-          key: "official_name",
-          value: mappedName,
-          type: "single_line_text_field",
-        });
-        seededCount++;
-      }
-    });
-
-    if (metafields.length > 0) {
-      const chunks = [];
-      for (let i = 0; i < metafields.length; i += 25) chunks.push(metafields.slice(i, i + 25));
-      for (const chunk of chunks) {
-        await admin.graphql(`
-          mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
-            metafieldsSet(metafields: $metafields) { userErrors { message } }
-          }
-        `, { variables: { metafields: chunk } });
-      }
-    }
-
-    return data({ ok: true, seededCount });
-  }
-
-  // ─── SINGLE PRODUCT AUTO-FILL ───────────────────────────────────────────────
-  if (intent === "autoFill") {
-    const title       = formData.get("title");
-    const description = formData.get("description");
-    const existingRaw = formData.get("existingMeta");
-    const existing    = existingRaw ? JSON.parse(existingRaw) : {};
-
-    const parsed  = parseDescription(description);
-    const library = lookupStone(title) || {};
-
-    let stoneName = existing.official_name ? String(existing.official_name).trim() : null;
-    if (!stoneName && library.official_name) stoneName = library.official_name;
-    if (!stoneName && title) stoneName = title;
-
-    let mindat = {};
-    let mindatError = null;
-
-    if (!stoneName) {
-      mindatError = "missing_name";
-    } else {
-      try {
-        const normalizedName = stoneName.toLowerCase().trim();
-        const cachedStone = await prisma.stoneCache.findUnique({
-          where: { stoneName: normalizedName }
-        });
-
-        if (cachedStone) {
-          mindat = JSON.parse(cachedStone.data);
-        } else {
-          if (!process.env.MINDAT_API_KEY) throw new Error("MINDAT_API_KEY not set");
-          const res = await fetch(
-            `https://api.mindat.org/v1/geomaterials/?name=${encodeURIComponent(stoneName)}&format=json`,
-            { headers: { Authorization: `Token ${process.env.MINDAT_API_KEY}` } }
-          );
-          if (!res.ok) throw new Error(`Mindat HTTP ${res.status}`);
-          const json = await res.json();
-          if (json.results?.[0]) {
-            const m = json.results[0];
-            const hardnessStr = m.hardness_min ? (m.hardness_max && m.hardness_max !== m.hardness_min ? `${m.hardness_min}-${m.hardness_max}` : `${m.hardness_min}`) : "";
-            const gravityStr = m.density_min ? (m.density_max && m.density_max !== m.density_min ? `${m.density_min}-${m.density_max}` : `${m.density_min}`) : "";
-
-            mindat = {
-              moh_hardness:     hardnessStr,
-              crystal_system:   m.crystal_system || "",
-              specific_gravity: gravityStr,
-              luster:           m.lustre         || "",
-              cleavage:         m.cleavage       || "",
-              fracture_pattern: m.fracture       || "",
-              diaphaneity:      m.diaphaneity    || "",
-            };
-            Object.keys(mindat).forEach(k => { if (!mindat[k]) delete mindat[k]; });
-
-            if (Object.keys(mindat).length > 0) {
-              await prisma.stoneCache.create({
-                data: { stoneName: normalizedName, data: JSON.stringify(mindat) }
-              });
-            }
-          }
-        }
-      } catch (e) {
-        mindatError = e.message;
-      }
-    }
-
-    const merged = {};
-    const conflicts = [];
-
-    if (stoneName && !existing["official_name"]) {
-      merged["official_name"] = stoneName;
-    }
-
-    TARGET_KEYS.forEach(key => {
-      if (existing[key] && String(existing[key]).trim() !== "") {
-        merged[key] = existing[key];
-        return;
-      }
-      const libVal    = library[key] || "";
-      const parsedVal = parsed[key]  || "";
-      const mindatVal = mindat[key]  || "";
-      if (mindatVal) {
-        if (libVal && libVal !== mindatVal) conflicts.push({ key, library: libVal, mindat: mindatVal });
-        merged[key] = `✅ ${mindatVal}`;
-      } else if (libVal) {
-        merged[key] = libVal;
-      } else if (parsedVal) {
-        merged[key] = `⚠️ ${parsedVal}`;
-      }
-    });
-
-    return data({ ok: true, merged, conflicts, mindatError });
-  }
-
-  // ─── BULK AUTO-FILL ALL PRODUCTS ────────────────────────────────────────────
-  if (intent === "bulkAutoFill") {
-    const productsRaw = formData.get("products");
-    const products = JSON.parse(productsRaw);
-    const results = [];
-
-    for (const p of products) {
-      const library  = lookupStone(p.title) || {};
-      const parsed   = parseDescription(p.description || "");
-      const existing = p.metafields || {};
-
-      let stoneName = existing.official_name ? String(existing.official_name).trim() : null;
-      if (!stoneName && library.official_name) stoneName = library.official_name;
-      if (!stoneName && p.title) stoneName = p.title;
-
-      if (!stoneName) {
-        results.push({ id: p.id, title: p.title, ok: false, error: "Could not identify stone." });
-        continue;
-      }
-
-      let mindat = {};
-      let mindatError = null;
-      try {
-        const normalizedName = stoneName.toLowerCase().trim();
-        const cachedStone = await prisma.stoneCache.findUnique({
-          where: { stoneName: normalizedName }
-        });
-
-        if (cachedStone) {
-          mindat = JSON.parse(cachedStone.data);
-        } else {
-          if (!process.env.MINDAT_API_KEY) throw new Error("MINDAT_API_KEY not set");
-          const res = await fetch(
-            `https://api.mindat.org/v1/geomaterials/?name=${encodeURIComponent(stoneName)}&format=json`,
-            { headers: { Authorization: `Token ${process.env.MINDAT_API_KEY}` } }
-          );
-          if (res.ok) {
-            const json = await res.json();
-            if (json.results?.[0]) {
-              const m = json.results[0];
-              const hardnessStr = m.hardness_min ? (m.hardness_max && m.hardness_max !== m.hardness_min ? `${m.hardness_min}-${m.hardness_max}` : `${m.hardness_min}`) : "";
-              const gravityStr = m.density_min ? (m.density_max && m.density_max !== m.density_min ? `${m.density_min}-${m.density_max}` : `${m.density_min}`) : "";
-
-              mindat = {
-                moh_hardness:     hardnessStr,
-                crystal_system:   m.crystal_system || "",
-                specific_gravity: gravityStr,
-                luster:           m.lustre         || "",
-                cleavage:         m.cleavage       || "",
-                fracture_pattern: m.fracture       || "",
-                diaphaneity:      m.diaphaneity    || "",
-              };
-              Object.keys(mindat).forEach(k => { if (!mindat[k]) delete mindat[k]; });
-
-              if (Object.keys(mindat).length > 0) {
-                await prisma.stoneCache.create({
-                  data: { stoneName: normalizedName, data: JSON.stringify(mindat) }
-                });
-              }
-            }
-          }
-        }
-      } catch (e) {
-        mindatError = e.message;
-      }
-
-      const merged = {};
-      if (stoneName && !existing["official_name"]) merged["official_name"] = stoneName;
-
-      TARGET_KEYS.forEach(key => {
-        if (existing[key] && String(existing[key]).trim() !== "") {
-          merged[key] = existing[key];
-          return;
-        }
-        const libVal    = library[key] || "";
-        const parsedVal = parsed[key]  || "";
-        const mindatVal = mindat[key]  || "";
-        if (mindatVal)      merged[key] = `✅ ${mindatVal}`;
-        else if (libVal)    merged[key] = libVal;
-        else if (parsedVal) merged[key] = `⚠️ ${parsedVal}`;
-      });
-
-      const metafields = TARGET_KEYS
-        .filter(key => merged[key] && String(merged[key]).trim() !== "")
-        .map(key => {
-          let finalValue = merged[key];
-          if (key === "stone_story") finalValue = autoLinkStory(finalValue);
-          const formatted = formatMetafieldValue(key, finalValue);
-          if (!formatted) return null;
-          return {
-            ownerId:   p.id,
-            namespace: formatted.namespace,
-            key:       formatted.key,
-            value:     formatted.value,
-            type:      formatted.type,
-          };
-        }).filter(Boolean);
-
-      if (metafields.length === 0) {
-        results.push({ id: p.id, title: p.title, ok: false, error: "no data found" });
-        continue;
-      }
-
-      let saveError = null;
-      const chunks = [];
-      for (let i = 0; i < metafields.length; i += 25) chunks.push(metafields.slice(i, i + 25));
-      for (const chunk of chunks) {
-        const res = await admin.graphql(`
-          mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
-            metafieldsSet(metafields: $metafields) { userErrors { message } }
-          }
-        `, { variables: { metafields: chunk } });
-        const json = await res.json();
-        const errors = (json.data?.metafieldsSet?.userErrors || [])
-          .filter(e => !e.message.includes("must be consistent with the definition"));
-        if (errors.length > 0) { saveError = errors[0].message; break; }
-      }
-
-      results.push({ id: p.id, title: p.title, ok: !saveError, error: saveError || mindatError || null, merged });
-      await new Promise(r => setTimeout(r, 200));
-    }
-
-    const failed = results.filter(r => !r.ok);
-    return data({ ok: true, total: results.length, failed, results });
-  }
-
   // ─── SAVE METAFIELDS (MANUAL EDITS) ─────────────────────────────────────────
   if (intent === "saveMetafields") {
     const rawMetafields = JSON.parse(formData.get("metafields"));
 
     const processedMetafields = rawMetafields
-      .filter(mf => mf.value && String(mf.value).trim() !== "")
+      .filter(mf => mf.value != null && String(mf.value).trim() !== "")
       .map(mf => {
         let finalValue = mf.value;
         if (mf.key.replace(/-/g, "_") === "stone_story") finalValue = autoLinkStory(finalValue);
@@ -491,6 +223,10 @@ export const action = async ({ request }) => {
         };
       }).filter(Boolean);
 
+    if (processedMetafields.length === 0) {
+      return data({ ok: false, error: "Empty Payload: No valid fields to save." });
+    }
+
     const chunks = [];
     for (let i = 0; i < processedMetafields.length; i += 25) chunks.push(processedMetafields.slice(i, i + 25));
     for (const chunk of chunks) {
@@ -501,11 +237,10 @@ export const action = async ({ request }) => {
           }
         `, { variables: { metafields: chunk } });
         const json = await res.json();
-        const errors = (json.data?.metafieldsSet?.userErrors || [])
-          .filter(e => !e.message.includes("must be consistent with the definition"));
-        if (errors.length > 0) return data({ success: false, error: errors[0].message });
+        const errors = json.data?.metafieldsSet?.userErrors || [];
+        if (errors.length > 0) return data({ ok: false, error: errors[0].message });
       } catch (e) {
-        throw e;
+        return data({ ok: false, error: e.message });
       }
     }
     return data({ ok: true, success: true, message: "Metafields locked to Shopify." });
@@ -550,33 +285,24 @@ export const action = async ({ request }) => {
     });
 
     if (metafields.length === 0) {
-      return data({ 
-        ok: false, 
-        error: "Empty Payload: The boxes were checked, but no text or valid dropdown selections were found to save." 
-      });
+      return data({ ok: false, error: "Empty Payload: No text or valid dropdowns to save." });
     }
 
-    if (metafields.length > 0) {
-      const chunks = [];
-      for (let i = 0; i < metafields.length; i += 25) chunks.push(metafields.slice(i, i + 25));
-      for (const chunk of chunks) {
-        try {
-          const res = await admin.graphql(`
-            mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
-              metafieldsSet(metafields: $metafields) { userErrors { message } }
-            }
-          `, { variables: { metafields: chunk } });
-          const json = await res.json();
-          
-          const errors = (json.data?.metafieldsSet?.userErrors || [])
-            .filter(e => !e.message.includes("must be consistent with the definition"));
-          
-          if (errors.length > 0) {
-            return data({ ok: false, error: errors[0].message });
+    const chunks = [];
+    for (let i = 0; i < metafields.length; i += 25) chunks.push(metafields.slice(i, i + 25));
+    for (const chunk of chunks) {
+      try {
+        const res = await admin.graphql(`
+          mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
+            metafieldsSet(metafields: $metafields) { userErrors { message } }
           }
-        } catch (e) {
-           return data({ ok: false, error: e.message });
-        }
+        `, { variables: { metafields: chunk } });
+        const json = await res.json();
+        
+        const errors = json.data?.metafieldsSet?.userErrors || [];
+        if (errors.length > 0) return data({ ok: false, error: errors[0].message });
+      } catch (e) {
+          return data({ ok: false, error: e.message });
       }
     }
     return data({ ok: true });

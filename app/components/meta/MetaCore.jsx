@@ -333,7 +333,7 @@ export default function MetaCore({ products = [], mode }) {
         key: k,
         value: qaEdits[k]
       }))
-      .filter(mf => mf.value.trim() !== "");
+      .filter(mf => mf.value != null && String(mf.value).trim() !== "");
 
     const fd = new FormData();
     fd.append("intent", "saveMetafields");
@@ -386,7 +386,7 @@ export default function MetaCore({ products = [], mode }) {
         )}
         {saveStatus === "error" && (
           <Banner tone="critical" onDismiss={() => setSaveStatus(null)}>
-            Save failed. Check your connection and try again.
+            Save failed: {saveFetcher.data?.error || "Check your connection and try again."}
           </Banner>
         )}
         {isProcessing && (
@@ -590,7 +590,7 @@ export default function MetaCore({ products = [], mode }) {
         )}
         {saveStatus === "error" && (
           <Banner tone="critical" onDismiss={() => setSaveStatus(null)}>
-            Save failed. Check your connection and try again.
+            Save failed: {saveFetcher.data?.error || "Check your connection and try again."}
           </Banner>
         )}
 
@@ -624,15 +624,18 @@ export default function MetaCore({ products = [], mode }) {
                       options={[
                         {label: "-- Pick a stone --", value: ""},
                         ...availableStones.map(s => ({label: s, value: s})),
-                        {label: "Custom Value...", value: "__custom__"}
+                        {label: "+ Custom Value...", value: "__custom__"}
                       ]}
                       value={availableStones.includes(qaEdits["official_name"]) ? qaEdits["official_name"] : (qaEdits["official_name"] ? "__custom__" : "")}
-                      onChange={(v) => { if (v !== "__custom__") handleQaEdit("official_name", v); }}
+                      onChange={(v) => { 
+                        if (v === "__custom__") handleQaEdit("official_name", "__custom__");
+                        else handleQaEdit("official_name", v); 
+                      }}
                     />
-                    {(!availableStones.includes(qaEdits["official_name"]) && qaEdits["official_name"]) || qaEdits["official_name"] === "__custom__" ? (
+                    {qaEdits["official_name"] === "__custom__" || (!availableStones.includes(qaEdits["official_name"]) && qaEdits["official_name"]) ? (
                       <TextField
                         label=""
-                        value={qaEdits["official_name"] || ""}
+                        value={qaEdits["official_name"] === "__custom__" ? "" : (qaEdits["official_name"] || "")}
                         onChange={(v) => handleQaEdit("official_name", v)}
                         autoComplete="off"
                         placeholder="Custom Official Name"
@@ -644,14 +647,14 @@ export default function MetaCore({ products = [], mode }) {
                 {/* Target Keys Array */}
                 {TARGET_KEYS.filter(k => k !== 'official_name').map(key => {
                   const options = DROPDOWN_FIELDS.includes(key) ? getOptionsForField(key, qaEdits["official_name"] || "") : [];
-                  const isCustomDropdown = DROPDOWN_FIELDS.includes(key) && qaEdits[key] && !options.includes(qaEdits[key]);
+                  const isCustomDropdown = DROPDOWN_FIELDS.includes(key) && qaEdits[key] && !options.includes(qaEdits[key]) || qaEdits[key] === "__custom__";
 
                   return (
                     <div key={key} style={{ background: '#f4f6f8', padding: '12px', borderRadius: '6px' }}>
                       <BlockStack gap="100">
                         <InlineStack align="space-between">
                           <Text variant="bodySm" fontWeight="bold" tone="subdued">{FIELD_LABELS[key] || key}</Text>
-                          <Badge tone={qaEdits[key] ? "success" : "attention"}>{qaEdits[key] ? "✅" : "⚠️"}</Badge>
+                          <Badge tone={qaEdits[key] && qaEdits[key] !== "__custom__" ? "success" : "attention"}>{qaEdits[key] && qaEdits[key] !== "__custom__" ? "✅" : "⚠️"}</Badge>
                         </InlineStack>
                         
                         {DROPDOWN_FIELDS.includes(key) ? (
@@ -664,12 +667,15 @@ export default function MetaCore({ products = [], mode }) {
                                 {label: "+ Custom Value...", value: "__custom__"}
                               ]}
                               value={isCustomDropdown ? "__custom__" : (qaEdits[key] || "")}
-                              onChange={(v) => { if (v !== "__custom__") handleQaEdit(key, v); }}
+                              onChange={(v) => { 
+                                if (v === "__custom__") handleQaEdit(key, "__custom__");
+                                else handleQaEdit(key, v); 
+                              }}
                             />
                             {isCustomDropdown && (
                               <TextField
                                 label=""
-                                value={qaEdits[key] || ""}
+                                value={qaEdits[key] === "__custom__" ? "" : (qaEdits[key] || "")}
                                 onChange={(v) => handleQaEdit(key, v)}
                                 autoComplete="off"
                                 placeholder="Custom dropdown value"
