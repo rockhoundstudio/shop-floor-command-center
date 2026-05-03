@@ -182,6 +182,106 @@ export const action = async ({ request }) => {
   const formData = await request.formData();
   const intent = formData.get("intent");
 
+  if (intent === "loadVocabulary") {
+    try {
+      const res = await admin.graphql(`
+        query {
+          metaobjects(type: "field_vocabulary", first: 50) {
+            edges {
+              node {
+                id
+                field_key: field(key: "field_key") { value }
+                values: field(key: "values") { value }
+              }
+            }
+          }
+        }
+      `);
+      const json = await res.json();
+      const map = {};
+      const edges = json.data?.metaobjects?.edges || [];
+      for (const edge of edges) {
+        const fk = edge.node.field_key?.value;
+        const vals = edge.node.values?.value;
+        if (fk && vals) {
+          map[fk] = vals.split(",").map(v => v.trim()).filter(Boolean);
+        }
+      }
+      return data({ ok: true, vocabulary: map });
+    } catch (e) {
+      return data({ ok: false, error: e.message });
+    }
+  }
+
+  if (intent === "saveVocabularyEntry") {
+    const fieldKey = formData.get("field_key");
+    const newValue = formData.get("new_value");
+    if (!fieldKey || !newValue) return data({ ok: false, error: "Missing fields" });
+
+    try {
+      const res = await admin.graphql(`
+        query {
+          metaobjects(type: "field_vocabulary", first: 50) {
+            edges {
+              node {
+                id
+                field_key: field(key: "field_key") { value }
+                values: field(key: "values") { value }
+              }
+            }
+          }
+        }
+      `);
+      const json = await res.json();
+      const edges = json.data?.metaobjects?.edges || [];
+      const existing = edges.find(e => e.node.field_key?.value === fieldKey);
+
+      if (existing) {
+        const currentVals = existing.node.values?.value ? existing.node.values.value.split(",").map(v => v.trim()) : [];
+        if (!currentVals.includes(newValue.trim())) {
+          currentVals.push(newValue.trim());
+        }
+        await admin.graphql(`
+          mutation metaobjectUpdate($id: ID!, $metaobject: MetaobjectUpdateInput!) {
+            metaobjectUpdate(id: $id, metaobject: $metaobject) {
+              userErrors { message }
+            }
+          }
+        `, {
+          variables: {
+            id: existing.node.id,
+            metaobject: {
+              fields: [
+                { key: "values", value: currentVals.join(",") }
+              ]
+            }
+          }
+        });
+      } else {
+        await admin.graphql(`
+          mutation metaobjectCreate($metaobject: MetaobjectCreateInput!) {
+            metaobjectCreate(metaobject: $metaobject) {
+              userErrors { message }
+            }
+          }
+        `, {
+          variables: {
+            metaobject: {
+              type: "field_vocabulary",
+              fields: [
+                { key: "field_key", value: fieldKey },
+                { key: "values", value: newValue.trim() }
+              ]
+            }
+          }
+        });
+      }
+      return data({ ok: true });
+    } catch (e) {
+      return data({ ok: false, error: e.message });
+    }
+  }
+
   if (intent === "build_payload") {
     const productId = formData.get("productId");
     const existingMeta = JSON.parse(formData.get("existingMeta") || "{}");

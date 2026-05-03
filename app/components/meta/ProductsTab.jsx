@@ -3,7 +3,7 @@ import {
   InlineStack, Page, Layout, Select, Box, ButtonGroup, 
   ResourceList, ResourceItem, Thumbnail, Divider
 } from "@shopify/polaris";
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useFetcher } from "react-router";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { TARGET_KEYS, FIELD_LABELS, MANUAL_KEYS } from "../../utils/metaScan";
@@ -24,6 +24,18 @@ const availableStones = [
   "Tiger's Eye", "Tourmaline", "Turquoise", "Variscite"
 ];
 
+const SEED_OPTIONS = {
+  story_theme: ["River Find", "Road Trip", "Rescue", "Canyon Run", "First Cut", "Commission", "Ranch Find", "Mine Pull"],
+  cut_type: ["Oval", "Teardrop", "Marquise", "Freeform", "Cabochon", "Round", "Cushion", "Trillion", "Heart", "Pear"],
+  stone_shape: ["Oval", "Teardrop", "Marquise", "Freeform", "Round", "Rectangular", "Irregular", "Heart"],
+  surface_finish: ["High Polish", "Matte", "Raw", "Satin", "Semi-Polish"],
+  treatment_status: ["Untreated — Natural", "Stabilized", "Dyed", "Heated", "Irradiated", "Coated"],
+  primary_color: ["Red", "Orange", "Yellow", "Green", "Blue", "Purple", "Pink", "Brown", "Black", "White", "Grey", "Multicolor", "Cream", "Gold", "Silver"],
+  secondary_colors: ["Red", "Orange", "Yellow", "Green", "Blue", "Purple", "Pink", "Brown", "Black", "White", "Grey", "Multicolor", "Cream", "Gold", "Silver"],
+  luster: ["Vitreous", "Waxy", "Resinous", "Silky", "Pearly", "Dull", "Adamantine", "Subvitreous"],
+  diaphaneity: ["Opaque", "Translucent", "Transparent", "Sub-translucent"]
+};
+
 function formatMetafieldValue(key, value) {
   const cleanValue = String(value).replace(/[✅⚠️]/g, "").trim();
   const safeKey = key.replace(/-/g, "_");
@@ -34,12 +46,10 @@ function formatMetafieldValue(key, value) {
       type: "list.metaobject_reference"
     };
   }
-  // If this key belongs to taxonomy but value isn't in the map, skip it
   if (TAXONOMY_GIDS[safeKey]) {
     return null;
   }
   
-  // Apply List Field Formatting matching the backend
   const isListField = LIST_TEXT_FIELDS.includes(safeKey);
 
   return {
@@ -63,12 +73,32 @@ export default function ProductsTab({ products = [] }) {
   const [bulkSaveStatus, setBulkSaveStatus] = useState(null);
   const [bulkSaveCount, setBulkSaveCount] = useState(0);
 
+  // Vocabulary UI States
+  const [vocabulary, setVocabulary] = useState({});
+  const [showCustomInput, setShowCustomInput] = useState({});
+  const [customInputValue, setCustomInputValue] = useState({});
+
   const saveFetcher     = useFetcher();
   const autoFetcher     = useFetcher();
   const bulkFetcher     = useFetcher();
   const bulkSaveFetcher = useFetcher();
+  const vocabFetcher    = useFetcher();
+  const addCustomFetcher = useFetcher();
 
   const filtered = products.filter(p => p.title.toLowerCase().includes(search.toLowerCase()));
+
+  // Trigger Vocabulary Load when Editor Opens
+  useEffect(() => {
+    if (selected && vocabFetcher.state === "idle" && !vocabFetcher.data) {
+      vocabFetcher.submit({ intent: "loadVocabulary" }, { method: "post", action: "/app/meta-injector" });
+    }
+  }, [selected, vocabFetcher]);
+
+  useEffect(() => {
+    if (vocabFetcher.data?.vocabulary) {
+      setVocabulary(vocabFetcher.data.vocabulary);
+    }
+  }, [vocabFetcher.data]);
 
   function openEditor(product) {
     const initial = {};
@@ -311,16 +341,115 @@ export default function ProductsTab({ products = [] }) {
                     </Box>
 
                     <BlockStack gap="300">
-                      {MANUAL_KEYS.filter(key => key !== "official_name").map(key => (
-                        <TextField
-                          key={key}
-                          label={FIELD_LABELS[key] || key}
-                          value={fieldValues[key] || ""}
-                          onChange={val => setFieldValues(prev => ({ ...prev, [key]: val }))}
-                          autoComplete="off"
-                          multiline={["stone_story", "bench_notes", "character_marks", "rock_composition"].includes(key) ? 3 : undefined}
-                        />
-                      ))}
+                      {MANUAL_KEYS.filter(key => key !== "official_name").map(key => {
+                        if (SEED_OPTIONS[key]) {
+                          const opts = [...new Set([...(SEED_OPTIONS[key] || []), ...(vocabulary[key] || [])])];
+                          const isMulti = key === "secondary_colors";
+
+                          const selectOptions = isMulti 
+                            ? [{label: "-- Add Color --", value: ""}, ...opts.map(o => ({label: o, value: o}))]
+                            : [{label: "-- Select --", value: ""}, ...opts.map(o => ({label: o, value: o}))];
+
+                          if (!isMulti && fieldValues[key] && !opts.includes(fieldValues[key])) {
+                            selectOptions.push({ label: fieldValues[key], value: fieldValues[key] });
+                          }
+
+                          return (
+                            <BlockStack gap="200" key={key}>
+                               <Text as="h3" variant="bodyMd" fontWeight="bold">{FIELD_LABELS[key] || key}</Text>
+                               <InlineStack gap="300" blockAlign="start" wrap={false}>
+                                 <div style={{ flex: 1 }}>
+                                   {!isMulti ? (
+                                     <Select
+                                       labelHidden
+                                       label={FIELD_LABELS[key] || key}
+                                       options={selectOptions}
+                                       value={fieldValues[key] || ""}
+                                       onChange={(v) => setFieldValues(prev => ({...prev, [key]: v}))}
+                                     />
+                                   ) : (
+                                     <BlockStack gap="200">
+                                       <Select
+                                         labelHidden
+                                         label="Add Color"
+                                         options={selectOptions}
+                                         value=""
+                                         onChange={(v) => {
+                                           if (!v) return;
+                                           const curr = fieldValues[key] ? fieldValues[key].split(",").map(s => s.trim()).filter(Boolean) : [];
+                                           if (!curr.includes(v)) curr.push(v);
+                                           setFieldValues(prev => ({...prev, [key]: curr.join(", ")}));
+                                         }}
+                                       />
+                                       <TextField
+                                         labelHidden
+                                         label={FIELD_LABELS[key] || key}
+                                         value={fieldValues[key] || ""}
+                                         onChange={val => setFieldValues(prev => ({ ...prev, [key]: val }))}
+                                         autoComplete="off"
+                                         helpText="Comma-separated list"
+                                       />
+                                     </BlockStack>
+                                   )}
+                                 </div>
+                                 <Button onClick={() => setShowCustomInput(p => ({...p, [key]: !p[key]}))}>
+                                   {showCustomInput[key] ? "Cancel" : "➕ Add Custom"}
+                                 </Button>
+                               </InlineStack>
+
+                               {showCustomInput[key] && (
+                                 <div style={{ paddingLeft: "8px", borderLeft: "2px solid #e1e3e5", marginTop: "8px" }}>
+                                   <InlineStack gap="300" blockAlign="center" wrap={false}>
+                                     <div style={{ flex: 1 }}>
+                                       <TextField
+                                         labelHidden
+                                         label="New custom value"
+                                         placeholder="Enter new custom option..."
+                                         value={customInputValue[key] || ""}
+                                         onChange={v => setCustomInputValue(p => ({...p, [key]: v}))}
+                                         autoComplete="off"
+                                       />
+                                     </div>
+                                     <Button variant="primary" onClick={() => {
+                                        const v = customInputValue[key]?.trim();
+                                        if (v) {
+                                           addCustomFetcher.submit({ intent: "saveVocabularyEntry", field_key: key, new_value: v }, { method: "post", action: "/app/meta-injector" });
+                                           setVocabulary(prev => {
+                                             const curr = prev[key] || [];
+                                             if (!curr.includes(v)) return { ...prev, [key]: [...curr, v] };
+                                             return prev;
+                                           });
+                                           if (isMulti) {
+                                             const currVals = fieldValues[key] ? fieldValues[key].split(",").map(s => s.trim()).filter(Boolean) : [];
+                                             if (!currVals.includes(v)) currVals.push(v);
+                                             setFieldValues(prev => ({...prev, [key]: currVals.join(", ")}));
+                                           } else {
+                                             setFieldValues(prev => ({...prev, [key]: v}));
+                                           }
+                                           setShowCustomInput(p => ({...p, [key]: false}));
+                                           setCustomInputValue(p => ({...p, [key]: ""}));
+                                        }
+                                     }}>
+                                       Save & Select
+                                     </Button>
+                                   </InlineStack>
+                                 </div>
+                               )}
+                            </BlockStack>
+                          );
+                        } else {
+                          return (
+                            <TextField
+                              key={key}
+                              label={FIELD_LABELS[key] || key}
+                              value={fieldValues[key] || ""}
+                              onChange={val => setFieldValues(prev => ({ ...prev, [key]: val }))}
+                              autoComplete="off"
+                              multiline={["stone_story", "bench_notes", "character_marks", "rock_composition"].includes(key) ? 3 : undefined}
+                            />
+                          );
+                        }
+                      })}
                     </BlockStack>
                   </BlockStack>
                 </Card>
