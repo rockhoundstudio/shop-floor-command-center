@@ -388,6 +388,7 @@ export const action = async ({ request }) => {
     return data({ ok: true, seededCount });
   }
 
+  // ─── SINGLE PRODUCT AUTO-FILL ───────────────────────────────────────────────
   if (intent === "autoFill") {
     const title       = formData.get("title");
     const description = formData.get("description");
@@ -476,9 +477,15 @@ export const action = async ({ request }) => {
       }
     });
 
+    // AUTO-ASSIGN OOAK FOR ALL STONES
+    if (stoneName && (!existing["is_ooak"] || String(existing["is_ooak"]).trim() === "")) {
+      merged["is_ooak"] = "✅ true";
+    }
+
     return data({ ok: true, merged, conflicts, mindatError });
   }
 
+  // ─── BULK AUTO-FILL ALL PRODUCTS ────────────────────────────────────────────
   if (intent === "bulkAutoFill") {
     const productsRaw = formData.get("products");
     const products = JSON.parse(productsRaw);
@@ -559,6 +566,11 @@ export const action = async ({ request }) => {
         else if (libVal)    merged[key] = libVal;
         else if (parsedVal) merged[key] = `⚠️ ${parsedVal}`;
       });
+
+      // AUTO-ASSIGN OOAK FOR ALL STONES
+      if (stoneName && (!existing["is_ooak"] || String(existing["is_ooak"]).trim() === "")) {
+        merged["is_ooak"] = "✅ true";
+      }
 
       const metafields = TARGET_KEYS
         .filter(key => merged[key] && String(merged[key]).trim() !== "")
