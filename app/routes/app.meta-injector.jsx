@@ -28,7 +28,6 @@ function formatMetafieldValue(key, value) {
     };
   }
 
-  // If this key belongs to taxonomy but value isn't in the map, skip it
   if (TAXONOMY_GIDS[safeKey]) {
     return null;
   }
@@ -120,7 +119,9 @@ export const loader = async ({ request }) => {
 };
 
 export const action = async ({ request }) => {
-  const { admin } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
+  console.log("[RS-DIAG] Auth Check - Session Shop:", session?.shop || "NULL - AUTH FAILED");
+
   const formData = await request.formData();
   const intent = formData.get("intent");
 
