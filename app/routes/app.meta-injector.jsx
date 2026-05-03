@@ -124,6 +124,8 @@ export const action = async ({ request }) => {
   const formData = await request.formData();
   const intent = formData.get("intent");
 
+  console.log("[RS-DIAG] Entry intent received:", JSON.stringify(intent, null, 2));
+
   // ─── BULK SEED OFFICIAL NAMES ───────────────────────────────────────────────
   if (intent === "seed_names") {
     const idsRaw = formData.get("ids");
@@ -390,6 +392,7 @@ export const action = async ({ request }) => {
   // ─── SAVE METAFIELDS (MANUAL EDITS) ─────────────────────────────────────────
   if (intent === "saveMetafields") {
     const rawMetafields = JSON.parse(formData.get("metafields"));
+    console.log("[RS-DIAG] Payload received (saveMetafields raw array):", JSON.stringify(rawMetafields, null, 2));
 
     const processedMetafields = rawMetafields
       .filter(mf => mf.value && String(mf.value).trim() !== "")
@@ -408,19 +411,29 @@ export const action = async ({ request }) => {
           type:      formatted.type,
         };
       }).filter(Boolean);
+      
+    console.log("[RS-DIAG] After GID unwrap filter (saveMetafields):", JSON.stringify(processedMetafields, null, 2));
 
     const chunks = [];
     for (let i = 0; i < processedMetafields.length; i += 25) chunks.push(processedMetafields.slice(i, i + 25));
     for (const chunk of chunks) {
-      const res = await admin.graphql(`
-        mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
-          metafieldsSet(metafields: $metafields) { userErrors { message } }
-        }
-      `, { variables: { metafields: chunk } });
-      const json = await res.json();
-      const errors = (json.data?.metafieldsSet?.userErrors || [])
-        .filter(e => !e.message.includes("must be consistent with the definition"));
-      if (errors.length > 0) return data({ success: false, error: errors[0].message });
+      console.log("[RS-DIAG] Before API call (saveMetafields chunk):", JSON.stringify(chunk, null, 2));
+      try {
+        const res = await admin.graphql(`
+          mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
+            metafieldsSet(metafields: $metafields) { userErrors { message } }
+          }
+        `, { variables: { metafields: chunk } });
+        const json = await res.json();
+        console.log("[RS-DIAG] API response (saveMetafields):", JSON.stringify(json, null, 2));
+        
+        const errors = (json.data?.metafieldsSet?.userErrors || [])
+          .filter(e => !e.message.includes("must be consistent with the definition"));
+        if (errors.length > 0) return data({ success: false, error: errors[0].message });
+      } catch (e) {
+        console.log("[RS-DIAG] Catch block error (saveMetafields):", JSON.stringify({ message: e.message, stack: e.stack }, null, 2));
+        throw e;
+      }
     }
     return data({ ok: true, success: true, message: "Metafields locked to Shopify." });
   }
@@ -431,6 +444,8 @@ export const action = async ({ request }) => {
     const ids = JSON.parse(formData.get("ids"));
     const ooakText = formData.get("ooakText") || "";
     const currentStories = JSON.parse(formData.get("currentStories") || "{}");
+
+    console.log("[RS-DIAG] Payload received (bulk_edit_new raw variables):", JSON.stringify({ updates, ids, ooakText }, null, 2));
 
     const metafields = [];
 
@@ -463,15 +478,25 @@ export const action = async ({ request }) => {
       }
     });
 
+    console.log("[RS-DIAG] After GID unwrap filter (bulk_edit_new):", JSON.stringify(metafields, null, 2));
+
     if (metafields.length > 0) {
       const chunks = [];
       for (let i = 0; i < metafields.length; i += 25) chunks.push(metafields.slice(i, i + 25));
       for (const chunk of chunks) {
-        await admin.graphql(`
-          mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
-            metafieldsSet(metafields: $metafields) { userErrors { message } }
-          }
-        `, { variables: { metafields: chunk } });
+        console.log("[RS-DIAG] Before API call (bulk_edit_new chunk):", JSON.stringify(chunk, null, 2));
+        try {
+          const res = await admin.graphql(`
+            mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
+              metafieldsSet(metafields: $metafields) { userErrors { message } }
+            }
+          `, { variables: { metafields: chunk } });
+          const json = await res.json();
+          console.log("[RS-DIAG] API response (bulk_edit_new):", JSON.stringify(json, null, 2));
+        } catch (e) {
+           console.log("[RS-DIAG] Catch block error (bulk_edit_new):", JSON.stringify({ message: e.message, stack: e.stack }, null, 2));
+           throw e;
+        }
       }
     }
     return data({ ok: true });
@@ -479,6 +504,8 @@ export const action = async ({ request }) => {
 
   if (intent === "mindat_lookup") {
     const query = formData.get("query");
+    console.log("[RS-DIAG] Payload received (mindat_lookup):", JSON.stringify(query, null, 2));
+    
     if (!query || !query.trim()) return data({ ok: true, found: false });
     try {
       const res = await fetch(
@@ -487,9 +514,12 @@ export const action = async ({ request }) => {
       );
       if (res.ok) {
         const json = await res.json();
+        console.log("[RS-DIAG] API response (mindat_lookup):", JSON.stringify(json.results?.[0] ? "Found Match" : "No Match", null, 2));
         if (json.results?.[0]) return data({ ok: true, found: true, result: json.results[0] });
       }
-    } catch (e) {}
+    } catch (e) {
+      console.log("[RS-DIAG] Catch block error (mindat_lookup):", JSON.stringify({ message: e.message }, null, 2));
+    }
     return data({ ok: true, found: false });
   }
 
