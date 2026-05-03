@@ -16,25 +16,28 @@ import { TARGET_KEYS, stripHtml, evaluateProductStatus, parseDescription, autoLi
 import { lookupStone } from "../utils/geoLibrary";
 import { TAXONOMY_GIDS, wrapGid } from "../utils/taxonomyMap";
 
-// ─── TAXONOMY FORMATTER ─────────────────────────────────────────────────────
-function formatMetafieldValue(key, value) {
+// ─── TAXONOMY FORMATTER (FIX #3: No more Custom black holes) ───────────────
+function formatMetafieldValue(originalKey, value) {
   const cleanValue = String(value).replace(/[✅⚠️]/g, "").trim();
-  const safeKey = key.replace(/-/g, "_");
+  const safeKey = originalKey.replace(/-/g, "_");
 
+  // If it's a known Shopify taxonomy field AND the value matches exactly
   if (TAXONOMY_GIDS[safeKey] && TAXONOMY_GIDS[safeKey][cleanValue]) {
     return {
       value: wrapGid(TAXONOMY_GIDS[safeKey][cleanValue]),
-      type: "list.metaobject_reference"
+      type: "list.metaobject_reference",
+      namespace: "shopify",
+      key: safeKey.replace(/_/g, "-")
     };
   }
 
-  if (TAXONOMY_GIDS[safeKey]) {
-    return null;
-  }
-
+  // If it gets here, it's either a strictly custom field OR a custom override 
+  // for a taxonomy field. We route it to the "custom" namespace to prevent API rejection.
   return {
     value: String(value).trim(),
-    type: "single_line_text_field"
+    type: "single_line_text_field",
+    namespace: "custom",
+    key: safeKey
   };
 }
 
@@ -126,6 +129,57 @@ export const action = async ({ request }) => {
   const intent = formData.get("intent");
 
   console.log("[RS-DIAG] Entry intent received:", JSON.stringify(intent, null, 2));
+
+  // ─── QA & INJECT VIEW HANDLERS (FIX #2: Missing backend endpoints wired) ────
+  if (intent === "build_payload") {
+    const productId = formData.get("productId");
+    const existingMeta = JSON.parse(formData.get("existingMeta") || "{}");
+
+    const payloadObj = Object.keys(existingMeta)
+      .filter(k => existingMeta[k] && String(existingMeta[k]).trim() !== "")
+      .map(k => {
+        const formatted = formatMetafieldValue(k, existingMeta[k]);
+        if (!formatted) return null;
+        return {
+          ownerId: productId,
+          namespace: formatted.namespace,
+          key: formatted.key,
+          value: formatted.value,
+          type: formatted.type
+        };
+      }).filter(Boolean);
+
+    return data({ ok: true, payload: JSON.stringify(payloadObj, null, 2) });
+  }
+
+  if (intent === "inject") {
+    try {
+      const payloadStr = formData.get("payload");
+      const metafields = JSON.parse(payloadStr);
+
+      if (!Array.isArray(metafields) || metafields.length === 0) {
+         return data({ ok: false, error: "Invalid or empty payload" });
+      }
+
+      const chunks = [];
+      for (let i = 0; i < metafields.length; i += 25) chunks.push(metafields.slice(i, i + 25));
+      for (const chunk of chunks) {
+        const res = await admin.graphql(`
+          mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
+            metafieldsSet(metafields: $metafields) { userErrors { message } }
+          }
+        `, { variables: { metafields: chunk } });
+        const json = await res.json();
+        const errors = (json.data?.metafieldsSet?.userErrors || [])
+          .filter(e => !e.message.includes("must be consistent with the definition"));
+        
+        if (errors.length > 0) return data({ ok: false, error: errors[0].message });
+      }
+      return data({ ok: true, injected: metafields.length });
+    } catch (e) {
+      return data({ ok: false, error: e.message });
+    }
+  }
 
   // ─── BULK SEED OFFICIAL NAMES ───────────────────────────────────────────────
   if (intent === "seed_names") {
@@ -355,8 +409,8 @@ export const action = async ({ request }) => {
           if (!formatted) return null;
           return {
             ownerId:   p.id,
-            namespace: TAXONOMY_GIDS[key.replace(/-/g, "_")] ? "shopify" : "custom",
-            key:       TAXONOMY_GIDS[key.replace(/-/g, "_")] ? key.replace(/_/g, "-") : key,
+            namespace: formatted.namespace,
+            key:       formatted.key,
             value:     formatted.value,
             type:      formatted.type,
           };
@@ -393,7 +447,6 @@ export const action = async ({ request }) => {
   // ─── SAVE METAFIELDS (MANUAL EDITS) ─────────────────────────────────────────
   if (intent === "saveMetafields") {
     const rawMetafields = JSON.parse(formData.get("metafields"));
-    console.log("[RS-DIAG] Payload received (saveMetafields raw array):", JSON.stringify(rawMetafields, null, 2));
 
     const processedMetafields = rawMetafields
       .filter(mf => mf.value && String(mf.value).trim() !== "")
@@ -406,19 +459,16 @@ export const action = async ({ request }) => {
         if (!formatted) return null;
         return {
           ownerId:   mf.ownerId,
-          namespace: TAXONOMY_GIDS[safeKey] ? "shopify" : "custom",
-          key:       TAXONOMY_GIDS[safeKey] ? mf.key.replace(/_/g, "-") : mf.key,
+          namespace: formatted.namespace,
+          key:       formatted.key,
           value:     formatted.value,
           type:      formatted.type,
         };
       }).filter(Boolean);
-      
-    console.log("[RS-DIAG] After GID unwrap filter (saveMetafields):", JSON.stringify(processedMetafields, null, 2));
 
     const chunks = [];
     for (let i = 0; i < processedMetafields.length; i += 25) chunks.push(processedMetafields.slice(i, i + 25));
     for (const chunk of chunks) {
-      console.log("[RS-DIAG] Before API call (saveMetafields chunk):", JSON.stringify(chunk, null, 2));
       try {
         const res = await admin.graphql(`
           mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
@@ -426,27 +476,22 @@ export const action = async ({ request }) => {
           }
         `, { variables: { metafields: chunk } });
         const json = await res.json();
-        console.log("[RS-DIAG] API response (saveMetafields):", JSON.stringify(json, null, 2));
-        
         const errors = (json.data?.metafieldsSet?.userErrors || [])
           .filter(e => !e.message.includes("must be consistent with the definition"));
         if (errors.length > 0) return data({ success: false, error: errors[0].message });
       } catch (e) {
-        console.log("[RS-DIAG] Catch block error (saveMetafields):", JSON.stringify({ message: e.message, stack: e.stack }, null, 2));
         throw e;
       }
     }
     return data({ ok: true, success: true, message: "Metafields locked to Shopify." });
   }
 
-  // ─── BULK EDIT ───────────────────────────────────────────────────────────────
+  // ─── BULK EDIT (FIX #1: Strict Error Catching) ───────────────────────────────
   if (intent === "bulk_edit_new") {
     const updates = JSON.parse(formData.get("updates"));
     const ids = JSON.parse(formData.get("ids"));
     const ooakText = formData.get("ooakText") || "";
     const currentStories = JSON.parse(formData.get("currentStories") || "{}");
-
-    console.log("[RS-DIAG] Payload received (bulk_edit_new raw variables):", JSON.stringify({ updates, ids, ooakText }, null, 2));
 
     const metafields = [];
 
@@ -459,10 +504,11 @@ export const action = async ({ request }) => {
 
           const formatted = formatMetafieldValue(safeKey, finalValue);
           if (!formatted) return;
+          
           metafields.push({
             ownerId,
-            namespace: TAXONOMY_GIDS[safeKey] ? "shopify" : "custom",
-            key: TAXONOMY_GIDS[safeKey] ? key.replace(/_/g, "-") : key,
+            namespace: formatted.namespace,
+            key: formatted.key,
             value: formatted.value,
             type: formatted.type
           });
@@ -479,13 +525,10 @@ export const action = async ({ request }) => {
       }
     });
 
-    console.log("[RS-DIAG] After GID unwrap filter (bulk_edit_new):", JSON.stringify(metafields, null, 2));
-
     if (metafields.length > 0) {
       const chunks = [];
       for (let i = 0; i < metafields.length; i += 25) chunks.push(metafields.slice(i, i + 25));
       for (const chunk of chunks) {
-        console.log("[RS-DIAG] Before API call (bulk_edit_new chunk):", JSON.stringify(chunk, null, 2));
         try {
           const res = await admin.graphql(`
             mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
@@ -493,10 +536,18 @@ export const action = async ({ request }) => {
             }
           `, { variables: { metafields: chunk } });
           const json = await res.json();
-          console.log("[RS-DIAG] API response (bulk_edit_new):", JSON.stringify(json, null, 2));
+          
+          const errors = (json.data?.metafieldsSet?.userErrors || [])
+            .filter(e => !e.message.includes("must be consistent with the definition"));
+          
+          // HARD STOP on error. Return ok: false so UI turns red.
+          if (errors.length > 0) {
+            console.log("[RS-DIAG] bulk_edit_new failed:", errors);
+            return data({ ok: false, error: errors[0].message });
+          }
         } catch (e) {
-           console.log("[RS-DIAG] Catch block error (bulk_edit_new):", JSON.stringify({ message: e.message, stack: e.stack }, null, 2));
-           throw e;
+           console.log("[RS-DIAG] Catch block error (bulk_edit_new):", JSON.stringify({ message: e.message }, null, 2));
+           return data({ ok: false, error: e.message });
         }
       }
     }
@@ -505,7 +556,6 @@ export const action = async ({ request }) => {
 
   if (intent === "mindat_lookup") {
     const query = formData.get("query");
-    console.log("[RS-DIAG] Payload received (mindat_lookup):", JSON.stringify(query, null, 2));
     
     if (!query || !query.trim()) return data({ ok: true, found: false });
     try {
@@ -515,7 +565,6 @@ export const action = async ({ request }) => {
       );
       if (res.ok) {
         const json = await res.json();
-        console.log("[RS-DIAG] API response (mindat_lookup):", JSON.stringify(json.results?.[0] ? "Found Match" : "No Match", null, 2));
         if (json.results?.[0]) return data({ ok: true, found: true, result: json.results[0] });
       }
     } catch (e) {
