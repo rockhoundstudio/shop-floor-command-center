@@ -13,6 +13,13 @@ import { TARGET_KEYS, stripHtml, evaluateProductStatus, parseDescription, autoLi
 import { lookupStone } from "../utils/geoLibrary";
 import { TAXONOMY_GIDS, wrapGid } from "../utils/taxonomyMap";
 
+// ─── LIST FIELDS CONFIGURATION ──────────────────────────────────────────────
+// If Shopify tells you a field expects a 'list.single_line_text_field', 
+// drop the exact key name right here (e.g., "origin_location", "cut_type")
+const LIST_TEXT_FIELDS = [
+  // Add failing keys here, in quotes, separated by commas
+];
+
 // ─── TAXONOMY FORMATTER ─────────────────────────────────────────────────────
 function formatMetafieldValue(originalKey, value) {
   const cleanValue = String(value).replace(/[✅⚠️]/g, "").trim();
@@ -25,14 +32,16 @@ function formatMetafieldValue(originalKey, value) {
       value: wrapGid(TAXONOMY_GIDS[mapKey][cleanValue]),
       type: "list.metaobject_reference",
       namespace: "shopify",
-      key: originalKey.replace(/_/g, "-") // Shopify requires dashes (e.g., mineral-class)
+      key: originalKey.replace(/_/g, "-") // Shopify requires dashes
     };
   }
 
-  // Fallback for custom fields
+  // Check if this specific field is configured as a list in Shopify
+  const isListField = LIST_TEXT_FIELDS.includes(mapKey);
+
   return {
-    value: String(value).trim(),
-    type: "single_line_text_field",
+    value: isListField ? JSON.stringify([String(value).trim()]) : String(value).trim(),
+    type: isListField ? "list.single_line_text_field" : "single_line_text_field",
     namespace: "custom",
     key: mapKey
   };
@@ -192,12 +201,20 @@ export const action = async ({ request }) => {
       for (const chunk of chunks) {
         const res = await admin.graphql(`
           mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
-            metafieldsSet(metafields: $metafields) { userErrors { message } }
+            metafieldsSet(metafields: $metafields) { userErrors { field message } }
           }
         `, { variables: { metafields: chunk } });
         const json = await res.json();
+        
         const errors = json.data?.metafieldsSet?.userErrors || [];
-        if (errors.length > 0) return data({ ok: false, error: errors[0].message });
+        if (errors.length > 0) {
+          let errorMsg = errors[0].message;
+          if (errors[0].field && typeof errors[0].field[1] === 'number') {
+            const failingKey = chunk[errors[0].field[1]]?.key;
+            if (failingKey) errorMsg = `[Field: ${failingKey}] ${errorMsg}`;
+          }
+          return data({ ok: false, error: errorMsg });
+        }
       }
       return data({ ok: true, injected: metafields.length });
     } catch (e) {
@@ -236,12 +253,20 @@ export const action = async ({ request }) => {
       try {
         const res = await admin.graphql(`
           mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
-            metafieldsSet(metafields: $metafields) { userErrors { message } }
+            metafieldsSet(metafields: $metafields) { userErrors { field message } }
           }
         `, { variables: { metafields: chunk } });
         const json = await res.json();
+        
         const errors = json.data?.metafieldsSet?.userErrors || [];
-        if (errors.length > 0) return data({ ok: false, error: errors[0].message });
+        if (errors.length > 0) {
+          let errorMsg = errors[0].message;
+          if (errors[0].field && typeof errors[0].field[1] === 'number') {
+            const failingKey = chunk[errors[0].field[1]]?.key;
+            if (failingKey) errorMsg = `[Field: ${failingKey}] ${errorMsg}`;
+          }
+          return data({ ok: false, error: errorMsg });
+        }
       } catch (e) {
         return data({ ok: false, error: e.message });
       }
@@ -297,13 +322,20 @@ export const action = async ({ request }) => {
       try {
         const res = await admin.graphql(`
           mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
-            metafieldsSet(metafields: $metafields) { userErrors { message } }
+            metafieldsSet(metafields: $metafields) { userErrors { field message } }
           }
         `, { variables: { metafields: chunk } });
         const json = await res.json();
         
         const errors = json.data?.metafieldsSet?.userErrors || [];
-        if (errors.length > 0) return data({ ok: false, error: errors[0].message });
+        if (errors.length > 0) {
+          let errorMsg = errors[0].message;
+          if (errors[0].field && typeof errors[0].field[1] === 'number') {
+            const failingKey = chunk[errors[0].field[1]]?.key;
+            if (failingKey) errorMsg = `[Field: ${failingKey}] ${errorMsg}`;
+          }
+          return data({ ok: false, error: errorMsg });
+        }
       } catch (e) {
           return data({ ok: false, error: e.message });
       }
