@@ -19,22 +19,25 @@ import { TAXONOMY_GIDS, wrapGid } from "../utils/taxonomyMap";
 // ─── TAXONOMY FORMATTER ─────────────────────────────────────────────────────
 function formatMetafieldValue(originalKey, value) {
   const cleanValue = String(value).replace(/[✅⚠️]/g, "").trim();
-  const safeKey = originalKey.replace(/-/g, "_");
+  
+  // Convert to dash format to perfectly match taxonomyMap.js keys
+  const dictionaryKey = originalKey.replace(/_/g, "-");
 
-  if (TAXONOMY_GIDS[safeKey] && TAXONOMY_GIDS[safeKey][cleanValue]) {
+  if (TAXONOMY_GIDS[dictionaryKey] && TAXONOMY_GIDS[dictionaryKey][cleanValue]) {
     return {
-      value: wrapGid(TAXONOMY_GIDS[safeKey][cleanValue]),
+      value: wrapGid(TAXONOMY_GIDS[dictionaryKey][cleanValue]),
       type: "list.metaobject_reference",
       namespace: "shopify",
-      key: safeKey.replace(/_/g, "-")
+      key: dictionaryKey
     };
   }
 
+  // Fallback for custom fields
   return {
     value: String(value).trim(),
     type: "single_line_text_field",
     namespace: "custom",
-    key: safeKey
+    key: originalKey.replace(/-/g, "_")
   };
 }
 
@@ -99,9 +102,11 @@ export const loader = async ({ request }) => {
           }
 
           // 2. Translate the clean ID back to English
-          const safeKey = k.replace(/-/g, "_");
-          if (TAXONOMY_GIDS[safeKey]) {
-            for (const [word, mappedGid] of Object.entries(TAXONOMY_GIDS[safeKey])) {
+          // Convert key to dash format to look up in TAXONOMY_GIDS
+          const dictionaryKey = k.replace(/_/g, "-");
+          if (TAXONOMY_GIDS[dictionaryKey]) {
+            for (const [word, mappedGid] of Object.entries(TAXONOMY_GIDS[dictionaryKey])) {
+              // Now matching against the full gid string from your map
               if (finalVal.includes(String(mappedGid))) {
                 finalVal = word;
                 break;
@@ -136,12 +141,9 @@ export const loader = async ({ request }) => {
 
 export const action = async ({ request }) => {
   const { admin, session } = await authenticate.admin(request);
-  console.log("[RS-DIAG] Auth Check - Session Shop:", session?.shop || "NULL - AUTH FAILED");
-
+  
   const formData = await request.formData();
   const intent = formData.get("intent");
-
-  console.log("[RS-DIAG] Entry intent received:", JSON.stringify(intent, null, 2));
 
   // ─── QA & INJECT VIEW HANDLERS ──────────────────────────────────────────────
   if (intent === "build_payload") {
@@ -151,11 +153,11 @@ export const action = async ({ request }) => {
     const payloadObj = Object.keys(existingMeta)
       .filter(k => existingMeta[k] && String(existingMeta[k]).trim() !== "")
       .map(k => {
-        const safeKey = k.replace(/-/g, "_");
+        const dictionaryKey = k.replace(/_/g, "-");
         return {
           ownerId: productId,
-          namespace: TAXONOMY_GIDS[safeKey] ? "shopify" : "custom",
-          key: TAXONOMY_GIDS[safeKey] ? safeKey.replace(/_/g, "-") : safeKey,
+          namespace: TAXONOMY_GIDS[dictionaryKey] ? "shopify" : "custom",
+          key: TAXONOMY_GIDS[dictionaryKey] ? dictionaryKey : k.replace(/-/g, "_"),
           value: String(existingMeta[k]).replace(/[✅⚠️]/g, "").trim()
         };
       });
@@ -173,8 +175,7 @@ export const action = async ({ request }) => {
       }
 
       const metafields = rawMetafields.map(mf => {
-        const safeKey = mf.key.replace(/-/g, "_");
-        const formatted = formatMetafieldValue(safeKey, mf.value);
+        const formatted = formatMetafieldValue(mf.key, mf.value);
         if (!formatted) return null;
         
         return {
@@ -476,11 +477,10 @@ export const action = async ({ request }) => {
     const processedMetafields = rawMetafields
       .filter(mf => mf.value && String(mf.value).trim() !== "")
       .map(mf => {
-        const safeKey = mf.key.replace(/-/g, "_");
         let finalValue = mf.value;
-        if (safeKey === "stone_story") finalValue = autoLinkStory(finalValue);
+        if (mf.key.replace(/-/g, "_") === "stone_story") finalValue = autoLinkStory(finalValue);
 
-        const formatted = formatMetafieldValue(safeKey, finalValue);
+        const formatted = formatMetafieldValue(mf.key, finalValue);
         if (!formatted) return null;
         return {
           ownerId:   mf.ownerId,
@@ -523,11 +523,10 @@ export const action = async ({ request }) => {
     ids.forEach((ownerId) => {
       Object.keys(updates).forEach(key => {
         if (updates[key] && updates[key].trim() !== "") {
-          const safeKey = key.replace(/-/g, "_");
           let finalValue = updates[key];
-          if (safeKey === "stone_story") finalValue = autoLinkStory(finalValue);
+          if (key.replace(/-/g, "_") === "stone_story") finalValue = autoLinkStory(finalValue);
 
-          const formatted = formatMetafieldValue(safeKey, finalValue);
+          const formatted = formatMetafieldValue(key, finalValue);
           if (!formatted) return;
           
           metafields.push({
