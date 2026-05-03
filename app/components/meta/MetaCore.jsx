@@ -9,15 +9,27 @@ import { SearchIcon } from "@shopify/polaris-icons";
 import { TARGET_KEYS, FIELD_LABELS } from "../../utils/metaScan";
 import { lookupStone } from "../../utils/geoLibrary"; 
 
-// Added rock_composition to the DROPDOWN_FIELDS array
 const DROPDOWN_FIELDS = ["luster", "diaphaneity", "fracture_pattern", "cleavage", "crystal_system", "rock_formation", "mineral_class", "geological_era", "tenacity", "rock_composition"];
 const FREE_TEXT_FIELDS = ["origin_location", "rescued_by", "stone_story", "bench_notes", "dimensions_mm", "carat_weight", "cut_type", "moh_hardness", "specific_gravity"];
 
 const SEO_DICTIONARY = {
   luster: {
-    global: ["Vitreous", "Waxy", "Resinous", "Silky", "Pearly", "Dull", "Submetallic"],
-    labradorite: ["Labradorescent", "Vitreous", "Pearly"],
-    obsidian: ["Vitreous", "Sheen", "Chatoyant"],
+    global: [
+      "Vitreous", 
+      "Waxy", 
+      "Resinous", 
+      "Silky", 
+      "Pearly", 
+      "Dull", 
+      "Submetallic",
+      "Vitreous to pearly with labradorescence",
+      "Vitreous with iridescent schiller",
+      "Vitreous to silky",
+      "Waxy to greasy",
+      "Vitreous to pearly"
+    ],
+    labradorite: ["Vitreous to pearly with labradorescence", "Labradorescent", "Vitreous", "Pearly"],
+    obsidian: ["Vitreous with iridescent schiller", "Vitreous", "Sheen", "Chatoyant"],
   },
   diaphaneity: {
     global: ["Opaque", "Translucent", "Transparent", "Semi-Translucent"],
@@ -112,7 +124,7 @@ export default function MetaCore({ products = [], mode }) {
       const getOpts = (key, stoneName) => {
         let opts = SEO_DICTIONARY[key]?.global || [];
         if (stoneName && SEO_DICTIONARY[key]?.[stoneName.toLowerCase()]) {
-          opts = SEO_DICTIONARY[key][stoneName.toLowerCase()];
+          opts = [...new Set([...SEO_DICTIONARY[key][stoneName.toLowerCase()], ...opts])];
         }
         return opts;
       };
@@ -179,7 +191,7 @@ export default function MetaCore({ products = [], mode }) {
       
     let opts = SEO_DICTIONARY[fieldKey]?.global || [];
     if (currentStone && SEO_DICTIONARY[fieldKey]?.[currentStone]) {
-      opts = SEO_DICTIONARY[fieldKey][currentStone];
+      opts = [...new Set([...SEO_DICTIONARY[fieldKey][currentStone], ...opts])];
     }
     return opts;
   };
@@ -236,13 +248,21 @@ export default function MetaCore({ products = [], mode }) {
           
         let opts = SEO_DICTIONARY[key]?.global || [];
         if (currentStone && SEO_DICTIONARY[key]?.[currentStone]) {
-          opts = SEO_DICTIONARY[key][currentStone];
+          opts = [...new Set([...SEO_DICTIONARY[key][currentStone], ...opts])];
         }
         
         if (opts.length === 0 || FREE_TEXT_FIELDS.includes(key)) {
            newValues[key] = value;
         } else {
-           const match = opts.find(opt => opt.toLowerCase().includes(value.toLowerCase()) || value.toLowerCase().includes(opt.toLowerCase()));
+           // Priority 1: Exact Match
+           let match = opts.find(opt => opt.toLowerCase() === value.toLowerCase());
+           
+           // Priority 2: Fuzzy Match (sorted by length so specific phrases beat generic words)
+           if (!match) {
+             const sortedOpts = [...opts].sort((a, b) => b.length - a.length);
+             match = sortedOpts.find(opt => value.toLowerCase().includes(opt.toLowerCase()) || opt.toLowerCase().includes(value.toLowerCase()));
+           }
+
            if (match) {
              newValues[key] = match;
            } else {
@@ -261,7 +281,9 @@ export default function MetaCore({ products = [], mode }) {
           applySuggestion("moh_hardness", hardness);
           applySuggestion("specific_gravity", density);
           applySuggestion("crystal_system", m.crystal_system);
-          applySuggestion("luster", m.lustre);
+          
+          // Note: Mindat's m.lustre is deliberately ignored here so it doesn't override the exact geoLibrary value with a generic "waxy"
+          
           applySuggestion("cleavage", m.cleavage);
           applySuggestion("fracture_pattern", m.fracture);
           applySuggestion("diaphaneity", m.diaphaneity);
