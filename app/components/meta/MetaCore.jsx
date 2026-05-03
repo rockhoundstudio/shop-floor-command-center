@@ -51,6 +51,8 @@ const availableStones = [
 
 export default function MetaCore({ products = [], mode }) {
   const fetcher = useFetcher();
+  const suggestFetcher = useFetcher();
+  const saveFetcher = useFetcher();
 
   const [checkedIds, setCheckedIds] = useState([]);
   const [tickedFields, setTickedFields] = useState({});
@@ -60,7 +62,7 @@ export default function MetaCore({ products = [], mode }) {
   const [ooakText, setOoakText] = useState("");
   const [isSuggesting, setIsSuggesting] = useState(false);
   const [productSearch, setProductSearch] = useState("");
-  const [saveStatus, setSaveStatus] = useState(null); // null | "success" | "error"
+  const [saveStatus, setSaveStatus] = useState(null); 
 
   const [injectProduct, setInjectProduct] = useState("");
   const [payload, setPayload] = useState("");
@@ -139,7 +141,99 @@ export default function MetaCore({ products = [], mode }) {
     return opts;
   };
 
-  const autoSuggestFields = async () => {
+  // --- HANDLE BULK SAVE RESPONSE ---
+  useEffect(() => {
+    if (isProcessing && saveFetcher.state === "idle" && saveFetcher.data) {
+      setIsProcessing(false);
+      if (saveFetcher.data.ok) {
+        setSaveStatus("success");
+      } else {
+        setSaveStatus("error");
+      }
+    }
+  }, [saveFetcher.state, saveFetcher.data, isProcessing]);
+
+  // --- HANDLE MINDAT SUGGESTION RESPONSE ---
+  useEffect(() => {
+    if (isSuggesting && suggestFetcher.state === "idle" && suggestFetcher.data) {
+      setIsSuggesting(false);
+      const data = suggestFetcher.data;
+
+      const firstStone = products.find(p => p.id === checkedIds[0]);
+      let suggestedName = fieldValues["official_name"] === "__custom__" 
+        ? customInputs["official_name"] 
+        : fieldValues["official_name"];
+
+      if (!suggestedName && firstStone) {
+        suggestedName = firstStone.metafields?.official_name || firstStone.title;
+      }
+      
+      const libraryData = lookupStone(suggestedName) || {};
+      if (libraryData.official_name) suggestedName = libraryData.official_name;
+
+      const newValues = { ...fieldValues };
+      const newTicked = { ...tickedFields };
+      const newCustom = { ...customInputs };
+
+      const applySuggestion = (key, value) => {
+        if (!value) return;
+        const currentStone = newValues["official_name"] === "__custom__" 
+          ? (newCustom["official_name"] || "").toLowerCase()
+          : (newValues["official_name"] || "").toLowerCase();
+          
+        let opts = SEO_DICTIONARY[key]?.global || [];
+        if (currentStone && SEO_DICTIONARY[key]?.[currentStone]) {
+          opts = SEO_DICTIONARY[key][currentStone];
+        }
+        
+        if (opts.length === 0 || FREE_TEXT_FIELDS.includes(key)) {
+           newValues[key] = value;
+        } else {
+           const match = opts.find(opt => opt.toLowerCase().includes(value.toLowerCase()) || value.toLowerCase().includes(opt.toLowerCase()));
+           if (match) {
+             newValues[key] = match;
+           } else {
+             newValues[key] = "__custom__";
+             newCustom[key] = value;
+           }
+        }
+        newTicked[key] = true;
+      };
+
+      if (data.ok && data.found) {
+          const m = data.result;
+          const hardness = m.hardness_min ? (m.hardness_max && m.hardness_max !== m.hardness_min ? `${m.hardness_min}-${m.hardness_max}` : `${m.hardness_min}`) : "";
+          const density = m.density_min ? (m.density_max && m.density_max !== m.density_min ? `${m.density_min}-${m.density_max}` : `${m.density_min}`) : "";
+          
+          applySuggestion("moh_hardness", hardness);
+          applySuggestion("specific_gravity", density);
+          applySuggestion("crystal_system", m.crystal_system);
+          applySuggestion("luster", m.lustre);
+          applySuggestion("cleavage", m.cleavage);
+          applySuggestion("fracture_pattern", m.fracture);
+          applySuggestion("diaphaneity", m.diaphaneity);
+      }
+
+      if (fieldValues["official_name"] !== "__custom__") {
+        newValues["official_name"] = suggestedName;
+      }
+      newTicked["official_name"] = true;
+      
+      if (libraryData.crystal_system) applySuggestion("crystal_system", libraryData.crystal_system);
+      if (libraryData.luster) applySuggestion("luster", libraryData.luster);
+      if (libraryData.diaphaneity) applySuggestion("diaphaneity", libraryData.diaphaneity);
+      if (libraryData.fracture_pattern) applySuggestion("fracture_pattern", libraryData.fracture_pattern);
+      if (libraryData.cleavage) applySuggestion("cleavage", libraryData.cleavage);
+      if (libraryData.rock_formation) applySuggestion("rock_formation", libraryData.rock_formation);
+      if (libraryData.mineral_class) applySuggestion("mineral_class", libraryData.mineral_class);
+
+      setFieldValues(newValues);
+      setCustomInputs(newCustom);
+      setTickedFields(newTicked);
+    }
+  }, [suggestFetcher.state, suggestFetcher.data, isSuggesting, checkedIds, products, fieldValues, customInputs, tickedFields]);
+
+  const autoSuggestFields = () => {
     if (checkedIds.length === 0) return;
     setIsSuggesting(true);
 
@@ -159,75 +253,14 @@ export default function MetaCore({ products = [], mode }) {
       return; 
     }
     
-    const libraryData = lookupStone(suggestedName) || {};
-    if (libraryData.official_name) suggestedName = libraryData.official_name;
-
-    const newValues = { ...fieldValues };
-    const newTicked = { ...tickedFields };
-    const newCustom = { ...customInputs };
-
-    const applySuggestion = (key, value) => {
-      if (!value) return;
-      const opts = getOptionsForField(key);
-      
-      if (opts.length === 0 || FREE_TEXT_FIELDS.includes(key)) {
-         newValues[key] = value;
-      } else {
-         const match = opts.find(opt => opt.toLowerCase().includes(value.toLowerCase()) || value.toLowerCase().includes(opt.toLowerCase()));
-         if (match) {
-           newValues[key] = match;
-         } else {
-           newValues[key] = "__custom__";
-           newCustom[key] = value;
-         }
-      }
-      newTicked[key] = true;
-    };
-
     const fd = new FormData();
     fd.append("intent", "mindat_lookup");
     fd.append("query", suggestedName);
     
-    try {
-      const res = await fetch("/app/meta-injector", { method: "POST", body: fd });
-      const data = await res.json();
-      if (data.ok && data.found) {
-          const m = data.result;
-          const hardness = m.hardness_min ? (m.hardness_max && m.hardness_max !== m.hardness_min ? `${m.hardness_min}-${m.hardness_max}` : `${m.hardness_min}`) : "";
-          const density = m.density_min ? (m.density_max && m.density_max !== m.density_min ? `${m.density_min}-${m.density_max}` : `${m.density_min}`) : "";
-          
-          applySuggestion("moh_hardness", hardness);
-          applySuggestion("specific_gravity", density);
-          applySuggestion("crystal_system", m.crystal_system);
-          applySuggestion("luster", m.lustre);
-          applySuggestion("cleavage", m.cleavage);
-          applySuggestion("fracture_pattern", m.fracture);
-          applySuggestion("diaphaneity", m.diaphaneity);
-      }
-    } catch (e) {
-        console.error("Mindat fetch failed");
-    }
-
-    if (fieldValues["official_name"] !== "__custom__") {
-      newValues["official_name"] = suggestedName;
-    }
-    newTicked["official_name"] = true;
-    
-    if (libraryData.crystal_system) applySuggestion("crystal_system", libraryData.crystal_system);
-    if (libraryData.luster) applySuggestion("luster", libraryData.luster);
-    if (libraryData.diaphaneity) applySuggestion("diaphaneity", libraryData.diaphaneity);
-    if (libraryData.fracture_pattern) applySuggestion("fracture_pattern", libraryData.fracture_pattern);
-    if (libraryData.cleavage) applySuggestion("cleavage", libraryData.cleavage);
-    if (libraryData.rock_formation) applySuggestion("rock_formation", libraryData.rock_formation);
-    if (libraryData.mineral_class) applySuggestion("mineral_class", libraryData.mineral_class);
-
-    setFieldValues(newValues);
-    setCustomInputs(newCustom);
-    setTickedFields(newTicked);
-    setIsSuggesting(false);
+    suggestFetcher.submit(fd, { method: "POST", action: "/app/meta-injector" });
   };
 
-  const processBulkQueue = async () => {
+  const processBulkQueue = () => {
     if (checkedIds.length === 0 || (!Object.values(tickedFields).some(Boolean) && !ooakText)) return;
     setIsProcessing(true);
     setSaveStatus(null);
@@ -254,20 +287,7 @@ export default function MetaCore({ products = [], mode }) {
     fd.append("ooakText", ooakText || "");
     fd.append("currentStories", JSON.stringify(currentStories));
 
-    try {
-      const res = await fetch("/app/meta-injector", { method: "POST", body: fd });
-      const data = await res.json();
-      if (data.ok) {
-        setSaveStatus("success");
-      } else {
-        setSaveStatus("error");
-      }
-    } catch (e) {
-      console.error("Save failed", e);
-      setSaveStatus("error");
-    }
-
-    setIsProcessing(false);
+    saveFetcher.submit(fd, { method: "POST", action: "/app/meta-injector" });
   };
 
   useEffect(() => {
