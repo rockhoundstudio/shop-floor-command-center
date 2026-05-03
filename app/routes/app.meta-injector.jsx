@@ -85,18 +85,37 @@ export const loader = async ({ request }) => {
         ])
       );
       const rawMfs = { ...shopifyMfs, ...customMfs };
+      
       const mfs = Object.fromEntries(
         Object.entries(rawMfs).map(([k, v]) => {
+          let finalVal = v;
+          
+          // Unwrap array brackets
           if (typeof v === "string" && v.startsWith("[") && v.endsWith("]")) {
             try {
               const parsed = JSON.parse(v);
-              if (Array.isArray(parsed) && parsed.length === 1) return [k, parsed[0]];
-              if (Array.isArray(parsed) && parsed.length === 0) return [k, ""];
+              if (Array.isArray(parsed) && parsed.length === 1) finalVal = parsed[0];
+              if (Array.isArray(parsed) && parsed.length === 0) finalVal = "";
             } catch {}
           }
-          return [k, v];
+          
+          // ─── REVERSE TRANSLATOR: Turn GIDs back into readable words for the UI ───
+          if (typeof finalVal === "string" && finalVal.includes("gid://")) {
+            const safeKey = k.replace(/-/g, "_");
+            if (TAXONOMY_GIDS[safeKey]) {
+              for (const [word, mappedGid] of Object.entries(TAXONOMY_GIDS[safeKey])) {
+                if (finalVal.includes(String(mappedGid))) {
+                  finalVal = word;
+                  break;
+                }
+              }
+            }
+          }
+
+          return [k, finalVal];
         })
       );
+      
       const { status, filledCount } = evaluateProductStatus(mfs);
       return {
         ...node,
@@ -490,7 +509,6 @@ export const action = async ({ request }) => {
     const ooakText = formData.get("ooakText") || "";
     const currentStories = JSON.parse(formData.get("currentStories") || "{}");
 
-    // ── DIPSTICK IN ──
     console.log("[RS-DIAG] bulk_edit_new - Received Updates Object:", JSON.stringify(updates, null, 2));
     console.log("[RS-DIAG] bulk_edit_new - Received IDs Count:", ids.length);
     console.log("[RS-DIAG] bulk_edit_new - OOAK Text:", ooakText);
@@ -532,7 +550,6 @@ export const action = async ({ request }) => {
       console.log("[RS-DIAG] bulk_edit_new - Sample of what is being sent to Shopify:", JSON.stringify(metafields.slice(0, 3), null, 2));
     }
 
-    // ── HARD STOP IF EMPTY ──
     if (metafields.length === 0) {
       return data({ 
         ok: false, 
