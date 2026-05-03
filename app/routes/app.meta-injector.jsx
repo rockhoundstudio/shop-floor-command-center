@@ -24,6 +24,10 @@ const BOOLEAN_FIELDS = [
   "custom_product"
 ];
 
+const KEYS_TO_PROCESS = TARGET_KEYS.filter(k => 
+  !["geological_age", "geological_era", "rock_composition", "rock_formation", "mineral_class"].includes(k)
+);
+
 // ─── TAXONOMY FORMATTER ─────────────────────────────────────────────────────
 function formatMetafieldValue(originalKey, value) {
   const cleanValue = String(value).replace(/[✅⚠️]/g, "").trim();
@@ -392,6 +396,7 @@ export const action = async ({ request }) => {
               cleavage:         m.cleavage       || "",
               fracture_pattern: m.fracture       || "",
               diaphaneity:      m.diaphaneity    || "",
+              tenacity:         m.tenacity       || "",
             };
             Object.keys(mindat).forEach(k => { if (!mindat[k]) delete mindat[k]; });
 
@@ -414,7 +419,7 @@ export const action = async ({ request }) => {
       merged["official_name"] = stoneName;
     }
 
-    TARGET_KEYS.forEach(key => {
+    KEYS_TO_PROCESS.forEach(key => {
       if (existing[key] && String(existing[key]).trim() !== "") {
         merged[key] = existing[key];
         return;
@@ -422,13 +427,25 @@ export const action = async ({ request }) => {
       const libVal    = library[key] || "";
       const parsedVal = parsed[key]  || "";
       const mindatVal = mindat[key]  || "";
-      if (mindatVal) {
-        if (libVal && libVal !== mindatVal) conflicts.push({ key, library: libVal, mindat: mindatVal });
-        merged[key] = `✅ ${mindatVal}`;
-      } else if (libVal) {
-        merged[key] = libVal;
-      } else if (parsedVal) {
-        merged[key] = `⚠️ ${parsedVal}`;
+      
+      if (key === "luster") {
+        if (libVal) {
+          if (mindatVal && libVal !== mindatVal) conflicts.push({ key, library: libVal, mindat: mindatVal });
+          merged[key] = libVal;
+        } else if (mindatVal) {
+          merged[key] = `✅ ${mindatVal}`;
+        } else if (parsedVal) {
+          merged[key] = `⚠️ ${parsedVal}`;
+        }
+      } else {
+        if (mindatVal) {
+          if (libVal && libVal !== mindatVal) conflicts.push({ key, library: libVal, mindat: mindatVal });
+          merged[key] = `✅ ${mindatVal}`;
+        } else if (libVal) {
+          merged[key] = libVal;
+        } else if (parsedVal) {
+          merged[key] = `⚠️ ${parsedVal}`;
+        }
       }
     });
 
@@ -489,6 +506,7 @@ export const action = async ({ request }) => {
                 cleavage:         m.cleavage       || "",
                 fracture_pattern: m.fracture       || "",
                 diaphaneity:      m.diaphaneity    || "",
+                tenacity:         m.tenacity       || "",
               };
               Object.keys(mindat).forEach(k => { if (!mindat[k]) delete mindat[k]; });
 
@@ -509,7 +527,7 @@ export const action = async ({ request }) => {
 
       if (stoneName && !existing["official_name"]) merged["official_name"] = stoneName;
 
-      TARGET_KEYS.forEach(key => {
+      KEYS_TO_PROCESS.forEach(key => {
         if (existing[key] && String(existing[key]).trim() !== "") {
           merged[key] = existing[key];
           return;
@@ -517,13 +535,25 @@ export const action = async ({ request }) => {
         const libVal    = library[key] || "";
         const parsedVal = parsed[key]  || "";
         const mindatVal = mindat[key]  || "";
-        if (mindatVal) {
-          if (libVal && libVal !== mindatVal) conflicts.push({ key, library: libVal, mindat: mindatVal });
-          merged[key] = `✅ ${mindatVal}`;
-        } else if (libVal) {
-          merged[key] = libVal;
-        } else if (parsedVal) {
-          merged[key] = `⚠️ ${parsedVal}`;
+        
+        if (key === "luster") {
+          if (libVal) {
+            if (mindatVal && libVal !== mindatVal) conflicts.push({ key, library: libVal, mindat: mindatVal });
+            merged[key] = libVal;
+          } else if (mindatVal) {
+            merged[key] = `✅ ${mindatVal}`;
+          } else if (parsedVal) {
+            merged[key] = `⚠️ ${parsedVal}`;
+          }
+        } else {
+          if (mindatVal) {
+            if (libVal && libVal !== mindatVal) conflicts.push({ key, library: libVal, mindat: mindatVal });
+            merged[key] = `✅ ${mindatVal}`;
+          } else if (libVal) {
+            merged[key] = libVal;
+          } else if (parsedVal) {
+            merged[key] = `⚠️ ${parsedVal}`;
+          }
         }
       });
 
@@ -531,7 +561,7 @@ export const action = async ({ request }) => {
         merged["is_ooak"] = "✅ true";
       }
 
-      const metafields = TARGET_KEYS
+      const metafields = KEYS_TO_PROCESS
         .filter(key => merged[key] && String(merged[key]).trim() !== "")
         .map(key => {
           let finalValue = merged[key];
