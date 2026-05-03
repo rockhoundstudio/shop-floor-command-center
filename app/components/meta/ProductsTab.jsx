@@ -66,7 +66,6 @@ export default function ProductsTab({ products = [] }) {
   const saveFetcher     = useFetcher();
   const autoFetcher     = useFetcher();
   const bulkFetcher     = useFetcher();
-  const seedFetcher     = useFetcher();
   const bulkSaveFetcher = useFetcher();
 
   const filtered = products.filter(p => p.title.toLowerCase().includes(search.toLowerCase()));
@@ -199,16 +198,6 @@ export default function ProductsTab({ products = [] }) {
   if (bulkSaveFetcher.state === "idle" && bulkSaveStatus === "saving") {
     if (bulkSaveFetcher.data?.success) setBulkSaveStatus("done");
     if (bulkSaveFetcher.data?.error)   setBulkSaveStatus("error");
-  }
-
-  function handleSeed() {
-    seedFetcher.submit(
-      {
-        intent: "seed_names",
-        ids: JSON.stringify(products.map(p => p.id))
-      },
-      { method: "post", action: "/app/meta-injector" }
-    );
   }
 
   const isSaving     = saveFetcher.state  !== "idle";
@@ -401,26 +390,10 @@ export default function ProductsTab({ products = [] }) {
 
           <InlineStack align="space-between" blockAlign="center">
             <BlockStack gap="100">
-              <Text variant="headingSm" fontWeight="bold">🌱 1. Seed Official Names</Text>
-              <Text variant="bodySm" tone="subdued">Matches GIDs from officialNames.json and saves them safely to Shopify.</Text>
+              <Text variant="headingSm" fontWeight="bold">⚡ 1. Auto-Fill All Products</Text>
+              <Text variant="bodySm" tone="subdued">Uses the Official Names to pull geological data from Mindat.</Text>
             </BlockStack>
-            <Button onClick={handleSeed} loading={seedFetcher.state !== "idle"} disabled={seedFetcher.state !== "idle" || isBulk}>
-              Seed Official Names
-            </Button>
-          </InlineStack>
-
-          {seedFetcher.data?.ok && seedFetcher.state === "idle" && (
-            <Banner tone="success">Seeded {seedFetcher.data.seededCount} of {products.length} products successfully.</Banner>
-          )}
-
-          <Divider />
-
-          <InlineStack align="space-between" blockAlign="center">
-            <BlockStack gap="100">
-              <Text variant="headingSm" fontWeight="bold">⚡ 2. Auto-Fill All Products</Text>
-              <Text variant="bodySm" tone="subdued">Uses the seeded Official Names to pull geological data from Mindat.</Text>
-            </BlockStack>
-            <Button variant="primary" onClick={handleBulkFill} loading={isBulk} disabled={isBulk || seedFetcher.state !== "idle"}>
+            <Button variant="primary" onClick={handleBulkFill} loading={isBulk} disabled={isBulk}>
               {isBulk ? "Filling all products…" : "Auto-Fill All"}
             </Button>
           </InlineStack>
@@ -440,7 +413,7 @@ export default function ProductsTab({ products = [] }) {
               <Divider />
               <InlineStack align="space-between" blockAlign="center">
                 <BlockStack gap="100">
-                  <Text variant="headingSm" fontWeight="bold">💾 3. Save All to Shopify</Text>
+                  <Text variant="headingSm" fontWeight="bold">💾 2. Save All to Shopify</Text>
                   <Text variant="bodySm" tone="subdued">Writes the filled data permanently to Shopify metafields.</Text>
                 </BlockStack>
                 <Button

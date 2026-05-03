@@ -344,50 +344,6 @@ export const action = async ({ request }) => {
     return data({ ok: true });
   }
 
-  if (intent === "seed_names") {
-    const idsRaw = formData.get("ids");
-    const ids = JSON.parse(idsRaw);
-
-    let officialNames = {};
-    try {
-      const filePath = path.join(process.cwd(), "app", "data", "officialNames.json");
-      officialNames = JSON.parse(fs.readFileSync(filePath, "utf8"));
-    } catch (e) {
-      return data({ ok: false, error: "Could not read officialNames.json map." });
-    }
-
-    const metafields = [];
-    let seededCount = 0;
-
-    ids.forEach(id => {
-      const mappedName = officialNames[id];
-      if (mappedName) {
-        metafields.push({
-          ownerId: id,
-          namespace: "custom",
-          key: "official_name",
-          value: mappedName,
-          type: "single_line_text_field",
-        });
-        seededCount++;
-      }
-    });
-
-    if (metafields.length > 0) {
-      const chunks = [];
-      for (let i = 0; i < metafields.length; i += 25) chunks.push(metafields.slice(i, i + 25));
-      for (const chunk of chunks) {
-        await admin.graphql(`
-          mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
-            metafieldsSet(metafields: $metafields) { userErrors { message } }
-          }
-        `, { variables: { metafields: chunk } });
-      }
-    }
-
-    return data({ ok: true, seededCount });
-  }
-
   if (intent === "autoFill") {
     const title       = formData.get("title");
     const description = formData.get("description");
