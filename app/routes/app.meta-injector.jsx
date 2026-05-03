@@ -17,7 +17,7 @@ import { TAXONOMY_GIDS, wrapGid } from "../utils/taxonomyMap";
 // If Shopify tells you a field expects a 'list.single_line_text_field', 
 // drop the exact key name right here (e.g., "origin_location", "cut_type")
 const LIST_TEXT_FIELDS = [
-  // Add failing keys here, in quotes, separated by commas
+  "character_marks"
 ];
 
 // ─── TAXONOMY FORMATTER ─────────────────────────────────────────────────────
@@ -589,13 +589,21 @@ export const action = async ({ request }) => {
       for (const chunk of chunks) {
         const res = await admin.graphql(`
           mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
-            metafieldsSet(metafields: $metafields) { userErrors { message } }
+            metafieldsSet(metafields: $metafields) { userErrors { field message } }
           }
         `, { variables: { metafields: chunk } });
         const json = await res.json();
         const errors = (json.data?.metafieldsSet?.userErrors || [])
           .filter(e => !e.message.includes("must be consistent with the definition"));
-        if (errors.length > 0) { saveError = errors[0].message; break; }
+        if (errors.length > 0) { 
+          let errorMsg = errors[0].message;
+          if (errors[0].field && typeof errors[0].field[1] === 'number') {
+            const failingKey = chunk[errors[0].field[1]]?.key;
+            if (failingKey) errorMsg = `[Field: ${failingKey}] ${errorMsg}`;
+          }
+          saveError = errorMsg; 
+          break; 
+        }
       }
 
       results.push({ id: p.id, title: p.title, ok: !saveError, error: saveError || mindatError || null, merged });
