@@ -1,9 +1,6 @@
 import { useState, useRef } from "react";
 import { useLoaderData, data } from "react-router";
 import { authenticate } from "../shopify.server";
-import prisma from "../db.server";
-import fs from "fs";
-import path from "path";
 import {
   Page, Layout, Card, Button, Box, Popover, ActionList, Divider, Banner,
 } from "@shopify/polaris";
@@ -139,6 +136,12 @@ export const loader = async ({ request }) => {
 
 export const action = async ({ request }) => {
   const { admin, session } = await authenticate.admin(request);
+  
+  // dynamically import server-only modules so Vite ignores them in the client bundle
+  const { default: prisma } = await import("../db.server");
+  const fs = await import("fs");
+  const path = await import("path");
+
   const formData = await request.formData();
   const intent = formData.get("intent");
 
@@ -306,6 +309,269 @@ export const action = async ({ request }) => {
       }
     }
     return data({ ok: true });
+  }
+
+  // ─── BULK SEED OFFICIAL NAMES ───────────────────────────────────────────────
+  if (intent === "seed_names") {
+    const idsRaw = formData.get("ids");
+    const ids = JSON.parse(idsRaw);
+
+    let officialNames = {};
+    try {
+      const filePath = path.join(process.cwd(), "app", "data", "officialNames.json");
+      officialNames = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    } catch (e) {
+      return data({ ok: false, error: "Could not read officialNames.json map." });
+    }
+
+    const metafields = [];
+    let seededCount = 0;
+
+    ids.forEach(id => {
+      const mappedName = officialNames[id];
+      if (mappedName) {
+        metafields.push({
+          ownerId: id,
+          namespace: "custom",
+          key: "official_name",
+          value: mappedName,
+          type: "single_line_text_field",
+        });
+        seededCount++;
+      }
+    });
+
+    if (metafields.length > 0) {
+      const chunks = [];
+      for (let i = 0; i < metafields.length; i += 25) chunks.push(metafields.slice(i, i + 25));
+      for (const chunk of chunks) {
+        await admin.graphql(`
+          mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
+            metafieldsSet(metafields: $metafields) { userErrors { message } }
+          }
+        `, { variables: { metafields: chunk } });
+      }
+    }
+
+    return data({ ok: true, seededCount });
+  }
+
+  // ─── SINGLE PRODUCT AUTO-FILL ───────────────────────────────────────────────
+  if (intent === "autoFill") {
+    const title       = formData.get("title");
+    const description = formData.get("description");
+    const existingRaw = formData.get("existingMeta");
+    const existing    = existingRaw ? JSON.parse(existingRaw) : {};
+
+    const parsed  = parseDescription(description);
+    const library = lookupStone(title) || {};
+
+    let stoneName = existing.official_name ? String(existing.official_name).trim() : null;
+    if (!stoneName && library.official_name) stoneName = library.official_name;
+    if (!stoneName && title) stoneName = title;
+
+    let mindat = {};
+    let mindatError = null;
+
+    if (!stoneName) {
+      mindatError = "missing_name";
+    } else {
+      try {
+        const normalizedName = stoneName.toLowerCase().trim();
+        const cachedStone = await prisma.stoneCache.findUnique({
+          where: { stoneName: normalizedName }
+        });
+
+        if (cachedStone) {
+          mindat = JSON.parse(cachedStone.data);
+        } else {
+          if (!process.env.MINDAT_API_KEY) throw new Error("MINDAT_API_KEY not set");
+          const res = await fetch(
+            `https://api.mindat.org/v1/geomaterials/?name=${encodeURIComponent(stoneName)}&format=json`,
+            { headers: { Authorization: `Token ${process.env.MINDAT_API_KEY}` } }
+          );
+          if (!res.ok) throw new Error(`Mindat HTTP ${res.status}`);
+          const json = await res.json();
+          if (json.results?.[0]) {
+            const m = json.results[0];
+            const hardnessStr = m.hardness_min ? (m.hardness_max && m.hardness_max !== m.hardness_min ? `${m.hardness_min}-${m.hardness_max}` : `${m.hardness_min}`) : "";
+            const gravityStr = m.density_min ? (m.density_max && m.density_max !== m.density_min ? `${m.density_min}-${m.density_max}` : `${m.density_min}`) : "";
+
+            mindat = {
+              moh_hardness:     hardnessStr,
+              crystal_system:   m.crystal_system || "",
+              specific_gravity: gravityStr,
+              luster:           m.lustre         || "",
+              cleavage:         m.cleavage       || "",
+              fracture_pattern: m.fracture       || "",
+              diaphaneity:      m.diaphaneity    || "",
+            };
+            Object.keys(mindat).forEach(k => { if (!mindat[k]) delete mindat[k]; });
+
+            if (Object.keys(mindat).length > 0) {
+              await prisma.stoneCache.create({
+                data: { stoneName: normalizedName, data: JSON.stringify(mindat) }
+              });
+            }
+          }
+        }
+      } catch (e) {
+        mindatError = e.message;
+      }
+    }
+
+    const merged = {};
+    const conflicts = [];
+
+    if (stoneName && !existing["official_name"]) {
+      merged["official_name"] = stoneName;
+    }
+
+    TARGET_KEYS.forEach(key => {
+      if (existing[key] && String(existing[key]).trim() !== "") {
+        merged[key] = existing[key];
+        return;
+      }
+      const libVal    = library[key] || "";
+      const parsedVal = parsed[key]  || "";
+      const mindatVal = mindat[key]  || "";
+      if (mindatVal) {
+        if (libVal && libVal !== mindatVal) conflicts.push({ key, library: libVal, mindat: mindatVal });
+        merged[key] = `✅ ${mindatVal}`;
+      } else if (libVal) {
+        merged[key] = libVal;
+      } else if (parsedVal) {
+        merged[key] = `⚠️ ${parsedVal}`;
+      }
+    });
+
+    return data({ ok: true, merged, conflicts, mindatError });
+  }
+
+  // ─── BULK AUTO-FILL ALL PRODUCTS ────────────────────────────────────────────
+  if (intent === "bulkAutoFill") {
+    const productsRaw = formData.get("products");
+    const products = JSON.parse(productsRaw);
+    const results = [];
+
+    for (const p of products) {
+      const library  = lookupStone(p.title) || {};
+      const parsed   = parseDescription(p.description || "");
+      const existing = p.metafields || {};
+
+      let stoneName = existing.official_name ? String(existing.official_name).trim() : null;
+      if (!stoneName && library.official_name) stoneName = library.official_name;
+      if (!stoneName && p.title) stoneName = p.title;
+
+      if (!stoneName) {
+        results.push({ id: p.id, title: p.title, ok: false, error: "Could not identify stone." });
+        continue;
+      }
+
+      let mindat = {};
+      let mindatError = null;
+      try {
+        const normalizedName = stoneName.toLowerCase().trim();
+        const cachedStone = await prisma.stoneCache.findUnique({
+          where: { stoneName: normalizedName }
+        });
+
+        if (cachedStone) {
+          mindat = JSON.parse(cachedStone.data);
+        } else {
+          if (!process.env.MINDAT_API_KEY) throw new Error("MINDAT_API_KEY not set");
+          const res = await fetch(
+            `https://api.mindat.org/v1/geomaterials/?name=${encodeURIComponent(stoneName)}&format=json`,
+            { headers: { Authorization: `Token ${process.env.MINDAT_API_KEY}` } }
+          );
+          if (res.ok) {
+            const json = await res.json();
+            if (json.results?.[0]) {
+              const m = json.results[0];
+              const hardnessStr = m.hardness_min ? (m.hardness_max && m.hardness_max !== m.hardness_min ? `${m.hardness_min}-${m.hardness_max}` : `${m.hardness_min}`) : "";
+              const gravityStr = m.density_min ? (m.density_max && m.density_max !== m.density_min ? `${m.density_min}-${m.density_max}` : `${m.density_min}`) : "";
+
+              mindat = {
+                moh_hardness:     hardnessStr,
+                crystal_system:   m.crystal_system || "",
+                specific_gravity: gravityStr,
+                luster:           m.lustre         || "",
+                cleavage:         m.cleavage       || "",
+                fracture_pattern: m.fracture       || "",
+                diaphaneity:      m.diaphaneity    || "",
+              };
+              Object.keys(mindat).forEach(k => { if (!mindat[k]) delete mindat[k]; });
+
+              if (Object.keys(mindat).length > 0) {
+                await prisma.stoneCache.create({
+                  data: { stoneName: normalizedName, data: JSON.stringify(mindat) }
+                });
+              }
+            }
+          }
+        }
+      } catch (e) {
+        mindatError = e.message;
+      }
+
+      const merged = {};
+      if (stoneName && !existing["official_name"]) merged["official_name"] = stoneName;
+
+      TARGET_KEYS.forEach(key => {
+        if (existing[key] && String(existing[key]).trim() !== "") {
+          merged[key] = existing[key];
+          return;
+        }
+        const libVal    = library[key] || "";
+        const parsedVal = parsed[key]  || "";
+        const mindatVal = mindat[key]  || "";
+        if (mindatVal)      merged[key] = `✅ ${mindatVal}`;
+        else if (libVal)    merged[key] = libVal;
+        else if (parsedVal) merged[key] = `⚠️ ${parsedVal}`;
+      });
+
+      const metafields = TARGET_KEYS
+        .filter(key => merged[key] && String(merged[key]).trim() !== "")
+        .map(key => {
+          let finalValue = merged[key];
+          if (key === "stone_story") finalValue = autoLinkStory(finalValue);
+          const formatted = formatMetafieldValue(key, finalValue);
+          if (!formatted) return null;
+          return {
+            ownerId:   p.id,
+            namespace: formatted.namespace,
+            key:       formatted.key,
+            value:     formatted.value,
+            type:      formatted.type,
+          };
+        }).filter(Boolean);
+
+      if (metafields.length === 0) {
+        results.push({ id: p.id, title: p.title, ok: false, error: "no data found" });
+        continue;
+      }
+
+      let saveError = null;
+      const chunks = [];
+      for (let i = 0; i < metafields.length; i += 25) chunks.push(metafields.slice(i, i + 25));
+      for (const chunk of chunks) {
+        const res = await admin.graphql(`
+          mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
+            metafieldsSet(metafields: $metafields) { userErrors { message } }
+          }
+        `, { variables: { metafields: chunk } });
+        const json = await res.json();
+        const errors = (json.data?.metafieldsSet?.userErrors || [])
+          .filter(e => !e.message.includes("must be consistent with the definition"));
+        if (errors.length > 0) { saveError = errors[0].message; break; }
+      }
+
+      results.push({ id: p.id, title: p.title, ok: !saveError, error: saveError || mindatError || null, merged });
+      await new Promise(r => setTimeout(r, 200));
+    }
+
+    const failed = results.filter(r => !r.ok);
+    return data({ ok: true, total: results.length, failed, results });
   }
 
   if (intent === "mindat_lookup") {
