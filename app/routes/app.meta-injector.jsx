@@ -14,8 +14,6 @@ import { lookupStone } from "../utils/geoLibrary";
 import { TAXONOMY_GIDS, wrapGid } from "../utils/taxonomyMap";
 
 // ─── LIST FIELDS CONFIGURATION ──────────────────────────────────────────────
-// If Shopify tells you a field expects a 'list.single_line_text_field', 
-// drop the exact key name right here (e.g., "origin_location", "cut_type")
 const LIST_TEXT_FIELDS = [
   "character_marks"
 ];
@@ -23,8 +21,6 @@ const LIST_TEXT_FIELDS = [
 // ─── TAXONOMY FORMATTER ─────────────────────────────────────────────────────
 function formatMetafieldValue(originalKey, value) {
   const cleanValue = String(value).replace(/[✅⚠️]/g, "").trim();
-  
-  // The taxonomyMap.js uses underscores (e.g., mineral_class)
   const mapKey = originalKey.replace(/-/g, "_");
 
   if (TAXONOMY_GIDS[mapKey] && TAXONOMY_GIDS[mapKey][cleanValue]) {
@@ -32,11 +28,10 @@ function formatMetafieldValue(originalKey, value) {
       value: wrapGid(TAXONOMY_GIDS[mapKey][cleanValue]),
       type: "list.metaobject_reference",
       namespace: "shopify",
-      key: originalKey.replace(/_/g, "-") // Shopify requires dashes
+      key: originalKey.replace(/_/g, "-") 
     };
   }
 
-  // Check if this specific field is configured as a list in Shopify
   const isListField = LIST_TEXT_FIELDS.includes(mapKey);
 
   return {
@@ -45,6 +40,20 @@ function formatMetafieldValue(originalKey, value) {
     namespace: "custom",
     key: mapKey
   };
+}
+
+// ─── RAW ERROR EXTRACTOR ────────────────────────────────────────────────────
+function extractShopifyError(errors, chunk) {
+  if (!errors || errors.length === 0) return null;
+  let failingKey = "UNKNOWN";
+  try {
+    if (errors[0].field && typeof errors[0].field[1] === 'number') {
+      failingKey = chunk[errors[0].field[1]]?.key || "UNKNOWN";
+    }
+  } catch (e) {}
+  
+  // Dump the raw JSON error and the exact keys in this chunk directly to the UI
+  return `[FIELD: ${failingKey}] ${errors[0].message} | RAW: ${JSON.stringify(errors)} | CHUNK: [${chunk.map(c => c.key).join(", ")}]`;
 }
 
 export const loader = async ({ request }) => {
@@ -99,7 +108,6 @@ export const loader = async ({ request }) => {
         Object.entries(rawMfs).map(([k, v]) => {
           let finalVal = String(v);
           
-          // 1. Unpack the JSON array first
           if (finalVal.startsWith("[") && finalVal.endsWith("]")) {
             try {
               const parsed = JSON.parse(finalVal);
@@ -107,7 +115,6 @@ export const loader = async ({ request }) => {
             } catch {}
           }
 
-          // 2. Translate the clean ID back to English
           const mapKey = k.replace(/-/g, "_");
           if (TAXONOMY_GIDS[mapKey]) {
             for (const [word, mappedGid] of Object.entries(TAXONOMY_GIDS[mapKey])) {
@@ -146,7 +153,6 @@ export const loader = async ({ request }) => {
 export const action = async ({ request }) => {
   const { admin, session } = await authenticate.admin(request);
   
-  // dynamically import server-only modules so Vite ignores them in the client bundle
   const { default: prisma } = await import("../db.server");
   const fs = await import("fs");
   const path = await import("path");
@@ -154,7 +160,6 @@ export const action = async ({ request }) => {
   const formData = await request.formData();
   const intent = formData.get("intent");
 
-  // ─── QA & INJECT VIEW HANDLERS ──────────────────────────────────────────────
   if (intent === "build_payload") {
     const productId = formData.get("productId");
     const existingMeta = JSON.parse(formData.get("existingMeta") || "{}");
@@ -206,15 +211,8 @@ export const action = async ({ request }) => {
         `, { variables: { metafields: chunk } });
         const json = await res.json();
         
-        const errors = json.data?.metafieldsSet?.userErrors || [];
-        if (errors.length > 0) {
-          let errorMsg = errors[0].message;
-          if (errors[0].field && typeof errors[0].field[1] === 'number') {
-            const failingKey = chunk[errors[0].field[1]]?.key;
-            if (failingKey) errorMsg = `[Field: ${failingKey}] ${errorMsg}`;
-          }
-          return data({ ok: false, error: errorMsg });
-        }
+        const errorMsg = extractShopifyError(json.data?.metafieldsSet?.userErrors, chunk);
+        if (errorMsg) return data({ ok: false, error: errorMsg });
       }
       return data({ ok: true, injected: metafields.length });
     } catch (e) {
@@ -222,7 +220,6 @@ export const action = async ({ request }) => {
     }
   }
 
-  // ─── SAVE METAFIELDS (MANUAL EDITS) ─────────────────────────────────────────
   if (intent === "saveMetafields") {
     const rawMetafields = JSON.parse(formData.get("metafields"));
 
@@ -258,15 +255,8 @@ export const action = async ({ request }) => {
         `, { variables: { metafields: chunk } });
         const json = await res.json();
         
-        const errors = json.data?.metafieldsSet?.userErrors || [];
-        if (errors.length > 0) {
-          let errorMsg = errors[0].message;
-          if (errors[0].field && typeof errors[0].field[1] === 'number') {
-            const failingKey = chunk[errors[0].field[1]]?.key;
-            if (failingKey) errorMsg = `[Field: ${failingKey}] ${errorMsg}`;
-          }
-          return data({ ok: false, error: errorMsg });
-        }
+        const errorMsg = extractShopifyError(json.data?.metafieldsSet?.userErrors, chunk);
+        if (errorMsg) return data({ ok: false, error: errorMsg });
       } catch (e) {
         return data({ ok: false, error: e.message });
       }
@@ -274,7 +264,6 @@ export const action = async ({ request }) => {
     return data({ ok: true, success: true, message: "Metafields locked to Shopify." });
   }
 
-  // ─── BULK EDIT ───────────────────────────────────────────────────────────────
   if (intent === "bulk_edit_new") {
     const updates = JSON.parse(formData.get("updates"));
     const ids = JSON.parse(formData.get("ids"));
@@ -327,15 +316,8 @@ export const action = async ({ request }) => {
         `, { variables: { metafields: chunk } });
         const json = await res.json();
         
-        const errors = json.data?.metafieldsSet?.userErrors || [];
-        if (errors.length > 0) {
-          let errorMsg = errors[0].message;
-          if (errors[0].field && typeof errors[0].field[1] === 'number') {
-            const failingKey = chunk[errors[0].field[1]]?.key;
-            if (failingKey) errorMsg = `[Field: ${failingKey}] ${errorMsg}`;
-          }
-          return data({ ok: false, error: errorMsg });
-        }
+        const errorMsg = extractShopifyError(json.data?.metafieldsSet?.userErrors, chunk);
+        if (errorMsg) return data({ ok: false, error: errorMsg });
       } catch (e) {
           return data({ ok: false, error: e.message });
       }
@@ -343,7 +325,6 @@ export const action = async ({ request }) => {
     return data({ ok: true });
   }
 
-  // ─── BULK SEED OFFICIAL NAMES ───────────────────────────────────────────────
   if (intent === "seed_names") {
     const idsRaw = formData.get("ids");
     const ids = JSON.parse(idsRaw);
@@ -388,7 +369,6 @@ export const action = async ({ request }) => {
     return data({ ok: true, seededCount });
   }
 
-  // ─── SINGLE PRODUCT AUTO-FILL ───────────────────────────────────────────────
   if (intent === "autoFill") {
     const title       = formData.get("title");
     const description = formData.get("description");
@@ -480,7 +460,6 @@ export const action = async ({ request }) => {
     return data({ ok: true, merged, conflicts, mindatError });
   }
 
-  // ─── BULK AUTO-FILL ALL PRODUCTS ────────────────────────────────────────────
   if (intent === "bulkAutoFill") {
     const productsRaw = formData.get("products");
     const products = JSON.parse(productsRaw);
@@ -593,17 +572,9 @@ export const action = async ({ request }) => {
           }
         `, { variables: { metafields: chunk } });
         const json = await res.json();
-        const errors = (json.data?.metafieldsSet?.userErrors || [])
-          .filter(e => !e.message.includes("must be consistent with the definition"));
-        if (errors.length > 0) { 
-          let errorMsg = errors[0].message;
-          if (errors[0].field && typeof errors[0].field[1] === 'number') {
-            const failingKey = chunk[errors[0].field[1]]?.key;
-            if (failingKey) errorMsg = `[Field: ${failingKey}] ${errorMsg}`;
-          }
-          saveError = errorMsg; 
-          break; 
-        }
+        
+        const errorMsg = extractShopifyError(json.data?.metafieldsSet?.userErrors, chunk);
+        if (errorMsg) { saveError = errorMsg; break; }
       }
 
       results.push({ id: p.id, title: p.title, ok: !saveError, error: saveError || mindatError || null, merged });
