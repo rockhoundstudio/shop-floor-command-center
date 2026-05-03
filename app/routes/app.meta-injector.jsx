@@ -84,18 +84,15 @@ export const loader = async ({ request }) => {
           mf.key.replace(/-/g, "_"), mf.value
         ])
       );
-      // Custom overrides shopify if they both exist, which is exactly what we want for custom fields
       const rawMfs = { ...shopifyMfs, ...customMfs };
       
       const mfs = Object.fromEntries(
         Object.entries(rawMfs).map(([k, v]) => {
           let finalVal = String(v);
           
-          // ─── AGGRESSIVE REVERSE TRANSLATOR ───
           const safeKey = k.replace(/-/g, "_");
           if (TAXONOMY_GIDS[safeKey]) {
             for (const [word, mappedGid] of Object.entries(TAXONOMY_GIDS[safeKey])) {
-              // If the raw string contains the dictionary ID anywhere, immediately swap it to English
               if (finalVal.includes(String(mappedGid))) {
                 finalVal = word;
                 break;
@@ -103,7 +100,6 @@ export const loader = async ({ request }) => {
             }
           }
 
-          // Unwrap array brackets ONLY if it wasn't just swapped out for an English word
           if (finalVal.startsWith("[") && finalVal.endsWith("]")) {
             try {
               const parsed = JSON.parse(finalVal);
@@ -151,19 +147,18 @@ export const action = async ({ request }) => {
     const productId = formData.get("productId");
     const existingMeta = JSON.parse(formData.get("existingMeta") || "{}");
 
+    // FIX: Keep the payload strictly human-readable for the UI box
     const payloadObj = Object.keys(existingMeta)
       .filter(k => existingMeta[k] && String(existingMeta[k]).trim() !== "")
       .map(k => {
-        const formatted = formatMetafieldValue(k, existingMeta[k]);
-        if (!formatted) return null;
+        const safeKey = k.replace(/-/g, "_");
         return {
           ownerId: productId,
-          namespace: formatted.namespace,
-          key: formatted.key,
-          value: formatted.value,
-          type: formatted.type
+          namespace: TAXONOMY_GIDS[safeKey] ? "shopify" : "custom",
+          key: TAXONOMY_GIDS[safeKey] ? safeKey.replace(/_/g, "-") : safeKey,
+          value: String(existingMeta[k]).replace(/[✅⚠️]/g, "").trim()
         };
-      }).filter(Boolean);
+      });
 
     return data({ ok: true, payload: JSON.stringify(payloadObj, null, 2) });
   }
@@ -171,11 +166,26 @@ export const action = async ({ request }) => {
   if (intent === "inject") {
     try {
       const payloadStr = formData.get("payload");
-      const metafields = JSON.parse(payloadStr);
+      const rawMetafields = JSON.parse(payloadStr);
 
-      if (!Array.isArray(metafields) || metafields.length === 0) {
+      if (!Array.isArray(rawMetafields) || rawMetafields.length === 0) {
          return data({ ok: false, error: "Invalid or empty payload" });
       }
+
+      // FIX: Translate English back to GIDs right before sending to Shopify
+      const metafields = rawMetafields.map(mf => {
+        const safeKey = mf.key.replace(/-/g, "_");
+        const formatted = formatMetafieldValue(safeKey, mf.value);
+        if (!formatted) return null;
+        
+        return {
+          ownerId: mf.ownerId,
+          namespace: formatted.namespace,
+          key: formatted.key,
+          value: formatted.value,
+          type: formatted.type
+        };
+      }).filter(Boolean);
 
       const chunks = [];
       for (let i = 0; i < metafields.length; i += 25) chunks.push(metafields.slice(i, i + 25));
@@ -509,10 +519,6 @@ export const action = async ({ request }) => {
     const ooakText = formData.get("ooakText") || "";
     const currentStories = JSON.parse(formData.get("currentStories") || "{}");
 
-    console.log("[RS-DIAG] bulk_edit_new - Received Updates Object:", JSON.stringify(updates, null, 2));
-    console.log("[RS-DIAG] bulk_edit_new - Received IDs Count:", ids.length);
-    console.log("[RS-DIAG] bulk_edit_new - OOAK Text:", ooakText);
-
     const metafields = [];
 
     ids.forEach((ownerId) => {
@@ -545,11 +551,6 @@ export const action = async ({ request }) => {
       }
     });
 
-    console.log("[RS-DIAG] bulk_edit_new - Processed Metafields Array Count:", metafields.length);
-    if (metafields.length > 0) {
-      console.log("[RS-DIAG] bulk_edit_new - Sample of what is being sent to Shopify:", JSON.stringify(metafields.slice(0, 3), null, 2));
-    }
-
     if (metafields.length === 0) {
       return data({ 
         ok: false, 
@@ -573,11 +574,9 @@ export const action = async ({ request }) => {
             .filter(e => !e.message.includes("must be consistent with the definition"));
           
           if (errors.length > 0) {
-            console.log("[RS-DIAG] bulk_edit_new API Error:", errors);
             return data({ ok: false, error: errors[0].message });
           }
         } catch (e) {
-           console.log("[RS-DIAG] Catch block error (bulk_edit_new):", JSON.stringify({ message: e.message }, null, 2));
            return data({ ok: false, error: e.message });
         }
       }
@@ -598,9 +597,7 @@ export const action = async ({ request }) => {
         const json = await res.json();
         if (json.results?.[0]) return data({ ok: true, found: true, result: json.results[0] });
       }
-    } catch (e) {
-      console.log("[RS-DIAG] Catch block error (mindat_lookup):", JSON.stringify({ message: e.message }, null, 2));
-    }
+    } catch (e) {}
     return data({ ok: true, found: false });
   }
 
