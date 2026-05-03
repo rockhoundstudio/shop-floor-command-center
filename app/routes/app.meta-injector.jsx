@@ -90,6 +90,15 @@ export const loader = async ({ request }) => {
         Object.entries(rawMfs).map(([k, v]) => {
           let finalVal = String(v);
           
+          // 1. Unpack the JSON array first (Sidekick's fix)
+          if (finalVal.startsWith("[") && finalVal.endsWith("]")) {
+            try {
+              const parsed = JSON.parse(finalVal);
+              finalVal = Array.isArray(parsed) && parsed.length > 0 ? String(parsed[0]) : "";
+            } catch {}
+          }
+
+          // 2. Translate the clean ID back to English
           const safeKey = k.replace(/-/g, "_");
           if (TAXONOMY_GIDS[safeKey]) {
             for (const [word, mappedGid] of Object.entries(TAXONOMY_GIDS[safeKey])) {
@@ -98,14 +107,6 @@ export const loader = async ({ request }) => {
                 break;
               }
             }
-          }
-
-          if (finalVal.startsWith("[") && finalVal.endsWith("]")) {
-            try {
-              const parsed = JSON.parse(finalVal);
-              if (Array.isArray(parsed) && parsed.length > 0) finalVal = String(parsed[0]);
-              if (Array.isArray(parsed) && parsed.length === 0) finalVal = "";
-            } catch {}
           }
 
           return [k, finalVal];
@@ -147,7 +148,6 @@ export const action = async ({ request }) => {
     const productId = formData.get("productId");
     const existingMeta = JSON.parse(formData.get("existingMeta") || "{}");
 
-    // FIX: Keep the payload strictly human-readable for the UI box
     const payloadObj = Object.keys(existingMeta)
       .filter(k => existingMeta[k] && String(existingMeta[k]).trim() !== "")
       .map(k => {
@@ -172,7 +172,6 @@ export const action = async ({ request }) => {
          return data({ ok: false, error: "Invalid or empty payload" });
       }
 
-      // FIX: Translate English back to GIDs right before sending to Shopify
       const metafields = rawMetafields.map(mf => {
         const safeKey = mf.key.replace(/-/g, "_");
         const formatted = formatMetafieldValue(safeKey, mf.value);
