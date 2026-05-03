@@ -48,8 +48,7 @@ function formatMetafieldValue(originalKey, value) {
     finalValue = JSON.stringify([finalValue]);
     finalType = "list.single_line_text_field";
   } else if (isBooleanField) {
-    // Converts "true", "yes", "1" to standard Shopify booleans
-    const truthy = ["true", "yes", "1"];
+    const truthy = ["true", "yes", "1", "✅ true"];
     finalValue = truthy.some(t => finalValue.toLowerCase().includes(t)) ? "true" : "false";
     finalType = "boolean";
   }
@@ -118,7 +117,7 @@ export const loader = async ({ request }) => {
       );
       const shopifyMfs = Object.fromEntries(
         (node.shopifyMeta?.edges || []).map(({ node: mf }) => [
-          mf.key.replace(/-/g, "_"), mf.value
+          mf.key, mf.value 
         ])
       );
       const rawMfs = { ...shopifyMfs, ...customMfs };
@@ -134,9 +133,9 @@ export const loader = async ({ request }) => {
             } catch {}
           }
 
-          const mapKey = k.replace(/-/g, "_");
-          if (TAXONOMY_GIDS[mapKey]) {
-            for (const [word, mappedGid] of Object.entries(TAXONOMY_GIDS[mapKey])) {
+          const dictKey = k.replace(/_/g, "-");
+          if (TAXONOMY_GIDS[dictKey]) {
+            for (const [word, mappedGid] of Object.entries(TAXONOMY_GIDS[dictKey])) {
               if (finalVal.includes(String(mappedGid))) {
                 finalVal = word;
                 break;
@@ -144,7 +143,7 @@ export const loader = async ({ request }) => {
             }
           }
 
-          return [k, finalVal];
+          return [k.replace(/-/g, "_"), finalVal];
         })
       );
       
@@ -186,11 +185,12 @@ export const action = async ({ request }) => {
     const payloadObj = Object.keys(existingMeta)
       .filter(k => existingMeta[k] && String(existingMeta[k]).trim() !== "")
       .map(k => {
-        const mapKey = k.replace(/-/g, "_");
+        const dictKey = k.replace(/_/g, "-");
+        const uiKey = k.replace(/-/g, "_");
         return {
           ownerId: productId,
-          namespace: TAXONOMY_GIDS[mapKey] ? "shopify" : "custom",
-          key: TAXONOMY_GIDS[mapKey] ? k.replace(/_/g, "-") : mapKey,
+          namespace: TAXONOMY_GIDS[dictKey] ? "shopify" : "custom",
+          key: TAXONOMY_GIDS[dictKey] ? dictKey : uiKey,
           value: String(existingMeta[k]).replace(/[✅⚠️]/g, "").trim()
         };
       });
@@ -388,7 +388,6 @@ export const action = async ({ request }) => {
     return data({ ok: true, seededCount });
   }
 
-  // ─── SINGLE PRODUCT AUTO-FILL ───────────────────────────────────────────────
   if (intent === "autoFill") {
     const title       = formData.get("title");
     const description = formData.get("description");
@@ -477,7 +476,6 @@ export const action = async ({ request }) => {
       }
     });
 
-    // AUTO-ASSIGN OOAK FOR ALL STONES
     if (stoneName && (!existing["is_ooak"] || String(existing["is_ooak"]).trim() === "")) {
       merged["is_ooak"] = "✅ true";
     }
@@ -485,7 +483,6 @@ export const action = async ({ request }) => {
     return data({ ok: true, merged, conflicts, mindatError });
   }
 
-  // ─── BULK AUTO-FILL ALL PRODUCTS ────────────────────────────────────────────
   if (intent === "bulkAutoFill") {
     const productsRaw = formData.get("products");
     const products = JSON.parse(productsRaw);
@@ -552,6 +549,8 @@ export const action = async ({ request }) => {
       }
 
       const merged = {};
+      const conflicts = [];
+
       if (stoneName && !existing["official_name"]) merged["official_name"] = stoneName;
 
       TARGET_KEYS.forEach(key => {
@@ -562,12 +561,16 @@ export const action = async ({ request }) => {
         const libVal    = library[key] || "";
         const parsedVal = parsed[key]  || "";
         const mindatVal = mindat[key]  || "";
-        if (mindatVal)      merged[key] = `✅ ${mindatVal}`;
-        else if (libVal)    merged[key] = libVal;
-        else if (parsedVal) merged[key] = `⚠️ ${parsedVal}`;
+        if (mindatVal) {
+          if (libVal && libVal !== mindatVal) conflicts.push({ key, library: libVal, mindat: mindatVal });
+          merged[key] = `✅ ${mindatVal}`;
+        } else if (libVal) {
+          merged[key] = libVal;
+        } else if (parsedVal) {
+          merged[key] = `⚠️ ${parsedVal}`;
+        }
       });
 
-      // AUTO-ASSIGN OOAK FOR ALL STONES
       if (stoneName && (!existing["is_ooak"] || String(existing["is_ooak"]).trim() === "")) {
         merged["is_ooak"] = "✅ true";
       }
@@ -608,7 +611,7 @@ export const action = async ({ request }) => {
         if (errorMsg) { saveError = errorMsg; break; }
       }
 
-      results.push({ id: p.id, title: p.title, ok: !saveError, error: saveError || mindatError || null, merged });
+      results.push({ id: p.id, title: p.title, ok: !saveError, error: saveError || mindatError || null, merged, conflicts });
       await new Promise(r => setTimeout(r, 200));
     }
 
