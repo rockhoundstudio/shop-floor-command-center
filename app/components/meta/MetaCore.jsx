@@ -9,7 +9,8 @@ import { SearchIcon } from "@shopify/polaris-icons";
 import { TARGET_KEYS, FIELD_LABELS } from "../../utils/metaScan";
 import { lookupStone } from "../../utils/geoLibrary"; 
 
-const DROPDOWN_FIELDS = ["luster", "diaphaneity", "fracture_pattern", "cleavage", "crystal_system", "rock_formation", "mineral_class", "geological_era", "tenacity"];
+// Added rock_composition to the DROPDOWN_FIELDS array
+const DROPDOWN_FIELDS = ["luster", "diaphaneity", "fracture_pattern", "cleavage", "crystal_system", "rock_formation", "mineral_class", "geological_era", "tenacity", "rock_composition"];
 const FREE_TEXT_FIELDS = ["origin_location", "rescued_by", "stone_story", "bench_notes", "dimensions_mm", "carat_weight", "cut_type", "moh_hardness", "specific_gravity"];
 
 const SEO_DICTIONARY = {
@@ -38,6 +39,20 @@ const SEO_DICTIONARY = {
   mineral_class: {
     global: ["Silicates", "Oxides", "Carbonates", "Sulfates", "Phosphates"],
   },
+  rock_composition: {
+    global: ["Microcrystalline quartz", "Macrocrystalline quartz", "Volcanic glass", "Metamorphic rock"],
+    jasper: ["Microcrystalline quartz with mineral impurities (iron oxides, clay, ash)"],
+    agate: ["Banded microcrystalline quartz with alternating silica layers"],
+    chalcedony: ["Banded microcrystalline quartz with alternating silica layers"],
+    labradorite: ["Calcium-rich plagioclase feldspar"],
+    obsidian: ["Volcanic glass (rhyolitic)"],
+    gneiss: ["Metamorphic rock with banded silicate minerals"],
+    siltstone: ["Compacted fine-grained sedimentary silica and clay"],
+    conglomerate: ["Mixed clast sedimentary rock with silica matrix"],
+    serpentine: ["Hydrated magnesium iron phyllosilicate"],
+    variscite: ["Hydrated aluminum phosphate with quartz matrix"],
+    quartz: ["Silicon dioxide (SiO2) macrocrystalline"]
+  }
 };
 
 const availableStones = [
@@ -264,6 +279,7 @@ export default function MetaCore({ products = [], mode }) {
       if (libraryData.cleavage) applySuggestion("cleavage", libraryData.cleavage);
       if (libraryData.rock_formation) applySuggestion("rock_formation", libraryData.rock_formation);
       if (libraryData.mineral_class) applySuggestion("mineral_class", libraryData.mineral_class);
+      if (libraryData.rock_composition) applySuggestion("rock_composition", libraryData.rock_composition);
 
       setFieldValues(newValues);
       setCustomInputs(newCustom);
