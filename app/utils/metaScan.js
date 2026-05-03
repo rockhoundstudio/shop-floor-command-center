@@ -33,6 +33,24 @@ export const TARGET_KEYS = [
   "custom_product"      
 ];
 
+export const MANUAL_KEYS = [
+  "official_name",
+  "origin_location",
+  "rescued_by",
+  "cut_type",
+  "stone_shape",
+  "surface_finish",
+  "treatment_status",
+  "primary_color",
+  "secondary_colors",
+  "dimensions_mm",
+  "carat_weight",
+  "story_theme",
+  "stone_story",
+  "character_marks",
+  "bench_notes"
+];
+
 export const FIELD_LABELS = {
   official_name:     "Official Name",
   mineral_class:     "Mineral Class",

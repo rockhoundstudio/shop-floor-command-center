@@ -6,7 +6,7 @@ import {
 import { useState, useRef } from "react";
 import { useFetcher } from "react-router";
 import { useAppBridge } from "@shopify/app-bridge-react";
-import { TARGET_KEYS, FIELD_LABELS } from "../../utils/metaScan";
+import { TARGET_KEYS, FIELD_LABELS, MANUAL_KEYS } from "../../utils/metaScan";
 import { TAXONOMY_GIDS, wrapGid } from "../../utils/taxonomyMap";
 
 // Synchronized with backend engine
@@ -311,7 +311,7 @@ export default function ProductsTab({ products = [] }) {
                     </Box>
 
                     <BlockStack gap="300">
-                      {TARGET_KEYS.filter(key => key !== "official_name").map(key => (
+                      {MANUAL_KEYS.filter(key => key !== "official_name").map(key => (
                         <TextField
                           key={key}
                           label={FIELD_LABELS[key] || key}
