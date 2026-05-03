@@ -84,32 +84,32 @@ export const loader = async ({ request }) => {
           mf.key.replace(/-/g, "_"), mf.value
         ])
       );
+      // Custom overrides shopify if they both exist, which is exactly what we want for custom fields
       const rawMfs = { ...shopifyMfs, ...customMfs };
       
       const mfs = Object.fromEntries(
         Object.entries(rawMfs).map(([k, v]) => {
-          let finalVal = v;
+          let finalVal = String(v);
           
-          // Unwrap array brackets
-          if (typeof v === "string" && v.startsWith("[") && v.endsWith("]")) {
-            try {
-              const parsed = JSON.parse(v);
-              if (Array.isArray(parsed) && parsed.length === 1) finalVal = parsed[0];
-              if (Array.isArray(parsed) && parsed.length === 0) finalVal = "";
-            } catch {}
-          }
-          
-          // ─── REVERSE TRANSLATOR: Turn GIDs back into readable words for the UI ───
-          if (typeof finalVal === "string" && finalVal.includes("gid://")) {
-            const safeKey = k.replace(/-/g, "_");
-            if (TAXONOMY_GIDS[safeKey]) {
-              for (const [word, mappedGid] of Object.entries(TAXONOMY_GIDS[safeKey])) {
-                if (finalVal.includes(String(mappedGid))) {
-                  finalVal = word;
-                  break;
-                }
+          // ─── AGGRESSIVE REVERSE TRANSLATOR ───
+          const safeKey = k.replace(/-/g, "_");
+          if (TAXONOMY_GIDS[safeKey]) {
+            for (const [word, mappedGid] of Object.entries(TAXONOMY_GIDS[safeKey])) {
+              // If the raw string contains the dictionary ID anywhere, immediately swap it to English
+              if (finalVal.includes(String(mappedGid))) {
+                finalVal = word;
+                break;
               }
             }
+          }
+
+          // Unwrap array brackets ONLY if it wasn't just swapped out for an English word
+          if (finalVal.startsWith("[") && finalVal.endsWith("]")) {
+            try {
+              const parsed = JSON.parse(finalVal);
+              if (Array.isArray(parsed) && parsed.length > 0) finalVal = String(parsed[0]);
+              if (Array.isArray(parsed) && parsed.length === 0) finalVal = "";
+            } catch {}
           }
 
           return [k, finalVal];
