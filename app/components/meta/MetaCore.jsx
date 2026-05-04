@@ -1,71 +1,26 @@
+import { 
+  TextField, BlockStack, Card, Text, Badge, Button, Banner, 
+  InlineStack, Page, Select, Box, ResourceList, ResourceItem, Thumbnail, Checkbox, Tag, Divider
+} from "@shopify/polaris";
 import { useState, useEffect } from "react";
 import { useFetcher } from "react-router";
-import {
-  Card, TextField, Text, BlockStack, InlineStack, Button,
-  Checkbox, Scrollable, Box, Select, Banner,
-  Divider, ActionList, Icon, Badge
-} from "@shopify/polaris";
-import { SearchIcon } from "@shopify/polaris-icons";
+import { useAppBridge } from "@shopify/app-bridge-react";
 import { TARGET_KEYS, FIELD_LABELS, MANUAL_KEYS } from "../../utils/metaScan";
-import { lookupStone } from "../../utils/geoLibrary"; 
+import { TAXONOMY_GIDS, wrapGid } from "../../utils/taxonomyMap";
 
-const DROPDOWN_FIELDS = ["luster", "diaphaneity", "fracture_pattern", "cleavage", "crystal_system", "rock_formation", "mineral_class", "geological_era", "tenacity", "rock_composition"];
-const FREE_TEXT_FIELDS = ["origin_location", "rescued_by", "stone_story", "bench_notes", "dimensions_mm", "carat_weight", "cut_type", "moh_hardness", "specific_gravity"];
+const LIST_TEXT_FIELDS = [
+  "character_marks"
+];
 
-const SEO_DICTIONARY = {
-  luster: {
-    global: [
-      "Vitreous", 
-      "Waxy", 
-      "Resinous", 
-      "Silky", 
-      "Pearly", 
-      "Dull", 
-      "Submetallic",
-      "Vitreous to pearly with labradorescence",
-      "Vitreous with iridescent schiller",
-      "Vitreous to silky",
-      "Waxy to greasy",
-      "Vitreous to pearly"
-    ],
-    labradorite: ["Vitreous to pearly with labradorescence", "Labradorescent", "Vitreous", "Pearly"],
-    obsidian: ["Vitreous with iridescent schiller", "Vitreous", "Sheen", "Chatoyant"],
-  },
-  diaphaneity: {
-    global: ["Opaque", "Translucent", "Transparent", "Semi-Translucent"],
-    agate: ["Highly Translucent", "Banded Translucent", "Semi-Translucent"],
-  },
-  fracture_pattern: {
-    global: ["Conchoidal", "Uneven", "Splintery", "Hackly", "Granular"],
-  },
-  cleavage: {
-    global: ["None", "Indistinct", "Perfect", "Good"],
-    labradorite: ["Perfect in two directions"],
-  },
-  crystal_system: {
-    global: ["Trigonal", "Cryptocrystalline", "Amorphous", "Monoclinic", "Triclinic", "Orthorhombic", "Hexagonal"],
-  },
-  rock_formation: {
-    global: ["Igneous", "Sedimentary", "Metamorphic"],
-  },
-  mineral_class: {
-    global: ["Silicates", "Oxides", "Carbonates", "Sulfates", "Phosphates"],
-  },
-  rock_composition: {
-    global: ["Microcrystalline quartz", "Macrocrystalline quartz", "Volcanic glass", "Metamorphic rock"],
-    jasper: ["Microcrystalline quartz with mineral impurities (iron oxides, clay, ash)"],
-    agate: ["Banded microcrystalline quartz with alternating silica layers"],
-    chalcedony: ["Banded microcrystalline quartz with alternating silica layers"],
-    labradorite: ["Calcium-rich plagioclase feldspar"],
-    obsidian: ["Volcanic glass (rhyolitic)"],
-    gneiss: ["Metamorphic rock with banded silicate minerals"],
-    siltstone: ["Compacted fine-grained sedimentary silica and clay"],
-    conglomerate: ["Mixed clast sedimentary rock with silica matrix"],
-    serpentine: ["Hydrated magnesium iron phyllosilicate"],
-    variscite: ["Hydrated aluminum phosphate with quartz matrix"],
-    quartz: ["Silicon dioxide (SiO2) macrocrystalline"]
-  }
-};
+const availableStones = [
+  "Agate", "Amethyst", "Aventurine", "Azurite", "Bloodstone", "Carnelian",
+  "Chalcedony", "Chrysocolla", "Conglomerate", "Fluorite", "Garnet",
+  "Gneiss", "Hematite", "Howlite", "Jade", "Jasper", "Labradorite",
+  "Lapis Lazuli", "Malachite", "Moonstone", "Obsidian", "Onyx", "Opal",
+  "Pyrite", "Quartz", "Rhodochrosite", "Rhodonite", "Rose Quartz",
+  "Serpentine", "Siltstone", "Smoky Quartz", "Sodalite", "Sunstone",
+  "Tiger's Eye", "Tourmaline", "Turquoise", "Variscite"
+];
 
 const SEED_OPTIONS = {
   story_theme: ["River Find", "Road Trip", "Rescue", "Canyon Run", "First Cut", "Commission", "Ranch Find", "Mine Pull"],
@@ -79,51 +34,49 @@ const SEED_OPTIONS = {
   diaphaneity: ["Opaque", "Translucent", "Transparent", "Sub-translucent"]
 };
 
-const availableStones = [
-  "Agate", "Amethyst", "Aventurine", "Azurite", "Bloodstone", "Carnelian",
-  "Chalcedony", "Chrysocolla", "Fluorite", "Garnet", "Hematite", "Howlite",
-  "Jade", "Jasper", "Labradorite", "Lapis Lazuli", "Malachite", "Moonstone",
-  "Obsidian", "Onyx", "Opal", "Pyrite", "Quartz", "Rhodochrosite",
-  "Rhodonite", "Rose Quartz", "Serpentine", "Smoky Quartz", "Sodalite",
-  "Sunstone", "Tiger's Eye", "Tourmaline", "Turquoise"
-];
+function formatMetafieldValue(key, value) {
+  const cleanValue = String(value).replace(/[✅⚠️]/g, "").trim();
+  const safeKey = key.replace(/-/g, "_");
+  
+  if (TAXONOMY_GIDS[safeKey] && TAXONOMY_GIDS[safeKey][cleanValue]) {
+    return {
+      value: wrapGid(TAXONOMY_GIDS[safeKey][cleanValue]),
+      type: "list.metaobject_reference"
+    };
+  }
+  if (TAXONOMY_GIDS[safeKey]) {
+    return null;
+  }
+  const isListField = LIST_TEXT_FIELDS.includes(safeKey);
+  return {
+    value: isListField ? JSON.stringify([String(value).trim()]) : String(value).trim(),
+    type: isListField ? "list.single_line_text_field" : "single_line_text_field"
+  };
+}
 
-export default function MetaCore({ products = [], mode }) {
-  const fetcher = useFetcher();
-  const suggestFetcher = useFetcher();
-  const saveFetcher = useFetcher();
+export default function MetaCore({ products = [] }) {
+  const shopify = useAppBridge();
 
-  const [checkedIds, setCheckedIds] = useState([]);
-  const [tickedFields, setTickedFields] = useState({});
+  const [selectedIds, setSelectedIds] = useState([]);
   const [fieldValues, setFieldValues] = useState({});
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [customInputs, setCustomInputs] = useState({});
-  const [ooakText, setOoakText] = useState("");
-  const [isSuggesting, setIsSuggesting] = useState(false);
-  const [productSearch, setProductSearch] = useState("");
-  const [saveStatus, setSaveStatus] = useState(null); 
-
-  // Vocabulary UI States
+  const [customName, setCustomName] = useState("");
+  const [search, setSearch] = useState("");
+  
   const [vocabulary, setVocabulary] = useState({});
   const [showCustomInput, setShowCustomInput] = useState({});
+  const [customInputs, setCustomInputs] = useState({});
 
-  const vocabFetcher    = useFetcher();
+  const saveFetcher = useFetcher();
+  const vocabFetcher = useFetcher();
   const addCustomFetcher = useFetcher();
 
-  // QA & Inject Tab State
-  const [injectProduct, setInjectProduct] = useState("");
-  const [payload, setPayload] = useState("");
-  const [qaEdits, setQaEdits] = useState({});
+  const filtered = products.filter(p => p.title.toLowerCase().includes(search.toLowerCase()));
 
-  const [mindatQuery, setMindatQuery] = useState("");
-  const [mindatSearched, setMindatSearched] = useState("");
-
-  // Trigger Vocabulary Load
   useEffect(() => {
-    if (mode === "bulk" && vocabFetcher.state === "idle" && !vocabFetcher.data) {
+    if (vocabFetcher.state === "idle" && !vocabFetcher.data) {
       vocabFetcher.submit({ intent: "loadVocabulary" }, { method: "post", action: "/app/meta-injector" });
     }
-  }, [mode, vocabFetcher]);
+  }, [vocabFetcher]);
 
   useEffect(() => {
     if (vocabFetcher.data?.vocabulary) {
@@ -131,826 +84,268 @@ export default function MetaCore({ products = [], mode }) {
     }
   }, [vocabFetcher.data]);
 
-  useEffect(() => {
-    if (checkedIds.length === 1) {
-      const p = products.find(prod => prod.id === checkedIds[0]);
-      if (!p) return;
+  function handleSave() {
+    if (selectedIds.length === 0) {
+      shopify.toast.show("Please select at least one product to update.");
+      return;
+    }
 
-      const mfs = p.metafields || {};
-      const newVals = {};
-      const newTicked = {};
-      const newCustom = {};
+    const metafields = TARGET_KEYS
+      .filter(key => fieldValues[key] && String(fieldValues[key]).trim() !== "")
+      .map(key => {
+        const safeKey = key.replace(/-/g, "_");
+        const rawValue = key === "official_name" && fieldValues[key] === "__custom__"
+          ? customName
+          : fieldValues[key] || "";
+        const formatted = formatMetafieldValue(safeKey, rawValue);
+        if (!formatted) return null;
+        return {
+          namespace: TAXONOMY_GIDS[safeKey] ? "shopify" : "custom",
+          key:       TAXONOMY_GIDS[safeKey] ? key.replace(/_/g, "-") : key,
+          value:     formatted.value,
+          type:      formatted.type,
+        };
+      }).filter(Boolean);
 
-      const offName = mfs["official_name"] ? String(mfs["official_name"]).replace(/[✅⚠️]/g, "").trim() : "";
-      if (offName) {
-        newTicked["official_name"] = true;
-        const stoneMatch = availableStones.find(s => s.toLowerCase() === offName.toLowerCase());
-        if (stoneMatch) {
-          newVals["official_name"] = stoneMatch;
-        } else {
-          newVals["official_name"] = "__custom__";
-          newCustom["official_name"] = offName;
-        }
-      }
+    saveFetcher.submit(
+      { 
+        intent: "bulkSaveMetafields", 
+        productIds: JSON.stringify(selectedIds),
+        metafields: JSON.stringify(metafields) 
+      },
+      { method: "post", action: "/app/meta-injector" }
+    );
+  }
 
-      const getOpts = (key, stoneName) => {
-        let opts = SEO_DICTIONARY[key]?.global || [];
-        if (stoneName && SEO_DICTIONARY[key]?.[stoneName.toLowerCase()]) {
-          opts = [...new Set([...SEO_DICTIONARY[key][stoneName.toLowerCase()], ...opts])];
-        }
-        return opts;
-      };
+  const isSaving = saveFetcher.state !== "idle";
+  const saveSuccess = saveFetcher.state === "idle" && saveFetcher.data?.success;
+  const saveError = saveFetcher.state === "idle" && saveFetcher.data?.error;
 
-      TARGET_KEYS.forEach(key => {
-        if (key === "official_name") return;
-        const rawVal = mfs[key];
-        if (!rawVal) return;
+  return (
+    <Page title="Bulk Inject Lapidary Data">
+      <BlockStack gap="600">
         
-        const cleanVal = String(rawVal).replace(/[✅⚠️]/g, "").trim();
-        newTicked[key] = true;
+        {saveSuccess && <Banner tone="success">Bulk update completed successfully across {saveFetcher.data.updatedCount} stones.</Banner>}
+        {saveError && <Banner tone="critical">Bulk save failed: {saveFetcher.data?.error}</Banner>}
 
-        if (FREE_TEXT_FIELDS.includes(key)) {
-          newVals[key] = cleanVal;
-        } else if (DROPDOWN_FIELDS.includes(key)) {
-          const opts = getOpts(key, offName);
-          const match = opts.find(o => o.toLowerCase() === cleanVal.toLowerCase());
-          if (match) {
-            newVals[key] = match;
-          } else {
-            newVals[key] = "__custom__";
-            newCustom[key] = cleanVal;
-          }
-        }
-      });
-
-      setFieldValues(newVals);
-      setCustomInputs(newCustom);
-      setTickedFields(newTicked);
-      setOoakText("");
-    }
-  }, [checkedIds, products]);
-
-  // Load selected product's exact data into QA Edit State
-  useEffect(() => {
-    if (injectProduct) {
-      const p = products.find(prod => prod.id === injectProduct);
-      if (p) {
-        const cleanedMeta = {};
-        if (p.metafields?.official_name) {
-          cleanedMeta["official_name"] = String(p.metafields.official_name).replace(/[✅⚠️]/g, "").trim();
-        }
-        TARGET_KEYS.forEach(k => {
-          cleanedMeta[k] = p.metafields?.[k] ? String(p.metafields[k]).replace(/[✅⚠️]/g, "").trim() : "";
-        });
-        setQaEdits(cleanedMeta);
-      }
-    } else {
-      setQaEdits({});
-      setPayload("");
-    }
-  }, [injectProduct, products]);
-
-  const handleQaEdit = (key, val) => {
-    setQaEdits(prev => ({ ...prev, [key]: val }));
-  };
-
-  const getOptionsForField = (fieldKey, explicitStoneName) => {
-    const currentStone = explicitStoneName !== undefined
-      ? explicitStoneName.toLowerCase()
-      : (fieldValues["official_name"] === "__custom__" 
-        ? (customInputs["official_name"] || "").toLowerCase()
-        : (fieldValues["official_name"] || "").toLowerCase());
-      
-    let opts = SEO_DICTIONARY[fieldKey]?.global || [];
-    if (currentStone && SEO_DICTIONARY[fieldKey]?.[currentStone]) {
-      opts = [...new Set([...SEO_DICTIONARY[fieldKey][currentStone], ...opts])];
-    }
-    return opts;
-  };
-
-  // --- HANDLE BULK SAVE RESPONSE ---
-  useEffect(() => {
-    if (isProcessing && saveFetcher.state === "idle" && saveFetcher.data) {
-      setIsProcessing(false);
-      if (saveFetcher.data.ok) {
-        setSaveStatus("success");
-      } else {
-        setSaveStatus("error");
-      }
-    }
-  }, [saveFetcher.state, saveFetcher.data, isProcessing]);
-
-  // --- TRIGGER ENGINE: Auto Populate on Selection ---
-  const triggerAutoSuggest = (stoneName) => {
-    if (!stoneName || stoneName.trim() === "") return;
-    setIsSuggesting(true);
-    const fd = new FormData();
-    fd.append("intent", "mindat_lookup");
-    fd.append("query", stoneName);
-    suggestFetcher.submit(fd, { method: "POST", action: "/app/meta-injector" });
-  };
-
-  // --- HANDLE MINDAT SUGGESTION RESPONSE ---
-  useEffect(() => {
-    if (isSuggesting && suggestFetcher.state === "idle" && suggestFetcher.data) {
-      setIsSuggesting(false);
-      const data = suggestFetcher.data;
-
-      const firstStone = products.find(p => p.id === checkedIds[0]);
-      let suggestedName = fieldValues["official_name"] === "__custom__" 
-        ? customInputs["official_name"] 
-        : fieldValues["official_name"];
-
-      if (!suggestedName && firstStone) {
-        suggestedName = firstStone.metafields?.official_name || firstStone.title;
-      }
-      
-      const libraryData = lookupStone(suggestedName) || {};
-      if (libraryData.official_name) suggestedName = libraryData.official_name;
-
-      const newValues = { ...fieldValues };
-      const newTicked = { ...tickedFields };
-      const newCustom = { ...customInputs };
-
-      const applySuggestion = (key, value) => {
-        if (!value) return;
-        const currentStone = newValues["official_name"] === "__custom__" 
-          ? (newCustom["official_name"] || "").toLowerCase()
-          : (newValues["official_name"] || "").toLowerCase();
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "24px", alignItems: "flex-start" }}>
           
-        let opts = SEO_DICTIONARY[key]?.global || [];
-        if (currentStone && SEO_DICTIONARY[key]?.[currentStone]) {
-          opts = [...new Set([...SEO_DICTIONARY[key][currentStone], ...opts])];
-        }
-        
-        if (opts.length === 0 || FREE_TEXT_FIELDS.includes(key)) {
-           newValues[key] = value;
-        } else {
-           // Priority 1: Exact Match
-           let match = opts.find(opt => opt.toLowerCase() === value.toLowerCase());
-           
-           // Priority 2: Fuzzy Match (sorted by length so specific phrases beat generic words)
-           if (!match) {
-             const sortedOpts = [...opts].sort((a, b) => b.length - a.length);
-             match = sortedOpts.find(opt => value.toLowerCase().includes(opt.toLowerCase()) || opt.toLowerCase().includes(value.toLowerCase()));
-           }
+          {/* Left Panel: Product Selection */}
+          <div style={{ flex: "1 1 300px", minWidth: 0 }}>
+            <BlockStack gap="400">
+              <Text variant="headingMd" as="h2">Select Stones ({selectedIds.length} selected)</Text>
+              
+              <TextField
+                value={search} onChange={setSearch} autoComplete="off" placeholder="Search title..."
+                clearButton onClearButtonClick={() => setSearch("")} prefix="🔍"
+              />
 
-           if (match) {
-             newValues[key] = match;
-           } else {
-             newValues[key] = "__custom__";
-             newCustom[key] = value;
-           }
-        }
-        newTicked[key] = true;
-      };
-
-      if (data.ok && data.found) {
-          const m = data.result;
-          const hardness = m.hardness_min ? (m.hardness_max && m.hardness_max !== m.hardness_min ? `${m.hardness_min}-${m.hardness_max}` : `${m.hardness_min}`) : "";
-          const density = m.density_min ? (m.density_max && m.density_max !== m.density_min ? `${m.density_min}-${m.density_max}` : `${m.density_min}`) : "";
-          
-          applySuggestion("moh_hardness", hardness);
-          applySuggestion("specific_gravity", density);
-          applySuggestion("crystal_system", m.crystal_system);
-          
-          // Note: Mindat's m.lustre is deliberately ignored here so it doesn't override the exact geoLibrary value with a generic "waxy"
-          
-          applySuggestion("cleavage", m.cleavage);
-          applySuggestion("fracture_pattern", m.fracture);
-          applySuggestion("diaphaneity", m.diaphaneity);
-      }
-
-      if (fieldValues["official_name"] !== "__custom__") {
-        newValues["official_name"] = suggestedName;
-      }
-      newTicked["official_name"] = true;
-      
-      if (libraryData.crystal_system) applySuggestion("crystal_system", libraryData.crystal_system);
-      if (libraryData.luster) applySuggestion("luster", libraryData.luster);
-      if (libraryData.diaphaneity) applySuggestion("diaphaneity", libraryData.diaphaneity);
-      if (libraryData.fracture_pattern) applySuggestion("fracture_pattern", libraryData.fracture_pattern);
-      if (libraryData.cleavage) applySuggestion("cleavage", libraryData.cleavage);
-      if (libraryData.rock_formation) applySuggestion("rock_formation", libraryData.rock_formation);
-      if (libraryData.mineral_class) applySuggestion("mineral_class", libraryData.mineral_class);
-      if (libraryData.rock_composition) applySuggestion("rock_composition", libraryData.rock_composition);
-
-      setFieldValues(newValues);
-      setCustomInputs(newCustom);
-      setTickedFields(newTicked);
-    }
-  }, [suggestFetcher.state, suggestFetcher.data, isSuggesting, checkedIds, products, fieldValues, customInputs, tickedFields]);
-
-  const autoSuggestFields = () => {
-    if (checkedIds.length === 0) return;
-    const firstStone = products.find(p => p.id === checkedIds[0]);
-    if (!firstStone) return;
-
-    let suggestedName = fieldValues["official_name"] === "__custom__" 
-      ? customInputs["official_name"] 
-      : fieldValues["official_name"];
-
-    if (!suggestedName) {
-      suggestedName = firstStone.metafields?.official_name || firstStone.title;
-    }
-    triggerAutoSuggest(suggestedName);
-  };
-
-  const processBulkQueue = () => {
-    if (checkedIds.length === 0 || (!Object.values(tickedFields).some(Boolean) && !ooakText)) return;
-    setIsProcessing(true);
-    setSaveStatus(null);
-
-    const updates = {};
-
-    // Explicitly add official_name payload hook
-    if (tickedFields["official_name"]) {
-      updates["official_name"] = fieldValues["official_name"] === "__custom__" ? (customInputs["official_name"] || "") : (fieldValues["official_name"] || "");
-    }
-
-    TARGET_KEYS.forEach(k => {
-      if (tickedFields[k]) {
-        updates[k] = fieldValues[k] === "__custom__" ? (customInputs[k] || "") : (fieldValues[k] || "");
-      }
-    });
-
-    const currentStories = {};
-    if (ooakText) {
-      checkedIds.forEach(id => {
-        const product = products.find(p => p.id === id);
-        currentStories[id] = product?.metafields?.stone_story || "";
-      });
-    }
-
-    const fd = new FormData();
-    fd.append("intent", "bulk_edit_new");
-    fd.append("ids", JSON.stringify(checkedIds));
-    fd.append("updates", JSON.stringify(updates));
-    fd.append("ooakText", ooakText || "");
-    fd.append("currentStories", JSON.stringify(currentStories));
-
-    saveFetcher.submit(fd, { method: "POST", action: "/app/meta-injector" });
-  };
-
-  // Direct Save Action for QA Edit Tab
-  const saveDirectQa = () => {
-    setIsProcessing(true);
-    setSaveStatus(null);
-
-    const payloadObj = Object.keys(qaEdits)
-      .map(k => ({
-        ownerId: injectProduct,
-        key: k,
-        value: qaEdits[k]
-      }))
-      .filter(mf => mf.value != null && String(mf.value).trim() !== "");
-
-    const fd = new FormData();
-    fd.append("intent", "saveMetafields");
-    fd.append("metafields", JSON.stringify(payloadObj));
-    saveFetcher.submit(fd, { method: "POST", action: "/app/meta-injector" });
-  };
-
-  useEffect(() => {
-    if (fetcher.data?.payload !== undefined) {
-      setPayload(fetcher.data.payload);
-    }
-  }, [fetcher.data]);
-
-  const filteredProducts = products.filter(p => p.title.toLowerCase().includes(productSearch.toLowerCase()));
-
-  // ==========================================
-  // VIEW 1: BULK EDIT
-  // ==========================================
-  if (mode === "bulk") {
-    const allChecked = checkedIds.length === filteredProducts.length && filteredProducts.length > 0;
-    const indeterminate = checkedIds.length > 0 && checkedIds.length < filteredProducts.length;
-
-    return (
-      <BlockStack gap="400">
-
-        {/* ── TOP ACTION BAR ── */}
-        <InlineStack gap="300" blockAlign="center">
-          <Button
-            onClick={autoSuggestFields}
-            disabled={checkedIds.length === 0 || isSuggesting}
-            icon={() => <span>🪄</span>}
-          >
-            {isSuggesting ? "Fetching from Mindat..." : "Auto-Suggest SEO Fields"}
-          </Button>
-          <Button
-            variant="primary"
-            size="large"
-            onClick={processBulkQueue}
-            disabled={checkedIds.length === 0 || isProcessing}
-          >
-            {isProcessing ? "Saving..." : `Apply Updates to ${checkedIds.length} Stone(s)`}
-          </Button>
-        </InlineStack>
-
-        {/* ── SAVE STATUS BANNERS ── */}
-        {saveStatus === "success" && (
-          <Banner tone="success" onDismiss={() => setSaveStatus(null)}>
-            Saved successfully to Shopify!
-          </Banner>
-        )}
-        {saveStatus === "error" && (
-          <Banner tone="critical" onDismiss={() => setSaveStatus(null)}>
-            Save failed: {saveFetcher.data?.error || "Check your connection and try again."}
-          </Banner>
-        )}
-        {isProcessing && (
-          <Banner tone="info">Saving data to Shopify. This may take a moment...</Banner>
-        )}
-
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1.5fr", gap: "24px" }}>
-          
-          <BlockStack gap="300">
-            <Card padding="0">
-              <Box padding="300" borderBlockEndWidth="025" borderColor="border">
-                <BlockStack gap="300">
-                  <TextField
-                    value={productSearch}
-                    onChange={setProductSearch}
-                    placeholder="Search products..."
-                    prefix={<Icon source={SearchIcon} />}
-                    autoComplete="off"
-                    clearButton
-                    onClearButtonClick={() => setProductSearch("")}
-                  />
+              <Card padding="0">
+                <Box padding="300" borderBlockEndWidth="025" borderColor="border">
                   <Checkbox
-                    label={`Select All Visible (${filteredProducts.length})`}
-                    checked={indeterminate ? "indeterminate" : allChecked}
-                    onChange={(checked) => setCheckedIds(checked ? filteredProducts.map(p => p.id) : [])}
+                    label="Select all visible"
+                    checked={selectedIds.length === filtered.length && filtered.length > 0}
+                    onChange={(checked) => {
+                      if (checked) setSelectedIds(filtered.map(p => p.id));
+                      else setSelectedIds([]);
+                    }}
                   />
-                </BlockStack>
-              </Box>
-              <Scrollable style={{ height: "550px" }}>
-                {filteredProducts.length === 0 ? (
-                  <Box padding="400"><Text tone="subdued" alignment="center">No products found.</Text></Box>
-                ) : (
-                  <ActionList
-                    actionRole="menuitem"
-                    items={filteredProducts.map(p => ({
-                      content: (
-                        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                          <Checkbox checked={checkedIds.includes(p.id)} onChange={() => {}} label="" />
-                          <span style={{ fontSize: "13px", fontWeight: checkedIds.includes(p.id) ? "bold" : "normal" }}>
-                            {p.title.length > 40 ? p.title.substring(0, 40) + "..." : p.title}
-                          </span>
-                        </div>
-                      ),
-                      onAction: () => setCheckedIds(prev =>
-                        prev.includes(p.id) ? prev.filter(id => id !== p.id) : [...prev, p.id]
-                      ),
-                    }))}
-                  />
-                )}
-              </Scrollable>
-            </Card>
-          </BlockStack>
-
-          <BlockStack gap="300">
-            <Banner tone="info">Fields are mapped to Shopify Metaobjects. Values adapt to the Official Name.</Banner>
-            <Card padding="0">
-              <Scrollable style={{ height: "550px" }}>
-                <BlockStack gap="400" padding="400">
-
-                  <Text variant="headingSm" tone="subdued">LAPIDARY DATA (MANUAL FIELDS)</Text>
-                  
-                  <BlockStack gap="200" style={{ background: "#e4f0f6", padding: "12px", borderRadius: "6px", border: "1px solid #005bd3" }}>
-                    <Checkbox
-                      label="Official Name (Required for Mindat)"
-                      checked={tickedFields["official_name"] || false}
-                      onChange={() => setTickedFields(prev => ({ ...prev, official_name: !prev.official_name }))}
-                    />
-                    {tickedFields["official_name"] && (
-                      <BlockStack gap="200">
-                        <select
-                          style={{ width: "100%", padding: "8px", borderRadius: "4px", border: "1px solid #c9cccf", fontSize: "14px", fontWeight: "bold" }}
-                          value={fieldValues["official_name"] || ""}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            setFieldValues({ ...fieldValues, official_name: val });
-                            if (val !== "__custom__" && val !== "") {
-                              triggerAutoSuggest(val);
-                            }
+                </Box>
+                <div style={{ maxHeight: "600px", overflowY: "auto" }}>
+                  <ResourceList
+                    items={filtered}
+                    renderItem={(p) => {
+                      const isSelected = selectedIds.includes(p.id);
+                      return (
+                        <ResourceItem 
+                          id={p.id} 
+                          onClick={() => {
+                            setSelectedIds(prev => isSelected ? prev.filter(id => id !== p.id) : [...prev, p.id]);
                           }}
+                          media={<Thumbnail source={p.featuredImage?.url || "https://cdn.shopify.com/s/files/1/0533/2089/files/placeholder-images-image_medium.png"} alt={p.title} size="small" />}
                         >
-                          <option value="">-- Select Valid Mindat Stone --</option>
+                          <InlineStack wrap={false} align="space-between" blockAlign="center">
+                            <BlockStack gap="100">
+                              <Text variant="bodyMd" fontWeight="bold">{p.title}</Text>
+                              <Badge tone={p.status === "✅ Complete" ? "success" : p.status === "🔴 Empty" ? "critical" : "warning"}>{p.status}</Badge>
+                            </BlockStack>
+                            <Checkbox checked={isSelected} onChange={() => {}} />
+                          </InlineStack>
+                        </ResourceItem>
+                      );
+                    }}
+                  />
+                </div>
+              </Card>
+            </BlockStack>
+          </div>
+
+          {/* Right Panel: Fields List */}
+          <div style={{ flex: "1 1 400px", maxWidth: "680px", width: "100%", minWidth: 0 }}>
+            <BlockStack gap="400">
+              <InlineStack align="space-between" blockAlign="center">
+                <Text variant="headingMd" as="h2">Apply Data Fields</Text>
+                <Button variant="primary" onClick={handleSave} loading={isSaving} disabled={selectedIds.length === 0}>
+                  Inject Selected
+                </Button>
+              </InlineStack>
+
+              <Card roundedAbove="sm">
+                <BlockStack gap="600">
+                  <Banner tone="info">
+                    Any field you leave blank will be ignored. Only filled fields will overwrite existing data on the selected products.
+                  </Banner>
+
+                  <Box paddingBlockEnd="400" borderBlockEndWidth="025" borderColor="border">
+                    <BlockStack gap="400">
+                      <BlockStack gap="200">
+                        <Text variant="bodyMd" fontWeight="bold">Official Name</Text>
+                        <select
+                          style={{ width: "100%", padding: "8px", borderRadius: "4px", border: "1px solid #c9cccf", fontSize: "14px" }}
+                          value={fieldValues["official_name"] || ""}
+                          onChange={(e) => setFieldValues({ ...fieldValues, official_name: e.target.value })}
+                        >
+                          <option value="">-- Do Not Change --</option>
                           {availableStones.map(stone => (
                             <option key={stone} value={stone}>{stone}</option>
                           ))}
                           <option value="__custom__">➕ Add New Stone...</option>
                         </select>
-                        
-                        {fieldValues["official_name"] === "__custom__" && (
-                          <TextField
-                            label="Type new stone name"
-                            value={customInputs["official_name"] || ""}
-                            onChange={(v) => setCustomInputs({ ...customInputs, official_name: v })}
-                            autoComplete="off"
-                            placeholder="e.g. Rhodochrosite"
-                            helpText="Mindat will attempt to look this up when you Auto-Suggest."
-                          />
-                        )}
                       </BlockStack>
-                    )}
-                  </BlockStack>
 
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+                      {fieldValues["official_name"] === "__custom__" && (
+                        <TextField
+                          label="Type new stone name"
+                          value={customName}
+                          onChange={setCustomName}
+                          autoComplete="off"
+                          placeholder="e.g. Rhodochrosite"
+                        />
+                      )}
+                    </BlockStack>
+                  </Box>
+
+                  <BlockStack gap="400">
                     {MANUAL_KEYS.filter(key => key !== "official_name").map(key => {
                       if (SEED_OPTIONS[key]) {
                         const opts = [...new Set([...(SEED_OPTIONS[key] || []), ...(vocabulary[key] || [])])];
                         const isMulti = key === "secondary_colors";
+                        const currentVal = fieldValues[key] || "";
 
-                        const currentVal = fieldValues[key] === "__custom__" ? "" : (fieldValues[key] || "");
                         const selectOptions = isMulti 
-                          ? [{label: "-- Add Color --", value: ""}, ...opts.map(o => ({label: o, value: o}))]
-                          : [{label: "-- Select --", value: ""}, ...opts.map(o => ({label: o, value: o}))];
+                          ? [{label: "-- Do Not Change --", value: ""}]
+                          : [{label: "-- Do Not Change --", value: ""}];
 
-                        if (!isMulti && currentVal && !opts.includes(currentVal)) {
+                        opts.forEach(o => selectOptions.push({label: o, value: o}));
+
+                        if (!isMulti && currentVal && currentVal !== "__custom__" && !opts.includes(currentVal)) {
                           selectOptions.push({ label: currentVal, value: currentVal });
                         }
+                        
+                        selectOptions.push({ label: "➕ Add Custom...", value: "__custom__" });
+
+                        const selectValue = showCustomInput[key] ? "__custom__" : (isMulti ? "" : currentVal);
 
                         return (
-                          <BlockStack key={key} gap="100" style={{ background: "#f9fafb", padding: "8px", borderRadius: "6px" }}>
-                            <Checkbox
-                              label={FIELD_LABELS[key] || key}
-                              checked={tickedFields[key] || false}
-                              onChange={() => setTickedFields(prev => ({ ...prev, [key]: !prev[key] }))}
-                            />
-                            {tickedFields[key] && (
-                              <BlockStack gap="200">
-                                <InlineStack gap="300" blockAlign="start" wrap={false}>
-                                  <div style={{ flex: 1 }}>
-                                    {!isMulti ? (
-                                      <Select
-                                        labelHidden
-                                        label={FIELD_LABELS[key] || key}
-                                        options={selectOptions}
-                                        value={currentVal}
-                                        onChange={(v) => setFieldValues(prev => ({...prev, [key]: v}))}
-                                      />
-                                    ) : (
-                                      <BlockStack gap="200">
-                                        <Select
-                                          labelHidden
-                                          label="Add Color"
-                                          options={selectOptions}
-                                          value=""
-                                          onChange={(v) => {
-                                            if (!v) return;
-                                            const curr = fieldValues[key] ? fieldValues[key].split(",").map(s => s.trim()).filter(Boolean) : [];
-                                            if (!curr.includes(v)) curr.push(v);
-                                            setFieldValues(prev => ({...prev, [key]: curr.join(", ")}));
-                                          }}
-                                        />
-                                        <TextField
-                                          labelHidden
-                                          label={FIELD_LABELS[key] || key}
-                                          value={fieldValues[key] || ""}
-                                          onChange={val => setFieldValues(prev => ({ ...prev, [key]: val }))}
-                                          autoComplete="off"
-                                          helpText="Comma-separated list"
-                                        />
-                                      </BlockStack>
-                                    )}
-                                  </div>
-                                  <Button onClick={() => setShowCustomInput(p => ({...p, [key]: !p[key]}))}>
-                                    {showCustomInput[key] ? "Cancel" : "➕ Add Custom"}
-                                  </Button>
-                                </InlineStack>
+                          <BlockStack gap="200" key={key}>
+                             {isMulti && currentVal && (
+                               <InlineStack gap="200" wrap>
+                                 {currentVal.split(",").map(c => c.trim()).filter(Boolean).map(color => (
+                                   <Tag key={color} onRemove={() => {
+                                     const newColors = currentVal.split(",").map(s => s.trim()).filter(Boolean).filter(c => c !== color);
+                                     setFieldValues(prev => ({...prev, [key]: newColors.join(", ")}));
+                                   }}>
+                                     {color}
+                                   </Tag>
+                                 ))}
+                               </InlineStack>
+                             )}
 
-                                {showCustomInput[key] && (
-                                  <div style={{ paddingLeft: "8px", borderLeft: "2px solid #e1e3e5", marginTop: "4px" }}>
-                                    <InlineStack gap="300" blockAlign="center" wrap={false}>
-                                      <div style={{ flex: 1 }}>
-                                        <TextField
-                                          labelHidden
-                                          label="New custom value"
-                                          placeholder="Enter new custom option..."
-                                          value={customInputs[key] || ""}
-                                          onChange={v => setCustomInputs(p => ({...p, [key]: v}))}
-                                          autoComplete="off"
-                                        />
-                                      </div>
-                                      <Button variant="primary" onClick={() => {
+                             <Select
+                               label={FIELD_LABELS[key] || key}
+                               options={selectOptions}
+                               value={selectValue}
+                               onChange={(v) => {
+                                 if (v === "__custom__") {
+                                   setShowCustomInput(prev => ({...prev, [key]: true}));
+                                 } else {
+                                   setShowCustomInput(prev => ({...prev, [key]: false}));
+                                   if (isMulti) {
+                                     if (!v) return;
+                                     const curr = currentVal ? currentVal.split(",").map(s => s.trim()).filter(Boolean) : [];
+                                     if (!curr.includes(v)) curr.push(v);
+                                     setFieldValues(prev => ({...prev, [key]: curr.join(", ")}));
+                                   } else {
+                                     setFieldValues(prev => ({...prev, [key]: v}));
+                                   }
+                                 }
+                               }}
+                             />
+
+                             {showCustomInput[key] && (
+                               <div style={{ paddingLeft: "8px", borderLeft: "2px solid #e1e3e5", marginTop: "4px" }}>
+                                 <BlockStack gap="300">
+                                   <TextField
+                                     label="New custom value"
+                                     placeholder="Enter new custom option..."
+                                     value={customInputs[key] || ""}
+                                     onChange={v => setCustomInputs(p => ({...p, [key]: v}))}
+                                     autoComplete="off"
+                                   />
+                                   <InlineStack gap="300" blockAlign="center" wrap={false}>
+                                     <Button variant="primary" onClick={() => {
                                         const v = customInputs[key]?.trim();
                                         if (v) {
-                                          addCustomFetcher.submit({ intent: "saveVocabularyEntry", field_key: key, new_value: v }, { method: "post", action: "/app/meta-injector" });
-                                          setVocabulary(prev => {
-                                            const curr = prev[key] || [];
-                                            if (!curr.includes(v)) return { ...prev, [key]: [...curr, v] };
-                                            return prev;
-                                          });
-
-                                          if (isMulti) {
-                                             const currVals = fieldValues[key] ? fieldValues[key].split(",").map(s => s.trim()).filter(Boolean) : [];
+                                           addCustomFetcher.submit({ intent: "saveVocabularyEntry", field_key: key, new_value: v }, { method: "post", action: "/app/meta-injector" });
+                                           setVocabulary(prev => {
+                                             const curr = prev[key] || [];
+                                             if (!curr.includes(v)) return { ...prev, [key]: [...curr, v] };
+                                             return prev;
+                                           });
+                                           if (isMulti) {
+                                             const currVals = currentVal ? currentVal.split(",").map(s => s.trim()).filter(Boolean) : [];
                                              if (!currVals.includes(v)) currVals.push(v);
                                              setFieldValues(prev => ({...prev, [key]: currVals.join(", ")}));
-                                          } else {
+                                           } else {
                                              setFieldValues(prev => ({...prev, [key]: v}));
-                                          }
-                                          setShowCustomInput(p => ({...p, [key]: false}));
-                                          setCustomInputs(p => ({...p, [key]: ""}));
+                                           }
+                                           setShowCustomInput(p => ({...p, [key]: false}));
+                                           setCustomInputs(p => ({...p, [key]: ""}));
                                         }
-                                      }}>
-                                        Save & Select
-                                      </Button>
-                                    </InlineStack>
-                                  </div>
-                                )}
-                              </BlockStack>
-                            )}
+                                     }}>
+                                       Save & Select
+                                     </Button>
+                                     <Button onClick={() => setShowCustomInput(p => ({...p, [key]: false}))}>Cancel</Button>
+                                   </InlineStack>
+                                 </BlockStack>
+                               </div>
+                             )}
                           </BlockStack>
                         );
                       } else {
                         return (
-                          <BlockStack key={key} gap="100">
-                            <Checkbox
+                          <BlockStack gap="200" key={key}>
+                            <TextField
                               label={FIELD_LABELS[key] || key}
-                              checked={tickedFields[key] || false}
-                              onChange={() => setTickedFields(prev => ({ ...prev, [key]: !prev[key] }))}
+                              value={fieldValues[key] || ""}
+                              onChange={val => setFieldValues(prev => ({ ...prev, [key]: val }))}
+                              autoComplete="off"
+                              placeholder="-- Do Not Change --"
+                              multiline={["stone_story", "bench_notes", "character_marks", "rock_composition"].includes(key) ? 3 : undefined}
                             />
-                            {tickedFields[key] && (
-                              <TextField
-                                labelHidden
-                                label={FIELD_LABELS[key] || key}
-                                value={fieldValues[key] || ""}
-                                onChange={val => setFieldValues(prev => ({ ...prev, [key]: val }))}
-                                autoComplete="off"
-                                multiline={["stone_story", "bench_notes", "character_marks", "rock_composition"].includes(key) ? 3 : undefined}
-                              />
-                            )}
                           </BlockStack>
                         );
                       }
                     })}
-                  </div>
-
-                  <Divider />
-
-                  <BlockStack gap="200" style={{ background: "#fff8e6", padding: "12px", borderRadius: "8px", border: "1px solid #e1b878" }}>
-                    <Text variant="headingSm">✨ OOAK Special Features</Text>
-                    <Text variant="bodySm" tone="subdued">Text entered here appends to the Stone Story without overwriting it.</Text>
-                    <TextField
-                      label=""
-                      value={ooakText}
-                      onChange={setOoakText}
-                      multiline={3}
-                      placeholder="e.g. Features a striking hematite inclusion..."
-                    />
                   </BlockStack>
-
                 </BlockStack>
-              </Scrollable>
-            </Card>
-          </BlockStack>
+              </Card>
+
+            </BlockStack>
+          </div>
+
         </div>
       </BlockStack>
-    );
-  }
-
-  // ==========================================
-  // VIEW 2: INJECT PAYLOAD (With Dashboard)
-  // ==========================================
-  if (mode === "inject") {
-    const product = products.find((p) => p.id === injectProduct);
-
-    return (
-      <BlockStack gap="400">
-        <Text variant="headingMd">QA / Direct Editor</Text>
-        <Select
-          label="Select a stone to review and edit its Metafield Data"
-          options={[{ label: "-- Pick a stone --", value: "" }, ...products.map((p) => ({ label: p.title, value: p.id }))]}
-          value={injectProduct}
-          onChange={setInjectProduct}
-        />
-
-        {saveStatus === "success" && (
-          <Banner tone="success" onDismiss={() => setSaveStatus(null)}>
-            Direct Edits Saved successfully to Shopify!
-          </Banner>
-        )}
-        {saveStatus === "error" && (
-          <Banner tone="critical" onDismiss={() => setSaveStatus(null)}>
-            Save failed: {saveFetcher.data?.error || "Check your connection and try again."}
-          </Banner>
-        )}
-
-        {product && (
-          <Card roundedAbove="sm">
-            <BlockStack gap="400">
-              <InlineStack align="space-between" blockAlign="center">
-                <Text as="h2" variant="headingSm">QA Edit Data</Text>
-                <InlineStack gap="300" blockAlign="center">
-                  <Badge tone={product.filledCount === TARGET_KEYS.length ? "success" : "warning"}>
-                    {product.filledCount} / {TARGET_KEYS.length} Complete
-                  </Badge>
-                  <Button variant="primary" onClick={saveDirectQa} loading={isProcessing}>
-                    Save Direct to Shopify
-                  </Button>
-                </InlineStack>
-              </InlineStack>
-              <Divider />
-              
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '12px' }}>
-                
-                {/* Official Name Field (Explicit) */}
-                <div style={{ background: '#f4f6f8', padding: '12px', borderRadius: '6px' }}>
-                  <BlockStack gap="100">
-                    <InlineStack align="space-between">
-                      <Text variant="bodySm" fontWeight="bold" tone="subdued">Official Name</Text>
-                      <Badge tone={qaEdits["official_name"] ? "success" : "attention"}>{qaEdits["official_name"] ? "✅" : "⚠️"}</Badge>
-                    </InlineStack>
-                    <Select
-                      label=""
-                      options={[
-                        {label: "-- Pick a stone --", value: ""},
-                        ...availableStones.map(s => ({label: s, value: s})),
-                        {label: "+ Custom Value...", value: "__custom__"}
-                      ]}
-                      value={availableStones.includes(qaEdits["official_name"]) ? qaEdits["official_name"] : (qaEdits["official_name"] ? "__custom__" : "")}
-                      onChange={(v) => { 
-                        if (v === "__custom__") handleQaEdit("official_name", "__custom__");
-                        else handleQaEdit("official_name", v); 
-                      }}
-                    />
-                    {qaEdits["official_name"] === "__custom__" || (!availableStones.includes(qaEdits["official_name"]) && qaEdits["official_name"]) ? (
-                      <TextField
-                        label=""
-                        value={qaEdits["official_name"] === "__custom__" ? "" : (qaEdits["official_name"] || "")}
-                        onChange={(v) => handleQaEdit("official_name", v)}
-                        autoComplete="off"
-                        placeholder="Custom Official Name"
-                      />
-                    ) : null}
-                  </BlockStack>
-                </div>
-
-                {/* Target Keys Array */}
-                {TARGET_KEYS.filter(k => k !== 'official_name').map(key => {
-                  const options = DROPDOWN_FIELDS.includes(key) ? getOptionsForField(key, qaEdits["official_name"] || "") : [];
-                  const isCustomDropdown = DROPDOWN_FIELDS.includes(key) && qaEdits[key] && !options.includes(qaEdits[key]) || qaEdits[key] === "__custom__";
-
-                  return (
-                    <div key={key} style={{ background: '#f4f6f8', padding: '12px', borderRadius: '6px' }}>
-                      <BlockStack gap="100">
-                        <InlineStack align="space-between">
-                          <Text variant="bodySm" fontWeight="bold" tone="subdued">{FIELD_LABELS[key] || key}</Text>
-                          <Badge tone={qaEdits[key] && qaEdits[key] !== "__custom__" ? "success" : "attention"}>{qaEdits[key] && qaEdits[key] !== "__custom__" ? "✅" : "⚠️"}</Badge>
-                        </InlineStack>
-                        
-                        {DROPDOWN_FIELDS.includes(key) ? (
-                          <BlockStack gap="200">
-                            <Select
-                              label=""
-                              options={[
-                                {label: "-- Select --", value: ""}, 
-                                ...options.map(o => ({label: o, value: o})),
-                                {label: "+ Custom Value...", value: "__custom__"}
-                              ]}
-                              value={isCustomDropdown ? "__custom__" : (qaEdits[key] || "")}
-                              onChange={(v) => { 
-                                if (v === "__custom__") handleQaEdit(key, "__custom__");
-                                else handleQaEdit(key, v); 
-                              }}
-                            />
-                            {isCustomDropdown && (
-                              <TextField
-                                label=""
-                                value={qaEdits[key] === "__custom__" ? "" : (qaEdits[key] || "")}
-                                onChange={(v) => handleQaEdit(key, v)}
-                                autoComplete="off"
-                                placeholder="Custom dropdown value"
-                              />
-                            )}
-                          </BlockStack>
-                        ) : (
-                          <TextField
-                            label=""
-                            value={qaEdits[key] || ""}
-                            onChange={(v) => handleQaEdit(key, v)}
-                            autoComplete="off"
-                            multiline={key === "stone_story" || key === "bench_notes" ? 2 : false}
-                          />
-                        )}
-                      </BlockStack>
-                    </div>
-                  );
-                })}
-              </div>
-            </BlockStack>
-          </Card>
-        )}
-
-        <Divider />
-        <Text variant="headingSm" tone="subdued">Advanced: JSON Payload Injector</Text>
-
-        <Button onClick={() => {
-          if (!product) return;
-          const fd = new FormData();
-          fd.append("intent", "build_payload");
-          fd.append("productId", product.id);
-          fd.append("title", product.title);
-          fd.append("description", product.description);
-          fd.append("existingMeta", JSON.stringify(qaEdits)); // Uses your live QA edits!
-          fetcher.submit(fd, { method: "post", action: "/app/meta-injector" });
-        }} loading={fetcher.state === "submitting" && fetcher.formData?.get("intent") === "build_payload"} disabled={!injectProduct}>
-          🔄 Build JSON Payload
-        </Button>
-        {fetcher.data?.payload !== undefined && <Banner tone="success">Payload built — review and edit below, then inject.</Banner>}
-        <TextField
-          label="JSON Payload (one object per line — edit before injecting)"
-          value={payload}
-          onChange={setPayload}
-          multiline={12}
-          autoComplete="off"
-        />
-        <Button variant="primary" onClick={() => {
-          const fd = new FormData();
-          fd.append("intent", "inject");
-          fd.append("payload", payload);
-          fetcher.submit(fd, { method: "post", action: "/app/meta-injector" });
-        }} loading={fetcher.state === "submitting" && fetcher.formData?.get("intent") === "inject"} disabled={!payload}>
-          💉 Inject Directly to Shopify
-        </Button>
-        {fetcher.data?.injected !== undefined && (
-          <Banner tone="success">Injected {fetcher.data.injected} metafield(s) successfully!</Banner>
-        )}
-      </BlockStack>
-    );
-  }
-
-  // ==========================================
-  // VIEW 3: MINDAT EXPLORER
-  // ==========================================
-  if (mode === "mindat") {
-    const isFetchingMindat = fetcher.state === "submitting";
-    const hasResult = fetcher.state === "idle" && fetcher.data?.ok !== undefined && mindatSearched !== "";
-
-    return (
-      <BlockStack gap="400">
-        <Text variant="headingMd">🌍 Mindat Database Explorer</Text>
-        <Text variant="bodyMd" tone="subdued">Query the live Mindat API to research geological data before adding it to your library.</Text>
-        
-        <Card>
-          <BlockStack gap="400">
-            <InlineStack gap="300" blockAlign="end">
-              <div style={{ flex: 1 }}>
-                <TextField
-                  label="Search Mineral/Rock Name"
-                  value={mindatQuery}
-                  onChange={setMindatQuery}
-                  placeholder="e.g., Lapis Lazuli, Quartz, Obsidian..."
-                  autoComplete="off"
-                  prefix={<Icon source={SearchIcon} />}
-                />
-              </div>
-              <Button 
-                variant="primary" 
-                onClick={() => {
-                  setMindatSearched(mindatQuery.trim());
-                  const fd = new FormData();
-                  fd.append("intent", "mindat_lookup");
-                  fd.append("query", mindatQuery.trim());
-                  fetcher.submit(fd, { method: "post", action: "/app/meta-injector" });
-                }} 
-                disabled={!mindatQuery.trim()}
-                loading={isFetchingMindat}
-              >
-                Search Database
-              </Button>
-            </InlineStack>
-
-            {hasResult && (
-              <Box paddingBlockStart="400">
-                <Divider />
-                <Box paddingBlockStart="400">
-                  {fetcher.data.found ? (
-                    <BlockStack gap="300">
-                      <InlineStack align="space-between" blockAlign="center">
-                        <Text variant="headingSm">Results for "{mindatSearched}"</Text>
-                        <Badge tone="success">Match Found</Badge>
-                      </InlineStack>
-                      <div style={{ background: "#202124", color: "#e8eaed", padding: "16px", borderRadius: "8px", overflowX: "auto", fontFamily: "monospace", fontSize: "13px" }}>
-                        <pre style={{ margin: 0 }}>
-                          {JSON.stringify(fetcher.data.result, null, 2)}
-                        </pre>
-                      </div>
-                    </BlockStack>
-                  ) : (
-                    <Banner tone="warning">No results found for "{mindatSearched}". Try a different spelling or a broader mineral family.</Banner>
-                  )}
-                </Box>
-              </Box>
-            )}
-          </BlockStack>
-        </Card>
-      </BlockStack>
-    );
-  }
-
-  return null;
+    </Page>
+  );
 }
