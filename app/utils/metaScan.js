@@ -43,3 +43,51 @@ export const FIELD_LABELS = {
   "diaphaneity": "Diaphaneity",
   "tenacity": "Tenacity"
 };
+
+export function stripHtml(html) {
+  if (!html) return "";
+  return html.replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " ").trim();
+}
+
+export function evaluateProductStatus(metafields) {
+  let filledCount = 0;
+  for (const key of TARGET_KEYS) {
+    if (metafields[key] && String(metafields[key]).trim() !== "") {
+      filledCount++;
+    }
+  }
+
+  let status = "🔴 Empty";
+  if (filledCount === TARGET_KEYS.length) {
+    status = "✅ Complete";
+  } else if (filledCount > 0) {
+    status = "🟡 Partial";
+  }
+
+  return { status, filledCount };
+}
+
+export function parseDescription(description) {
+  if (!description) return {};
+  const data = {};
+  const lines = description.split('\n');
+  
+  for (const line of lines) {
+    if (line.includes(':')) {
+      const [key, ...valueParts] = line.split(':');
+      const value = valueParts.join(':').trim();
+      const cleanKey = key.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_');
+      
+      const matchedKey = TARGET_KEYS.find(k => k.includes(cleanKey) || cleanKey.includes(k));
+      if (matchedKey) {
+          data[matchedKey] = value;
+      }
+    }
+  }
+  return data;
+}
+
+export function autoLinkStory(storyText) {
+  if (!storyText) return "";
+  return storyText;
+}
