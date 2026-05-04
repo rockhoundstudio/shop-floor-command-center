@@ -255,7 +255,7 @@ export default function ProductsTab({ products = [] }) {
         primaryAction={{ content: 'Save Stone', onAction: handleSave, loading: isSaving, disabled: isAutoFill }}
         secondaryActions={[{ content: '🔍 Auto-Fill (Mindat)', onAction: handleAutoFill, loading: isAutoFill, disabled: isSaving }]}
       >
-        <div style={{ maxWidth: "720px", margin: "0 auto", width: "100%" }}>
+        <div style={{ maxWidth: "680px", width: "100%", margin: "0 auto", padding: "16px" }}>
           <BlockStack gap="600">
 
             {saveSuccess && <Banner tone="success">Saved successfully to Shopify.</Banner>}
@@ -275,243 +275,218 @@ export default function ProductsTab({ products = [] }) {
               </Banner>
             )}
 
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "20px", alignItems: "flex-start" }}>
-              
-              {/* Main Content Column */}
-              <div style={{ flex: "1 1 400px", minWidth: 0 }}>
+            <BlockStack gap="500">
+              <Card roundedAbove="sm">
                 <BlockStack gap="500">
-                  
-                  <Card roundedAbove="sm">
-                    <BlockStack gap="500">
-                      <TextField
-                        label="Product Title"
-                        value={baseFields.title}
-                        onChange={val => setBaseFields(p => ({...p, title: val}))}
-                        autoComplete="off"
-                      />
-                      <TextField
-                        label="Public Description & Story"
-                        value={baseFields.description}
-                        onChange={val => setBaseFields(p => ({...p, description: val}))}
-                        multiline={8}
-                        autoComplete="off"
-                      />
-                    </BlockStack>
-                  </Card>
+                  <TextField
+                    label="Product Title"
+                    value={baseFields.title}
+                    onChange={val => setBaseFields(p => ({...p, title: val}))}
+                    autoComplete="off"
+                  />
+                  <TextField
+                    label="Public Description & Story"
+                    value={baseFields.description}
+                    onChange={val => setBaseFields(p => ({...p, description: val}))}
+                    multiline={8}
+                    autoComplete="off"
+                  />
+                </BlockStack>
+              </Card>
 
-                  <Card roundedAbove="sm">
+              <Card roundedAbove="sm">
+                <BlockStack gap="400">
+                  <Select
+                    label="Store Status"
+                    options={[{label: 'Active (Live)', value: 'ACTIVE'}, {label: 'Draft (Hidden)', value: 'DRAFT'}]}
+                    value={baseFields.status}
+                    onChange={val => setBaseFields(p => ({...p, status: val}))}
+                  />
+                  <TextField
+                    label="Price"
+                    type="number"
+                    value={baseFields.price}
+                    onChange={val => setBaseFields(p => ({...p, price: val}))}
+                    autoComplete="off" prefix="$"
+                  />
+                  <TextField
+                    label="Available Inventory"
+                    type="number"
+                    value={baseFields.inventory}
+                    onChange={val => setBaseFields(p => ({...p, inventory: val}))}
+                    autoComplete="off"
+                  />
+                </BlockStack>
+              </Card>
+
+              <Card roundedAbove="sm">
+                <BlockStack gap="400">
+                  <InlineStack align="space-between">
+                    <Text as="h2" variant="headingSm">Media & Pictures</Text>
+                    <Button size="micro">Add Media</Button>
+                  </InlineStack>
+                  <Box padding="400" background="bg-surface-secondary" borderRadius="100" borderColor="border" borderWidth="025">
+                    <InlineStack gap="400" wrap={false} blockAlign="center">
+                      <div style={{ width: '120px', height: '120px', background: "#fff", borderRadius: '8px', overflow: 'hidden', border: '1px solid #e1e3e5' }}>
+                        <img src={selected.featuredImage?.url || "https://cdn.shopify.com/s/files/1/0533/2089/files/placeholder-images-image_medium.png"} style={{ width: "100%", height: "100%", objectFit: "cover" }} alt="Hero" />
+                      </div>
+                      <div style={{ width: '80px', height: '80px', backgroundColor: '#f4f6f8', borderRadius: '8px' }}></div>
+                      <div style={{ width: '80px', height: '80px', border: '1px dashed #8c9196', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}><Text tone="subdued">+</Text></div>
+                    </InlineStack>
+                  </Box>
+                </BlockStack>
+              </Card>
+
+              <Card roundedAbove="sm">
+                <BlockStack gap="400">
+                  <Text as="h2" variant="headingSm">Lapidary Data (Meta Injector)</Text>
+
+                  <Box paddingBlockEnd="400" borderBlockEndWidth="025" borderColor="border">
                     <BlockStack gap="400">
-                      <InlineStack align="space-between">
-                        <Text as="h2" variant="headingSm">Media & Pictures</Text>
-                        <Button size="micro">Add Media</Button>
-                      </InlineStack>
-                      <Box padding="400" background="bg-surface-secondary" borderRadius="100" borderColor="border" borderWidth="025">
-                        <InlineStack gap="400" wrap={false} blockAlign="center">
-                          <div style={{ width: '120px', height: '120px', background: "#fff", borderRadius: '8px', overflow: 'hidden', border: '1px solid #e1e3e5' }}>
-                            <img src={selected.featuredImage?.url || "https://cdn.shopify.com/s/files/1/0533/2089/files/placeholder-images-image_medium.png"} style={{ width: "100%", height: "100%", objectFit: "cover" }} alt="Hero" />
-                          </div>
-                          <div style={{ width: '80px', height: '80px', backgroundColor: '#f4f6f8', borderRadius: '8px' }}></div>
-                          <div style={{ width: '80px', height: '80px', border: '1px dashed #8c9196', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}><Text tone="subdued">+</Text></div>
-                        </InlineStack>
-                      </Box>
-                    </BlockStack>
-                  </Card>
-
-                  <Card roundedAbove="sm">
-                    <BlockStack gap="400">
-                      <Text as="h2" variant="headingSm">Lapidary Data (Meta Injector)</Text>
-
-                      <Box paddingBlockEnd="400" borderBlockEndWidth="025" borderColor="border">
-                        <BlockStack gap="200">
-                          <Text variant="bodyMd" fontWeight="bold">Official Name (Required for Mindat)</Text>
-                          <select
-                            style={{ width: "100%", padding: "8px", borderRadius: "4px", border: "1px solid #c9cccf", fontSize: "14px" }}
-                            value={fieldValues["official_name"] || ""}
-                            onChange={(e) => setFieldValues({ ...fieldValues, official_name: e.target.value })}
-                          >
-                            <option value="">-- Select Valid Mindat Stone --</option>
-                            {availableStones.map(stone => (
-                              <option key={stone} value={stone}>{stone}</option>
-                            ))}
-                            <option value="__custom__">➕ Add New Stone...</option>
-                          </select>
-
-                          {fieldValues["official_name"] === "__custom__" && (
-                            <TextField
-                              labelHidden
-                              label="Type new stone name"
-                              value={customName}
-                              onChange={setCustomName}
-                              autoComplete="off"
-                              placeholder="e.g. Rhodochrosite"
-                            />
-                          )}
-                        </BlockStack>
-                      </Box>
-
-                      <BlockStack gap="300">
-                        {MANUAL_KEYS.filter(key => key !== "official_name").map(key => {
-                          if (SEED_OPTIONS[key]) {
-                            const opts = [...new Set([...(SEED_OPTIONS[key] || []), ...(vocabulary[key] || [])])];
-                            const isMulti = key === "secondary_colors";
-                            const currentVal = fieldValues[key] || "";
-
-                            const selectOptions = isMulti 
-                              ? [{label: "-- Add Color --", value: ""}]
-                              : [{label: "-- Select --", value: ""}];
-
-                            opts.forEach(o => selectOptions.push({label: o, value: o}));
-
-                            if (!isMulti && currentVal && currentVal !== "__custom__" && !opts.includes(currentVal)) {
-                              selectOptions.push({ label: currentVal, value: currentVal });
-                            }
-                            
-                            selectOptions.push({ label: "➕ Add Custom...", value: "__custom__" });
-
-                            const selectValue = showCustomInput[key] ? "__custom__" : (isMulti ? "" : currentVal);
-
-                            return (
-                              <BlockStack gap="200" key={key}>
-                                 <Text as="h3" variant="bodyMd" fontWeight="bold">{FIELD_LABELS[key] || key}</Text>
-                                 
-                                 {isMulti && currentVal && (
-                                   <InlineStack gap="200" wrap>
-                                     {currentVal.split(",").map(c => c.trim()).filter(Boolean).map(color => (
-                                       <Tag key={color} onRemove={() => {
-                                         const newColors = currentVal.split(",").map(s => s.trim()).filter(Boolean).filter(c => c !== color);
-                                         setFieldValues(prev => ({...prev, [key]: newColors.join(", ")}));
-                                       }}>
-                                         {color}
-                                       </Tag>
-                                     ))}
-                                   </InlineStack>
-                                 )}
-
-                                 <Select
-                                   labelHidden
-                                   label={FIELD_LABELS[key] || key}
-                                   options={selectOptions}
-                                   value={selectValue}
-                                   onChange={(v) => {
-                                     if (v === "__custom__") {
-                                       setShowCustomInput(prev => ({...prev, [key]: true}));
-                                     } else {
-                                       setShowCustomInput(prev => ({...prev, [key]: false}));
-                                       if (isMulti) {
-                                         if (!v) return;
-                                         const curr = currentVal ? currentVal.split(",").map(s => s.trim()).filter(Boolean) : [];
-                                         if (!curr.includes(v)) curr.push(v);
-                                         setFieldValues(prev => ({...prev, [key]: curr.join(", ")}));
-                                       } else {
-                                         setFieldValues(prev => ({...prev, [key]: v}));
-                                       }
-                                     }
-                                   }}
-                                 />
-
-                                 {showCustomInput[key] && (
-                                   <div style={{ paddingLeft: "8px", borderLeft: "2px solid #e1e3e5", marginTop: "4px" }}>
-                                     <InlineStack gap="300" blockAlign="center" wrap={false}>
-                                       <div style={{ flex: 1 }}>
-                                         <TextField
-                                           labelHidden
-                                           label="New custom value"
-                                           placeholder="Enter new custom option..."
-                                           value={customInputs[key] || ""}
-                                           onChange={v => setCustomInputs(p => ({...p, [key]: v}))}
-                                           autoComplete="off"
-                                         />
-                                       </div>
-                                       <Button variant="primary" onClick={() => {
-                                          const v = customInputs[key]?.trim();
-                                          if (v) {
-                                             addCustomFetcher.submit({ intent: "saveVocabularyEntry", field_key: key, new_value: v }, { method: "post", action: "/app/meta-injector" });
-                                             setVocabulary(prev => {
-                                               const curr = prev[key] || [];
-                                               if (!curr.includes(v)) return { ...prev, [key]: [...curr, v] };
-                                               return prev;
-                                             });
-                                             if (isMulti) {
-                                               const currVals = currentVal ? currentVal.split(",").map(s => s.trim()).filter(Boolean) : [];
-                                               if (!currVals.includes(v)) currVals.push(v);
-                                               setFieldValues(prev => ({...prev, [key]: currVals.join(", ")}));
-                                             } else {
-                                               setFieldValues(prev => ({...prev, [key]: v}));
-                                             }
-                                             setShowCustomInput(p => ({...p, [key]: false}));
-                                             setCustomInputs(p => ({...p, [key]: ""}));
-                                          }
-                                       }}>
-                                         Save & Select
-                                       </Button>
-                                       <Button onClick={() => setShowCustomInput(p => ({...p, [key]: false}))}>Cancel</Button>
-                                     </InlineStack>
-                                   </div>
-                                 )}
-                              </BlockStack>
-                            );
-                          } else {
-                            return (
-                              <BlockStack gap="200" key={key}>
-                                <Text as="h3" variant="bodyMd" fontWeight="bold">{FIELD_LABELS[key] || key}</Text>
-                                <TextField
-                                  labelHidden
-                                  label={FIELD_LABELS[key] || key}
-                                  value={fieldValues[key] || ""}
-                                  onChange={val => setFieldValues(prev => ({ ...prev, [key]: val }))}
-                                  autoComplete="off"
-                                  multiline={["stone_story", "bench_notes", "character_marks", "rock_composition"].includes(key) ? 3 : undefined}
-                                />
-                              </BlockStack>
-                            );
-                          }
-                        })}
+                      <BlockStack gap="200">
+                        <Text variant="bodyMd" fontWeight="bold">Official Name (Required for Mindat)</Text>
+                        <select
+                          style={{ width: "100%", padding: "8px", borderRadius: "4px", border: "1px solid #c9cccf", fontSize: "14px" }}
+                          value={fieldValues["official_name"] || ""}
+                          onChange={(e) => setFieldValues({ ...fieldValues, official_name: e.target.value })}
+                        >
+                          <option value="">-- Select Valid Mindat Stone --</option>
+                          {availableStones.map(stone => (
+                            <option key={stone} value={stone}>{stone}</option>
+                          ))}
+                          <option value="__custom__">➕ Add New Stone...</option>
+                        </select>
                       </BlockStack>
-                    </BlockStack>
-                  </Card>
 
+                      {fieldValues["official_name"] === "__custom__" && (
+                        <TextField
+                          label="Type new stone name"
+                          value={customName}
+                          onChange={setCustomName}
+                          autoComplete="off"
+                          placeholder="e.g. Rhodochrosite"
+                        />
+                      )}
+                    </BlockStack>
+                  </Box>
+
+                  <BlockStack gap="400">
+                    {MANUAL_KEYS.filter(key => key !== "official_name").map(key => {
+                      if (SEED_OPTIONS[key]) {
+                        const opts = [...new Set([...(SEED_OPTIONS[key] || []), ...(vocabulary[key] || [])])];
+                        const isMulti = key === "secondary_colors";
+                        const currentVal = fieldValues[key] || "";
+
+                        const selectOptions = isMulti 
+                          ? [{label: "-- Add Color --", value: ""}]
+                          : [{label: "-- Select --", value: ""}];
+
+                        opts.forEach(o => selectOptions.push({label: o, value: o}));
+
+                        if (!isMulti && currentVal && currentVal !== "__custom__" && !opts.includes(currentVal)) {
+                          selectOptions.push({ label: currentVal, value: currentVal });
+                        }
+                        
+                        selectOptions.push({ label: "➕ Add Custom...", value: "__custom__" });
+
+                        const selectValue = showCustomInput[key] ? "__custom__" : (isMulti ? "" : currentVal);
+
+                        return (
+                          <BlockStack gap="200" key={key}>
+                             
+                             {isMulti && currentVal && (
+                               <InlineStack gap="200" wrap>
+                                 {currentVal.split(",").map(c => c.trim()).filter(Boolean).map(color => (
+                                   <Tag key={color} onRemove={() => {
+                                     const newColors = currentVal.split(",").map(s => s.trim()).filter(Boolean).filter(c => c !== color);
+                                     setFieldValues(prev => ({...prev, [key]: newColors.join(", ")}));
+                                   }}>
+                                     {color}
+                                   </Tag>
+                                 ))}
+                               </InlineStack>
+                             )}
+
+                             <Select
+                               label={FIELD_LABELS[key] || key}
+                               options={selectOptions}
+                               value={selectValue}
+                               onChange={(v) => {
+                                 if (v === "__custom__") {
+                                   setShowCustomInput(prev => ({...prev, [key]: true}));
+                                 } else {
+                                   setShowCustomInput(prev => ({...prev, [key]: false}));
+                                   if (isMulti) {
+                                     if (!v) return;
+                                     const curr = currentVal ? currentVal.split(",").map(s => s.trim()).filter(Boolean) : [];
+                                     if (!curr.includes(v)) curr.push(v);
+                                     setFieldValues(prev => ({...prev, [key]: curr.join(", ")}));
+                                   } else {
+                                     setFieldValues(prev => ({...prev, [key]: v}));
+                                   }
+                                 }
+                               }}
+                             />
+
+                             {showCustomInput[key] && (
+                               <div style={{ paddingLeft: "8px", borderLeft: "2px solid #e1e3e5", marginTop: "4px" }}>
+                                 <BlockStack gap="300">
+                                   <TextField
+                                     label="New custom value"
+                                     placeholder="Enter new custom option..."
+                                     value={customInputs[key] || ""}
+                                     onChange={v => setCustomInputs(p => ({...p, [key]: v}))}
+                                     autoComplete="off"
+                                   />
+                                   <InlineStack gap="300" blockAlign="center" wrap={false}>
+                                     <Button variant="primary" onClick={() => {
+                                        const v = customInputs[key]?.trim();
+                                        if (v) {
+                                           addCustomFetcher.submit({ intent: "saveVocabularyEntry", field_key: key, new_value: v }, { method: "post", action: "/app/meta-injector" });
+                                           setVocabulary(prev => {
+                                             const curr = prev[key] || [];
+                                             if (!curr.includes(v)) return { ...prev, [key]: [...curr, v] };
+                                             return prev;
+                                           });
+                                           if (isMulti) {
+                                             const currVals = currentVal ? currentVal.split(",").map(s => s.trim()).filter(Boolean) : [];
+                                             if (!currVals.includes(v)) currVals.push(v);
+                                             setFieldValues(prev => ({...prev, [key]: currVals.join(", ")}));
+                                           } else {
+                                             setFieldValues(prev => ({...prev, [key]: v}));
+                                           }
+                                           setShowCustomInput(p => ({...p, [key]: false}));
+                                           setCustomInputs(p => ({...p, [key]: ""}));
+                                        }
+                                     }}>
+                                       Save & Select
+                                     </Button>
+                                     <Button onClick={() => setShowCustomInput(p => ({...p, [key]: false}))}>Cancel</Button>
+                                   </InlineStack>
+                                 </BlockStack>
+                               </div>
+                             )}
+                          </BlockStack>
+                        );
+                      } else {
+                        return (
+                          <BlockStack gap="200" key={key}>
+                            <TextField
+                              label={FIELD_LABELS[key] || key}
+                              value={fieldValues[key] || ""}
+                              onChange={val => setFieldValues(prev => ({ ...prev, [key]: val }))}
+                              autoComplete="off"
+                              multiline={["stone_story", "bench_notes", "character_marks", "rock_composition"].includes(key) ? 3 : undefined}
+                            />
+                          </BlockStack>
+                        );
+                      }
+                    })}
+                  </BlockStack>
                 </BlockStack>
-              </div>
+              </Card>
 
-              {/* Sidebar Column */}
-              <div style={{ flex: "1 1 240px", minWidth: 0 }}>
-                <BlockStack gap="500">
-                  <Card roundedAbove="sm">
-                    <BlockStack gap="400">
-                      <Select
-                        label="Store Status"
-                        options={[{label: 'Active (Live)', value: 'ACTIVE'}, {label: 'Draft (Hidden)', value: 'DRAFT'}]}
-                        value={baseFields.status}
-                        onChange={val => setBaseFields(p => ({...p, status: val}))}
-                      />
-                    </BlockStack>
-                  </Card>
-                  <Card roundedAbove="sm">
-                    <BlockStack gap="400">
-                      <TextField
-                        label="Price"
-                        type="number"
-                        value={baseFields.price}
-                        onChange={val => setBaseFields(p => ({...p, price: val}))}
-                        autoComplete="off" prefix="$"
-                      />
-                    </BlockStack>
-                  </Card>
-                  <Card roundedAbove="sm">
-                    <BlockStack gap="400">
-                      <TextField
-                        label="Available Inventory"
-                        type="number"
-                        value={baseFields.inventory}
-                        onChange={val => setBaseFields(p => ({...p, inventory: val}))}
-                        autoComplete="off"
-                      />
-                    </BlockStack>
-                  </Card>
-                </BlockStack>
-              </div>
-
-            </div>
+            </BlockStack>
           </BlockStack>
         </div>
       </Page>
