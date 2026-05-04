@@ -5,7 +5,7 @@ import {
 import { useState, useEffect } from "react";
 import { useFetcher } from "react-router";
 import { useAppBridge } from "@shopify/app-bridge-react";
-import { TARGET_KEYS, FIELD_LABELS, MANUAL_KEYS } from "../../utils/metaScan";
+import { TARGET_KEYS, FIELD_LABELS, DATABASE_KEYS } from "../../utils/metaScan";
 import { TAXONOMY_GIDS, wrapGid } from "../../utils/taxonomyMap";
 
 const LIST_TEXT_FIELDS = [
@@ -205,7 +205,8 @@ export default function MetaCore({ products = [] }) {
                           value={fieldValues["official_name"] || ""}
                           onChange={(e) => setFieldValues({ ...fieldValues, official_name: e.target.value })}
                         >
-                          <option value="">-- Do Not Change --</option>
+                          {/* Blank default option instead of "-- Do Not Change --" */}
+                          <option value=""></option>
                           {availableStones.map(stone => (
                             <option key={stone} value={stone}>{stone}</option>
                           ))}
@@ -226,15 +227,15 @@ export default function MetaCore({ products = [] }) {
                   </Box>
 
                   <BlockStack gap="400">
-                    {MANUAL_KEYS.filter(key => key !== "official_name").map(key => {
+                    {DATABASE_KEYS.map(key => {
                       if (SEED_OPTIONS[key]) {
                         const opts = [...new Set([...(SEED_OPTIONS[key] || []), ...(vocabulary[key] || [])])];
                         const isMulti = key === "secondary_colors";
                         const currentVal = fieldValues[key] || "";
 
                         const selectOptions = isMulti 
-                          ? [{label: "-- Do Not Change --", value: ""}]
-                          : [{label: "-- Do Not Change --", value: ""}];
+                          ? [{label: "", value: ""}]
+                          : [{label: "", value: ""}];
 
                         opts.forEach(o => selectOptions.push({label: o, value: o}));
 
@@ -330,7 +331,6 @@ export default function MetaCore({ products = [] }) {
                               value={fieldValues[key] || ""}
                               onChange={val => setFieldValues(prev => ({ ...prev, [key]: val }))}
                               autoComplete="off"
-                              placeholder="-- Do Not Change --"
                               multiline={["stone_story", "bench_notes", "character_marks", "rock_composition"].includes(key) ? 3 : undefined}
                             />
                           </BlockStack>
