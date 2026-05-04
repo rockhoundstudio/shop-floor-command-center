@@ -1,25 +1,15 @@
 import { 
   TextField, BlockStack, Card, Text, Badge, Button, Banner, 
-  InlineStack, Page, Select, Box, ResourceList, ResourceItem, Thumbnail, Checkbox, Tag, Divider
+  InlineStack, Page, Select, Box, ResourceList, ResourceItem, Thumbnail, Checkbox, Tag
 } from "@shopify/polaris";
 import { useState, useEffect } from "react";
 import { useFetcher } from "react-router";
 import { useAppBridge } from "@shopify/app-bridge-react";
-import { TARGET_KEYS, FIELD_LABELS, DATABASE_KEYS } from "../../utils/metaScan";
+import { DATABASE_KEYS, FIELD_LABELS } from "../../utils/metaScan";
 import { TAXONOMY_GIDS, wrapGid } from "../../utils/taxonomyMap";
 
 const LIST_TEXT_FIELDS = [
   "character_marks"
-];
-
-const availableStones = [
-  "Agate", "Amethyst", "Aventurine", "Azurite", "Bloodstone", "Carnelian",
-  "Chalcedony", "Chrysocolla", "Conglomerate", "Fluorite", "Garnet",
-  "Gneiss", "Hematite", "Howlite", "Jade", "Jasper", "Labradorite",
-  "Lapis Lazuli", "Malachite", "Moonstone", "Obsidian", "Onyx", "Opal",
-  "Pyrite", "Quartz", "Rhodochrosite", "Rhodonite", "Rose Quartz",
-  "Serpentine", "Siltstone", "Smoky Quartz", "Sodalite", "Sunstone",
-  "Tiger's Eye", "Tourmaline", "Turquoise", "Variscite"
 ];
 
 const SEED_OPTIONS = {
@@ -59,7 +49,6 @@ export default function MetaCore({ products = [] }) {
 
   const [selectedIds, setSelectedIds] = useState([]);
   const [fieldValues, setFieldValues] = useState({});
-  const [customName, setCustomName] = useState("");
   const [search, setSearch] = useState("");
   
   const [vocabulary, setVocabulary] = useState({});
@@ -71,6 +60,9 @@ export default function MetaCore({ products = [] }) {
   const addCustomFetcher = useFetcher();
 
   const filtered = products.filter(p => p.title.toLowerCase().includes(search.toLowerCase()));
+
+  // Get the selected product if exactly one is selected
+  const selectedProduct = selectedIds.length === 1 ? products.find(p => p.id === selectedIds[0]) : null;
 
   useEffect(() => {
     if (vocabFetcher.state === "idle" && !vocabFetcher.data) {
@@ -90,13 +82,11 @@ export default function MetaCore({ products = [] }) {
       return;
     }
 
-    const metafields = TARGET_KEYS
+    const metafields = DATABASE_KEYS
       .filter(key => fieldValues[key] && String(fieldValues[key]).trim() !== "")
       .map(key => {
         const safeKey = key.replace(/-/g, "_");
-        const rawValue = key === "official_name" && fieldValues[key] === "__custom__"
-          ? customName
-          : fieldValues[key] || "";
+        const rawValue = fieldValues[key] || "";
         const formatted = formatMetafieldValue(safeKey, rawValue);
         if (!formatted) return null;
         return {
@@ -196,46 +186,18 @@ export default function MetaCore({ products = [] }) {
                     Any field you leave blank will be ignored. Only filled fields will overwrite existing data on the selected products.
                   </Banner>
 
-                  <Box paddingBlockEnd="400" borderBlockEndWidth="025" borderColor="border">
-                    <BlockStack gap="400">
-                      <BlockStack gap="200">
-                        <Text variant="bodyMd" fontWeight="bold">Official Name</Text>
-                        <select
-                          style={{ width: "100%", padding: "8px", borderRadius: "4px", border: "1px solid #c9cccf", fontSize: "14px" }}
-                          value={fieldValues["official_name"] || ""}
-                          onChange={(e) => setFieldValues({ ...fieldValues, official_name: e.target.value })}
-                        >
-                          {/* Blank default option instead of "-- Do Not Change --" */}
-                          <option value=""></option>
-                          {availableStones.map(stone => (
-                            <option key={stone} value={stone}>{stone}</option>
-                          ))}
-                          <option value="__custom__">➕ Add New Stone...</option>
-                        </select>
-                      </BlockStack>
-
-                      {fieldValues["official_name"] === "__custom__" && (
-                        <TextField
-                          label="Type new stone name"
-                          value={customName}
-                          onChange={setCustomName}
-                          autoComplete="off"
-                          placeholder="e.g. Rhodochrosite"
-                        />
-                      )}
-                    </BlockStack>
-                  </Box>
-
                   <BlockStack gap="400">
                     {DATABASE_KEYS.map(key => {
+                      // Determine placeholder based on selected product's saved metafields
+                      const savedValue = selectedProduct?.metafields?.[key.replace(/-/g, "_")];
+                      const placeholderText = savedValue ? `Current: ${String(savedValue).replace(/[✅⚠️]/g, "").trim()}` : "";
+
                       if (SEED_OPTIONS[key]) {
                         const opts = [...new Set([...(SEED_OPTIONS[key] || []), ...(vocabulary[key] || [])])];
                         const isMulti = key === "secondary_colors";
                         const currentVal = fieldValues[key] || "";
 
-                        const selectOptions = isMulti 
-                          ? [{label: "", value: ""}]
-                          : [{label: "", value: ""}];
+                        const selectOptions = [{label: placeholderText, value: ""}];
 
                         opts.forEach(o => selectOptions.push({label: o, value: o}));
 
@@ -331,6 +293,7 @@ export default function MetaCore({ products = [] }) {
                               value={fieldValues[key] || ""}
                               onChange={val => setFieldValues(prev => ({ ...prev, [key]: val }))}
                               autoComplete="off"
+                              placeholder={placeholderText}
                               multiline={["stone_story", "bench_notes", "character_marks", "rock_composition"].includes(key) ? 3 : undefined}
                             />
                           </BlockStack>
