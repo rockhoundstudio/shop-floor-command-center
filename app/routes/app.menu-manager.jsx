@@ -103,10 +103,8 @@ export default function MenuManager() {
   const [menuTitle, setMenuTitle] = useState("");
   const [scanned, setScanned] = useState(false);
 
-  // Resolve GID display name for menu item badge
   const resolveItemGidLabel = (id) => MENU_ITEM_GIDS[id] ? "✅ GID Matched" : "⚠️ No GID";
 
-  // Build dropdown options
   const linkOptions = [
     { label: "✏️ Type Custom Link...", value: "custom" },
     { label: "🏠 Home Page", value: "/" },
@@ -183,7 +181,7 @@ export default function MenuManager() {
   };
 
   return (
-    <Page title="Menu Maker 🗂️" subtitle="Prestige V11 Mega-Menu Factory" backAction={{ content: "Command Center", url: "/app" }}>
+    <Page title="Menu Maker 🗂️" subtitle="Prestige V11 Mega-Menu Factory" backAction={{ content: "Command Center", url: "/app/_index" }}>
       <Layout>
 
         {/* LEFT COLUMN */}
@@ -224,7 +222,6 @@ export default function MenuManager() {
           ) : (
             <BlockStack gap="400">
 
-              {/* MAGIC AUTOMATION PANEL */}
               <Card background="bg-surface-secondary">
                 <BlockStack gap="300">
                   <Text variant="headingSm">✨ Janyce's Magic Automations</Text>
@@ -235,7 +232,6 @@ export default function MenuManager() {
                 </BlockStack>
               </Card>
 
-              {/* VISUAL EDITOR */}
               <Card>
                 <BlockStack gap="500">
                   <TextField label="Menu Title" value={menuTitle} onChange={setMenuTitle} autoComplete="off" />
