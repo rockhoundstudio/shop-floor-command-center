@@ -1,8 +1,7 @@
 import { useState } from "react";
 import { useFetcher } from "react-router";
 import { Card, TextField, Text, BlockStack, InlineStack, Button, Select, Box, Divider, Banner, Grid, Badge, Icon, Tag } from "@shopify/polaris";
-import { FolderIcon } from "@shopify/polaris-icons";
-import { SearchIcon } from "@shopify/polaris-icons";
+import { FolderIcon, SearchIcon } from "@shopify/polaris-icons";
 
 export default function CollectionsTab({ products = [], collections = [], onBack }) {
   const fetcher = useFetcher();
@@ -131,7 +130,7 @@ export default function CollectionsTab({ products = [], collections = [], onBack
           </BlockStack>
         </Grid.Cell>
 
-        {/* RIGHT: Assign Stones */}
+        {/* RIGHT: Assign Stones — 3 column table */}
         <Grid.Cell columnSpan={{ xs: 6, sm: 6, md: 8, lg: 8 }}>
           <Card roundedAbove="sm">
             <BlockStack gap="400">
@@ -152,6 +151,15 @@ export default function CollectionsTab({ products = [], collections = [], onBack
 
               <Divider />
 
+              {/* Column headers */}
+              <div style={{ display: "grid", gridTemplateColumns: "2fr 2fr 1fr", gap: "12px", padding: "0 4px" }}>
+                <Text variant="bodySm" fontWeight="bold" tone="subdued">STONE</Text>
+                <Text variant="bodySm" fontWeight="bold" tone="subdued">COLLECTIONS</Text>
+                <Text variant="bodySm" fontWeight="bold" tone="subdued">ADD TO</Text>
+              </div>
+
+              <Divider />
+
               {filteredProducts.length === 0 && (
                 <Box paddingBlock="400">
                   <Text tone="subdued" alignment="center">No stones match your search.</Text>
@@ -165,33 +173,39 @@ export default function CollectionsTab({ products = [], collections = [], onBack
                       c.title.toLowerCase() !== "all collections"
                     );
                     return (
-                      <Box key={p.id} paddingBlock="300" borderBlockEndWidth={index !== filteredProducts.length - 1 ? "025" : "0"} borderColor="border">
-                        <InlineStack align="space-between" blockAlign="center" wrap={false} gap="300">
+                      <div
+                        key={p.id}
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns: "2fr 2fr 1fr",
+                          gap: "12px",
+                          alignItems: "center",
+                          padding: "10px 4px",
+                          borderBottom: index !== filteredProducts.length - 1 ? "1px solid #e1e3e5" : "none",
+                        }}
+                      >
+                        {/* Col 1: Stone name */}
+                        <Text fontWeight="semibold" truncate>{p.title}</Text>
 
-                          <BlockStack gap="100" style={{ flex: 1, minWidth: 0 }}>
-                            <Text fontWeight="bold" truncate>{p.title}</Text>
-                            <InlineStack gap="100" wrap>
-                              {stoneCols.length > 0
-                                ? stoneCols.map(c => (
-                                    <Tag key={c.id} onRemove={() => handleRemove(p.id, c.id)}>
-                                      {c.title}
-                                    </Tag>
-                                  ))
-                                : <Text variant="bodyXs" tone="subdued">No Collections</Text>
-                              }
-                            </InlineStack>
-                          </BlockStack>
+                        {/* Col 2: Current collections as removable tags */}
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: "4px" }}>
+                          {stoneCols.length > 0
+                            ? stoneCols.map(c => (
+                                <Tag key={c.id} onRemove={() => handleRemove(p.id, c.id)}>
+                                  {c.title}
+                                </Tag>
+                              ))
+                            : <Text variant="bodyXs" tone="subdued">No Collections</Text>
+                          }
+                        </div>
 
-                          <div style={{ width: "160px", flexShrink: 0 }}>
-                            <Select
-                              options={[{ label: "Add to...", value: "" }, ...filteredCollections.map(c => ({ label: c.title, value: c.id }))]}
-                              value=""
-                              onChange={(val) => handleAssign(p.id, val)}
-                            />
-                          </div>
-
-                        </InlineStack>
-                      </Box>
+                        {/* Col 3: Add to dropdown */}
+                        <Select
+                          options={[{ label: "Add to...", value: "" }, ...filteredCollections.map(c => ({ label: c.title, value: c.id }))]}
+                          value=""
+                          onChange={(val) => handleAssign(p.id, val)}
+                        />
+                      </div>
                     );
                   })}
                 </BlockStack>
