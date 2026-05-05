@@ -48,6 +48,17 @@ export default function Index() {
           </div>
         </Link>
 
+        <Link to="/app/dwell-web-manager" style={{
+          display: "block", padding: "32px 40px", backgroundColor: "#3a1a1a",
+          color: "#fff", borderRadius: "12px", textDecoration: "none",
+          fontSize: "22px", fontWeight: "bold", minWidth: "220px"
+        }}>
+          🕸️ Dwell Web Manager
+          <div style={{ fontSize: "14px", fontWeight: "normal", marginTop: "8px", color: "#aaa" }}>
+            Manage dwell time and content engagement
+          </div>
+        </Link>
+
       </div>
     </div>
   );
