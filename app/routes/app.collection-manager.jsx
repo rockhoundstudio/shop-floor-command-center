@@ -28,7 +28,7 @@ export const loader = async ({ request }) => {
   const collections = data.data.collections.nodes;
   const products = data.data.products.nodes.map(p => ({
     ...p,
-    currentCollections: p.collections.nodes,
+    currentCollections: p.collections?.nodes ?? [],
   }));
 
   return json({ collections, products });
@@ -73,6 +73,20 @@ export const action = async ({ request }) => {
       mutation {
         collectionAddProducts(id: "${collectionId}", productIds: ["${productId}"]) {
           collection { id title }
+          userErrors { field message }
+        }
+      }
+    `);
+    return json({ ok: true });
+  }
+
+  if (intent === "removeCollection") {
+    const productId = fd.get("productId");
+    const collectionId = fd.get("collectionId");
+    await admin.graphql(`
+      mutation {
+        collectionRemoveProducts(id: "${collectionId}", productIds: ["${productId}"]) {
+          job { id }
           userErrors { field message }
         }
       }

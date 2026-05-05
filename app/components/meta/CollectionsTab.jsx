@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useFetcher } from "react-router";
-import { Card, TextField, Text, BlockStack, InlineStack, Button, Select, Box, Divider, Banner, Grid, Badge, Icon } from "@shopify/polaris";
+import { Card, TextField, Text, BlockStack, InlineStack, Button, Select, Box, Divider, Banner, Grid, Badge, Icon, Tag } from "@shopify/polaris";
 import { SearchIcon, FolderIcon } from "@shopify/polaris-icons";
 
 export default function CollectionsTab({ products = [], collections = [], onBack }) {
@@ -8,6 +8,11 @@ export default function CollectionsTab({ products = [], collections = [], onBack
   const [newCollTitle, setNewCollTitle] = useState("");
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
+
+  // Filter out "All Collections" meta-collection
+  const filteredCollections = collections.filter(c => 
+    c.title.toLowerCase() !== "all collections"
+  );
 
   const handleCreate = () => {
     if (!newCollTitle.trim()) return;
@@ -27,8 +32,23 @@ export default function CollectionsTab({ products = [], collections = [], onBack
     fetcher.submit(fd, { method: "post" });
   };
 
-  // Filter products based on search
-  const filteredProducts = products.filter(p => 
+  const handleRemove = (productId, collectionId) => {
+    const fd = new FormData();
+    fd.append("intent", "removeCollection");
+    fd.append("productId", productId);
+    fd.append("collectionId", collectionId);
+    fetcher.submit(fd, { method: "post" });
+  };
+
+  // Deduplicate products by id
+  const seen = new Set();
+  const uniqueProducts = products.filter(p => {
+    if (seen.has(p.id)) return false;
+    seen.add(p.id);
+    return true;
+  });
+
+  const filteredProducts = uniqueProducts.filter(p =>
     p.title.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
@@ -51,16 +71,16 @@ export default function CollectionsTab({ products = [], collections = [], onBack
                 <Text variant="headingMd">➕ New Collection</Text>
                 <Text variant="bodySm" tone="subdued">Create a new category for your shop.</Text>
                 <BlockStack gap="200">
-                  <TextField 
-                    value={newCollTitle} 
-                    onChange={setNewCollTitle} 
-                    placeholder="e.g. Rare Jaspers" 
-                    autoComplete="off" 
+                  <TextField
+                    value={newCollTitle}
+                    onChange={setNewCollTitle}
+                    placeholder="e.g. Rare Jaspers"
+                    autoComplete="off"
                   />
-                  <Button 
-                    variant="primary" 
-                    onClick={handleCreate} 
-                    disabled={!newCollTitle.trim()} 
+                  <Button
+                    variant="primary"
+                    onClick={handleCreate}
+                    disabled={!newCollTitle.trim()}
                     loading={fetcher.state === "submitting" && fetcher.formData?.get("intent") === "createCollection"}
                   >
                     Create Collection
@@ -73,27 +93,27 @@ export default function CollectionsTab({ products = [], collections = [], onBack
               <BlockStack gap="300">
                 <InlineStack align="space-between" blockAlign="center">
                   <Text variant="headingMd">🗂️ Active Collections</Text>
-                  <Badge tone="info">{collections.length}</Badge>
+                  <Badge tone="info">{filteredCollections.length}</Badge>
                 </InlineStack>
                 <Divider />
-                
-                {collections.length === 0 && (
+
+                {filteredCollections.length === 0 && (
                   <Box paddingBlock="400">
                     <Text tone="subdued" alignment="center">No collections yet.</Text>
                   </Box>
                 )}
-                
+
                 <BlockStack gap="200">
-                  {collections.map((c) => (
+                  {filteredCollections.map((c) => (
                     <Box key={c.id} padding="200" background="bg-surface-secondary" borderRadius="100" borderColor="border" borderWidth="025">
                       <InlineStack align="space-between" blockAlign="center" wrap={false}>
                         <InlineStack gap="200" wrap={false} blockAlign="center">
                           <Icon source={FolderIcon} tone="base" />
                           <Text variant="bodyMd" fontWeight="bold" truncate>{c.title}</Text>
                         </InlineStack>
-                        <Button 
-                          size="micro" 
-                          tone="critical" 
+                        <Button
+                          size="micro"
+                          tone="critical"
                           onClick={() => setDeleteTarget(c)}
                         >
                           Delete
@@ -133,26 +153,20 @@ export default function CollectionsTab({ products = [], collections = [], onBack
                 <Text variant="headingMd">🪨 Assign Stones</Text>
                 <Badge>{filteredProducts.length} Stones</Badge>
               </InlineStack>
-              
+
               <TextField
                 value={searchQuery}
                 onChange={setSearchQuery}
-                placeholder="Search stones by name to assign..."
+                placeholder="Search stones by name..."
                 autoComplete="off"
                 clearButton
                 onClearButtonClick={() => setSearchQuery("")}
                 prefix={<Icon source={SearchIcon} tone="base" />}
               />
-              
-              <Divider />
-              
-              {products.length === 0 && (
-                <Box paddingBlock="400">
-                  <Text tone="subdued" alignment="center">No products loaded.</Text>
-                </Box>
-              )}
 
-              {products.length > 0 && filteredProducts.length === 0 && (
+              <Divider />
+
+              {filteredProducts.length === 0 && (
                 <Box paddingBlock="400">
                   <Text tone="subdued" alignment="center">No stones match your search.</Text>
                 </Box>
@@ -160,37 +174,53 @@ export default function CollectionsTab({ products = [], collections = [], onBack
 
               <Box style={{ maxHeight: "600px", overflowY: "auto" }}>
                 <BlockStack gap="0">
-                  {filteredProducts.map((p, index) => (
-                    <Box key={p.id} paddingBlock="300" borderBlockEndWidth={index !== filteredProducts.length - 1 ? "025" : "0"} borderColor="border">
-                      <InlineStack align="space-between" blockAlign="center" wrap={false}>
-                        
-                        <InlineStack gap="300" blockAlign="center" wrap={false} style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ width: '40px', height: '40px', background: "#f4f6f8", borderRadius: '6px', overflow: 'hidden', flexShrink: 0 }}>
-                            <img 
-                              src={p.featuredImage?.url || "https://cdn.shopify.com/s/files/1/0533/2089/files/placeholder-images-image_medium.png"} 
-                              alt={p.title} 
-                              style={{ width: "100%", height: "100%", objectFit: "cover" }} 
-                            />
-                          </div>
-                          <BlockStack gap="0" style={{ minWidth: 0 }}>
-                            <Text fontWeight="bold" truncate>{p.title}</Text>
-                            <Text variant="bodyXs" tone="subdued" truncate>
-                              In: {(p.currentCollections ?? []).map(c => c.title).join(", ") || "No Collections"}
-                            </Text>
-                          </BlockStack>
-                        </InlineStack>
+                  {filteredProducts.map((p, index) => {
+                    const stoneCols = (p.currentCollections ?? []).filter(c =>
+                      c.title.toLowerCase() !== "all collections"
+                    );
+                    return (
+                      <Box key={p.id} paddingBlock="400" borderBlockEndWidth={index !== filteredProducts.length - 1 ? "025" : "0"} borderColor="border">
+                        <BlockStack gap="200">
+                          <InlineStack align="space-between" blockAlign="start" wrap={false}>
 
-                        <div style={{ width: "180px", flexShrink: 0, marginLeft: "12px" }}>
-                          <Select
-                            options={[{ label: "Move to...", value: "" }, ...collections.map(c => ({ label: c.title, value: c.id }))]}
-                            value=""
-                            onChange={(val) => handleAssign(p.id, val)}
-                          />
-                        </div>
+                            <InlineStack gap="300" blockAlign="center" wrap={false} style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ width: '40px', height: '40px', background: "#f4f6f8", borderRadius: '6px', overflow: 'hidden', flexShrink: 0 }}>
+                                <img
+                                  src={p.featuredImage?.url || "https://cdn.shopify.com/s/files/1/0533/2089/files/placeholder-images-image_medium.png"}
+                                  alt={p.title}
+                                  style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                                />
+                              </div>
+                              <BlockStack gap="100" style={{ minWidth: 0 }}>
+                                <Text fontWeight="bold" truncate>{p.title}</Text>
+                                {/* Current collections as removable tags */}
+                                {stoneCols.length > 0 ? (
+                                  <InlineStack gap="100" wrap>
+                                    {stoneCols.map(c => (
+                                      <Tag key={c.id} onRemove={() => handleRemove(p.id, c.id)}>
+                                        {c.title}
+                                      </Tag>
+                                    ))}
+                                  </InlineStack>
+                                ) : (
+                                  <Text variant="bodyXs" tone="subdued">No Collections</Text>
+                                )}
+                              </BlockStack>
+                            </InlineStack>
 
-                      </InlineStack>
-                    </Box>
-                  ))}
+                            <div style={{ width: "180px", flexShrink: 0, marginLeft: "12px" }}>
+                              <Select
+                                options={[{ label: "Add to...", value: "" }, ...filteredCollections.map(c => ({ label: c.title, value: c.id }))]}
+                                value=""
+                                onChange={(val) => handleAssign(p.id, val)}
+                              />
+                            </div>
+
+                          </InlineStack>
+                        </BlockStack>
+                      </Box>
+                    );
+                  })}
                 </BlockStack>
               </Box>
 
