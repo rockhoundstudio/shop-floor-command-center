@@ -1,55 +1,100 @@
+import { json } from "@remix-run/node";
+import { useLoaderData } from "react-router";
 import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
-import { Link } from "react-router";
+import { Page } from "@shopify/polaris";
+import CollectionsTab from "../components/meta/CollectionsTab";
 
+// ── LOADER ──────────────────────────────────────────────────────────────────
 export const loader = async ({ request }) => {
-  await authenticate.admin(request);
-  return null;
+  const { admin } = await authenticate.admin(request);
+
+  const res = await admin.graphql(`
+    query {
+      collections(first: 50) {
+        nodes { id title }
+      }
+      products(first: 100) {
+        nodes {
+          id title
+          featuredImage { url }
+          collections(first: 10) { nodes { id title } }
+        }
+      }
+    }
+  `);
+
+  const data = await res.json();
+  const collections = data.data.collections.nodes;
+  const products = data.data.products.nodes.map(p => ({
+    ...p,
+    currentCollections: p.collections.nodes,
+  }));
+
+  return json({ collections, products });
 };
 
-export default function Index() {
+// ── ACTION ───────────────────────────────────────────────────────────────────
+export const action = async ({ request }) => {
+  const { admin } = await authenticate.admin(request);
+  const fd = await request.formData();
+  const intent = fd.get("intent");
+
+  if (intent === "createCollection") {
+    const title = fd.get("title");
+    await admin.graphql(`
+      mutation {
+        collectionCreate(input: { title: "${title}" }) {
+          collection { id title }
+          userErrors { field message }
+        }
+      }
+    `);
+    return json({ ok: true });
+  }
+
+  if (intent === "deleteCollection") {
+    const id = fd.get("id");
+    await admin.graphql(`
+      mutation {
+        collectionDelete(input: { id: "${id}" }) {
+          deletedCollectionId
+          userErrors { field message }
+        }
+      }
+    `);
+    return json({ ok: true });
+  }
+
+  if (intent === "assignCollection") {
+    const productId = fd.get("productId");
+    const collectionId = fd.get("collectionId");
+    await admin.graphql(`
+      mutation {
+        collectionAddProducts(id: "${collectionId}", productIds: ["${productId}"]) {
+          collection { id title }
+          userErrors { field message }
+        }
+      }
+    `);
+    return json({ ok: true });
+  }
+
+  return json({ ok: false, error: "Unknown intent" });
+};
+
+// ── COMPONENT ────────────────────────────────────────────────────────────────
+export default function CollectionManager() {
+  const { collections, products } = useLoaderData();
+
   return (
-    <div style={{ padding: "40px", fontFamily: "sans-serif" }}>
-      <h1 style={{ fontSize: "32px", marginBottom: "8px" }}>🪨 Rockhound Studio</h1>
-      <h2 style={{ fontSize: "20px", color: "#555", marginBottom: "40px" }}>Shop Floor Command Center</h2>
-
-      <div style={{ display: "flex", gap: "24px", flexWrap: "wrap" }}>
-
-        <Link to="/app/meta-injector" style={{
-          display: "block", padding: "32px 40px", backgroundColor: "#1a1a1a",
-          color: "#fff", borderRadius: "12px", textDecoration: "none",
-          fontSize: "22px", fontWeight: "bold", minWidth: "220px", flex: "1 1 250px"
-        }}>
-          💎 Meta Injector
-          <div style={{ fontSize: "14px", fontWeight: "normal", marginTop: "8px", color: "#aaa" }}>
-            Inject geological metafields into stone products
-          </div>
-        </Link>
-
-        <Link to="/app/menu-manager" style={{
-          display: "block", padding: "32px 40px", backgroundColor: "#1a3a1a",
-          color: "#fff", borderRadius: "12px", textDecoration: "none",
-          fontSize: "22px", fontWeight: "bold", minWidth: "220px", flex: "1 1 250px"
-        }}>
-          🗂️ Menu Manager
-          <div style={{ fontSize: "14px", fontWeight: "normal", marginTop: "8px", color: "#aaa" }}>
-            Build and edit your store navigation menus
-          </div>
-        </Link>
-
-        <Link to="/app/collection-manager" style={{
-          display: "block", padding: "32px 40px", backgroundColor: "#3a1a1a",
-          color: "#fff", borderRadius: "12px", textDecoration: "none",
-          fontSize: "22px", fontWeight: "bold", minWidth: "220px", flex: "1 1 250px"
-        }}>
-          🕷️ Dwell Web Manager
-          <div style={{ fontSize: "14px", fontWeight: "normal", marginTop: "8px", color: "#aaa" }}>
-            Fix orphan stones, audit blogs, and clean duplicates
-          </div>
-        </Link>
-
-      </div>
-    </div>
+    <Page title="📁 Collection Manager">
+      <CollectionsTab
+        collections={collections}
+        products={products}
+        onBack={() => window.history.back()}
+      />
+    </Page>
   );
 }
 
