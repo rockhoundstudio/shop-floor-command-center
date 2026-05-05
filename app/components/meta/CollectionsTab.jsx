@@ -43,6 +43,9 @@ export default function CollectionsTab({ products = [], collections = [], onBack
     p.title.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
+  // Detect mobile via window width
+  const isMobile = typeof window !== "undefined" && window.innerWidth < 768;
+
   return (
     <BlockStack gap="500">
       <InlineStack align="start">
@@ -70,6 +73,7 @@ export default function CollectionsTab({ products = [], collections = [], onBack
                   />
                   <Button
                     variant="primary"
+                    fullWidth
                     onClick={handleCreate}
                     disabled={!newCollTitle.trim()}
                     loading={fetcher.state === "submitting" && fetcher.formData?.get("intent") === "createCollection"}
@@ -130,7 +134,7 @@ export default function CollectionsTab({ products = [], collections = [], onBack
           </BlockStack>
         </Grid.Cell>
 
-        {/* RIGHT: Assign Stones — 3 column table */}
+        {/* RIGHT: Assign Stones */}
         <Grid.Cell columnSpan={{ xs: 6, sm: 6, md: 8, lg: 8 }}>
           <Card roundedAbove="sm">
             <BlockStack gap="400">
@@ -151,8 +155,9 @@ export default function CollectionsTab({ products = [], collections = [], onBack
 
               <Divider />
 
-              {/* Column headers */}
-              <div style={{ display: "grid", gridTemplateColumns: "2fr 2fr 1fr", gap: "12px", padding: "0 4px" }}>
+              {/* Column headers — desktop only */}
+              <div style={{ display: "grid", gridTemplateColumns: "2fr 2fr 1fr", gap: "12px", padding: "0 4px" }}
+                className="hide-on-mobile">
                 <Text variant="bodySm" fontWeight="bold" tone="subdued">STONE</Text>
                 <Text variant="bodySm" fontWeight="bold" tone="subdued">COLLECTIONS</Text>
                 <Text variant="bodySm" fontWeight="bold" tone="subdued">ADD TO</Text>
@@ -176,35 +181,28 @@ export default function CollectionsTab({ products = [], collections = [], onBack
                       <div
                         key={p.id}
                         style={{
-                          display: "grid",
-                          gridTemplateColumns: "2fr 2fr 1fr",
-                          gap: "12px",
-                          alignItems: "center",
-                          padding: "10px 4px",
+                          padding: "12px 4px",
                           borderBottom: index !== filteredProducts.length - 1 ? "1px solid #e1e3e5" : "none",
                         }}
                       >
-                        {/* Col 1: Stone name */}
-                        <Text fontWeight="semibold" truncate>{p.title}</Text>
-
-                        {/* Col 2: Current collections as removable tags */}
-                        <div style={{ display: "flex", flexWrap: "wrap", gap: "4px" }}>
-                          {stoneCols.length > 0
-                            ? stoneCols.map(c => (
-                                <Tag key={c.id} onRemove={() => handleRemove(p.id, c.id)}>
-                                  {c.title}
-                                </Tag>
-                              ))
-                            : <Text variant="bodyXs" tone="subdued">No Collections</Text>
-                          }
+                        {/* Desktop: 3-column grid */}
+                        <div style={{ display: "grid", gridTemplateColumns: "2fr 2fr 1fr", gap: "12px", alignItems: "center" }}
+                          className="desktop-row">
+                          <Text fontWeight="semibold" truncate>{p.title}</Text>
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: "4px" }}>
+                            {stoneCols.length > 0
+                              ? stoneCols.map(c => (
+                                  <Tag key={c.id} onRemove={() => handleRemove(p.id, c.id)}>{c.title}</Tag>
+                                ))
+                              : <Text variant="bodyXs" tone="subdued">No Collections</Text>
+                            }
+                          </div>
+                          <Select
+                            options={[{ label: "Add to...", value: "" }, ...filteredCollections.map(c => ({ label: c.title, value: c.id }))]}
+                            value=""
+                            onChange={(val) => handleAssign(p.id, val)}
+                          />
                         </div>
-
-                        {/* Col 3: Add to dropdown */}
-                        <Select
-                          options={[{ label: "Add to...", value: "" }, ...filteredCollections.map(c => ({ label: c.title, value: c.id }))]}
-                          value=""
-                          onChange={(val) => handleAssign(p.id, val)}
-                        />
                       </div>
                     );
                   })}
@@ -215,6 +213,20 @@ export default function CollectionsTab({ products = [], collections = [], onBack
           </Card>
         </Grid.Cell>
       </Grid>
+
+      {/* Mobile responsive styles */}
+      <style>{`
+        @media (max-width: 767px) {
+          .desktop-row {
+            display: flex !important;
+            flex-direction: column !important;
+            gap: 8px !important;
+          }
+          .hide-on-mobile {
+            display: none !important;
+          }
+        }
+      `}</style>
 
     </BlockStack>
   );
