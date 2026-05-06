@@ -28,6 +28,24 @@ const KEYS_TO_PROCESS = TARGET_KEYS.filter(k =>
   !["geological_age", "geological_era", "rock_composition", "rock_formation", "mineral_class"].includes(k)
 );
 
+// ─── UNWRAP HELPER (loader only — strips all JSON nesting layers) ────────────
+function unwrapListValue(value) {
+  let val = String(value).trim();
+  while (val.startsWith("[") && val.endsWith("]")) {
+    try {
+      const parsed = JSON.parse(val);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        val = String(parsed[0]).trim();
+      } else {
+        break;
+      }
+    } catch {
+      break;
+    }
+  }
+  return val;
+}
+
 // ─── TAXONOMY FORMATTER ─────────────────────────────────────────────────────
 function formatMetafieldValue(originalKey, value) {
   const cleanValue = String(value).replace(/[✅⚠️]/g, "").trim();
@@ -128,14 +146,8 @@ export const loader = async ({ request }) => {
       
       const mfs = Object.fromEntries(
         Object.entries(rawMfs).map(([k, v]) => {
-          let finalVal = String(v);
-          
-          if (finalVal.startsWith("[") && finalVal.endsWith("]")) {
-            try {
-              const parsed = JSON.parse(finalVal);
-              finalVal = Array.isArray(parsed) && parsed.length > 0 ? String(parsed[0]) : "";
-            } catch {}
-          }
+          // Always fully unwrap — handles single, double, and triple nesting
+          let finalVal = unwrapListValue(String(v));
 
           const dictKey = k.replace(/_/g, "-");
           if (TAXONOMY_GIDS[dictKey]) {
