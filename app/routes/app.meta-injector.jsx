@@ -13,22 +13,13 @@ import { TARGET_KEYS, stripHtml, evaluateProductStatus, parseDescription, autoLi
 import { lookupStone } from "../utils/geoLibrary";
 import { TAXONOMY_GIDS, wrapGid } from "../utils/taxonomyMap";
 
-// ─── LIST & BOOLEAN CONFIGURATION ───────────────────────────────────────────
-const LIST_TEXT_FIELDS = [
-  "character_marks",
-  "stone_story"
-];
+const LIST_TEXT_FIELDS = ["character_marks", "stone_story"];
+const BOOLEAN_FIELDS = ["is_ooak", "custom_product"];
 
-const BOOLEAN_FIELDS = [
-  "is_ooak",
-  "custom_product"
-];
-
-const KEYS_TO_PROCESS = TARGET_KEYS.filter(k => 
+const KEYS_TO_PROCESS = TARGET_KEYS.filter(k =>
   !["geological_age", "geological_era", "rock_composition", "rock_formation", "mineral_class"].includes(k)
 );
 
-// ─── UNWRAP HELPER (loader only — strips all JSON nesting layers) ────────────
 function unwrapListValue(value) {
   let val = String(value).trim();
   while (val.startsWith("[") && val.endsWith("]")) {
@@ -46,7 +37,6 @@ function unwrapListValue(value) {
   return val;
 }
 
-// ─── TAXONOMY FORMATTER ─────────────────────────────────────────────────────
 function formatMetafieldValue(originalKey, value) {
   const cleanValue = String(value).replace(/[✅⚠️]/g, "").trim();
   const mapKey = originalKey.replace(/-/g, "_");
@@ -56,7 +46,7 @@ function formatMetafieldValue(originalKey, value) {
       value: wrapGid(TAXONOMY_GIDS[mapKey][cleanValue]),
       type: "list.metaobject_reference",
       namespace: "shopify",
-      key: originalKey.replace(/_/g, "-") 
+      key: originalKey.replace(/_/g, "-")
     };
   }
 
@@ -83,16 +73,14 @@ function formatMetafieldValue(originalKey, value) {
   };
 }
 
-// ─── RAW ERROR EXTRACTOR ────────────────────────────────────────────────────
 function extractShopifyError(errors, chunk) {
   if (!errors || errors.length === 0) return null;
   let failingKey = "UNKNOWN";
   try {
-    if (errors[0].field && typeof errors[0].field[1] === 'number') {
+    if (errors[0].field && typeof errors[0].field[1] === "number") {
       failingKey = chunk[errors[0].field[1]]?.key || "UNKNOWN";
     }
   } catch (e) {}
-  
   return `[FIELD: ${failingKey}] ${errors[0].message} | RAW: ${JSON.stringify(errors)} | CHUNK: [${chunk.map(c => c.key).join(", ")}]`;
 }
 
@@ -105,7 +93,8 @@ export const loader = async ({ request }) => {
           products(first: 100) {
             edges {
               node {
-                id title descriptionHtml
+                id title descriptionHtml status
+                variants(first: 1) { edges { node { id price } } }
                 featuredImage { url altText }
                 customMeta: metafields(first: 100, namespace: "custom") {
                   edges { node { key value } }
@@ -138,17 +127,13 @@ export const loader = async ({ request }) => {
         (node.customMeta?.edges || []).map(({ node: mf }) => [mf.key, mf.value])
       );
       const shopifyMfs = Object.fromEntries(
-        (node.shopifyMeta?.edges || []).map(({ node: mf }) => [
-          mf.key, mf.value 
-        ])
+        (node.shopifyMeta?.edges || []).map(({ node: mf }) => [mf.key, mf.value])
       );
       const rawMfs = { ...shopifyMfs, ...customMfs };
-      
+
       const mfs = Object.fromEntries(
         Object.entries(rawMfs).map(([k, v]) => {
-          // Always fully unwrap — handles single, double, and triple nesting
           let finalVal = unwrapListValue(String(v));
-
           const dictKey = k.replace(/_/g, "-");
           if (TAXONOMY_GIDS[dictKey]) {
             for (const [word, mappedGid] of Object.entries(TAXONOMY_GIDS[dictKey])) {
@@ -158,14 +143,16 @@ export const loader = async ({ request }) => {
               }
             }
           }
-
           return [k.replace(/-/g, "_"), finalVal];
         })
       );
-      
+
       const { status, filledCount } = evaluateProductStatus(mfs);
+      const price = node.variants?.edges?.[0]?.node?.price || "0.00";
+
       return {
         ...node,
+        price,
         description: stripHtml(node.descriptionHtml),
         metafields: mfs,
         status,
@@ -185,11 +172,8 @@ export const loader = async ({ request }) => {
 };
 
 export const action = async ({ request }) => {
-  const { admin, session } = await authenticate.admin(request);
-  
+  const { admin } = await authenticate.admin(request);
   const { default: prisma } = await import("../db.server");
-  const fs = await import("fs");
-  const path = await import("path");
 
   const formData = await request.formData();
   const intent = formData.get("intent");
@@ -229,7 +213,6 @@ export const action = async ({ request }) => {
     const fieldKey = formData.get("field_key");
     const newValue = formData.get("new_value");
     if (!fieldKey || !newValue) return data({ ok: false, error: "Missing fields" });
-
     try {
       const res = await admin.graphql(`
         query {
@@ -247,28 +230,16 @@ export const action = async ({ request }) => {
       const json = await res.json();
       const edges = json.data?.metaobjects?.edges || [];
       const existing = edges.find(e => e.node.field_key?.value === fieldKey);
-
       if (existing) {
         const currentVals = existing.node.values?.value ? existing.node.values.value.split(",").map(v => v.trim()) : [];
-        if (!currentVals.includes(newValue.trim())) {
-          currentVals.push(newValue.trim());
-        }
+        if (!currentVals.includes(newValue.trim())) currentVals.push(newValue.trim());
         await admin.graphql(`
           mutation metaobjectUpdate($id: ID!, $metaobject: MetaobjectUpdateInput!) {
             metaobjectUpdate(id: $id, metaobject: $metaobject) {
               userErrors { message }
             }
           }
-        `, {
-          variables: {
-            id: existing.node.id,
-            metaobject: {
-              fields: [
-                { key: "values", value: currentVals.join(",") }
-              ]
-            }
-          }
-        });
+        `, { variables: { id: existing.node.id, metaobject: { fields: [{ key: "values", value: currentVals.join(",") }] } } });
       } else {
         await admin.graphql(`
           mutation metaobjectCreate($metaobject: MetaobjectCreateInput!) {
@@ -276,19 +247,48 @@ export const action = async ({ request }) => {
               userErrors { message }
             }
           }
-        `, {
-          variables: {
-            metaobject: {
-              type: "field_vocabulary",
-              fields: [
-                { key: "field_key", value: fieldKey },
-                { key: "values", value: newValue.trim() }
-              ]
-            }
-          }
-        });
+        `, { variables: { metaobject: { type: "field_vocabulary", fields: [{ key: "field_key", value: fieldKey }, { key: "values", value: newValue.trim() }] } } });
       }
       return data({ ok: true });
+    } catch (e) {
+      return data({ ok: false, error: e.message });
+    }
+  }
+
+  if (intent === "saveProductBase") {
+    const productId = formData.get("productId");
+    const title     = formData.get("title");
+    const status    = formData.get("status");
+    const price     = formData.get("price");
+    try {
+      await admin.graphql(`
+        mutation productUpdate($input: ProductInput!) {
+          productUpdate(input: $input) {
+            userErrors { field message }
+          }
+        }
+      `, { variables: { input: { id: productId, title, status } } });
+
+      const variantRes = await admin.graphql(`
+        query getVariant($id: ID!) {
+          product(id: $id) {
+            variants(first: 1) { edges { node { id } } }
+          }
+        }
+      `, { variables: { id: productId } });
+      const variantJson = await variantRes.json();
+      const variantId = variantJson.data?.product?.variants?.edges?.[0]?.node?.id;
+
+      if (variantId && price) {
+        await admin.graphql(`
+          mutation productVariantUpdate($input: ProductVariantInput!) {
+            productVariantUpdate(input: $input) {
+              userErrors { field message }
+            }
+          }
+        `, { variables: { input: { id: variantId, price: String(parseFloat(price).toFixed(2)) } } });
+      }
+      return data({ ok: true, success: true });
     } catch (e) {
       return data({ ok: false, error: e.message });
     }
@@ -297,7 +297,6 @@ export const action = async ({ request }) => {
   if (intent === "build_payload") {
     const productId = formData.get("productId");
     const existingMeta = JSON.parse(formData.get("existingMeta") || "{}");
-
     const payloadObj = Object.keys(existingMeta)
       .filter(k => existingMeta[k] && String(existingMeta[k]).trim() !== "")
       .map(k => {
@@ -310,7 +309,6 @@ export const action = async ({ request }) => {
           value: String(existingMeta[k]).replace(/[✅⚠️]/g, "").trim()
         };
       });
-
     return data({ ok: true, payload: JSON.stringify(payloadObj, null, 2) });
   }
 
@@ -318,24 +316,14 @@ export const action = async ({ request }) => {
     try {
       const payloadStr = formData.get("payload");
       const rawMetafields = JSON.parse(payloadStr);
-
       if (!Array.isArray(rawMetafields) || rawMetafields.length === 0) {
-         return data({ ok: false, error: "Invalid or empty payload" });
+        return data({ ok: false, error: "Invalid or empty payload" });
       }
-
       const metafields = rawMetafields.map(mf => {
         const formatted = formatMetafieldValue(mf.key, mf.value);
         if (!formatted) return null;
-        
-        return {
-          ownerId: mf.ownerId,
-          namespace: formatted.namespace,
-          key: formatted.key,
-          value: formatted.value,
-          type: formatted.type
-        };
+        return { ownerId: mf.ownerId, namespace: formatted.namespace, key: formatted.key, value: formatted.value, type: formatted.type };
       }).filter(Boolean);
-
       const chunks = [];
       for (let i = 0; i < metafields.length; i += 25) chunks.push(metafields.slice(i, i + 25));
       for (const chunk of chunks) {
@@ -345,7 +333,6 @@ export const action = async ({ request }) => {
           }
         `, { variables: { metafields: chunk } });
         const json = await res.json();
-        
         const errorMsg = extractShopifyError(json.data?.metafieldsSet?.userErrors, chunk);
         if (errorMsg) return data({ ok: false, error: errorMsg });
       }
@@ -357,28 +344,18 @@ export const action = async ({ request }) => {
 
   if (intent === "saveMetafields") {
     const rawMetafields = JSON.parse(formData.get("metafields"));
-
     const processedMetafields = rawMetafields
       .filter(mf => mf.value != null && String(mf.value).trim() !== "")
       .map(mf => {
         let finalValue = mf.value;
         if (mf.key.replace(/-/g, "_") === "stone_story") finalValue = autoLinkStory(finalValue);
-
         const formatted = formatMetafieldValue(mf.key, finalValue);
         if (!formatted) return null;
-        return {
-          ownerId:   mf.ownerId,
-          namespace: formatted.namespace,
-          key:       formatted.key,
-          value:     formatted.value,
-          type:      formatted.type,
-        };
+        return { ownerId: mf.ownerId, namespace: formatted.namespace, key: formatted.key, value: formatted.value, type: formatted.type };
       }).filter(Boolean);
-
     if (processedMetafields.length === 0) {
       return data({ ok: false, error: "Empty Payload: No valid fields to save." });
     }
-
     const chunks = [];
     for (let i = 0; i < processedMetafields.length; i += 25) chunks.push(processedMetafields.slice(i, i + 25));
     for (const chunk of chunks) {
@@ -389,7 +366,6 @@ export const action = async ({ request }) => {
           }
         `, { variables: { metafields: chunk } });
         const json = await res.json();
-        
         const errorMsg = extractShopifyError(json.data?.metafieldsSet?.userErrors, chunk);
         if (errorMsg) return data({ ok: false, error: errorMsg });
       } catch (e) {
@@ -404,42 +380,27 @@ export const action = async ({ request }) => {
     const ids = JSON.parse(formData.get("ids"));
     const ooakText = formData.get("ooakText") || "";
     const currentStories = JSON.parse(formData.get("currentStories") || "{}");
-
     const metafields = [];
-
     ids.forEach((ownerId) => {
       Object.keys(updates).forEach(key => {
         if (updates[key] && updates[key].trim() !== "") {
           let finalValue = updates[key];
           if (key.replace(/-/g, "_") === "stone_story") finalValue = autoLinkStory(finalValue);
-
           const formatted = formatMetafieldValue(key, finalValue);
           if (!formatted) return;
-          
-          metafields.push({
-            ownerId,
-            namespace: formatted.namespace,
-            key: formatted.key,
-            value: formatted.value,
-            type: formatted.type
-          });
+          metafields.push({ ownerId, namespace: formatted.namespace, key: formatted.key, value: formatted.value, type: formatted.type });
         }
       });
-
       if (ooakText && ooakText.trim() !== "") {
         const baseStory = currentStories[ownerId] || "";
-        const combinedStory = baseStory
-          ? `${baseStory} | ✨ Unique Features: ${ooakText}`
-          : `✨ Unique Features: ${ooakText}`;
+        const combinedStory = baseStory ? `${baseStory} | ✨ Unique Features: ${ooakText}` : `✨ Unique Features: ${ooakText}`;
         const linkedStory = autoLinkStory(combinedStory);
         metafields.push({ ownerId, namespace: "custom", key: "stone_story", value: linkedStory, type: "single_line_text_field" });
       }
     });
-
     if (metafields.length === 0) {
       return data({ ok: false, error: "Empty Payload: No text or valid dropdowns to save." });
     }
-
     const chunks = [];
     for (let i = 0; i < metafields.length; i += 25) chunks.push(metafields.slice(i, i + 25));
     for (const chunk of chunks) {
@@ -450,11 +411,10 @@ export const action = async ({ request }) => {
           }
         `, { variables: { metafields: chunk } });
         const json = await res.json();
-        
         const errorMsg = extractShopifyError(json.data?.metafieldsSet?.userErrors, chunk);
         if (errorMsg) return data({ ok: false, error: errorMsg });
       } catch (e) {
-          return data({ ok: false, error: e.message });
+        return data({ ok: false, error: e.message });
       }
     }
     return data({ ok: true });
@@ -465,9 +425,8 @@ export const action = async ({ request }) => {
     const description = formData.get("description");
     const existingRaw = formData.get("existingMeta");
     const existing    = existingRaw ? JSON.parse(existingRaw) : {};
-
-    const parsed  = parseDescription(description);
-    const library = lookupStone(title) || {};
+    const parsed      = parseDescription(description);
+    const library     = lookupStone(title) || {};
 
     let stoneName = existing.official_name ? String(existing.official_name).trim() : null;
     if (!stoneName && library.official_name) stoneName = library.official_name;
@@ -481,10 +440,7 @@ export const action = async ({ request }) => {
     } else {
       try {
         const normalizedName = stoneName.toLowerCase().trim();
-        const cachedStone = await prisma.stoneCache.findUnique({
-          where: { stoneName: normalizedName }
-        });
-
+        const cachedStone = await prisma.stoneCache.findUnique({ where: { stoneName: normalizedName } });
         if (cachedStone) {
           mindat = JSON.parse(cachedStone.data);
         } else {
@@ -499,23 +455,15 @@ export const action = async ({ request }) => {
             const m = json.results[0];
             const hardnessStr = m.hardness_min ? (m.hardness_max && m.hardness_max !== m.hardness_min ? `${m.hardness_min}-${m.hardness_max}` : `${m.hardness_min}`) : "";
             const gravityStr = m.density_min ? (m.density_max && m.density_max !== m.density_min ? `${m.density_min}-${m.density_max}` : `${m.density_min}`) : "";
-
             mindat = {
-              moh_hardness:     hardnessStr,
-              crystal_system:   m.crystal_system || "",
-              specific_gravity: gravityStr,
-              luster:           m.lustre         || "",
-              cleavage:         m.cleavage       || "",
-              fracture_pattern: m.fracture       || "",
-              diaphaneity:      m.diaphaneity    || "",
-              tenacity:         m.tenacity       || "",
+              moh_hardness: hardnessStr, crystal_system: m.crystal_system || "",
+              specific_gravity: gravityStr, luster: m.lustre || "",
+              cleavage: m.cleavage || "", fracture_pattern: m.fracture || "",
+              diaphaneity: m.diaphaneity || "", tenacity: m.tenacity || "",
             };
             Object.keys(mindat).forEach(k => { if (!mindat[k]) delete mindat[k]; });
-
             if (Object.keys(mindat).length > 0) {
-              await prisma.stoneCache.create({
-                data: { stoneName: normalizedName, data: JSON.stringify(mindat) }
-              });
+              await prisma.stoneCache.create({ data: { stoneName: normalizedName, data: JSON.stringify(mindat) } });
             }
           }
         }
@@ -526,75 +474,47 @@ export const action = async ({ request }) => {
 
     const merged = {};
     const conflicts = [];
-
-    if (stoneName && !existing["official_name"]) {
-      merged["official_name"] = stoneName;
-    }
+    if (stoneName && !existing["official_name"]) merged["official_name"] = stoneName;
 
     KEYS_TO_PROCESS.forEach(key => {
-      if (existing[key] && String(existing[key]).trim() !== "") {
-        merged[key] = existing[key];
-        return;
-      }
+      if (existing[key] && String(existing[key]).trim() !== "") { merged[key] = existing[key]; return; }
       const libVal    = library[key] || "";
       const parsedVal = parsed[key]  || "";
       const mindatVal = mindat[key]  || "";
-      
       if (key === "luster") {
-        if (libVal) {
-          if (mindatVal && libVal !== mindatVal) conflicts.push({ key, library: libVal, mindat: mindatVal });
-          merged[key] = libVal;
-        } else if (mindatVal) {
-          merged[key] = `✅ ${mindatVal}`;
-        } else if (parsedVal) {
-          merged[key] = `⚠️ ${parsedVal}`;
-        }
+        if (libVal) { if (mindatVal && libVal !== mindatVal) conflicts.push({ key, library: libVal, mindat: mindatVal }); merged[key] = libVal; }
+        else if (mindatVal) { merged[key] = `✅ ${mindatVal}`; }
+        else if (parsedVal) { merged[key] = `⚠️ ${parsedVal}`; }
       } else {
-        if (mindatVal) {
-          if (libVal && libVal !== mindatVal) conflicts.push({ key, library: libVal, mindat: mindatVal });
-          merged[key] = `✅ ${mindatVal}`;
-        } else if (libVal) {
-          merged[key] = libVal;
-        } else if (parsedVal) {
-          merged[key] = `⚠️ ${parsedVal}`;
-        }
+        if (mindatVal) { if (libVal && libVal !== mindatVal) conflicts.push({ key, library: libVal, mindat: mindatVal }); merged[key] = `✅ ${mindatVal}`; }
+        else if (libVal) { merged[key] = libVal; }
+        else if (parsedVal) { merged[key] = `⚠️ ${parsedVal}`; }
       }
     });
 
     if (stoneName && (!existing["is_ooak"] || String(existing["is_ooak"]).trim() === "")) {
       merged["is_ooak"] = "✅ true";
     }
-
     return data({ ok: true, merged, conflicts, mindatError });
   }
 
   if (intent === "bulkAutoFill") {
-    const productsRaw = formData.get("products");
-    const products = JSON.parse(productsRaw);
+    const products = JSON.parse(formData.get("products"));
     const results = [];
-
     for (const p of products) {
       const library  = lookupStone(p.title) || {};
       const parsed   = parseDescription(p.description || "");
       const existing = p.metafields || {};
-
       let stoneName = existing.official_name ? String(existing.official_name).trim() : null;
       if (!stoneName && library.official_name) stoneName = library.official_name;
       if (!stoneName && p.title) stoneName = p.title;
-
-      if (!stoneName) {
-        results.push({ id: p.id, title: p.title, ok: false, error: "Could not identify stone." });
-        continue;
-      }
+      if (!stoneName) { results.push({ id: p.id, title: p.title, ok: false, error: "Could not identify stone." }); continue; }
 
       let mindat = {};
       let mindatError = null;
       try {
         const normalizedName = stoneName.toLowerCase().trim();
-        const cachedStone = await prisma.stoneCache.findUnique({
-          where: { stoneName: normalizedName }
-        });
-
+        const cachedStone = await prisma.stoneCache.findUnique({ where: { stoneName: normalizedName } });
         if (cachedStone) {
           mindat = JSON.parse(cachedStone.data);
         } else {
@@ -609,63 +529,38 @@ export const action = async ({ request }) => {
               const m = json.results[0];
               const hardnessStr = m.hardness_min ? (m.hardness_max && m.hardness_max !== m.hardness_min ? `${m.hardness_min}-${m.hardness_max}` : `${m.hardness_min}`) : "";
               const gravityStr = m.density_min ? (m.density_max && m.density_max !== m.density_min ? `${m.density_min}-${m.density_max}` : `${m.density_min}`) : "";
-
               mindat = {
-                moh_hardness:     hardnessStr,
-                crystal_system:   m.crystal_system || "",
-                specific_gravity: gravityStr,
-                luster:           m.lustre         || "",
-                cleavage:         m.cleavage       || "",
-                fracture_pattern: m.fracture       || "",
-                diaphaneity:      m.diaphaneity    || "",
-                tenacity:         m.tenacity       || "",
+                moh_hardness: hardnessStr, crystal_system: m.crystal_system || "",
+                specific_gravity: gravityStr, luster: m.lustre || "",
+                cleavage: m.cleavage || "", fracture_pattern: m.fracture || "",
+                diaphaneity: m.diaphaneity || "", tenacity: m.tenacity || "",
               };
               Object.keys(mindat).forEach(k => { if (!mindat[k]) delete mindat[k]; });
-
               if (Object.keys(mindat).length > 0) {
-                await prisma.stoneCache.create({
-                  data: { stoneName: normalizedName, data: JSON.stringify(mindat) }
-                });
+                await prisma.stoneCache.create({ data: { stoneName: normalizedName, data: JSON.stringify(mindat) } });
               }
             }
           }
         }
-      } catch (e) {
-        mindatError = e.message;
-      }
+      } catch (e) { mindatError = e.message; }
 
       const merged = {};
       const conflicts = [];
-
       if (stoneName && !existing["official_name"]) merged["official_name"] = stoneName;
 
       KEYS_TO_PROCESS.forEach(key => {
-        if (existing[key] && String(existing[key]).trim() !== "") {
-          merged[key] = existing[key];
-          return;
-        }
+        if (existing[key] && String(existing[key]).trim() !== "") { merged[key] = existing[key]; return; }
         const libVal    = library[key] || "";
         const parsedVal = parsed[key]  || "";
         const mindatVal = mindat[key]  || "";
-        
         if (key === "luster") {
-          if (libVal) {
-            if (mindatVal && libVal !== mindatVal) conflicts.push({ key, library: libVal, mindat: mindatVal });
-            merged[key] = libVal;
-          } else if (mindatVal) {
-            merged[key] = `✅ ${mindatVal}`;
-          } else if (parsedVal) {
-            merged[key] = `⚠️ ${parsedVal}`;
-          }
+          if (libVal) { if (mindatVal && libVal !== mindatVal) conflicts.push({ key, library: libVal, mindat: mindatVal }); merged[key] = libVal; }
+          else if (mindatVal) { merged[key] = `✅ ${mindatVal}`; }
+          else if (parsedVal) { merged[key] = `⚠️ ${parsedVal}`; }
         } else {
-          if (mindatVal) {
-            if (libVal && libVal !== mindatVal) conflicts.push({ key, library: libVal, mindat: mindatVal });
-            merged[key] = `✅ ${mindatVal}`;
-          } else if (libVal) {
-            merged[key] = libVal;
-          } else if (parsedVal) {
-            merged[key] = `⚠️ ${parsedVal}`;
-          }
+          if (mindatVal) { if (libVal && libVal !== mindatVal) conflicts.push({ key, library: libVal, mindat: mindatVal }); merged[key] = `✅ ${mindatVal}`; }
+          else if (libVal) { merged[key] = libVal; }
+          else if (parsedVal) { merged[key] = `⚠️ ${parsedVal}`; }
         }
       });
 
@@ -680,19 +575,10 @@ export const action = async ({ request }) => {
           if (key === "stone_story") finalValue = autoLinkStory(finalValue);
           const formatted = formatMetafieldValue(key, finalValue);
           if (!formatted) return null;
-          return {
-            ownerId:   p.id,
-            namespace: formatted.namespace,
-            key:       formatted.key,
-            value:     formatted.value,
-            type:      formatted.type,
-          };
+          return { ownerId: p.id, namespace: formatted.namespace, key: formatted.key, value: formatted.value, type: formatted.type };
         }).filter(Boolean);
 
-      if (metafields.length === 0) {
-        results.push({ id: p.id, title: p.title, ok: false, error: "no data found" });
-        continue;
-      }
+      if (metafields.length === 0) { results.push({ id: p.id, title: p.title, ok: false, error: "no data found" }); continue; }
 
       let saveError = null;
       const chunks = [];
@@ -704,7 +590,6 @@ export const action = async ({ request }) => {
           }
         `, { variables: { metafields: chunk } });
         const json = await res.json();
-        
         const errorMsg = extractShopifyError(json.data?.metafieldsSet?.userErrors, chunk);
         if (errorMsg) { saveError = errorMsg; break; }
       }
@@ -719,7 +604,6 @@ export const action = async ({ request }) => {
 
   if (intent === "mindat_lookup") {
     const query = formData.get("query");
-    
     if (!query || !query.trim()) return data({ ok: true, found: false });
     try {
       const res = await fetch(

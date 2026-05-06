@@ -65,6 +65,7 @@ export default function ProductsTab({ products = [] }) {
   const [customInputs, setCustomInputs] = useState({});
 
   const saveFetcher      = useFetcher();
+  const baseFetcher      = useFetcher();
   const autoFetcher      = useFetcher();
   const bulkFetcher      = useFetcher();
   const bulkSaveFetcher  = useFetcher();
@@ -103,6 +104,7 @@ export default function ProductsTab({ products = [] }) {
   }
 
   function handleSave() {
+    // Save metafields
     const metafields = TARGET_KEYS
       .filter(key => fieldValues[key] && String(fieldValues[key]).trim() !== "")
       .map(key => {
@@ -119,19 +121,20 @@ export default function ProductsTab({ products = [] }) {
         };
       }).filter(Boolean);
 
-    // Also save dimensions_mm separately (not in TARGET_KEYS)
-    if (fieldValues.dimensions_mm && String(fieldValues.dimensions_mm).trim() !== "") {
-      metafields.push({
-        ownerId:   selected.id,
-        namespace: "custom",
-        key:       "dimensions_mm",
-        value:     String(fieldValues.dimensions_mm).trim(),
-        type:      "single_line_text_field",
-      });
-    }
-
     saveFetcher.submit(
       { intent: "saveMetafields", metafields: JSON.stringify(metafields) },
+      { method: "post", action: "/app/meta-injector" }
+    );
+
+    // Save price, title, status separately
+    baseFetcher.submit(
+      {
+        intent: "saveProductBase",
+        productId: selected.id,
+        title: baseFields.title,
+        status: baseFields.status,
+        price: baseFields.price,
+      },
       { method: "post", action: "/app/meta-injector" }
     );
   }
@@ -198,19 +201,19 @@ export default function ProductsTab({ products = [] }) {
     if (bulkSaveFetcher.data?.error)   setBulkSaveStatus("error");
   }
 
-  const isSaving     = saveFetcher.state     !== "idle";
+  const isSaving     = saveFetcher.state     !== "idle" || baseFetcher.state !== "idle";
   const isAutoFill   = autoFetcher.state     !== "idle";
   const isBulk       = bulkFetcher.state     !== "idle";
   const isBulkSaving = bulkSaveFetcher.state !== "idle";
-  const saveSuccess  = saveFetcher.state === "idle" && saveFetcher.data?.success;
-  const saveError    = saveFetcher.state === "idle" && saveFetcher.data?.error;
+  const saveSuccess  = saveFetcher.state === "idle" && saveFetcher.data?.success && baseFetcher.state === "idle" && !baseFetcher.data?.error;
+  const saveError    = (saveFetcher.state === "idle" && saveFetcher.data?.error) || (baseFetcher.state === "idle" && baseFetcher.data?.error);
   const conflicts    = autoFetcher.data?.conflicts  || [];
   const mindatError  = autoFetcher.data?.mindatError;
   const bulkDone     = bulkFetcher.state === "idle" && bulkFetcher.data?.ok;
   const bulkFailed   = bulkFetcher.data?.failed || [];
   const bulkTotal    = bulkFetcher.data?.total  || 0;
 
-  // ── EDITOR VIEW ────────────────────────────────────────────────────────────
+  // ── EDITOR VIEW ──────────────────────────────────────────────────────────
   if (selected) {
     return (
       <Page
@@ -223,7 +226,7 @@ export default function ProductsTab({ products = [] }) {
           <BlockStack gap="500">
 
             {saveSuccess && <Banner tone="success">Saved successfully to Shopify.</Banner>}
-            {saveError   && <Banner tone="critical">Save failed: {saveFetcher.data?.error}</Banner>}
+            {saveError   && <Banner tone="critical">Save failed: {saveFetcher.data?.error || baseFetcher.data?.error}</Banner>}
             {mindatError === "missing_name" && <Banner tone="warning">Mindat skipped: Please select an Official Name first.</Banner>}
             {mindatError && mindatError !== "missing_name" && <Banner tone="critical">Mindat API Error: {mindatError}. Filled from local geo library only.</Banner>}
             {conflicts.length > 0 && (
@@ -250,8 +253,21 @@ export default function ProductsTab({ products = [] }) {
                   value={baseFields.status}
                   onChange={val => setBaseFields(p => ({...p, status: val}))}
                 />
-                <TextField label="Price" type="number" value={baseFields.price} onChange={val => setBaseFields(p => ({...p, price: val}))} autoComplete="off" prefix="$" />
-                <TextField label="Available Inventory" type="number" value={baseFields.inventory} onChange={val => setBaseFields(p => ({...p, inventory: val}))} autoComplete="off" />
+                <TextField
+                  label="Price"
+                  type="number"
+                  value={baseFields.price}
+                  onChange={val => setBaseFields(p => ({...p, price: val}))}
+                  autoComplete="off"
+                  prefix="$"
+                />
+                <TextField
+                  label="Available Inventory"
+                  type="number"
+                  value={baseFields.inventory}
+                  onChange={val => setBaseFields(p => ({...p, inventory: val}))}
+                  autoComplete="off"
+                />
               </BlockStack>
             </Card>
 
@@ -297,7 +313,7 @@ export default function ProductsTab({ products = [] }) {
                   <TextField label="Type new stone name" value={customName} onChange={setCustomName} autoComplete="off" placeholder="e.g. Rhodochrosite" />
                 )}
 
-                {/* ── DIMENSIONS (mm) — manual intake field ── */}
+                {/* Dimensions */}
                 <BlockStack gap="200">
                   <TextField
                     label="Dimensions (mm)"
@@ -310,7 +326,7 @@ export default function ProductsTab({ products = [] }) {
 
                 {/* Manual fields */}
                 <BlockStack gap="400">
-                  {MANUAL_KEYS.filter(key => key !== "official_name").map(key => {
+                  {MANUAL_KEYS.filter(key => key !== "official_name" && key !== "dimensions_mm").map(key => {
                     if (SEED_OPTIONS[key]) {
                       const opts = [...new Set([...(SEED_OPTIONS[key] || []), ...(vocabulary[key] || [])])];
                       const isMulti = key === "secondary_colors";
@@ -412,7 +428,7 @@ export default function ProductsTab({ products = [] }) {
               </BlockStack>
             </Card>
 
-            {/* Mobile sticky save button */}
+            {/* Sticky save button */}
             <div style={{ position: "sticky", bottom: "16px", zIndex: 10 }}>
               <Button variant="primary" size="large" fullWidth onClick={handleSave} loading={isSaving} disabled={isAutoFill}>
                 💾 Save Stone
@@ -441,7 +457,6 @@ export default function ProductsTab({ products = [] }) {
         clearButton onClearButtonClick={() => setSearch("")} prefix="🔍"
       />
 
-      {/* Bulk actions */}
       <Card>
         <BlockStack gap="400">
           <BlockStack gap="100">
@@ -509,7 +524,7 @@ export default function ProductsTab({ products = [] }) {
               <div onClick={() => openEditor(p)} style={{ cursor: "pointer" }}>
                 <Card padding="200">
                   <BlockStack gap="200">
-                    <div style={{ height: "140px", background: "#f1f1f1", borderRadius: "4px", overflow: "hidden" }}>
+                    <div style={{ height: "140px", background: "#f1f1f1", borderRadius: "8px", overflow: "hidden" }}>
                       <img src={p.featuredImage?.url || "https://cdn.shopify.com/s/files/1/0533/2089/files/placeholder-images-image_medium.png"} style={{ width: "100%", height: "100%", objectFit: "cover" }} alt={p.title} />
                     </div>
                     <Text variant="bodySm" fontWeight="bold" truncate>{p.title}</Text>
