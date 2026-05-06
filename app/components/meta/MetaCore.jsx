@@ -22,16 +22,39 @@ const SEED_OPTIONS = {
   diaphaneity: ["Opaque", "Translucent", "Transparent", "Sub-translucent"]
 };
 
+function unwrapListValue(value) {
+  let val = String(value).trim();
+  // Keep unwrapping until it's a plain string
+  while (val.startsWith("[") && val.endsWith("]")) {
+    try {
+      const parsed = JSON.parse(val);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        val = String(parsed[0]).trim();
+      } else {
+        break;
+      }
+    } catch {
+      break;
+    }
+  }
+  return val;
+}
+
 function formatMetafieldValue(key, value) {
-  const cleanValue = String(value).replace(/[✅⚠️]/g, "").trim();
   const safeKey = key.replace(/-/g, "_");
+  const isListField = LIST_TEXT_FIELDS.includes(safeKey);
+
+  // Unwrap first if it's a list field to prevent double-nesting
+  const cleanInput = isListField ? unwrapListValue(value) : String(value);
+  const cleanValue = cleanInput.replace(/[✅⚠️]/g, "").trim();
+
   if (TAXONOMY_GIDS[safeKey] && TAXONOMY_GIDS[safeKey][cleanValue]) {
     return { value: wrapGid(TAXONOMY_GIDS[safeKey][cleanValue]), type: "list.metaobject_reference" };
   }
   if (TAXONOMY_GIDS[safeKey]) return null;
-  const isListField = LIST_TEXT_FIELDS.includes(safeKey);
+
   return {
-    value: isListField ? JSON.stringify([String(value).trim()]) : String(value).trim(),
+    value: isListField ? JSON.stringify([cleanValue]) : cleanValue,
     type: isListField ? "list.single_line_text_field" : "single_line_text_field"
   };
 }
@@ -237,7 +260,7 @@ export default function MetaCore({ products = [] }) {
                     {TARGET_KEYS.map(key => {
                       const savedValue = selectedProduct?.metafields?.[key.replace(/-/g, "_")];
                       const placeholderText = savedValue
-                        ? `Current: ${String(savedValue).replace(/[✅⚠️]/g, "").trim()}`
+                        ? `Current: ${unwrapListValue(String(savedValue)).replace(/[✅⚠️]/g, "").trim()}`
                         : "";
 
                       if (SEED_OPTIONS[key]) {
