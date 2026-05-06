@@ -118,6 +118,18 @@ export default function ProductsTab({ products = [] }) {
           type:      formatted.type,
         };
       }).filter(Boolean);
+
+    // Also save dimensions_mm separately (not in TARGET_KEYS)
+    if (fieldValues.dimensions_mm && String(fieldValues.dimensions_mm).trim() !== "") {
+      metafields.push({
+        ownerId:   selected.id,
+        namespace: "custom",
+        key:       "dimensions_mm",
+        value:     String(fieldValues.dimensions_mm).trim(),
+        type:      "single_line_text_field",
+      });
+    }
+
     saveFetcher.submit(
       { intent: "saveMetafields", metafields: JSON.stringify(metafields) },
       { method: "post", action: "/app/meta-injector" }
@@ -243,7 +255,7 @@ export default function ProductsTab({ products = [] }) {
               </BlockStack>
             </Card>
 
-            {/* Media — stacked on mobile */}
+            {/* Media */}
             <Card roundedAbove="sm">
               <BlockStack gap="300">
                 <InlineStack align="space-between" blockAlign="center">
@@ -284,6 +296,17 @@ export default function ProductsTab({ products = [] }) {
                 {fieldValues["official_name"] === "__custom__" && (
                   <TextField label="Type new stone name" value={customName} onChange={setCustomName} autoComplete="off" placeholder="e.g. Rhodochrosite" />
                 )}
+
+                {/* ── DIMENSIONS (mm) — manual intake field ── */}
+                <BlockStack gap="200">
+                  <TextField
+                    label="Dimensions (mm)"
+                    value={fieldValues.dimensions_mm || ""}
+                    onChange={val => setFieldValues(prev => ({ ...prev, dimensions_mm: val }))}
+                    autoComplete="off"
+                    placeholder="e.g. 22mm x 15mm x 6mm"
+                  />
+                </BlockStack>
 
                 {/* Manual fields */}
                 <BlockStack gap="400">
@@ -418,7 +441,7 @@ export default function ProductsTab({ products = [] }) {
         clearButton onClearButtonClick={() => setSearch("")} prefix="🔍"
       />
 
-      {/* Bulk actions — stacked on mobile */}
+      {/* Bulk actions */}
       <Card>
         <BlockStack gap="400">
           <BlockStack gap="100">
