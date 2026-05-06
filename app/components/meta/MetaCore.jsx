@@ -59,7 +59,6 @@ export default function MetaCore({ products = [] }) {
     ? products.find(p => p.id === selectedIds[0])
     : null;
 
-  // Load vocabulary on mount — always re-fetch to pick up saved custom values
   useEffect(() => {
     vocabFetcher.submit(
       { intent: "loadVocabulary" },
@@ -87,7 +86,6 @@ export default function MetaCore({ products = [] }) {
       return;
     }
 
-    // Build updates object — only filled fields
     const updates = {};
     TARGET_KEYS.forEach(key => {
       const val = fieldValues[key];
@@ -96,7 +94,6 @@ export default function MetaCore({ products = [] }) {
       }
     });
 
-    // Build currentStories map for stone_story append logic
     const currentStories = {};
     selectedIds.forEach(id => {
       const p = products.find(pr => pr.id === id);
@@ -166,7 +163,7 @@ export default function MetaCore({ products = [] }) {
                     }}
                   />
                 </Box>
-                <div style={{ maxHeight: "600px", overflowY: "auto" }}>
+                <div style={{ maxHeight: "900px", overflowY: "auto" }}>
                   <ResourceList
                     items={filtered}
                     renderItem={(p) => {
@@ -374,7 +371,6 @@ export default function MetaCore({ products = [] }) {
                         );
 
                       } else {
-                        // Plain text / multiline fields
                         return (
                           <BlockStack gap="200" key={key}>
                             <TextField
