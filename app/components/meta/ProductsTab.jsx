@@ -33,6 +33,15 @@ const SEED_OPTIONS = {
   diaphaneity: ["Opaque", "Translucent", "Transparent", "Sub-translucent"]
 };
 
+function toShopifyStatus(val) {
+  const map = {
+    "ACTIVE": "ACTIVE", "DRAFT": "DRAFT", "ARCHIVED": "ARCHIVED", "UNLISTED": "UNLISTED",
+    "✅ Complete": "ACTIVE", "🟡 Partial": "DRAFT", "⬜ Empty": "DRAFT",
+    "🔴 Empty": "DRAFT", "Active (Live)": "ACTIVE", "Draft (Hidden)": "DRAFT"
+  };
+  return map[val] ?? "DRAFT";
+}
+
 function formatMetafieldValue(key, value) {
   const cleanValue = String(value).replace(/[✅⚠️]/g, "").trim();
   const safeKey = key.replace(/-/g, "_");
@@ -95,7 +104,13 @@ export default function ProductsTab({ products = [] }) {
       initial.official_name = existingName;
     }
     if (!initial.stone_story) initial.stone_story = product.description || "";
-    setBaseFields({ title: product.title || "", description: product.description || "", status: product.status || "DRAFT", price: product.price || "0.00", inventory: "1" });
+    setBaseFields({
+      title: product.title || "",
+      description: product.description || "",
+      status: toShopifyStatus(product.shopifyStatus || product.status),
+      price: product.price || "0.00",
+      inventory: "1"
+    });
     setFieldValues(initial);
     setShowCustomInput({});
     setCustomInputs({});
@@ -104,7 +119,6 @@ export default function ProductsTab({ products = [] }) {
   }
 
   function handleSave() {
-    // Save metafields
     const metafields = TARGET_KEYS
       .filter(key => fieldValues[key] && String(fieldValues[key]).trim() !== "")
       .map(key => {
@@ -126,13 +140,12 @@ export default function ProductsTab({ products = [] }) {
       { method: "post", action: "/app/meta-injector" }
     );
 
-    // Save price, title, status separately
     baseFetcher.submit(
       {
         intent: "saveProductBase",
         productId: selected.id,
         title: baseFields.title,
-        status: baseFields.status,
+        status: toShopifyStatus(baseFields.status),
         price: baseFields.price,
       },
       { method: "post", action: "/app/meta-injector" }
@@ -213,7 +226,6 @@ export default function ProductsTab({ products = [] }) {
   const bulkFailed   = bulkFetcher.data?.failed || [];
   const bulkTotal    = bulkFetcher.data?.total  || 0;
 
-  // ── EDITOR VIEW ──────────────────────────────────────────────────────────
   if (selected) {
     return (
       <Page
@@ -236,7 +248,6 @@ export default function ProductsTab({ products = [] }) {
               </Banner>
             )}
 
-            {/* Basic Info */}
             <Card roundedAbove="sm">
               <BlockStack gap="400">
                 <TextField label="Product Title" value={baseFields.title} onChange={val => setBaseFields(p => ({...p, title: val}))} autoComplete="off" />
@@ -244,7 +255,6 @@ export default function ProductsTab({ products = [] }) {
               </BlockStack>
             </Card>
 
-            {/* Price / Status */}
             <Card roundedAbove="sm">
               <BlockStack gap="400">
                 <Select
@@ -271,7 +281,6 @@ export default function ProductsTab({ products = [] }) {
               </BlockStack>
             </Card>
 
-            {/* Media */}
             <Card roundedAbove="sm">
               <BlockStack gap="300">
                 <InlineStack align="space-between" blockAlign="center">
@@ -290,12 +299,10 @@ export default function ProductsTab({ products = [] }) {
               </BlockStack>
             </Card>
 
-            {/* Lapidary Meta */}
             <Card roundedAbove="sm">
               <BlockStack gap="400">
                 <Text as="h2" variant="headingSm">Lapidary Data (Meta Injector)</Text>
 
-                {/* Official Name */}
                 <BlockStack gap="200">
                   <Text variant="bodyMd" fontWeight="bold">Official Name (Required for Mindat)</Text>
                   <select
@@ -313,7 +320,6 @@ export default function ProductsTab({ products = [] }) {
                   <TextField label="Type new stone name" value={customName} onChange={setCustomName} autoComplete="off" placeholder="e.g. Rhodochrosite" />
                 )}
 
-                {/* Dimensions */}
                 <BlockStack gap="200">
                   <TextField
                     label="Dimensions (mm)"
@@ -324,7 +330,6 @@ export default function ProductsTab({ products = [] }) {
                   />
                 </BlockStack>
 
-                {/* Manual fields */}
                 <BlockStack gap="400">
                   {MANUAL_KEYS.filter(key => key !== "official_name" && key !== "dimensions_mm").map(key => {
                     if (SEED_OPTIONS[key]) {
@@ -428,7 +433,6 @@ export default function ProductsTab({ products = [] }) {
               </BlockStack>
             </Card>
 
-            {/* Sticky save button */}
             <div style={{ position: "sticky", bottom: "16px", zIndex: 10 }}>
               <Button variant="primary" size="large" fullWidth onClick={handleSave} loading={isSaving} disabled={isAutoFill}>
                 💾 Save Stone
@@ -441,7 +445,6 @@ export default function ProductsTab({ products = [] }) {
     );
   }
 
-  // ── LIST VIEW ──────────────────────────────────────────────────────────────
   return (
     <BlockStack gap="400">
       <InlineStack align="space-between" blockAlign="center">
