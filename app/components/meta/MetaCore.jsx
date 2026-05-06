@@ -131,10 +131,10 @@ export default function MetaCore({ products = [] }) {
           <Banner tone="critical">Bulk save failed: {saveError}</Banner>
         )}
 
-        <div style={{ display: "flex", flexWrap: "wrap", gap: "24px", alignItems: "flex-start" }}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "24px", alignItems: "stretch" }}>
 
           {/* Left Panel: Product Selection */}
-          <div style={{ flex: "1 1 300px", minWidth: 0 }}>
+          <div style={{ flex: "1 1 300px", minWidth: 0, display: "flex", flexDirection: "column" }}>
             <BlockStack gap="400">
               <Text variant="headingMd" as="h2">
                 Select Stones ({selectedIds.length} selected)
@@ -150,7 +150,7 @@ export default function MetaCore({ products = [] }) {
                 prefix="🔍"
               />
 
-              <Card padding="0">
+              <Card padding="0" style={{ flex: 1, display: "flex", flexDirection: "column" }}>
                 <Box padding="300" borderBlockEndWidth="025" borderColor="border">
                   <Checkbox
                     label="Select all visible"
@@ -163,7 +163,7 @@ export default function MetaCore({ products = [] }) {
                     }}
                   />
                 </Box>
-                <div style={{ maxHeight: "900px", overflowY: "auto" }}>
+                <div style={{ overflowY: "auto", flex: 1 }}>
                   <ResourceList
                     items={filtered}
                     renderItem={(p) => {
