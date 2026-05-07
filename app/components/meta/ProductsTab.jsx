@@ -6,9 +6,13 @@ import {
 import { useState, useRef, useEffect } from "react";
 import { useFetcher } from "react-router";
 import { useAppBridge } from "@shopify/app-bridge-react";
+
+// --- LOCAL IMPORTS ---
 import { TARGET_KEYS, FIELD_LABELS, MANUAL_KEYS } from "../../utils/metaScan";
 import { TAXONOMY_GIDS, wrapGid } from "../../utils/taxonomyMap";
+import DictationButton from "../DictationButton"; // The new Voice Module
 
+// --- CONSTANTS & CONFIG ---
 const LIST_TEXT_FIELDS = ["character_marks"];
 
 const availableStones = [
@@ -33,6 +37,7 @@ const SEED_OPTIONS = {
   diaphaneity: ["Opaque", "Translucent", "Transparent", "Sub-translucent"]
 };
 
+// --- HELPER FUNCTIONS ---
 function toShopifyStatus(val) {
   const map = {
     "ACTIVE": "ACTIVE", "DRAFT": "DRAFT", "ARCHIVED": "ARCHIVED", "UNLISTED": "UNLISTED",
@@ -45,10 +50,12 @@ function toShopifyStatus(val) {
 function formatMetafieldValue(key, value) {
   const cleanValue = String(value).replace(/[✅⚠️]/g, "").trim();
   const safeKey = key.replace(/-/g, "_");
+  
   if (TAXONOMY_GIDS[safeKey] && TAXONOMY_GIDS[safeKey][cleanValue]) {
     return { value: wrapGid(TAXONOMY_GIDS[safeKey][cleanValue]), type: "list.metaobject_reference" };
   }
   if (TAXONOMY_GIDS[safeKey]) return null;
+  
   const isListField = LIST_TEXT_FIELDS.includes(safeKey);
   return {
     value: isListField ? JSON.stringify([String(value).trim()]) : String(value).trim(),
@@ -56,23 +63,33 @@ function formatMetafieldValue(key, value) {
   };
 }
 
+// ==========================================
+// MAIN COMPONENT: ProductsTab
+// ==========================================
 export default function ProductsTab({ products = [] }) {
   const shopify = useAppBridge();
 
+  // --- STATE ---
   const [viewMode, setViewMode] = useState("list");
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState(null);
+  
+  // Editor State
   const [fieldValues, setFieldValues] = useState({});
   const [customName, setCustomName] = useState("");
   const [baseFields, setBaseFields] = useState({ title: "", description: "", status: "DRAFT", price: "0.00", inventory: "1" });
-  const mergedApplied = useRef(false);
-
+  
+  // Bulk & Custom Logic State
   const [bulkSaveStatus, setBulkSaveStatus] = useState(null);
   const [bulkSaveCount, setBulkSaveCount] = useState(0);
   const [vocabulary, setVocabulary] = useState({});
   const [showCustomInput, setShowCustomInput] = useState({});
   const [customInputs, setCustomInputs] = useState({});
 
+  // --- REFS ---
+  const mergedApplied = useRef(false);
+
+  // --- FETCHERS ---
   const saveFetcher      = useFetcher();
   const baseFetcher      = useFetcher();
   const autoFetcher      = useFetcher();
@@ -81,8 +98,23 @@ export default function ProductsTab({ products = [] }) {
   const vocabFetcher     = useFetcher();
   const addCustomFetcher = useFetcher();
 
+  // --- DERIVED DATA ---
   const filtered = products.filter(p => p.title.toLowerCase().includes(search.toLowerCase()));
 
+  const isSaving     = saveFetcher.state !== "idle" || baseFetcher.state !== "idle";
+  const isAutoFill   = autoFetcher.state !== "idle";
+  const isBulk       = bulkFetcher.state !== "idle";
+  const isBulkSaving = bulkSaveFetcher.state !== "idle";
+  const saveSuccess  = saveFetcher.state === "idle" && saveFetcher.data?.success && baseFetcher.state === "idle" && !baseFetcher.data?.error;
+  const saveError    = (saveFetcher.state === "idle" && saveFetcher.data?.error) || (baseFetcher.state === "idle" && baseFetcher.data?.error);
+  
+  const conflicts    = autoFetcher.data?.conflicts || [];
+  const mindatError  = autoFetcher.data?.mindatError;
+  const bulkDone     = bulkFetcher.state === "idle" && bulkFetcher.data?.ok;
+  const bulkFailed   = bulkFetcher.data?.failed || [];
+  const bulkTotal    = bulkFetcher.data?.total || 0;
+
+  // --- EFFECTS ---
   useEffect(() => {
     if (selected && vocabFetcher.state === "idle" && !vocabFetcher.data) {
       vocabFetcher.submit({ intent: "loadVocabulary" }, { method: "post", action: "/app/meta-injector" });
@@ -93,9 +125,20 @@ export default function ProductsTab({ products = [] }) {
     if (vocabFetcher.data?.vocabulary) setVocabulary(vocabFetcher.data.vocabulary);
   }, [vocabFetcher.data]);
 
+  if (autoFetcher.state === "idle" && autoFetcher.data?.merged && !mergedApplied.current) {
+    const merged = autoFetcher.data.merged;
+    const hasNew = Object.keys(merged).some(k => merged[k] !== fieldValues[k]);
+    if (hasNew) {
+      mergedApplied.current = true;
+      setFieldValues(prev => ({ ...prev, ...merged }));
+    }
+  }
+
+  // --- ACTION HANDLERS ---
   function openEditor(product) {
     const initial = {};
     TARGET_KEYS.forEach(key => { initial[key] = product.metafields?.[key] || ""; });
+    
     const existingName = initial.official_name || product.title || "";
     if (existingName && !availableStones.includes(existingName)) {
       initial.official_name = "__custom__";
@@ -103,7 +146,9 @@ export default function ProductsTab({ products = [] }) {
     } else {
       initial.official_name = existingName;
     }
+    
     if (!initial.stone_story) initial.stone_story = product.description || "";
+    
     setBaseFields({
       title: product.title || "",
       description: product.description || "",
@@ -111,6 +156,7 @@ export default function ProductsTab({ products = [] }) {
       price: product.price || "0.00",
       inventory: "1"
     });
+    
     setFieldValues(initial);
     setShowCustomInput({});
     setCustomInputs({});
@@ -127,11 +173,11 @@ export default function ProductsTab({ products = [] }) {
         const formatted = formatMetafieldValue(safeKey, rawValue);
         if (!formatted) return null;
         return {
-          ownerId:   selected.id,
+          ownerId: selected.id,
           namespace: TAXONOMY_GIDS[safeKey] ? "shopify" : "custom",
-          key:       TAXONOMY_GIDS[safeKey] ? key.replace(/_/g, "-") : key,
-          value:     formatted.value,
-          type:      formatted.type,
+          key: TAXONOMY_GIDS[safeKey] ? key.replace(/_/g, "-") : key,
+          value: formatted.value,
+          type: formatted.type,
         };
       }).filter(Boolean);
 
@@ -161,15 +207,6 @@ export default function ProductsTab({ products = [] }) {
     );
   }
 
-  if (autoFetcher.state === "idle" && autoFetcher.data?.merged && !mergedApplied.current) {
-    const merged = autoFetcher.data.merged;
-    const hasNew = Object.keys(merged).some(k => merged[k] !== fieldValues[k]);
-    if (hasNew) {
-      mergedApplied.current = true;
-      setFieldValues(prev => ({ ...prev, ...merged }));
-    }
-  }
-
   function handleBulkFill() {
     setBulkSaveStatus(null);
     setBulkSaveCount(0);
@@ -184,6 +221,7 @@ export default function ProductsTab({ products = [] }) {
     const results = bulkFetcher.data?.results || [];
     if (!results.length) return;
     setBulkSaveStatus("saving");
+    
     const allMetafields = [];
     results.forEach(({ id, merged }) => {
       if (!merged) return;
@@ -194,14 +232,15 @@ export default function ProductsTab({ products = [] }) {
         const formatted = formatMetafieldValue(safeKey, val);
         if (!formatted) return;
         allMetafields.push({
-          ownerId:   id,
+          ownerId: id,
           namespace: TAXONOMY_GIDS[safeKey] ? "shopify" : "custom",
-          key:       TAXONOMY_GIDS[safeKey] ? key.replace(/_/g, "-") : key,
-          value:     formatted.value,
-          type:      formatted.type,
+          key: TAXONOMY_GIDS[safeKey] ? key.replace(/_/g, "-") : key,
+          value: formatted.value,
+          type: formatted.type,
         });
       });
     });
+    
     setBulkSaveCount(results.length);
     bulkSaveFetcher.submit(
       { intent: "saveMetafields", metafields: JSON.stringify(allMetafields) },
@@ -209,23 +248,9 @@ export default function ProductsTab({ products = [] }) {
     );
   }
 
-  if (bulkSaveFetcher.state === "idle" && bulkSaveStatus === "saving") {
-    if (bulkSaveFetcher.data?.success) setBulkSaveStatus("done");
-    if (bulkSaveFetcher.data?.error)   setBulkSaveStatus("error");
-  }
-
-  const isSaving     = saveFetcher.state     !== "idle" || baseFetcher.state !== "idle";
-  const isAutoFill   = autoFetcher.state     !== "idle";
-  const isBulk       = bulkFetcher.state     !== "idle";
-  const isBulkSaving = bulkSaveFetcher.state !== "idle";
-  const saveSuccess  = saveFetcher.state === "idle" && saveFetcher.data?.success && baseFetcher.state === "idle" && !baseFetcher.data?.error;
-  const saveError    = (saveFetcher.state === "idle" && saveFetcher.data?.error) || (baseFetcher.state === "idle" && baseFetcher.data?.error);
-  const conflicts    = autoFetcher.data?.conflicts  || [];
-  const mindatError  = autoFetcher.data?.mindatError;
-  const bulkDone     = bulkFetcher.state === "idle" && bulkFetcher.data?.ok;
-  const bulkFailed   = bulkFetcher.data?.failed || [];
-  const bulkTotal    = bulkFetcher.data?.total  || 0;
-
+  // ==========================================
+  // RENDER: INDIVIDUAL STONE EDITOR
+  // ==========================================
   if (selected) {
     return (
       <Page
@@ -251,7 +276,7 @@ export default function ProductsTab({ products = [] }) {
             <Card roundedAbove="sm">
               <BlockStack gap="400">
                 <TextField label="Product Title" value={baseFields.title} onChange={val => setBaseFields(p => ({...p, title: val}))} autoComplete="off" />
-                <TextField label="Public Description & Story" value={baseFields.description} onChange={val => setBaseFields(p => ({...p, description: val}))} multiline={6} autoComplete="off" />
+                <TextField label="Public Description" value={baseFields.description} onChange={val => setBaseFields(p => ({...p, description: val}))} multiline={4} autoComplete="off" />
               </BlockStack>
             </Card>
 
@@ -264,19 +289,12 @@ export default function ProductsTab({ products = [] }) {
                   onChange={val => setBaseFields(p => ({...p, status: val}))}
                 />
                 <TextField
-                  label="Price"
-                  type="number"
-                  value={baseFields.price}
-                  onChange={val => setBaseFields(p => ({...p, price: val}))}
-                  autoComplete="off"
-                  prefix="$"
+                  label="Price" type="number" prefix="$" autoComplete="off"
+                  value={baseFields.price} onChange={val => setBaseFields(p => ({...p, price: val}))}
                 />
                 <TextField
-                  label="Available Inventory"
-                  type="number"
-                  value={baseFields.inventory}
-                  onChange={val => setBaseFields(p => ({...p, inventory: val}))}
-                  autoComplete="off"
+                  label="Available Inventory" type="number" autoComplete="off"
+                  value={baseFields.inventory} onChange={val => setBaseFields(p => ({...p, inventory: val}))}
                 />
               </BlockStack>
             </Card>
@@ -322,22 +340,49 @@ export default function ProductsTab({ products = [] }) {
 
                 <BlockStack gap="200">
                   <TextField
-                    label="Dimensions (mm)"
-                    value={fieldValues.dimensions_mm || ""}
+                    label="Dimensions (mm)" value={fieldValues.dimensions_mm || ""}
                     onChange={val => setFieldValues(prev => ({ ...prev, dimensions_mm: val }))}
-                    autoComplete="off"
-                    placeholder="e.g. 22mm x 15mm x 6mm"
+                    autoComplete="off" placeholder="e.g. 22mm x 15mm x 6mm"
                   />
                 </BlockStack>
 
                 <BlockStack gap="400">
                   {MANUAL_KEYS.filter(key => key !== "official_name" && key !== "dimensions_mm").map(key => {
+                    
+                    // --- THE CHROME: VOICE MODULE FOR STONE STORY ---
+                    if (key === "stone_story") {
+                      return (
+                        <BlockStack gap="200" key={key}>
+                          <TextField
+                            label={FIELD_LABELS[key] || key}
+                            value={fieldValues[key] || ""}
+                            onChange={val => setFieldValues(prev => ({ ...prev, [key]: val }))}
+                            autoComplete="off"
+                            multiline={4}
+                          />
+                          <InlineStack align="start">
+                            <DictationButton 
+                              placeholder="🎤 Dictate Story" 
+                              onResult={(text) => {
+                                setFieldValues(prev => ({
+                                  ...prev,
+                                  [key]: prev[key] ? prev[key] + " " + text : text
+                                }));
+                              }}
+                            />
+                          </InlineStack>
+                        </BlockStack>
+                      );
+                    }
+
+                    // --- DROPDOWN/MULTI-SELECT FIELDS ---
                     if (SEED_OPTIONS[key]) {
                       const opts = [...new Set([...(SEED_OPTIONS[key] || []), ...(vocabulary[key] || [])])];
                       const isMulti = key === "secondary_colors";
                       const currentVal = fieldValues[key] || "";
                       const selectOptions = isMulti ? [{label: "-- Add Color --", value: ""}] : [{label: "-- Select --", value: ""}];
                       opts.forEach(o => selectOptions.push({label: o, value: o}));
+                      
                       if (!isMulti && currentVal && currentVal !== "__custom__" && !opts.includes(currentVal)) {
                         selectOptions.push({ label: currentVal, value: currentVal });
                       }
@@ -380,11 +425,8 @@ export default function ProductsTab({ products = [] }) {
                             <div style={{ paddingLeft: "8px", borderLeft: "2px solid #e1e3e5", marginTop: "4px" }}>
                               <BlockStack gap="300">
                                 <TextField
-                                  label="New custom value"
-                                  placeholder="Enter new custom option..."
-                                  value={customInputs[key] || ""}
-                                  onChange={v => setCustomInputs(p => ({...p, [key]: v}))}
-                                  autoComplete="off"
+                                  label="New custom value" placeholder="Enter new custom option..." autoComplete="off"
+                                  value={customInputs[key] || ""} onChange={v => setCustomInputs(p => ({...p, [key]: v}))}
                                 />
                                 <InlineStack gap="300" blockAlign="center" wrap={false}>
                                   <Button variant="primary" onClick={() => {
@@ -415,6 +457,8 @@ export default function ProductsTab({ products = [] }) {
                         </BlockStack>
                       );
                     } else {
+                      
+                      // --- STANDARD TEXT FIELDS ---
                       return (
                         <BlockStack gap="200" key={key}>
                           <TextField
@@ -422,7 +466,7 @@ export default function ProductsTab({ products = [] }) {
                             value={fieldValues[key] || ""}
                             onChange={val => setFieldValues(prev => ({ ...prev, [key]: val }))}
                             autoComplete="off"
-                            multiline={["stone_story", "bench_notes", "character_marks", "rock_composition"].includes(key) ? 3 : undefined}
+                            multiline={["bench_notes", "character_marks", "rock_composition"].includes(key) ? 3 : undefined}
                           />
                         </BlockStack>
                       );
@@ -445,6 +489,9 @@ export default function ProductsTab({ products = [] }) {
     );
   }
 
+  // ==========================================
+  // RENDER: MAIN LIST/GRID VIEW
+  // ==========================================
   return (
     <BlockStack gap="400">
       <InlineStack align="space-between" blockAlign="center">

@@ -1,6 +1,6 @@
-// app/utils/taxonomyMap.js
-
-// 🗂️ ROCKHOUND STUDIO — MASTER TAXONOMY GID DICTIONARY
+// ==========================================
+// UTILITY: MASTER TAXONOMY GID DICTIONARY
+// ==========================================
 // The definitive map for the Lapidary Auto-Injector.
 
 export const TAXONOMY_GIDS = {
@@ -47,9 +47,17 @@ export const TAXONOMY_GIDS = {
   }
 };
 
-// ─── THE WELDING RULES ──────────────────────────────────────────────
-// Helper function to safely wrap GIDs for Shopify Metaobject Injection
+// --- HELPER FUNCTIONS ---
+
+/**
+ * Safely wraps GIDs into a JSON array string for Shopify Metaobject Injection.
+ * Ensures we don't double-wrap if the string is already formatted.
+ */
 export function wrapGid(gidString) {
   if (!gidString) return null;
+  // If it's already wrapped in brackets, return it as is
+  if (gidString.startsWith("[") && gidString.endsWith("]")) {
+    return gidString;
+  }
   return `["${gidString}"]`;
 }
