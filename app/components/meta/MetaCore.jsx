@@ -5,9 +5,13 @@ import {
 import { useState, useEffect } from "react";
 import { useFetcher } from "react-router";
 import { useAppBridge } from "@shopify/app-bridge-react";
+
+// --- LOCAL IMPORTS ---
 import { TARGET_KEYS, FIELD_LABELS } from "../../utils/metaScan";
 import { TAXONOMY_GIDS, wrapGid } from "../../utils/taxonomyMap";
+import DictationButton from "../DictationButton"; // The new Voice Module
 
+// --- CONSTANTS ---
 const LIST_TEXT_FIELDS = ["character_marks"];
 
 const SEED_OPTIONS = {
@@ -22,6 +26,7 @@ const SEED_OPTIONS = {
   diaphaneity: ["Opaque", "Translucent", "Transparent", "Sub-translucent"]
 };
 
+// --- HELPER FUNCTIONS ---
 function formatMetafieldValue(key, value) {
   const cleanValue = String(value).replace(/[✅⚠️]/g, "").trim();
   const safeKey = key.replace(/-/g, "_");
@@ -36,9 +41,13 @@ function formatMetafieldValue(key, value) {
   };
 }
 
+// ==========================================
+// MAIN COMPONENT: Bulk Meta Injector
+// ==========================================
 export default function MetaCore({ products = [] }) {
   const shopify = useAppBridge();
 
+  // --- STATE ---
   const [selectedIds, setSelectedIds] = useState([]);
   const [fieldValues, setFieldValues] = useState({});
   const [search, setSearch] = useState("");
@@ -47,18 +56,20 @@ export default function MetaCore({ products = [] }) {
   const [showCustomInput, setShowCustomInput] = useState({});
   const [customInputs, setCustomInputs] = useState({});
 
+  // --- FETCHERS ---
   const saveFetcher = useFetcher();
   const vocabFetcher = useFetcher();
   const addCustomFetcher = useFetcher();
 
-  const filtered = products.filter(p =>
-    p.title.toLowerCase().includes(search.toLowerCase())
-  );
+  // --- DERIVED DATA ---
+  const filtered = products.filter(p => p.title.toLowerCase().includes(search.toLowerCase()));
+  const selectedProduct = selectedIds.length === 1 ? products.find(p => p.id === selectedIds[0]) : null;
 
-  const selectedProduct = selectedIds.length === 1
-    ? products.find(p => p.id === selectedIds[0])
-    : null;
+  const isSaving = saveFetcher.state !== "idle";
+  const saveSuccess = saveFetcher.state === "idle" && saveFetcher.data?.ok === true;
+  const saveError = saveFetcher.state === "idle" && saveFetcher.data?.error;
 
+  // --- EFFECTS ---
   useEffect(() => {
     vocabFetcher.submit(
       { intent: "loadVocabulary" },
@@ -72,6 +83,7 @@ export default function MetaCore({ products = [] }) {
     }
   }, [vocabFetcher.data]);
 
+  // --- ACTION HANDLERS ---
   function handleSave() {
     if (selectedIds.length === 0) {
       shopify.toast.show("Please select at least one product to update.");
@@ -114,10 +126,9 @@ export default function MetaCore({ products = [] }) {
     );
   }
 
-  const isSaving = saveFetcher.state !== "idle";
-  const saveSuccess = saveFetcher.state === "idle" && saveFetcher.data?.ok === true;
-  const saveError = saveFetcher.state === "idle" && saveFetcher.data?.error;
-
+  // ==========================================
+  // RENDER
+  // ==========================================
   return (
     <Page title="Bulk Inject Lapidary Data">
       <BlockStack gap="600">
@@ -133,7 +144,7 @@ export default function MetaCore({ products = [] }) {
 
         <div style={{ display: "flex", flexWrap: "wrap", gap: "24px", alignItems: "stretch" }}>
 
-          {/* Left Panel: Product Selection */}
+          {/* LEFT PANEL: Product Selection */}
           <div style={{ flex: "1 1 300px", minWidth: 0, display: "flex", flexDirection: "column" }}>
             <BlockStack gap="400">
               <Text variant="headingMd" as="h2">
@@ -141,22 +152,15 @@ export default function MetaCore({ products = [] }) {
               </Text>
 
               <TextField
-                value={search}
-                onChange={setSearch}
-                autoComplete="off"
-                placeholder="Search title..."
-                clearButton
-                onClearButtonClick={() => setSearch("")}
-                prefix="🔍"
+                value={search} onChange={setSearch} autoComplete="off" placeholder="Search title..."
+                clearButton onClearButtonClick={() => setSearch("")} prefix="🔍"
               />
 
               <Card padding="0" style={{ flex: 1, display: "flex", flexDirection: "column" }}>
                 <Box padding="300" borderBlockEndWidth="025" borderColor="border">
                   <Checkbox
                     label="Select all visible"
-                    checked={
-                      selectedIds.length === filtered.length && filtered.length > 0
-                    }
+                    checked={selectedIds.length === filtered.length && filtered.length > 0}
                     onChange={(checked) => {
                       if (checked) setSelectedIds(filtered.map(p => p.id));
                       else setSelectedIds([]);
@@ -172,32 +176,14 @@ export default function MetaCore({ products = [] }) {
                         <ResourceItem
                           id={p.id}
                           onClick={() => {
-                            setSelectedIds(prev =>
-                              isSelected
-                                ? prev.filter(id => id !== p.id)
-                                : [...prev, p.id]
-                            );
+                            setSelectedIds(prev => isSelected ? prev.filter(id => id !== p.id) : [...prev, p.id]);
                           }}
-                          media={
-                            <Thumbnail
-                              source={
-                                p.featuredImage?.url ||
-                                "https://cdn.shopify.com/s/files/1/0533/2089/files/placeholder-images-image_medium.png"
-                              }
-                              alt={p.title}
-                              size="small"
-                            />
-                          }
+                          media={<Thumbnail source={p.featuredImage?.url || "https://cdn.shopify.com/s/files/1/0533/2089/files/placeholder-images-image_medium.png"} alt={p.title} size="small" />}
                         >
                           <InlineStack wrap={false} align="space-between" blockAlign="center">
                             <BlockStack gap="100">
                               <Text variant="bodyMd" fontWeight="bold">{p.title}</Text>
-                              <Badge
-                                tone={
-                                  p.status === "✅ Complete" ? "success" :
-                                  p.status === "🔴 Empty" ? "critical" : "warning"
-                                }
-                              >
+                              <Badge tone={p.status === "✅ Complete" ? "success" : p.status === "🔴 Empty" ? "critical" : "warning"}>
                                 {p.status}
                               </Badge>
                             </BlockStack>
@@ -212,17 +198,12 @@ export default function MetaCore({ products = [] }) {
             </BlockStack>
           </div>
 
-          {/* Right Panel: All Fields */}
+          {/* RIGHT PANEL: Data Entry */}
           <div style={{ flex: "1 1 400px", maxWidth: "680px", width: "100%", minWidth: 0 }}>
             <BlockStack gap="400">
               <InlineStack align="space-between" blockAlign="center">
                 <Text variant="headingMd" as="h2">Apply Data Fields</Text>
-                <Button
-                  variant="primary"
-                  onClick={handleSave}
-                  loading={isSaving}
-                  disabled={selectedIds.length === 0}
-                >
+                <Button variant="primary" onClick={handleSave} loading={isSaving} disabled={selectedIds.length === 0}>
                   Save to Shopify
                 </Button>
               </InlineStack>
@@ -236,58 +217,61 @@ export default function MetaCore({ products = [] }) {
                   <BlockStack gap="400">
                     {TARGET_KEYS.map(key => {
                       const savedValue = selectedProduct?.metafields?.[key.replace(/-/g, "_")];
-                      const placeholderText = savedValue
-                        ? `Current: ${String(savedValue).replace(/[✅⚠️]/g, "").trim()}`
-                        : "";
+                      const placeholderText = savedValue ? `Current: ${String(savedValue).replace(/[✅⚠️]/g, "").trim()}` : "";
 
+                      // --- THE CHROME: VOICE MODULE FOR BULK STONE STORY ---
+                      if (key === "stone_story") {
+                        return (
+                          <BlockStack gap="200" key={key}>
+                            <TextField
+                              label={FIELD_LABELS[key] || key}
+                              value={fieldValues[key] || ""}
+                              onChange={val => setFieldValues(prev => ({ ...prev, [key]: val }))}
+                              autoComplete="off"
+                              placeholder={placeholderText}
+                              multiline={4}
+                            />
+                            <InlineStack align="start">
+                              <DictationButton 
+                                placeholder="🎤 Dictate Bulk Story" 
+                                onResult={(text) => {
+                                  setFieldValues(prev => ({
+                                    ...prev,
+                                    [key]: prev[key] ? prev[key] + " " + text : text
+                                  }));
+                                }}
+                              />
+                            </InlineStack>
+                          </BlockStack>
+                        );
+                      }
+
+                      // --- DROPDOWN SELECTIONS ---
                       if (SEED_OPTIONS[key]) {
-                        const opts = [
-                          ...new Set([
-                            ...(SEED_OPTIONS[key] || []),
-                            ...(vocabulary[key] || [])
-                          ])
-                        ];
+                        const opts = [...new Set([...(SEED_OPTIONS[key] || []), ...(vocabulary[key] || [])])];
                         const isMulti = key === "secondary_colors";
                         const currentVal = fieldValues[key] || "";
-
                         const selectOptions = [{ label: placeholderText || "— select —", value: "" }];
                         opts.forEach(o => selectOptions.push({ label: o, value: o }));
-                        if (
-                          !isMulti &&
-                          currentVal &&
-                          currentVal !== "__custom__" &&
-                          !opts.includes(currentVal)
-                        ) {
+                        
+                        if (!isMulti && currentVal && currentVal !== "__custom__" && !opts.includes(currentVal)) {
                           selectOptions.push({ label: currentVal, value: currentVal });
                         }
                         selectOptions.push({ label: "➕ Add Custom...", value: "__custom__" });
-
-                        const selectValue = showCustomInput[key]
-                          ? "__custom__"
-                          : (isMulti ? "" : currentVal);
+                        const selectValue = showCustomInput[key] ? "__custom__" : (isMulti ? "" : currentVal);
 
                         return (
                           <BlockStack gap="200" key={key}>
                             {isMulti && currentVal && (
                               <InlineStack gap="200" wrap>
                                 {currentVal.split(",").map(c => c.trim()).filter(Boolean).map(color => (
-                                  <Tag
-                                    key={color}
-                                    onRemove={() => {
-                                      const newColors = currentVal
-                                        .split(",")
-                                        .map(s => s.trim())
-                                        .filter(Boolean)
-                                        .filter(c => c !== color);
-                                      setFieldValues(prev => ({ ...prev, [key]: newColors.join(", ") }));
-                                    }}
-                                  >
-                                    {color}
-                                  </Tag>
+                                  <Tag key={color} onRemove={() => {
+                                    const newColors = currentVal.split(",").map(s => s.trim()).filter(Boolean).filter(c => c !== color);
+                                    setFieldValues(prev => ({ ...prev, [key]: newColors.join(", ") }));
+                                  }}>{color}</Tag>
                                 ))}
                               </InlineStack>
                             )}
-
                             <Select
                               label={FIELD_LABELS[key] || key}
                               options={selectOptions}
@@ -299,9 +283,7 @@ export default function MetaCore({ products = [] }) {
                                   setShowCustomInput(prev => ({ ...prev, [key]: false }));
                                   if (isMulti) {
                                     if (!v) return;
-                                    const curr = currentVal
-                                      ? currentVal.split(",").map(s => s.trim()).filter(Boolean)
-                                      : [];
+                                    const curr = currentVal ? currentVal.split(",").map(s => s.trim()).filter(Boolean) : [];
                                     if (!curr.includes(v)) curr.push(v);
                                     setFieldValues(prev => ({ ...prev, [key]: curr.join(", ") }));
                                   } else {
@@ -310,67 +292,43 @@ export default function MetaCore({ products = [] }) {
                                 }
                               }}
                             />
-
                             {showCustomInput[key] && (
-                              <div style={{
-                                paddingLeft: "8px",
-                                borderLeft: "2px solid #e1e3e5",
-                                marginTop: "4px"
-                              }}>
+                              <div style={{ paddingLeft: "8px", borderLeft: "2px solid #e1e3e5", marginTop: "4px" }}>
                                 <BlockStack gap="300">
                                   <TextField
-                                    label="New custom value"
-                                    placeholder="Enter new custom option..."
-                                    value={customInputs[key] || ""}
-                                    onChange={v => setCustomInputs(p => ({ ...p, [key]: v }))}
-                                    autoComplete="off"
+                                    label="New custom value" placeholder="Enter new custom option..."
+                                    value={customInputs[key] || ""} onChange={v => setCustomInputs(p => ({ ...p, [key]: v }))} autoComplete="off"
                                   />
                                   <InlineStack gap="300" blockAlign="center" wrap={false}>
-                                    <Button
-                                      variant="primary"
-                                      onClick={() => {
-                                        const v = customInputs[key]?.trim();
-                                        if (v) {
-                                          addCustomFetcher.submit(
-                                            {
-                                              intent: "saveVocabularyEntry",
-                                              field_key: key,
-                                              new_value: v
-                                            },
-                                            { method: "post", action: "/app/meta-injector" }
-                                          );
-                                          setVocabulary(prev => {
-                                            const curr = prev[key] || [];
-                                            if (!curr.includes(v)) return { ...prev, [key]: [...curr, v] };
-                                            return prev;
-                                          });
-                                          if (isMulti) {
-                                            const currVals = currentVal
-                                              ? currentVal.split(",").map(s => s.trim()).filter(Boolean)
-                                              : [];
-                                            if (!currVals.includes(v)) currVals.push(v);
-                                            setFieldValues(prev => ({ ...prev, [key]: currVals.join(", ") }));
-                                          } else {
-                                            setFieldValues(prev => ({ ...prev, [key]: v }));
-                                          }
-                                          setShowCustomInput(p => ({ ...p, [key]: false }));
-                                          setCustomInputs(p => ({ ...p, [key]: "" }));
+                                    <Button variant="primary" onClick={() => {
+                                      const v = customInputs[key]?.trim();
+                                      if (v) {
+                                        addCustomFetcher.submit({ intent: "saveVocabularyEntry", field_key: key, new_value: v }, { method: "post", action: "/app/meta-injector" });
+                                        setVocabulary(prev => {
+                                          const curr = prev[key] || [];
+                                          if (!curr.includes(v)) return { ...prev, [key]: [...curr, v] };
+                                          return prev;
+                                        });
+                                        if (isMulti) {
+                                          const currVals = currentVal ? currentVal.split(",").map(s => s.trim()).filter(Boolean) : [];
+                                          if (!currVals.includes(v)) currVals.push(v);
+                                          setFieldValues(prev => ({ ...prev, [key]: currVals.join(", ") }));
+                                        } else {
+                                          setFieldValues(prev => ({ ...prev, [key]: v }));
                                         }
-                                      }}
-                                    >
-                                      Save & Select
-                                    </Button>
-                                    <Button onClick={() => setShowCustomInput(p => ({ ...p, [key]: false }))}>
-                                      Cancel
-                                    </Button>
+                                        setShowCustomInput(p => ({ ...p, [key]: false }));
+                                        setCustomInputs(p => ({ ...p, [key]: "" }));
+                                      }
+                                    }}>Save & Select</Button>
+                                    <Button onClick={() => setShowCustomInput(p => ({ ...p, [key]: false }))}>Cancel</Button>
                                   </InlineStack>
                                 </BlockStack>
                               </div>
                             )}
                           </BlockStack>
                         );
-
                       } else {
+                        // --- STANDARD TEXT FIELDS ---
                         return (
                           <BlockStack gap="200" key={key}>
                             <TextField
@@ -379,11 +337,7 @@ export default function MetaCore({ products = [] }) {
                               onChange={val => setFieldValues(prev => ({ ...prev, [key]: val }))}
                               autoComplete="off"
                               placeholder={placeholderText}
-                              multiline={
-                                ["stone_story", "bench_notes", "character_marks", "rock_composition"].includes(key)
-                                  ? 4
-                                  : undefined
-                              }
+                              multiline={["bench_notes", "character_marks", "rock_composition"].includes(key) ? 4 : undefined}
                             />
                           </BlockStack>
                         );

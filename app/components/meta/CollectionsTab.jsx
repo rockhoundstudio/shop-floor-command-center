@@ -3,6 +3,10 @@ import { useFetcher } from "react-router";
 import { Card, TextField, Text, BlockStack, InlineStack, Button, Select, Box, Divider, Banner, Grid, Badge, Icon, Tag } from "@shopify/polaris";
 import { FolderIcon, SearchIcon } from "@shopify/polaris-icons";
 
+// ==========================================
+// COMPONENT: COLLECTIONS MANAGER TAB
+// ==========================================
+
 export default function CollectionsTab({ products = [], collections = [], onBack }) {
   const fetcher = useFetcher();
   const [newCollTitle, setNewCollTitle] = useState("");
@@ -13,12 +17,18 @@ export default function CollectionsTab({ products = [], collections = [], onBack
     c.title.toLowerCase() !== "all collections"
   );
 
+  const filteredProducts = products.filter(p =>
+    p.title.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  // --- ACTION HANDLERS ---
   const handleCreate = () => {
     if (!newCollTitle.trim()) return;
     const fd = new FormData();
     fd.append("intent", "createCollection");
     fd.append("title", newCollTitle.trim());
-    fetcher.submit(fd, { method: "post" });
+    // Explicitly target the collection manager route
+    fetcher.submit(fd, { method: "post", action: "/app/collection-manager" });
     setNewCollTitle("");
   };
 
@@ -28,7 +38,8 @@ export default function CollectionsTab({ products = [], collections = [], onBack
     fd.append("intent", "assignCollection");
     fd.append("productId", productId);
     fd.append("collectionId", collectionId);
-    fetcher.submit(fd, { method: "post" });
+    // Explicitly target the collection manager route
+    fetcher.submit(fd, { method: "post", action: "/app/collection-manager" });
   };
 
   const handleRemove = (productId, collectionId) => {
@@ -36,16 +47,13 @@ export default function CollectionsTab({ products = [], collections = [], onBack
     fd.append("intent", "removeCollection");
     fd.append("productId", productId);
     fd.append("collectionId", collectionId);
-    fetcher.submit(fd, { method: "post" });
+    // Explicitly target the collection manager route
+    fetcher.submit(fd, { method: "post", action: "/app/collection-manager" });
   };
 
-  const filteredProducts = products.filter(p =>
-    p.title.toLowerCase().includes(searchQuery.toLowerCase())
-  );
-
-  // Detect mobile via window width
-  const isMobile = typeof window !== "undefined" && window.innerWidth < 768;
-
+  // ==========================================
+  // RENDER
+  // ==========================================
   return (
     <BlockStack gap="500">
       <InlineStack align="start">
@@ -123,7 +131,7 @@ export default function CollectionsTab({ products = [], collections = [], onBack
                       const fd = new FormData();
                       fd.append("intent", "deleteCollection");
                       fd.append("id", deleteTarget.id);
-                      fetcher.submit(fd, { method: "post" });
+                      fetcher.submit(fd, { method: "post", action: "/app/collection-manager" });
                       setDeleteTarget(null);
                     }}>Yes, Delete</Button>
                     <Button onClick={() => setDeleteTarget(null)}>Cancel</Button>
