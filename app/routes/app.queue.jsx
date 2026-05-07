@@ -1,5 +1,4 @@
-import { json } from "@remix-run/node";
-import { useLoaderData, useFetcher } from "@remix-run/react";
+import { useLoaderData, useFetcher } from "react-router";
 import { authenticate } from "../shopify.server";
 import { Page, Layout, Card, Text, BlockStack, Badge, DataTable } from "@shopify/polaris";
 import { useEffect } from "react";
@@ -7,7 +6,6 @@ import { useEffect } from "react";
 export const loader = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
 
-  // --- SILENTLY AUTO-BUILD THE MAILBOX DATABASE IF MISSING ---
   const setupMutation = `
     mutation {
       metaobjectDefinitionCreate(definition: {
@@ -23,9 +21,8 @@ export const loader = async ({ request }) => {
       }) { metaobjectDefinition { id } }
     }
   `;
-  try { await admin.graphql(setupMutation); } catch(e) { /* Ignore if it already exists */ }
+  try { await admin.graphql(setupMutation); } catch(e) { }
 
-  // --- LOAD THE QUEUE JOBS ---
   try {
     const response = await admin.graphql(`
       #graphql
@@ -51,9 +48,9 @@ export const loader = async ({ request }) => {
         status: fields.status || "pending",
       };
     });
-    return json({ jobs });
+    return Response.json({ jobs });
   } catch (error) {
-    return json({ jobs: [] });
+    return Response.json({ jobs: [] });
   }
 };
 
