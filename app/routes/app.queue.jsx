@@ -1,16 +1,16 @@
-import { useLoaderData, useFetcher } from "react-router";
+import { useLoaderData, useRouteError } from "react-router";
 import { authenticate } from "../shopify.server";
-import { Page, Layout, Card, Text, BlockStack, Badge, DataTable } from "@shopify/polaris";
-import { useEffect } from "react";
+import { Page, Layout, Card, Text, BlockStack, DataTable } from "@shopify/polaris";
 
 export const loader = async ({ request }) => {
+  // THE FIX: Shopify's security check MUST be outside the error trap!
   const { admin } = await authenticate.admin(request);
 
   try {
     const response = await admin.graphql(`
       #graphql
       query {
-        metaobjects(type: "sidekick_queue", first: 20, reverse: true) {
+        metaobjects(type: "sidekick_queue", first: 20) {
           edges { node { id fields { key value } } }
         }
       }
@@ -20,44 +20,34 @@ export const loader = async ({ request }) => {
     const edges = data.data?.metaobjects?.edges || [];
 
     const jobs = edges.map((edge) => {
-      const fields = edge.node.fields.reduce((acc, field) => {
+      const fields = (edge.node.fields || []).reduce((acc, field) => {
         acc[field.key] = field.value; return acc;
       }, {});
       return {
-        id: edge.node.id ? String(edge.node.id) : "N/A",
-        productId: fields.productId ? String(fields.productId) : "N/A",
-        targetKey: fields.key ? String(fields.key) : "N/A",
-        targetValue: fields.value ? String(fields.value) : "N/A",
-        status: fields.status ? String(fields.status) : "pending",
+        id: String(edge.node.id || "N/A"),
+        productId: String(fields.productId || "N/A"),
+        targetKey: String(fields.key || "N/A"),
+        targetValue: String(fields.value || "N/A"),
+        status: String(fields.status || "pending"),
       };
     });
     return Response.json({ jobs });
   } catch (error) {
-    // Fails safely if the metaobject doesn't exist yet
     return Response.json({ jobs: [] });
   }
 };
 
 export default function SidekickQueueTab() {
-  const { jobs } = useLoaderData();
-  const fetcher = useFetcher();
+  const data = useLoaderData();
+  const jobs = data?.jobs || [];
 
-  useEffect(() => {
-    const interval = setInterval(() => {
-      if (fetcher.state === "idle") fetcher.load("/app/queue");
-    }, 30000);
-    return () => clearInterval(interval);
-  }, [fetcher]);
-
-  // Heavily armored string splitting to prevent React crashes
+  // THE FIX 2: 100% plain text rendering so React cannot crash
   const rows = jobs.map((job) => [
-    job.id && job.id.includes('/') ? job.id.split('/').pop() : job.id || "N/A",
-    job.productId && job.productId.includes('/') ? job.productId.split('/').pop() : job.productId || "N/A",
-    job.targetKey || "N/A",
-    job.targetValue || "N/A",
-    <Badge tone={job.status === "pending" ? "warning" : job.status === "complete" ? "success" : "critical"}>
-      {job.status || "pending"}
-    </Badge>,
+    String(job.id).split('/').pop(),
+    String(job.productId).split('/').pop(),
+    String(job.targetKey),
+    String(job.targetValue),
+    String(job.status).toUpperCase()
   ]);
 
   return (
@@ -67,8 +57,8 @@ export default function SidekickQueueTab() {
           <Card>
             <BlockStack gap="400">
               <Text as="h2" variant="headingMd">Rockhound Studio - AI Command Queue</Text>
-              <Text as="p">Live feed of jobs sent by Sidekick. This dashboard auto-refreshes every 30 seconds.</Text>
-              {jobs && jobs.length > 0 ? (
+              <Text as="p">Live feed of jobs sent by Sidekick.</Text>
+              {jobs.length > 0 ? (
                 <DataTable
                   columnContentTypes={['text', 'text', 'text', 'text', 'text']}
                   headings={['Job ID', 'Product ID', 'Metafield', 'Value', 'Status']}
@@ -77,6 +67,25 @@ export default function SidekickQueueTab() {
               ) : (
                 <Text as="p">Waiting for Sidekick... No jobs in the queue yet. (Tab is stable and active!)</Text>
               )}
+            </BlockStack>
+          </Card>
+        </Layout.Section>
+      </Layout>
+    </Page>
+  );
+}
+
+// THE BLACK BOX: If it crashes, Bob sees the exact error, not a white screen.
+export function ErrorBoundary() {
+  const error = useRouteError();
+  return (
+    <Page title="System Error">
+      <Layout>
+        <Layout.Section>
+          <Card>
+            <BlockStack gap="400">
+              <Text as="h2" variant="headingMd">We hit a snag.</Text>
+              <Text as="p">Please copy this error for Gemini: {error?.message || "Unknown rendering error"}</Text>
             </BlockStack>
           </Card>
         </Layout.Section>
