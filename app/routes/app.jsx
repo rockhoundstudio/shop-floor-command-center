@@ -33,7 +33,7 @@ export default function App() {
           <a href="/app/meta-injector">Meta Injector</a>
           <a href="/app/menu-manager">Menu Manager</a>
           <a href="/app/collection-manager">Collection Manager</a>
-          <Link to="/app/queue">Sidekick Queue</Link>
+          
     </ui-nav-menu>
         
         {/* Renders the active tab */}
@@ -51,3 +51,4 @@ export function ErrorBoundary() {
 export const headers = (headersArgs) => {
   return boundary.headers(headersArgs);
 };
+
