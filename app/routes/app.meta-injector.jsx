@@ -149,10 +149,12 @@ export const loader = async ({ request }) => {
 
       const { status, filledCount } = evaluateProductStatus(mfs);
       const price = node.variants?.edges?.[0]?.node?.price || "0.00";
+      const shopifyStatus = node.status;
 
       return {
         ...node,
         price,
+        shopifyStatus,
         description: stripHtml(node.descriptionHtml),
         metafields: mfs,
         status,
@@ -281,12 +283,15 @@ export const action = async ({ request }) => {
 
       if (variantId && price) {
         await admin.graphql(`
-          mutation productVariantUpdate($input: ProductVariantInput!) {
-            productVariantUpdate(input: $input) {
+          mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+            productVariantsBulkUpdate(productId: $productId, variants: $variants) {
               userErrors { field message }
             }
           }
-        `, { variables: { input: { id: variantId, price: String(parseFloat(price).toFixed(2)) } } });
+        `, { variables: {
+          productId,
+          variants: [{ id: variantId, price: String(parseFloat(price).toFixed(2)) }]
+        }});
       }
       return data({ ok: true, success: true });
     } catch (e) {
@@ -563,10 +568,6 @@ export const action = async ({ request }) => {
           else if (parsedVal) { merged[key] = `⚠️ ${parsedVal}`; }
         }
       });
-
-      if (stoneName && (!existing["is_ooak"] || String(existing["is_ooak"]).trim() === "")) {
-        merged["is_ooak"] = "✅ true";
-      }
 
       const metafields = KEYS_TO_PROCESS
         .filter(key => merged[key] && String(merged[key]).trim() !== "")
