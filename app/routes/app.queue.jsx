@@ -1,5 +1,4 @@
-import { json } from "@remix-run/node";
-import { useLoaderData, useFetcher } from "@remix-run/react";
+import { useLoaderData, useFetcher } from "react-router";
 import { authenticate } from "../shopify.server";
 import { Page, Layout, Card, Text, BlockStack, Badge, DataTable } from "@shopify/polaris";
 import { useEffect } from "react";
@@ -32,10 +31,10 @@ export const loader = async ({ request }) => {
         status: fields.status ? String(fields.status) : "pending",
       };
     });
-    return json({ jobs });
+    return Response.json({ jobs });
   } catch (error) {
     // Fails safely if the metaobject doesn't exist yet
-    return json({ jobs: [] });
+    return Response.json({ jobs: [] });
   }
 };
 
