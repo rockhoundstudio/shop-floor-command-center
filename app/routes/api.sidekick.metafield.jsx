@@ -1,57 +1,31 @@
 import { json } from "@remix-run/node";
 import { unauthenticated } from "../shopify.server";
 
-// ==========================================
-// API: SIDEKICK SECURE HOOK (SINGLE METAFIELD)
-// ==========================================
-// Endpoint: /api/sidekick/metafield
-// Receives POST requests from Sidekick AI to update product metafields.
-
-export async function action({ request }) {
-  // 1. Check HTTP Method
+export const action = async ({ request }) => {
+  // 1. Ensure it's a POST request
   if (request.method !== "POST") {
     return json({ error: "Method not allowed. Use POST." }, { status: 405 });
   }
 
-  // 2. Verify the Secret Password (SIDEKICK_HOOK_SECRET)
-  const authHeader = request.headers.get("Authorization");
-  const EXPECTED_SECRET = process.env.SIDEKICK_HOOK_SECRET;
-
-  if (!EXPECTED_SECRET) {
-    console.error("CRITICAL: SIDEKICK_HOOK_SECRET is not set in Render environment.");
-    return json({ error: "Server misconfiguration" }, { status: 500 });
+  // 2. Check Rockhound Studio security secret
+  const secret = request.headers.get("X-Sidekick-Secret");
+  if (secret !== "RockhoundAlpha7799!") {
+    return json({ error: "Unauthorized. Invalid secret." }, { status: 401 });
   }
 
-  if (!authHeader || authHeader !== `Bearer ${EXPECTED_SECRET}`) {
-    console.warn("Unauthorized access attempt to Sidekick Hook");
-    return json({ error: "Unauthorized: Invalid secret" }, { status: 401 });
-  }
-
-  // 3. Parse the Payload
-  let payload;
   try {
-    payload = await request.json();
-  } catch (e) {
-    return json({ error: "Invalid JSON payload" }, { status: 400 });
-  }
+    // 3. Parse the incoming payload from Flow/Sidekick
+    const payload = await request.json();
+    const { shop, productId, key, value, type } = payload;
 
-  const { shop, productId, key, value, type, namespace } = payload;
+    if (!shop || !productId || !key || value === undefined) {
+      return json({ error: "Missing required fields: shop, productId, key, value" }, { status: 400 });
+    }
 
-  if (!shop || !productId || !key || value === undefined) {
-    return json({ error: "Missing required fields: shop, productId, key, value" }, { status: 400 });
-  }
-
-  // Ensure GID formatting
-  const productGid = String(productId).includes("gid://") ? productId : `gid://shopify/Product/${productId}`;
-  const fieldType = type || "single_line_text_field";
-  const fieldNamespace = namespace || "custom";
-
-  // 4. Inject into Shopify using the unauthenticated admin client
-  try {
+    // 4. Connect to Shopify admin safely
     const { admin } = await unauthenticated.admin(shop);
 
-    const response = await admin.graphql(
-      `#graphql
+    const mutation = `
       mutation MetafieldsSet($metafields: [MetafieldsSetInput!]!) {
         metafieldsSet(metafields: $metafields) {
           metafields {
@@ -64,33 +38,36 @@ export async function action({ request }) {
             message
           }
         }
-      }`,
-      {
-        variables: {
-          metafields: [
-            {
-              ownerId: productGid,
-              namespace: fieldNamespace,
-              key: key,
-              type: fieldType,
-              value: String(value)
-            }
-          ]
-        }
       }
-    );
+    `;
 
-    const responseJson = await response.json();
+    const variables = {
+      metafields: [
+        {
+          ownerId: productId,
+          namespace: "custom",
+          key: key,
+          value: String(value),
+          type: type || "single_line_text_field"
+        }
+      ]
+    };
 
-    if (responseJson.data?.metafieldsSet?.userErrors?.length > 0) {
-      console.error("Shopify Injection Error:", responseJson.data.metafieldsSet.userErrors);
-      return json({ error: responseJson.data.metafieldsSet.userErrors }, { status: 400 });
+    // 5. Execute the update
+    const response = await admin.graphql(mutation, { variables });
+    const data = await response.json();
+
+    if (data.data.metafieldsSet.userErrors.length > 0) {
+      return json({ success: false, errors: data.data.metafieldsSet.userErrors }, { status: 400 });
     }
 
-    return json({ success: true, message: `Injected ${key}: ${value} into ${productGid}` });
+    return json({
+      success: true,
+      message: "Rockhound Studio Metafield Updated Successfully",
+      updated: data.data.metafieldsSet.metafields
+    });
 
   } catch (error) {
-    console.error("Sidekick Hook Engine Error:", error);
-    return json({ error: "Internal server error during injection" }, { status: 500 });
+    return json({ success: false, error: error.message }, { status: 500 });
   }
-}
+};

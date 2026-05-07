@@ -33,7 +33,8 @@ export default function App() {
           <a href="/app/meta-injector">Meta Injector</a>
           <a href="/app/menu-manager">Menu Manager</a>
           <a href="/app/collection-manager">Collection Manager</a>
-        </ui-nav-menu>
+          <Link to="/app/queue">Sidekick Queue</Link>
+    </ui-nav-menu>
         
         {/* Renders the active tab */}
         <Outlet />
