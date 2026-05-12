@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useFetcher } from "react-router";
 import { Card, TextField, Text, BlockStack, InlineStack, Button, Select, Box, Divider, Banner, Grid, Badge, Icon, Tag } from "@shopify/polaris";
 import { FolderIcon, SearchIcon } from "@shopify/polaris-icons";
+import { useSidekickActivityTools } from "../../hooks/useSidekickActivityTools";
 
 // ==========================================
 // COMPONENT: COLLECTIONS MANAGER TAB
@@ -21,13 +22,15 @@ export default function CollectionsTab({ products = [], collections = [], onBack
     p.title.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
+  // ── SIDEKICK HOOK ──────────────────────────────────────────────────────────
+  useSidekickActivityTools(filteredCollections, filteredProducts);
+
   // --- ACTION HANDLERS ---
   const handleCreate = () => {
     if (!newCollTitle.trim()) return;
     const fd = new FormData();
     fd.append("intent", "createCollection");
     fd.append("title", newCollTitle.trim());
-    // Explicitly target the collection manager route
     fetcher.submit(fd, { method: "post", action: "/app/collection-manager" });
     setNewCollTitle("");
   };
@@ -38,7 +41,6 @@ export default function CollectionsTab({ products = [], collections = [], onBack
     fd.append("intent", "assignCollection");
     fd.append("productId", productId);
     fd.append("collectionId", collectionId);
-    // Explicitly target the collection manager route
     fetcher.submit(fd, { method: "post", action: "/app/collection-manager" });
   };
 
@@ -47,7 +49,6 @@ export default function CollectionsTab({ products = [], collections = [], onBack
     fd.append("intent", "removeCollection");
     fd.append("productId", productId);
     fd.append("collectionId", collectionId);
-    // Explicitly target the collection manager route
     fetcher.submit(fd, { method: "post", action: "/app/collection-manager" });
   };
 
@@ -163,7 +164,6 @@ export default function CollectionsTab({ products = [], collections = [], onBack
 
               <Divider />
 
-              {/* Column headers — desktop only */}
               <div style={{ display: "grid", gridTemplateColumns: "2fr 2fr 1fr", gap: "12px", padding: "0 4px" }}
                 className="hide-on-mobile">
                 <Text variant="bodySm" fontWeight="bold" tone="subdued">STONE</Text>
@@ -193,7 +193,6 @@ export default function CollectionsTab({ products = [], collections = [], onBack
                           borderBottom: index !== filteredProducts.length - 1 ? "1px solid #e1e3e5" : "none",
                         }}
                       >
-                        {/* Desktop: 3-column grid */}
                         <div style={{ display: "grid", gridTemplateColumns: "2fr 2fr 1fr", gap: "12px", alignItems: "center" }}
                           className="desktop-row">
                           <Text fontWeight="semibold" truncate>{p.title}</Text>
@@ -222,7 +221,6 @@ export default function CollectionsTab({ products = [], collections = [], onBack
         </Grid.Cell>
       </Grid>
 
-      {/* Mobile responsive styles */}
       <style>{`
         @media (max-width: 767px) {
           .desktop-row {
