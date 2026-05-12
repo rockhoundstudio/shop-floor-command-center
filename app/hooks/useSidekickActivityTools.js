@@ -46,6 +46,9 @@ export function useSidekickActivityTools(currentCollections, currentAssignments)
       if (event.origin !== 'https://admin.shopify.com' && !event.origin.endsWith('.myshopify.com')) {
         return;
       }
+
+      console.log('[Incoming Shopify Message]', event.data);
+
       const { type, payload } = event.data || {};
       if (type !== 'SIDEKICK::INVOKE_ACTIVITY') return;
 
