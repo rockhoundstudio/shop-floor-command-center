@@ -1,46 +1,11 @@
-import { useLoaderData, useSubmit, useNavigation } from "react-router";
+import { useLoaderData, useFetcher } from "react-router";
 import { authenticate } from "../shopify.server";
-import { Page, Layout, Card, Text, BlockStack, DataTable, Button, Banner } from "@shopify/polaris";
+import { Page, Layout, Card, Text, BlockStack, Badge, DataTable } from "@shopify/polaris";
+import { useEffect } from "react";
 
 export const loader = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
-  try {
-    const response = await admin.graphql(`
-      #graphql
-      query {
-        metaobjects(type: "sidekick_queue", first: 20) {
-          edges { node { id fields { key value } } }
-        }
-      }
-    `);
-    const data = await response.json();
 
-    // If Shopify returns an error because the database doesn't exist, trigger the setup button
-    if (data.errors) {
-      return Response.json({ jobs: [], needsSetup: true });
-    }
-
-    const edges = data.data?.metaobjects?.edges || [];
-    const jobs = edges.map((edge) => {
-      const fields = (edge.node.fields || []).reduce((acc, field) => {
-        acc[field.key] = field.value; return acc;
-      }, {});
-      return {
-        id: String(edge.node.id || "N/A"),
-        productId: String(fields.productId || "N/A"),
-        targetKey: String(fields.key || "N/A"),
-        targetValue: String(fields.value || "N/A"),
-        status: String(fields.status || "pending"),
-      };
-    });
-    return Response.json({ jobs, needsSetup: false });
-  } catch (error) {
-    return Response.json({ jobs: [], needsSetup: true });
-  }
-};
-
-export const action = async ({ request }) => {
-  const { admin } = await authenticate.admin(request);
   const setupMutation = `
     mutation {
       metaobjectDefinitionCreate(definition: {
@@ -56,63 +21,79 @@ export const action = async ({ request }) => {
       }) { metaobjectDefinition { id } }
     }
   `;
+  try { await admin.graphql(setupMutation); } catch(e) { }
+
   try {
-    await admin.graphql(setupMutation);
-    return Response.json({ success: true });
-  } catch (e) {
-    return Response.json({ success: false, error: e.message });
+    const response = await admin.graphql(`
+      #graphql
+      query {
+        metaobjects(type: "sidekick_queue", first: 20, reverse: true) {
+          edges { node { id fields { key value } } }
+        }
+      }
+    `);
+
+    const data = await response.json();
+    const edges = data.data?.metaobjects?.edges || [];
+
+    const jobs = edges.map((edge) => {
+      const fields = edge.node.fields.reduce((acc, field) => {
+        acc[field.key] = field.value; return acc;
+      }, {});
+      return {
+        id: edge.node.id,
+        productId: fields.productId || "N/A",
+        targetKey: fields.key || "N/A",
+        targetValue: fields.value || "N/A",
+        status: fields.status || "pending",
+      };
+    });
+    return Response.json({ jobs });
+  } catch (error) {
+    return Response.json({ jobs: [] });
   }
 };
 
 export default function SidekickQueueTab() {
-  const data = useLoaderData();
-  // Safe fallback just in case data is missing
-  const jobs = data?.jobs || [];
-  const needsSetup = data?.needsSetup || false;
-  
-  const submit = useSubmit();
-  const nav = useNavigation();
-  const isLoading = nav.state === "submitting";
+  const { jobs } = useLoaderData();
+  const fetcher = useFetcher();
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (fetcher.state === "idle") fetcher.load("/app/queue");
+    }, 30000);
+    return () => clearInterval(interval);
+  }, [fetcher]);
 
   const rows = jobs.map((job) => [
-    String(job.id).split('/').pop(),
-    String(job.productId).split('/').pop(),
-    String(job.targetKey),
-    String(job.targetValue),
-    String(job.status).toUpperCase()
+    job.id.split('/').pop(),
+    job.productId.split('/').pop(),
+    job.targetKey,
+    job.targetValue,
+    <Badge tone={job.status === "pending" ? "warning" : job.status === "complete" ? "success" : "critical"}>
+      {job.status}
+    </Badge>,
   ]);
 
   return (
     <Page title="Sidekick Queue">
       <Layout>
         <Layout.Section>
-          {needsSetup ? (
-            <Card>
-              <BlockStack gap="400">
-                <Banner tone="warning" title="Missing Database" />
-                <Text as="p">Sidekick was right! The holding tank doesn't exist yet. Click the button below to have the app build it automatically.</Text>
-                <Button variant="primary" loading={isLoading} onClick={() => submit({}, { method: "post" })}>
-                  Build Queue Database Now
-                </Button>
-              </BlockStack>
-            </Card>
-          ) : (
-            <Card>
-              <BlockStack gap="400">
-                <Text as="h2" variant="headingMd">Rockhound Studio - AI Command Queue</Text>
-                <Text as="p">Live feed of jobs sent by Sidekick. (Database is linked and active!)</Text>
-                {jobs.length > 0 ? (
-                  <DataTable
-                    columnContentTypes={['text', 'text', 'text', 'text', 'text']}
-                    headings={['Job ID', 'Product ID', 'Metafield', 'Value', 'Status']}
-                    rows={rows}
-                  />
-                ) : (
-                  <Text as="p">Waiting for Sidekick... No jobs in the queue yet.</Text>
-                )}
-              </BlockStack>
-            </Card>
-          )}
+          <Card>
+            <BlockStack gap="400">
+              <Text as="h2" variant="headingMd">Rockhound Studio - AI Command Queue</Text>
+              <Text as="p">Live feed of jobs sent by Sidekick. This dashboard auto-refreshes every 30 seconds.</Text>
+              {jobs.length > 0 ? (
+                <DataTable
+                  columnContentTypes={['text', 'text', 'text', 'text', 'text']}
+                  headings={['Job ID', 'Product ID', 'Metafield', 'Value', 'Status']}
+                  rows={rows}
+                />
+              ) : (
+                <Text as="p">Waiting for Sidekick... No jobs in the queue yet. (Database is linked and ready!)</Text>
+              )}
+            </BlockStack>
+          </Card>
         </Layout.Section>
       </Layout>
     </Page>

@@ -1,20 +1,21 @@
 import { useEffect } from 'react';
+import { useAppBridge } from '@shopify/app-bridge-react';
 
 export function useSidekickActivityTools(currentCollections, currentAssignments) {
-  useEffect(() => {
+  const shopify = useAppBridge();
 
+  useEffect(() => {
     const executeAction = async (payload) => {
       const formData = new FormData();
       Object.entries(payload).forEach(([key, value]) => formData.append(key, value));
-      const response = await fetch(window.location.pathname + window.location.search, {
+      const response = await fetch('/app/collection-manager', {
         method: 'POST',
         body: formData,
       });
       if (!response.ok) {
         throw new Error(`Action failed with status ${response.status}: ${response.statusText}`);
       }
-      const data = await response.json().catch(() => ({}));
-      return data;
+      return await response.json().catch(() => ({}));
     };
 
     const activityTools = {
@@ -38,30 +39,49 @@ export function useSidekickActivityTools(currentCollections, currentAssignments)
       }
     };
 
-    window.get_activity_tools = () => {
-      return Object.keys(activityTools).map(toolName => ({
-        name: toolName,
-        status: 'ready'
-      }));
-    };
+    const registeredTools = Object.keys(activityTools).map(toolName => ({
+      name: toolName,
+      status: 'ready'
+    }));
 
-    window.invoke_activity = async (actionName, params = {}) => {
+    shopify.dispatch('SIDEKICK::REGISTER_ACTIVITY_TOOLS', { tools: registeredTools });
+
+    const unsubscribe = shopify.subscribe('SIDEKICK::INVOKE_ACTIVITY', async (event) => {
+      const { actionName, params, invocationId } = event.data;
+
       if (!activityTools[actionName]) {
-        throw new Error(`Activity tool '${actionName}' is not registered on this route.`);
+        shopify.dispatch('SIDEKICK::ACTIVITY_RESULT', {
+          invocationId,
+          success: false,
+          error: `Tool '${actionName}' is not registered.`
+        });
+        return;
       }
-      console.log(`[Sidekick] Invoking: ${actionName}`, params);
+
+      console.log(`[App Bridge] Sidekick invoking: ${actionName}`, params);
+
       try {
-        const result = await activityTools[actionName](params);
-        return result;
+        const result = await activityTools[actionName](params || {});
+        shopify.dispatch('SIDEKICK::ACTIVITY_RESULT', {
+          invocationId,
+          success: true,
+          data: result
+        });
       } catch (error) {
-        console.error(`[Sidekick] Error in ${actionName}:`, error);
-        return { success: false, error: error.message };
+        console.error(`[App Bridge] Error in ${actionName}:`, error);
+        shopify.dispatch('SIDEKICK::ACTIVITY_RESULT', {
+          invocationId,
+          success: false,
+          error: error.message
+        });
       }
-    };
+    });
 
     return () => {
-      delete window.get_activity_tools;
-      delete window.invoke_activity;
+      shopify.dispatch('SIDEKICK::DEREGISTER_ACTIVITY_TOOLS', {
+        tools: registeredTools.map(t => t.name)
+      });
+      unsubscribe();
     };
-  }, [currentCollections, currentAssignments]);
+  }, [shopify, currentCollections, currentAssignments]);
 }
