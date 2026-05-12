@@ -2,6 +2,10 @@ import { useEffect } from 'react';
 
 export function useSidekickActivityTools(currentCollections, currentAssignments) {
   useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const shopParam = urlParams.get('shop');
+    const targetOrigin = shopParam ? `https://${shopParam}` : 'https://admin.shopify.com';
+
     const executeAction = async (payload) => {
       const formData = new FormData();
       Object.entries(payload).forEach(([key, value]) => formData.append(key, value));
@@ -40,7 +44,7 @@ export function useSidekickActivityTools(currentCollections, currentAssignments)
     window.parent.postMessage({
       type: 'SIDEKICK::REGISTER_ACTIVITY_TOOLS',
       payload: { tools: registeredTools }
-    }, 'https://admin.shopify.com');
+    }, targetOrigin);
 
     const handleMessage = async (event) => {
       if (event.origin !== 'https://admin.shopify.com' && !event.origin.endsWith('.myshopify.com')) {
@@ -82,11 +86,11 @@ export function useSidekickActivityTools(currentCollections, currentAssignments)
     window.addEventListener('message', handleMessage);
 
     return () => {
-      window.removeEventListener('message', handleMessage);
       window.parent.postMessage({
         type: 'SIDEKICK::DEREGISTER_ACTIVITY_TOOLS',
         payload: { tools: registeredTools.map(t => t.name) }
-      }, 'https://admin.shopify.com');
+      }, targetOrigin);
+      window.removeEventListener('message', handleMessage);
     };
   }, [currentCollections, currentAssignments]);
 }
