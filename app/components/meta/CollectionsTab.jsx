@@ -2,7 +2,6 @@ import { useState } from "react";
 import { useFetcher } from "react-router";
 import { Card, TextField, Text, BlockStack, InlineStack, Button, Select, Box, Divider, Banner, Grid, Badge, Icon, Tag } from "@shopify/polaris";
 import { FolderIcon, SearchIcon } from "@shopify/polaris-icons";
-import { useSidekickActivityTools } from "../../hooks/useSidekickActivityTools";
 
 // ==========================================
 // COMPONENT: COLLECTIONS MANAGER TAB
@@ -21,9 +20,6 @@ export default function CollectionsTab({ products = [], collections = [], onBack
   const filteredProducts = products.filter(p =>
     p.title.toLowerCase().includes(searchQuery.toLowerCase())
   );
-
-  // ── SIDEKICK HOOK ──────────────────────────────────────────────────────────
-  useSidekickActivityTools(filteredCollections, filteredProducts);
 
   // --- ACTION HANDLERS ---
   const handleCreate = () => {
