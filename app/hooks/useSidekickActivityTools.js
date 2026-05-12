@@ -1,9 +1,6 @@
 import { useEffect } from 'react';
-import { useAppBridge } from '@shopify/app-bridge-react';
 
 export function useSidekickActivityTools(currentCollections, currentAssignments) {
-  const shopify = useAppBridge();
-
   useEffect(() => {
     const executeAction = async (payload) => {
       const formData = new FormData();
@@ -31,12 +28,8 @@ export function useSidekickActivityTools(currentCollections, currentAssignments)
         await executeAction({ intent: 'removeCollection', productId, collectionId });
         return { success: true, message: `Confirmed: Removed stone ${productId} from ${collectionId}.` };
       },
-      getCollectionList: async () => {
-        return currentCollections;
-      },
-      getStoneAssignments: async () => {
-        return currentAssignments;
-      }
+      getCollectionList: async () => currentCollections,
+      getStoneAssignments: async () => currentAssignments
     };
 
     const registeredTools = Object.keys(activityTools).map(toolName => ({
@@ -44,44 +37,53 @@ export function useSidekickActivityTools(currentCollections, currentAssignments)
       status: 'ready'
     }));
 
-    shopify.dispatch('SIDEKICK::REGISTER_ACTIVITY_TOOLS', { tools: registeredTools });
+    window.parent.postMessage({
+      type: 'SIDEKICK::REGISTER_ACTIVITY_TOOLS',
+      payload: { tools: registeredTools }
+    }, 'https://admin.shopify.com');
 
-    const unsubscribe = shopify.subscribe('SIDEKICK::INVOKE_ACTIVITY', async (event) => {
-      const { actionName, params, invocationId } = event.data;
+    const handleMessage = async (event) => {
+      if (event.origin !== 'https://admin.shopify.com' && !event.origin.endsWith('.myshopify.com')) {
+        return;
+      }
+      const { type, payload } = event.data || {};
+      if (type !== 'SIDEKICK::INVOKE_ACTIVITY') return;
+
+      const { actionName, params, invocationId } = payload;
 
       if (!activityTools[actionName]) {
-        shopify.dispatch('SIDEKICK::ACTIVITY_RESULT', {
-          invocationId,
-          success: false,
-          error: `Tool '${actionName}' is not registered.`
-        });
+        window.parent.postMessage({
+          type: 'SIDEKICK::ACTIVITY_RESULT',
+          payload: { invocationId, success: false, error: `Tool '${actionName}' is not registered.` }
+        }, event.origin);
         return;
       }
 
-      console.log(`[App Bridge] Sidekick invoking: ${actionName}`, params);
+      console.log(`[Sidekick] Invoking: ${actionName}`, params);
 
       try {
         const result = await activityTools[actionName](params || {});
-        shopify.dispatch('SIDEKICK::ACTIVITY_RESULT', {
-          invocationId,
-          success: true,
-          data: result
-        });
+        window.parent.postMessage({
+          type: 'SIDEKICK::ACTIVITY_RESULT',
+          payload: { invocationId, success: true, data: result }
+        }, event.origin);
       } catch (error) {
-        console.error(`[App Bridge] Error in ${actionName}:`, error);
-        shopify.dispatch('SIDEKICK::ACTIVITY_RESULT', {
-          invocationId,
-          success: false,
-          error: error.message
-        });
+        console.error(`[Sidekick] Error in ${actionName}:`, error);
+        window.parent.postMessage({
+          type: 'SIDEKICK::ACTIVITY_RESULT',
+          payload: { invocationId, success: false, error: error.message }
+        }, event.origin);
       }
-    });
+    };
+
+    window.addEventListener('message', handleMessage);
 
     return () => {
-      shopify.dispatch('SIDEKICK::DEREGISTER_ACTIVITY_TOOLS', {
-        tools: registeredTools.map(t => t.name)
-      });
-      unsubscribe();
+      window.removeEventListener('message', handleMessage);
+      window.parent.postMessage({
+        type: 'SIDEKICK::DEREGISTER_ACTIVITY_TOOLS',
+        payload: { tools: registeredTools.map(t => t.name) }
+      }, 'https://admin.shopify.com');
     };
-  }, [shopify, currentCollections, currentAssignments]);
+  }, [currentCollections, currentAssignments]);
 }
