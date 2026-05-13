@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useFetcher } from "react-router";
 import { Card, TextField, Text, BlockStack, InlineStack, Button, Select, Box, Divider, Banner, Grid, Badge, Icon, Tag } from "@shopify/polaris";
-import { FolderIcon, SearchIcon } from "@shopify/polaris-icons";
+import { SearchIcon } from "@shopify/polaris-icons";
 
 export default function CollectionsTab({ products = [], collections = [], onBack }) {
   const fetcher = useFetcher();
@@ -125,7 +125,6 @@ export default function CollectionsTab({ products = [], collections = [], onBack
                             >
                               <InlineStack gap="200" wrap={false} blockAlign="center">
                                 <span style={{ fontSize: "10px" }}>{isExpanded ? "▲" : "▼"}</span>
-                                <Icon source={FolderIcon} tone={isExpanded ? "emphasis" : "base"} />
                                 <BlockStack gap="0">
                                   <Text variant="bodyMd" fontWeight="bold" truncate>{c.title}</Text>
                                   <Text variant="bodyXs" tone="subdued">{stoneCount} stone{stoneCount !== 1 ? "s" : ""}</Text>
