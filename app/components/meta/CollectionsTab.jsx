@@ -3,15 +3,12 @@ import { useFetcher } from "react-router";
 import { Card, TextField, Text, BlockStack, InlineStack, Button, Select, Box, Divider, Banner, Grid, Badge, Icon, Tag } from "@shopify/polaris";
 import { FolderIcon, SearchIcon } from "@shopify/polaris-icons";
 
-// ==========================================
-// COMPONENT: COLLECTIONS MANAGER TAB
-// ==========================================
-
 export default function CollectionsTab({ products = [], collections = [], onBack }) {
   const fetcher = useFetcher();
   const [newCollTitle, setNewCollTitle] = useState("");
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [selectedCollection, setSelectedCollection] = useState(null);
 
   const filteredCollections = collections.filter(c =>
     c.title.toLowerCase() !== "all collections"
@@ -21,7 +18,6 @@ export default function CollectionsTab({ products = [], collections = [], onBack
     p.title.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  // --- ACTION HANDLERS ---
   const handleCreate = () => {
     if (!newCollTitle.trim()) return;
     const fd = new FormData();
@@ -48,9 +44,13 @@ export default function CollectionsTab({ products = [], collections = [], onBack
     fetcher.submit(fd, { method: "post", action: "/app/collection-manager" });
   };
 
-  // ==========================================
-  // RENDER
-  // ==========================================
+  // Stones in the selected collection
+  const stonesInSelected = selectedCollection
+    ? products.filter(p =>
+        (p.currentCollections ?? []).some(c => c.id === selectedCollection.id)
+      )
+    : [];
+
   return (
     <BlockStack gap="500">
       <InlineStack align="start">
@@ -95,6 +95,7 @@ export default function CollectionsTab({ products = [], collections = [], onBack
                   <Text variant="headingMd">🗂️ Active Collections</Text>
                   <Badge tone="info">{filteredCollections.length}</Badge>
                 </InlineStack>
+                <Text variant="bodySm" tone="subdued">Click a collection to see its stones.</Text>
                 <Divider />
                 {filteredCollections.length === 0 && (
                   <Box paddingBlock="400">
@@ -102,19 +103,47 @@ export default function CollectionsTab({ products = [], collections = [], onBack
                   </Box>
                 )}
                 <BlockStack gap="200">
-                  {filteredCollections.map((c) => (
-                    <Box key={c.id} padding="200" background="bg-surface-secondary" borderRadius="100" borderColor="border" borderWidth="025">
-                      <InlineStack align="space-between" blockAlign="center" wrap={false}>
-                        <InlineStack gap="200" wrap={false} blockAlign="center">
-                          <Icon source={FolderIcon} tone="base" />
-                          <Text variant="bodyMd" fontWeight="bold" truncate>{c.title}</Text>
+                  {filteredCollections.map((c) => {
+                    const isSelected = selectedCollection?.id === c.id;
+                    const stoneCount = products.filter(p =>
+                      (p.currentCollections ?? []).some(col => col.id === c.id)
+                    ).length;
+                    return (
+                      <Box
+                        key={c.id}
+                        padding="200"
+                        background={isSelected ? "bg-surface-selected" : "bg-surface-secondary"}
+                        borderRadius="100"
+                        borderColor={isSelected ? "border-focus" : "border"}
+                        borderWidth="025"
+                      >
+                        <InlineStack align="space-between" blockAlign="center" wrap={false}>
+                          <button
+                            onClick={() => setSelectedCollection(isSelected ? null : c)}
+                            style={{
+                              background: "none",
+                              border: "none",
+                              cursor: "pointer",
+                              padding: 0,
+                              flex: 1,
+                              textAlign: "left",
+                            }}
+                          >
+                            <InlineStack gap="200" wrap={false} blockAlign="center">
+                              <Icon source={FolderIcon} tone={isSelected ? "emphasis" : "base"} />
+                              <BlockStack gap="0">
+                                <Text variant="bodyMd" fontWeight="bold" truncate>{c.title}</Text>
+                                <Text variant="bodyXs" tone="subdued">{stoneCount} stone{stoneCount !== 1 ? "s" : ""}</Text>
+                              </BlockStack>
+                            </InlineStack>
+                          </button>
+                          <Button size="micro" tone="critical" onClick={() => setDeleteTarget(c)}>
+                            Delete
+                          </Button>
                         </InlineStack>
-                        <Button size="micro" tone="critical" onClick={() => setDeleteTarget(c)}>
-                          Delete
-                        </Button>
-                      </InlineStack>
-                    </Box>
-                  ))}
+                      </Box>
+                    );
+                  })}
                 </BlockStack>
               </BlockStack>
             </Card>
@@ -130,6 +159,7 @@ export default function CollectionsTab({ products = [], collections = [], onBack
                       fd.append("id", deleteTarget.id);
                       fetcher.submit(fd, { method: "post", action: "/app/collection-manager" });
                       setDeleteTarget(null);
+                      if (selectedCollection?.id === deleteTarget.id) setSelectedCollection(null);
                     }}>Yes, Delete</Button>
                     <Button onClick={() => setDeleteTarget(null)}>Cancel</Button>
                   </InlineStack>
@@ -139,8 +169,55 @@ export default function CollectionsTab({ products = [], collections = [], onBack
           </BlockStack>
         </Grid.Cell>
 
-        {/* RIGHT: Assign Stones */}
+        {/* RIGHT: Collection Detail OR Assign Stones */}
         <Grid.Cell columnSpan={{ xs: 6, sm: 6, md: 8, lg: 8 }}>
+
+          {/* COLLECTION DETAIL VIEW */}
+          {selectedCollection ? (
+            <Card roundedAbove="sm">
+              <BlockStack gap="400">
+                <InlineStack align="space-between" blockAlign="center">
+                  <BlockStack gap="0">
+                    <Text variant="headingMd">📁 {selectedCollection.title}</Text>
+                    <Text variant="bodySm" tone="subdued">{stonesInSelected.length} stone{stonesInSelected.length !== 1 ? "s" : ""} in this collection</Text>
+                  </BlockStack>
+                  <Button onClick={() => setSelectedCollection(null)}>✕ Close</Button>
+                </InlineStack>
+                <Divider />
+                {stonesInSelected.length === 0 ? (
+                  <Box paddingBlock="400">
+                    <Text tone="subdued" alignment="center">No stones in this collection yet.</Text>
+                  </Box>
+                ) : (
+                  <BlockStack gap="0">
+                    {stonesInSelected.map((p, index) => (
+                      <div
+                        key={p.id}
+                        style={{
+                          padding: "12px 4px",
+                          borderBottom: index !== stonesInSelected.length - 1 ? "1px solid #e1e3e5" : "none",
+                        }}
+                      >
+                        <InlineStack align="space-between" blockAlign="center" wrap={false}>
+                          <Text fontWeight="semibold">{p.title}</Text>
+                          <Button
+                            size="micro"
+                            tone="critical"
+                            onClick={() => handleRemove(p.id, selectedCollection.id)}
+                            loading={fetcher.state === "submitting" && fetcher.formData?.get("productId") === p.id}
+                          >
+                            ✕ Remove
+                          </Button>
+                        </InlineStack>
+                      </div>
+                    ))}
+                  </BlockStack>
+                )}
+              </BlockStack>
+            </Card>
+          ) : (
+
+          /* ASSIGN STONES VIEW */
           <Card roundedAbove="sm">
             <BlockStack gap="400">
               <InlineStack align="space-between" blockAlign="center">
@@ -211,9 +288,9 @@ export default function CollectionsTab({ products = [], collections = [], onBack
                   })}
                 </BlockStack>
               </Box>
-
             </BlockStack>
           </Card>
+          )}
         </Grid.Cell>
       </Grid>
 
