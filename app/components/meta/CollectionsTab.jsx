@@ -96,7 +96,7 @@ export default function CollectionsTab({ products = [], collections = [], onBack
                   </Box>
                 )}
                 <BlockStack gap="0">
-                  {filteredCollections.map((c, index) => {
+                  {filteredCollections.map((c) => {
                     const isExpanded = expandedCollection === c.id;
                     const stonesInCollection = products.filter(p =>
                       (p.currentCollections ?? []).some(col => col.id === c.id)
@@ -111,7 +111,8 @@ export default function CollectionsTab({ products = [], collections = [], onBack
                           borderColor={isExpanded ? "border-focus" : "border"}
                           borderWidth="025"
                         >
-                          <InlineStack align="space-between" blockAlign="center" wrap={false}>
+                          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%" }}>
+                            {/* LEFT: caret + title stack */}
                             <button
                               onClick={() => setExpandedCollection(isExpanded ? null : c.id)}
                               style={{
@@ -119,22 +120,24 @@ export default function CollectionsTab({ products = [], collections = [], onBack
                                 border: "none",
                                 cursor: "pointer",
                                 padding: 0,
-                                flex: 1,
+                                margin: 0,
+                                display: "flex",
+                                alignItems: "center",
+                                gap: "6px",
                                 textAlign: "left",
                               }}
                             >
-                              <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                                <span style={{ fontSize: "10px", flexShrink: 0 }}>{isExpanded ? "▲" : "▼"}</span>
-                                <div>
-                                  <Text variant="bodyMd" fontWeight="bold">{c.title}</Text>
-                                  <Text variant="bodyXs" tone="subdued">{stoneCount} stone{stoneCount !== 1 ? "s" : ""}</Text>
-                                </div>
+                              <span style={{ fontSize: "10px", flexShrink: 0, lineHeight: 1 }}>{isExpanded ? "▲" : "▼"}</span>
+                              <div>
+                                <div style={{ fontWeight: "700", fontSize: "14px", lineHeight: "1.3" }}>{c.title}</div>
+                                <div style={{ fontSize: "11px", color: "#6d7175" }}>{stoneCount} stone{stoneCount !== 1 ? "s" : ""}</div>
                               </div>
                             </button>
+                            {/* RIGHT: delete */}
                             <Button size="micro" tone="critical" onClick={() => setDeleteTarget(c)}>
                               Delete
                             </Button>
-                          </InlineStack>
+                          </div>
                         </Box>
 
                         {/* EXPANDED STONE LIST */}
