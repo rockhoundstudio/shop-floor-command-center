@@ -108,9 +108,9 @@ export default function CollectionsTab({ products = [], collections = [], onBack
           <Divider />
 
           {/* COLUMN HEADERS */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 180px 80px", gap: "12px", padding: "0 8px" }}>
-            <Text variant="bodySm" fontWeight="bold" tone="subdued">COLLECTION</Text>
+          <div style={{ display: "grid", gridTemplateColumns: "180px 1fr 80px", gap: "12px", padding: "0 8px" }}>
             <Text variant="bodySm" fontWeight="bold" tone="subdued">ADD STONE</Text>
+            <Text variant="bodySm" fontWeight="bold" tone="subdued">COLLECTION</Text>
             <Text variant="bodySm" fontWeight="bold" tone="subdued"> </Text>
           </div>
           <Divider />
@@ -128,15 +128,22 @@ export default function CollectionsTab({ products = [], collections = [], onBack
                   {/* COLLECTION ROW */}
                   <div style={{
                     display: "grid",
-                    gridTemplateColumns: "1fr 180px 80px",
+                    gridTemplateColumns: "180px 1fr 80px",
                     gap: "12px",
                     alignItems: "center",
                     padding: "10px 8px",
                     borderBottom: !isExpanded && index !== filteredCollections.length - 1 ? "1px solid #e1e3e5" : "none",
                     background: isExpanded ? "#f6f6f7" : "transparent",
-                    cursor: "pointer",
                   }}>
-                    {/* TITLE — clicks to expand */}
+
+                    {/* ADD STONE DROPDOWN — column 1 */}
+                    <Select
+                      options={[{ label: "Add stone...", value: "" }, ...filteredProducts.map(p => ({ label: p.title, value: p.id }))]}
+                      value=""
+                      onChange={(val) => handleAssign(val, c.id)}
+                    />
+
+                    {/* TITLE — column 2 — clicks to expand */}
                     <button
                       onClick={() => setExpandedCollection(isExpanded ? null : c.id)}
                       style={{ background: "none", border: "none", cursor: "pointer", padding: 0, textAlign: "left" }}
@@ -150,14 +157,7 @@ export default function CollectionsTab({ products = [], collections = [], onBack
                       </InlineStack>
                     </button>
 
-                    {/* ADD STONE DROPDOWN */}
-                    <Select
-                      options={[{ label: "Add stone...", value: "" }, ...filteredProducts.map(p => ({ label: p.title, value: p.id }))]}
-                      value=""
-                      onChange={(val) => handleAssign(val, c.id)}
-                    />
-
-                    {/* DELETE */}
+                    {/* DELETE — column 3 */}
                     <Button size="micro" tone="critical" onClick={() => setDeleteTarget(c)}>
                       Delete
                     </Button>
