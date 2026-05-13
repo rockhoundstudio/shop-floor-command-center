@@ -9,7 +9,6 @@ import {
   PlusIcon, DeleteIcon, AlertTriangleIcon, CheckCircleIcon, MagicIcon
 } from "@shopify/polaris-icons";
 
-// ── LOADER ─────────────────────────────────────────────────────────────────
 export const loader = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
   try {
@@ -38,18 +37,14 @@ export const loader = async ({ request }) => {
     const menus = (json.data?.menus?.edges || []).map(e => e.node);
     const collections = (json.data?.collections?.edges || []).map(e => e.node);
     const pages = (json.data?.pages?.edges || []).map(e => e.node);
-
-    // Build live destination sets for governance checks
-    const liveCollectionHandles = new Set(collections.map(c => c.handle));
-    const livePageHandles = new Set(pages.map(p => p.handle));
-
-    return data({ menus, collections, pages, liveCollectionHandles: [...liveCollectionHandles], livePageHandles: [...livePageHandles] });
+    const liveCollectionHandles = collections.map(c => c.handle);
+    const livePageHandles = pages.map(p => p.handle);
+    return data({ menus, collections, pages, liveCollectionHandles, livePageHandles });
   } catch (error) {
     return data({ menus: [], collections: [], pages: [], liveCollectionHandles: [], livePageHandles: [] });
   }
 };
 
-// ── ACTION ─────────────────────────────────────────────────────────────────
 export const action = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
   const formData = await request.formData();
@@ -86,21 +81,13 @@ export const action = async ({ request }) => {
   return data({ ok: false });
 };
 
-// ── HELPERS ────────────────────────────────────────────────────────────────
 function getDestinationStatus(url, liveCollectionHandles, livePageHandles) {
   if (!url || url.trim() === "" || url === "#") return "dead";
   if (url === "/" || url === "/collections/all") return "live";
-
   const collMatch = url.match(/^\/collections\/(.+)$/);
-  if (collMatch) {
-    return liveCollectionHandles.includes(collMatch[1]) ? "live" : "dead";
-  }
-
+  if (collMatch) return liveCollectionHandles.includes(collMatch[1]) ? "live" : "dead";
   const pageMatch = url.match(/^\/pages\/(.+)$/);
-  if (pageMatch) {
-    return livePageHandles.includes(pageMatch[1]) ? "live" : "draft";
-  }
-
+  if (pageMatch) return livePageHandles.includes(pageMatch[1]) ? "live" : "draft";
   if (url.startsWith("http")) return "external";
   return "unknown";
 }
@@ -119,23 +106,19 @@ function StatusBadge({ status }) {
 
 function countByStatus(items, liveCollectionHandles, livePageHandles) {
   let live = 0, draft = 0, dead = 0;
-  items.forEach(item => {
-    const s = getDestinationStatus(item.url, liveCollectionHandles, livePageHandles);
+  const check = (url) => {
+    const s = getDestinationStatus(url, liveCollectionHandles, livePageHandles);
     if (s === "live" || s === "external") live++;
     else if (s === "draft" || s === "unknown") draft++;
     else dead++;
-    // check children too
-    (item.items || []).forEach(child => {
-      const cs = getDestinationStatus(child.url, liveCollectionHandles, livePageHandles);
-      if (cs === "live" || cs === "external") live++;
-      else if (cs === "draft" || cs === "unknown") draft++;
-      else dead++;
-    });
+  };
+  items.forEach(item => {
+    check(item.url);
+    (item.items || []).forEach(child => check(child.url));
   });
   return { live, draft, dead };
 }
 
-// ── COMPONENT ──────────────────────────────────────────────────────────────
 export default function MenuManager() {
   const { menus, collections, pages, liveCollectionHandles, livePageHandles } = useLoaderData();
   const fetcher = useFetcher();
@@ -144,7 +127,7 @@ export default function MenuManager() {
   const [menuItems, setMenuItems] = useState([]);
   const [menuTitle, setMenuTitle] = useState("");
   const [scanned, setScanned] = useState(false);
-  const [globalScan, setGlobalScan] = useState(null); // { menuId -> { live, draft, dead } }
+  const [globalScan, setGlobalScan] = useState(null);
 
   const linkOptions = [
     { label: "✏️ Type Custom Link...", value: "custom" },
@@ -167,7 +150,7 @@ export default function MenuManager() {
         url: child.url || ""
       }))
     })));
-    setScanned(false);
+    setScanned(globalScan !== null);
   };
 
   const handleAddLink = () => {
@@ -193,6 +176,7 @@ export default function MenuManager() {
       result[menu.id] = countByStatus(menu.items, liveCollectionHandles, livePageHandles);
     });
     setGlobalScan(result);
+    setScanned(true);
   };
 
   const autoFillCollections = () => {
@@ -222,7 +206,6 @@ export default function MenuManager() {
     fetcher.submit(fd, { method: "post" });
   };
 
-  // Summary counts for active menu
   const activeCounts = scanned && activeMenu
     ? countByStatus(menuItems, liveCollectionHandles, livePageHandles)
     : null;
@@ -235,7 +218,6 @@ export default function MenuManager() {
     >
       <Layout>
 
-        {/* ── LEFT: MENU LIST ── */}
         <Layout.Section variant="oneThird">
           <BlockStack gap="400">
             <Card>
@@ -279,7 +261,6 @@ export default function MenuManager() {
               </BlockStack>
             </Card>
 
-            {/* Dwell Web cross-link */}
             <Card>
               <BlockStack gap="200">
                 <Text variant="headingSm">🕸️ Link Governance</Text>
@@ -297,7 +278,6 @@ export default function MenuManager() {
           </BlockStack>
         </Layout.Section>
 
-        {/* ── RIGHT: EDITOR ── */}
         <Layout.Section>
           {!activeMenu ? (
             <Card>
@@ -308,11 +288,8 @@ export default function MenuManager() {
           ) : (
             <BlockStack gap="400">
 
-              {/* Scan summary */}
               {activeCounts && (
-                <Banner
-                  tone={activeCounts.dead > 0 ? "critical" : activeCounts.draft > 0 ? "warning" : "success"}
-                >
+                <Banner tone={activeCounts.dead > 0 ? "critical" : activeCounts.draft > 0 ? "warning" : "success"}>
                   <Text>
                     Scan complete — 🟢 {activeCounts.live} live &nbsp;|&nbsp;
                     🟡 {activeCounts.draft} draft/unverified &nbsp;|&nbsp;
@@ -321,25 +298,17 @@ export default function MenuManager() {
                 </Banner>
               )}
 
-              {/* Magic automations */}
               <Card>
                 <BlockStack gap="300">
                   <Text variant="headingSm">✨ Quick Actions</Text>
                   <InlineStack gap="200" wrap>
-                    <Button icon={MagicIcon} onClick={autoFillCollections}>
-                      🪄 Auto-Fill All Collections
-                    </Button>
-                    <Button icon={AlertTriangleIcon} onClick={autoCleanDeadLinks}>
-                      🧹 Remove Dead Links
-                    </Button>
-                    <Button onClick={handleScan}>
-                      🔍 Scan This Menu
-                    </Button>
+                    <Button icon={MagicIcon} onClick={autoFillCollections}>🪄 Auto-Fill All Collections</Button>
+                    <Button icon={AlertTriangleIcon} onClick={autoCleanDeadLinks}>🧹 Remove Dead Links</Button>
+                    <Button onClick={handleScan}>🔍 Scan This Menu</Button>
                   </InlineStack>
                 </BlockStack>
               </Card>
 
-              {/* Editor */}
               <Card>
                 <BlockStack gap="500">
                   <TextField
@@ -353,9 +322,7 @@ export default function MenuManager() {
                     <BlockStack gap="400">
                       <InlineStack align="space-between">
                         <Text variant="headingSm">Menu Links ({menuItems.length})</Text>
-                        <Button icon={PlusIcon} variant="primary" onClick={handleAddLink}>
-                          Add Link
-                        </Button>
+                        <Button icon={PlusIcon} variant="primary" onClick={handleAddLink}>Add Link</Button>
                       </InlineStack>
 
                       {menuItems.map((item) => {
@@ -377,7 +344,6 @@ export default function MenuManager() {
                                   onClick={() => handleDeleteLink(item.id)}
                                 />
                               </InlineStack>
-
                               <InlineStack blockAlign="end" gap="300" wrap>
                                 <div style={{ flex: 1, minWidth: "140px" }}>
                                   <TextField
