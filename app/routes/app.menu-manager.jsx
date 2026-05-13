@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useLoaderData, useFetcher, data } from "react-router";
 import { authenticate } from "../shopify.server";
 import {
@@ -129,6 +129,37 @@ export default function MenuManager() {
   const [scanned, setScanned] = useState(false);
   const [globalScan, setGlobalScan] = useState(null);
 
+  const [isSaving, setIsSaving] = useState(false);
+  const [savedOverrides, setSavedOverrides] = useState({});
+
+  useEffect(() => {
+    if (fetcher.state === "submitting" && fetcher.formData?.get("intent") === "updateMenu") {
+      setIsSaving(true);
+    } else if (fetcher.state === "idle" && isSaving) {
+      setIsSaving(false);
+      if (fetcher.data?.ok && activeMenu) {
+        setSavedOverrides(prev => ({
+          ...prev,
+          [activeMenu.id]: { items: menuItems, title: menuTitle }
+        }));
+        if (globalScan) {
+          setGlobalScan(prev => ({
+            ...prev,
+            [activeMenu.id]: countByStatus(menuItems, liveCollectionHandles, livePageHandles)
+          }));
+        }
+      }
+    }
+  }, [fetcher.state, fetcher.data, activeMenu, menuItems, menuTitle, globalScan, liveCollectionHandles, livePageHandles, isSaving]);
+
+  const displayMenus = menus.map(menu => {
+    const override = savedOverrides[menu.id];
+    if (override) {
+      return { ...menu, items: override.items, title: override.title };
+    }
+    return menu;
+  });
+
   const linkOptions = [
     { label: "✏️ Type Custom Link...", value: "custom" },
     { label: "🏠 Home Page", value: "/" },
@@ -243,7 +274,7 @@ export default function MenuManager() {
 
   const handleGlobalScan = () => {
     const result = {};
-    menus.forEach(menu => {
+    displayMenus.forEach(menu => {
       result[menu.id] = countByStatus(menu.items, liveCollectionHandles, livePageHandles);
     });
     setGlobalScan(result);
@@ -318,7 +349,7 @@ export default function MenuManager() {
                   <Button size="slim" onClick={handleGlobalScan}>Scan All</Button>
                 </InlineStack>
                 <Divider />
-                {menus.map((menu) => {
+                {displayMenus.map((menu) => {
                   const counts = globalScan?.[menu.id];
                   return (
                     <Box
@@ -378,6 +409,16 @@ export default function MenuManager() {
             </Card>
           ) : (
             <BlockStack gap="400">
+
+              <InlineStack align="end">
+                <Button
+                  variant="primary"
+                  onClick={handleSaveMenu}
+                  loading={fetcher.state === "submitting"}
+                >
+                  Save Menu
+                </Button>
+              </InlineStack>
 
               {activeCounts && (
                 <Banner tone={activeCounts.dead > 0 ? "critical" : activeCounts.draft > 0 ? "warning" : "success"}>
