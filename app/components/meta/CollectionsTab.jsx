@@ -80,6 +80,8 @@ export default function CollectionsTab({ products = [], collections = [], onBack
           <InlineStack gap="300" blockAlign="end">
             <div style={{ flex: 1 }}>
               <TextField
+                label="Collection title"
+                labelHidden
                 value={newCollTitle}
                 onChange={setNewCollTitle}
                 placeholder="e.g. Rare Jaspers"
@@ -109,9 +111,9 @@ export default function CollectionsTab({ products = [], collections = [], onBack
 
           {/* COLUMN HEADERS */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 180px 80px", gap: "12px", padding: "0 8px" }}>
-            <Text variant="bodySm" fontWeight="bold" tone="subdued">COLLECTION</Text>
-            <Text variant="bodySm" fontWeight="bold" tone="subdued">ADD STONE</Text>
-            <Text variant="bodySm" fontWeight="bold" tone="subdued"> </Text>
+            <div><Text variant="bodySm" fontWeight="bold" tone="subdued">COLLECTION</Text></div>
+            <div><Text variant="bodySm" fontWeight="bold" tone="subdued">ADD STONE</Text></div>
+            <div><Text variant="bodySm" fontWeight="bold" tone="subdued"> </Text></div>
           </div>
           <Divider />
 
@@ -137,30 +139,38 @@ export default function CollectionsTab({ products = [], collections = [], onBack
                   }}>
 
                     {/* TITLE — column 1 — clicks to expand */}
-                    <button
-                      onClick={() => setExpandedCollection(isExpanded ? null : c.id)}
-                      style={{ background: "none", border: "none", cursor: "pointer", padding: 0, textAlign: "left" }}
-                    >
-                      <InlineStack gap="200" blockAlign="center">
-                        <Icon source={isExpanded ? ChevronUpIcon : ChevronDownIcon} tone="base" />
-                        <BlockStack gap="0">
-                          <Text variant="bodyMd" fontWeight="bold">{c.title}</Text>
-                          <Text variant="bodyXs" tone="subdued">{stoneCount} stone{stoneCount !== 1 ? "s" : ""}</Text>
-                        </BlockStack>
-                      </InlineStack>
-                    </button>
+                    <div>
+                      <button
+                        onClick={() => setExpandedCollection(isExpanded ? null : c.id)}
+                        style={{ background: "none", border: "none", cursor: "pointer", padding: 0, textAlign: "left", width: "100%" }}
+                      >
+                        <InlineStack gap="200" blockAlign="center">
+                          <Icon source={isExpanded ? ChevronUpIcon : ChevronDownIcon} tone="base" />
+                          <BlockStack gap="0">
+                            <Text variant="bodyMd" fontWeight="bold">{c.title}</Text>
+                            <Text variant="bodyXs" tone="subdued">{stoneCount} stone{stoneCount !== 1 ? "s" : ""}</Text>
+                          </BlockStack>
+                        </InlineStack>
+                      </button>
+                    </div>
 
                     {/* ADD STONE DROPDOWN — column 2 */}
-                    <Select
-                      options={[{ label: "Add stone...", value: "" }, ...filteredProducts.map(p => ({ label: p.title, value: p.id }))]}
-                      value=""
-                      onChange={(val) => handleAssign(val, c.id)}
-                    />
+                    <div>
+                      <Select
+                        label="Add stone to collection"
+                        labelHidden
+                        options={[{ label: "Add stone...", value: "" }, ...filteredProducts.map(p => ({ label: p.title, value: p.id }))]}
+                        value=""
+                        onChange={(val) => handleAssign(val, c.id)}
+                      />
+                    </div>
 
                     {/* DELETE — column 3 */}
-                    <Button size="micro" tone="critical" onClick={() => setDeleteTarget(c)}>
-                      Delete
-                    </Button>
+                    <div>
+                      <Button size="micro" tone="critical" onClick={() => setDeleteTarget(c)}>
+                        Delete
+                      </Button>
+                    </div>
                   </div>
 
                   {/* EXPANDED STONE LIST */}
@@ -221,6 +231,8 @@ export default function CollectionsTab({ products = [], collections = [], onBack
           </InlineStack>
 
           <TextField
+            label="Search stones"
+            labelHidden
             value={searchQuery}
             onChange={setSearchQuery}
             placeholder="Search stones by name..."
@@ -234,9 +246,9 @@ export default function CollectionsTab({ products = [], collections = [], onBack
 
           <div style={{ display: "grid", gridTemplateColumns: "2fr 2fr 1fr", gap: "12px", padding: "0 4px" }}
             className="hide-on-mobile">
-            <Text variant="bodySm" fontWeight="bold" tone="subdued">STONE</Text>
-            <Text variant="bodySm" fontWeight="bold" tone="subdued">COLLECTIONS</Text>
-            <Text variant="bodySm" fontWeight="bold" tone="subdued">ADD TO</Text>
+            <div><Text variant="bodySm" fontWeight="bold" tone="subdued">STONE</Text></div>
+            <div><Text variant="bodySm" fontWeight="bold" tone="subdued">COLLECTIONS</Text></div>
+            <div><Text variant="bodySm" fontWeight="bold" tone="subdued">ADD TO</Text></div>
           </div>
 
           <Divider />
@@ -263,7 +275,11 @@ export default function CollectionsTab({ products = [], collections = [], onBack
                   >
                     <div style={{ display: "grid", gridTemplateColumns: "2fr 2fr 1fr", gap: "12px", alignItems: "center" }}
                       className="desktop-row">
-                      <Text fontWeight="semibold" truncate>{p.title}</Text>
+                      
+                      <div>
+                        <Text fontWeight="semibold" truncate>{p.title}</Text>
+                      </div>
+                      
                       <div style={{ display: "flex", flexWrap: "wrap", gap: "4px" }}>
                         {stoneCols.length > 0
                           ? stoneCols.map(c => (
@@ -272,11 +288,17 @@ export default function CollectionsTab({ products = [], collections = [], onBack
                           : <Text variant="bodyXs" tone="subdued">No Collections</Text>
                         }
                       </div>
-                      <Select
-                        options={[{ label: "Add to...", value: "" }, ...filteredCollections.map(c => ({ label: c.title, value: c.id }))]}
-                        value=""
-                        onChange={(val) => handleAssign(p.id, val)}
-                      />
+
+                      <div>
+                        <Select
+                          label="Assign to collection"
+                          labelHidden
+                          options={[{ label: "Add to...", value: "" }, ...filteredCollections.map(c => ({ label: c.title, value: c.id }))]}
+                          value=""
+                          onChange={(val) => handleAssign(p.id, val)}
+                        />
+                      </div>
+                      
                     </div>
                   </div>
                 );
