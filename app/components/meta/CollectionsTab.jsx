@@ -1,14 +1,14 @@
 import { useState } from "react";
 import { useFetcher } from "react-router";
 import { Card, TextField, Text, BlockStack, InlineStack, Button, Select, Box, Divider, Banner, Grid, Badge, Icon, Tag } from "@shopify/polaris";
-import { FolderIcon, SearchIcon } from "@shopify/polaris-icons";
+import { FolderIcon, SearchIcon, ChevronDownIcon, ChevronUpIcon } from "@shopify/polaris-icons";
 
 export default function CollectionsTab({ products = [], collections = [], onBack }) {
   const fetcher = useFetcher();
   const [newCollTitle, setNewCollTitle] = useState("");
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedCollection, setSelectedCollection] = useState(null);
+  const [expandedCollection, setExpandedCollection] = useState(null);
 
   const filteredCollections = collections.filter(c =>
     c.title.toLowerCase() !== "all collections"
@@ -43,13 +43,6 @@ export default function CollectionsTab({ products = [], collections = [], onBack
     fd.append("collectionId", collectionId);
     fetcher.submit(fd, { method: "post", action: "/app/collection-manager" });
   };
-
-  // Stones in the selected collection
-  const stonesInSelected = selectedCollection
-    ? products.filter(p =>
-        (p.currentCollections ?? []).some(c => c.id === selectedCollection.id)
-      )
-    : [];
 
   return (
     <BlockStack gap="500">
@@ -102,45 +95,95 @@ export default function CollectionsTab({ products = [], collections = [], onBack
                     <Text tone="subdued" alignment="center">No collections yet.</Text>
                   </Box>
                 )}
-                <BlockStack gap="200">
+                <BlockStack gap="0">
                   {filteredCollections.map((c) => {
-                    const isSelected = selectedCollection?.id === c.id;
-                    const stoneCount = products.filter(p =>
+                    const isExpanded = expandedCollection === c.id;
+                    const stonesInCollection = products.filter(p =>
                       (p.currentCollections ?? []).some(col => col.id === c.id)
-                    ).length;
+                    );
+                    const stoneCount = stonesInCollection.length;
                     return (
-                      <Box
-                        key={c.id}
-                        padding="200"
-                        background={isSelected ? "bg-surface-selected" : "bg-surface-secondary"}
-                        borderRadius="100"
-                        borderColor={isSelected ? "border-focus" : "border"}
-                        borderWidth="025"
-                      >
-                        <InlineStack align="space-between" blockAlign="center" wrap={false}>
-                          <button
-                            onClick={() => setSelectedCollection(isSelected ? null : c)}
-                            style={{
-                              background: "none",
-                              border: "none",
-                              cursor: "pointer",
-                              padding: 0,
-                              flex: 1,
-                              textAlign: "left",
-                            }}
+                      <Box key={c.id}>
+                        {/* Collection Row */}
+                        <Box
+                          padding="200"
+                          background={isExpanded ? "bg-surface-selected" : "bg-surface-secondary"}
+                          borderColor="border"
+                          borderWidth="025"
+                        >
+                          <InlineStack align="space-between" blockAlign="center" wrap={false}>
+                            <button
+                              onClick={() => setExpandedCollection(isExpanded ? null : c.id)}
+                              style={{
+                                background: "none",
+                                border: "none",
+                                cursor: "pointer",
+                                padding: 0,
+                                flex: 1,
+                                textAlign: "left",
+                              }}
+                            >
+                              <InlineStack gap="200" wrap={false} blockAlign="center">
+                                <Icon source={isExpanded ? ChevronUpIcon : ChevronDownIcon} tone="base" />
+                                <Icon source={FolderIcon} tone={isExpanded ? "emphasis" : "base"} />
+                                <BlockStack gap="0">
+                                  <Text variant="bodyMd" fontWeight="bold">{c.title}</Text>
+                                  <Text variant="bodyXs" tone="subdued">{stoneCount} stone{stoneCount !== 1 ? "s" : ""}</Text>
+                                </BlockStack>
+                              </InlineStack>
+                            </button>
+                            <Button size="micro" tone="critical" onClick={() => setDeleteTarget(c)}>
+                              Delete
+                            </Button>
+                          </InlineStack>
+                        </Box>
+
+                        {/* Inline Expanded Stone List */}
+                        {isExpanded && (
+                          <Box
+                            padding="200"
+                            background="bg-surface"
+                            borderColor="border"
+                            borderWidth="025"
                           >
-                            <InlineStack gap="200" wrap={false} blockAlign="center">
-                              <Icon source={FolderIcon} tone={isSelected ? "emphasis" : "base"} />
+                            {stonesInCollection.length === 0 ? (
+                              <Text tone="subdued" variant="bodyXs">No stones in this collection.</Text>
+                            ) : (
                               <BlockStack gap="0">
-                                <Text variant="bodyMd" fontWeight="bold" truncate>{c.title}</Text>
-                                <Text variant="bodyXs" tone="subdued">{stoneCount} stone{stoneCount !== 1 ? "s" : ""}</Text>
+                                {stonesInCollection.map((p, index) => (
+                                  <div
+                                    key={p.id}
+                                    style={{
+                                      display: "flex",
+                                      justifyContent: "space-between",
+                                      alignItems: "center",
+                                      padding: "6px 4px",
+                                      borderBottom: index !== stonesInCollection.length - 1 ? "1px solid #e1e3e5" : "none",
+                                    }}
+                                  >
+                                    <Text variant="bodyXs" fontWeight="semibold" alignment="end" style={{ flex: 1, textAlign: "right", paddingRight: "8px" }}>{p.title}</Text>
+                                    <button
+                                      onClick={() => handleRemove(p.id, c.id)}
+                                      style={{
+                                        background: "none",
+                                        border: "none",
+                                        cursor: "pointer",
+                                        color: "#d72c0d",
+                                        fontWeight: "bold",
+                                        fontSize: "14px",
+                                        padding: "0 4px",
+                                        flexShrink: 0,
+                                      }}
+                                      title="Remove from collection"
+                                    >
+                                      ✕
+                                    </button>
+                                  </div>
+                                ))}
                               </BlockStack>
-                            </InlineStack>
-                          </button>
-                          <Button size="micro" tone="critical" onClick={() => setDeleteTarget(c)}>
-                            Delete
-                          </Button>
-                        </InlineStack>
+                            )}
+                          </Box>
+                        )}
                       </Box>
                     );
                   })}
@@ -159,7 +202,7 @@ export default function CollectionsTab({ products = [], collections = [], onBack
                       fd.append("id", deleteTarget.id);
                       fetcher.submit(fd, { method: "post", action: "/app/collection-manager" });
                       setDeleteTarget(null);
-                      if (selectedCollection?.id === deleteTarget.id) setSelectedCollection(null);
+                      if (expandedCollection === deleteTarget.id) setExpandedCollection(null);
                     }}>Yes, Delete</Button>
                     <Button onClick={() => setDeleteTarget(null)}>Cancel</Button>
                   </InlineStack>
@@ -169,55 +212,8 @@ export default function CollectionsTab({ products = [], collections = [], onBack
           </BlockStack>
         </Grid.Cell>
 
-        {/* RIGHT: Collection Detail OR Assign Stones */}
+        {/* RIGHT: Assign Stones */}
         <Grid.Cell columnSpan={{ xs: 6, sm: 6, md: 8, lg: 8 }}>
-
-          {/* COLLECTION DETAIL VIEW */}
-          {selectedCollection ? (
-            <Card roundedAbove="sm">
-              <BlockStack gap="400">
-                <InlineStack align="space-between" blockAlign="center">
-                  <BlockStack gap="0">
-                    <Text variant="headingMd">📁 {selectedCollection.title}</Text>
-                    <Text variant="bodySm" tone="subdued">{stonesInSelected.length} stone{stonesInSelected.length !== 1 ? "s" : ""} in this collection</Text>
-                  </BlockStack>
-                  <Button onClick={() => setSelectedCollection(null)}>✕ Close</Button>
-                </InlineStack>
-                <Divider />
-                {stonesInSelected.length === 0 ? (
-                  <Box paddingBlock="400">
-                    <Text tone="subdued" alignment="center">No stones in this collection yet.</Text>
-                  </Box>
-                ) : (
-                  <BlockStack gap="0">
-                    {stonesInSelected.map((p, index) => (
-                      <div
-                        key={p.id}
-                        style={{
-                          padding: "12px 4px",
-                          borderBottom: index !== stonesInSelected.length - 1 ? "1px solid #e1e3e5" : "none",
-                        }}
-                      >
-                        <InlineStack align="space-between" blockAlign="center" wrap={false}>
-                          <Text fontWeight="semibold">{p.title}</Text>
-                          <Button
-                            size="micro"
-                            tone="critical"
-                            onClick={() => handleRemove(p.id, selectedCollection.id)}
-                            loading={fetcher.state === "submitting" && fetcher.formData?.get("productId") === p.id}
-                          >
-                            ✕ Remove
-                          </Button>
-                        </InlineStack>
-                      </div>
-                    ))}
-                  </BlockStack>
-                )}
-              </BlockStack>
-            </Card>
-          ) : (
-
-          /* ASSIGN STONES VIEW */
           <Card roundedAbove="sm">
             <BlockStack gap="400">
               <InlineStack align="space-between" blockAlign="center">
@@ -290,7 +286,6 @@ export default function CollectionsTab({ products = [], collections = [], onBack
               </Box>
             </BlockStack>
           </Card>
-          )}
         </Grid.Cell>
       </Grid>
 
