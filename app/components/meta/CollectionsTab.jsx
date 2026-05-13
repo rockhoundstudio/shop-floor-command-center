@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useFetcher } from "react-router";
-import { Card, TextField, Text, BlockStack, InlineStack, Button, Select, Box, Divider, Banner, Grid, Badge, Icon, Tag } from "@shopify/polaris";
+import { Card, TextField, Text, BlockStack, InlineStack, Button, Select, Box, Divider, Banner, Grid, Badge, Icon, Tag, Modal } from "@shopify/polaris";
 import { SearchIcon } from "@shopify/polaris-icons";
 
 export default function CollectionsTab({ products = [], collections = [], onBack }) {
@@ -44,6 +44,15 @@ export default function CollectionsTab({ products = [], collections = [], onBack
     fetcher.submit(fd, { method: "post", action: "/app/collection-manager" });
   };
 
+  const handleDeleteConfirm = () => {
+    const fd = new FormData();
+    fd.append("intent", "deleteCollection");
+    fd.append("id", deleteTarget.id);
+    fetcher.submit(fd, { method: "post", action: "/app/collection-manager" });
+    if (expandedCollection === deleteTarget.id) setExpandedCollection(null);
+    setDeleteTarget(null);
+  };
+
   return (
     <BlockStack gap="500">
       <InlineStack align="start">
@@ -53,6 +62,26 @@ export default function CollectionsTab({ products = [], collections = [], onBack
       {fetcher.data?.ok && fetcher.state === "idle" && (
         <Banner tone="success">Action completed successfully.</Banner>
       )}
+
+      {/* DELETE CONFIRMATION MODAL */}
+      <Modal
+        open={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        title="Delete Collection?"
+        primaryAction={{
+          content: "Yes, Delete",
+          destructive: true,
+          onAction: handleDeleteConfirm,
+        }}
+        secondaryActions={[{
+          content: "Cancel",
+          onAction: () => setDeleteTarget(null),
+        }]}
+      >
+        <Modal.Section>
+          <Text>Delete <strong>{deleteTarget?.title}</strong>? Your stones stay safe — they just leave this collection.</Text>
+        </Modal.Section>
+      </Modal>
 
       <Grid>
         {/* LEFT: Manage Collections */}
@@ -112,7 +141,6 @@ export default function CollectionsTab({ products = [], collections = [], onBack
                           borderWidth="025"
                         >
                           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%" }}>
-                            {/* LEFT: caret + title stack */}
                             <button
                               onClick={() => setExpandedCollection(isExpanded ? null : c.id)}
                               style={{
@@ -133,7 +161,6 @@ export default function CollectionsTab({ products = [], collections = [], onBack
                                 <div style={{ fontSize: "11px", color: "#6d7175" }}>{stoneCount} stone{stoneCount !== 1 ? "s" : ""}</div>
                               </div>
                             </button>
-                            {/* RIGHT: delete */}
                             <Button size="micro" tone="critical" onClick={() => setDeleteTarget(c)}>
                               Delete
                             </Button>
@@ -186,25 +213,6 @@ export default function CollectionsTab({ products = [], collections = [], onBack
                 </BlockStack>
               </BlockStack>
             </Card>
-
-            {deleteTarget && (
-              <Banner tone="critical">
-                <BlockStack gap="200">
-                  <Text>Delete <strong>{deleteTarget.title}</strong>? Keeps your stones safe.</Text>
-                  <InlineStack gap="200">
-                    <Button tone="critical" variant="primary" onClick={() => {
-                      const fd = new FormData();
-                      fd.append("intent", "deleteCollection");
-                      fd.append("id", deleteTarget.id);
-                      fetcher.submit(fd, { method: "post", action: "/app/collection-manager" });
-                      if (expandedCollection === deleteTarget.id) setExpandedCollection(null);
-                      setDeleteTarget(null);
-                    }}>Yes, Delete</Button>
-                    <Button onClick={() => setDeleteTarget(null)}>Cancel</Button>
-                  </InlineStack>
-                </BlockStack>
-              </Banner>
-            )}
           </BlockStack>
         </Grid.Cell>
 
