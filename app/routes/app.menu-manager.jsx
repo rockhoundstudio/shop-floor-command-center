@@ -158,14 +158,85 @@ export default function MenuManager() {
     setScanned(false);
   };
 
+  const handleAddSubLink = (parentId) => {
+    setMenuItems(prev => prev.map(item => {
+      if (item.id === parentId) {
+        return {
+          ...item,
+          items: [...(item.items || []), { id: Math.random().toString(), title: "New Sub-link", url: "" }]
+        };
+      }
+      return item;
+    }));
+    setScanned(false);
+  };
+
   const handleUpdateLink = (id, field, value) => {
     setMenuItems(prev => prev.map(item => item.id === id ? { ...item, [field]: value } : item));
+    setScanned(false);
+  };
+
+  const handleUpdateSubLink = (parentId, childId, field, value) => {
+    setMenuItems(prev => prev.map(item => {
+      if (item.id === parentId) {
+        return {
+          ...item,
+          items: (item.items || []).map(child => child.id === childId ? { ...child, [field]: value } : child)
+        };
+      }
+      return item;
+    }));
     setScanned(false);
   };
 
   const handleDeleteLink = (e, id) => {
     e.stopPropagation();
     setMenuItems(prev => prev.filter(item => item.id !== id));
+  };
+
+  const handleDeleteSubLink = (e, parentId, childId) => {
+    e.stopPropagation();
+    setMenuItems(prev => prev.map(item => {
+      if (item.id === parentId) {
+        return { ...item, items: (item.items || []).filter(child => child.id !== childId) };
+      }
+      return item;
+    }));
+  };
+
+  const handleMoveLink = (e, index, direction) => {
+    e.stopPropagation();
+    const newItems = [...menuItems];
+    if (direction === "up" && index > 0) {
+      [newItems[index - 1], newItems[index]] = [newItems[index], newItems[index - 1]];
+    } else if (direction === "down" && index < newItems.length - 1) {
+      [newItems[index], newItems[index + 1]] = [newItems[index + 1], newItems[index]];
+    }
+    setMenuItems(newItems);
+  };
+
+  const handleMoveSubLink = (e, parentIndex, childIndex, direction) => {
+    e.stopPropagation();
+    const newItems = [...menuItems];
+    const parent = { ...newItems[parentIndex] };
+    const children = [...(parent.items || [])];
+    if (direction === "up" && childIndex > 0) {
+      [children[childIndex - 1], children[childIndex]] = [children[childIndex], children[childIndex - 1]];
+    } else if (direction === "down" && childIndex < children.length - 1) {
+      [children[childIndex], children[childIndex + 1]] = [children[childIndex + 1], children[childIndex]];
+    }
+    parent.items = children;
+    newItems[parentIndex] = parent;
+    setMenuItems(newItems);
+  };
+
+  const handleFixIt = (e, id) => {
+    e.stopPropagation();
+    const el = document.getElementById(`quick-select-${id}`);
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      el.focus();
+    }
   };
 
   const handleScan = () => setScanned(true);
@@ -190,9 +261,13 @@ export default function MenuManager() {
   };
 
   const autoCleanDeadLinks = () => {
-    setMenuItems(prev => prev.filter(item =>
-      getDestinationStatus(item.url, liveCollectionHandles, livePageHandles) !== "dead"
-    ));
+    setMenuItems(prev => prev
+      .map(item => ({
+        ...item,
+        items: (item.items || []).filter(child => getDestinationStatus(child.url, liveCollectionHandles, livePageHandles) !== "dead")
+      }))
+      .filter(item => getDestinationStatus(item.url, liveCollectionHandles, livePageHandles) !== "dead" || (item.items && item.items.length > 0))
+    );
     setScanned(true);
   };
 
@@ -209,6 +284,22 @@ export default function MenuManager() {
   const activeCounts = scanned && activeMenu
     ? countByStatus(menuItems, liveCollectionHandles, livePageHandles)
     : null;
+
+  let orphanedCollections = [];
+  if (scanned && activeMenu) {
+    const activeUrls = new Set();
+    menuItems.forEach(item => {
+      activeUrls.add(item.url);
+      (item.items || []).forEach(child => activeUrls.add(child.url));
+    });
+    orphanedCollections = collections.filter(c => !activeUrls.has(`/collections/${c.handle}`));
+  }
+
+  const actionBtnStyle = {
+    background: "none", border: "none", cursor: "pointer",
+    fontSize: "16px", padding: "4px 8px", color: "#5c5f62"
+  };
+  const deleteBtnStyle = { ...actionBtnStyle, color: "#d72c0d" };
 
   return (
     <Page
@@ -298,6 +389,19 @@ export default function MenuManager() {
                 </Banner>
               )}
 
+              {scanned && orphanedCollections.length > 0 && (
+                <Card>
+                  <BlockStack gap="300">
+                    <Text variant="headingSm" tone="critical">Orphaned Collections — not in this menu</Text>
+                    <InlineStack gap="200" wrap>
+                      {orphanedCollections.map(c => (
+                        <Badge key={c.id} tone="warning">{c.title}</Badge>
+                      ))}
+                    </InlineStack>
+                  </BlockStack>
+                </Card>
+              )}
+
               <Card>
                 <BlockStack gap="300">
                   <Text variant="headingSm">✨ Quick Actions</Text>
@@ -325,67 +429,134 @@ export default function MenuManager() {
                         <Button icon={PlusIcon} variant="primary" onClick={handleAddLink}>Add Link</Button>
                       </InlineStack>
 
-                      {menuItems.map((item) => {
+                      {menuItems.map((item, index) => {
                         const status = scanned
                           ? getDestinationStatus(item.url, liveCollectionHandles, livePageHandles)
                           : null;
+                        
                         return (
                           <Card key={item.id} background="bg-surface">
-                            <BlockStack gap="200">
-                              <InlineStack align="space-between" blockAlign="center">
-                                {status
-                                  ? <StatusBadge status={status} />
-                                  : <Badge tone="info">Not scanned</Badge>
-                                }
-                                <button
-                                  onClick={(e) => handleDeleteLink(e, item.id)}
-                                  style={{
-                                    background: "none",
-                                    border: "none",
-                                    cursor: "pointer",
-                                    color: "#d72c0d",
-                                    fontSize: "18px",
-                                    lineHeight: 1,
-                                    padding: "4px 8px"
-                                  }}
-                                  title="Delete link"
-                                >
-                                  ✕
-                                </button>
-                              </InlineStack>
-                              <InlineStack blockAlign="end" gap="300" wrap>
-                                <div style={{ flex: 1, minWidth: "140px" }}>
-                                  <TextField
-                                    label="Display Name"
-                                    value={item.title}
-                                    onChange={(v) => handleUpdateLink(item.id, "title", v)}
-                                    autoComplete="off"
-                                  />
-                                </div>
-                                <div style={{ flex: 1, minWidth: "180px" }}>
-                                  <Select
-                                    label="Quick Select"
-                                    options={linkOptions}
-                                    value={linkOptions.find(o => o.value === item.url) ? item.url : "custom"}
-                                    onChange={(v) => v !== "custom" && handleUpdateLink(item.id, "url", v)}
-                                  />
-                                </div>
-                                <div style={{ flex: 1, minWidth: "180px" }}>
-                                  <TextField
-                                    label="URL Path"
-                                    value={item.url}
-                                    onChange={(v) => handleUpdateLink(item.id, "url", v)}
-                                    autoComplete="off"
-                                    error={
-                                      scanned && status === "dead"
-                                        ? "Dead link — destination not found"
-                                        : scanned && status === "draft"
-                                        ? "Page may be unpublished"
-                                        : undefined
-                                    }
-                                  />
-                                </div>
-                              </InlineStack>
+                            <BlockStack gap="300">
+                              
+                              {/* PARENT LINK */}
+                              <BlockStack gap="200">
+                                <InlineStack align="space-between" blockAlign="center">
+                                  <InlineStack gap="200" blockAlign="center">
+                                    {status ? <StatusBadge status={status} /> : <Badge tone="info">Not scanned</Badge>}
+                                    {status === "dead" && (
+                                      <Button size="micro" onClick={(e) => handleFixIt(e, item.id)}>Fix It</Button>
+                                    )}
+                                  </InlineStack>
+                                  <div style={{ display: "flex", gap: "4px", alignItems: "center" }}>
+                                    <button disabled={index === 0} onClick={(e) => handleMoveLink(e, index, "up")} style={actionBtnStyle} title="Move Up">↑</button>
+                                    <button disabled={index === menuItems.length - 1} onClick={(e) => handleMoveLink(e, index, "down")} style={actionBtnStyle} title="Move Down">↓</button>
+                                    <button onClick={(e) => handleDeleteLink(e, item.id)} style={deleteBtnStyle} title="Delete link">✕</button>
+                                  </div>
+                                </InlineStack>
+                                
+                                <InlineStack blockAlign="end" gap="300" wrap>
+                                  <div style={{ flex: 1, minWidth: "140px" }}>
+                                    <TextField
+                                      label="Display Name"
+                                      value={item.title}
+                                      onChange={(v) => handleUpdateLink(item.id, "title", v)}
+                                      autoComplete="off"
+                                    />
+                                  </div>
+                                  <div style={{ flex: 1, minWidth: "180px" }}>
+                                    <Select
+                                      id={`quick-select-${item.id}`}
+                                      label="Quick Select"
+                                      options={linkOptions}
+                                      value={linkOptions.find(o => o.value === item.url) ? item.url : "custom"}
+                                      onChange={(v) => v !== "custom" && handleUpdateLink(item.id, "url", v)}
+                                    />
+                                  </div>
+                                  <div style={{ flex: 1, minWidth: "180px" }}>
+                                    <TextField
+                                      label="URL Path"
+                                      value={item.url}
+                                      onChange={(v) => handleUpdateLink(item.id, "url", v)}
+                                      autoComplete="off"
+                                      error={
+                                        scanned && status === "dead"
+                                          ? "Dead link — destination not found"
+                                          : scanned && status === "draft"
+                                          ? "Page may be unpublished"
+                                          : undefined
+                                      }
+                                    />
+                                  </div>
+                                </InlineStack>
+                              </BlockStack>
+
+                              {/* SUB-LINKS SECTION */}
+                              <Box paddingInlineStart="400" borderWidth="0" borderInlineStartWidth="025" borderColor="border">
+                                <BlockStack gap="400">
+                                  {(item.items || []).map((child, childIndex) => {
+                                    const childStatus = scanned
+                                      ? getDestinationStatus(child.url, liveCollectionHandles, livePageHandles)
+                                      : null;
+
+                                    return (
+                                      <BlockStack key={child.id} gap="200">
+                                        <InlineStack align="space-between" blockAlign="center">
+                                          <InlineStack gap="200" blockAlign="center">
+                                            {childStatus ? <StatusBadge status={childStatus} /> : <Badge tone="info">Not scanned</Badge>}
+                                            {childStatus === "dead" && (
+                                              <Button size="micro" onClick={(e) => handleFixIt(e, child.id)}>Fix It</Button>
+                                            )}
+                                          </InlineStack>
+                                          <div style={{ display: "flex", gap: "4px", alignItems: "center" }}>
+                                            <button disabled={childIndex === 0} onClick={(e) => handleMoveSubLink(e, index, childIndex, "up")} style={actionBtnStyle} title="Move Up">↑</button>
+                                            <button disabled={childIndex === (item.items || []).length - 1} onClick={(e) => handleMoveSubLink(e, index, childIndex, "down")} style={actionBtnStyle} title="Move Down">↓</button>
+                                            <button onClick={(e) => handleDeleteSubLink(e, item.id, child.id)} style={deleteBtnStyle} title="Delete sub-link">✕</button>
+                                          </div>
+                                        </InlineStack>
+                                        
+                                        <InlineStack blockAlign="end" gap="300" wrap>
+                                          <div style={{ flex: 1, minWidth: "140px" }}>
+                                            <TextField
+                                              label="Sub-link Name"
+                                              value={child.title}
+                                              onChange={(v) => handleUpdateSubLink(item.id, child.id, "title", v)}
+                                              autoComplete="off"
+                                            />
+                                          </div>
+                                          <div style={{ flex: 1, minWidth: "180px" }}>
+                                            <Select
+                                              id={`quick-select-${child.id}`}
+                                              label="Quick Select"
+                                              options={linkOptions}
+                                              value={linkOptions.find(o => o.value === child.url) ? child.url : "custom"}
+                                              onChange={(v) => v !== "custom" && handleUpdateSubLink(item.id, child.id, "url", v)}
+                                            />
+                                          </div>
+                                          <div style={{ flex: 1, minWidth: "180px" }}>
+                                            <TextField
+                                              label="URL Path"
+                                              value={child.url}
+                                              onChange={(v) => handleUpdateSubLink(item.id, child.id, "url", v)}
+                                              autoComplete="off"
+                                              error={
+                                                scanned && childStatus === "dead"
+                                                  ? "Dead link — destination not found"
+                                                  : scanned && childStatus === "draft"
+                                                  ? "Page may be unpublished"
+                                                  : undefined
+                                              }
+                                            />
+                                          </div>
+                                        </InlineStack>
+                                      </BlockStack>
+                                    );
+                                  })}
+                                  <InlineStack>
+                                    <Button size="micro" icon={PlusIcon} onClick={() => handleAddSubLink(item.id)}>Add Sub-link</Button>
+                                  </InlineStack>
+                                </BlockStack>
+                              </Box>
+
                             </BlockStack>
                           </Card>
                         );
