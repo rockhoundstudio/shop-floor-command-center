@@ -3,49 +3,33 @@ import { useLoaderData, useFetcher, data } from "react-router";
 import { authenticate } from "../shopify.server";
 import {
   Page, Layout, Card, Text, BlockStack, InlineStack, Button,
-  TextField, Badge, Banner, Box, Icon, Select
+  TextField, Badge, Banner, Box, Icon, Select, Divider
 } from "@shopify/polaris";
-import { PlusIcon, DeleteIcon, AlertTriangleIcon, CheckCircleIcon, MagicIcon } from "@shopify/polaris-icons";
+import {
+  PlusIcon, DeleteIcon, AlertTriangleIcon, CheckCircleIcon, MagicIcon
+} from "@shopify/polaris-icons";
 
-// ── GID MAP ────────────────────────────────────────────────────────────────
-const MENU_GID = "gid://shopify/Menu/252615295227";
-
-const MENU_ITEM_GIDS = {
-  "gid://shopify/MenuItem/619586322683": { title: "all collections",             url: "/collections/all-collections" },
-  "gid://shopify/MenuItem/619586355451": { title: "Touch Stones & Mile Stones",  url: "/collections/memorials" },
-  "gid://shopify/MenuItem/619586388219": { title: "Small Batches / The Vault",   url: "/collections/small-batches-the-vault" },
-  "gid://shopify/MenuItem/619586420987": { title: "Wearable Art",                url: "/collections/wearable-art" },
-  "gid://shopify/MenuItem/619586453755": { title: "The Yakima Canyon Collection", url: "/collections/yakima-canyon" },
-  "gid://shopify/MenuItem/619586486523": { title: "The Gallery",                 url: "/collections/the-gallery" },
-  "gid://shopify/MenuItem/619586519291": { title: "Richardson's Rock Ranch",     url: "/collections/richardsons-rock-ranch" },
-  "gid://shopify/MenuItem/619586552059": { title: "The 3,000-Mile Run",          url: "/collections/the-3-000-mile-run-1" },
-  "gid://shopify/MenuItem/619586584827": { title: "Home",                        url: "/" },
-};
-
-const COLLECTION_GIDS = {
-  "gid://shopify/Collection/452654924027": { title: "all collections",             handle: "all-collections" },
-  "gid://shopify/Collection/452655775995": { title: "Touch Stones & Mile Stones",  handle: "memorials" },
-  "gid://shopify/Collection/452658528507": { title: "Small Batches / The Vault",   handle: "small-batches-the-vault" },
-  "gid://shopify/Collection/452823482619": { title: "Wearable Art",                handle: "wearable-art" },
-  "gid://shopify/Collection/452884922619": { title: "The Yakima Canyon Collection", handle: "yakima-canyon" },
-  "gid://shopify/Collection/452886495483": { title: "The Gallery",                 handle: "the-gallery" },
-  "gid://shopify/Collection/452912972027": { title: "Richardson's Rock Ranch",     handle: "richardsons-rock-ranch" },
-  "gid://shopify/Collection/452913135867": { title: "The 3,000-Mile Run",          handle: "the-3-000-mile-run-1" },
-};
-// ── END GID MAP ────────────────────────────────────────────────────────────
-
+// ── LOADER ─────────────────────────────────────────────────────────────────
 export const loader = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
   try {
     const res = await admin.graphql(`
       query {
         menus(first: 50) {
-          edges { node { id title handle items { id title url type items { id title url type } } } }
+          edges {
+            node {
+              id title handle
+              items {
+                id title url type
+                items { id title url type }
+              }
+            }
+          }
         }
-        collections(first: 100) {
+        collections(first: 250) {
           edges { node { id title handle } }
         }
-        pages(first: 50) {
+        pages(first: 100) {
           edges { node { id title handle } }
         }
       }
@@ -54,12 +38,18 @@ export const loader = async ({ request }) => {
     const menus = (json.data?.menus?.edges || []).map(e => e.node);
     const collections = (json.data?.collections?.edges || []).map(e => e.node);
     const pages = (json.data?.pages?.edges || []).map(e => e.node);
-    return data({ menus, collections, pages });
+
+    // Build live destination sets for governance checks
+    const liveCollectionHandles = new Set(collections.map(c => c.handle));
+    const livePageHandles = new Set(pages.map(p => p.handle));
+
+    return data({ menus, collections, pages, liveCollectionHandles: [...liveCollectionHandles], livePageHandles: [...livePageHandles] });
   } catch (error) {
-    return data({ menus: [], collections: [], pages: [] });
+    return data({ menus: [], collections: [], pages: [], liveCollectionHandles: [], livePageHandles: [] });
   }
 };
 
+// ── ACTION ─────────────────────────────────────────────────────────────────
 export const action = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
   const formData = await request.formData();
@@ -82,54 +72,101 @@ export const action = async ({ request }) => {
 
     const res = await admin.graphql(`
       mutation menuUpdate($id: ID!, $title: String!, $handle: String!, $items: [MenuItemUpdateInput!]!) {
-        menuUpdate(id: $id, title: $title, handle: $handle, items: $items) { userErrors { message } }
+        menuUpdate(id: $id, title: $title, handle: $handle, items: $items) {
+          userErrors { message }
+        }
       }
     `, { variables: { id, title, handle, items } });
 
     const json = await res.json();
     if (json.data?.menuUpdate?.userErrors?.length)
       return data({ ok: false, error: json.data.menuUpdate.userErrors[0].message });
-    return data({ ok: true, message: "Menu Saved Successfully!" });
+    return data({ ok: true, message: "Menu saved successfully!" });
   }
   return data({ ok: false });
 };
 
+// ── HELPERS ────────────────────────────────────────────────────────────────
+function getDestinationStatus(url, liveCollectionHandles, livePageHandles) {
+  if (!url || url.trim() === "" || url === "#") return "dead";
+  if (url === "/" || url === "/collections/all") return "live";
+
+  const collMatch = url.match(/^\/collections\/(.+)$/);
+  if (collMatch) {
+    return liveCollectionHandles.includes(collMatch[1]) ? "live" : "dead";
+  }
+
+  const pageMatch = url.match(/^\/pages\/(.+)$/);
+  if (pageMatch) {
+    return livePageHandles.includes(pageMatch[1]) ? "live" : "draft";
+  }
+
+  if (url.startsWith("http")) return "external";
+  return "unknown";
+}
+
+function StatusBadge({ status }) {
+  const map = {
+    live:     { tone: "success",  label: "🟢 Live" },
+    draft:    { tone: "warning",  label: "🟡 Draft / Unverified" },
+    dead:     { tone: "critical", label: "🔴 Dead" },
+    external: { tone: "info",     label: "🔗 External" },
+    unknown:  { tone: "warning",  label: "⚠️ Unknown" },
+  };
+  const { tone, label } = map[status] || map.unknown;
+  return <Badge tone={tone}>{label}</Badge>;
+}
+
+function countByStatus(items, liveCollectionHandles, livePageHandles) {
+  let live = 0, draft = 0, dead = 0;
+  items.forEach(item => {
+    const s = getDestinationStatus(item.url, liveCollectionHandles, livePageHandles);
+    if (s === "live" || s === "external") live++;
+    else if (s === "draft" || s === "unknown") draft++;
+    else dead++;
+    // check children too
+    (item.items || []).forEach(child => {
+      const cs = getDestinationStatus(child.url, liveCollectionHandles, livePageHandles);
+      if (cs === "live" || cs === "external") live++;
+      else if (cs === "draft" || cs === "unknown") draft++;
+      else dead++;
+    });
+  });
+  return { live, draft, dead };
+}
+
+// ── COMPONENT ──────────────────────────────────────────────────────────────
 export default function MenuManager() {
-  const { menus, collections, pages } = useLoaderData();
+  const { menus, collections, pages, liveCollectionHandles, livePageHandles } = useLoaderData();
   const fetcher = useFetcher();
 
   const [activeMenu, setActiveMenu] = useState(null);
   const [menuItems, setMenuItems] = useState([]);
   const [menuTitle, setMenuTitle] = useState("");
   const [scanned, setScanned] = useState(false);
-
-  const resolveItemGidLabel = (id) => MENU_ITEM_GIDS[id] ? "✅ GID Matched" : "⚠️ No GID";
+  const [globalScan, setGlobalScan] = useState(null); // { menuId -> { live, draft, dead } }
 
   const linkOptions = [
     { label: "✏️ Type Custom Link...", value: "custom" },
     { label: "🏠 Home Page", value: "/" },
     { label: "🛍️ All Products", value: "/collections/all" },
-    ...Object.values(COLLECTION_GIDS).map(c => ({
-      label: `📦 Collection: ${c.title}`,
-      value: `/collections/${c.handle}`
-    })),
-    ...pages.map(p => ({ label: `📄 Page: ${p.title}`, value: `/pages/${p.handle}` }))
+    ...collections.map(c => ({ label: `📦 ${c.title}`, value: `/collections/${c.handle}` })),
+    ...pages.map(p => ({ label: `📄 ${p.title}`, value: `/pages/${p.handle}` }))
   ];
 
   const handleSelectMenu = (menu) => {
     setActiveMenu(menu);
     setMenuTitle(menu.title);
-    const parsedItems = menu.items.map(item => ({
+    setMenuItems(menu.items.map(item => ({
       id: item.id || Math.random().toString(),
       title: item.title,
       url: item.url || "",
-      items: item.items ? item.items.map(child => ({
+      items: (item.items || []).map(child => ({
         id: child.id || Math.random().toString(),
         title: child.title,
         url: child.url || ""
-      })) : []
-    }));
-    setMenuItems(parsedItems);
+      }))
+    })));
     setScanned(false);
   };
 
@@ -145,18 +182,21 @@ export default function MenuManager() {
 
   const handleDeleteLink = (id) => {
     setMenuItems(menuItems.filter(item => item.id !== id));
+    setScanned(false);
   };
 
   const handleScan = () => setScanned(true);
 
-  const verifyUrl = (url) => {
-    if (!url || url.trim() === "" || url === "#") return "critical";
-    if (!url.startsWith("/") && !url.startsWith("http")) return "warning";
-    return "success";
+  const handleGlobalScan = () => {
+    const result = {};
+    menus.forEach(menu => {
+      result[menu.id] = countByStatus(menu.items, liveCollectionHandles, livePageHandles);
+    });
+    setGlobalScan(result);
   };
 
   const autoFillCollections = () => {
-    const newLinks = Object.values(COLLECTION_GIDS).map(c => ({
+    const newLinks = collections.map(c => ({
       id: Math.random().toString(),
       title: c.title,
       url: `/collections/${c.handle}`,
@@ -166,7 +206,9 @@ export default function MenuManager() {
   };
 
   const autoCleanDeadLinks = () => {
-    setMenuItems(menuItems.filter(item => verifyUrl(item.url) !== "critical"));
+    setMenuItems(menuItems.filter(item =>
+      getDestinationStatus(item.url, liveCollectionHandles, livePageHandles) !== "dead"
+    ));
     setScanned(true);
   };
 
@@ -180,38 +222,82 @@ export default function MenuManager() {
     fetcher.submit(fd, { method: "post" });
   };
 
+  // Summary counts for active menu
+  const activeCounts = scanned && activeMenu
+    ? countByStatus(menuItems, liveCollectionHandles, livePageHandles)
+    : null;
+
   return (
-    <Page title="Menu Maker 🗂️" subtitle="Prestige V11 Mega-Menu Factory" backAction={{ content: "Command Center", url: "/app/_index" }}>
+    <Page
+      title="Menu Manager 🗂️"
+      subtitle="Link Governance — Nav Audit & Repair"
+      backAction={{ content: "Command Center", url: "/app/_index" }}
+    >
       <Layout>
 
-        {/* LEFT COLUMN */}
+        {/* ── LEFT: MENU LIST ── */}
         <Layout.Section variant="oneThird">
           <BlockStack gap="400">
             <Card>
               <BlockStack gap="300">
-                <Text variant="headingMd">Your Menus</Text>
-                {menus.map((menu) => (
-                  <Box key={menu.id} padding="200"
-                    background={activeMenu?.id === menu.id ? "bg-surface-active" : "bg-surface"}
-                    borderWidth="025" borderColor="border" borderRadius="100"
-                    onClick={() => handleSelectMenu(menu)} style={{ cursor: "pointer" }}>
-                    <InlineStack align="space-between" blockAlign="center">
-                      <Text fontWeight={activeMenu?.id === menu.id ? "bold" : "regular"}>{menu.title}</Text>
+                <InlineStack align="space-between" blockAlign="center">
+                  <Text variant="headingMd">Your Menus</Text>
+                  <Button size="slim" onClick={handleGlobalScan}>Scan All</Button>
+                </InlineStack>
+                <Divider />
+                {menus.map((menu) => {
+                  const counts = globalScan?.[menu.id];
+                  return (
+                    <Box
+                      key={menu.id}
+                      padding="300"
+                      background={activeMenu?.id === menu.id ? "bg-surface-active" : "bg-surface"}
+                      borderWidth="025"
+                      borderColor="border"
+                      borderRadius="100"
+                      onClick={() => handleSelectMenu(menu)}
+                      style={{ cursor: "pointer" }}
+                    >
                       <BlockStack gap="100">
-                        <Badge tone="info">{menu.items.length} Links</Badge>
-                        {menu.id === MENU_GID && <Badge tone="success">GID ✅</Badge>}
+                        <InlineStack align="space-between" blockAlign="center">
+                          <Text fontWeight={activeMenu?.id === menu.id ? "bold" : "regular"}>
+                            {menu.title}
+                          </Text>
+                          <Badge tone="info">{menu.items.length} Links</Badge>
+                        </InlineStack>
+                        {counts && (
+                          <InlineStack gap="100">
+                            <Badge tone="success">🟢 {counts.live}</Badge>
+                            {counts.draft > 0 && <Badge tone="warning">🟡 {counts.draft}</Badge>}
+                            {counts.dead > 0 && <Badge tone="critical">🔴 {counts.dead}</Badge>}
+                          </InlineStack>
+                        )}
                       </BlockStack>
-                    </InlineStack>
-                  </Box>
-                ))}
+                    </Box>
+                  );
+                })}
               </BlockStack>
             </Card>
+
+            {/* Dwell Web cross-link */}
+            <Card>
+              <BlockStack gap="200">
+                <Text variant="headingSm">🕸️ Link Governance</Text>
+                <Text tone="subdued" variant="bodySm">
+                  Nav links checked here. Body copy links checked in Dwell Web Manager.
+                </Text>
+                <Button url="/app/dwell-web-manager" disabled>
+                  Run Full Site Audit → (coming soon)
+                </Button>
+              </BlockStack>
+            </Card>
+
             {fetcher.data?.message && <Banner tone="success">{fetcher.data.message}</Banner>}
             {fetcher.data?.error && <Banner tone="critical">{fetcher.data.error}</Banner>}
           </BlockStack>
         </Layout.Section>
 
-        {/* RIGHT COLUMN */}
+        {/* ── RIGHT: EDITOR ── */}
         <Layout.Section>
           {!activeMenu ? (
             <Card>
@@ -222,58 +308,108 @@ export default function MenuManager() {
           ) : (
             <BlockStack gap="400">
 
-              <Card background="bg-surface-secondary">
+              {/* Scan summary */}
+              {activeCounts && (
+                <Banner
+                  tone={activeCounts.dead > 0 ? "critical" : activeCounts.draft > 0 ? "warning" : "success"}
+                >
+                  <Text>
+                    Scan complete — 🟢 {activeCounts.live} live &nbsp;|&nbsp;
+                    🟡 {activeCounts.draft} draft/unverified &nbsp;|&nbsp;
+                    🔴 {activeCounts.dead} dead
+                  </Text>
+                </Banner>
+              )}
+
+              {/* Magic automations */}
+              <Card>
                 <BlockStack gap="300">
-                  <Text variant="headingSm">✨ Janyce's Magic Automations</Text>
+                  <Text variant="headingSm">✨ Quick Actions</Text>
                   <InlineStack gap="200" wrap>
-                    <Button icon={MagicIcon} onClick={autoFillCollections}>🪄 Auto-Fill All Collections</Button>
-                    <Button icon={AlertTriangleIcon} onClick={autoCleanDeadLinks}>🧹 Clean Dead Links</Button>
+                    <Button icon={MagicIcon} onClick={autoFillCollections}>
+                      🪄 Auto-Fill All Collections
+                    </Button>
+                    <Button icon={AlertTriangleIcon} onClick={autoCleanDeadLinks}>
+                      🧹 Remove Dead Links
+                    </Button>
+                    <Button onClick={handleScan}>
+                      🔍 Scan This Menu
+                    </Button>
                   </InlineStack>
                 </BlockStack>
               </Card>
 
+              {/* Editor */}
               <Card>
                 <BlockStack gap="500">
-                  <TextField label="Menu Title" value={menuTitle} onChange={setMenuTitle} autoComplete="off" />
+                  <TextField
+                    label="Menu Title"
+                    value={menuTitle}
+                    onChange={setMenuTitle}
+                    autoComplete="off"
+                  />
 
                   <Box padding="400" borderRadius="200" borderWidth="025" borderColor="border">
                     <BlockStack gap="400">
                       <InlineStack align="space-between">
-                        <Text variant="headingSm">Menu Links</Text>
-                        <InlineStack gap="200">
-                          <Button onClick={handleScan}>Scan Links</Button>
-                          <Button icon={PlusIcon} variant="primary" onClick={handleAddLink}>Add Link</Button>
-                        </InlineStack>
+                        <Text variant="headingSm">Menu Links ({menuItems.length})</Text>
+                        <Button icon={PlusIcon} variant="primary" onClick={handleAddLink}>
+                          Add Link
+                        </Button>
                       </InlineStack>
 
                       {menuItems.map((item) => {
-                        const status = verifyUrl(item.url);
-                        const gidLabel = resolveItemGidLabel(item.id);
+                        const status = scanned
+                          ? getDestinationStatus(item.url, liveCollectionHandles, livePageHandles)
+                          : null;
                         return (
                           <Card key={item.id} background="bg-surface">
                             <BlockStack gap="200">
-                              <InlineStack align="space-between">
-                                <Badge tone={MENU_ITEM_GIDS[item.id] ? "success" : "warning"}>{gidLabel}</Badge>
-                                <Text tone="subdued" variant="bodySm">{item.id}</Text>
+                              <InlineStack align="space-between" blockAlign="center">
+                                {status
+                                  ? <StatusBadge status={status} />
+                                  : <Badge tone="info">Not scanned</Badge>
+                                }
+                                <Button
+                                  icon={DeleteIcon}
+                                  tone="critical"
+                                  variant="plain"
+                                  onClick={() => handleDeleteLink(item.id)}
+                                />
                               </InlineStack>
-                              <InlineStack blockAlign="end" gap="300">
-                                <div style={{ flex: 1 }}>
-                                  <TextField label="Display Name" value={item.title}
-                                    onChange={(v) => handleUpdateLink(item.id, "title", v)} autoComplete="off" />
+
+                              <InlineStack blockAlign="end" gap="300" wrap>
+                                <div style={{ flex: 1, minWidth: "140px" }}>
+                                  <TextField
+                                    label="Display Name"
+                                    value={item.title}
+                                    onChange={(v) => handleUpdateLink(item.id, "title", v)}
+                                    autoComplete="off"
+                                  />
                                 </div>
-                                <div style={{ flex: 1 }}>
-                                  <Select label="Quick Select Destination" options={linkOptions}
+                                <div style={{ flex: 1, minWidth: "180px" }}>
+                                  <Select
+                                    label="Quick Select"
+                                    options={linkOptions}
                                     value={linkOptions.find(o => o.value === item.url) ? item.url : "custom"}
-                                    onChange={(v) => v !== "custom" && handleUpdateLink(item.id, "url", v)} />
+                                    onChange={(v) => v !== "custom" && handleUpdateLink(item.id, "url", v)}
+                                  />
                                 </div>
-                                <div style={{ flex: 1 }}>
-                                  <TextField label="URL Path" value={item.url}
-                                    onChange={(v) => handleUpdateLink(item.id, "url", v)} autoComplete="off" />
+                                <div style={{ flex: 1, minWidth: "180px" }}>
+                                  <TextField
+                                    label="URL Path"
+                                    value={item.url}
+                                    onChange={(v) => handleUpdateLink(item.id, "url", v)}
+                                    autoComplete="off"
+                                    error={
+                                      scanned && status === "dead"
+                                        ? "Dead link — destination not found"
+                                        : scanned && status === "draft"
+                                        ? "Page may be unpublished"
+                                        : undefined
+                                    }
+                                  />
                                 </div>
-                                {scanned && status === "success" && <Icon source={CheckCircleIcon} tone="success" />}
-                                {scanned && status === "critical" && <Icon source={AlertTriangleIcon} tone="critical" />}
-                                <Button icon={DeleteIcon} tone="critical" variant="plain"
-                                  onClick={() => handleDeleteLink(item.id)} />
                               </InlineStack>
                             </BlockStack>
                           </Card>
@@ -283,11 +419,18 @@ export default function MenuManager() {
                   </Box>
 
                   <InlineStack align="end">
-                    <Button variant="primary" size="large" onClick={handleSaveMenu}
-                      loading={fetcher.state === "submitting"}>Save Menu</Button>
+                    <Button
+                      variant="primary"
+                      size="large"
+                      onClick={handleSaveMenu}
+                      loading={fetcher.state === "submitting"}
+                    >
+                      Save Menu
+                    </Button>
                   </InlineStack>
                 </BlockStack>
               </Card>
+
             </BlockStack>
           )}
         </Layout.Section>
