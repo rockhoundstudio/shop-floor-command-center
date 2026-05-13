@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useFetcher } from "react-router";
-import { Card, TextField, Text, BlockStack, InlineStack, Button, Select, Box, Divider, Banner, Badge, Icon, Tag } from "@shopify/polaris";
-import { SearchIcon, ChevronDownIcon, ChevronUpIcon } from "@shopify/polaris-icons";
+import { Card, TextField, Text, BlockStack, InlineStack, Button, Select, Box, Divider, Banner, Badge, Tag } from "@shopify/polaris";
+import { SearchIcon } from "@shopify/polaris-icons";
 
 export default function CollectionsTab({ products = [], collections = [], onBack }) {
   const fetcher = useFetcher();
@@ -138,19 +138,16 @@ export default function CollectionsTab({ products = [], collections = [], onBack
                     background: isExpanded ? "#f6f6f7" : "transparent",
                   }} className="desktop-row">
 
-                    {/* 1. TITLE (Takes up left side) */}
+                    {/* 1. TITLE (Takes up left side) - NO CHEVRON ARROW */}
                     <div style={{ flex: "1 1 auto", minWidth: 0 }}>
                       <button
                         onClick={() => setExpandedCollection(isExpanded ? null : c.id)}
                         style={{ background: "none", border: "none", cursor: "pointer", padding: 0, textAlign: "left", width: "100%" }}
                       >
-                        <InlineStack gap="200" blockAlign="center">
-                          <Icon source={isExpanded ? ChevronUpIcon : ChevronDownIcon} tone="base" />
-                          <BlockStack gap="0">
-                            <Text variant="bodyMd" fontWeight="bold" truncate>{c.title}</Text>
-                            <Text variant="bodyXs" tone="subdued">{stoneCount} stone{stoneCount !== 1 ? "s" : ""}</Text>
-                          </BlockStack>
-                        </InlineStack>
+                        <BlockStack gap="0">
+                          <Text variant="bodyMd" fontWeight="bold" truncate>{c.title}</Text>
+                          <Text variant="bodyXs" tone="subdued">{stoneCount} stone{stoneCount !== 1 ? "s" : ""}</Text>
+                        </BlockStack>
                       </button>
                     </div>
 
