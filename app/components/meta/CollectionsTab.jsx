@@ -123,13 +123,13 @@ export default function CollectionsTab({ products = [], collections = [], onBack
                                 textAlign: "left",
                               }}
                             >
-                              <InlineStack gap="200" wrap={false} blockAlign="center">
-                                <span style={{ fontSize: "10px" }}>{isExpanded ? "▲" : "▼"}</span>
-                                <BlockStack gap="0">
-                                  <Text variant="bodyMd" fontWeight="bold" truncate>{c.title}</Text>
+                              <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                                <span style={{ fontSize: "10px", flexShrink: 0 }}>{isExpanded ? "▲" : "▼"}</span>
+                                <div>
+                                  <Text variant="bodyMd" fontWeight="bold">{c.title}</Text>
                                   <Text variant="bodyXs" tone="subdued">{stoneCount} stone{stoneCount !== 1 ? "s" : ""}</Text>
-                                </BlockStack>
-                              </InlineStack>
+                                </div>
+                              </div>
                             </button>
                             <Button size="micro" tone="critical" onClick={() => setDeleteTarget(c)}>
                               Delete
