@@ -3,10 +3,10 @@ import { useLoaderData, useFetcher, data } from "react-router";
 import { authenticate } from "../shopify.server";
 import {
   Page, Layout, Card, Text, BlockStack, InlineStack, Button,
-  TextField, Badge, Banner, Box, Icon, Select, Divider
+  TextField, Badge, Banner, Box, Select, Divider
 } from "@shopify/polaris";
 import {
-  PlusIcon, DeleteIcon, AlertTriangleIcon, CheckCircleIcon, MagicIcon
+  PlusIcon, DeleteIcon, AlertTriangleIcon, MagicIcon
 } from "@shopify/polaris-icons";
 
 export const loader = async ({ request }) => {
@@ -154,18 +154,18 @@ export default function MenuManager() {
   };
 
   const handleAddLink = () => {
-    setMenuItems([...menuItems, { id: Math.random().toString(), title: "New Link", url: "", items: [] }]);
+    setMenuItems(prev => [...prev, { id: Math.random().toString(), title: "New Link", url: "", items: [] }]);
     setScanned(false);
   };
 
   const handleUpdateLink = (id, field, value) => {
-    setMenuItems(menuItems.map(item => item.id === id ? { ...item, [field]: value } : item));
+    setMenuItems(prev => prev.map(item => item.id === id ? { ...item, [field]: value } : item));
     setScanned(false);
   };
 
-  const handleDeleteLink = (id) => {
-    setMenuItems(menuItems.filter(item => item.id !== id));
-    setScanned(false);
+  const handleDeleteLink = (e, id) => {
+    e.stopPropagation();
+    setMenuItems(prev => prev.filter(item => item.id !== id));
   };
 
   const handleScan = () => setScanned(true);
@@ -186,11 +186,11 @@ export default function MenuManager() {
       url: `/collections/${c.handle}`,
       items: []
     }));
-    setMenuItems([...menuItems, ...newLinks]);
+    setMenuItems(prev => [...prev, ...newLinks]);
   };
 
   const autoCleanDeadLinks = () => {
-    setMenuItems(menuItems.filter(item =>
+    setMenuItems(prev => prev.filter(item =>
       getDestinationStatus(item.url, liveCollectionHandles, livePageHandles) !== "dead"
     ));
     setScanned(true);
@@ -337,12 +337,21 @@ export default function MenuManager() {
                                   ? <StatusBadge status={status} />
                                   : <Badge tone="info">Not scanned</Badge>
                                 }
-                                <Button
-                                  icon={DeleteIcon}
-                                  tone="critical"
-                                  variant="plain"
-                                  onClick={() => handleDeleteLink(item.id)}
-                                />
+                                <button
+                                  onClick={(e) => handleDeleteLink(e, item.id)}
+                                  style={{
+                                    background: "none",
+                                    border: "none",
+                                    cursor: "pointer",
+                                    color: "#d72c0d",
+                                    fontSize: "18px",
+                                    lineHeight: 1,
+                                    padding: "4px 8px"
+                                  }}
+                                  title="Delete link"
+                                >
+                                  ✕
+                                </button>
                               </InlineStack>
                               <InlineStack blockAlign="end" gap="300" wrap>
                                 <div style={{ flex: 1, minWidth: "140px" }}>
