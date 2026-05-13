@@ -109,11 +109,10 @@ export default function CollectionsTab({ products = [], collections = [], onBack
           </InlineStack>
           <Divider />
 
-          {/* COLUMN HEADERS - Using Flexbox instead of Grid */}
-          <div style={{ display: "flex", flexDirection: "row", gap: "12px", padding: "0 8px" }} className="hide-on-mobile">
-            <div style={{ flex: "1 1 200px" }}><Text variant="bodySm" fontWeight="bold" tone="subdued">COLLECTION</Text></div>
-            <div style={{ flex: "0 0 180px" }}><Text variant="bodySm" fontWeight="bold" tone="subdued">ADD STONE</Text></div>
-            <div style={{ flex: "0 0 80px" }}><Text variant="bodySm" fontWeight="bold" tone="subdued"> </Text></div>
+          {/* COLUMN HEADERS - Simplified */}
+          <div style={{ display: "flex", flexDirection: "row", justifyContent: "space-between", padding: "0 8px" }} className="hide-on-mobile">
+            <div><Text variant="bodySm" fontWeight="bold" tone="subdued">COLLECTION</Text></div>
+            <div><Text variant="bodySm" fontWeight="bold" tone="subdued">ACTIONS</Text></div>
           </div>
           <Divider />
 
@@ -127,10 +126,11 @@ export default function CollectionsTab({ products = [], collections = [], onBack
 
               return (
                 <Box key={c.id}>
-                  {/* COLLECTION ROW - Using Flexbox to force horizontal row */}
+                  {/* COLLECTION ROW - Title and Buttons Only */}
                   <div style={{
                     display: "flex",
                     flexDirection: "row",
+                    justifyContent: "space-between",
                     gap: "12px",
                     alignItems: "center",
                     padding: "10px 8px",
@@ -139,7 +139,7 @@ export default function CollectionsTab({ products = [], collections = [], onBack
                   }} className="desktop-row">
 
                     {/* 1. TITLE (Takes up left side) */}
-                    <div style={{ flex: "1 1 200px", minWidth: 0 }}>
+                    <div style={{ flex: "1 1 auto", minWidth: 0 }}>
                       <button
                         onClick={() => setExpandedCollection(isExpanded ? null : c.id)}
                         style={{ background: "none", border: "none", cursor: "pointer", padding: 0, textAlign: "left", width: "100%" }}
@@ -154,63 +154,68 @@ export default function CollectionsTab({ products = [], collections = [], onBack
                       </button>
                     </div>
 
-                    {/* 2. ADD STONE DROPDOWN (Fixed width in middle) */}
-                    <div style={{ flex: "0 0 180px" }}>
-                      <Select
-                        label="Add stone to collection"
-                        labelHidden
-                        options={[{ label: "Add stone...", value: "" }, ...filteredProducts.map(p => ({ label: p.title, value: p.id }))]}
-                        value=""
-                        onChange={(val) => handleAssign(val, c.id)}
-                      />
-                    </div>
-
-                    {/* 3. DELETE (Fixed width on right) */}
-                    <div style={{ flex: "0 0 80px", textAlign: "right" }}>
+                    {/* 2. EDIT & DELETE BUTTONS (Right Side) */}
+                    <div style={{ flex: "0 0 auto", display: "flex", gap: "8px", alignItems: "center" }}>
+                      <Button size="micro" onClick={() => setExpandedCollection(isExpanded ? null : c.id)}>
+                        {isExpanded ? "Close" : "Edit"}
+                      </Button>
                       <Button size="micro" tone="critical" onClick={() => setDeleteTarget(c)}>
                         Delete
                       </Button>
                     </div>
                   </div>
 
-                  {/* EXPANDED STONE LIST */}
+                  {/* EXPANDED STONE LIST & ADD STONE MENU */}
                   {isExpanded && (
                     <Box padding="300" background="bg-surface">
-                      {stonesInCollection.length === 0 ? (
-                        <Text tone="subdued" variant="bodyXs">No stones in this collection yet.</Text>
-                      ) : (
-                        <BlockStack gap="0">
-                          {stonesInCollection.map((p, i) => (
-                            <div
-                              key={p.id}
-                              style={{
-                                display: "flex",
-                                justifyContent: "space-between",
-                                alignItems: "center",
-                                padding: "6px 8px",
-                                borderBottom: i !== stonesInCollection.length - 1 ? "1px solid #e1e3e5" : "none",
-                              }}
-                            >
-                              <div style={{ fontSize: "13px", fontWeight: "500" }}>{p.title}</div>
-                              <button
-                                onClick={() => handleRemove(p.id, c.id)}
+                      <BlockStack gap="300">
+                        {/* ADD STONE DROPDOWN MOVED INSIDE HERE */}
+                        <Select
+                          label="Add stone to collection"
+                          labelHidden
+                          options={[{ label: "Add stone...", value: "" }, ...filteredProducts.map(p => ({ label: p.title, value: p.id }))]}
+                          value=""
+                          onChange={(val) => handleAssign(val, c.id)}
+                        />
+                        
+                        <Divider />
+
+                        {stonesInCollection.length === 0 ? (
+                          <Text tone="subdued" variant="bodyXs">No stones in this collection yet.</Text>
+                        ) : (
+                          <BlockStack gap="0">
+                            {stonesInCollection.map((p, i) => (
+                              <div
+                                key={p.id}
                                 style={{
-                                  background: "none",
-                                  border: "none",
-                                  cursor: "pointer",
-                                  color: "#d72c0d",
-                                  fontWeight: "bold",
-                                  fontSize: "14px",
-                                  padding: "0 4px",
+                                  display: "flex",
+                                  justifyContent: "space-between",
+                                  alignItems: "center",
+                                  padding: "6px 8px",
+                                  borderBottom: i !== stonesInCollection.length - 1 ? "1px solid #e1e3e5" : "none",
                                 }}
-                                title="Remove from collection"
                               >
-                                ✕
-                              </button>
-                            </div>
-                          ))}
-                        </BlockStack>
-                      )}
+                                <div style={{ fontSize: "13px", fontWeight: "500" }}>{p.title}</div>
+                                <button
+                                  onClick={() => handleRemove(p.id, c.id)}
+                                  style={{
+                                    background: "none",
+                                    border: "none",
+                                    cursor: "pointer",
+                                    color: "#d72c0d",
+                                    fontWeight: "bold",
+                                    fontSize: "14px",
+                                    padding: "0 4px",
+                                  }}
+                                  title="Remove from collection"
+                                >
+                                  ✕
+                                </button>
+                              </div>
+                            ))}
+                          </BlockStack>
+                        )}
+                      </BlockStack>
                     </Box>
                   )}
 
@@ -222,7 +227,7 @@ export default function CollectionsTab({ products = [], collections = [], onBack
         </BlockStack>
       </Card>
 
-      {/* ASSIGN STONES */}
+      {/* ASSIGN STONES (ALL STONES TABLE) */}
       <Card roundedAbove="sm">
         <BlockStack gap="400">
           <InlineStack align="space-between" blockAlign="center">
@@ -244,7 +249,7 @@ export default function CollectionsTab({ products = [], collections = [], onBack
 
           <Divider />
 
-          {/* ALL STONES HEADERS - Flexbox */}
+          {/* ALL STONES HEADERS */}
           <div style={{ display: "flex", flexDirection: "row", gap: "12px", padding: "0 4px" }} className="hide-on-mobile">
             <div style={{ flex: "2 1 0" }}><Text variant="bodySm" fontWeight="bold" tone="subdued">STONE</Text></div>
             <div style={{ flex: "2 1 0" }}><Text variant="bodySm" fontWeight="bold" tone="subdued">COLLECTIONS</Text></div>
@@ -273,15 +278,12 @@ export default function CollectionsTab({ products = [], collections = [], onBack
                       borderBottom: index !== filteredProducts.length - 1 ? "1px solid #e1e3e5" : "none",
                     }}
                   >
-                    {/* ALL STONES ROW - Flexbox row layout */}
                     <div style={{ display: "flex", flexDirection: "row", gap: "12px", alignItems: "center" }} className="desktop-row">
                       
-                      {/* 1. STONE TITLE */}
                       <div style={{ flex: "2 1 0", minWidth: 0 }}>
                         <Text fontWeight="semibold" truncate>{p.title}</Text>
                       </div>
                       
-                      {/* 2. COLLECTIONS TAGS */}
                       <div style={{ flex: "2 1 0", minWidth: 0, display: "flex", flexWrap: "wrap", gap: "4px" }}>
                         {stoneCols.length > 0
                           ? stoneCols.map(c => (
@@ -291,7 +293,6 @@ export default function CollectionsTab({ products = [], collections = [], onBack
                         }
                       </div>
 
-                      {/* 3. ADD TO DROPDOWN */}
                       <div style={{ flex: "1 1 180px", maxWidth: "180px" }}>
                         <Select
                           label="Assign to collection"
@@ -311,7 +312,6 @@ export default function CollectionsTab({ products = [], collections = [], onBack
         </BlockStack>
       </Card>
 
-      {/* MOBILE STYLES: This forces the flex rows to stack vertically only on small phone screens */}
       <style>{`
         @media (max-width: 767px) {
           .desktop-row {
