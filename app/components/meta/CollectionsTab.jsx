@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useFetcher } from "react-router";
-import { Card, TextField, Text, BlockStack, InlineStack, Button, Select, Box, Divider, Banner, Grid, Badge, Icon, Tag, Modal } from "@shopify/polaris";
+import { Card, TextField, Text, BlockStack, InlineStack, Button, Select, Box, Divider, Banner, Grid, Badge, Icon, Tag, Modal, Thumbnail } from "@shopify/polaris";
 import { SearchIcon } from "@shopify/polaris-icons";
 
 export default function CollectionsTab({ products = [], collections = [], onBack }) {
@@ -117,7 +117,7 @@ export default function CollectionsTab({ products = [], collections = [], onBack
                   <Text variant="headingMd">🗂️ Active Collections</Text>
                   <Badge tone="info">{filteredCollections.length}</Badge>
                 </InlineStack>
-                <Text variant="bodySm" tone="subdued">Click a collection to see its stones.</Text>
+                <Text variant="bodySm" tone="subdued">Click a collection to expand and add stones.</Text>
                 <Divider />
                 {filteredCollections.length === 0 && (
                   <Box paddingBlock="400">
@@ -131,6 +131,9 @@ export default function CollectionsTab({ products = [], collections = [], onBack
                       (p.currentCollections ?? []).some(col => col.id === c.id)
                     );
                     const stoneCount = stonesInCollection.length;
+                    const stonesNotInCollection = products.filter(p =>
+                      !(p.currentCollections ?? []).some(col => col.id === c.id)
+                    );
                     return (
                       <Box key={c.id}>
                         <Box
@@ -167,44 +170,66 @@ export default function CollectionsTab({ products = [], collections = [], onBack
                           </div>
                         </Box>
 
-                        {/* EXPANDED STONE LIST */}
+                        {/* EXPANDED: add stone + stone list */}
                         {isExpanded && (
                           <Box padding="300" background="bg-surface" borderColor="border" borderWidth="025">
-                            {stonesInCollection.length === 0 ? (
-                              <Text tone="subdued" variant="bodyXs">No stones in this collection yet.</Text>
-                            ) : (
-                              <BlockStack gap="0">
-                                {stonesInCollection.map((p, i) => (
-                                  <div
-                                    key={p.id}
-                                    style={{
-                                      display: "flex",
-                                      justifyContent: "space-between",
-                                      alignItems: "center",
-                                      padding: "6px 8px",
-                                      borderBottom: i !== stonesInCollection.length - 1 ? "1px solid #e1e3e5" : "none",
-                                    }}
-                                  >
-                                    <div style={{ fontSize: "13px", fontWeight: "500" }}>{p.title}</div>
-                                    <button
-                                      onClick={() => handleRemove(p.id, c.id)}
+                            <BlockStack gap="300">
+                              {/* ADD STONE ROW */}
+                              <Select
+                                label="Add a stone"
+                                options={[{ label: "Select a stone to add...", value: "" }, ...stonesNotInCollection.map(p => ({ label: p.title, value: p.id }))]}
+                                value=""
+                                onChange={(val) => handleAssign(val, c.id)}
+                              />
+                              <Divider />
+                              {/* STONE LIST */}
+                              {stonesInCollection.length === 0 ? (
+                                <Text tone="subdued" variant="bodyXs">No stones in this collection yet.</Text>
+                              ) : (
+                                <BlockStack gap="0">
+                                  {stonesInCollection.map((p, i) => (
+                                    <div
+                                      key={p.id}
                                       style={{
-                                        background: "none",
-                                        border: "none",
-                                        cursor: "pointer",
-                                        color: "#d72c0d",
-                                        fontWeight: "bold",
-                                        fontSize: "14px",
-                                        padding: "0 4px",
+                                        display: "flex",
+                                        justifyContent: "space-between",
+                                        alignItems: "center",
+                                        padding: "6px 4px",
+                                        borderBottom: i !== stonesInCollection.length - 1 ? "1px solid #e1e3e5" : "none",
+                                        gap: "8px",
                                       }}
-                                      title="Remove from collection"
                                     >
-                                      ✕
-                                    </button>
-                                  </div>
-                                ))}
-                              </BlockStack>
-                            )}
+                                      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                                        {p.featuredImage?.url && (
+                                          <Thumbnail
+                                            source={p.featuredImage.url}
+                                            alt={p.title}
+                                            size="small"
+                                          />
+                                        )}
+                                        <div style={{ fontSize: "12px", fontWeight: "500" }}>{p.title}</div>
+                                      </div>
+                                      <button
+                                        onClick={() => handleRemove(p.id, c.id)}
+                                        style={{
+                                          background: "none",
+                                          border: "none",
+                                          cursor: "pointer",
+                                          color: "#d72c0d",
+                                          fontWeight: "bold",
+                                          fontSize: "14px",
+                                          padding: "0 4px",
+                                          flexShrink: 0,
+                                        }}
+                                        title="Remove from collection"
+                                      >
+                                        ✕
+                                      </button>
+                                    </div>
+                                  ))}
+                                </BlockStack>
+                              )}
+                            </BlockStack>
                           </Box>
                         )}
                       </Box>
@@ -221,7 +246,7 @@ export default function CollectionsTab({ products = [], collections = [], onBack
           <Card roundedAbove="sm">
             <BlockStack gap="400">
               <InlineStack align="space-between" blockAlign="center">
-                <Text variant="headingMd">🪨 Assign Stones</Text>
+                <Text variant="headingMd">🪨 All Stones</Text>
                 <Badge>{filteredProducts.length} Stones</Badge>
               </InlineStack>
 
@@ -237,8 +262,9 @@ export default function CollectionsTab({ products = [], collections = [], onBack
 
               <Divider />
 
-              <div style={{ display: "grid", gridTemplateColumns: "2fr 2fr 1fr", gap: "12px", padding: "0 4px" }}
+              <div style={{ display: "grid", gridTemplateColumns: "40px 2fr 2fr 1fr", gap: "12px", padding: "0 4px" }}
                 className="hide-on-mobile">
+                <Text variant="bodySm" fontWeight="bold" tone="subdued"> </Text>
                 <Text variant="bodySm" fontWeight="bold" tone="subdued">STONE</Text>
                 <Text variant="bodySm" fontWeight="bold" tone="subdued">COLLECTIONS</Text>
                 <Text variant="bodySm" fontWeight="bold" tone="subdued">ADD TO</Text>
@@ -262,13 +288,22 @@ export default function CollectionsTab({ products = [], collections = [], onBack
                       <div
                         key={p.id}
                         style={{
-                          padding: "12px 4px",
+                          padding: "10px 4px",
                           borderBottom: index !== filteredProducts.length - 1 ? "1px solid #e1e3e5" : "none",
                         }}
                       >
-                        <div style={{ display: "grid", gridTemplateColumns: "2fr 2fr 1fr", gap: "12px", alignItems: "center" }}
+                        <div style={{ display: "grid", gridTemplateColumns: "40px 2fr 2fr 1fr", gap: "12px", alignItems: "center" }}
                           className="desktop-row">
-                          <Text fontWeight="semibold" truncate>{p.title}</Text>
+                          {p.featuredImage?.url ? (
+                            <Thumbnail
+                              source={p.featuredImage.url}
+                              alt={p.title}
+                              size="small"
+                            />
+                          ) : (
+                            <div style={{ width: "40px", height: "40px", background: "#f1f1f1", borderRadius: "4px" }} />
+                          )}
+                          <Text fontWeight="semibold">{p.title}</Text>
                           <div style={{ display: "flex", flexWrap: "wrap", gap: "4px" }}>
                             {stoneCols.length > 0
                               ? stoneCols.map(c => (
