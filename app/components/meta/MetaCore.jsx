@@ -1,10 +1,12 @@
 import { 
   TextField, BlockStack, Card, Text, Badge, Button, Banner, 
-  InlineStack, Page, Select, Box, ResourceList, ResourceItem, Thumbnail, Checkbox, Tag
+  InlineStack, Page, Select, Box, ResourceList, ResourceItem, Thumbnail, Checkbox, Tag,
+  IndexTable, useIndexResourceState, Grid, Scrollable, FormLayout
 } from "@shopify/polaris";
 import { useState, useEffect } from "react";
-import { useFetcher } from "react-router";
+import { useFetcher, useSubmit } from "react-router";
 import { useAppBridge } from "@shopify/app-bridge-react";
+import { ImageIcon } from "@shopify/polaris-icons";
 
 // --- LOCAL IMPORTS ---
 import { TARGET_KEYS, FIELD_LABELS } from "../../utils/metaScan";
@@ -44,10 +46,16 @@ function formatMetafieldValue(key, value) {
 // ==========================================
 // MAIN COMPONENT: Bulk Meta Injector
 // ==========================================
-export default function MetaCore({ products = [] }) {
+export default function MetaCore({ mode, products = [] }) {
   const shopify = useAppBridge();
+  const submit = useSubmit();
 
-  // --- STATE ---
+  // --- STATE (BULK EDIT MODE) ---
+  const { selectedResources, allResourcesSelected, handleSelectionChange } = useIndexResourceState(products);
+  const [bulkStatus, setBulkStatus] = useState("");
+  const [selectedFields, setSelectedFields] = useState({});
+
+  // --- STATE (STANDARD INJECT MODE) ---
   const [selectedIds, setSelectedIds] = useState([]);
   const [fieldValues, setFieldValues] = useState({});
   const [search, setSearch] = useState("");
@@ -83,7 +91,35 @@ export default function MetaCore({ products = [] }) {
     }
   }, [vocabFetcher.data]);
 
-  // --- ACTION HANDLERS ---
+  // --- ACTION HANDLERS (BULK MODE) ---
+  const handleFieldToggle = (key, checked) => {
+    setSelectedFields(prev => ({ ...prev, [key]: checked }));
+  };
+
+  const handleBulkSave = (e) => {
+    e.preventDefault();
+    if (selectedResources.length === 0) return alert("Select at least one product.");
+    const fd = new FormData(e.target);
+    const updates = {};
+    
+    TARGET_KEYS.forEach(k => {
+      if (selectedFields[k]) {
+        const val = fd.get(`mf_${k}`);
+        if (val && val.trim() !== "") updates[k] = val.trim();
+      }
+    });
+    
+    const submitData = new FormData();
+    submitData.append("intent", "bulk_edit_new");
+    submitData.append("ids", JSON.stringify(selectedResources));
+    submitData.append("updates", JSON.stringify(updates));
+    submitData.append("ooakText", fd.get("ooakText") || "");
+    submitData.append("bulkStatus", bulkStatus);
+    
+    submit(submitData, { method: "post" });
+  };
+
+  // --- ACTION HANDLERS (STANDARD MODE) ---
   function handleSave() {
     if (selectedIds.length === 0) {
       shopify.toast.show("Please select at least one product to update.");
@@ -127,7 +163,114 @@ export default function MetaCore({ products = [] }) {
   }
 
   // ==========================================
-  // RENDER
+  // RENDER: BULK EDIT MODE
+  // ==========================================
+  if (mode === "bulk") {
+    const rowMarkup = products.map(({ id, title, status, image }, index) => {
+      const normalizedStatus = String(status || "").toLowerCase();
+      const badgeTone = normalizedStatus === "complete" ? "success" : normalizedStatus === "partial" ? "warning" : "critical";
+      
+      return (
+        <IndexTable.Row id={id} key={id} selected={selectedResources.includes(id)} position={index}>
+          <IndexTable.Cell>
+            <Thumbnail source={image || ImageIcon} alt={title} size="small" />
+          </IndexTable.Cell>
+          <IndexTable.Cell><Text fontWeight="bold">{title}</Text></IndexTable.Cell>
+          <IndexTable.Cell>
+            <Box display={{xs: 'none', sm: 'block'}}>
+              <Badge tone={badgeTone}>
+                {status || "Unknown"}
+              </Badge>
+            </Box>
+          </IndexTable.Cell>
+        </IndexTable.Row>
+      );
+    });
+
+    return (
+      <form onSubmit={handleBulkSave}>
+        <Grid>
+          <Grid.Cell columnSpan={{xs: 12, sm: 12, md: 4, lg: 4, xl: 4}}>
+            <BlockStack gap="400">
+              <Card>
+                <BlockStack gap="300">
+                  <Text variant="headingMd">Apply Data Fields</Text>
+                  <Text tone="subdued">Check the fields you want to override and apply to all selected stones.</Text>
+                  
+                  <Scrollable style={{ maxHeight: "50vh" }}>
+                    <FormLayout>
+                      <Select
+                        label="Set Product Status"
+                        name="bulkStatus"
+                        options={[
+                          {label: 'No change', value: ''},
+                          {label: 'ACTIVE', value: 'ACTIVE'},
+                          {label: 'DRAFT', value: 'DRAFT'},
+                          {label: 'ARCHIVED', value: 'ARCHIVED'},
+                        ]}
+                        value={bulkStatus}
+                        onChange={setBulkStatus}
+                      />
+                      
+                      <TextField label="OOAK Features (Appended to Story)" name="ooakText" autoComplete="off"/>
+                      
+                      <Box paddingBlockStart="200">
+                        <Text variant="headingSm">Metafield Overrides</Text>
+                      </Box>
+
+                      {TARGET_KEYS.map(key => (
+                        <BlockStack key={key} gap="200">
+                          <Checkbox 
+                            label={`Update ${key.replace(/_/g, " ").toUpperCase()}`}
+                            checked={selectedFields[key] || false}
+                            onChange={(newChecked) => handleFieldToggle(key, newChecked)}
+                          />
+                          {selectedFields[key] && (
+                            <TextField 
+                              labelHidden
+                              label={key}
+                              name={`mf_${key}`} 
+                              autoComplete="off"
+                              placeholder={`Enter new ${key.replace(/_/g, " ")}`}
+                            />
+                          )}
+                        </BlockStack>
+                      ))}
+                    </FormLayout>
+                  </Scrollable>
+                  
+                  <Button submit variant="primary" disabled={selectedResources.length === 0}>
+                    Apply Updates
+                  </Button>
+                </BlockStack>
+              </Card>
+            </BlockStack>
+          </Grid.Cell>
+          
+          <Grid.Cell columnSpan={{xs: 12, sm: 12, md: 8, lg: 8, xl: 8}}>
+            <Card padding="0">
+              <IndexTable 
+                resourceName={{ singular: 'product', plural: 'products' }} 
+                itemCount={products.length} 
+                selectedItemsCount={allResourcesSelected ? 'All' : selectedResources.length} 
+                onSelectionChange={handleSelectionChange} 
+                headings={[
+                  { title: '' }, 
+                  { title: 'Title' }, 
+                  { title: <Box display={{xs: 'none', sm: 'block'}}>Completeness</Box> }
+                ]}
+              >
+                {rowMarkup}
+              </IndexTable>
+            </Card>
+          </Grid.Cell>
+        </Grid>
+      </form>
+    );
+  }
+
+  // ==========================================
+  // RENDER: STANDARD / INJECT MODE
   // ==========================================
   return (
     <Page title="Bulk Inject Lapidary Data">
