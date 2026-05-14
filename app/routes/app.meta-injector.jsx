@@ -8,7 +8,6 @@ import { MenuIcon } from "@shopify/polaris-icons";
 
 import ProductsTab from "../components/meta/ProductsTab";
 import MetaCore from "../components/meta/MetaCore";
-import CollectionsTab from "../components/meta/CollectionsTab";
 import { TARGET_KEYS, stripHtml, evaluateProductStatus, parseDescription, autoLinkStory } from "../utils/metaScan";
 import { lookupStone } from "../utils/geoLibrary";
 import { TAXONOMY_GIDS, wrapGid } from "../utils/taxonomyMap";
@@ -87,40 +86,27 @@ function extractShopifyError(errors, chunk) {
 export const loader = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
   try {
-    const [productsRes, collectionsRes] = await Promise.all([
-      admin.graphql(`
-        query {
-          products(first: 100) {
-            edges {
-              node {
-                id title descriptionHtml status
-                variants(first: 1) { edges { node { id price } } }
-                featuredImage { url altText }
-                customMeta: metafields(first: 100, namespace: "custom") {
-                  edges { node { key value } }
-                }
-                shopifyMeta: metafields(first: 100, namespace: "shopify") {
-                  edges { node { key value } }
-                }
-                collections(first: 10) {
-                  edges { node { id title } }
-                }
+    const productsRes = await admin.graphql(`
+      query {
+        products(first: 100) {
+          edges {
+            node {
+              id title descriptionHtml status
+              variants(first: 1) { edges { node { id price } } }
+              featuredImage { url altText }
+              customMeta: metafields(first: 100, namespace: "custom") {
+                edges { node { key value } }
+              }
+              shopifyMeta: metafields(first: 100, namespace: "shopify") {
+                edges { node { key value } }
               }
             }
           }
         }
-      `),
-      admin.graphql(`
-        query {
-          collections(first: 50) {
-            edges { node { id title handle } }
-          }
-        }
-      `)
-    ]);
+      }
+    `);
 
     const pData = await productsRes.json();
-    const cData = await collectionsRes.json();
 
     const products = (pData.data?.products?.edges || []).map(({ node }) => {
       const customMfs = Object.fromEntries(
@@ -159,17 +145,12 @@ export const loader = async ({ request }) => {
         metafields: mfs,
         status,
         filledCount,
-        currentCollections: (node.collections?.edges || []).map(({ node: c }) => ({ id: c.id, title: c.title })),
       };
     });
 
-    const collections = (cData.data?.collections?.edges || [])
-      .map(({ node }) => node)
-      .filter((c) => c.handle !== "all-collections");
-
-    return data({ products, collections, loaderError: null });
+    return data({ products, loaderError: null });
   } catch (error) {
-    return data({ products: [], collections: [], loaderError: error.message });
+    return data({ products: [], loaderError: error.message });
   }
 };
 
@@ -623,7 +604,7 @@ export const action = async ({ request }) => {
 };
 
 export default function MetaInjector() {
-  const { products, collections, loaderError } = useLoaderData();
+  const { products, loaderError } = useLoaderData();
   const [activeView, setActiveView] = useState(0);
   const [menuActive, setMenuActive] = useState(false);
 
@@ -631,8 +612,7 @@ export default function MetaInjector() {
     { id: "products",    content: "🪨 Products" },
     { id: "bulk",        content: "📦 Bulk Edit" },
     { id: "inject",      content: "💉 QA & Inject" },
-    { id: "mindat",      content: "🌍 Mindat" },
-    { id: "collections", content: "🗂️ Collections" }
+    { id: "mindat",      content: "🌍 Mindat" }
   ];
 
   return (
@@ -665,7 +645,6 @@ export default function MetaInjector() {
               {activeView === 1 && <MetaCore products={products} mode="bulk" />}
               {activeView === 2 && <MetaCore products={products} mode="inject" />}
               {activeView === 3 && <MetaCore products={products} mode="mindat" />}
-              {activeView === 4 && <CollectionsTab products={products} collections={collections} onBack={() => setActiveView(0)} />}
             </Box>
           </Card>
         </Layout.Section>
