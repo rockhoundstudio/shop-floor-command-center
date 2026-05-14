@@ -1,6 +1,7 @@
 import { useState, useMemo } from "react";
-import { useLoaderData, useFetcher, data, useNavigate } from "react-router";
+import { useLoaderData, useFetcher, data } from "react-router";
 import { authenticate } from "../shopify.server";
+import { useNavigate } from "@shopify/app-bridge-react";
 import {
   Page, Layout, Card, Text, BlockStack, InlineStack, Button,
   Badge, Box, Divider, Tabs, DataTable, Select, TextField, Banner, Grid, Tooltip, Icon
@@ -537,7 +538,7 @@ export default function DwellWeb() {
       subtitle="Product Link Governance & Dwell Loop Enforcer"
     >
       <Box paddingBlockEnd="400">
-        <Button onClick={() => navigate("/app/_index")}>← Command Center</Button>
+        <Button onClick={() => navigate("/app")}>← Command Center</Button>
       </Box>
 
       {loaderError && (
