@@ -65,7 +65,7 @@ export const loader = async ({ request }) => {
         }
         collections(first: 150) { edges { node { handle } } }
         pages(first: 100) { edges { node { id title handle body } } }
-        articles(first: 100) { edges { node { id title handle blog { handle } content } } }
+        articles(first: 100) { edges { node { id title handle blog { handle } bodyHtml } } }
       }
     `);
     const json = await res.json();
@@ -482,7 +482,7 @@ export default function DwellWeb() {
                       borderRadius="100"
                       onClick={() => {
                         setActiveItem({ ...item, type: editorType });
-                        setContentHtml(editorType === "pages" ? item.body : item.content);
+                        setContentHtml(editorType === "pages" ? item.body : item.bodyHtml);
                       }}
                       style={{ cursor: "pointer" }}
                     >
