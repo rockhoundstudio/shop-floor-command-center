@@ -4,9 +4,9 @@ import { authenticate } from "../shopify.server";
 import {
   Page, Layout, Card, Button, Box, Popover, ActionList, Divider, Banner,
   IndexTable, useIndexResourceState, Text, Badge, TextField, BlockStack,
-  InlineStack, Grid, Scrollable, FormLayout
+  InlineStack, Grid, Scrollable, FormLayout, Thumbnail
 } from "@shopify/polaris";
-import { MenuIcon, SearchIcon, ViewIcon } from "@shopify/polaris-icons";
+import { MenuIcon, SearchIcon, ViewIcon, ImageIcon } from "@shopify/polaris-icons";
 
 // --- EXTERNAL IMPORTS ---
 import { TARGET_KEYS, stripHtml, evaluateProductStatus, parseDescription, autoLinkStory } from "../utils/metaScan";
@@ -146,6 +146,7 @@ export const loader = async ({ request }) => {
         price,
         shopifyStatus: node.status,
         description: stripHtml(node.descriptionHtml),
+        image: node.featuredImage?.url || null,
         metafields: mfs,
         status,
         filledCount,
@@ -440,8 +441,11 @@ function ProductsView({ products }) {
     );
   }
 
-  const rowMarkup = products.map(({ id, title, price, status, shopifyStatus }, index) => (
+  const rowMarkup = products.map(({ id, title, price, status, shopifyStatus, image }, index) => (
     <IndexTable.Row id={id} key={id} position={index}>
+      <IndexTable.Cell>
+        <Thumbnail source={image || ImageIcon} alt={title} size="small" />
+      </IndexTable.Cell>
       <IndexTable.Cell><Text fontWeight="bold">{title}</Text></IndexTable.Cell>
       <IndexTable.Cell>${price}</IndexTable.Cell>
       <IndexTable.Cell>{shopifyStatus}</IndexTable.Cell>
@@ -464,7 +468,7 @@ function ProductsView({ products }) {
           resourceName={{ singular: 'product', plural: 'products' }} 
           itemCount={products.length} 
           selectable={false} 
-          headings={[{ title: 'Title' }, { title: 'Price' }, { title: 'Store Status' }, { title: 'Meta Completeness' }, { title: 'Action' }]}
+          headings={[{ title: '' }, { title: 'Title' }, { title: 'Price' }, { title: 'Store Status' }, { title: 'Meta Completeness' }, { title: 'Action' }]}
         >
           {rowMarkup}
         </IndexTable>
@@ -495,8 +499,11 @@ function BulkEditView({ products }) {
     submit(submitData, { method: "post" });
   };
 
-  const rowMarkup = products.map(({ id, title, status }, index) => (
+  const rowMarkup = products.map(({ id, title, status, image }, index) => (
     <IndexTable.Row id={id} key={id} selected={selectedResources.includes(id)} position={index}>
+      <IndexTable.Cell>
+        <Thumbnail source={image || ImageIcon} alt={title} size="small" />
+      </IndexTable.Cell>
       <IndexTable.Cell><Text fontWeight="bold">{title}</Text></IndexTable.Cell>
       <IndexTable.Cell>
         <Badge tone={status === "Complete" ? "success" : status === "Partial" ? "warning" : "critical"}>
@@ -537,7 +544,7 @@ function BulkEditView({ products }) {
               itemCount={products.length} 
               selectedItemsCount={allResourcesSelected ? 'All' : selectedResources.length} 
               onSelectionChange={handleSelectionChange} 
-              headings={[{ title: 'Title' }, { title: 'Completeness' }]}
+              headings={[{ title: '' }, { title: 'Title' }, { title: 'Completeness' }]}
             >
               {rowMarkup}
             </IndexTable>
@@ -560,6 +567,9 @@ function QAInjectView({ products }) {
 
   const rowMarkup = products.map((product, index) => (
     <IndexTable.Row id={product.id} key={product.id} position={index}>
+      <IndexTable.Cell>
+        <Thumbnail source={product.image || ImageIcon} alt={product.title} size="small" />
+      </IndexTable.Cell>
       <IndexTable.Cell><Text fontWeight="bold">{product.title}</Text></IndexTable.Cell>
       <IndexTable.Cell>
         <Badge tone={product.status === "Complete" ? "success" : product.status === "Partial" ? "warning" : "critical"}>
@@ -590,7 +600,7 @@ function QAInjectView({ products }) {
           resourceName={{ singular: 'product', plural: 'products' }} 
           itemCount={products.length} 
           selectable={false} 
-          headings={[{ title: 'Title' }, { title: 'Status' }, { title: 'Missing Fields' }, { title: 'Action' }]}
+          headings={[{ title: '' }, { title: 'Title' }, { title: 'Status' }, { title: 'Missing Fields' }, { title: 'Action' }]}
         >
           {rowMarkup}
         </IndexTable>
