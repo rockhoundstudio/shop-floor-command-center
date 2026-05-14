@@ -1,7 +1,7 @@
 import { 
   TextField, BlockStack, Card, Text, Badge, Button, Banner, 
   InlineStack, Page, Select, Box, ResourceList, ResourceItem, Thumbnail, Checkbox, Tag,
-  IndexTable, useIndexResourceState, Grid, Scrollable, FormLayout
+  IndexTable, useIndexResourceState, FormLayout
 } from "@shopify/polaris";
 import { useState, useEffect } from "react";
 import { useFetcher, useSubmit } from "react-router";
@@ -154,78 +154,73 @@ export default function MetaCore({ mode, products = [] }) {
 
     return (
       <form onSubmit={handleBulkSave}>
-        <Grid>
-          <Grid.Cell columnSpan={{xs: 12, sm: 12, md: 4, lg: 4, xl: 4}}>
-            <BlockStack gap="400">
-              <Card>
-                <BlockStack gap="300">
-                  <Text variant="headingMd">Apply Data Fields</Text>
-                  <Text tone="subdued">Check the fields you want to override and apply to all selected stones.</Text>
-                  <Scrollable style={{ maxHeight: "50vh" }}>
-                    <FormLayout>
-                      <Select
-                        label="Set Product Status"
-                        options={[
-                          {label: 'No change', value: ''},
-                          {label: 'ACTIVE', value: 'ACTIVE'},
-                          {label: 'DRAFT', value: 'DRAFT'},
-                          {label: 'ARCHIVED', value: 'ARCHIVED'},
-                        ]}
-                        value={bulkStatus}
-                        onChange={setBulkStatus}
+        <BlockStack gap="400">
+          <Card>
+            <BlockStack gap="300">
+              <Text variant="headingMd">Apply Data Fields</Text>
+              <Text tone="subdued">Check the fields you want to override and apply to all selected stones.</Text>
+              <div style={{ maxHeight: "30vh", overflowY: "auto", padding: "10px" }}>
+                <FormLayout>
+                  <Select
+                    label="Set Product Status"
+                    name="bulkStatus"
+                    options={[
+                      {label: 'No change', value: ''},
+                      {label: 'ACTIVE', value: 'ACTIVE'},
+                      {label: 'DRAFT', value: 'DRAFT'},
+                      {label: 'ARCHIVED', value: 'ARCHIVED'},
+                    ]}
+                    value={bulkStatus}
+                    onChange={setBulkStatus}
+                  />
+                  <TextField label="OOAK Features (Appended to Story)" name="ooakText" autoComplete="off"/>
+                  <Box paddingBlockStart="200">
+                    <Text variant="headingSm">Metafield Overrides</Text>
+                  </Box>
+                  {TARGET_KEYS.map(key => (
+                    <BlockStack key={key} gap="200">
+                      <Checkbox
+                        label={FIELD_LABELS[key] || key.replace(/_/g, " ").toUpperCase()}
+                        checked={selectedFields[key] || false}
+                        onChange={(newChecked) => handleFieldToggle(key, newChecked)}
                       />
-                      <TextField label="OOAK Features (Appended to Story)" name="ooakText" autoComplete="off"/>
-                      <Box paddingBlockStart="200">
-                        <Text variant="headingSm">Metafield Overrides</Text>
-                      </Box>
-                      {TARGET_KEYS.map(key => (
-                        <BlockStack key={key} gap="200">
-                          <Checkbox
-                            label={FIELD_LABELS[key] || key.replace(/_/g, " ").toUpperCase()}
-                            checked={selectedFields[key] || false}
-                            onChange={(newChecked) => handleFieldToggle(key, newChecked)}
-                          />
-                          {selectedFields[key] && (
-                            <TextField
-                              labelHidden
-                              label={key}
-                              name={`mf_${key}`}
-                              autoComplete="off"
-                              placeholder={`Enter new ${key.replace(/_/g, " ")}`}
-                            />
-                          )}
-                        </BlockStack>
-                      ))}
-                    </FormLayout>
-                  </Scrollable>
-                  <Button submit variant="primary" disabled={selectedResources.length === 0}>
-                    Apply Updates
-                  </Button>
-                </BlockStack>
-              </Card>
+                      {selectedFields[key] && (
+                        <TextField
+                          labelHidden
+                          label={key}
+                          name={`mf_${key}`}
+                          autoComplete="off"
+                          placeholder={`Enter new ${key.replace(/_/g, " ")}`}
+                        />
+                      )}
+                    </BlockStack>
+                  ))}
+                </FormLayout>
+              </div>
+              <Button submit variant="primary" disabled={selectedResources.length === 0}>
+                Apply Updates
+              </Button>
             </BlockStack>
-          </Grid.Cell>
+          </Card>
 
-          <Grid.Cell columnSpan={{xs: 12, sm: 12, md: 8, lg: 8, xl: 8}}>
-            <Card padding="0">
-              <Scrollable style={{ maxHeight: "60vh" }}>
-                <IndexTable
-                  resourceName={{ singular: 'product', plural: 'products' }}
-                  itemCount={products.length}
-                  selectedItemsCount={allResourcesSelected ? 'All' : selectedResources.length}
-                  onSelectionChange={handleSelectionChange}
-                  headings={[
-                    { title: '' },
-                    { title: 'Title' },
-                    { title: <Box display={{xs: 'none', sm: 'block'}}>Completeness</Box> }
-                  ]}
-                >
-                  {rowMarkup}
-                </IndexTable>
-              </Scrollable>
-            </Card>
-          </Grid.Cell>
-        </Grid>
+          <Card padding="0">
+            <div style={{ maxHeight: "60vh", overflowY: "auto" }}>
+              <IndexTable
+                resourceName={{ singular: 'product', plural: 'products' }}
+                itemCount={products.length}
+                selectedItemsCount={allResourcesSelected ? 'All' : selectedResources.length}
+                onSelectionChange={handleSelectionChange}
+                headings={[
+                  { title: '' },
+                  { title: 'Title' },
+                  { title: <Box display={{xs: 'none', sm: 'block'}}>Completeness</Box> }
+                ]}
+              >
+                {rowMarkup}
+              </IndexTable>
+            </div>
+          </Card>
+        </BlockStack>
       </form>
     );
   }
