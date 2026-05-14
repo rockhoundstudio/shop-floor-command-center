@@ -3,9 +3,9 @@ import { useLoaderData, useFetcher, data } from "react-router";
 import { authenticate } from "../shopify.server";
 import {
   Page, Layout, Card, Text, BlockStack, InlineStack, Button,
-  Badge, Box, Divider, Tabs, DataTable, Select, TextField, Banner, Grid, Link
+  Badge, Box, Divider, Tabs, DataTable, Select, TextField, Banner, Grid, Tooltip
 } from "@shopify/polaris";
-import { SearchIcon, TextIcon, LinkIcon } from "@shopify/polaris-icons";
+import { SearchIcon } from "@shopify/polaris-icons";
 
 // --- 1. THE RULE SET ---
 const GLOBAL_LINKS = [
@@ -23,7 +23,7 @@ const COLLECTION_RULES = {
       { url: "/collections/the-3-000-mile-run-1", label: "3,000-Mile Run Collection" }
     ]
   },
-  "the-shopped-rock-collection": {
+  "the-shopped-rock": {
     name: "The Shopped Rock",
     links: [
       { url: "/pages/the-shopped-rock", label: "The Shopped Rock" },
@@ -40,11 +40,11 @@ const COLLECTION_RULES = {
   "the-yellowstone-river-collection": {
     name: "Yellowstone",
     links: [
-      // Array indicates an OR condition
-      { url: ["/pages/day-5-yellowstone-park", "/pages/day-7-yellowstone-sun-enters"], label: "Day 5 OR Day 7 Yellowstone" },
-      { url: "/collections/the-yellowstone-river-collection", label: "Yellowstone Collection" },
+      { url: "/pages/day-7-yellowstone-sun-enters", label: "Day 7 — Yellowstone Sun Enters" },
+      { url: "/collections/the-yellowstone-river-collection", label: "Yellowstone River Collection" },
       { url: "/pages/the-3-000-mile-run", label: "The 3,000-Mile Run" },
-      { url: "/collections/the-3-000-mile-run-1", label: "3,000-Mile Run Collection" }
+      { url: "/collections/the-3-000-mile-run-1", label: "3,000-Mile Run Collection" },
+      { url: "/pages/the-shop-lore-spencer-opal-mine-sox-the-manx", label: "Sox — The Yellowstone Highway" }
     ]
   }
 };
@@ -58,23 +58,14 @@ export const loader = async ({ request }) => {
         products(first: 100) {
           edges {
             node {
-              id
-              title
-              descriptionHtml
-              collections(first: 10) {
-                edges {
-                  node { handle }
-                }
-              }
+              id title descriptionHtml
+              collections(first: 10) { edges { node { handle } } }
             }
           }
         }
-        pages(first: 50) {
-          edges { node { id title handle body } }
-        }
-        articles(first: 50) {
-          edges { node { id title handle blog { handle } content } }
-        }
+        collections(first: 150) { edges { node { handle } } }
+        pages(first: 100) { edges { node { id title handle body } } }
+        articles(first: 100) { edges { node { id title handle blog { handle } content } } }
       }
     `);
     const json = await res.json();
@@ -83,12 +74,21 @@ export const loader = async ({ request }) => {
       ...e.node,
       collectionHandles: e.node.collections.edges.map(ce => ce.node.handle)
     }));
+    const collections = (json.data?.collections?.edges || []).map(e => e.node);
     const pages = (json.data?.pages?.edges || []).map(e => e.node);
     const articles = (json.data?.articles?.edges || []).map(e => e.node);
     
-    return data({ products, pages, articles });
+    // Generate an array of all valid Shopify paths to check for dead links
+    const livePaths = [
+      "/collections/all",
+      ...collections.map(c => `/collections/${c.handle}`),
+      ...pages.map(p => `/pages/${p.handle}`),
+      ...articles.map(a => `/blogs/${a.blog.handle}/${a.handle}`)
+    ];
+
+    return data({ products, pages, articles, livePaths });
   } catch (error) {
-    return data({ products: [], pages: [], articles: [] });
+    return data({ products: [], pages: [], articles: [], livePaths: [] });
   }
 };
 
@@ -110,6 +110,27 @@ export const action = async ({ request }) => {
     return data({ ok: true, message: "Links injected successfully!" });
   }
 
+  // BULK INJECTION LOGIC
+  if (intent === "bulkInjectLinks") {
+    const payload = JSON.parse(formData.get("payload")); // Array of { id, newHtml }
+    let errors = [];
+    
+    for (const item of payload) {
+      const res = await admin.graphql(`
+        mutation productUpdate($input: ProductInput!) {
+          productUpdate(input: $input) { userErrors { message } }
+        }
+      `, { variables: { input: { id: item.id, descriptionHtml: item.newHtml } } });
+      const json = await res.json();
+      if (json.data?.productUpdate?.userErrors?.length) {
+        errors.push(`Error on product ${item.id}: ${json.data.productUpdate.userErrors[0].message}`);
+      }
+    }
+    if (errors.length > 0) return data({ ok: false, error: `Finished with errors: ${errors.join(', ')}` });
+    return data({ ok: true, message: `Successfully injected links into ${payload.length} products!` });
+  }
+
+  // EDITOR TAB SAVES
   if (intent === "updatePage") {
     const id = formData.get("id");
     const bodyHtml = formData.get("bodyHtml");
@@ -150,35 +171,31 @@ function extractLinks(html) {
 }
 
 function checkLinkPresence(htmlLinks, requiredUrl) {
-  if (Array.isArray(requiredUrl)) {
-    return requiredUrl.some(url => htmlLinks.some(h => h.includes(url)));
-  }
   return htmlLinks.some(h => h.includes(requiredUrl));
 }
 
-function evaluateProducts(products) {
+function evaluateProducts(products, livePaths) {
   return products.map(product => {
     const htmlLinks = extractLinks(product.descriptionHtml);
     const required = [];
     const missing = [];
     const present = [];
 
-    // Add global links
-    GLOBAL_LINKS.forEach(link => required.push(link));
+    // Map Global Links
+    GLOBAL_LINKS.forEach(link => required.push({ ...link, isDead: !livePaths.includes(link.url) }));
 
-    // Add specific collection links
+    // Map Collection Links
     product.collectionHandles.forEach(handle => {
       if (COLLECTION_RULES[handle]) {
         COLLECTION_RULES[handle].links.forEach(link => {
-          // Prevent duplicates if multiple collections require the same link
           if (!required.some(r => r.label === link.label)) {
-            required.push(link);
+            required.push({ ...link, isDead: !livePaths.includes(link.url) });
           }
         });
       }
     });
 
-    // Check status
+    // Evaluate Presence
     required.forEach(link => {
       if (checkLinkPresence(htmlLinks, link.url)) {
         present.push(link);
@@ -192,14 +209,26 @@ function evaluateProducts(products) {
       required,
       missing,
       present,
-      isCompliant: missing.length === 0
+      isCompliant: missing.length === 0,
+      hasDeadLinks: required.some(r => r.isDead)
     };
   });
 }
 
+// Generates the HTML snippet for missing links
+function generateInjectionHtml(currentHtml, missingLinks) {
+  let newHtml = currentHtml || "";
+  let injectionHtml = `\n\n<div class="rockhound-dwell-links" style="margin-top: 2em; display: flex; flex-wrap: wrap; gap: 10px;">`;
+  missingLinks.forEach(link => {
+     injectionHtml += `\n  <a href="${link.url}" class="button" style="padding: 10px 15px; background: #f4f6f8; border: 1px solid #c9cccf; border-radius: 4px; text-decoration: none; color: #202223; font-weight: 500;">${link.label}</a>`;
+  });
+  injectionHtml += `\n</div>`;
+  return newHtml + injectionHtml;
+}
+
 // --- 4. MAIN COMPONENT ---
 export default function DwellWeb() {
-  const { products, pages, articles } = useLoaderData();
+  const { products, pages, articles, livePaths } = useLoaderData();
   const fetcher = useFetcher();
 
   const [selectedTab, setSelectedTab] = useState(0);
@@ -212,21 +241,12 @@ export default function DwellWeb() {
 
   const handleTabChange = (index) => setSelectedTab(index);
 
-  const evaluatedProducts = useMemo(() => evaluateProducts(products), [products]);
+  const evaluatedProducts = useMemo(() => evaluateProducts(products, livePaths), [products, livePaths]);
   const nonCompliantProducts = evaluatedProducts.filter(p => !p.isCompliant);
 
+  // Single Inject
   const handleInject = (product) => {
-    let newHtml = product.descriptionHtml || "";
-    
-    // Inject missing links as a neat block at the bottom
-    let injectionHtml = `\n\n<div class="rockhound-dwell-links" style="margin-top: 2em; display: flex; flex-wrap: wrap; gap: 10px;">`;
-    product.missing.forEach(link => {
-       const url = Array.isArray(link.url) ? link.url[0] : link.url;
-       injectionHtml += `\n  <a href="${url}" class="button" style="padding: 10px 15px; background: #f4f6f8; border: 1px solid #c9cccf; border-radius: 4px; text-decoration: none; color: #202223; font-weight: 500;">${link.label}</a>`;
-    });
-    injectionHtml += `\n</div>`;
-    newHtml += injectionHtml;
-
+    const newHtml = generateInjectionHtml(product.descriptionHtml, product.missing);
     const fd = new FormData();
     fd.append("intent", "injectLinks");
     fd.append("id", product.id);
@@ -234,56 +254,80 @@ export default function DwellWeb() {
     fetcher.submit(fd, { method: "post" });
   };
 
+  // Bulk Inject All
+  const handleBulkInject = () => {
+    const payload = nonCompliantProducts.map(p => ({
+      id: p.id,
+      newHtml: generateInjectionHtml(p.descriptionHtml, p.missing)
+    }));
+    const fd = new FormData();
+    fd.append("intent", "bulkInjectLinks");
+    fd.append("payload", JSON.stringify(payload));
+    fetcher.submit(fd, { method: "post" });
+  };
+
   // TABS RENDERING
-  const renderRulesTab = () => (
-    <BlockStack gap="500">
-      <Card>
-        <BlockStack gap="300">
-          <Text variant="headingMd">Global Rule (All Products)</Text>
-          <Text tone="subdued">Every product must contain these two footer buttons.</Text>
-          <Box padding="300" background="bg-surface-secondary" borderRadius="100">
-            <BlockStack gap="100">
-              {GLOBAL_LINKS.map(l => (
-                <Text key={l.url}>• <strong>{l.label}</strong> <Text as="span" tone="subdued">({l.url})</Text></Text>
-              ))}
-            </BlockStack>
-          </Box>
+  const renderRulesTab = () => {
+    const renderLinkRule = (l) => {
+      const isDead = !livePaths.includes(l.url);
+      return (
+        <BlockStack key={l.url} gap="0">
+          <InlineStack gap="200" blockAlign="center">
+            <Text fontWeight="bold">• {l.label}</Text>
+            {isDead && <Badge tone="critical">DEAD LINK</Badge>}
+          </InlineStack>
+          <Text variant="bodySm" tone={isDead ? "critical" : "subdued"}>{l.url}</Text>
         </BlockStack>
-      </Card>
-      
-      <Text variant="headingMd">Collection-Specific Rules</Text>
-      <Grid>
-        {Object.entries(COLLECTION_RULES).map(([handle, rule]) => (
-          <Grid.Cell key={handle} columnSpan={{xs: 6, sm: 6, md: 3, lg: 6, xl: 6}}>
-            <Card>
-              <BlockStack gap="300">
-                <Text variant="headingSm">{rule.name}</Text>
-                <Box padding="300" background="bg-surface-secondary" borderRadius="100">
-                  <BlockStack gap="200">
-                    {rule.links.map(l => (
-                      <BlockStack key={l.label} gap="0">
-                        <Text fontWeight="bold">• {l.label}</Text>
-                        <Text variant="bodySm" tone="subdued">
-                          {Array.isArray(l.url) ? l.url.join("  OR  ") : l.url}
-                        </Text>
-                      </BlockStack>
-                    ))}
-                  </BlockStack>
-                </Box>
+      );
+    };
+
+    return (
+      <BlockStack gap="500">
+        <Card>
+          <BlockStack gap="300">
+            <Text variant="headingMd">Global Rule (All Products)</Text>
+            <Text tone="subdued">Every product must contain these two footer buttons.</Text>
+            <Box padding="300" background="bg-surface-secondary" borderRadius="100">
+              <BlockStack gap="200">
+                {GLOBAL_LINKS.map(renderLinkRule)}
               </BlockStack>
-            </Card>
-          </Grid.Cell>
-        ))}
-      </Grid>
-    </BlockStack>
-  );
+            </Box>
+          </BlockStack>
+        </Card>
+        
+        <Text variant="headingMd">Collection-Specific Rules</Text>
+        <Grid>
+          {Object.entries(COLLECTION_RULES).map(([handle, rule]) => (
+            <Grid.Cell key={handle} columnSpan={{xs: 6, sm: 6, md: 3, lg: 6, xl: 6}}>
+              <Card>
+                <BlockStack gap="300">
+                  <Text variant="headingSm">{rule.name}</Text>
+                  <Box padding="300" background="bg-surface-secondary" borderRadius="100">
+                    <BlockStack gap="200">
+                      {rule.links.map(renderLinkRule)}
+                    </BlockStack>
+                  </Box>
+                </BlockStack>
+              </Card>
+            </Grid.Cell>
+          ))}
+        </Grid>
+      </BlockStack>
+    );
+  };
 
   const renderScanTab = () => {
     const rows = evaluatedProducts.map(p => [
       <Text fontWeight="bold" truncate>{p.title}</Text>,
       p.required.length.toString(),
-      p.isCompliant ? <Badge tone="success">✅ Compliant</Badge> : <Badge tone="critical">🔴 {p.missing.length} Missing</Badge>,
-      p.isCompliant ? <Text tone="subdued">—</Text> : p.missing.map(m => m.label).join(", ")
+      p.hasDeadLinks 
+        ? <Badge tone="warning">⚠️ Setup Error</Badge> 
+        : p.isCompliant 
+          ? <Badge tone="success">✅ Compliant</Badge> 
+          : <Badge tone="critical">🔴 {p.missing.length} Missing</Badge>,
+      p.hasDeadLinks
+        ? <Text tone="critical">Rule contains dead link</Text>
+        : p.isCompliant ? <Text tone="subdued">—</Text> : p.missing.map(m => m.label).join(", ")
     ]);
 
     return (
@@ -309,13 +353,34 @@ export default function DwellWeb() {
       );
     }
 
+    const hasDeadLinkConfig = nonCompliantProducts.some(p => p.hasDeadLinks);
+
     return (
       <BlockStack gap="400">
-        <Banner tone="warning">
-          Found {nonCompliantProducts.length} products with broken Dwell loops.
-        </Banner>
         
-        {fetcher.data?.message && fetcher.formData?.get("intent") === "injectLinks" && (
+        <Card background="bg-surface-secondary">
+          <InlineStack align="space-between" blockAlign="center">
+            <BlockStack gap="100">
+              <Text variant="headingMd">Bulk Action</Text>
+              <Text tone="subdued">Found {nonCompliantProducts.length} products with broken Dwell loops.</Text>
+            </BlockStack>
+            <Tooltip content={hasDeadLinkConfig ? "Fix dead links in Rules tab first." : "Inject links into all missing products."}>
+              <div>
+                <Button 
+                  size="large"
+                  variant="primary" 
+                  onClick={handleBulkInject}
+                  loading={fetcher.state === "submitting" && fetcher.formData?.get("intent") === "bulkInjectLinks"}
+                  disabled={hasDeadLinkConfig}
+                >
+                  ⚡ Bulk Inject All Missing Links
+                </Button>
+              </div>
+            </Tooltip>
+          </InlineStack>
+        </Card>
+
+        {fetcher.data?.message && ["injectLinks", "bulkInjectLinks"].includes(fetcher.formData?.get("intent")) && (
           <Banner tone="success">{fetcher.data.message}</Banner>
         )}
         
@@ -333,6 +398,7 @@ export default function DwellWeb() {
                   variant="primary" 
                   onClick={() => handleInject(p)}
                   loading={fetcher.state === "submitting" && fetcher.formData?.get("id") === p.id}
+                  disabled={p.hasDeadLinks}
                 >
                   Inject Missing Links
                 </Button>
@@ -348,7 +414,11 @@ export default function DwellWeb() {
                 <Box style={{ flex: 1 }}>
                   <Text variant="bodySm" fontWeight="bold" tone="critical">🔴 Missing:</Text>
                   <InlineStack gap="200" wrap>
-                    {p.missing.map((l, i) => <Badge key={i} tone="critical">{l.label}</Badge>)}
+                    {p.missing.map((l, i) => (
+                      <Badge key={i} tone={l.isDead ? "warning" : "critical"}>
+                        {l.label} {l.isDead && "(DEAD URL)"}
+                      </Badge>
+                    ))}
                   </InlineStack>
                 </Box>
               </InlineStack>
