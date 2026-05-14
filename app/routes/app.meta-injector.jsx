@@ -624,10 +624,10 @@ export const action = async ({ request }) => {
 
 export default function MetaInjector() {
   const { products, collections, loaderError } = useLoaderData();
-  const [tabIndex, setTabIndex] = useState(0);
+  const [activeView, setActiveView] = useState(0);
   const [menuActive, setMenuActive] = useState(false);
 
-  const tabs = [
+  const views = [
     { id: "products",    content: "🪨 Products" },
     { id: "bulk",        content: "📦 Bulk Edit" },
     { id: "inject",      content: "💉 QA & Inject" },
@@ -644,25 +644,25 @@ export default function MetaInjector() {
             <Box padding="400">
               <Popover
                 active={menuActive}
-                activator={<Button onClick={() => setMenuActive(!menuActive)} icon={MenuIcon} size="large">{tabs[tabIndex].content}</Button>}
+                activator={<Button onClick={() => setMenuActive(!menuActive)} icon={MenuIcon} size="large">{views[activeView].content}</Button>}
                 onClose={() => setMenuActive(false)}
               >
                 <ActionList
                   actionRole="menuitem"
-                  items={tabs.map((tab, index) => ({
-                    content: tab.content,
-                    onAction: () => { setTabIndex(index); setMenuActive(false); },
+                  items={views.map((view, index) => ({
+                    content: view.content,
+                    onAction: () => { setActiveView(index); setMenuActive(false); },
                   }))}
                 />
               </Popover>
             </Box>
             <Divider />
             <Box padding="400">
-              {tabIndex === 0 && <ProductsTab products={products} />}
-              {tabIndex === 1 && <MetaCore products={products} mode="bulk" />}
-              {tabIndex === 2 && <MetaCore products={products} mode="inject" />}
-              {tabIndex === 3 && <MetaCore products={products} mode="mindat" />}
-              {tabIndex === 4 && <CollectionsTab products={products} collections={collections} onBack={() => setTabIndex(0)} />}
+              {activeView === 0 && <ProductsTab products={products} />}
+              {activeView === 1 && <MetaCore products={products} mode="bulk" />}
+              {activeView === 2 && <MetaCore products={products} mode="inject" />}
+              {activeView === 3 && <MetaCore products={products} mode="mindat" />}
+              {activeView === 4 && <CollectionsTab products={products} collections={collections} onBack={() => setActiveView(0)} />}
             </Box>
           </Card>
         </Layout.Section>
