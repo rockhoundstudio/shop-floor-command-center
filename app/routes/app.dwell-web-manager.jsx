@@ -1,6 +1,7 @@
 import { useState, useMemo } from "react";
 import { useLoaderData, useFetcher, data } from "react-router";
 import { authenticate } from "../shopify.server";
+import { useNavigate } from "@shopify/app-bridge-react";
 import {
   Page, Layout, Card, Text, BlockStack, InlineStack, Button,
   Badge, Box, Divider, Tabs, DataTable, Select, TextField, Banner, Grid, Tooltip, Icon
@@ -228,6 +229,7 @@ function generateInjectionHtml(currentHtml, missingLinks) {
 export default function DwellWeb() {
   const { products, pages, articles, livePaths, loaderError } = useLoaderData();
   const fetcher = useFetcher();
+  const navigate = useNavigate();
 
   const [selectedTab, setSelectedTab] = useState(0);
   const [editorType, setEditorType] = useState("pages"); 
@@ -534,8 +536,11 @@ export default function DwellWeb() {
     <Page
       title="Dwell Web Manager 🕸️"
       subtitle="Product Link Governance & Dwell Loop Enforcer"
-      backAction={{ content: "Command Center", url: "/app/_index" }}
     >
+      <Box paddingBlockEnd="400">
+        <Button onClick={() => navigate("/app/_index")}>← Command Center</Button>
+      </Box>
+
       {loaderError && (
         <Box paddingBlockEnd="400">
           <Banner tone="critical" title="Failed to load Shopify data">
