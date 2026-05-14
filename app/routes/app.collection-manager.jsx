@@ -1,4 +1,4 @@
-import { data as json } from "react-router";
+import { data } from "react-router";
 import { useLoaderData } from "react-router";
 import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
@@ -24,14 +24,14 @@ export const loader = async ({ request }) => {
     }
   `);
 
-  const data = await res.json();
-  const collections = data.data.collections.nodes;
-  const products = data.data.products.nodes.map(p => ({
+  const json = await res.json();
+  const collections = json.data.collections.nodes;
+  const products = json.data.products.nodes.map(p => ({
     ...p,
     currentCollections: p.collections?.nodes ?? [],
   }));
 
-  return json({ collections, products });
+  return data({ collections, products });
 };
 
 // ── ACTION ───────────────────────────────────────────────────────────────────
@@ -42,59 +42,71 @@ export const action = async ({ request }) => {
 
   if (intent === "createCollection") {
     const title = fd.get("title");
-    await admin.graphql(`
-      mutation {
-        collectionCreate(input: { title: "${title}" }) {
+    const res = await admin.graphql(`
+      mutation createCollection($title: String!) {
+        collectionCreate(input: { title: $title }) {
           collection { id title }
           userErrors { field message }
         }
       }
-    `);
-    return json({ ok: true });
+    `, { variables: { title } });
+    const json = await res.json();
+    if (json.data?.collectionCreate?.userErrors?.length)
+      return data({ ok: false, error: json.data.collectionCreate.userErrors[0].message });
+    return data({ ok: true });
   }
 
   if (intent === "deleteCollection") {
     const id = fd.get("id");
-    await admin.graphql(`
-      mutation {
-        collectionDelete(input: { id: "${id}" }) {
+    const res = await admin.graphql(`
+      mutation deleteCollection($id: ID!) {
+        collectionDelete(input: { id: $id }) {
           deletedCollectionId
           userErrors { field message }
         }
       }
-    `);
-    return json({ ok: true });
+    `, { variables: { id } });
+    const json = await res.json();
+    if (json.data?.collectionDelete?.userErrors?.length)
+      return data({ ok: false, error: json.data.collectionDelete.userErrors[0].message });
+    return data({ ok: true });
   }
 
   if (intent === "assignCollection") {
     const productId = fd.get("productId");
     const collectionId = fd.get("collectionId");
-    await admin.graphql(`
-      mutation {
-        collectionAddProducts(id: "${collectionId}", productIds: ["${productId}"]) {
+    const res = await admin.graphql(`
+      mutation assignCollection($collectionId: ID!, $productIds: [ID!]!) {
+        collectionAddProducts(id: $collectionId, productIds: $productIds) {
           collection { id title }
           userErrors { field message }
         }
       }
-    `);
-    return json({ ok: true });
+    `, { variables: { collectionId, productIds: [productId] } });
+    const json = await res.json();
+    if (json.data?.collectionAddProducts?.userErrors?.length)
+      return data({ ok: false, error: json.data.collectionAddProducts.userErrors[0].message });
+    return data({ ok: true });
   }
 
   if (intent === "removeCollection") {
     const productId = fd.get("productId");
     const collectionId = fd.get("collectionId");
-    await admin.graphql(`
-      mutation {
-        collectionRemoveProducts(id: "${collectionId}", productIds: ["${productId}"]) {
+    const res = await admin.graphql(`
+      mutation removeCollection($collectionId: ID!, $productIds: [ID!]!) {
+        collectionRemoveProducts(id: $collectionId, productIds: $productIds) {
           job { id }
           userErrors { field message }
         }
       }
-    `);
-    return json({ ok: true });
+    `, { variables: { collectionId, productIds: [productId] } });
+    const json = await res.json();
+    if (json.data?.collectionRemoveProducts?.userErrors?.length)
+      return data({ ok: false, error: json.data.collectionRemoveProducts.userErrors[0].message });
+    return data({ ok: true });
   }
 
-  return json({ ok: false, error: "Unknown intent" });
+  return data({ ok: false, error: "Unknown intent" });
 };
 
 // ── COMPONENT ────────────────────────────────────────────────────────────────
