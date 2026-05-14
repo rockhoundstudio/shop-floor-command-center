@@ -96,6 +96,7 @@ export const loader = async ({ request }) => {
             node {
               id title descriptionHtml status
               variants(first: 1) { edges { node { id price } } }
+              featuredImage { url altText }
               customMeta: metafields(first: 100, namespace: "custom") {
                 edges { node { key value } }
               }
@@ -111,8 +112,12 @@ export const loader = async ({ request }) => {
     const pData = await productsRes.json();
 
     const products = (pData.data?.products?.edges || []).map(({ node }) => {
-      const customMfs = Object.fromEntries((node.customMeta?.edges || []).map(({ node: mf }) => [mf.key, mf.value]));
-      const shopifyMfs = Object.fromEntries((node.shopifyMeta?.edges || []).map(({ node: mf }) => [mf.key, mf.value]));
+      const customMfs = Object.fromEntries(
+        (node.customMeta?.edges || []).map(({ node: mf }) => [mf.key, mf.value])
+      );
+      const shopifyMfs = Object.fromEntries(
+        (node.shopifyMeta?.edges || []).map(({ node: mf }) => [mf.key, mf.value])
+      );
       const rawMfs = { ...shopifyMfs, ...customMfs };
 
       const mfs = Object.fromEntries(
@@ -168,7 +173,6 @@ export const action = async ({ request }) => {
     const price = formData.get("price");
 
     try {
-      // 1. Update Base Info
       await admin.graphql(`
         mutation productUpdate($input: ProductInput!) {
           productUpdate(input: $input) { userErrors { message } }
@@ -189,7 +193,6 @@ export const action = async ({ request }) => {
         `, { variables: { productId: id, variants: [{ id: variantId, price: String(parseFloat(price).toFixed(2)) }] }});
       }
 
-      // 2. Update Metafields
       const mfs = [];
       TARGET_KEYS.forEach(key => {
         const val = formData.get(`mf_${key}`);
@@ -223,6 +226,8 @@ export const action = async ({ request }) => {
     const ids = JSON.parse(formData.get("ids"));
     const ooakText = formData.get("ooakText") || "";
     
+    console.log("BULK EDIT IDs:", ids);
+    
     const metafields = [];
     ids.forEach((ownerId) => {
       Object.keys(updates).forEach(key => {
@@ -237,7 +242,10 @@ export const action = async ({ request }) => {
       });
       if (ooakText && ooakText.trim() !== "") {
         const linkedStory = autoLinkStory(`✨ Unique Features: ${ooakText}`);
-        metafields.push({ ownerId, namespace: "custom", key: "stone_story", value: linkedStory, type: "single_line_text_field" });
+        const formatted = formatMetafieldValue("stone_story", linkedStory);
+        if (formatted) {
+          metafields.push({ ownerId, namespace: formatted.namespace, key: formatted.key, value: formatted.value, type: formatted.type });
+        }
       }
     });
 
@@ -266,6 +274,10 @@ export const action = async ({ request }) => {
     const products = JSON.parse(formData.get("products"));
     const results = [];
     
+    if (!process.env.MINDAT_API_KEY) {
+      return data({ ok: false, error: "MINDAT_API_KEY not set in environment." });
+    }
+
     for (const p of products) {
       const library  = lookupStone(p.title) || {};
       const parsed   = parseDescription(p.description || "");
@@ -283,7 +295,6 @@ export const action = async ({ request }) => {
         if (cachedStone) {
           mindat = JSON.parse(cachedStone.data);
         } else {
-          if (!process.env.MINDAT_API_KEY) throw new Error("MINDAT_API_KEY not set");
           const res = await fetch(
             `https://api.mindat.org/v1/geomaterials/?name=${encodeURIComponent(stoneName)}&format=json`,
             { headers: { Authorization: `Token ${process.env.MINDAT_API_KEY}` } }
@@ -401,11 +412,11 @@ function ProductsView({ products }) {
           <form onSubmit={handleSave}>
             <FormLayout>
               <FormLayout.Group>
-                <TextField label="Title" name="title" defaultValue={product.title} autoComplete="off" />
-                <TextField label="Price" name="price" defaultValue={product.price} autoComplete="off" />
+                <TextField label="Title" name="title" defaultValue={product.title} autoComplete="off"/>
+                <TextField label="Price" name="price" defaultValue={product.price} autoComplete="off"/>
               </FormLayout.Group>
-              <TextField label="Description" value={product.description} readOnly multiline={3} autoComplete="off" />
-              <Divider />
+              <TextField label="Description" value={product.description} disabled={true} multiline={3} autoComplete="off"/>
+              <Divider/>
               <Text variant="headingMd">Metafields</Text>
               <Grid>
                 {TARGET_KEYS.map(key => (
@@ -414,7 +425,7 @@ function ProductsView({ products }) {
                       label={key.replace(/_/g, " ").toUpperCase()} 
                       name={`mf_${key}`} 
                       defaultValue={product.metafields[key] || ""} 
-                      autoComplete="off" 
+                      autoComplete="off"
                     />
                   </Grid.Cell>
                 ))}
@@ -449,17 +460,11 @@ function ProductsView({ products }) {
     <BlockStack gap="400">
       <Text variant="headingMd">Product Roster</Text>
       <Card padding="0">
-        <IndexTable
-          resourceName={{ singular: 'product', plural: 'products' }}
-          itemCount={products.length}
-          selectable={false}
-          headings={[
-            { title: 'Title' },
-            { title: 'Price' },
-            { title: 'Store Status' },
-            { title: 'Meta Completeness' },
-            { title: 'Action' },
-          ]}
+        <IndexTable 
+          resourceName={{ singular: 'product', plural: 'products' }} 
+          itemCount={products.length} 
+          selectable={false} 
+          headings={[{ title: 'Title' }, { title: 'Price' }, { title: 'Store Status' }, { title: 'Meta Completeness' }, { title: 'Action' }]}
         >
           {rowMarkup}
         </IndexTable>
@@ -512,14 +517,9 @@ function BulkEditView({ products }) {
                 <Text tone="subdued">Fields left blank are ignored. Filled fields will overwrite existing data on all selected stones.</Text>
                 <Scrollable style={{ maxHeight: "50vh" }}>
                   <FormLayout>
-                    <TextField label="OOAK Features (Appended to Story)" name="ooakText" autoComplete="off" />
+                    <TextField label="OOAK Features (Appended to Story)" name="ooakText" autoComplete="off"/>
                     {TARGET_KEYS.map(key => (
-                      <TextField 
-                        key={key}
-                        label={key.replace(/_/g, " ").toUpperCase()} 
-                        name={`mf_${key}`} 
-                        autoComplete="off" 
-                      />
+                      <TextField key={key} label={key.replace(/_/g, " ").toUpperCase()} name={`mf_${key}`} autoComplete="off"/>
                     ))}
                   </FormLayout>
                 </Scrollable>
@@ -532,11 +532,11 @@ function BulkEditView({ products }) {
         </Layout.Section>
         <Layout.Section>
           <Card padding="0">
-            <IndexTable
-              resourceName={{ singular: 'product', plural: 'products' }}
-              itemCount={products.length}
-              selectedItemsCount={allResourcesSelected ? 'All' : selectedResources.length}
-              onSelectionChange={handleSelectionChange}
+            <IndexTable 
+              resourceName={{ singular: 'product', plural: 'products' }} 
+              itemCount={products.length} 
+              selectedItemsCount={allResourcesSelected ? 'All' : selectedResources.length} 
+              onSelectionChange={handleSelectionChange} 
               headings={[{ title: 'Title' }, { title: 'Completeness' }]}
             >
               {rowMarkup}
@@ -586,16 +586,11 @@ function QAInjectView({ products }) {
     <BlockStack gap="400">
       <Text variant="headingMd">Quality Assurance & Data Injection</Text>
       <Card padding="0">
-        <IndexTable
-          resourceName={{ singular: 'product', plural: 'products' }}
-          itemCount={products.length}
-          selectable={false}
-          headings={[
-            { title: 'Title' },
-            { title: 'Status' },
-            { title: 'Missing Fields' },
-            { title: 'Action' },
-          ]}
+        <IndexTable 
+          resourceName={{ singular: 'product', plural: 'products' }} 
+          itemCount={products.length} 
+          selectable={false} 
+          headings={[{ title: 'Title' }, { title: 'Status' }, { title: 'Missing Fields' }, { title: 'Action' }]}
         >
           {rowMarkup}
         </IndexTable>
@@ -619,7 +614,7 @@ function MindatView() {
             <input type="hidden" name="intent" value="mindat_lookup" />
             <InlineStack gap="300" blockAlign="end">
               <Box minWidth="300px">
-                <TextField label="Mineral Name" name="query" placeholder="e.g. Quartz, Pyrite" autoComplete="off" />
+                <TextField label="Mineral Name" name="query" placeholder="e.g. Quartz, Pyrite" autoComplete="off"/>
               </Box>
               <Button submit variant="primary" loading={isLoading} icon={SearchIcon}>Search Mindat</Button>
             </InlineStack>
@@ -639,11 +634,11 @@ function MindatView() {
         <Card>
           <BlockStack gap="400">
             <Text variant="headingLg">{result.name}</Text>
-            <Divider />
+            <Divider/>
             <Grid>
               <Grid.Cell columnSpan={{xs: 6, sm: 6, md: 4, lg: 4, xl: 4}}>
                 <Text fontWeight="bold">Mohs Hardness:</Text>
-                <Text>{result.hardness_min} {result.hardness_max && `- ${result.hardness_max}`}</Text>
+                <Text>{result.hardness_min} {result.hardness_max ? `- ${result.hardness_max}` : ""}</Text>
               </Grid.Cell>
               <Grid.Cell columnSpan={{xs: 6, sm: 6, md: 4, lg: 4, xl: 4}}>
                 <Text fontWeight="bold">Crystal System:</Text>
@@ -655,7 +650,7 @@ function MindatView() {
               </Grid.Cell>
               <Grid.Cell columnSpan={{xs: 6, sm: 6, md: 4, lg: 4, xl: 4}}>
                 <Text fontWeight="bold">Specific Gravity:</Text>
-                <Text>{result.density_min} {result.density_max && `- ${result.density_max}`}</Text>
+                <Text>{result.density_min} {result.density_max ? `- ${result.density_max}` : ""}</Text>
               </Grid.Cell>
               <Grid.Cell columnSpan={{xs: 6, sm: 6, md: 4, lg: 4, xl: 4}}>
                 <Text fontWeight="bold">Cleavage:</Text>
@@ -673,7 +668,6 @@ function MindatView() {
   );
 }
 
-// --- MAIN LAYOUT COMPONENT ---
 export default function MetaInjector() {
   const { products, loaderError } = useLoaderData();
   const [activeView, setActiveView] = useState(0);
@@ -696,8 +690,8 @@ export default function MetaInjector() {
           
           <Card padding="0">
             <Box padding="400">
-              <Popover
-                active={menuActive}
+              <Popover 
+                active={menuActive} 
                 activator={
                   <Button onClick={() => setMenuActive(!menuActive)} icon={MenuIcon} size="large">
                     {currentViewTitle}
@@ -705,8 +699,8 @@ export default function MetaInjector() {
                 }
                 onClose={() => setMenuActive(false)}
               >
-                <ActionList
-                  actionRole="menuitem"
+                <ActionList 
+                  actionRole="menuitem" 
                   items={views.map((view, index) => ({
                     content: view.content,
                     onAction: () => { 
@@ -718,19 +712,17 @@ export default function MetaInjector() {
               </Popover>
             </Box>
             
-            <Divider />
+            <Divider/>
             
             <Box padding="400" background="bg-surface-secondary">
-              {activeView === 0 && <ProductsView products={products} />}
-              {activeView === 1 && <BulkEditView products={products} />}
-              {activeView === 2 && <QAInjectView products={products} />}
-              {activeView === 3 && <MindatView />}
+              {activeView === 0 && <ProductsView products={products}/>}
+              {activeView === 1 && <BulkEditView products={products}/>}
+              {activeView === 2 && <QAInjectView products={products}/>}
+              {activeView === 3 && <MindatView/>}
             </Box>
           </Card>
-          
         </Layout.Section>
       </Layout>
     </Page>
   );
 }
-```</MindatView></QAInjectView></BulkEditView></ProductsView></ProductsTab></MetaCore></MetaCore>
