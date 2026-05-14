@@ -3,7 +3,7 @@ import { useLoaderData, useFetcher, data } from "react-router";
 import { authenticate } from "../shopify.server";
 import {
   Page, Layout, Card, Text, BlockStack, InlineStack, Button,
-  Badge, Box, Divider, Tabs, DataTable, Select, TextField, Banner, Grid, Tooltip
+  Badge, Box, Divider, Tabs, DataTable, Select, TextField, Banner, Grid, Tooltip, Icon
 } from "@shopify/polaris";
 import { SearchIcon } from "@shopify/polaris-icons";
 
@@ -65,12 +65,11 @@ export const loader = async ({ request }) => {
         }
         collections(first: 150) { edges { node { handle } } }
         pages(first: 100) { edges { node { id title handle body } } }
-        articles(first: 100) { edges { node { id title handle blog { handle } bodyHtml } } }
+        articles(first: 100) { edges { node { id title handle blog { handle } body } } }
       }
     `);
     const json = await res.json();
     
-    // Trap silent GraphQL errors and force them into the catch block
     if (json.errors) {
       throw new Error(JSON.stringify(json.errors));
     }
@@ -83,7 +82,6 @@ export const loader = async ({ request }) => {
     const pages = (json.data?.pages?.edges || []).map(e => e.node);
     const articles = (json.data?.articles?.edges || []).map(e => e.node);
     
-    // Generate an array of all valid Shopify paths to check for dead links
     const livePaths = [
       "/collections/all",
       ...collections.map(c => `/collections/${c.handle}`),
@@ -116,9 +114,8 @@ export const action = async ({ request }) => {
     return data({ ok: true, message: "Links injected successfully!" });
   }
 
-  // BULK INJECTION LOGIC
   if (intent === "bulkInjectLinks") {
-    const payload = JSON.parse(formData.get("payload")); // Array of { id, newHtml }
+    const payload = JSON.parse(formData.get("payload"));
     let errors = [];
     
     for (const item of payload) {
@@ -136,7 +133,6 @@ export const action = async ({ request }) => {
     return data({ ok: true, message: `Successfully injected links into ${payload.length} products!` });
   }
 
-  // EDITOR TAB SAVES
   if (intent === "updatePage") {
     const id = formData.get("id");
     const bodyHtml = formData.get("bodyHtml");
@@ -157,7 +153,7 @@ export const action = async ({ request }) => {
       mutation articleUpdate($id: ID!, $article: ArticleUpdateInput!) {
         articleUpdate(id: $id, article: $article) { userErrors { message } }
       }
-    `, { variables: { id, article: { bodyHtml: bodyHtml } } });
+    `, { variables: { id, article: { body: bodyHtml } } });
     const json = await res.json();
     if (json.data?.articleUpdate?.userErrors?.length) return data({ ok: false, error: json.data.articleUpdate.userErrors[0].message });
     return data({ ok: true, message: "Article saved successfully!" });
@@ -187,10 +183,8 @@ function evaluateProducts(products, livePaths) {
     const missing = [];
     const present = [];
 
-    // Map Global Links
     GLOBAL_LINKS.forEach(link => required.push({ ...link, isDead: !livePaths.includes(link.url) }));
 
-    // Map Collection Links
     product.collectionHandles.forEach(handle => {
       if (COLLECTION_RULES[handle]) {
         COLLECTION_RULES[handle].links.forEach(link => {
@@ -201,7 +195,6 @@ function evaluateProducts(products, livePaths) {
       }
     });
 
-    // Evaluate Presence
     required.forEach(link => {
       if (checkLinkPresence(htmlLinks, link.url)) {
         present.push(link);
@@ -221,7 +214,6 @@ function evaluateProducts(products, livePaths) {
   });
 }
 
-// Generates the HTML snippet for missing links
 function generateInjectionHtml(currentHtml, missingLinks) {
   let newHtml = currentHtml || "";
   let injectionHtml = `\n\n<div class="rockhound-dwell-links" style="margin-top: 2em; display: flex; flex-wrap: wrap; gap: 10px;">`;
@@ -238,8 +230,6 @@ export default function DwellWeb() {
   const fetcher = useFetcher();
 
   const [selectedTab, setSelectedTab] = useState(0);
-  
-  // Editor State (Tab 4)
   const [editorType, setEditorType] = useState("pages"); 
   const [activeItem, setActiveItem] = useState(null);
   const [contentHtml, setContentHtml] = useState("");
@@ -250,7 +240,6 @@ export default function DwellWeb() {
   const evaluatedProducts = useMemo(() => evaluateProducts(products, livePaths), [products, livePaths]);
   const nonCompliantProducts = evaluatedProducts.filter(p => !p.isCompliant);
 
-  // Single Inject
   const handleInject = (product) => {
     const newHtml = generateInjectionHtml(product.descriptionHtml, product.missing);
     const fd = new FormData();
@@ -260,7 +249,6 @@ export default function DwellWeb() {
     fetcher.submit(fd, { method: "post" });
   };
 
-  // Bulk Inject All
   const handleBulkInject = () => {
     const payload = nonCompliantProducts.map(p => ({
       id: p.id,
@@ -272,7 +260,6 @@ export default function DwellWeb() {
     fetcher.submit(fd, { method: "post" });
   };
 
-  // TABS RENDERING
   const renderRulesTab = () => {
     const renderLinkRule = (l) => {
       const isDead = !livePaths.includes(l.url);
@@ -363,7 +350,6 @@ export default function DwellWeb() {
 
     return (
       <BlockStack gap="400">
-        
         <Card background="bg-surface-secondary">
           <InlineStack align="space-between" blockAlign="center">
             <BlockStack gap="100">
@@ -469,27 +455,30 @@ export default function DwellWeb() {
                 autoComplete="off"
                 clearButton
                 onClearButtonClick={() => setSearchQuery("")}
-                prefix={<SearchIcon width="16" fill="#5c5f62" />}
+                prefix={<Icon source={SearchIcon} />}
               />
               <Divider />
               <Box style={{ maxHeight: "50vh", overflowY: "auto" }}>
                 <BlockStack gap="200">
                   {filteredItems.map(item => (
-                    <Box
-                      key={item.id}
-                      padding="200"
-                      background={activeItem?.id === item.id ? "bg-surface-active" : "transparent"}
-                      borderRadius="100"
+                    <div 
+                      key={item.id} 
                       onClick={() => {
                         setActiveItem({ ...item, type: editorType });
-                        setContentHtml(editorType === "pages" ? item.body : item.bodyHtml);
-                      }}
+                        setContentHtml(item.body);
+                      }} 
                       style={{ cursor: "pointer" }}
                     >
-                      <Text fontWeight={activeItem?.id === item.id ? "bold" : "regular"} truncate>
-                        {item.title}
-                      </Text>
-                    </Box>
+                      <Box
+                        padding="200"
+                        background={activeItem?.id === item.id ? "bg-surface-active" : "transparent"}
+                        borderRadius="100"
+                      >
+                        <Text fontWeight={activeItem?.id === item.id ? "bold" : "regular"} truncate>
+                          {item.title}
+                        </Text>
+                      </Box>
+                    </div>
                   ))}
                 </BlockStack>
               </Box>
@@ -547,7 +536,6 @@ export default function DwellWeb() {
       subtitle="Product Link Governance & Dwell Loop Enforcer"
       backAction={{ content: "Command Center", url: "/app/_index" }}
     >
-      {/* Show GraphQL errors right at the top if the fetch fails */}
       {loaderError && (
         <Box paddingBlockEnd="400">
           <Banner tone="critical" title="Failed to load Shopify data">
