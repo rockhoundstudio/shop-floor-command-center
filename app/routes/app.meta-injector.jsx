@@ -461,24 +461,35 @@ function ProductsView({ products }) {
     );
   }
 
-  const rowMarkup = products.map(({ id, title, price, status, shopifyStatus, image }, index) => (
-    <IndexTable.Row id={id} key={id} position={index}>
-      <IndexTable.Cell>
-        <Thumbnail source={image || ImageIcon} alt={title} size="small" />
-      </IndexTable.Cell>
-      <IndexTable.Cell><Text fontWeight="bold">{title}</Text></IndexTable.Cell>
-      <IndexTable.Cell>${price}</IndexTable.Cell>
-      <IndexTable.Cell>{shopifyStatus}</IndexTable.Cell>
-      <IndexTable.Cell>
-        <Badge tone={status === "Complete" ? "success" : status === "Partial" ? "warning" : "critical"}>
-          {status}
-        </Badge>
-      </IndexTable.Cell>
-      <IndexTable.Cell>
-        <Button size="slim" icon={ViewIcon} onClick={() => setEditingId(id)}>Edit Single</Button>
-      </IndexTable.Cell>
-    </IndexTable.Row>
-  ));
+  const rowMarkup = products.map(({ id, title, price, status, shopifyStatus, image }, index) => {
+    const normalizedStatus = String(status).toLowerCase();
+    const badgeTone = normalizedStatus === "complete" ? "success" : normalizedStatus === "partial" ? "warning" : "critical";
+    
+    return (
+      <IndexTable.Row id={id} key={id} position={index}>
+        <IndexTable.Cell>
+          <Thumbnail source={image || ImageIcon} alt={title} size="small" />
+        </IndexTable.Cell>
+        <IndexTable.Cell><Text fontWeight="bold">{title}</Text></IndexTable.Cell>
+        <IndexTable.Cell>
+          <Box display={{xs: 'none', sm: 'block'}}>${price}</Box>
+        </IndexTable.Cell>
+        <IndexTable.Cell>
+          <Box display={{xs: 'none', sm: 'block'}}>{shopifyStatus}</Box>
+        </IndexTable.Cell>
+        <IndexTable.Cell>
+          <Box display={{xs: 'none', sm: 'block'}}>
+            <Badge tone={badgeTone}>
+              {status}
+            </Badge>
+          </Box>
+        </IndexTable.Cell>
+        <IndexTable.Cell>
+          <Button size="slim" icon={ViewIcon} onClick={() => setEditingId(id)}>Edit Single</Button>
+        </IndexTable.Cell>
+      </IndexTable.Row>
+    );
+  });
 
   return (
     <BlockStack gap="400">
@@ -488,7 +499,14 @@ function ProductsView({ products }) {
           resourceName={{ singular: 'product', plural: 'products' }} 
           itemCount={products.length} 
           selectable={false} 
-          headings={[{ title: '' }, { title: 'Title' }, { title: 'Price' }, { title: 'Store Status' }, { title: 'Meta Completeness' }, { title: 'Action' }]}
+          headings={[
+            { title: '' }, 
+            { title: 'Title' }, 
+            { title: <Box display={{xs: 'none', sm: 'block'}}>Price</Box> }, 
+            { title: <Box display={{xs: 'none', sm: 'block'}}>Store Status</Box> }, 
+            { title: <Box display={{xs: 'none', sm: 'block'}}>Meta Completeness</Box> }, 
+            { title: 'Action' }
+          ]}
         >
           {rowMarkup}
         </IndexTable>
@@ -521,24 +539,31 @@ function BulkEditView({ products }) {
     submit(submitData, { method: "post" });
   };
 
-  const rowMarkup = products.map(({ id, title, status, image }, index) => (
-    <IndexTable.Row id={id} key={id} selected={selectedResources.includes(id)} position={index}>
-      <IndexTable.Cell>
-        <Thumbnail source={image || ImageIcon} alt={title} size="small" />
-      </IndexTable.Cell>
-      <IndexTable.Cell><Text fontWeight="bold">{title}</Text></IndexTable.Cell>
-      <IndexTable.Cell>
-        <Badge tone={status === "Complete" ? "success" : status === "Partial" ? "warning" : "critical"}>
-          {status}
-        </Badge>
-      </IndexTable.Cell>
-    </IndexTable.Row>
-  ));
+  const rowMarkup = products.map(({ id, title, status, image }, index) => {
+    const normalizedStatus = String(status).toLowerCase();
+    const badgeTone = normalizedStatus === "complete" ? "success" : normalizedStatus === "partial" ? "warning" : "critical";
+    
+    return (
+      <IndexTable.Row id={id} key={id} selected={selectedResources.includes(id)} position={index}>
+        <IndexTable.Cell>
+          <Thumbnail source={image || ImageIcon} alt={title} size="small" />
+        </IndexTable.Cell>
+        <IndexTable.Cell><Text fontWeight="bold">{title}</Text></IndexTable.Cell>
+        <IndexTable.Cell>
+          <Box display={{xs: 'none', sm: 'block'}}>
+            <Badge tone={badgeTone}>
+              {status}
+            </Badge>
+          </Box>
+        </IndexTable.Cell>
+      </IndexTable.Row>
+    );
+  });
 
   return (
     <form onSubmit={handleBulkSave}>
-      <Layout>
-        <Layout.Section variant="oneThird">
+      <Grid>
+        <Grid.Cell columnSpan={{xs: 6, sm: 6, md: 4, lg: 4, xl: 4}}>
           <BlockStack gap="400">
             <Card>
               <BlockStack gap="300">
@@ -570,21 +595,25 @@ function BulkEditView({ products }) {
               </BlockStack>
             </Card>
           </BlockStack>
-        </Layout.Section>
-        <Layout.Section>
+        </Grid.Cell>
+        <Grid.Cell columnSpan={{xs: 6, sm: 6, md: 8, lg: 8, xl: 8}}>
           <Card padding="0">
             <IndexTable 
               resourceName={{ singular: 'product', plural: 'products' }} 
               itemCount={products.length} 
               selectedItemsCount={allResourcesSelected ? 'All' : selectedResources.length} 
               onSelectionChange={handleSelectionChange} 
-              headings={[{ title: '' }, { title: 'Title' }, { title: 'Completeness' }]}
+              headings={[
+                { title: '' }, 
+                { title: 'Title' }, 
+                { title: <Box display={{xs: 'none', sm: 'block'}}>Completeness</Box> }
+              ]}
             >
               {rowMarkup}
             </IndexTable>
           </Card>
-        </Layout.Section>
-      </Layout>
+        </Grid.Cell>
+      </Grid>
     </form>
   );
 }
@@ -599,32 +628,41 @@ function QAInjectView({ products }) {
     fetcher.submit(fd, { method: "post" });
   };
 
-  const rowMarkup = products.map((product, index) => (
-    <IndexTable.Row id={product.id} key={product.id} position={index}>
-      <IndexTable.Cell>
-        <Thumbnail source={product.image || ImageIcon} alt={product.title} size="small" />
-      </IndexTable.Cell>
-      <IndexTable.Cell><Text fontWeight="bold">{product.title}</Text></IndexTable.Cell>
-      <IndexTable.Cell>
-        <Badge tone={product.status === "Complete" ? "success" : product.status === "Partial" ? "warning" : "critical"}>
-          {product.status}
-        </Badge>
-      </IndexTable.Cell>
-      <IndexTable.Cell>
-        {product.missing.length === 0 ? <Text tone="success">None</Text> : <Text tone="critical">{product.missing.length} Missing</Text>}
-        <Text variant="bodySm" tone="subdued">{product.missing.slice(0, 3).join(", ")}{product.missing.length > 3 ? "..." : ""}</Text>
-      </IndexTable.Cell>
-      <IndexTable.Cell>
-        <Button 
-          size="slim" 
-          onClick={() => handleInject(product)}
-          disabled={product.status === "Complete"}
-        >
-          Inject Missing
-        </Button>
-      </IndexTable.Cell>
-    </IndexTable.Row>
-  ));
+  const rowMarkup = products.map((product, index) => {
+    const normalizedStatus = String(product.status).toLowerCase();
+    const badgeTone = normalizedStatus === "complete" ? "success" : normalizedStatus === "partial" ? "warning" : "critical";
+    
+    return (
+      <IndexTable.Row id={product.id} key={product.id} position={index}>
+        <IndexTable.Cell>
+          <Thumbnail source={product.image || ImageIcon} alt={product.title} size="small" />
+        </IndexTable.Cell>
+        <IndexTable.Cell><Text fontWeight="bold">{product.title}</Text></IndexTable.Cell>
+        <IndexTable.Cell>
+          <Box display={{xs: 'none', sm: 'block'}}>
+            <Badge tone={badgeTone}>
+              {product.status}
+            </Badge>
+          </Box>
+        </IndexTable.Cell>
+        <IndexTable.Cell>
+          <Box display={{xs: 'none', sm: 'block'}}>
+            {product.missing.length === 0 ? <Text tone="success">None</Text> : <Text tone="critical">{product.missing.length} Missing</Text>}
+            <Text variant="bodySm" tone="subdued">{product.missing.slice(0, 3).join(", ")}{product.missing.length > 3 ? "..." : ""}</Text>
+          </Box>
+        </IndexTable.Cell>
+        <IndexTable.Cell>
+          <Button 
+            size="slim" 
+            onClick={() => handleInject(product)}
+            disabled={normalizedStatus === "complete"}
+          >
+            Inject Missing
+          </Button>
+        </IndexTable.Cell>
+      </IndexTable.Row>
+    );
+  });
 
   return (
     <BlockStack gap="400">
@@ -634,7 +672,13 @@ function QAInjectView({ products }) {
           resourceName={{ singular: 'product', plural: 'products' }} 
           itemCount={products.length} 
           selectable={false} 
-          headings={[{ title: '' }, { title: 'Title' }, { title: 'Status' }, { title: 'Missing Fields' }, { title: 'Action' }]}
+          headings={[
+            { title: '' }, 
+            { title: 'Title' }, 
+            { title: <Box display={{xs: 'none', sm: 'block'}}>Status</Box> }, 
+            { title: <Box display={{xs: 'none', sm: 'block'}}>Missing Fields</Box> }, 
+            { title: 'Action' }
+          ]}
         >
           {rowMarkup}
         </IndexTable>
