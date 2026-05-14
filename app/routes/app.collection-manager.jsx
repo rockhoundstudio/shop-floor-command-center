@@ -118,7 +118,7 @@ export default function CollectionManager() {
       <CollectionsTab
         collections={collections}
         products={products}
-        onBack={() => window.history.back()}
+        onBack={() => window.location.href = "/app"}
       />
     </Page>
   );
