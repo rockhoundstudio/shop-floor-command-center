@@ -8,12 +8,10 @@ import { useFetcher, useSubmit } from "react-router";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { ImageIcon } from "@shopify/polaris-icons";
 
-// --- LOCAL IMPORTS ---
 import { TARGET_KEYS, FIELD_LABELS } from "../../utils/metaScan";
 import { TAXONOMY_GIDS, wrapGid } from "../../utils/taxonomyMap";
-import DictationButton from "../DictationButton"; // The new Voice Module
+import DictationButton from "../DictationButton";
 
-// --- CONSTANTS ---
 const LIST_TEXT_FIELDS = ["character_marks"];
 
 const SEED_OPTIONS = {
@@ -28,7 +26,6 @@ const SEED_OPTIONS = {
   diaphaneity: ["Opaque", "Translucent", "Transparent", "Sub-translucent"]
 };
 
-// --- HELPER FUNCTIONS ---
 function formatMetafieldValue(key, value) {
   const cleanValue = String(value).replace(/[✅⚠️]/g, "").trim();
   const safeKey = key.replace(/-/g, "_");
@@ -43,33 +40,25 @@ function formatMetafieldValue(key, value) {
   };
 }
 
-// ==========================================
-// MAIN COMPONENT: Bulk Meta Injector
-// ==========================================
 export default function MetaCore({ mode, products = [] }) {
   const shopify = useAppBridge();
   const submit = useSubmit();
 
-  // --- STATE (BULK EDIT MODE) ---
   const { selectedResources, allResourcesSelected, handleSelectionChange } = useIndexResourceState(products);
   const [bulkStatus, setBulkStatus] = useState("");
   const [selectedFields, setSelectedFields] = useState({});
 
-  // --- STATE (STANDARD INJECT MODE) ---
   const [selectedIds, setSelectedIds] = useState([]);
   const [fieldValues, setFieldValues] = useState({});
   const [search, setSearch] = useState("");
-
   const [vocabulary, setVocabulary] = useState({});
   const [showCustomInput, setShowCustomInput] = useState({});
   const [customInputs, setCustomInputs] = useState({});
 
-  // --- FETCHERS ---
   const saveFetcher = useFetcher();
   const vocabFetcher = useFetcher();
   const addCustomFetcher = useFetcher();
 
-  // --- DERIVED DATA ---
   const filtered = products.filter(p => p.title.toLowerCase().includes(search.toLowerCase()));
   const selectedProduct = selectedIds.length === 1 ? products.find(p => p.id === selectedIds[0]) : null;
 
@@ -77,7 +66,6 @@ export default function MetaCore({ mode, products = [] }) {
   const saveSuccess = saveFetcher.state === "idle" && saveFetcher.data?.ok === true;
   const saveError = saveFetcher.state === "idle" && saveFetcher.data?.error;
 
-  // --- EFFECTS ---
   useEffect(() => {
     vocabFetcher.submit(
       { intent: "loadVocabulary" },
@@ -91,7 +79,6 @@ export default function MetaCore({ mode, products = [] }) {
     }
   }, [vocabFetcher.data]);
 
-  // --- ACTION HANDLERS (BULK MODE) ---
   const handleFieldToggle = (key, checked) => {
     setSelectedFields(prev => ({ ...prev, [key]: checked }));
   };
@@ -101,75 +88,55 @@ export default function MetaCore({ mode, products = [] }) {
     if (selectedResources.length === 0) return alert("Select at least one product.");
     const fd = new FormData(e.target);
     const updates = {};
-    
     TARGET_KEYS.forEach(k => {
       if (selectedFields[k]) {
         const val = fd.get(`mf_${k}`);
         if (val && val.trim() !== "") updates[k] = val.trim();
       }
     });
-    
     const submitData = new FormData();
     submitData.append("intent", "bulk_edit_new");
     submitData.append("ids", JSON.stringify(selectedResources));
     submitData.append("updates", JSON.stringify(updates));
     submitData.append("ooakText", fd.get("ooakText") || "");
     submitData.append("bulkStatus", bulkStatus);
-    
     submit(submitData, { method: "post" });
   };
 
-  // --- ACTION HANDLERS (STANDARD MODE) ---
   function handleSave() {
     if (selectedIds.length === 0) {
       shopify.toast.show("Please select at least one product to update.");
       return;
     }
-
-    const hasAnyValue = TARGET_KEYS.some(
-      key => fieldValues[key] && String(fieldValues[key]).trim() !== ""
-    );
+    const hasAnyValue = TARGET_KEYS.some(key => fieldValues[key] && String(fieldValues[key]).trim() !== "");
     if (!hasAnyValue) {
       shopify.toast.show("Fill in at least one field before saving.");
       return;
     }
-
     const updates = {};
     TARGET_KEYS.forEach(key => {
       const val = fieldValues[key];
-      if (val && String(val).trim() !== "") {
-        updates[key] = String(val).trim();
-      }
+      if (val && String(val).trim() !== "") updates[key] = String(val).trim();
     });
-
     const currentStories = {};
     selectedIds.forEach(id => {
       const p = products.find(pr => pr.id === id);
-      if (p?.metafields?.stone_story) {
-        currentStories[id] = p.metafields.stone_story;
-      }
+      if (p?.metafields?.stone_story) currentStories[id] = p.metafields.stone_story;
     });
-
     saveFetcher.submit(
-      {
-        intent: "bulk_edit_new",
-        ids: JSON.stringify(selectedIds),
-        updates: JSON.stringify(updates),
-        ooakText: "",
-        currentStories: JSON.stringify(currentStories),
-      },
+      { intent: "bulk_edit_new", ids: JSON.stringify(selectedIds), updates: JSON.stringify(updates), ooakText: "", currentStories: JSON.stringify(currentStories) },
       { method: "post", action: "/app/meta-injector" }
     );
   }
 
   // ==========================================
-  // RENDER: BULK EDIT MODE
+  // BULK EDIT MODE
   // ==========================================
   if (mode === "bulk") {
     const rowMarkup = products.map(({ id, title, status, image }, index) => {
-      const normalizedStatus = String(status || "").toLowerCase();
-      const badgeTone = normalizedStatus === "complete" ? "success" : normalizedStatus === "partial" ? "warning" : "critical";
-      
+      const normalizedStatus = String(status || "").replace(/[^a-zA-Z\s]/g, "").trim().toLowerCase();
+      const badgeTone = normalizedStatus.includes("complete") ? "success" : normalizedStatus.includes("partial") ? "warning" : "critical";
+
       return (
         <IndexTable.Row id={id} key={id} selected={selectedResources.includes(id)} position={index}>
           <IndexTable.Cell>
@@ -178,9 +145,7 @@ export default function MetaCore({ mode, products = [] }) {
           <IndexTable.Cell><Text fontWeight="bold">{title}</Text></IndexTable.Cell>
           <IndexTable.Cell>
             <Box display={{xs: 'none', sm: 'block'}}>
-              <Badge tone={badgeTone}>
-                {status || "Unknown"}
-              </Badge>
+              <Badge tone={badgeTone}>{status || "Unknown"}</Badge>
             </Box>
           </IndexTable.Cell>
         </IndexTable.Row>
@@ -196,12 +161,10 @@ export default function MetaCore({ mode, products = [] }) {
                 <BlockStack gap="300">
                   <Text variant="headingMd">Apply Data Fields</Text>
                   <Text tone="subdued">Check the fields you want to override and apply to all selected stones.</Text>
-                  
                   <Scrollable style={{ maxHeight: "50vh" }}>
                     <FormLayout>
                       <Select
                         label="Set Product Status"
-                        name="bulkStatus"
                         options={[
                           {label: 'No change', value: ''},
                           {label: 'ACTIVE', value: 'ACTIVE'},
@@ -211,25 +174,22 @@ export default function MetaCore({ mode, products = [] }) {
                         value={bulkStatus}
                         onChange={setBulkStatus}
                       />
-                      
                       <TextField label="OOAK Features (Appended to Story)" name="ooakText" autoComplete="off"/>
-                      
                       <Box paddingBlockStart="200">
                         <Text variant="headingSm">Metafield Overrides</Text>
                       </Box>
-
                       {TARGET_KEYS.map(key => (
                         <BlockStack key={key} gap="200">
-                          <Checkbox 
-                            label={`Update ${key.replace(/_/g, " ").toUpperCase()}`}
+                          <Checkbox
+                            label={FIELD_LABELS[key] || key.replace(/_/g, " ").toUpperCase()}
                             checked={selectedFields[key] || false}
                             onChange={(newChecked) => handleFieldToggle(key, newChecked)}
                           />
                           {selectedFields[key] && (
-                            <TextField 
+                            <TextField
                               labelHidden
                               label={key}
-                              name={`mf_${key}`} 
+                              name={`mf_${key}`}
                               autoComplete="off"
                               placeholder={`Enter new ${key.replace(/_/g, " ")}`}
                             />
@@ -238,7 +198,6 @@ export default function MetaCore({ mode, products = [] }) {
                       ))}
                     </FormLayout>
                   </Scrollable>
-                  
                   <Button submit variant="primary" disabled={selectedResources.length === 0}>
                     Apply Updates
                   </Button>
@@ -246,18 +205,18 @@ export default function MetaCore({ mode, products = [] }) {
               </Card>
             </BlockStack>
           </Grid.Cell>
-          
+
           <Grid.Cell columnSpan={{xs: 12, sm: 12, md: 8, lg: 8, xl: 8}}>
             <Card padding="0">
               <Scrollable style={{ maxHeight: "60vh" }}>
-                <IndexTable 
-                  resourceName={{ singular: 'product', plural: 'products' }} 
-                  itemCount={products.length} 
-                  selectedItemsCount={allResourcesSelected ? 'All' : selectedResources.length} 
-                  onSelectionChange={handleSelectionChange} 
+                <IndexTable
+                  resourceName={{ singular: 'product', plural: 'products' }}
+                  itemCount={products.length}
+                  selectedItemsCount={allResourcesSelected ? 'All' : selectedResources.length}
+                  onSelectionChange={handleSelectionChange}
                   headings={[
-                    { title: '' }, 
-                    { title: 'Title' }, 
+                    { title: '' },
+                    { title: 'Title' },
                     { title: <Box display={{xs: 'none', sm: 'block'}}>Completeness</Box> }
                   ]}
                 >
@@ -272,12 +231,11 @@ export default function MetaCore({ mode, products = [] }) {
   }
 
   // ==========================================
-  // RENDER: STANDARD / INJECT MODE
+  // STANDARD / INJECT MODE
   // ==========================================
   return (
     <Page title="Bulk Inject Lapidary Data">
       <BlockStack gap="600">
-
         {saveSuccess && (
           <Banner tone="success">
             Bulk update saved to Shopify across {selectedIds.length} stone{selectedIds.length !== 1 ? "s" : ""}.
@@ -288,19 +246,13 @@ export default function MetaCore({ mode, products = [] }) {
         )}
 
         <div style={{ display: "flex", flexWrap: "wrap", gap: "24px", alignItems: "stretch" }}>
-
-          {/* LEFT PANEL: Product Selection */}
           <div style={{ flex: "1 1 300px", minWidth: 0, display: "flex", flexDirection: "column" }}>
             <BlockStack gap="400">
-              <Text variant="headingMd" as="h2">
-                Select Stones ({selectedIds.length} selected)
-              </Text>
-
+              <Text variant="headingMd" as="h2">Select Stones ({selectedIds.length} selected)</Text>
               <TextField
                 value={search} onChange={setSearch} autoComplete="off" placeholder="Search title..."
                 clearButton onClearButtonClick={() => setSearch("")} prefix="🔍"
               />
-
               <Card padding="0" style={{ flex: 1, display: "flex", flexDirection: "column" }}>
                 <Box padding="300" borderBlockEndWidth="025" borderColor="border">
                   <Checkbox
@@ -343,7 +295,6 @@ export default function MetaCore({ mode, products = [] }) {
             </BlockStack>
           </div>
 
-          {/* RIGHT PANEL: Data Entry */}
           <div style={{ flex: "1 1 400px", maxWidth: "680px", width: "100%", minWidth: 0 }}>
             <BlockStack gap="400">
               <InlineStack align="space-between" blockAlign="center">
@@ -352,19 +303,16 @@ export default function MetaCore({ mode, products = [] }) {
                   Save to Shopify
                 </Button>
               </InlineStack>
-
               <Card roundedAbove="sm">
                 <BlockStack gap="600">
                   <Banner tone="info">
                     Any field you leave blank will be ignored. Only filled fields will overwrite existing data on the selected stones.
                   </Banner>
-
                   <BlockStack gap="400">
                     {TARGET_KEYS.map(key => {
                       const savedValue = selectedProduct?.metafields?.[key.replace(/-/g, "_")];
                       const placeholderText = savedValue ? `Current: ${String(savedValue).replace(/[✅⚠️]/g, "").trim()}` : "";
 
-                      // --- THE CHROME: VOICE MODULE FOR BULK STONE STORY ---
                       if (key === "stone_story") {
                         return (
                           <BlockStack gap="200" key={key}>
@@ -377,8 +325,8 @@ export default function MetaCore({ mode, products = [] }) {
                               multiline={4}
                             />
                             <InlineStack align="start">
-                              <DictationButton 
-                                placeholder="🎤 Dictate Bulk Story" 
+                              <DictationButton
+                                placeholder="🎤 Dictate Bulk Story"
                                 onResult={(text) => {
                                   setFieldValues(prev => ({
                                     ...prev,
@@ -391,14 +339,12 @@ export default function MetaCore({ mode, products = [] }) {
                         );
                       }
 
-                      // --- DROPDOWN SELECTIONS ---
                       if (SEED_OPTIONS[key]) {
                         const opts = [...new Set([...(SEED_OPTIONS[key] || []), ...(vocabulary[key] || [])])];
                         const isMulti = key === "secondary_colors";
                         const currentVal = fieldValues[key] || "";
                         const selectOptions = [{ label: placeholderText || "— select —", value: "" }];
                         opts.forEach(o => selectOptions.push({ label: o, value: o }));
-                        
                         if (!isMulti && currentVal && currentVal !== "__custom__" && !opts.includes(currentVal)) {
                           selectOptions.push({ label: currentVal, value: currentVal });
                         }
@@ -473,7 +419,6 @@ export default function MetaCore({ mode, products = [] }) {
                           </BlockStack>
                         );
                       } else {
-                        // --- STANDARD TEXT FIELDS ---
                         return (
                           <BlockStack gap="200" key={key}>
                             <TextField
@@ -491,10 +436,8 @@ export default function MetaCore({ mode, products = [] }) {
                   </BlockStack>
                 </BlockStack>
               </Card>
-
             </BlockStack>
           </div>
-
         </div>
       </BlockStack>
     </Page>
