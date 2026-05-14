@@ -4,7 +4,7 @@ import { authenticate } from "../shopify.server";
 import {
   Page, Layout, Card, Button, Box, Popover, ActionList, Divider, Banner,
   IndexTable, useIndexResourceState, Text, Badge, TextField, BlockStack,
-  InlineStack, Grid, Scrollable, FormLayout, Thumbnail
+  InlineStack, Grid, Scrollable, FormLayout, Thumbnail, Select
 } from "@shopify/polaris";
 import { MenuIcon, SearchIcon, ViewIcon, ImageIcon } from "@shopify/polaris-icons";
 
@@ -226,6 +226,7 @@ export const action = async ({ request }) => {
     const updates = JSON.parse(formData.get("updates"));
     const ids = JSON.parse(formData.get("ids"));
     const ooakText = formData.get("ooakText") || "";
+    const bulkStatus = formData.get("bulkStatus") || "";
     
     console.log("BULK EDIT IDs:", ids);
     
@@ -250,24 +251,43 @@ export const action = async ({ request }) => {
       }
     });
 
-    if (metafields.length === 0) return data({ ok: false, error: "No data to save." });
+    if (metafields.length === 0 && bulkStatus.trim() === "") {
+      return data({ ok: false, error: "No data to save." });
+    }
 
-    const chunks = [];
-    for (let i = 0; i < metafields.length; i += 25) chunks.push(metafields.slice(i, i + 25));
-    for (const chunk of chunks) {
-      try {
-        const res = await admin.graphql(`
-          mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
-            metafieldsSet(metafields: $metafields) { userErrors { field message } }
-          }
-        `, { variables: { metafields: chunk } });
-        const json = await res.json();
-        const errorMsg = extractShopifyError(json.data?.metafieldsSet?.userErrors, chunk);
-        if (errorMsg) return data({ ok: false, error: errorMsg });
-      } catch (e) {
-        return data({ ok: false, error: e.message });
+    if (metafields.length > 0) {
+      const chunks = [];
+      for (let i = 0; i < metafields.length; i += 25) chunks.push(metafields.slice(i, i + 25));
+      for (const chunk of chunks) {
+        try {
+          const res = await admin.graphql(`
+            mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
+              metafieldsSet(metafields: $metafields) { userErrors { field message } }
+            }
+          `, { variables: { metafields: chunk } });
+          const json = await res.json();
+          const errorMsg = extractShopifyError(json.data?.metafieldsSet?.userErrors, chunk);
+          if (errorMsg) return data({ ok: false, error: errorMsg });
+        } catch (e) {
+          return data({ ok: false, error: e.message });
+        }
       }
     }
+
+    if (bulkStatus.trim() !== "") {
+      for (const id of ids) {
+        try {
+          await admin.graphql(`
+            mutation productUpdate($input: ProductInput!) {
+              productUpdate(input: $input) { userErrors { field message } }
+            }
+          `, { variables: { input: { id, status: bulkStatus } } });
+        } catch (e) {
+          console.error(`Failed to update status for ${id}:`, e.message);
+        }
+      }
+    }
+
     return data({ ok: true });
   }
 
@@ -480,6 +500,7 @@ function ProductsView({ products }) {
 function BulkEditView({ products }) {
   const submit = useSubmit();
   const { selectedResources, allResourcesSelected, handleSelectionChange } = useIndexResourceState(products);
+  const [bulkStatus, setBulkStatus] = useState("");
 
   const handleBulkSave = (e) => {
     e.preventDefault();
@@ -496,6 +517,7 @@ function BulkEditView({ products }) {
     submitData.append("ids", JSON.stringify(selectedResources));
     submitData.append("updates", JSON.stringify(updates));
     submitData.append("ooakText", fd.get("ooakText") || "");
+    submitData.append("bulkStatus", bulkStatus);
     submit(submitData, { method: "post" });
   };
 
@@ -524,6 +546,18 @@ function BulkEditView({ products }) {
                 <Text tone="subdued">Fields left blank are ignored. Filled fields will overwrite existing data on all selected stones.</Text>
                 <Scrollable style={{ maxHeight: "50vh" }}>
                   <FormLayout>
+                    <Select
+                      label="Set Product Status"
+                      name="bulkStatus"
+                      options={[
+                        {label: 'No change', value: ''},
+                        {label: 'ACTIVE', value: 'ACTIVE'},
+                        {label: 'DRAFT', value: 'DRAFT'},
+                        {label: 'ARCHIVED', value: 'ARCHIVED'},
+                      ]}
+                      value={bulkStatus}
+                      onChange={setBulkStatus}
+                    />
                     <TextField label="OOAK Features (Appended to Story)" name="ooakText" autoComplete="off"/>
                     {TARGET_KEYS.map(key => (
                       <TextField key={key} label={key.replace(/_/g, " ").toUpperCase()} name={`mf_${key}`} autoComplete="off"/>
