@@ -534,7 +534,7 @@ export default function DwellWeb() {
     <Page
       title="Dwell Web Manager 🕸️"
       subtitle="Product Link Governance & Dwell Loop Enforcer"
-      backAction={{ content: "Command Center", url: "/app/_index" }}
+      backAction={{ content: "Command Center", url: "/app" }}
     >
       {loaderError && (
         <Box paddingBlockEnd="400">
