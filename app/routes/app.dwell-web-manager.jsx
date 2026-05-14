@@ -70,6 +70,11 @@ export const loader = async ({ request }) => {
     `);
     const json = await res.json();
     
+    // Trap silent GraphQL errors and force them into the catch block
+    if (json.errors) {
+      throw new Error(JSON.stringify(json.errors));
+    }
+    
     const products = (json.data?.products?.edges || []).map(e => ({
       ...e.node,
       collectionHandles: e.node.collections.edges.map(ce => ce.node.handle)
@@ -88,7 +93,8 @@ export const loader = async ({ request }) => {
 
     return data({ products, pages, articles, livePaths });
   } catch (error) {
-    return data({ products: [], pages: [], articles: [], livePaths: [] });
+    console.error("Loader error:", error);
+    return data({ products: [], pages: [], articles: [], livePaths: [], loaderError: error.message });
   }
 };
 
@@ -228,7 +234,7 @@ function generateInjectionHtml(currentHtml, missingLinks) {
 
 // --- 4. MAIN COMPONENT ---
 export default function DwellWeb() {
-  const { products, pages, articles, livePaths } = useLoaderData();
+  const { products, pages, articles, livePaths, loaderError } = useLoaderData();
   const fetcher = useFetcher();
 
   const [selectedTab, setSelectedTab] = useState(0);
@@ -541,6 +547,15 @@ export default function DwellWeb() {
       subtitle="Product Link Governance & Dwell Loop Enforcer"
       backAction={{ content: "Command Center", url: "/app/_index" }}
     >
+      {/* Show GraphQL errors right at the top if the fetch fails */}
+      {loaderError && (
+        <Box paddingBlockEnd="400">
+          <Banner tone="critical" title="Failed to load Shopify data">
+            {loaderError}
+          </Banner>
+        </Box>
+      )}
+
       <Tabs tabs={tabs} selected={selectedTab} onSelect={handleTabChange}>
         <Box paddingBlockStart="400">
           {selectedTab === 0 && renderRulesTab()}
