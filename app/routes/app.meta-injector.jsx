@@ -651,7 +651,7 @@ export default function MetaInjector() {
                   actionRole="menuitem"
                   items={views.map((view, index) => ({
                     content: view.content,
-                    onAction: () => { setActiveView(index); setMenuActive(false); },
+                    onAction: () => { setActiveView(Number(index)); setMenuActive(false); },
                   }))}
                 />
               </Popover>
