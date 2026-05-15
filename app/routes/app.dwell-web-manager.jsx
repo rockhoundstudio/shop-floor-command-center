@@ -535,11 +535,8 @@ export default function DwellWeb() {
     <Page
       title="Dwell Web Manager 🕸️"
       subtitle="Product Link Governance & Dwell Loop Enforcer"
+      backAction={{ content: "Command Center", onAction: () => navigate("/app") }}
     >
-      <Box paddingBlockEnd="400">
-        <Button onClick={() => navigate("/app/_index")}>← Command Center</Button>
-      </Box>
-
       {loaderError && (
         <Box paddingBlockEnd="400">
           <Banner tone="critical" title="Failed to load Shopify data">

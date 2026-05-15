@@ -1,19 +1,19 @@
-import { useState, useMemo } from "react";
-import { useLoaderData, useFetcher, useSubmit, data } from "react-router";
-import { authenticate } from "../shopify.server";
-import {
-  Page, Layout, Card, Button, Box, Popover, ActionList, Divider, Banner,
-  IndexTable, useIndexResourceState, Text, Badge, TextField, BlockStack,
-  InlineStack, Grid, Scrollable, FormLayout, Thumbnail, Select
+import { 
+  TextField, BlockStack, Card, Text, Badge, Button, Banner, 
+  InlineStack, Page, Select, Box, ResourceList, ResourceItem, Thumbnail, Checkbox, Tag
 } from "@shopify/polaris";
-import { MenuIcon, SearchIcon, ViewIcon, ImageIcon } from "@shopify/polaris-icons";
+import { useState, useEffect } from "react";
+import { useLoaderData, useFetcher } from "react-router";
+import { authenticate } from "../shopify.server";
+import { useAppBridge } from "@shopify/app-bridge-react";
 
-// --- EXTERNAL IMPORTS ---
-import { TARGET_KEYS, stripHtml, evaluateProductStatus, parseDescription, autoLinkStory } from "../utils/metaScan";
+// --- LOCAL IMPORTS ---
+import { TARGET_KEYS, FIELD_LABELS, stripHtml, evaluateProductStatus, parseDescription, autoLinkStory } from "../utils/metaScan";
 import { lookupStone } from "../utils/geoLibrary";
 import { TAXONOMY_GIDS, wrapGid } from "../utils/taxonomyMap";
+import DictationButton from "../components/DictationButton"; // The new Voice Module
 
-// --- CONSTANTS & HELPERS ---
+// --- CONSTANTS ---
 const LIST_TEXT_FIELDS = ["character_marks", "stone_story"];
 const BOOLEAN_FIELDS = ["is_ooak", "custom_product"];
 
@@ -21,6 +21,19 @@ const KEYS_TO_PROCESS = TARGET_KEYS.filter(k =>
   !["geological_age", "geological_era", "rock_composition", "rock_formation", "mineral_class"].includes(k)
 );
 
+const SEED_OPTIONS = {
+  story_theme: ["River Find", "Road Trip", "Rescue", "Canyon Run", "First Cut", "Commission", "Ranch Find", "Mine Pull"],
+  cut_type: ["Oval", "Teardrop", "Marquise", "Freeform", "Cabochon", "Round", "Cushion", "Trillion", "Heart", "Pear"],
+  stone_shape: ["Oval", "Teardrop", "Marquise", "Freeform", "Round", "Rectangular", "Irregular", "Heart"],
+  surface_finish: ["High Polish", "Matte", "Raw", "Satin", "Semi-Polish"],
+  treatment_status: ["Untreated — Natural", "Stabilized", "Dyed", "Heated", "Irradiated", "Coated"],
+  primary_color: ["Red", "Orange", "Yellow", "Green", "Blue", "Purple", "Pink", "Brown", "Black", "White", "Grey", "Multicolor", "Cream", "Gold", "Silver"],
+  secondary_colors: ["Red", "Orange", "Yellow", "Green", "Blue", "Purple", "Pink", "Brown", "Black", "White", "Grey", "Multicolor", "Cream", "Gold", "Silver"],
+  luster: ["Vitreous", "Waxy", "Resinous", "Silky", "Pearly", "Dull", "Adamantine", "Subvitreous"],
+  diaphaneity: ["Opaque", "Translucent", "Transparent", "Sub-translucent"]
+};
+
+// --- HELPER FUNCTIONS ---
 function unwrapListValue(value) {
   let val = String(value).trim();
   while (val.startsWith("[") && val.endsWith("]")) {
@@ -168,129 +181,6 @@ export const action = async ({ request }) => {
   const formData = await request.formData();
   const intent = formData.get("intent");
 
-  if (intent === "saveSingleProduct") {
-    const id = formData.get("id");
-    const title = formData.get("title");
-    const price = formData.get("price");
-
-    try {
-      await admin.graphql(`
-        mutation productUpdate($input: ProductInput!) {
-          productUpdate(input: $input) { userErrors { message } }
-        }
-      `, { variables: { input: { id, title } } });
-
-      const variantRes = await admin.graphql(`
-        query getVariant($id: ID!) { product(id: $id) { variants(first: 1) { edges { node { id } } } } }
-      `, { variables: { id } });
-      const variantJson = await variantRes.json();
-      const variantId = variantJson.data?.product?.variants?.edges?.[0]?.node?.id;
-
-      if (variantId && price) {
-        await admin.graphql(`
-          mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
-            productVariantsBulkUpdate(productId: $productId, variants: $variants) { userErrors { message } }
-          }
-        `, { variables: { productId: id, variants: [{ id: variantId, price: String(parseFloat(price).toFixed(2)) }] }});
-      }
-
-      const mfs = [];
-      TARGET_KEYS.forEach(key => {
-        const val = formData.get(`mf_${key}`);
-        if (val !== null && val !== undefined) {
-          let finalValue = val;
-          if (key.replace(/-/g, "_") === "stone_story") finalValue = autoLinkStory(finalValue);
-          const formatted = formatMetafieldValue(key, finalValue);
-          if (formatted) {
-            mfs.push({ ownerId: id, namespace: formatted.namespace, key: formatted.key, value: formatted.value, type: formatted.type });
-          }
-        }
-      });
-
-      if (mfs.length > 0) {
-        for (let i = 0; i < mfs.length; i += 25) {
-          await admin.graphql(`
-            mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
-              metafieldsSet(metafields: $metafields) { userErrors { message } }
-            }
-          `, { variables: { metafields: mfs.slice(i, i + 25) } });
-        }
-      }
-      return data({ ok: true, message: "Product saved successfully!" });
-    } catch (e) {
-      return data({ ok: false, error: e.message });
-    }
-  }
-
-  if (intent === "bulk_edit_new") {
-    const updates = JSON.parse(formData.get("updates"));
-    const ids = JSON.parse(formData.get("ids"));
-    const ooakText = formData.get("ooakText") || "";
-    const bulkStatus = formData.get("bulkStatus") || "";
-    
-    console.log("BULK EDIT IDs:", ids);
-    
-    const metafields = [];
-    ids.forEach((ownerId) => {
-      Object.keys(updates).forEach(key => {
-        if (updates[key] && updates[key].trim() !== "") {
-          let finalValue = updates[key];
-          if (key.replace(/-/g, "_") === "stone_story") finalValue = autoLinkStory(finalValue);
-          const formatted = formatMetafieldValue(key, finalValue);
-          if (formatted) {
-            metafields.push({ ownerId, namespace: formatted.namespace, key: formatted.key, value: formatted.value, type: formatted.type });
-          }
-        }
-      });
-      if (ooakText && ooakText.trim() !== "") {
-        const linkedStory = autoLinkStory(`✨ Unique Features: ${ooakText}`);
-        const formatted = formatMetafieldValue("stone_story", linkedStory);
-        if (formatted) {
-          metafields.push({ ownerId, namespace: formatted.namespace, key: formatted.key, value: formatted.value, type: formatted.type });
-        }
-      }
-    });
-
-    if (metafields.length === 0 && bulkStatus.trim() === "") {
-      return data({ ok: false, error: "No data to save." });
-    }
-
-    if (metafields.length > 0) {
-      const chunks = [];
-      for (let i = 0; i < metafields.length; i += 25) chunks.push(metafields.slice(i, i + 25));
-      for (const chunk of chunks) {
-        try {
-          const res = await admin.graphql(`
-            mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
-              metafieldsSet(metafields: $metafields) { userErrors { field message } }
-            }
-          `, { variables: { metafields: chunk } });
-          const json = await res.json();
-          const errorMsg = extractShopifyError(json.data?.metafieldsSet?.userErrors, chunk);
-          if (errorMsg) return data({ ok: false, error: errorMsg });
-        } catch (e) {
-          return data({ ok: false, error: e.message });
-        }
-      }
-    }
-
-    if (bulkStatus.trim() !== "") {
-      for (const id of ids) {
-        try {
-          await admin.graphql(`
-            mutation productUpdate($input: ProductInput!) {
-              productUpdate(input: $input) { userErrors { field message } }
-            }
-          `, { variables: { input: { id, status: bulkStatus } } });
-        } catch (e) {
-          console.error(`Failed to update status for ${id}:`, e.message);
-        }
-      }
-    }
-
-    return data({ ok: true });
-  }
-
   if (intent === "bulkAutoFill") {
     const products = JSON.parse(formData.get("products"));
     const results = [];
@@ -386,431 +276,321 @@ export const action = async ({ request }) => {
     return data({ ok: true, results });
   }
 
-  if (intent === "mindat_lookup") {
-    const query = formData.get("query");
-    if (!query || !query.trim()) return data({ ok: true, found: false });
-    try {
-      const res = await fetch(
-        `https://api.mindat.org/v1/geomaterials/?name=${encodeURIComponent(query.trim())}&format=json`,
-        { headers: { Authorization: `Token ${process.env.MINDAT_API_KEY}` } }
-      );
-      if (res.ok) {
-        const json = await res.json();
-        if (json.results?.[0]) return data({ ok: true, found: true, result: json.results[0] });
-      }
-    } catch (e) {}
-    return data({ ok: true, found: false });
-  }
-
+  // Handle standard individual edits here if needed, or fallback.
   return data({ ok: false });
 };
 
-// --- VIEW COMPONENTS ---
+// ==========================================
+// VIEW COMPONENT
+// ==========================================
+export default function MetaInjector() {
+  const { products, loaderError } = useLoaderData();
+  const shopify = useAppBridge();
 
-function ProductsView({ products }) {
-  const submit = useSubmit();
-  const [editingId, setEditingId] = useState(null);
-  
-  const product = products.find(p => p.id === editingId);
+  // --- STATE ---
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [fieldValues, setFieldValues] = useState({});
+  const [search, setSearch] = useState("");
 
-  const handleSave = (e) => {
-    e.preventDefault();
-    const formData = new FormData(e.target);
-    formData.append("intent", "saveSingleProduct");
-    formData.append("id", product.id);
-    submit(formData, { method: "post" });
-    setEditingId(null);
-  };
+  const [vocabulary, setVocabulary] = useState({});
+  const [showCustomInput, setShowCustomInput] = useState({});
+  const [customInputs, setCustomInputs] = useState({});
 
-  if (product) {
-    return (
-      <BlockStack gap="400">
-        <InlineStack align="space-between">
-          <Button onClick={() => setEditingId(null)}>← Back to Roster</Button>
-          <Text variant="headingLg">{product.title}</Text>
-        </InlineStack>
-        <Card>
-          <form onSubmit={handleSave}>
-            <FormLayout>
-              <FormLayout.Group>
-                <TextField label="Title" name="title" defaultValue={product.title} autoComplete="off"/>
-                <TextField label="Price" name="price" defaultValue={product.price} autoComplete="off"/>
-              </FormLayout.Group>
-              <TextField label="Description" value={product.description} disabled={true} multiline={3} autoComplete="off"/>
-              <Divider/>
-              <Text variant="headingMd">Metafields</Text>
-              <Grid>
-                {TARGET_KEYS.map(key => (
-                  <Grid.Cell key={key} columnSpan={{xs: 6, sm: 6, md: 4, lg: 4, xl: 4}}>
-                    <TextField 
-                      label={key.replace(/_/g, " ").toUpperCase()} 
-                      name={`mf_${key}`} 
-                      defaultValue={product.metafields[key] || ""} 
-                      autoComplete="off"
-                    />
-                  </Grid.Cell>
-                ))}
-              </Grid>
-              <Box paddingBlockStart="400">
-                <Button submit variant="primary" size="large">Lock to Shopify</Button>
-              </Box>
-            </FormLayout>
-          </form>
-        </Card>
-      </BlockStack>
+  // --- FETCHERS ---
+  const saveFetcher = useFetcher();
+  const vocabFetcher = useFetcher();
+  const addCustomFetcher = useFetcher();
+
+  // --- DERIVED DATA ---
+  const filtered = products.filter(p => p.title.toLowerCase().includes(search.toLowerCase()));
+  const selectedProduct = selectedIds.length === 1 ? products.find(p => p.id === selectedIds[0]) : null;
+
+  const isSaving = saveFetcher.state !== "idle";
+  const saveSuccess = saveFetcher.state === "idle" && saveFetcher.data?.ok === true;
+  const saveError = saveFetcher.state === "idle" && saveFetcher.data?.error;
+
+  // --- EFFECTS ---
+  useEffect(() => {
+    vocabFetcher.submit(
+      { intent: "loadVocabulary" },
+      { method: "post", action: "/app/meta-injector" }
+    );
+  }, []);
+
+  useEffect(() => {
+    if (vocabFetcher.data?.vocabulary) {
+      setVocabulary(vocabFetcher.data.vocabulary);
+    }
+  }, [vocabFetcher.data]);
+
+  // --- ACTION HANDLERS ---
+  function handleSave() {
+    if (selectedIds.length === 0) {
+      shopify.toast.show("Please select at least one product to update.");
+      return;
+    }
+
+    const hasAnyValue = TARGET_KEYS.some(
+      key => fieldValues[key] && String(fieldValues[key]).trim() !== ""
+    );
+    if (!hasAnyValue) {
+      shopify.toast.show("Fill in at least one field before saving.");
+      return;
+    }
+
+    const updates = {};
+    TARGET_KEYS.forEach(key => {
+      const val = fieldValues[key];
+      if (val && String(val).trim() !== "") {
+        updates[key] = String(val).trim();
+      }
+    });
+
+    const currentStories = {};
+    selectedIds.forEach(id => {
+      const p = products.find(pr => pr.id === id);
+      if (p?.metafields?.stone_story) {
+        currentStories[id] = p.metafields.stone_story;
+      }
+    });
+
+    // You will need to implement a standard save handler in the action block to handle this intent
+    saveFetcher.submit(
+      {
+        intent: "save_standard_edit",
+        ids: JSON.stringify(selectedIds),
+        updates: JSON.stringify(updates),
+        currentStories: JSON.stringify(currentStories),
+      },
+      { method: "post", action: "/app/meta-injector" }
     );
   }
 
-  const rowMarkup = products.map(({ id, title, price, status, shopifyStatus, image }, index) => {
-    const normalizedStatus = String(status).toLowerCase();
-    const badgeTone = normalizedStatus === "complete" ? "success" : normalizedStatus === "partial" ? "warning" : "critical";
-    
-    return (
-      <IndexTable.Row id={id} key={id} position={index}>
-        <IndexTable.Cell>
-          <Thumbnail source={image || ImageIcon} alt={title} size="small" />
-        </IndexTable.Cell>
-        <IndexTable.Cell><Text fontWeight="bold">{title}</Text></IndexTable.Cell>
-        <IndexTable.Cell>
-          <Box display={{xs: 'none', sm: 'block'}}>${price}</Box>
-        </IndexTable.Cell>
-        <IndexTable.Cell>
-          <Box display={{xs: 'none', sm: 'block'}}>{shopifyStatus}</Box>
-        </IndexTable.Cell>
-        <IndexTable.Cell>
-          <Box display={{xs: 'none', sm: 'block'}}>
-            <Badge tone={badgeTone}>
-              {status}
-            </Badge>
-          </Box>
-        </IndexTable.Cell>
-        <IndexTable.Cell>
-          <Button size="slim" icon={ViewIcon} onClick={() => setEditingId(id)}>Edit Single</Button>
-        </IndexTable.Cell>
-      </IndexTable.Row>
-    );
-  });
-
   return (
-    <BlockStack gap="400">
-      <Text variant="headingMd">Product Roster</Text>
-      <Card padding="0">
-        <IndexTable 
-          resourceName={{ singular: 'product', plural: 'products' }} 
-          itemCount={products.length} 
-          selectable={false} 
-          headings={[
-            { title: '' }, 
-            { title: 'Title' }, 
-            { title: <Box display={{xs: 'none', sm: 'block'}}>Price</Box> }, 
-            { title: <Box display={{xs: 'none', sm: 'block'}}>Store Status</Box> }, 
-            { title: <Box display={{xs: 'none', sm: 'block'}}>Meta Completeness</Box> }, 
-            { title: 'Action' }
-          ]}
-        >
-          {rowMarkup}
-        </IndexTable>
-      </Card>
-    </BlockStack>
-  );
-}
+    <Page title="Standard Data Injector" fullWidth>
+      <BlockStack gap="600">
 
-function BulkEditView({ products }) {
-  const submit = useSubmit();
-  const { selectedResources, allResourcesSelected, handleSelectionChange } = useIndexResourceState(products);
-  const [bulkStatus, setBulkStatus] = useState("");
+        {loaderError && <Banner tone="critical">Loader error: {loaderError}</Banner>}
+        {saveSuccess && (
+          <Banner tone="success">
+            Update saved to Shopify across {selectedIds.length} stone{selectedIds.length !== 1 ? "s" : ""}.
+          </Banner>
+        )}
+        {saveError && (
+          <Banner tone="critical">Save failed: {saveError}</Banner>
+        )}
 
-  const handleBulkSave = (e) => {
-    e.preventDefault();
-    if (selectedResources.length === 0) return alert("Select at least one product.");
-    const fd = new FormData(e.target);
-    const updates = {};
-    TARGET_KEYS.forEach(k => {
-      const val = fd.get(`mf_${k}`);
-      if (val && val.trim() !== "") updates[k] = val.trim();
-    });
-    
-    const submitData = new FormData();
-    submitData.append("intent", "bulk_edit_new");
-    submitData.append("ids", JSON.stringify(selectedResources));
-    submitData.append("updates", JSON.stringify(updates));
-    submitData.append("ooakText", fd.get("ooakText") || "");
-    submitData.append("bulkStatus", bulkStatus);
-    submit(submitData, { method: "post" });
-  };
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "24px", alignItems: "stretch" }}>
 
-  const rowMarkup = products.map(({ id, title, status, image }, index) => {
-    const normalizedStatus = String(status).toLowerCase();
-    const badgeTone = normalizedStatus === "complete" ? "success" : normalizedStatus === "partial" ? "warning" : "critical";
-    
-    return (
-      <IndexTable.Row id={id} key={id} selected={selectedResources.includes(id)} position={index}>
-        <IndexTable.Cell>
-          <Thumbnail source={image || ImageIcon} alt={title} size="small" />
-        </IndexTable.Cell>
-        <IndexTable.Cell><Text fontWeight="bold">{title}</Text></IndexTable.Cell>
-        <IndexTable.Cell>
-          <Box display={{xs: 'none', sm: 'block'}}>
-            <Badge tone={badgeTone}>
-              {status}
-            </Badge>
-          </Box>
-        </IndexTable.Cell>
-      </IndexTable.Row>
-    );
-  });
+          {/* LEFT PANEL: Product Selection */}
+          <div style={{ flex: "1 1 300px", minWidth: 0, display: "flex", flexDirection: "column" }}>
+            <BlockStack gap="400">
+              <Text variant="headingMd" as="h2">
+                Select Stones ({selectedIds.length} selected)
+              </Text>
 
-  return (
-    <form onSubmit={handleBulkSave}>
-      <Grid>
-        <Grid.Cell columnSpan={{xs: 6, sm: 6, md: 4, lg: 4, xl: 4}}>
-          <BlockStack gap="400">
-            <Card>
-              <BlockStack gap="300">
-                <Text variant="headingMd">Apply Data Fields</Text>
-                <Text tone="subdued">Fields left blank are ignored. Filled fields will overwrite existing data on all selected stones.</Text>
-                <Scrollable style={{ maxHeight: "50vh" }}>
-                  <FormLayout>
-                    <Select
-                      label="Set Product Status"
-                      name="bulkStatus"
-                      options={[
-                        {label: 'No change', value: ''},
-                        {label: 'ACTIVE', value: 'ACTIVE'},
-                        {label: 'DRAFT', value: 'DRAFT'},
-                        {label: 'ARCHIVED', value: 'ARCHIVED'},
-                      ]}
-                      value={bulkStatus}
-                      onChange={setBulkStatus}
-                    />
-                    <TextField label="OOAK Features (Appended to Story)" name="ooakText" autoComplete="off"/>
-                    {TARGET_KEYS.map(key => (
-                      <TextField key={key} label={key.replace(/_/g, " ").toUpperCase()} name={`mf_${key}`} autoComplete="off"/>
-                    ))}
-                  </FormLayout>
-                </Scrollable>
-                <Button submit variant="primary" disabled={selectedResources.length === 0}>
-                  Apply to {selectedResources.length} Stones
+              <TextField
+                value={search} onChange={setSearch} autoComplete="off" placeholder="Search title..."
+                clearButton onClearButtonClick={() => setSearch("")} prefix="🔍"
+              />
+
+              <Card padding="0" style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+                <Box padding="300" borderBlockEndWidth="025" borderColor="border">
+                  <Checkbox
+                    label="Select all visible"
+                    checked={selectedIds.length === filtered.length && filtered.length > 0}
+                    onChange={(checked) => {
+                      if (checked) setSelectedIds(filtered.map(p => p.id));
+                      else setSelectedIds([]);
+                    }}
+                  />
+                </Box>
+                <div style={{ overflowY: "auto", flex: 1, maxHeight: "60vh" }}>
+                  <ResourceList
+                    items={filtered}
+                    renderItem={(p) => {
+                      const isSelected = selectedIds.includes(p.id);
+                      
+                      const cleanStatus = String(p.status || "").replace(/[^\w\s]/gi, '').trim().toLowerCase();
+                      const badgeTone = cleanStatus === "complete" ? "success" : cleanStatus === "partial" ? "warning" : "critical";
+
+                      return (
+                        <ResourceItem
+                          id={p.id}
+                          onClick={() => {
+                            setSelectedIds(prev => isSelected ? prev.filter(id => id !== p.id) : [...prev, p.id]);
+                          }}
+                          media={<Thumbnail source={p.image || ImageIcon} alt={p.title} size="small" />}
+                        >
+                          <InlineStack wrap={false} align="space-between" blockAlign="center">
+                            <BlockStack gap="100">
+                              <Text variant="bodyMd" fontWeight="bold">{p.title}</Text>
+                              <Badge tone={badgeTone}>
+                                {p.status}
+                              </Badge>
+                            </BlockStack>
+                            <Checkbox checked={isSelected} onChange={() => {}} />
+                          </InlineStack>
+                        </ResourceItem>
+                      );
+                    }}
+                  />
+                </div>
+              </Card>
+            </BlockStack>
+          </div>
+
+          {/* RIGHT PANEL: Data Entry */}
+          <div style={{ flex: "1 1 400px", maxWidth: "680px", width: "100%", minWidth: 0 }}>
+            <BlockStack gap="400">
+              <InlineStack align="space-between" blockAlign="center">
+                <Text variant="headingMd" as="h2">Apply Data Fields</Text>
+                <Button variant="primary" onClick={handleSave} loading={isSaving} disabled={selectedIds.length === 0}>
+                  Save to Shopify
                 </Button>
-              </BlockStack>
-            </Card>
-          </BlockStack>
-        </Grid.Cell>
-        <Grid.Cell columnSpan={{xs: 6, sm: 6, md: 8, lg: 8, xl: 8}}>
-          <Card padding="0">
-            <IndexTable 
-              resourceName={{ singular: 'product', plural: 'products' }} 
-              itemCount={products.length} 
-              selectedItemsCount={allResourcesSelected ? 'All' : selectedResources.length} 
-              onSelectionChange={handleSelectionChange} 
-              headings={[
-                { title: '' }, 
-                { title: 'Title' }, 
-                { title: <Box display={{xs: 'none', sm: 'block'}}>Completeness</Box> }
-              ]}
-            >
-              {rowMarkup}
-            </IndexTable>
-          </Card>
-        </Grid.Cell>
-      </Grid>
-    </form>
-  );
-}
+              </InlineStack>
 
-function QAInjectView({ products }) {
-  const fetcher = useFetcher();
-  
-  const handleInject = (product) => {
-    const fd = new FormData();
-    fd.append("intent", "bulkAutoFill");
-    fd.append("products", JSON.stringify([product]));
-    fetcher.submit(fd, { method: "post" });
-  };
+              <Card roundedAbove="sm">
+                <BlockStack gap="600">
+                  <Banner tone="info">
+                    Any field you leave blank will be ignored. Only filled fields will overwrite existing data on the selected stones.
+                  </Banner>
 
-  const rowMarkup = products.map((product, index) => {
-    const normalizedStatus = String(product.status).toLowerCase();
-    const badgeTone = normalizedStatus === "complete" ? "success" : normalizedStatus === "partial" ? "warning" : "critical";
-    
-    return (
-      <IndexTable.Row id={product.id} key={product.id} position={index}>
-        <IndexTable.Cell>
-          <Thumbnail source={product.image || ImageIcon} alt={product.title} size="small" />
-        </IndexTable.Cell>
-        <IndexTable.Cell><Text fontWeight="bold">{product.title}</Text></IndexTable.Cell>
-        <IndexTable.Cell>
-          <Box display={{xs: 'none', sm: 'block'}}>
-            <Badge tone={badgeTone}>
-              {product.status}
-            </Badge>
-          </Box>
-        </IndexTable.Cell>
-        <IndexTable.Cell>
-          <Box display={{xs: 'none', sm: 'block'}}>
-            {product.missing.length === 0 ? <Text tone="success">None</Text> : <Text tone="critical">{product.missing.length} Missing</Text>}
-            <Text variant="bodySm" tone="subdued">{product.missing.slice(0, 3).join(", ")}{product.missing.length > 3 ? "..." : ""}</Text>
-          </Box>
-        </IndexTable.Cell>
-        <IndexTable.Cell>
-          <Button 
-            size="slim" 
-            onClick={() => handleInject(product)}
-            disabled={normalizedStatus === "complete"}
-          >
-            Inject Missing
-          </Button>
-        </IndexTable.Cell>
-      </IndexTable.Row>
-    );
-  });
+                  <BlockStack gap="400">
+                    {TARGET_KEYS.map(key => {
+                      const savedValue = selectedProduct?.metafields?.[key.replace(/-/g, "_")];
+                      const placeholderText = savedValue ? `Current: ${String(savedValue).replace(/[✅⚠️]/g, "").trim()}` : "";
 
-  return (
-    <BlockStack gap="400">
-      <Text variant="headingMd">Quality Assurance & Data Injection</Text>
-      <Card padding="0">
-        <IndexTable 
-          resourceName={{ singular: 'product', plural: 'products' }} 
-          itemCount={products.length} 
-          selectable={false} 
-          headings={[
-            { title: '' }, 
-            { title: 'Title' }, 
-            { title: <Box display={{xs: 'none', sm: 'block'}}>Status</Box> }, 
-            { title: <Box display={{xs: 'none', sm: 'block'}}>Missing Fields</Box> }, 
-            { title: 'Action' }
-          ]}
-        >
-          {rowMarkup}
-        </IndexTable>
-      </Card>
-    </BlockStack>
-  );
-}
+                      if (key === "stone_story") {
+                        return (
+                          <BlockStack gap="200" key={key}>
+                            <TextField
+                              label={FIELD_LABELS[key] || key}
+                              value={fieldValues[key] || ""}
+                              onChange={val => setFieldValues(prev => ({ ...prev, [key]: val }))}
+                              autoComplete="off"
+                              placeholder={placeholderText}
+                              multiline={4}
+                            />
+                            <InlineStack align="start">
+                              <DictationButton 
+                                placeholder="🎤 Dictate Bulk Story" 
+                                onResult={(text) => {
+                                  setFieldValues(prev => ({
+                                    ...prev,
+                                    [key]: prev[key] ? prev[key] + " " + text : text
+                                  }));
+                                }}
+                              />
+                            </InlineStack>
+                          </BlockStack>
+                        );
+                      }
 
-function MindatView() {
-  const fetcher = useFetcher();
-  const isLoading = fetcher.state === "submitting";
-  const result = fetcher.data?.result;
+                      if (SEED_OPTIONS[key]) {
+                        const opts = [...new Set([...(SEED_OPTIONS[key] || []), ...(vocabulary[key] || [])])];
+                        const isMulti = key === "secondary_colors";
+                        const currentVal = fieldValues[key] || "";
+                        const selectOptions = [{ label: "— select —", value: "" }];
+                        opts.forEach(o => selectOptions.push({ label: o, value: o }));
+                        
+                        if (!isMulti && currentVal && currentVal !== "__custom__" && !opts.includes(currentVal)) {
+                          selectOptions.push({ label: currentVal, value: currentVal });
+                        }
+                        selectOptions.push({ label: "➕ Add Custom...", value: "__custom__" });
+                        const selectValue = showCustomInput[key] ? "__custom__" : (isMulti ? "" : currentVal);
 
-  return (
-    <BlockStack gap="500">
-      <Card>
-        <BlockStack gap="300">
-          <Text variant="headingMd">Mindat Geological Lookup</Text>
-          <Text tone="subdued">Look up pure minerals to return baseline geological facts. Will not return data for composites or regional rocks.</Text>
-          <fetcher.Form method="post">
-            <input type="hidden" name="intent" value="mindat_lookup" />
-            <InlineStack gap="300" blockAlign="end">
-              <Box minWidth="300px">
-                <TextField label="Mineral Name" name="query" placeholder="e.g. Quartz, Pyrite" autoComplete="off"/>
-              </Box>
-              <Button submit variant="primary" loading={isLoading} icon={SearchIcon}>Search Mindat</Button>
-            </InlineStack>
-          </fetcher.Form>
-        </BlockStack>
-      </Card>
+                        return (
+                          <BlockStack gap="200" key={key}>
+                            {isMulti && currentVal && (
+                              <InlineStack gap="200" wrap>
+                                {currentVal.split(",").map(c => c.trim()).filter(Boolean).map(color => (
+                                  <Tag key={color} onRemove={() => {
+                                    const newColors = currentVal.split(",").map(s => s.trim()).filter(Boolean).filter(c => c !== color);
+                                    setFieldValues(prev => ({ ...prev, [key]: newColors.join(", ") }));
+                                  }}>{color}</Tag>
+                                ))}
+                              </InlineStack>
+                            )}
+                            <Select
+                              label={FIELD_LABELS[key] || key}
+                              options={selectOptions}
+                              value={selectValue}
+                              onChange={(v) => {
+                                if (v === "__custom__") {
+                                  setShowCustomInput(prev => ({ ...prev, [key]: true }));
+                                } else {
+                                  setShowCustomInput(prev => ({ ...prev, [key]: false }));
+                                  if (isMulti) {
+                                    if (!v) return;
+                                    const curr = currentVal ? currentVal.split(",").map(s => s.trim()).filter(Boolean) : [];
+                                    if (!curr.includes(v)) curr.push(v);
+                                    setFieldValues(prev => ({ ...prev, [key]: curr.join(", ") }));
+                                  } else {
+                                    setFieldValues(prev => ({ ...prev, [key]: v }));
+                                  }
+                                }
+                              }}
+                            />
+                            {showCustomInput[key] && (
+                              <div style={{ paddingLeft: "8px", borderLeft: "2px solid #e1e3e5", marginTop: "4px" }}>
+                                <BlockStack gap="300">
+                                  <TextField
+                                    label="New custom value" placeholder="Enter new custom option..."
+                                    value={customInputs[key] || ""} onChange={v => setCustomInputs(p => ({ ...p, [key]: v }))} autoComplete="off"
+                                  />
+                                  <InlineStack gap="300" blockAlign="center" wrap={false}>
+                                    <Button variant="primary" onClick={() => {
+                                      const v = customInputs[key]?.trim();
+                                      if (v) {
+                                        addCustomFetcher.submit({ intent: "saveVocabularyEntry", field_key: key, new_value: v }, { method: "post", action: "/app/meta-injector" });
+                                        setVocabulary(prev => {
+                                          const curr = prev[key] || [];
+                                          if (!curr.includes(v)) return { ...prev, [key]: [...curr, v] };
+                                          return prev;
+                                        });
+                                        if (isMulti) {
+                                          const currVals = currentVal ? currentVal.split(",").map(s => s.trim()).filter(Boolean) : [];
+                                          if (!currVals.includes(v)) currVals.push(v);
+                                          setFieldValues(prev => ({ ...prev, [key]: currVals.join(", ") }));
+                                        } else {
+                                          setFieldValues(prev => ({ ...prev, [key]: v }));
+                                        }
+                                        setShowCustomInput(p => ({ ...p, [key]: false }));
+                                        setCustomInputs(p => ({ ...p, [key]: "" }));
+                                      }
+                                    }}>Save & Select</Button>
+                                    <Button onClick={() => setShowCustomInput(p => ({ ...p, [key]: false }))}>Cancel</Button>
+                                  </InlineStack>
+                                </BlockStack>
+                              </div>
+                            )}
+                          </BlockStack>
+                        );
+                      } else {
+                        return (
+                          <BlockStack gap="200" key={key}>
+                            <TextField
+                              label={FIELD_LABELS[key] || key}
+                              value={fieldValues[key] || ""}
+                              onChange={val => setFieldValues(prev => ({ ...prev, [key]: val }))}
+                              autoComplete="off"
+                              placeholder={placeholderText}
+                              multiline={["bench_notes", "character_marks", "rock_composition"].includes(key) ? 4 : undefined}
+                            />
+                          </BlockStack>
+                        );
+                      }
+                    })}
+                  </BlockStack>
+                </BlockStack>
+              </Card>
 
-      {fetcher.data && !result && fetcher.data.found === false && (
-        <Banner tone="warning">No mineral found with that exact name.</Banner>
-      )}
+            </BlockStack>
+          </div>
 
-      {fetcher.data && fetcher.data.error && (
-        <Banner tone="critical">{fetcher.data.error}</Banner>
-      )}
-
-      {result && (
-        <Card>
-          <BlockStack gap="400">
-            <Text variant="headingLg">{result.name}</Text>
-            <Divider/>
-            <Grid>
-              <Grid.Cell columnSpan={{xs: 6, sm: 6, md: 4, lg: 4, xl: 4}}>
-                <Text fontWeight="bold">Mohs Hardness:</Text>
-                <Text>{result.hardness_min} {result.hardness_max ? `- ${result.hardness_max}` : ""}</Text>
-              </Grid.Cell>
-              <Grid.Cell columnSpan={{xs: 6, sm: 6, md: 4, lg: 4, xl: 4}}>
-                <Text fontWeight="bold">Crystal System:</Text>
-                <Text>{result.crystal_system || "N/A"}</Text>
-              </Grid.Cell>
-              <Grid.Cell columnSpan={{xs: 6, sm: 6, md: 4, lg: 4, xl: 4}}>
-                <Text fontWeight="bold">Luster:</Text>
-                <Text>{result.lustre || "N/A"}</Text>
-              </Grid.Cell>
-              <Grid.Cell columnSpan={{xs: 6, sm: 6, md: 4, lg: 4, xl: 4}}>
-                <Text fontWeight="bold">Specific Gravity:</Text>
-                <Text>{result.density_min} {result.density_max ? `- ${result.density_max}` : ""}</Text>
-              </Grid.Cell>
-              <Grid.Cell columnSpan={{xs: 6, sm: 6, md: 4, lg: 4, xl: 4}}>
-                <Text fontWeight="bold">Cleavage:</Text>
-                <Text>{result.cleavage || "N/A"}</Text>
-              </Grid.Cell>
-              <Grid.Cell columnSpan={{xs: 6, sm: 6, md: 4, lg: 4, xl: 4}}>
-                <Text fontWeight="bold">Fracture:</Text>
-                <Text>{result.fracture || "N/A"}</Text>
-              </Grid.Cell>
-            </Grid>
-          </BlockStack>
-        </Card>
-      )}
-    </BlockStack>
-  );
-}
-
-export default function MetaInjector() {
-  const { products, loaderError } = useLoaderData();
-  const [activeView, setActiveView] = useState(0);
-  const [menuActive, setMenuActive] = useState(false);
-
-  const views = [
-    { id: 0, content: "🪨 Products" },
-    { id: 1, content: "📦 Bulk Edit" },
-    { id: 2, content: "💉 QA & Inject" },
-    { id: 3, content: "🌍 Mindat" }
-  ];
-
-  const currentViewTitle = views.find(v => v.id === activeView)?.content || "Menu";
-
-  return (
-    <Page title="Meta Injector Command Center" fullWidth>
-      <Layout>
-        <Layout.Section>
-          {loaderError && <Banner tone="critical">Loader error: {loaderError}</Banner>}
-          
-          <Card padding="0">
-            <Box padding="400">
-              <Popover 
-                active={menuActive} 
-                activator={
-                  <Button onClick={() => setMenuActive(!menuActive)} icon={MenuIcon} size="large">
-                    {currentViewTitle}
-                  </Button>
-                }
-                onClose={() => setMenuActive(false)}
-              >
-                <ActionList 
-                  actionRole="menuitem" 
-                  items={views.map((view, index) => ({
-                    content: view.content,
-                    onAction: () => { 
-                      setActiveView(Number(index)); 
-                      setMenuActive(false); 
-                    },
-                  }))}
-                />
-              </Popover>
-            </Box>
-            
-            <Divider/>
-            
-            <Box padding="400" background="bg-surface-secondary">
-              {activeView === 0 && <ProductsView products={products}/>}
-              {activeView === 1 && <BulkEditView products={products}/>}
-              {activeView === 2 && <QAInjectView products={products}/>}
-              {activeView === 3 && <MindatView/>}
-            </Box>
-          </Card>
-        </Layout.Section>
-      </Layout>
+        </div>
+      </BlockStack>
     </Page>
   );
 }
