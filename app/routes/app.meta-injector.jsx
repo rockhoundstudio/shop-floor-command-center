@@ -7,17 +7,12 @@ import { useLoaderData, useFetcher, data } from "react-router";
 import { authenticate } from "../shopify.server";
 import { useAppBridge } from "@shopify/app-bridge-react";
 
-import { TARGET_KEYS, FIELD_LABELS, stripHtml, evaluateProductStatus, parseDescription, autoLinkStory } from "../utils/metaScan";
-import { lookupStone } from "../utils/geoLibrary";
+import { TARGET_KEYS, FIELD_LABELS, stripHtml, evaluateProductStatus } from "../utils/metaScan";
 import { TAXONOMY_GIDS, wrapGid } from "../utils/taxonomyMap";
 import DictationButton from "../components/DictationButton";
 
 const LIST_TEXT_FIELDS = ["character_marks", "stone_story"];
 const BOOLEAN_FIELDS = ["is_ooak", "custom_product"];
-
-const KEYS_TO_PROCESS = TARGET_KEYS.filter(k =>
-  !["geological_age", "geological_era", "rock_composition", "rock_formation", "mineral_class"].includes(k)
-);
 
 const SEED_OPTIONS = {
   story_theme: ["River Find", "Road Trip", "Rescue", "Canyon Run", "First Cut", "Commission", "Ranch Find", "Mine Pull"],

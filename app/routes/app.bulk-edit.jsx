@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useLoaderData, useFetcher, useSubmit, data } from "react-router";
+import { useState, useEffect } from "react";
+import { useLoaderData, useFetcher, data } from "react-router";
 import { authenticate } from "../shopify.server";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import {
@@ -9,7 +9,7 @@ import {
 import { ImageIcon } from "@shopify/polaris-icons";
 
 // --- EXTERNAL IMPORTS ---
-import { TARGET_KEYS, FIELD_LABELS, stripHtml, evaluateProductStatus, autoLinkStory } from "../utils/metaScan";
+import { TARGET_KEYS, FIELD_LABELS, evaluateProductStatus, autoLinkStory } from "../utils/metaScan";
 import { TAXONOMY_GIDS, wrapGid } from "../utils/taxonomyMap";
 import DictationButton from "../components/DictationButton";
 
@@ -36,12 +36,8 @@ function unwrapListValue(value) {
       const parsed = JSON.parse(val);
       if (Array.isArray(parsed) && parsed.length > 0) {
         val = String(parsed[0]).trim();
-      } else {
-        break;
-      }
-    } catch {
-      break;
-    }
+      } else { break; }
+    } catch { break; }
   }
   return val;
 }
@@ -74,12 +70,7 @@ function formatMetafieldValue(originalKey, value) {
     finalType = "boolean";
   }
 
-  return {
-    value: finalValue,
-    type: finalType,
-    namespace: "custom",
-    key: mapKey
-  };
+  return { value: finalValue, type: finalType, namespace: "custom", key: mapKey };
 }
 
 function extractShopifyError(errors, chunk) {
@@ -90,7 +81,7 @@ function extractShopifyError(errors, chunk) {
       failingKey = chunk[errors[0].field[1]]?.key || "UNKNOWN";
     }
   } catch (e) {}
-  return `[FIELD: ${failingKey}] ${errors[0].message} | RAW: ${JSON.stringify(errors)} | CHUNK: [${chunk.map(c => c.key).join(", ")}]`;
+  return `[FIELD: ${failingKey}] ${errors[0].message}`;
 }
 
 // --- SERVER LOADER ---
@@ -119,12 +110,8 @@ export const loader = async ({ request }) => {
     const pData = await productsRes.json();
 
     const products = (pData.data?.products?.edges || []).map(({ node }) => {
-      const customMfs = Object.fromEntries(
-        (node.customMeta?.edges || []).map(({ node: mf }) => [mf.key, mf.value])
-      );
-      const shopifyMfs = Object.fromEntries(
-        (node.shopifyMeta?.edges || []).map(({ node: mf }) => [mf.key, mf.value])
-      );
+      const customMfs = Object.fromEntries((node.customMeta?.edges || []).map(({ node: mf }) => [mf.key, mf.value]));
+      const shopifyMfs = Object.fromEntries((node.shopifyMeta?.edges || []).map(({ node: mf }) => [mf.key, mf.value]));
       const rawMfs = { ...shopifyMfs, ...customMfs };
 
       const mfs = Object.fromEntries(
@@ -163,7 +150,6 @@ export const loader = async ({ request }) => {
 // --- SERVER ACTION ---
 export const action = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
-
   const formData = await request.formData();
   const intent = formData.get("intent");
 
@@ -240,10 +226,9 @@ export const action = async ({ request }) => {
 // ==========================================
 // VIEW COMPONENT
 // ==========================================
-export default function BulkEditView() {
+export default function BulkEditRoute() {
   const { products, loaderError } = useLoaderData();
   const shopify = useAppBridge();
-  const submit = useSubmit();
 
   const { selectedResources, allResourcesSelected, handleSelectionChange } = useIndexResourceState(products);
   const [bulkStatus, setBulkStatus] = useState("");
@@ -261,6 +246,19 @@ export default function BulkEditView() {
   const isSaving = saveFetcher.state !== "idle";
   const saveSuccess = saveFetcher.state === "idle" && saveFetcher.data?.ok === true;
   const saveError = saveFetcher.state === "idle" && saveFetcher.data?.error;
+
+  useEffect(() => {
+    vocabFetcher.submit(
+      { intent: "loadVocabulary" },
+      { method: "post", action: "/app/meta-injector" }
+    );
+  }, []);
+
+  useEffect(() => {
+    if (vocabFetcher.data?.vocabulary) {
+      setVocabulary(vocabFetcher.data.vocabulary);
+    }
+  }, [vocabFetcher.data]);
 
   const handleFieldToggle = (key, checked) => {
     setSelectedFields(prev => ({ ...prev, [key]: checked }));

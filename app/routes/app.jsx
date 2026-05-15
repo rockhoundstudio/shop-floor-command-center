@@ -33,8 +33,8 @@ export default function App() {
           <a href="/app/meta-injector">Meta Injector</a>
           <a href="/app/menu-manager">Menu Manager</a>
           <a href="/app/collection-manager">Collection Manager</a>
-          
-    </ui-nav-menu>
+          <a href="/app/bulk-edit">Bulk Edit</a>
+        </ui-nav-menu>
         
         {/* Renders the active tab */}
         <Outlet />
@@ -51,4 +51,3 @@ export function ErrorBoundary() {
 export const headers = (headersArgs) => {
   return boundary.headers(headersArgs);
 };
-
