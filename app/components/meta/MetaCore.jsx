@@ -115,10 +115,7 @@ export default function MetaCore({ mode, products = [] }) {
     submitData.append("ids", JSON.stringify(selectedResources));
     submitData.append("updates", JSON.stringify(updates));
     submitData.append("ooakText", fd.get("ooakText") || "");
-    
-    // Convert NO_CHANGE proxy value back to empty string
-    const finalBulkStatus = bulkStatus === "NO_CHANGE" ? "" : bulkStatus;
-    submitData.append("bulkStatus", finalBulkStatus);
+    submitData.append("bulkStatus", bulkStatus);
     
     submit(submitData, { method: "post" });
   };
@@ -171,9 +168,9 @@ export default function MetaCore({ mode, products = [] }) {
   // ==========================================
   if (mode === "bulk") {
     const rowMarkup = products.map(({ id, title, status, image }, index) => {
-      // Ignored emojis, look strictly for the word Complete or Partial
-      const s = String(status || "");
-      const badgeTone = s.includes("Complete") ? "success" : s.includes("Partial") ? "warning" : "critical";
+      // Strip emojis and non-word characters, then lower case for exact matching
+      const cleanStatus = String(status || "").replace(/[^\w\s]/gi, '').trim().toLowerCase();
+      const badgeTone = cleanStatus === "complete" ? "success" : cleanStatus === "partial" ? "warning" : "critical";
       
       return (
         <IndexTable.Row id={id} key={id} selected={selectedResources.includes(id)} position={index}>
@@ -206,13 +203,13 @@ export default function MetaCore({ mode, products = [] }) {
                     label="Set Product Status"
                     name="bulkStatus"
                     options={[
-                      {label: 'No change', value: 'NO_CHANGE'},
+                      {label: 'No change', value: ''},
                       {label: 'ACTIVE', value: 'ACTIVE'},
                       {label: 'DRAFT', value: 'DRAFT'},
                       {label: 'ARCHIVED', value: 'ARCHIVED'},
                     ]}
-                    value={bulkStatus || 'NO_CHANGE'}
-                    onChange={(val) => setBulkStatus(val === 'NO_CHANGE' ? '' : val)}
+                    value={bulkStatus}
+                    onChange={setBulkStatus}
                   />
                   
                   <TextField label="OOAK Features (Appended to Story)" name="ooakText" autoComplete="off"/>
@@ -448,8 +445,9 @@ export default function MetaCore({ mode, products = [] }) {
                     renderItem={(p) => {
                       const isSelected = selectedIds.includes(p.id);
                       
-                      const s = String(p.status || "");
-                      const badgeTone = s.includes("Complete") ? "success" : s.includes("Partial") ? "warning" : "critical";
+                      // Strip emojis and non-word characters, then lower case
+                      const cleanStatus = String(p.status || "").replace(/[^\w\s]/gi, '').trim().toLowerCase();
+                      const badgeTone = cleanStatus === "complete" ? "success" : cleanStatus === "partial" ? "warning" : "critical";
 
                       return (
                         <ResourceItem
@@ -634,3 +632,4 @@ export default function MetaCore({ mode, products = [] }) {
     </Page>
   );
 }
+```</Select>
