@@ -3,17 +3,15 @@ import {
   InlineStack, Page, Select, Box, ResourceList, ResourceItem, Thumbnail, Checkbox, Tag
 } from "@shopify/polaris";
 import { useState, useEffect } from "react";
-import { useLoaderData, useFetcher } from "react-router";
+import { useLoaderData, useFetcher, data } from "react-router";
 import { authenticate } from "../shopify.server";
 import { useAppBridge } from "@shopify/app-bridge-react";
 
-// --- LOCAL IMPORTS ---
 import { TARGET_KEYS, FIELD_LABELS, stripHtml, evaluateProductStatus, parseDescription, autoLinkStory } from "../utils/metaScan";
 import { lookupStone } from "../utils/geoLibrary";
 import { TAXONOMY_GIDS, wrapGid } from "../utils/taxonomyMap";
-import DictationButton from "../components/DictationButton"; // The new Voice Module
+import DictationButton from "../components/DictationButton";
 
-// --- CONSTANTS ---
 const LIST_TEXT_FIELDS = ["character_marks", "stone_story"];
 const BOOLEAN_FIELDS = ["is_ooak", "custom_product"];
 
@@ -33,7 +31,6 @@ const SEED_OPTIONS = {
   diaphaneity: ["Opaque", "Translucent", "Transparent", "Sub-translucent"]
 };
 
-// --- HELPER FUNCTIONS ---
 function unwrapListValue(value) {
   let val = String(value).trim();
   while (val.startsWith("[") && val.endsWith("]")) {
@@ -41,12 +38,8 @@ function unwrapListValue(value) {
       const parsed = JSON.parse(val);
       if (Array.isArray(parsed) && parsed.length > 0) {
         val = String(parsed[0]).trim();
-      } else {
-        break;
-      }
-    } catch {
-      break;
-    }
+      } else { break; }
+    } catch { break; }
   }
   return val;
 }
@@ -79,12 +72,7 @@ function formatMetafieldValue(originalKey, value) {
     finalType = "boolean";
   }
 
-  return {
-    value: finalValue,
-    type: finalType,
-    namespace: "custom",
-    key: mapKey
-  };
+  return { value: finalValue, type: finalType, namespace: "custom", key: mapKey };
 }
 
 function extractShopifyError(errors, chunk) {
@@ -98,7 +86,7 @@ function extractShopifyError(errors, chunk) {
   return `[FIELD: ${failingKey}] ${errors[0].message} | RAW: ${JSON.stringify(errors)} | CHUNK: [${chunk.map(c => c.key).join(", ")}]`;
 }
 
-// --- SERVER LOADER ---
+// --- LOADER ---
 export const loader = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
   try {
@@ -139,10 +127,7 @@ export const loader = async ({ request }) => {
           const dictKey = k.replace(/_/g, "-");
           if (TAXONOMY_GIDS[dictKey]) {
             for (const [word, mappedGid] of Object.entries(TAXONOMY_GIDS[dictKey])) {
-              if (finalVal.includes(String(mappedGid))) {
-                finalVal = word;
-                break;
-              }
+              if (finalVal.includes(String(mappedGid))) { finalVal = word; break; }
             }
           }
           return [k.replace(/-/g, "_"), finalVal];
@@ -173,92 +158,45 @@ export const loader = async ({ request }) => {
   }
 };
 
-// --- SERVER ACTION ---
+// --- ACTION ---
 export const action = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
-  const { default: prisma } = await import("../db.server");
 
   const formData = await request.formData();
   const intent = formData.get("intent");
 
-  if (intent === "bulkAutoFill") {
-    const products = JSON.parse(formData.get("products"));
+  // --- STANDARD SAVE ---
+  if (intent === "save_standard_edit") {
+    const ids = JSON.parse(formData.get("ids") || "[]");
+    const updates = JSON.parse(formData.get("updates") || "{}");
+
     const results = [];
-    
-    if (!process.env.MINDAT_API_KEY) {
-      return data({ ok: false, error: "MINDAT_API_KEY not set in environment." });
-    }
 
-    for (const p of products) {
-      const library  = lookupStone(p.title) || {};
-      const parsed   = parseDescription(p.description || "");
-      const existing = p.metafields || {};
-      let stoneName = existing.official_name ? String(existing.official_name).trim() : null;
-      if (!stoneName && library.official_name) stoneName = library.official_name;
-      if (!stoneName && p.title) stoneName = p.title;
-      if (!stoneName) { results.push({ id: p.id, title: p.title, ok: false, error: "Could not identify stone." }); continue; }
-
-      let mindat = {};
-      let mindatError = null;
-      try {
-        const normalizedName = stoneName.toLowerCase().trim();
-        const cachedStone = await prisma.stoneCache.findUnique({ where: { stoneName: normalizedName } });
-        if (cachedStone) {
-          mindat = JSON.parse(cachedStone.data);
-        } else {
-          const res = await fetch(
-            `https://api.mindat.org/v1/geomaterials/?name=${encodeURIComponent(stoneName)}&format=json`,
-            { headers: { Authorization: `Token ${process.env.MINDAT_API_KEY}` } }
-          );
-          if (res.ok) {
-            const json = await res.json();
-            if (json.results?.[0]) {
-              const m = json.results[0];
-              const hardnessStr = m.hardness_min ? (m.hardness_max && m.hardness_max !== m.hardness_min ? `${m.hardness_min}-${m.hardness_max}` : `${m.hardness_min}`) : "";
-              const gravityStr = m.density_min ? (m.density_max && m.density_max !== m.density_min ? `${m.density_min}-${m.density_max}` : `${m.density_min}`) : "";
-              mindat = {
-                moh_hardness: hardnessStr, crystal_system: m.crystal_system || "",
-                specific_gravity: gravityStr, luster: m.lustre || "",
-                cleavage: m.cleavage || "", fracture_pattern: m.fracture || "",
-                diaphaneity: m.diaphaneity || "", tenacity: m.tenacity || "",
-              };
-              Object.keys(mindat).forEach(k => { if (!mindat[k]) delete mindat[k]; });
-              if (Object.keys(mindat).length > 0) {
-                await prisma.stoneCache.create({ data: { stoneName: normalizedName, data: JSON.stringify(mindat) } });
-              }
-            }
-          }
-        }
-      } catch (e) { mindatError = e.message; }
-
-      const merged = {};
-      if (stoneName && !existing["official_name"]) merged["official_name"] = stoneName;
-
-      KEYS_TO_PROCESS.forEach(key => {
-        if (existing[key] && String(existing[key]).trim() !== "") { merged[key] = existing[key]; return; }
-        const libVal    = library[key] || "";
-        const parsedVal = parsed[key]  || "";
-        const mindatVal = mindat[key]  || "";
-        if (mindatVal) { merged[key] = `✅ ${mindatVal}`; }
-        else if (libVal) { merged[key] = libVal; }
-        else if (parsedVal) { merged[key] = `⚠️ ${parsedVal}`; }
-      });
-
-      const metafields = KEYS_TO_PROCESS
-        .filter(key => merged[key] && String(merged[key]).trim() !== "")
-        .map(key => {
-          let finalValue = merged[key];
-          if (key === "stone_story") finalValue = autoLinkStory(finalValue);
-          const formatted = formatMetafieldValue(key, finalValue);
+    for (const productId of ids) {
+      const metafields = Object.entries(updates)
+        .map(([key, value]) => {
+          if (!value || String(value).trim() === "") return null;
+          const formatted = formatMetafieldValue(key, value);
           if (!formatted) return null;
-          return { ownerId: p.id, namespace: formatted.namespace, key: formatted.key, value: formatted.value, type: formatted.type };
-        }).filter(Boolean);
+          return {
+            ownerId: productId,
+            namespace: formatted.namespace,
+            key: formatted.key,
+            value: formatted.value,
+            type: formatted.type
+          };
+        })
+        .filter(Boolean);
 
-      if (metafields.length === 0) { results.push({ id: p.id, title: p.title, ok: false, error: "no data found" }); continue; }
+      if (metafields.length === 0) {
+        results.push({ id: productId, ok: false, error: "no fields to save" });
+        continue;
+      }
 
       let saveError = null;
       const chunks = [];
       for (let i = 0; i < metafields.length; i += 25) chunks.push(metafields.slice(i, i + 25));
+
       for (const chunk of chunks) {
         const res = await admin.graphql(`
           mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
@@ -270,38 +208,41 @@ export const action = async ({ request }) => {
         if (errorMsg) { saveError = errorMsg; break; }
       }
 
-      results.push({ id: p.id, title: p.title, ok: !saveError, error: saveError || mindatError || null, merged });
-      await new Promise(r => setTimeout(r, 200));
+      results.push({ id: productId, ok: !saveError, error: saveError || null });
     }
-    return data({ ok: true, results });
+
+    const anyFailed = results.some(r => !r.ok);
+    return data({ ok: !anyFailed, results, error: anyFailed ? results.find(r => r.error)?.error : null });
   }
 
-  // Handle standard individual edits here if needed, or fallback.
-  return data({ ok: false });
+  // --- VOCABULARY ---
+  if (intent === "loadVocabulary") {
+    return data({ vocabulary: {} });
+  }
+
+  if (intent === "saveVocabularyEntry") {
+    return data({ ok: true });
+  }
+
+  return data({ ok: false, error: "Unknown intent: " + intent });
 };
 
-// ==========================================
-// VIEW COMPONENT
-// ==========================================
+// --- VIEW ---
 export default function MetaInjector() {
   const { products, loaderError } = useLoaderData();
   const shopify = useAppBridge();
 
-  // --- STATE ---
   const [selectedIds, setSelectedIds] = useState([]);
   const [fieldValues, setFieldValues] = useState({});
   const [search, setSearch] = useState("");
-
   const [vocabulary, setVocabulary] = useState({});
   const [showCustomInput, setShowCustomInput] = useState({});
   const [customInputs, setCustomInputs] = useState({});
 
-  // --- FETCHERS ---
   const saveFetcher = useFetcher();
   const vocabFetcher = useFetcher();
   const addCustomFetcher = useFetcher();
 
-  // --- DERIVED DATA ---
   const filtered = products.filter(p => p.title.toLowerCase().includes(search.toLowerCase()));
   const selectedProduct = selectedIds.length === 1 ? products.find(p => p.id === selectedIds[0]) : null;
 
@@ -309,7 +250,6 @@ export default function MetaInjector() {
   const saveSuccess = saveFetcher.state === "idle" && saveFetcher.data?.ok === true;
   const saveError = saveFetcher.state === "idle" && saveFetcher.data?.error;
 
-  // --- EFFECTS ---
   useEffect(() => {
     vocabFetcher.submit(
       { intent: "loadVocabulary" },
@@ -323,13 +263,11 @@ export default function MetaInjector() {
     }
   }, [vocabFetcher.data]);
 
-  // --- ACTION HANDLERS ---
   function handleSave() {
     if (selectedIds.length === 0) {
       shopify.toast.show("Please select at least one product to update.");
       return;
     }
-
     const hasAnyValue = TARGET_KEYS.some(
       key => fieldValues[key] && String(fieldValues[key]).trim() !== ""
     );
@@ -337,30 +275,17 @@ export default function MetaInjector() {
       shopify.toast.show("Fill in at least one field before saving.");
       return;
     }
-
     const updates = {};
     TARGET_KEYS.forEach(key => {
       const val = fieldValues[key];
-      if (val && String(val).trim() !== "") {
-        updates[key] = String(val).trim();
-      }
+      if (val && String(val).trim() !== "") updates[key] = String(val).trim();
     });
 
-    const currentStories = {};
-    selectedIds.forEach(id => {
-      const p = products.find(pr => pr.id === id);
-      if (p?.metafields?.stone_story) {
-        currentStories[id] = p.metafields.stone_story;
-      }
-    });
-
-    // You will need to implement a standard save handler in the action block to handle this intent
     saveFetcher.submit(
       {
         intent: "save_standard_edit",
         ids: JSON.stringify(selectedIds),
         updates: JSON.stringify(updates),
-        currentStories: JSON.stringify(currentStories),
       },
       { method: "post", action: "/app/meta-injector" }
     );
@@ -376,25 +301,19 @@ export default function MetaInjector() {
             Update saved to Shopify across {selectedIds.length} stone{selectedIds.length !== 1 ? "s" : ""}.
           </Banner>
         )}
-        {saveError && (
-          <Banner tone="critical">Save failed: {saveError}</Banner>
-        )}
+        {saveError && <Banner tone="critical">Save failed: {saveError}</Banner>}
 
         <div style={{ display: "flex", flexWrap: "wrap", gap: "24px", alignItems: "stretch" }}>
 
-          {/* LEFT PANEL: Product Selection */}
+          {/* LEFT — Product List */}
           <div style={{ flex: "1 1 300px", minWidth: 0, display: "flex", flexDirection: "column" }}>
             <BlockStack gap="400">
-              <Text variant="headingMd" as="h2">
-                Select Stones ({selectedIds.length} selected)
-              </Text>
-
+              <Text variant="headingMd" as="h2">Select Stones ({selectedIds.length} selected)</Text>
               <TextField
                 value={search} onChange={setSearch} autoComplete="off" placeholder="Search title..."
                 clearButton onClearButtonClick={() => setSearch("")} prefix="🔍"
               />
-
-              <Card padding="0" style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+              <Card padding="0">
                 <Box padding="300" borderBlockEndWidth="025" borderColor="border">
                   <Checkbox
                     label="Select all visible"
@@ -405,29 +324,25 @@ export default function MetaInjector() {
                     }}
                   />
                 </Box>
-                <div style={{ overflowY: "auto", flex: 1, maxHeight: "60vh" }}>
+                <div style={{ height: "500px", overflowY: "auto" }}>
                   <ResourceList
                     items={filtered}
                     renderItem={(p) => {
                       const isSelected = selectedIds.includes(p.id);
-                      
-                      const cleanStatus = String(p.status || "").replace(/[^\w\s]/gi, '').trim().toLowerCase();
+                      const cleanStatus = String(p.status || "").replace(/[^\w\s]/gi, "").trim().toLowerCase();
                       const badgeTone = cleanStatus === "complete" ? "success" : cleanStatus === "partial" ? "warning" : "critical";
-
                       return (
                         <ResourceItem
                           id={p.id}
                           onClick={() => {
                             setSelectedIds(prev => isSelected ? prev.filter(id => id !== p.id) : [...prev, p.id]);
                           }}
-                          media={<Thumbnail source={p.image || ImageIcon} alt={p.title} size="small" />}
+                          media={<Thumbnail source={p.image || ""} alt={p.title} size="small" />}
                         >
                           <InlineStack wrap={false} align="space-between" blockAlign="center">
                             <BlockStack gap="100">
                               <Text variant="bodyMd" fontWeight="bold">{p.title}</Text>
-                              <Badge tone={badgeTone}>
-                                {p.status}
-                              </Badge>
+                              <Badge tone={badgeTone}>{p.status}</Badge>
                             </BlockStack>
                             <Checkbox checked={isSelected} onChange={() => {}} />
                           </InlineStack>
@@ -440,7 +355,7 @@ export default function MetaInjector() {
             </BlockStack>
           </div>
 
-          {/* RIGHT PANEL: Data Entry */}
+          {/* RIGHT — Data Entry */}
           <div style={{ flex: "1 1 400px", maxWidth: "680px", width: "100%", minWidth: 0 }}>
             <BlockStack gap="400">
               <InlineStack align="space-between" blockAlign="center">
@@ -455,7 +370,6 @@ export default function MetaInjector() {
                   <Banner tone="info">
                     Any field you leave blank will be ignored. Only filled fields will overwrite existing data on the selected stones.
                   </Banner>
-
                   <BlockStack gap="400">
                     {TARGET_KEYS.map(key => {
                       const savedValue = selectedProduct?.metafields?.[key.replace(/-/g, "_")];
@@ -473,8 +387,8 @@ export default function MetaInjector() {
                               multiline={4}
                             />
                             <InlineStack align="start">
-                              <DictationButton 
-                                placeholder="🎤 Dictate Bulk Story" 
+                              <DictationButton
+                                placeholder="🎤 Dictate Bulk Story"
                                 onResult={(text) => {
                                   setFieldValues(prev => ({
                                     ...prev,
@@ -493,7 +407,6 @@ export default function MetaInjector() {
                         const currentVal = fieldValues[key] || "";
                         const selectOptions = [{ label: "— select —", value: "" }];
                         opts.forEach(o => selectOptions.push({ label: o, value: o }));
-                        
                         if (!isMulti && currentVal && currentVal !== "__custom__" && !opts.includes(currentVal)) {
                           selectOptions.push({ label: currentVal, value: currentVal });
                         }
@@ -585,7 +498,6 @@ export default function MetaInjector() {
                   </BlockStack>
                 </BlockStack>
               </Card>
-
             </BlockStack>
           </div>
 
