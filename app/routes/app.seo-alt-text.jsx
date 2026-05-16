@@ -29,7 +29,7 @@ export function ErrorBoundary() {
           <Text variant="headingLg" as="h1" fontWeight="bold">Dashboard Crashed</Text>
           <Text>
             {isRouteErrorResponse(error)
-              ? `${error.status} ${error.statusText}`
+              ? `${error.status} ${error.statusText} - ${error.data}`
               : error instanceof Error
               ? error.message
               : "Unknown engine failure."}
@@ -40,48 +40,65 @@ export function ErrorBoundary() {
   );
 }
 
-// ─── LOADER ───────────────────────────────────────────────────────────────────
+// ─── LOADER (With Timeout Governor) ───────────────────────────────────────────
 export const loader = async ({ request }) => {
-  const { admin } = await authenticate.admin(request);
+  try {
+    const { admin } = await authenticate.admin(request);
 
-  let allProducts = [];
-  let cursor = null;
-  let hasNextPage = true;
+    let allProducts = [];
+    let cursor = null;
+    let hasNextPage = true;
+    let cycleCount = 0; // Safety breaker
 
-  while (hasNextPage) {
-    const query = `
-      query GetProducts($cursor: String) {
-        products(first: 25, after: $cursor) {
-          pageInfo { hasNextPage endCursor }
-          edges {
-            node {
-              id
-              title
-              handle
-              seo { title description }
-              images(first: 10) {
-                edges {
-                  node {
-                    id
-                    src
-                    altText
+    while (hasNextPage && cycleCount < 20) {
+      const query = `
+        query GetProducts($cursor: String) {
+          products(first: 100, after: $cursor) {
+            pageInfo { hasNextPage endCursor }
+            edges {
+              node {
+                id
+                title
+                handle
+                seo { title description }
+                images(first: 10) {
+                  edges {
+                    node {
+                      id
+                      src
+                      altText
+                    }
                   }
                 }
               }
             }
           }
         }
-      }
-    `;
-    const res = await admin.graphql(query, { variables: { cursor } });
-    const json = await res.json();
-    const page = json.data.products;
-    allProducts = allProducts.concat(page.edges.map((e) => e.node));
-    hasNextPage = page.pageInfo.hasNextPage;
-    cursor = page.pageInfo.endCursor;
-  }
+      `;
+      const res = await admin.graphql(query, { variables: { cursor } });
+      const json = await res.json();
 
-  return { products: allProducts };
+      if (json.errors) {
+        throw new Error(json.errors[0].message);
+      }
+
+      const page = json.data?.products;
+      if (!page) break;
+
+      allProducts = allProducts.concat(page.edges.map((e) => e.node));
+      hasNextPage = page.pageInfo.hasNextPage;
+      cursor = page.pageInfo.endCursor;
+      cycleCount++;
+    }
+
+    return { products: allProducts };
+  } catch (error) {
+    // Trip the ErrorBoundary instead of silently dying
+    throw new Response(error.message || "Failed to load product map.", {
+      status: 500,
+      statusText: "Loader Engine Fault",
+    });
+  }
 };
 
 // ─── ACTION (The Engine with Chunking Governor) ───────────────────────────────
@@ -94,21 +111,36 @@ export const action = async ({ request }) => {
     // Save single image alt text
     if (intent === "save_alt") {
       const imageId = body.get("imageId");
-      const productId = body.get("productId");
       const altText = body.get("altText");
       
       const res = await admin.graphql(
-        `mutation UpdateImageAlt($productId: ID!, $imageId: ID!, $altText: String!) {
-          productImageUpdate(productId: $productId, image: [{ id: $imageId, altText: $altText }]) {
-            image { id altText }
-            userErrors { field message }
+        `mutation fileUpdate($files: [FileUpdateInput!]!) {
+          fileUpdate(files: $files) {
+            files {
+              ... on MediaImage {
+                id
+                image {
+                  altText
+                }
+              }
+            }
+            userErrors {
+              field
+              message
+            }
           }
         }`,
-        { variables: { productId, imageId, altText } }
+        { variables: { files: [{ id: imageId, altText }] } }
       );
+      
       const json = await res.json();
       if (json.errors) throw new Error(json.errors[0].message);
-      return { ok: true, result: json.data.productImageUpdate };
+      if (json.data.fileUpdate.userErrors.length > 0) {
+         throw new Error(json.data.fileUpdate.userErrors[0].message);
+      }
+      
+      // Map back to expected format for the frontend useEffect
+      return { ok: true, result: { image: { id: imageId, altText } } };
     }
 
     // Bulk auto-fill alt text from product title
@@ -121,20 +153,38 @@ export const action = async ({ request }) => {
       for (let i = 0; i < pairs.length; i += chunkSize) {
         const chunk = pairs.slice(i, i + chunkSize);
         
-        await Promise.all(chunk.map(async ({ productId, imageId, title }) => {
-          const res = await admin.graphql(
-            `mutation UpdateImageAlt($productId: ID!, $imageId: ID!, $altText: String!) {
-              productImageUpdate(productId: $productId, image: [{ id: $imageId, altText: $altText }]) {
-                image { id altText }
-                userErrors { field message }
+        // Assemble the array of files for the single mutation
+        const filesInput = chunk.map(({ imageId, title }) => ({ id: imageId, altText: title }));
+        
+        const res = await admin.graphql(
+          `mutation fileUpdate($files: [FileUpdateInput!]!) {
+            fileUpdate(files: $files) {
+              files {
+                ... on MediaImage {
+                  id
+                  image {
+                    altText
+                  }
+                }
               }
-            }`,
-            { variables: { productId, imageId, altText: title } }
-          );
-          const json = await res.json();
-          if (json.errors) throw new Error(json.errors[0].message);
-          results.push(json.data.productImageUpdate);
-        }));
+              userErrors {
+                field
+                message
+              }
+            }
+          }`,
+          { variables: { files: filesInput } }
+        );
+        
+        const json = await res.json();
+        if (json.errors) throw new Error(json.errors[0].message);
+        if (json.data.fileUpdate.userErrors.length > 0) {
+           throw new Error(json.data.fileUpdate.userErrors[0].message);
+        }
+        
+        // Push the mapped results back to the array for the frontend
+        const formatted = filesInput.map(f => ({ image: { id: f.id, altText: f.altText } }));
+        results.push(...formatted);
         
         // Pause for 1 full second between batches so Shopify doesn't panic
         if (i + chunkSize < pairs.length) {
@@ -160,6 +210,9 @@ export const action = async ({ request }) => {
       );
       const json = await res.json();
       if (json.errors) throw new Error(json.errors[0].message);
+      if (json.data.productUpdate.userErrors.length > 0) {
+         throw new Error(json.data.productUpdate.userErrors[0].message);
+      }
       return { ok: true, result: json.data.productUpdate };
     }
 
