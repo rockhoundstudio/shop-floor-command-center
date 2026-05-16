@@ -40,7 +40,7 @@ export function ErrorBoundary() {
   );
 }
 
-// ─── LOADER (With Timeout Governor) ───────────────────────────────────────────
+// ─── LOADER (With Timeout Governor & Media API Adapter) ───────────────────────
 export const loader = async ({ request }) => {
   try {
     const { admin } = await authenticate.admin(request);
@@ -61,12 +61,16 @@ export const loader = async ({ request }) => {
                 title
                 handle
                 seo { title description }
-                images(first: 10) {
+                media(first: 10) {
                   edges {
                     node {
-                      id
-                      src
-                      altText
+                      ... on MediaImage {
+                        id
+                        alt
+                        image {
+                          url
+                        }
+                      }
                     }
                   }
                 }
@@ -85,7 +89,29 @@ export const loader = async ({ request }) => {
       const page = json.data?.products;
       if (!page) break;
 
-      allProducts = allProducts.concat(page.edges.map((e) => e.node));
+      // Adapter: Map the new Media nodes back into the old images shape for the UI
+      const formattedNodes = page.edges.map((e) => {
+        const node = e.node;
+        const mappedImages = (node.media?.edges || [])
+          .filter(mediaEdge => mediaEdge.node.image) // Ensure it's a MediaImage
+          .map(mediaEdge => ({
+            node: {
+              id: mediaEdge.node.id, // The correct MediaImage ID for fileUpdate
+              src: mediaEdge.node.image?.url || "",
+              altText: mediaEdge.node.alt || ""
+            }
+          }));
+
+        return {
+          id: node.id,
+          title: node.title,
+          handle: node.handle,
+          seo: node.seo,
+          images: { edges: mappedImages }
+        };
+      });
+
+      allProducts = allProducts.concat(formattedNodes);
       hasNextPage = page.pageInfo.hasNextPage;
       cursor = page.pageInfo.endCursor;
       cycleCount++;
@@ -119,9 +145,7 @@ export const action = async ({ request }) => {
             files {
               ... on MediaImage {
                 id
-                image {
-                  altText
-                }
+                alt
               }
             }
             userErrors {
@@ -162,9 +186,7 @@ export const action = async ({ request }) => {
               files {
                 ... on MediaImage {
                   id
-                  image {
-                    altText
-                  }
+                  alt
                 }
               }
               userErrors {
