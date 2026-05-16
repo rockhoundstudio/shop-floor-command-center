@@ -385,7 +385,7 @@ export default function SeoAltTextTab() {
     setBulkRunning(productId);
     const pairs = selectedImgIds.map((id) => ({
       imageId: id,
-      title: textToApply, // Using the custom text instead of product title
+      title: textToApply, 
     }));
     
     const fd = new FormData();
@@ -413,6 +413,59 @@ export default function SeoAltTextTab() {
     fetcher.submit(fd, { method: "post" });
   };
 
+  // ⚡ TASK 1: PREMIUM BULK FILL DEFAULT
+  const handleBulkAlt = () => {
+    setBulkRunning(true);
+    const pairs = allImages
+      .filter((img) => !img.altText || img.altText.trim() === "")
+      .map((img) => ({ 
+        productId: img.productId, 
+        imageId: img.imageId, 
+        // Generates: "[Visual Beauty] [Stone Name], one-of-a-kind handcrafted art, Rockhound Studio"
+        title: `[Visual Beauty/Color] polished ${img.productTitle}, one-of-a-kind handcrafted art, Rockhound Studio` 
+      }));
+    const fd = new FormData();
+    fd.append("intent", "bulk_alt");
+    fd.append("pairs", JSON.stringify(pairs));
+    fetcher.submit(fd, { method: "post" });
+  };
+
+  // ⚡ TASK 4: ADD CUSTOM POLISHING CHIPS
+  const injectChip = (productId, phrase) => {
+    setEditSeo((prev) => {
+      const currentDesc = prev[productId]?.description ?? products.find(p => p.id === productId)?.seo?.description ?? "";
+      const newDesc = currentDesc ? `${currentDesc} ${phrase}` : phrase;
+      return {
+        ...prev,
+        [productId]: {
+          ...prev[productId],
+          description: newDesc,
+        },
+      };
+    });
+  };
+
+  // AUTO-INJECT HELPERS FOR SEO
+  const injectSeoTitleTemplate = (productId, productTitle) => {
+    setEditSeo((prev) => ({
+      ...prev,
+      [productId]: {
+        ...prev[productId],
+        title: `${productTitle} — One-of-a-Kind | Rockhound Studio`,
+      },
+    }));
+  };
+
+  const injectSeoDescTemplate = (productId, productTitle) => {
+    setEditSeo((prev) => ({
+      ...prev,
+      [productId]: {
+        ...prev[productId],
+        description: `This ${productTitle} found its way from the [Origin] to Bob and Janyce's bench in Spokane Valley. Polished by hand. One of a kind. Read its story.`,
+      },
+    }));
+  };
+
   const altFilterOptions = [
     { label: "All", value: "all" },
     { label: "🔴 Missing Alt", value: "missing" },
@@ -428,7 +481,7 @@ export default function SeoAltTextTab() {
   return (
     <Page
       title="SEO & Alt Text Diagnostics"
-      subtitle="Group select images to tag specific angles, grit finishes, and raw flaws."
+      subtitle="Group select images to tag premium, story-driven details for everyday buyers."
     >
       {toast && (
         <div style={{ position: "fixed", top: 16, right: 16, zIndex: 9999 }}>
@@ -443,13 +496,13 @@ export default function SeoAltTextTab() {
               variant={activeTab === "alt" ? "primary" : "secondary"}
               onClick={() => { setActiveTab("alt"); setFilter("all"); }}
             >
-              🖼 Maker-Pivot Alt Text
+              🖼 Premium Story Alt Text
             </Button>
             <Button
               variant={activeTab === "seo" ? "primary" : "secondary"}
               onClick={() => { setActiveTab("seo"); setFilter("all"); }}
             >
-              🔍 SEO
+              🔍 Premium SEO
             </Button>
           </InlineStack>
         </Layout.Section>
@@ -464,6 +517,15 @@ export default function SeoAltTextTab() {
                 onChange={(v) => setFilter(v)}
               />
             </div>
+            {activeTab === "alt" && (
+              <Button
+                onClick={handleBulkAlt}
+                loading={bulkRunning}
+                disabled={altMissing === 0}
+              >
+                ⚡ Bulk Fill All Missing Alt (Premium Template)
+              </Button>
+            )}
           </InlineStack>
         </Layout.Section>
 
@@ -512,7 +574,7 @@ export default function SeoAltTextTab() {
                                   onChange={(val) =>
                                     setGroupText((prev) => ({ ...prev, [product.id]: val }))
                                   }
-                                  placeholder="e.g. Freeform fire obsidian, 3000 grit polish face..."
+                                  placeholder="e.g. Deep red flash polished fire obsidian pocket stone, one-of-a-kind handcrafted art..."
                                   autoComplete="off"
                                 />
                               </div>
@@ -562,17 +624,32 @@ export default function SeoAltTextTab() {
                                     onChange={(val) =>
                                       setEditAlt((prev) => ({ ...prev, [img.id]: val }))
                                     }
-                                    placeholder="Single image tag..."
+                                    placeholder="e.g. Deep red flash polished fire obsidian pocket stone..."
                                     autoComplete="off"
                                   />
-                                  <Button
-                                    size="slim"
-                                    onClick={() => handleSaveAlt(product.id, img.id)}
-                                    loading={saving === img.id}
-                                    disabled={prodSelected.length > 0} // Lock single save if bulk is active
-                                  >
-                                    Save Single
-                                  </Button>
+                                  <InlineStack gap="200">
+                                    <Button
+                                      size="slim"
+                                      onClick={() => {
+                                        // Auto-inject template for single image
+                                        setEditAlt((prev) => ({ 
+                                          ...prev, 
+                                          [img.id]: `[Visual Beauty/Color] polished ${product.title}, one-of-a-kind handcrafted art, Rockhound Studio` 
+                                        }));
+                                      }}
+                                    >
+                                      Load Template
+                                    </Button>
+                                    <Button
+                                      size="slim"
+                                      variant="primary"
+                                      onClick={() => handleSaveAlt(product.id, img.id)}
+                                      loading={saving === img.id}
+                                      disabled={prodSelected.length > 0} 
+                                    >
+                                      Save Single
+                                    </Button>
+                                  </InlineStack>
                                 </BlockStack>
                               </InlineStack>
                             </Box>
@@ -611,6 +688,12 @@ export default function SeoAltTextTab() {
                       </InlineStack>
 
                       <BlockStack gap="100">
+                        <InlineStack align="space-between">
+                          <Text variant="bodyMd" fontWeight="bold">SEO Title</Text>
+                          <Button size="slim" onClick={() => injectSeoTitleTemplate(product.id, product.title)}>
+                            ⚡ Auto-Fill Template
+                          </Button>
+                        </InlineStack>
                         <TextField
                           label={`SEO Title — ${tLen} chars (target: 50–60)`}
                           value={editedTitle}
@@ -623,7 +706,7 @@ export default function SeoAltTextTab() {
                               },
                             }))
                           }
-                          placeholder="SEO title..."
+                          placeholder="e.g. Fire Obsidian Display Stone — One-of-a-Kind | Rockhound Studio"
                           autoComplete="off"
                           error={
                             tLen > 60 ? "Too long (over 60 chars)" : tLen > 0 && tLen < 30 ? "Too short (under 30 chars)" : undefined
@@ -635,6 +718,12 @@ export default function SeoAltTextTab() {
                       </BlockStack>
 
                       <BlockStack gap="100">
+                        <InlineStack align="space-between">
+                          <Text variant="bodyMd" fontWeight="bold">Meta Description</Text>
+                          <Button size="slim" onClick={() => injectSeoDescTemplate(product.id, product.title)}>
+                            ⚡ Auto-Fill Template
+                          </Button>
+                        </InlineStack>
                         <TextField
                           label={`Meta Description — ${dLen} chars (target: 150–160)`}
                           value={editedDesc}
@@ -647,7 +736,7 @@ export default function SeoAltTextTab() {
                               },
                             }))
                           }
-                          placeholder="Meta description..."
+                          placeholder="e.g. This fire obsidian found its way from the high desert to Bob and Janyce's bench in Spokane Valley. Polished by hand. One of a kind..."
                           multiline={3}
                           autoComplete="off"
                           error={
@@ -657,13 +746,27 @@ export default function SeoAltTextTab() {
                         <Text tone="subdued" variant="bodySm">
                           {dLen === 0 ? "🔴 Missing" : dLen >= 150 && dLen <= 160 ? "🟢 Good length" : "🟡 Adjust length"}
                         </Text>
+                        
+                        {/* ⚡ TASK 4: CUSTOM POLISHING CHIPS */}
+                        <InlineStack gap="200" wrap>
+                          <Button size="slim" onClick={() => injectChip(product.id, "custom stone polishing service")}>
+                            + Custom Stone Polishing
+                          </Button>
+                          <Button size="slim" onClick={() => injectChip(product.id, "heirloom rock polishing")}>
+                            + Heirloom Rock Polishing
+                          </Button>
+                          <Button size="slim" onClick={() => injectChip(product.id, "turn your found rock into art")}>
+                            + Turn Found Rock Into Art
+                          </Button>
+                        </InlineStack>
                       </BlockStack>
 
                       <Button
+                        variant="primary"
                         onClick={() => handleSaveSeo(product.id)}
                         loading={saving === product.id}
                       >
-                        Save SEO
+                        Save SEO Data
                       </Button>
                     </BlockStack>
                   </Card>
