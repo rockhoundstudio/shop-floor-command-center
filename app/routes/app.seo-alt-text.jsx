@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect } from "react";
-import { useFetcher, useLoaderData, useRouteError, isRouteErrorResponse } from "react-router";
+// ⚡ FIX: Swapped "react-router" for the correct Shopify/Remix engine package
+import { useFetcher, useLoaderData, useRouteError, isRouteErrorResponse } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
 import {
   Page,
@@ -43,8 +44,6 @@ export function ErrorBoundary() {
 
 // ─── LOADER (With Timeout Governor & Media API Adapter) ───────────────────────
 export const loader = async ({ request }) => {
-  // ⚡ FIX: Authentication must happen OUTSIDE the try/catch block 
-  // so Shopify can safely trigger its session redirects without tripping the alarm.
   const { admin } = await authenticate.admin(request);
 
   try {
@@ -122,7 +121,10 @@ export const loader = async ({ request }) => {
 
     return { products: allProducts };
   } catch (error) {
-    throw new Response(error.message || "Failed to load product map.", {
+    if (error instanceof Response) {
+      throw error;
+    }
+    throw new Response(error.message || String(error), {
       status: 500,
       statusText: "Loader Engine Fault",
     });
@@ -131,7 +133,6 @@ export const loader = async ({ request }) => {
 
 // ─── ACTION (The Engine with Chunking Governor) ───────────────────────────────
 export const action = async ({ request }) => {
-  // ⚡ FIX: Authentication moved outside the error boundary here as well.
   const { admin } = await authenticate.admin(request);
   
   try {
@@ -240,6 +241,9 @@ export const action = async ({ request }) => {
 
     return { ok: false, error: "Unknown intent" };
   } catch (error) {
+    if (error instanceof Response) {
+      throw error;
+    }
     return { ok: false, error: error.message || "An internal engine fault occurred." };
   }
 };
@@ -281,7 +285,6 @@ export default function SeoAltTextTab() {
   const [bulkRunning, setBulkRunning] = useState(false);
   const [toast, setToast] = useState(null); 
 
-  // THE MULTI-FIRE JIG STATE
   const [selectedImages, setSelectedImages] = useState([]);
   const [groupText, setGroupText] = useState({});
 
@@ -298,7 +301,6 @@ export default function SeoAltTextTab() {
       setSaving(null);
       setBulkRunning(false);
       
-      // Clear selections on successful save
       setSelectedImages([]);
       setGroupText({});
       
@@ -381,7 +383,6 @@ export default function SeoAltTextTab() {
     fetcher.submit(fd, { method: "post" });
   };
 
-  // MULTI-FIRE JIG EXECUTOR
   const handleGroupSaveAlt = (productId, selectedImgIds) => {
     const textToApply = groupText[productId] || "";
     if (!textToApply.trim()) return;
@@ -417,7 +418,6 @@ export default function SeoAltTextTab() {
     fetcher.submit(fd, { method: "post" });
   };
 
-  // ⚡ TASK 1: PREMIUM BULK FILL DEFAULT
   const handleBulkAlt = () => {
     setBulkRunning(true);
     const pairs = allImages
@@ -433,7 +433,6 @@ export default function SeoAltTextTab() {
     fetcher.submit(fd, { method: "post" });
   };
 
-  // ⚡ TASK 4: ADD CUSTOM POLISHING CHIPS
   const injectChip = (productId, phrase) => {
     setEditSeo((prev) => {
       const currentDesc = prev[productId]?.description ?? products.find(p => p.id === productId)?.seo?.description ?? "";
@@ -448,7 +447,6 @@ export default function SeoAltTextTab() {
     });
   };
 
-  // AUTO-INJECT HELPERS FOR SEO
   const injectSeoTitleTemplate = (productId, productTitle) => {
     setEditSeo((prev) => ({
       ...prev,
@@ -563,7 +561,6 @@ export default function SeoAltTextTab() {
                         <Text tone="subdued">No images on this product.</Text>
                       )}
 
-                      {/* GROUP TICK BATCH COMMAND PANEL */}
                       {prodSelected.length > 0 && (
                         <Box padding="300" background="bg-surface-secondary" borderRadius="200">
                           <BlockStack gap="300">
@@ -634,7 +631,6 @@ export default function SeoAltTextTab() {
                                     <Button
                                       size="slim"
                                       onClick={() => {
-                                        // Auto-inject template for single image
                                         setEditAlt((prev) => ({ 
                                           ...prev, 
                                           [img.id]: `[Visual Beauty/Color] polished ${product.title}, one-of-a-kind handcrafted art, Rockhound Studio` 
@@ -750,7 +746,6 @@ export default function SeoAltTextTab() {
                           {dLen === 0 ? "🔴 Missing" : dLen >= 150 && dLen <= 160 ? "🟢 Good length" : "🟡 Adjust length"}
                         </Text>
                         
-                        {/* ⚡ TASK 4: CUSTOM POLISHING CHIPS */}
                         <InlineStack gap="200" wrap>
                           <Button size="slim" onClick={() => injectChip(product.id, "custom stone polishing service")}>
                             + Custom Stone Polishing
