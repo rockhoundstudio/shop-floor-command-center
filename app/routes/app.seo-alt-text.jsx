@@ -43,9 +43,11 @@ export function ErrorBoundary() {
 
 // ─── LOADER (With Timeout Governor & Media API Adapter) ───────────────────────
 export const loader = async ({ request }) => {
-  try {
-    const { admin } = await authenticate.admin(request);
+  // ⚡ FIX: Authentication must happen OUTSIDE the try/catch block 
+  // so Shopify can safely trigger its session redirects without tripping the alarm.
+  const { admin } = await authenticate.admin(request);
 
+  try {
     let allProducts = [];
     let cursor = null;
     let hasNextPage = true;
@@ -129,8 +131,10 @@ export const loader = async ({ request }) => {
 
 // ─── ACTION (The Engine with Chunking Governor) ───────────────────────────────
 export const action = async ({ request }) => {
+  // ⚡ FIX: Authentication moved outside the error boundary here as well.
+  const { admin } = await authenticate.admin(request);
+  
   try {
-    const { admin } = await authenticate.admin(request);
     const body = await request.formData();
     const intent = body.get("intent");
 
@@ -421,7 +425,6 @@ export default function SeoAltTextTab() {
       .map((img) => ({ 
         productId: img.productId, 
         imageId: img.imageId, 
-        // Generates: "[Visual Beauty] [Stone Name], one-of-a-kind handcrafted art, Rockhound Studio"
         title: `[Visual Beauty/Color] polished ${img.productTitle}, one-of-a-kind handcrafted art, Rockhound Studio` 
       }));
     const fd = new FormData();
