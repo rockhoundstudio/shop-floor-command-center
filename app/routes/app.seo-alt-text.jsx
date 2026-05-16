@@ -1,5 +1,5 @@
-import { useState, useEffect } from "react";
-import { useFetcher, useLoaderData } from "react-router";
+import { useState, useCallback, useEffect } from "react";
+import { useFetcher, useLoaderData, useRouteError, isRouteErrorResponse } from "react-router";
 import { authenticate } from "../shopify.server";
 import {
   Page,
@@ -7,18 +7,40 @@ import {
   Card,
   Text,
   Button,
+  Badge,
   TextField,
   Thumbnail,
   Banner,
   Select,
+  Spinner,
   BlockStack,
   InlineStack,
   Divider,
   Box,
 } from "@shopify/polaris";
 
-// ─── LOADER ───────────────────────────────────────────────────────────────────
+// ─── ERROR BOUNDARY (The Diagnostic Screen) ───────────────────────────────────
+export function ErrorBoundary() {
+  const error = useRouteError();
+  return (
+    <Page title="Engine Fault">
+      <Card background="bg-surface-critical">
+        <BlockStack gap="400">
+          <Text variant="headingLg" as="h1" fontWeight="bold">Dashboard Crashed</Text>
+          <Text>
+            {isRouteErrorResponse(error)
+              ? `${error.status} ${error.statusText}`
+              : error instanceof Error
+              ? error.message
+              : "Unknown engine failure."}
+          </Text>
+        </BlockStack>
+      </Card>
+    </Page>
+  );
+}
 
+// ─── LOADER ───────────────────────────────────────────────────────────────────
 export const loader = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
 
@@ -27,8 +49,8 @@ export const loader = async ({ request }) => {
   let hasNextPage = true;
 
   while (hasNextPage) {
-    const res = await admin.graphql(
-      `query GetProducts($cursor: String) {
+    const query = `
+      query GetProducts($cursor: String) {
         products(first: 25, after: $cursor) {
           pageInfo { hasNextPage endCursor }
           edges {
@@ -49,9 +71,9 @@ export const loader = async ({ request }) => {
             }
           }
         }
-      }`,
-      { variables: { cursor } }
-    );
+      }
+    `;
+    const res = await admin.graphql(query, { variables: { cursor } });
     const json = await res.json();
     const page = json.data.products;
     allProducts = allProducts.concat(page.edges.map((e) => e.node));
@@ -62,79 +84,93 @@ export const loader = async ({ request }) => {
   return { products: allProducts };
 };
 
-// ─── ACTION ───────────────────────────────────────────────────────────────────
-
+// ─── ACTION (The Engine with Chunking Governor) ───────────────────────────────
 export const action = async ({ request }) => {
-  const { admin } = await authenticate.admin(request);
-  const body = await request.formData();
-  const intent = body.get("intent");
+  try {
+    const { admin } = await authenticate.admin(request);
+    const body = await request.formData();
+    const intent = body.get("intent");
 
-  if (intent === "save_alt") {
-    const imageId = body.get("imageId");
-    const productId = body.get("productId");
-    const altText = body.get("altText");
-    const res = await admin.graphql(
-      `mutation UpdateImageAlt($productId: ID!, $imageId: ID!, $altText: String!) {
-        productImageUpdate(productId: $productId, image: { id: $imageId, altText: $altText }) {
-          image { id altText }
-          userErrors { field message }
-        }
-      }`,
-      { variables: { productId, imageId, altText } }
-    );
-    const json = await res.json();
-    return { ok: true, result: json.data.productImageUpdate };
-  }
-
-  if (intent === "bulk_alt") {
-    const pairs = JSON.parse(body.get("pairs"));
-    const results = [];
-    const CHUNK = 20;
-
-    for (let i = 0; i < pairs.length; i += CHUNK) {
-      const batch = pairs.slice(i, i + CHUNK);
-      for (const { productId, imageId, title } of batch) {
-        const res = await admin.graphql(
-          `mutation UpdateImageAlt($productId: ID!, $imageId: ID!, $altText: String!) {
-            productImageUpdate(productId: $productId, image: { id: $imageId, altText: $altText }) {
-              image { id altText }
-              userErrors { field message }
-            }
-          }`,
-          { variables: { productId, imageId, altText: title } }
-        );
-        const json = await res.json();
-        results.push(json.data.productImageUpdate);
-      }
-      if (i + CHUNK < pairs.length) {
-        await new Promise((r) => setTimeout(r, 500));
-      }
+    // Save single image alt text
+    if (intent === "save_alt") {
+      const imageId = body.get("imageId");
+      const productId = body.get("productId");
+      const altText = body.get("altText");
+      
+      const res = await admin.graphql(
+        `mutation UpdateImageAlt($productId: ID!, $imageId: ID!, $altText: String!) {
+          productImageUpdate(productId: $productId, image: [{ id: $imageId, altText: $altText }]) {
+            image { id altText }
+            userErrors { field message }
+          }
+        }`,
+        { variables: { productId, imageId, altText } }
+      );
+      const json = await res.json();
+      if (json.errors) throw new Error(json.errors[0].message);
+      return { ok: true, result: json.data.productImageUpdate };
     }
-    return { ok: true, results };
-  }
 
-  if (intent === "save_seo") {
-    const productId = body.get("productId");
-    const seoTitle = body.get("seoTitle");
-    const seoDescription = body.get("seoDescription");
-    const res = await admin.graphql(
-      `mutation UpdateSEO($productId: ID!, $seoTitle: String!, $seoDescription: String!) {
-        productUpdate(input: { id: $productId, seo: { title: $seoTitle, description: $seoDescription } }) {
-          product { id seo { title description } }
-          userErrors { field message }
+    // Bulk auto-fill alt text from product title
+    if (intent === "bulk_alt") {
+      const pairs = JSON.parse(body.get("pairs")); 
+      const results = [];
+      
+      // THE CHUNKING GOVERNOR: Process in batches of 10 to protect the API
+      const chunkSize = 10;
+      for (let i = 0; i < pairs.length; i += chunkSize) {
+        const chunk = pairs.slice(i, i + chunkSize);
+        
+        await Promise.all(chunk.map(async ({ productId, imageId, title }) => {
+          const res = await admin.graphql(
+            `mutation UpdateImageAlt($productId: ID!, $imageId: ID!, $altText: String!) {
+              productImageUpdate(productId: $productId, image: [{ id: $imageId, altText: $altText }]) {
+                image { id altText }
+                userErrors { field message }
+              }
+            }`,
+            { variables: { productId, imageId, altText: title } }
+          );
+          const json = await res.json();
+          if (json.errors) throw new Error(json.errors[0].message);
+          results.push(json.data.productImageUpdate);
+        }));
+        
+        // Pause for 1 full second between batches so Shopify doesn't panic
+        if (i + chunkSize < pairs.length) {
+          await new Promise((resolve) => setTimeout(resolve, 1000));
         }
-      }`,
-      { variables: { productId, seoTitle, seoDescription } }
-    );
-    const json = await res.json();
-    return { ok: true, result: json.data.productUpdate };
-  }
+      }
+      return { ok: true, results };
+    }
 
-  return { ok: false, error: "Unknown intent" };
+    // Save single product SEO
+    if (intent === "save_seo") {
+      const productId = body.get("productId");
+      const seoTitle = body.get("seoTitle");
+      const seoDescription = body.get("seoDescription");
+      const res = await admin.graphql(
+        `mutation UpdateSEO($productId: ID!, $seoTitle: String!, $seoDescription: String!) {
+          productUpdate(input: { id: $productId, seo: { title: $seoTitle, description: $seoDescription } }) {
+            product { id seo { title description } }
+            userErrors { field message }
+          }
+        }`,
+        { variables: { productId, seoTitle, seoDescription } }
+      );
+      const json = await res.json();
+      if (json.errors) throw new Error(json.errors[0].message);
+      return { ok: true, result: json.data.productUpdate };
+    }
+
+    return { ok: false, error: "Unknown intent" };
+  } catch (error) {
+    // FUSE BOX
+    return { ok: false, error: error.message || "An internal engine fault occurred." };
+  }
 };
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
-
 function seoStatus(title, description) {
   const tLen = (title || "").length;
   const dLen = (description || "").length;
@@ -146,7 +182,7 @@ function seoStatus(title, description) {
 }
 
 function altStatus(images) {
-  if (!images || images.length === 0) return "green";
+  if (!images || images.length === 0) return "green"; 
   const missing = images.filter((img) => !img.altText || img.altText.trim() === "");
   if (missing.length === 0) return "green";
   return "red";
@@ -158,25 +194,33 @@ function StatusDot({ status }) {
 }
 
 // ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
-
 export default function SeoAltTextTab() {
   const { products: initialProducts } = useLoaderData();
   const fetcher = useFetcher();
 
-  const [activeTab, setActiveTab] = useState("alt");
-  const [filter, setFilter] = useState("all");
+  const [activeTab, setActiveTab] = useState("alt"); 
+  const [filter, setFilter] = useState("all"); 
   const [products, setProducts] = useState(initialProducts);
-  const [editAlt, setEditAlt] = useState({});
-  const [editSeo, setEditSeo] = useState({});
+  const [editAlt, setEditAlt] = useState({}); 
+  const [editSeo, setEditSeo] = useState({}); 
   const [saving, setSaving] = useState(null);
   const [bulkRunning, setBulkRunning] = useState(false);
-  const [toast, setToast] = useState(null);
+  const [toast, setToast] = useState(null); 
 
+  // Sync fetcher results back into local state
   useEffect(() => {
-    if (fetcher.state === "idle" && fetcher.data?.ok) {
+    if (fetcher.state === "idle" && fetcher.data) {
+      if (!fetcher.data.ok) {
+        setSaving(null);
+        setBulkRunning(false);
+        setToast({ message: `❌ Fault: ${fetcher.data.error}`, tone: "critical" });
+        setTimeout(() => setToast(null), 5000);
+        return;
+      }
+
       setSaving(null);
       setBulkRunning(false);
-      setToast("Saved ✓");
+      setToast({ message: "Saved ✓", tone: "success" });
       setTimeout(() => setToast(null), 2500);
 
       if (fetcher.data.result?.image) {
@@ -201,7 +245,7 @@ export default function SeoAltTextTab() {
       if (fetcher.data.results) {
         const updated = {};
         fetcher.data.results.forEach((r) => {
-          if (r.image) updated[r.image.id] = r.image.altText;
+          if (r?.image) updated[r.image.id] = r.image.altText;
         });
         setProducts((prev) =>
           prev.map((p) => ({
@@ -304,7 +348,7 @@ export default function SeoAltTextTab() {
     >
       {toast && (
         <div style={{ position: "fixed", top: 16, right: 16, zIndex: 9999 }}>
-          <Banner tone="success">{toast}</Banner>
+          <Banner tone={toast.tone}>{toast.message}</Banner>
         </div>
       )}
 
@@ -473,17 +517,16 @@ export default function SeoAltTextTab() {
                           onChange={(val) =>
                             setEditSeo((prev) => ({
                               ...prev,
-                              [product.id]: { ...prev[product.id], title: val },
+                              [product.id]: {
+                                ...prev[product.id],
+                                title: val,
+                              },
                             }))
                           }
                           placeholder="SEO title..."
                           autoComplete="off"
                           error={
-                            tLen > 60
-                              ? "Too long (over 60 chars)"
-                              : tLen > 0 && tLen < 30
-                              ? "Too short (under 30 chars)"
-                              : undefined
+                            tLen > 60 ? "Too long (over 60 chars)" : tLen > 0 && tLen < 30 ? "Too short (under 30 chars)" : undefined
                           }
                         />
                         <Text tone="subdued" variant="bodySm">
@@ -498,18 +541,17 @@ export default function SeoAltTextTab() {
                           onChange={(val) =>
                             setEditSeo((prev) => ({
                               ...prev,
-                              [product.id]: { ...prev[product.id], description: val },
+                              [product.id]: {
+                                ...prev[product.id],
+                                description: val,
+                              },
                             }))
                           }
                           placeholder="Meta description..."
                           multiline={3}
                           autoComplete="off"
                           error={
-                            dLen > 160
-                              ? "Too long (over 160 chars)"
-                              : dLen > 0 && dLen < 100
-                              ? "Too short (under 100 chars)"
-                              : undefined
+                            dLen > 160 ? "Too long (over 160 chars)" : dLen > 0 && dLen < 100 ? "Too short (under 100 chars)" : undefined
                           }
                         />
                         <Text tone="subdued" variant="bodySm">
