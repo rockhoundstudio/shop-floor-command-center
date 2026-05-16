@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from "react";
-import { useFetcher, useLoaderData } from "react-router";
+import { useFetcher, useLoaderData } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
 import {
   Page,
@@ -29,8 +29,8 @@ export const loader = async ({ request }) => {
   let hasNextPage = true;
 
   while (hasNextPage) {
-    const query = `
-      query GetProducts($cursor: String) {
+    const res = await admin.graphql(
+      `query GetProducts($cursor: String) {
         products(first: 25, after: $cursor) {
           pageInfo { hasNextPage endCursor }
           edges {
@@ -51,9 +51,9 @@ export const loader = async ({ request }) => {
             }
           }
         }
-      }
-    `;
-    const res = await admin.graphql(query, { variables: { cursor } });
+      }`,
+      { variables: { cursor } }
+    );
     const json = await res.json();
     const page = json.data.products;
     allProducts = allProducts.concat(page.edges.map((e) => e.node));
@@ -76,11 +76,9 @@ export const action = async ({ request }) => {
     const imageId = body.get("imageId");
     const productId = body.get("productId");
     const altText = body.get("altText");
-    
-    // FIX: image takes an array of objects
     const res = await admin.graphql(
       `mutation UpdateImageAlt($productId: ID!, $imageId: ID!, $altText: String!) {
-        productImageUpdate(productId: $productId, image: [{ id: $imageId, altText: $altText }]) {
+        productImageUpdate(productId: $productId, image: { id: $imageId, altText: $altText }) {
           image { id altText }
           userErrors { field message }
         }
@@ -91,23 +89,31 @@ export const action = async ({ request }) => {
     return { ok: true, result: json.data.productImageUpdate };
   }
 
-  // Bulk auto-fill alt text from product title
+  // Bulk auto-fill alt text — chunked in batches of 20
   if (intent === "bulk_alt") {
-    const pairs = JSON.parse(body.get("pairs")); // [{productId, imageId, title}]
+    const pairs = JSON.parse(body.get("pairs"));
     const results = [];
-    for (const { productId, imageId, title } of pairs) {
-      // FIX: image takes an array of objects
-      const res = await admin.graphql(
-        `mutation UpdateImageAlt($productId: ID!, $imageId: ID!, $altText: String!) {
-          productImageUpdate(productId: $productId, image: [{ id: $imageId, altText: $altText }]) {
-            image { id altText }
-            userErrors { field message }
-          }
-        }`,
-        { variables: { productId, imageId, altText: title } }
-      );
-      const json = await res.json();
-      results.push(json.data.productImageUpdate);
+    const CHUNK = 20;
+
+    for (let i = 0; i < pairs.length; i += CHUNK) {
+      const batch = pairs.slice(i, i + CHUNK);
+      for (const { productId, imageId, title } of batch) {
+        const res = await admin.graphql(
+          `mutation UpdateImageAlt($productId: ID!, $imageId: ID!, $altText: String!) {
+            productImageUpdate(productId: $productId, image: { id: $imageId, altText: $altText }) {
+              image { id altText }
+              userErrors { field message }
+            }
+          }`,
+          { variables: { productId, imageId, altText: title } }
+        );
+        const json = await res.json();
+        results.push(json.data.productImageUpdate);
+      }
+      // Small delay between chunks
+      if (i + CHUNK < pairs.length) {
+        await new Promise((r) => setTimeout(r, 500));
+      }
     }
     return { ok: true, results };
   }
@@ -146,7 +152,7 @@ function seoStatus(title, description) {
 }
 
 function altStatus(images) {
-  if (!images || images.length === 0) return "green"; // no images, N/A
+  if (!images || images.length === 0) return "green";
   const missing = images.filter((img) => !img.altText || img.altText.trim() === "");
   if (missing.length === 0) return "green";
   return "red";
@@ -157,28 +163,21 @@ function StatusDot({ status }) {
   return <span>{map[status] || "⚪"}</span>;
 }
 
-function charCountColor(len, min, max) {
-  if (len === 0) return "critical";
-  if (len < min || len > max) return "caution";
-  return "success";
-}
-
 // ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
 
 export default function SeoAltTextTab() {
   const { products: initialProducts } = useLoaderData();
   const fetcher = useFetcher();
 
-  const [activeTab, setActiveTab] = useState("alt"); // "alt" | "seo"
-  const [filter, setFilter] = useState("all"); // all | missing | weak | good
+  const [activeTab, setActiveTab] = useState("alt");
+  const [filter, setFilter] = useState("all");
   const [products, setProducts] = useState(initialProducts);
-  const [editAlt, setEditAlt] = useState({}); // { imageId: altText }
-  const [editSeo, setEditSeo] = useState({}); // { productId: { title, description } }
+  const [editAlt, setEditAlt] = useState({});
+  const [editSeo, setEditSeo] = useState({});
   const [saving, setSaving] = useState(null);
   const [bulkRunning, setBulkRunning] = useState(false);
   const [toast, setToast] = useState(null);
 
-  // Sync fetcher results back into local state
   useEffect(() => {
     if (fetcher.state === "idle" && fetcher.data?.ok) {
       setSaving(null);
@@ -186,7 +185,6 @@ export default function SeoAltTextTab() {
       setToast("Saved ✓");
       setTimeout(() => setToast(null), 2500);
 
-      // Update local product state from results
       if (fetcher.data.result?.image) {
         const img = fetcher.data.result.image;
         setProducts((prev) =>
@@ -207,7 +205,6 @@ export default function SeoAltTextTab() {
         );
       }
       if (fetcher.data.results) {
-        // bulk alt update
         const updated = {};
         fetcher.data.results.forEach((r) => {
           if (r.image) updated[r.image.id] = r.image.altText;
@@ -228,7 +225,6 @@ export default function SeoAltTextTab() {
     }
   }, [fetcher.state, fetcher.data]);
 
-  // ── Derived image list (flat) for alt tab
   const allImages = products.flatMap((p) =>
     (p.images?.edges || []).map((e) => ({
       productId: p.id,
@@ -239,7 +235,6 @@ export default function SeoAltTextTab() {
     }))
   );
 
-  // ── Filter logic
   const filteredProducts = products.filter((p) => {
     if (activeTab === "alt") {
       const status = altStatus((p.images?.edges || []).map((e) => e.node));
@@ -255,14 +250,12 @@ export default function SeoAltTextTab() {
     }
   });
 
-  // ── Summary counts
   const altMissing = products.filter(
     (p) => altStatus((p.images?.edges || []).map((e) => e.node)) === "red"
   ).length;
   const seoRed = products.filter((p) => seoStatus(p.seo?.title, p.seo?.description) === "red").length;
   const seoYellow = products.filter((p) => seoStatus(p.seo?.title, p.seo?.description) === "yellow").length;
 
-  // ── Handlers
   const handleSaveAlt = (productId, imageId) => {
     const altText = editAlt[imageId] ?? allImages.find((i) => i.imageId === imageId)?.altText ?? "";
     setSaving(imageId);
@@ -298,7 +291,6 @@ export default function SeoAltTextTab() {
     fetcher.submit(fd, { method: "post" });
   };
 
-  // ── Filter options
   const altFilterOptions = [
     { label: "All", value: "all" },
     { label: "🔴 Missing Alt", value: "missing" },
@@ -316,7 +308,6 @@ export default function SeoAltTextTab() {
       title="SEO & Alt Text"
       subtitle="Scan, fix, and optimize product images and SEO metadata"
     >
-      {/* Toast */}
       {toast && (
         <div style={{ position: "fixed", top: 16, right: 16, zIndex: 9999 }}>
           <Banner tone="success">{toast}</Banner>
@@ -324,7 +315,6 @@ export default function SeoAltTextTab() {
       )}
 
       <Layout>
-        {/* ── Tab switcher */}
         <Layout.Section>
           <InlineStack gap="300">
             <Button
@@ -342,7 +332,6 @@ export default function SeoAltTextTab() {
           </InlineStack>
         </Layout.Section>
 
-        {/* ── Summary Banner */}
         <Layout.Section>
           {activeTab === "alt" ? (
             <Banner tone={altMissing > 0 ? "warning" : "success"}>
@@ -355,21 +344,14 @@ export default function SeoAltTextTab() {
           ) : (
             <Banner tone={seoRed > 0 ? "critical" : seoYellow > 0 ? "warning" : "success"}>
               <Text>
-                {seoRed > 0
-                  ? `🔴 ${seoRed} product(s) missing SEO. `
-                  : ""}
-                {seoYellow > 0
-                  ? `🟡 ${seoYellow} product(s) with weak SEO. `
-                  : ""}
-                {seoRed === 0 && seoYellow === 0
-                  ? "✅ All products have strong SEO metadata."
-                  : ""}
+                {seoRed > 0 ? `🔴 ${seoRed} product(s) missing SEO. ` : ""}
+                {seoYellow > 0 ? `🟡 ${seoYellow} product(s) with weak SEO. ` : ""}
+                {seoRed === 0 && seoYellow === 0 ? "✅ All products have strong SEO metadata." : ""}
               </Text>
             </Banner>
           )}
         </Layout.Section>
 
-        {/* ── Controls */}
         <Layout.Section>
           <InlineStack gap="400" align="space-between">
             <div style={{ minWidth: 220 }}>
@@ -396,7 +378,6 @@ export default function SeoAltTextTab() {
           <Divider />
         </Layout.Section>
 
-        {/* ── ALT TEXT TAB */}
         {activeTab === "alt" && (
           <Layout.Section>
             <BlockStack gap="400">
@@ -468,7 +449,6 @@ export default function SeoAltTextTab() {
           </Layout.Section>
         )}
 
-        {/* ── SEO TAB */}
         {activeTab === "seo" && (
           <Layout.Section>
             <BlockStack gap="400">
@@ -492,7 +472,6 @@ export default function SeoAltTextTab() {
                         </InlineStack>
                       </InlineStack>
 
-                      {/* SEO Title */}
                       <BlockStack gap="100">
                         <TextField
                           label={`SEO Title — ${tLen} chars (target: 50–60)`}
@@ -500,10 +479,7 @@ export default function SeoAltTextTab() {
                           onChange={(val) =>
                             setEditSeo((prev) => ({
                               ...prev,
-                              [product.id]: {
-                                ...prev[product.id],
-                                title: val,
-                              },
+                              [product.id]: { ...prev[product.id], title: val },
                             }))
                           }
                           placeholder="SEO title..."
@@ -517,15 +493,10 @@ export default function SeoAltTextTab() {
                           }
                         />
                         <Text tone="subdued" variant="bodySm">
-                          {tLen === 0
-                            ? "🔴 Missing"
-                            : tLen >= 50 && tLen <= 60
-                            ? "🟢 Good length"
-                            : "🟡 Adjust length"}
+                          {tLen === 0 ? "🔴 Missing" : tLen >= 50 && tLen <= 60 ? "🟢 Good length" : "🟡 Adjust length"}
                         </Text>
                       </BlockStack>
 
-                      {/* SEO Description */}
                       <BlockStack gap="100">
                         <TextField
                           label={`Meta Description — ${dLen} chars (target: 150–160)`}
@@ -533,10 +504,7 @@ export default function SeoAltTextTab() {
                           onChange={(val) =>
                             setEditSeo((prev) => ({
                               ...prev,
-                              [product.id]: {
-                                ...prev[product.id],
-                                description: val,
-                              },
+                              [product.id]: { ...prev[product.id], description: val },
                             }))
                           }
                           placeholder="Meta description..."
@@ -551,11 +519,7 @@ export default function SeoAltTextTab() {
                           }
                         />
                         <Text tone="subdued" variant="bodySm">
-                          {dLen === 0
-                            ? "🔴 Missing"
-                            : dLen >= 150 && dLen <= 160
-                            ? "🟢 Good length"
-                            : "🟡 Adjust length"}
+                          {dLen === 0 ? "🔴 Missing" : dLen >= 150 && dLen <= 160 ? "🟢 Good length" : "🟡 Adjust length"}
                         </Text>
                       </BlockStack>
 
