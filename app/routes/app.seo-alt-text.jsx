@@ -17,6 +17,7 @@ import {
   InlineStack,
   Divider,
   Box,
+  Checkbox,
 } from "@shopify/polaris";
 
 // ─── ERROR BOUNDARY (The Diagnostic Screen) ───────────────────────────────────
@@ -93,10 +94,10 @@ export const loader = async ({ request }) => {
       const formattedNodes = page.edges.map((e) => {
         const node = e.node;
         const mappedImages = (node.media?.edges || [])
-          .filter(mediaEdge => mediaEdge.node.image) // Ensure it's a MediaImage
+          .filter(mediaEdge => mediaEdge.node.image) 
           .map(mediaEdge => ({
             node: {
-              id: mediaEdge.node.id, // The correct MediaImage ID for fileUpdate
+              id: mediaEdge.node.id, 
               src: mediaEdge.node.image?.url || "",
               altText: mediaEdge.node.alt || ""
             }
@@ -119,7 +120,6 @@ export const loader = async ({ request }) => {
 
     return { products: allProducts };
   } catch (error) {
-    // Trip the ErrorBoundary instead of silently dying
     throw new Response(error.message || "Failed to load product map.", {
       status: 500,
       statusText: "Loader Engine Fault",
@@ -163,21 +163,19 @@ export const action = async ({ request }) => {
          throw new Error(json.data.fileUpdate.userErrors[0].message);
       }
       
-      // Map back to expected format for the frontend useEffect
       return { ok: true, result: { image: { id: imageId, altText } } };
     }
 
-    // Bulk auto-fill alt text from product title
+    // Bulk/Group auto-fill alt text
     if (intent === "bulk_alt") {
       const pairs = JSON.parse(body.get("pairs")); 
       const results = [];
       
-      // THE CHUNKING GOVERNOR: Process in batches of 10 to protect the API
+      // THE CHUNKING GOVERNOR: Process in batches of 10
       const chunkSize = 10;
       for (let i = 0; i < pairs.length; i += chunkSize) {
         const chunk = pairs.slice(i, i + chunkSize);
         
-        // Assemble the array of files for the single mutation
         const filesInput = chunk.map(({ imageId, title }) => ({ id: imageId, alt: title }));
         
         const res = await admin.graphql(
@@ -204,11 +202,9 @@ export const action = async ({ request }) => {
            throw new Error(json.data.fileUpdate.userErrors[0].message);
         }
         
-        // Push the mapped results back to the array for the frontend
         const formatted = filesInput.map(f => ({ image: { id: f.id, altText: f.alt } }));
         results.push(...formatted);
         
-        // Pause for 1 full second between batches so Shopify doesn't panic
         if (i + chunkSize < pairs.length) {
           await new Promise((resolve) => setTimeout(resolve, 1000));
         }
@@ -240,7 +236,6 @@ export const action = async ({ request }) => {
 
     return { ok: false, error: "Unknown intent" };
   } catch (error) {
-    // FUSE BOX
     return { ok: false, error: error.message || "An internal engine fault occurred." };
   }
 };
@@ -282,7 +277,10 @@ export default function SeoAltTextTab() {
   const [bulkRunning, setBulkRunning] = useState(false);
   const [toast, setToast] = useState(null); 
 
-  // Sync fetcher results back into local state
+  // THE MULTI-FIRE JIG STATE
+  const [selectedImages, setSelectedImages] = useState([]);
+  const [groupText, setGroupText] = useState({});
+
   useEffect(() => {
     if (fetcher.state === "idle" && fetcher.data) {
       if (!fetcher.data.ok) {
@@ -295,6 +293,11 @@ export default function SeoAltTextTab() {
 
       setSaving(null);
       setBulkRunning(false);
+      
+      // Clear selections on successful save
+      setSelectedImages([]);
+      setGroupText({});
+      
       setToast({ message: "Saved ✓", tone: "success" });
       setTimeout(() => setToast(null), 2500);
 
@@ -363,12 +366,6 @@ export default function SeoAltTextTab() {
     }
   });
 
-  const altMissing = products.filter(
-    (p) => altStatus((p.images?.edges || []).map((e) => e.node)) === "red"
-  ).length;
-  const seoRed = products.filter((p) => seoStatus(p.seo?.title, p.seo?.description) === "red").length;
-  const seoYellow = products.filter((p) => seoStatus(p.seo?.title, p.seo?.description) === "yellow").length;
-
   const handleSaveAlt = (productId, imageId) => {
     const altText = editAlt[imageId] ?? allImages.find((i) => i.imageId === imageId)?.altText ?? "";
     setSaving(imageId);
@@ -380,15 +377,27 @@ export default function SeoAltTextTab() {
     fetcher.submit(fd, { method: "post" });
   };
 
-  const handleBulkAlt = () => {
-    setBulkRunning(true);
-    const pairs = allImages
-      .filter((img) => !img.altText || img.altText.trim() === "")
-      .map((img) => ({ productId: img.productId, imageId: img.imageId, title: img.productTitle }));
+  // MULTI-FIRE JIG EXECUTOR
+  const handleGroupSaveAlt = (productId, selectedImgIds) => {
+    const textToApply = groupText[productId] || "";
+    if (!textToApply.trim()) return;
+
+    setBulkRunning(productId);
+    const pairs = selectedImgIds.map((id) => ({
+      imageId: id,
+      title: textToApply, // Using the custom text instead of product title
+    }));
+    
     const fd = new FormData();
     fd.append("intent", "bulk_alt");
     fd.append("pairs", JSON.stringify(pairs));
     fetcher.submit(fd, { method: "post" });
+  };
+
+  const toggleSelection = (imageId) => {
+    setSelectedImages((prev) =>
+      prev.includes(imageId) ? prev.filter((id) => id !== imageId) : [...prev, imageId]
+    );
   };
 
   const handleSaveSeo = (productId) => {
@@ -418,8 +427,8 @@ export default function SeoAltTextTab() {
 
   return (
     <Page
-      title="SEO & Alt Text"
-      subtitle="Scan, fix, and optimize product images and SEO metadata"
+      title="SEO & Alt Text Diagnostics"
+      subtitle="Group select images to tag specific angles, grit finishes, and raw flaws."
     >
       {toast && (
         <div style={{ position: "fixed", top: 16, right: 16, zIndex: 9999 }}>
@@ -434,7 +443,7 @@ export default function SeoAltTextTab() {
               variant={activeTab === "alt" ? "primary" : "secondary"}
               onClick={() => { setActiveTab("alt"); setFilter("all"); }}
             >
-              🖼 Alt Text
+              🖼 Maker-Pivot Alt Text
             </Button>
             <Button
               variant={activeTab === "seo" ? "primary" : "secondary"}
@@ -443,26 +452,6 @@ export default function SeoAltTextTab() {
               🔍 SEO
             </Button>
           </InlineStack>
-        </Layout.Section>
-
-        <Layout.Section>
-          {activeTab === "alt" ? (
-            <Banner tone={altMissing > 0 ? "warning" : "success"}>
-              <Text>
-                {altMissing === 0
-                  ? `✅ All products have alt text on their images.`
-                  : `⚠️ ${altMissing} product(s) have images missing alt text.`}
-              </Text>
-            </Banner>
-          ) : (
-            <Banner tone={seoRed > 0 ? "critical" : seoYellow > 0 ? "warning" : "success"}>
-              <Text>
-                {seoRed > 0 ? `🔴 ${seoRed} product(s) missing SEO. ` : ""}
-                {seoYellow > 0 ? `🟡 ${seoYellow} product(s) with weak SEO. ` : ""}
-                {seoRed === 0 && seoYellow === 0 ? "✅ All products have strong SEO metadata." : ""}
-              </Text>
-            </Banner>
-          )}
         </Layout.Section>
 
         <Layout.Section>
@@ -475,15 +464,6 @@ export default function SeoAltTextTab() {
                 onChange={(v) => setFilter(v)}
               />
             </div>
-            {activeTab === "alt" && (
-              <Button
-                onClick={handleBulkAlt}
-                loading={bulkRunning}
-                disabled={altMissing === 0}
-              >
-                ⚡ Bulk Fill Missing Alt from Title
-              </Button>
-            )}
           </InlineStack>
         </Layout.Section>
 
@@ -497,6 +477,8 @@ export default function SeoAltTextTab() {
               {filteredProducts.map((product) => {
                 const images = (product.images?.edges || []).map((e) => e.node);
                 const status = altStatus(images);
+                const prodSelected = images.filter((img) => selectedImages.includes(img.id));
+
                 return (
                   <Card key={product.id}>
                     <BlockStack gap="300">
@@ -516,44 +498,87 @@ export default function SeoAltTextTab() {
                         <Text tone="subdued">No images on this product.</Text>
                       )}
 
-                      {images.map((img) => {
-                        const currentAlt = editAlt[img.id] ?? img.altText ?? "";
-                        const hasAlt = img.altText && img.altText.trim() !== "";
-                        return (
-                          <Box
-                            key={img.id}
-                            padding="300"
-                            background={hasAlt ? "bg-surface-success" : "bg-surface-critical"}
-                            borderRadius="200"
-                          >
-                            <InlineStack gap="400" align="start" blockAlign="start">
-                              <Thumbnail
-                                source={img.src}
-                                alt={img.altText || "No alt text"}
-                                size="large"
-                              />
-                              <BlockStack gap="200" style={{ flex: 1 }}>
+                      {/* GROUP TICK BATCH COMMAND PANEL */}
+                      {prodSelected.length > 0 && (
+                        <Box padding="300" background="bg-surface-secondary" borderRadius="200">
+                          <BlockStack gap="300">
+                            <Text fontWeight="bold">
+                              Apply to {prodSelected.length} Selected View(s)
+                            </Text>
+                            <InlineStack gap="300" align="start">
+                              <div style={{ flex: 1 }}>
                                 <TextField
-                                  label={hasAlt ? "🟢 Alt text" : "🔴 Alt text (missing)"}
-                                  value={currentAlt}
+                                  value={groupText[product.id] || ""}
                                   onChange={(val) =>
-                                    setEditAlt((prev) => ({ ...prev, [img.id]: val }))
+                                    setGroupText((prev) => ({ ...prev, [product.id]: val }))
                                   }
-                                  placeholder={`e.g. ${product.title}`}
+                                  placeholder="e.g. Freeform fire obsidian, 3000 grit polish face..."
                                   autoComplete="off"
                                 />
-                                <Button
-                                  size="slim"
-                                  onClick={() => handleSaveAlt(product.id, img.id)}
-                                  loading={saving === img.id}
-                                >
-                                  Save Alt Text
-                                </Button>
-                              </BlockStack>
+                              </div>
+                              <Button
+                                variant="primary"
+                                onClick={() => handleGroupSaveAlt(product.id, prodSelected.map(i => i.id))}
+                                loading={bulkRunning === product.id}
+                                disabled={!(groupText[product.id] || "").trim()}
+                              >
+                                Fire Batch
+                              </Button>
                             </InlineStack>
-                          </Box>
-                        );
-                      })}
+                          </BlockStack>
+                        </Box>
+                      )}
+
+                      <InlineStack gap="400" wrap>
+                        {images.map((img) => {
+                          const currentAlt = editAlt[img.id] ?? img.altText ?? "";
+                          const hasAlt = img.altText && img.altText.trim() !== "";
+                          const isChecked = selectedImages.includes(img.id);
+
+                          return (
+                            <Box
+                              key={img.id}
+                              padding="300"
+                              background={hasAlt ? "bg-surface-success" : "bg-surface-critical"}
+                              borderRadius="200"
+                              style={{ width: "100%", maxWidth: "450px" }}
+                            >
+                              <InlineStack gap="400" align="start" blockAlign="start">
+                                <Box paddingBlockStart="100">
+                                  <Checkbox
+                                    checked={isChecked}
+                                    onChange={() => toggleSelection(img.id)}
+                                  />
+                                </Box>
+                                <Thumbnail
+                                  source={img.src}
+                                  alt={img.altText || "No alt text"}
+                                  size="large"
+                                />
+                                <BlockStack gap="200" style={{ flex: 1 }}>
+                                  <TextField
+                                    label={hasAlt ? "🟢 Tagged" : "🔴 Missing Tag"}
+                                    value={currentAlt}
+                                    onChange={(val) =>
+                                      setEditAlt((prev) => ({ ...prev, [img.id]: val }))
+                                    }
+                                    placeholder="Single image tag..."
+                                    autoComplete="off"
+                                  />
+                                  <Button
+                                    size="slim"
+                                    onClick={() => handleSaveAlt(product.id, img.id)}
+                                    loading={saving === img.id}
+                                    disabled={prodSelected.length > 0} // Lock single save if bulk is active
+                                  >
+                                    Save Single
+                                  </Button>
+                                </BlockStack>
+                              </InlineStack>
+                            </Box>
+                          );
+                        })}
+                      </InlineStack>
                     </BlockStack>
                   </Card>
                 );
