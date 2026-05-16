@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from "react";
-// ⚡ FIX: Swapped "react-router" for the correct Shopify/Remix engine package
-import { useFetcher, useLoaderData, useRouteError, isRouteErrorResponse } from "@remix-run/react";
+// ⚡ FIX: Reverted to the correct, modern React Router v7 engine
+import { useFetcher, useLoaderData, useRouteError, isRouteErrorResponse } from "react-router";
 import { authenticate } from "../shopify.server";
 import {
   Page,
