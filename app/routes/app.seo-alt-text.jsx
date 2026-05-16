@@ -1,5 +1,4 @@
 import { useState, useCallback, useEffect } from "react";
-// ⚡ FIX: Reverted to the correct, modern React Router v7 engine
 import { useFetcher, useLoaderData, useRouteError, isRouteErrorResponse } from "react-router";
 import { authenticate } from "../shopify.server";
 import {
@@ -356,6 +355,9 @@ export default function SeoAltTextTab() {
       altText: e.node.altText || "",
     }))
   );
+
+  // ⚡ FIX: Derived variable accurately tracks the flattened queue for the bulk governor
+  const altMissing = allImages.filter((img) => !img.altText || img.altText.trim() === "").length;
 
   const filteredProducts = products.filter((p) => {
     if (activeTab === "alt") {
