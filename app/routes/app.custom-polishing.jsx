@@ -1,5 +1,4 @@
 import { useState, useEffect } from "react";
-// ⚡ FIX: Corrected import to the modern React Router v7 engine
 import { useFetcher, useLoaderData, useRouteError, isRouteErrorResponse } from "react-router";
 import { authenticate } from "../shopify.server";
 import {
@@ -43,7 +42,6 @@ export const loader = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
 
   try {
-    // Search for a page that might already be our Custom Polishing page
     const res = await admin.graphql(
       `query getPages {
         pages(first: 10, query: "title:*Polishing* OR title:*Custom*") {
@@ -80,7 +78,7 @@ export const action = async ({ request }) => {
   const body = await request.formData();
   
   const intent = body.get("intent");
-  const pageId = body.get("pageId"); // empty if creating new
+  const pageId = body.get("pageId"); 
   const title = body.get("title");
   const htmlBody = body.get("htmlBody");
   const seoTitle = body.get("seoTitle");
@@ -101,7 +99,6 @@ export const action = async ({ request }) => {
       let variables = {};
 
       if (pageId) {
-        // Update existing
         mutation = `
           mutation pageUpdate($id: ID!, $page: PageUpdateInput!) {
             pageUpdate(id: $id, page: $page) {
@@ -112,7 +109,6 @@ export const action = async ({ request }) => {
         `;
         variables = { id: pageId, page: pageInput };
       } else {
-        // Create new
         mutation = `
           mutation pageCreate($page: PageCreateInput!) {
             pageCreate(page: $page) {
@@ -149,7 +145,6 @@ export default function CustomPolishingTab() {
   const { pages } = useLoaderData();
   const fetcher = useFetcher();
 
-  // Try to find the specific page in the loader data, otherwise default to empty
   const targetPage = pages.find(p => p.title.toLowerCase().includes("polishing")) || null;
 
   const [title, setTitle] = useState(targetPage?.title || "");
@@ -181,7 +176,6 @@ export default function CustomPolishingTab() {
     fetcher.submit(fd, { method: "post" });
   };
 
-  // ⚡ AUTO-INJECT TEMPLATES
   const loadTemplates = () => {
     setTitle("Custom Stone Polishing Service");
     setHtmlBody("Have a special stone you found on a hike or a piece of rough material with sentimental value? Bob and Janyce operate a full lapidary workshop in Spokane Valley and can turn your found rock into a finished piece of wearable art or a polished display stone. \n\nEvery piece is hand-cut and polished to reveal its true inner beauty. Contact us to start your custom project.");
