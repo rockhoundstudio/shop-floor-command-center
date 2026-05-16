@@ -130,7 +130,7 @@ export const action = async ({ request }) => {
             }
           }
         }`,
-        { variables: { files: [{ id: imageId, altText }] } }
+        { variables: { files: [{ id: imageId, alt: altText }] } }
       );
       
       const json = await res.json();
@@ -154,7 +154,7 @@ export const action = async ({ request }) => {
         const chunk = pairs.slice(i, i + chunkSize);
         
         // Assemble the array of files for the single mutation
-        const filesInput = chunk.map(({ imageId, title }) => ({ id: imageId, altText: title }));
+        const filesInput = chunk.map(({ imageId, title }) => ({ id: imageId, alt: title }));
         
         const res = await admin.graphql(
           `mutation fileUpdate($files: [FileUpdateInput!]!) {
@@ -183,7 +183,7 @@ export const action = async ({ request }) => {
         }
         
         // Push the mapped results back to the array for the frontend
-        const formatted = filesInput.map(f => ({ image: { id: f.id, altText: f.altText } }));
+        const formatted = filesInput.map(f => ({ image: { id: f.id, altText: f.alt } }));
         results.push(...formatted);
         
         // Pause for 1 full second between batches so Shopify doesn't panic
