@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from "react";
-import { useFetcher, useLoaderData } from "@remix-run/react";
+import { useFetcher, useLoaderData } from "react-router";
 import { authenticate } from "../shopify.server";
 import {
   Page,
