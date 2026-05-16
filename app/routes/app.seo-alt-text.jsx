@@ -1,5 +1,5 @@
-import { useState, useCallback, useEffect } from "react";
-import { useFetcher, useLoaderData } from "@remix-run/react";
+import { useState, useEffect } from "react";
+import { useFetcher, useLoaderData } from "react-router";
 import { authenticate } from "../shopify.server";
 import {
   Page,
@@ -7,12 +7,10 @@ import {
   Card,
   Text,
   Button,
-  Badge,
   TextField,
   Thumbnail,
   Banner,
   Select,
-  Spinner,
   BlockStack,
   InlineStack,
   Divider,
@@ -71,7 +69,6 @@ export const action = async ({ request }) => {
   const body = await request.formData();
   const intent = body.get("intent");
 
-  // Save single image alt text
   if (intent === "save_alt") {
     const imageId = body.get("imageId");
     const productId = body.get("productId");
@@ -89,7 +86,6 @@ export const action = async ({ request }) => {
     return { ok: true, result: json.data.productImageUpdate };
   }
 
-  // Bulk auto-fill alt text — chunked in batches of 20
   if (intent === "bulk_alt") {
     const pairs = JSON.parse(body.get("pairs"));
     const results = [];
@@ -110,7 +106,6 @@ export const action = async ({ request }) => {
         const json = await res.json();
         results.push(json.data.productImageUpdate);
       }
-      // Small delay between chunks
       if (i + CHUNK < pairs.length) {
         await new Promise((r) => setTimeout(r, 500));
       }
@@ -118,7 +113,6 @@ export const action = async ({ request }) => {
     return { ok: true, results };
   }
 
-  // Save single product SEO
   if (intent === "save_seo") {
     const productId = body.get("productId");
     const seoTitle = body.get("seoTitle");
