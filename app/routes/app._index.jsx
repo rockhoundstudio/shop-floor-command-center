@@ -59,6 +59,17 @@ export default function Index() {
           </div>
         </Link>
 
+        <Link to="/app/seo-alt-text" style={{
+          display: "block", padding: "32px 40px", backgroundColor: "#2a1a3a",
+          color: "#fff", borderRadius: "12px", textDecoration: "none",
+          fontSize: "22px", fontWeight: "bold", minWidth: "220px"
+        }}>
+          🔍 SEO & Alt Text
+          <div style={{ fontSize: "14px", fontWeight: "normal", marginTop: "8px", color: "#aaa" }}>
+            Scan and fix product SEO and image alt text
+          </div>
+        </Link>
+
       </div>
     </div>
   );
