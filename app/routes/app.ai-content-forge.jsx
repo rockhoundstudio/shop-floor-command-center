@@ -1,4 +1,4 @@
-﻿import { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { useFetcher, useLoaderData, useRouteError, isRouteErrorResponse } from "react-router";
 import { authenticate } from "../shopify.server";
 import {
@@ -121,7 +121,7 @@ Product Description: ${productDescription}
 Origin Context: ${origin}`;
 
       const geminiRes = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
+        `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -268,23 +268,11 @@ export default function AiContentForgeTab() {
     <Page title="⚡ AI Content Forge" subtitle="Generate premium, story-driven Alt Text and SEO descriptions powered by Gemini.">
       {toast && <div style={{ position: "fixed", top: 16, right: 16, zIndex: 9999 }}><Banner tone={toast.tone}>{toast.message}</Banner></div>}
       <Layout>
-        <Layout.Section>
-          <InlineStack gap="300">
-            <Button url="/app" variant="secondary">Home</Button>
-            <Button url="/app/meta-injector" variant="secondary">Meta Injector</Button>
-            <Button url="/app/menu-manager" variant="secondary">Menu Manager</Button>
-            <Button url="/app/collection-manager" variant="secondary">Collection Manager</Button>
-            <Button url="/app/bulk-edit" variant="secondary">Bulk Edit</Button>
-            <Button url="/app/seo-alt-text" variant="secondary">SEO & Alt Text</Button>
-            <Button url="/app/ai-content-forge" variant="primary">⚡ AI Content Forge</Button>
-          </InlineStack>
-        </Layout.Section>
         {pageError && (
           <Layout.Section>
             <Banner tone="critical" title="Action Failed" onDismiss={() => setPageError(null)}><Text as="p">{pageError}</Text></Banner>
           </Layout.Section>
         )}
-        <Layout.Section><Divider /></Layout.Section>
         <Layout.Section>
           <BlockStack gap="500">
             {products.map((product) => {
