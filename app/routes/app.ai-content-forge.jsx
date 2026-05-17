@@ -105,6 +105,7 @@ export const action = async ({ request }) => {
       const productDescription = body.get("productDescription");
       const origin = body.get("origin") || "Pacific Northwest region";
       const customHook = body.get("customHook") || "";
+      const imageUrl = body.get("imageUrl");
       
       const apiKey = process.env.GEMINI_API_KEY;
       if (!apiKey) throw new Error("GEMINI_API_KEY is not set in Render environment variables.");
@@ -119,7 +120,7 @@ Rules:
 - seoTitle formula: [Stone Name] + [Finished Type] + "One-of-a-Kind" + "Rockhound Studio". Max 70 chars.
 - metaDescription tone: Poetic, spare, story-driven. The shape, color, and origin should feel inevitable — like the stone decided, not the maker. Never clinical. Never salesy. Max 150 characters STRICT.
 - metaDescription formula: Write 3 flowing sentences. 
-  1. Describe the striking visual inevitability of the stone. 
+  1. Describe the striking visual inevitability of the stone based on the image provided. 
   2. Weave together Bob's creed: "Personally handcrafted and picked from the PNW dirt. Colors sculpted by nature and hand-shaped by color." (If a "Foreman's Direct Note" is provided below, seamlessly blend those specific workbench details into this space). 
   3. End exactly with: "One of a kind." 
 
@@ -128,12 +129,24 @@ Product Title: ${productTitle}
 Product Description: ${productDescription}
 Origin Context: ${origin}`;
 
+      let parts = [{ text: prompt }];
+
+      if (imageUrl && imageUrl.trim() !== "") {
+        const imgRes = await fetch(imageUrl);
+        if (imgRes.ok) {
+           const buffer = await imgRes.arrayBuffer();
+           const base64Data = Buffer.from(buffer).toString("base64");
+           const mimeType = imgRes.headers.get("content-type") || "image/jpeg";
+           parts.push({ inlineData: { data: base64Data, mimeType: mimeType } });
+        }
+      }
+
       const geminiRes = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+          body: JSON.stringify({ contents: [{ parts: parts }] })
         }
       );
 
@@ -254,6 +267,11 @@ export default function AiContentForgeTab() {
     fd.append("productTitle", product.title); 
     fd.append("productDescription", product.description || "");
     fd.append("customHook", customHooks[product.id] || "");
+    
+    // Grab the first image URL to send to Gemini Vision
+    const imageUrl = product.images.length > 0 ? product.images[0].url : "";
+    fd.append("imageUrl", imageUrl);
+
     fetcher.submit(fd, { method: "post" });
   };
 
