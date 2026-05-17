@@ -6,15 +6,10 @@ import {
   Layout,
   Card,
   Text,
-  Button,
-  TextField,
   Banner,
   BlockStack,
-  InlineStack,
-  Divider,
-  Box,
-  Checkbox,
 } from "@shopify/polaris";
+import ForgeProductCard from "../components/ForgeProductCard";
 
 export function ErrorBoundary() {
   const error = useRouteError();
@@ -225,8 +220,6 @@ export default function AiContentForgeTab() {
   const fetcher = useFetcher();
   const [products, setProducts] = useState(initialProducts);
   const [suggestions, setSuggestions] = useState({});
-  const [customHooks, setCustomHooks] = useState({});
-  const [isPolishingTargets, setIsPolishingTargets] = useState({});
   const [suggestingId, setSuggestingId] = useState(null);
   const [savingAltId, setSavingAltId] = useState(null);
   const [savingSeoId, setSavingSeoId] = useState(null);
@@ -262,25 +255,16 @@ export default function AiContentForgeTab() {
     }
   }, [fetcher.state, fetcher.data]);
 
-  const handleHookChange = (productId, value) => {
-    setCustomHooks((prev) => ({ ...prev, [productId]: value }));
-  };
-
-  const handlePolishingChange = (productId, checked) => {
-    setIsPolishingTargets((prev) => ({ ...prev, [productId]: checked }));
-  };
-
-  const handleSuggest = (product) => {
+  const handleSuggest = (product, customHook, isPolishingTarget) => {
     setSuggestingId(product.id);
     const fd = new FormData();
     fd.append("intent", "ai_suggest"); 
     fd.append("productId", product.id);
     fd.append("productTitle", product.title); 
     fd.append("productDescription", product.description || "");
-    fd.append("customHook", customHooks[product.id] || "");
-    fd.append("isPolishingTarget", isPolishingTargets[product.id] ? "true" : "false");
+    fd.append("customHook", customHook || "");
+    fd.append("isPolishingTarget", isPolishingTarget ? "true" : "false");
     
-    // Grab the first image URL to send to Gemini Vision
     const imageUrl = product.images.length > 0 ? product.images[0].url : "";
     fd.append("imageUrl", imageUrl);
 
@@ -321,42 +305,24 @@ export default function AiContentForgeTab() {
         )}
         <Layout.Section>
           <BlockStack gap="500">
-            {products.map((product) => {
-              const currentAlt = product.images.length > 0 ? product.images[0].altText : "";
-              const currentSeoTitle = product.seo?.title || "";
-              const currentSeoDesc = product.seo?.description || "";
-              const activeSuggestion = suggestions[product.id];
-              return (
-                <Card key={product.id}>
-                  <BlockStack gap="400">
-                    <InlineStack align="space-between" blockAlign="center">
-                      <Text variant="headingMd" fontWeight="bold">{product.title}</Text>
-                      <Box minWidth="300px">
-                        <BlockStack gap="200">
-                          <TextField 
-                            label="Direct instructions for AI (Optional)" 
-                            placeholder="e.g., Mention the hidden quartz pocket..." 
-                            value={customHooks[product.id] || ""} 
-                            onChange={(val) => handleHookChange(product.id, val)} 
-                            autoComplete="off" 
-                          />
-                          <Checkbox
-                            label="Custom Polishing Service page"
-                            checked={isPolishingTargets[product.id] || false}
-                            onChange={(checked) => handlePolishingChange(product.id, checked)}
-                          />
-                          <Button variant="primary" onClick={() => handleSuggest(product)} loading={suggestingId === product.id}>⚡ Suggest Content</Button>
-                        </BlockStack>
-                      </Box>
-                    </InlineStack>
-                    <Divider />
-                    <InlineStack align="start" gap="800">
-                      <Box style={{ flex: 1 }}>
-                        <BlockStack gap="300">
-                          <Text variant="headingSm" tone="subdued">Current Configuration</Text>
-                          <BlockStack gap="100"><Text fontWeight="bold">Alt Text (Applied to {product.images.length} images):</Text><Text tone={currentAlt ? "base" : "subdued"}>{currentAlt || "None applied."}</Text></BlockStack>
-                          <BlockStack gap="100"><Text fontWeight="bold">SEO Title:</Text><Text tone={currentSeoTitle ? "base" : "subdued"}>{currentSeoTitle || "None applied."}</Text></BlockStack>
-                          <BlockStack gap="100"><Text fontWeight="bold">Meta Description:</Text><Text tone={currentSeoDesc ? "base" : "subdued"}>{currentSeoDesc || "None applied."}</Text></BlockStack>
-                        </BlockStack>
-                      </Box>
-                      <Box style
+            {products.map((product) => (
+              <ForgeProductCard
+                key={product.id}
+                product={product}
+                activeSuggestion={suggestions[product.id]}
+                isSuggesting={suggestingId === product.id}
+                isSavingAlt={savingAltId === product.id}
+                isSavingSeo={savingSeoId === product.id}
+                onSuggest={handleSuggest}
+                onSaveAlt={handleSaveAlt}
+                onSaveSeo={handleSaveSeo}
+                onUpdateSuggestionField={updateSuggestionField}
+              />
+            ))}
+            {products.length === 0 && <Banner tone="info"><Text>No products found to forge content for.</Text></Banner>}
+          </BlockStack>
+        </Layout.Section>
+      </Layout>
+    </Page>
+  );
+}
