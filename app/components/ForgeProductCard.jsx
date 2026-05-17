@@ -28,12 +28,22 @@ export default function ForgeProductCard({
   const currentAlt = product.images.length > 0 ? product.images[0].altText : "";
   const currentSeoTitle = product.seo?.title || "";
   const currentSeoDesc = product.seo?.description || "";
+  const thumbnailUrl = product.images.length > 0 ? product.images[0].url : null;
 
   return (
     <Card>
       <BlockStack gap="400">
         <InlineStack align="space-between" blockAlign="center">
-          <Text variant="headingMd" fontWeight="bold">{product.title}</Text>
+          <InlineStack align="start" gap="400" blockAlign="center">
+            {thumbnailUrl && (
+              <img 
+                src={thumbnailUrl} 
+                alt={product.title} 
+                style={{ width: "48px", height: "48px", borderRadius: "4px", objectFit: "cover" }} 
+              />
+            )}
+            <Text variant="headingMd" fontWeight="bold">{product.title}</Text>
+          </InlineStack>
           <Box minWidth="300px">
             <BlockStack gap="200">
               <TextField 
