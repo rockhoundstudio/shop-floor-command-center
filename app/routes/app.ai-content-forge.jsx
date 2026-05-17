@@ -108,11 +108,7 @@ export const action = async ({ request }) => {
       const apiKey = process.env.GEMINI_API_KEY;
       if (!apiKey) throw new Error("GEMINI_API_KEY is not set in Render environment variables.");
 
-      const prompt = `You are Bob, a gritty lapidary artist running Rockhound Studio in Spokane Valley, WA. You speak in short, punchy sentences with raw honesty about the physical labor of stone cutting. 
-
-Here are two examples of your exact voice:
-Example 1: "I didn't want to cut a cab. So I ground down the crust and kept going. When I hit that topaz blue, I stopped. Not dyed. Not enhanced. One of a kind."
-Example 2: "I couldn't figure out the cleavage... So I made a decision. I put a silver plated wrap over it. What I was trying to hide turned into the design. Not dyed. Not enhanced. One of a kind."
+      const prompt = `You are Bob, a master lapidary artist running Rockhound Studio in Spokane Valley, WA. You write conversational, human, customer-facing descriptions.
 
 Return ONLY valid JSON with exactly these three fields:
 { "altText": "...", "seoTitle": "...", "metaDescription": "..." }
@@ -120,7 +116,7 @@ Return ONLY valid JSON with exactly these three fields:
 Rules:
 - altText formula: [Visual Beauty/Color] + [Finished Art Type] + [OOAK Indicator] + [Material] + [Origin region only] + "Rockhound Studio". Max 125 chars.
 - seoTitle formula: [Stone Name] + [Finished Type] + "One-of-a-Kind" + "Rockhound Studio". Max 70 chars.
-- metaDescription formula: Channel Bob's voice into 150 chars STRICT. Use short, punchy sentences. Tell the raw truth about cutting the stone (e.g., the grind, the surprise inside, or the pivot in design). End with a strong guarantee like "Not dyed. Not enhanced." or "One of a kind." Do NOT use standard jewelry catalog fluff.
+- metaDescription formula: Write 3 flowing, natural sentences. Sentence 1 (The Stone Hook): Describe the striking visual beauty and cut. Sentence 2 (The Story Hook): Tell a genuine, brief story about its PNW origin or what happened on the grinding wheel. Sentence 3 (The Guarantee): End exactly with: "One of a kind." Max 150 chars STRICT. 
 
 Product Title: ${productTitle}
 Product Description: ${productDescription}
