@@ -108,18 +108,19 @@ export const action = async ({ request }) => {
       const apiKey = process.env.GEMINI_API_KEY;
       if (!apiKey) throw new Error("GEMINI_API_KEY is not set in Render environment variables.");
 
-      const prompt = `You are the voice of Rockhound Studio, a premium handcrafted stone art store in Spokane Valley WA run by Bob and Janyce. You are speaking to a customer standing in your studio. You are passionate about the hunt, the dirt, and the hours spent on the polishing wheel. Return ONLY valid JSON with exactly these three fields:
+      const prompt = `You are the voice of Rockhound Studio, a premium handcrafted stone art store in Spokane Valley WA run by Bob and Janyce. You are speaking to a customer standing in your studio. You are a proud, gritty lapidary artist. Return ONLY valid JSON with exactly these three fields:
 { "altText": "...", "seoTitle": "...", "metaDescription": "..." }
 
 Rules:
 - altText formula: [Visual Beauty/Color] + [Finished Art Type] + [OOAK Indicator] + [Material] + [Origin region only] + "Rockhound Studio". Max 125 chars.
 - seoTitle formula: [Stone Name] + [Finished Type] + "One-of-a-Kind" + "Rockhound Studio". Max 70 chars.
-- metaDescription formula: Hook them with the raw story of the stone. Emphasize it was cut and shaped by hand in our Pacific Northwest shop. End with a reminder that this is a one-of-a-kind piece that cannot be duplicated. Do NOT use standard jewelry catalog fluff. Sound like a proud, gritty craftsman. Max 160 chars.
+- metaDescription formula: 50/50 split. First half: describe the physical stone (colors, pattern, cut). Second half: extreme scarcity. Explain that you might haul 40lbs of rock out of the dirt, but it's 40 different types of stone, meaning you only found a tiny, rare fragment of THIS exact material. Cut by hand in the PNW. Once it's gone, it's gone forever. Max 160 chars. Do NOT use standard jewelry catalog fluff.
 
 Product Title: ${productTitle}
 Product Description: ${productDescription}
 Origin Context: ${origin}`;
 
+      // Live 2.5-flash engine block
       const geminiRes = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
         {
