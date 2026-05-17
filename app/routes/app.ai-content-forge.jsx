@@ -142,29 +142,59 @@ Origin Context: ${origin}`;
         }
       }
 
-      const geminiRes = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
-        {
+      try {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+        const options = {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ contents: [{ parts: parts }] })
+        };
+
+        const fetchWithTimeout = () => {
+          const fetchPromise = fetch(url, options);
+          const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error("Gemini timeout — try again")), 15000)
+          );
+          return Promise.race([fetchPromise, timeoutPromise]);
+        };
+
+        let geminiRes = await fetchWithTimeout();
+
+        if (geminiRes.status === 429) {
+          await new Promise(resolve => setTimeout(resolve, 5000));
+          geminiRes = await fetchWithTimeout();
+          if (geminiRes.status === 429) {
+            throw new Error("Rate limited — try again in a moment");
+          }
         }
-      );
 
-      if (!geminiRes.ok) {
-        const errorText = await geminiRes.text();
-        throw new Error(`API Fault ${geminiRes.status}: ${errorText}`);
+        if (!geminiRes.ok) {
+          const errorText = await geminiRes.text();
+          throw new Error(`API Fault ${geminiRes.status}: ${errorText}`);
+        }
+
+        const data = await geminiRes.json();
+        console.log("RAW GEMINI RESPONSE:", JSON.stringify(data));
+
+        let rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+        rawText = rawText.replace(/```json/gi, "").replace(/```/gi, "").trim();
+        
+        let parsedData;
+        try { 
+          parsedData = JSON.parse(rawText); 
+        } catch (e) { 
+          throw new Error("Gemini returned invalid JSON format."); 
+        }
+
+        if (!parsedData || !parsedData.altText || !parsedData.seoTitle || !parsedData.metaDescription) {
+          throw new Error("Gemini returned empty response — try again");
+        }
+
+        return { ok: true, intent, productId, suggestion: parsedData };
+
+      } catch (geminiError) {
+        return { ok: false, error: geminiError.message };
       }
-
-      const data = await geminiRes.json();
-      let rawText = data.candidates[0].content.parts[0].text;
-      rawText = rawText.replace(/```json/gi, "").replace(/```/gi, "").trim();
-      
-      let parsedData;
-      try { parsedData = JSON.parse(rawText); } 
-      catch (e) { throw new Error("Gemini returned invalid JSON format."); }
-
-      return { ok: true, intent, productId, suggestion: parsedData };
     }
 
     if (intent === "save_alt") {
