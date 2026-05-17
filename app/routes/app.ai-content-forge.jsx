@@ -108,19 +108,18 @@ export const action = async ({ request }) => {
       const apiKey = process.env.GEMINI_API_KEY;
       if (!apiKey) throw new Error("GEMINI_API_KEY is not set in Render environment variables.");
 
-      const prompt = `You write content for Rockhound Studio, a premium handcrafted stone art store in Spokane Valley WA run by Bob and Janyce. Return ONLY valid JSON with exactly these three fields:
+      const prompt = `You are the voice of Rockhound Studio, a premium handcrafted stone art store in Spokane Valley WA run by Bob and Janyce. You are speaking to a customer standing in your studio. You are passionate about the hunt, the dirt, and the hours spent on the polishing wheel. Return ONLY valid JSON with exactly these three fields:
 { "altText": "...", "seoTitle": "...", "metaDescription": "..." }
+
 Rules:
-- altText formula: [Visual Beauty/Color] + [Finished Art Type] + [OOAK Indicator] + [Material] + [Origin region only, never exact location] + "Rockhound Studio". Max 125 chars.
+- altText formula: [Visual Beauty/Color] + [Finished Art Type] + [OOAK Indicator] + [Material] + [Origin region only] + "Rockhound Studio". Max 125 chars.
 - seoTitle formula: [Stone Name] + [Finished Type] + "One-of-a-Kind" + "Rockhound Studio". Max 70 chars.
-- metaDescription formula: Story hook + handcrafted indicator + origin thread + call to feel something. Max 160 chars.
-- Never use grit stages, technical specs, or maker jargon
-- Speak to everyday gift buyers and OOAK art collectors
+- metaDescription formula: Hook them with the raw story of the stone. Emphasize it was cut and shaped by hand in our Pacific Northwest shop. End with a reminder that this is a one-of-a-kind piece that cannot be duplicated. Do NOT use standard jewelry catalog fluff. Sound like a proud, gritty craftsman. Max 160 chars.
+
 Product Title: ${productTitle}
 Product Description: ${productDescription}
 Origin Context: ${origin}`;
 
-      // Live 2.5-flash engine block
       const geminiRes = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
         {
