@@ -141,7 +141,7 @@ export const action = async ({ request }) => {
       const apiKey = process.env.GEMINI_API_KEY;
       if (!apiKey) throw new Error("GEMINI_API_KEY is not set in Render environment variables.");
 
-      const systemPrompt = `You write content for Rockhound Studio, a premium handcrafted stone art store in Spokane Valley WA run by Bob and Janyce. Return ONLY valid JSON with exactly these three fields:
+      const prompt = `You write content for Rockhound Studio, a premium handcrafted stone art store in Spokane Valley WA run by Bob and Janyce. Return ONLY valid JSON with exactly these three fields:
 {
   "altText": "...",
   "seoTitle": "...",
@@ -160,27 +160,30 @@ Product Title: ${productTitle}
 Product Description: ${productDescription}
 Origin Context: ${origin}`;
 
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [
-            {
-              parts: [
-                { text: systemPrompt }
-              ]
-            }
-          ]
-        })
-      });
+      const geminiRes = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [
+              {
+                parts: [
+                  { text: prompt }
+                ]
+              }
+            ]
+          })
+        }
+      );
 
-      // OBD2 SCANNER FIX: If the API fails, read the raw error text from Google instead of just the status code.
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`API Fault ${response.status}: ${errorText}`);
+      // OBD2 SCANNER FIX: Read the raw error text from Google
+      if (!geminiRes.ok) {
+        const errorText = await geminiRes.text();
+        throw new Error(`API Fault ${geminiRes.status}: ${errorText}`);
       }
 
-      const data = await response.json();
+      const data = await geminiRes.json();
       let rawText = data.candidates[0].content.parts[0].text;
       
       // Strip markdown JSON wrappers if Gemini includes them
@@ -516,3 +519,41 @@ export default function AiContentForgeTab() {
                                     multiline={3}
                                     autoComplete="off"
                                   />
+                                  <Button 
+                                    size="slim" 
+                                    onClick={() => handleSaveSeo(product)}
+                                    loading={savingSeoId === product.id}
+                                    disabled={!activeSuggestion.seoTitle || !activeSuggestion.metaDescription}
+                                  >
+                                    Save SEO Data
+                                  </Button>
+                                </BlockStack>
+                              </BlockStack>
+                            </Box>
+                          </BlockStack>
+                        ) : (
+                          <Box background="bg-surface-secondary" padding="400" borderRadius="200" style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                            <Text tone="subdued" alignment="center">
+                              Click "Suggest Content" to forge premium, story-driven text for this product using Gemini AI.
+                            </Text>
+                          </Box>
+                        )}
+                      </Box>
+                    </InlineStack>
+
+                  </BlockStack>
+                </Card>
+              );
+            })}
+
+            {products.length === 0 && (
+              <Banner tone="info">
+                <Text>No products found to forge content for.</Text>
+              </Banner>
+            )}
+          </BlockStack>
+        </Layout.Section>
+      </Layout>
+    </Page>
+  );
+}
