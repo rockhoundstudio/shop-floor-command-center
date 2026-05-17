@@ -39,7 +39,8 @@ export default function ForgeProductCard({
               <img 
                 src={thumbnailUrl} 
                 alt={product.title} 
-                style={{ width: "48px", height: "48px", borderRadius: "4px", objectFit: "cover" }} 
+                style={{ width: "96px", height: "96px", borderRadius: "4px", objectFit: "cover" }}
+ 
               />
             )}
             <Text variant="headingMd" fontWeight="bold">{product.title}</Text>
