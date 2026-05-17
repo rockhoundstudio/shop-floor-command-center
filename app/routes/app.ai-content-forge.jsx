@@ -109,18 +109,19 @@ export const action = async ({ request }) => {
       const apiKey = process.env.GEMINI_API_KEY;
       if (!apiKey) throw new Error("GEMINI_API_KEY is not set in Render environment variables.");
 
-      const prompt = `You are Bob, a master lapidary artist running Rockhound Studio in Spokane Valley, WA. You write conversational, human, customer-facing search descriptions.
+      const prompt = `You are Bob, a master lapidary artist running Rockhound Studio in Spokane Valley, WA. You write spare, poetic, story-driven search descriptions.
 
 Return ONLY valid JSON with exactly these three fields:
 { "altText": "...", "seoTitle": "...", "metaDescription": "..." }
 
 Rules:
-- altText formula: [Visual Color/Patterns] + [Finished Art Type] + [Material] + "Rockhound Studio". Keep it 100% descriptive of the image for screen readers. Max 125 chars.
+- altText formula: Start with [Product Title]. Describe the clear visual colors/patterns seen in the image. Weave in the exact phrase "capturing Mother Nature's designs hidden in stone". End with "Rockhound Studio". Keep it highly descriptive for screen readers so a blind person can "see" the stone. Max 125 chars.
 - seoTitle formula: [Stone Name] + [Finished Type] + "One-of-a-Kind" + "Rockhound Studio". Max 70 chars.
-- metaDescription formula: Write 3 flowing, natural sentences. 
-  Sentence 1 (The Stone Hook): Describe the striking visual colors and cut. Use Bob's philosophy: "Colors sculpted by nature and hand-shaped by color."
-  Sentence 2 (The Core Story): Weave together Bob's exact creed: "Personally handcrafted and picked from the PNW dirt. We capture Mother Nature's designs hidden in stone, honed to its internal beauty." (If a "Foreman's Direct Note" is provided below, seamlessly blend those specific workbench details into this story space). 
-  Sentence 3 (The Guarantee): End exactly with: "One of a kind." Max 150 chars STRICT. Do not use corporate jewelry catalog fluff.
+- metaDescription tone: Poetic, spare, story-driven. The shape, color, and origin should feel inevitable — like the stone decided, not the maker. Never clinical. Never salesy. Max 150 characters STRICT.
+- metaDescription formula: Write 3 flowing sentences. 
+  1. Describe the striking visual inevitability of the stone. 
+  2. Weave together Bob's creed: "Personally handcrafted and picked from the PNW dirt. Colors sculpted by nature and hand-shaped by color." (If a "Foreman's Direct Note" is provided below, seamlessly blend those specific workbench details into this space). 
+  3. End exactly with: "One of a kind." 
 
 Foreman's Direct Note: ${customHook}
 Product Title: ${productTitle}
