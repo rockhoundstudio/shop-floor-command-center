@@ -101,7 +101,6 @@ export const action = async ({ request }) => {
       const productDescription = body.get("productDescription");
       const origin = body.get("origin") || "Pacific Northwest region";
       const customHook = body.get("customHook") || "";
-      const imageUrl = body.get("imageUrl");
       const isPolishingTarget = body.get("isPolishingTarget") === "true";
       
       const apiKey = process.env.GEMINI_API_KEY;
@@ -131,16 +130,6 @@ Product Description: ${productDescription}
 Origin Context: ${origin}`;
 
       let parts = [{ text: prompt }];
-
-      if (imageUrl && imageUrl.trim() !== "") {
-        const imgRes = await fetch(imageUrl);
-        if (imgRes.ok) {
-           const buffer = await imgRes.arrayBuffer();
-           const base64Data = Buffer.from(buffer).toString("base64");
-           const mimeType = imgRes.headers.get("content-type") || "image/jpeg";
-           parts.push({ inlineData: { data: base64Data, mimeType: mimeType } });
-        }
-      }
 
       try {
         const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
