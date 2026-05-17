@@ -164,12 +164,20 @@ Origin Context: ${origin}`;
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          contents: [{ parts: [{ text: systemPrompt }] }]
+          contents: [
+            {
+              parts: [
+                { text: systemPrompt }
+              ]
+            }
+          ]
         })
       });
 
+      // OBD2 SCANNER FIX: If the API fails, read the raw error text from Google instead of just the status code.
       if (!response.ok) {
-        throw new Error(`Gemini API failed with status: ${response.status}`);
+        const errorText = await response.text();
+        throw new Error(`API Fault ${response.status}: ${errorText}`);
       }
 
       const data = await response.json();
@@ -384,6 +392,18 @@ export default function AiContentForgeTab() {
       )}
 
       <Layout>
+        <Layout.Section>
+          <InlineStack gap="300">
+            <Button url="/app" variant="secondary">Home</Button>
+            <Button url="/app/meta-injector" variant="secondary">Meta Injector</Button>
+            <Button url="/app/menu-manager" variant="secondary">Menu Manager</Button>
+            <Button url="/app/collection-manager" variant="secondary">Collection Manager</Button>
+            <Button url="/app/bulk-edit" variant="secondary">Bulk Edit</Button>
+            <Button url="/app/seo-alt-text" variant="secondary">SEO & Alt Text</Button>
+            <Button url="/app/ai-content-forge" variant="primary">⚡ AI Content Forge</Button>
+          </InlineStack>
+        </Layout.Section>
+
         {pageError && (
           <Layout.Section>
             <Banner 
@@ -395,6 +415,10 @@ export default function AiContentForgeTab() {
             </Banner>
           </Layout.Section>
         )}
+
+        <Layout.Section>
+          <Divider />
+        </Layout.Section>
 
         <Layout.Section>
           <BlockStack gap="500">
@@ -492,41 +516,3 @@ export default function AiContentForgeTab() {
                                     multiline={3}
                                     autoComplete="off"
                                   />
-                                  <Button 
-                                    size="slim" 
-                                    onClick={() => handleSaveSeo(product)}
-                                    loading={savingSeoId === product.id}
-                                    disabled={!activeSuggestion.seoTitle || !activeSuggestion.metaDescription}
-                                  >
-                                    Save SEO Data
-                                  </Button>
-                                </BlockStack>
-                              </BlockStack>
-                            </Box>
-                          </BlockStack>
-                        ) : (
-                          <Box background="bg-surface-secondary" padding="400" borderRadius="200" style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                            <Text tone="subdued" alignment="center">
-                              Click "Suggest Content" to forge premium, story-driven text for this product using Gemini AI.
-                            </Text>
-                          </Box>
-                        )}
-                      </Box>
-                    </InlineStack>
-
-                  </BlockStack>
-                </Card>
-              );
-            })}
-
-            {products.length === 0 && (
-              <Banner tone="info">
-                <Text>No products found to forge content for.</Text>
-              </Banner>
-            )}
-          </BlockStack>
-        </Layout.Section>
-      </Layout>
-    </Page>
-  );
-}
