@@ -104,6 +104,7 @@ export const action = async ({ request }) => {
       const productTitle = body.get("productTitle");
       const productDescription = body.get("productDescription");
       const origin = body.get("origin") || "Pacific Northwest region";
+      const customHook = body.get("customHook") || "";
       
       const apiKey = process.env.GEMINI_API_KEY;
       if (!apiKey) throw new Error("GEMINI_API_KEY is not set in Render environment variables.");
@@ -116,8 +117,9 @@ Return ONLY valid JSON with exactly these three fields:
 Rules:
 - altText formula: [Visual Beauty/Color] + [Finished Art Type] + [OOAK Indicator] + [Material] + [Origin region only] + "Rockhound Studio". Max 125 chars.
 - seoTitle formula: [Stone Name] + [Finished Type] + "One-of-a-Kind" + "Rockhound Studio". Max 70 chars.
-- metaDescription formula: Write 3 flowing, natural sentences. Sentence 1 (The Stone Hook): Describe the striking visual beauty and cut. Sentence 2 (The Story Hook): Tell a genuine, brief story about its PNW origin or what happened on the grinding wheel. Sentence 3 (The Guarantee): End exactly with: "One of a kind." Max 150 chars STRICT. 
+- metaDescription formula: Write 3 flowing, natural sentences. Sentence 1 (The Stone Hook): Describe the striking visual beauty and cut. Sentence 2 (The Story Hook): Tell a genuine story. IF a "Foreman's Direct Note" is provided below, you MUST weave that specific detail into this sentence seamlessly. Sentence 3 (The Guarantee): End exactly with: "One of a kind." Max 150 chars STRICT. 
 
+Foreman's Direct Note: ${customHook}
 Product Title: ${productTitle}
 Product Description: ${productDescription}
 Origin Context: ${origin}`;
@@ -200,6 +202,7 @@ export default function AiContentForgeTab() {
   const fetcher = useFetcher();
   const [products, setProducts] = useState(initialProducts);
   const [suggestions, setSuggestions] = useState({});
+  const [customHooks, setCustomHooks] = useState({});
   const [suggestingId, setSuggestingId] = useState(null);
   const [savingAltId, setSavingAltId] = useState(null);
   const [savingSeoId, setSavingSeoId] = useState(null);
@@ -235,11 +238,18 @@ export default function AiContentForgeTab() {
     }
   }, [fetcher.state, fetcher.data]);
 
+  const handleHookChange = (productId, value) => {
+    setCustomHooks((prev) => ({ ...prev, [productId]: value }));
+  };
+
   const handleSuggest = (product) => {
     setSuggestingId(product.id);
     const fd = new FormData();
-    fd.append("intent", "ai_suggest"); fd.append("productId", product.id);
-    fd.append("productTitle", product.title); fd.append("productDescription", product.description || "");
+    fd.append("intent", "ai_suggest"); 
+    fd.append("productId", product.id);
+    fd.append("productTitle", product.title); 
+    fd.append("productDescription", product.description || "");
+    fd.append("customHook", customHooks[product.id] || "");
     fetcher.submit(fd, { method: "post" });
   };
 
@@ -260,79 +270,3 @@ export default function AiContentForgeTab() {
     fd.append("intent", "save_seo"); fd.append("productId", product.id);
     fd.append("seoTitle", seoTitle); fd.append("seoDescription", seoDesc);
     fetcher.submit(fd, { method: "post" });
-  };
-
-  const updateSuggestionField = (productId, field, value) => {
-    setSuggestions((prev) => ({ ...prev, [productId]: { ...prev[productId], [field]: value } }));
-  };
-
-  return (
-    <Page title="⚡ AI Content Forge" subtitle="Generate premium, story-driven Alt Text and SEO descriptions powered by Gemini.">
-      {toast && <div style={{ position: "fixed", top: 16, right: 16, zIndex: 9999 }}><Banner tone={toast.tone}>{toast.message}</Banner></div>}
-      <Layout>
-        {pageError && (
-          <Layout.Section>
-            <Banner tone="critical" title="Action Failed" onDismiss={() => setPageError(null)}><Text as="p">{pageError}</Text></Banner>
-          </Layout.Section>
-        )}
-        <Layout.Section>
-          <BlockStack gap="500">
-            {products.map((product) => {
-              const currentAlt = product.images.length > 0 ? product.images[0].altText : "";
-              const currentSeoTitle = product.seo?.title || "";
-              const currentSeoDesc = product.seo?.description || "";
-              const activeSuggestion = suggestions[product.id];
-              return (
-                <Card key={product.id}>
-                  <BlockStack gap="400">
-                    <InlineStack align="space-between" blockAlign="center">
-                      <Text variant="headingMd" fontWeight="bold">{product.title}</Text>
-                      <Button variant="primary" onClick={() => handleSuggest(product)} loading={suggestingId === product.id}>⚡ Suggest Content</Button>
-                    </InlineStack>
-                    <Divider />
-                    <InlineStack align="start" gap="800">
-                      <Box style={{ flex: 1 }}>
-                        <BlockStack gap="300">
-                          <Text variant="headingSm" tone="subdued">Current Configuration</Text>
-                          <BlockStack gap="100"><Text fontWeight="bold">Alt Text (Applied to {product.images.length} images):</Text><Text tone={currentAlt ? "base" : "subdued"}>{currentAlt || "None applied."}</Text></BlockStack>
-                          <BlockStack gap="100"><Text fontWeight="bold">SEO Title:</Text><Text tone={currentSeoTitle ? "base" : "subdued"}>{currentSeoTitle || "None applied."}</Text></BlockStack>
-                          <BlockStack gap="100"><Text fontWeight="bold">Meta Description:</Text><Text tone={currentSeoDesc ? "base" : "subdued"}>{currentSeoDesc || "None applied."}</Text></BlockStack>
-                        </BlockStack>
-                      </Box>
-                      <Box style={{ flex: 1 }}>
-                        {activeSuggestion ? (
-                          <BlockStack gap="400">
-                            <Box background="bg-surface-success" padding="300" borderRadius="200">
-                              <BlockStack gap="300">
-                                <Text variant="headingSm" tone="success">✨ Forged Suggestions</Text>
-                                <BlockStack gap="200">
-                                  <TextField label={`Premium Alt Text (${(activeSuggestion.altText || "").length} chars)`} value={activeSuggestion.altText || ""} onChange={(val) => updateSuggestionField(product.id, "altText", val)} multiline={2} autoComplete="off" />
-                                  <Button size="slim" onClick={() => handleSaveAlt(product)} loading={savingAltId === product.id} disabled={!activeSuggestion.altText || product.images.length === 0}>Apply Alt to All {product.images.length} Images</Button>
-                                </BlockStack>
-                                <Divider />
-                                <BlockStack gap="200">
-                                  <TextField label={`SEO Title (${(activeSuggestion.seoTitle || "").length} chars)`} value={activeSuggestion.seoTitle || ""} onChange={(val) => updateSuggestionField(product.id, "seoTitle", val)} autoComplete="off" />
-                                  <TextField label={`Meta Description (${(activeSuggestion.metaDescription || "").length} chars)`} value={activeSuggestion.metaDescription || ""} onChange={(val) => updateSuggestionField(product.id, "metaDescription", val)} multiline={3} autoComplete="off" />
-                                  <Button size="slim" onClick={() => handleSaveSeo(product)} loading={savingSeoId === product.id} disabled={!activeSuggestion.seoTitle || !activeSuggestion.metaDescription}>Save SEO Data</Button>
-                                </BlockStack>
-                              </BlockStack>
-                            </Box>
-                          </BlockStack>
-                        ) : (
-                          <Box background="bg-surface-secondary" padding="400" borderRadius="200" style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                            <Text tone="subdued" alignment="center">Click "Suggest Content" to forge premium, story-driven text for this product using Gemini AI.</Text>
-                          </Box>
-                        )}
-                      </Box>
-                    </InlineStack>
-                  </BlockStack>
-                </Card>
-              );
-            })}
-            {products.length === 0 && <Banner tone="info"><Text>No products found to forge content for.</Text></Banner>}
-          </BlockStack>
-        </Layout.Section>
-      </Layout>
-    </Page>
-  );
-}
