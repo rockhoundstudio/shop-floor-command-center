@@ -13,6 +13,7 @@ import {
   InlineStack,
   Divider,
   Box,
+  Checkbox,
 } from "@shopify/polaris";
 
 export function ErrorBoundary() {
@@ -106,9 +107,14 @@ export const action = async ({ request }) => {
       const origin = body.get("origin") || "Pacific Northwest region";
       const customHook = body.get("customHook") || "";
       const imageUrl = body.get("imageUrl");
+      const isPolishingTarget = body.get("isPolishingTarget") === "true";
       
       const apiKey = process.env.GEMINI_API_KEY;
       if (!apiKey) throw new Error("GEMINI_API_KEY is not set in Render environment variables.");
+
+      const polishingInstruction = isPolishingTarget 
+        ? `\n  CRITICAL SEO: You MUST naturally and organically weave these three exact phrases into the story without feeling stuffed: "custom stone polishing service", "heirloom rock polishing", and "turn your found rock into art".`
+        : "";
 
       const prompt = `You are Bob, a master lapidary artist running Rockhound Studio in Spokane Valley, WA. You write spare, poetic, story-driven search descriptions.
 
@@ -121,7 +127,7 @@ Rules:
 - metaDescription tone: Poetic, spare, story-driven. The shape, color, and origin should feel inevitable. Never clinical. Never salesy. Max 150 characters STRICT.
 - metaDescription formula: Write 3 flowing sentences. 
   1. Describe the striking visual inevitability of the stone using ONLY the colors seen in the image. 
-  2. Weave together Bob's creed: "Personally handcrafted and picked from the PNW dirt. Shaped on the Frankenstein until the color said stop." (If a Foreman's Direct Note is provided below, blend it in). 
+  2. Weave together Bob's creed: "Personally handcrafted and picked from the PNW dirt. Shaped on the Frankenstein until the color said stop." (If a Foreman's Direct Note is provided below, blend it in). ${polishingInstruction}
   3. End exactly with: "One of a kind." 
 
 Foreman's Direct Note: ${customHook}
@@ -220,6 +226,7 @@ export default function AiContentForgeTab() {
   const [products, setProducts] = useState(initialProducts);
   const [suggestions, setSuggestions] = useState({});
   const [customHooks, setCustomHooks] = useState({});
+  const [isPolishingTargets, setIsPolishingTargets] = useState({});
   const [suggestingId, setSuggestingId] = useState(null);
   const [savingAltId, setSavingAltId] = useState(null);
   const [savingSeoId, setSavingSeoId] = useState(null);
@@ -259,6 +266,10 @@ export default function AiContentForgeTab() {
     setCustomHooks((prev) => ({ ...prev, [productId]: value }));
   };
 
+  const handlePolishingChange = (productId, checked) => {
+    setIsPolishingTargets((prev) => ({ ...prev, [productId]: checked }));
+  };
+
   const handleSuggest = (product) => {
     setSuggestingId(product.id);
     const fd = new FormData();
@@ -267,6 +278,7 @@ export default function AiContentForgeTab() {
     fd.append("productTitle", product.title); 
     fd.append("productDescription", product.description || "");
     fd.append("customHook", customHooks[product.id] || "");
+    fd.append("isPolishingTarget", isPolishingTargets[product.id] ? "true" : "false");
     
     // Grab the first image URL to send to Gemini Vision
     const imageUrl = product.images.length > 0 ? product.images[0].url : "";
@@ -328,6 +340,11 @@ export default function AiContentForgeTab() {
                             onChange={(val) => handleHookChange(product.id, val)} 
                             autoComplete="off" 
                           />
+                          <Checkbox
+                            label="Custom Polishing Service page"
+                            checked={isPolishingTargets[product.id] || false}
+                            onChange={(checked) => handlePolishingChange(product.id, checked)}
+                          />
                           <Button variant="primary" onClick={() => handleSuggest(product)} loading={suggestingId === product.id}>⚡ Suggest Content</Button>
                         </BlockStack>
                       </Box>
@@ -342,40 +359,4 @@ export default function AiContentForgeTab() {
                           <BlockStack gap="100"><Text fontWeight="bold">Meta Description:</Text><Text tone={currentSeoDesc ? "base" : "subdued"}>{currentSeoDesc || "None applied."}</Text></BlockStack>
                         </BlockStack>
                       </Box>
-                      <Box style={{ flex: 1 }}>
-                        {activeSuggestion ? (
-                          <BlockStack gap="400">
-                            <Box background="bg-surface-success" padding="300" borderRadius="200">
-                              <BlockStack gap="300">
-                                <Text variant="headingSm" tone="success">✨ Forged Suggestions</Text>
-                                <BlockStack gap="200">
-                                  <TextField label={`Premium Alt Text (${(activeSuggestion.altText || "").length} chars)`} value={activeSuggestion.altText || ""} onChange={(val) => updateSuggestionField(product.id, "altText", val)} multiline={2} autoComplete="off" />
-                                  <Button size="slim" onClick={() => handleSaveAlt(product)} loading={savingAltId === product.id} disabled={!activeSuggestion.altText || product.images.length === 0}>Apply Alt to All {product.images.length} Images</Button>
-                                </BlockStack>
-                                <Divider />
-                                <BlockStack gap="200">
-                                  <TextField label={`SEO Title (${(activeSuggestion.seoTitle || "").length} chars)`} value={activeSuggestion.seoTitle || ""} onChange={(val) => updateSuggestionField(product.id, "seoTitle", val)} autoComplete="off" />
-                                  <TextField label={`Meta Description (${(activeSuggestion.metaDescription || "").length} chars)`} value={activeSuggestion.metaDescription || ""} onChange={(val) => updateSuggestionField(product.id, "metaDescription", val)} multiline={3} autoComplete="off" />
-                                  <Button size="slim" onClick={() => handleSaveSeo(product)} loading={savingSeoId === product.id} disabled={!activeSuggestion.seoTitle || !activeSuggestion.metaDescription}>Save SEO Data</Button>
-                                </BlockStack>
-                              </BlockStack>
-                            </Box>
-                          </BlockStack>
-                        ) : (
-                          <Box background="bg-surface-secondary" padding="400" borderRadius="200" style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                            <Text tone="subdued" alignment="center">Add an optional instruction hook above, then click "Suggest Content".</Text>
-                          </Box>
-                        )}
-                      </Box>
-                    </InlineStack>
-                  </BlockStack>
-                </Card>
-              );
-            })}
-            {products.length === 0 && <Banner tone="info"><Text>No products found to forge content for.</Text></Banner>}
-          </BlockStack>
-        </Layout.Section>
-      </Layout>
-    </Page>
-  );
-}
+                      <Box style
