@@ -271,7 +271,10 @@ export default function AiContentForgeTab() {
   const [suggestingId, setSuggestingId] = useState(null);
   const [savingAltId, setSavingAltId] = useState(null);
   const [savingSeoId, setSavingSeoId] = useState(null);
+  
+  // Notice the distinct separation of success vs persistent errors
   const [toast, setToast] = useState(null); 
+  const [pageError, setPageError] = useState(null);
 
   useEffect(() => {
     if (fetcher.state === "idle" && fetcher.data) {
@@ -281,10 +284,13 @@ export default function AiContentForgeTab() {
       setSavingSeoId(null);
 
       if (!fetcher.data.ok) {
-        setToast({ message: `❌ Fault: ${fetcher.data.error}`, tone: "critical" });
-        setTimeout(() => setToast(null), 5000);
+        // FIX 2: Set persistent inline error, do NOT auto-dismiss
+        setPageError(`❌ Fault: ${fetcher.data.error}`);
         return;
       }
+
+      // If an action succeeds, clear any existing inline error
+      setPageError(null);
 
       const { intent, productId } = fetcher.data;
 
@@ -317,6 +323,7 @@ export default function AiContentForgeTab() {
         setToast({ message: "✓ SEO Data Saved", tone: "success" });
       }
       
+      // Auto-dismiss logic remains *only* for the successful toast states
       setTimeout(() => setToast(null), 3000);
     }
   }, [fetcher.state, fetcher.data]);
@@ -376,6 +383,7 @@ export default function AiContentForgeTab() {
       title="⚡ AI Content Forge"
       subtitle="Generate premium, story-driven Alt Text and SEO descriptions powered by Gemini."
     >
+      {/* Toast only used for successes now */}
       {toast && (
         <div style={{ position: "fixed", top: 16, right: 16, zIndex: 9999 }}>
           <Banner tone={toast.tone}>{toast.message}</Banner>
@@ -383,6 +391,31 @@ export default function AiContentForgeTab() {
       )}
 
       <Layout>
+        {/* FIX 1: Extracted Layout Section handling the Command Center Tab Bar */}
+        <Layout.Section>
+          <InlineStack gap="300">
+            <Button url="/app" variant="secondary">Home</Button>
+            <Button url="/app/meta-injector" variant="secondary">Meta Injector</Button>
+            <Button url="/app/menu-manager" variant="secondary">Menu Manager</Button>
+            <Button url="/app/collection-manager" variant="secondary">Collection Manager</Button>
+            <Button url="/app/bulk-edit" variant="secondary">Bulk Edit</Button>
+            <Button url="/app/ai-content-forge" variant="primary">⚡ AI Content Forge</Button>
+          </InlineStack>
+        </Layout.Section>
+
+        {/* FIX 2: Inline, persistent, and dismissible error banner */}
+        {pageError && (
+          <Layout.Section>
+            <Banner 
+              tone="critical" 
+              title="Action Failed" 
+              onDismiss={() => setPageError(null)}
+            >
+              <Text as="p">{pageError}</Text>
+            </Banner>
+          </Layout.Section>
+        )}
+
         <Layout.Section>
           <BlockStack gap="500">
             {products.map((product) => {
