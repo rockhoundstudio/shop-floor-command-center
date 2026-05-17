@@ -356,7 +356,6 @@ export default function SeoAltTextTab() {
     }))
   );
 
-  // ⚡ FIX: Derived variable accurately tracks the flattened queue for the bulk governor
   const altMissing = allImages.filter((img) => !img.altText || img.altText.trim() === "").length;
 
   const filteredProducts = products.filter((p) => {
@@ -423,7 +422,7 @@ export default function SeoAltTextTab() {
   const handleBulkAlt = () => {
     setBulkRunning(true);
     const pairs = allImages
-      .filter((img) => !img.altText || img.altText.trim() === "")
+      .filter((img) => selectedImages.includes(img.imageId))
       .map((img) => ({ 
         productId: img.productId, 
         imageId: img.imageId, 
@@ -524,9 +523,9 @@ export default function SeoAltTextTab() {
               <Button
                 onClick={handleBulkAlt}
                 loading={bulkRunning}
-                disabled={altMissing === 0}
+                disabled={selectedImages.length === 0}
               >
-                ⚡ Bulk Fill All Missing Alt (Premium Template)
+                ⚡ Bulk Fill Selected Alt (Premium Template)
               </Button>
             )}
           </InlineStack>
@@ -563,35 +562,34 @@ export default function SeoAltTextTab() {
                         <Text tone="subdued">No images on this product.</Text>
                       )}
 
-                      {prodSelected.length > 0 && (
-                        <Box padding="300" background="bg-surface-secondary" borderRadius="200">
-                          <BlockStack gap="300">
-                            <Text fontWeight="bold">
-                              Apply to {prodSelected.length} Selected View(s)
-                            </Text>
-                            <InlineStack gap="300" align="start">
-                              <div style={{ flex: 1 }}>
-                                <TextField
-                                  value={groupText[product.id] || ""}
-                                  onChange={(val) =>
-                                    setGroupText((prev) => ({ ...prev, [product.id]: val }))
-                                  }
-                                  placeholder="e.g. Deep red flash polished fire obsidian pocket stone, one-of-a-kind handcrafted art..."
-                                  autoComplete="off"
-                                />
-                              </div>
-                              <Button
-                                variant="primary"
-                                onClick={() => handleGroupSaveAlt(product.id, prodSelected.map(i => i.id))}
-                                loading={bulkRunning === product.id}
-                                disabled={!(groupText[product.id] || "").trim()}
-                              >
-                                Fire Batch
-                              </Button>
-                            </InlineStack>
-                          </BlockStack>
-                        </Box>
-                      )}
+                      <Box padding="300" background="bg-surface-secondary" borderRadius="200">
+                        <BlockStack gap="300">
+                          <Text fontWeight="bold">
+                            Apply to {prodSelected.length} Selected View(s)
+                          </Text>
+                          <InlineStack gap="300" align="start">
+                            <div style={{ flex: 1 }}>
+                              <TextField
+                                value={groupText[product.id] || ""}
+                                onChange={(val) =>
+                                  setGroupText((prev) => ({ ...prev, [product.id]: val }))
+                                }
+                                placeholder="e.g. Deep red flash polished fire obsidian pocket stone, one-of-a-kind handcrafted art..."
+                                autoComplete="off"
+                                disabled={prodSelected.length === 0}
+                              />
+                            </div>
+                            <Button
+                              variant="primary"
+                              onClick={() => handleGroupSaveAlt(product.id, prodSelected.map(i => i.id))}
+                              loading={bulkRunning === product.id}
+                              disabled={prodSelected.length === 0 || !(groupText[product.id] || "").trim()}
+                            >
+                              Fire Batch
+                            </Button>
+                          </InlineStack>
+                        </BlockStack>
+                      </Box>
 
                       <InlineStack gap="400" wrap>
                         {images.map((img) => {
