@@ -111,19 +111,28 @@ export const action = async ({ request }) => {
         ? `\n  CRITICAL SEO: You MUST naturally and organically weave these three exact phrases into the story without feeling stuffed: "custom stone polishing service", "heirloom rock polishing", and "turn your found rock into art".`
         : "";
 
-      const prompt = `You are Bob, a master lapidary artist running Rockhound Studio in Spokane Valley, WA. You write spare, poetic, story-driven search descriptions.
+      const prompt = `You are writing for Rockhound Studio, Spokane Valley WA. Bob and Janyce find, cut, and polish one-of-a-kind stones by hand.
+
+The voice is Bob at the bench. Short declarative sentences. No flowery adjectives. No "inevitable", "ripple", "surfaced", "journey", "stunning", or "beautiful". The stone earns every word.
+
+EXAMPLES OF THE CORRECT VOICE:
+"When I hit that topaz blue, I stopped. Islands started appearing — dark, outlined in gold, floating in a pale blue sea. It named itself."
+
+"We waded in and stared straight down at the riverbed until the sun went down. Not one of them went into the front yard rock garden."
 
 Return ONLY valid JSON with exactly these three fields:
 { "altText": "...", "seoTitle": "...", "metaDescription": "..." }
 
-Rules:
-- altText formula: Start with [Product Title]. IGNORE ANY COLORS IN THE TITLE. You MUST rely ONLY on the uploaded image to accurately describe the true physical colors and patterns. Weave in the exact phrase "capturing Mother Nature's designs hidden in stone". End with "Rockhound Studio". Max 125 chars.
-- seoTitle formula: [Stone Name] + [Finished Type] + "One-of-a-Kind" + "Rockhound Studio". Max 70 chars.
-- metaDescription tone: Poetic, spare, story-driven. The shape, color, and origin should feel inevitable. Never clinical. Never salesy. Max 150 characters STRICT.
-- metaDescription formula: Write 3 flowing sentences. 
-  1. Describe the striking visual inevitability of the stone using ONLY the colors seen in the image. 
-  2. Weave together Bob's creed: "Personally handcrafted and picked from the PNW dirt. Shaped on the Frankenstein until the color said stop." (If a Foreman's Direct Note is provided below, blend it in). ${polishingInstruction}
-  3. End exactly with: "One of a kind." 
+RULES:
+- altText: [Product Title]. Describe true colors from the image only — ignore title color words. Include "capturing Mother Nature's designs hidden in stone". End with "Rockhound Studio". Max 125 chars.
+
+- seoTitle: [Stone Name] + [Finished Type] + "One-of-a-Kind" + "Rockhound Studio". Max 70 chars.
+
+- metaDescription: Three short declarative sentences.
+  1. What the stone looks like — colors and form, image only, no adjectives that weren't earned.
+  2. Where it came from and one true thing that happened on the bench. Blend in Foreman's Note if provided.
+  3. End exactly with: "One of a kind."
+  Max 150 chars STRICT. ${polishingInstruction}
 
 Foreman's Direct Note: ${customHook}
 Product Title: ${productTitle}
