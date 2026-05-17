@@ -120,7 +120,7 @@ Product Title: ${productTitle}
 Product Description: ${productDescription}
 Origin Context: ${origin}`;
 
-      // This is the correct, live, current engine part.
+      // Live 2.5-flash engine block
       const geminiRes = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
         {
