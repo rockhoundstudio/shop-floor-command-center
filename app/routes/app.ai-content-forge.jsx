@@ -138,8 +138,7 @@ export const action = async ({ request }) => {
       const productDescription = body.get("productDescription");
       const origin = body.get("origin") || "Pacific Northwest region";
       
-      const apiKey = process.env.GEMINI_API_KEY;
-      if (!apiKey) throw new Error("GEMINI_API_KEY is not set in Render environment variables.");
+      if (!process.env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY is not set in Render environment variables.");
 
       const prompt = `You write content for Rockhound Studio, a premium handcrafted stone art store in Spokane Valley WA run by Bob and Janyce. Return ONLY valid JSON with exactly these three fields:
 {
@@ -160,8 +159,9 @@ Product Title: ${productTitle}
 Product Description: ${productDescription}
 Origin Context: ${origin}`;
 
+      // FIX: Appended "-latest" to the model name so Google's router can find it
       const geminiRes = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${process.env.GEMINI_API_KEY}`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -177,7 +177,7 @@ Origin Context: ${origin}`;
         }
       );
 
-      // OBD2 SCANNER FIX: Read the raw error text from Google
+      // OBD2 SCANNER: Read the raw error text from Google
       if (!geminiRes.ok) {
         const errorText = await geminiRes.text();
         throw new Error(`API Fault ${geminiRes.status}: ${errorText}`);
