@@ -265,31 +265,27 @@ export default function AiContentForgeTab() {
   const fetcher = useFetcher();
 
   const [products, setProducts] = useState(initialProducts);
-  const [suggestions, setSuggestions] = useState({}); // Stores the active AI results for editing
+  const [suggestions, setSuggestions] = useState({});
   
   // Track specific loading states
   const [suggestingId, setSuggestingId] = useState(null);
   const [savingAltId, setSavingAltId] = useState(null);
   const [savingSeoId, setSavingSeoId] = useState(null);
   
-  // Notice the distinct separation of success vs persistent errors
   const [toast, setToast] = useState(null); 
   const [pageError, setPageError] = useState(null);
 
   useEffect(() => {
     if (fetcher.state === "idle" && fetcher.data) {
-      // Clear loaders
       setSuggestingId(null);
       setSavingAltId(null);
       setSavingSeoId(null);
 
       if (!fetcher.data.ok) {
-        // FIX 2: Set persistent inline error, do NOT auto-dismiss
         setPageError(`❌ Fault: ${fetcher.data.error}`);
         return;
       }
 
-      // If an action succeeds, clear any existing inline error
       setPageError(null);
 
       const { intent, productId } = fetcher.data;
@@ -323,7 +319,6 @@ export default function AiContentForgeTab() {
         setToast({ message: "✓ SEO Data Saved", tone: "success" });
       }
       
-      // Auto-dismiss logic remains *only* for the successful toast states
       setTimeout(() => setToast(null), 3000);
     }
   }, [fetcher.state, fetcher.data]);
@@ -342,7 +337,6 @@ export default function AiContentForgeTab() {
     setSavingAltId(product.id);
     const altText = suggestions[product.id]?.altText;
     
-    // Package all image IDs for this product into pairs
     const pairs = product.images.map((img) => ({
       id: img.id,
       alt: altText
@@ -383,7 +377,6 @@ export default function AiContentForgeTab() {
       title="⚡ AI Content Forge"
       subtitle="Generate premium, story-driven Alt Text and SEO descriptions powered by Gemini."
     >
-      {/* Toast only used for successes now */}
       {toast && (
         <div style={{ position: "fixed", top: 16, right: 16, zIndex: 9999 }}>
           <Banner tone={toast.tone}>{toast.message}</Banner>
@@ -391,19 +384,6 @@ export default function AiContentForgeTab() {
       )}
 
       <Layout>
-        {/* FIX 1: Extracted Layout Section handling the Command Center Tab Bar */}
-        <Layout.Section>
-          <InlineStack gap="300">
-            <Button url="/app" variant="secondary">Home</Button>
-            <Button url="/app/meta-injector" variant="secondary">Meta Injector</Button>
-            <Button url="/app/menu-manager" variant="secondary">Menu Manager</Button>
-            <Button url="/app/collection-manager" variant="secondary">Collection Manager</Button>
-            <Button url="/app/bulk-edit" variant="secondary">Bulk Edit</Button>
-            <Button url="/app/ai-content-forge" variant="primary">⚡ AI Content Forge</Button>
-          </InlineStack>
-        </Layout.Section>
-
-        {/* FIX 2: Inline, persistent, and dismissible error banner */}
         {pageError && (
           <Layout.Section>
             <Banner 
@@ -444,7 +424,6 @@ export default function AiContentForgeTab() {
                     <Divider />
 
                     <InlineStack align="start" gap="800">
-                      {/* Left Side: Current State */}
                       <Box style={{ flex: 1 }}>
                         <BlockStack gap="300">
                           <Text variant="headingSm" tone="subdued">Current Configuration</Text>
@@ -472,7 +451,6 @@ export default function AiContentForgeTab() {
                         </BlockStack>
                       </Box>
 
-                      {/* Right Side: AI Forge Results */}
                       <Box style={{ flex: 1 }}>
                         {activeSuggestion ? (
                           <BlockStack gap="400">
