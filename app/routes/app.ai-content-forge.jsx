@@ -139,19 +139,24 @@ Origin Context: ${origin}`;
           body: JSON.stringify({ contents: [{ parts: parts }] })
         };
 
-        const fetchWithTimeout = () => {
-          const fetchPromise = fetch(url, options);
-          const timeoutPromise = new Promise((_, reject) => 
-            setTimeout(() => reject(new Error("Gemini timeout — try again")), 15000)
-          );
-          return Promise.race([fetchPromise, timeoutPromise]);
+        const makeGeminiRequest = async () => {
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 15000);
+          try {
+            const res = await fetch(url, { ...options, signal: controller.signal });
+            clearTimeout(timeout);
+            return res;
+          } catch (e) {
+            clearTimeout(timeout);
+            throw new Error("Gemini timeout — try again");
+          }
         };
 
-        let geminiRes = await fetchWithTimeout();
+        let geminiRes = await makeGeminiRequest();
 
         if (geminiRes.status === 429) {
-          await new Promise(resolve => setTimeout(resolve, 5000));
-          geminiRes = await fetchWithTimeout();
+          await new Promise(resolve => setTimeout(resolve, 8000));
+          geminiRes = await makeGeminiRequest();
           if (geminiRes.status === 429) {
             throw new Error("Rate limited — try again in a moment");
           }
@@ -275,18 +280,15 @@ export default function AiContentForgeTab() {
   }, [fetcher.state, fetcher.data]);
 
   const handleSuggest = (product, customHook, isPolishingTarget) => {
+    setPageError(null);
     setSuggestingId(product.id);
     const fd = new FormData();
-    fd.append("intent", "ai_suggest"); 
+    fd.append("intent", "ai_suggest");
     fd.append("productId", product.id);
-    fd.append("productTitle", product.title); 
+    fd.append("productTitle", product.title);
     fd.append("productDescription", product.description || "");
     fd.append("customHook", customHook || "");
     fd.append("isPolishingTarget", isPolishingTarget ? "true" : "false");
-    
-    const imageUrl = product.images.length > 0 ? product.images[0].url : "";
-    fd.append("imageUrl", imageUrl);
-
     fetcher.submit(fd, { method: "post" });
   };
 
