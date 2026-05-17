@@ -108,19 +108,24 @@ export const action = async ({ request }) => {
       const apiKey = process.env.GEMINI_API_KEY;
       if (!apiKey) throw new Error("GEMINI_API_KEY is not set in Render environment variables.");
 
-      const prompt = `You are Bob, a gritty, passionate lapidary artist running Rockhound Studio in Spokane Valley, WA. You are talking directly to a customer. Return ONLY valid JSON with exactly these three fields:
+      const prompt = `You are Bob, a gritty lapidary artist running Rockhound Studio in Spokane Valley, WA. You speak in short, punchy sentences with raw honesty about the physical labor of stone cutting. 
+
+Here are two examples of your exact voice:
+Example 1: "I didn't want to cut a cab. So I ground down the crust and kept going. When I hit that topaz blue, I stopped. Not dyed. Not enhanced. One of a kind."
+Example 2: "I couldn't figure out the cleavage... So I made a decision. I put a silver plated wrap over it. What I was trying to hide turned into the design. Not dyed. Not enhanced. One of a kind."
+
+Return ONLY valid JSON with exactly these three fields:
 { "altText": "...", "seoTitle": "...", "metaDescription": "..." }
 
 Rules:
 - altText formula: [Visual Beauty/Color] + [Finished Art Type] + [OOAK Indicator] + [Material] + [Origin region only] + "Rockhound Studio". Max 125 chars.
 - seoTitle formula: [Stone Name] + [Finished Type] + "One-of-a-Kind" + "Rockhound Studio". Max 70 chars.
-- metaDescription formula: Sound like a human craftsman. Describe the stone's visual beauty, then emphasize extreme rarity using the "dirt haul" concept naturally. Example: "We hauled a heavy bucket out of the canyon, but only found this one perfect piece. Cut by hand in our PNW shop. Once it's gone, it's gone." Do NOT repeat words. Max 150 chars STRICT.
+- metaDescription formula: Channel Bob's voice into 150 chars STRICT. Use short, punchy sentences. Tell the raw truth about cutting the stone (e.g., the grind, the surprise inside, or the pivot in design). End with a strong guarantee like "Not dyed. Not enhanced." or "One of a kind." Do NOT use standard jewelry catalog fluff.
 
 Product Title: ${productTitle}
 Product Description: ${productDescription}
 Origin Context: ${origin}`;
 
-      // Live 2.5-flash engine block
       const geminiRes = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
         {
@@ -200,4 +205,138 @@ export default function AiContentForgeTab() {
   const [products, setProducts] = useState(initialProducts);
   const [suggestions, setSuggestions] = useState({});
   const [suggestingId, setSuggestingId] = useState(null);
-  const [savingAltId
+  const [savingAltId, setSavingAltId] = useState(null);
+  const [savingSeoId, setSavingSeoId] = useState(null);
+  const [toast, setToast] = useState(null); 
+  const [pageError, setPageError] = useState(null);
+
+  useEffect(() => {
+    if (fetcher.state === "idle" && fetcher.data) {
+      setSuggestingId(null); setSavingAltId(null); setSavingSeoId(null);
+      if (!fetcher.data.ok) {
+        setPageError(`❌ Fault: ${fetcher.data.error}`);
+        return;
+      }
+      setPageError(null);
+      const { intent, productId } = fetcher.data;
+      if (intent === "ai_suggest") {
+        setSuggestions((prev) => ({ ...prev, [productId]: fetcher.data.suggestion }));
+        setToast({ message: "✨ AI Forged Content Generated", tone: "success" });
+      } 
+      else if (intent === "save_alt") {
+        const updatedAlt = suggestions[productId]?.altText || "";
+        setProducts((prev) => prev.map((p) => {
+            if (p.id === productId) return { ...p, images: p.images.map((img) => ({ ...img, altText: updatedAlt })) };
+            return p;
+        }));
+        setToast({ message: "✓ Alt Text Bulk Updated", tone: "success" });
+      }
+      else if (intent === "save_seo") {
+        setProducts((prev) => prev.map((p) => (p.id === productId ? { ...p, seo: fetcher.data.seo } : p)));
+        setToast({ message: "✓ SEO Data Saved", tone: "success" });
+      }
+      setTimeout(() => setToast(null), 3000);
+    }
+  }, [fetcher.state, fetcher.data]);
+
+  const handleSuggest = (product) => {
+    setSuggestingId(product.id);
+    const fd = new FormData();
+    fd.append("intent", "ai_suggest"); fd.append("productId", product.id);
+    fd.append("productTitle", product.title); fd.append("productDescription", product.description || "");
+    fetcher.submit(fd, { method: "post" });
+  };
+
+  const handleSaveAlt = (product) => {
+    setSavingAltId(product.id);
+    const altText = suggestions[product.id]?.altText;
+    const pairs = product.images.map((img) => ({ id: img.id, alt: altText }));
+    const fd = new FormData();
+    fd.append("intent", "save_alt"); fd.append("productId", product.id); fd.append("pairs", JSON.stringify(pairs));
+    fetcher.submit(fd, { method: "post" });
+  };
+
+  const handleSaveSeo = (product) => {
+    setSavingSeoId(product.id);
+    const seoTitle = suggestions[product.id]?.seoTitle;
+    const seoDesc = suggestions[product.id]?.metaDescription;
+    const fd = new FormData();
+    fd.append("intent", "save_seo"); fd.append("productId", product.id);
+    fd.append("seoTitle", seoTitle); fd.append("seoDescription", seoDesc);
+    fetcher.submit(fd, { method: "post" });
+  };
+
+  const updateSuggestionField = (productId, field, value) => {
+    setSuggestions((prev) => ({ ...prev, [productId]: { ...prev[productId], [field]: value } }));
+  };
+
+  return (
+    <Page title="⚡ AI Content Forge" subtitle="Generate premium, story-driven Alt Text and SEO descriptions powered by Gemini.">
+      {toast && <div style={{ position: "fixed", top: 16, right: 16, zIndex: 9999 }}><Banner tone={toast.tone}>{toast.message}</Banner></div>}
+      <Layout>
+        {pageError && (
+          <Layout.Section>
+            <Banner tone="critical" title="Action Failed" onDismiss={() => setPageError(null)}><Text as="p">{pageError}</Text></Banner>
+          </Layout.Section>
+        )}
+        <Layout.Section>
+          <BlockStack gap="500">
+            {products.map((product) => {
+              const currentAlt = product.images.length > 0 ? product.images[0].altText : "";
+              const currentSeoTitle = product.seo?.title || "";
+              const currentSeoDesc = product.seo?.description || "";
+              const activeSuggestion = suggestions[product.id];
+              return (
+                <Card key={product.id}>
+                  <BlockStack gap="400">
+                    <InlineStack align="space-between" blockAlign="center">
+                      <Text variant="headingMd" fontWeight="bold">{product.title}</Text>
+                      <Button variant="primary" onClick={() => handleSuggest(product)} loading={suggestingId === product.id}>⚡ Suggest Content</Button>
+                    </InlineStack>
+                    <Divider />
+                    <InlineStack align="start" gap="800">
+                      <Box style={{ flex: 1 }}>
+                        <BlockStack gap="300">
+                          <Text variant="headingSm" tone="subdued">Current Configuration</Text>
+                          <BlockStack gap="100"><Text fontWeight="bold">Alt Text (Applied to {product.images.length} images):</Text><Text tone={currentAlt ? "base" : "subdued"}>{currentAlt || "None applied."}</Text></BlockStack>
+                          <BlockStack gap="100"><Text fontWeight="bold">SEO Title:</Text><Text tone={currentSeoTitle ? "base" : "subdued"}>{currentSeoTitle || "None applied."}</Text></BlockStack>
+                          <BlockStack gap="100"><Text fontWeight="bold">Meta Description:</Text><Text tone={currentSeoDesc ? "base" : "subdued"}>{currentSeoDesc || "None applied."}</Text></BlockStack>
+                        </BlockStack>
+                      </Box>
+                      <Box style={{ flex: 1 }}>
+                        {activeSuggestion ? (
+                          <BlockStack gap="400">
+                            <Box background="bg-surface-success" padding="300" borderRadius="200">
+                              <BlockStack gap="300">
+                                <Text variant="headingSm" tone="success">✨ Forged Suggestions</Text>
+                                <BlockStack gap="200">
+                                  <TextField label={`Premium Alt Text (${(activeSuggestion.altText || "").length} chars)`} value={activeSuggestion.altText || ""} onChange={(val) => updateSuggestionField(product.id, "altText", val)} multiline={2} autoComplete="off" />
+                                  <Button size="slim" onClick={() => handleSaveAlt(product)} loading={savingAltId === product.id} disabled={!activeSuggestion.altText || product.images.length === 0}>Apply Alt to All {product.images.length} Images</Button>
+                                </BlockStack>
+                                <Divider />
+                                <BlockStack gap="200">
+                                  <TextField label={`SEO Title (${(activeSuggestion.seoTitle || "").length} chars)`} value={activeSuggestion.seoTitle || ""} onChange={(val) => updateSuggestionField(product.id, "seoTitle", val)} autoComplete="off" />
+                                  <TextField label={`Meta Description (${(activeSuggestion.metaDescription || "").length} chars)`} value={activeSuggestion.metaDescription || ""} onChange={(val) => updateSuggestionField(product.id, "metaDescription", val)} multiline={3} autoComplete="off" />
+                                  <Button size="slim" onClick={() => handleSaveSeo(product)} loading={savingSeoId === product.id} disabled={!activeSuggestion.seoTitle || !activeSuggestion.metaDescription}>Save SEO Data</Button>
+                                </BlockStack>
+                              </BlockStack>
+                            </Box>
+                          </BlockStack>
+                        ) : (
+                          <Box background="bg-surface-secondary" padding="400" borderRadius="200" style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                            <Text tone="subdued" alignment="center">Click "Suggest Content" to forge premium, story-driven text for this product using Gemini AI.</Text>
+                          </Box>
+                        )}
+                      </Box>
+                    </InlineStack>
+                  </BlockStack>
+                </Card>
+              );
+            })}
+            {products.length === 0 && <Banner tone="info"><Text>No products found to forge content for.</Text></Banner>}
+          </BlockStack>
+        </Layout.Section>
+      </Layout>
+    </Page>
+  );
+}
