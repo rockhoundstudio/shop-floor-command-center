@@ -116,12 +116,12 @@ Return ONLY valid JSON with exactly these three fields:
 { "altText": "...", "seoTitle": "...", "metaDescription": "..." }
 
 Rules:
-- altText formula: Start with [Product Title]. Describe the clear visual colors/patterns seen in the image. Weave in the exact phrase "capturing Mother Nature's designs hidden in stone". End with "Rockhound Studio". Keep it highly descriptive for screen readers so a blind person can "see" the stone. Max 125 chars.
+- altText formula: Start with [Product Title]. IGNORE ANY COLORS IN THE TITLE. You MUST rely ONLY on the uploaded image to accurately describe the true physical colors and patterns. Weave in the exact phrase "capturing Mother Nature's designs hidden in stone". End with "Rockhound Studio". Max 125 chars.
 - seoTitle formula: [Stone Name] + [Finished Type] + "One-of-a-Kind" + "Rockhound Studio". Max 70 chars.
-- metaDescription tone: Poetic, spare, story-driven. The shape, color, and origin should feel inevitable — like the stone decided, not the maker. Never clinical. Never salesy. Max 150 characters STRICT.
+- metaDescription tone: Poetic, spare, story-driven. The shape, color, and origin should feel inevitable. Never clinical. Never salesy. Max 150 characters STRICT.
 - metaDescription formula: Write 3 flowing sentences. 
-  1. Describe the striking visual inevitability of the stone based on the image provided. 
-  2. Weave together Bob's creed: "Personally handcrafted and picked from the PNW dirt. Colors sculpted by nature and hand-shaped by color." (If a "Foreman's Direct Note" is provided below, seamlessly blend those specific workbench details into this space). 
+  1. Describe the striking visual inevitability of the stone using ONLY the colors seen in the image. 
+  2. Weave together Bob's creed: "Personally handcrafted and picked from the PNW dirt. Shaped on the Frankenstein until the color said stop." (If a Foreman's Direct Note is provided below, blend it in). 
   3. End exactly with: "One of a kind." 
 
 Foreman's Direct Note: ${customHook}
