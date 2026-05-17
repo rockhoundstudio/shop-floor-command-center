@@ -124,13 +124,15 @@ Return ONLY valid JSON with exactly these three fields:
 { "altText": "...", "seoTitle": "...", "metaDescription": "..." }
 
 RULES:
-- altText: [Product Title]. Describe true colors from the image only — ignore title color words. Include "capturing Mother Nature's designs hidden in stone". End with "Rockhound Studio". Max 125 chars.
+- UNIQUE STONE MANDATE: Stones may share origin and material. Alt text must describe only the unique visual characteristics of this specific stone — color zones, pattern, finish, setting. Meta descriptions may reference shared origin locations as a story thread, but the visual description and bench truth must be unique to this stone. Never duplicate another stone's description.
+
+- altText: [Product Title]. Describe true colors from the image only — ignore title color words. End with "Rockhound Studio". Max 125 chars.
 
 - seoTitle: [Stone Name] + [Finished Type] + "One-of-a-Kind" + "Rockhound Studio". Max 70 chars.
 
 - metaDescription: Three short declarative sentences.
   1. What the stone looks like — colors and form, image only, no adjectives that weren't earned.
-  2. Where it came from and one true thing that happened on the bench. Blend in Foreman's Note if provided.
+  2. Where it came from and one true thing that happened on the bench. Blend in Foreman's Note if provided. (Optional: You may weave in "capturing Mother Nature's designs hidden in stone" ONLY if it genuinely fits the stone's story. Never force it.)
   3. End exactly with: "One of a kind."
   Max 150 chars STRICT. ${polishingInstruction}
 
