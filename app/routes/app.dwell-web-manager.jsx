@@ -1,5 +1,5 @@
-import { useState, useEffect } from "react";
-import { useLoaderData, useFetcher, data, useNavigate, useRevalidator } from "react-router";
+import { useState, useMemo, useEffect } from "react";
+import { useLoaderData, useFetcher, data, redirect, useNavigate, useRevalidator } from "react-router";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server"; // Prisma Engine Connection
 import {
@@ -9,7 +9,6 @@ import {
 import { SearchIcon } from "@shopify/polaris-icons";
 
 // --- 1. THE RULE SET ---
-// Added unique keys to track these natively in the Prisma database
 const INITIAL_GLOBAL_LINKS = [
   { key: "global_all_stones", url: "/collections/all", label: "All Stones" },
   { key: "global_all_tales", url: "/pages/rockhound-logbook-hub", label: "All Tales" }
@@ -121,6 +120,11 @@ function generateInjectionHtml(currentHtml, missingLinks) {
 // --- 2. SERVER ACTIONS & LOADERS ---
 export const loader = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
+  const requestUrl = new URL(request.url);
+  const successMessage = requestUrl.searchParams.get("success") === "rule_saved" 
+    ? "Global rule saved successfully!" 
+    : null;
+
   try {
     // 1. Fetch live products and pages from Shopify
     const res = await admin.graphql(`
@@ -175,7 +179,7 @@ export const loader = async ({ request }) => {
     // 3. Process Server-Side Scan
     const evaluatedProducts = evaluateProducts(products, livePaths, globalLinks);
 
-    return data({ evaluatedProducts, pages, articles, livePaths, globalLinks });
+    return data({ evaluatedProducts, pages, articles, livePaths, globalLinks, successMessage });
   } catch (error) {
     console.error("Loader error:", error);
     return data({ evaluatedProducts: [], pages: [], articles: [], livePaths: [], globalLinks: INITIAL_GLOBAL_LINKS, loaderError: error.message });
@@ -183,11 +187,12 @@ export const loader = async ({ request }) => {
 };
 
 export const action = async ({ request }) => {
+  // 1. Core Engine Hookup: Secure the Admin GraphQL client
   const { admin } = await authenticate.admin(request);
   const formData = await request.formData();
   const intent = formData.get("intent");
 
-  // Save the rule to Render Postgres DB using Prisma Upsert
+  // Save the rule to Render Postgres DB & Trigger Loader Redirect
   if (intent === "saveGlobalRule") {
     const key = formData.get("key");
     const label = formData.get("label");
@@ -199,7 +204,10 @@ export const action = async ({ request }) => {
         update: { label, url },
         create: { key, label, url, isGlobal: true }
       });
-      return data({ ok: true, intent, message: "Global rule saved to database!" });
+      
+      // Redirect back to page to force a clean loader re-scan
+      const requestUrl = new URL(request.url);
+      return redirect(requestUrl.pathname + "?success=rule_saved");
     } catch (error) {
       return data({ ok: false, error: "Failed to save to database." });
     }
@@ -208,14 +216,20 @@ export const action = async ({ request }) => {
   if (intent === "injectLinks") {
     const id = formData.get("id");
     const newHtml = formData.get("newHtml");
-    const res = await admin.graphql(`
-      mutation productUpdate($input: ProductInput!) {
-        productUpdate(input: $input) { userErrors { message } }
+    try {
+      const res = await admin.graphql(`
+        mutation productUpdate($input: ProductInput!) {
+          productUpdate(input: $input) { userErrors { message } }
+        }
+      `, { variables: { input: { id, descriptionHtml: newHtml } } });
+      const json = await res.json();
+      if (json.data?.productUpdate?.userErrors?.length) {
+        return data({ ok: false, error: json.data.productUpdate.userErrors[0].message });
       }
-    `, { variables: { input: { id, descriptionHtml: newHtml } } });
-    const json = await res.json();
-    if (json.data?.productUpdate?.userErrors?.length) return data({ ok: false, error: json.data.productUpdate.userErrors[0].message });
-    return data({ ok: true, intent, message: "Links injected successfully!" });
+      return data({ ok: true, intent, message: "Links injected successfully!" });
+    } catch (e) {
+      return data({ ok: false, error: e.message });
+    }
   }
 
   if (intent === "bulkInjectLinks") {
@@ -223,18 +237,23 @@ export const action = async ({ request }) => {
     let errors = [];
     
     for (const item of payload) {
-      const res = await admin.graphql(`
-        mutation productUpdate($input: ProductInput!) {
-          productUpdate(input: $input) { userErrors { message } }
+      try {
+        const res = await admin.graphql(`
+          mutation productUpdate($input: ProductInput!) {
+            productUpdate(input: $input) { userErrors { message } }
+          }
+        `, { variables: { input: { id: item.id, descriptionHtml: item.newHtml } } });
+        
+        const json = await res.json();
+        if (json.data?.productUpdate?.userErrors?.length) {
+          errors.push(`Error on product ${item.id}: ${json.data.productUpdate.userErrors[0].message}`);
         }
-      `, { variables: { input: { id: item.id, descriptionHtml: item.newHtml } } });
-      const json = await res.json();
-      if (json.data?.productUpdate?.userErrors?.length) {
-        errors.push(`Error on product ${item.id}: ${json.data.productUpdate.userErrors[0].message}`);
+      } catch (e) {
+        errors.push(`Exception on product ${item.id}: ${e.message}`);
       }
     }
     if (errors.length > 0) return data({ ok: false, error: `Finished with errors: ${errors.join(', ')}` });
-    return data({ ok: true, intent, message: `Successfully injected links into ${payload.length} products!` });
+    return data({ ok: true, intent, message: `Successfully applied fixes to ${payload.length} products!` });
   }
 
   if (intent === "updatePage") {
@@ -268,10 +287,10 @@ export const action = async ({ request }) => {
 
 // --- 4. MAIN COMPONENT ---
 export default function DwellWeb() {
-  const { evaluatedProducts, pages, articles, livePaths, loaderError, globalLinks: loadedGlobalLinks } = useLoaderData();
+  const { evaluatedProducts, pages, articles, livePaths, loaderError, globalLinks: loadedGlobalLinks, successMessage } = useLoaderData();
   const fetcher = useFetcher();
   const navigate = useNavigate();
-  const revalidator = useRevalidator(); // Native Remix engine reload tool
+  const revalidator = useRevalidator(); 
 
   const [selectedTab, setSelectedTab] = useState(0);
   const [editorType, setEditorType] = useState("pages"); 
@@ -288,9 +307,9 @@ export default function DwellWeb() {
     if (loadedGlobalLinks) setGlobalLinks(loadedGlobalLinks);
   }, [loadedGlobalLinks]);
 
-  // Clear editing UI on successful backend save
+  // Clear editing UI on successful backend save or redirect completion
   useEffect(() => {
-    if (fetcher.state === "idle" && fetcher.data?.ok && fetcher.data?.intent === "saveGlobalRule") {
+    if (fetcher.state === "idle" && !fetcher.data?.error) {
       setEditingGlobalIndex(null);
     }
   }, [fetcher.state, fetcher.data]);
@@ -336,8 +355,12 @@ export default function DwellWeb() {
 
     return (
       <BlockStack gap="500">
-        {fetcher.data?.message && fetcher.data?.intent === "saveGlobalRule" && (
-          <Banner tone="success">{fetcher.data.message}</Banner>
+        {successMessage && (
+          <Banner tone="success">{successMessage}</Banner>
+        )}
+        
+        {fetcher.data?.error && (
+          <Banner tone="critical">{fetcher.data.error}</Banner>
         )}
 
         <Card>
