@@ -17,7 +17,7 @@ export function ErrorBoundary() {
     <Page title="Engine Fault">
       <Card background="bg-surface-critical">
         <BlockStack gap="400">
-          <Text variant="headingLg" as="h1" fontWeight="bold">AI Forge Crashed</Text>
+          <Text as="h1" fontWeight="bold" variant="headingLg">AI Forge Crashed</Text>
           <Text>
             {isRouteErrorResponse(error)
               ? `${error.status} ${error.statusText} - ${error.data}`
@@ -175,8 +175,11 @@ Origin Context: ${origin}`;
         console.log("RAW GEMINI RESPONSE:", JSON.stringify(data));
 
         let rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-        rawText = rawText.replace(/```json/gi, "").replace(/
-```/gi, "").trim();
+        
+        // Bulletproof string cleaning to prevent Vite/esbuild regex crash
+        rawText = rawText.replace(new RegExp("```json", "gi"), "");
+        rawText = rawText.replace(new RegExp("```", "gi"), "");
+        rawText = rawText.trim();
         
         let parsedData;
         try { 
@@ -332,18 +335,18 @@ export default function AiContentForgeTab() {
   };
 
   return (
-    <Page title="⚡ AI Content Forge" subtitle="Generate premium, story-driven Alt Text and SEO descriptions powered by Gemini.">
+    <Page subtitle="Generate premium, story-driven Alt Text and SEO descriptions powered by Gemini." title="⚡ AI Content Forge">
       {toast && <div style={{ position: "fixed", top: 16, right: 16, zIndex: 9999 }}><Banner tone="{toast.tone}">{toast.message}</Banner></div>}
       <Layout>
         {pageError && (
           <Layout.Section>
-            <Banner tone="critical" title="Action Failed" onDismiss="{()"> setPageError(null)}><Text as="p">{pageError}</Text></Banner>
+            <Banner onDismiss="{()" title="Action Failed" tone="critical"> setPageError(null)}><Text as="p">{pageError}</Text></Banner>
           </Layout.Section>
         )}
         <Layout.Section>
           <BlockStack gap="500">
             {products.map((product) => (
-              <ForgeProductCard key="{product.id}" product="{product}" activeSuggestion="{suggestions[product.id]}" isSuggesting="{suggestingId" product.id} isSavingAlt="{savingAltId" isSavingSeo="{savingSeoId" globalCooldown="{globalCooldown}" onSuggest="{handleSuggest}" onSaveAlt="{handleSaveAlt}" onSaveSeo="{handleSaveSeo}" onUpdateSuggestionField="{updateSuggestionField}"/>
+              <ForgeProductCard activeSuggestion="{suggestions[product.id]}" globalCooldown="{globalCooldown}" isSavingAlt="{savingAltId" isSavingSeo="{savingSeoId" isSuggesting="{suggestingId" key="{product.id}" onSaveAlt="{handleSaveAlt}" onSaveSeo="{handleSaveSeo}" onSuggest="{handleSuggest}" onUpdateSuggestionField="{updateSuggestionField}" product="{product}" product.id}/>
             ))}
             {products.length === 0 && <Banner tone="info"><Text>No products found to forge content for.</Text></Banner>}
           </BlockStack>
