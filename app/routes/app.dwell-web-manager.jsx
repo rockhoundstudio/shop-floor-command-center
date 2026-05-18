@@ -11,8 +11,7 @@ import { SearchIcon } from "@shopify/polaris-icons";
 // --- 1. THE RULE SET ---
 const INITIAL_GLOBAL_LINKS = [
   { key: "global_all_stones", url: "/collections/all", label: "All Stones" },
-  { key: "global_all_tales", url: "/pages/tails-and-trails
-", label: "All Tales" }
+  { key: "global_all_tales", url: "/pages/tails-and-trails", label: "All Tales" }
 ];
 
 const HARDWARE_LINKS = [
