@@ -1,6 +1,7 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useLoaderData, useFetcher, data, useNavigate } from "react-router";
 import { authenticate } from "../shopify.server";
+import prisma from "../db.server"; // Prisma Engine Connection
 import {
   Page, Layout, Card, Text, BlockStack, InlineStack, Button,
   Badge, Box, Divider, Tabs, DataTable, Select, TextField, Banner, Grid, Tooltip, Icon
@@ -8,9 +9,10 @@ import {
 import { SearchIcon } from "@shopify/polaris-icons";
 
 // --- 1. THE RULE SET ---
+// Added unique keys to track these natively in the Prisma database
 const INITIAL_GLOBAL_LINKS = [
-  { url: "/collections/all", label: "All Stones" },
-  { url: "/pages/rockhound-logbook-hub", label: "All Tales" }
+  { key: "global_all_stones", url: "/collections/all", label: "All Stones" },
+  { key: "global_all_tales", url: "/pages/rockhound-logbook-hub", label: "All Tales" }
 ];
 
 const COLLECTION_RULES = {
@@ -53,6 +55,7 @@ const COLLECTION_RULES = {
 export const loader = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
   try {
+    // 1. Fetch live products and pages from Shopify
     const res = await admin.graphql(`
       query {
         products(first: 100) {
@@ -74,6 +77,19 @@ export const loader = async ({ request }) => {
       throw new Error(JSON.stringify(json.errors));
     }
     
+    // 2. Fetch global rules from Render Prisma Database
+    const dbGlobalRules = await prisma.dwellRule.findMany({ 
+      where: { isGlobal: true } 
+    });
+
+    // Merge database rules over the hardcoded defaults
+    const globalLinks = INITIAL_GLOBAL_LINKS.map(defaultLink => {
+      const dbMatch = dbGlobalRules.find(r => r.key === defaultLink.key);
+      return dbMatch 
+        ? { key: dbMatch.key, url: dbMatch.url, label: dbMatch.label } 
+        : defaultLink;
+    });
+
     const products = (json.data?.products?.edges || []).map(e => ({
       ...e.node,
       collectionHandles: e.node.collections.edges.map(ce => ce.node.handle)
@@ -89,10 +105,10 @@ export const loader = async ({ request }) => {
       ...articles.map(a => `/blogs/${a.blog.handle}/${a.handle}`)
     ];
 
-    return data({ products, pages, articles, livePaths });
+    return data({ products, pages, articles, livePaths, globalLinks });
   } catch (error) {
     console.error("Loader error:", error);
-    return data({ products: [], pages: [], articles: [], livePaths: [], loaderError: error.message });
+    return data({ products: [], pages: [], articles: [], livePaths: [], globalLinks: INITIAL_GLOBAL_LINKS, loaderError: error.message });
   }
 };
 
@@ -100,6 +116,24 @@ export const action = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
   const formData = await request.formData();
   const intent = formData.get("intent");
+
+  // Save the rule to Render Postgres DB using Prisma Upsert
+  if (intent === "saveGlobalRule") {
+    const key = formData.get("key");
+    const label = formData.get("label");
+    const url = formData.get("url");
+
+    try {
+      await prisma.dwellRule.upsert({
+        where: { key: key },
+        update: { label, url },
+        create: { key, label, url, isGlobal: true }
+      });
+      return data({ ok: true, intent, message: "Global rule saved to database!" });
+    } catch (error) {
+      return data({ ok: false, error: "Failed to save to database." });
+    }
+  }
 
   if (intent === "injectLinks") {
     const id = formData.get("id");
@@ -111,7 +145,7 @@ export const action = async ({ request }) => {
     `, { variables: { input: { id, descriptionHtml: newHtml } } });
     const json = await res.json();
     if (json.data?.productUpdate?.userErrors?.length) return data({ ok: false, error: json.data.productUpdate.userErrors[0].message });
-    return data({ ok: true, message: "Links injected successfully!" });
+    return data({ ok: true, intent, message: "Links injected successfully!" });
   }
 
   if (intent === "bulkInjectLinks") {
@@ -130,7 +164,7 @@ export const action = async ({ request }) => {
       }
     }
     if (errors.length > 0) return data({ ok: false, error: `Finished with errors: ${errors.join(', ')}` });
-    return data({ ok: true, message: `Successfully injected links into ${payload.length} products!` });
+    return data({ ok: true, intent, message: `Successfully injected links into ${payload.length} products!` });
   }
 
   if (intent === "updatePage") {
@@ -143,7 +177,7 @@ export const action = async ({ request }) => {
     `, { variables: { id, page: { body: bodyHtml } } });
     const json = await res.json();
     if (json.data?.pageUpdate?.userErrors?.length) return data({ ok: false, error: json.data.pageUpdate.userErrors[0].message });
-    return data({ ok: true, message: "Page saved successfully!" });
+    return data({ ok: true, intent, message: "Page saved successfully!" });
   }
 
   if (intent === "updateArticle") {
@@ -156,7 +190,7 @@ export const action = async ({ request }) => {
     `, { variables: { id, article: { body: bodyHtml } } });
     const json = await res.json();
     if (json.data?.articleUpdate?.userErrors?.length) return data({ ok: false, error: json.data.articleUpdate.userErrors[0].message });
-    return data({ ok: true, message: "Article saved successfully!" });
+    return data({ ok: true, intent, message: "Article saved successfully!" });
   }
 
   return data({ ok: false });
@@ -217,7 +251,12 @@ function evaluateProducts(products, livePaths, currentGlobalLinks) {
 function generateInjectionHtml(currentHtml, missingLinks) {
   let newHtml = currentHtml || "";
   let injectionHtml = `\n\n<div class="rockhound-dwell-links" style="margin-top: 2em; display: flex; flex-wrap: wrap; gap: 10px;">`;
-  missingLinks.forEach(link => {
+  
+  // Hard Filter: Only inject valid URLs, deliberately bypassing dead links
+  const validLinks = missingLinks.filter(link => !link.isDead);
+  if (validLinks.length === 0) return newHtml;
+
+  validLinks.forEach(link => {
      injectionHtml += `\n  <a href="${link.url}" class="button" style="padding: 10px 15px; background: #f4f6f8; border: 1px solid #c9cccf; border-radius: 4px; text-decoration: none; color: #202223; font-weight: 500;">${link.label}</a>`;
   });
   injectionHtml += `\n</div>`;
@@ -226,7 +265,7 @@ function generateInjectionHtml(currentHtml, missingLinks) {
 
 // --- 4. MAIN COMPONENT ---
 export default function DwellWeb() {
-  const { products, pages, articles, livePaths, loaderError } = useLoaderData();
+  const { products, pages, articles, livePaths, loaderError, globalLinks: loadedGlobalLinks } = useLoaderData();
   const fetcher = useFetcher();
   const navigate = useNavigate();
 
@@ -236,10 +275,21 @@ export default function DwellWeb() {
   const [contentHtml, setContentHtml] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
 
-  // Manage Global Links in state to allow inline editing
-  const [globalLinks, setGlobalLinks] = useState(INITIAL_GLOBAL_LINKS);
+  const [globalLinks, setGlobalLinks] = useState(loadedGlobalLinks || INITIAL_GLOBAL_LINKS);
   const [editingGlobalIndex, setEditingGlobalIndex] = useState(null);
   const [editForm, setEditForm] = useState({ label: "", url: "" });
+
+  // Sync state if loader data re-fetches after a save
+  useEffect(() => {
+    if (loadedGlobalLinks) setGlobalLinks(loadedGlobalLinks);
+  }, [loadedGlobalLinks]);
+
+  // Clear editing UI on successful backend save
+  useEffect(() => {
+    if (fetcher.state === "idle" && fetcher.data?.ok && fetcher.data?.intent === "saveGlobalRule") {
+      setEditingGlobalIndex(null);
+    }
+  }, [fetcher.state, fetcher.data]);
 
   const handleTabChange = (index) => setSelectedTab(index);
 
@@ -282,6 +332,10 @@ export default function DwellWeb() {
 
     return (
       <BlockStack gap="500">
+        {fetcher.data?.message && fetcher.data?.intent === "saveGlobalRule" && (
+          <Banner tone="success">{fetcher.data.message}</Banner>
+        )}
+
         <Card>
           <BlockStack gap="300">
             <Text variant="headingMd">Global Rule (All Products)</Text>
@@ -294,7 +348,7 @@ export default function DwellWeb() {
 
                   if (isEditing) {
                     return (
-                      <BlockStack gap="200" key={index}>
+                      <BlockStack gap="200" key={l.key}>
                         <TextField
                           label="Label"
                           value={editForm.label}
@@ -310,12 +364,15 @@ export default function DwellWeb() {
                         <InlineStack gap="200">
                           <Button 
                             size="micro" 
-                            variant="primary" 
+                            variant="primary"
+                            loading={fetcher.state === "submitting" && fetcher.formData?.get("key") === l.key}
                             onClick={() => {
-                              const newLinks = [...globalLinks];
-                              newLinks[index] = editForm;
-                              setGlobalLinks(newLinks);
-                              setEditingGlobalIndex(null);
+                              const fd = new FormData();
+                              fd.append("intent", "saveGlobalRule");
+                              fd.append("key", l.key);
+                              fd.append("label", editForm.label);
+                              fd.append("url", editForm.url);
+                              fetcher.submit(fd, { method: "post" });
                             }}
                           >
                             Save
@@ -327,7 +384,7 @@ export default function DwellWeb() {
                   }
 
                   return (
-                    <BlockStack key={index} gap="100">
+                    <BlockStack key={l.key} gap="100">
                       <InlineStack align="space-between" blockAlign="center">
                         <InlineStack gap="200" blockAlign="center">
                           <Text fontWeight="bold">• {l.label}</Text>
@@ -403,12 +460,13 @@ export default function DwellWeb() {
     }
 
     const hasDeadLinkConfig = nonCompliantProducts.some(p => p.hasDeadLinks);
+    const hasAnyValidMissing = nonCompliantProducts.some(p => p.missing.some(l => !l.isDead));
 
     return (
       <BlockStack gap="400">
         {hasDeadLinkConfig && (
           <Banner tone="warning" title="Dead Links Detected in Rules">
-            <Text>Some products require URLs that are currently dead (404). You can still inject the links, but those specific loops will be broken until you correct the URLs in the Rules tab.</Text>
+            <Text>Some products require URLs that are currently dead (404). You can still inject the links, but dead URLs will be safely ignored until you correct them in the Rules tab.</Text>
           </Banner>
         )}
 
@@ -423,56 +481,62 @@ export default function DwellWeb() {
               variant="primary" 
               onClick={handleBulkInject}
               loading={fetcher.state === "submitting" && fetcher.formData?.get("intent") === "bulkInjectLinks"}
+              disabled={!hasAnyValidMissing}
             >
               ⚡ Bulk Inject All Missing Links
             </Button>
           </InlineStack>
         </Card>
 
-        {fetcher.data?.message && ["injectLinks", "bulkInjectLinks"].includes(fetcher.formData?.get("intent")) && (
+        {fetcher.data?.message && ["injectLinks", "bulkInjectLinks"].includes(fetcher.data?.intent) && (
           <Banner tone="success">{fetcher.data.message}</Banner>
         )}
         
-        {nonCompliantProducts.map(p => (
-          <Card key={p.id}>
-            <BlockStack gap="300">
-              <InlineStack align="space-between" blockAlign="center">
-                <BlockStack gap="100">
-                  <Text variant="headingSm">{p.title}</Text>
-                  <Text variant="bodySm" tone="subdued">
-                    Found in: {p.collectionHandles.filter(h => COLLECTION_RULES[h]).map(h => COLLECTION_RULES[h].name).join(", ") || "Global Only"}
-                  </Text>
-                </BlockStack>
-                <Button 
-                  variant="primary" 
-                  onClick={() => handleInject(p)}
-                  loading={fetcher.state === "submitting" && fetcher.formData?.get("id") === p.id}
-                >
-                  Inject Missing Links
-                </Button>
-              </InlineStack>
-              <Divider />
-              <InlineStack gap="400">
-                <Box style={{ flex: 1 }}>
-                  <Text variant="bodySm" fontWeight="bold" tone="success">✅ Present:</Text>
-                  <InlineStack gap="200" wrap>
-                    {p.present.length === 0 ? <Text variant="bodySm" tone="subdued">None</Text> : p.present.map((l, i) => <Badge key={i} tone="success">{l.label}</Badge>)}
-                  </InlineStack>
-                </Box>
-                <Box style={{ flex: 1 }}>
-                  <Text variant="bodySm" fontWeight="bold" tone="critical">🔴 Missing:</Text>
-                  <InlineStack gap="200" wrap>
-                    {p.missing.map((l, i) => (
-                      <Badge key={i} tone={l.isDead ? "warning" : "critical"}>
-                        {l.label} {l.isDead && "(DEAD URL)"}
-                      </Badge>
-                    ))}
-                  </InlineStack>
-                </Box>
-              </InlineStack>
-            </BlockStack>
-          </Card>
-        ))}
+        {nonCompliantProducts.map(p => {
+          const hasValidMissingForProduct = p.missing.some(l => !l.isDead);
+
+          return (
+            <Card key={p.id}>
+              <BlockStack gap="300">
+                <InlineStack align="space-between" blockAlign="center">
+                  <BlockStack gap="100">
+                    <Text variant="headingSm">{p.title}</Text>
+                    <Text variant="bodySm" tone="subdued">
+                      Found in: {p.collectionHandles.filter(h => COLLECTION_RULES[h]).map(h => COLLECTION_RULES[h].name).join(", ") || "Global Only"}
+                    </Text>
+                  </BlockStack>
+                  <Button 
+                    variant="primary" 
+                    onClick={() => handleInject(p)}
+                    loading={fetcher.state === "submitting" && fetcher.formData?.get("id") === p.id}
+                    disabled={!hasValidMissingForProduct}
+                  >
+                    Inject Missing Links
+                  </Button>
+                </InlineStack>
+                <Divider />
+                <InlineStack gap="400">
+                  <Box style={{ flex: 1 }}>
+                    <Text variant="bodySm" fontWeight="bold" tone="success">✅ Present:</Text>
+                    <InlineStack gap="200" wrap>
+                      {p.present.length === 0 ? <Text variant="bodySm" tone="subdued">None</Text> : p.present.map((l, i) => <Badge key={i} tone="success">{l.label}</Badge>)}
+                    </InlineStack>
+                  </Box>
+                  <Box style={{ flex: 1 }}>
+                    <Text variant="bodySm" fontWeight="bold" tone="critical">🔴 Missing:</Text>
+                    <InlineStack gap="200" wrap>
+                      {p.missing.map((l, i) => (
+                        <Badge key={i} tone={l.isDead ? "warning" : "critical"}>
+                          {l.label} {l.isDead && "(DEAD URL - Ignored)"}
+                        </Badge>
+                      ))}
+                    </InlineStack>
+                  </Box>
+                </InlineStack>
+              </BlockStack>
+            </Card>
+          );
+        })}
       </BlockStack>
     );
   };
@@ -550,14 +614,14 @@ export default function DwellWeb() {
             </Card>
           ) : (
             <BlockStack gap="400">
-              {fetcher.data?.message && ["updatePage", "updateArticle"].includes(fetcher.formData?.get("intent")) && (
+              {fetcher.data?.message && ["updatePage", "updateArticle"].includes(fetcher.data?.intent) && (
                 <Banner tone="success">{fetcher.data.message}</Banner>
               )}
               <Card>
                 <BlockStack gap="400">
                   <InlineStack align="space-between">
                     <Text variant="headingLg">{activeItem.title}</Text>
-                    <Button variant="primary" onClick={handleSaveContent} loading={fetcher.state === "submitting"}>
+                    <Button variant="primary" onClick={handleSaveContent} loading={fetcher.state === "submitting" && ["updatePage", "updateArticle"].includes(fetcher.formData?.get("intent"))}>
                       Save HTML
                     </Button>
                   </InlineStack>
