@@ -1,10 +1,10 @@
 import { useState, useMemo, useEffect } from "react";
-import { useLoaderData, useFetcher, data, redirect, useNavigate, useRevalidator } from "react-router";
+import { useLoaderData, useFetcher, data, redirect, useNavigate } from "react-router";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server"; // Prisma Engine Connection
 import {
   Page, Layout, Card, Text, BlockStack, InlineStack, Button,
-  Badge, Box, Divider, Tabs, DataTable, Select, TextField, Banner, Grid, Tooltip, Icon
+  Badge, Box, Divider, Tabs, DataTable, Select, TextField, Banner, Grid, Icon
 } from "@shopify/polaris";
 import { SearchIcon } from "@shopify/polaris-icons";
 
@@ -12,6 +12,11 @@ import { SearchIcon } from "@shopify/polaris-icons";
 const INITIAL_GLOBAL_LINKS = [
   { key: "global_all_stones", url: "/collections/all", label: "All Stones" },
   { key: "global_all_tales", url: "/pages/rockhound-logbook-hub", label: "All Tales" }
+];
+
+const HARDWARE_LINKS = [
+  { url: "/pages/build-your-setting", label: "Build Your Setting" },
+  { url: "/collections/hardware", label: "Hardware Collection" }
 ];
 
 const COLLECTION_RULES = {
@@ -70,18 +75,25 @@ function evaluateProducts(products, livePaths, currentGlobalLinks) {
     const required = [];
     const missing = [];
     const present = [];
+    const isHardware = product.tags && product.tags.includes("hardware");
 
-    currentGlobalLinks.forEach(link => required.push({ ...link, isDead: !livePaths.includes(link.url) }));
+    if (isHardware) {
+      // Hardware products strictly require these two links
+      HARDWARE_LINKS.forEach(link => required.push({ ...link, isDead: !livePaths.includes(link.url) }));
+    } else {
+      // Standard stone products require global links + collection specifics
+      currentGlobalLinks.forEach(link => required.push({ ...link, isDead: !livePaths.includes(link.url) }));
 
-    product.collectionHandles.forEach(handle => {
-      if (COLLECTION_RULES[handle]) {
-        COLLECTION_RULES[handle].links.forEach(link => {
-          if (!required.some(r => r.label === link.label)) {
-            required.push({ ...link, isDead: !livePaths.includes(link.url) });
-          }
-        });
-      }
-    });
+      product.collectionHandles.forEach(handle => {
+        if (COLLECTION_RULES[handle]) {
+          COLLECTION_RULES[handle].links.forEach(link => {
+            if (!required.some(r => r.label === link.label)) {
+              required.push({ ...link, isDead: !livePaths.includes(link.url) });
+            }
+          });
+        }
+      });
+    }
 
     required.forEach(link => {
       if (checkLinkPresence(htmlLinks, link.url)) {
@@ -91,12 +103,26 @@ function evaluateProducts(products, livePaths, currentGlobalLinks) {
       }
     });
 
+    const isCompliant = missing.length === 0;
+    
+    // Determine strict compliance state
+    let complianceStatus = "Broken";
+    if (isCompliant) {
+      complianceStatus = "Compliant";
+    } else if (present.length === 2) {
+      complianceStatus = "Partial";
+    } else {
+      complianceStatus = "Broken";
+    }
+
     return {
       ...product,
+      isHardware,
       required,
       missing,
       present,
-      isCompliant: missing.length === 0,
+      isCompliant,
+      complianceStatus,
       hasDeadLinks: required.some(r => r.isDead)
     };
   });
@@ -126,13 +152,13 @@ export const loader = async ({ request }) => {
     : null;
 
   try {
-    // 1. Fetch live products and pages from Shopify
+    // 1. Fetch live products, tags, and pages from Shopify
     const res = await admin.graphql(`
       query {
         products(first: 100) {
           edges {
             node {
-              id title descriptionHtml
+              id title descriptionHtml tags
               collections(first: 10) { edges { node { handle } } }
             }
           }
@@ -163,6 +189,7 @@ export const loader = async ({ request }) => {
 
     const products = (json.data?.products?.edges || []).map(e => ({
       ...e.node,
+      tags: e.node.tags || [],
       collectionHandles: e.node.collections.edges.map(ce => ce.node.handle)
     }));
     const collections = (json.data?.collections?.edges || []).map(e => e.node);
@@ -290,7 +317,6 @@ export default function DwellWeb() {
   const { evaluatedProducts, pages, articles, livePaths, loaderError, globalLinks: loadedGlobalLinks, successMessage } = useLoaderData();
   const fetcher = useFetcher();
   const navigate = useNavigate();
-  const revalidator = useRevalidator(); 
 
   const [selectedTab, setSelectedTab] = useState(0);
   const [editorType, setEditorType] = useState("pages"); 
@@ -366,7 +392,7 @@ export default function DwellWeb() {
         <Card>
           <BlockStack gap="300">
             <Text variant="headingMd">Global Rule (All Products)</Text>
-            <Text tone="subdued">Every product must contain these two footer buttons.</Text>
+            <Text tone="subdued">Every stone product must contain these two footer buttons.</Text>
             <Box padding="300" background="bg-surface-secondary" borderRadius="100">
               <BlockStack gap="400">
                 {globalLinks.map((l, index) => {
@@ -427,6 +453,18 @@ export default function DwellWeb() {
             </Box>
           </BlockStack>
         </Card>
+
+        <Card>
+          <BlockStack gap="300">
+            <Text variant="headingMd">Hardware Rule</Text>
+            <Text tone="subdued">Applies automatically to any product tagged with "hardware".</Text>
+            <Box padding="300" background="bg-surface-secondary" borderRadius="100">
+              <BlockStack gap="200">
+                {HARDWARE_LINKS.map(renderLinkRule)}
+              </BlockStack>
+            </Box>
+          </BlockStack>
+        </Card>
         
         <Text variant="headingMd">Collection-Specific Rules</Text>
         <Grid>
@@ -455,9 +493,11 @@ export default function DwellWeb() {
       p.required.length.toString(),
       p.hasDeadLinks 
         ? <Badge tone="warning">⚠️ Setup Error</Badge> 
-        : p.isCompliant 
+        : p.complianceStatus === "Compliant" 
           ? <Badge tone="success">✅ Compliant</Badge> 
-          : <Badge tone="critical">🔴 {p.missing.length} Missing</Badge>,
+          : p.complianceStatus === "Partial"
+            ? <Badge tone="warning">⚠️ Partial</Badge>
+            : <Badge tone="critical">🔴 Broken</Badge>,
       p.hasDeadLinks
         ? <Text tone="critical">Rule contains dead link</Text>
         : p.isCompliant ? <Text tone="subdued">—</Text> : p.missing.map(m => m.label).join(", ")
@@ -467,8 +507,7 @@ export default function DwellWeb() {
       <BlockStack gap="400">
         <InlineStack align="end">
           <Button 
-            onClick={() => revalidator.revalidate()} 
-            loading={revalidator.state === "loading"}
+            onClick={() => window.location.reload()} 
           >
             🔄 Rescan Live Data
           </Button>
@@ -539,7 +578,7 @@ export default function DwellWeb() {
                   <BlockStack gap="100">
                     <Text variant="headingSm">{p.title}</Text>
                     <Text variant="bodySm" tone="subdued">
-                      Found in: {p.collectionHandles.filter(h => COLLECTION_RULES[h]).map(h => COLLECTION_RULES[h].name).join(", ") || "Global Only"}
+                      Found in: {p.isHardware ? "Hardware" : (p.collectionHandles.filter(h => COLLECTION_RULES[h]).map(h => COLLECTION_RULES[h].name).join(", ") || "Global Only")}
                     </Text>
                   </BlockStack>
                   <Button 
@@ -694,8 +733,7 @@ export default function DwellWeb() {
       backAction={{ content: "Command Center", onAction: () => navigate("/app") }}
       primaryAction={{
         content: "🔄 Rescan Live Data",
-        onAction: () => revalidator.revalidate(),
-        loading: revalidator.state === "loading"
+        onAction: () => window.location.reload()
       }}
     >
       {loaderError && (
