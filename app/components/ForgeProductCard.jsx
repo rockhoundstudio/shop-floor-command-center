@@ -18,6 +18,7 @@ export default function ForgeProductCard({
   isSuggesting,
   isSavingAlt,
   isSavingSeo,
+  globalCooldown,
   onSuggest,
   onSaveAlt,
   onSaveSeo,
@@ -26,7 +27,6 @@ export default function ForgeProductCard({
   const [customHook, setCustomHook] = useState("");
   const [isPolishingTarget, setIsPolishingTarget] = useState(false);
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
-  const [cooldown, setCooldown] = useState(0);
 
   const currentAlt = product.images.length > 0 ? product.images[0].altText : "";
   const currentSeoTitle = product.seo?.title || "";
@@ -35,13 +35,6 @@ export default function ForgeProductCard({
 
   const handleSuggestClick = () => {
     onSuggest(product, customHook, isPolishingTarget);
-    setCooldown(15);
-    const interval = setInterval(() => {
-      setCooldown((prev) => {
-        if (prev <= 1) { clearInterval(interval); return 0; }
-        return prev - 1;
-      });
-    }, 1000);
   };
 
   return (
@@ -89,9 +82,9 @@ export default function ForgeProductCard({
                   variant="primary"
                   onClick={handleSuggestClick}
                   loading={isSuggesting}
-                  disabled={isSuggesting || cooldown > 0}
+                  disabled={isSuggesting || globalCooldown > 0}
                 >
-                  {cooldown > 0 ? `⏳ Wait ${cooldown}s` : "⚡ Suggest Content"}
+                  {globalCooldown > 0 ? `⏳ Wait ${globalCooldown}s` : "⚡ Suggest Content"}
                 </Button>
               </BlockStack>
             </Box>

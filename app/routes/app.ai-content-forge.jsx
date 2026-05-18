@@ -249,6 +249,16 @@ export default function AiContentForgeTab() {
   const [savingSeoId, setSavingSeoId] = useState(null);
   const [toast, setToast] = useState(null); 
   const [pageError, setPageError] = useState(null);
+  const [globalCooldown, setGlobalCooldown] = useState(0);
+
+  // Global Cooldown Timer
+  useEffect(() => {
+    if (globalCooldown <= 0) return;
+    const timer = setInterval(() => {
+      setGlobalCooldown((prev) => Math.max(0, prev - 1));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [globalCooldown]);
 
   useEffect(() => {
     if (fetcher.state === "idle" && fetcher.data) {
@@ -282,6 +292,7 @@ export default function AiContentForgeTab() {
   const handleSuggest = (product, customHook, isPolishingTarget) => {
     setPageError(null);
     setSuggestingId(product.id);
+    setGlobalCooldown(65); // Trigger Master Lock
     const fd = new FormData();
     fd.append("intent", "ai_suggest");
     fd.append("productId", product.id);
@@ -334,6 +345,7 @@ export default function AiContentForgeTab() {
                 isSuggesting={suggestingId === product.id}
                 isSavingAlt={savingAltId === product.id}
                 isSavingSeo={savingSeoId === product.id}
+                globalCooldown={globalCooldown}
                 onSuggest={handleSuggest}
                 onSaveAlt={handleSaveAlt}
                 onSaveSeo={handleSaveSeo}
