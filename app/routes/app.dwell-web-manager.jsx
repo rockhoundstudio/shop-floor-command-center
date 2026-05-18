@@ -1,5 +1,5 @@
-import { useState, useMemo, useEffect } from "react";
-import { useLoaderData, useFetcher, data, useNavigate } from "react-router";
+import { useState, useEffect } from "react";
+import { useLoaderData, useFetcher, data, useNavigate, useRevalidator } from "react-router";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server"; // Prisma Engine Connection
 import {
@@ -50,6 +50,73 @@ const COLLECTION_RULES = {
     ]
   }
 };
+
+// --- 3. EVALUATION ENGINE (Hoisted for Loader use) ---
+function extractLinks(html) {
+  if (!html) return [];
+  const regex = /href=["']([^"']*)["']/gi;
+  const links = [];
+  let match;
+  while ((match = regex.exec(html)) !== null) links.push(match[1]);
+  return links;
+}
+
+function checkLinkPresence(htmlLinks, requiredUrl) {
+  return htmlLinks.some(h => h.includes(requiredUrl));
+}
+
+function evaluateProducts(products, livePaths, currentGlobalLinks) {
+  return products.map(product => {
+    const htmlLinks = extractLinks(product.descriptionHtml);
+    const required = [];
+    const missing = [];
+    const present = [];
+
+    currentGlobalLinks.forEach(link => required.push({ ...link, isDead: !livePaths.includes(link.url) }));
+
+    product.collectionHandles.forEach(handle => {
+      if (COLLECTION_RULES[handle]) {
+        COLLECTION_RULES[handle].links.forEach(link => {
+          if (!required.some(r => r.label === link.label)) {
+            required.push({ ...link, isDead: !livePaths.includes(link.url) });
+          }
+        });
+      }
+    });
+
+    required.forEach(link => {
+      if (checkLinkPresence(htmlLinks, link.url)) {
+        present.push(link);
+      } else {
+        missing.push(link);
+      }
+    });
+
+    return {
+      ...product,
+      required,
+      missing,
+      present,
+      isCompliant: missing.length === 0,
+      hasDeadLinks: required.some(r => r.isDead)
+    };
+  });
+}
+
+function generateInjectionHtml(currentHtml, missingLinks) {
+  let newHtml = currentHtml || "";
+  let injectionHtml = `\n\n<div class="rockhound-dwell-links" style="margin-top: 2em; display: flex; flex-wrap: wrap; gap: 10px;">`;
+  
+  // Hard Filter: Only inject valid URLs, deliberately bypassing dead links
+  const validLinks = missingLinks.filter(link => !link.isDead);
+  if (validLinks.length === 0) return newHtml;
+
+  validLinks.forEach(link => {
+     injectionHtml += `\n  <a href="${link.url}" class="button" style="padding: 10px 15px; background: #f4f6f8; border: 1px solid #c9cccf; border-radius: 4px; text-decoration: none; color: #202223; font-weight: 500;">${link.label}</a>`;
+  });
+  injectionHtml += `\n</div>`;
+  return newHtml + injectionHtml;
+}
 
 // --- 2. SERVER ACTIONS & LOADERS ---
 export const loader = async ({ request }) => {
@@ -105,10 +172,13 @@ export const loader = async ({ request }) => {
       ...articles.map(a => `/blogs/${a.blog.handle}/${a.handle}`)
     ];
 
-    return data({ products, pages, articles, livePaths, globalLinks });
+    // 3. Process Server-Side Scan
+    const evaluatedProducts = evaluateProducts(products, livePaths, globalLinks);
+
+    return data({ evaluatedProducts, pages, articles, livePaths, globalLinks });
   } catch (error) {
     console.error("Loader error:", error);
-    return data({ products: [], pages: [], articles: [], livePaths: [], globalLinks: INITIAL_GLOBAL_LINKS, loaderError: error.message });
+    return data({ evaluatedProducts: [], pages: [], articles: [], livePaths: [], globalLinks: INITIAL_GLOBAL_LINKS, loaderError: error.message });
   }
 };
 
@@ -196,78 +266,12 @@ export const action = async ({ request }) => {
   return data({ ok: false });
 };
 
-// --- 3. EVALUATION ENGINE ---
-function extractLinks(html) {
-  if (!html) return [];
-  const regex = /href=["']([^"']*)["']/gi;
-  const links = [];
-  let match;
-  while ((match = regex.exec(html)) !== null) links.push(match[1]);
-  return links;
-}
-
-function checkLinkPresence(htmlLinks, requiredUrl) {
-  return htmlLinks.some(h => h.includes(requiredUrl));
-}
-
-function evaluateProducts(products, livePaths, currentGlobalLinks) {
-  return products.map(product => {
-    const htmlLinks = extractLinks(product.descriptionHtml);
-    const required = [];
-    const missing = [];
-    const present = [];
-
-    currentGlobalLinks.forEach(link => required.push({ ...link, isDead: !livePaths.includes(link.url) }));
-
-    product.collectionHandles.forEach(handle => {
-      if (COLLECTION_RULES[handle]) {
-        COLLECTION_RULES[handle].links.forEach(link => {
-          if (!required.some(r => r.label === link.label)) {
-            required.push({ ...link, isDead: !livePaths.includes(link.url) });
-          }
-        });
-      }
-    });
-
-    required.forEach(link => {
-      if (checkLinkPresence(htmlLinks, link.url)) {
-        present.push(link);
-      } else {
-        missing.push(link);
-      }
-    });
-
-    return {
-      ...product,
-      required,
-      missing,
-      present,
-      isCompliant: missing.length === 0,
-      hasDeadLinks: required.some(r => r.isDead)
-    };
-  });
-}
-
-function generateInjectionHtml(currentHtml, missingLinks) {
-  let newHtml = currentHtml || "";
-  let injectionHtml = `\n\n<div class="rockhound-dwell-links" style="margin-top: 2em; display: flex; flex-wrap: wrap; gap: 10px;">`;
-  
-  // Hard Filter: Only inject valid URLs, deliberately bypassing dead links
-  const validLinks = missingLinks.filter(link => !link.isDead);
-  if (validLinks.length === 0) return newHtml;
-
-  validLinks.forEach(link => {
-     injectionHtml += `\n  <a href="${link.url}" class="button" style="padding: 10px 15px; background: #f4f6f8; border: 1px solid #c9cccf; border-radius: 4px; text-decoration: none; color: #202223; font-weight: 500;">${link.label}</a>`;
-  });
-  injectionHtml += `\n</div>`;
-  return newHtml + injectionHtml;
-}
-
 // --- 4. MAIN COMPONENT ---
 export default function DwellWeb() {
-  const { products, pages, articles, livePaths, loaderError, globalLinks: loadedGlobalLinks } = useLoaderData();
+  const { evaluatedProducts, pages, articles, livePaths, loaderError, globalLinks: loadedGlobalLinks } = useLoaderData();
   const fetcher = useFetcher();
   const navigate = useNavigate();
+  const revalidator = useRevalidator(); // Native Remix engine reload tool
 
   const [selectedTab, setSelectedTab] = useState(0);
   const [editorType, setEditorType] = useState("pages"); 
@@ -293,7 +297,7 @@ export default function DwellWeb() {
 
   const handleTabChange = (index) => setSelectedTab(index);
 
-  const evaluatedProducts = useMemo(() => evaluateProducts(products, livePaths, globalLinks), [products, livePaths, globalLinks]);
+  // Directly access evaluated results calculated server-side
   const nonCompliantProducts = evaluatedProducts.filter(p => !p.isCompliant);
 
   const handleInject = (product) => {
@@ -437,13 +441,23 @@ export default function DwellWeb() {
     ]);
 
     return (
-      <Card padding="0">
-        <DataTable
-          columnContentTypes={['text', 'numeric', 'text', 'text']}
-          headings={['Product', 'Required Links', 'Status', 'Missing Targets']}
-          rows={rows}
-        />
-      </Card>
+      <BlockStack gap="400">
+        <InlineStack align="end">
+          <Button 
+            onClick={() => revalidator.revalidate()} 
+            loading={revalidator.state === "loading"}
+          >
+            🔄 Rescan Live Data
+          </Button>
+        </InlineStack>
+        <Card padding="0">
+          <DataTable
+            columnContentTypes={['text', 'numeric', 'text', 'text']}
+            headings={['Product', 'Required Links', 'Status', 'Missing Targets']}
+            rows={rows}
+          />
+        </Card>
+      </BlockStack>
     );
   };
 
@@ -655,6 +669,11 @@ export default function DwellWeb() {
       title="Dwell Web Manager 🕸️"
       subtitle="Product Link Governance & Dwell Loop Enforcer"
       backAction={{ content: "Command Center", onAction: () => navigate("/app") }}
+      primaryAction={{
+        content: "🔄 Rescan Live Data",
+        onAction: () => revalidator.revalidate(),
+        loading: revalidator.state === "loading"
+      }}
     >
       {loaderError && (
         <Box paddingBlockEnd="400">
