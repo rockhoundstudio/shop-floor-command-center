@@ -14,9 +14,9 @@ const INITIAL_GLOBAL_LINKS = [
   { key: "global_all_tales", url: "/pages/tails-and-trails", label: "All Tales" }
 ];
 
-const HARDWARE_LINKS = [
-  { url: "/pages/build-your-setting", label: "Build Your Setting" },
-  { url: "/collections/hardware", label: "Hardware Collection" }
+const INITIAL_HARDWARE_LINKS = [
+  { key: "hardware_build_your_setting", url: "/pages/build-your-setting", label: "Build Your Setting" },
+  { key: "hardware_collection", url: "/collections/hardware", label: "Hardware Collection" }
 ];
 
 const COLLECTION_RULES = {
@@ -69,7 +69,7 @@ function checkLinkPresence(htmlLinks, requiredUrl) {
   return htmlLinks.some(h => h.includes(requiredUrl));
 }
 
-function evaluateProducts(products, livePaths, currentGlobalLinks) {
+function evaluateProducts(products, livePaths, currentGlobalLinks, currentHardwareLinks) {
   return products.map(product => {
     const htmlLinks = extractLinks(product.descriptionHtml);
     const required = [];
@@ -79,7 +79,7 @@ function evaluateProducts(products, livePaths, currentGlobalLinks) {
 
     if (isHardware) {
       // Hardware products strictly require these two links
-      HARDWARE_LINKS.forEach(link => required.push({ ...link, isDead: !livePaths.includes(link.url) }));
+      currentHardwareLinks.forEach(link => required.push({ ...link, isDead: !livePaths.includes(link.url) }));
     } else {
       // Standard stone products require global links + collection specifics
       currentGlobalLinks.forEach(link => required.push({ ...link, isDead: !livePaths.includes(link.url) }));
@@ -148,7 +148,7 @@ export const loader = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
   const requestUrl = new URL(request.url);
   const successMessage = requestUrl.searchParams.get("success") === "rule_saved" 
-    ? "Global rule saved successfully!" 
+    ? "Rule saved successfully!" 
     : null;
 
   try {
@@ -174,13 +174,20 @@ export const loader = async ({ request }) => {
       throw new Error(JSON.stringify(json.errors));
     }
     
-    // 2. Fetch global rules from Render Prisma Database
+    // 2. Fetch global & hardware rules from Render Prisma Database
     const dbGlobalRules = await prisma.dwellRule.findMany({ 
       where: { isGlobal: true } 
     });
 
     // Merge database rules over the hardcoded defaults
     const globalLinks = INITIAL_GLOBAL_LINKS.map(defaultLink => {
+      const dbMatch = dbGlobalRules.find(r => r.key === defaultLink.key);
+      return dbMatch 
+        ? { key: dbMatch.key, url: dbMatch.url, label: dbMatch.label } 
+        : defaultLink;
+    });
+
+    const hardwareLinks = INITIAL_HARDWARE_LINKS.map(defaultLink => {
       const dbMatch = dbGlobalRules.find(r => r.key === defaultLink.key);
       return dbMatch 
         ? { key: dbMatch.key, url: dbMatch.url, label: dbMatch.label } 
@@ -204,12 +211,12 @@ export const loader = async ({ request }) => {
     ];
 
     // 3. Process Server-Side Scan
-    const evaluatedProducts = evaluateProducts(products, livePaths, globalLinks);
+    const evaluatedProducts = evaluateProducts(products, livePaths, globalLinks, hardwareLinks);
 
-    return data({ evaluatedProducts, pages, articles, livePaths, globalLinks, successMessage });
+    return data({ evaluatedProducts, pages, articles, livePaths, globalLinks, hardwareLinks, successMessage });
   } catch (error) {
     console.error("Loader error:", error);
-    return data({ evaluatedProducts: [], pages: [], articles: [], livePaths: [], globalLinks: INITIAL_GLOBAL_LINKS, loaderError: error.message });
+    return data({ evaluatedProducts: [], pages: [], articles: [], livePaths: [], globalLinks: INITIAL_GLOBAL_LINKS, hardwareLinks: INITIAL_HARDWARE_LINKS, loaderError: error.message });
   }
 };
 
@@ -229,7 +236,7 @@ export const action = async ({ request }) => {
       await prisma.dwellRule.upsert({
         where: { key: key },
         update: { label, url },
-        create: { key, label, url, isGlobal: true }
+        create: { key, label, url, isGlobal: true } // We treat hardware defaults as "global" configurations
       });
       
       // Redirect back to page to force a clean loader re-scan
@@ -314,7 +321,7 @@ export const action = async ({ request }) => {
 
 // --- 4. MAIN COMPONENT ---
 export default function DwellWeb() {
-  const { evaluatedProducts, pages, articles, livePaths, loaderError, globalLinks: loadedGlobalLinks, successMessage } = useLoaderData();
+  const { evaluatedProducts, pages, articles, livePaths, loaderError, globalLinks: loadedGlobalLinks, hardwareLinks: loadedHardwareLinks, successMessage } = useLoaderData();
   const fetcher = useFetcher();
   const navigate = useNavigate();
 
@@ -328,15 +335,21 @@ export default function DwellWeb() {
   const [editingGlobalIndex, setEditingGlobalIndex] = useState(null);
   const [editForm, setEditForm] = useState({ label: "", url: "" });
 
+  const [hardwareLinks, setHardwareLinks] = useState(loadedHardwareLinks || INITIAL_HARDWARE_LINKS);
+  const [editingHardwareIndex, setEditingHardwareIndex] = useState(null);
+  const [editHardwareForm, setEditHardwareForm] = useState({ label: "", url: "" });
+
   // Sync state if loader data re-fetches after a save
   useEffect(() => {
     if (loadedGlobalLinks) setGlobalLinks(loadedGlobalLinks);
-  }, [loadedGlobalLinks]);
+    if (loadedHardwareLinks) setHardwareLinks(loadedHardwareLinks);
+  }, [loadedGlobalLinks, loadedHardwareLinks]);
 
   // Clear editing UI on successful backend save or redirect completion
   useEffect(() => {
     if (fetcher.state === "idle" && !fetcher.data?.error) {
       setEditingGlobalIndex(null);
+      setEditingHardwareIndex(null);
     }
   }, [fetcher.state, fetcher.data]);
 
@@ -369,7 +382,7 @@ export default function DwellWeb() {
     const renderLinkRule = (l) => {
       const isDead = !livePaths.includes(l.url);
       return (
-        <BlockStack key={l.url} gap="0">
+        <BlockStack key={l.url || l.label} gap="0">
           <InlineStack gap="200" blockAlign="center">
             <Text fontWeight="bold">• {l.label}</Text>
             {isDead && <Badge tone="critical">DEAD LINK</Badge>}
@@ -459,8 +472,61 @@ export default function DwellWeb() {
             <Text variant="headingMd">Hardware Rule</Text>
             <Text tone="subdued">Applies automatically to any product tagged with "hardware".</Text>
             <Box padding="300" background="bg-surface-secondary" borderRadius="100">
-              <BlockStack gap="200">
-                {HARDWARE_LINKS.map(renderLinkRule)}
+              <BlockStack gap="400">
+                {hardwareLinks.map((l, index) => {
+                  const isDead = !livePaths.includes(l.url);
+                  const isEditing = editingHardwareIndex === index;
+
+                  if (isEditing) {
+                    return (
+                      <BlockStack gap="200" key={l.key}>
+                        <TextField
+                          label="Label"
+                          value={editHardwareForm.label}
+                          onChange={(val) => setEditHardwareForm({ ...editHardwareForm, label: val })}
+                          autoComplete="off"
+                        />
+                        <TextField
+                          label="URL"
+                          value={editHardwareForm.url}
+                          onChange={(val) => setEditHardwareForm({ ...editHardwareForm, url: val })}
+                          autoComplete="off"
+                        />
+                        <InlineStack gap="200">
+                          <Button 
+                            size="micro" 
+                            variant="primary"
+                            loading={fetcher.state === "submitting" && fetcher.formData?.get("key") === l.key}
+                            onClick={() => {
+                              const fd = new FormData();
+                              fd.append("intent", "saveGlobalRule");
+                              fd.append("key", l.key);
+                              fd.append("label", editHardwareForm.label);
+                              fd.append("url", editHardwareForm.url);
+                              fetcher.submit(fd, { method: "post" });
+                            }}
+                          >
+                            Save
+                          </Button>
+                          <Button size="micro" onClick={() => setEditingHardwareIndex(null)}>Cancel</Button>
+                        </InlineStack>
+                      </BlockStack>
+                    );
+                  }
+
+                  return (
+                    <BlockStack key={l.key} gap="100">
+                      <InlineStack align="space-between" blockAlign="center">
+                        <InlineStack gap="200" blockAlign="center">
+                          <Text fontWeight="bold">• {l.label}</Text>
+                          {isDead && <Badge tone="critical">DEAD LINK</Badge>}
+                        </InlineStack>
+                        <Button size="micro" onClick={() => { setEditingHardwareIndex(index); setEditHardwareForm(l); }}>Edit</Button>
+                      </InlineStack>
+                      <Text variant="bodySm" tone={isDead ? "critical" : "subdued"}>{l.url}</Text>
+                    </BlockStack>
+                  );
+                })}
               </BlockStack>
             </Box>
           </BlockStack>
