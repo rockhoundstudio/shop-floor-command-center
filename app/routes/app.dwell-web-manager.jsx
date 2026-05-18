@@ -122,7 +122,7 @@ function evaluateProducts(products, livePaths, currentGlobalLinks, currentHardwa
       complianceStatus = "Broken";
     }
 
-    // Diagnostics Engine Log
+    // Diagnostics Engine Log (Server Side)
     console.log(`\n========================================`);
     console.log(`Product: ${product.title}`);
     console.log(`Required URLs:`, required.map(r => r.url));
@@ -137,6 +137,7 @@ function evaluateProducts(products, livePaths, currentGlobalLinks, currentHardwa
       required,
       missing,
       present,
+      extractedUrls: htmlLinks, // Exposed for UI Diagnostics
       isCompliant,
       complianceStatus,
       hasDeadLinks: required.some(r => r.isDead)
@@ -346,6 +347,7 @@ export default function DwellWeb() {
   const [activeItem, setActiveItem] = useState(null);
   const [contentHtml, setContentHtml] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
+  const [showDebug, setShowDebug] = useState(false);
 
   const [globalLinks, setGlobalLinks] = useState(loadedGlobalLinks || INITIAL_GLOBAL_LINKS);
   const [editingGlobalIndex, setEditingGlobalIndex] = useState(null);
@@ -588,18 +590,44 @@ export default function DwellWeb() {
     return (
       <BlockStack gap="400">
         <InlineStack align="end">
-          <Button 
-            onClick={() => window.location.reload()} 
-          >
+          <Button onClick={() => window.location.reload()}>
             🔄 Rescan Live Data
           </Button>
         </InlineStack>
+        
         <Card padding="0">
           <DataTable
             columnContentTypes={['text', 'numeric', 'text', 'text']}
             headings={['Product', 'Required Links', 'Status', 'Missing Targets']}
             rows={rows}
           />
+        </Card>
+
+        {/* Diagnostics Panel */}
+        <Card>
+          <BlockStack gap="300">
+            <InlineStack align="space-between" blockAlign="center">
+              <Text variant="headingMd">Engine Diagnostics</Text>
+              <Button onClick={() => setShowDebug(!showDebug)}>
+                {showDebug ? "Hide Debug Data" : "Show Debug Data"}
+              </Button>
+            </InlineStack>
+            {showDebug && (
+              <Box padding="300" background="bg-surface-secondary" borderRadius="100">
+                <BlockStack gap="400">
+                  {evaluatedProducts.map(p => (
+                    <BlockStack key={p.id} gap="100">
+                      <Text fontWeight="bold">{p.title} ({p.complianceStatus})</Text>
+                      <Text variant="bodySm"><b>Required:</b> {p.required.map(r => r.url).join(', ') || "None"}</Text>
+                      <Text variant="bodySm"><b>Found (Raw):</b> {p.extractedUrls.join(', ') || "None"}</Text>
+                      <Text variant="bodySm"><b>Missing:</b> {p.missing.map(m => m.url).join(', ') || "None"}</Text>
+                      <Divider />
+                    </BlockStack>
+                  ))}
+                </BlockStack>
+              </Box>
+            )}
+          </BlockStack>
         </Card>
       </BlockStack>
     );
