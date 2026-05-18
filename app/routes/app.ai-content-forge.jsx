@@ -17,7 +17,7 @@ export function ErrorBoundary() {
     <Page title="Engine Fault">
       <Card background="bg-surface-critical">
         <BlockStack gap="400">
-          <Text as="h1" fontWeight="bold" variant="headingLg">AI Forge Crashed</Text>
+          <Text variant="headingLg" as="h1" fontWeight="bold">AI Forge Crashed</Text>
           <Text>
             {isRouteErrorResponse(error)
               ? `${error.status} ${error.statusText} - ${error.data}`
@@ -132,8 +132,8 @@ Origin Context: ${origin}`;
       let parts = [{ text: prompt }];
 
       try {
-        // Swapped to explicit -latest alias to bypass the 404 rejection
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${apiKey}`;
+        // Swapped to the universal baseline model: gemini-pro
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${apiKey}`;
         const options = {
           method: "POST",
           headers: { "Content-Type": "application/json" },
