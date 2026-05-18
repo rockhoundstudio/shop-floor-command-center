@@ -132,7 +132,7 @@ Origin Context: ${origin}`;
       let parts = [{ text: prompt }];
 
       try {
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
         const options = {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -141,14 +141,18 @@ Origin Context: ${origin}`;
 
         const makeGeminiRequest = async () => {
           const controller = new AbortController();
-          const timeout = setTimeout(() => controller.abort(), 15000);
+          const timeout = setTimeout(() => controller.abort(), 45000); // 45-second fuse
           try {
             const res = await fetch(url, { ...options, signal: controller.signal });
             clearTimeout(timeout);
             return res;
           } catch (e) {
             clearTimeout(timeout);
-            throw new Error("Gemini timeout — try again");
+            console.error("RAW FETCH FAULT:", e);
+            if (e.name === "AbortError") {
+              throw new Error("Timeout: Google took longer than 45 seconds to respond.");
+            }
+            throw new Error(`Network Fault: ${e.message}`);
           }
         };
 
@@ -158,7 +162,7 @@ Origin Context: ${origin}`;
           await new Promise(resolve => setTimeout(resolve, 8000));
           geminiRes = await makeGeminiRequest();
           if (geminiRes.status === 429) {
-            throw new Error("Rate limited — try again in a moment");
+            throw new Error("Rate limited — Google rejected the request after retry.");
           }
         }
 
@@ -171,7 +175,8 @@ Origin Context: ${origin}`;
         console.log("RAW GEMINI RESPONSE:", JSON.stringify(data));
 
         let rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-        rawText = rawText.replace(/```json/gi, "").replace(/```/gi, "").trim();
+        rawText = rawText.replace(/```json/gi, "").replace(/
+```/gi, "").trim();
         
         let parsedData;
         try { 
@@ -328,29 +333,17 @@ export default function AiContentForgeTab() {
 
   return (
     <Page title="⚡ AI Content Forge" subtitle="Generate premium, story-driven Alt Text and SEO descriptions powered by Gemini.">
-      {toast && <div style={{ position: "fixed", top: 16, right: 16, zIndex: 9999 }}><Banner tone={toast.tone}>{toast.message}</Banner></div>}
+      {toast && <div style={{ position: "fixed", top: 16, right: 16, zIndex: 9999 }}><Banner tone="{toast.tone}">{toast.message}</Banner></div>}
       <Layout>
         {pageError && (
           <Layout.Section>
-            <Banner tone="critical" title="Action Failed" onDismiss={() => setPageError(null)}><Text as="p">{pageError}</Text></Banner>
+            <Banner tone="critical" title="Action Failed" onDismiss="{()"> setPageError(null)}><Text as="p">{pageError}</Text></Banner>
           </Layout.Section>
         )}
         <Layout.Section>
           <BlockStack gap="500">
             {products.map((product) => (
-              <ForgeProductCard
-                key={product.id}
-                product={product}
-                activeSuggestion={suggestions[product.id]}
-                isSuggesting={suggestingId === product.id}
-                isSavingAlt={savingAltId === product.id}
-                isSavingSeo={savingSeoId === product.id}
-                globalCooldown={globalCooldown}
-                onSuggest={handleSuggest}
-                onSaveAlt={handleSaveAlt}
-                onSaveSeo={handleSaveSeo}
-                onUpdateSuggestionField={updateSuggestionField}
-              />
+              <ForgeProductCard key="{product.id}" product="{product}" activeSuggestion="{suggestions[product.id]}" isSuggesting="{suggestingId" product.id} isSavingAlt="{savingAltId" isSavingSeo="{savingSeoId" globalCooldown="{globalCooldown}" onSuggest="{handleSuggest}" onSaveAlt="{handleSaveAlt}" onSaveSeo="{handleSaveSeo}" onUpdateSuggestionField="{updateSuggestionField}"/>
             ))}
             {products.length === 0 && <Banner tone="info"><Text>No products found to forge content for.</Text></Banner>}
           </BlockStack>
