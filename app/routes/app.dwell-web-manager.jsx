@@ -78,15 +78,23 @@ function evaluateProducts(products, livePaths, currentGlobalLinks, currentHardwa
 
     if (isHardware) {
       // Hardware products strictly require these links
-      currentHardwareLinks.forEach(link => required.push({ ...link, isDead: !livePaths.includes(link.url) }));
+      currentHardwareLinks.forEach(link => {
+        if (!required.some(r => r.url === link.url)) {
+          required.push({ ...link, isDead: !livePaths.includes(link.url) });
+        }
+      });
     } else {
       // Standard stone products require global links + collection specifics
-      currentGlobalLinks.forEach(link => required.push({ ...link, isDead: !livePaths.includes(link.url) }));
+      currentGlobalLinks.forEach(link => {
+        if (!required.some(r => r.url === link.url)) {
+          required.push({ ...link, isDead: !livePaths.includes(link.url) });
+        }
+      });
 
       product.collectionHandles.forEach(handle => {
         if (COLLECTION_RULES[handle]) {
           COLLECTION_RULES[handle].links.forEach(link => {
-            if (!required.some(r => r.label === link.label)) {
+            if (!required.some(r => r.url === link.url || r.label === link.label)) {
               required.push({ ...link, isDead: !livePaths.includes(link.url) });
             }
           });
@@ -108,11 +116,20 @@ function evaluateProducts(products, livePaths, currentGlobalLinks, currentHardwa
     let complianceStatus = "Broken";
     if (isCompliant) {
       complianceStatus = "Compliant";
-    } else if (present.length === 2) {
+    } else if (missing.length > 0 && present.length > 0) {
       complianceStatus = "Partial";
     } else {
       complianceStatus = "Broken";
     }
+
+    // Diagnostics Engine Log
+    console.log(`\n========================================`);
+    console.log(`Product: ${product.title}`);
+    console.log(`Required URLs:`, required.map(r => r.url));
+    console.log(`Found URLs:`, htmlLinks);
+    console.log(`Missing URLs:`, missing.map(m => m.url));
+    console.log(`Status: ${complianceStatus}`);
+    console.log(`========================================\n`);
 
     return {
       ...product,
