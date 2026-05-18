@@ -49,6 +49,7 @@ export const loader = async ({ request }) => {
                 title
                 handle
                 description
+                originMetafield: metafield(namespace: "custom", key: "origin") { value }
                 seo { title description }
                 media(first: 50) {
                   edges { node { ... on MediaImage { id alt image { url } } } }
@@ -73,8 +74,13 @@ export const loader = async ({ request }) => {
             altText: mediaEdge.node.alt || ""
           }));
         return {
-          id: node.id, title: node.title, handle: node.handle,
-          description: node.description, seo: node.seo, images: mappedImages
+          id: node.id, 
+          title: node.title, 
+          handle: node.handle,
+          description: node.description, 
+          origin: node.originMetafield?.value || "",
+          seo: node.seo, 
+          images: mappedImages
         };
       });
       allProducts = allProducts.concat(formattedNodes);
@@ -132,8 +138,7 @@ Origin Context: ${origin}`;
       let parts = [{ text: prompt }];
 
       try {
-        // Swapped to the universal baseline model: gemini-pro
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${apiKey}`;
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
         const options = {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -273,6 +278,13 @@ export default function AiContentForgeTab() {
     return () => clearInterval(timer);
   }, [globalCooldown]);
 
+  // Clean Toast Timer
+  useEffect(() => {
+    if (!toast) return;
+    const timer = setTimeout(() => setToast(null), 3000);
+    return () => clearTimeout(timer);
+  }, [toast]);
+
   useEffect(() => {
     if (fetcher.state === "idle" && fetcher.data) {
       setSuggestingId(null); setSavingAltId(null); setSavingSeoId(null);
@@ -298,7 +310,6 @@ export default function AiContentForgeTab() {
         setProducts((prev) => prev.map((p) => (p.id === productId ? { ...p, seo: fetcher.data.seo } : p)));
         setToast({ message: "✓ SEO Data Saved", tone: "success" });
       }
-      setTimeout(() => setToast(null), 3000);
     }
   }, [fetcher.state, fetcher.data]);
 
@@ -311,6 +322,7 @@ export default function AiContentForgeTab() {
     fd.append("productId", product.id);
     fd.append("productTitle", product.title);
     fd.append("productDescription", product.description || "");
+    fd.append("origin", product.origin || ""); 
     fd.append("customHook", customHook || "");
     fd.append("isPolishingTarget", isPolishingTarget ? "true" : "false");
     fetcher.submit(fd, { method: "post" });
