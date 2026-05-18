@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from "react";
-import { useLoaderData, useFetcher, data, redirect, useNavigate } from "react-router";
+import { useLoaderData, useFetcher, data, redirect, useNavigate, useRevalidator } from "react-router";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server"; // Prisma Engine Connection
 import {
@@ -341,6 +341,7 @@ export default function DwellWeb() {
   const { evaluatedProducts, pages, articles, livePaths, loaderError, globalLinks: loadedGlobalLinks, hardwareLinks: loadedHardwareLinks, successMessage } = useLoaderData();
   const fetcher = useFetcher();
   const navigate = useNavigate();
+  const revalidator = useRevalidator(); // Native Remix re-fetch hook
 
   const [selectedTab, setSelectedTab] = useState(0);
   const [editorType, setEditorType] = useState("pages"); 
@@ -590,7 +591,10 @@ export default function DwellWeb() {
     return (
       <BlockStack gap="400">
         <InlineStack align="end">
-          <Button onClick={() => window.location.reload()}>
+          <Button 
+            onClick={() => revalidator.revalidate()} 
+            loading={revalidator.state === "loading"}
+          >
             🔄 Rescan Live Data
           </Button>
         </InlineStack>
@@ -843,7 +847,8 @@ export default function DwellWeb() {
       backAction={{ content: "Command Center", onAction: () => navigate("/app") }}
       primaryAction={{
         content: "🔄 Rescan Live Data",
-        onAction: () => window.location.reload()
+        onAction: () => revalidator.revalidate(),
+        loading: revalidator.state === "loading"
       }}
     >
       {loaderError && (
