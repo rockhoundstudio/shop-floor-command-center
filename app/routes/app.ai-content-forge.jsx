@@ -316,7 +316,7 @@ export default function AiContentForgeTab() {
   const handleSuggest = (product, customHook, isPolishingTarget) => {
     setPageError(null);
     setSuggestingId(product.id);
-    setGlobalCooldown(90); // Trigger Master Lock
+    setGlobalCooldown(120); // Trigger Master Lock
     const fd = new FormData();
     fd.append("intent", "ai_suggest");
     fd.append("productId", product.id);
