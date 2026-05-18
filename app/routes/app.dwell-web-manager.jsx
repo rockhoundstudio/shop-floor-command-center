@@ -8,7 +8,7 @@ import {
 import { SearchIcon } from "@shopify/polaris-icons";
 
 // --- 1. THE RULE SET ---
-const GLOBAL_LINKS = [
+const INITIAL_GLOBAL_LINKS = [
   { url: "/collections/all", label: "All Stones" },
   { url: "/pages/rockhound-logbook-hub", label: "All Tales" }
 ];
@@ -176,14 +176,14 @@ function checkLinkPresence(htmlLinks, requiredUrl) {
   return htmlLinks.some(h => h.includes(requiredUrl));
 }
 
-function evaluateProducts(products, livePaths) {
+function evaluateProducts(products, livePaths, currentGlobalLinks) {
   return products.map(product => {
     const htmlLinks = extractLinks(product.descriptionHtml);
     const required = [];
     const missing = [];
     const present = [];
 
-    GLOBAL_LINKS.forEach(link => required.push({ ...link, isDead: !livePaths.includes(link.url) }));
+    currentGlobalLinks.forEach(link => required.push({ ...link, isDead: !livePaths.includes(link.url) }));
 
     product.collectionHandles.forEach(handle => {
       if (COLLECTION_RULES[handle]) {
@@ -236,9 +236,14 @@ export default function DwellWeb() {
   const [contentHtml, setContentHtml] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
 
+  // Manage Global Links in state to allow inline editing
+  const [globalLinks, setGlobalLinks] = useState(INITIAL_GLOBAL_LINKS);
+  const [editingGlobalIndex, setEditingGlobalIndex] = useState(null);
+  const [editForm, setEditForm] = useState({ label: "", url: "" });
+
   const handleTabChange = (index) => setSelectedTab(index);
 
-  const evaluatedProducts = useMemo(() => evaluateProducts(products, livePaths), [products, livePaths]);
+  const evaluatedProducts = useMemo(() => evaluateProducts(products, livePaths, globalLinks), [products, livePaths, globalLinks]);
   const nonCompliantProducts = evaluatedProducts.filter(p => !p.isCompliant);
 
   const handleInject = (product) => {
@@ -282,8 +287,58 @@ export default function DwellWeb() {
             <Text variant="headingMd">Global Rule (All Products)</Text>
             <Text tone="subdued">Every product must contain these two footer buttons.</Text>
             <Box padding="300" background="bg-surface-secondary" borderRadius="100">
-              <BlockStack gap="200">
-                {GLOBAL_LINKS.map(renderLinkRule)}
+              <BlockStack gap="400">
+                {globalLinks.map((l, index) => {
+                  const isDead = !livePaths.includes(l.url);
+                  const isEditing = editingGlobalIndex === index;
+
+                  if (isEditing) {
+                    return (
+                      <BlockStack gap="200" key={index}>
+                        <TextField
+                          label="Label"
+                          value={editForm.label}
+                          onChange={(val) => setEditForm({ ...editForm, label: val })}
+                          autoComplete="off"
+                        />
+                        <TextField
+                          label="URL"
+                          value={editForm.url}
+                          onChange={(val) => setEditForm({ ...editForm, url: val })}
+                          autoComplete="off"
+                        />
+                        <InlineStack gap="200">
+                          <Button 
+                            size="micro" 
+                            variant="primary" 
+                            onClick={() => {
+                              const newLinks = [...globalLinks];
+                              newLinks[index] = editForm;
+                              setGlobalLinks(newLinks);
+                              setEditingGlobalIndex(null);
+                            }}
+                          >
+                            Save
+                          </Button>
+                          <Button size="micro" onClick={() => setEditingGlobalIndex(null)}>Cancel</Button>
+                        </InlineStack>
+                      </BlockStack>
+                    );
+                  }
+
+                  return (
+                    <BlockStack key={index} gap="100">
+                      <InlineStack align="space-between" blockAlign="center">
+                        <InlineStack gap="200" blockAlign="center">
+                          <Text fontWeight="bold">• {l.label}</Text>
+                          {isDead && <Badge tone="critical">DEAD LINK</Badge>}
+                        </InlineStack>
+                        <Button size="micro" onClick={() => { setEditingGlobalIndex(index); setEditForm(l); }}>Edit</Button>
+                      </InlineStack>
+                      <Text variant="bodySm" tone={isDead ? "critical" : "subdued"}>{l.url}</Text>
+                    </BlockStack>
+                  );
+                })}
               </BlockStack>
             </Box>
           </BlockStack>
@@ -351,25 +406,26 @@ export default function DwellWeb() {
 
     return (
       <BlockStack gap="400">
+        {hasDeadLinkConfig && (
+          <Banner tone="warning" title="Dead Links Detected in Rules">
+            <Text>Some products require URLs that are currently dead (404). You can still inject the links, but those specific loops will be broken until you correct the URLs in the Rules tab.</Text>
+          </Banner>
+        )}
+
         <Card background="bg-surface-secondary">
           <InlineStack align="space-between" blockAlign="center">
             <BlockStack gap="100">
               <Text variant="headingMd">Bulk Action</Text>
-              <Text tone="subdued">Found {nonCompliantProducts.length} products with broken Dwell loops.</Text>
+              <Text tone="subdued">Found {nonCompliantProducts.length} products with missing Dwell links.</Text>
             </BlockStack>
-            <Tooltip content={hasDeadLinkConfig ? "Fix dead links in Rules tab first." : "Inject links into all missing products."}>
-              <div>
-                <Button 
-                  size="large"
-                  variant="primary" 
-                  onClick={handleBulkInject}
-                  loading={fetcher.state === "submitting" && fetcher.formData?.get("intent") === "bulkInjectLinks"}
-                  disabled={hasDeadLinkConfig}
-                >
-                  ⚡ Bulk Inject All Missing Links
-                </Button>
-              </div>
-            </Tooltip>
+            <Button 
+              size="large"
+              variant="primary" 
+              onClick={handleBulkInject}
+              loading={fetcher.state === "submitting" && fetcher.formData?.get("intent") === "bulkInjectLinks"}
+            >
+              ⚡ Bulk Inject All Missing Links
+            </Button>
           </InlineStack>
         </Card>
 
@@ -391,7 +447,6 @@ export default function DwellWeb() {
                   variant="primary" 
                   onClick={() => handleInject(p)}
                   loading={fetcher.state === "submitting" && fetcher.formData?.get("id") === p.id}
-                  disabled={p.hasDeadLinks}
                 >
                   Inject Missing Links
                 </Button>
