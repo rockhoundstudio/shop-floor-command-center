@@ -15,8 +15,7 @@ const INITIAL_GLOBAL_LINKS = [
 ];
 
 const INITIAL_HARDWARE_LINKS = [
-  { key: "hardware_build_your_setting", url: "/pages/build-your-setting", label: "Build Your Setting" },
-  { key: "hardware_collection", url: "/collections/hardware", label: "Hardware Collection" }
+  { key: "hardware_build_your_setting", url: "/pages/build-your-setting", label: "Build Your Setting" }
 ];
 
 const COLLECTION_RULES = {
@@ -78,7 +77,7 @@ function evaluateProducts(products, livePaths, currentGlobalLinks, currentHardwa
     const isHardware = product.tags && product.tags.includes("hardware");
 
     if (isHardware) {
-      // Hardware products strictly require these two links
+      // Hardware products strictly require these links
       currentHardwareLinks.forEach(link => required.push({ ...link, isDead: !livePaths.includes(link.url) }));
     } else {
       // Standard stone products require global links + collection specifics
