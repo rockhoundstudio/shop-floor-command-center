@@ -17,7 +17,7 @@ export function ErrorBoundary() {
     <Page title="Engine Fault">
       <Card background="bg-surface-critical">
         <BlockStack gap="400">
-          <Text as="h1" fontWeight="bold" variant="headingLg">AI Forge Crashed</Text>
+          <Text variant="headingLg" as="h1" fontWeight="bold">AI Forge Crashed</Text>
           <Text>
             {isRouteErrorResponse(error)
               ? `${error.status} ${error.statusText} - ${error.data}`
@@ -132,7 +132,7 @@ Origin Context: ${origin}`;
       let parts = [{ text: prompt }];
 
       try {
-        const url = `[https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=$](https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=$){apiKey}`;
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
         const options = {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -339,20 +339,42 @@ export default function AiContentForgeTab() {
   };
 
   return (
-    <Page subtitle="Generate premium, story-driven Alt Text and SEO descriptions powered by Gemini." title="⚡ AI Content Forge">
-      {toast && <div style={{ position: "fixed", top: 16, right: 16, zIndex: 9999 }}><Banner tone="{toast.tone}">{toast.message}</Banner></div>}
+    <Page title="⚡ AI Content Forge" subtitle="Generate premium, story-driven Alt Text and SEO descriptions powered by Gemini.">
+      {toast && (
+        <div style={{ position: "fixed", top: 16, right: 16, zIndex: 9999 }}>
+          <Banner tone={toast.tone}>{toast.message}</Banner>
+        </div>
+      )}
       <Layout>
         {pageError && (
           <Layout.Section>
-            <Banner onDismiss="{()" title="Action Failed" tone="critical"> setPageError(null)}><Text as="p">{pageError}</Text></Banner>
+            <Banner tone="critical" title="Action Failed" onDismiss={() => setPageError(null)}>
+              <Text as="p">{pageError}</Text>
+            </Banner>
           </Layout.Section>
         )}
         <Layout.Section>
           <BlockStack gap="500">
             {products.map((product) => (
-              <ForgeProductCard activeSuggestion="{suggestions[product.id]}" globalCooldown="{globalCooldown}" isSavingAlt="{savingAltId" isSavingSeo="{savingSeoId" isSuggesting="{suggestingId" key="{product.id}" onSaveAlt="{handleSaveAlt}" onSaveSeo="{handleSaveSeo}" onSuggest="{handleSuggest}" onUpdateSuggestionField="{updateSuggestionField}" product="{product}" product.id}/>
+              <ForgeProductCard
+                key={product.id}
+                product={product}
+                activeSuggestion={suggestions[product.id]}
+                isSuggesting={suggestingId === product.id}
+                isSavingAlt={savingAltId === product.id}
+                isSavingSeo={savingSeoId === product.id}
+                globalCooldown={globalCooldown}
+                onSuggest={handleSuggest}
+                onSaveAlt={handleSaveAlt}
+                onSaveSeo={handleSaveSeo}
+                onUpdateSuggestionField={updateSuggestionField}
+              />
             ))}
-            {products.length === 0 && <Banner tone="info"><Text>No products found to forge content for.</Text></Banner>}
+            {products.length === 0 && (
+              <Banner tone="info">
+                <Text>No products found to forge content for.</Text>
+              </Banner>
+            )}
           </BlockStack>
         </Layout.Section>
       </Layout>
