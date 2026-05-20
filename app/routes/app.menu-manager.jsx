@@ -10,6 +10,23 @@ import {
   PlusIcon, AlertTriangleIcon, MagicIcon
 } from "@shopify/polaris-icons";
 
+// 🚀 NEW: Hardcoded Dwell Web Exemption List
+const DWELL_WEB_PAGES = [
+  "frankenstein-lapidary-line",
+  "the-banshee-flat-lap",
+  "the-richardson-strike",
+  "the-rufus-protocol",
+  "the-yellowstone-river",
+  "day-7-yellowstone-sun-enters",
+  "the-shop-lore-spencer-opal-mine-sox-the-manx",
+  "the-shop-lore-chert-road-detour-yakima-river-jasper",
+  "the-shop-lore-shift-change-3d-marquise",
+  "the-chipper-lore-wood-pile-rescue-eight-generations",
+  "nickel-back-collection",
+  "the-shopped-rock",
+  "the-rockhound-logbook",
+];
+
 export const loader = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
   try {
@@ -218,7 +235,7 @@ export default function MenuManager() {
     return { live, draft, dead };
   }, [globalScan]);
 
-  // Calculate Unlinked Story Pages
+  // Calculate True Orphans (excluding Dwell Web Pages)
   const unlinkedPages = useMemo(() => {
     if (!scanned) return [];
     const allUsedUrls = new Set();
@@ -228,7 +245,7 @@ export default function MenuManager() {
         (item.items || []).forEach(child => allUsedUrls.add(child.url));
       });
     });
-    return pages.filter(p => !allUsedUrls.has(`/pages/${p.handle}`));
+    return pages.filter(p => !allUsedUrls.has(`/pages/${p.handle}`) && !DWELL_WEB_PAGES.includes(p.handle));
   }, [scanned, displayMenus, pages]);
 
   const linkOptions = [
@@ -536,8 +553,8 @@ export default function MenuManager() {
             {scanned && unlinkedPages.length > 0 && (
               <Card>
                 <BlockStack gap="300">
-                  <Text variant="headingSm" tone="warning">Unlinked Story Pages</Text>
-                  <Text variant="bodySm" tone="subdued">These pages exist in Shopify but are not linked in any navigational menu.</Text>
+                  <Text variant="headingSm" tone="warning">True Orphans</Text>
+                  <Text variant="bodySm" tone="subdued">These pages exist in Shopify but are not linked in any navigational menu, nor are they Dwell Web exemptions.</Text>
                   <Box style={{ maxHeight: "200px", overflowY: "auto" }}>
                     <InlineStack gap="200" wrap>
                       {unlinkedPages.map(p => (
