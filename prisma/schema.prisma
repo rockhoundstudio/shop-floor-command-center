@@ -46,3 +46,20 @@ model DwellRule {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
+
+// 🚀 NEW: Menu Manager settings (Locks & Auto-Sync)
+model MenuSetting {
+  id         String   @id @default(cuid())
+  menuHandle String   @unique
+  isLocked   Boolean  @default(false)
+  autoSync   Boolean  @default(false)
+  updatedAt  DateTime @updatedAt
+}
+
+// 🚀 NEW: Menu Manager change log
+model MenuHistory {
+  id         String   @id @default(cuid())
+  menuHandle String
+  message    String
+  createdAt  DateTime @default(now())
+}
