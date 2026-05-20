@@ -87,6 +87,7 @@ export const action = async ({ request }) => {
     const title = formData.get("title");
     const handle = formData.get("handle");
     const itemsRaw = formData.get("items");
+    const logMessage = formData.get("logMessage") || "Menu structure manually updated and saved.";
 
     const formatItem = (item) => ({
       title: item.title,
@@ -114,7 +115,7 @@ export const action = async ({ request }) => {
     await prisma.menuHistory.create({
       data: {
         menuHandle: handle,
-        message: "Menu structure manually updated and saved."
+        message: logMessage
       }
     });
 
@@ -195,27 +196,33 @@ export default function MenuManager() {
   const [globalScan, setGlobalScan] = useState(null);
 
   const [isSaving, setIsSaving] = useState(false);
+  const [savingMenuData, setSavingMenuData] = useState(null);
   const [savedOverrides, setSavedOverrides] = useState({});
 
   useEffect(() => {
     if (fetcher.state === "submitting" && fetcher.formData?.get("intent") === "updateMenu") {
       setIsSaving(true);
+      setSavingMenuData({
+        id: fetcher.formData.get("id"),
+        title: fetcher.formData.get("title"),
+        items: JSON.parse(fetcher.formData.get("items"))
+      });
     } else if (fetcher.state === "idle" && isSaving) {
       setIsSaving(false);
-      if (fetcher.data?.ok && activeMenu) {
+      if (fetcher.data?.ok && savingMenuData) {
         setSavedOverrides(prev => ({
           ...prev,
-          [activeMenu.id]: { items: menuItems, title: menuTitle }
+          [savingMenuData.id]: { items: savingMenuData.items, title: savingMenuData.title }
         }));
         if (globalScan) {
           setGlobalScan(prev => ({
             ...prev,
-            [activeMenu.id]: countByStatus(menuItems, liveCollectionHandles, livePageHandles)
+            [savingMenuData.id]: countByStatus(savingMenuData.items, liveCollectionHandles, livePageHandles)
           }));
         }
       }
     }
-  }, [fetcher.state, fetcher.data, activeMenu, menuItems, menuTitle, globalScan, liveCollectionHandles, livePageHandles, isSaving]);
+  }, [fetcher.state, fetcher.data, isSaving, globalScan, liveCollectionHandles, livePageHandles]);
 
   const displayMenus = menus.map(menu => {
     const override = savedOverrides[menu.id];
@@ -435,6 +442,62 @@ export default function MenuManager() {
     setScanned(true);
   };
 
+  // 🚀 NEW: Auto-Add Orphans to Footer Logic
+  const handleFixOrphans = () => {
+    const footerMenu = displayMenus.find(m => m.handle === "footer");
+    if (!footerMenu) return;
+
+    // Build list of existing URLs in the footer so we don't add duplicates
+    const existingUrls = new Set();
+    const gatherUrls = (items) => {
+      items.forEach(item => {
+        existingUrls.add(item.url);
+        if (item.items) gatherUrls(item.items);
+      });
+    };
+    gatherUrls(footerMenu.items);
+
+    // Create the new links
+    const newLinks = unlinkedPages
+      .filter(p => !existingUrls.has(`/pages/${p.handle}`))
+      .map(p => ({
+        id: Math.random().toString(),
+        title: p.title,
+        url: `/pages/${p.handle}`,
+        items: []
+      }));
+
+    if (newLinks.length === 0) return;
+
+    // Combine current footer items with the new orphan links
+    const updatedFooterItems = [...footerMenu.items, ...newLinks];
+
+    // Format strictly for Shopify Admin API
+    const formatItem = (item) => ({
+      title: item.title,
+      url: item.url || "#",
+      type: "HTTP",
+      items: item.items && item.items.length > 0 ? item.items.map(formatItem) : []
+    });
+
+    const itemsForServer = updatedFooterItems.map(formatItem);
+
+    // Fire it to the server
+    const fd = new FormData();
+    fd.append("intent", "updateMenu");
+    fd.append("id", footerMenu.id);
+    fd.append("title", footerMenu.title);
+    fd.append("handle", footerMenu.handle);
+    fd.append("items", JSON.stringify(itemsForServer));
+    fd.append("logMessage", "⚡ Auto-fixed orphaned pages by adding them to the footer.");
+    fetcher.submit(fd, { method: "post" });
+
+    // If the user happens to be looking at the footer right now, update the UI instantly
+    if (activeMenu?.handle === "footer") {
+      setMenuItems(prev => [...prev, ...newLinks]);
+    }
+  };
+
   const handleSaveMenu = () => {
     const fd = new FormData();
     fd.append("intent", "updateMenu");
@@ -442,6 +505,7 @@ export default function MenuManager() {
     fd.append("title", menuTitle);
     fd.append("handle", activeMenu.handle);
     fd.append("items", JSON.stringify(menuItems));
+    fd.append("logMessage", "Menu structure manually updated and saved.");
     fetcher.submit(fd, { method: "post" });
   };
 
@@ -553,8 +617,19 @@ export default function MenuManager() {
             {scanned && unlinkedPages.length > 0 && (
               <Card>
                 <BlockStack gap="300">
-                  <Text variant="headingSm" tone="warning">True Orphans</Text>
-                  <Text variant="bodySm" tone="subdued">These pages exist in Shopify but are not linked in any navigational menu, nor are they Dwell Web exemptions.</Text>
+                  <InlineStack align="space-between" blockAlign="center">
+                    <BlockStack>
+                      <Text variant="headingSm" tone="warning">True Orphans</Text>
+                      <Text variant="bodySm" tone="subdued">These pages exist in Shopify but are not linked in any navigational menu.</Text>
+                    </BlockStack>
+                    <Button 
+                      size="micro" 
+                      onClick={handleFixOrphans}
+                      loading={fetcher.state === "submitting" && fetcher.formData?.get("logMessage")?.includes("Auto-fixed")}
+                    >
+                      Fix Orphans
+                    </Button>
+                  </InlineStack>
                   <Box style={{ maxHeight: "200px", overflowY: "auto" }}>
                     <InlineStack gap="200" wrap>
                       {unlinkedPages.map(p => (
