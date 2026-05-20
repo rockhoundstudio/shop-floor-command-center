@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useLoaderData, useFetcher, data } from "react-router";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
@@ -25,7 +25,44 @@ const DWELL_WEB_PAGES = [
   "nickel-back-collection",
   "the-shopped-rock",
   "the-rockhound-logbook",
+  "the-3-000-mile-run",
+  "memories-in-stone",
+  "standard-specs",
+  "frequently-asked-questions"
 ];
+
+// Fuzzy Mathing Helper for Deep Scan Suggestions
+function levenshtein(a, b) {
+  if (a.length === 0) return b.length;
+  if (b.length === 0) return a.length;
+  const matrix = [];
+  for (let i = 0; i <= b.length; i++) matrix[i] = [i];
+  for (let j = 0; j <= a.length; j++) matrix[0][j] = j;
+  for (let i = 1; i <= b.length; i++) {
+    for (let j = 1; j <= a.length; j++) {
+      if (b.charAt(i - 1) === a.charAt(j - 1)) {
+        matrix[i][j] = matrix[i - 1][j - 1];
+      } else {
+        matrix[i][j] = Math.min(matrix[i - 1][j - 1] + 1, matrix[i][j - 1] + 1, matrix[i - 1][j] + 1);
+      }
+    }
+  }
+  return matrix[b.length][a.length];
+}
+
+function getClosestHandle(target, handles) {
+  if (!handles || handles.length === 0) return null;
+  let bestMatch = null;
+  let bestScore = Infinity;
+  for (const h of handles) {
+    let score = levenshtein(target, h);
+    if (score < bestScore) {
+      bestScore = score;
+      bestMatch = h;
+    }
+  }
+  return bestScore <= 5 ? bestMatch : null; 
+}
 
 export const loader = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
@@ -47,7 +84,7 @@ export const loader = async ({ request }) => {
           edges { node { id title handle } }
         }
         pages(first: 100) {
-          edges { node { id title handle } }
+          edges { node { id title handle } } 
         }
       }
     `);
@@ -58,13 +95,11 @@ export const loader = async ({ request }) => {
     const liveCollectionHandles = collections.map(c => c.handle);
     const livePageHandles = pages.map(p => p.handle);
 
-    // Fetch persistent settings and history from Prisma
     const dbSettings = await prisma.menuSetting.findMany();
     const dbHistoryRaw = await prisma.menuHistory.findMany({
       orderBy: { createdAt: 'desc' }
     });
 
-    // Group history by menuHandle (limit to 5 per menu)
     const dbHistory = {};
     dbHistoryRaw.forEach(h => {
       if (!dbHistory[h.menuHandle]) dbHistory[h.menuHandle] = [];
@@ -81,6 +116,29 @@ export const action = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
   const formData = await request.formData();
   const intent = formData.get("intent");
+
+  // 🚀 NEW: Paginated Action for the Deep Scanner
+  if (intent === "fetchPageBatch") {
+    const cursor = formData.get("cursor");
+    const res = await admin.graphql(`
+      query GetPageBatch($cursor: String) {
+        pages(first: 10, after: $cursor) {
+          pageInfo { hasNextPage endCursor }
+          edges { node { title handle body } }
+        }
+      }
+    `, { variables: { cursor: cursor === "null" ? null : cursor } });
+    
+    const json = await res.json();
+    if (json.errors) return data({ ok: false, error: json.errors[0].message });
+    
+    return data({
+      ok: true,
+      requestCursor: cursor,
+      batch: json.data?.pages?.edges?.map(e => e.node) || [],
+      pageInfo: json.data?.pages?.pageInfo || {}
+    });
+  }
 
   if (intent === "updateMenu") {
     const id = formData.get("id");
@@ -111,12 +169,8 @@ export const action = async ({ request }) => {
       return data({ ok: false, error: json.data.menuUpdate.userErrors[0].message });
     }
 
-    // Log the successful save to Prisma
     await prisma.menuHistory.create({
-      data: {
-        menuHandle: handle,
-        message: logMessage
-      }
+      data: { menuHandle: handle, message: logMessage }
     });
 
     return data({ ok: true, message: "Menu saved successfully!" });
@@ -126,9 +180,7 @@ export const action = async ({ request }) => {
     const menuHandle = formData.get("menuHandle");
     const isLocked = formData.get("isLocked") === "true";
     await prisma.menuSetting.upsert({
-      where: { menuHandle },
-      update: { isLocked },
-      create: { menuHandle, isLocked }
+      where: { menuHandle }, update: { isLocked }, create: { menuHandle, isLocked }
     });
     return data({ ok: true });
   }
@@ -137,9 +189,7 @@ export const action = async ({ request }) => {
     const menuHandle = formData.get("menuHandle");
     const autoSync = formData.get("autoSync") === "true";
     await prisma.menuSetting.upsert({
-      where: { menuHandle },
-      update: { autoSync },
-      create: { menuHandle, autoSync }
+      where: { menuHandle }, update: { autoSync }, create: { menuHandle, autoSync }
     });
     return data({ ok: true });
   }
@@ -188,6 +238,7 @@ function countByStatus(items, liveCollectionHandles, livePageHandles) {
 export default function MenuManager() {
   const { menus, collections, pages, liveCollectionHandles, livePageHandles, dbSettings, dbHistory } = useLoaderData();
   const fetcher = useFetcher();
+  const scanFetcher = useFetcher({ key: "deepScanner" }); // Dedicated fetcher for pagination
 
   const [activeMenu, setActiveMenu] = useState(null);
   const [menuItems, setMenuItems] = useState([]);
@@ -199,6 +250,15 @@ export default function MenuManager() {
   const [savingMenuData, setSavingMenuData] = useState(null);
   const [savedOverrides, setSavedOverrides] = useState({});
 
+  // Deep Scan State Engine
+  const [isDeepScanning, setIsDeepScanning] = useState(false);
+  const [scanProgress, setScanProgress] = useState(0);
+  const [deepScanResults, setDeepScanResults] = useState(null);
+  
+  const accumulatedPagesRef = useRef([]);
+  const lastCursorRef = useRef(null);
+
+  // Background Saver
   useEffect(() => {
     if (fetcher.state === "submitting" && fetcher.formData?.get("intent") === "updateMenu") {
       setIsSaving(true);
@@ -224,6 +284,86 @@ export default function MenuManager() {
     }
   }, [fetcher.state, fetcher.data, isSaving, globalScan, liveCollectionHandles, livePageHandles]);
 
+  // 🚀 NEW: Deep Scan Pagination Loop
+  useEffect(() => {
+    if (isDeepScanning && scanFetcher.state === "idle") {
+      if (scanFetcher.data?.error) {
+        setIsDeepScanning(false);
+        return;
+      }
+      
+      if (scanFetcher.data?.batch) {
+        const { batch, pageInfo, requestCursor } = scanFetcher.data;
+
+        // Prevent double processing from React strict mode or re-renders
+        if (lastCursorRef.current === requestCursor) return;
+        lastCursorRef.current = requestCursor;
+
+        const newPages = [...accumulatedPagesRef.current, ...batch];
+        accumulatedPagesRef.current = newPages;
+        setScanProgress(newPages.length);
+
+        if (pageInfo?.hasNextPage) {
+          const fd = new FormData();
+          fd.append("intent", "fetchPageBatch");
+          fd.append("cursor", pageInfo.endCursor);
+          scanFetcher.submit(fd, { method: "post" });
+        } else {
+          processScanResults(newPages);
+          setIsDeepScanning(false);
+        }
+      }
+    }
+  }, [isDeepScanning, scanFetcher.state, scanFetcher.data]);
+
+  const processScanResults = (fetchedPages) => {
+    const brokenLinks = [];
+    const regex = /href=["'](?:https?:\/\/[^\/]+)?\/?(pages|collections)\/([^"'\?\#>]+)/gi;
+
+    fetchedPages.forEach(page => {
+      if (!page.body) return;
+      let match;
+      regex.lastIndex = 0;
+      
+      while ((match = regex.exec(page.body)) !== null) {
+        const type = match[1].toLowerCase();
+        const handle = match[2];
+        
+        if (type === 'pages' && !livePageHandles.includes(handle)) {
+          brokenLinks.push({
+            sourcePage: page.title,
+            sourceHandle: page.handle,
+            brokenType: type,
+            brokenHandle: handle,
+            suggestion: getClosestHandle(handle, livePageHandles)
+          });
+        } else if (type === 'collections' && !liveCollectionHandles.includes(handle)) {
+          brokenLinks.push({
+            sourcePage: page.title,
+            sourceHandle: page.handle,
+            brokenType: type,
+            brokenHandle: handle,
+            suggestion: getClosestHandle(handle, liveCollectionHandles)
+          });
+        }
+      }
+    });
+    setDeepScanResults(brokenLinks);
+  };
+
+  const handleStartDeepScan = () => {
+    setIsDeepScanning(true);
+    setScanProgress(0);
+    setDeepScanResults(null);
+    accumulatedPagesRef.current = [];
+    lastCursorRef.current = "START";
+
+    const fd = new FormData();
+    fd.append("intent", "fetchPageBatch");
+    fd.append("cursor", "null");
+    scanFetcher.submit(fd, { method: "post" });
+  };
+
   const displayMenus = menus.map(menu => {
     const override = savedOverrides[menu.id];
     if (override) {
@@ -232,7 +372,6 @@ export default function MenuManager() {
     return menu;
   });
 
-  // Calculate Global Scan Totals
   const globalTotals = useMemo(() => {
     if (!globalScan) return null;
     let live = 0, draft = 0, dead = 0;
@@ -242,7 +381,6 @@ export default function MenuManager() {
     return { live, draft, dead };
   }, [globalScan]);
 
-  // Calculate True Orphans (excluding Dwell Web Pages)
   const unlinkedPages = useMemo(() => {
     if (!scanned) return [];
     const allUsedUrls = new Set();
@@ -279,7 +417,6 @@ export default function MenuManager() {
     setScanned(globalScan !== null);
   };
 
-  // Derive persistent state from database loader
   const activeMenuSetting = dbSettings?.find(s => s.menuHandle === activeMenu?.handle) || {};
   const isLocked = activeMenu?.handle === "main-menu" && activeMenuSetting.isLocked;
   const autoSyncFooter = activeMenuSetting.autoSync || false;
@@ -442,12 +579,10 @@ export default function MenuManager() {
     setScanned(true);
   };
 
-  // 🚀 NEW: Auto-Add Orphans to Footer Logic
   const handleFixOrphans = () => {
     const footerMenu = displayMenus.find(m => m.handle === "footer");
     if (!footerMenu) return;
 
-    // Build list of existing URLs in the footer so we don't add duplicates
     const existingUrls = new Set();
     const gatherUrls = (items) => {
       items.forEach(item => {
@@ -457,7 +592,6 @@ export default function MenuManager() {
     };
     gatherUrls(footerMenu.items);
 
-    // Create the new links
     const newLinks = unlinkedPages
       .filter(p => !existingUrls.has(`/pages/${p.handle}`))
       .map(p => ({
@@ -469,10 +603,8 @@ export default function MenuManager() {
 
     if (newLinks.length === 0) return;
 
-    // Combine current footer items with the new orphan links
     const updatedFooterItems = [...footerMenu.items, ...newLinks];
 
-    // Format strictly for Shopify Admin API
     const formatItem = (item) => ({
       title: item.title,
       url: item.url || "#",
@@ -482,7 +614,6 @@ export default function MenuManager() {
 
     const itemsForServer = updatedFooterItems.map(formatItem);
 
-    // Fire it to the server
     const fd = new FormData();
     fd.append("intent", "updateMenu");
     fd.append("id", footerMenu.id);
@@ -492,7 +623,6 @@ export default function MenuManager() {
     fd.append("logMessage", "⚡ Auto-fixed orphaned pages by adding them to the footer.");
     fetcher.submit(fd, { method: "post" });
 
-    // If the user happens to be looking at the footer right now, update the UI instantly
     if (activeMenu?.handle === "footer") {
       setMenuItems(prev => [...prev, ...newLinks]);
     }
@@ -640,6 +770,53 @@ export default function MenuManager() {
                 </BlockStack>
               </Card>
             )}
+
+            <Card>
+              <BlockStack gap="300">
+                <InlineStack align="space-between" blockAlign="center">
+                  <BlockStack>
+                    <Text variant="headingSm">Deep Link Scanner</Text>
+                    <Text variant="bodySm" tone="subdued">Scans page body content for broken internal links.</Text>
+                  </BlockStack>
+                  <InlineStack gap="300" blockAlign="center">
+                    {isDeepScanning && (
+                      <Text tone="subdued" variant="bodySm">
+                        Scanning page {scanProgress} of {Math.max(scanProgress, pages.length)}...
+                      </Text>
+                    )}
+                    <Button onClick={handleStartDeepScan} loading={isDeepScanning}>
+                      Scan Page Content
+                    </Button>
+                  </InlineStack>
+                </InlineStack>
+                
+                {deepScanResults !== null && !isDeepScanning && (
+                  <Box paddingBlockStart="200">
+                    {deepScanResults.length === 0 ? (
+                      <Banner tone="success">All internal links are healthy ✅</Banner>
+                    ) : (
+                      <BlockStack gap="300">
+                        <Badge tone="critical">{deepScanResults.length} broken internal links found</Badge>
+                        <List type="bullet">
+                          {deepScanResults.map((err, i) => (
+                            <List.Item key={i}>
+                              <Text fontWeight="bold">{err.sourcePage}</Text>
+                              <Text tone="subdued" variant="bodySm"> ({err.sourceHandle}) contains broken link: </Text>
+                              <Text tone="critical">/{err.brokenType}/{err.brokenHandle}</Text>
+                              {err.suggestion && (
+                                <Text tone="success" variant="bodySm">
+                                  {" "}→ Did you mean: /{err.brokenType}/{err.suggestion}?
+                                </Text>
+                              )}
+                            </List.Item>
+                          ))}
+                        </List>
+                      </BlockStack>
+                    )}
+                  </Box>
+                )}
+              </BlockStack>
+            </Card>
 
             {fetcher.data?.message && <Banner tone="success">{fetcher.data.message}</Banner>}
             {fetcher.data?.error && <Banner tone="critical">{fetcher.data.error}</Banner>}
