@@ -32,26 +32,34 @@ const PINNED_FILES = [
 const FOLDERS = ["sections", "snippets", "templates", "assets", "config"];
 
 export const loader = async ({ request }) => {
-  const { admin } = await authenticate.admin(request);
+  // Extracting the raw session data natively bypassing Shopify's missing REST wrappers
+  const { session } = await authenticate.admin(request);
+  const { shop, accessToken } = session;
   
   try {
-    // Bypassing admin.rest and using the native authenticated fetch
-    const response = await admin.fetch(`/admin/api/2024-10/themes/${THEME_ID}/assets.json`);
+    const response = await fetch(`https://${shop}/admin/api/2024-10/themes/${THEME_ID}/assets.json`, {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Shopify-Access-Token": accessToken,
+      },
+    });
     
     if (!response.ok) {
       throw new Error(`Shopify API responded with status: ${response.status}`);
     }
     
     const data = await response.json();
-    return { files: data.assets || [] };
+    return Response.json({ files: data.assets || [] });
   } catch (error) {
     console.error("Failed to load theme assets:", error);
-    return { files: [], error: "Failed to load theme files." };
+    return Response.json({ files: [], error: `Failed to load theme files: ${error.message}` });
   }
 };
 
 export const action = async ({ request }) => {
-  const { admin } = await authenticate.admin(request);
+  const { session } = await authenticate.admin(request);
+  const { shop, accessToken } = session;
   const formData = await request.formData();
   const intent = formData.get("intent");
   const assetKey = formData.get("assetKey");
@@ -59,7 +67,14 @@ export const action = async ({ request }) => {
   try {
     // 1. FETCH ASSET CONTENT
     if (intent === "fetchAsset") {
-      const response = await admin.fetch(`/admin/api/2024-10/themes/${THEME_ID}/assets.json?asset[key]=${encodeURIComponent(assetKey)}`);
+      const response = await fetch(`https://${shop}/admin/api/2024-10/themes/${THEME_ID}/assets.json?asset[key]=${encodeURIComponent(assetKey)}`, {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Shopify-Access-Token": accessToken,
+        },
+      });
+
       if (!response.ok) throw new Error("Failed to fetch asset content.");
       
       const data = await response.json();
@@ -69,9 +84,12 @@ export const action = async ({ request }) => {
     // 2. SAVE ASSET TO THEME
     if (intent === "saveAsset") {
       const content = formData.get("content");
-      const response = await admin.fetch(`/admin/api/2024-10/themes/${THEME_ID}/assets.json`, {
+      const response = await fetch(`https://${shop}/admin/api/2024-10/themes/${THEME_ID}/assets.json`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          "X-Shopify-Access-Token": accessToken,
+        },
         body: JSON.stringify({
           asset: { key: assetKey, value: content },
         }),
@@ -112,6 +130,7 @@ Return only the modified file content. No explanation unless asked.`;
       
       const geminiData = await geminiRes.json();
       let modifiedContent = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || "";
+      
       // Strip markdown code block formatting if Gemini wraps it
       modifiedContent = modifiedContent.replace(/^```liquid\n|^```html\n|^```\n/, "").replace(/\n```$/, "");
 
@@ -159,7 +178,10 @@ ${content}`;
 };
 
 export default function ThemeEditorTab() {
-  const { files = [], error: loaderError } = useLoaderData() || {};
+  const loaderData = useLoaderData();
+  const files = loaderData?.files || [];
+  const loaderError = loaderData?.error;
+  
   const actionData = useActionData();
   const submit = useSubmit();
   const navigation = useNavigation();
