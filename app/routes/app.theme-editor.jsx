@@ -1,5 +1,4 @@
 import { useState, useEffect, useCallback } from "react";
-import { json } from "@remix-run/node";
 import { useLoaderData, useActionData, useSubmit, useNavigation } from "react-router";
 import {
   Page,
@@ -15,7 +14,6 @@ import {
   Badge,
   Box,
   Divider,
-  Spinner,
   Banner,
   Scrollable
 } from "@shopify/polaris";
@@ -42,10 +40,10 @@ export const loader = async ({ request }) => {
     });
     
     const data = await response.json();
-    return json({ assets: data.assets || [] });
+    return Response.json({ assets: data.assets || [] });
   } catch (error) {
     console.error("Failed to load theme assets:", error);
-    return json({ assets: [], error: "Failed to load theme files." });
+    return Response.json({ assets: [], error: "Failed to load theme files." });
   }
 };
 
@@ -63,7 +61,7 @@ export const action = async ({ request }) => {
         query: { "asset[key]": assetKey },
       });
       const data = await response.json();
-      return json({ intent, assetKey, content: data.asset?.value || "" });
+      return Response.json({ intent, assetKey, content: data.asset?.value || "" });
     }
 
     // 2. SAVE ASSET TO THEME
@@ -76,7 +74,7 @@ export const action = async ({ request }) => {
         },
       });
       const data = await response.json();
-      return json({ intent, success: true, message: `Saved ${assetKey} successfully.` });
+      return Response.json({ intent, success: true, message: `Saved ${assetKey} successfully.` });
     }
 
     // 3. GEMINI ASSIST (CODE MODIFICATION)
@@ -112,7 +110,7 @@ Return only the modified file content. No explanation unless asked.`;
       // Strip markdown code block formatting if Gemini wraps it
       modifiedContent = modifiedContent.replace(/^```liquid\n|^```html\n|^```\n/, "").replace(/\n```$/, "");
 
-      return json({ intent, assetKey, modifiedContent });
+      return Response.json({ intent, assetKey, modifiedContent });
     }
 
     // 4. GEMINI RESEARCH (SCHEMA CATALOGING)
@@ -144,14 +142,14 @@ ${content}`;
       const geminiData = await geminiRes.json();
       const researchContent = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || "No research data generated.";
 
-      return json({ intent, assetKey, researchContent });
+      return Response.json({ intent, assetKey, researchContent });
     }
 
-    return json({ error: "Invalid intent" }, { status: 400 });
+    return Response.json({ error: "Invalid intent" }, { status: 400 });
 
   } catch (error) {
     console.error("Action error:", error);
-    return json({ error: error.message }, { status: 500 });
+    return Response.json({ error: error.message }, { status: 500 });
   }
 };
 
