@@ -14,134 +14,168 @@ export const loader = async ({ request }) => {
   const { admin, session } = await authenticate.admin(request);
   const { shop, accessToken } = session;
 
-  // A. Paginate Products for Missing Content
-  let products = [];
-  let hasNextPage = true;
-  let cursor = null;
+  try {
+    // A. Paginate Products for Missing Content
+    let products = [];
+    let hasNextPage = true;
+    let cursor = null;
 
-  while (hasNextPage) {
-    const productQuery = `#graphql
-      query getProducts($cursor: String) {
-        products(first: 50, after: $cursor) {
-          pageInfo { hasNextPage endCursor }
-          edges {
-            node {
-              id
-              title
-              handle
-              descriptionHtml
-              images(first: 5) { edges { node { id altText } } }
-              seo { title description }
-              variants(first: 1) { edges { node { price } } }
+    while (hasNextPage) {
+      const productQuery = `#graphql
+        query getProducts($cursor: String) {
+          products(first: 50, after: $cursor) {
+            pageInfo { hasNextPage endCursor }
+            edges {
+              node {
+                id
+                title
+                handle
+                descriptionHtml
+                images(first: 5) { edges { node { id altText } } }
+                seo { title description }
+                variants(first: 1) { edges { node { price } } }
+              }
             }
           }
         }
+      `;
+      const res = await admin.graphql(productQuery, { variables: { cursor } });
+      const data = await res.json();
+      
+      // If Shopify returns a 200 OK but includes GQL validation errors in the payload
+      if (data.errors) {
+        console.error("GQL ERRORS (Products):", JSON.stringify(data.errors, null, 2));
       }
-    `;
-    const res = await admin.graphql(productQuery, { variables: { cursor } });
-    const data = await res.json();
-    const edges = data.data?.products?.edges || [];
-    products.push(...edges.map(e => e.node));
-    
-    hasNextPage = data.data?.products?.pageInfo?.hasNextPage;
-    cursor = data.data?.products?.pageInfo?.endCursor;
-  }
 
-  const missingContent = products.map(p => {
-    const missingImages = p.images.edges.length === 0;
-    const missingAltText = p.images.edges.some(img => !img.node.altText);
-    const missingDesc = !p.descriptionHtml || p.descriptionHtml.trim() === "";
-    const missingSEO = !p.seo.title || !p.seo.description;
-    const missingPrice = p.variants.edges.some(v => parseFloat(v.node.price) === 0);
-
-    if (missingImages || missingAltText || missingDesc || missingSEO || missingPrice) {
-      return { id: p.id, title: p.title, missingImages, missingAltText, missingDesc, missingSEO, missingPrice };
+      const edges = data.data?.products?.edges || [];
+      products.push(...edges.map(e => e.node));
+      
+      hasNextPage = data.data?.products?.pageInfo?.hasNextPage;
+      cursor = data.data?.products?.pageInfo?.endCursor;
     }
-    return null;
-  }).filter(Boolean);
 
-  // B. Paginate Pages for Orphan Check (Basic scan)
-  let pages = [];
-  let pagesHasNext = true;
-  let pagesCursor = null;
-  while (pagesHasNext) {
-    const pageQuery = `#graphql
-      query getPages($cursor: String) {
-        pages(first: 50, after: $cursor) {
-          pageInfo { hasNextPage endCursor }
-          edges { node { id title handle } }
+    const missingContent = products.map(p => {
+      const missingImages = p.images?.edges?.length === 0;
+      const missingAltText = p.images?.edges?.some(img => !img.node.altText);
+      const missingDesc = !p.descriptionHtml || p.descriptionHtml.trim() === "";
+      const missingSEO = !p.seo?.title || !p.seo?.description;
+      const missingPrice = p.variants?.edges?.some(v => parseFloat(v.node.price) === 0);
+
+      if (missingImages || missingAltText || missingDesc || missingSEO || missingPrice) {
+        return { id: p.id, title: p.title, missingImages, missingAltText, missingDesc, missingSEO, missingPrice };
+      }
+      return null;
+    }).filter(Boolean);
+
+    // B. Paginate Pages for Orphan Check (Basic scan)
+    let pages = [];
+    let pagesHasNext = true;
+    let pagesCursor = null;
+    while (pagesHasNext) {
+      const pageQuery = `#graphql
+        query getPages($cursor: String) {
+          pages(first: 50, after: $cursor) {
+            pageInfo { hasNextPage endCursor }
+            edges { node { id title handle } }
+          }
+        }
+      `;
+      const res = await admin.graphql(pageQuery, { variables: { cursor: pagesCursor } });
+      const data = await res.json();
+      
+      if (data.errors) {
+        console.error("GQL ERRORS (Pages):", JSON.stringify(data.errors, null, 2));
+      }
+
+      pages.push(...(data.data?.pages?.edges || []).map(e => e.node));
+      pagesHasNext = data.data?.pages?.pageInfo?.hasNextPage;
+      pagesCursor = data.data?.pages?.pageInfo?.endCursor;
+    }
+    // Simulated orphan detection (requires deep menu traversal in reality)
+    const orphanedPages = pages.slice(0, 2).map(p => ({ ...p, issue: "Not linked in Navigation" }));
+
+    // C. Scan Shop Vitals
+    const shopQuery = `#graphql
+      query {
+        shop {
+          paymentSettings { acceptedCardBrands }
+          taxesIncluded
+          shipsToCountries
         }
       }
     `;
-    const res = await admin.graphql(pageQuery, { variables: { cursor: pagesCursor } });
-    const data = await res.json();
-    pages.push(...(data.data?.pages?.edges || []).map(e => e.node));
-    pagesHasNext = data.data?.pages?.pageInfo?.hasNextPage;
-    pagesCursor = data.data?.pages?.pageInfo?.endCursor;
-  }
-  // Simulated orphan detection (requires deep menu traversal in reality)
-  const orphanedPages = pages.slice(0, 2).map(p => ({ ...p, issue: "Not linked in Navigation" }));
-
-  // C. Scan Shop Vitals
-  const shopQuery = `#graphql
-    query {
-      shop {
-        paymentSettings { acceptedCardBrands }
-        taxesIncluded
-        shipsToCountries
-      }
-    }
-  `;
-  const shopRes = await admin.graphql(shopQuery);
-  const shopData = await shopRes.json();
-  const shopInfo = shopData.data?.shop || {};
-
-  const vitals = {
-    paymentsActive: (shopInfo.paymentSettings?.acceptedCardBrands || []).length > 0,
-    shippingSet: (shopInfo.shipsToCountries || []).length > 0,
-    taxesConfigured: shopInfo.taxesIncluded !== null,
-  };
-
-  // D. Theme Audit via REST Assets API (Using Session Token)
-  let themeAudit = [];
-  try {
-    const themeRes = await fetch(`https://${shop}/admin/api/2024-01/themes.json`, {
-      headers: { "X-Shopify-Access-Token": accessToken }
-    });
-    const themeData = await themeRes.json();
-    const mainTheme = themeData.themes?.find(t => t.role === "main");
+    const shopRes = await admin.graphql(shopQuery);
+    const shopData = await shopRes.json();
     
-    if (mainTheme) {
-      const assetsRes = await fetch(`https://${shop}/admin/api/2024-01/themes/${mainTheme.id}/assets.json`, {
+    if (shopData.errors) {
+      console.error("GQL ERRORS (Shop Vitals):", JSON.stringify(shopData.errors, null, 2));
+    }
+    
+    const shopInfo = shopData.data?.shop || {};
+
+    const vitals = {
+      paymentsActive: (shopInfo.paymentSettings?.acceptedCardBrands || []).length > 0,
+      shippingSet: (shopInfo.shipsToCountries || []).length > 0,
+      taxesConfigured: shopInfo.taxesIncluded !== null,
+    };
+
+    // D. Theme Audit via REST Assets API (Using Session Token)
+    let themeAudit = [];
+    try {
+      const themeRes = await fetch(`https://${shop}/admin/api/2024-01/themes.json`, {
         headers: { "X-Shopify-Access-Token": accessToken }
       });
-      const assetsData = await assetsRes.json();
-      const snippets = (assetsData.assets || []).filter(a => a.key.startsWith("snippets/"));
-      // Simulated unused check
-      themeAudit = snippets.slice(0, 3).map(s => ({ file: s.key, issue: "Unused Snippet" }));
+      const themeData = await themeRes.json();
+      const mainTheme = themeData.themes?.find(t => t.role === "main");
+      
+      if (mainTheme) {
+        const assetsRes = await fetch(`https://${shop}/admin/api/2024-01/themes/${mainTheme.id}/assets.json`, {
+          headers: { "X-Shopify-Access-Token": accessToken }
+        });
+        const assetsData = await assetsRes.json();
+        const snippets = (assetsData.assets || []).filter(a => a.key.startsWith("snippets/"));
+        // Simulated unused check
+        themeAudit = snippets.slice(0, 3).map(s => ({ file: s.key, issue: "Unused Snippet" }));
+      }
+    } catch (e) {
+      console.error("Theme audit failed:", e);
     }
-  } catch (e) {
-    console.error("Theme audit failed:", e);
+
+    // E. Compute Polish & Shine Score
+    let score = 100;
+    if (missingContent.length > 0) score -= Math.min(20, missingContent.length * 2);
+    if (orphanedPages.length > 0) score -= 10;
+    if (!vitals.paymentsActive) score -= 15;
+    if (!vitals.shippingSet) score -= 15;
+    if (!vitals.taxesConfigured) score -= 10;
+    if (themeAudit.length > 0) score -= 5;
+
+    return Response.json({
+      shop,
+      score: Math.max(0, score),
+      missingContent,
+      orphanedPages,
+      vitals,
+      themeAudit,
+      brokenLinks: [] // Placeholder for 404 crawler
+    });
+
+  } catch (errors) {
+    // THIS IS THE CATCH BLOCK FOR THROWN GRAPHQL ERRORS
+    console.error("GQL ERRORS:", JSON.stringify(errors.graphQLErrors, null, 2));
+    
+    // Return a safe fallback object so the UI doesn't completely crash while we diagnose
+    return Response.json({
+      shop,
+      score: 0,
+      missingContent: [],
+      orphanedPages: [],
+      vitals: { paymentsActive: false, shippingSet: false, taxesConfigured: false },
+      themeAudit: [],
+      brokenLinks: [],
+      error: "Diagnostic scanner failed. Check terminal for GraphQL errors."
+    });
   }
-
-  // E. Compute Polish & Shine Score
-  let score = 100;
-  if (missingContent.length > 0) score -= Math.min(20, missingContent.length * 2);
-  if (orphanedPages.length > 0) score -= 10;
-  if (!vitals.paymentsActive) score -= 15;
-  if (!vitals.shippingSet) score -= 15;
-  if (!vitals.taxesConfigured) score -= 10;
-  if (themeAudit.length > 0) score -= 5;
-
-  return Response.json({
-    shop,
-    score: Math.max(0, score),
-    missingContent,
-    orphanedPages,
-    vitals,
-    themeAudit,
-    brokenLinks: [] // Placeholder for 404 crawler
-  });
 };
 
 // ==========================================
@@ -150,6 +184,14 @@ export const loader = async ({ request }) => {
 export default function StoreHealthCheckTab() {
   const data = useLoaderData();
   const nav = useNavigation();
+
+  if (data.error) {
+    return (
+      <Page title="Diagnostic Bay: Store Health Check">
+        <Banner tone="critical">{data.error}</Banner>
+      </Page>
+    );
+  }
 
   // Score Logic
   const getTone = (score) => {
