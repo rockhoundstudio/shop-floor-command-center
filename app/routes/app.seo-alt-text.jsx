@@ -1,315 +1,424 @@
-import { useState, useEffect } from "react";
-import { useFetcher, useLoaderData, useRouteError, isRouteErrorResponse } from "react-router";
-import { authenticate } from "../shopify.server";
+import { useState, useEffect, useCallback } from "react";
+import { useLoaderData, useActionData, useSubmit, useNavigation } from "react-router";
 import {
   Page,
   Layout,
   Card,
-  Text,
-  Button,
-  TextField,
-  Banner,
   BlockStack,
   InlineStack,
-  Divider,
+  Text,
+  List,
+  Button,
+  TextField,
+  Tabs,
+  Badge,
   Box,
-  Thumbnail
+  Divider,
+  Banner,
+  Scrollable
 } from "@shopify/polaris";
+import { authenticate } from "../shopify.server";
 
-export function ErrorBoundary() {
-  const error = useRouteError();
-  return (
-    <Page title="Engine Fault">
-      <Card background="bg-surface-critical">
-        <BlockStack gap="400">
-          <Text variant="headingLg" as="h1" fontWeight="bold">Manual Editor Crashed</Text>
-          <Text>
-            {isRouteErrorResponse(error)
-              ? `${error.status} ${error.statusText} - ${error.data}`
-              : error instanceof Error
-              ? error.message
-              : "Unknown engine failure."}
-          </Text>
-        </BlockStack>
-      </Card>
-    </Page>
-  );
-}
+const THEME_ID = "158876434683"; // Live Prestige v11.1.0 Theme
+
+const PINNED_FILES = [
+  "config/settings_schema.json",
+  "config/settings_data.json",
+  "layout/theme.liquid",
+  "sections/header.liquid",
+  "sections/footer.liquid",
+];
+
+const FOLDERS = ["sections", "snippets", "templates", "assets", "config"];
 
 export const loader = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
+
   try {
-    let allProducts = [];
-    let cursor = null;
-    let hasNextPage = true;
-    let cycleCount = 0;
-    while (hasNextPage && cycleCount < 20) {
-      const query = `
-        query GetProducts($cursor: String) {
-          products(first: 100, after: $cursor) {
-            pageInfo { hasNextPage endCursor }
-            edges {
-              node {
-                id
-                title
-                seo { title description }
-                media(first: 10) {
-                  edges { node { ... on MediaImage { id alt image { url } } } }
-                }
-              }
-            }
-          }
-        }
-      `;
-      const res = await admin.graphql(query, { variables: { cursor } });
-      const json = await res.json();
-      if (json.errors) throw new Error(json.errors[0].message);
-      const page = json.data?.products;
-      if (!page) break;
-      const formattedNodes = page.edges.map((e) => {
-        const node = e.node;
-        const mappedImages = (node.media?.edges || [])
-          .filter(mediaEdge => mediaEdge.node.image)
-          .map(mediaEdge => ({
-            id: mediaEdge.node.id,
-            url: mediaEdge.node.image?.url || "",
-            altText: mediaEdge.node.alt || ""
-          }));
-        return {
-          id: node.id, title: node.title,
-          seo: node.seo, images: mappedImages
-        };
-      });
-      allProducts = allProducts.concat(formattedNodes);
-      hasNextPage = page.pageInfo.hasNextPage;
-      cursor = page.pageInfo.endCursor;
-      cycleCount++;
+    const response = await admin.fetch(`/admin/api/2024-10/themes/${THEME_ID}/assets.json`);
+    
+    if (!response.ok) {
+      throw new Error(`Shopify API responded with status: ${response.status}`);
     }
-    return { products: allProducts };
+    
+    const data = await response.json();
+    return Response.json({ assets: data.assets || [] });
   } catch (error) {
-    if (error instanceof Response) throw error;
-    throw new Response(error.message || String(error), { status: 500, statusText: "Loader Engine Fault" });
+    console.error("Failed to load theme assets:", error);
+    return Response.json({ assets: [], error: `Failed to load theme files: ${error.message}` });
   }
 };
 
 export const action = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
+  const formData = await request.formData();
+  const intent = formData.get("intent");
+  const assetKey = formData.get("assetKey");
+
   try {
-    const body = await request.formData();
-    const intent = body.get("intent");
-
-    if (intent === "save_alt") {
-      const productId = body.get("productId");
-      const pairs = JSON.parse(body.get("pairs"));
-      const chunkSize = 10;
-      for (let i = 0; i < pairs.length; i += chunkSize) {
-        const chunk = pairs.slice(i, i + chunkSize);
-        const filesInput = chunk.map(({ id, alt }) => ({ id: id, alt: alt }));
-        const res = await admin.graphql(
-          `mutation fileUpdate($files: [FileUpdateInput!]!) {
-            fileUpdate(files: $files) {
-              files { ... on MediaImage { id alt } }
-              userErrors { field message }
-            }
-          }`, { variables: { files: filesInput } }
-        );
-        const json = await res.json();
-        if (json.errors) throw new Error(json.errors[0].message);
-        if (json.data.fileUpdate.userErrors.length > 0) throw new Error(json.data.fileUpdate.userErrors[0].message);
-        if (i + chunkSize < pairs.length) await new Promise((resolve) => setTimeout(resolve, 1000));
-      }
-      return { ok: true, intent, productId };
+    // 1. FETCH ASSET CONTENT
+    if (intent === "fetchAsset") {
+      const response = await admin.fetch(`/admin/api/2024-10/themes/${THEME_ID}/assets.json?asset[key]=${encodeURIComponent(assetKey)}`);
+      if (!response.ok) throw new Error("Failed to fetch asset content.");
+      
+      const data = await response.json();
+      return Response.json({ intent, assetKey, content: data.asset?.value || "" });
     }
 
-    if (intent === "save_seo") {
-      const productId = body.get("productId");
-      const seoTitle = body.get("seoTitle");
-      const seoDescription = body.get("seoDescription");
-      const res = await admin.graphql(
-        `mutation UpdateSEO($productId: ID!, $seoTitle: String!, $seoDescription: String!) {
-          productUpdate(input: { id: $productId, seo: { title: $seoTitle, description: $seoDescription } }) {
-            product { id seo { title description } }
-            userErrors { field message }
-          }
-        }`, { variables: { productId, seoTitle, seoDescription } }
+    // 2. SAVE ASSET TO THEME
+    if (intent === "saveAsset") {
+      const content = formData.get("content");
+      const response = await admin.fetch(`/admin/api/2024-10/themes/${THEME_ID}/assets.json`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          asset: { key: assetKey, value: content },
+        }),
+      });
+      
+      if (!response.ok) throw new Error("Failed to save asset to theme.");
+      
+      return Response.json({ intent, success: true, message: `Saved ${assetKey} successfully.` });
+    }
+
+    // 3. GEMINI ASSIST (CODE MODIFICATION)
+    if (intent === "geminiAssist") {
+      const content = formData.get("content");
+      const instruction = formData.get("instruction");
+      const apiKey = process.env.GEMINI_API_KEY;
+
+      const prompt = `You are a Shopify Liquid and theme architecture expert.
+Theme: Prestige v11.1.0 by Maestrooo.
+File: ${assetKey}
+
+Current file content:
+${content}
+
+Task: ${instruction}
+
+Return only the modified file content. No explanation unless asked.`;
+
+      const geminiRes = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key=${apiKey}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }],
+          }),
+        }
       );
-      const json = await res.json();
-      if (json.errors) throw new Error(json.errors[0].message);
-      if (json.data.productUpdate.userErrors.length > 0) throw new Error(json.data.productUpdate.userErrors[0].message);
-      return { ok: true, intent, productId, seo: { title: seoTitle, description: seoDescription } };
+      
+      const geminiData = await geminiRes.json();
+      let modifiedContent = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || "";
+      // Strip markdown code block formatting if Gemini wraps it
+      modifiedContent = modifiedContent.replace(/^```liquid\n|^```html\n|^```\n/, "").replace(/\n```$/, "");
+
+      return Response.json({ intent, assetKey, modifiedContent });
     }
 
-    return { ok: false, error: "Unknown intent" };
+    // 4. GEMINI RESEARCH (SCHEMA CATALOGING)
+    if (intent === "geminiResearch") {
+      const content = formData.get("content");
+      const apiKey = process.env.GEMINI_API_KEY;
+
+      const prompt = `You are a Shopify Liquid and Prestige theme expert.
+Catalog every setting, block type, and preset defined in this file.
+For each setting: ID, label, type, default value, and what it controls.
+For each block: type, name, available settings.
+Return as a structured markdown table.
+
+File: ${assetKey}
+Content:
+${content}`;
+
+      const geminiRes = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key=${apiKey}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }],
+          }),
+        }
+      );
+      
+      const geminiData = await geminiRes.json();
+      const researchContent = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || "No research data generated.";
+
+      return Response.json({ intent, assetKey, researchContent });
+    }
+
+    return Response.json({ error: "Invalid intent" }, { status: 400 });
+
   } catch (error) {
-    if (error instanceof Response) throw error;
-    return { ok: false, error: error.message || "An internal engine fault occurred." };
+    console.error("Action error:", error);
+    return Response.json({ error: error.message }, { status: 500 });
   }
 };
 
-export default function SeoAltTextManager() {
-  const { products: initialProducts } = useLoaderData();
-  const fetcher = useFetcher();
-  const [products, setProducts] = useState(initialProducts);
-  const [savingAltId, setSavingAltId] = useState(null);
-  const [savingSeoId, setSavingSeoId] = useState(null);
-  const [toast, setToast] = useState(null);
-  const [pageError, setPageError] = useState(null);
+export default function ThemeEditorTab() {
+  const { assets, error: loaderError } = useLoaderData();
+  const actionData = useActionData();
+  const submit = useSubmit();
+  const navigation = useNavigation();
 
-  // Local state for manual edits
-  const [altEdits, setAltEdits] = useState({});
-  const [seoEdits, setSeoEdits] = useState({});
+  // State Management
+  const [selectedTab, setSelectedTab] = useState(0);
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [originalContent, setOriginalContent] = useState("");
+  const [currentContent, setCurrentContent] = useState("");
+  const [showDiff, setShowDiff] = useState(false);
+  const [instruction, setInstruction] = useState("");
+  const [researchData, setResearchData] = useState("");
 
+  const isLoading = navigation.state === "submitting" || navigation.state === "loading";
+
+  // Handle Action Responses
   useEffect(() => {
-    // Initialize state with current shop data
-    const initialAlt = {};
-    const initialSeo = {};
-    initialProducts.forEach(p => {
-      initialAlt[p.id] = p.images.map(img => ({ id: img.id, altText: img.altText || "" }));
-      initialSeo[p.id] = { title: p.seo?.title || "", description: p.seo?.description || "" };
-    });
-    setAltEdits(initialAlt);
-    setSeoEdits(initialSeo);
-  }, [initialProducts]);
-
-  useEffect(() => {
-    if (fetcher.state === "idle" && fetcher.data) {
-      setSavingAltId(null); setSavingSeoId(null);
-      if (!fetcher.data.ok) {
-        setPageError(`❌ Fault: ${fetcher.data.error}`);
-        return;
+    if (actionData) {
+      if (actionData.intent === "fetchAsset") {
+        setOriginalContent(actionData.content);
+        setCurrentContent(actionData.content);
+        setResearchData(""); // Reset research on new file load
+      } else if (actionData.intent === "saveAsset" && actionData.success) {
+        setOriginalContent(currentContent); // Update baseline after save
+        setShowDiff(false);
+        shopify.toast.show(actionData.message);
+      } else if (actionData.intent === "geminiAssist") {
+        setCurrentContent(actionData.modifiedContent);
+        setShowDiff(true); // Auto-show diff so user can review AI changes
+        shopify.toast.show("Gemini modifications applied to editor.");
+      } else if (actionData.intent === "geminiResearch") {
+        setResearchData(actionData.researchContent);
+        shopify.toast.show("Research complete.");
       }
-      setPageError(null);
-      const { intent } = fetcher.data;
-      if (intent === "save_alt") {
-        setToast({ message: "✓ Manual Alt Text Saved", tone: "success" });
-      } else if (intent === "save_seo") {
-        setToast({ message: "✓ Manual SEO Data Saved", tone: "success" });
-      }
-      setTimeout(() => setToast(null), 3000);
     }
-  }, [fetcher.state, fetcher.data]);
+  }, [actionData]);
 
-  const handleAltChange = (productId, imageIndex, value) => {
-    setAltEdits(prev => {
-      const productAlts = [...(prev[productId] || [])];
-      if (productAlts[imageIndex]) {
-        productAlts[imageIndex].altText = value;
-      }
-      return { ...prev, [productId]: productAlts };
-    });
-  };
+  // File Handlers
+  const handleSelectFile = useCallback((key) => {
+    setSelectedFile(key);
+    submit({ intent: "fetchAsset", assetKey: key }, { method: "post" });
+  }, [submit]);
 
-  const handleSeoChange = (productId, field, value) => {
-    setSeoEdits(prev => ({
-      ...prev,
-      [productId]: { ...(prev[productId] || {}), [field]: value }
-    }));
-  };
+  const handleSave = useCallback(() => {
+    submit({ intent: "saveAsset", assetKey: selectedFile, content: currentContent }, { method: "post" });
+  }, [submit, selectedFile, currentContent]);
 
-  const handleSaveAlt = (productId) => {
-    setSavingAltId(productId);
-    const pairs = altEdits[productId].map(img => ({ id: img.id, alt: img.altText }));
-    const fd = new FormData();
-    fd.append("intent", "save_alt");
-    fd.append("productId", productId);
-    fd.append("pairs", JSON.stringify(pairs));
-    fetcher.submit(fd, { method: "post" });
-  };
+  const handleGeminiAssist = useCallback(() => {
+    if (!instruction.trim()) {
+      shopify.toast.show("Please enter an instruction for Gemini.");
+      return;
+    }
+    submit({ intent: "geminiAssist", assetKey: selectedFile, content: currentContent, instruction }, { method: "post" });
+  }, [submit, selectedFile, currentContent, instruction]);
 
-  const handleSaveSeo = (productId) => {
-    setSavingSeoId(productId);
-    const seoData = seoEdits[productId] || {};
-    const fd = new FormData();
-    fd.append("intent", "save_seo");
-    fd.append("productId", productId);
-    fd.append("seoTitle", seoData.title || "");
-    fd.append("seoDescription", seoData.description || "");
-    fetcher.submit(fd, { method: "post" });
+  const handleGeminiResearch = useCallback(() => {
+    submit({ intent: "geminiResearch", assetKey: selectedFile, content: currentContent }, { method: "post" });
+  }, [submit, selectedFile, currentContent]);
+
+  // Derived Stats
+  const lineCount = currentContent.split("\n").length;
+  const charCount = currentContent.length;
+
+  // File Tree Grouping Logic
+  const renderFileGroup = (folderName) => {
+    const files = assets.filter((a) => a.key.startsWith(`${folderName}/`) && !PINNED_FILES.includes(a.key));
+    if (files.length === 0) return null;
+    
+    return (
+      <Box paddingBlockEnd="400" key={folderName}>
+        <Text variant="headingSm" as="h6" fontWeight="bold">{folderName.toUpperCase()}</Text>
+        <List type="bullet">
+          {files.map((file) => (
+            <List.Item key={file.key}>
+              <Button variant="monochromePlain" onClick={() => handleSelectFile(file.key)} textAlign="left">
+                {file.key.replace(`${folderName}/`, "")}
+              </Button>
+            </List.Item>
+          ))}
+        </List>
+      </Box>
+    );
   };
 
   return (
-    <Page title="Manual SEO & Alt Text" subtitle="Direct manual control over product SEO and image Alt Text.">
-      {toast && <div style={{ position: "fixed", top: 16, right: 16, zIndex: 9999 }}><Banner tone={toast.tone}>{toast.message}</Banner></div>}
+    <Page title="Theme Editor: Prestige v11.1.0" fullWidth>
+      {loaderError && <Banner tone="critical">{loaderError}</Banner>}
+      {actionData?.error && <Banner tone="critical">{actionData.error}</Banner>}
+
       <Layout>
-        {pageError && (
-          <Layout.Section>
-            <Banner tone="critical" title="Action Failed" onDismiss={() => setPageError(null)}><Text as="p">{pageError}</Text></Banner>
-          </Layout.Section>
-        )}
+        {/* LEFT PANEL: FILE TREE */}
+        <Layout.Section variant="oneThird">
+          <Card padding="0">
+            <Box padding="400" borderBottom="025" borderColor="border">
+              <Text variant="headingMd" as="h2">File Tree</Text>
+            </Box>
+            <Scrollable style={{ height: "75vh" }} focusable>
+              <Box padding="400">
+                {/* Pinned Files */}
+                <Box paddingBlockEnd="400">
+                  <Text variant="headingSm" as="h6" fontWeight="bold">PINNED QUICK-ACCESS</Text>
+                  <List type="bullet">
+                    {PINNED_FILES.map((fileKey) => (
+                      <List.Item key={fileKey}>
+                        <Button variant="monochromePlain" onClick={() => handleSelectFile(fileKey)} textAlign="left">
+                          <Text fontWeight="bold">{fileKey}</Text>
+                        </Button>
+                      </List.Item>
+                    ))}
+                  </List>
+                </Box>
+                <Divider />
+                <Box paddingBlockStart="400">
+                  {FOLDERS.map((folder) => renderFileGroup(folder))}
+                </Box>
+              </Box>
+            </Scrollable>
+          </Card>
+        </Layout.Section>
+
+        {/* RIGHT PANEL: EDITOR & RESEARCH */}
         <Layout.Section>
-          <BlockStack gap="500">
-            {products.map((product) => (
-              <Card key={product.id}>
-                <BlockStack gap="400">
-                  <Text variant="headingMd" fontWeight="bold">{product.title}</Text>
-                  <Divider />
-                  <InlineStack align="start" gap="800">
-                    
-                    {/* LEFT COLUMN: MANUAL ALT TEXT */}
-                    <Box style={{ flex: 1 }}>
-                      <BlockStack gap="300">
-                        <Text variant="headingSm" fontWeight="bold">Image Alt Text</Text>
-                        {product.images.length === 0 ? (
-                          <Text tone="subdued">No images for this product.</Text>
-                        ) : (
+          <Card padding="0">
+            {selectedFile ? (
+              <BlockStack>
+                {/* Editor Header */}
+                <Box padding="400" borderBottom="025" borderColor="border">
+                  <InlineStack align="space-between" blockAlign="center">
+                    <BlockStack gap="100">
+                      <Text variant="headingLg" as="h2">{selectedFile}</Text>
+                      <InlineStack gap="300">
+                        <Badge tone="info">{lineCount} Lines</Badge>
+                        <Badge>{charCount} Characters</Badge>
+                      </InlineStack>
+                    </BlockStack>
+                    <InlineStack gap="300">
+                      <Button onClick={() => setShowDiff(!showDiff)}>
+                        {showDiff ? "Hide Diff" : "Show Diff"}
+                      </Button>
+                      <Button variant="primary" onClick={handleSave} loading={isLoading && actionData?.intent === "saveAsset"}>
+                        SAVE TO THEME
+                      </Button>
+                    </InlineStack>
+                  </InlineStack>
+                </Box>
+
+                <Tabs
+                  tabs={[{ id: "editor", content: "Editor" }, { id: "research", content: "Research" }]}
+                  selected={selectedTab}
+                  onSelect={setSelectedTab}
+                  fitted
+                >
+                  <Box padding="400">
+                    {/* TAB 1: EDITOR */}
+                    {selectedTab === 0 && (
+                      <BlockStack gap="400">
+                        {/* Gemini Assist Bar */}
+                        <Box background="bg-surface-secondary" padding="400" borderRadius="200">
                           <BlockStack gap="300">
-                            {altEdits[product.id]?.map((img, index) => (
-                              <InlineStack key={img.id} align="start" gap="300" blockAlign="center">
-                                <Thumbnail source={product.images[index]?.url || ""} alt="Thumbnail" size="small" />
-                                <Box style={{ flex: 1 }}>
-                                  <TextField
-                                    labelHidden
-                                    label="Alt Text"
-                                    value={img.altText}
-                                    onChange={(val) => handleAltChange(product.id, index, val)}
-                                    autoComplete="off"
-                                  />
-                                </Box>
-                              </InlineStack>
-                            ))}
-                            <Box paddingBlockStart="200">
-                              <Button size="slim" onClick={() => handleSaveAlt(product.id)} loading={savingAltId === product.id}>
-                                Save Alt Text
+                            <Text variant="headingSm" as="h3">Gemini Assist (gemini-2.5-pro)</Text>
+                            <InlineStack gap="300" wrap={false} blockAlign="center">
+                              <Box width="100%">
+                                <TextField
+                                  value={instruction}
+                                  onChange={setInstruction}
+                                  placeholder="e.g. 'Add a new schema setting for background color with id custom_bg'"
+                                  autoComplete="off"
+                                />
+                              </Box>
+                              <Button 
+                                onClick={handleGeminiAssist} 
+                                loading={isLoading && navigation.formData?.get("intent") === "geminiAssist"}
+                                tone="success"
+                              >
+                                Modify Code
                               </Button>
-                            </Box>
+                            </InlineStack>
                           </BlockStack>
+                        </Box>
+
+                        {/* Editor Workspace */}
+                        {showDiff ? (
+                          <InlineStack gap="400" wrap={false} align="start">
+                            <Box width="50%">
+                              <Text fontWeight="bold">Original Content</Text>
+                              <Box paddingBlockStart="200">
+                                <TextField
+                                  value={originalContent}
+                                  multiline={25}
+                                  monospaced
+                                  autoComplete="off"
+                                  readOnly
+                                />
+                              </Box>
+                            </Box>
+                            <Box width="50%">
+                              <Text fontWeight="bold">Modified Content</Text>
+                              <Box paddingBlockStart="200">
+                                <TextField
+                                  value={currentContent}
+                                  onChange={setCurrentContent}
+                                  multiline={25}
+                                  monospaced
+                                  autoComplete="off"
+                                />
+                              </Box>
+                            </Box>
+                          </InlineStack>
+                        ) : (
+                          <TextField
+                            value={currentContent}
+                            onChange={setCurrentContent}
+                            multiline={30}
+                            monospaced
+                            autoComplete="off"
+                            disabled={isLoading}
+                          />
                         )}
                       </BlockStack>
-                    </Box>
-                    
-                    {/* RIGHT COLUMN: MANUAL SEO */}
-                    <Box style={{ flex: 1 }}>
-                      <BlockStack gap="300">
-                        <Text variant="headingSm" fontWeight="bold">SEO Metadata</Text>
-                        <BlockStack gap="200">
-                          <TextField
-                            label="SEO Title"
-                            value={seoEdits[product.id]?.title || ""}
-                            onChange={(val) => handleSeoChange(product.id, "title", val)}
-                            autoComplete="off"
-                          />
-                          <TextField
-                            label="Meta Description"
-                            value={seoEdits[product.id]?.description || ""}
-                            onChange={(val) => handleSeoChange(product.id, "description", val)}
-                            multiline={3}
-                            autoComplete="off"
-                          />
-                          <Box paddingBlockStart="200">
-                            <Button size="slim" onClick={() => handleSaveSeo(product.id)} loading={savingSeoId === product.id}>
-                              Save SEO Data
-                            </Button>
-                          </Box>
-                        </BlockStack>
-                      </BlockStack>
-                    </Box>
+                    )}
 
-                  </InlineStack>
-                </BlockStack>
-              </Card>
-            ))}
-            {products.length === 0 && <Banner tone="info"><Text>No products found.</Text></Banner>}
-          </BlockStack>
+                    {/* TAB 2: RESEARCH */}
+                    {selectedTab === 1 && (
+                      <BlockStack gap="400">
+                        <InlineStack align="space-between" blockAlign="center">
+                          <Text variant="headingMd" as="h3">Prestige Schema Cataloger</Text>
+                          <Button 
+                            onClick={handleGeminiResearch} 
+                            loading={isLoading && navigation.formData?.get("intent") === "geminiResearch"}
+                          >
+                            Run Schema Analysis
+                          </Button>
+                        </InlineStack>
+                        <Divider />
+                        {researchData ? (
+                          <Box background="bg-surface-secondary" padding="400" borderRadius="200">
+                            <Text as="pre" variant="bodyMd" style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                              {researchData}
+                            </Text>
+                          </Box>
+                        ) : (
+                          <Box padding="800">
+                            <Text alignment="center" tone="subdued">
+                              Click "Run Schema Analysis" to have Gemini map all settings and blocks in {selectedFile}.
+                            </Text>
+                          </Box>
+                        )}
+                      </BlockStack>
+                    )}
+                  </Box>
+                </Tabs>
+              </BlockStack>
+            ) : (
+              <Box padding="800">
+                <Text alignment="center" variant="headingLg" tone="subdued">
+                  Select a file from the tree to begin editing.
+                </Text>
+              </Box>
+            )}
+          </Card>
         </Layout.Section>
       </Layout>
     </Page>

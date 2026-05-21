@@ -32,18 +32,16 @@ const PINNED_FILES = [
 const FOLDERS = ["sections", "snippets", "templates", "assets", "config"];
 
 export const loader = async ({ request }) => {
-  const { admin } = await authenticate.admin(request);
-
+  const { admin, session } = await authenticate.admin(request);
+  
   try {
     const response = await admin.rest.get({
-      path: `/themes/${THEME_ID}/assets.json`,
+      path: `themes/${THEME_ID}/assets`,
     });
-    
-    const data = await response.json();
-    return Response.json({ assets: data.assets || [] });
+    return { files: response.body.assets };
   } catch (error) {
     console.error("Failed to load theme assets:", error);
-    return Response.json({ assets: [], error: "Failed to load theme files." });
+    return { files: [], error: "Failed to load theme files." };
   }
 };
 
@@ -56,10 +54,9 @@ export const action = async ({ request }) => {
   try {
     // 1. FETCH ASSET CONTENT
     if (intent === "fetchAsset") {
-      const response = await admin.rest.get({
-        path: `/themes/${THEME_ID}/assets.json`,
-        query: { "asset[key]": assetKey },
-      });
+      const response = await admin.fetch(`/admin/api/2024-10/themes/${THEME_ID}/assets.json?asset[key]=${encodeURIComponent(assetKey)}`);
+      if (!response.ok) throw new Error("Failed to fetch asset content.");
+      
       const data = await response.json();
       return Response.json({ intent, assetKey, content: data.asset?.value || "" });
     }
@@ -67,13 +64,16 @@ export const action = async ({ request }) => {
     // 2. SAVE ASSET TO THEME
     if (intent === "saveAsset") {
       const content = formData.get("content");
-      const response = await admin.rest.put({
-        path: `/themes/${THEME_ID}/assets.json`,
-        data: {
+      const response = await admin.fetch(`/admin/api/2024-10/themes/${THEME_ID}/assets.json`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
           asset: { key: assetKey, value: content },
-        },
+        }),
       });
-      const data = await response.json();
+      
+      if (!response.ok) throw new Error("Failed to save asset to theme.");
+      
       return Response.json({ intent, success: true, message: `Saved ${assetKey} successfully.` });
     }
 
@@ -154,7 +154,7 @@ ${content}`;
 };
 
 export default function ThemeEditorTab() {
-  const { assets, error: loaderError } = useLoaderData();
+  const { files = [], error: loaderError } = useLoaderData() || {};
   const actionData = useActionData();
   const submit = useSubmit();
   const navigation = useNavigation();
@@ -220,14 +220,14 @@ export default function ThemeEditorTab() {
 
   // File Tree Grouping Logic
   const renderFileGroup = (folderName) => {
-    const files = assets.filter((a) => a.key.startsWith(`${folderName}/`) && !PINNED_FILES.includes(a.key));
-    if (files.length === 0) return null;
+    const folderFiles = files.filter((a) => a.key.startsWith(`${folderName}/`) && !PINNED_FILES.includes(a.key));
+    if (folderFiles.length === 0) return null;
     
     return (
       <Box paddingBlockEnd="400" key={folderName}>
         <Text variant="headingSm" as="h6" fontWeight="bold">{folderName.toUpperCase()}</Text>
         <List type="bullet">
-          {files.map((file) => (
+          {folderFiles.map((file) => (
             <List.Item key={file.key}>
               <Button variant="monochromePlain" onClick={() => handleSelectFile(file.key)} textAlign="left">
                 {file.key.replace(`${folderName}/`, "")}
@@ -391,7 +391,6 @@ export default function ThemeEditorTab() {
                         <Divider />
                         {researchData ? (
                           <Box background="bg-surface-secondary" padding="400" borderRadius="200">
-                            {/* Rendering markdown structure safely inside a preformatted text block for the admin UI */}
                             <Text as="pre" variant="bodyMd" style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
                               {researchData}
                             </Text>
