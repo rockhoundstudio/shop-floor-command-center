@@ -70,6 +70,17 @@ export default function Index() {
           </div>
         </Link>
 
+        <Link to="/app/theme-editor" style={{
+          display: "block", padding: "32px 40px", backgroundColor: "#1a2a3a",
+          color: "#fff", borderRadius: "12px", textDecoration: "none",
+          fontSize: "22px", fontWeight: "bold", minWidth: "220px"
+        }}>
+          🎨 Theme Editor
+          <div style={{ fontSize: "14px", fontWeight: "normal", marginTop: "8px", color: "#aaa" }}>
+            Read and edit Prestige theme files directly
+          </div>
+        </Link>
+
       </div>
     </div>
   );
