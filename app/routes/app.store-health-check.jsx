@@ -42,7 +42,6 @@ export const loader = async ({ request }) => {
       const res = await admin.graphql(productQuery, { variables: { cursor } });
       const data = await res.json();
       
-      // If Shopify returns a 200 OK but includes GQL validation errors in the payload
       if (data.errors) {
         console.error("GQL ERRORS (Products):", JSON.stringify(data.errors, null, 2));
       }
@@ -161,10 +160,8 @@ export const loader = async ({ request }) => {
     });
 
   } catch (errors) {
-    // THIS IS THE CATCH BLOCK FOR THROWN GRAPHQL ERRORS
     console.error("GQL ERRORS:", JSON.stringify(errors.graphQLErrors, null, 2));
     
-    // Return a safe fallback object so the UI doesn't completely crash while we diagnose
     return Response.json({
       shop,
       score: 0,
