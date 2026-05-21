@@ -35,6 +35,7 @@ export default function App() {
           <a href="/app/collection-manager">Collection Manager</a>
           <a href="/app/bulk-edit">Bulk Edit</a>
           <a href="/app/ai-content-forge">AI Content Forge</a>
+          <a href="/app/theme-editor">Theme Editor</a>
         </ui-nav-menu>
         
         {/* Renders the active tab */}
