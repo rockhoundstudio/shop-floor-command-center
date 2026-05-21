@@ -32,13 +32,18 @@ const PINNED_FILES = [
 const FOLDERS = ["sections", "snippets", "templates", "assets", "config"];
 
 export const loader = async ({ request }) => {
-  const { admin, session } = await authenticate.admin(request);
+  const { admin } = await authenticate.admin(request);
   
   try {
-    const response = await admin.rest.get({
-      path: `themes/${THEME_ID}/assets`,
-    });
-    return { files: response.body.assets };
+    // Bypassing admin.rest and using the native authenticated fetch
+    const response = await admin.fetch(`/admin/api/2024-10/themes/${THEME_ID}/assets.json`);
+    
+    if (!response.ok) {
+      throw new Error(`Shopify API responded with status: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    return { files: data.assets || [] };
   } catch (error) {
     console.error("Failed to load theme assets:", error);
     return { files: [], error: "Failed to load theme files." };
