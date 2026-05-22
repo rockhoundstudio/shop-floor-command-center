@@ -97,9 +97,50 @@ export const action = async ({ request }) => {
       return Response.json({ intent, success: true, message: `Saved ${assetKey} successfully.` });
     }
 
-    if (intent === "geminiAssist") { return Response.json({ intent, assetKey, modifiedContent: "// AI STUBBED" }); }
+    if (intent === "geminiAssist") {
+      const content = formData.get("content");
+      const instruction = formData.get("instruction");
+      const apiKey = process.env.GEMINI_API_KEY;
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 15000);
+      try {
+        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key=${apiKey}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          signal: controller.signal,
+          body: JSON.stringify({ contents: [{ parts: [{ text: `You are a Shopify Liquid and theme architecture expert.\nFile: ${assetKey}\n\nCurrent file content:\n${content}\n\nInstruction: ${instruction}\n\nReturn only the complete modified file content, no explanation.` }] }] }),
+        });
+        clearTimeout(timeoutId);
+        const data = await res.json();
+        const modifiedContent = data.candidates?.[0]?.content?.parts?.[0]?.text || content;
+        return Response.json({ intent, assetKey, modifiedContent });
+      } catch (error) {
+        clearTimeout(timeoutId);
+        throw new Error(`Gemini Assist failed: ${error.message}`);
+      }
+    }
 
-    if (intent === "geminiResearch") { return Response.json({ intent, assetKey, researchContent: "// AI STUBBED" }); }
+    if (intent === "geminiResearch") {
+      const content = formData.get("content");
+      const apiKey = process.env.GEMINI_API_KEY;
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 15000);
+      try {
+        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key=${apiKey}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          signal: controller.signal,
+          body: JSON.stringify({ contents: [{ parts: [{ text: `You are a Shopify Liquid and theme architecture expert.\nCatalog all schema settings and blocks in this file: ${assetKey}\n\nFile content:\n${content}\n\nReturn a structured list of all settings IDs, types, labels, and blocks found.` }] }] }),
+        });
+        clearTimeout(timeoutId);
+        const data = await res.json();
+        const researchContent = data.candidates?.[0]?.content?.parts?.[0]?.text || "No results returned.";
+        return Response.json({ intent, assetKey, researchContent });
+      } catch (error) {
+        clearTimeout(timeoutId);
+        throw new Error(`Gemini Research failed: ${error.message}`);
+      }
+    }
 
     return Response.json({ error: "Invalid intent" }, { status: 400 });
 
@@ -371,3 +412,4 @@ export default function ThemeEditorTab() {
     </Page>
   );
 }
+
