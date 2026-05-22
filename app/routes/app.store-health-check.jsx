@@ -12,7 +12,7 @@ import { authenticate } from "../shopify.server";
 export const loader = async ({ request }) => {
   const { admin, session } = await authenticate.admin(request);
   const { shop, accessToken } = session;
-  const baseUrl = `https://${shop}`;
+  const baseUrl = `https://rockhoundstudio.com`;
 
   try {
     // 1. Pull all nav menu links
@@ -41,12 +41,18 @@ export const loader = async ({ request }) => {
 
     let urlsToCheck = new Set();
 
-    // Extract all menu URLs
+    // Extract all menu URLs — normalize myshopify URLs to primary domain
     for (const menu of menus) {
       for (const item of menu.node.items || []) {
-        if (item.url) urlsToCheck.add(item.url);
+        if (item.url) {
+          const normalized = item.url.replace(/https:\/\/[^/]*myshopify\.com/, baseUrl);
+          urlsToCheck.add(normalized);
+        }
         for (const sub of item.items || []) {
-          if (sub.url) urlsToCheck.add(sub.url);
+          if (sub.url) {
+            const normalized = sub.url.replace(/https:\/\/[^/]*myshopify\.com/, baseUrl);
+            urlsToCheck.add(normalized);
+          }
         }
       }
     }
@@ -102,7 +108,7 @@ export const loader = async ({ request }) => {
             method: "GET",
             redirect: "follow",
             headers: { "User-Agent": "RockhoundStudio-HealthCheck/1.0" },
-            signal: AbortSignal.timeout(8000)
+            signal: AbortSignal.timeout(15000)
           });
           return { url, status: res.status, ok: res.status < 400 };
         } catch (e) {
@@ -200,7 +206,6 @@ export default function StoreHealthCheckTab() {
     return "critical";
   };
   const tone = getTone(data.score);
-  const shopHandle = data.shop.split(".")[0];
 
   return (
     <Page title="Diagnostic Bay: Store Health Check" subtitle="Live crawler — every link, every page, every product." fullWidth>
