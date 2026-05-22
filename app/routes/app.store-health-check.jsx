@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useLoaderData, useNavigation } from "react-router";
+import { useLoaderData, useNavigation, useNavigate } from "react-router";
 import {
   Page, Layout, Card, BlockStack, InlineStack, Text, Badge, 
   ProgressBar, Grid, List, Icon, Banner, Box, Link
@@ -15,9 +15,6 @@ export const loader = async ({ request }) => {
   const { shop } = session;
 
   try {
-    // --- API SCANNERS ---
-    
-    // A. Fetch Products
     let allProducts = [];
     let hasNext = true;
     let cursor = null;
@@ -45,7 +42,6 @@ export const loader = async ({ request }) => {
       cursor = data.data?.products?.pageInfo?.endCursor;
     }
 
-    // B. Fetch Pages
     let allPages = [];
     hasNext = true;
     cursor = null;
@@ -65,7 +61,6 @@ export const loader = async ({ request }) => {
       cursor = data.data?.pages?.pageInfo?.endCursor;
     }
 
-    // C. Fetch Collections
     let allCollections = [];
     hasNext = true;
     cursor = null;
@@ -85,7 +80,6 @@ export const loader = async ({ request }) => {
       cursor = data.data?.collections?.pageInfo?.endCursor;
     }
 
-    // D. Fetch Menus (Dynamic Extraction)
     let rawMenuUrls = [];
     hasNext = true;
     cursor = null;
@@ -113,7 +107,6 @@ export const loader = async ({ request }) => {
       
       const menus = data.data?.menus?.edges || [];
       menus.forEach(({ node }) => {
-        // Recursive extraction for nested menus
         const extractUrls = (items) => {
           if (!items) return;
           items.forEach(item => {
@@ -128,19 +121,14 @@ export const loader = async ({ request }) => {
       cursor = data.data?.menus?.pageInfo?.endCursor;
     }
 
-    // --- DATA SORTING BUCKETS ---
-    
-    // Buckets: Drafts & Archives (Unpublished - DO NOT CRAWL)
     const draftProducts = allProducts.filter(p => p.status === "DRAFT");
     const archivedProducts = allProducts.filter(p => p.status === "ARCHIVED");
     const draftPages = allPages.filter(p => !p.publishedAt);
     
-    // Buckets: Live (Published)
     const liveProducts = allProducts.filter(p => p.status === "ACTIVE");
     const livePages = allPages.filter(p => p.publishedAt);
     const liveCollections = allCollections;
 
-    // --- PRODUCT CONTENT AUDIT (Live Only) ---
     const missingContent = liveProducts.map(p => {
       const missingImages = p.images?.edges?.length === 0;
       const missingAltText = p.images?.edges?.some(img => !img.node.altText);
@@ -161,9 +149,6 @@ export const loader = async ({ request }) => {
       return null;
     }).filter(Boolean);
 
-    // --- THE LIVE CRAWLER ---
-    
-    // 1. Build URL list to crawl
     const baseUrl = "https://rockhoundstudio.com";
     let urlsToCrawl = [
       ...liveProducts.map(p => `${baseUrl}/products/${p.handle}`),
@@ -172,23 +157,18 @@ export const loader = async ({ request }) => {
       ...rawMenuUrls
     ];
 
-    urlsToCrawl = [...new Set(urlsToCrawl)]; // Deduplicate everything
+    urlsToCrawl = [...new Set(urlsToCrawl)];
 
-    // 2. Crawler Logic with 15s Timeout and Whitelist Rules
     const checkUrl = async (url) => {
       let targetUrl = url;
       
-      // Rule: Whitelist Account
       if (targetUrl.includes("account.rockhoundstudio.com")) return { url: targetUrl, status: "SKIPPED" };
       
-      // Rule: Normalize myshopify domains
       if (targetUrl.includes(".myshopify.com")) {
         targetUrl = targetUrl.replace(/https?:\/\/[^/]+\.myshopify\.com/, baseUrl);
       }
-      // Rule: Handle relative paths
       if (targetUrl.startsWith("/")) targetUrl = baseUrl + targetUrl;
 
-      // Ensure we only hit rockhoundstudio
       if (!targetUrl.startsWith(baseUrl)) return { url: targetUrl, status: "SKIPPED (External)" };
 
       const controller = new AbortController();
@@ -202,25 +182,19 @@ export const loader = async ({ request }) => {
         });
         clearTimeout(timeoutId);
         
-        return { 
-          url: targetUrl, 
-          ok: response.ok, 
-          status: response.status 
-        };
+        return { url: targetUrl, ok: response.ok, status: response.status };
       } catch (error) {
         clearTimeout(timeoutId);
         return { url: targetUrl, ok: false, status: error.name === "AbortError" ? "TIMEOUT" : "ERROR" };
       }
     };
 
-    // 3. Fire all requests concurrently
     const crawlResults = await Promise.allSettled(urlsToCrawl.map(checkUrl));
     
     const brokenLinks = crawlResults
       .filter(r => r.status === "fulfilled" && !r.value.ok && r.value.status !== "SKIPPED")
       .map(r => r.value);
 
-    // Identify Deleted Products Still Linked (404s from menuUrls not in active handles)
     const validPaths = [
       ...liveProducts.map(p => `/products/${p.handle}`),
       ...livePages.map(p => `/pages/${p.handle}`),
@@ -232,14 +206,9 @@ export const loader = async ({ request }) => {
       return !validPaths.includes(path);
     });
 
-    // --- SCORE CALCULATION ---
     let totalScore = 100;
-    
-    // -5 per broken link (Max -40)
     const brokenLinkPenalty = Math.min(40, brokenLinks.length * 5);
     totalScore -= brokenLinkPenalty;
-
-    // -2 per missing content field (Max -20)
     const totalMissingFields = missingContent.reduce((sum, item) => sum + item.errors.length, 0);
     const missingContentPenalty = Math.min(20, totalMissingFields * 2);
     totalScore -= missingContentPenalty;
@@ -263,15 +232,20 @@ export const loader = async ({ request }) => {
   }
 };
 
+
 // ==========================================
 // 2. CHASSIS: POLARIS UI DASHBOARD
 // ==========================================
 export default function StoreHealthCheckTab() {
   const data = useLoaderData();
+  const navigate = useNavigate();
 
   if (data.error) {
     return (
-      <Page title="Diagnostic Bay: Store Health Check">
+      <Page
+        title="Diagnostic Bay: Store Health Check"
+        backAction={{ content: "Dashboard", onAction: () => navigate("/app") }}
+      >
         <Banner tone="critical">{data.error}</Banner>
       </Page>
     );
@@ -285,7 +259,12 @@ export default function StoreHealthCheckTab() {
   const tone = getTone(data.score);
 
   return (
-    <Page title="Diagnostic Bay: Store Health Check" subtitle="Live URL Crawler & Content Audit" fullWidth>
+    <Page
+      title="Diagnostic Bay: Store Health Check"
+      subtitle="Live URL Crawler & Content Audit"
+      fullWidth
+      backAction={{ content: "Dashboard", onAction: () => navigate("/app") }}
+    >
       <BlockStack gap="600">
         
         <Card padding="400">

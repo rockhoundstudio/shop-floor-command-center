@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { useLoaderData, useActionData, useSubmit, useNavigation } from "react-router";
+import { useLoaderData, useActionData, useSubmit, useNavigation, useNavigate } from "react-router";
 import {
   Page,
   Layout,
@@ -19,7 +19,7 @@ import {
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 
-const THEME_ID = "158876434683"; // Live Prestige v11.1.0 Theme
+const THEME_ID = "158876434683";
 
 const PINNED_FILES = [
   "config/settings_schema.json",
@@ -32,7 +32,6 @@ const PINNED_FILES = [
 const FOLDERS = ["sections", "snippets", "templates", "assets", "config"];
 
 export const loader = async ({ request }) => {
-  // Extracting the raw session data natively bypassing Shopify's missing REST wrappers
   const { session } = await authenticate.admin(request);
   const { shop, accessToken } = session;
   
@@ -65,7 +64,6 @@ export const action = async ({ request }) => {
   const assetKey = formData.get("assetKey");
 
   try {
-    // 1. FETCH ASSET CONTENT
     if (intent === "fetchAsset") {
       const response = await fetch(`https://${shop}/admin/api/2024-10/themes/${THEME_ID}/assets.json?asset[key]=${encodeURIComponent(assetKey)}`, {
         method: "GET",
@@ -81,7 +79,6 @@ export const action = async ({ request }) => {
       return Response.json({ intent, assetKey, content: data.asset?.value || "" });
     }
 
-    // 2. SAVE ASSET TO THEME
     if (intent === "saveAsset") {
       const content = formData.get("content");
       const response = await fetch(`https://${shop}/admin/api/2024-10/themes/${THEME_ID}/assets.json`, {
@@ -100,74 +97,9 @@ export const action = async ({ request }) => {
       return Response.json({ intent, success: true, message: `Saved ${assetKey} successfully.` });
     }
 
-    // 3. GEMINI ASSIST (CODE MODIFICATION)
-    if (intent === "geminiAssist") {
-      const content = formData.get("content");
-      const instruction = formData.get("instruction");
-      const apiKey = process.env.GEMINI_API_KEY;
+    if (intent === "geminiAssist") { return Response.json({ intent, assetKey, modifiedContent: "// AI STUBBED" }); }
 
-      const prompt = `You are a Shopify Liquid and theme architecture expert.
-Theme: Prestige v11.1.0 by Maestrooo.
-File: ${assetKey}
-
-Current file content:
-${content}
-
-Task: ${instruction}
-
-Return only the modified file content. No explanation unless asked.`;
-
-      const geminiRes = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key=${apiKey}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: prompt }] }],
-          }),
-        }
-      );
-      
-      const geminiData = await geminiRes.json();
-      let modifiedContent = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || "";
-      
-      // Strip markdown code block formatting if Gemini wraps it
-      modifiedContent = modifiedContent.replace(/^```liquid\n|^```html\n|^```\n/, "").replace(/\n```$/, "");
-
-      return Response.json({ intent, assetKey, modifiedContent });
-    }
-
-    // 4. GEMINI RESEARCH (SCHEMA CATALOGING)
-    if (intent === "geminiResearch") {
-      const content = formData.get("content");
-      const apiKey = process.env.GEMINI_API_KEY;
-
-      const prompt = `You are a Shopify Liquid and Prestige theme expert.
-Catalog every setting, block type, and preset defined in this file.
-For each setting: ID, label, type, default value, and what it controls.
-For each block: type, name, available settings.
-Return as a structured markdown table.
-
-File: ${assetKey}
-Content:
-${content}`;
-
-      const geminiRes = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key=${apiKey}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: prompt }] }],
-          }),
-        }
-      );
-      
-      const geminiData = await geminiRes.json();
-      const researchContent = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || "No research data generated.";
-
-      return Response.json({ intent, assetKey, researchContent });
-    }
+    if (intent === "geminiResearch") { return Response.json({ intent, assetKey, researchContent: "// AI STUBBED" }); }
 
     return Response.json({ error: "Invalid intent" }, { status: 400 });
 
@@ -185,8 +117,8 @@ export default function ThemeEditorTab() {
   const actionData = useActionData();
   const submit = useSubmit();
   const navigation = useNavigation();
+  const navigate = useNavigate();
 
-  // State Management
   const [selectedTab, setSelectedTab] = useState(0);
   const [selectedFile, setSelectedFile] = useState(null);
   const [originalContent, setOriginalContent] = useState("");
@@ -197,20 +129,19 @@ export default function ThemeEditorTab() {
 
   const isLoading = navigation.state === "submitting" || navigation.state === "loading";
 
-  // Handle Action Responses
   useEffect(() => {
     if (actionData) {
       if (actionData.intent === "fetchAsset") {
         setOriginalContent(actionData.content);
         setCurrentContent(actionData.content);
-        setResearchData(""); // Reset research on new file load
+        setResearchData("");
       } else if (actionData.intent === "saveAsset" && actionData.success) {
-        setOriginalContent(currentContent); // Update baseline after save
+        setOriginalContent(currentContent);
         setShowDiff(false);
         shopify.toast.show(actionData.message);
       } else if (actionData.intent === "geminiAssist") {
         setCurrentContent(actionData.modifiedContent);
-        setShowDiff(true); // Auto-show diff so user can review AI changes
+        setShowDiff(true);
         shopify.toast.show("Gemini modifications applied to editor.");
       } else if (actionData.intent === "geminiResearch") {
         setResearchData(actionData.researchContent);
@@ -219,7 +150,6 @@ export default function ThemeEditorTab() {
     }
   }, [actionData]);
 
-  // File Handlers
   const handleSelectFile = useCallback((key) => {
     setSelectedFile(key);
     submit({ intent: "fetchAsset", assetKey: key }, { method: "post" });
@@ -241,11 +171,9 @@ export default function ThemeEditorTab() {
     submit({ intent: "geminiResearch", assetKey: selectedFile, content: currentContent }, { method: "post" });
   }, [submit, selectedFile, currentContent]);
 
-  // Derived Stats
   const lineCount = currentContent.split("\n").length;
   const charCount = currentContent.length;
 
-  // File Tree Grouping Logic
   const renderFileGroup = (folderName) => {
     const folderFiles = files.filter((a) => a.key.startsWith(`${folderName}/`) && !PINNED_FILES.includes(a.key));
     if (folderFiles.length === 0) return null;
@@ -267,12 +195,15 @@ export default function ThemeEditorTab() {
   };
 
   return (
-    <Page title="Theme Editor: Prestige v11.1.0" fullWidth>
+    <Page
+      title="Theme Editor: Prestige v11.1.0"
+      fullWidth
+      backAction={{ content: "Dashboard", onAction: () => navigate("/app") }}
+    >
       {loaderError && <Banner tone="critical">{loaderError}</Banner>}
       {actionData?.error && <Banner tone="critical">{actionData.error}</Banner>}
 
       <Layout>
-        {/* LEFT PANEL: FILE TREE */}
         <Layout.Section variant="oneThird">
           <Card padding="0">
             <Box padding="400" borderBottom="025" borderColor="border">
@@ -280,7 +211,6 @@ export default function ThemeEditorTab() {
             </Box>
             <Scrollable style={{ height: "75vh" }} focusable>
               <Box padding="400">
-                {/* Pinned Files */}
                 <Box paddingBlockEnd="400">
                   <Text variant="headingSm" as="h6" fontWeight="bold">PINNED QUICK-ACCESS</Text>
                   <List type="bullet">
@@ -302,12 +232,10 @@ export default function ThemeEditorTab() {
           </Card>
         </Layout.Section>
 
-        {/* RIGHT PANEL: EDITOR & RESEARCH */}
         <Layout.Section>
           <Card padding="0">
             {selectedFile ? (
               <BlockStack>
-                {/* Editor Header */}
                 <Box padding="400" borderBottom="025" borderColor="border">
                   <InlineStack align="space-between" blockAlign="center">
                     <BlockStack gap="100">
@@ -335,10 +263,8 @@ export default function ThemeEditorTab() {
                   fitted
                 >
                   <Box padding="400">
-                    {/* TAB 1: EDITOR */}
                     {selectedTab === 0 && (
                       <BlockStack gap="400">
-                        {/* Gemini Assist Bar */}
                         <Box background="bg-surface-secondary" padding="400" borderRadius="200">
                           <BlockStack gap="300">
                             <Text variant="headingSm" as="h3">Gemini Assist (gemini-2.5-pro)</Text>
@@ -362,7 +288,6 @@ export default function ThemeEditorTab() {
                           </BlockStack>
                         </Box>
 
-                        {/* Editor Workspace */}
                         {showDiff ? (
                           <InlineStack gap="400" wrap={false} align="start">
                             <Box width="50%">
@@ -403,7 +328,6 @@ export default function ThemeEditorTab() {
                       </BlockStack>
                     )}
 
-                    {/* TAB 2: RESEARCH */}
                     {selectedTab === 1 && (
                       <BlockStack gap="400">
                         <InlineStack align="space-between" blockAlign="center">
