@@ -248,7 +248,8 @@ Origin Context: ${origin}`;
   }
 };
 
-export default function AiContentForgeTab() {`n  const navigate = useNavigate();
+export default function AiContentForgeTab() {
+  const navigate = useNavigate();
   const { products: initialProducts } = useLoaderData();
   const fetcher = useFetcher();
   const [products, setProducts] = useState(initialProducts);
@@ -389,6 +390,3 @@ export default function AiContentForgeTab() {`n  const navigate = useNavigate();
     </Page>
   );
 }
-
-
-
