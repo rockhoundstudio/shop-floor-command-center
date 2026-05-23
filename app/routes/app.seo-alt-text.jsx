@@ -1,10 +1,12 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { useLoaderData, useActionData, useSubmit, useNavigation } from "react-router";
 import { Page, Layout, Card, BlockStack, InlineStack, Text, Button, TextField, Banner, Thumbnail, Box, Divider, Badge } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 
 // ==========================================
 // 1. ENGINE: FETCH PRODUCTS & IMAGES
+// FIX: Rewired from images → media connection
+// Returns MediaImage GIDs required by fileUpdate
 // ==========================================
 export const loader = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
@@ -17,12 +19,16 @@ export const loader = async ({ request }) => {
             node {
               id
               title
-              images(first: 5) {
+              media(first: 5) {
                 edges {
                   node {
-                    id
-                    url
-                    altText
+                    ... on MediaImage {
+                      id
+                      image {
+                        url
+                        altText
+                      }
+                    }
                   }
                 }
               }
@@ -32,7 +38,26 @@ export const loader = async ({ request }) => {
       }`
     );
     const data = await response.json();
-    return Response.json({ products: data.data?.products?.edges || [] });
+
+    // Adapter: map media shape back to frontend image shape
+    const products = (data.data?.products?.edges || []).map(({ node: product }) => ({
+      node: {
+        ...product,
+        images: {
+          edges: product.media.edges
+            .filter(({ node }) => node.id) // MediaImage only
+            .map(({ node: mediaNode }) => ({
+              node: {
+                id: mediaNode.id, // gid://shopify/MediaImage/...
+                url: mediaNode.image?.url,
+                altText: mediaNode.image?.altText,
+              }
+            }))
+        }
+      }
+    }));
+
+    return Response.json({ products });
   } catch (error) {
     console.error("Failed to load products:", error);
     return Response.json({ products: [], error: "Failed to load products." });
@@ -41,56 +66,62 @@ export const loader = async ({ request }) => {
 
 // ==========================================
 // 2. TRANSMISSION: SAVE OR GENERATE AI TEXT
+// FIX: productImageUpdate → fileUpdate (alt field)
+// FIX: gemini-2.5-pro → gemini-2.5-flash on v1beta
 // ==========================================
 export const action = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
   const formData = await request.formData();
   const intent = formData.get("intent");
-  
+
   try {
     // Intent A: Save to Shopify
     if (intent === "saveAltText") {
-      const imageId = formData.get("imageId");
+      const imageId = formData.get("imageId"); // MediaImage GID
       const altText = formData.get("altText");
-      const productId = formData.get("productId");
 
       const response = await admin.graphql(
         `#graphql
-        mutation productImageUpdate($image: ImageInput!, $productId: ID!) {
-          productImageUpdate(image: $image, productId: $productId) {
-            image { id altText }
+        mutation fileUpdate($files: [FileUpdateInput!]!) {
+          fileUpdate(files: $files) {
+            files {
+              ... on MediaImage {
+                id
+                image { altText }
+              }
+            }
             userErrors { field message }
           }
         }`,
-        { variables: { productId, image: { id: imageId, altText } } }
+        { variables: { files: [{ id: imageId, alt: altText }] } }
       );
       const data = await response.json();
-      
-      if (data.data?.productImageUpdate?.userErrors?.length > 0) {
-        throw new Error(data.data.productImageUpdate.userErrors[0].message);
+
+      if (data.data?.fileUpdate?.userErrors?.length > 0) {
+        throw new Error(data.data.fileUpdate.userErrors[0].message);
       }
       return Response.json({ intent, success: true, message: "SEO Alt Text locked in." });
     }
 
-    // Intent B: Generate with Gemini
+    // Intent B: Generate with AI
     if (intent === "generateAI") {
       const productTitle = formData.get("productTitle");
       const apiKey = process.env.GEMINI_API_KEY;
-      
-      const prompt = `You are an expert Shopify SEO copywriter. Write a highly optimized, descriptive alt text (under 100 characters) for a product image of: "${productTitle}". Return ONLY the alt text, no quotes or explanations.`;
 
-      const geminiRes = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key=${apiKey}`,
+      const prompt = `You are an expert Shopify SEO copywriter specializing in premium handcrafted gemstone art. Write a highly optimized, descriptive alt text (under 100 characters) for a product image of: "${productTitle}". Follow this formula: [Visual Beauty/Color] + [Finished Art Type] + [OOAK Indicator] + [Material] + [Region hint]. Return ONLY the alt text, no quotes or explanations.`;
+
+      const aiRes = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
         }
       );
-      
-      const geminiData = await geminiRes.json();
-      const generatedText = geminiData.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "";
-      
+
+      const aiData = await aiRes.json();
+      const generatedText = aiData.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "";
+
       return Response.json({ intent, success: true, imageId: formData.get("imageId"), generatedText });
     }
 
@@ -102,6 +133,7 @@ export const action = async ({ request }) => {
 
 // ==========================================
 // 3. CHASSIS: POLARIS UI FRAMEWORK
+// FIX: Added back button to /app
 // ==========================================
 export default function SeoAltTextTab() {
   const { products = [], error } = useLoaderData() || {};
@@ -115,7 +147,12 @@ export default function SeoAltTextTab() {
   }, [actionData]);
 
   return (
-    <Page title="SEO Alt Text Command" subtitle="Manage and auto-generate image alt text" fullWidth>
+    <Page
+      title="SEO Alt Text Command"
+      subtitle="Manage and auto-generate image alt text"
+      fullWidth
+      backAction={{ content: "Home", url: "/app" }}
+    >
       {error && <Banner tone="critical">{error}</Banner>}
       <Layout>
         <Layout.Section>
@@ -140,12 +177,12 @@ export default function SeoAltTextTab() {
                         ) : (
                           <BlockStack gap="400">
                             {product.images.edges.map(({ node: image }) => (
-                              <ImageRow 
-                                key={image.id} 
-                                product={product} 
-                                image={image} 
-                                submit={submit} 
-                                navigation={navigation} 
+                              <ImageRow
+                                key={image.id}
+                                product={product}
+                                image={image}
+                                submit={submit}
+                                navigation={navigation}
                                 actionData={actionData}
                               />
                             ))}
@@ -165,18 +202,22 @@ export default function SeoAltTextTab() {
   );
 }
 
-// Sub-component for the individual rows
+// Sub-component for individual image rows
 function ImageRow({ product, image, submit, navigation, actionData }) {
   const [altText, setAltText] = useState(image.altText || "");
-  
-  const isSaving = navigation.state === "submitting" && navigation.formData?.get("intent") === "saveAltText" && navigation.formData?.get("imageId") === image.id;
-  const isGenerating = navigation.state === "submitting" && navigation.formData?.get("intent") === "generateAI" && navigation.formData?.get("imageId") === image.id;
 
-  // Listen for AI generation
+  const isSaving = navigation.state === "submitting" &&
+    navigation.formData?.get("intent") === "saveAltText" &&
+    navigation.formData?.get("imageId") === image.id;
+
+  const isGenerating = navigation.state === "submitting" &&
+    navigation.formData?.get("intent") === "generateAI" &&
+    navigation.formData?.get("imageId") === image.id;
+
   useEffect(() => {
     if (actionData?.intent === "generateAI" && actionData?.imageId === image.id && actionData?.generatedText) {
       setAltText(actionData.generatedText);
-      shopify.toast.show("AI Alt Text Generated! Click Save to lock it in.");
+      shopify.toast.show("AI Alt Text generated — click Save to lock it in.");
     }
   }, [actionData, image.id]);
 
@@ -192,11 +233,11 @@ function ImageRow({ product, image, submit, navigation, actionData }) {
     <InlineStack wrap={false} gap="400" blockAlign="center">
       <Thumbnail source={image.url} alt={altText} size="large" />
       <Box width="100%">
-        <TextField 
-          value={altText} 
-          onChange={setAltText} 
-          placeholder="Enter SEO Alt Text or hit Generate..." 
-          autoComplete="off" 
+        <TextField
+          value={altText}
+          onChange={setAltText}
+          placeholder="Enter SEO Alt Text or hit Generate..."
+          autoComplete="off"
         />
       </Box>
       <InlineStack gap="200" wrap={false}>

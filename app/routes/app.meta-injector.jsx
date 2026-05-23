@@ -2,6 +2,7 @@ import {
   TextField, BlockStack, Card, Text, Badge, Button, Banner, 
   InlineStack, Page, Select, Box, ResourceList, ResourceItem, Thumbnail, Checkbox, Tag
 } from "@shopify/polaris";
+import { ArrowLeftIcon } from "@shopify/polaris-icons";
 import { useState, useEffect } from "react";
 import { useLoaderData, useFetcher, data } from "react-router";
 import { authenticate } from "../shopify.server";
@@ -287,217 +288,222 @@ export default function MetaInjector() {
   }
 
   return (
-    <Page title="Standard Data Injector" fullWidth>
-      <BlockStack gap="600">
+    <>
+      <Box paddingBlockStart="400" paddingInlineStart="400">
+        <Button url="/app" icon={ArrowLeftIcon}>Back</Button>
+      </Box>
+      <Page title="Standard Data Injector" fullWidth>
+        <BlockStack gap="600">
 
-        {loaderError && <Banner tone="critical">Loader error: {loaderError}</Banner>}
-        {saveSuccess && (
-          <Banner tone="success">
-            Update saved to Shopify across {selectedIds.length} stone{selectedIds.length !== 1 ? "s" : ""}.
-          </Banner>
-        )}
-        {saveError && <Banner tone="critical">Save failed: {saveError}</Banner>}
+          {loaderError && <Banner tone="critical">Loader error: {loaderError}</Banner>}
+          {saveSuccess && (
+            <Banner tone="success">
+              Update saved to Shopify across {selectedIds.length} stone{selectedIds.length !== 1 ? "s" : ""}.
+            </Banner>
+          )}
+          {saveError && <Banner tone="critical">Save failed: {saveError}</Banner>}
 
-        <div style={{ display: "flex", flexWrap: "wrap", gap: "24px", alignItems: "stretch" }}>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "24px", alignItems: "stretch" }}>
 
-          {/* LEFT — Product List */}
-          <div style={{ flex: "1 1 300px", minWidth: 0, display: "flex", flexDirection: "column" }}>
-            <BlockStack gap="400">
-              <Text variant="headingMd" as="h2">Select Stones ({selectedIds.length} selected)</Text>
-              <TextField
-                value={search} onChange={setSearch} autoComplete="off" placeholder="Search title..."
-                clearButton onClearButtonClick={() => setSearch("")} prefix="🔍"
-              />
-              <Card padding="0">
-                <Box padding="300" borderBlockEndWidth="025" borderColor="border">
-                  <Checkbox
-                    label="Select all visible"
-                    checked={selectedIds.length === filtered.length && filtered.length > 0}
-                    onChange={(checked) => {
-                      if (checked) setSelectedIds(filtered.map(p => p.id));
-                      else setSelectedIds([]);
-                    }}
-                  />
-                </Box>
-                <div style={{ height: "500px", overflowY: "auto" }}>
-                  <ResourceList
-                    items={filtered}
-                    renderItem={(p) => {
-                      const isSelected = selectedIds.includes(p.id);
-                      const cleanStatus = String(p.status || "").replace(/[^\w\s]/gi, "").trim().toLowerCase();
-                      const badgeTone = cleanStatus === "complete" ? "success" : cleanStatus === "partial" ? "warning" : "critical";
-                      return (
-                        <ResourceItem
-                          id={p.id}
-                          onClick={() => {
-                            setSelectedIds(prev => isSelected ? prev.filter(id => id !== p.id) : [...prev, p.id]);
-                          }}
-                          media={<Thumbnail source={p.image || ""} alt={p.title} size="small" />}
-                        >
-                          <InlineStack wrap={false} align="space-between" blockAlign="center">
-                            <BlockStack gap="100">
-                              <Text variant="bodyMd" fontWeight="bold">{p.title}</Text>
-                              <Badge tone={badgeTone}>{p.status}</Badge>
-                            </BlockStack>
-                            <Checkbox checked={isSelected} onChange={() => {}} />
-                          </InlineStack>
-                        </ResourceItem>
-                      );
-                    }}
-                  />
-                </div>
-              </Card>
-            </BlockStack>
-          </div>
-
-          {/* RIGHT — Data Entry */}
-          <div style={{ flex: "1 1 400px", maxWidth: "680px", width: "100%", minWidth: 0 }}>
-            <BlockStack gap="400">
-              <InlineStack align="space-between" blockAlign="center">
-                <Text variant="headingMd" as="h2">Apply Data Fields</Text>
-                <Button variant="primary" onClick={handleSave} loading={isSaving} disabled={selectedIds.length === 0}>
-                  Save to Shopify
-                </Button>
-              </InlineStack>
-
-              <Card roundedAbove="sm">
-                <BlockStack gap="600">
-                  <Banner tone="info">
-                    Any field you leave blank will be ignored. Only filled fields will overwrite existing data on the selected stones.
-                  </Banner>
-                  <BlockStack gap="400">
-                    {TARGET_KEYS.map(key => {
-                      const savedValue = selectedProduct?.metafields?.[key.replace(/-/g, "_")];
-                      const placeholderText = savedValue ? `Current: ${String(savedValue).replace(/[✅⚠️]/g, "").trim()}` : "";
-
-                      if (key === "stone_story") {
+            {/* LEFT — Product List */}
+            <div style={{ flex: "1 1 300px", minWidth: 0, display: "flex", flexDirection: "column" }}>
+              <BlockStack gap="400">
+                <Text variant="headingMd" as="h2">Select Stones ({selectedIds.length} selected)</Text>
+                <TextField
+                  value={search} onChange={setSearch} autoComplete="off" placeholder="Search title..."
+                  clearButton onClearButtonClick={() => setSearch("")} prefix="🔍"
+                />
+                <Card padding="0">
+                  <Box padding="300" borderBlockEndWidth="025" borderColor="border">
+                    <Checkbox
+                      label="Select all visible"
+                      checked={selectedIds.length === filtered.length && filtered.length > 0}
+                      onChange={(checked) => {
+                        if (checked) setSelectedIds(filtered.map(p => p.id));
+                        else setSelectedIds([]);
+                      }}
+                    />
+                  </Box>
+                  <div style={{ height: "500px", overflowY: "auto" }}>
+                    <ResourceList
+                      items={filtered}
+                      renderItem={(p) => {
+                        const isSelected = selectedIds.includes(p.id);
+                        const cleanStatus = String(p.status || "").replace(/[^\w\s]/gi, "").trim().toLowerCase();
+                        const badgeTone = cleanStatus === "complete" ? "success" : cleanStatus === "partial" ? "warning" : "critical";
                         return (
-                          <BlockStack gap="200" key={key}>
-                            <TextField
-                              label={FIELD_LABELS[key] || key}
-                              value={fieldValues[key] || ""}
-                              onChange={val => setFieldValues(prev => ({ ...prev, [key]: val }))}
-                              autoComplete="off"
-                              placeholder={placeholderText}
-                              multiline={4}
-                            />
-                            <InlineStack align="start">
-                              <DictationButton
-                                placeholder="🎤 Dictate Bulk Story"
-                                onResult={(text) => {
-                                  setFieldValues(prev => ({
-                                    ...prev,
-                                    [key]: prev[key] ? prev[key] + " " + text : text
-                                  }));
+                          <ResourceItem
+                            id={p.id}
+                            onClick={() => {
+                              setSelectedIds(prev => isSelected ? prev.filter(id => id !== p.id) : [...prev, p.id]);
+                            }}
+                            media={<Thumbnail source={p.image || ""} alt={p.title} size="small" />}
+                          >
+                            <InlineStack wrap={false} align="space-between" blockAlign="center">
+                              <BlockStack gap="100">
+                                <Text variant="bodyMd" fontWeight="bold">{p.title}</Text>
+                                <Badge tone={badgeTone}>{p.status}</Badge>
+                              </BlockStack>
+                              <Checkbox checked={isSelected} onChange={() => {}} />
+                            </InlineStack>
+                          </ResourceItem>
+                        );
+                      }}
+                    />
+                  </div>
+                </Card>
+              </BlockStack>
+            </div>
+
+            {/* RIGHT — Data Entry */}
+            <div style={{ flex: "1 1 400px", maxWidth: "680px", width: "100%", minWidth: 0 }}>
+              <BlockStack gap="400">
+                <InlineStack align="space-between" blockAlign="center">
+                  <Text variant="headingMd" as="h2">Apply Data Fields</Text>
+                  <Button variant="primary" onClick={handleSave} loading={isSaving} disabled={selectedIds.length === 0}>
+                    Save to Shopify
+                  </Button>
+                </InlineStack>
+
+                <Card roundedAbove="sm">
+                  <BlockStack gap="600">
+                    <Banner tone="info">
+                      Any field you leave blank will be ignored. Only filled fields will overwrite existing data on the selected stones.
+                    </Banner>
+                    <BlockStack gap="400">
+                      {TARGET_KEYS.map(key => {
+                        const savedValue = selectedProduct?.metafields?.[key.replace(/-/g, "_")];
+                        const placeholderText = savedValue ? `Current: ${String(savedValue).replace(/[✅⚠️]/g, "").trim()}` : "";
+
+                        if (key === "stone_story") {
+                          return (
+                            <BlockStack gap="200" key={key}>
+                              <TextField
+                                label={FIELD_LABELS[key] || key}
+                                value={fieldValues[key] || ""}
+                                onChange={val => setFieldValues(prev => ({ ...prev, [key]: val }))}
+                                autoComplete="off"
+                                placeholder={placeholderText}
+                                multiline={4}
+                              />
+                              <InlineStack align="start">
+                                <DictationButton
+                                  placeholder="🎤 Dictate Bulk Story"
+                                  onResult={(text) => {
+                                    setFieldValues(prev => ({
+                                      ...prev,
+                                      [key]: prev[key] ? prev[key] + " " + text : text
+                                    }));
+                                  }}
+                                />
+                              </InlineStack>
+                            </BlockStack>
+                          );
+                        }
+
+                        if (SEED_OPTIONS[key]) {
+                          const opts = [...new Set([...(SEED_OPTIONS[key] || []), ...(vocabulary[key] || [])])];
+                          const isMulti = key === "secondary_colors";
+                          const currentVal = fieldValues[key] || "";
+                          const selectOptions = [{ label: "— select —", value: "" }];
+                          opts.forEach(o => selectOptions.push({ label: o, value: o }));
+                          if (!isMulti && currentVal && currentVal !== "__custom__" && !opts.includes(currentVal)) {
+                            selectOptions.push({ label: currentVal, value: currentVal });
+                          }
+                          selectOptions.push({ label: "➕ Add Custom...", value: "__custom__" });
+                          const selectValue = showCustomInput[key] ? "__custom__" : (isMulti ? "" : currentVal);
+
+                          return (
+                            <BlockStack gap="200" key={key}>
+                              {isMulti && currentVal && (
+                                <InlineStack gap="200" wrap>
+                                  {currentVal.split(",").map(c => c.trim()).filter(Boolean).map(color => (
+                                    <Tag key={color} onRemove={() => {
+                                      const newColors = currentVal.split(",").map(s => s.trim()).filter(Boolean).filter(c => c !== color);
+                                      setFieldValues(prev => ({ ...prev, [key]: newColors.join(", ") }));
+                                    }}>{color}</Tag>
+                                  ))}
+                                </InlineStack>
+                              )}
+                              <Select
+                                label={FIELD_LABELS[key] || key}
+                                options={selectOptions}
+                                value={selectValue}
+                                onChange={(v) => {
+                                  if (v === "__custom__") {
+                                    setShowCustomInput(prev => ({ ...prev, [key]: true }));
+                                  } else {
+                                    setShowCustomInput(prev => ({ ...prev, [key]: false }));
+                                    if (isMulti) {
+                                      if (!v) return;
+                                      const curr = currentVal ? currentVal.split(",").map(s => s.trim()).filter(Boolean) : [];
+                                      if (!curr.includes(v)) curr.push(v);
+                                      setFieldValues(prev => ({ ...prev, [key]: curr.join(", ") }));
+                                    } else {
+                                      setFieldValues(prev => ({ ...prev, [key]: v }));
+                                    }
+                                  }
                                 }}
                               />
-                            </InlineStack>
-                          </BlockStack>
-                        );
-                      }
-
-                      if (SEED_OPTIONS[key]) {
-                        const opts = [...new Set([...(SEED_OPTIONS[key] || []), ...(vocabulary[key] || [])])];
-                        const isMulti = key === "secondary_colors";
-                        const currentVal = fieldValues[key] || "";
-                        const selectOptions = [{ label: "— select —", value: "" }];
-                        opts.forEach(o => selectOptions.push({ label: o, value: o }));
-                        if (!isMulti && currentVal && currentVal !== "__custom__" && !opts.includes(currentVal)) {
-                          selectOptions.push({ label: currentVal, value: currentVal });
-                        }
-                        selectOptions.push({ label: "➕ Add Custom...", value: "__custom__" });
-                        const selectValue = showCustomInput[key] ? "__custom__" : (isMulti ? "" : currentVal);
-
-                        return (
-                          <BlockStack gap="200" key={key}>
-                            {isMulti && currentVal && (
-                              <InlineStack gap="200" wrap>
-                                {currentVal.split(",").map(c => c.trim()).filter(Boolean).map(color => (
-                                  <Tag key={color} onRemove={() => {
-                                    const newColors = currentVal.split(",").map(s => s.trim()).filter(Boolean).filter(c => c !== color);
-                                    setFieldValues(prev => ({ ...prev, [key]: newColors.join(", ") }));
-                                  }}>{color}</Tag>
-                                ))}
-                              </InlineStack>
-                            )}
-                            <Select
-                              label={FIELD_LABELS[key] || key}
-                              options={selectOptions}
-                              value={selectValue}
-                              onChange={(v) => {
-                                if (v === "__custom__") {
-                                  setShowCustomInput(prev => ({ ...prev, [key]: true }));
-                                } else {
-                                  setShowCustomInput(prev => ({ ...prev, [key]: false }));
-                                  if (isMulti) {
-                                    if (!v) return;
-                                    const curr = currentVal ? currentVal.split(",").map(s => s.trim()).filter(Boolean) : [];
-                                    if (!curr.includes(v)) curr.push(v);
-                                    setFieldValues(prev => ({ ...prev, [key]: curr.join(", ") }));
-                                  } else {
-                                    setFieldValues(prev => ({ ...prev, [key]: v }));
-                                  }
-                                }
-                              }}
-                            />
-                            {showCustomInput[key] && (
-                              <div style={{ paddingLeft: "8px", borderLeft: "2px solid #e1e3e5", marginTop: "4px" }}>
-                                <BlockStack gap="300">
-                                  <TextField
-                                    label="New custom value" placeholder="Enter new custom option..."
-                                    value={customInputs[key] || ""} onChange={v => setCustomInputs(p => ({ ...p, [key]: v }))} autoComplete="off"
-                                  />
-                                  <InlineStack gap="300" blockAlign="center" wrap={false}>
-                                    <Button variant="primary" onClick={() => {
-                                      const v = customInputs[key]?.trim();
-                                      if (v) {
-                                        addCustomFetcher.submit({ intent: "saveVocabularyEntry", field_key: key, new_value: v }, { method: "post", action: "/app/meta-injector" });
-                                        setVocabulary(prev => {
-                                          const curr = prev[key] || [];
-                                          if (!curr.includes(v)) return { ...prev, [key]: [...curr, v] };
-                                          return prev;
-                                        });
-                                        if (isMulti) {
-                                          const currVals = currentVal ? currentVal.split(",").map(s => s.trim()).filter(Boolean) : [];
-                                          if (!currVals.includes(v)) currVals.push(v);
-                                          setFieldValues(prev => ({ ...prev, [key]: currVals.join(", ") }));
-                                        } else {
-                                          setFieldValues(prev => ({ ...prev, [key]: v }));
+                              {showCustomInput[key] && (
+                                <div style={{ paddingLeft: "8px", borderLeft: "2px solid #e1e3e5", marginTop: "4px" }}>
+                                  <BlockStack gap="300">
+                                    <TextField
+                                      label="New custom value" placeholder="Enter new custom option..."
+                                      value={customInputs[key] || ""} onChange={v => setCustomInputs(p => ({ ...p, [key]: v }))} autoComplete="off"
+                                    />
+                                    <InlineStack gap="300" blockAlign="center" wrap={false}>
+                                      <Button variant="primary" onClick={() => {
+                                        const v = customInputs[key]?.trim();
+                                        if (v) {
+                                          addCustomFetcher.submit({ intent: "saveVocabularyEntry", field_key: key, new_value: v }, { method: "post", action: "/app/meta-injector" });
+                                          setVocabulary(prev => {
+                                            const curr = prev[key] || [];
+                                            if (!curr.includes(v)) return { ...prev, [key]: [...curr, v] };
+                                            return prev;
+                                          });
+                                          if (isMulti) {
+                                            const currVals = currentVal ? currentVal.split(",").map(s => s.trim()).filter(Boolean) : [];
+                                            if (!currVals.includes(v)) currVals.push(v);
+                                            setFieldValues(prev => ({ ...prev, [key]: currVals.join(", ") }));
+                                          } else {
+                                            setFieldValues(prev => ({ ...prev, [key]: v }));
+                                          }
+                                          setShowCustomInput(p => ({ ...p, [key]: false }));
+                                          setCustomInputs(p => ({ ...p, [key]: "" }));
                                         }
-                                        setShowCustomInput(p => ({ ...p, [key]: false }));
-                                        setCustomInputs(p => ({ ...p, [key]: "" }));
-                                      }
-                                    }}>Save & Select</Button>
-                                    <Button onClick={() => setShowCustomInput(p => ({ ...p, [key]: false }))}>Cancel</Button>
-                                  </InlineStack>
-                                </BlockStack>
-                              </div>
-                            )}
-                          </BlockStack>
-                        );
-                      } else {
-                        return (
-                          <BlockStack gap="200" key={key}>
-                            <TextField
-                              label={FIELD_LABELS[key] || key}
-                              value={fieldValues[key] || ""}
-                              onChange={val => setFieldValues(prev => ({ ...prev, [key]: val }))}
-                              autoComplete="off"
-                              placeholder={placeholderText}
-                              multiline={["bench_notes", "character_marks", "rock_composition"].includes(key) ? 4 : undefined}
-                            />
-                          </BlockStack>
-                        );
-                      }
-                    })}
+                                      }}>Save & Select</Button>
+                                      <Button onClick={() => setShowCustomInput(p => ({ ...p, [key]: false }))}>Cancel</Button>
+                                    </InlineStack>
+                                  </BlockStack>
+                                </div>
+                              )}
+                            </BlockStack>
+                          );
+                        } else {
+                          return (
+                            <BlockStack gap="200" key={key}>
+                              <TextField
+                                label={FIELD_LABELS[key] || key}
+                                value={fieldValues[key] || ""}
+                                onChange={val => setFieldValues(prev => ({ ...prev, [key]: val }))}
+                                autoComplete="off"
+                                placeholder={placeholderText}
+                                multiline={["bench_notes", "character_marks", "rock_composition"].includes(key) ? 4 : undefined}
+                              />
+                            </BlockStack>
+                          );
+                        }
+                      })}
+                    </BlockStack>
                   </BlockStack>
-                </BlockStack>
-              </Card>
-            </BlockStack>
-          </div>
+                </Card>
+              </BlockStack>
+            </div>
 
-        </div>
-      </BlockStack>
-    </Page>
+          </div>
+        </BlockStack>
+      </Page>
+    </>
   );
 }

@@ -14,7 +14,7 @@ import ForgeProductCard from "../components/ForgeProductCard";
 export function ErrorBoundary() {
   const error = useRouteError();
   return (
-    <Page title="Engine Fault">
+    <Page title="Engine Fault" backAction={{ content: "Home", url: "/app" }}>
       <Card background="bg-surface-critical">
         <BlockStack gap="400">
           <Text variant="headingLg" as="h1" fontWeight="bold">AI Forge Crashed</Text>
@@ -67,19 +67,19 @@ export const loader = async ({ request }) => {
       const formattedNodes = page.edges.map((e) => {
         const node = e.node;
         const mappedImages = (node.media?.edges || [])
-          .filter(mediaEdge => mediaEdge.node.image) 
+          .filter(mediaEdge => mediaEdge.node.image)
           .map(mediaEdge => ({
-            id: mediaEdge.node.id, 
+            id: mediaEdge.node.id,
             url: mediaEdge.node.image?.url || "",
             altText: mediaEdge.node.alt || ""
           }));
         return {
-          id: node.id, 
-          title: node.title, 
+          id: node.id,
+          title: node.title,
           handle: node.handle,
-          description: node.description, 
+          description: node.description,
           origin: node.originMetafield?.value || "",
-          seo: node.seo, 
+          seo: node.seo,
           images: mappedImages
         };
       });
@@ -108,11 +108,11 @@ export const action = async ({ request }) => {
       const origin = body.get("origin") || "Pacific Northwest region";
       const customHook = body.get("customHook") || "";
       const isPolishingTarget = body.get("isPolishingTarget") === "true";
-      
+
       const apiKey = process.env.GEMINI_API_KEY;
       if (!apiKey) throw new Error("GEMINI_API_KEY is not set in Render environment variables.");
 
-      const polishingInstruction = isPolishingTarget 
+      const polishingInstruction = isPolishingTarget
         ? `\n  CRITICAL SEO: You MUST naturally and organically weave these three exact phrases into the story without feeling stuffed: "custom stone polishing service", "heirloom rock polishing", and "turn your found rock into art".`
         : "";
 
@@ -128,48 +128,41 @@ RULES:
 
 - seoTitle: [Stone Name] + [Finished Type] + "One-of-a-Kind" + "Rockhound Studio". Max 70 chars.
 
-- metaDescription: Material + origin + "one of a kind". Load natural keyword phrases. Max 150 chars STRICT. ${polishingInstruction}
+- metaDescription: Material + origin + "one of a kind". Load natural keyword phrases. Max 150 chars STRICT. NEVER end with a generic closer like "Add it to your collection today", "Shop now", "Perfect gift", or any call-to-action phrase. End on the stone's story or character — not a sales pitch. ${polishingInstruction}
 
 Foreman's Direct Note: ${customHook}
 Product Title: ${productTitle}
 Product Description: ${productDescription}
 Origin Context: ${origin}`;
 
-      let parts = [{ text: prompt }];
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+      const options = {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+      };
 
       try {
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
-        const options = {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ contents: [{ parts: parts }] })
-        };
-
-        const makeGeminiRequest = async () => {
+        const makeRequest = async () => {
           const controller = new AbortController();
-          const timeout = setTimeout(() => controller.abort(), 45000); // 45-second fuse
+          const timeout = setTimeout(() => controller.abort(), 45000);
           try {
             const res = await fetch(url, { ...options, signal: controller.signal });
             clearTimeout(timeout);
             return res;
           } catch (e) {
             clearTimeout(timeout);
-            console.error("RAW FETCH FAULT:", e);
-            if (e.name === "AbortError") {
-              throw new Error("Timeout: Google took longer than 45 seconds to respond.");
-            }
+            if (e.name === "AbortError") throw new Error("Timeout: took longer than 45 seconds.");
             throw new Error(`Network Fault: ${e.message}`);
           }
         };
 
-        let geminiRes = await makeGeminiRequest();
+        let geminiRes = await makeRequest();
 
         if (geminiRes.status === 429) {
           await new Promise(resolve => setTimeout(resolve, 8000));
-          geminiRes = await makeGeminiRequest();
-          if (geminiRes.status === 429) {
-            throw new Error("Rate limited — Google rejected the request after retry.");
-          }
+          geminiRes = await makeRequest();
+          if (geminiRes.status === 429) throw new Error("Rate limited — rejected after retry.");
         }
 
         if (!geminiRes.ok) {
@@ -178,28 +171,26 @@ Origin Context: ${origin}`;
         }
 
         const data = await geminiRes.json();
-        console.log("RAW GEMINI RESPONSE:", JSON.stringify(data));
 
         let rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-        
-        // Bulletproof string cleaning: bypassing copy-paste mangling by building characters dynamically
+
+        // Strip markdown code fences
         const t = String.fromCharCode(96);
         const jsonWrapper = t + t + t + "json";
         const codeWrapper = t + t + t;
-        
         rawText = rawText.replace(new RegExp(jsonWrapper, "gi"), "");
         rawText = rawText.replace(new RegExp(codeWrapper, "gi"), "");
         rawText = rawText.trim();
-        
+
         let parsedData;
-        try { 
-          parsedData = JSON.parse(rawText); 
-        } catch (e) { 
-          throw new Error("Gemini returned invalid JSON format."); 
+        try {
+          parsedData = JSON.parse(rawText);
+        } catch (e) {
+          throw new Error("Returned invalid JSON format.");
         }
 
-        if (!parsedData || !parsedData.altText || !parsedData.seoTitle || !parsedData.metaDescription) {
-          throw new Error("Gemini returned empty response — try again");
+        if (!parsedData?.altText || !parsedData?.seoTitle || !parsedData?.metaDescription) {
+          throw new Error("Empty response — try again.");
         }
 
         return { ok: true, intent, productId, suggestion: parsedData };
@@ -211,11 +202,11 @@ Origin Context: ${origin}`;
 
     if (intent === "save_alt") {
       const productId = body.get("productId");
-      const pairs = JSON.parse(body.get("pairs")); 
+      const pairs = JSON.parse(body.get("pairs"));
       const chunkSize = 10;
       for (let i = 0; i < pairs.length; i += chunkSize) {
         const chunk = pairs.slice(i, i + chunkSize);
-        const filesInput = chunk.map(({ id, alt }) => ({ id: id, alt: alt }));
+        const filesInput = chunk.map(({ id, alt }) => ({ id, alt }));
         const res = await admin.graphql(
           `mutation fileUpdate($files: [FileUpdateInput!]!) {
             fileUpdate(files: $files) {
@@ -265,11 +256,10 @@ export default function AiContentForgeTab() {
   const [suggestingId, setSuggestingId] = useState(null);
   const [savingAltId, setSavingAltId] = useState(null);
   const [savingSeoId, setSavingSeoId] = useState(null);
-  const [toast, setToast] = useState(null); 
+  const [toast, setToast] = useState(null);
   const [pageError, setPageError] = useState(null);
   const [globalCooldown, setGlobalCooldown] = useState(0);
 
-  // Global Cooldown Timer
   useEffect(() => {
     if (globalCooldown <= 0) return;
     const timer = setInterval(() => {
@@ -278,7 +268,6 @@ export default function AiContentForgeTab() {
     return () => clearInterval(timer);
   }, [globalCooldown]);
 
-  // Clean Toast Timer
   useEffect(() => {
     if (!toast) return;
     const timer = setTimeout(() => setToast(null), 3000);
@@ -297,16 +286,14 @@ export default function AiContentForgeTab() {
       if (intent === "ai_suggest") {
         setSuggestions((prev) => ({ ...prev, [productId]: fetcher.data.suggestion }));
         setToast({ message: "✨ AI Forged Content Generated", tone: "success" });
-      } 
-      else if (intent === "save_alt") {
+      } else if (intent === "save_alt") {
         const updatedAlt = suggestions[productId]?.altText || "";
         setProducts((prev) => prev.map((p) => {
-            if (p.id === productId) return { ...p, images: p.images.map((img) => ({ ...img, altText: updatedAlt })) };
-            return p;
+          if (p.id === productId) return { ...p, images: p.images.map((img) => ({ ...img, altText: updatedAlt })) };
+          return p;
         }));
         setToast({ message: "✓ Alt Text Bulk Updated", tone: "success" });
-      }
-      else if (intent === "save_seo") {
+      } else if (intent === "save_seo") {
         setProducts((prev) => prev.map((p) => (p.id === productId ? { ...p, seo: fetcher.data.seo } : p)));
         setToast({ message: "✓ SEO Data Saved", tone: "success" });
       }
@@ -316,13 +303,13 @@ export default function AiContentForgeTab() {
   const handleSuggest = (product, customHook, isPolishingTarget) => {
     setPageError(null);
     setSuggestingId(product.id);
-    setGlobalCooldown(120); // Trigger Master Lock
+    setGlobalCooldown(120);
     const fd = new FormData();
     fd.append("intent", "ai_suggest");
     fd.append("productId", product.id);
     fd.append("productTitle", product.title);
     fd.append("productDescription", product.description || "");
-    fd.append("origin", product.origin || ""); 
+    fd.append("origin", product.origin || "");
     fd.append("customHook", customHook || "");
     fd.append("isPolishingTarget", isPolishingTarget ? "true" : "false");
     fetcher.submit(fd, { method: "post" });
@@ -333,7 +320,9 @@ export default function AiContentForgeTab() {
     const altText = suggestions[product.id]?.altText;
     const pairs = product.images.map((img) => ({ id: img.id, alt: altText }));
     const fd = new FormData();
-    fd.append("intent", "save_alt"); fd.append("productId", product.id); fd.append("pairs", JSON.stringify(pairs));
+    fd.append("intent", "save_alt");
+    fd.append("productId", product.id);
+    fd.append("pairs", JSON.stringify(pairs));
     fetcher.submit(fd, { method: "post" });
   };
 
@@ -342,8 +331,10 @@ export default function AiContentForgeTab() {
     const seoTitle = suggestions[product.id]?.seoTitle;
     const seoDesc = suggestions[product.id]?.metaDescription;
     const fd = new FormData();
-    fd.append("intent", "save_seo"); fd.append("productId", product.id);
-    fd.append("seoTitle", seoTitle); fd.append("seoDescription", seoDesc);
+    fd.append("intent", "save_seo");
+    fd.append("productId", product.id);
+    fd.append("seoTitle", seoTitle);
+    fd.append("seoDescription", seoDesc);
     fetcher.submit(fd, { method: "post" });
   };
 
@@ -352,7 +343,11 @@ export default function AiContentForgeTab() {
   };
 
   return (
-    <Page title="⚡ AI Content Forge" subtitle="Generate premium, story-driven Alt Text and SEO descriptions powered by Gemini.">
+    <Page
+      title="⚡ AI Content Forge"
+      subtitle="Generate premium, story-driven Alt Text and SEO descriptions powered by Gemini."
+      backAction={{ content: "Home", url: "/app" }}
+    >
       {toast && (
         <div style={{ position: "fixed", top: 16, right: 16, zIndex: 9999 }}>
           <Banner tone={toast.tone}>{toast.message}</Banner>
