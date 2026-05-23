@@ -235,7 +235,8 @@ function countByStatus(items, liveCollectionHandles, livePageHandles) {
   return { live, draft, dead };
 }
 
-export default function MenuManager() {`n  const navigate = useNavigate();
+export default function MenuManager() {
+  const navigate = useNavigate();
   const { menus, collections, pages, liveCollectionHandles, livePageHandles, dbSettings, dbHistory } = useLoaderData();
   const fetcher = useFetcher();
   const scanFetcher = useFetcher({ key: "deepScanner" }); // Dedicated fetcher for pagination
@@ -1103,6 +1104,3 @@ export default function MenuManager() {`n  const navigate = useNavigate();
     </>
   );
 }
-
-
-
