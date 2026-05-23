@@ -36,7 +36,7 @@ export const loader = async ({ request }) => {
     }
     
     const data = await response.json();
-    return Response.json({ files: data.assets || [] });
+    return Response.json({ files: data.assets ? data.assets : [] });
   } catch (error) {
     console.error("Failed to load theme assets:", error);
     return Response.json({ files: [], error: `Failed to load theme files: ${error.message}` });
@@ -63,7 +63,7 @@ export const action = async ({ request }) => {
       if (!response.ok) throw new Error("Failed to fetch asset content.");
       
       const data = await response.json();
-      return Response.json({ intent, assetKey, content: data.asset?.value || "" });
+      return Response.json({ intent, assetKey, content: data.asset?.value ? data.asset.value : "" });
     }
 
     if (intent === "saveAsset" || intent === "createAsset" || intent === "duplicateAsset") {
@@ -102,7 +102,6 @@ export const action = async ({ request }) => {
       const newKey = formData.get("newKey");
       const content = formData.get("content");
 
-      // Create new
       const createResponse = await fetch(`https://${shop}/admin/api/2024-10/themes/${THEME_ID}/assets.json`, {
         method: "PUT",
         headers: { 
@@ -116,7 +115,6 @@ export const action = async ({ request }) => {
 
       if (!createResponse.ok) throw new Error("Failed to create new file during rename.");
 
-      // Delete old
       const deleteResponse = await fetch(`https://${shop}/admin/api/2024-10/themes/${THEME_ID}/assets.json?asset[key]=${encodeURIComponent(assetKey)}`, {
         method: "DELETE",
         headers: {
@@ -145,7 +143,7 @@ export const action = async ({ request }) => {
         });
         clearTimeout(timeoutId);
         const data = await res.json();
-        const modifiedContent = data.candidates?.[0]?.content?.parts?.[0]?.text || content;
+        const modifiedContent = data.candidates?.[0]?.content?.parts?.[0]?.text ? data.candidates[0].content.parts[0].text : content;
         return Response.json({ intent, assetKey, modifiedContent });
       } catch (error) {
         clearTimeout(timeoutId);
@@ -167,7 +165,7 @@ export const action = async ({ request }) => {
         });
         clearTimeout(timeoutId);
         const data = await res.json();
-        const researchContent = data.candidates?.[0]?.content?.parts?.[0]?.text || "No results returned.";
+        const researchContent = data.candidates?.[0]?.content?.parts?.[0]?.text ? data.candidates[0].content.parts[0].text : "No results returned.";
         return Response.json({ intent, assetKey, researchContent });
       } catch (error) {
         clearTimeout(timeoutId);
@@ -185,7 +183,7 @@ export const action = async ({ request }) => {
 
 export default function ThemeEditorTab() {
   const loaderData = useLoaderData();
-  const files = loaderData?.files || [];
+  const files = loaderData?.files ? loaderData.files : [];
   const loaderError = loaderData?.error;
   
   const actionData = useActionData();
@@ -193,6 +191,7 @@ export default function ThemeEditorTab() {
   const navigation = useNavigation();
   const navigate = useNavigate();
 
+  const [searchQuery, setSearchQuery] = useState("");
   const [selectedTab, setSelectedTab] = useState(0);
   const [selectedFile, setSelectedFile] = useState(null);
   const [originalContent, setOriginalContent] = useState("");
@@ -201,13 +200,11 @@ export default function ThemeEditorTab() {
   const [instruction, setInstruction] = useState("");
   const [researchData, setResearchData] = useState("");
 
-  // Modal states
   const [isNewModalOpen, setIsNewModalOpen] = useState(false);
   const [isRenameModalOpen, setIsRenameModalOpen] = useState(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [isDuplicateModalOpen, setIsDuplicateModalOpen] = useState(false);
 
-  // Form states
   const [newFileName, setNewFileName] = useState("");
   const [newFileType, setNewFileType] = useState("sections");
   const [renameInput, setRenameInput] = useState("");
@@ -233,7 +230,6 @@ export default function ThemeEditorTab() {
           setOriginalContent(currentContent);
           setIsNewModalOpen(false);
           setIsDuplicateModalOpen(false);
-          // Re-fetch to update file list if needed, or handle locally
         } else if (actionData.intent === "renameAsset") {
           setSelectedFile(actionData.assetKey);
           setOriginalContent(currentContent);
@@ -268,7 +264,6 @@ export default function ThemeEditorTab() {
   const handleCreateNew = useCallback(() => {
     const fullKey = `${newFileType}/${newFileName}.liquid`;
     submit({ intent: "createAsset", assetKey: fullKey, content: "" }, { method: "post" });
-    // Optimistically set content to blank for the new file
     setCurrentContent("");
   }, [submit, newFileType, newFileName]);
 
@@ -303,8 +298,16 @@ export default function ThemeEditorTab() {
   const lineCount = currentContent.split("\n").length;
   const charCount = currentContent.length;
 
+  const filteredFiles = files.filter((f) => 
+    f.key.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+  
+  const visiblePinned = PINNED_FILES.filter((f) => 
+    f.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
   const renderFileGroup = (folderName) => {
-    const folderFiles = files.filter((a) => a.key.startsWith(`${folderName}/`) && !PINNED_FILES.includes(a.key));
+    const folderFiles = filteredFiles.filter((a) => a.key.startsWith(`${folderName}/`) && !PINNED_FILES.includes(a.key));
     if (folderFiles.length === 0) return null;
     
     return (
@@ -313,7 +316,12 @@ export default function ThemeEditorTab() {
         <List type="bullet">
           {folderFiles.map((file) => (
             <List.Item key={file.key}>
-              <Button variant="monochromePlain" onClick={() => handleSelectFile(file.key)} textAlign="left">
+              <Button 
+                variant="monochromePlain" 
+                onClick={() => handleSelectFile(file.key)} 
+                textAlign="left"
+                accessibilityLabel={`Open ${file.key}`}
+              >
                 {file.key.replace(`${folderName}/`, "")}
               </Button>
             </List.Item>
@@ -329,8 +337,8 @@ export default function ThemeEditorTab() {
         open={isNewModalOpen}
         onClose={() => setIsNewModalOpen(false)}
         title="Create New File"
-        primaryAction={{ content: "Create", onAction: handleCreateNew, loading: isLoading }}
-        secondaryActions={[{ content: "Cancel", onAction: () => setIsNewModalOpen(false) }]}
+        primaryAction={{ content: "Create", onAction: handleCreateNew, loading: isLoading, accessibilityLabel: "Confirm create new file" }}
+        secondaryActions={[{ content: "Cancel", onAction: () => setIsNewModalOpen(false), accessibilityLabel: "Cancel create new file" }]}
       >
         <Modal.Section>
           <FormLayout>
@@ -350,6 +358,7 @@ export default function ThemeEditorTab() {
               value={newFileName}
               onChange={setNewFileName}
               autoComplete="off"
+              accessibilityLabel="Filename input"
             />
           </FormLayout>
         </Modal.Section>
@@ -363,8 +372,8 @@ export default function ThemeEditorTab() {
         open={isRenameModalOpen}
         onClose={() => setIsRenameModalOpen(false)}
         title="Rename File"
-        primaryAction={{ content: "Rename", onAction: handleRename, loading: isLoading }}
-        secondaryActions={[{ content: "Cancel", onAction: () => setIsRenameModalOpen(false) }]}
+        primaryAction={{ content: "Rename", onAction: handleRename, loading: isLoading, accessibilityLabel: "Confirm rename file" }}
+        secondaryActions={[{ content: "Cancel", onAction: () => setIsRenameModalOpen(false), accessibilityLabel: "Cancel rename file" }]}
       >
         <Modal.Section>
           <TextField
@@ -372,6 +381,7 @@ export default function ThemeEditorTab() {
             value={renameInput}
             onChange={setRenameInput}
             autoComplete="off"
+            accessibilityLabel="Rename file path input"
           />
         </Modal.Section>
       </Modal>
@@ -384,8 +394,8 @@ export default function ThemeEditorTab() {
         open={isDeleteModalOpen}
         onClose={() => setIsDeleteModalOpen(false)}
         title="Delete File"
-        primaryAction={{ content: "Delete", onAction: handleDelete, destructive: true, loading: isLoading }}
-        secondaryActions={[{ content: "Cancel", onAction: () => setIsDeleteModalOpen(false) }]}
+        primaryAction={{ content: "Delete", onAction: handleDelete, destructive: true, loading: isLoading, accessibilityLabel: "Confirm delete file" }}
+        secondaryActions={[{ content: "Cancel", onAction: () => setIsDeleteModalOpen(false), accessibilityLabel: "Cancel delete file" }]}
       >
         <Modal.Section>
           <Text as="p">Are you sure you want to delete {selectedFile}? This cannot be undone.</Text>
@@ -400,8 +410,8 @@ export default function ThemeEditorTab() {
         open={isDuplicateModalOpen}
         onClose={() => setIsDuplicateModalOpen(false)}
         title="Duplicate File"
-        primaryAction={{ content: "Duplicate", onAction: handleDuplicate, loading: isLoading }}
-        secondaryActions={[{ content: "Cancel", onAction: () => setIsDuplicateModalOpen(false) }]}
+        primaryAction={{ content: "Duplicate", onAction: handleDuplicate, loading: isLoading, accessibilityLabel: "Confirm duplicate file" }}
+        secondaryActions={[{ content: "Cancel", onAction: () => setIsDuplicateModalOpen(false), accessibilityLabel: "Cancel duplicate file" }]}
       >
         <Modal.Section>
           <TextField
@@ -409,6 +419,7 @@ export default function ThemeEditorTab() {
             value={duplicateInput}
             onChange={setDuplicateInput}
             autoComplete="off"
+            accessibilityLabel="Duplicate file path input"
           />
         </Modal.Section>
       </Modal>
@@ -417,12 +428,12 @@ export default function ThemeEditorTab() {
 
   return (
     <Page
-      title="Theme Editor: Prestige v11.1.0"
+      title={selectedFile ? selectedFile : "Theme Editor"}
       fullWidth
       backAction={{ content: "Dashboard", onAction: () => navigate("/app") }}
     >
-      {loaderError && <Banner tone="critical">{loaderError}</Banner>}
-      {actionData?.error && <Banner tone="critical">{actionData.error}</Banner>}
+      {loaderError ? <Banner tone="critical">{loaderError}</Banner> : null}
+      {actionData?.error ? <Banner tone="critical">{actionData.error}</Banner> : null}
 
       {renderNewFileModal()}
       {renderRenameModal()}
@@ -433,22 +444,42 @@ export default function ThemeEditorTab() {
         <Layout.Section variant="oneThird">
           <Card padding="0">
             <Box padding="400" borderBottom="025" borderColor="border">
-              <Text variant="headingMd" as="h2">File Tree</Text>
+              <BlockStack gap="300">
+                <Text variant="headingMd" as="h2">File Tree</Text>
+                <TextField
+                  labelHidden
+                  label="Search files"
+                  placeholder="Filter files by name..."
+                  value={searchQuery}
+                  onChange={setSearchQuery}
+                  autoComplete="off"
+                  clearButton
+                  onClearButtonClick={() => setSearchQuery("")}
+                  accessibilityLabel="Search files filter"
+                />
+              </BlockStack>
             </Box>
             <Scrollable style={{ height: "75vh" }} focusable>
               <Box padding="400">
-                <Box paddingBlockEnd="400">
-                  <Text variant="headingSm" as="h6" fontWeight="bold">PINNED QUICK-ACCESS</Text>
-                  <List type="bullet">
-                    {PINNED_FILES.map((fileKey) => (
-                      <List.Item key={fileKey}>
-                        <Button variant="monochromePlain" onClick={() => handleSelectFile(fileKey)} textAlign="left">
-                          <Text fontWeight="bold">{fileKey}</Text>
-                        </Button>
-                      </List.Item>
-                    ))}
-                  </List>
-                </Box>
+                {visiblePinned.length > 0 ? (
+                  <Box paddingBlockEnd="400">
+                    <Text variant="headingSm" as="h6" fontWeight="bold">PINNED QUICK-ACCESS</Text>
+                    <List type="bullet">
+                      {visiblePinned.map((fileKey) => (
+                        <List.Item key={fileKey}>
+                          <Button 
+                            variant="monochromePlain" 
+                            onClick={() => handleSelectFile(fileKey)} 
+                            textAlign="left"
+                            accessibilityLabel={`Open pinned file ${fileKey}`}
+                          >
+                            <Text fontWeight="bold">{fileKey}</Text>
+                          </Button>
+                        </List.Item>
+                      ))}
+                    </List>
+                  </Box>
+                ) : null}
                 <Divider />
                 <Box paddingBlockStart="400">
                   {FOLDERS.map((folder) => renderFileGroup(folder))}
@@ -473,10 +504,21 @@ export default function ThemeEditorTab() {
                         </InlineStack>
                       </BlockStack>
                       <InlineStack gap="300">
-                        <Button onClick={() => setShowDiff(!showDiff)}>
+                        <Button 
+                          onClick={() => setShowDiff(!showDiff)} 
+                          size="large"
+                          accessibilityLabel="Toggle Diff View"
+                        >
                           {showDiff ? "Hide Diff" : "Show Diff"}
                         </Button>
-                        <Button variant="primary" onClick={handleSave} loading={isLoading && actionData?.intent === "saveAsset"} disabled={!hasChanges}>
+                        <Button 
+                          variant="primary" 
+                          onClick={handleSave} 
+                          loading={isLoading && actionData?.intent === "saveAsset"} 
+                          disabled={!hasChanges}
+                          size="large"
+                          accessibilityLabel="Save to Theme"
+                        >
                           SAVE TO THEME
                         </Button>
                       </InlineStack>
@@ -486,7 +528,7 @@ export default function ThemeEditorTab() {
                       <Button
                         size="large"
                         onClick={() => setIsNewModalOpen(true)}
-                        ariaLabel="Create a new file"
+                        accessibilityLabel="Create a new file"
                       >
                         New File
                       </Button>
@@ -495,7 +537,7 @@ export default function ThemeEditorTab() {
                         onClick={handleSave}
                         disabled={!hasChanges}
                         loading={isLoading && actionData?.intent === "saveAsset"}
-                        ariaLabel="Save current file"
+                        accessibilityLabel="Save current file"
                       >
                         Save File
                       </Button>
@@ -505,7 +547,7 @@ export default function ThemeEditorTab() {
                           setRenameInput(selectedFile);
                           setIsRenameModalOpen(true);
                         }}
-                        ariaLabel="Rename current file"
+                        accessibilityLabel="Rename current file"
                       >
                         Rename File
                       </Button>
@@ -513,7 +555,7 @@ export default function ThemeEditorTab() {
                         size="large"
                         onClick={() => setIsDeleteModalOpen(true)}
                         tone="critical"
-                        ariaLabel="Delete current file"
+                        accessibilityLabel="Delete current file"
                       >
                         Delete File
                       </Button>
@@ -523,7 +565,7 @@ export default function ThemeEditorTab() {
                           setDuplicateInput(selectedFile.replace('.liquid', '-copy.liquid'));
                           setIsDuplicateModalOpen(true);
                         }}
-                        ariaLabel="Duplicate current file"
+                        accessibilityLabel="Duplicate current file"
                       >
                         Duplicate File
                       </Button>
@@ -531,7 +573,7 @@ export default function ThemeEditorTab() {
                         size="large"
                         onClick={handleDiscard}
                         disabled={!hasChanges}
-                        ariaLabel="Discard unsaved changes"
+                        accessibilityLabel="Discard unsaved changes"
                       >
                         Discard Changes
                       </Button>
@@ -540,13 +582,13 @@ export default function ThemeEditorTab() {
                 </Box>
 
                 <Tabs
-                  tabs={[{ id: "editor", content: "Editor" }, { id: "research", content: "Research" }]}
+                  tabs={[{ id: "editor", content: "Editor", accessibilityLabel: "Editor Tab" }, { id: "research", content: "Research", accessibilityLabel: "Research Tab" }]}
                   selected={selectedTab}
                   onSelect={setSelectedTab}
                   fitted
                 >
                   <Box padding="400">
-                    {selectedTab === 0 && (
+                    {selectedTab === 0 ? (
                       <BlockStack gap="400">
                         <Box background="bg-surface-secondary" padding="400" borderRadius="200">
                           <BlockStack gap="300">
@@ -554,16 +596,21 @@ export default function ThemeEditorTab() {
                             <InlineStack gap="300" wrap={false} blockAlign="center">
                               <Box width="100%">
                                 <TextField
+                                  labelHidden
+                                  label="Instruction for Gemini"
                                   value={instruction}
                                   onChange={setInstruction}
                                   placeholder="e.g. 'Add a new schema setting for background color with id custom_bg'"
                                   autoComplete="off"
+                                  accessibilityLabel="Instruction input for Gemini Assist"
                                 />
                               </Box>
                               <Button 
                                 onClick={handleGeminiAssist} 
                                 loading={isLoading && navigation.formData?.get("intent") === "geminiAssist"}
                                 tone="success"
+                                size="large"
+                                accessibilityLabel="Send instruction to Gemini"
                               >
                                 Modify Code
                               </Button>
@@ -577,11 +624,14 @@ export default function ThemeEditorTab() {
                               <Text fontWeight="bold">Original Content</Text>
                               <Box paddingBlockStart="200">
                                 <TextField
+                                  labelHidden
+                                  label="Original file content"
                                   value={originalContent}
                                   multiline={25}
                                   monospaced
                                   autoComplete="off"
                                   readOnly
+                                  accessibilityLabel="Original read-only content"
                                 />
                               </Box>
                             </Box>
@@ -589,35 +639,43 @@ export default function ThemeEditorTab() {
                               <Text fontWeight="bold">Modified Content</Text>
                               <Box paddingBlockStart="200">
                                 <TextField
+                                  labelHidden
+                                  label="Modified file content"
                                   value={currentContent}
                                   onChange={setCurrentContent}
                                   multiline={25}
                                   monospaced
                                   autoComplete="off"
+                                  accessibilityLabel="Editable modified content"
                                 />
                               </Box>
                             </Box>
                           </InlineStack>
                         ) : (
                           <TextField
+                            labelHidden
+                            label="Code Editor"
                             value={currentContent}
                             onChange={setCurrentContent}
                             multiline={30}
                             monospaced
                             autoComplete="off"
                             disabled={isLoading}
+                            accessibilityLabel="Main code editor"
                           />
                         )}
                       </BlockStack>
-                    )}
+                    ) : null}
 
-                    {selectedTab === 1 && (
+                    {selectedTab === 1 ? (
                       <BlockStack gap="400">
                         <InlineStack align="space-between" blockAlign="center">
                           <Text variant="headingMd" as="h3">Prestige Schema Cataloger</Text>
                           <Button 
                             onClick={handleGeminiResearch} 
                             loading={isLoading && navigation.formData?.get("intent") === "geminiResearch"}
+                            size="large"
+                            accessibilityLabel="Run schema analysis using Gemini"
                           >
                             Run Schema Analysis
                           </Button>
@@ -637,7 +695,7 @@ export default function ThemeEditorTab() {
                           </Box>
                         )}
                       </BlockStack>
-                    )}
+                    ) : null}
                   </Box>
                 </Tabs>
               </BlockStack>
@@ -646,9 +704,10 @@ export default function ThemeEditorTab() {
                 <Text alignment="center" variant="headingLg" tone="subdued">
                   Select a file from the tree to begin editing.
                 </Text>
-                
                 <Box paddingBlockStart="400" display="flex" justifyContent="center">
-                   <Button size="large" onClick={() => setIsNewModalOpen(true)}>Create New File</Button>
+                   <Button size="large" onClick={() => setIsNewModalOpen(true)} accessibilityLabel="Create new file from empty state">
+                     Create New File
+                   </Button>
                 </Box>
               </Box>
             )}
