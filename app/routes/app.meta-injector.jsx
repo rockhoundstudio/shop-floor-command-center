@@ -4,7 +4,7 @@ import {
 } from "@shopify/polaris";
 import { ArrowLeftIcon } from "@shopify/polaris-icons";
 import { useState, useEffect } from "react";
-import { useLoaderData, useFetcher, data } from "react-router";
+import { useLoaderData, useFetcher, data, useNavigate } from "react-router";
 import { authenticate } from "../shopify.server";
 import { useAppBridge } from "@shopify/app-bridge-react";
 
@@ -224,7 +224,7 @@ export const action = async ({ request }) => {
 };
 
 // --- VIEW ---
-export default function MetaInjector() {
+export default function MetaInjector() {`n  const navigate = useNavigate();
   const { products, loaderError } = useLoaderData();
   const shopify = useAppBridge();
 
@@ -290,7 +290,7 @@ export default function MetaInjector() {
   return (
     <>
       <Box paddingBlockStart="400" paddingInlineStart="400">
-        <Button url="/app" icon={ArrowLeftIcon}>Back</Button>
+        <Button onClick={() => navigate("/app")} icon={ArrowLeftIcon}>Back</Button>
       </Box>
       <Page title="Standard Data Injector" fullWidth>
         <BlockStack gap="600">
@@ -507,3 +507,6 @@ export default function MetaInjector() {
     </>
   );
 }
+
+
+

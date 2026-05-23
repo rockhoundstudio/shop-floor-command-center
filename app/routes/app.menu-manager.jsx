@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from "react";
-import { useLoaderData, useFetcher, data } from "react-router";
+import { useLoaderData, useFetcher, data, useNavigate } from "react-router";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import {
@@ -235,7 +235,7 @@ function countByStatus(items, liveCollectionHandles, livePageHandles) {
   return { live, draft, dead };
 }
 
-export default function MenuManager() {
+export default function MenuManager() {`n  const navigate = useNavigate();
   const { menus, collections, pages, liveCollectionHandles, livePageHandles, dbSettings, dbHistory } = useLoaderData();
   const fetcher = useFetcher();
   const scanFetcher = useFetcher({ key: "deepScanner" }); // Dedicated fetcher for pagination
@@ -662,7 +662,7 @@ export default function MenuManager() {
   return (
     <>
       <Box padding="400" paddingBlockEnd="0">
-        <Button url="/app" icon={ArrowLeftIcon}>Back</Button>
+        <Button onClick={() => navigate("/app")} icon={ArrowLeftIcon}>Back</Button>
       </Box>
       <Page
         title="Menu Manager 🗂️"
@@ -1103,3 +1103,6 @@ export default function MenuManager() {
     </>
   );
 }
+
+
+

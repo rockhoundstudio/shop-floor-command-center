@@ -1,12 +1,12 @@
 import { useState, useEffect } from "react";
-import { useLoaderData, useFetcher, data } from "react-router";
+import { useLoaderData, useFetcher, data, useNavigate } from "react-router";
 import { authenticate } from "../shopify.server";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import {
   Page, Card, Button, Box, Banner, Text, Badge, TextField, BlockStack,
   InlineStack, Grid, FormLayout, Thumbnail, Checkbox, Tag, Select, IndexTable, useIndexResourceState
 } from "@shopify/polaris";
-import { ImageIcon } from "@shopify/polaris-icons";
+import { ImageIcon, ArrowLeftIcon } from "@shopify/polaris-icons";
 
 // --- EXTERNAL IMPORTS ---
 import { TARGET_KEYS, FIELD_LABELS, evaluateProductStatus, autoLinkStory } from "../utils/metaScan";
@@ -226,7 +226,7 @@ export const action = async ({ request }) => {
 // ==========================================
 // VIEW COMPONENT
 // ==========================================
-export default function BulkEditRoute() {
+export default function BulkEditRoute() {`n  const navigate = useNavigate();
   const { products, loaderError } = useLoaderData();
   const shopify = useAppBridge();
 
@@ -312,7 +312,7 @@ export default function BulkEditRoute() {
 
   return (
     <Page title="Bulk Edit Data" fullWidth>
-      <BlockStack gap="600">
+      <BlockStack gap="600">`n        <Button icon={ArrowLeftIcon} onClick={() => navigate("/app")}>Back</Button>
         {loaderError && <Banner tone="critical">Loader error: {loaderError}</Banner>}
         {saveSuccess && <Banner tone="success">Bulk update saved to Shopify successfully.</Banner>}
         {saveError && <Banner tone="critical">Bulk save failed: {saveError}</Banner>}
@@ -523,3 +523,6 @@ export default function BulkEditRoute() {
     </Page>
   );
 }
+
+
+
