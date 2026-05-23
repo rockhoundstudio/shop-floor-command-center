@@ -224,7 +224,8 @@ export const action = async ({ request }) => {
 };
 
 // --- VIEW ---
-export default function MetaInjector() {`n  const navigate = useNavigate();
+export default function MetaInjector() {
+  const navigate = useNavigate();
   const { products, loaderError } = useLoaderData();
   const shopify = useAppBridge();
 
@@ -507,6 +508,3 @@ export default function MetaInjector() {`n  const navigate = useNavigate();
     </>
   );
 }
-
-
-
