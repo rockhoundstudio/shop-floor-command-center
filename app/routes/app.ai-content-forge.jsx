@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useFetcher, useLoaderData, useRouteError, isRouteErrorResponse } from "react-router";
+import { useFetcher, useLoaderData, useRouteError, isRouteErrorResponse, useNavigate } from "react-router";
 import { authenticate } from "../shopify.server";
 import {
   Page,
@@ -14,7 +14,7 @@ import ForgeProductCard from "../components/ForgeProductCard";
 export function ErrorBoundary() {
   const error = useRouteError();
   return (
-    <Page title="Engine Fault" backAction={{ content: "Home", url: "/app" }}>
+    <Page title="Engine Fault" backAction={{ content: "Home", action: () => navigate("/app") }}>
       <Card background="bg-surface-critical">
         <BlockStack gap="400">
           <Text variant="headingLg" as="h1" fontWeight="bold">AI Forge Crashed</Text>
@@ -248,7 +248,7 @@ Origin Context: ${origin}`;
   }
 };
 
-export default function AiContentForgeTab() {
+export default function AiContentForgeTab() {`n  const navigate = useNavigate();
   const { products: initialProducts } = useLoaderData();
   const fetcher = useFetcher();
   const [products, setProducts] = useState(initialProducts);
@@ -346,7 +346,7 @@ export default function AiContentForgeTab() {
     <Page
       title="⚡ AI Content Forge"
       subtitle="Generate premium, story-driven Alt Text and SEO descriptions powered by Gemini."
-      backAction={{ content: "Home", url: "/app" }}
+      backAction={{ content: "Home", action: () => navigate("/app") }}
     >
       {toast && (
         <div style={{ position: "fixed", top: 16, right: 16, zIndex: 9999 }}>
@@ -389,3 +389,6 @@ export default function AiContentForgeTab() {
     </Page>
   );
 }
+
+
+

@@ -1,5 +1,5 @@
 import { data } from "react-router";
-import { useLoaderData } from "react-router";
+import { useLoaderData, useNavigate } from "react-router";
 import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { Page } from "@shopify/polaris";
@@ -110,7 +110,7 @@ export const action = async ({ request }) => {
 };
 
 // ── COMPONENT ────────────────────────────────────────────────────────────────
-export default function CollectionManager() {
+export default function CollectionManager() {`n  const navigate = useNavigate();
   const { collections, products } = useLoaderData();
 
   return (
@@ -118,7 +118,7 @@ export default function CollectionManager() {
       <CollectionsTab
         collections={collections}
         products={products}
-        onBack={() => window.location.href = "/app"}
+        onBack={() => navigate("/app")}
       />
     </Page>
   );
@@ -127,3 +127,6 @@ export default function CollectionManager() {
 export const headers = (headersArgs) => {
   return boundary.headers(headersArgs);
 };
+
+
+
