@@ -18,6 +18,7 @@ const PINNED_FILES = [
 
 const FOLDERS = ["sections", "snippets", "templates", "assets", "config"];
 
+// ── SERVER LOADER ────────────────────────────────────────────────────────────
 export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
   const { shop, accessToken } = session;
@@ -43,6 +44,7 @@ export const loader = async ({ request }) => {
   }
 };
 
+// ── SERVER ACTION ────────────────────────────────────────────────────────────
 export const action = async ({ request }) => {
   const { session } = await authenticate.admin(request);
   const { shop, accessToken } = session;
@@ -81,7 +83,8 @@ export const action = async ({ request }) => {
       
       if (!response.ok) throw new Error(`Failed to save asset: ${assetKey}`);
       
-      return Response.json({ intent, assetKey, success: true, message: `Saved ${assetKey} successfully.` });
+      // We pass 'content' back here so the frontend doesn't need to depend on live typing state
+      return Response.json({ intent, assetKey, content, success: true, message: `Saved ${assetKey} successfully.` });
     }
 
     if (intent === "deleteAsset") {
@@ -125,7 +128,7 @@ export const action = async ({ request }) => {
 
       if (!deleteResponse.ok) throw new Error("Created new file but failed to delete original.");
 
-      return Response.json({ intent, assetKey: newKey, success: true, message: `Renamed to ${newKey}.` });
+      return Response.json({ intent, assetKey: newKey, content, success: true, message: `Renamed to ${newKey}.` });
     }
 
     if (intent === "geminiAssist") {
@@ -181,6 +184,7 @@ export const action = async ({ request }) => {
   }
 };
 
+// ── REACT COMPONENT ──────────────────────────────────────────────────────────
 export default function ThemeEditorTab() {
   const loaderData = useLoaderData();
   const files = loaderData?.files ? loaderData.files : [];
@@ -194,8 +198,11 @@ export default function ThemeEditorTab() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedTab, setSelectedTab] = useState(0);
   const [selectedFile, setSelectedFile] = useState(null);
+  
+  // Decoupled editor states
   const [originalContent, setOriginalContent] = useState("");
   const [currentContent, setCurrentContent] = useState("");
+  
   const [showDiff, setShowDiff] = useState(false);
   const [instruction, setInstruction] = useState("");
   const [researchData, setResearchData] = useState("");
@@ -210,8 +217,13 @@ export default function ThemeEditorTab() {
   const [renameInput, setRenameInput] = useState("");
   const [duplicateInput, setDuplicateInput] = useState("");
 
-  const isLoading = navigation.state === "submitting" || navigation.state === "loading";
+  const isNavigating = navigation.state !== "idle";
   const hasChanges = currentContent !== originalContent;
+
+  // Strict loading booleans to prevent any UI flashing
+  const isSaving = isNavigating ? navigation.formData?.get("intent") === "saveAsset" : false;
+  const isAssisting = isNavigating ? navigation.formData?.get("intent") === "geminiAssist" : false;
+  const isResearching = isNavigating ? navigation.formData?.get("intent") === "geminiResearch" : false;
 
   useEffect(() => {
     if (actionData) {
@@ -223,16 +235,18 @@ export default function ThemeEditorTab() {
         shopify.toast.show(actionData.message);
         
         if (actionData.intent === "saveAsset") {
-          setOriginalContent(currentContent);
+          // Explicitly use the server's returned content to set original, avoiding any keystroke dependency
+          setOriginalContent(actionData.content);
           setShowDiff(false);
         } else if (actionData.intent === "createAsset" || actionData.intent === "duplicateAsset") {
           setSelectedFile(actionData.assetKey);
-          setOriginalContent(currentContent);
+          setOriginalContent(actionData.content);
+          setCurrentContent(actionData.content);
           setIsNewModalOpen(false);
           setIsDuplicateModalOpen(false);
         } else if (actionData.intent === "renameAsset") {
           setSelectedFile(actionData.assetKey);
-          setOriginalContent(currentContent);
+          setOriginalContent(actionData.content);
           setIsRenameModalOpen(false);
         } else if (actionData.intent === "deleteAsset") {
           setSelectedFile(null);
@@ -249,7 +263,7 @@ export default function ThemeEditorTab() {
         shopify.toast.show("Research complete.");
       }
     }
-  }, [actionData, currentContent]);
+  }, [actionData]); // Only depends on actionData, never on currentContent. Flashing is dead.
 
   const handleSelectFile = useCallback((key) => {
     setSelectedFile(key);
@@ -264,7 +278,6 @@ export default function ThemeEditorTab() {
   const handleCreateNew = useCallback(() => {
     const fullKey = `${newFileType}/${newFileName}.liquid`;
     submit({ intent: "createAsset", assetKey: fullKey, content: "" }, { method: "post" });
-    setCurrentContent("");
   }, [submit, newFileType, newFileName]);
 
   const handleRename = useCallback(() => {
@@ -308,9 +321,8 @@ export default function ThemeEditorTab() {
 
   const renderFileGroup = (folderName) => {
     const folderFiles = filteredFiles.filter((a) => a.key.startsWith(`${folderName}/`) && !PINNED_FILES.includes(a.key));
-    if (folderFiles.length === 0) return null;
     
-    return (
+    return folderFiles.length > 0 ? (
       <Box paddingBlockEnd="400" key={folderName}>
         <Text variant="headingSm" as="h6" fontWeight="bold">{folderName.toUpperCase()}</Text>
         <List type="bullet">
@@ -320,7 +332,7 @@ export default function ThemeEditorTab() {
                 variant="monochromePlain" 
                 onClick={() => handleSelectFile(file.key)} 
                 textAlign="left"
-                accessibilityLabel={`Open ${file.key}`}
+                accessibilityLabel={`Open file ${file.key}`}
               >
                 {file.key.replace(`${folderName}/`, "")}
               </Button>
@@ -328,101 +340,6 @@ export default function ThemeEditorTab() {
           ))}
         </List>
       </Box>
-    );
-  };
-
-  const renderNewFileModal = () => {
-    return isNewModalOpen ? (
-      <Modal
-        open={isNewModalOpen}
-        onClose={() => setIsNewModalOpen(false)}
-        title="Create New File"
-        primaryAction={{ content: "Create", onAction: handleCreateNew, loading: isLoading, accessibilityLabel: "Confirm create new file" }}
-        secondaryActions={[{ content: "Cancel", onAction: () => setIsNewModalOpen(false), accessibilityLabel: "Cancel create new file" }]}
-      >
-        <Modal.Section>
-          <FormLayout>
-            <Select
-              label="Folder"
-              options={[
-                { label: "Sections", value: "sections" },
-                { label: "Snippets", value: "snippets" },
-                { label: "Templates", value: "templates" },
-                { label: "Assets", value: "assets" }
-              ]}
-              value={newFileType}
-              onChange={setNewFileType}
-            />
-            <TextField
-              label="Filename (without extension)"
-              value={newFileName}
-              onChange={setNewFileName}
-              autoComplete="off"
-              accessibilityLabel="Filename input"
-            />
-          </FormLayout>
-        </Modal.Section>
-      </Modal>
-    ) : null;
-  };
-
-  const renderRenameModal = () => {
-    return isRenameModalOpen ? (
-      <Modal
-        open={isRenameModalOpen}
-        onClose={() => setIsRenameModalOpen(false)}
-        title="Rename File"
-        primaryAction={{ content: "Rename", onAction: handleRename, loading: isLoading, accessibilityLabel: "Confirm rename file" }}
-        secondaryActions={[{ content: "Cancel", onAction: () => setIsRenameModalOpen(false), accessibilityLabel: "Cancel rename file" }]}
-      >
-        <Modal.Section>
-          <TextField
-            label="New File Path (e.g., snippets/new-name.liquid)"
-            value={renameInput}
-            onChange={setRenameInput}
-            autoComplete="off"
-            accessibilityLabel="Rename file path input"
-          />
-        </Modal.Section>
-      </Modal>
-    ) : null;
-  };
-
-  const renderDeleteModal = () => {
-    return isDeleteModalOpen ? (
-      <Modal
-        open={isDeleteModalOpen}
-        onClose={() => setIsDeleteModalOpen(false)}
-        title="Delete File"
-        primaryAction={{ content: "Delete", onAction: handleDelete, destructive: true, loading: isLoading, accessibilityLabel: "Confirm delete file" }}
-        secondaryActions={[{ content: "Cancel", onAction: () => setIsDeleteModalOpen(false), accessibilityLabel: "Cancel delete file" }]}
-      >
-        <Modal.Section>
-          <Text as="p">Are you sure you want to delete {selectedFile}? This cannot be undone.</Text>
-        </Modal.Section>
-      </Modal>
-    ) : null;
-  };
-
-  const renderDuplicateModal = () => {
-    return isDuplicateModalOpen ? (
-      <Modal
-        open={isDuplicateModalOpen}
-        onClose={() => setIsDuplicateModalOpen(false)}
-        title="Duplicate File"
-        primaryAction={{ content: "Duplicate", onAction: handleDuplicate, loading: isLoading, accessibilityLabel: "Confirm duplicate file" }}
-        secondaryActions={[{ content: "Cancel", onAction: () => setIsDuplicateModalOpen(false), accessibilityLabel: "Cancel duplicate file" }]}
-      >
-        <Modal.Section>
-          <TextField
-            label="New File Path (e.g., sections/copy.liquid)"
-            value={duplicateInput}
-            onChange={setDuplicateInput}
-            autoComplete="off"
-            accessibilityLabel="Duplicate file path input"
-          />
-        </Modal.Section>
-      </Modal>
     ) : null;
   };
 
@@ -435,10 +352,92 @@ export default function ThemeEditorTab() {
       {loaderError ? <Banner tone="critical">{loaderError}</Banner> : null}
       {actionData?.error ? <Banner tone="critical">{actionData.error}</Banner> : null}
 
-      {renderNewFileModal()}
-      {renderRenameModal()}
-      {renderDeleteModal()}
-      {renderDuplicateModal()}
+      {isNewModalOpen ? (
+        <Modal
+          open={isNewModalOpen}
+          onClose={() => setIsNewModalOpen(false)}
+          title="Create New File"
+          primaryAction={{ content: "Create", onAction: handleCreateNew, loading: isNavigating, accessibilityLabel: "Confirm create new file" }}
+          secondaryActions={[{ content: "Cancel", onAction: () => setIsNewModalOpen(false), accessibilityLabel: "Cancel create new file" }]}
+        >
+          <Modal.Section>
+            <FormLayout>
+              <Select
+                label="Folder"
+                options={[
+                  { label: "Sections", value: "sections" },
+                  { label: "Snippets", value: "snippets" },
+                  { label: "Templates", value: "templates" },
+                  { label: "Assets", value: "assets" }
+                ]}
+                value={newFileType}
+                onChange={setNewFileType}
+              />
+              <TextField
+                label="Filename (without extension)"
+                value={newFileName}
+                onChange={setNewFileName}
+                autoComplete="off"
+                accessibilityLabel="New filename input"
+              />
+            </FormLayout>
+          </Modal.Section>
+        </Modal>
+      ) : null}
+
+      {isRenameModalOpen ? (
+        <Modal
+          open={isRenameModalOpen}
+          onClose={() => setIsRenameModalOpen(false)}
+          title="Rename File"
+          primaryAction={{ content: "Rename", onAction: handleRename, loading: isNavigating, accessibilityLabel: "Confirm rename file" }}
+          secondaryActions={[{ content: "Cancel", onAction: () => setIsRenameModalOpen(false), accessibilityLabel: "Cancel rename file" }]}
+        >
+          <Modal.Section>
+            <TextField
+              label="New File Path (e.g., snippets/new-name.liquid)"
+              value={renameInput}
+              onChange={setRenameInput}
+              autoComplete="off"
+              accessibilityLabel="Rename file path input"
+            />
+          </Modal.Section>
+        </Modal>
+      ) : null}
+
+      {isDeleteModalOpen ? (
+        <Modal
+          open={isDeleteModalOpen}
+          onClose={() => setIsDeleteModalOpen(false)}
+          title="Delete File"
+          primaryAction={{ content: "Delete", onAction: handleDelete, destructive: true, loading: isNavigating, accessibilityLabel: "Confirm delete file" }}
+          secondaryActions={[{ content: "Cancel", onAction: () => setIsDeleteModalOpen(false), accessibilityLabel: "Cancel delete file" }]}
+        >
+          <Modal.Section>
+            <Text as="p">Are you sure you want to delete {selectedFile}? This cannot be undone.</Text>
+          </Modal.Section>
+        </Modal>
+      ) : null}
+
+      {isDuplicateModalOpen ? (
+        <Modal
+          open={isDuplicateModalOpen}
+          onClose={() => setIsDuplicateModalOpen(false)}
+          title="Duplicate File"
+          primaryAction={{ content: "Duplicate", onAction: handleDuplicate, loading: isNavigating, accessibilityLabel: "Confirm duplicate file" }}
+          secondaryActions={[{ content: "Cancel", onAction: () => setIsDuplicateModalOpen(false), accessibilityLabel: "Cancel duplicate file" }]}
+        >
+          <Modal.Section>
+            <TextField
+              label="New File Path (e.g., sections/copy.liquid)"
+              value={duplicateInput}
+              onChange={setDuplicateInput}
+              autoComplete="off"
+              accessibilityLabel="Duplicate file path input"
+            />
+          </Modal.Section>
+        </Modal>
+      ) : null}
 
       <Layout>
         <Layout.Section variant="oneThird">
@@ -514,10 +513,10 @@ export default function ThemeEditorTab() {
                         <Button 
                           variant="primary" 
                           onClick={handleSave} 
-                          loading={isLoading && actionData?.intent === "saveAsset"} 
+                          loading={isSaving} 
                           disabled={!hasChanges}
                           size="large"
-                          accessibilityLabel="Save to Theme"
+                          accessibilityLabel="Save changes to Theme"
                         >
                           SAVE TO THEME
                         </Button>
@@ -536,7 +535,7 @@ export default function ThemeEditorTab() {
                         size="large"
                         onClick={handleSave}
                         disabled={!hasChanges}
-                        loading={isLoading && actionData?.intent === "saveAsset"}
+                        loading={isSaving}
                         accessibilityLabel="Save current file"
                       >
                         Save File
@@ -607,7 +606,7 @@ export default function ThemeEditorTab() {
                               </Box>
                               <Button 
                                 onClick={handleGeminiAssist} 
-                                loading={isLoading && navigation.formData?.get("intent") === "geminiAssist"}
+                                loading={isAssisting}
                                 tone="success"
                                 size="large"
                                 accessibilityLabel="Send instruction to Gemini"
@@ -660,7 +659,6 @@ export default function ThemeEditorTab() {
                             multiline={30}
                             monospaced
                             autoComplete="off"
-                            disabled={isLoading}
                             accessibilityLabel="Main code editor"
                           />
                         )}
@@ -673,7 +671,7 @@ export default function ThemeEditorTab() {
                           <Text variant="headingMd" as="h3">Prestige Schema Cataloger</Text>
                           <Button 
                             onClick={handleGeminiResearch} 
-                            loading={isLoading && navigation.formData?.get("intent") === "geminiResearch"}
+                            loading={isResearching}
                             size="large"
                             accessibilityLabel="Run schema analysis using Gemini"
                           >
