@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useLoaderData, useActionData, useSubmit, useNavigation, useNavigate } from "react-router";
 import {
   Page, Layout, Card, BlockStack, InlineStack, Text, List, Button, TextField,
@@ -51,6 +51,7 @@ export const action = async ({ request }) => {
   const formData = await request.formData();
   const intent = formData.get("intent");
   const assetKey = formData.get("assetKey");
+  const timestamp = Date.now(); // The physical lock for the frontend
 
   try {
     if (intent === "fetchAsset") {
@@ -65,7 +66,7 @@ export const action = async ({ request }) => {
       if (!response.ok) throw new Error("Failed to fetch asset content.");
       
       const data = await response.json();
-      return Response.json({ intent, assetKey, content: data.asset?.value ? data.asset.value : "" });
+      return Response.json({ intent, assetKey, content: data.asset?.value ? data.asset.value : "", timestamp });
     }
 
     if (intent === "saveAsset" || intent === "createAsset" || intent === "duplicateAsset") {
@@ -83,8 +84,7 @@ export const action = async ({ request }) => {
       
       if (!response.ok) throw new Error(`Failed to save asset: ${assetKey}`);
       
-      // We pass 'content' back here so the frontend doesn't need to depend on live typing state
-      return Response.json({ intent, assetKey, content, success: true, message: `Saved ${assetKey} successfully.` });
+      return Response.json({ intent, assetKey, content, success: true, message: `Saved ${assetKey} successfully.`, timestamp });
     }
 
     if (intent === "deleteAsset") {
@@ -98,7 +98,7 @@ export const action = async ({ request }) => {
 
       if (!response.ok) throw new Error(`Failed to delete asset: ${assetKey}`);
       
-      return Response.json({ intent, assetKey, success: true, message: `Deleted ${assetKey} successfully.` });
+      return Response.json({ intent, assetKey, success: true, message: `Deleted ${assetKey} successfully.`, timestamp });
     }
 
     if (intent === "renameAsset") {
@@ -128,7 +128,7 @@ export const action = async ({ request }) => {
 
       if (!deleteResponse.ok) throw new Error("Created new file but failed to delete original.");
 
-      return Response.json({ intent, assetKey: newKey, content, success: true, message: `Renamed to ${newKey}.` });
+      return Response.json({ intent, assetKey: newKey, content, success: true, message: `Renamed to ${newKey}.`, timestamp });
     }
 
     if (intent === "geminiAssist") {
@@ -147,7 +147,7 @@ export const action = async ({ request }) => {
         clearTimeout(timeoutId);
         const data = await res.json();
         const modifiedContent = data.candidates?.[0]?.content?.parts?.[0]?.text ? data.candidates[0].content.parts[0].text : content;
-        return Response.json({ intent, assetKey, modifiedContent });
+        return Response.json({ intent, assetKey, modifiedContent, timestamp });
       } catch (error) {
         clearTimeout(timeoutId);
         throw new Error(`Gemini Assist failed: ${error.message}`);
@@ -169,18 +169,18 @@ export const action = async ({ request }) => {
         clearTimeout(timeoutId);
         const data = await res.json();
         const researchContent = data.candidates?.[0]?.content?.parts?.[0]?.text ? data.candidates[0].content.parts[0].text : "No results returned.";
-        return Response.json({ intent, assetKey, researchContent });
+        return Response.json({ intent, assetKey, researchContent, timestamp });
       } catch (error) {
         clearTimeout(timeoutId);
         throw new Error(`Gemini Research failed: ${error.message}`);
       }
     }
 
-    return Response.json({ error: "Invalid intent" }, { status: 400 });
+    return Response.json({ error: "Invalid intent", timestamp }, { status: 400 });
 
   } catch (error) {
     console.error("Action error:", error);
-    return Response.json({ error: error.message }, { status: 500 });
+    return Response.json({ error: error.message, timestamp }, { status: 500 });
   }
 };
 
@@ -199,7 +199,6 @@ export default function ThemeEditorTab() {
   const [selectedTab, setSelectedTab] = useState(0);
   const [selectedFile, setSelectedFile] = useState(null);
   
-  // Decoupled editor states
   const [originalContent, setOriginalContent] = useState("");
   const [currentContent, setCurrentContent] = useState("");
   
@@ -217,54 +216,61 @@ export default function ThemeEditorTab() {
   const [renameInput, setRenameInput] = useState("");
   const [duplicateInput, setDuplicateInput] = useState("");
 
+  const lastProcessedActionRef = useRef(null);
+
+  // Purely derived state. These do not trigger renders, they just reflect current reality.
   const isNavigating = navigation.state !== "idle";
   const hasChanges = currentContent !== originalContent;
-
-  // Strict loading booleans to prevent any UI flashing
   const isSaving = isNavigating ? navigation.formData?.get("intent") === "saveAsset" : false;
   const isAssisting = isNavigating ? navigation.formData?.get("intent") === "geminiAssist" : false;
   const isResearching = isNavigating ? navigation.formData?.get("intent") === "geminiResearch" : false;
 
+  // THE ONLY USEEFFECT IN THE FILE
+  // The timestamp lock ensures this ONLY runs when a server action finishes and returns a new timestamp.
   useEffect(() => {
     if (actionData) {
-      if (actionData.intent === "fetchAsset") {
-        setOriginalContent(actionData.content);
-        setCurrentContent(actionData.content);
-        setResearchData("");
-      } else if (actionData.success) {
-        shopify.toast.show(actionData.message);
-        
-        if (actionData.intent === "saveAsset") {
-          // Explicitly use the server's returned content to set original, avoiding any keystroke dependency
-          setOriginalContent(actionData.content);
-          setShowDiff(false);
-        } else if (actionData.intent === "createAsset" || actionData.intent === "duplicateAsset") {
-          setSelectedFile(actionData.assetKey);
+      if (actionData.timestamp !== lastProcessedActionRef.current) {
+        lastProcessedActionRef.current = actionData.timestamp;
+
+        if (actionData.intent === "fetchAsset") {
           setOriginalContent(actionData.content);
           setCurrentContent(actionData.content);
-          setIsNewModalOpen(false);
-          setIsDuplicateModalOpen(false);
-        } else if (actionData.intent === "renameAsset") {
-          setSelectedFile(actionData.assetKey);
-          setOriginalContent(actionData.content);
-          setIsRenameModalOpen(false);
-        } else if (actionData.intent === "deleteAsset") {
-          setSelectedFile(null);
-          setCurrentContent("");
-          setOriginalContent("");
-          setIsDeleteModalOpen(false);
+          setResearchData("");
+        } else if (actionData.success) {
+          shopify.toast.show(actionData.message);
+          
+          if (actionData.intent === "saveAsset") {
+            setOriginalContent(actionData.content);
+            setShowDiff(false);
+          } else if (actionData.intent === "createAsset" || actionData.intent === "duplicateAsset") {
+            setSelectedFile(actionData.assetKey);
+            setOriginalContent(actionData.content);
+            setCurrentContent(actionData.content);
+            setIsNewModalOpen(false);
+            setIsDuplicateModalOpen(false);
+          } else if (actionData.intent === "renameAsset") {
+            setSelectedFile(actionData.assetKey);
+            setOriginalContent(actionData.content);
+            setIsRenameModalOpen(false);
+          } else if (actionData.intent === "deleteAsset") {
+            setSelectedFile(null);
+            setCurrentContent("");
+            setOriginalContent("");
+            setIsDeleteModalOpen(false);
+          }
+        } else if (actionData.intent === "geminiAssist") {
+          setCurrentContent(actionData.modifiedContent);
+          setShowDiff(true);
+          shopify.toast.show("Gemini modifications applied to editor.");
+        } else if (actionData.intent === "geminiResearch") {
+          setResearchData(actionData.researchContent);
+          shopify.toast.show("Research complete.");
         }
-      } else if (actionData.intent === "geminiAssist") {
-        setCurrentContent(actionData.modifiedContent);
-        setShowDiff(true);
-        shopify.toast.show("Gemini modifications applied to editor.");
-      } else if (actionData.intent === "geminiResearch") {
-        setResearchData(actionData.researchContent);
-        shopify.toast.show("Research complete.");
       }
     }
-  }, [actionData]); // Only depends on actionData, never on currentContent. Flashing is dead.
+  }, [actionData]);
 
+  // Click Handlers (The ONLY things that trigger server submissions)
   const handleSelectFile = useCallback((key) => {
     setSelectedFile(key);
     submit({ intent: "fetchAsset", assetKey: key }, { method: "post" });
@@ -343,6 +349,101 @@ export default function ThemeEditorTab() {
     ) : null;
   };
 
+  const renderNewFileModal = () => {
+    return isNewModalOpen ? (
+      <Modal
+        open={isNewModalOpen}
+        onClose={() => setIsNewModalOpen(false)}
+        title="Create New File"
+        primaryAction={{ content: "Create", onAction: handleCreateNew, loading: isNavigating, accessibilityLabel: "Confirm create new file" }}
+        secondaryActions={[{ content: "Cancel", onAction: () => setIsNewModalOpen(false), accessibilityLabel: "Cancel create new file" }]}
+      >
+        <Modal.Section>
+          <FormLayout>
+            <Select
+              label="Folder"
+              options={[
+                { label: "Sections", value: "sections" },
+                { label: "Snippets", value: "snippets" },
+                { label: "Templates", value: "templates" },
+                { label: "Assets", value: "assets" }
+              ]}
+              value={newFileType}
+              onChange={setNewFileType}
+            />
+            <TextField
+              label="Filename (without extension)"
+              value={newFileName}
+              onChange={setNewFileName}
+              autoComplete="off"
+              accessibilityLabel="New filename input"
+            />
+          </FormLayout>
+        </Modal.Section>
+      </Modal>
+    ) : null;
+  };
+
+  const renderRenameModal = () => {
+    return isRenameModalOpen ? (
+      <Modal
+        open={isRenameModalOpen}
+        onClose={() => setIsRenameModalOpen(false)}
+        title="Rename File"
+        primaryAction={{ content: "Rename", onAction: handleRename, loading: isNavigating, accessibilityLabel: "Confirm rename file" }}
+        secondaryActions={[{ content: "Cancel", onAction: () => setIsRenameModalOpen(false), accessibilityLabel: "Cancel rename file" }]}
+      >
+        <Modal.Section>
+          <TextField
+            label="New File Path (e.g., snippets/new-name.liquid)"
+            value={renameInput}
+            onChange={setRenameInput}
+            autoComplete="off"
+            accessibilityLabel="Rename file path input"
+          />
+        </Modal.Section>
+      </Modal>
+    ) : null;
+  };
+
+  const renderDeleteModal = () => {
+    return isDeleteModalOpen ? (
+      <Modal
+        open={isDeleteModalOpen}
+        onClose={() => setIsDeleteModalOpen(false)}
+        title="Delete File"
+        primaryAction={{ content: "Delete", onAction: handleDelete, destructive: true, loading: isNavigating, accessibilityLabel: "Confirm delete file" }}
+        secondaryActions={[{ content: "Cancel", onAction: () => setIsDeleteModalOpen(false), accessibilityLabel: "Cancel delete file" }]}
+      >
+        <Modal.Section>
+          <Text as="p">Are you sure you want to delete {selectedFile}? This cannot be undone.</Text>
+        </Modal.Section>
+      </Modal>
+    ) : null;
+  };
+
+  const renderDuplicateModal = () => {
+    return isDuplicateModalOpen ? (
+      <Modal
+        open={isDuplicateModalOpen}
+        onClose={() => setIsDuplicateModalOpen(false)}
+        title="Duplicate File"
+        primaryAction={{ content: "Duplicate", onAction: handleDuplicate, loading: isNavigating, accessibilityLabel: "Confirm duplicate file" }}
+        secondaryActions={[{ content: "Cancel", onAction: () => setIsDuplicateModalOpen(false), accessibilityLabel: "Cancel duplicate file" }]}
+      >
+        <Modal.Section>
+          <TextField
+            label="New File Path (e.g., sections/copy.liquid)"
+            value={duplicateInput}
+            onChange={setDuplicateInput}
+            autoComplete="off"
+            accessibilityLabel="Duplicate file path input"
+          />
+        </Modal.Section>
+      </Modal>
+    ) : null;
+  };
+
   return (
     <Page
       title={selectedFile ? selectedFile : "Theme Editor"}
@@ -352,92 +453,10 @@ export default function ThemeEditorTab() {
       {loaderError ? <Banner tone="critical">{loaderError}</Banner> : null}
       {actionData?.error ? <Banner tone="critical">{actionData.error}</Banner> : null}
 
-      {isNewModalOpen ? (
-        <Modal
-          open={isNewModalOpen}
-          onClose={() => setIsNewModalOpen(false)}
-          title="Create New File"
-          primaryAction={{ content: "Create", onAction: handleCreateNew, loading: isNavigating, accessibilityLabel: "Confirm create new file" }}
-          secondaryActions={[{ content: "Cancel", onAction: () => setIsNewModalOpen(false), accessibilityLabel: "Cancel create new file" }]}
-        >
-          <Modal.Section>
-            <FormLayout>
-              <Select
-                label="Folder"
-                options={[
-                  { label: "Sections", value: "sections" },
-                  { label: "Snippets", value: "snippets" },
-                  { label: "Templates", value: "templates" },
-                  { label: "Assets", value: "assets" }
-                ]}
-                value={newFileType}
-                onChange={setNewFileType}
-              />
-              <TextField
-                label="Filename (without extension)"
-                value={newFileName}
-                onChange={setNewFileName}
-                autoComplete="off"
-                accessibilityLabel="New filename input"
-              />
-            </FormLayout>
-          </Modal.Section>
-        </Modal>
-      ) : null}
-
-      {isRenameModalOpen ? (
-        <Modal
-          open={isRenameModalOpen}
-          onClose={() => setIsRenameModalOpen(false)}
-          title="Rename File"
-          primaryAction={{ content: "Rename", onAction: handleRename, loading: isNavigating, accessibilityLabel: "Confirm rename file" }}
-          secondaryActions={[{ content: "Cancel", onAction: () => setIsRenameModalOpen(false), accessibilityLabel: "Cancel rename file" }]}
-        >
-          <Modal.Section>
-            <TextField
-              label="New File Path (e.g., snippets/new-name.liquid)"
-              value={renameInput}
-              onChange={setRenameInput}
-              autoComplete="off"
-              accessibilityLabel="Rename file path input"
-            />
-          </Modal.Section>
-        </Modal>
-      ) : null}
-
-      {isDeleteModalOpen ? (
-        <Modal
-          open={isDeleteModalOpen}
-          onClose={() => setIsDeleteModalOpen(false)}
-          title="Delete File"
-          primaryAction={{ content: "Delete", onAction: handleDelete, destructive: true, loading: isNavigating, accessibilityLabel: "Confirm delete file" }}
-          secondaryActions={[{ content: "Cancel", onAction: () => setIsDeleteModalOpen(false), accessibilityLabel: "Cancel delete file" }]}
-        >
-          <Modal.Section>
-            <Text as="p">Are you sure you want to delete {selectedFile}? This cannot be undone.</Text>
-          </Modal.Section>
-        </Modal>
-      ) : null}
-
-      {isDuplicateModalOpen ? (
-        <Modal
-          open={isDuplicateModalOpen}
-          onClose={() => setIsDuplicateModalOpen(false)}
-          title="Duplicate File"
-          primaryAction={{ content: "Duplicate", onAction: handleDuplicate, loading: isNavigating, accessibilityLabel: "Confirm duplicate file" }}
-          secondaryActions={[{ content: "Cancel", onAction: () => setIsDuplicateModalOpen(false), accessibilityLabel: "Cancel duplicate file" }]}
-        >
-          <Modal.Section>
-            <TextField
-              label="New File Path (e.g., sections/copy.liquid)"
-              value={duplicateInput}
-              onChange={setDuplicateInput}
-              autoComplete="off"
-              accessibilityLabel="Duplicate file path input"
-            />
-          </Modal.Section>
-        </Modal>
-      ) : null}
+      {renderNewFileModal()}
+      {renderRenameModal()}
+      {renderDeleteModal()}
+      {renderDuplicateModal()}
 
       <Layout>
         <Layout.Section variant="oneThird">
@@ -659,6 +678,7 @@ export default function ThemeEditorTab() {
                             multiline={30}
                             monospaced
                             autoComplete="off"
+                            disabled={isNavigating}
                             accessibilityLabel="Main code editor"
                           />
                         )}
