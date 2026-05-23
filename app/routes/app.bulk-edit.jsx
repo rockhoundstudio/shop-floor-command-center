@@ -226,7 +226,8 @@ export const action = async ({ request }) => {
 // ==========================================
 // VIEW COMPONENT
 // ==========================================
-export default function BulkEditRoute() {`n  const navigate = useNavigate();
+export default function BulkEditRoute() {
+  const navigate = useNavigate();
   const { products, loaderError } = useLoaderData();
   const shopify = useAppBridge();
 
@@ -312,7 +313,8 @@ export default function BulkEditRoute() {`n  const navigate = useNavigate();
 
   return (
     <Page title="Bulk Edit Data" fullWidth>
-      <BlockStack gap="600">`n        <Button icon={ArrowLeftIcon} onClick={() => navigate("/app")}>Back</Button>
+      <BlockStack gap="600">
+        <Button icon={ArrowLeftIcon} onClick={() => navigate("/app")}>Back</Button>
         {loaderError && <Banner tone="critical">Loader error: {loaderError}</Banner>}
         {saveSuccess && <Banner tone="success">Bulk update saved to Shopify successfully.</Banner>}
         {saveError && <Banner tone="critical">Bulk save failed: {saveError}</Banner>}
@@ -523,6 +525,3 @@ export default function BulkEditRoute() {`n  const navigate = useNavigate();
     </Page>
   );
 }
-
-
-
