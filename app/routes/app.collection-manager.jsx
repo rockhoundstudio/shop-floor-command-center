@@ -110,7 +110,8 @@ export const action = async ({ request }) => {
 };
 
 // ── COMPONENT ────────────────────────────────────────────────────────────────
-export default function CollectionManager() {`n  const navigate = useNavigate();
+export default function CollectionManager() {
+  const navigate = useNavigate();
   const { collections, products } = useLoaderData();
 
   return (
@@ -127,6 +128,3 @@ export default function CollectionManager() {`n  const navigate = useNavigate();
 export const headers = (headersArgs) => {
   return boundary.headers(headersArgs);
 };
-
-
-
