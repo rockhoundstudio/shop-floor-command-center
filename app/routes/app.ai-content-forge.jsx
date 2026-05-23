@@ -14,7 +14,7 @@ import ForgeProductCard from "../components/ForgeProductCard";
 export function ErrorBoundary() {
   const error = useRouteError();
   return (
-    <Page title="Engine Fault" backAction={{ content: "Home", action: () => navigate("/app") }}>
+    <Page title="Engine Fault" backAction={{ content: "Home", onAction: () => navigate("/app") }}>
       <Card background="bg-surface-critical">
         <BlockStack gap="400">
           <Text variant="headingLg" as="h1" fontWeight="bold">AI Forge Crashed</Text>
@@ -347,7 +347,7 @@ export default function AiContentForgeTab() {
     <Page
       title="⚡ AI Content Forge"
       subtitle="Generate premium, story-driven Alt Text and SEO descriptions powered by Gemini."
-      backAction={{ content: "Home", action: () => navigate("/app") }}
+      backAction={{ content: "Home", onAction: () => navigate("/app") }}
     >
       {toast && (
         <div style={{ position: "fixed", top: 16, right: 16, zIndex: 9999 }}>
