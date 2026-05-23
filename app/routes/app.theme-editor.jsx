@@ -1,21 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
 import { useLoaderData, useActionData, useSubmit, useNavigation, useNavigate } from "react-router";
 import {
-  Page,
-  Layout,
-  Card,
-  BlockStack,
-  InlineStack,
-  Text,
-  List,
-  Button,
-  TextField,
-  Tabs,
-  Badge,
-  Box,
-  Divider,
-  Banner,
-  Scrollable
+  Page, Layout, Card, BlockStack, InlineStack, Text, List, Button, TextField,
+  Tabs, Badge, Box, Divider, Banner, Scrollable, Modal, Select, FormLayout, ButtonGroup
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 
@@ -79,7 +66,7 @@ export const action = async ({ request }) => {
       return Response.json({ intent, assetKey, content: data.asset?.value || "" });
     }
 
-    if (intent === "saveAsset") {
+    if (intent === "saveAsset" || intent === "createAsset" || intent === "duplicateAsset") {
       const content = formData.get("content");
       const response = await fetch(`https://${shop}/admin/api/2024-10/themes/${THEME_ID}/assets.json`, {
         method: "PUT",
@@ -92,9 +79,55 @@ export const action = async ({ request }) => {
         }),
       });
       
-      if (!response.ok) throw new Error("Failed to save asset to theme.");
+      if (!response.ok) throw new Error(`Failed to save asset: ${assetKey}`);
       
-      return Response.json({ intent, success: true, message: `Saved ${assetKey} successfully.` });
+      return Response.json({ intent, assetKey, success: true, message: `Saved ${assetKey} successfully.` });
+    }
+
+    if (intent === "deleteAsset") {
+      const response = await fetch(`https://${shop}/admin/api/2024-10/themes/${THEME_ID}/assets.json?asset[key]=${encodeURIComponent(assetKey)}`, {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Shopify-Access-Token": accessToken,
+        },
+      });
+
+      if (!response.ok) throw new Error(`Failed to delete asset: ${assetKey}`);
+      
+      return Response.json({ intent, assetKey, success: true, message: `Deleted ${assetKey} successfully.` });
+    }
+
+    if (intent === "renameAsset") {
+      const newKey = formData.get("newKey");
+      const content = formData.get("content");
+
+      // Create new
+      const createResponse = await fetch(`https://${shop}/admin/api/2024-10/themes/${THEME_ID}/assets.json`, {
+        method: "PUT",
+        headers: { 
+          "Content-Type": "application/json",
+          "X-Shopify-Access-Token": accessToken,
+        },
+        body: JSON.stringify({
+          asset: { key: newKey, value: content },
+        }),
+      });
+
+      if (!createResponse.ok) throw new Error("Failed to create new file during rename.");
+
+      // Delete old
+      const deleteResponse = await fetch(`https://${shop}/admin/api/2024-10/themes/${THEME_ID}/assets.json?asset[key]=${encodeURIComponent(assetKey)}`, {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Shopify-Access-Token": accessToken,
+        },
+      });
+
+      if (!deleteResponse.ok) throw new Error("Created new file but failed to delete original.");
+
+      return Response.json({ intent, assetKey: newKey, success: true, message: `Renamed to ${newKey}.` });
     }
 
     if (intent === "geminiAssist") {
@@ -168,7 +201,20 @@ export default function ThemeEditorTab() {
   const [instruction, setInstruction] = useState("");
   const [researchData, setResearchData] = useState("");
 
+  // Modal states
+  const [isNewModalOpen, setIsNewModalOpen] = useState(false);
+  const [isRenameModalOpen, setIsRenameModalOpen] = useState(false);
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [isDuplicateModalOpen, setIsDuplicateModalOpen] = useState(false);
+
+  // Form states
+  const [newFileName, setNewFileName] = useState("");
+  const [newFileType, setNewFileType] = useState("sections");
+  const [renameInput, setRenameInput] = useState("");
+  const [duplicateInput, setDuplicateInput] = useState("");
+
   const isLoading = navigation.state === "submitting" || navigation.state === "loading";
+  const hasChanges = currentContent !== originalContent;
 
   useEffect(() => {
     if (actionData) {
@@ -176,10 +222,28 @@ export default function ThemeEditorTab() {
         setOriginalContent(actionData.content);
         setCurrentContent(actionData.content);
         setResearchData("");
-      } else if (actionData.intent === "saveAsset" && actionData.success) {
-        setOriginalContent(currentContent);
-        setShowDiff(false);
+      } else if (actionData.success) {
         shopify.toast.show(actionData.message);
+        
+        if (actionData.intent === "saveAsset") {
+          setOriginalContent(currentContent);
+          setShowDiff(false);
+        } else if (actionData.intent === "createAsset" || actionData.intent === "duplicateAsset") {
+          setSelectedFile(actionData.assetKey);
+          setOriginalContent(currentContent);
+          setIsNewModalOpen(false);
+          setIsDuplicateModalOpen(false);
+          // Re-fetch to update file list if needed, or handle locally
+        } else if (actionData.intent === "renameAsset") {
+          setSelectedFile(actionData.assetKey);
+          setOriginalContent(currentContent);
+          setIsRenameModalOpen(false);
+        } else if (actionData.intent === "deleteAsset") {
+          setSelectedFile(null);
+          setCurrentContent("");
+          setOriginalContent("");
+          setIsDeleteModalOpen(false);
+        }
       } else if (actionData.intent === "geminiAssist") {
         setCurrentContent(actionData.modifiedContent);
         setShowDiff(true);
@@ -189,7 +253,7 @@ export default function ThemeEditorTab() {
         shopify.toast.show("Research complete.");
       }
     }
-  }, [actionData]);
+  }, [actionData, currentContent]);
 
   const handleSelectFile = useCallback((key) => {
     setSelectedFile(key);
@@ -197,8 +261,32 @@ export default function ThemeEditorTab() {
   }, [submit]);
 
   const handleSave = useCallback(() => {
+    if (!selectedFile) return;
     submit({ intent: "saveAsset", assetKey: selectedFile, content: currentContent }, { method: "post" });
   }, [submit, selectedFile, currentContent]);
+
+  const handleCreateNew = useCallback(() => {
+    const fullKey = `${newFileType}/${newFileName}.liquid`;
+    submit({ intent: "createAsset", assetKey: fullKey, content: "" }, { method: "post" });
+    // Optimistically set content to blank for the new file
+    setCurrentContent("");
+  }, [submit, newFileType, newFileName]);
+
+  const handleRename = useCallback(() => {
+    submit({ intent: "renameAsset", assetKey: selectedFile, newKey: renameInput, content: currentContent }, { method: "post" });
+  }, [submit, selectedFile, renameInput, currentContent]);
+
+  const handleDelete = useCallback(() => {
+    submit({ intent: "deleteAsset", assetKey: selectedFile }, { method: "post" });
+  }, [submit, selectedFile]);
+
+  const handleDuplicate = useCallback(() => {
+    submit({ intent: "duplicateAsset", assetKey: duplicateInput, content: currentContent }, { method: "post" });
+  }, [submit, duplicateInput, currentContent]);
+
+  const handleDiscard = useCallback(() => {
+    setCurrentContent(originalContent);
+  }, [originalContent]);
 
   const handleGeminiAssist = useCallback(() => {
     if (!instruction.trim()) {
@@ -235,6 +323,98 @@ export default function ThemeEditorTab() {
     );
   };
 
+  const renderNewFileModal = () => {
+    return isNewModalOpen ? (
+      <Modal
+        open={isNewModalOpen}
+        onClose={() => setIsNewModalOpen(false)}
+        title="Create New File"
+        primaryAction={{ content: "Create", onAction: handleCreateNew, loading: isLoading }}
+        secondaryActions={[{ content: "Cancel", onAction: () => setIsNewModalOpen(false) }]}
+      >
+        <Modal.Section>
+          <FormLayout>
+            <Select
+              label="Folder"
+              options={[
+                { label: "Sections", value: "sections" },
+                { label: "Snippets", value: "snippets" },
+                { label: "Templates", value: "templates" },
+                { label: "Assets", value: "assets" }
+              ]}
+              value={newFileType}
+              onChange={setNewFileType}
+            />
+            <TextField
+              label="Filename (without extension)"
+              value={newFileName}
+              onChange={setNewFileName}
+              autoComplete="off"
+            />
+          </FormLayout>
+        </Modal.Section>
+      </Modal>
+    ) : null;
+  };
+
+  const renderRenameModal = () => {
+    return isRenameModalOpen ? (
+      <Modal
+        open={isRenameModalOpen}
+        onClose={() => setIsRenameModalOpen(false)}
+        title="Rename File"
+        primaryAction={{ content: "Rename", onAction: handleRename, loading: isLoading }}
+        secondaryActions={[{ content: "Cancel", onAction: () => setIsRenameModalOpen(false) }]}
+      >
+        <Modal.Section>
+          <TextField
+            label="New File Path (e.g., snippets/new-name.liquid)"
+            value={renameInput}
+            onChange={setRenameInput}
+            autoComplete="off"
+          />
+        </Modal.Section>
+      </Modal>
+    ) : null;
+  };
+
+  const renderDeleteModal = () => {
+    return isDeleteModalOpen ? (
+      <Modal
+        open={isDeleteModalOpen}
+        onClose={() => setIsDeleteModalOpen(false)}
+        title="Delete File"
+        primaryAction={{ content: "Delete", onAction: handleDelete, destructive: true, loading: isLoading }}
+        secondaryActions={[{ content: "Cancel", onAction: () => setIsDeleteModalOpen(false) }]}
+      >
+        <Modal.Section>
+          <Text as="p">Are you sure you want to delete {selectedFile}? This cannot be undone.</Text>
+        </Modal.Section>
+      </Modal>
+    ) : null;
+  };
+
+  const renderDuplicateModal = () => {
+    return isDuplicateModalOpen ? (
+      <Modal
+        open={isDuplicateModalOpen}
+        onClose={() => setIsDuplicateModalOpen(false)}
+        title="Duplicate File"
+        primaryAction={{ content: "Duplicate", onAction: handleDuplicate, loading: isLoading }}
+        secondaryActions={[{ content: "Cancel", onAction: () => setIsDuplicateModalOpen(false) }]}
+      >
+        <Modal.Section>
+          <TextField
+            label="New File Path (e.g., sections/copy.liquid)"
+            value={duplicateInput}
+            onChange={setDuplicateInput}
+            autoComplete="off"
+          />
+        </Modal.Section>
+      </Modal>
+    ) : null;
+  };
+
   return (
     <Page
       title="Theme Editor: Prestige v11.1.0"
@@ -243,6 +423,11 @@ export default function ThemeEditorTab() {
     >
       {loaderError && <Banner tone="critical">{loaderError}</Banner>}
       {actionData?.error && <Banner tone="critical">{actionData.error}</Banner>}
+
+      {renderNewFileModal()}
+      {renderRenameModal()}
+      {renderDeleteModal()}
+      {renderDuplicateModal()}
 
       <Layout>
         <Layout.Section variant="oneThird">
@@ -278,23 +463,80 @@ export default function ThemeEditorTab() {
             {selectedFile ? (
               <BlockStack>
                 <Box padding="400" borderBottom="025" borderColor="border">
-                  <InlineStack align="space-between" blockAlign="center">
-                    <BlockStack gap="100">
-                      <Text variant="headingLg" as="h2">{selectedFile}</Text>
+                  <BlockStack gap="400">
+                    <InlineStack align="space-between" blockAlign="center">
+                      <BlockStack gap="100">
+                        <Text variant="headingLg" as="h2">{selectedFile}</Text>
+                        <InlineStack gap="300">
+                          <Badge tone="info">{lineCount} Lines</Badge>
+                          <Badge>{charCount} Characters</Badge>
+                        </InlineStack>
+                      </BlockStack>
                       <InlineStack gap="300">
-                        <Badge tone="info">{lineCount} Lines</Badge>
-                        <Badge>{charCount} Characters</Badge>
+                        <Button onClick={() => setShowDiff(!showDiff)}>
+                          {showDiff ? "Hide Diff" : "Show Diff"}
+                        </Button>
+                        <Button variant="primary" onClick={handleSave} loading={isLoading && actionData?.intent === "saveAsset"} disabled={!hasChanges}>
+                          SAVE TO THEME
+                        </Button>
                       </InlineStack>
-                    </BlockStack>
-                    <InlineStack gap="300">
-                      <Button onClick={() => setShowDiff(!showDiff)}>
-                        {showDiff ? "Hide Diff" : "Show Diff"}
-                      </Button>
-                      <Button variant="primary" onClick={handleSave} loading={isLoading && actionData?.intent === "saveAsset"}>
-                        SAVE TO THEME
-                      </Button>
                     </InlineStack>
-                  </InlineStack>
+
+                    <ButtonGroup segmented>
+                      <Button
+                        size="large"
+                        onClick={() => setIsNewModalOpen(true)}
+                        ariaLabel="Create a new file"
+                      >
+                        New File
+                      </Button>
+                      <Button
+                        size="large"
+                        onClick={handleSave}
+                        disabled={!hasChanges}
+                        loading={isLoading && actionData?.intent === "saveAsset"}
+                        ariaLabel="Save current file"
+                      >
+                        Save File
+                      </Button>
+                      <Button
+                        size="large"
+                        onClick={() => {
+                          setRenameInput(selectedFile);
+                          setIsRenameModalOpen(true);
+                        }}
+                        ariaLabel="Rename current file"
+                      >
+                        Rename File
+                      </Button>
+                      <Button
+                        size="large"
+                        onClick={() => setIsDeleteModalOpen(true)}
+                        tone="critical"
+                        ariaLabel="Delete current file"
+                      >
+                        Delete File
+                      </Button>
+                      <Button
+                        size="large"
+                        onClick={() => {
+                          setDuplicateInput(selectedFile.replace('.liquid', '-copy.liquid'));
+                          setIsDuplicateModalOpen(true);
+                        }}
+                        ariaLabel="Duplicate current file"
+                      >
+                        Duplicate File
+                      </Button>
+                      <Button
+                        size="large"
+                        onClick={handleDiscard}
+                        disabled={!hasChanges}
+                        ariaLabel="Discard unsaved changes"
+                      >
+                        Discard Changes
+                      </Button>
+                    </ButtonGroup>
+                  </BlockStack>
                 </Box>
 
                 <Tabs
@@ -404,6 +646,10 @@ export default function ThemeEditorTab() {
                 <Text alignment="center" variant="headingLg" tone="subdued">
                   Select a file from the tree to begin editing.
                 </Text>
+                
+                <Box paddingBlockStart="400" display="flex" justifyContent="center">
+                   <Button size="large" onClick={() => setIsNewModalOpen(true)}>Create New File</Button>
+                </Box>
               </Box>
             )}
           </Card>
@@ -412,4 +658,3 @@ export default function ThemeEditorTab() {
     </Page>
   );
 }
-
