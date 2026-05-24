@@ -265,6 +265,26 @@ function countByStatus(items, liveCollectionHandles, livePageHandles) {
   return { live, draft, dead };
 }
 
+// 🚀 Helper to categorize page handles
+function getPageCategory(handle) {
+  const h = handle.toLowerCase();
+  
+  const storyKeywords = ["logbook", "lore", "trail", "story", "strike", "protocol", "shopped", "run", "clock", "nickel", "yellowstone", "rufus", "chipper", "janyce", "richardson", "spencer", "chopper", "evolution", "banshee", "dop", "frankenstein"];
+  const collectionKeywords = ["collection", "stones", "gems"];
+
+  const isStory = storyKeywords.some(kw => h.includes(kw)) ? true : false;
+  if (isStory) {
+    return { label: "Story", tone: "success" };
+  }
+
+  const isCollection = collectionKeywords.some(kw => h.includes(kw)) ? true : false;
+  if (isCollection) {
+    return { label: "Collection", tone: "info" };
+  }
+
+  return { label: "Page", tone: null };
+}
+
 // 🚀 MODULAR COMPONENT: MenuCreator
 function MenuCreator({ pages, fetcher, onCancel }) {
   const [title, setTitle] = useState("");
@@ -336,20 +356,30 @@ function MenuCreator({ pages, fetcher, onCancel }) {
             <Box paddingBlockStart="200" style={{ maxHeight: "300px", overflowY: "auto" }}>
               <Card background="bg-surface-secondary">
                 <List type="bullet">
-                  {availablePages.map(page => (
-                    <List.Item key={page.id}>
-                      <InlineStack align="space-between" blockAlign="center">
-                        <Text as="span">{page.title}</Text>
-                        <Button
-                          size="large"
-                          onClick={() => handleAddPage(page)}
-                          aria-label={`Add page ${page.title} to the new menu list`}
-                        >
-                          Add Link
-                        </Button>
-                      </InlineStack>
-                    </List.Item>
-                  ))}
+                  {availablePages.map(page => {
+                    const category = getPageCategory(page.handle);
+                    return (
+                      <List.Item key={page.id}>
+                        <InlineStack align="space-between" blockAlign="center">
+                          <InlineStack gap="200" blockAlign="center">
+                            <Text as="span">{page.title}</Text>
+                            {category.tone !== null ? (
+                              <Badge tone={category.tone}>{category.label}</Badge>
+                            ) : (
+                              <Badge>{category.label}</Badge>
+                            )}
+                          </InlineStack>
+                          <Button
+                            size="large"
+                            onClick={() => handleAddPage(page)}
+                            aria-label={`Add page ${page.title} to the new menu list`}
+                          >
+                            Add Link
+                          </Button>
+                        </InlineStack>
+                      </List.Item>
+                    );
+                  })}
                 </List>
               </Card>
             </Box>
@@ -368,24 +398,34 @@ function MenuCreator({ pages, fetcher, onCancel }) {
             </Box>
           ) : (
             <BlockStack gap="200">
-              {selectedPages.map((page) => (
-                <Card key={page.id} background="bg-surface-secondary">
-                  <InlineStack align="space-between" blockAlign="center">
-                    <BlockStack gap="100">
-                      <Text fontWeight="bold" as="span">{page.title}</Text>
-                      <Text tone="subdued" variant="bodySm" as="span">/pages/{page.handle}</Text>
-                    </BlockStack>
-                    <Button
-                      tone="critical"
-                      size="large"
-                      onClick={() => handleRemovePage(page.id)}
-                      aria-label={`Remove page ${page.title} from the new menu list`}
-                    >
-                      Remove
-                    </Button>
-                  </InlineStack>
-                </Card>
-              ))}
+              {selectedPages.map((page) => {
+                const category = getPageCategory(page.handle);
+                return (
+                  <Card key={page.id} background="bg-surface-secondary">
+                    <InlineStack align="space-between" blockAlign="center">
+                      <BlockStack gap="100">
+                        <InlineStack gap="200" blockAlign="center">
+                          <Text fontWeight="bold" as="span">{page.title}</Text>
+                          {category.tone !== null ? (
+                            <Badge tone={category.tone}>{category.label}</Badge>
+                          ) : (
+                            <Badge>{category.label}</Badge>
+                          )}
+                        </InlineStack>
+                        <Text tone="subdued" variant="bodySm" as="span">/pages/{page.handle}</Text>
+                      </BlockStack>
+                      <Button
+                        tone="critical"
+                        size="large"
+                        onClick={() => handleRemovePage(page.id)}
+                        aria-label={`Remove page ${page.title} from the new menu list`}
+                      >
+                        Remove
+                      </Button>
+                    </InlineStack>
+                  </Card>
+                );
+              })}
             </BlockStack>
           )}
         </Box>
@@ -418,7 +458,7 @@ export default function MenuManager() {
   const accumulatedPagesRef = useRef([]);
   const lastCursorRef = useRef(null);
 
-  // Background Saver
+  // Background Saver with Unconditional Idle Reset
   useEffect(() => {
     const isSubmitUpdate = fetcher.state === "submitting" ? (fetcher.formData?.get("intent") === "updateMenu" ? true : false) : false;
     
@@ -429,29 +469,30 @@ export default function MenuManager() {
         title: fetcher.formData.get("title"),
         items: JSON.parse(fetcher.formData.get("items"))
       });
-    } else {
-      if (fetcher.state === "idle" ? (isSaving ? true : false) : false) {
-        setIsSaving(false);
-        if (fetcher.data?.ok ? (savingMenuData ? true : false) : false) {
-          setSavedOverrides(prev => ({
-            ...prev,
-            [savingMenuData.id]: { items: savingMenuData.items, title: savingMenuData.title }
-          }));
-          if (globalScan) {
-            setGlobalScan(prev => ({
-              ...prev,
-              [savingMenuData.id]: countByStatus(savingMenuData.items, liveCollectionHandles, livePageHandles)
-            }));
-          }
-        }
-      }
     }
 
-    const isCreateSuccess = fetcher.state === "idle" ? (fetcher.data?.ok ? (fetcher.data?.message?.includes("created") ? true : false) : false) : false;
-    if (isCreateSuccess) {
-      setIsCreatingMenu(false);
+    if (fetcher.state === "idle") {
+      setIsSaving(false);
+      
+      if (fetcher.data?.ok ? (savingMenuData ? true : false) : false) {
+        setSavedOverrides(prev => ({
+          ...prev,
+          [savingMenuData.id]: { items: savingMenuData.items, title: savingMenuData.title }
+        }));
+        if (globalScan) {
+          setGlobalScan(prev => ({
+            ...prev,
+            [savingMenuData.id]: countByStatus(savingMenuData.items, liveCollectionHandles, livePageHandles)
+          }));
+        }
+      }
+
+      const isCreateSuccess = fetcher.data?.ok ? (fetcher.data?.message?.includes("created") ? true : false) : false;
+      if (isCreateSuccess) {
+        setIsCreatingMenu(false);
+      }
     }
-  }, [fetcher.state, fetcher.data, isSaving, globalScan, liveCollectionHandles, livePageHandles, savingMenuData]);
+  }, [fetcher.state, fetcher.data, globalScan, liveCollectionHandles, livePageHandles, savingMenuData]);
 
   // Deep Scan Pagination Loop
   useEffect(() => {
