@@ -51,7 +51,7 @@ export const action = async ({ request }) => {
   const formData = await request.formData();
   const intent = formData.get("intent");
   const assetKey = formData.get("assetKey");
-  const timestamp = Date.now(); // The physical lock for the frontend
+  const timestamp = Date.now(); 
 
   try {
     if (intent === "fetchAsset") {
@@ -132,36 +132,34 @@ export const action = async ({ request }) => {
     }
 
     if (intent === "populateMosaic") {
-      const { admin } = await authenticate.admin(request);
-
-      // 1. Fetch all published collections
-      const collectionsQuery = await admin.graphql(`
-        query {
-          collections(first: 50, query: "published_status:published") {
-            edges { node { id } }
-          }
-        }
-      `);
-      const collectionsData = await collectionsQuery.json();
-      const collections = collectionsData.data.collections.edges.map(e => e.node.id);
-
-      // 2. Fetch all published pages
-      const pagesQuery = await admin.graphql(`
-        query {
-          pages(first: 50, query: "published_status:published") {
-            edges { node { id } }
-          }
-        }
-      `);
-      const pagesData = await pagesQuery.json();
-      const pages = pagesData.data.pages.edges.map(e => e.node.id);
-
-      // 3. Fetch index.json asset
-      const assetQuery = await admin.rest.get({
-        path: `themes/${THEME_ID}/assets`,
-        query: { "asset[key]": "templates/index.json" }
+      // 1. Fetch Collections using raw fetch to avoid admin.graphql errors
+      const collectionsRes = await fetch(`https://${shop}/admin/api/2024-10/graphql.json`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": accessToken },
+        body: JSON.stringify({
+          query: `query { collections(first: 50, query: "published_status:published") { edges { node { handle } } } }`
+        })
       });
-      const assetData = await assetQuery.json();
+      const collectionsData = await collectionsRes.json();
+      const collections = collectionsData.data.collections.edges.map(e => e.node.handle);
+
+      // 2. Fetch Pages using raw fetch
+      const pagesRes = await fetch(`https://${shop}/admin/api/2024-10/graphql.json`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": accessToken },
+        body: JSON.stringify({
+          query: `query { pages(first: 50, query: "published_status:published") { edges { node { handle } } } }`
+        })
+      });
+      const pagesData = await pagesRes.json();
+      const pages = pagesData.data.pages.edges.map(e => e.node.handle);
+
+      // 3. Fetch index.json asset using raw fetch
+      const assetRes = await fetch(`https://${shop}/admin/api/2024-10/themes/${THEME_ID}/assets.json?asset[key]=templates/index.json`, {
+        method: "GET",
+        headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": accessToken }
+      });
+      const assetData = await assetRes.json();
       if (!assetData.asset?.value) throw new Error("Could not load templates/index.json");
 
       const templateData = JSON.parse(assetData.asset.value);
@@ -186,20 +184,20 @@ export const action = async ({ request }) => {
       const newBlocks = {};
       const newBlockOrder = [];
 
-      collections.forEach((id, index) => {
+      collections.forEach((handle, index) => {
         const blockId = `stone_collection_${index}`;
         newBlocks[blockId] = {
           type: "stone_collection",
-          settings: { collection: id }
+          settings: { collection: handle }
         };
         newBlockOrder.push(blockId);
       });
 
-      pages.forEach((id, index) => {
+      pages.forEach((handle, index) => {
         const blockId = `story_page_${index}`;
         newBlocks[blockId] = {
           type: "story_page",
-          settings: { page: id }
+          settings: { page: handle }
         };
         newBlockOrder.push(blockId);
       });
@@ -216,18 +214,19 @@ export const action = async ({ request }) => {
 
       templateData.sections[targetSectionKey] = targetSection;
 
-      // 7. POST updated template back to the theme
-      const saveResponse = await admin.rest.put({
-        path: `themes/${THEME_ID}/assets`,
-        data: {
+      // 7. POST updated template back to the theme using raw fetch
+      const saveRes = await fetch(`https://${shop}/admin/api/2024-10/themes/${THEME_ID}/assets.json`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": accessToken },
+        body: JSON.stringify({
           asset: {
             key: "templates/index.json",
             value: JSON.stringify(templateData)
           }
-        }
+        })
       });
 
-      if (!saveResponse.ok) throw new Error("Failed to save populated index.json to theme.");
+      if (!saveRes.ok) throw new Error("Failed to save populated index.json to theme.");
 
       return Response.json({ intent, success: true, message: "Successfully populated the Living Mosaic wall!", timestamp });
     }
@@ -319,7 +318,6 @@ export default function ThemeEditorTab() {
 
   const lastProcessedActionRef = useRef(null);
 
-  // Purely derived state. These do not trigger renders, they just reflect current reality.
   const isNavigating = navigation.state !== "idle";
   const hasChanges = currentContent !== originalContent;
   const isSaving = isNavigating ? navigation.formData?.get("intent") === "saveAsset" : false;
@@ -327,8 +325,6 @@ export default function ThemeEditorTab() {
   const isResearching = isNavigating ? navigation.formData?.get("intent") === "geminiResearch" : false;
   const isPopulating = isNavigating ? navigation.formData?.get("intent") === "populateMosaic" : false;
 
-  // THE ONLY USEEFFECT IN THE FILE
-  // The timestamp lock ensures this ONLY runs when a server action finishes and returns a new timestamp.
   useEffect(() => {
     if (actionData) {
       if (actionData.timestamp !== lastProcessedActionRef.current) {
@@ -372,7 +368,6 @@ export default function ThemeEditorTab() {
     }
   }, [actionData]);
 
-  // Click Handlers (The ONLY things that trigger server submissions)
   const handleSelectFile = useCallback((key) => {
     setSelectedFile(key);
     submit({ intent: "fetchAsset", assetKey: key }, { method: "post" });
@@ -559,7 +554,6 @@ export default function ThemeEditorTab() {
       {loaderError ? <Banner tone="critical">{loaderError}</Banner> : null}
       {actionData?.error ? <Banner tone="critical">{actionData.error}</Banner> : null}
       
-      {/* Explicit Success Banner for Mosaic Population */}
       {actionData?.intent === "populateMosaic" && actionData?.success && (
         <Box paddingBlockEnd="400">
           <Banner tone="success" title="Success">
@@ -574,7 +568,6 @@ export default function ThemeEditorTab() {
       {renderDuplicateModal()}
 
       <Layout>
-        {/* Mosaic Automation Action Card */}
         <Layout.Section>
           <Card>
             <InlineStack align="space-between" blockAlign="center">
@@ -683,56 +676,22 @@ export default function ThemeEditorTab() {
                     </InlineStack>
 
                     <ButtonGroup segmented>
-                      <Button
-                        size="large"
-                        onClick={() => setIsNewModalOpen(true)}
-                        accessibilityLabel="Create a new file"
-                      >
+                      <Button size="large" onClick={() => setIsNewModalOpen(true)} accessibilityLabel="Create a new file">
                         New File
                       </Button>
-                      <Button
-                        size="large"
-                        onClick={handleSave}
-                        disabled={!hasChanges}
-                        loading={isSaving}
-                        accessibilityLabel="Save current file"
-                      >
+                      <Button size="large" onClick={handleSave} disabled={!hasChanges} loading={isSaving} accessibilityLabel="Save current file">
                         Save File
                       </Button>
-                      <Button
-                        size="large"
-                        onClick={() => {
-                          setRenameInput(selectedFile);
-                          setIsRenameModalOpen(true);
-                        }}
-                        accessibilityLabel="Rename current file"
-                      >
+                      <Button size="large" onClick={() => { setRenameInput(selectedFile); setIsRenameModalOpen(true); }} accessibilityLabel="Rename current file">
                         Rename File
                       </Button>
-                      <Button
-                        size="large"
-                        onClick={() => setIsDeleteModalOpen(true)}
-                        tone="critical"
-                        accessibilityLabel="Delete current file"
-                      >
+                      <Button size="large" onClick={() => setIsDeleteModalOpen(true)} tone="critical" accessibilityLabel="Delete current file">
                         Delete File
                       </Button>
-                      <Button
-                        size="large"
-                        onClick={() => {
-                          setDuplicateInput(selectedFile.replace('.liquid', '-copy.liquid'));
-                          setIsDuplicateModalOpen(true);
-                        }}
-                        accessibilityLabel="Duplicate current file"
-                      >
+                      <Button size="large" onClick={() => { setDuplicateInput(selectedFile.replace('.liquid', '-copy.liquid')); setIsDuplicateModalOpen(true); }} accessibilityLabel="Duplicate current file">
                         Duplicate File
                       </Button>
-                      <Button
-                        size="large"
-                        onClick={handleDiscard}
-                        disabled={!hasChanges}
-                        accessibilityLabel="Discard unsaved changes"
-                      >
+                      <Button size="large" onClick={handleDiscard} disabled={!hasChanges} accessibilityLabel="Discard unsaved changes">
                         Discard Changes
                       </Button>
                     </ButtonGroup>
@@ -763,13 +722,7 @@ export default function ThemeEditorTab() {
                                   accessibilityLabel="Instruction input for Gemini Assist"
                                 />
                               </Box>
-                              <Button 
-                                onClick={handleGeminiAssist} 
-                                loading={isAssisting}
-                                tone="success"
-                                size="large"
-                                accessibilityLabel="Send instruction to Gemini"
-                              >
+                              <Button onClick={handleGeminiAssist} loading={isAssisting} tone="success" size="large" accessibilityLabel="Send instruction to Gemini">
                                 Modify Code
                               </Button>
                             </InlineStack>
@@ -781,46 +734,18 @@ export default function ThemeEditorTab() {
                             <Box width="50%">
                               <Text fontWeight="bold">Original Content</Text>
                               <Box paddingBlockStart="200">
-                                <TextField
-                                  labelHidden
-                                  label="Original file content"
-                                  value={originalContent}
-                                  multiline={25}
-                                  monospaced
-                                  autoComplete="off"
-                                  readOnly
-                                  accessibilityLabel="Original read-only content"
-                                />
+                                <TextField labelHidden label="Original file content" value={originalContent} multiline={25} monospaced autoComplete="off" readOnly accessibilityLabel="Original read-only content" />
                               </Box>
                             </Box>
                             <Box width="50%">
                               <Text fontWeight="bold">Modified Content</Text>
                               <Box paddingBlockStart="200">
-                                <TextField
-                                  labelHidden
-                                  label="Modified file content"
-                                  value={currentContent}
-                                  onChange={setCurrentContent}
-                                  multiline={25}
-                                  monospaced
-                                  autoComplete="off"
-                                  accessibilityLabel="Editable modified content"
-                                />
+                                <TextField labelHidden label="Modified file content" value={currentContent} onChange={setCurrentContent} multiline={25} monospaced autoComplete="off" accessibilityLabel="Editable modified content" />
                               </Box>
                             </Box>
                           </InlineStack>
                         ) : (
-                          <TextField
-                            labelHidden
-                            label="Code Editor"
-                            value={currentContent}
-                            onChange={setCurrentContent}
-                            multiline={30}
-                            monospaced
-                            autoComplete="off"
-                            disabled={isNavigating}
-                            accessibilityLabel="Main code editor"
-                          />
+                          <TextField labelHidden label="Code Editor" value={currentContent} onChange={setCurrentContent} multiline={30} monospaced autoComplete="off" disabled={isNavigating} accessibilityLabel="Main code editor" />
                         )}
                       </BlockStack>
                     ) : null}
@@ -829,12 +754,7 @@ export default function ThemeEditorTab() {
                       <BlockStack gap="400">
                         <InlineStack align="space-between" blockAlign="center">
                           <Text variant="headingMd" as="h3">Prestige Schema Cataloger</Text>
-                          <Button 
-                            onClick={handleGeminiResearch} 
-                            loading={isResearching}
-                            size="large"
-                            accessibilityLabel="Run schema analysis using Gemini"
-                          >
+                          <Button onClick={handleGeminiResearch} loading={isResearching} size="large" accessibilityLabel="Run schema analysis using Gemini">
                             Run Schema Analysis
                           </Button>
                         </InlineStack>
