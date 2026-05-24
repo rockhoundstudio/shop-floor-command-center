@@ -95,6 +95,9 @@ export const loader = async ({ request }) => {
     const liveCollectionHandles = collections.map(c => c.handle);
     const livePageHandles = pages.map(p => p.handle);
 
+    // Explicitly define collectionHandles
+    const collectionHandles = collections.map(c => c.handle);
+
     const dbSettings = await prisma.menuSetting.findMany();
     const dbHistoryRaw = await prisma.menuHistory.findMany({
       orderBy: { createdAt: 'desc' }
@@ -106,9 +109,9 @@ export const loader = async ({ request }) => {
       if (dbHistory[h.menuHandle].length < 5) dbHistory[h.menuHandle].push(h);
     });
 
-    return data({ menus, collections, pages, liveCollectionHandles, livePageHandles, dbSettings, dbHistory });
+    return data({ menus, collections, pages, liveCollectionHandles, livePageHandles, collectionHandles, dbSettings, dbHistory });
   } catch (error) {
-    return data({ menus: [], collections: [], pages: [], liveCollectionHandles: [], livePageHandles: [], dbSettings: [], dbHistory: {} });
+    return data({ menus: [], collections: [], pages: [], liveCollectionHandles: [], livePageHandles: [], collectionHandles: [], dbSettings: [], dbHistory: {} });
   }
 };
 
@@ -265,42 +268,31 @@ function countByStatus(items, liveCollectionHandles, livePageHandles) {
   return { live, draft, dead };
 }
 
-// 🚀 UPDATED: Deterministic Helper to categorize pages via URLs
-function getPageCategory(url) {
-  if (!url || typeof url !== "string") {
+function getPageCategory(url, collectionHandles) {
+  if (!url) {
+    return { label: "Page", tone: null };
+  }
+
+  if (typeof url !== "string") {
     return { label: "Page", tone: null };
   }
 
   const normalizedUrl = url.toLowerCase();
+  const urlParts = normalizedUrl.split("/");
+  const handle = urlParts[urlParts.length - 1];
 
-  // Deterministic checks based on standard Shopify routing paths
-  const isCollectionPath = normalizedUrl.includes("/collections/") ? true : false;
-  const isBlogPath = normalizedUrl.includes("/blogs/") ? true : false;
-  const isPagePath = normalizedUrl.includes("/pages/") ? true : false;
-
-  if (isCollectionPath) {
+  if (collectionHandles.includes(handle)) {
     return { label: "Collection", tone: "info" };
   }
 
-  if (isBlogPath) {
+  if (normalizedUrl.includes("/pages/")) {
     return { label: "Story", tone: "success" };
   }
 
-  if (isPagePath) {
-    const storyKeywords = ["logbook", "lore", "trail", "story", "strike", "protocol", "shopped", "run", "clock", "nickel", "yellowstone", "rufus", "chipper", "janyce", "richardson", "spencer", "chopper", "evolution", "banshee", "dop", "frankenstein"];
-    const isStoryKeyword = storyKeywords.some(kw => normalizedUrl.includes(kw)) ? true : false;
-    
-    if (isStoryKeyword) {
-      return { label: "Story", tone: "success" };
-    }
-  }
-
-  // Fallback
   return { label: "Page", tone: null };
 }
 
-// 🚀 MODULAR COMPONENT: MenuCreator
-function MenuCreator({ pages, fetcher, onCancel }) {
+function MenuCreator({ pages, fetcher, onCancel, collectionHandles }) {
   const [title, setTitle] = useState("");
   const [selectedPages, setSelectedPages] = useState([]);
 
@@ -324,7 +316,6 @@ function MenuCreator({ pages, fetcher, onCancel }) {
     fetcher.submit(fd, { method: "post" });
   };
 
-  // Filter out pages that are already selected so they disappear from the list
   const availablePages = pages.filter(p => selectedPages.find(sp => sp.id === p.id) ? false : true);
 
   return (
@@ -372,7 +363,7 @@ function MenuCreator({ pages, fetcher, onCancel }) {
                 <List type="bullet">
                   {availablePages.map(page => {
                     const generatedUrl = `/pages/${page.handle}`;
-                    const category = getPageCategory(generatedUrl);
+                    const category = getPageCategory(generatedUrl, collectionHandles);
                     return (
                       <List.Item key={page.id}>
                         <InlineStack align="space-between" blockAlign="center">
@@ -415,7 +406,7 @@ function MenuCreator({ pages, fetcher, onCancel }) {
             <BlockStack gap="200">
               {selectedPages.map((page) => {
                 const generatedUrl = `/pages/${page.handle}`;
-                const category = getPageCategory(generatedUrl);
+                const category = getPageCategory(generatedUrl, collectionHandles);
                 return (
                   <Card key={page.id} background="bg-surface-secondary">
                     <InlineStack align="space-between" blockAlign="center">
@@ -452,7 +443,7 @@ function MenuCreator({ pages, fetcher, onCancel }) {
 
 export default function MenuManager() {
   const navigate = useNavigate();
-  const { menus, collections, pages, liveCollectionHandles, livePageHandles, dbSettings, dbHistory } = useLoaderData();
+  const { menus, collections, pages, liveCollectionHandles, livePageHandles, dbSettings, dbHistory, collectionHandles } = useLoaderData();
   const fetcher = useFetcher();
   const scanFetcher = useFetcher({ key: "deepScanner" });
 
@@ -474,7 +465,6 @@ export default function MenuManager() {
   const accumulatedPagesRef = useRef([]);
   const lastCursorRef = useRef(null);
 
-  // Background Saver with Unconditional Idle Reset
   useEffect(() => {
     const isSubmitUpdate = fetcher.state === "submitting" ? (fetcher.formData?.get("intent") === "updateMenu" ? true : false) : false;
     
@@ -510,7 +500,6 @@ export default function MenuManager() {
     }
   }, [fetcher.state, fetcher.data, globalScan, liveCollectionHandles, livePageHandles, savingMenuData]);
 
-  // Deep Scan Pagination Loop
   useEffect(() => {
     const canProcessScan = isDeepScanning ? (scanFetcher.state === "idle" ? true : false) : false;
     
@@ -1092,7 +1081,7 @@ export default function MenuManager() {
 
           <Layout.Section>
             {isCreatingMenu ? (
-              <MenuCreator pages={pages} fetcher={fetcher} onCancel={handleCancelCreator} />
+              <MenuCreator pages={pages} fetcher={fetcher} onCancel={handleCancelCreator} collectionHandles={collectionHandles} />
             ) : (!activeMenu ? (
               <Card>
                 <Box padding="800" textAlign="center">
