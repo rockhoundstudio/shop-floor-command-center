@@ -132,7 +132,7 @@ export const action = async ({ request }) => {
     }
 
     if (intent === "populateMosaic") {
-      // 1. Debug Step: Fetch index.json asset using raw fetch FIRST
+      // 1. Fetch index.json asset using raw fetch
       const assetRes = await fetch(`https://${shop}/admin/api/2024-10/themes/${THEME_ID}/assets.json?asset[key]=templates/index.json`, {
         method: "GET",
         headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": accessToken }
@@ -142,16 +142,12 @@ export const action = async ({ request }) => {
 
       const templateData = JSON.parse(assetData.asset.value);
 
-      // 2. Debug Step: Extract and console.log section types
-      const foundSectionTypes = Object.values(templateData.sections).map(s => s.type);
-      console.log("DEBUG: Homepage Section Types:", foundSectionTypes);
-
-      // 3. Find Hero Living Mosaic Section
+      // 2. Find Hero Living Mosaic Section
       let targetSectionKey = null;
       let targetSection = null;
 
       for (const [key, section] of Object.entries(templateData.sections)) {
-        if (section.type === 'hero-living-mosaic') {
+        if (section.type === 'hero-mosaic-panel') {
           targetSectionKey = key;
           targetSection = section;
           break;
@@ -162,12 +158,11 @@ export const action = async ({ request }) => {
         return Response.json({ 
           intent, 
           error: "Hero Living Mosaic section not found on homepage template.", 
-          debugTypes: foundSectionTypes,
           timestamp 
         });
       }
 
-      // 4. Fetch Collections using raw fetch
+      // 3. Fetch Collections using raw fetch
       const collectionsRes = await fetch(`https://${shop}/admin/api/2024-10/graphql.json`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": accessToken },
@@ -178,7 +173,7 @@ export const action = async ({ request }) => {
       const collectionsData = await collectionsRes.json();
       const collections = collectionsData.data.collections.edges.map(e => e.node.handle);
 
-      // 5. Fetch Pages using raw fetch
+      // 4. Fetch Pages using raw fetch
       const pagesRes = await fetch(`https://${shop}/admin/api/2024-10/graphql.json`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": accessToken },
@@ -189,7 +184,7 @@ export const action = async ({ request }) => {
       const pagesData = await pagesRes.json();
       const pages = pagesData.data.pages.edges.map(e => e.node.handle);
 
-      // 6. Generate New Blocks
+      // 5. Generate New Blocks
       const newBlocks = {};
       const newBlockOrder = [];
 
@@ -211,7 +206,7 @@ export const action = async ({ request }) => {
         newBlockOrder.push(blockId);
       });
 
-      // 7. Update Section in Template
+      // 6. Update Section in Template
       targetSection.blocks = {
         ...targetSection.blocks,
         ...newBlocks
@@ -223,7 +218,7 @@ export const action = async ({ request }) => {
 
       templateData.sections[targetSectionKey] = targetSection;
 
-      // 8. POST updated template back to the theme using raw fetch
+      // 7. POST updated template back to the theme using raw fetch
       const saveRes = await fetch(`https://${shop}/admin/api/2024-10/themes/${THEME_ID}/assets.json`, {
         method: "PUT",
         headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": accessToken },
@@ -241,7 +236,6 @@ export const action = async ({ request }) => {
         intent, 
         success: true, 
         message: "Successfully populated the Living Mosaic wall!", 
-        debugTypes: foundSectionTypes,
         timestamp 
       });
     }
@@ -451,7 +445,7 @@ export default function ThemeEditorTab() {
           {folderFiles.map((file) => (
             <List.Item key={file.key}>
               <Button 
-                variant="monochromePlain" 
+                variant="plain" 
                 onClick={() => handleSelectFile(file.key)} 
                 textAlign="left"
                 accessibilityLabel={`Open file ${file.key}`}
@@ -571,17 +565,6 @@ export default function ThemeEditorTab() {
       {actionData?.error && !actionData?.debugTypes ? (
         <Banner tone="critical">{actionData.error}</Banner>
       ) : null}
-      
-      {/* ── NEW DEBUG BANNER ── */}
-      {actionData?.debugTypes && (
-        <Box paddingBlockEnd="400">
-          <Banner tone={actionData.success ? "info" : "critical"} title={actionData.success ? "Debug: Homepage Section Types Found" : actionData.error}>
-            <div style={{ fontFamily: 'monospace', wordBreak: 'break-all' }}>
-              <strong>Available Sections:</strong> {actionData.debugTypes.join(", ")}
-            </div>
-          </Banner>
-        </Box>
-      )}
 
       {actionData?.intent === "populateMosaic" && actionData?.success && (
         <Box paddingBlockEnd="400">
@@ -597,6 +580,7 @@ export default function ThemeEditorTab() {
       {renderDuplicateModal()}
 
       <Layout>
+        {/* Living Mosaic Automation returned exactly to its original place */}
         <Layout.Section>
           <Card>
             <InlineStack align="space-between" blockAlign="center">
@@ -621,6 +605,7 @@ export default function ThemeEditorTab() {
           </Card>
         </Layout.Section>
 
+        {/* File Tree Section restored to its left-side position */}
         <Layout.Section variant="oneThird">
           <Card padding="0">
             <Box padding="400" borderBottom="025" borderColor="border">
@@ -647,8 +632,9 @@ export default function ThemeEditorTab() {
                     <List type="bullet">
                       {visiblePinned.map((fileKey) => (
                         <List.Item key={fileKey}>
+                          {/* Button variant corrected to "plain" */}
                           <Button 
-                            variant="monochromePlain" 
+                            variant="plain" 
                             onClick={() => handleSelectFile(fileKey)} 
                             textAlign="left"
                             accessibilityLabel={`Open pinned file ${fileKey}`}
@@ -669,6 +655,7 @@ export default function ThemeEditorTab() {
           </Card>
         </Layout.Section>
 
+        {/* Main Editor Section restored to its right-side position */}
         <Layout.Section>
           <Card padding="0">
             {selectedFile ? (
