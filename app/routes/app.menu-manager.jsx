@@ -265,23 +265,37 @@ function countByStatus(items, liveCollectionHandles, livePageHandles) {
   return { live, draft, dead };
 }
 
-// 🚀 Helper to categorize page handles
-function getPageCategory(handle) {
-  const h = handle.toLowerCase();
-  
-  const storyKeywords = ["logbook", "lore", "trail", "story", "strike", "protocol", "shopped", "run", "clock", "nickel", "yellowstone", "rufus", "chipper", "janyce", "richardson", "spencer", "chopper", "evolution", "banshee", "dop", "frankenstein"];
-  const collectionKeywords = ["collection", "stones", "gems"];
-
-  const isStory = storyKeywords.some(kw => h.includes(kw)) ? true : false;
-  if (isStory) {
-    return { label: "Story", tone: "success" };
+// 🚀 UPDATED: Deterministic Helper to categorize pages via URLs
+function getPageCategory(url) {
+  if (!url || typeof url !== "string") {
+    return { label: "Page", tone: null };
   }
 
-  const isCollection = collectionKeywords.some(kw => h.includes(kw)) ? true : false;
-  if (isCollection) {
+  const normalizedUrl = url.toLowerCase();
+
+  // Deterministic checks based on standard Shopify routing paths
+  const isCollectionPath = normalizedUrl.includes("/collections/") ? true : false;
+  const isBlogPath = normalizedUrl.includes("/blogs/") ? true : false;
+  const isPagePath = normalizedUrl.includes("/pages/") ? true : false;
+
+  if (isCollectionPath) {
     return { label: "Collection", tone: "info" };
   }
 
+  if (isBlogPath) {
+    return { label: "Story", tone: "success" };
+  }
+
+  if (isPagePath) {
+    const storyKeywords = ["logbook", "lore", "trail", "story", "strike", "protocol", "shopped", "run", "clock", "nickel", "yellowstone", "rufus", "chipper", "janyce", "richardson", "spencer", "chopper", "evolution", "banshee", "dop", "frankenstein"];
+    const isStoryKeyword = storyKeywords.some(kw => normalizedUrl.includes(kw)) ? true : false;
+    
+    if (isStoryKeyword) {
+      return { label: "Story", tone: "success" };
+    }
+  }
+
+  // Fallback
   return { label: "Page", tone: null };
 }
 
@@ -357,7 +371,8 @@ function MenuCreator({ pages, fetcher, onCancel }) {
               <Card background="bg-surface-secondary">
                 <List type="bullet">
                   {availablePages.map(page => {
-                    const category = getPageCategory(page.handle);
+                    const generatedUrl = `/pages/${page.handle}`;
+                    const category = getPageCategory(generatedUrl);
                     return (
                       <List.Item key={page.id}>
                         <InlineStack align="space-between" blockAlign="center">
@@ -399,7 +414,8 @@ function MenuCreator({ pages, fetcher, onCancel }) {
           ) : (
             <BlockStack gap="200">
               {selectedPages.map((page) => {
-                const category = getPageCategory(page.handle);
+                const generatedUrl = `/pages/${page.handle}`;
+                const category = getPageCategory(generatedUrl);
                 return (
                   <Card key={page.id} background="bg-surface-secondary">
                     <InlineStack align="space-between" blockAlign="center">
@@ -412,7 +428,7 @@ function MenuCreator({ pages, fetcher, onCancel }) {
                             <Badge>{category.label}</Badge>
                           )}
                         </InlineStack>
-                        <Text tone="subdued" variant="bodySm" as="span">/pages/{page.handle}</Text>
+                        <Text tone="subdued" variant="bodySm" as="span">{generatedUrl}</Text>
                       </BlockStack>
                       <Button
                         tone="critical"
