@@ -10,7 +10,7 @@ import {
   PlusIcon, AlertTriangleIcon, MagicIcon, ArrowLeftIcon
 } from "@shopify/polaris-icons";
 
-// 🚀 NEW: Hardcoded Dwell Web Exemption List
+// 🚀 Hardcoded Dwell Web Exemption List
 const DWELL_WEB_PAGES = [
   "frankenstein-lapidary-line",
   "the-banshee-flat-lap",
@@ -31,7 +31,7 @@ const DWELL_WEB_PAGES = [
   "frequently-asked-questions"
 ];
 
-// Fuzzy Mathing Helper for Deep Scan Suggestions
+// Fuzzy Matching Helper for Deep Scan Suggestions
 function levenshtein(a, b) {
   if (a.length === 0) return b.length;
   if (b.length === 0) return a.length;
@@ -117,7 +117,6 @@ export const action = async ({ request }) => {
   const formData = await request.formData();
   const intent = formData.get("intent");
 
-  // 🚀 NEW: Paginated Action for the Deep Scanner
   if (intent === "fetchPageBatch") {
     const cursor = formData.get("cursor");
     const res = await admin.graphql(`
@@ -138,6 +137,38 @@ export const action = async ({ request }) => {
       batch: json.data?.pages?.edges?.map(e => e.node) || [],
       pageInfo: json.data?.pages?.pageInfo || {}
     });
+  }
+
+  // 🚀 NEW: Create Menu Mutation
+  if (intent === "createMenu") {
+    const title = formData.get("title");
+    const itemsRaw = formData.get("items");
+    const items = JSON.parse(itemsRaw).map(item => ({
+      title: item.title,
+      url: item.url,
+      type: "HTTP"
+    }));
+
+    const res = await admin.graphql(`
+      mutation menuCreate($menu: MenuCreateInput!) {
+        menuCreate(menu: $menu) {
+          menu { id title handle }
+          userErrors { message }
+        }
+      }
+    `, { variables: { menu: { title, items } } });
+
+    const json = await res.json();
+    if (json.data?.menuCreate?.userErrors?.length) {
+      return data({ ok: false, error: json.data.menuCreate.userErrors[0].message });
+    }
+
+    const newMenu = json.data?.menuCreate?.menu;
+    await prisma.menuHistory.create({
+      data: { menuHandle: newMenu.handle || "new-menu", message: "New menu created via Menu Manager." }
+    });
+
+    return data({ ok: true, message: `Menu "${title}" created successfully!` });
   }
 
   if (intent === "updateMenu") {
@@ -216,7 +247,7 @@ function StatusBadge({ status }) {
     external: { tone: "info",     label: "🔗 External" },
     unknown:  { tone: "warning",  label: "⚠️ Unknown" },
   };
-  const { tone, label } = map[status] || map.unknown;
+  const { tone, label } = map[status] ? map[status] : map.unknown;
   return <Badge tone={tone}>{label}</Badge>;
 }
 
@@ -235,13 +266,157 @@ function countByStatus(items, liveCollectionHandles, livePageHandles) {
   return { live, draft, dead };
 }
 
+// 🚀 NEW: Modular Component for Creating a Menu
+function MenuCreator({ pages, fetcher, onCancel }) {
+  const [title, setTitle] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedPages, setSelectedPages] = useState([]);
+
+  const handleAddPage = (page) => {
+    const isAlreadyAdded = selectedPages.find(p => p.id === page.id) ? true : false;
+    if (!isAlreadyAdded) {
+      setSelectedPages([...selectedPages, page]);
+    }
+    setSearchQuery("");
+  };
+
+  const handleRemovePage = (pageId) => {
+    setSelectedPages(selectedPages.filter(p => p.id !== pageId));
+  };
+
+  const handleSave = () => {
+    const fd = new FormData();
+    fd.append("intent", "createMenu");
+    fd.append("title", title);
+    const items = selectedPages.map(p => ({ title: p.title, url: `/pages/${p.handle}` }));
+    fd.append("items", JSON.stringify(items));
+    fetcher.submit(fd, { method: "post" });
+  };
+
+  const searchResults = searchQuery.trim() === ""
+    ? []
+    : pages.filter(p => p.title.toLowerCase().includes(searchQuery.toLowerCase())).slice(0, 5);
+
+  const isSaving = fetcher.state === "submitting" ? (fetcher.formData?.get("intent") === "createMenu" ? true : false) : false;
+  const isSaveDisabled = title.trim() === "" ? true : (selectedPages.length === 0 ? true : false);
+
+  return (
+    <Card>
+      <BlockStack gap="400">
+        <InlineStack align="space-between" blockAlign="center">
+          <BlockStack gap="100">
+            <Text variant="headingLg" as="h2">Create New Menu</Text>
+            <Text tone="subdued" as="p">Build a new menu by selecting pages from your store.</Text>
+          </BlockStack>
+          <Button onClick={onCancel} aria-label="Cancel creating new menu" size="large">Cancel</Button>
+        </InlineStack>
+        <Divider />
+
+        <TextField
+          label="Menu Title"
+          value={title}
+          onChange={setTitle}
+          autoComplete="off"
+          helpText="Give your new menu a clear name, like 'Holiday Sale Navigation'."
+          aria-label="Input field for new menu title"
+        />
+
+        <Box paddingBlockStart="400">
+          <Text variant="headingSm" as="h3">Add Pages to Menu</Text>
+          <Text tone="subdued" variant="bodySm" as="p">Search for existing pages to add to this menu as links.</Text>
+          <Box paddingBlockStart="200">
+            <TextField
+              labelHidden
+              label="Search Pages"
+              placeholder="Type page name here..."
+              value={searchQuery}
+              onChange={setSearchQuery}
+              autoComplete="off"
+              clearButton
+              onClearButtonClick={() => setSearchQuery("")}
+              aria-label="Search box for finding store pages"
+            />
+          </Box>
+
+          {searchResults.length > 0 ? (
+            <Box paddingBlockStart="200">
+              <Card background="bg-surface-secondary">
+                <List type="bullet">
+                  {searchResults.map(page => (
+                    <List.Item key={page.id}>
+                      <InlineStack align="space-between" blockAlign="center">
+                        <Text as="span">{page.title}</Text>
+                        <Button
+                          size="large"
+                          onClick={() => handleAddPage(page)}
+                          aria-label={`Add page ${page.title} to the new menu list`}
+                        >
+                          Add Link
+                        </Button>
+                      </InlineStack>
+                    </List.Item>
+                  ))}
+                </List>
+              </Card>
+            </Box>
+          ) : null}
+        </Box>
+
+        <Box paddingBlockStart="400">
+          <Text variant="headingSm" as="h3">Selected Links in this Menu</Text>
+          {selectedPages.length === 0 ? (
+            <Box padding="400" background="bg-surface-secondary" borderRadius="100">
+              <Text tone="subdued" as="p">No pages added yet. Use the search above to select pages.</Text>
+            </Box>
+          ) : (
+            <BlockStack gap="200">
+              {selectedPages.map((page) => (
+                <Card key={page.id} background="bg-surface-secondary">
+                  <InlineStack align="space-between" blockAlign="center">
+                    <BlockStack gap="100">
+                      <Text fontWeight="bold" as="span">{page.title}</Text>
+                      <Text tone="subdued" variant="bodySm" as="span">/pages/{page.handle}</Text>
+                    </BlockStack>
+                    <Button
+                      tone="critical"
+                      size="large"
+                      onClick={() => handleRemovePage(page.id)}
+                      aria-label={`Remove page ${page.title} from the new menu list`}
+                    >
+                      Remove
+                    </Button>
+                  </InlineStack>
+                </Card>
+              ))}
+            </BlockStack>
+          )}
+        </Box>
+
+        <InlineStack align="end">
+          <Button
+            variant="primary"
+            size="large"
+            onClick={handleSave}
+            disabled={isSaveDisabled}
+            loading={isSaving}
+            aria-label="Save and Create Menu in Shopify"
+          >
+            Create Menu
+          </Button>
+        </InlineStack>
+      </BlockStack>
+    </Card>
+  );
+}
+
 export default function MenuManager() {
   const navigate = useNavigate();
   const { menus, collections, pages, liveCollectionHandles, livePageHandles, dbSettings, dbHistory } = useLoaderData();
   const fetcher = useFetcher();
-  const scanFetcher = useFetcher({ key: "deepScanner" }); // Dedicated fetcher for pagination
+  const scanFetcher = useFetcher({ key: "deepScanner" });
 
   const [activeMenu, setActiveMenu] = useState(null);
+  const [isCreatingMenu, setIsCreatingMenu] = useState(false);
   const [menuItems, setMenuItems] = useState([]);
   const [menuTitle, setMenuTitle] = useState("");
   const [scanned, setScanned] = useState(false);
@@ -261,33 +436,45 @@ export default function MenuManager() {
 
   // Background Saver
   useEffect(() => {
-    if (fetcher.state === "submitting" && fetcher.formData?.get("intent") === "updateMenu") {
+    const isSubmitUpdate = fetcher.state === "submitting" ? (fetcher.formData?.get("intent") === "updateMenu" ? true : false) : false;
+    
+    if (isSubmitUpdate) {
       setIsSaving(true);
       setSavingMenuData({
         id: fetcher.formData.get("id"),
         title: fetcher.formData.get("title"),
         items: JSON.parse(fetcher.formData.get("items"))
       });
-    } else if (fetcher.state === "idle" && isSaving) {
-      setIsSaving(false);
-      if (fetcher.data?.ok && savingMenuData) {
-        setSavedOverrides(prev => ({
-          ...prev,
-          [savingMenuData.id]: { items: savingMenuData.items, title: savingMenuData.title }
-        }));
-        if (globalScan) {
-          setGlobalScan(prev => ({
+    } else {
+      if (fetcher.state === "idle" ? (isSaving ? true : false) : false) {
+        setIsSaving(false);
+        if (fetcher.data?.ok ? (savingMenuData ? true : false) : false) {
+          setSavedOverrides(prev => ({
             ...prev,
-            [savingMenuData.id]: countByStatus(savingMenuData.items, liveCollectionHandles, livePageHandles)
+            [savingMenuData.id]: { items: savingMenuData.items, title: savingMenuData.title }
           }));
+          if (globalScan) {
+            setGlobalScan(prev => ({
+              ...prev,
+              [savingMenuData.id]: countByStatus(savingMenuData.items, liveCollectionHandles, livePageHandles)
+            }));
+          }
         }
       }
     }
-  }, [fetcher.state, fetcher.data, isSaving, globalScan, liveCollectionHandles, livePageHandles]);
 
-  // 🚀 NEW: Deep Scan Pagination Loop
+    // Reset creation mode if a menu creation succeeds
+    const isCreateSuccess = fetcher.state === "idle" ? (fetcher.data?.ok ? (fetcher.data?.message?.includes("created") ? true : false) : false) : false;
+    if (isCreateSuccess) {
+      setIsCreatingMenu(false);
+    }
+  }, [fetcher.state, fetcher.data, isSaving, globalScan, liveCollectionHandles, livePageHandles, savingMenuData]);
+
+  // Deep Scan Pagination Loop
   useEffect(() => {
-    if (isDeepScanning && scanFetcher.state === "idle") {
+    const canProcessScan = isDeepScanning ? (scanFetcher.state === "idle" ? true : false) : false;
+    
+    if (canProcessScan) {
       if (scanFetcher.data?.error) {
         setIsDeepScanning(false);
         return;
@@ -296,7 +483,6 @@ export default function MenuManager() {
       if (scanFetcher.data?.batch) {
         const { batch, pageInfo, requestCursor } = scanFetcher.data;
 
-        // Prevent double processing from React strict mode or re-renders
         if (lastCursorRef.current === requestCursor) return;
         lastCursorRef.current = requestCursor;
 
@@ -330,22 +516,28 @@ export default function MenuManager() {
         const type = match[1].toLowerCase();
         const handle = match[2];
         
-        if (type === 'pages' && !livePageHandles.includes(handle)) {
-          brokenLinks.push({
-            sourcePage: page.title,
-            sourceHandle: page.handle,
-            brokenType: type,
-            brokenHandle: handle,
-            suggestion: getClosestHandle(handle, livePageHandles)
-          });
-        } else if (type === 'collections' && !liveCollectionHandles.includes(handle)) {
-          brokenLinks.push({
-            sourcePage: page.title,
-            sourceHandle: page.handle,
-            brokenType: type,
-            brokenHandle: handle,
-            suggestion: getClosestHandle(handle, liveCollectionHandles)
-          });
+        if (type === 'pages') {
+          if (!livePageHandles.includes(handle)) {
+            brokenLinks.push({
+              sourcePage: page.title,
+              sourceHandle: page.handle,
+              brokenType: type,
+              brokenHandle: handle,
+              suggestion: getClosestHandle(handle, livePageHandles)
+            });
+          }
+        } else {
+          if (type === 'collections') {
+            if (!liveCollectionHandles.includes(handle)) {
+              brokenLinks.push({
+                sourcePage: page.title,
+                sourceHandle: page.handle,
+                brokenType: type,
+                brokenHandle: handle,
+                suggestion: getClosestHandle(handle, liveCollectionHandles)
+              });
+            }
+          }
         }
       }
     });
@@ -391,7 +583,7 @@ export default function MenuManager() {
         (item.items || []).forEach(child => allUsedUrls.add(child.url));
       });
     });
-    return pages.filter(p => !allUsedUrls.has(`/pages/${p.handle}`) && !DWELL_WEB_PAGES.includes(p.handle));
+    return pages.filter(p => !allUsedUrls.has(`/pages/${p.handle}`) ? (!DWELL_WEB_PAGES.includes(p.handle) ? true : false) : false);
   }, [scanned, displayMenus, pages]);
 
   const linkOptions = [
@@ -403,6 +595,7 @@ export default function MenuManager() {
   ];
 
   const handleSelectMenu = (menu) => {
+    setIsCreatingMenu(false);
     setActiveMenu(menu);
     setMenuTitle(menu.title);
     setMenuItems(menu.items.map(item => ({
@@ -415,11 +608,11 @@ export default function MenuManager() {
         url: child.url || ""
       }))
     })));
-    setScanned(globalScan !== null);
+    setScanned(globalScan !== null ? true : false);
   };
 
   const activeMenuSetting = dbSettings?.find(s => s.menuHandle === activeMenu?.handle) || {};
-  const isLocked = activeMenu?.handle === "main-menu" && activeMenuSetting.isLocked;
+  const isLocked = activeMenu?.handle === "main-menu" ? (activeMenuSetting.isLocked ? true : false) : false;
   const autoSyncFooter = activeMenuSetting.autoSync || false;
   const activeMenuHistory = dbHistory[activeMenu?.handle] || [];
 
@@ -500,10 +693,16 @@ export default function MenuManager() {
     e.stopPropagation();
     if (isLocked) return;
     const newItems = [...menuItems];
-    if (direction === "up" && index > 0) {
-      [newItems[index - 1], newItems[index]] = [newItems[index], newItems[index - 1]];
-    } else if (direction === "down" && index < newItems.length - 1) {
-      [newItems[index], newItems[index + 1]] = [newItems[index + 1], newItems[index]];
+    if (direction === "up") {
+      if (index > 0) {
+        [newItems[index - 1], newItems[index]] = [newItems[index], newItems[index - 1]];
+      }
+    } else {
+      if (direction === "down") {
+        if (index < newItems.length - 1) {
+          [newItems[index], newItems[index + 1]] = [newItems[index + 1], newItems[index]];
+        }
+      }
     }
     setMenuItems(newItems);
   };
@@ -514,10 +713,16 @@ export default function MenuManager() {
     const newItems = [...menuItems];
     const parent = { ...newItems[parentIndex] };
     const children = [...(parent.items || [])];
-    if (direction === "up" && childIndex > 0) {
-      [children[childIndex - 1], children[childIndex]] = [children[childIndex], children[childIndex - 1]];
-    } else if (direction === "down" && childIndex < children.length - 1) {
-      [children[childIndex], children[childIndex + 1]] = [children[childIndex + 1], children[childIndex]];
+    if (direction === "up") {
+      if (childIndex > 0) {
+        [children[childIndex - 1], children[childIndex]] = [children[childIndex], children[childIndex - 1]];
+      }
+    } else {
+      if (direction === "down") {
+        if (childIndex < children.length - 1) {
+          [children[childIndex], children[childIndex + 1]] = [children[childIndex + 1], children[childIndex]];
+        }
+      }
     }
     parent.items = children;
     newItems[parentIndex] = parent;
@@ -546,7 +751,9 @@ export default function MenuManager() {
   };
 
   const autoFillCollections = () => {
-    if (activeMenu?.handle !== "footer" || isLocked) return;
+    const isFooterAndUnlocked = activeMenu?.handle === "footer" ? (!isLocked ? true : false) : false;
+    if (!isFooterAndUnlocked) return;
+    
     const existingUrls = new Set();
     menuItems.forEach(item => {
       existingUrls.add(item.url);
@@ -575,7 +782,7 @@ export default function MenuManager() {
         ...item,
         items: (item.items || []).filter(child => getDestinationStatus(child.url, liveCollectionHandles, livePageHandles) !== "dead")
       }))
-      .filter(item => getDestinationStatus(item.url, liveCollectionHandles, livePageHandles) !== "dead" || (item.items && item.items.length > 0))
+      .filter(item => getDestinationStatus(item.url, liveCollectionHandles, livePageHandles) !== "dead" ? true : (item.items ? (item.items.length > 0 ? true : false) : false))
     );
     setScanned(true);
   };
@@ -610,7 +817,7 @@ export default function MenuManager() {
       title: item.title,
       url: item.url || "#",
       type: "HTTP",
-      items: item.items && item.items.length > 0 ? item.items.map(formatItem) : []
+      items: item.items ? (item.items.length > 0 ? item.items.map(formatItem) : []) : []
     });
 
     const itemsForServer = updatedFooterItems.map(formatItem);
@@ -640,12 +847,20 @@ export default function MenuManager() {
     fetcher.submit(fd, { method: "post" });
   };
 
-  const activeCounts = scanned && activeMenu
-    ? countByStatus(menuItems, liveCollectionHandles, livePageHandles)
-    : null;
+  const handleOpenCreator = () => {
+    setActiveMenu(null);
+    setIsCreatingMenu(true);
+  };
+
+  const handleCancelCreator = () => {
+    setIsCreatingMenu(false);
+  };
+
+  const activeCounts = scanned ? (activeMenu ? countByStatus(menuItems, liveCollectionHandles, livePageHandles) : null) : null;
 
   let orphanedCollections = [];
-  if (scanned && activeMenu && activeMenu.handle === "footer") {
+  const shouldCalculateOrphanCollections = scanned ? (activeMenu ? (activeMenu.handle === "footer" ? true : false) : false) : false;
+  if (shouldCalculateOrphanCollections) {
     const activeUrls = new Set();
     menuItems.forEach(item => {
       activeUrls.add(item.url);
@@ -654,32 +869,35 @@ export default function MenuManager() {
     orphanedCollections = collections.filter(c => !activeUrls.has(`/collections/${c.handle}`));
   }
 
+  // 48px tap target rules strictly enforced on custom buttons
   const actionBtnStyle = {
     background: "none", border: "none", cursor: isLocked ? "not-allowed" : "pointer",
-    fontSize: "16px", padding: "4px 8px", color: isLocked ? "#a6a6a6" : "#5c5f62"
+    fontSize: "16px", color: isLocked ? "#a6a6a6" : "#5c5f62",
+    minHeight: "48px", minWidth: "48px", display: "flex", alignItems: "center", justifyContent: "center"
   };
   const deleteBtnStyle = { ...actionBtnStyle, color: isLocked ? "#a6a6a6" : "#d72c0d" };
 
   return (
     <>
       <Box padding="400" paddingBlockEnd="0">
-        <Button onClick={() => navigate("/app")} icon={ArrowLeftIcon}>Back</Button>
+        <Button onClick={() => navigate("/app")} icon={ArrowLeftIcon} aria-label="Navigate back to main dashboard" size="large">Back</Button>
       </Box>
       <Page
         title="Menu Manager 🗂️"
         subtitle="Link Governance — Nav Audit & Repair"
         primaryAction={{
           content: "🔍 Scan All Menus",
-          onAction: handleGlobalScan
+          onAction: handleGlobalScan,
+          accessibilityLabel: "Execute global scan across all store menus"
         }}
       >
         <Layout>
 
-          {globalTotals && (
+          {globalTotals ? (
             <Layout.Section>
               <Card background="bg-surface-secondary">
                 <BlockStack gap="300" align="center" inlineAlign="center">
-                  <Text variant="headingMd">Global Menu Diagnostics</Text>
+                  <Text variant="headingMd" as="h2">Global Menu Diagnostics</Text>
                   <InlineStack gap="300">
                     <Badge tone="success">🟢 {globalTotals.live} Live</Badge>
                     <Badge tone="warning">🟡 {globalTotals.draft} Draft/Unverified</Badge>
@@ -688,18 +906,21 @@ export default function MenuManager() {
                 </BlockStack>
               </Card>
             </Layout.Section>
-          )}
+          ) : null}
 
           <Layout.Section variant="oneThird">
             <BlockStack gap="400">
               <Card>
                 <BlockStack gap="300">
-                  <Text variant="headingMd">Your Menus</Text>
+                  <InlineStack align="space-between" blockAlign="center">
+                    <Text variant="headingMd" as="h3">Your Menus</Text>
+                    <Button icon={PlusIcon} size="large" onClick={handleOpenCreator} aria-label="Create a new store menu">Create Menu</Button>
+                  </InlineStack>
                   <Divider />
                   {displayMenus.map((menu) => {
                     const counts = globalScan?.[menu.id];
                     const setting = dbSettings?.find(s => s.menuHandle === menu.handle);
-                    const menuIsLocked = menu.handle === "main-menu" && setting?.isLocked;
+                    const menuIsLocked = menu.handle === "main-menu" ? (setting?.isLocked ? true : false) : false;
 
                     return (
                       <Box
@@ -710,25 +931,27 @@ export default function MenuManager() {
                         borderColor="border"
                         borderRadius="100"
                         onClick={() => handleSelectMenu(menu)}
-                        style={{ cursor: "pointer" }}
+                        style={{ cursor: "pointer", minHeight: "48px" }}
+                        role="button"
+                        aria-label={`Edit ${menu.title} menu`}
                       >
                         <BlockStack gap="100">
                           <InlineStack align="space-between" blockAlign="center">
                             <InlineStack gap="200" blockAlign="center">
-                              <Text fontWeight={activeMenu?.id === menu.id ? "bold" : "regular"}>
+                              <Text fontWeight={activeMenu?.id === menu.id ? "bold" : "regular"} as="span">
                                 {menu.title}
                               </Text>
-                              {menuIsLocked && <Badge tone="info">Locked</Badge>}
+                              {menuIsLocked ? <Badge tone="info">Locked</Badge> : null}
                             </InlineStack>
                             <Badge tone="info">{menu.items.length} Links</Badge>
                           </InlineStack>
-                          {counts && (
+                          {counts ? (
                             <InlineStack gap="100">
                               <Badge tone="success">🟢 {counts.live}</Badge>
-                              {counts.draft > 0 && <Badge tone="warning">🟡 {counts.draft}</Badge>}
-                              {counts.dead > 0 && <Badge tone="critical">🔴 {counts.dead}</Badge>}
+                              {counts.draft > 0 ? <Badge tone="warning">🟡 {counts.draft}</Badge> : null}
+                              {counts.dead > 0 ? <Badge tone="critical">🔴 {counts.dead}</Badge> : null}
                             </InlineStack>
-                          )}
+                          ) : null}
                         </BlockStack>
                       </Box>
                     );
@@ -738,28 +961,29 @@ export default function MenuManager() {
 
               <Card>
                 <BlockStack gap="200">
-                  <Text variant="headingSm">🕸️ Link Governance</Text>
-                  <Text tone="subdued" variant="bodySm">
+                  <Text variant="headingSm" as="h3">🕸️ Link Governance</Text>
+                  <Text tone="subdued" variant="bodySm" as="p">
                     Nav links checked here. Body copy links checked in Dwell Web Manager.
                   </Text>
-                  <Button url="/app/dwell-web-manager" disabled>
+                  <Button url="/app/dwell-web-manager" disabled size="large" aria-label="Run full site audit link governance">
                     Run Full Site Audit → (coming soon)
                   </Button>
                 </BlockStack>
               </Card>
 
-              {scanned && unlinkedPages.length > 0 && (
+              {scanned ? (unlinkedPages.length > 0 ? (
                 <Card>
                   <BlockStack gap="300">
                     <InlineStack align="space-between" blockAlign="center">
                       <BlockStack>
-                        <Text variant="headingSm" tone="warning">True Orphans</Text>
-                        <Text variant="bodySm" tone="subdued">These pages exist in Shopify but are not linked in any navigational menu.</Text>
+                        <Text variant="headingSm" tone="warning" as="h3">True Orphans</Text>
+                        <Text variant="bodySm" tone="subdued" as="p">These pages exist in Shopify but are not linked in any navigational menu.</Text>
                       </BlockStack>
                       <Button 
-                        size="micro" 
+                        size="large" 
                         onClick={handleFixOrphans}
-                        loading={fetcher.state === "submitting" && fetcher.formData?.get("logMessage")?.includes("Auto-fixed")}
+                        loading={fetcher.state === "submitting" ? (fetcher.formData?.get("logMessage")?.includes("Auto-fixed") ? true : false) : false}
+                        aria-label="Automatically fix orphan pages by linking them"
                       >
                         Fix Orphans
                       </Button>
@@ -773,28 +997,28 @@ export default function MenuManager() {
                     </Box>
                   </BlockStack>
                 </Card>
-              )}
+              ) : null) : null}
 
               <Card>
                 <BlockStack gap="300">
                   <InlineStack align="space-between" blockAlign="center">
                     <BlockStack>
-                      <Text variant="headingSm">Deep Link Scanner</Text>
-                      <Text variant="bodySm" tone="subdued">Scans page body content for broken internal links.</Text>
+                      <Text variant="headingSm" as="h3">Deep Link Scanner</Text>
+                      <Text variant="bodySm" tone="subdued" as="p">Scans page body content for broken internal links.</Text>
                     </BlockStack>
                     <InlineStack gap="300" blockAlign="center">
-                      {isDeepScanning && (
-                        <Text tone="subdued" variant="bodySm">
+                      {isDeepScanning ? (
+                        <Text tone="subdued" variant="bodySm" as="span">
                           Scanning page {scanProgress} of {Math.max(scanProgress, pages.length)}...
                         </Text>
-                      )}
-                      <Button onClick={handleStartDeepScan} loading={isDeepScanning}>
+                      ) : null}
+                      <Button size="large" onClick={handleStartDeepScan} loading={isDeepScanning} aria-label="Start deep scanning for broken body content links">
                         Scan Page Content
                       </Button>
                     </InlineStack>
                   </InlineStack>
                   
-                  {deepScanResults !== null && !isDeepScanning && (
+                  {deepScanResults !== null ? (!isDeepScanning ? (
                     <Box paddingBlockStart="200">
                       {deepScanResults.length === 0 ? (
                         <Banner tone="success">All internal links are healthy ✅</Banner>
@@ -804,34 +1028,36 @@ export default function MenuManager() {
                           <List type="bullet">
                             {deepScanResults.map((err, i) => (
                               <List.Item key={i}>
-                                <Text fontWeight="bold">{err.sourcePage}</Text>
-                                <Text tone="subdued" variant="bodySm"> ({err.sourceHandle}) contains broken link: </Text>
-                                <Text tone="critical">/{err.brokenType}/{err.brokenHandle}</Text>
-                                {err.suggestion && (
-                                  <Text tone="success" variant="bodySm">
+                                <Text fontWeight="bold" as="span">{err.sourcePage}</Text>
+                                <Text tone="subdued" variant="bodySm" as="span"> ({err.sourceHandle}) contains broken link: </Text>
+                                <Text tone="critical" as="span">/{err.brokenType}/{err.brokenHandle}</Text>
+                                {err.suggestion ? (
+                                  <Text tone="success" variant="bodySm" as="span">
                                     {" "}→ Did you mean: /{err.brokenType}/{err.suggestion}?
                                   </Text>
-                                )}
+                                ) : null}
                               </List.Item>
                             ))}
                           </List>
                         </BlockStack>
                       )}
                     </Box>
-                  )}
+                  ) : null) : null}
                 </BlockStack>
               </Card>
 
-              {fetcher.data?.message && <Banner tone="success">{fetcher.data.message}</Banner>}
-              {fetcher.data?.error && <Banner tone="critical">{fetcher.data.error}</Banner>}
+              {fetcher.data?.message ? <Banner tone="success">{fetcher.data.message}</Banner> : null}
+              {fetcher.data?.error ? <Banner tone="critical">{fetcher.data.error}</Banner> : null}
             </BlockStack>
           </Layout.Section>
 
           <Layout.Section>
-            {!activeMenu ? (
+            {isCreatingMenu ? (
+              <MenuCreator pages={pages} fetcher={fetcher} onCancel={handleCancelCreator} />
+            ) : (!activeMenu ? (
               <Card>
                 <Box padding="800" textAlign="center">
-                  <Text variant="headingLg" tone="subdued">Select a menu on the left to start editing.</Text>
+                  <Text variant="headingLg" tone="subdued" as="h2">Select a menu on the left to start editing, or create a new one.</Text>
                 </Box>
               </Card>
             ) : (
@@ -840,34 +1066,36 @@ export default function MenuManager() {
                 <InlineStack align="end">
                   <Button
                     variant="primary"
+                    size="large"
                     onClick={handleSaveMenu}
-                    loading={fetcher.state === "submitting" && fetcher.formData?.get("intent") === "updateMenu"}
+                    loading={fetcher.state === "submitting" ? (fetcher.formData?.get("intent") === "updateMenu" ? true : false) : false}
                     disabled={isLocked}
+                    aria-label="Save current menu configuration"
                   >
                     Save Menu
                   </Button>
                 </InlineStack>
 
-                {isLocked && (
+                {isLocked ? (
                   <Banner tone="warning" title="Main Menu is Locked">
-                    <Text>This menu is structurally locked to prevent accidental modifications. Unlock it using the button below to enable editing controls.</Text>
+                    <Text as="p">This menu is structurally locked to prevent accidental modifications. Unlock it using the button below to enable editing controls.</Text>
                   </Banner>
-                )}
+                ) : null}
 
-                {activeCounts && (
-                  <Banner tone={activeCounts.dead > 0 ? "critical" : activeCounts.draft > 0 ? "warning" : "success"}>
-                    <Text>
+                {activeCounts ? (
+                  <Banner tone={activeCounts.dead > 0 ? "critical" : (activeCounts.draft > 0 ? "warning" : "success")}>
+                    <Text as="p">
                       Scan complete — 🟢 {activeCounts.live} live &nbsp;|&nbsp;
                       🟡 {activeCounts.draft} draft/unverified &nbsp;|&nbsp;
                       🔴 {activeCounts.dead} dead
                     </Text>
                   </Banner>
-                )}
+                ) : null}
 
-                {scanned && activeMenu.handle === "footer" && orphanedCollections.length > 0 && (
+                {shouldCalculateOrphanCollections ? (orphanedCollections.length > 0 ? (
                   <Card>
                     <BlockStack gap="300">
-                      <Text variant="headingSm" tone="critical">Orphaned Collections — not in this menu</Text>
+                      <Text variant="headingSm" tone="critical" as="h3">Orphaned Collections — not in this menu</Text>
                       <InlineStack gap="200" wrap>
                         {orphanedCollections.map(c => (
                           <Badge key={c.id} tone="warning">{c.title}</Badge>
@@ -875,28 +1103,29 @@ export default function MenuManager() {
                       </InlineStack>
                     </BlockStack>
                   </Card>
-                )}
+                ) : null) : null}
 
                 <Card>
                   <BlockStack gap="300">
-                    <Text variant="headingSm">✨ Quick Actions</Text>
+                    <Text variant="headingSm" as="h3">✨ Quick Actions</Text>
                     <InlineStack gap="200" wrap>
-                      {activeMenu.handle === "footer" && (
-                        <Button icon={MagicIcon} onClick={autoFillCollections} disabled={isLocked}>🪄 Auto-Fill Missing Collections</Button>
-                      )}
-                      <Button icon={AlertTriangleIcon} onClick={autoCleanDeadLinks} disabled={isLocked}>🧹 Remove Dead Links</Button>
-                      <Button onClick={handleScan}>🔍 Scan This Menu</Button>
+                      {activeMenu.handle === "footer" ? (
+                        <Button size="large" icon={MagicIcon} onClick={autoFillCollections} disabled={isLocked} aria-label="Auto fill missing collections">🪄 Auto-Fill Missing Collections</Button>
+                      ) : null}
+                      <Button size="large" icon={AlertTriangleIcon} onClick={autoCleanDeadLinks} disabled={isLocked} aria-label="Remove dead links from menu">🧹 Remove Dead Links</Button>
+                      <Button size="large" onClick={handleScan} aria-label="Scan current active menu">🔍 Scan This Menu</Button>
                     </InlineStack>
-                    {activeMenu.handle === "footer" && (
+                    {activeMenu.handle === "footer" ? (
                       <Box paddingBlockStart="200">
                         <Checkbox
                           label="Auto-sync collections to footer"
                           checked={autoSyncFooter}
                           onChange={handleAutoSyncChange}
                           helpText="Automatically injects new collections when created in Shopify."
+                          aria-label="Toggle auto sync collections to footer menu checkbox"
                         />
                       </Box>
-                    )}
+                    ) : null}
                   </BlockStack>
                 </Card>
 
@@ -908,20 +1137,21 @@ export default function MenuManager() {
                       onChange={setMenuTitle}
                       autoComplete="off"
                       disabled={isLocked}
+                      aria-label="Input field for editing current menu title"
                     />
 
                     <Box padding="400" borderRadius="200" borderWidth="025" borderColor="border">
                       <BlockStack gap="400">
                         <InlineStack align="space-between">
                           <InlineStack gap="300" blockAlign="center">
-                            <Text variant="headingSm">Menu Links ({menuItems.length})</Text>
-                            {activeMenu.handle === "main-menu" && (
-                              <Button size="slim" onClick={toggleLock} loading={fetcher.state === "submitting" && fetcher.formData?.get("intent") === "toggleLock"}>
+                            <Text variant="headingSm" as="h3">Menu Links ({menuItems.length})</Text>
+                            {activeMenu.handle === "main-menu" ? (
+                              <Button size="large" onClick={toggleLock} loading={fetcher.state === "submitting" ? (fetcher.formData?.get("intent") === "toggleLock" ? true : false) : false} aria-label="Toggle menu lock status">
                                 {isLocked ? "🔓 Unlock Menu" : "🔒 Lock Menu"}
                               </Button>
-                            )}
+                            ) : null}
                           </InlineStack>
-                          <Button icon={PlusIcon} variant="primary" onClick={handleAddLink} disabled={isLocked}>Add Link</Button>
+                          <Button size="large" icon={PlusIcon} variant="primary" onClick={handleAddLink} disabled={isLocked} aria-label="Add new parent link to menu">Add Link</Button>
                         </InlineStack>
 
                         {menuItems.map((item, index) => {
@@ -938,14 +1168,14 @@ export default function MenuManager() {
                                   <InlineStack align="space-between" blockAlign="center">
                                     <InlineStack gap="200" blockAlign="center">
                                       {status ? <StatusBadge status={status} /> : <Badge tone="info">Not scanned</Badge>}
-                                      {status === "dead" && !isLocked && (
-                                        <Button size="micro" onClick={(e) => handleFixIt(e, item.id)}>Fix It</Button>
-                                      )}
+                                      {status === "dead" ? (!isLocked ? (
+                                        <Button size="large" onClick={(e) => handleFixIt(e, item.id)} aria-label={`Fix dead link for ${item.title}`}>Fix It</Button>
+                                      ) : null) : null}
                                     </InlineStack>
                                     <div style={{ display: "flex", gap: "4px", alignItems: "center" }}>
-                                      <button disabled={index === 0 || isLocked} onClick={(e) => handleMoveLink(e, index, "up")} style={actionBtnStyle} title="Move Up">↑</button>
-                                      <button disabled={index === menuItems.length - 1 || isLocked} onClick={(e) => handleMoveLink(e, index, "down")} style={actionBtnStyle} title="Move Down">↓</button>
-                                      <button disabled={isLocked} onClick={(e) => handleDeleteLink(e, item.id)} style={deleteBtnStyle} title="Delete link">✕</button>
+                                      <button disabled={index === 0 ? true : (isLocked ? true : false)} onClick={(e) => handleMoveLink(e, index, "up")} style={actionBtnStyle} title="Move Up" aria-label={`Move link ${item.title} up`}>↑</button>
+                                      <button disabled={index === menuItems.length - 1 ? true : (isLocked ? true : false)} onClick={(e) => handleMoveLink(e, index, "down")} style={actionBtnStyle} title="Move Down" aria-label={`Move link ${item.title} down`}>↓</button>
+                                      <button disabled={isLocked} onClick={(e) => handleDeleteLink(e, item.id)} style={deleteBtnStyle} title="Delete link" aria-label={`Delete link ${item.title}`}>✕</button>
                                     </div>
                                   </InlineStack>
                                   
@@ -957,6 +1187,7 @@ export default function MenuManager() {
                                         onChange={(v) => handleUpdateLink(item.id, "title", v)}
                                         autoComplete="off"
                                         disabled={isLocked}
+                                        aria-label={`Input field for link display name ${item.title}`}
                                       />
                                     </div>
                                     <div style={{ flex: 1, minWidth: "180px" }}>
@@ -965,8 +1196,9 @@ export default function MenuManager() {
                                         label="Quick Select"
                                         options={linkOptions}
                                         value={linkOptions.find(o => o.value === item.url) ? item.url : "custom"}
-                                        onChange={(v) => v !== "custom" && handleUpdateLink(item.id, "url", v)}
+                                        onChange={(v) => v !== "custom" ? handleUpdateLink(item.id, "url", v) : null}
                                         disabled={isLocked}
+                                        aria-label={`Quick select destination for link ${item.title}`}
                                       />
                                     </div>
                                     <div style={{ flex: 1, minWidth: "180px" }}>
@@ -976,12 +1208,9 @@ export default function MenuManager() {
                                         onChange={(v) => handleUpdateLink(item.id, "url", v)}
                                         autoComplete="off"
                                         disabled={isLocked}
+                                        aria-label={`Input field for URL path for link ${item.title}`}
                                         error={
-                                          scanned && status === "dead"
-                                            ? "Dead link — destination not found"
-                                            : scanned && status === "draft"
-                                            ? "Page may be unpublished"
-                                            : undefined
+                                          scanned ? (status === "dead" ? "Dead link — destination not found" : (status === "draft" ? "Page may be unpublished" : undefined)) : undefined
                                         }
                                       />
                                     </div>
@@ -1001,14 +1230,14 @@ export default function MenuManager() {
                                           <InlineStack align="space-between" blockAlign="center">
                                             <InlineStack gap="200" blockAlign="center">
                                               {childStatus ? <StatusBadge status={childStatus} /> : <Badge tone="info">Not scanned</Badge>}
-                                              {childStatus === "dead" && !isLocked && (
-                                                <Button size="micro" onClick={(e) => handleFixIt(e, child.id)}>Fix It</Button>
-                                              )}
+                                              {childStatus === "dead" ? (!isLocked ? (
+                                                <Button size="large" onClick={(e) => handleFixIt(e, child.id)} aria-label={`Fix dead sub-link for ${child.title}`}>Fix It</Button>
+                                              ) : null) : null}
                                             </InlineStack>
                                             <div style={{ display: "flex", gap: "4px", alignItems: "center" }}>
-                                              <button disabled={childIndex === 0 || isLocked} onClick={(e) => handleMoveSubLink(e, index, childIndex, "up")} style={actionBtnStyle} title="Move Up">↑</button>
-                                              <button disabled={childIndex === (item.items || []).length - 1 || isLocked} onClick={(e) => handleMoveSubLink(e, index, childIndex, "down")} style={actionBtnStyle} title="Move Down">↓</button>
-                                              <button disabled={isLocked} onClick={(e) => handleDeleteSubLink(e, item.id, child.id)} style={deleteBtnStyle} title="Delete sub-link">✕</button>
+                                              <button disabled={childIndex === 0 ? true : (isLocked ? true : false)} onClick={(e) => handleMoveSubLink(e, index, childIndex, "up")} style={actionBtnStyle} title="Move Up" aria-label={`Move sub-link ${child.title} up`}>↑</button>
+                                              <button disabled={childIndex === (item.items || []).length - 1 ? true : (isLocked ? true : false)} onClick={(e) => handleMoveSubLink(e, index, childIndex, "down")} style={actionBtnStyle} title="Move Down" aria-label={`Move sub-link ${child.title} down`}>↓</button>
+                                              <button disabled={isLocked} onClick={(e) => handleDeleteSubLink(e, item.id, child.id)} style={deleteBtnStyle} title="Delete sub-link" aria-label={`Delete sub-link ${child.title}`}>✕</button>
                                             </div>
                                           </InlineStack>
                                           
@@ -1020,6 +1249,7 @@ export default function MenuManager() {
                                                 onChange={(v) => handleUpdateSubLink(item.id, child.id, "title", v)}
                                                 autoComplete="off"
                                                 disabled={isLocked}
+                                                aria-label={`Input field for sub-link display name ${child.title}`}
                                               />
                                             </div>
                                             <div style={{ flex: 1, minWidth: "180px" }}>
@@ -1028,8 +1258,9 @@ export default function MenuManager() {
                                                 label="Quick Select"
                                                 options={linkOptions}
                                                 value={linkOptions.find(o => o.value === child.url) ? child.url : "custom"}
-                                                onChange={(v) => v !== "custom" && handleUpdateSubLink(item.id, child.id, "url", v)}
+                                                onChange={(v) => v !== "custom" ? handleUpdateSubLink(item.id, child.id, "url", v) : null}
                                                 disabled={isLocked}
+                                                aria-label={`Quick select destination for sub-link ${child.title}`}
                                               />
                                             </div>
                                             <div style={{ flex: 1, minWidth: "180px" }}>
@@ -1039,12 +1270,9 @@ export default function MenuManager() {
                                                 onChange={(v) => handleUpdateSubLink(item.id, child.id, "url", v)}
                                                 autoComplete="off"
                                                 disabled={isLocked}
+                                                aria-label={`Input field for URL path for sub-link ${child.title}`}
                                                 error={
-                                                  scanned && childStatus === "dead"
-                                                    ? "Dead link — destination not found"
-                                                    : scanned && childStatus === "draft"
-                                                    ? "Page may be unpublished"
-                                                    : undefined
+                                                  scanned ? (childStatus === "dead" ? "Dead link — destination not found" : (childStatus === "draft" ? "Page may be unpublished" : undefined)) : undefined
                                                 }
                                               />
                                             </div>
@@ -1053,7 +1281,7 @@ export default function MenuManager() {
                                       );
                                     })}
                                     <InlineStack>
-                                      <Button size="micro" icon={PlusIcon} onClick={() => handleAddSubLink(item.id)} disabled={isLocked}>Add Sub-link</Button>
+                                      <Button size="large" icon={PlusIcon} onClick={() => handleAddSubLink(item.id)} disabled={isLocked} aria-label={`Add new sub-link under ${item.title}`}>Add Sub-link</Button>
                                     </InlineStack>
                                   </BlockStack>
                                 </Box>
@@ -1070,8 +1298,9 @@ export default function MenuManager() {
                         variant="primary"
                         size="large"
                         onClick={handleSaveMenu}
-                        loading={fetcher.state === "submitting" && fetcher.formData?.get("intent") === "updateMenu"}
+                        loading={fetcher.state === "submitting" ? (fetcher.formData?.get("intent") === "updateMenu" ? true : false) : false}
                         disabled={isLocked}
+                        aria-label="Save current menu configuration"
                       >
                         Save Menu
                       </Button>
@@ -1079,14 +1308,14 @@ export default function MenuManager() {
                   </BlockStack>
                 </Card>
 
-                {activeMenuHistory.length > 0 && (
+                {activeMenuHistory.length > 0 ? (
                   <Card>
                     <BlockStack gap="300">
-                      <Text variant="headingSm">Change History</Text>
+                      <Text variant="headingSm" as="h3">Change History</Text>
                       <List type="bullet">
                         {activeMenuHistory.map((entry) => (
                           <List.Item key={entry.id}>
-                            <Text tone="subdued">
+                            <Text tone="subdued" as="span">
                               {new Date(entry.createdAt).toLocaleString()} — {entry.message}
                             </Text>
                           </List.Item>
@@ -1094,10 +1323,10 @@ export default function MenuManager() {
                       </List>
                     </BlockStack>
                   </Card>
-                )}
+                ) : null}
 
               </BlockStack>
-            )}
+            ))}
           </Layout.Section>
         </Layout>
       </Page>
