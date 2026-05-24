@@ -164,12 +164,12 @@ export const action = async ({ request }) => {
 
       const templateData = JSON.parse(assetData.asset.value);
 
-      // 4. Find Hero Living Mosaic Section
+      // 4. Find Hero Living Mosaic Section (Now checks for all naming variations)
       let targetSectionKey = null;
       let targetSection = null;
 
       for (const [key, section] of Object.entries(templateData.sections)) {
-        if (section.type === 'hero_mosaic_panel') {
+        if (section.type === 'hero-living-mosaic' || section.type === 'hero-mosaic-panel' || section.type === 'hero_mosaic_panel') {
           targetSectionKey = key;
           targetSection = section;
           break;
@@ -177,7 +177,7 @@ export const action = async ({ request }) => {
       }
 
       if (!targetSection) {
-        throw new Error("Hero Living Mosaic section (hero_mosaic_panel) not found on homepage template.");
+        throw new Error("Hero Living Mosaic section not found on homepage template. Make sure the section is added to the theme.");
       }
 
       // 5. Generate New Blocks
