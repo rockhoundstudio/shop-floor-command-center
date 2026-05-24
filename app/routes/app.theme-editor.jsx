@@ -164,12 +164,12 @@ export const action = async ({ request }) => {
 
       const templateData = JSON.parse(assetData.asset.value);
 
-      // 4. Find Hero Living Mosaic Section (Now checks for all naming variations)
+      // 4. Find Hero Living Mosaic Section
       let targetSectionKey = null;
       let targetSection = null;
 
       for (const [key, section] of Object.entries(templateData.sections)) {
-        if (section.type === 'hero-living-mosaic' || section.type === 'hero-mosaic-panel' || section.type === 'hero_mosaic_panel') {
+        if (section.type === 'hero-living-mosaic') {
           targetSectionKey = key;
           targetSection = section;
           break;
