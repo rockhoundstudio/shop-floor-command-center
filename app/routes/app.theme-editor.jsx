@@ -567,14 +567,17 @@ export default function ThemeEditorTab() {
       backAction={{ content: "Dashboard", onAction: () => navigate("/app") }}
     >
       {loaderError ? <Banner tone="critical">{loaderError}</Banner> : null}
-      {actionData?.error ? <Banner tone="critical">{actionData.error}</Banner> : null}
+      
+      {actionData?.error && !actionData?.debugTypes ? (
+        <Banner tone="critical">{actionData.error}</Banner>
+      ) : null}
       
       {/* ── NEW DEBUG BANNER ── */}
       {actionData?.debugTypes && (
         <Box paddingBlockEnd="400">
-          <Banner tone="info" title="Debug: Homepage Section Types Found">
+          <Banner tone={actionData.success ? "info" : "critical"} title={actionData.success ? "Debug: Homepage Section Types Found" : actionData.error}>
             <div style={{ fontFamily: 'monospace', wordBreak: 'break-all' }}>
-              {actionData.debugTypes.join(", ")}
+              <strong>Available Sections:</strong> {actionData.debugTypes.join(", ")}
             </div>
           </Banner>
         </Box>
