@@ -131,6 +131,107 @@ export const action = async ({ request }) => {
       return Response.json({ intent, assetKey: newKey, content, success: true, message: `Renamed to ${newKey}.`, timestamp });
     }
 
+    if (intent === "populateMosaic") {
+      const { admin } = await authenticate.admin(request);
+
+      // 1. Fetch all published collections
+      const collectionsQuery = await admin.graphql(`
+        query {
+          collections(first: 50, query: "published_status:published") {
+            edges { node { id } }
+          }
+        }
+      `);
+      const collectionsData = await collectionsQuery.json();
+      const collections = collectionsData.data.collections.edges.map(e => e.node.id);
+
+      // 2. Fetch all published pages
+      const pagesQuery = await admin.graphql(`
+        query {
+          pages(first: 50, query: "published_status:published") {
+            edges { node { id } }
+          }
+        }
+      `);
+      const pagesData = await pagesQuery.json();
+      const pages = pagesData.data.pages.edges.map(e => e.node.id);
+
+      // 3. Fetch index.json asset
+      const assetQuery = await admin.rest.get({
+        path: `themes/${THEME_ID}/assets`,
+        query: { "asset[key]": "templates/index.json" }
+      });
+      const assetData = await assetQuery.json();
+      if (!assetData.asset?.value) throw new Error("Could not load templates/index.json");
+
+      const templateData = JSON.parse(assetData.asset.value);
+
+      // 4. Find Hero Living Mosaic Section
+      let targetSectionKey = null;
+      let targetSection = null;
+
+      for (const [key, section] of Object.entries(templateData.sections)) {
+        if (section.type === 'hero_mosaic_panel') {
+          targetSectionKey = key;
+          targetSection = section;
+          break;
+        }
+      }
+
+      if (!targetSection) {
+        throw new Error("Hero Living Mosaic section (hero_mosaic_panel) not found on homepage template.");
+      }
+
+      // 5. Generate New Blocks
+      const newBlocks = {};
+      const newBlockOrder = [];
+
+      collections.forEach((id, index) => {
+        const blockId = `stone_collection_${index}`;
+        newBlocks[blockId] = {
+          type: "stone_collection",
+          settings: { collection: id }
+        };
+        newBlockOrder.push(blockId);
+      });
+
+      pages.forEach((id, index) => {
+        const blockId = `story_page_${index}`;
+        newBlocks[blockId] = {
+          type: "story_page",
+          settings: { page: id }
+        };
+        newBlockOrder.push(blockId);
+      });
+
+      // 6. Update Section in Template
+      targetSection.blocks = {
+        ...targetSection.blocks,
+        ...newBlocks
+      };
+      targetSection.block_order = [
+        ...(targetSection.block_order || []),
+        ...newBlockOrder
+      ];
+
+      templateData.sections[targetSectionKey] = targetSection;
+
+      // 7. POST updated template back to the theme
+      const saveResponse = await admin.rest.put({
+        path: `themes/${THEME_ID}/assets`,
+        data: {
+          asset: {
+            key: "templates/index.json",
+            value: JSON.stringify(templateData)
+          }
+        }
+      });
+
+      if (!saveResponse.ok) throw new Error("Failed to save populated index.json to theme.");
+
+      return Response.json({ intent, success: true, message: "Successfully populated the Living Mosaic wall!", timestamp });
+    }
+
     if (intent === "geminiAssist") {
       const content = formData.get("content");
       const instruction = formData.get("instruction");
@@ -224,6 +325,7 @@ export default function ThemeEditorTab() {
   const isSaving = isNavigating ? navigation.formData?.get("intent") === "saveAsset" : false;
   const isAssisting = isNavigating ? navigation.formData?.get("intent") === "geminiAssist" : false;
   const isResearching = isNavigating ? navigation.formData?.get("intent") === "geminiResearch" : false;
+  const isPopulating = isNavigating ? navigation.formData?.get("intent") === "populateMosaic" : false;
 
   // THE ONLY USEEFFECT IN THE FILE
   // The timestamp lock ensures this ONLY runs when a server action finishes and returns a new timestamp.
@@ -313,6 +415,10 @@ export default function ThemeEditorTab() {
   const handleGeminiResearch = useCallback(() => {
     submit({ intent: "geminiResearch", assetKey: selectedFile, content: currentContent }, { method: "post" });
   }, [submit, selectedFile, currentContent]);
+
+  const handlePopulateMosaic = useCallback(() => {
+    submit({ intent: "populateMosaic" }, { method: "post" });
+  }, [submit]);
 
   const lineCount = currentContent.split("\n").length;
   const charCount = currentContent.length;
@@ -452,6 +558,15 @@ export default function ThemeEditorTab() {
     >
       {loaderError ? <Banner tone="critical">{loaderError}</Banner> : null}
       {actionData?.error ? <Banner tone="critical">{actionData.error}</Banner> : null}
+      
+      {/* Explicit Success Banner for Mosaic Population */}
+      {actionData?.intent === "populateMosaic" && actionData?.success && (
+        <Box paddingBlockEnd="400">
+          <Banner tone="success" title="Success">
+            {actionData.message}
+          </Banner>
+        </Box>
+      )}
 
       {renderNewFileModal()}
       {renderRenameModal()}
@@ -459,6 +574,31 @@ export default function ThemeEditorTab() {
       {renderDuplicateModal()}
 
       <Layout>
+        {/* Mosaic Automation Action Card */}
+        <Layout.Section>
+          <Card>
+            <InlineStack align="space-between" blockAlign="center">
+              <BlockStack gap="200">
+                <Text variant="headingMd" as="h2">Living Mosaic Automation</Text>
+                <Text as="p" tone="subdued">Automatically pull all published collections and pages into the homepage hero section.</Text>
+              </BlockStack>
+              
+              <div style={{ display: 'inline-flex', minHeight: '48px', alignItems: 'stretch' }}>
+                <Button
+                  tone="success"
+                  variant="primary"
+                  size="large"
+                  loading={isPopulating}
+                  onClick={handlePopulateMosaic}
+                  aria-label="Populate Living Mosaic hero section with all collections and story pages"
+                >
+                  Populate Living Mosaic
+                </Button>
+              </div>
+            </InlineStack>
+          </Card>
+        </Layout.Section>
+
         <Layout.Section variant="oneThird">
           <Card padding="0">
             <Box padding="400" borderBottom="025" borderColor="border">
@@ -723,15 +863,4 @@ export default function ThemeEditorTab() {
                   Select a file from the tree to begin editing.
                 </Text>
                 <Box paddingBlockStart="400" display="flex" justifyContent="center">
-                   <Button size="large" onClick={() => setIsNewModalOpen(true)} accessibilityLabel="Create new file from empty state">
-                     Create New File
-                   </Button>
-                </Box>
-              </Box>
-            )}
-          </Card>
-        </Layout.Section>
-      </Layout>
-    </Page>
-  );
-}
+                   <Button size="large" onClick={() => setIsNewModalOpen(true)} accessibilityLabel="Create new file from empty state
