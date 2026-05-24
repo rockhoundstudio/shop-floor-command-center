@@ -24,7 +24,8 @@ export const loader = async ({ request }) => {
   const { shop, accessToken } = session;
   
   try {
-    const response = await fetch(`https://${shop}/admin/api/2024-10/themes/${THEME_ID}/assets.json`, {
+    // Added a cache-buster (?_t=Date) to force Shopify to return the freshest file tree
+    const response = await fetch(`https://${shop}/admin/api/2024-10/themes/${THEME_ID}/assets.json?_t=${Date.now()}`, {
       method: "GET",
       headers: {
         "Content-Type": "application/json",
@@ -128,11 +129,11 @@ export const action = async ({ request }) => {
 
       if (!deleteResponse.ok) throw new Error("Created new file but failed to delete original.");
 
-      return Response.json({ intent, assetKey: newKey, content, success: true, message: `Renamed to ${newKey}.`, timestamp });
+      // Returning oldKey allows the frontend to instantly map and update the file tree
+      return Response.json({ intent, oldKey: assetKey, assetKey: newKey, content, success: true, message: `Renamed to ${newKey}.`, timestamp });
     }
 
     if (intent === "populateMosaic") {
-      // 1. Fetch index.json asset using raw fetch
       const assetRes = await fetch(`https://${shop}/admin/api/2024-10/themes/${THEME_ID}/assets.json?asset[key]=templates/index.json`, {
         method: "GET",
         headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": accessToken }
@@ -142,7 +143,6 @@ export const action = async ({ request }) => {
 
       const templateData = JSON.parse(assetData.asset.value);
 
-      // 2. Find Hero Living Mosaic Section
       let targetSectionKey = null;
       let targetSection = null;
 
@@ -162,7 +162,6 @@ export const action = async ({ request }) => {
         });
       }
 
-      // 3. Fetch Collections using raw fetch
       const collectionsRes = await fetch(`https://${shop}/admin/api/2024-10/graphql.json`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": accessToken },
@@ -173,7 +172,6 @@ export const action = async ({ request }) => {
       const collectionsData = await collectionsRes.json();
       const collections = collectionsData.data.collections.edges.map(e => e.node.handle);
 
-      // 4. Fetch Pages using raw fetch
       const pagesRes = await fetch(`https://${shop}/admin/api/2024-10/graphql.json`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": accessToken },
@@ -184,7 +182,6 @@ export const action = async ({ request }) => {
       const pagesData = await pagesRes.json();
       const pages = pagesData.data.pages.edges.map(e => e.node.handle);
 
-      // 5. Generate New Blocks
       const newBlocks = {};
       const newBlockOrder = [];
 
@@ -206,7 +203,6 @@ export const action = async ({ request }) => {
         newBlockOrder.push(blockId);
       });
 
-      // 6. Update Section in Template
       targetSection.blocks = {
         ...targetSection.blocks,
         ...newBlocks
@@ -218,7 +214,6 @@ export const action = async ({ request }) => {
 
       templateData.sections[targetSectionKey] = targetSection;
 
-      // 7. POST updated template back to the theme using raw fetch
       const saveRes = await fetch(`https://${shop}/admin/api/2024-10/themes/${THEME_ID}/assets.json`, {
         method: "PUT",
         headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": accessToken },
@@ -296,13 +291,15 @@ export const action = async ({ request }) => {
 // ── REACT COMPONENT ──────────────────────────────────────────────────────────
 export default function ThemeEditorTab() {
   const loaderData = useLoaderData();
-  const files = loaderData?.files ? loaderData.files : [];
   const loaderError = loaderData?.error;
   
   const actionData = useActionData();
   const submit = useSubmit();
   const navigation = useNavigation();
   const navigate = useNavigate();
+
+  // Local state to instantly render file tree changes without waiting for Shopify's API cache
+  const [localFiles, setLocalFiles] = useState([]);
 
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedTab, setSelectedTab] = useState(0);
@@ -334,6 +331,13 @@ export default function ThemeEditorTab() {
   const isResearching = isNavigating ? navigation.formData?.get("intent") === "geminiResearch" : false;
   const isPopulating = isNavigating ? navigation.formData?.get("intent") === "populateMosaic" : false;
 
+  // Sync loader data to local file tree state
+  useEffect(() => {
+    if (loaderData?.files) {
+      setLocalFiles(loaderData.files);
+    }
+  }, [loaderData]);
+
   useEffect(() => {
     if (actionData) {
       if (actionData.timestamp !== lastProcessedActionRef.current) {
@@ -355,15 +359,22 @@ export default function ThemeEditorTab() {
             setCurrentContent(actionData.content);
             setIsNewModalOpen(false);
             setIsDuplicateModalOpen(false);
+            setNewFileName(""); 
+            setDuplicateInput("");
+            setLocalFiles((prev) => prev.some((f) => f.key === actionData.assetKey) ? prev : [...prev, { key: actionData.assetKey }]);
           } else if (actionData.intent === "renameAsset") {
             setSelectedFile(actionData.assetKey);
             setOriginalContent(actionData.content);
+            setCurrentContent(actionData.content);
             setIsRenameModalOpen(false);
+            setRenameInput(""); 
+            setLocalFiles((prev) => prev.map((f) => f.key === actionData.oldKey ? { ...f, key: actionData.assetKey } : f));
           } else if (actionData.intent === "deleteAsset") {
             setSelectedFile(null);
             setCurrentContent("");
             setOriginalContent("");
             setIsDeleteModalOpen(false);
+            setLocalFiles((prev) => prev.filter((f) => f.key !== actionData.assetKey));
           }
         } else if (actionData.intent === "geminiAssist") {
           setCurrentContent(actionData.modifiedContent);
@@ -427,7 +438,8 @@ export default function ThemeEditorTab() {
   const lineCount = currentContent.split("\n").length;
   const charCount = currentContent.length;
 
-  const filteredFiles = files.filter((f) => 
+  // Map from the fast local optimistic state instead of the slow loader payload
+  const filteredFiles = localFiles.filter((f) => 
     f.key.toLowerCase().includes(searchQuery.toLowerCase())
   );
   
@@ -579,33 +591,31 @@ export default function ThemeEditorTab() {
       {renderDeleteModal()}
       {renderDuplicateModal()}
 
-      <Layout>
-        {/* Living Mosaic Automation returned exactly to its original place */}
-        <Layout.Section>
-          <Card>
-            <InlineStack align="space-between" blockAlign="center">
-              <BlockStack gap="200">
-                <Text variant="headingMd" as="h2">Living Mosaic Automation</Text>
-                <Text as="p" tone="subdued">Automatically pull all published collections and pages into the homepage hero section.</Text>
-              </BlockStack>
-              
-              <div style={{ display: 'inline-flex', minHeight: '48px', alignItems: 'stretch' }}>
-                <Button
-                  tone="success"
-                  variant="primary"
-                  size="large"
-                  loading={isPopulating}
-                  onClick={handlePopulateMosaic}
-                  aria-label="Populate Living Mosaic hero section with all collections and story pages"
-                >
-                  Populate Living Mosaic
-                </Button>
-              </div>
-            </InlineStack>
-          </Card>
-        </Layout.Section>
+      <Box paddingBlockEnd="400">
+        <Card>
+          <InlineStack align="space-between" blockAlign="center">
+            <BlockStack gap="200">
+              <Text variant="headingMd" as="h2">Living Mosaic Automation</Text>
+              <Text as="p" tone="subdued">Automatically pull all published collections and pages into the homepage hero section.</Text>
+            </BlockStack>
+            
+            <div style={{ display: 'inline-flex', minHeight: '48px', alignItems: 'stretch' }}>
+              <Button
+                tone="success"
+                variant="primary"
+                size="large"
+                loading={isPopulating}
+                onClick={handlePopulateMosaic}
+                aria-label="Populate Living Mosaic hero section with all collections and story pages"
+              >
+                Populate Living Mosaic
+              </Button>
+            </div>
+          </InlineStack>
+        </Card>
+      </Box>
 
-        {/* File Tree Section restored to its left-side position */}
+      <Layout>
         <Layout.Section variant="oneThird">
           <Card padding="0">
             <Box padding="400" borderBottom="025" borderColor="border">
@@ -632,7 +642,6 @@ export default function ThemeEditorTab() {
                     <List type="bullet">
                       {visiblePinned.map((fileKey) => (
                         <List.Item key={fileKey}>
-                          {/* Button variant corrected to "plain" */}
                           <Button 
                             variant="plain" 
                             onClick={() => handleSelectFile(fileKey)} 
@@ -655,7 +664,6 @@ export default function ThemeEditorTab() {
           </Card>
         </Layout.Section>
 
-        {/* Main Editor Section restored to its right-side position */}
         <Layout.Section>
           <Card padding="0">
             {selectedFile ? (
