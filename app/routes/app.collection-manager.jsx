@@ -1,397 +1,971 @@
-import { useState, useEffect } from "react";
-import { useLoaderData, useActionData, useSubmit, useNavigation, useNavigate } from "@remix-run/react";
-import { Page, Layout, Card, BlockStack, InlineStack, Text, Badge, Divider, Button, Box, TextField, Grid, Banner } from "@shopify/polaris";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { useLoaderData, useActionData, useSubmit, useNavigation, useNavigate } from "react-router";
+import {
+  Page, Layout, Card, BlockStack, InlineStack, Text, List, Button, TextField,
+  Tabs, Badge, Box, Divider, Banner, Scrollable, Modal, Select, FormLayout, ButtonGroup
+} from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
-import { boundary } from "@shopify/shopify-app-react-router/server";
 
-// ==========================================
-// 1. ENGINE: FETCH LIVE COLLECTIONS & PRODUCTS
-// ==========================================
+const PINNED_FILES = [
+  "config/settings_schema.json",
+  "config/settings_data.json",
+  "layout/theme.liquid",
+  "sections/header.liquid",
+  "sections/footer.liquid",
+];
+
+// ── HELPER: GET ACTIVE THEME ─────────────────────────────────────────────────
+const getActiveTheme = async (admin) => {
+  const themeQuery = `#graphql
+    query {
+      themes(first: 1, roles: [MAIN]) {
+        edges {
+          node {
+            id
+            name
+          }
+        }
+      }
+    }
+  `;
+  const themeRes = await admin.graphql(themeQuery);
+  const themeJson = await themeRes.json();
+  const activeThemeNode = themeJson.data?.themes?.edges[0]?.node;
+  
+  if (!activeThemeNode) {
+    throw new Error("No active main theme found.");
+  }
+  
+  return {
+    id: activeThemeNode.id.split("/").pop(),
+    name: activeThemeNode.name
+  };
+};
+
+// ── SERVER LOADER ────────────────────────────────────────────────────────────
 export const loader = async ({ request }) => {
-  const { admin } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
+  const { shop, accessToken } = session;
   
   try {
-    let allCollections = [];
-    let cursor = null;
-    let hasNext = true;
-    let cycle = 0;
-
-    // Fetch all collections and their products
-    while (hasNext && cycle < 20) {
-      const collQuery = `#graphql
-        query($cursor: String) {
-          collections(first: 50, after: $cursor, sortKey: UPDATED_AT, reverse: true) {
-            pageInfo { hasNextPage endCursor }
-            edges {
-              node {
-                id
-                title
-                handle
-                products(first: 250) {
-                  edges { node { id title } }
-                }
-              }
-            }
-          }
-        }
-      `;
-      const res = await admin.graphql(collQuery, { variables: { cursor } });
-      const json = await res.json();
-      
-      if (json.errors) {
-        throw new Error(json.errors[0].message);
-      }
-
-      const nodes = (json.data?.collections?.edges || []).map(e => ({
-        id: e.node.id,
-        title: e.node.title,
-        handle: e.node.handle,
-        products: e.node.products.edges.map(pe => pe.node)
-      }));
-      
-      allCollections = allCollections.concat(nodes);
-      hasNext = json.data?.collections?.pageInfo?.hasNextPage || false;
-      cursor = json.data?.collections?.pageInfo?.endCursor || null;
-      cycle++;
+    const theme = await getActiveTheme(admin);
+    
+    const response = await fetch(`https://${shop}/admin/api/2024-10/themes/${theme.id}/assets.json?_t=${Date.now()}`, {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Shopify-Access-Token": accessToken,
+      },
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Shopify API responded with status: ${response.status}`);
     }
-
-    let allProducts = [];
-    cursor = null;
-    hasNext = true;
-    cycle = 0;
-
-    // Fetch all products and their collections
-    while (hasNext && cycle < 20) {
-      const prodQuery = `#graphql
-        query($cursor: String) {
-          products(first: 100, after: $cursor, sortKey: UPDATED_AT, reverse: true) {
-            pageInfo { hasNextPage endCursor }
-            edges {
-              node {
-                id
-                title
-                handle
-                collections(first: 10) {
-                  edges { node { id title } }
-                }
-              }
-            }
-          }
-        }
-      `;
-      const res = await admin.graphql(prodQuery, { variables: { cursor } });
-      const json = await res.json();
-      
-      if (json.errors) {
-        throw new Error(json.errors[0].message);
-      }
-
-      const nodes = (json.data?.products?.edges || []).map(e => ({
-        id: e.node.id,
-        title: e.node.title,
-        handle: e.node.handle,
-        collections: e.node.collections.edges.map(ce => ce.node)
-      }));
-      
-      allProducts = allProducts.concat(nodes);
-      hasNext = json.data?.products?.pageInfo?.hasNextPage || false;
-      cursor = json.data?.products?.pageInfo?.endCursor || null;
-      cycle++;
-    }
-
-    return Response.json({ collections: allCollections, products: allProducts });
+    
+    const data = await response.json();
+    return Response.json({ theme, files: data.assets ? data.assets : [] });
   } catch (error) {
-    console.error("Failed to load collection data:", error);
-    return Response.json({ collections: [], products: [], error: error.message });
+    console.error("Failed to load theme assets:", error);
+    return Response.json({ theme: null, files: [], error: `Failed to load theme files: ${error.message}` });
   }
 };
 
-// ==========================================
-// 2. TRANSMISSION: ACTIONS & MUTATIONS
-// ==========================================
+// ── SERVER ACTION ────────────────────────────────────────────────────────────
 export const action = async ({ request }) => {
-  const { admin } = await authenticate.admin(request);
-  const fd = await request.formData();
-  const intent = fd.get("intent");
+  const { admin, session } = await authenticate.admin(request);
+  const { shop, accessToken } = session;
+  const formData = await request.formData();
+  const intent = formData.get("intent");
+  const assetKey = formData.get("assetKey");
+  const timestamp = Date.now(); 
 
   try {
-    if (intent === "createCollection") {
-      const title = fd.get("title");
-      const res = await admin.graphql(`
-        mutation createCollection($title: String!) {
-          collectionCreate(input: { title: $title }) {
-            collection { id title }
-            userErrors { field message }
-          }
-        }
-      `, { variables: { title } });
-      const json = await res.json();
-      if (json.data?.collectionCreate?.userErrors?.length) {
-        return Response.json({ ok: false, error: json.data.collectionCreate.userErrors[0].message });
-      }
-      return Response.json({ ok: true, message: `Collection "${title}" created.` });
+    const theme = await getActiveTheme(admin);
+    const THEME_ID = theme.id;
+
+    if (intent === "fetchAsset") {
+      const response = await fetch(`https://${shop}/admin/api/2024-10/themes/${THEME_ID}/assets.json?asset[key]=${encodeURIComponent(assetKey)}`, {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Shopify-Access-Token": accessToken,
+        },
+      });
+
+      if (!response.ok) throw new Error("Failed to fetch asset content.");
+      
+      const data = await response.json();
+      return Response.json({ intent, assetKey, content: data.asset?.value ? data.asset.value : "", timestamp });
     }
 
-    if (intent === "deleteCollection") {
-      const id = fd.get("id");
-      const res = await admin.graphql(`
-        mutation deleteCollection($id: ID!) {
-          collectionDelete(input: { id: $id }) {
-            deletedCollectionId
-            userErrors { field message }
-          }
-        }
-      `, { variables: { id } });
-      const json = await res.json();
-      if (json.data?.collectionDelete?.userErrors?.length) {
-        return Response.json({ ok: false, error: json.data.collectionDelete.userErrors[0].message });
-      }
-      return Response.json({ ok: true, message: "Collection deleted successfully." });
+    if (intent === "saveAsset" || intent === "createAsset" || intent === "duplicateAsset") {
+      const content = formData.get("content");
+      const response = await fetch(`https://${shop}/admin/api/2024-10/themes/${THEME_ID}/assets.json`, {
+        method: "PUT",
+        headers: { 
+          "Content-Type": "application/json",
+          "X-Shopify-Access-Token": accessToken,
+        },
+        body: JSON.stringify({
+          asset: { key: assetKey, value: content },
+        }),
+      });
+      
+      if (!response.ok) throw new Error(`Failed to save asset: ${assetKey}`);
+      
+      return Response.json({ intent, assetKey, content, success: true, message: `Saved ${assetKey} successfully.`, timestamp });
     }
 
-    if (intent === "assignCollection") {
-      const productId = fd.get("productId");
-      const collectionId = fd.get("collectionId");
-      const res = await admin.graphql(`
-        mutation assignCollection($collectionId: ID!, $productIds: [ID!]!) {
-          collectionAddProducts(id: $collectionId, productIds: $productIds) {
-            collection { id title }
-            userErrors { field message }
-          }
-        }
-      `, { variables: { collectionId, productIds: [productId] } });
-      const json = await res.json();
-      if (json.data?.collectionAddProducts?.userErrors?.length) {
-        return Response.json({ ok: false, error: json.data.collectionAddProducts.userErrors[0].message });
-      }
-      return Response.json({ ok: true, message: "Product assigned to collection." });
+    if (intent === "deleteAsset") {
+      const response = await fetch(`https://${shop}/admin/api/2024-10/themes/${THEME_ID}/assets.json?asset[key]=${encodeURIComponent(assetKey)}`, {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Shopify-Access-Token": accessToken,
+        },
+      });
+
+      if (!response.ok) throw new Error(`Failed to delete asset: ${assetKey}`);
+      
+      return Response.json({ intent, assetKey, success: true, message: `Deleted ${assetKey} successfully.`, timestamp });
     }
 
-    if (intent === "removeCollection") {
-      const productId = fd.get("productId");
-      const collectionId = fd.get("collectionId");
-      const res = await admin.graphql(`
-        mutation removeCollection($collectionId: ID!, $productIds: [ID!]!) {
-          collectionRemoveProducts(id: $collectionId, productIds: $productIds) {
-            job { id }
-            userErrors { field message }
-          }
-        }
-      `, { variables: { collectionId, productIds: [productId] } });
-      const json = await res.json();
-      if (json.data?.collectionRemoveProducts?.userErrors?.length) {
-        return Response.json({ ok: false, error: json.data.collectionRemoveProducts.userErrors[0].message });
+    if (intent === "renameAsset") {
+      let newKey = formData.get("newKey");
+      const content = formData.get("content");
+
+      if (!newKey.includes('/')) {
+        const folder = assetKey.substring(0, assetKey.indexOf('/'));
+        newKey = `${folder}/${newKey}`;
       }
-      return Response.json({ ok: true, message: "Product removed from collection." });
+
+      const copyResponse = await fetch(`https://${shop}/admin/api/2024-10/themes/${THEME_ID}/assets.json`, {
+        method: "PUT",
+        headers: { 
+          "Content-Type": "application/json",
+          "X-Shopify-Access-Token": accessToken,
+        },
+        body: JSON.stringify({
+          asset: { key: newKey, source_key: assetKey },
+        }),
+      });
+
+      if (!copyResponse.ok) throw new Error(`Failed to copy file from ${assetKey} to ${newKey}. Check for invalid naming.`);
+
+      const deleteResponse = await fetch(`https://${shop}/admin/api/2024-10/themes/${THEME_ID}/assets.json?asset[key]=${encodeURIComponent(assetKey)}`, {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Shopify-Access-Token": accessToken,
+        },
+      });
+
+      if (!deleteResponse.ok) throw new Error(`Successfully created ${newKey} but failed to delete original file ${assetKey}.`);
+
+      return Response.json({ intent, oldKey: assetKey, assetKey: newKey, content, success: true, message: `Renamed to ${newKey}.`, timestamp });
     }
 
-    return Response.json({ ok: false, error: "Unknown intent" });
+    if (intent === "populateMosaic") {
+      const assetRes = await fetch(`https://${shop}/admin/api/2024-10/themes/${THEME_ID}/assets.json?asset[key]=templates/index.json`, {
+        method: "GET",
+        headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": accessToken }
+      });
+      const assetData = await assetRes.json();
+      if (!assetData.asset?.value) throw new Error("Could not load templates/index.json");
+
+      const templateData = JSON.parse(assetData.asset.value);
+
+      let targetSectionKey = null;
+      let targetSection = null;
+
+      for (const [key, section] of Object.entries(templateData.sections)) {
+        if (section.type === 'hero-mosaic-panel') {
+          targetSectionKey = key;
+          targetSection = section;
+          break;
+        }
+      }
+
+      if (!targetSection) {
+        return Response.json({ 
+          intent, 
+          error: "Hero Living Mosaic section not found on homepage template.", 
+          timestamp 
+        });
+      }
+
+      const collectionsRes = await fetch(`https://${shop}/admin/api/2024-10/graphql.json`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": accessToken },
+        body: JSON.stringify({
+          query: `query { collections(first: 50, query: "published_status:published") { edges { node { handle } } } }`
+        })
+      });
+      const collectionsData = await collectionsRes.json();
+      const collections = collectionsData.data.collections.edges.map(e => e.node.handle);
+
+      const pagesRes = await fetch(`https://${shop}/admin/api/2024-10/graphql.json`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": accessToken },
+        body: JSON.stringify({
+          query: `query { pages(first: 50, query: "published_status:published") { edges { node { handle } } } }`
+        })
+      });
+      const pagesData = await pagesRes.json();
+      const pages = pagesData.data.pages.edges.map(e => e.node.handle);
+
+      const newBlocks = {};
+      const newBlockOrder = [];
+
+      collections.forEach((handle, index) => {
+        const blockId = `stone_collection_${index}`;
+        newBlocks[blockId] = {
+          type: "stone_collection",
+          settings: { collection: handle }
+        };
+        newBlockOrder.push(blockId);
+      });
+
+      pages.forEach((handle, index) => {
+        const blockId = `story_page_${index}`;
+        newBlocks[blockId] = {
+          type: "story_page",
+          settings: { page: handle }
+        };
+        newBlockOrder.push(blockId);
+      });
+
+      targetSection.blocks = {
+        ...targetSection.blocks,
+        ...newBlocks
+      };
+      targetSection.block_order = [
+        ...(targetSection.block_order || []),
+        ...newBlockOrder
+      ];
+
+      templateData.sections[targetSectionKey] = targetSection;
+
+      const saveRes = await fetch(`https://${shop}/admin/api/2024-10/themes/${THEME_ID}/assets.json`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": accessToken },
+        body: JSON.stringify({
+          asset: {
+            key: "templates/index.json",
+            value: JSON.stringify(templateData)
+          }
+        })
+      });
+
+      if (!saveRes.ok) throw new Error("Failed to save populated index.json to theme.");
+
+      return Response.json({ 
+        intent, 
+        success: true, 
+        message: "Successfully populated the Living Mosaic wall!", 
+        timestamp 
+      });
+    }
+
+    if (intent === "geminiAssist") {
+      const content = formData.get("content");
+      const instruction = formData.get("instruction");
+      const apiKey = process.env.GEMINI_API_KEY;
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 15000);
+      try {
+        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key=${apiKey}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          signal: controller.signal,
+          body: JSON.stringify({ contents: [{ parts: [{ text: `You are a Shopify Liquid and theme architecture expert.\nFile: ${assetKey}\n\nCurrent file content:\n${content}\n\nInstruction: ${instruction}\n\nReturn only the complete modified file content, no explanation.` }] }] }),
+        });
+        clearTimeout(timeoutId);
+        const data = await res.json();
+        const modifiedContent = data.candidates?.[0]?.content?.parts?.[0]?.text ? data.candidates[0].content.parts[0].text : content;
+        return Response.json({ intent, assetKey, modifiedContent, timestamp });
+      } catch (error) {
+        clearTimeout(timeoutId);
+        throw new Error(`Gemini Assist failed: ${error.message}`);
+      }
+    }
+
+    if (intent === "geminiResearch") {
+      const content = formData.get("content");
+      const apiKey = process.env.GEMINI_API_KEY;
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 15000);
+      try {
+        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key=${apiKey}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          signal: controller.signal,
+          body: JSON.stringify({ contents: [{ parts: [{ text: `You are a Shopify Liquid and theme architecture expert.\nCatalog all schema settings and blocks in this file: ${assetKey}\n\nFile content:\n${content}\n\nReturn a structured list of all settings IDs, types, labels, and blocks found.` }] }] }),
+        });
+        clearTimeout(timeoutId);
+        const data = await res.json();
+        const researchContent = data.candidates?.[0]?.content?.parts?.[0]?.text ? data.candidates[0].content.parts[0].text : "No results returned.";
+        return Response.json({ intent, assetKey, researchContent, timestamp });
+      } catch (error) {
+        clearTimeout(timeoutId);
+        throw new Error(`Gemini Research failed: ${error.message}`);
+      }
+    }
+
+    return Response.json({ error: "Invalid intent", timestamp }, { status: 400 });
+
   } catch (error) {
-    return Response.json({ ok: false, error: error.message });
+    console.error("Action error:", error);
+    return Response.json({ error: error.message, timestamp }, { status: 500 });
   }
 };
 
-// ==========================================
-// 3. CHASSIS: POLARIS UI DASHBOARD
-// ==========================================
-export default function CollectionManager() {
-  const navigate = useNavigate();
-  const { collections = [], products = [], error } = useLoaderData() || {};
+// ── REACT COMPONENT ──────────────────────────────────────────────────────────
+export default function ThemeEditorTab() {
+  const loaderData = useLoaderData() || {};
+  const { theme, files = [], error: loaderError } = loaderData;
+  
   const actionData = useActionData();
   const submit = useSubmit();
   const navigation = useNavigation();
+  const navigate = useNavigate();
 
-  const [newTitle, setNewTitle] = useState("");
+  const [localFiles, setLocalFiles] = useState([]);
+
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedTab, setSelectedTab] = useState(0);
+  const [selectedFile, setSelectedFile] = useState(null);
+  
+  const [originalContent, setOriginalContent] = useState("");
+  const [currentContent, setCurrentContent] = useState("");
+  
+  const [showDiff, setShowDiff] = useState(false);
+  const [instruction, setInstruction] = useState("");
+  const [researchData, setResearchData] = useState("");
+
+  const [isNewModalOpen, setIsNewModalOpen] = useState(false);
+  const [isRenameModalOpen, setIsRenameModalOpen] = useState(false);
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [isDuplicateModalOpen, setIsDuplicateModalOpen] = useState(false);
+
+  const [newFileName, setNewFileName] = useState("");
+  const [newFileType, setNewFileType] = useState("sections");
+  const [renameInput, setRenameInput] = useState("");
+  const [duplicateInput, setDuplicateInput] = useState("");
+
+  const lastProcessedActionRef = useRef(null);
+
+  const isNavigating = navigation.state !== "idle";
+  const hasChanges = currentContent !== originalContent;
+  const isSaving = isNavigating && navigation.formData?.get("intent") === "saveAsset";
+  const isAssisting = isNavigating && navigation.formData?.get("intent") === "geminiAssist";
+  const isResearching = isNavigating && navigation.formData?.get("intent") === "geminiResearch";
+  const isPopulating = isNavigating && navigation.formData?.get("intent") === "populateMosaic";
 
   useEffect(() => {
-    if (actionData?.message) shopify.toast.show(actionData.message);
-    if (actionData?.error) shopify.toast.show(actionData.error, { isError: true });
-    if (actionData?.ok && navigation.state === "idle") {
-      setNewTitle("");
+    if (files.length > 0) {
+      setLocalFiles(files);
     }
-  }, [actionData, navigation.state]);
+  }, [files]);
 
-  const orphanedProducts = products.filter(p => p.collections.length === 0);
-  const multiCollectionProducts = products.filter(p => p.collections.length > 1);
+  useEffect(() => {
+    if (actionData) {
+      if (actionData.timestamp !== lastProcessedActionRef.current) {
+        lastProcessedActionRef.current = actionData.timestamp;
 
-  const handleCreateCollection = () => {
-    if (!newTitle.trim()) return;
-    submit({ intent: "createCollection", title: newTitle }, { method: "post" });
+        if (actionData.intent === "fetchAsset") {
+          setOriginalContent(actionData.content);
+          setCurrentContent(actionData.content);
+          setResearchData("");
+        } else if (actionData.success) {
+          shopify.toast.show(actionData.message);
+          
+          if (actionData.intent === "saveAsset") {
+            setOriginalContent(actionData.content);
+            setShowDiff(false);
+          } else if (actionData.intent === "createAsset" || actionData.intent === "duplicateAsset") {
+            setSelectedFile(actionData.assetKey);
+            setOriginalContent(actionData.content);
+            setCurrentContent(actionData.content);
+            setIsNewModalOpen(false);
+            setIsDuplicateModalOpen(false);
+            setNewFileName(""); 
+            setDuplicateInput("");
+            setLocalFiles((prev) => prev.some((f) => f.key === actionData.assetKey) ? prev : [...prev, { key: actionData.assetKey }]);
+          } else if (actionData.intent === "renameAsset") {
+            setSelectedFile(actionData.assetKey);
+            setOriginalContent(actionData.content);
+            setCurrentContent(actionData.content);
+            setIsRenameModalOpen(false);
+            setRenameInput(""); 
+            setLocalFiles((prev) => prev.map((f) => f.key === actionData.oldKey ? { ...f, key: actionData.assetKey } : f));
+          } else if (actionData.intent === "deleteAsset") {
+            setSelectedFile(null);
+            setCurrentContent("");
+            setOriginalContent("");
+            setIsDeleteModalOpen(false);
+            setLocalFiles((prev) => prev.filter((f) => f.key !== actionData.assetKey));
+          }
+        } else if (actionData.intent === "geminiAssist") {
+          setCurrentContent(actionData.modifiedContent);
+          setShowDiff(true);
+          shopify.toast.show("Gemini modifications applied to editor.");
+        } else if (actionData.intent === "geminiResearch") {
+          setResearchData(actionData.researchContent);
+          shopify.toast.show("Research complete.");
+        }
+      }
+    }
+  }, [actionData]);
+
+  const handleSelectFile = useCallback((key) => {
+    setSelectedFile(key);
+    submit({ intent: "fetchAsset", assetKey: key }, { method: "post" });
+  }, [submit]);
+
+  const handleSave = useCallback(() => {
+    if (!selectedFile) return;
+    submit({ intent: "saveAsset", assetKey: selectedFile, content: currentContent }, { method: "post" });
+  }, [submit, selectedFile, currentContent]);
+
+  const handleCreateNew = useCallback(() => {
+    const fullKey = `${newFileType}/${newFileName}.liquid`;
+    submit({ intent: "createAsset", assetKey: fullKey, content: "" }, { method: "post" });
+  }, [submit, newFileType, newFileName]);
+
+  const handleRename = useCallback(() => {
+    submit({ intent: "renameAsset", assetKey: selectedFile, newKey: renameInput, content: currentContent }, { method: "post" });
+  }, [submit, selectedFile, renameInput, currentContent]);
+
+  const handleDelete = useCallback(() => {
+    submit({ intent: "deleteAsset", assetKey: selectedFile }, { method: "post" });
+  }, [submit, selectedFile]);
+
+  const handleDuplicate = useCallback(() => {
+    submit({ intent: "duplicateAsset", assetKey: duplicateInput, content: currentContent }, { method: "post" });
+  }, [submit, duplicateInput, currentContent]);
+
+  const handleDiscard = useCallback(() => {
+    setCurrentContent(originalContent);
+  }, [originalContent]);
+
+  const handleGeminiAssist = useCallback(() => {
+    if (!instruction.trim()) {
+      shopify.toast.show("Please enter an instruction for Gemini.");
+      return;
+    }
+    submit({ intent: "geminiAssist", assetKey: selectedFile, content: currentContent, instruction }, { method: "post" });
+  }, [submit, selectedFile, currentContent, instruction]);
+
+  const handleGeminiResearch = useCallback(() => {
+    submit({ intent: "geminiResearch", assetKey: selectedFile, content: currentContent }, { method: "post" });
+  }, [submit, selectedFile, currentContent]);
+
+  const handlePopulateMosaic = useCallback(() => {
+    submit({ intent: "populateMosaic" }, { method: "post" });
+  }, [submit]);
+
+  const extractLiveSchema = (content) => {
+    const match = content.match(/\{%\s*schema\s*%\}([\s\S]*?)\{%\s*endschema\s*%\}/);
+    if (match && match[1]) {
+      try {
+        return JSON.parse(match[1]);
+      } catch (e) {
+        return null;
+      }
+    }
+    return null;
   };
 
-  const handleDeleteCollection = (id) => {
-    submit({ intent: "deleteCollection", id }, { method: "post" });
+  const lineCount = currentContent.split("\n").length;
+  const charCount = currentContent.length;
+  const liveSchema = extractLiveSchema(currentContent);
+
+  const filteredFiles = localFiles.filter((f) => 
+    f.key.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+  
+  const dynamicFolders = [...new Set(localFiles.map((f) => f.key.split('/')[0]))];
+
+  const visiblePinned = PINNED_FILES.filter((f) => 
+    f.toLowerCase().includes(searchQuery.toLowerCase()) && localFiles.some(lf => lf.key === f)
+  );
+
+  const renderFileGroup = (folderName) => {
+    const folderFiles = filteredFiles.filter((a) => a.key.startsWith(`${folderName}/`) && !PINNED_FILES.includes(a.key));
+    
+    return folderFiles.length > 0 ? (
+      <Box paddingBlockEnd="400" key={folderName}>
+        <Text variant="headingSm" as="h6" fontWeight="bold">{folderName.toUpperCase()}</Text>
+        <List type="bullet">
+          {folderFiles.map((file) => (
+            <List.Item key={file.key}>
+              <div style={{ minHeight: "48px", display: "flex", alignItems: "center" }}>
+                <Button 
+                  variant="plain" 
+                  onClick={() => handleSelectFile(file.key)} 
+                  textAlign="left"
+                  accessibilityLabel={`Open file ${file.key}`}
+                >
+                  {file.key.replace(`${folderName}/`, "")}
+                </Button>
+              </div>
+            </List.Item>
+          ))}
+        </List>
+      </Box>
+    ) : null;
+  };
+
+  const renderNewFileModal = () => {
+    return isNewModalOpen ? (
+      <Modal
+        open={isNewModalOpen}
+        onClose={() => setIsNewModalOpen(false)}
+        title="Create New File"
+        primaryAction={{ content: "Create", onAction: handleCreateNew, loading: isNavigating, accessibilityLabel: "Confirm create new file" }}
+        secondaryActions={[{ content: "Cancel", onAction: () => setIsNewModalOpen(false), accessibilityLabel: "Cancel create new file" }]}
+      >
+        <Modal.Section>
+          <FormLayout>
+            <div style={{ minHeight: "48px", display: "flex", width: "100%", alignItems: "center" }}>
+              <Select
+                label="Folder"
+                options={[
+                  { label: "Sections", value: "sections" },
+                  { label: "Snippets", value: "snippets" },
+                  { label: "Templates", value: "templates" },
+                  { label: "Assets", value: "assets" }
+                ]}
+                value={newFileType}
+                onChange={setNewFileType}
+              />
+            </div>
+            <div style={{ minHeight: "48px", display: "flex", width: "100%", alignItems: "center" }}>
+              <TextField
+                label="Filename (without extension)"
+                value={newFileName}
+                onChange={setNewFileName}
+                autoComplete="off"
+                accessibilityLabel="New filename input"
+              />
+            </div>
+          </FormLayout>
+        </Modal.Section>
+      </Modal>
+    ) : null;
+  };
+
+  const renderRenameModal = () => {
+    return isRenameModalOpen ? (
+      <Modal
+        open={isRenameModalOpen}
+        onClose={() => setIsRenameModalOpen(false)}
+        title="Rename File"
+        primaryAction={{ content: "Rename", onAction: handleRename, loading: isNavigating, accessibilityLabel: "Confirm rename file" }}
+        secondaryActions={[{ content: "Cancel", onAction: () => setIsRenameModalOpen(false), accessibilityLabel: "Cancel rename file" }]}
+      >
+        <Modal.Section>
+          <div style={{ minHeight: "48px", display: "flex", width: "100%", alignItems: "center" }}>
+            <TextField
+              label="New File Path (e.g., snippets/new-name.liquid)"
+              value={renameInput}
+              onChange={setRenameInput}
+              autoComplete="off"
+              accessibilityLabel="Rename file path input"
+            />
+          </div>
+        </Modal.Section>
+      </Modal>
+    ) : null;
+  };
+
+  const renderDeleteModal = () => {
+    return isDeleteModalOpen ? (
+      <Modal
+        open={isDeleteModalOpen}
+        onClose={() => setIsDeleteModalOpen(false)}
+        title="Delete File"
+        primaryAction={{ content: "Delete", onAction: handleDelete, destructive: true, loading: isNavigating, accessibilityLabel: "Confirm delete file" }}
+        secondaryActions={[{ content: "Cancel", onAction: () => setIsDeleteModalOpen(false), accessibilityLabel: "Cancel delete file" }]}
+      >
+        <Modal.Section>
+          <Text as="p">Are you sure you want to delete {selectedFile}? This cannot be undone.</Text>
+        </Modal.Section>
+      </Modal>
+    ) : null;
+  };
+
+  const renderDuplicateModal = () => {
+    return isDuplicateModalOpen ? (
+      <Modal
+        open={isDuplicateModalOpen}
+        onClose={() => setIsDuplicateModalOpen(false)}
+        title="Duplicate File"
+        primaryAction={{ content: "Duplicate", onAction: handleDuplicate, loading: isNavigating, accessibilityLabel: "Confirm duplicate file" }}
+        secondaryActions={[{ content: "Cancel", onAction: () => setIsDuplicateModalOpen(false), accessibilityLabel: "Cancel duplicate file" }]}
+      >
+        <Modal.Section>
+          <div style={{ minHeight: "48px", display: "flex", width: "100%", alignItems: "center" }}>
+            <TextField
+              label="New File Path (e.g., sections/copy.liquid)"
+              value={duplicateInput}
+              onChange={setDuplicateInput}
+              autoComplete="off"
+              accessibilityLabel="Duplicate file path input"
+            />
+          </div>
+        </Modal.Section>
+      </Modal>
+    ) : null;
   };
 
   return (
-    <Page 
-      title="Collection Manager" 
-      subtitle="Live taxonomy mapping and conflict detection"
+    <Page
+      title={theme ? `Theme Editor: ${theme.name}` : "Theme Editor"}
       fullWidth
       backAction={{ content: "Home", onAction: () => navigate("/app") }}
     >
-      {error && <Banner tone="critical">{error}</Banner>}
+      {loaderError && <Banner tone="critical">{loaderError}</Banner>}
+      
+      {actionData?.error && !actionData?.debugTypes && (
+        <Banner tone="critical">{actionData.error}</Banner>
+      )}
 
-      <BlockStack gap="600">
-        
-        {/* OVERVIEW DASHBOARD */}
-        <Grid>
-          <Grid.Cell columnSpan={{xs: 6, sm: 6, md: 4, lg: 4, xl: 4}}>
-            <Card padding="400">
-              <BlockStack gap="200">
-                <Text variant="headingMd" as="h3">Total Collections</Text>
-                <Text variant="headingXl" as="p" fontWeight="bold">{collections.length}</Text>
-              </BlockStack>
-            </Card>
-          </Grid.Cell>
-          <Grid.Cell columnSpan={{xs: 6, sm: 6, md: 4, lg: 4, xl: 4}}>
-            <Card padding="400" background={orphanedProducts.length > 0 ? "bg-surface-warning" : "bg-surface"}>
-              <BlockStack gap="200">
-                <Text variant="headingMd" as="h3">Orphaned Products</Text>
-                <InlineStack align="space-between">
-                  <Text variant="headingXl" as="p" fontWeight="bold">{orphanedProducts.length}</Text>
-                  {orphanedProducts.length > 0 && <Badge tone="warning">Requires Taxonomy</Badge>}
-                </InlineStack>
-              </BlockStack>
-            </Card>
-          </Grid.Cell>
-          <Grid.Cell columnSpan={{xs: 6, sm: 6, md: 4, lg: 4, xl: 4}}>
-            <Card padding="400" background={multiCollectionProducts.length > 0 ? "bg-surface-warning" : "bg-surface"}>
-              <BlockStack gap="200">
-                <Text variant="headingMd" as="h3">Multi-Collection Conflicts</Text>
-                <InlineStack align="space-between">
-                  <Text variant="headingXl" as="p" fontWeight="bold">{multiCollectionProducts.length}</Text>
-                  {multiCollectionProducts.length > 0 && <Badge tone="warning">Overlap Detected</Badge>}
-                </InlineStack>
-              </BlockStack>
-            </Card>
-          </Grid.Cell>
-        </Grid>
+      {actionData?.intent === "populateMosaic" && actionData?.success && (
+        <Box paddingBlockEnd="400">
+          <Banner tone="success" title="Success">
+            {actionData.message}
+          </Banner>
+        </Box>
+      )}
 
-        {/* COLLECTIONS ROSTER */}
-        <Card padding="0">
-          <Box padding="400" borderBottom="025" borderColor="border">
-            <BlockStack gap="400">
-              <Text variant="headingMd" as="h2">Live Collections Roster</Text>
-              <InlineStack gap="300" blockAlign="center" wrap={false}>
-                <Box width="100%">
-                  <div style={{ minHeight: "48px", display: "flex", alignItems: "center", width: "100%" }}>
-                    <TextField
-                      label="New Collection Title"
-                      labelHidden
-                      value={newTitle}
-                      onChange={setNewTitle}
-                      placeholder="Enter new collection title..."
-                      autoComplete="off"
-                    />
-                  </div>
-                </Box>
-                <div style={{ minHeight: "48px", display: "flex", alignItems: "center" }}>
-                  <Button
-                    variant="primary"
-                    accessibilityLabel="Create New Collection"
-                    onClick={handleCreateCollection}
-                    loading={navigation.state === "submitting" && navigation.formData?.get("intent") === "createCollection"}
-                  >
-                    Create Collection
-                  </Button>
-                </div>
-              </InlineStack>
+      {renderNewFileModal()}
+      {renderRenameModal()}
+      {renderDeleteModal()}
+      {renderDuplicateModal()}
+
+      <Box paddingBlockEnd="400">
+        <Card>
+          <InlineStack align="space-between" blockAlign="center">
+            <BlockStack gap="200">
+              <Text variant="headingMd" as="h2">Living Mosaic Automation</Text>
+              <Text as="p" tone="subdued">Automatically pull all published collections and pages into the homepage hero section.</Text>
             </BlockStack>
-          </Box>
-          <Box padding="400">
-            {collections.length === 0 && (
-              <div style={{ minHeight: "48px", display: "flex", alignItems: "center" }}>
-                <Text tone="subdued">No collections found on the shop floor.</Text>
-              </div>
-            )}
-            {collections.length > 0 && (
-              <BlockStack gap="400">
-                {collections.map(collection => (
-                  <Box key={collection.id}>
+            
+            <div style={{ display: 'inline-flex', minHeight: '48px', alignItems: 'stretch' }}>
+              <Button
+                tone="success"
+                variant="primary"
+                size="large"
+                loading={isPopulating}
+                onClick={handlePopulateMosaic}
+                accessibilityLabel="Populate Living Mosaic hero section with all collections and story pages"
+              >
+                Populate Living Mosaic
+              </Button>
+            </div>
+          </InlineStack>
+        </Card>
+      </Box>
+
+      <Layout>
+        <Layout.Section variant="oneThird">
+          <Card padding="0">
+            <Box padding="400" borderBottom="025" borderColor="border">
+              <BlockStack gap="300">
+                <Text variant="headingMd" as="h2">Live File Tree</Text>
+                <div style={{ minHeight: "48px", display: "flex", width: "100%" }}>
+                  <TextField
+                    labelHidden
+                    label="Search files"
+                    placeholder="Filter files by name..."
+                    value={searchQuery}
+                    onChange={setSearchQuery}
+                    autoComplete="off"
+                    clearButton
+                    onClearButtonClick={() => setSearchQuery("")}
+                    accessibilityLabel="Search files filter"
+                  />
+                </div>
+              </BlockStack>
+            </Box>
+            <Scrollable style={{ height: "75vh" }} focusable>
+              <Box padding="400">
+                {visiblePinned.length > 0 && (
+                  <Box paddingBlockEnd="400">
+                    <Text variant="headingSm" as="h6" fontWeight="bold">PINNED QUICK-ACCESS</Text>
+                    <List type="bullet">
+                      {visiblePinned.map((fileKey) => (
+                        <List.Item key={fileKey}>
+                          <div style={{ minHeight: "48px", display: "flex", alignItems: "center" }}>
+                            <Button 
+                              variant="plain" 
+                              onClick={() => handleSelectFile(fileKey)} 
+                              textAlign="left"
+                              accessibilityLabel={`Open pinned file ${fileKey}`}
+                            >
+                              <Text fontWeight="bold">{fileKey}</Text>
+                            </Button>
+                          </div>
+                        </List.Item>
+                      ))}
+                    </List>
+                  </Box>
+                )}
+                <Divider />
+                <Box paddingBlockStart="400">
+                  {dynamicFolders.map((folder) => renderFileGroup(folder))}
+                </Box>
+              </Box>
+            </Scrollable>
+          </Card>
+        </Layout.Section>
+
+        <Layout.Section>
+          <Card padding="0">
+            {selectedFile ? (
+              <BlockStack>
+                <Box padding="400" borderBottom="025" borderColor="border">
+                  <BlockStack gap="400">
                     <InlineStack align="space-between" blockAlign="center">
                       <BlockStack gap="100">
-                        <Text variant="headingSm" as="h3" fontWeight="bold">{collection.title}</Text>
-                        <Text tone="subdued">Handle: {collection.handle}</Text>
+                        <Text variant="headingLg" as="h2">{selectedFile}</Text>
+                        <InlineStack gap="300">
+                          <Badge tone="info">{lineCount} Lines</Badge>
+                          <Badge>{charCount} Characters</Badge>
+                        </InlineStack>
                       </BlockStack>
-                      <InlineStack gap="400" blockAlign="center">
-                        <Badge tone="info">{collection.products.length} Products</Badge>
+                      <InlineStack gap="300">
                         <div style={{ minHeight: "48px", display: "flex", alignItems: "center" }}>
-                          <Button
-                            tone="critical"
-                            accessibilityLabel={`Delete Collection ${collection.title}`}
-                            onClick={() => handleDeleteCollection(collection.id)}
-                            loading={navigation.state === "submitting" && navigation.formData?.get("id") === collection.id}
+                          <Button 
+                            onClick={() => setShowDiff(!showDiff)} 
+                            size="large"
+                            accessibilityLabel="Toggle Diff View"
                           >
-                            Delete
+                            {showDiff ? "Hide Diff" : "Show Diff"}
+                          </Button>
+                        </div>
+                        <div style={{ minHeight: "48px", display: "flex", alignItems: "center" }}>
+                          <Button 
+                            variant="primary" 
+                            onClick={handleSave} 
+                            loading={isSaving} 
+                            disabled={!hasChanges}
+                            size="large"
+                            accessibilityLabel="Save changes to Theme"
+                          >
+                            SAVE TO THEME
                           </Button>
                         </div>
                       </InlineStack>
                     </InlineStack>
-                    <Box paddingBlockStart="400"><Divider /></Box>
-                  </Box>
-                ))}
-              </BlockStack>
-            )}
-          </Box>
-        </Card>
 
-        {/* PRODUCTS ROSTER */}
-        <Card padding="0">
-          <Box padding="400" borderBottom="025" borderColor="border">
-            <Text variant="headingMd" as="h2">Product Taxonomy Status</Text>
-          </Box>
-          <Box padding="400">
-            {products.length === 0 && (
-              <div style={{ minHeight: "48px", display: "flex", alignItems: "center" }}>
-                <Text tone="subdued">No products found on the shop floor.</Text>
-              </div>
-            )}
-            {products.length > 0 && (
-              <BlockStack gap="400">
-                {products.map(product => {
-                  const isOrphaned = product.collections.length === 0;
-                  const isMulti = product.collections.length > 1;
+                    <ButtonGroup segmented>
+                      <div style={{ minHeight: "48px", display: "flex", alignItems: "center" }}>
+                        <Button size="large" onClick={() => setIsNewModalOpen(true)} accessibilityLabel="Create a new file">
+                          New File
+                        </Button>
+                      </div>
+                      <div style={{ minHeight: "48px", display: "flex", alignItems: "center" }}>
+                        <Button size="large" onClick={handleSave} disabled={!hasChanges} loading={isSaving} accessibilityLabel="Save current file">
+                          Save File
+                        </Button>
+                      </div>
+                      <div style={{ minHeight: "48px", display: "flex", alignItems: "center" }}>
+                        <Button size="large" onClick={() => { setRenameInput(selectedFile); setIsRenameModalOpen(true); }} accessibilityLabel="Rename current file">
+                          Rename File
+                        </Button>
+                      </div>
+                      <div style={{ minHeight: "48px", display: "flex", alignItems: "center" }}>
+                        <Button size="large" onClick={() => setIsDeleteModalOpen(true)} tone="critical" accessibilityLabel="Delete current file">
+                          Delete File
+                        </Button>
+                      </div>
+                      <div style={{ minHeight: "48px", display: "flex", alignItems: "center" }}>
+                        <Button size="large" onClick={() => { setDuplicateInput(selectedFile.replace('.liquid', '-copy.liquid')); setIsDuplicateModalOpen(true); }} accessibilityLabel="Duplicate current file">
+                          Duplicate File
+                        </Button>
+                      </div>
+                      <div style={{ minHeight: "48px", display: "flex", alignItems: "center" }}>
+                        <Button size="large" onClick={handleDiscard} disabled={!hasChanges} accessibilityLabel="Discard unsaved changes">
+                          Discard Changes
+                        </Button>
+                      </div>
+                    </ButtonGroup>
+                  </BlockStack>
+                </Box>
 
-                  return (
-                    <Box key={product.id}>
-                      <InlineStack align="space-between" blockAlign="center">
-                        <BlockStack gap="200">
-                          <Text variant="headingSm" as="h3" fontWeight="bold">{product.title}</Text>
-                          <InlineStack gap="200" wrap>
-                            {isOrphaned && <Badge tone="critical">Orphaned (No Collection)</Badge>}
-                            {isMulti && <Badge tone="warning">Multi-Collection Conflict</Badge>}
-                            {!isOrphaned && !isMulti && <Badge tone="success">Assigned</Badge>}
-                            
-                            {product.collections.map(c => (
-                              <Badge key={c.id} tone="info">{c.title}</Badge>
-                            ))}
+                <Tabs
+                  tabs={[
+                    { id: "editor", content: "Editor", accessibilityLabel: "Editor Tab" }, 
+                    { id: "research", content: "Research", accessibilityLabel: "Research Tab" },
+                    { id: "schema", content: "Live Schema", accessibilityLabel: "Schema Tab" }
+                  ]}
+                  selected={selectedTab}
+                  onSelect={setSelectedTab}
+                  fitted
+                >
+                  <Box padding="400">
+                    {selectedTab === 0 && (
+                      <BlockStack gap="400">
+                        <Box background="bg-surface-secondary" padding="400" borderRadius="200">
+                          <BlockStack gap="300">
+                            <Text variant="headingSm" as="h3">Gemini Assist (gemini-2.5-pro)</Text>
+                            <InlineStack gap="300" wrap={false} blockAlign="center">
+                              <Box width="100%">
+                                <div style={{ minHeight: "48px", display: "flex", width: "100%" }}>
+                                  <TextField
+                                    labelHidden
+                                    label="Instruction for Gemini"
+                                    value={instruction}
+                                    onChange={setInstruction}
+                                    placeholder="e.g. 'Add a new schema setting for background color with id custom_bg'"
+                                    autoComplete="off"
+                                    accessibilityLabel="Instruction input for Gemini Assist"
+                                  />
+                                </div>
+                              </Box>
+                              <div style={{ minHeight: "48px", display: "flex", alignItems: "center" }}>
+                                <Button onClick={handleGeminiAssist} loading={isAssisting} tone="success" size="large" accessibilityLabel="Send instruction to Gemini">
+                                  Modify Code
+                                </Button>
+                              </div>
+                            </InlineStack>
+                          </BlockStack>
+                        </Box>
+
+                        {showDiff ? (
+                          <InlineStack gap="400" wrap={false} align="start">
+                            <Box width="50%">
+                              <Text fontWeight="bold">Original Content</Text>
+                              <Box paddingBlockStart="200">
+                                <div style={{ minHeight: "48px", display: "flex", width: "100%" }}>
+                                  <TextField labelHidden label="Original file content" value={originalContent} multiline={25} monospaced autoComplete="off" readOnly accessibilityLabel="Original read-only content" />
+                                </div>
+                              </Box>
+                            </Box>
+                            <Box width="50%">
+                              <Text fontWeight="bold">Modified Content</Text>
+                              <Box paddingBlockStart="200">
+                                <div style={{ minHeight: "48px", display: "flex", width: "100%" }}>
+                                  <TextField labelHidden label="Modified file content" value={currentContent} onChange={setCurrentContent} multiline={25} monospaced autoComplete="off" accessibilityLabel="Editable modified content" />
+                                </div>
+                              </Box>
+                            </Box>
                           </InlineStack>
-                        </BlockStack>
-                        <div style={{ minHeight: "48px", display: "flex", alignItems: "center" }}>
-                          <Button
-                            accessibilityLabel={`View ${product.title} in Shopify Admin`}
-                            url={`shopify:admin/products/${product.id.split("/").pop()}`}
-                            target="_blank"
-                          >
-                            View
-                          </Button>
-                        </div>
-                      </InlineStack>
-                      <Box paddingBlockStart="400"><Divider /></Box>
-                    </Box>
-                  );
-                })}
-              </BlockStack>
-            )}
-          </Box>
-        </Card>
+                        ) : (
+                          <div style={{ minHeight: "48px", display: "flex", width: "100%" }}>
+                            <TextField labelHidden label="Code Editor" value={currentContent} onChange={setCurrentContent} multiline={30} monospaced autoComplete="off" disabled={isNavigating} accessibilityLabel="Main code editor" />
+                          </div>
+                        )}
+                      </BlockStack>
+                    )}
 
-      </BlockStack>
+                    {selectedTab === 1 && (
+                      <BlockStack gap="400">
+                        <InlineStack align="space-between" blockAlign="center">
+                          <Text variant="headingMd" as="h3">Prestige Schema Cataloger</Text>
+                          <div style={{ minHeight: "48px", display: "flex", alignItems: "center" }}>
+                            <Button onClick={handleGeminiResearch} loading={isResearching} size="large" accessibilityLabel="Run schema analysis using Gemini">
+                              Run Schema Analysis
+                            </Button>
+                          </div>
+                        </InlineStack>
+                        <Divider />
+                        {researchData ? (
+                          <Box background="bg-surface-secondary" padding="400" borderRadius="200">
+                            <Text as="pre" variant="bodyMd" style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                              {researchData}
+                            </Text>
+                          </Box>
+                        ) : (
+                          <Box padding="800">
+                            <Text alignment="center" tone="subdued">
+                              Click "Run Schema Analysis" to have Gemini map all settings and blocks in {selectedFile}.
+                            </Text>
+                          </Box>
+                        )}
+                      </BlockStack>
+                    )}
+
+                    {selectedTab === 2 && (
+                      <BlockStack gap="400">
+                        <Text variant="headingMd" as="h3">Live Extracted Section Schema</Text>
+                        <Divider />
+                        {liveSchema ? (
+                          <BlockStack gap="400">
+                            <Text variant="headingLg" as="h4">{liveSchema.name || "Unnamed Section"}</Text>
+                            {liveSchema.settings && liveSchema.settings.length > 0 ? (
+                              <BlockStack gap="300">
+                                <Text variant="headingSm" as="h5">Settings</Text>
+                                {liveSchema.settings.map((setting, idx) => (
+                                  <Box key={idx} padding="300" background="bg-surface-secondary" borderRadius="100">
+                                    <InlineStack align="space-between">
+                                      <Text fontWeight="bold">{setting.label || setting.id || "Unnamed Setting"}</Text>
+                                      <Badge tone="info">{setting.type}</Badge>
+                                    </InlineStack>
+                                    <Text tone="subdued">ID: {setting.id}</Text>
+                                  </Box>
+                                ))}
+                              </BlockStack>
+                            ) : (
+                              <Text tone="subdued">No top-level settings mapped.</Text>
+                            )}
+
+                            {liveSchema.blocks && liveSchema.blocks.length > 0 && (
+                              <BlockStack gap="300">
+                                <Text variant="headingSm" as="h5">Blocks</Text>
+                                {liveSchema.blocks.map((block, idx) => (
+                                  <Box key={idx} padding="300" background="bg-surface" borderColor="border" borderWidth="025" borderRadius="100">
+                                    <BlockStack gap="200">
+                                      <InlineStack align="space-between">
+                                        <Text fontWeight="bold">{block.name || block.type}</Text>
+                                        <Badge tone="success">{block.type}</Badge>
+                                      </InlineStack>
+                                      {block.settings && block.settings.map((bSet, bIdx) => (
+                                        <Box key={bIdx} paddingInlineStart="400">
+                                          <InlineStack align="space-between">
+                                            <Text tone="subdued">{bSet.label || bSet.id}</Text>
+                                            <Text tone="subdued" variant="bodySm">({bSet.type})</Text>
+                                          </InlineStack>
+                                        </Box>
+                                      ))}
+                                    </BlockStack>
+                                  </Box>
+                                ))}
+                              </BlockStack>
+                            )}
+                          </BlockStack>
+                        ) : (
+                          <Box padding="800">
+                            <Text alignment="center" tone="subdued">
+                              No valid JSON schema block detected in this file. (Must be a section file with a {'{% schema %}'} tag).
+                            </Text>
+                          </Box>
+                        )}
+                      </BlockStack>
+                    )}
+                  </Box>
+                </Tabs>
+              </BlockStack>
+            ) : (
+              <Box padding="800">
+                <Text alignment="center" variant="headingLg" tone="subdued">
+                  Select a file from the tree to begin editing.
+                </Text>
+                <Box paddingBlockStart="400" display="flex" justifyContent="center">
+                  <div style={{ minHeight: "48px", display: "flex", alignItems: "center" }}>
+                    <Button size="large" onClick={() => setIsNewModalOpen(true)} accessibilityLabel="Create new file from empty state">
+                      Create New File
+                    </Button>
+                  </div>
+                </Box>
+              </Box>
+            )}
+          </Card>
+        </Layout.Section>
+      </Layout>
     </Page>
   );
 }
-
-export const headers = (headersArgs) => {
-  return boundary.headers(headersArgs);
-};

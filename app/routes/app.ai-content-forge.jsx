@@ -1,453 +1,487 @@
 import { useState, useEffect } from "react";
-import { useFetcher, useLoaderData, useRouteError, isRouteErrorResponse, useNavigate } from "@remix-run/react";
-import { authenticate } from "../shopify.server";
+import { useLoaderData, useNavigate } from "react-router";
 import {
-  Page,
-  Layout,
-  Card,
-  Text,
-  Banner,
-  BlockStack,
+  Page, Layout, Card, BlockStack, InlineStack, Text, Badge, 
+  ProgressBar, Grid, List, Icon, Banner, Box, Link, Divider, Button
 } from "@shopify/polaris";
-import ForgeProductCard from "../components/ForgeProductCard";
+import { InfoIcon } from "@shopify/polaris-icons";
+import { authenticate } from "../shopify.server";
 
-export function ErrorBoundary() {
-  const error = useRouteError();
-  const navigate = useNavigate();
-  
-  return (
-    <Page 
-      title="Engine Fault" 
-      backAction={{ 
-        content: "Back", 
-        onAction: () => navigate("/app"),
-        accessibilityLabel: "Navigate back to Command Center"
-      }}
-    >
-      <Card background="bg-surface-critical">
-        <BlockStack gap="400">
-          <Text variant="headingLg" as="h1" fontWeight="bold">AI Forge Crashed</Text>
-          <Text as="p">
-            {isRouteErrorResponse(error)
-              ? `${error.status} ${error.statusText} - ${error.data}`
-              : error instanceof Error
-              ? error.message
-              : "Unknown engine failure."}
-          </Text>
-        </BlockStack>
-      </Card>
-    </Page>
-  );
-}
-
+// ==========================================
+// 1. ENGINE: LIVE CRAWLER & API SCANNER (LOADER)
+// ==========================================
 export const loader = async ({ request }) => {
-  const { admin } = await authenticate.admin(request);
-  
+  const { admin, session } = await authenticate.admin(request);
+  const { shop } = session;
+
   try {
     let allProducts = [];
+    let hasNext = true;
     let cursor = null;
-    let hasNextPage = true;
     let cycleCount = 0;
-    
-    while (hasNextPage && cycleCount < 20) {
-      const query = `
-        query GetProducts($cursor: String) {
-          products(first: 100, after: $cursor) {
+
+    // Upgraded GraphQL: Fetch all products with required fields
+    while (hasNext && cycleCount < 20) {
+      const prodQuery = `#graphql
+        query($cursor: String) {
+          products(first: 50, after: $cursor, sortKey: UPDATED_AT, reverse: true) {
             pageInfo { hasNextPage endCursor }
             edges {
               node {
                 id
                 title
                 handle
-                description
-                originMetafield: metafield(namespace: "custom", key: "origin_location") { value }
+                status
+                descriptionHtml
+                images(first: 5) { 
+                  edges { node { id url altText } } 
+                }
                 seo { title description }
-                media(first: 50) {
-                  edges { node { ... on MediaImage { id alt image { url } } } }
+                variants(first: 1) { 
+                  edges { node { price } } 
+                }
+                collections(first: 5) {
+                  edges { node { id title } }
                 }
               }
             }
           }
         }
       `;
-      
-      const res = await admin.graphql(query, { variables: { cursor } });
-      const json = await res.json();
-      
-      if (json.errors) {
-        throw new Error(json.errors[0].message);
+      const res = await admin.graphql(prodQuery, { variables: { cursor } });
+      const data = await res.json();
+
+      if (data.errors) {
+        throw new Error(data.errors[0].message);
       }
-      
-      const page = json.data?.products;
-      if (!page) {
-        break;
-      }
-      
-      const formattedNodes = page.edges.map((e) => {
-        const node = e.node;
-        const mappedImages = (node.media?.edges || [])
-          .filter(mediaEdge => mediaEdge.node.image)
-          .map(mediaEdge => ({
-            id: mediaEdge.node.id,
-            url: mediaEdge.node.image?.url || "",
-            altText: mediaEdge.node.alt || ""
-          }));
-          
+
+      const pageProducts = (data.data?.products?.edges || []).map(e => {
+        const p = e.node;
         return {
-          id: node.id,
-          title: node.title,
-          handle: node.handle,
-          description: node.description,
-          origin: node.originMetafield?.value || "",
-          seo: node.seo,
-          images: mappedImages
+          id: p.id,
+          title: p.title,
+          handle: p.handle,
+          status: p.status,
+          description: p.descriptionHtml || "",
+          price: p.variants?.edges?.[0]?.node?.price || "0",
+          seo: p.seo,
+          images: p.images?.edges?.map(img => img.node) || [],
+          collections: p.collections?.edges?.map(c => c.node) || []
         };
       });
-      
-      allProducts = allProducts.concat(formattedNodes);
-      hasNextPage = page.pageInfo.hasNextPage;
-      cursor = page.pageInfo.endCursor;
+
+      allProducts = allProducts.concat(pageProducts);
+      hasNext = data.data?.products?.pageInfo?.hasNextPage || false;
+      cursor = data.data?.products?.pageInfo?.endCursor || null;
       cycleCount++;
     }
-    
-    return { products: allProducts };
-  } catch (error) {
-    if (error instanceof Response) {
-      throw error;
+
+    // Fetch Pages
+    let allPages = [];
+    hasNext = true;
+    cursor = null;
+    while (hasNext) {
+      const pageQuery = `#graphql
+        query($cursor: String) {
+          pages(first: 50, after: $cursor) {
+            pageInfo { hasNextPage endCursor }
+            edges { node { id title handle publishedAt } }
+          }
+        }
+      `;
+      const res = await admin.graphql(pageQuery, { variables: { cursor } });
+      const data = await res.json();
+      allPages.push(...(data.data?.pages?.edges || []).map(e => e.node));
+      hasNext = data.data?.pages?.pageInfo?.hasNextPage;
+      cursor = data.data?.pages?.pageInfo?.endCursor;
     }
-    throw new Response(error.message || String(error), { status: 500, statusText: "Loader Engine Fault" });
-  }
-};
 
-export const action = async ({ request }) => {
-  const { admin } = await authenticate.admin(request);
-  
-  try {
-    const body = await request.formData();
-    const intent = body.get("intent");
+    // Fetch Collections
+    let allCollections = [];
+    hasNext = true;
+    cursor = null;
+    while (hasNext) {
+      const collQuery = `#graphql
+        query($cursor: String) {
+          collections(first: 50, after: $cursor) {
+            pageInfo { hasNextPage endCursor }
+            edges { node { id title handle } }
+          }
+        }
+      `;
+      const res = await admin.graphql(collQuery, { variables: { cursor } });
+      const data = await res.json();
+      allCollections.push(...(data.data?.collections?.edges || []).map(e => e.node));
+      hasNext = data.data?.collections?.pageInfo?.hasNextPage;
+      cursor = data.data?.collections?.pageInfo?.endCursor;
+    }
 
-    if (intent === "ai_suggest") {
-      const productId = body.get("productId");
-      const productTitle = body.get("productTitle");
-      const productDescription = body.get("productDescription");
-      const origin = body.get("origin") || "";
-      const customHook = body.get("customHook") || "";
-      const isPolishingTarget = body.get("isPolishingTarget") === "true";
+    // Fetch Menus
+    let rawMenuUrls = [];
+    hasNext = true;
+    cursor = null;
+    while (hasNext) {
+      const menuQuery = `#graphql
+        query($cursor: String) {
+          menus(first: 10, after: $cursor) {
+            pageInfo { hasNextPage endCursor }
+            edges {
+              node {
+                items {
+                  url
+                  items {
+                    url
+                    items { url }
+                  }
+                }
+              }
+            }
+          }
+        }
+      `;
+      const res = await admin.graphql(menuQuery, { variables: { cursor } });
+      const data = await res.json();
+      
+      const menus = data.data?.menus?.edges || [];
+      menus.forEach(({ node }) => {
+        const extractUrls = (items) => {
+          if (!items) return;
+          items.forEach(item => {
+            if (item.url) rawMenuUrls.push(item.url);
+            if (item.items && item.items.length > 0) extractUrls(item.items);
+          });
+        };
+        extractUrls(node.items);
+      });
+      
+      hasNext = data.data?.menus?.pageInfo?.hasNextPage;
+      cursor = data.data?.menus?.pageInfo?.endCursor;
+    }
 
-      const apiKey = process.env.GEMINI_API_KEY;
-      if (!apiKey) {
-        throw new Error("GEMINI_API_KEY is not set in Render environment variables.");
+    // Status Parsing
+    const draftProducts = allProducts.filter(p => p.status === "DRAFT");
+    const archivedProducts = allProducts.filter(p => p.status === "ARCHIVED");
+    const draftPages = allPages.filter(p => !p.publishedAt);
+    
+    const liveProducts = allProducts.filter(p => p.status === "ACTIVE");
+    const livePages = allPages.filter(p => p.publishedAt);
+    const liveCollections = allCollections;
+
+    // Content Penalty Calculation (Internal)
+    const missingContent = liveProducts.map(p => {
+      const missingImages = p.images.length === 0;
+      const missingAltText = p.images.some(img => !img.altText || img.altText.trim() === "");
+      const missingDesc = !p.description || p.description.trim() === "";
+      const missingSEO = !p.seo?.title || !p.seo?.description;
+      const missingPrice = parseFloat(p.price) === 0;
+      const noCollection = p.collections.length === 0;
+
+      const errors = [];
+      if (missingImages) errors.push("No Image");
+      if (missingAltText) errors.push("Missing Alt Text");
+      if (missingDesc) errors.push("No Description");
+      if (missingSEO) errors.push("Missing SEO");
+      if (missingPrice) errors.push("Price is $0");
+      if (noCollection) errors.push("No Collection");
+
+      if (errors.length > 0) {
+        return { id: p.id, title: p.title, errors };
       }
+      return null;
+    }).filter(Boolean);
 
-      const polishingInstruction = isPolishingTarget
-        ? `\n  CRITICAL SEO: You MUST naturally and organically weave these three exact phrases into the story without feeling stuffed: "custom stone polishing service", "heirloom rock polishing", and "turn your found rock into art".`
-        : "";
+    // URL CRAWLER
+    const baseUrl = "https://rockhoundstudio.com";
+    let urlsToCrawl = [
+      ...liveProducts.map(p => `${baseUrl}/products/${p.handle}`),
+      ...livePages.map(p => `${baseUrl}/pages/${p.handle}`),
+      ...liveCollections.map(c => `${baseUrl}/collections/${c.handle}`),
+      ...rawMenuUrls
+    ];
 
-      const prompt = `Generate SEO-optimized alt text and meta descriptions for Rockhound Studio that match how buyers search. Load natural keyword phrases: material type, color, shape, finish, origin location, "one of a kind", "handcrafted", "handmade stone", "gemstone pendant", "polished stone".
+    urlsToCrawl = [...new Set(urlsToCrawl)];
 
-Return ONLY valid JSON with exactly these three fields:
-{ "altText": "...", "seoTitle": "...", "metaDescription": "..." }
+    const checkUrl = async (url) => {
+      let targetUrl = url;
+      
+      if (targetUrl.includes("account.rockhoundstudio.com")) return { url: targetUrl, status: "SKIPPED" };
+      
+      if (targetUrl.includes(".myshopify.com")) {
+        targetUrl = targetUrl.replace(/https?:\/\/[^/]+\.myshopify\.com/, baseUrl);
+      }
+      if (targetUrl.startsWith("/")) targetUrl = baseUrl + targetUrl;
 
-RULES:
-- UNIQUE STONE MANDATE: Stones may share origin and material. Alt text must describe only the unique visual characteristics of this specific stone — color zones, pattern, finish, setting. Meta descriptions may reference shared origin locations as a story thread, but the visual description and bench truth must be unique to this stone. Never duplicate another stone's description.
+      if (!targetUrl.startsWith(baseUrl)) return { url: targetUrl, status: "SKIPPED (External)" };
 
-- altText: Visual description of true colors from the image only (ignore title color words) + keywords. End with "Rockhound Studio". Max 125 chars.
-
-- seoTitle: [Stone Name] + [Finished Type] + "One-of-a-Kind" + "Rockhound Studio". Max 70 chars.
-
-- metaDescription: Material + origin + "one of a kind". Load natural keyword phrases. Max 150 chars STRICT. NEVER end with a generic closer like "Add it to your collection today", "Shop now", "Perfect gift", or any call-to-action phrase. End on the stone's story or character — not a sales pitch. ${polishingInstruction}
-
-Foreman's Direct Note: ${customHook}
-Product Title: ${productTitle}
-Product Description: ${productDescription}
-Origin Context: ${origin}`;
-
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
-      const options = {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
-      };
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 15000);
 
       try {
-        const makeRequest = async () => {
-          const controller = new AbortController();
-          const timeout = setTimeout(() => controller.abort(), 45000);
-          try {
-            const res = await fetch(url, { ...options, signal: controller.signal });
-            clearTimeout(timeout);
-            return res;
-          } catch (e) {
-            clearTimeout(timeout);
-            if (e.name === "AbortError") {
-              throw new Error("Timeout: took longer than 45 seconds.");
-            }
-            throw new Error(`Network Fault: ${e.message}`);
-          }
-        };
-
-        let geminiRes = await makeRequest();
-
-        if (geminiRes.status === 429) {
-          await new Promise(resolve => setTimeout(resolve, 8000));
-          geminiRes = await makeRequest();
-          if (geminiRes.status === 429) {
-            throw new Error("Rate limited — rejected after retry.");
-          }
-        }
-
-        if (!geminiRes.ok) {
-          const errorText = await geminiRes.text();
-          throw new Error(`API Fault ${geminiRes.status}: ${errorText}`);
-        }
-
-        const data = await geminiRes.json();
-        let rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-
-        const t = String.fromCharCode(96);
-        const jsonWrapper = t + t + t + "json";
-        const codeWrapper = t + t + t;
-        rawText = rawText.replace(new RegExp(jsonWrapper, "gi"), "");
-        rawText = rawText.replace(new RegExp(codeWrapper, "gi"), "");
-        rawText = rawText.trim();
-
-        let parsedData;
-        try {
-          parsedData = JSON.parse(rawText);
-        } catch (e) {
-          throw new Error("Returned invalid JSON format.");
-        }
-
-        if (!parsedData?.altText || !parsedData?.seoTitle || !parsedData?.metaDescription) {
-          throw new Error("Empty response — try again.");
-        }
-
-        return { ok: true, intent, productId, suggestion: parsedData };
-
-      } catch (geminiError) {
-        return { ok: false, error: geminiError.message };
-      }
-    }
-
-    if (intent === "save_alt") {
-      const productId = body.get("productId");
-      const pairs = JSON.parse(body.get("pairs"));
-      const chunkSize = 10;
-      
-      for (let i = 0; i < pairs.length; i += chunkSize) {
-        const chunk = pairs.slice(i, i + chunkSize);
-        const filesInput = chunk.map(({ id, alt }) => ({ id, alt }));
-        const res = await admin.graphql(
-          `mutation fileUpdate($files: [FileUpdateInput!]!) {
-            fileUpdate(files: $files) {
-              files { ... on MediaImage { id alt } }
-              userErrors { field message }
-            }
-          }`, { variables: { files: filesInput } }
-        );
-        const json = await res.json();
+        const response = await fetch(targetUrl, { 
+          method: "HEAD", 
+          signal: controller.signal,
+          headers: { "User-Agent": "Rockhound-Diagnostic-Bot/1.0" }
+        });
+        clearTimeout(timeoutId);
         
-        if (json.errors) {
-          throw new Error(json.errors[0].message);
-        }
-        if (json.data.fileUpdate.userErrors.length > 0) {
-          throw new Error(json.data.fileUpdate.userErrors[0].message);
-        }
-        if (i + chunkSize < pairs.length) {
-          await new Promise((resolve) => setTimeout(resolve, 1000));
-        }
+        return { url: targetUrl, ok: response.ok, status: response.status };
+      } catch (error) {
+        clearTimeout(timeoutId);
+        return { url: targetUrl, ok: false, status: error.name === "AbortError" ? "TIMEOUT" : "ERROR" };
       }
-      return { ok: true, intent, productId };
-    }
+    };
 
-    if (intent === "save_seo") {
-      const productId = body.get("productId");
-      const seoTitle = body.get("seoTitle");
-      const seoDescription = body.get("seoDescription");
-      
-      const res = await admin.graphql(
-        `mutation UpdateSEO($productId: ID!, $seoTitle: String!, $seoDescription: String!) {
-          productUpdate(input: { id: $productId, seo: { title: $seoTitle, description: $seoDescription } }) {
-            product { id seo { title description } }
-            userErrors { field message }
-          }
-        }`, { variables: { productId, seoTitle, seoDescription } }
-      );
-      
-      const json = await res.json();
-      if (json.errors) {
-        throw new Error(json.errors[0].message);
-      }
-      if (json.data.productUpdate.userErrors.length > 0) {
-        throw new Error(json.data.productUpdate.userErrors[0].message);
-      }
-      
-      return { ok: true, intent, productId, seo: { title: seoTitle, description: seoDescription } };
-    }
+    const crawlResults = await Promise.allSettled(urlsToCrawl.map(checkUrl));
+    
+    const brokenLinks = crawlResults
+      .filter(r => r.status === "fulfilled" && !r.value.ok && r.value.status !== "SKIPPED")
+      .map(r => r.value);
 
-    return { ok: false, error: "Unknown intent" };
+    const validPaths = [
+      ...liveProducts.map(p => `/products/${p.handle}`),
+      ...livePages.map(p => `/pages/${p.handle}`),
+      ...liveCollections.map(c => `/collections/${c.handle}`)
+    ];
+    
+    const ghostLinks = brokenLinks.filter(link => {
+      const path = link.url.replace(baseUrl, "");
+      return !validPaths.includes(path);
+    });
+
+    // Score Assembly
+    let totalScore = 100;
+    const brokenLinkPenalty = Math.min(40, brokenLinks.length * 5);
+    totalScore -= brokenLinkPenalty;
+    const totalMissingFields = missingContent.reduce((sum, item) => sum + item.errors.length, 0);
+    const missingContentPenalty = Math.min(20, totalMissingFields * 2);
+    totalScore -= missingContentPenalty;
+
+    return Response.json({
+      shop,
+      score: Math.max(0, totalScore),
+      brokenLinks,
+      ghostLinks,
+      products: allProducts, // Passes full updated array to the component
+      drafts: {
+        products: draftProducts.length,
+        archived: archivedProducts.length,
+        pages: draftPages.length
+      }
+    });
+
   } catch (error) {
-    if (error instanceof Response) {
-      throw error;
-    }
-    return { ok: false, error: error.message || "An internal engine fault occurred." };
+    console.error("HARD MISFIRE IN LOADER:", error.message);
+    return Response.json({ error: `Diagnostic scanner failed: ${error.message}` });
   }
 };
 
-export default function AiContentForgeTab() {
+
+// ==========================================
+// 2. CHASSIS: POLARIS UI DASHBOARD
+// ==========================================
+export default function StoreHealthCheckTab() {
+  const data = useLoaderData();
   const navigate = useNavigate();
-  const { products: initialProducts } = useLoaderData();
-  const fetcher = useFetcher();
-  
-  const [products, setProducts] = useState(initialProducts);
-  const [suggestions, setSuggestions] = useState({});
-  const [suggestingId, setSuggestingId] = useState(null);
-  const [savingAltId, setSavingAltId] = useState(null);
-  const [savingSeoId, setSavingSeoId] = useState(null);
-  const [toast, setToast] = useState(null);
-  const [pageError, setPageError] = useState(null);
-  const [globalCooldown, setGlobalCooldown] = useState(0);
 
-  useEffect(() => {
-    if (globalCooldown <= 0) return;
-    const timer = setInterval(() => {
-      setGlobalCooldown((prev) => Math.max(0, prev - 1));
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [globalCooldown]);
+  if (data.error) {
+    return (
+      <Page
+        title="Diagnostic Bay: Store Health Check"
+        backAction={{ content: "Dashboard", onAction: () => navigate("/app") }}
+      >
+        <Banner tone="critical">{data.error}</Banner>
+      </Page>
+    );
+  }
 
-  useEffect(() => {
-    if (!toast) return;
-    const timer = setTimeout(() => setToast(null), 3000);
-    return () => clearTimeout(timer);
-  }, [toast]);
-
-  useEffect(() => {
-    if (fetcher.state === "idle" && fetcher.data) {
-      setSuggestingId(null); 
-      setSavingAltId(null); 
-      setSavingSeoId(null);
-      
-      if (!fetcher.data.ok) {
-        setPageError(`❌ Fault: ${fetcher.data.error}`);
-        return;
-      }
-      
-      setPageError(null);
-      const { intent, productId } = fetcher.data;
-      
-      if (intent === "ai_suggest") {
-        setSuggestions((prev) => ({ ...prev, [productId]: fetcher.data.suggestion }));
-        setToast({ message: "✨ AI Forged Content Generated", tone: "success" });
-      } else if (intent === "save_alt") {
-        const updatedAlt = suggestions[productId]?.altText || "";
-        setProducts((prev) => prev.map((p) => {
-          if (p.id === productId) {
-            return { ...p, images: p.images.map((img) => ({ ...img, altText: updatedAlt })) };
-          }
-          return p;
-        }));
-        setToast({ message: "✓ Alt Text Bulk Updated", tone: "success" });
-      } else if (intent === "save_seo") {
-        setProducts((prev) => prev.map((p) => (p.id === productId ? { ...p, seo: fetcher.data.seo } : p)));
-        setToast({ message: "✓ SEO Data Saved", tone: "success" });
-      }
-    }
-  }, [fetcher.state, fetcher.data, suggestions]);
-
-  const handleSuggest = (product, customHook, isPolishingTarget) => {
-    setPageError(null);
-    setSuggestingId(product.id);
-    setGlobalCooldown(120);
-    const fd = new FormData();
-    fd.append("intent", "ai_suggest");
-    fd.append("productId", product.id);
-    fd.append("productTitle", product.title);
-    fd.append("productDescription", product.description || "");
-    fd.append("origin", product.origin || "");
-    fd.append("customHook", customHook || "");
-    fd.append("isPolishingTarget", isPolishingTarget ? "true" : "false");
-    fetcher.submit(fd, { method: "post" });
+  const getTone = (score) => {
+    if (score >= 90) return "success";
+    if (score >= 70) return "warning";
+    return "critical";
   };
-
-  const handleSaveAlt = (product) => {
-    setSavingAltId(product.id);
-    const altText = suggestions[product.id]?.altText;
-    const pairs = product.images.map((img) => ({ id: img.id, alt: altText }));
-    const fd = new FormData();
-    fd.append("intent", "save_alt");
-    fd.append("productId", product.id);
-    fd.append("pairs", JSON.stringify(pairs));
-    fetcher.submit(fd, { method: "post" });
-  };
-
-  const handleSaveSeo = (product) => {
-    setSavingSeoId(product.id);
-    const seoTitle = suggestions[product.id]?.seoTitle;
-    const seoDesc = suggestions[product.id]?.metaDescription;
-    const fd = new FormData();
-    fd.append("intent", "save_seo");
-    fd.append("productId", product.id);
-    fd.append("seoTitle", seoTitle);
-    fd.append("seoDescription", seoDesc);
-    fetcher.submit(fd, { method: "post" });
-  };
-
-  const updateSuggestionField = (productId, field, value) => {
-    setSuggestions((prev) => ({ ...prev, [productId]: { ...prev[productId], [field]: value } }));
-  };
+  const tone = getTone(data.score);
 
   return (
     <Page
-      title="⚡ AI Content Forge"
-      subtitle="Generate premium, story-driven Alt Text and SEO descriptions powered by Gemini."
-      backAction={{ 
-        content: "Back", 
-        onAction: () => navigate("/app"),
-        accessibilityLabel: "Navigate back to Command Center"
-      }}
+      title="Diagnostic Bay: Store Health Check"
+      subtitle="Live URL Crawler & Content Audit"
+      fullWidth
+      backAction={{ content: "Dashboard", onAction: () => navigate("/app") }}
     >
-      {toast && (
-        <div style={{ position: "fixed", top: 16, right: 16, zIndex: 9999 }}>
-          <Banner tone={toast.tone}>{toast.message}</Banner>
-        </div>
-      )}
-      
-      <Layout>
-        {pageError && (
-          <Layout.Section>
-            <Banner tone="critical" title="Action Failed" onDismiss={() => setPageError(null)}>
-              <Text as="p">{pageError}</Text>
-            </Banner>
-          </Layout.Section>
-        )}
+      <BlockStack gap="600">
         
-        <Layout.Section>
-          <BlockStack gap="500">
-            {products.map((product) => (
-              <ForgeProductCard
-                key={product.id}
-                product={product}
-                activeSuggestion={suggestions[product.id]}
-                isSuggesting={suggestingId === product.id}
-                isSavingAlt={savingAltId === product.id}
-                isSavingSeo={savingSeoId === product.id}
-                globalCooldown={globalCooldown}
-                onSuggest={handleSuggest}
-                onSaveAlt={handleSaveAlt}
-                onSaveSeo={handleSaveSeo}
-                onUpdateSuggestionField={updateSuggestionField}
-              />
-            ))}
-            
-            {products.length === 0 && (
-              <Banner tone="info">
-                <Text as="p">No products found to forge content for.</Text>
-              </Banner>
-            )}
+        <Card padding="400">
+          <BlockStack gap="400">
+            <InlineStack align="space-between" blockAlign="center">
+              <Text variant="headingLg" as="h2">Polish & Shine Score</Text>
+              <Badge tone={tone} size="large">{data.score} / 100</Badge>
+            </InlineStack>
+            <ProgressBar progress={data.score} tone={tone} size="medium" />
+            <Text tone="subdued">
+              Score starts at 100. Deductions: -5 per broken link (max -40), -2 per missing content field (max -20). Drafts do not penalize.
+            </Text>
           </BlockStack>
+        </Card>
+
+        <Grid>
+          <Grid.Cell columnSpan={{xs: 6, sm: 6, md: 6, lg: 6, xl: 6}}>
+            <Card>
+              <Box paddingBlockEnd="400" borderBottom="025" borderColor="border">
+                <InlineStack align="space-between" blockAlign="center">
+                  <Text variant="headingMd" as="h3">Broken Links (Crawler)</Text>
+                  <Badge tone={data.brokenLinks.length > 0 ? "critical" : "success"}>
+                    {data.brokenLinks.length} Found
+                  </Badge>
+                </InlineStack>
+              </Box>
+              <Box paddingBlockStart="400">
+                {data.brokenLinks.length === 0 && (
+                  <Text tone="success">🟢 All live routes returned 200 OK.</Text>
+                )}
+                {data.brokenLinks.length > 0 && (
+                  <BlockStack gap="300">
+                    {data.brokenLinks.map((link, i) => (
+                      <div key={i} style={{ minHeight: "48px", display: "flex", alignItems: "center", width: "100%" }}>
+                        <InlineStack align="space-between" blockAlign="center" style={{ width: "100%" }}>
+                          <Link url={link.url} target="_blank">{link.url.replace("https://rockhoundstudio.com", "")}</Link>
+                          <Badge tone="critical">HTTP {link.status}</Badge>
+                        </InlineStack>
+                      </div>
+                    ))}
+                  </BlockStack>
+                )}
+              </Box>
+            </Card>
+          </Grid.Cell>
+
+          <Grid.Cell columnSpan={{xs: 6, sm: 6, md: 6, lg: 6, xl: 6}}>
+            <Card>
+              <Box paddingBlockEnd="400" borderBottom="025" borderColor="border">
+                <InlineStack align="space-between" blockAlign="center">
+                  <Text variant="headingMd" as="h3">Drafts & Archived</Text>
+                  <Badge tone="info">No Score Penalty</Badge>
+                </InlineStack>
+              </Box>
+              <Box paddingBlockStart="400">
+                <List type="bullet">
+                  <List.Item>
+                    <InlineStack gap="200">
+                      <Icon source={InfoIcon} tone="base"/>
+                      <Text><strong>{data.drafts.products}</strong> Products marked DRAFT</Text>
+                    </InlineStack>
+                  </List.Item>
+                  <List.Item>
+                    <InlineStack gap="200">
+                      <Icon source={InfoIcon} tone="base"/>
+                      <Text><strong>{data.drafts.archived}</strong> Products marked ARCHIVED</Text>
+                    </InlineStack>
+                  </List.Item>
+                  <List.Item>
+                    <InlineStack gap="200">
+                      <Icon source={InfoIcon} tone="base"/>
+                      <Text><strong>{data.drafts.pages}</strong> Pages with Null PublishedAt</Text>
+                    </InlineStack>
+                  </List.Item>
+                </List>
+              </Box>
+            </Card>
+          </Grid.Cell>
+
+          <Grid.Cell columnSpan={{xs: 6, sm: 6, md: 6, lg: 6, xl: 6}}>
+            <Card>
+              <Box paddingBlockEnd="400" borderBottom="025" borderColor="border">
+                <InlineStack align="space-between" blockAlign="center">
+                  <Text variant="headingMd" as="h3">Ghost Links</Text>
+                  <Badge tone={data.ghostLinks.length > 0 ? "critical" : "success"}>
+                    {data.ghostLinks.length} Found
+                  </Badge>
+                </InlineStack>
+              </Box>
+              <Box paddingBlockStart="400">
+                {data.ghostLinks.length === 0 && (
+                  <Text tone="success">🟢 No deleted products/pages found in live menus.</Text>
+                )}
+                {data.ghostLinks.length > 0 && (
+                  <BlockStack gap="300">
+                    <Text tone="subdued">These URLs returned 404 and do not exist in your active handles.</Text>
+                    {data.ghostLinks.map((link, i) => (
+                      <div key={i} style={{ minHeight: "48px", display: "flex", alignItems: "center" }}>
+                        <Text tone="critical">{link.url.replace("https://rockhoundstudio.com", "")}</Text>
+                      </div>
+                    ))}
+                  </BlockStack>
+                )}
+              </Box>
+            </Card>
+          </Grid.Cell>
+        </Grid>
+
+        <Layout.Section>
+          <Card padding="0">
+            <Box padding="400" borderBottom="025" borderColor="border">
+              <InlineStack align="space-between" blockAlign="center">
+                <Text variant="headingMd" as="h2">Master Product Content Audit</Text>
+                <Badge tone="info">{data.products.length} Products Scanned</Badge>
+              </InlineStack>
+            </Box>
+            <Box padding="400">
+              {data.products.length === 0 && (
+                <div style={{ minHeight: "48px", display: "flex", alignItems: "center" }}>
+                  <Text tone="subdued">No products found on the shop floor.</Text>
+                </div>
+              )}
+
+              {data.products.length > 0 && (
+                <BlockStack gap="600">
+                  {data.products.map((product) => {
+                    const missingImages = product.images.length === 0;
+                    const missingDesc = !product.description || product.description.trim() === "";
+                    const missingPrice = !product.price || parseFloat(product.price) === 0;
+                    const isDraft = product.status === "DRAFT";
+                    const missingAltText = product.images.length > 0 && product.images.some(img => !img.altText || img.altText.trim() === "");
+                    const noCollection = product.collections.length === 0;
+
+                    const hasIssues = missingImages || missingDesc || missingPrice || missingAltText || noCollection;
+
+                    return (
+                      <Box key={product.id}>
+                        <InlineStack align="space-between" blockAlign="center" wrap={false}>
+                          <BlockStack gap="200">
+                            <Text variant="headingSm" as="h4" fontWeight="bold">
+                              {product.title}
+                            </Text>
+                            <InlineStack gap="200" wrap>
+                              {!hasIssues && !isDraft && <Badge tone="success">Healthy</Badge>}
+                              {isDraft && <Badge tone="info">DRAFT</Badge>}
+                              {missingImages && <Badge tone="critical">Missing Images</Badge>}
+                              {missingDesc && <Badge tone="critical">Missing Description</Badge>}
+                              {missingPrice && <Badge tone="critical">Missing Price</Badge>}
+                              {missingAltText && <Badge tone="warning">Empty Alt Text</Badge>}
+                              {noCollection && <Badge tone="warning">No Collection Assigned</Badge>}
+                            </InlineStack>
+                          </BlockStack>
+                          
+                          <div style={{ minHeight: "48px", display: "flex", alignItems: "center" }}>
+                            <Button
+                              accessibilityLabel={`View ${product.title} in Shopify Admin`}
+                              url={`shopify:admin/products/${product.id.split("/").pop()}`}
+                              target="_blank"
+                            >
+                              View
+                            </Button>
+                          </div>
+                        </InlineStack>
+                        <Box paddingBlockStart="400"><Divider /></Box>
+                      </Box>
+                    );
+                  })}
+                </BlockStack>
+              )}
+            </Box>
+          </Card>
         </Layout.Section>
-      </Layout>
+
+      </BlockStack>
     </Page>
   );
 }
