@@ -290,9 +290,6 @@ function MenuCreator({ pages, fetcher, onCancel }) {
     fetcher.submit(fd, { method: "post" });
   };
 
-  const isSaving = fetcher.state === "submitting" ? (fetcher.formData?.get("intent") === "createMenu" ? true : false) : false;
-  const isSaveDisabled = title.trim() === "" ? true : (selectedPages.length === 0 ? true : false);
-
   // Filter out pages that are already selected so they disappear from the list
   const availablePages = pages.filter(p => selectedPages.find(sp => sp.id === p.id) ? false : true);
 
@@ -308,14 +305,28 @@ function MenuCreator({ pages, fetcher, onCancel }) {
         </InlineStack>
         <Divider />
 
-        <TextField
-          label="Menu Title"
-          value={title}
-          onChange={setTitle}
-          autoComplete="off"
-          helpText="Give your new menu a clear name, like 'Holiday Sale Navigation'."
-          aria-label="Input field for new menu title"
-        />
+        <BlockStack gap="400">
+          <TextField
+            label="Menu Title"
+            value={title}
+            onChange={setTitle}
+            autoComplete="off"
+            helpText="Give your new menu a clear name, like 'Holiday Sale Navigation'."
+            aria-label="Input field for new menu title"
+          />
+
+          <InlineStack align="end">
+            <Button
+              variant="primary"
+              size="large"
+              onClick={handleSave}
+              disabled={title.trim() === "" ? true : false}
+              aria-label="Save and Create Menu in Shopify"
+            >
+              Create Menu
+            </Button>
+          </InlineStack>
+        </BlockStack>
 
         <Box paddingBlockStart="400">
           <Text variant="headingSm" as="h3">Available Pages</Text>
@@ -378,19 +389,6 @@ function MenuCreator({ pages, fetcher, onCancel }) {
             </BlockStack>
           )}
         </Box>
-
-        <InlineStack align="end">
-          <Button
-            variant="primary"
-            size="large"
-            onClick={handleSave}
-            disabled={isSaveDisabled}
-            loading={isSaving}
-            aria-label="Save and Create Menu in Shopify"
-          >
-            Create Menu
-          </Button>
-        </InlineStack>
       </BlockStack>
     </Card>
   );
