@@ -132,29 +132,7 @@ export const action = async ({ request }) => {
     }
 
     if (intent === "populateMosaic") {
-      // 1. Fetch Collections using raw fetch to avoid admin.graphql errors
-      const collectionsRes = await fetch(`https://${shop}/admin/api/2024-10/graphql.json`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": accessToken },
-        body: JSON.stringify({
-          query: `query { collections(first: 50, query: "published_status:published") { edges { node { handle } } } }`
-        })
-      });
-      const collectionsData = await collectionsRes.json();
-      const collections = collectionsData.data.collections.edges.map(e => e.node.handle);
-
-      // 2. Fetch Pages using raw fetch
-      const pagesRes = await fetch(`https://${shop}/admin/api/2024-10/graphql.json`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": accessToken },
-        body: JSON.stringify({
-          query: `query { pages(first: 50, query: "published_status:published") { edges { node { handle } } } }`
-        })
-      });
-      const pagesData = await pagesRes.json();
-      const pages = pagesData.data.pages.edges.map(e => e.node.handle);
-
-      // 3. Fetch index.json asset using raw fetch
+      // 1. Debug Step: Fetch index.json asset using raw fetch FIRST
       const assetRes = await fetch(`https://${shop}/admin/api/2024-10/themes/${THEME_ID}/assets.json?asset[key]=templates/index.json`, {
         method: "GET",
         headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": accessToken }
@@ -164,7 +142,11 @@ export const action = async ({ request }) => {
 
       const templateData = JSON.parse(assetData.asset.value);
 
-      // 4. Find Hero Living Mosaic Section
+      // 2. Debug Step: Extract and console.log section types
+      const foundSectionTypes = Object.values(templateData.sections).map(s => s.type);
+      console.log("DEBUG: Homepage Section Types:", foundSectionTypes);
+
+      // 3. Find Hero Living Mosaic Section
       let targetSectionKey = null;
       let targetSection = null;
 
@@ -177,10 +159,37 @@ export const action = async ({ request }) => {
       }
 
       if (!targetSection) {
-        throw new Error("Hero Living Mosaic section not found on homepage template. Make sure the section is added to the theme.");
+        return Response.json({ 
+          intent, 
+          error: "Hero Living Mosaic section not found on homepage template.", 
+          debugTypes: foundSectionTypes,
+          timestamp 
+        });
       }
 
-      // 5. Generate New Blocks
+      // 4. Fetch Collections using raw fetch
+      const collectionsRes = await fetch(`https://${shop}/admin/api/2024-10/graphql.json`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": accessToken },
+        body: JSON.stringify({
+          query: `query { collections(first: 50, query: "published_status:published") { edges { node { handle } } } }`
+        })
+      });
+      const collectionsData = await collectionsRes.json();
+      const collections = collectionsData.data.collections.edges.map(e => e.node.handle);
+
+      // 5. Fetch Pages using raw fetch
+      const pagesRes = await fetch(`https://${shop}/admin/api/2024-10/graphql.json`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": accessToken },
+        body: JSON.stringify({
+          query: `query { pages(first: 50, query: "published_status:published") { edges { node { handle } } } }`
+        })
+      });
+      const pagesData = await pagesRes.json();
+      const pages = pagesData.data.pages.edges.map(e => e.node.handle);
+
+      // 6. Generate New Blocks
       const newBlocks = {};
       const newBlockOrder = [];
 
@@ -202,7 +211,7 @@ export const action = async ({ request }) => {
         newBlockOrder.push(blockId);
       });
 
-      // 6. Update Section in Template
+      // 7. Update Section in Template
       targetSection.blocks = {
         ...targetSection.blocks,
         ...newBlocks
@@ -214,7 +223,7 @@ export const action = async ({ request }) => {
 
       templateData.sections[targetSectionKey] = targetSection;
 
-      // 7. POST updated template back to the theme using raw fetch
+      // 8. POST updated template back to the theme using raw fetch
       const saveRes = await fetch(`https://${shop}/admin/api/2024-10/themes/${THEME_ID}/assets.json`, {
         method: "PUT",
         headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": accessToken },
@@ -228,7 +237,13 @@ export const action = async ({ request }) => {
 
       if (!saveRes.ok) throw new Error("Failed to save populated index.json to theme.");
 
-      return Response.json({ intent, success: true, message: "Successfully populated the Living Mosaic wall!", timestamp });
+      return Response.json({ 
+        intent, 
+        success: true, 
+        message: "Successfully populated the Living Mosaic wall!", 
+        debugTypes: foundSectionTypes,
+        timestamp 
+      });
     }
 
     if (intent === "geminiAssist") {
@@ -554,6 +569,17 @@ export default function ThemeEditorTab() {
       {loaderError ? <Banner tone="critical">{loaderError}</Banner> : null}
       {actionData?.error ? <Banner tone="critical">{actionData.error}</Banner> : null}
       
+      {/* ── NEW DEBUG BANNER ── */}
+      {actionData?.debugTypes && (
+        <Box paddingBlockEnd="400">
+          <Banner tone="info" title="Debug: Homepage Section Types Found">
+            <div style={{ fontFamily: 'monospace', wordBreak: 'break-all' }}>
+              {actionData.debugTypes.join(", ")}
+            </div>
+          </Banner>
+        </Box>
+      )}
+
       {actionData?.intent === "populateMosaic" && actionData?.success && (
         <Box paddingBlockEnd="400">
           <Banner tone="success" title="Success">
