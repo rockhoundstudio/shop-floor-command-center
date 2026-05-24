@@ -24,7 +24,6 @@ export const loader = async ({ request }) => {
   const { shop, accessToken } = session;
   
   try {
-    // Added a cache-buster (?_t=Date) to force Shopify to return the freshest file tree
     const response = await fetch(`https://${shop}/admin/api/2024-10/themes/${THEME_ID}/assets.json?_t=${Date.now()}`, {
       method: "GET",
       headers: {
@@ -106,19 +105,21 @@ export const action = async ({ request }) => {
       const newKey = formData.get("newKey");
       const content = formData.get("content");
 
-      const createResponse = await fetch(`https://${shop}/admin/api/2024-10/themes/${THEME_ID}/assets.json`, {
+      // 1. Copy the asset natively using source_key
+      const copyResponse = await fetch(`https://${shop}/admin/api/2024-10/themes/${THEME_ID}/assets.json`, {
         method: "PUT",
         headers: { 
           "Content-Type": "application/json",
           "X-Shopify-Access-Token": accessToken,
         },
         body: JSON.stringify({
-          asset: { key: newKey, value: content },
+          asset: { key: newKey, source_key: assetKey },
         }),
       });
 
-      if (!createResponse.ok) throw new Error("Failed to create new file during rename.");
+      if (!copyResponse.ok) throw new Error(`Failed to copy file from ${assetKey} to ${newKey}. Check for invalid naming.`);
 
+      // 2. Delete the original asset
       const deleteResponse = await fetch(`https://${shop}/admin/api/2024-10/themes/${THEME_ID}/assets.json?asset[key]=${encodeURIComponent(assetKey)}`, {
         method: "DELETE",
         headers: {
@@ -127,9 +128,8 @@ export const action = async ({ request }) => {
         },
       });
 
-      if (!deleteResponse.ok) throw new Error("Created new file but failed to delete original.");
+      if (!deleteResponse.ok) throw new Error(`Successfully created ${newKey} but failed to delete original file ${assetKey}.`);
 
-      // Returning oldKey allows the frontend to instantly map and update the file tree
       return Response.json({ intent, oldKey: assetKey, assetKey: newKey, content, success: true, message: `Renamed to ${newKey}.`, timestamp });
     }
 
@@ -298,7 +298,6 @@ export default function ThemeEditorTab() {
   const navigation = useNavigation();
   const navigate = useNavigate();
 
-  // Local state to instantly render file tree changes without waiting for Shopify's API cache
   const [localFiles, setLocalFiles] = useState([]);
 
   const [searchQuery, setSearchQuery] = useState("");
@@ -331,7 +330,6 @@ export default function ThemeEditorTab() {
   const isResearching = isNavigating ? navigation.formData?.get("intent") === "geminiResearch" : false;
   const isPopulating = isNavigating ? navigation.formData?.get("intent") === "populateMosaic" : false;
 
-  // Sync loader data to local file tree state
   useEffect(() => {
     if (loaderData?.files) {
       setLocalFiles(loaderData.files);
@@ -438,7 +436,6 @@ export default function ThemeEditorTab() {
   const lineCount = currentContent.split("\n").length;
   const charCount = currentContent.length;
 
-  // Map from the fast local optimistic state instead of the slow loader payload
   const filteredFiles = localFiles.filter((f) => 
     f.key.toLowerCase().includes(searchQuery.toLowerCase())
   );
