@@ -83,7 +83,7 @@ export const loader = async ({ request }) => {
         collections(first: 250) {
           edges { node { id title handle } }
         }
-        pages(first: 100) {
+        pages(first: 250) {
           edges { node { id title handle } } 
         }
       }
@@ -139,7 +139,6 @@ export const action = async ({ request }) => {
     });
   }
 
-  // 🚀 NEW: Create Menu Mutation
   if (intent === "createMenu") {
     const title = formData.get("title");
     const itemsRaw = formData.get("items");
@@ -182,7 +181,7 @@ export const action = async ({ request }) => {
       title: item.title,
       url: item.url || "#",
       type: "HTTP",
-      items: item.items && item.items.length > 0 ? item.items.map(formatItem) : []
+      items: item.items ? (item.items.length > 0 ? item.items.map(formatItem) : []) : []
     });
 
     const items = JSON.parse(itemsRaw).map(formatItem);
@@ -255,8 +254,8 @@ function countByStatus(items, liveCollectionHandles, livePageHandles) {
   let live = 0, draft = 0, dead = 0;
   const check = (url) => {
     const s = getDestinationStatus(url, liveCollectionHandles, livePageHandles);
-    if (s === "live" || s === "external") live++;
-    else if (s === "draft" || s === "unknown") draft++;
+    if (s === "live" ? true : (s === "external" ? true : false)) live++;
+    else if (s === "draft" ? true : (s === "unknown" ? true : false)) draft++;
     else dead++;
   };
   items.forEach(item => {
@@ -266,10 +265,9 @@ function countByStatus(items, liveCollectionHandles, livePageHandles) {
   return { live, draft, dead };
 }
 
-// 🚀 NEW: Modular Component for Creating a Menu
+// 🚀 MODULAR COMPONENT: MenuCreator
 function MenuCreator({ pages, fetcher, onCancel }) {
   const [title, setTitle] = useState("");
-  const [searchQuery, setSearchQuery] = useState("");
   const [selectedPages, setSelectedPages] = useState([]);
 
   const handleAddPage = (page) => {
@@ -277,7 +275,6 @@ function MenuCreator({ pages, fetcher, onCancel }) {
     if (!isAlreadyAdded) {
       setSelectedPages([...selectedPages, page]);
     }
-    setSearchQuery("");
   };
 
   const handleRemovePage = (pageId) => {
@@ -293,12 +290,11 @@ function MenuCreator({ pages, fetcher, onCancel }) {
     fetcher.submit(fd, { method: "post" });
   };
 
-  const searchResults = searchQuery.trim() === ""
-    ? []
-    : pages.filter(p => p.title.toLowerCase().includes(searchQuery.toLowerCase())).slice(0, 5);
-
   const isSaving = fetcher.state === "submitting" ? (fetcher.formData?.get("intent") === "createMenu" ? true : false) : false;
   const isSaveDisabled = title.trim() === "" ? true : (selectedPages.length === 0 ? true : false);
+
+  // Filter out pages that are already selected so they disappear from the list
+  const availablePages = pages.filter(p => selectedPages.find(sp => sp.id === p.id) ? false : true);
 
   return (
     <Card>
@@ -322,27 +318,14 @@ function MenuCreator({ pages, fetcher, onCancel }) {
         />
 
         <Box paddingBlockStart="400">
-          <Text variant="headingSm" as="h3">Add Pages to Menu</Text>
-          <Text tone="subdued" variant="bodySm" as="p">Search for existing pages to add to this menu as links.</Text>
-          <Box paddingBlockStart="200">
-            <TextField
-              labelHidden
-              label="Search Pages"
-              placeholder="Type page name here..."
-              value={searchQuery}
-              onChange={setSearchQuery}
-              autoComplete="off"
-              clearButton
-              onClearButtonClick={() => setSearchQuery("")}
-              aria-label="Search box for finding store pages"
-            />
-          </Box>
+          <Text variant="headingSm" as="h3">Available Pages</Text>
+          <Text tone="subdued" variant="bodySm" as="p">Click to add pages to your new menu.</Text>
 
-          {searchResults.length > 0 ? (
-            <Box paddingBlockStart="200">
+          {availablePages.length > 0 ? (
+            <Box paddingBlockStart="200" style={{ maxHeight: "300px", overflowY: "auto" }}>
               <Card background="bg-surface-secondary">
                 <List type="bullet">
-                  {searchResults.map(page => (
+                  {availablePages.map(page => (
                     <List.Item key={page.id}>
                       <InlineStack align="space-between" blockAlign="center">
                         <Text as="span">{page.title}</Text>
@@ -359,14 +342,18 @@ function MenuCreator({ pages, fetcher, onCancel }) {
                 </List>
               </Card>
             </Box>
-          ) : null}
+          ) : (
+            <Box padding="400" background="bg-surface-secondary" borderRadius="100" paddingBlockStart="200">
+              <Text tone="subdued" as="p">No more pages available to add.</Text>
+            </Box>
+          )}
         </Box>
 
         <Box paddingBlockStart="400">
           <Text variant="headingSm" as="h3">Selected Links in this Menu</Text>
           {selectedPages.length === 0 ? (
             <Box padding="400" background="bg-surface-secondary" borderRadius="100">
-              <Text tone="subdued" as="p">No pages added yet. Use the search above to select pages.</Text>
+              <Text tone="subdued" as="p">No pages added yet. Select pages from the list above.</Text>
             </Box>
           ) : (
             <BlockStack gap="200">
@@ -426,7 +413,6 @@ export default function MenuManager() {
   const [savingMenuData, setSavingMenuData] = useState(null);
   const [savedOverrides, setSavedOverrides] = useState({});
 
-  // Deep Scan State Engine
   const [isDeepScanning, setIsDeepScanning] = useState(false);
   const [scanProgress, setScanProgress] = useState(0);
   const [deepScanResults, setDeepScanResults] = useState(null);
@@ -463,7 +449,6 @@ export default function MenuManager() {
       }
     }
 
-    // Reset creation mode if a menu creation succeeds
     const isCreateSuccess = fetcher.state === "idle" ? (fetcher.data?.ok ? (fetcher.data?.message?.includes("created") ? true : false) : false) : false;
     if (isCreateSuccess) {
       setIsCreatingMenu(false);
@@ -869,7 +854,6 @@ export default function MenuManager() {
     orphanedCollections = collections.filter(c => !activeUrls.has(`/collections/${c.handle}`));
   }
 
-  // 48px tap target rules strictly enforced on custom buttons
   const actionBtnStyle = {
     background: "none", border: "none", cursor: isLocked ? "not-allowed" : "pointer",
     fontSize: "16px", color: isLocked ? "#a6a6a6" : "#5c5f62",
