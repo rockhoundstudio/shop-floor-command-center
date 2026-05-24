@@ -863,4 +863,15 @@ export default function ThemeEditorTab() {
                   Select a file from the tree to begin editing.
                 </Text>
                 <Box paddingBlockStart="400" display="flex" justifyContent="center">
-                   <Button size="large" onClick={() => setIsNewModalOpen(true)} accessibilityLabel="Create new file from empty state
+                   <Button size="large" onClick={() => setIsNewModalOpen(true)} accessibilityLabel="Create new file from empty state">
+                     Create New File
+                   </Button>
+                </Box>
+              </Box>
+            )}
+          </Card>
+        </Layout.Section>
+      </Layout>
+    </Page>
+  );
+}
