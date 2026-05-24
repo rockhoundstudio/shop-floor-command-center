@@ -1,8 +1,8 @@
 import { useState, useEffect } from "react";
-import { useLoaderData, useNavigation, useNavigate } from "react-router";
+import { useLoaderData, useNavigate } from "@remix-run/react";
 import {
   Page, Layout, Card, BlockStack, InlineStack, Text, Badge, 
-  ProgressBar, Grid, List, Icon, Banner, Box, Link
+  ProgressBar, Grid, List, Icon, Banner, Box, Link, Divider, Button
 } from "@shopify/polaris";
 import { InfoIcon } from "@shopify/polaris-icons";
 import { authenticate } from "../shopify.server";
@@ -18,18 +18,31 @@ export const loader = async ({ request }) => {
     let allProducts = [];
     let hasNext = true;
     let cursor = null;
-    while (hasNext) {
+    let cycleCount = 0;
+
+    // Upgraded GraphQL: Fetch all products with required fields
+    while (hasNext && cycleCount < 20) {
       const prodQuery = `#graphql
         query($cursor: String) {
-          products(first: 50, after: $cursor) {
+          products(first: 50, after: $cursor, sortKey: UPDATED_AT, reverse: true) {
             pageInfo { hasNextPage endCursor }
             edges {
               node {
-                id title handle status
+                id
+                title
+                handle
+                status
                 descriptionHtml
-                images(first: 5) { edges { node { id altText } } }
+                images(first: 5) { 
+                  edges { node { id url altText } } 
+                }
                 seo { title description }
-                variants(first: 1) { edges { node { price } } }
+                variants(first: 1) { 
+                  edges { node { price } } 
+                }
+                collections(first: 5) {
+                  edges { node { id title } }
+                }
               }
             }
           }
@@ -37,11 +50,33 @@ export const loader = async ({ request }) => {
       `;
       const res = await admin.graphql(prodQuery, { variables: { cursor } });
       const data = await res.json();
-      allProducts.push(...(data.data?.products?.edges || []).map(e => e.node));
-      hasNext = data.data?.products?.pageInfo?.hasNextPage;
-      cursor = data.data?.products?.pageInfo?.endCursor;
+
+      if (data.errors) {
+        throw new Error(data.errors[0].message);
+      }
+
+      const pageProducts = (data.data?.products?.edges || []).map(e => {
+        const p = e.node;
+        return {
+          id: p.id,
+          title: p.title,
+          handle: p.handle,
+          status: p.status,
+          description: p.descriptionHtml || "",
+          price: p.variants?.edges?.[0]?.node?.price || "0",
+          seo: p.seo,
+          images: p.images?.edges?.map(img => img.node) || [],
+          collections: p.collections?.edges?.map(c => c.node) || []
+        };
+      });
+
+      allProducts = allProducts.concat(pageProducts);
+      hasNext = data.data?.products?.pageInfo?.hasNextPage || false;
+      cursor = data.data?.products?.pageInfo?.endCursor || null;
+      cycleCount++;
     }
 
+    // Fetch Pages
     let allPages = [];
     hasNext = true;
     cursor = null;
@@ -61,6 +96,7 @@ export const loader = async ({ request }) => {
       cursor = data.data?.pages?.pageInfo?.endCursor;
     }
 
+    // Fetch Collections
     let allCollections = [];
     hasNext = true;
     cursor = null;
@@ -80,6 +116,7 @@ export const loader = async ({ request }) => {
       cursor = data.data?.collections?.pageInfo?.endCursor;
     }
 
+    // Fetch Menus
     let rawMenuUrls = [];
     hasNext = true;
     cursor = null;
@@ -121,6 +158,7 @@ export const loader = async ({ request }) => {
       cursor = data.data?.menus?.pageInfo?.endCursor;
     }
 
+    // Status Parsing
     const draftProducts = allProducts.filter(p => p.status === "DRAFT");
     const archivedProducts = allProducts.filter(p => p.status === "ARCHIVED");
     const draftPages = allPages.filter(p => !p.publishedAt);
@@ -129,12 +167,14 @@ export const loader = async ({ request }) => {
     const livePages = allPages.filter(p => p.publishedAt);
     const liveCollections = allCollections;
 
+    // Content Penalty Calculation (Internal)
     const missingContent = liveProducts.map(p => {
-      const missingImages = p.images?.edges?.length === 0;
-      const missingAltText = p.images?.edges?.some(img => !img.node.altText);
-      const missingDesc = !p.descriptionHtml || p.descriptionHtml.trim() === "";
+      const missingImages = p.images.length === 0;
+      const missingAltText = p.images.some(img => !img.altText || img.altText.trim() === "");
+      const missingDesc = !p.description || p.description.trim() === "";
       const missingSEO = !p.seo?.title || !p.seo?.description;
-      const missingPrice = p.variants?.edges?.some(v => parseFloat(v.node.price) === 0);
+      const missingPrice = parseFloat(p.price) === 0;
+      const noCollection = p.collections.length === 0;
 
       const errors = [];
       if (missingImages) errors.push("No Image");
@@ -142,6 +182,7 @@ export const loader = async ({ request }) => {
       if (missingDesc) errors.push("No Description");
       if (missingSEO) errors.push("Missing SEO");
       if (missingPrice) errors.push("Price is $0");
+      if (noCollection) errors.push("No Collection");
 
       if (errors.length > 0) {
         return { id: p.id, title: p.title, errors };
@@ -149,6 +190,7 @@ export const loader = async ({ request }) => {
       return null;
     }).filter(Boolean);
 
+    // URL CRAWLER
     const baseUrl = "https://rockhoundstudio.com";
     let urlsToCrawl = [
       ...liveProducts.map(p => `${baseUrl}/products/${p.handle}`),
@@ -206,6 +248,7 @@ export const loader = async ({ request }) => {
       return !validPaths.includes(path);
     });
 
+    // Score Assembly
     let totalScore = 100;
     const brokenLinkPenalty = Math.min(40, brokenLinks.length * 5);
     totalScore -= brokenLinkPenalty;
@@ -218,7 +261,7 @@ export const loader = async ({ request }) => {
       score: Math.max(0, totalScore),
       brokenLinks,
       ghostLinks,
-      missingContent,
+      products: allProducts, // Passes full updated array to the component
       drafts: {
         products: draftProducts.length,
         archived: archivedProducts.length,
@@ -292,48 +335,19 @@ export default function StoreHealthCheckTab() {
                 </InlineStack>
               </Box>
               <Box paddingBlockStart="400">
-                {data.brokenLinks.length === 0 ? (
+                {data.brokenLinks.length === 0 && (
                   <Text tone="success">🟢 All live routes returned 200 OK.</Text>
-                ) : (
+                )}
+                {data.brokenLinks.length > 0 && (
                   <BlockStack gap="300">
                     {data.brokenLinks.map((link, i) => (
-                      <InlineStack key={i} align="space-between" blockAlign="center">
-                        <Link url={link.url} target="_blank">{link.url.replace("https://rockhoundstudio.com", "")}</Link>
-                        <Badge tone="critical">HTTP {link.status}</Badge>
-                      </InlineStack>
-                    ))}
-                  </BlockStack>
-                )}
-              </Box>
-            </Card>
-          </Grid.Cell>
-
-          <Grid.Cell columnSpan={{xs: 6, sm: 6, md: 6, lg: 6, xl: 6}}>
-            <Card>
-              <Box paddingBlockEnd="400" borderBottom="025" borderColor="border">
-                <InlineStack align="space-between" blockAlign="center">
-                  <Text variant="headingMd" as="h3">Product Content Audit</Text>
-                  <Badge tone={data.missingContent.length > 0 ? "warning" : "success"}>
-                    {data.missingContent.length} Products Missing Data
-                  </Badge>
-                </InlineStack>
-              </Box>
-              <Box paddingBlockStart="400">
-                {data.missingContent.length === 0 ? (
-                  <Text tone="success">🟢 All active products fully loaded.</Text>
-                ) : (
-                  <BlockStack gap="300">
-                    {data.missingContent.slice(0, 10).map((p) => (
-                      <BlockStack key={p.id} gap="100">
-                        <Text variant="bodyMd" fontWeight="bold">{p.title}</Text>
-                        <InlineStack gap="200">
-                          {p.errors.map((err, i) => (
-                            <Badge key={i} tone="critical">{err}</Badge>
-                          ))}
+                      <div key={i} style={{ minHeight: "48px", display: "flex", alignItems: "center", width: "100%" }}>
+                        <InlineStack align="space-between" blockAlign="center" style={{ width: "100%" }}>
+                          <Link url={link.url} target="_blank">{link.url.replace("https://rockhoundstudio.com", "")}</Link>
+                          <Badge tone="critical">HTTP {link.status}</Badge>
                         </InlineStack>
-                      </BlockStack>
+                      </div>
                     ))}
-                    {data.missingContent.length > 10 && <Text tone="subdued">+{data.missingContent.length - 10} more...</Text>}
                   </BlockStack>
                 )}
               </Box>
@@ -344,7 +358,7 @@ export default function StoreHealthCheckTab() {
             <Card>
               <Box paddingBlockEnd="400" borderBottom="025" borderColor="border">
                 <InlineStack align="space-between" blockAlign="center">
-                  <Text variant="headingMd" as="h3">Drafts & Archived (Skipped by Crawler)</Text>
+                  <Text variant="headingMd" as="h3">Drafts & Archived</Text>
                   <Badge tone="info">No Score Penalty</Badge>
                 </InlineStack>
               </Box>
@@ -377,30 +391,96 @@ export default function StoreHealthCheckTab() {
             <Card>
               <Box paddingBlockEnd="400" borderBottom="025" borderColor="border">
                 <InlineStack align="space-between" blockAlign="center">
-                  <Text variant="headingMd" as="h3">Ghost Links (Deleted but Linked)</Text>
+                  <Text variant="headingMd" as="h3">Ghost Links</Text>
                   <Badge tone={data.ghostLinks.length > 0 ? "critical" : "success"}>
                     {data.ghostLinks.length} Found
                   </Badge>
                 </InlineStack>
               </Box>
               <Box paddingBlockStart="400">
-                {data.ghostLinks.length === 0 ? (
+                {data.ghostLinks.length === 0 && (
                   <Text tone="success">🟢 No deleted products/pages found in live menus.</Text>
-                ) : (
+                )}
+                {data.ghostLinks.length > 0 && (
                   <BlockStack gap="300">
                     <Text tone="subdued">These URLs returned 404 and do not exist in your active handles.</Text>
                     {data.ghostLinks.map((link, i) => (
-                      <InlineStack key={i} align="space-between" blockAlign="center">
+                      <div key={i} style={{ minHeight: "48px", display: "flex", alignItems: "center" }}>
                         <Text tone="critical">{link.url.replace("https://rockhoundstudio.com", "")}</Text>
-                      </InlineStack>
+                      </div>
                     ))}
                   </BlockStack>
                 )}
               </Box>
             </Card>
           </Grid.Cell>
-
         </Grid>
+
+        <Layout.Section>
+          <Card padding="0">
+            <Box padding="400" borderBottom="025" borderColor="border">
+              <InlineStack align="space-between" blockAlign="center">
+                <Text variant="headingMd" as="h2">Master Product Content Audit</Text>
+                <Badge tone="info">{data.products.length} Products Scanned</Badge>
+              </InlineStack>
+            </Box>
+            <Box padding="400">
+              {data.products.length === 0 && (
+                <div style={{ minHeight: "48px", display: "flex", alignItems: "center" }}>
+                  <Text tone="subdued">No products found on the shop floor.</Text>
+                </div>
+              )}
+
+              {data.products.length > 0 && (
+                <BlockStack gap="600">
+                  {data.products.map((product) => {
+                    const missingImages = product.images.length === 0;
+                    const missingDesc = !product.description || product.description.trim() === "";
+                    const missingPrice = !product.price || parseFloat(product.price) === 0;
+                    const isDraft = product.status === "DRAFT";
+                    const missingAltText = product.images.length > 0 && product.images.some(img => !img.altText || img.altText.trim() === "");
+                    const noCollection = product.collections.length === 0;
+
+                    const hasIssues = missingImages || missingDesc || missingPrice || missingAltText || noCollection;
+
+                    return (
+                      <Box key={product.id}>
+                        <InlineStack align="space-between" blockAlign="center" wrap={false}>
+                          <BlockStack gap="200">
+                            <Text variant="headingSm" as="h4" fontWeight="bold">
+                              {product.title}
+                            </Text>
+                            <InlineStack gap="200" wrap>
+                              {!hasIssues && !isDraft && <Badge tone="success">Healthy</Badge>}
+                              {isDraft && <Badge tone="info">DRAFT</Badge>}
+                              {missingImages && <Badge tone="critical">Missing Images</Badge>}
+                              {missingDesc && <Badge tone="critical">Missing Description</Badge>}
+                              {missingPrice && <Badge tone="critical">Missing Price</Badge>}
+                              {missingAltText && <Badge tone="warning">Empty Alt Text</Badge>}
+                              {noCollection && <Badge tone="warning">No Collection Assigned</Badge>}
+                            </InlineStack>
+                          </BlockStack>
+                          
+                          <div style={{ minHeight: "48px", display: "flex", alignItems: "center" }}>
+                            <Button
+                              accessibilityLabel={`View ${product.title} in Shopify Admin`}
+                              url={`shopify:admin/products/${product.id.split("/").pop()}`}
+                              target="_blank"
+                            >
+                              View
+                            </Button>
+                          </div>
+                        </InlineStack>
+                        <Box paddingBlockStart="400"><Divider /></Box>
+                      </Box>
+                    );
+                  })}
+                </BlockStack>
+              )}
+            </Box>
+          </Card>
+        </Layout.Section>
+
       </BlockStack>
     </Page>
   );

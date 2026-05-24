@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useFetcher, useLoaderData, useRouteError, isRouteErrorResponse, useNavigate } from "react-router";
+import { useFetcher, useLoaderData, useRouteError, isRouteErrorResponse, useNavigate } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
 import {
   Page,
@@ -13,12 +13,21 @@ import ForgeProductCard from "../components/ForgeProductCard";
 
 export function ErrorBoundary() {
   const error = useRouteError();
+  const navigate = useNavigate();
+  
   return (
-    <Page title="Engine Fault" backAction={{ content: "Home", onAction: () => navigate("/app") }}>
+    <Page 
+      title="Engine Fault" 
+      backAction={{ 
+        content: "Back", 
+        onAction: () => navigate("/app"),
+        accessibilityLabel: "Navigate back to Command Center"
+      }}
+    >
       <Card background="bg-surface-critical">
         <BlockStack gap="400">
           <Text variant="headingLg" as="h1" fontWeight="bold">AI Forge Crashed</Text>
-          <Text>
+          <Text as="p">
             {isRouteErrorResponse(error)
               ? `${error.status} ${error.statusText} - ${error.data}`
               : error instanceof Error
@@ -33,11 +42,13 @@ export function ErrorBoundary() {
 
 export const loader = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
+  
   try {
     let allProducts = [];
     let cursor = null;
     let hasNextPage = true;
     let cycleCount = 0;
+    
     while (hasNextPage && cycleCount < 20) {
       const query = `
         query GetProducts($cursor: String) {
@@ -49,7 +60,7 @@ export const loader = async ({ request }) => {
                 title
                 handle
                 description
-                originMetafield: metafield(namespace: "custom", key: "origin") { value }
+                originMetafield: metafield(namespace: "custom", key: "origin_location") { value }
                 seo { title description }
                 media(first: 50) {
                   edges { node { ... on MediaImage { id alt image { url } } } }
@@ -59,11 +70,19 @@ export const loader = async ({ request }) => {
           }
         }
       `;
+      
       const res = await admin.graphql(query, { variables: { cursor } });
       const json = await res.json();
-      if (json.errors) throw new Error(json.errors[0].message);
+      
+      if (json.errors) {
+        throw new Error(json.errors[0].message);
+      }
+      
       const page = json.data?.products;
-      if (!page) break;
+      if (!page) {
+        break;
+      }
+      
       const formattedNodes = page.edges.map((e) => {
         const node = e.node;
         const mappedImages = (node.media?.edges || [])
@@ -73,6 +92,7 @@ export const loader = async ({ request }) => {
             url: mediaEdge.node.image?.url || "",
             altText: mediaEdge.node.alt || ""
           }));
+          
         return {
           id: node.id,
           title: node.title,
@@ -83,20 +103,25 @@ export const loader = async ({ request }) => {
           images: mappedImages
         };
       });
+      
       allProducts = allProducts.concat(formattedNodes);
       hasNextPage = page.pageInfo.hasNextPage;
       cursor = page.pageInfo.endCursor;
       cycleCount++;
     }
+    
     return { products: allProducts };
   } catch (error) {
-    if (error instanceof Response) throw error;
+    if (error instanceof Response) {
+      throw error;
+    }
     throw new Response(error.message || String(error), { status: 500, statusText: "Loader Engine Fault" });
   }
 };
 
 export const action = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
+  
   try {
     const body = await request.formData();
     const intent = body.get("intent");
@@ -105,12 +130,14 @@ export const action = async ({ request }) => {
       const productId = body.get("productId");
       const productTitle = body.get("productTitle");
       const productDescription = body.get("productDescription");
-      const origin = body.get("origin") || "Pacific Northwest region";
+      const origin = body.get("origin") || "";
       const customHook = body.get("customHook") || "";
       const isPolishingTarget = body.get("isPolishingTarget") === "true";
 
       const apiKey = process.env.GEMINI_API_KEY;
-      if (!apiKey) throw new Error("GEMINI_API_KEY is not set in Render environment variables.");
+      if (!apiKey) {
+        throw new Error("GEMINI_API_KEY is not set in Render environment variables.");
+      }
 
       const polishingInstruction = isPolishingTarget
         ? `\n  CRITICAL SEO: You MUST naturally and organically weave these three exact phrases into the story without feeling stuffed: "custom stone polishing service", "heirloom rock polishing", and "turn your found rock into art".`
@@ -152,7 +179,9 @@ Origin Context: ${origin}`;
             return res;
           } catch (e) {
             clearTimeout(timeout);
-            if (e.name === "AbortError") throw new Error("Timeout: took longer than 45 seconds.");
+            if (e.name === "AbortError") {
+              throw new Error("Timeout: took longer than 45 seconds.");
+            }
             throw new Error(`Network Fault: ${e.message}`);
           }
         };
@@ -162,7 +191,9 @@ Origin Context: ${origin}`;
         if (geminiRes.status === 429) {
           await new Promise(resolve => setTimeout(resolve, 8000));
           geminiRes = await makeRequest();
-          if (geminiRes.status === 429) throw new Error("Rate limited — rejected after retry.");
+          if (geminiRes.status === 429) {
+            throw new Error("Rate limited — rejected after retry.");
+          }
         }
 
         if (!geminiRes.ok) {
@@ -171,10 +202,8 @@ Origin Context: ${origin}`;
         }
 
         const data = await geminiRes.json();
-
         let rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
 
-        // Strip markdown code fences
         const t = String.fromCharCode(96);
         const jsonWrapper = t + t + t + "json";
         const codeWrapper = t + t + t;
@@ -204,6 +233,7 @@ Origin Context: ${origin}`;
       const productId = body.get("productId");
       const pairs = JSON.parse(body.get("pairs"));
       const chunkSize = 10;
+      
       for (let i = 0; i < pairs.length; i += chunkSize) {
         const chunk = pairs.slice(i, i + chunkSize);
         const filesInput = chunk.map(({ id, alt }) => ({ id, alt }));
@@ -216,9 +246,16 @@ Origin Context: ${origin}`;
           }`, { variables: { files: filesInput } }
         );
         const json = await res.json();
-        if (json.errors) throw new Error(json.errors[0].message);
-        if (json.data.fileUpdate.userErrors.length > 0) throw new Error(json.data.fileUpdate.userErrors[0].message);
-        if (i + chunkSize < pairs.length) await new Promise((resolve) => setTimeout(resolve, 1000));
+        
+        if (json.errors) {
+          throw new Error(json.errors[0].message);
+        }
+        if (json.data.fileUpdate.userErrors.length > 0) {
+          throw new Error(json.data.fileUpdate.userErrors[0].message);
+        }
+        if (i + chunkSize < pairs.length) {
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+        }
       }
       return { ok: true, intent, productId };
     }
@@ -227,6 +264,7 @@ Origin Context: ${origin}`;
       const productId = body.get("productId");
       const seoTitle = body.get("seoTitle");
       const seoDescription = body.get("seoDescription");
+      
       const res = await admin.graphql(
         `mutation UpdateSEO($productId: ID!, $seoTitle: String!, $seoDescription: String!) {
           productUpdate(input: { id: $productId, seo: { title: $seoTitle, description: $seoDescription } }) {
@@ -235,15 +273,23 @@ Origin Context: ${origin}`;
           }
         }`, { variables: { productId, seoTitle, seoDescription } }
       );
+      
       const json = await res.json();
-      if (json.errors) throw new Error(json.errors[0].message);
-      if (json.data.productUpdate.userErrors.length > 0) throw new Error(json.data.productUpdate.userErrors[0].message);
+      if (json.errors) {
+        throw new Error(json.errors[0].message);
+      }
+      if (json.data.productUpdate.userErrors.length > 0) {
+        throw new Error(json.data.productUpdate.userErrors[0].message);
+      }
+      
       return { ok: true, intent, productId, seo: { title: seoTitle, description: seoDescription } };
     }
 
     return { ok: false, error: "Unknown intent" };
   } catch (error) {
-    if (error instanceof Response) throw error;
+    if (error instanceof Response) {
+      throw error;
+    }
     return { ok: false, error: error.message || "An internal engine fault occurred." };
   }
 };
@@ -252,6 +298,7 @@ export default function AiContentForgeTab() {
   const navigate = useNavigate();
   const { products: initialProducts } = useLoaderData();
   const fetcher = useFetcher();
+  
   const [products, setProducts] = useState(initialProducts);
   const [suggestions, setSuggestions] = useState({});
   const [suggestingId, setSuggestingId] = useState(null);
@@ -277,20 +324,27 @@ export default function AiContentForgeTab() {
 
   useEffect(() => {
     if (fetcher.state === "idle" && fetcher.data) {
-      setSuggestingId(null); setSavingAltId(null); setSavingSeoId(null);
+      setSuggestingId(null); 
+      setSavingAltId(null); 
+      setSavingSeoId(null);
+      
       if (!fetcher.data.ok) {
         setPageError(`❌ Fault: ${fetcher.data.error}`);
         return;
       }
+      
       setPageError(null);
       const { intent, productId } = fetcher.data;
+      
       if (intent === "ai_suggest") {
         setSuggestions((prev) => ({ ...prev, [productId]: fetcher.data.suggestion }));
         setToast({ message: "✨ AI Forged Content Generated", tone: "success" });
       } else if (intent === "save_alt") {
         const updatedAlt = suggestions[productId]?.altText || "";
         setProducts((prev) => prev.map((p) => {
-          if (p.id === productId) return { ...p, images: p.images.map((img) => ({ ...img, altText: updatedAlt })) };
+          if (p.id === productId) {
+            return { ...p, images: p.images.map((img) => ({ ...img, altText: updatedAlt })) };
+          }
           return p;
         }));
         setToast({ message: "✓ Alt Text Bulk Updated", tone: "success" });
@@ -299,7 +353,7 @@ export default function AiContentForgeTab() {
         setToast({ message: "✓ SEO Data Saved", tone: "success" });
       }
     }
-  }, [fetcher.state, fetcher.data]);
+  }, [fetcher.state, fetcher.data, suggestions]);
 
   const handleSuggest = (product, customHook, isPolishingTarget) => {
     setPageError(null);
@@ -347,13 +401,18 @@ export default function AiContentForgeTab() {
     <Page
       title="⚡ AI Content Forge"
       subtitle="Generate premium, story-driven Alt Text and SEO descriptions powered by Gemini."
-      backAction={{ content: "Home", onAction: () => navigate("/app") }}
+      backAction={{ 
+        content: "Back", 
+        onAction: () => navigate("/app"),
+        accessibilityLabel: "Navigate back to Command Center"
+      }}
     >
       {toast && (
         <div style={{ position: "fixed", top: 16, right: 16, zIndex: 9999 }}>
           <Banner tone={toast.tone}>{toast.message}</Banner>
         </div>
       )}
+      
       <Layout>
         {pageError && (
           <Layout.Section>
@@ -362,6 +421,7 @@ export default function AiContentForgeTab() {
             </Banner>
           </Layout.Section>
         )}
+        
         <Layout.Section>
           <BlockStack gap="500">
             {products.map((product) => (
@@ -379,9 +439,10 @@ export default function AiContentForgeTab() {
                 onUpdateSuggestionField={updateSuggestionField}
               />
             ))}
+            
             {products.length === 0 && (
               <Banner tone="info">
-                <Text>No products found to forge content for.</Text>
+                <Text as="p">No products found to forge content for.</Text>
               </Banner>
             )}
           </BlockStack>

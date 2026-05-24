@@ -1,12 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { useLoaderData, useActionData, useSubmit, useNavigation, useNavigate } from "react-router";
+import { useLoaderData, useActionData, useSubmit, useNavigation, useNavigate } from "@remix-run/react";
 import {
   Page, Layout, Card, BlockStack, InlineStack, Text, List, Button, TextField,
   Tabs, Badge, Box, Divider, Banner, Scrollable, Modal, Select, FormLayout, ButtonGroup
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
-
-const THEME_ID = "158876434683";
 
 const PINNED_FILES = [
   "config/settings_schema.json",
@@ -16,15 +14,43 @@ const PINNED_FILES = [
   "sections/footer.liquid",
 ];
 
-const FOLDERS = ["sections", "snippets", "templates", "assets", "config"];
+// ── HELPER: GET ACTIVE THEME ─────────────────────────────────────────────────
+const getActiveTheme = async (admin) => {
+  const themeQuery = `#graphql
+    query {
+      themes(first: 1, roles: [MAIN]) {
+        edges {
+          node {
+            id
+            name
+          }
+        }
+      }
+    }
+  `;
+  const themeRes = await admin.graphql(themeQuery);
+  const themeJson = await themeRes.json();
+  const activeThemeNode = themeJson.data?.themes?.edges[0]?.node;
+  
+  if (!activeThemeNode) {
+    throw new Error("No active main theme found.");
+  }
+  
+  return {
+    id: activeThemeNode.id.split("/").pop(),
+    name: activeThemeNode.name
+  };
+};
 
 // ── SERVER LOADER ────────────────────────────────────────────────────────────
 export const loader = async ({ request }) => {
-  const { session } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
   const { shop, accessToken } = session;
   
   try {
-    const response = await fetch(`https://${shop}/admin/api/2024-10/themes/${THEME_ID}/assets.json?_t=${Date.now()}`, {
+    const theme = await getActiveTheme(admin);
+    
+    const response = await fetch(`https://${shop}/admin/api/2024-10/themes/${theme.id}/assets.json?_t=${Date.now()}`, {
       method: "GET",
       headers: {
         "Content-Type": "application/json",
@@ -37,16 +63,16 @@ export const loader = async ({ request }) => {
     }
     
     const data = await response.json();
-    return Response.json({ files: data.assets ? data.assets : [] });
+    return Response.json({ theme, files: data.assets ? data.assets : [] });
   } catch (error) {
     console.error("Failed to load theme assets:", error);
-    return Response.json({ files: [], error: `Failed to load theme files: ${error.message}` });
+    return Response.json({ theme: null, files: [], error: `Failed to load theme files: ${error.message}` });
   }
 };
 
 // ── SERVER ACTION ────────────────────────────────────────────────────────────
 export const action = async ({ request }) => {
-  const { session } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
   const { shop, accessToken } = session;
   const formData = await request.formData();
   const intent = formData.get("intent");
@@ -54,6 +80,9 @@ export const action = async ({ request }) => {
   const timestamp = Date.now(); 
 
   try {
+    const theme = await getActiveTheme(admin);
+    const THEME_ID = theme.id;
+
     if (intent === "fetchAsset") {
       const response = await fetch(`https://${shop}/admin/api/2024-10/themes/${THEME_ID}/assets.json?asset[key]=${encodeURIComponent(assetKey)}`, {
         method: "GET",
@@ -105,13 +134,11 @@ export const action = async ({ request }) => {
       let newKey = formData.get("newKey");
       const content = formData.get("content");
 
-      // Smart format: Automatically append the folder prefix if the user only typed the filename
       if (!newKey.includes('/')) {
         const folder = assetKey.substring(0, assetKey.indexOf('/'));
         newKey = `${folder}/${newKey}`;
       }
 
-      // 1. Copy the asset natively using source_key
       const copyResponse = await fetch(`https://${shop}/admin/api/2024-10/themes/${THEME_ID}/assets.json`, {
         method: "PUT",
         headers: { 
@@ -125,7 +152,6 @@ export const action = async ({ request }) => {
 
       if (!copyResponse.ok) throw new Error(`Failed to copy file from ${assetKey} to ${newKey}. Check for invalid naming.`);
 
-      // 2. Delete the original asset
       const deleteResponse = await fetch(`https://${shop}/admin/api/2024-10/themes/${THEME_ID}/assets.json?asset[key]=${encodeURIComponent(assetKey)}`, {
         method: "DELETE",
         headers: {
@@ -296,8 +322,8 @@ export const action = async ({ request }) => {
 
 // ── REACT COMPONENT ──────────────────────────────────────────────────────────
 export default function ThemeEditorTab() {
-  const loaderData = useLoaderData();
-  const loaderError = loaderData?.error;
+  const loaderData = useLoaderData() || {};
+  const { theme, files = [], error: loaderError } = loaderData;
   
   const actionData = useActionData();
   const submit = useSubmit();
@@ -331,16 +357,16 @@ export default function ThemeEditorTab() {
 
   const isNavigating = navigation.state !== "idle";
   const hasChanges = currentContent !== originalContent;
-  const isSaving = isNavigating ? navigation.formData?.get("intent") === "saveAsset" : false;
-  const isAssisting = isNavigating ? navigation.formData?.get("intent") === "geminiAssist" : false;
-  const isResearching = isNavigating ? navigation.formData?.get("intent") === "geminiResearch" : false;
-  const isPopulating = isNavigating ? navigation.formData?.get("intent") === "populateMosaic" : false;
+  const isSaving = isNavigating && navigation.formData?.get("intent") === "saveAsset";
+  const isAssisting = isNavigating && navigation.formData?.get("intent") === "geminiAssist";
+  const isResearching = isNavigating && navigation.formData?.get("intent") === "geminiResearch";
+  const isPopulating = isNavigating && navigation.formData?.get("intent") === "populateMosaic";
 
   useEffect(() => {
-    if (loaderData?.files) {
-      setLocalFiles(loaderData.files);
+    if (files.length > 0) {
+      setLocalFiles(files);
     }
-  }, [loaderData]);
+  }, [files]);
 
   useEffect(() => {
     if (actionData) {
@@ -439,15 +465,30 @@ export default function ThemeEditorTab() {
     submit({ intent: "populateMosaic" }, { method: "post" });
   }, [submit]);
 
+  const extractLiveSchema = (content) => {
+    const match = content.match(/\{%\s*schema\s*%\}([\s\S]*?)\{%\s*endschema\s*%\}/);
+    if (match && match[1]) {
+      try {
+        return JSON.parse(match[1]);
+      } catch (e) {
+        return null;
+      }
+    }
+    return null;
+  };
+
   const lineCount = currentContent.split("\n").length;
   const charCount = currentContent.length;
+  const liveSchema = extractLiveSchema(currentContent);
 
   const filteredFiles = localFiles.filter((f) => 
     f.key.toLowerCase().includes(searchQuery.toLowerCase())
   );
   
+  const dynamicFolders = [...new Set(localFiles.map((f) => f.key.split('/')[0]))];
+
   const visiblePinned = PINNED_FILES.filter((f) => 
-    f.toLowerCase().includes(searchQuery.toLowerCase())
+    f.toLowerCase().includes(searchQuery.toLowerCase()) && localFiles.some(lf => lf.key === f)
   );
 
   const renderFileGroup = (folderName) => {
@@ -459,14 +500,16 @@ export default function ThemeEditorTab() {
         <List type="bullet">
           {folderFiles.map((file) => (
             <List.Item key={file.key}>
-              <Button 
-                variant="plain" 
-                onClick={() => handleSelectFile(file.key)} 
-                textAlign="left"
-                accessibilityLabel={`Open file ${file.key}`}
-              >
-                {file.key.replace(`${folderName}/`, "")}
-              </Button>
+              <div style={{ minHeight: "48px", display: "flex", alignItems: "center" }}>
+                <Button 
+                  variant="plain" 
+                  onClick={() => handleSelectFile(file.key)} 
+                  textAlign="left"
+                  accessibilityLabel={`Open file ${file.key}`}
+                >
+                  {file.key.replace(`${folderName}/`, "")}
+                </Button>
+              </div>
             </List.Item>
           ))}
         </List>
@@ -485,24 +528,28 @@ export default function ThemeEditorTab() {
       >
         <Modal.Section>
           <FormLayout>
-            <Select
-              label="Folder"
-              options={[
-                { label: "Sections", value: "sections" },
-                { label: "Snippets", value: "snippets" },
-                { label: "Templates", value: "templates" },
-                { label: "Assets", value: "assets" }
-              ]}
-              value={newFileType}
-              onChange={setNewFileType}
-            />
-            <TextField
-              label="Filename (without extension)"
-              value={newFileName}
-              onChange={setNewFileName}
-              autoComplete="off"
-              accessibilityLabel="New filename input"
-            />
+            <div style={{ minHeight: "48px", display: "flex", width: "100%", alignItems: "center" }}>
+              <Select
+                label="Folder"
+                options={[
+                  { label: "Sections", value: "sections" },
+                  { label: "Snippets", value: "snippets" },
+                  { label: "Templates", value: "templates" },
+                  { label: "Assets", value: "assets" }
+                ]}
+                value={newFileType}
+                onChange={setNewFileType}
+              />
+            </div>
+            <div style={{ minHeight: "48px", display: "flex", width: "100%", alignItems: "center" }}>
+              <TextField
+                label="Filename (without extension)"
+                value={newFileName}
+                onChange={setNewFileName}
+                autoComplete="off"
+                accessibilityLabel="New filename input"
+              />
+            </div>
           </FormLayout>
         </Modal.Section>
       </Modal>
@@ -519,13 +566,15 @@ export default function ThemeEditorTab() {
         secondaryActions={[{ content: "Cancel", onAction: () => setIsRenameModalOpen(false), accessibilityLabel: "Cancel rename file" }]}
       >
         <Modal.Section>
-          <TextField
-            label="New File Path (e.g., snippets/new-name.liquid)"
-            value={renameInput}
-            onChange={setRenameInput}
-            autoComplete="off"
-            accessibilityLabel="Rename file path input"
-          />
+          <div style={{ minHeight: "48px", display: "flex", width: "100%", alignItems: "center" }}>
+            <TextField
+              label="New File Path (e.g., snippets/new-name.liquid)"
+              value={renameInput}
+              onChange={setRenameInput}
+              autoComplete="off"
+              accessibilityLabel="Rename file path input"
+            />
+          </div>
         </Modal.Section>
       </Modal>
     ) : null;
@@ -557,13 +606,15 @@ export default function ThemeEditorTab() {
         secondaryActions={[{ content: "Cancel", onAction: () => setIsDuplicateModalOpen(false), accessibilityLabel: "Cancel duplicate file" }]}
       >
         <Modal.Section>
-          <TextField
-            label="New File Path (e.g., sections/copy.liquid)"
-            value={duplicateInput}
-            onChange={setDuplicateInput}
-            autoComplete="off"
-            accessibilityLabel="Duplicate file path input"
-          />
+          <div style={{ minHeight: "48px", display: "flex", width: "100%", alignItems: "center" }}>
+            <TextField
+              label="New File Path (e.g., sections/copy.liquid)"
+              value={duplicateInput}
+              onChange={setDuplicateInput}
+              autoComplete="off"
+              accessibilityLabel="Duplicate file path input"
+            />
+          </div>
         </Modal.Section>
       </Modal>
     ) : null;
@@ -571,15 +622,15 @@ export default function ThemeEditorTab() {
 
   return (
     <Page
-      title={selectedFile ? selectedFile : "Theme Editor"}
+      title={theme ? `Theme Editor: ${theme.name}` : "Theme Editor"}
       fullWidth
-      backAction={{ content: "Dashboard", onAction: () => navigate("/app") }}
+      backAction={{ content: "Home", onAction: () => navigate("/app") }}
     >
-      {loaderError ? <Banner tone="critical">{loaderError}</Banner> : null}
+      {loaderError && <Banner tone="critical">{loaderError}</Banner>}
       
-      {actionData?.error && !actionData?.debugTypes ? (
+      {actionData?.error && !actionData?.debugTypes && (
         <Banner tone="critical">{actionData.error}</Banner>
-      ) : null}
+      )}
 
       {actionData?.intent === "populateMosaic" && actionData?.success && (
         <Box paddingBlockEnd="400">
@@ -609,7 +660,7 @@ export default function ThemeEditorTab() {
                 size="large"
                 loading={isPopulating}
                 onClick={handlePopulateMosaic}
-                aria-label="Populate Living Mosaic hero section with all collections and story pages"
+                accessibilityLabel="Populate Living Mosaic hero section with all collections and story pages"
               >
                 Populate Living Mosaic
               </Button>
@@ -623,44 +674,48 @@ export default function ThemeEditorTab() {
           <Card padding="0">
             <Box padding="400" borderBottom="025" borderColor="border">
               <BlockStack gap="300">
-                <Text variant="headingMd" as="h2">File Tree</Text>
-                <TextField
-                  labelHidden
-                  label="Search files"
-                  placeholder="Filter files by name..."
-                  value={searchQuery}
-                  onChange={setSearchQuery}
-                  autoComplete="off"
-                  clearButton
-                  onClearButtonClick={() => setSearchQuery("")}
-                  accessibilityLabel="Search files filter"
-                />
+                <Text variant="headingMd" as="h2">Live File Tree</Text>
+                <div style={{ minHeight: "48px", display: "flex", width: "100%" }}>
+                  <TextField
+                    labelHidden
+                    label="Search files"
+                    placeholder="Filter files by name..."
+                    value={searchQuery}
+                    onChange={setSearchQuery}
+                    autoComplete="off"
+                    clearButton
+                    onClearButtonClick={() => setSearchQuery("")}
+                    accessibilityLabel="Search files filter"
+                  />
+                </div>
               </BlockStack>
             </Box>
             <Scrollable style={{ height: "75vh" }} focusable>
               <Box padding="400">
-                {visiblePinned.length > 0 ? (
+                {visiblePinned.length > 0 && (
                   <Box paddingBlockEnd="400">
                     <Text variant="headingSm" as="h6" fontWeight="bold">PINNED QUICK-ACCESS</Text>
                     <List type="bullet">
                       {visiblePinned.map((fileKey) => (
                         <List.Item key={fileKey}>
-                          <Button 
-                            variant="plain" 
-                            onClick={() => handleSelectFile(fileKey)} 
-                            textAlign="left"
-                            accessibilityLabel={`Open pinned file ${fileKey}`}
-                          >
-                            <Text fontWeight="bold">{fileKey}</Text>
-                          </Button>
+                          <div style={{ minHeight: "48px", display: "flex", alignItems: "center" }}>
+                            <Button 
+                              variant="plain" 
+                              onClick={() => handleSelectFile(fileKey)} 
+                              textAlign="left"
+                              accessibilityLabel={`Open pinned file ${fileKey}`}
+                            >
+                              <Text fontWeight="bold">{fileKey}</Text>
+                            </Button>
+                          </div>
                         </List.Item>
                       ))}
                     </List>
                   </Box>
-                ) : null}
+                )}
                 <Divider />
                 <Box paddingBlockStart="400">
-                  {FOLDERS.map((folder) => renderFileGroup(folder))}
+                  {dynamicFolders.map((folder) => renderFileGroup(folder))}
                 </Box>
               </Box>
             </Scrollable>
@@ -682,76 +737,100 @@ export default function ThemeEditorTab() {
                         </InlineStack>
                       </BlockStack>
                       <InlineStack gap="300">
-                        <Button 
-                          onClick={() => setShowDiff(!showDiff)} 
-                          size="large"
-                          accessibilityLabel="Toggle Diff View"
-                        >
-                          {showDiff ? "Hide Diff" : "Show Diff"}
-                        </Button>
-                        <Button 
-                          variant="primary" 
-                          onClick={handleSave} 
-                          loading={isSaving} 
-                          disabled={!hasChanges}
-                          size="large"
-                          accessibilityLabel="Save changes to Theme"
-                        >
-                          SAVE TO THEME
-                        </Button>
+                        <div style={{ minHeight: "48px", display: "flex", alignItems: "center" }}>
+                          <Button 
+                            onClick={() => setShowDiff(!showDiff)} 
+                            size="large"
+                            accessibilityLabel="Toggle Diff View"
+                          >
+                            {showDiff ? "Hide Diff" : "Show Diff"}
+                          </Button>
+                        </div>
+                        <div style={{ minHeight: "48px", display: "flex", alignItems: "center" }}>
+                          <Button 
+                            variant="primary" 
+                            onClick={handleSave} 
+                            loading={isSaving} 
+                            disabled={!hasChanges}
+                            size="large"
+                            accessibilityLabel="Save changes to Theme"
+                          >
+                            SAVE TO THEME
+                          </Button>
+                        </div>
                       </InlineStack>
                     </InlineStack>
 
                     <ButtonGroup segmented>
-                      <Button size="large" onClick={() => setIsNewModalOpen(true)} accessibilityLabel="Create a new file">
-                        New File
-                      </Button>
-                      <Button size="large" onClick={handleSave} disabled={!hasChanges} loading={isSaving} accessibilityLabel="Save current file">
-                        Save File
-                      </Button>
-                      <Button size="large" onClick={() => { setRenameInput(selectedFile); setIsRenameModalOpen(true); }} accessibilityLabel="Rename current file">
-                        Rename File
-                      </Button>
-                      <Button size="large" onClick={() => setIsDeleteModalOpen(true)} tone="critical" accessibilityLabel="Delete current file">
-                        Delete File
-                      </Button>
-                      <Button size="large" onClick={() => { setDuplicateInput(selectedFile.replace('.liquid', '-copy.liquid')); setIsDuplicateModalOpen(true); }} accessibilityLabel="Duplicate current file">
-                        Duplicate File
-                      </Button>
-                      <Button size="large" onClick={handleDiscard} disabled={!hasChanges} accessibilityLabel="Discard unsaved changes">
-                        Discard Changes
-                      </Button>
+                      <div style={{ minHeight: "48px", display: "flex", alignItems: "center" }}>
+                        <Button size="large" onClick={() => setIsNewModalOpen(true)} accessibilityLabel="Create a new file">
+                          New File
+                        </Button>
+                      </div>
+                      <div style={{ minHeight: "48px", display: "flex", alignItems: "center" }}>
+                        <Button size="large" onClick={handleSave} disabled={!hasChanges} loading={isSaving} accessibilityLabel="Save current file">
+                          Save File
+                        </Button>
+                      </div>
+                      <div style={{ minHeight: "48px", display: "flex", alignItems: "center" }}>
+                        <Button size="large" onClick={() => { setRenameInput(selectedFile); setIsRenameModalOpen(true); }} accessibilityLabel="Rename current file">
+                          Rename File
+                        </Button>
+                      </div>
+                      <div style={{ minHeight: "48px", display: "flex", alignItems: "center" }}>
+                        <Button size="large" onClick={() => setIsDeleteModalOpen(true)} tone="critical" accessibilityLabel="Delete current file">
+                          Delete File
+                        </Button>
+                      </div>
+                      <div style={{ minHeight: "48px", display: "flex", alignItems: "center" }}>
+                        <Button size="large" onClick={() => { setDuplicateInput(selectedFile.replace('.liquid', '-copy.liquid')); setIsDuplicateModalOpen(true); }} accessibilityLabel="Duplicate current file">
+                          Duplicate File
+                        </Button>
+                      </div>
+                      <div style={{ minHeight: "48px", display: "flex", alignItems: "center" }}>
+                        <Button size="large" onClick={handleDiscard} disabled={!hasChanges} accessibilityLabel="Discard unsaved changes">
+                          Discard Changes
+                        </Button>
+                      </div>
                     </ButtonGroup>
                   </BlockStack>
                 </Box>
 
                 <Tabs
-                  tabs={[{ id: "editor", content: "Editor", accessibilityLabel: "Editor Tab" }, { id: "research", content: "Research", accessibilityLabel: "Research Tab" }]}
+                  tabs={[
+                    { id: "editor", content: "Editor", accessibilityLabel: "Editor Tab" }, 
+                    { id: "research", content: "Research", accessibilityLabel: "Research Tab" },
+                    { id: "schema", content: "Live Schema", accessibilityLabel: "Schema Tab" }
+                  ]}
                   selected={selectedTab}
                   onSelect={setSelectedTab}
                   fitted
                 >
                   <Box padding="400">
-                    {selectedTab === 0 ? (
+                    {selectedTab === 0 && (
                       <BlockStack gap="400">
                         <Box background="bg-surface-secondary" padding="400" borderRadius="200">
                           <BlockStack gap="300">
                             <Text variant="headingSm" as="h3">Gemini Assist (gemini-2.5-pro)</Text>
                             <InlineStack gap="300" wrap={false} blockAlign="center">
                               <Box width="100%">
-                                <TextField
-                                  labelHidden
-                                  label="Instruction for Gemini"
-                                  value={instruction}
-                                  onChange={setInstruction}
-                                  placeholder="e.g. 'Add a new schema setting for background color with id custom_bg'"
-                                  autoComplete="off"
-                                  accessibilityLabel="Instruction input for Gemini Assist"
-                                />
+                                <div style={{ minHeight: "48px", display: "flex", width: "100%" }}>
+                                  <TextField
+                                    labelHidden
+                                    label="Instruction for Gemini"
+                                    value={instruction}
+                                    onChange={setInstruction}
+                                    placeholder="e.g. 'Add a new schema setting for background color with id custom_bg'"
+                                    autoComplete="off"
+                                    accessibilityLabel="Instruction input for Gemini Assist"
+                                  />
+                                </div>
                               </Box>
-                              <Button onClick={handleGeminiAssist} loading={isAssisting} tone="success" size="large" accessibilityLabel="Send instruction to Gemini">
-                                Modify Code
-                              </Button>
+                              <div style={{ minHeight: "48px", display: "flex", alignItems: "center" }}>
+                                <Button onClick={handleGeminiAssist} loading={isAssisting} tone="success" size="large" accessibilityLabel="Send instruction to Gemini">
+                                  Modify Code
+                                </Button>
+                              </div>
                             </InlineStack>
                           </BlockStack>
                         </Box>
@@ -761,29 +840,37 @@ export default function ThemeEditorTab() {
                             <Box width="50%">
                               <Text fontWeight="bold">Original Content</Text>
                               <Box paddingBlockStart="200">
-                                <TextField labelHidden label="Original file content" value={originalContent} multiline={25} monospaced autoComplete="off" readOnly accessibilityLabel="Original read-only content" />
+                                <div style={{ minHeight: "48px", display: "flex", width: "100%" }}>
+                                  <TextField labelHidden label="Original file content" value={originalContent} multiline={25} monospaced autoComplete="off" readOnly accessibilityLabel="Original read-only content" />
+                                </div>
                               </Box>
                             </Box>
                             <Box width="50%">
                               <Text fontWeight="bold">Modified Content</Text>
                               <Box paddingBlockStart="200">
-                                <TextField labelHidden label="Modified file content" value={currentContent} onChange={setCurrentContent} multiline={25} monospaced autoComplete="off" accessibilityLabel="Editable modified content" />
+                                <div style={{ minHeight: "48px", display: "flex", width: "100%" }}>
+                                  <TextField labelHidden label="Modified file content" value={currentContent} onChange={setCurrentContent} multiline={25} monospaced autoComplete="off" accessibilityLabel="Editable modified content" />
+                                </div>
                               </Box>
                             </Box>
                           </InlineStack>
                         ) : (
-                          <TextField labelHidden label="Code Editor" value={currentContent} onChange={setCurrentContent} multiline={30} monospaced autoComplete="off" disabled={isNavigating} accessibilityLabel="Main code editor" />
+                          <div style={{ minHeight: "48px", display: "flex", width: "100%" }}>
+                            <TextField labelHidden label="Code Editor" value={currentContent} onChange={setCurrentContent} multiline={30} monospaced autoComplete="off" disabled={isNavigating} accessibilityLabel="Main code editor" />
+                          </div>
                         )}
                       </BlockStack>
-                    ) : null}
+                    )}
 
-                    {selectedTab === 1 ? (
+                    {selectedTab === 1 && (
                       <BlockStack gap="400">
                         <InlineStack align="space-between" blockAlign="center">
                           <Text variant="headingMd" as="h3">Prestige Schema Cataloger</Text>
-                          <Button onClick={handleGeminiResearch} loading={isResearching} size="large" accessibilityLabel="Run schema analysis using Gemini">
-                            Run Schema Analysis
-                          </Button>
+                          <div style={{ minHeight: "48px", display: "flex", alignItems: "center" }}>
+                            <Button onClick={handleGeminiResearch} loading={isResearching} size="large" accessibilityLabel="Run schema analysis using Gemini">
+                              Run Schema Analysis
+                            </Button>
+                          </div>
                         </InlineStack>
                         <Divider />
                         {researchData ? (
@@ -800,7 +887,65 @@ export default function ThemeEditorTab() {
                           </Box>
                         )}
                       </BlockStack>
-                    ) : null}
+                    )}
+
+                    {selectedTab === 2 && (
+                      <BlockStack gap="400">
+                        <Text variant="headingMd" as="h3">Live Extracted Section Schema</Text>
+                        <Divider />
+                        {liveSchema ? (
+                          <BlockStack gap="400">
+                            <Text variant="headingLg" as="h4">{liveSchema.name || "Unnamed Section"}</Text>
+                            {liveSchema.settings && liveSchema.settings.length > 0 ? (
+                              <BlockStack gap="300">
+                                <Text variant="headingSm" as="h5">Settings</Text>
+                                {liveSchema.settings.map((setting, idx) => (
+                                  <Box key={idx} padding="300" background="bg-surface-secondary" borderRadius="100">
+                                    <InlineStack align="space-between">
+                                      <Text fontWeight="bold">{setting.label || setting.id || "Unnamed Setting"}</Text>
+                                      <Badge tone="info">{setting.type}</Badge>
+                                    </InlineStack>
+                                    <Text tone="subdued">ID: {setting.id}</Text>
+                                  </Box>
+                                ))}
+                              </BlockStack>
+                            ) : (
+                              <Text tone="subdued">No top-level settings mapped.</Text>
+                            )}
+
+                            {liveSchema.blocks && liveSchema.blocks.length > 0 && (
+                              <BlockStack gap="300">
+                                <Text variant="headingSm" as="h5">Blocks</Text>
+                                {liveSchema.blocks.map((block, idx) => (
+                                  <Box key={idx} padding="300" background="bg-surface" borderColor="border" borderWidth="025" borderRadius="100">
+                                    <BlockStack gap="200">
+                                      <InlineStack align="space-between">
+                                        <Text fontWeight="bold">{block.name || block.type}</Text>
+                                        <Badge tone="success">{block.type}</Badge>
+                                      </InlineStack>
+                                      {block.settings && block.settings.map((bSet, bIdx) => (
+                                        <Box key={bIdx} paddingInlineStart="400">
+                                          <InlineStack align="space-between">
+                                            <Text tone="subdued">{bSet.label || bSet.id}</Text>
+                                            <Text tone="subdued" variant="bodySm">({bSet.type})</Text>
+                                          </InlineStack>
+                                        </Box>
+                                      ))}
+                                    </BlockStack>
+                                  </Box>
+                                ))}
+                              </BlockStack>
+                            )}
+                          </BlockStack>
+                        ) : (
+                          <Box padding="800">
+                            <Text alignment="center" tone="subdued">
+                              No valid JSON schema block detected in this file. (Must be a section file with a {'{% schema %}'} tag).
+                            </Text>
+                          </Box>
+                        )}
+                      </BlockStack>
+                    )}
                   </Box>
                 </Tabs>
               </BlockStack>
@@ -810,9 +955,11 @@ export default function ThemeEditorTab() {
                   Select a file from the tree to begin editing.
                 </Text>
                 <Box paddingBlockStart="400" display="flex" justifyContent="center">
-                   <Button size="large" onClick={() => setIsNewModalOpen(true)} accessibilityLabel="Create new file from empty state">
-                     Create New File
-                   </Button>
+                  <div style={{ minHeight: "48px", display: "flex", alignItems: "center" }}>
+                    <Button size="large" onClick={() => setIsNewModalOpen(true)} accessibilityLabel="Create new file from empty state">
+                      Create New File
+                    </Button>
+                  </div>
                 </Box>
               </Box>
             )}

@@ -1,32 +1,43 @@
 import { useState, useEffect } from "react";
-import { useLoaderData, useActionData, useSubmit, useNavigation } from "react-router";
+import { useLoaderData, useActionData, useSubmit, useNavigation, useNavigate } from "@remix-run/react";
 import { Page, Layout, Card, BlockStack, InlineStack, Text, Button, TextField, Banner, Thumbnail, Box, Divider, Badge } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 
 // ==========================================
-// 1. ENGINE: FETCH PRODUCTS & IMAGES
-// FIX: Rewired from images → media connection
-// Returns MediaImage GIDs required by fileUpdate
+// 1. ENGINE: FETCH ALL IMAGES
+// Returns a flat array of all images across all products
 // ==========================================
 export const loader = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
   try {
-    const response = await admin.graphql(
-      `#graphql
-      query {
-        products(first: 20, sortKey: UPDATED_AT, reverse: true) {
-          edges {
-            node {
-              id
-              title
-              media(first: 5) {
-                edges {
-                  node {
-                    ... on MediaImage {
-                      id
-                      image {
-                        url
-                        altText
+    let allImages = [];
+    let cursor = null;
+    let hasNextPage = true;
+    let cycleCount = 0;
+
+    while (hasNextPage && cycleCount < 20) {
+      const response = await admin.graphql(
+        `#graphql
+        query GetProductsWithImages($cursor: String) {
+          products(first: 100, after: $cursor, sortKey: UPDATED_AT, reverse: true) {
+            pageInfo {
+              hasNextPage
+              endCursor
+            }
+            edges {
+              node {
+                id
+                title
+                handle
+                media(first: 50) {
+                  edges {
+                    node {
+                      ... on MediaImage {
+                        id
+                        image {
+                          url
+                          altText
+                        }
                       }
                     }
                   }
@@ -34,40 +45,51 @@ export const loader = async ({ request }) => {
               }
             }
           }
-        }
-      }`
-    );
-    const data = await response.json();
-
-    // Adapter: map media shape back to frontend image shape
-    const products = (data.data?.products?.edges || []).map(({ node: product }) => ({
-      node: {
-        ...product,
-        images: {
-          edges: product.media.edges
-            .filter(({ node }) => node.id) // MediaImage only
-            .map(({ node: mediaNode }) => ({
-              node: {
-                id: mediaNode.id, // gid://shopify/MediaImage/...
-                url: mediaNode.image?.url,
-                altText: mediaNode.image?.altText,
-              }
-            }))
-        }
+        }`,
+        { variables: { cursor } }
+      );
+      
+      const data = await response.json();
+      
+      if (data.errors) {
+        throw new Error(data.errors[0].message);
       }
-    }));
 
-    return Response.json({ products });
+      const page = data.data?.products;
+      if (!page) {
+        break;
+      }
+
+      // Adapter: Flatten products and media into a single images array
+      page.edges.forEach(({ node: product }) => {
+        const productImages = (product.media?.edges || [])
+          .filter(({ node }) => node.id) // MediaImage only
+          .map(({ node: mediaNode }) => ({
+            id: mediaNode.id, // gid://shopify/MediaImage/...
+            url: mediaNode.image?.url || "",
+            altText: mediaNode.image?.altText || "",
+            productTitle: product.title,
+            productHandle: product.handle,
+            needsAltText: !mediaNode.image?.altText || mediaNode.image?.altText.trim() === ""
+          }));
+        
+        allImages = allImages.concat(productImages);
+      });
+
+      hasNextPage = page.pageInfo.hasNextPage;
+      cursor = page.pageInfo.endCursor;
+      cycleCount++;
+    }
+
+    return Response.json({ images: allImages });
   } catch (error) {
-    console.error("Failed to load products:", error);
-    return Response.json({ products: [], error: "Failed to load products." });
+    console.error("Failed to load images:", error);
+    return Response.json({ images: [], error: "Failed to load images." });
   }
 };
 
 // ==========================================
 // 2. TRANSMISSION: SAVE OR GENERATE AI TEXT
-// FIX: productImageUpdate → fileUpdate (alt field)
-// FIX: gemini-2.5-pro → gemini-2.5-flash on v1beta
 // ==========================================
 export const action = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
@@ -133,13 +155,13 @@ export const action = async ({ request }) => {
 
 // ==========================================
 // 3. CHASSIS: POLARIS UI FRAMEWORK
-// FIX: Added back button to /app
 // ==========================================
 export default function SeoAltTextTab() {
-  const { products = [], error } = useLoaderData() || {};
+  const { images = [], error } = useLoaderData() || {};
   const actionData = useActionData();
   const submit = useSubmit();
   const navigation = useNavigation();
+  const navigate = useNavigate();
 
   useEffect(() => {
     if (actionData?.message) shopify.toast.show(actionData.message);
@@ -149,46 +171,37 @@ export default function SeoAltTextTab() {
   return (
     <Page
       title="SEO Alt Text Command"
-      subtitle="Manage and auto-generate image alt text"
+      subtitle="Manage and auto-generate image alt text across all products"
       fullWidth
-      backAction={{ content: "Home", url: "/app" }}
+      backAction={{ content: "Home", onAction: () => navigate("/app") }}
     >
       {error && <Banner tone="critical">{error}</Banner>}
       <Layout>
         <Layout.Section>
           <Card padding="0">
             <Box padding="400" borderBottom="025" borderColor="border">
-              <Text variant="headingMd" as="h2">Product Image Roster</Text>
+              <InlineStack align="space-between" blockAlign="center">
+                <Text variant="headingMd" as="h2">Master Image Roster</Text>
+                <Badge tone="info">{images.length} Total Images</Badge>
+              </InlineStack>
             </Box>
             <Box padding="400">
-              {products.length === 0 ? (
-                <Text tone="subdued">No products found on the shop floor.</Text>
-              ) : (
+              {images.length === 0 && (
+                <div style={{ minHeight: "48px", display: "flex", alignItems: "center" }}>
+                  <Text tone="subdued">No images found on the shop floor.</Text>
+                </div>
+              )}
+              
+              {images.length > 0 && (
                 <BlockStack gap="600">
-                  {products.map(({ node: product }) => (
-                    <Box key={product.id}>
-                      <InlineStack gap="300" blockAlign="center">
-                        <Text variant="headingSm" as="h3" fontWeight="bold">{product.title}</Text>
-                        <Badge tone="info">{product.images.edges.length} Images</Badge>
-                      </InlineStack>
-                      <Box paddingBlockStart="200">
-                        {product.images.edges.length === 0 ? (
-                          <Text tone="subdued">No images for this product.</Text>
-                        ) : (
-                          <BlockStack gap="400">
-                            {product.images.edges.map(({ node: image }) => (
-                              <ImageRow
-                                key={image.id}
-                                product={product}
-                                image={image}
-                                submit={submit}
-                                navigation={navigation}
-                                actionData={actionData}
-                              />
-                            ))}
-                          </BlockStack>
-                        )}
-                      </Box>
+                  {images.map((image) => (
+                    <Box key={image.id}>
+                      <ImageRow
+                        image={image}
+                        submit={submit}
+                        navigation={navigation}
+                        actionData={actionData}
+                      />
                       <Box paddingBlockStart="400"><Divider /></Box>
                     </Box>
                   ))}
@@ -202,9 +215,11 @@ export default function SeoAltTextTab() {
   );
 }
 
-// Sub-component for individual image rows
-function ImageRow({ product, image, submit, navigation, actionData }) {
-  const [altText, setAltText] = useState(image.altText || "");
+// ==========================================
+// 4. SUB-COMPONENT: IMAGE ROW MANAGER
+// ==========================================
+function ImageRow({ image, submit, navigation, actionData }) {
+  const [altText, setAltText] = useState(image.altText);
 
   const isSaving = navigation.state === "submitting" &&
     navigation.formData?.get("intent") === "saveAltText" &&
@@ -222,28 +237,59 @@ function ImageRow({ product, image, submit, navigation, actionData }) {
   }, [actionData, image.id]);
 
   const handleSave = () => {
-    submit({ intent: "saveAltText", productId: product.id, imageId: image.id, altText }, { method: "post" });
+    submit({ intent: "saveAltText", imageId: image.id, altText }, { method: "post" });
   };
 
   const handleGenerateAI = () => {
-    submit({ intent: "generateAI", productTitle: product.title, imageId: image.id }, { method: "post" });
+    submit({ intent: "generateAI", productTitle: image.productTitle, imageId: image.id }, { method: "post" });
   };
 
   return (
-    <InlineStack wrap={false} gap="400" blockAlign="center">
-      <Thumbnail source={image.url} alt={altText} size="large" />
-      <Box width="100%">
-        <TextField
-          value={altText}
-          onChange={setAltText}
-          placeholder="Enter SEO Alt Text or hit Generate..."
-          autoComplete="off"
-        />
-      </Box>
-      <InlineStack gap="200" wrap={false}>
-        <Button onClick={handleGenerateAI} loading={isGenerating}>Gemini AI</Button>
-        <Button onClick={handleSave} loading={isSaving} variant="primary" tone="success">Save</Button>
+    <div style={{ minHeight: "48px", display: "flex", flexDirection: "column", width: "100%", gap: "12px" }}>
+      <InlineStack gap="300" blockAlign="center">
+        <Text variant="headingSm" as="h3" fontWeight="bold">{image.productTitle}</Text>
+        {image.needsAltText && <Badge tone="critical">Missing Alt Text</Badge>}
       </InlineStack>
-    </InlineStack>
+      
+      <InlineStack wrap={false} gap="400" blockAlign="center" style={{ width: "100%" }}>
+        <Thumbnail source={image.url} alt={altText} size="large" />
+        <Box width="100%">
+          <div style={{ minHeight: "48px", display: "flex", alignItems: "center", width: "100%" }}>
+            <TextField
+              label={`Alt text for ${image.productTitle}`}
+              labelHidden
+              value={altText}
+              onChange={setAltText}
+              placeholder="Enter SEO Alt Text or hit Generate..."
+              autoComplete="off"
+            />
+          </div>
+        </Box>
+        <InlineStack gap="200" wrap={false}>
+          <div style={{ minHeight: "48px", display: "flex", alignItems: "center" }}>
+            <Button
+              size="large"
+              accessibilityLabel={`Generate AI alt text for ${image.productTitle}`}
+              onClick={handleGenerateAI}
+              loading={isGenerating}
+            >
+              Gemini AI
+            </Button>
+          </div>
+          <div style={{ minHeight: "48px", display: "flex", alignItems: "center" }}>
+            <Button
+              size="large"
+              accessibilityLabel={`Save alt text for ${image.productTitle}`}
+              onClick={handleSave}
+              loading={isSaving}
+              variant="primary"
+              tone="success"
+            >
+              Save
+            </Button>
+          </div>
+        </InlineStack>
+      </InlineStack>
+    </div>
   );
 }
