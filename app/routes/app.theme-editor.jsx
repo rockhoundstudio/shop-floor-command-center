@@ -102,8 +102,14 @@ export const action = async ({ request }) => {
     }
 
     if (intent === "renameAsset") {
-      const newKey = formData.get("newKey");
+      let newKey = formData.get("newKey");
       const content = formData.get("content");
+
+      // Smart format: Automatically append the folder prefix if the user only typed the filename
+      if (!newKey.includes('/')) {
+        const folder = assetKey.substring(0, assetKey.indexOf('/'));
+        newKey = `${folder}/${newKey}`;
+      }
 
       // 1. Copy the asset natively using source_key
       const copyResponse = await fetch(`https://${shop}/admin/api/2024-10/themes/${THEME_ID}/assets.json`, {
