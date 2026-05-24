@@ -1,5 +1,4 @@
-import { json } from "@remix-run/node";
-import { useLoaderData, useNavigate } from "@remix-run/react";
+import { useLoaderData, useNavigate } from "react-router";
 import { Page, Layout, Card, Text, Button, BlockStack } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 
@@ -29,7 +28,7 @@ export const loader = async ({ request }) => {
     collectionHandles.push(edges[i].node.handle);
   }
 
-  return json({
+  return Response.json({
     collectionHandles: collectionHandles
   });
 };
@@ -67,9 +66,10 @@ export default function MenuManager() {
                 Menu Configuration Data Active
               </Text>
               
-              {collectionHandles.length > 0 ? (
+              {collectionHandles.length > 0 && (
                 <Text as="p">Connected to Shopify GraphQL. Category mapping dynamically applied.</Text>
-              ) : (
+              )}
+              {collectionHandles.length === 0 && (
                 <Text as="p">Awaiting collection data or store has zero collections.</Text>
               )}
               
