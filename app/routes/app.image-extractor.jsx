@@ -222,9 +222,9 @@ export const action = async ({ request }) => {
           capabilities: { publishable: { status: "ACTIVE" } },
           fields: [
             { key: "page_title", value: page.title },
-            { key: "page_url", value: page.url },
+            { key: "page_url", value: `https://rockhoundstudio.com${page.url}` },
             { key: "image_urls", value: JSON.stringify(page.selectedImages.map(img => img.src)) },
-            { key: "image_alts", value: JSON.stringify(page.selectedImages.map(img => img.alt)) },
+            { key: "image_alts", value: JSON.stringify(page.selectedImages.map(img => (!img.alt || img.alt.trim() === "") ? page.title : img.alt)) },
             { key: "display_order", value: JSON.stringify(page.selectedImages.map(img => img.src)) }
           ]
         }
