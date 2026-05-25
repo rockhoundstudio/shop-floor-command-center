@@ -216,21 +216,37 @@ export const action = async ({ request }) => {
         }
       `;
 
-      await admin.graphql(upsertQuery, {
-        variables: {
-          handle: { type: "story_slideshow_pool", handle: page.handle },
-          metaobject: {
-            capabilities: { publishable: { status: "ACTIVE" } },
-            fields: [
-              { key: "page_title", value: page.title },
-              { key: "page_url", value: page.url },
-              { key: "image_urls", value: JSON.stringify(page.selectedImages.map(img => img.src)) },
-              { key: "image_alts", value: JSON.stringify(page.selectedImages.map(img => img.alt)) },
-              { key: "display_order", value: JSON.stringify(page.selectedImages.map(img => img.src)) }
-            ]
-          }
+      const variables = {
+        handle: { type: "story_slideshow_pool", handle: page.handle },
+        metaobject: {
+          capabilities: { publishable: { status: "ACTIVE" } },
+          fields: [
+            { key: "page_title", value: page.title },
+            { key: "page_url", value: page.url },
+            { key: "image_urls", value: JSON.stringify(page.selectedImages.map(img => img.src)) },
+            { key: "image_alts", value: JSON.stringify(page.selectedImages.map(img => img.alt)) },
+            { key: "display_order", value: JSON.stringify(page.selectedImages.map(img => img.src)) }
+          ]
         }
-      });
+      };
+
+      console.log(`\n--- UPSERT PAYLOAD FOR: ${page.handle} ---`);
+      console.log(JSON.stringify(variables, null, 2));
+
+      const upsertRes = await admin.graphql(upsertQuery, { variables });
+      const upsertData = await upsertRes.json();
+
+      console.log(`\n--- UPSERT RESPONSE FOR: ${page.handle} ---`);
+      console.log(JSON.stringify(upsertData, null, 2));
+
+      if (upsertData.errors) {
+        throw new Error(`GraphQL Root Error: ${JSON.stringify(upsertData.errors)}`);
+      }
+
+      const userErrors = upsertData.data?.metaobjectUpsert?.userErrors || [];
+      if (userErrors.length > 0) {
+        throw new Error(`Shopify UserError on ${page.handle}: ${JSON.stringify(userErrors)}`);
+      }
     }
 
     return Response.json({ success: true, timestamp: new Date().toLocaleTimeString() });
