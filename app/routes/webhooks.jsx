@@ -5,9 +5,7 @@ import prisma from "../db.server";
 // HELPER: HTML PARSER
 // ==========================================
 const extractImagesFromHtml = (html) => {
-  if (html === null) { return []; }
-  if (html === undefined) { return []; }
-  if (html === "") { return []; }
+  if (!html) return [];
   
   const imgRegex = /<img[^>]+>/g;
   const srcRegex = /src=["']([^"']+)["']/;
@@ -21,13 +19,11 @@ const extractImagesFromHtml = (html) => {
     const srcMatch = imgTag.match(srcRegex);
     const altMatch = imgTag.match(altRegex);
     
-    if (srcMatch) {
-      if (srcMatch[1]) {
-        images.push({
-          src: srcMatch[1],
-          alt: altMatch ? (altMatch[1] ? altMatch[1] : "") : ""
-        });
-      }
+    if (srcMatch && srcMatch[1]) {
+      images.push({
+        src: srcMatch[1],
+        alt: (altMatch && altMatch[1]) ? altMatch[1] : ""
+      });
     }
   }
   
@@ -62,96 +58,85 @@ export const action = async ({ request }) => {
           where: { menuHandle: "footer" }
         });
 
-        if (footerSetting) {
-          if (footerSetting.autoSync) {
-            const collectionTitle = payload.title;
-            const collectionHandle = payload.handle;
-            const newUrl = `/collections/${collectionHandle}`;
+        if (footerSetting && footerSetting.autoSync) {
+          const collectionTitle = payload.title;
+          const collectionHandle = payload.handle;
+          const newUrl = `/collections/${collectionHandle}`;
 
-            // 2. Fetch the current footer menu from Shopify
-            const menuRes = await admin.graphql(`
-              query {
-                menus(first: 1, query: "handle:footer") {
-                  edges {
-                    node {
-                      id
+          // 2. Fetch the current footer menu from Shopify
+          const menuRes = await admin.graphql(`
+            query {
+              menus(first: 1, query: "handle:footer") {
+                edges {
+                  node {
+                    id
+                    title
+                    handle
+                    items {
                       title
-                      handle
+                      url
+                      type
                       items {
                         title
                         url
                         type
-                        items {
-                          title
-                          url
-                          type
-                        }
                       }
                     }
                   }
                 }
               }
-            `);
-            
-            const menuJson = await menuRes.json();
-            const footerMenu = menuJson.data?.menus?.edges[0]?.node;
+            }
+          `);
+          
+          const menuJson = await menuRes.json();
+          const footerMenu = menuJson.data?.menus?.edges[0]?.node;
 
-            if (footerMenu) {
-              // 3. Format existing items so Shopify accepts them back
-              const formatItem = (item) => {
-                let formattedItems = [];
-                if (item.items) {
-                  if (item.items.length > 0) {
-                    formattedItems = item.items.map(formatItem);
+          if (footerMenu) {
+            // 3. Format existing items so Shopify accepts them back
+            const formatItem = (item) => ({
+              title: item.title,
+              url: item.url || "#",
+              type: "HTTP",
+              items: (item.items && item.items.length > 0) ? item.items.map(formatItem) : []
+            });
+
+            const currentItems = footerMenu.items.map(formatItem);
+            
+            // Safety Check: Don't add it if it somehow already exists
+            const alreadyExists = currentItems.some(item => item.url === newUrl);
+
+            if (!alreadyExists) {
+              // Append the new collection to the end of the menu
+              currentItems.push({
+                title: collectionTitle,
+                url: newUrl,
+                type: "HTTP",
+                items: []
+              });
+
+              // 4. Update the menu in Shopify
+              await admin.graphql(`
+                mutation menuUpdate($id: ID!, $title: String!, $handle: String!, $items: [MenuItemUpdateInput!]!) {
+                  menuUpdate(id: $id, title: $title, handle: $handle, items: $items) {
+                    userErrors { message }
                   }
                 }
-                
-                return {
-                  title: item.title,
-                  url: item.url ? item.url : "#",
-                  type: "HTTP",
-                  items: formattedItems
-                };
-              };
+              `, {
+                variables: {
+                  id: footerMenu.id,
+                  title: footerMenu.title,
+                  handle: "footer",
+                  items: currentItems
+                }
+              });
 
-              const currentItems = footerMenu.items.map(formatItem);
-              
-              // Safety Check: Don't add it if it somehow already exists
-              const alreadyExists = currentItems.some(item => item.url === newUrl);
-
-              if (!alreadyExists) {
-                // Append the new collection to the end of the menu
-                currentItems.push({
-                  title: collectionTitle,
-                  url: newUrl,
-                  type: "HTTP",
-                  items: []
-                });
-
-                // 4. Update the menu in Shopify
-                await admin.graphql(`
-                  mutation menuUpdate($id: ID!, $title: String!, $handle: String!, $items: [MenuItemUpdateInput!]!) {
-                    menuUpdate(id: $id, title: $title, handle: $handle, items: $items) {
-                      userErrors { message }
-                    }
-                  }
-                `, {
-                  variables: {
-                    id: footerMenu.id,
-                    title: footerMenu.title,
-                    handle: "footer",
-                    items: currentItems
-                  }
-                });
-
-                // 5. Log the action to the MenuHistory table in Prisma
-                await prisma.menuHistory.create({
-                  data: {
-                    menuHandle: "footer",
-                    message: `⚡ Auto-synced new collection: ${collectionTitle}`
-                  }
-                });
-              }
+              // 5. Log the action to the MenuHistory table in Prisma
+              await prisma.menuHistory.create({
+                data: {
+                  menuHandle: "footer",
+                  message: `⚡ Auto-synced new collection: ${collectionTitle}`
+                }
+              });
             }
           }
         }
@@ -166,9 +151,9 @@ export const action = async ({ request }) => {
     case "PAGES_CREATE":
     case "PAGES_UPDATE":
       try {
-        if (!payload.body_html) { break; }
-        if (!payload.handle) { break; }
-        if (!payload.title) { break; }
+        if (!payload.body_html || !payload.handle || !payload.title) {
+          break; // Nothing to extract
+        }
 
         // 1. Fetch Global Excludes (e.g. contact, privacy-policy)
         const settingsQuery = `#graphql
@@ -183,17 +168,7 @@ export const action = async ({ request }) => {
         const settingsRes = await admin.graphql(settingsQuery);
         const settingsData = await settingsRes.json();
         
-        let excludedHandlesStr = "";
-        if (settingsData.data) {
-          if (settingsData.data.shop) {
-            if (settingsData.data.shop.metafield) {
-              if (settingsData.data.shop.metafield.value) {
-                excludedHandlesStr = settingsData.data.shop.metafield.value;
-              }
-            }
-          }
-        }
-
+        const excludedHandlesStr = settingsData.data?.shop?.metafield?.value || "";
         const excludedHandles = excludedHandlesStr.split(",").map(s => s.trim().toLowerCase());
 
         // 2. Bail out immediately if this page is excluded
@@ -229,11 +204,7 @@ export const action = async ({ request }) => {
               { key: "page_title", value: payload.title },
               { key: "page_url", value: `https://rockhoundstudio.com/pages/${payload.handle}` },
               { key: "image_urls", value: JSON.stringify(extractedImages.map(img => img.src)) },
-              { key: "image_alts", value: JSON.stringify(extractedImages.map(img => {
-                 if (!img.alt) { return payload.title; }
-                 if (img.alt.trim() === "") { return payload.title; }
-                 return img.alt;
-              })) },
+              { key: "image_alts", value: JSON.stringify(extractedImages.map(img => (!img.alt || img.alt.trim() === "") ? payload.title : img.alt)) },
               { key: "display_order", value: JSON.stringify(extractedImages.map(img => img.src)) }
             ]
           }
@@ -242,22 +213,10 @@ export const action = async ({ request }) => {
         const upsertRes = await admin.graphql(upsertQuery, { variables });
         const upsertData = await upsertRes.json();
 
-        if (upsertData.errors) {
-          console.error(`[Image Extractor] Webhook Upsert Root Error for ${payload.handle}:`, upsertData.errors);
+        if (upsertData.errors || (upsertData.data?.metaobjectUpsert?.userErrors && upsertData.data.metaobjectUpsert.userErrors.length > 0)) {
+          console.error(`[Image Extractor] Webhook Upsert Failed for ${payload.handle}:`, JSON.stringify(upsertData));
         } else {
-          if (upsertData.data) {
-            if (upsertData.data.metaobjectUpsert) {
-              if (upsertData.data.metaobjectUpsert.userErrors) {
-                if (upsertData.data.metaobjectUpsert.userErrors.length > 0) {
-                  console.error(`[Image Extractor] UserErrors for ${payload.handle}:`, upsertData.data.metaobjectUpsert.userErrors);
-                } else {
-                  console.log(`[Image Extractor] Successfully auto-synced ${extractedImages.length} images for ${payload.handle}`);
-                }
-              } else {
-                console.log(`[Image Extractor] Successfully auto-synced ${extractedImages.length} images for ${payload.handle}`);
-              }
-            }
-          }
+          console.log(`[Image Extractor] Successfully auto-synced ${extractedImages.length} images for ${payload.handle}`);
         }
 
       } catch (error) {
