@@ -1,17 +1,20 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { useLoaderData, useSubmit, useNavigation, useActionData, useNavigate } from "react-router";
 import {
-  Page, Layout, Card, BlockStack, InlineStack, Text, TextField, Button,
-  Badge, Spinner, Checkbox, Box, Divider, Modal, Frame, Toast, Icon
+  Page, Card, BlockStack, InlineStack, Text, TextField, Button,
+  Badge, Checkbox, Box, Divider, Modal, Frame, Toast, Icon, Banner
 } from "@shopify/polaris";
-import { DragHandleIcon, DeleteIcon, RefreshIcon, CheckIcon } from "@shopify/polaris-icons";
+import { DragHandleIcon, RefreshIcon } from "@shopify/polaris-icons";
 import { authenticate } from "../shopify.server";
 
 // ==========================================
 // HELPER: HTML PARSER
 // ==========================================
 const extractImagesFromHtml = (html) => {
-  if (!html) return [];
+  if (html === null || html === undefined || html === "") {
+    return [];
+  }
+  
   const imgRegex = /<img[^>]+>/g;
   const srcRegex = /src=["']([^"']+)["']/;
   const altRegex = /alt=["']([^"']*)["']/;
@@ -23,12 +26,13 @@ const extractImagesFromHtml = (html) => {
     const srcMatch = imgTag.match(srcRegex);
     const altMatch = imgTag.match(altRegex);
     
-    if (srcMatch && srcMatch[1]) {
-      // Ensure it's a valid URL or CDN path
-      images.push({
-        src: srcMatch[1],
-        alt: altMatch ? altMatch[1] : ""
-      });
+    if (srcMatch) {
+      if (srcMatch[1]) {
+        images.push({
+          src: srcMatch[1],
+          alt: altMatch ? (altMatch[1] ? altMatch[1] : "") : ""
+        });
+      }
     }
   }
   return images;
@@ -38,11 +42,9 @@ const extractImagesFromHtml = (html) => {
 // 1. ENGINE: LOADER
 // ==========================================
 export const loader = async ({ request }) => {
-  // 1. Authenticate Request
   const { admin } = await authenticate.admin(request);
 
   try {
-    // 2. Fetch existing exclude settings from Shop Metafields
     const settingsQuery = `#graphql
       query {
         shop {
@@ -56,7 +58,6 @@ export const loader = async ({ request }) => {
     const settingsData = await settingsRes.json();
     const excludedHandlesStr = settingsData.data?.shop?.metafield?.value || "";
 
-    // 3. Fetch existing saved Metaobjects (The Pool)
     let savedPool = {};
     let hasNextMeta = true;
     let cursorMeta = null;
@@ -94,7 +95,6 @@ export const loader = async ({ request }) => {
       cursorMeta = mData.data?.metaobjects?.pageInfo?.endCursor || null;
     }
 
-    // 4. Fetch all published pages using strict cycle limits
     let allPages = [];
     let hasNext = true;
     let cursor = null;
@@ -110,7 +110,7 @@ export const loader = async ({ request }) => {
                 id
                 title
                 handle
-                body
+                bodyHtml
               }
             }
           }
@@ -126,14 +126,34 @@ export const loader = async ({ request }) => {
       const rawPages = data.data?.pages?.edges || [];
       
       rawPages.forEach(({ node }) => {
-        const extractedImages = extractImagesFromHtml(node.body);
-        if (extractedImages.length > 0) {
+        if (node.bodyHtml === null || node.bodyHtml === undefined || node.bodyHtml === "") {
+          allPages.push({
+            id: node.id,
+            handle: node.handle,
+            title: node.title,
+            url: `/pages/${node.handle}`,
+            images: []
+          });
+          return;
+        }
+
+        try {
+          const extractedImages = extractImagesFromHtml(node.bodyHtml);
           allPages.push({
             id: node.id,
             handle: node.handle,
             title: node.title,
             url: `/pages/${node.handle}`,
             images: extractedImages
+          });
+        } catch (parseError) {
+          console.error(`HTML Parse Error on page ${node.handle}:`, parseError);
+          allPages.push({
+            id: node.id,
+            handle: node.handle,
+            title: node.title,
+            url: `/pages/${node.handle}`,
+            images: []
           });
         }
       });
@@ -143,7 +163,6 @@ export const loader = async ({ request }) => {
       cycleCount++;
     }
 
-    // 5. Return JSON to component using native Response
     return Response.json({ pages: allPages, savedPool, excludedHandlesStr, success: true });
 
   } catch (error) {
@@ -163,7 +182,12 @@ export const action = async ({ request }) => {
     const payload = JSON.parse(formData.get("payload"));
     const { curatedPages, excludedHandlesStr } = payload;
 
-    // 1. Save Excludes to Shop Metafield
+    // 1. Fetch Shop ID explicitly and wait for it
+    const shopQuery = await admin.graphql(`query { shop { id } }`);
+    const shopData = await shopQuery.json();
+    const shopId = shopData.data.shop.id;
+
+    // 2. Save Excludes to Shop Metafield
     const updateExcludesQuery = `#graphql
       mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
         metafieldsSet(metafields: $metafields) {
@@ -178,14 +202,14 @@ export const action = async ({ request }) => {
           key: "excludes",
           type: "single_line_text_field",
           value: excludedHandlesStr,
-          ownerId: (await admin.graphql(`query { shop { id } }`)).json().then(res => res.data.shop.id)
+          ownerId: shopId
         }]
       }
     });
 
-    // 2. Upsert Metaobjects per page
+    // 3. Upsert Metaobjects per page
     for (const page of curatedPages) {
-      if (page.selectedImages.length === 0) continue; // Skip empty pools
+      if (page.selectedImages.length === 0) continue;
 
       const upsertQuery = `#graphql
         mutation metaobjectUpsert($handle: MetaobjectHandleInput!, $metaobject: MetaobjectUpsertInput!) {
@@ -235,66 +259,72 @@ export default function ImageExtractor() {
 
   const [excludes, setExcludes] = useState("");
   const [pageData, setPageData] = useState([]);
+  const [showImageless, setShowImageless] = useState(false);
   
-  // Toast & Modal State
   const [toastMsg, setToastMsg] = useState("");
   const [toastError, setToastError] = useState(false);
   const [previewImage, setPreviewImage] = useState(null);
 
-  // Initialize State
   useEffect(() => {
-    if (loaderData?.success) {
-      setExcludes(loaderData.excludedHandlesStr);
-      
-      const structuredData = loaderData.pages.map(page => {
-        const savedData = loaderData.savedPool[page.handle];
-        let orderedImages = [];
+    if (loaderData) {
+      if (loaderData.success) {
+        setExcludes(loaderData.excludedHandlesStr);
         
-        if (savedData && savedData.display_order && savedData.display_order.length > 0) {
-          // Reconstruct saved order
-          savedData.display_order.forEach(savedSrc => {
-            const foundExtracted = page.images.find(img => img.src === savedSrc);
-            if (foundExtracted) {
-              orderedImages.push({ ...foundExtracted, selected: true });
+        const structuredData = loaderData.pages.map(page => {
+          const savedData = loaderData.savedPool[page.handle];
+          let orderedImages = [];
+          
+          if (savedData) {
+            if (savedData.display_order) {
+              if (savedData.display_order.length > 0) {
+                savedData.display_order.forEach(savedSrc => {
+                  const foundExtracted = page.images.find(img => img.src === savedSrc);
+                  if (foundExtracted) {
+                    orderedImages.push({ ...foundExtracted, selected: true });
+                  }
+                });
+                page.images.forEach(img => {
+                  if (savedData.display_order.includes(img.src) === false) {
+                    orderedImages.push({ ...img, selected: false });
+                  }
+                });
+              } else {
+                orderedImages = page.images.map(img => ({ ...img, selected: false }));
+              }
+            } else {
+              orderedImages = page.images.map(img => ({ ...img, selected: false }));
             }
-          });
-          // Append any newly found extracted images that weren't in the saved order
-          page.images.forEach(img => {
-            if (!savedData.display_order.includes(img.src)) {
-              orderedImages.push({ ...img, selected: false });
-            }
-          });
-        } else {
-          // No saved data, just map extracted
-          orderedImages = page.images.map(img => ({ ...img, selected: false }));
-        }
+          } else {
+            orderedImages = page.images.map(img => ({ ...img, selected: false }));
+          }
 
-        return { ...page, images: orderedImages };
-      });
+          return { ...page, images: orderedImages };
+        });
 
-      setPageData(structuredData);
-    }
-    
-    if (loaderData?.error) {
-      setToastError(true);
-      setToastMsg(`Failed to load: ${loaderData.error}`);
+        setPageData(structuredData);
+      }
+      
+      if (loaderData.error) {
+        setToastError(true);
+        setToastMsg(`Failed to load: ${loaderData.error}`);
+      }
     }
   }, [loaderData]);
 
-  // Action Success Handler
   useEffect(() => {
-    if (actionData?.success) {
-      setToastError(false);
-      setToastMsg(`Pool saved successfully at ${actionData.timestamp}`);
-    } else if (actionData?.error) {
-      setToastError(true);
-      setToastMsg(`Save failed: ${actionData.error}`);
+    if (actionData) {
+      if (actionData.success) {
+        setToastError(false);
+        setToastMsg(`Pool saved successfully at ${actionData.timestamp}`);
+      } else {
+        if (actionData.error) {
+          setToastError(true);
+          setToastMsg(`Save failed: ${actionData.error}`);
+        }
+      }
     }
   }, [actionData]);
 
-  // ==========================================
-  // LOGIC CONTROLLERS
-  // ==========================================
   const toggleImageSelect = (pageId, src) => {
     setPageData(prev => prev.map(p => {
       if (p.id !== pageId) return p;
@@ -315,7 +345,6 @@ export default function ImageExtractor() {
     }));
   };
 
-  // Drag and Drop Handlers
   const handleDragStart = (e, pageId, index) => {
     e.dataTransfer.setData("pageId", pageId);
     e.dataTransfer.setData("index", index);
@@ -323,7 +352,7 @@ export default function ImageExtractor() {
 
   const handleDrop = (e, pageId, dropIndex) => {
     const sourcePageId = e.dataTransfer.getData("pageId");
-    if (sourcePageId !== pageId) return; // Block cross-page dragging
+    if (sourcePageId !== pageId) return; 
     
     const dragIndex = parseInt(e.dataTransfer.getData("index"), 10);
     if (dragIndex === dropIndex) return;
@@ -348,12 +377,9 @@ export default function ImageExtractor() {
         const liveUrls = page.images.map(img => img.src);
         let cleanedImages = [...page.images];
 
-        // If a saved image is no longer in live HTML, deselect it (it's orphaned)
         savedData.image_urls.forEach(savedSrc => {
-          if (!liveUrls.includes(savedSrc)) {
+          if (liveUrls.includes(savedSrc) === false) {
             orphansRemoved++;
-            // The item is already technically removed because it's not in page.images anymore,
-            // but we register the count for the toast.
           }
         });
         return { ...page, images: cleanedImages };
@@ -366,7 +392,10 @@ export default function ImageExtractor() {
 
   const handleSave = () => {
     const curatedPages = pageData
-      .filter(p => !getExcludedList().includes(p.handle)) // Don't save excluded pages
+      .filter(p => {
+         if (getExcludedList().includes(p.handle)) return false;
+         return p.images.length > 0;
+      })
       .map(p => ({
         handle: p.handle,
         title: p.title,
@@ -381,9 +410,24 @@ export default function ImageExtractor() {
     submit(formData, { method: "post" });
   };
 
-  // Helpers
   const getExcludedList = () => excludes.split(",").map(s => s.trim().toLowerCase());
-  const activePages = pageData.filter(p => !getExcludedList().includes(p.handle));
+  
+  const activePages = pageData.filter(p => {
+    if (getExcludedList().includes(p.handle)) return false;
+    return p.images.length > 0;
+  });
+
+  const imagelessPages = pageData.filter(p => {
+    if (getExcludedList().includes(p.handle)) return false;
+    return p.images.length === 0;
+  });
+
+  const hasLoaderError = loaderData ? (loaderData.success === false ? true : false) : false;
+  const showEngineFault = hasLoaderError ? (toastError === false ? true : false) : false;
+  const noPagesToDisplay = activePages.length === 0 ? (loaderData ? (loaderData.success === true ? true : false) : false) : false;
+  const showSaveButton = activePages.length > 0;
+  const showToast = toastMsg !== "";
+  const showPreview = previewImage !== null;
 
   // ==========================================
   // RENDER
@@ -411,6 +455,14 @@ export default function ImageExtractor() {
       >
         <BlockStack gap="600">
 
+          {toastError ? (
+            toastMsg !== "" ? (
+              <Banner title="System Fault Detected" tone="critical">
+                <p>{toastMsg}</p>
+              </Banner>
+            ) : null
+          ) : null}
+
           <Card padding="400">
             <BlockStack gap="400">
               <Text variant="headingMd" as="h2">Exclusion Rules</Text>
@@ -425,21 +477,21 @@ export default function ImageExtractor() {
             </BlockStack>
           </Card>
 
-          {loaderData && !loaderData.success && (
+          {showEngineFault ? (
             <Card padding="400"><Text tone="critical">Engine Fault: Check Loader connection.</Text></Card>
-          )}
+          ) : null}
 
-          {activePages.length === 0 && loaderData?.success && (
+          {noPagesToDisplay ? (
             <Card padding="400">
               <Box padding="400" textAlign="center">
                 <Text tone="subdued">No images found or all pages are excluded.</Text>
               </Box>
             </Card>
-          )}
+          ) : null}
 
           {activePages.map((page) => {
             const selectedCount = page.images.filter(img => img.selected).length;
-            const allSelected = selectedCount === page.images.length;
+            const allSelected = page.images.length > 0 ? selectedCount === page.images.length : false;
 
             return (
               <Card key={page.id} padding="400">
@@ -506,7 +558,7 @@ export default function ImageExtractor() {
                         >
                           <img 
                             src={img.src} 
-                            alt={img.alt || "Extracted image"} 
+                            alt={img.alt !== "" ? img.alt : "Extracted image"} 
                             style={{ width: "100%", height: "100%", objectFit: "cover" }} 
                           />
                         </button>
@@ -518,7 +570,30 @@ export default function ImageExtractor() {
             );
           })}
 
-          {activePages.length > 0 && (
+          {imagelessPages.length > 0 ? (
+            <Card padding="400">
+               <BlockStack gap="400">
+                  <InlineStack align="space-between" blockAlign="center">
+                     <Text variant="headingMd" as="h2">Excluded — No Images Found ({imagelessPages.length})</Text>
+                     <Button 
+                       onClick={() => setShowImageless(!showImageless)}
+                       accessibilityLabel="Toggle imageless pages list"
+                     >
+                       {showImageless ? "Collapse" : "Expand"}
+                     </Button>
+                  </InlineStack>
+                  {showImageless ? (
+                     <BlockStack gap="200">
+                        {imagelessPages.map(page => (
+                           <Text key={page.id} tone="subdued">{page.title} ({page.url})</Text>
+                        ))}
+                     </BlockStack>
+                  ) : null}
+               </BlockStack>
+            </Card>
+          ) : null}
+
+          {showSaveButton ? (
             <InlineStack align="end">
                <Button 
                  variant="primary" 
@@ -530,32 +605,32 @@ export default function ImageExtractor() {
                  Save Pool
                </Button>
             </InlineStack>
-          )}
+          ) : null}
 
         </BlockStack>
 
-        {toastMsg && (
+        {showToast ? (
           <Toast 
             content={toastMsg} 
             error={toastError} 
             onDismiss={() => setToastMsg("")} 
-            duration={4500} 
+            duration={toastError ? 10000 : 4500} 
           />
-        )}
+        ) : null}
 
         <Modal
-          open={!!previewImage}
+          open={showPreview}
           onClose={() => setPreviewImage(null)}
           title="Image Preview"
         >
           <Modal.Section>
-             {previewImage && (
+             {showPreview ? (
                <img 
                  src={previewImage} 
                  alt="Preview" 
                  style={{ width: "100%", height: "auto", display: "block" }} 
                />
-             )}
+             ) : null}
           </Modal.Section>
         </Modal>
 
