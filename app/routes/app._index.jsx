@@ -81,6 +81,17 @@ export default function Index() {
           </div>
         </Link>
 
+        <Link to="/app/image-extractor" style={{
+          display: "block", padding: "32px 40px", backgroundColor: "#1a3a2a",
+          color: "#fff", borderRadius: "12px", textDecoration: "none",
+          fontSize: "22px", fontWeight: "bold", minWidth: "220px"
+        }}>
+          🖼️ Image Extractor
+          <div style={{ fontSize: "14px", fontWeight: "normal", marginTop: "8px", color: "#aaa" }}>
+            Build the story slideshow image pool from page content
+          </div>
+        </Link>
+
       </div>
     </div>
   );
