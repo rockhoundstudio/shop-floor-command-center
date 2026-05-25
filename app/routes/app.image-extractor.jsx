@@ -11,9 +11,7 @@ import { authenticate } from "../shopify.server";
 // HELPER: HTML PARSER
 // ==========================================
 const extractImagesFromHtml = (html) => {
-  if (html === null || html === undefined || html === "") {
-    return [];
-  }
+  if (!html) return [];
   
   const imgRegex = /<img[^>]+>/g;
   const srcRegex = /src=["']([^"']+)["']/;
@@ -26,13 +24,11 @@ const extractImagesFromHtml = (html) => {
     const srcMatch = imgTag.match(srcRegex);
     const altMatch = imgTag.match(altRegex);
     
-    if (srcMatch) {
-      if (srcMatch[1]) {
-        images.push({
-          src: srcMatch[1],
-          alt: altMatch ? (altMatch[1] ? altMatch[1] : "") : ""
-        });
-      }
+    if (srcMatch && srcMatch[1]) {
+      images.push({
+        src: srcMatch[1],
+        alt: altMatch && altMatch[1] ? altMatch[1] : ""
+      });
     }
   }
   return images;
@@ -110,7 +106,7 @@ export const loader = async ({ request }) => {
                 id
                 title
                 handle
-                bodyHtml
+                body
               }
             }
           }
@@ -126,7 +122,7 @@ export const loader = async ({ request }) => {
       const rawPages = data.data?.pages?.edges || [];
       
       rawPages.forEach(({ node }) => {
-        if (node.bodyHtml === null || node.bodyHtml === undefined || node.bodyHtml === "") {
+        if (!node.body) {
           allPages.push({
             id: node.id,
             handle: node.handle,
@@ -138,7 +134,7 @@ export const loader = async ({ request }) => {
         }
 
         try {
-          const extractedImages = extractImagesFromHtml(node.bodyHtml);
+          const extractedImages = extractImagesFromHtml(node.body);
           allPages.push({
             id: node.id,
             handle: node.handle,
@@ -266,62 +262,48 @@ export default function ImageExtractor() {
   const [previewImage, setPreviewImage] = useState(null);
 
   useEffect(() => {
-    if (loaderData) {
-      if (loaderData.success) {
-        setExcludes(loaderData.excludedHandlesStr);
-        
-        const structuredData = loaderData.pages.map(page => {
-          const savedData = loaderData.savedPool[page.handle];
-          let orderedImages = [];
-          
-          if (savedData) {
-            if (savedData.display_order) {
-              if (savedData.display_order.length > 0) {
-                savedData.display_order.forEach(savedSrc => {
-                  const foundExtracted = page.images.find(img => img.src === savedSrc);
-                  if (foundExtracted) {
-                    orderedImages.push({ ...foundExtracted, selected: true });
-                  }
-                });
-                page.images.forEach(img => {
-                  if (savedData.display_order.includes(img.src) === false) {
-                    orderedImages.push({ ...img, selected: false });
-                  }
-                });
-              } else {
-                orderedImages = page.images.map(img => ({ ...img, selected: false }));
-              }
-            } else {
-              orderedImages = page.images.map(img => ({ ...img, selected: false }));
-            }
-          } else {
-            orderedImages = page.images.map(img => ({ ...img, selected: false }));
-          }
-
-          return { ...page, images: orderedImages };
-        });
-
-        setPageData(structuredData);
-      }
+    if (loaderData?.success) {
+      setExcludes(loaderData.excludedHandlesStr);
       
-      if (loaderData.error) {
-        setToastError(true);
-        setToastMsg(`Failed to load: ${loaderData.error}`);
-      }
+      const structuredData = loaderData.pages.map(page => {
+        const savedData = loaderData.savedPool[page.handle];
+        let orderedImages = [];
+        
+        if (savedData?.display_order?.length > 0) {
+          savedData.display_order.forEach(savedSrc => {
+            const foundExtracted = page.images.find(img => img.src === savedSrc);
+            if (foundExtracted) {
+              orderedImages.push({ ...foundExtracted, selected: true });
+            }
+          });
+          page.images.forEach(img => {
+            if (!savedData.display_order.includes(img.src)) {
+              orderedImages.push({ ...img, selected: false });
+            }
+          });
+        } else {
+          orderedImages = page.images.map(img => ({ ...img, selected: false }));
+        }
+
+        return { ...page, images: orderedImages };
+      });
+
+      setPageData(structuredData);
+    }
+    
+    if (loaderData?.error) {
+      setToastError(true);
+      setToastMsg(`Failed to load: ${loaderData.error}`);
     }
   }, [loaderData]);
 
   useEffect(() => {
-    if (actionData) {
-      if (actionData.success) {
-        setToastError(false);
-        setToastMsg(`Pool saved successfully at ${actionData.timestamp}`);
-      } else {
-        if (actionData.error) {
-          setToastError(true);
-          setToastMsg(`Save failed: ${actionData.error}`);
-        }
-      }
+    if (actionData?.success) {
+      setToastError(false);
+      setToastMsg(`Pool saved successfully at ${actionData.timestamp}`);
+    } else if (actionData?.error) {
+      setToastError(true);
+      setToastMsg(`Save failed: ${actionData.error}`);
     }
   }, [actionData]);
 
@@ -378,7 +360,7 @@ export default function ImageExtractor() {
         let cleanedImages = [...page.images];
 
         savedData.image_urls.forEach(savedSrc => {
-          if (liveUrls.includes(savedSrc) === false) {
+          if (!liveUrls.includes(savedSrc)) {
             orphansRemoved++;
           }
         });
@@ -392,10 +374,7 @@ export default function ImageExtractor() {
 
   const handleSave = () => {
     const curatedPages = pageData
-      .filter(p => {
-         if (getExcludedList().includes(p.handle)) return false;
-         return p.images.length > 0;
-      })
+      .filter(p => !getExcludedList().includes(p.handle) && p.images.length > 0)
       .map(p => ({
         handle: p.handle,
         title: p.title,
@@ -412,22 +391,8 @@ export default function ImageExtractor() {
 
   const getExcludedList = () => excludes.split(",").map(s => s.trim().toLowerCase());
   
-  const activePages = pageData.filter(p => {
-    if (getExcludedList().includes(p.handle)) return false;
-    return p.images.length > 0;
-  });
-
-  const imagelessPages = pageData.filter(p => {
-    if (getExcludedList().includes(p.handle)) return false;
-    return p.images.length === 0;
-  });
-
-  const hasLoaderError = loaderData ? (loaderData.success === false ? true : false) : false;
-  const showEngineFault = hasLoaderError ? (toastError === false ? true : false) : false;
-  const noPagesToDisplay = activePages.length === 0 ? (loaderData ? (loaderData.success === true ? true : false) : false) : false;
-  const showSaveButton = activePages.length > 0;
-  const showToast = toastMsg !== "";
-  const showPreview = previewImage !== null;
+  const activePages = pageData.filter(p => !getExcludedList().includes(p.handle) && p.images.length > 0);
+  const imagelessPages = pageData.filter(p => !getExcludedList().includes(p.handle) && p.images.length === 0);
 
   // ==========================================
   // RENDER
@@ -455,13 +420,11 @@ export default function ImageExtractor() {
       >
         <BlockStack gap="600">
 
-          {toastError ? (
-            toastMsg !== "" ? (
-              <Banner title="System Fault Detected" tone="critical">
-                <p>{toastMsg}</p>
-              </Banner>
-            ) : null
-          ) : null}
+          {toastError && toastMsg && (
+            <Banner title="System Fault Detected" tone="critical">
+              <p>{toastMsg}</p>
+            </Banner>
+          )}
 
           <Card padding="400">
             <BlockStack gap="400">
@@ -477,21 +440,21 @@ export default function ImageExtractor() {
             </BlockStack>
           </Card>
 
-          {showEngineFault ? (
+          {loaderData && !loaderData.success && !toastError && (
             <Card padding="400"><Text tone="critical">Engine Fault: Check Loader connection.</Text></Card>
-          ) : null}
+          )}
 
-          {noPagesToDisplay ? (
+          {activePages.length === 0 && loaderData?.success && (
             <Card padding="400">
               <Box padding="400" textAlign="center">
                 <Text tone="subdued">No images found or all pages are excluded.</Text>
               </Box>
             </Card>
-          ) : null}
+          )}
 
           {activePages.map((page) => {
             const selectedCount = page.images.filter(img => img.selected).length;
-            const allSelected = page.images.length > 0 ? selectedCount === page.images.length : false;
+            const allSelected = page.images.length > 0 && selectedCount === page.images.length;
 
             return (
               <Card key={page.id} padding="400">
@@ -558,7 +521,7 @@ export default function ImageExtractor() {
                         >
                           <img 
                             src={img.src} 
-                            alt={img.alt !== "" ? img.alt : "Extracted image"} 
+                            alt={img.alt || "Extracted image"} 
                             style={{ width: "100%", height: "100%", objectFit: "cover" }} 
                           />
                         </button>
@@ -570,7 +533,7 @@ export default function ImageExtractor() {
             );
           })}
 
-          {imagelessPages.length > 0 ? (
+          {imagelessPages.length > 0 && (
             <Card padding="400">
                <BlockStack gap="400">
                   <InlineStack align="space-between" blockAlign="center">
@@ -582,18 +545,18 @@ export default function ImageExtractor() {
                        {showImageless ? "Collapse" : "Expand"}
                      </Button>
                   </InlineStack>
-                  {showImageless ? (
+                  {showImageless && (
                      <BlockStack gap="200">
                         {imagelessPages.map(page => (
                            <Text key={page.id} tone="subdued">{page.title} ({page.url})</Text>
                         ))}
                      </BlockStack>
-                  ) : null}
+                  )}
                </BlockStack>
             </Card>
-          ) : null}
+          )}
 
-          {showSaveButton ? (
+          {activePages.length > 0 && (
             <InlineStack align="end">
                <Button 
                  variant="primary" 
@@ -605,32 +568,32 @@ export default function ImageExtractor() {
                  Save Pool
                </Button>
             </InlineStack>
-          ) : null}
+          )}
 
         </BlockStack>
 
-        {showToast ? (
+        {toastMsg && (
           <Toast 
             content={toastMsg} 
             error={toastError} 
             onDismiss={() => setToastMsg("")} 
             duration={toastError ? 10000 : 4500} 
           />
-        ) : null}
+        )}
 
         <Modal
-          open={showPreview}
+          open={!!previewImage}
           onClose={() => setPreviewImage(null)}
           title="Image Preview"
         >
           <Modal.Section>
-             {showPreview ? (
+             {previewImage && (
                <img 
                  src={previewImage} 
                  alt="Preview" 
                  style={{ width: "100%", height: "auto", display: "block" }} 
                />
-             ) : null}
+             )}
           </Modal.Section>
         </Modal>
 
