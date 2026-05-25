@@ -110,7 +110,7 @@ export const loader = async ({ request }) => {
                 id
                 title
                 handle
-                bodyHtml
+                body
               }
             }
           }
@@ -126,7 +126,7 @@ export const loader = async ({ request }) => {
       const rawPages = data.data?.pages?.edges || [];
       
       rawPages.forEach(({ node }) => {
-        const extractedImages = extractImagesFromHtml(node.bodyHtml);
+        const extractedImages = extractImagesFromHtml(node.body);
         if (extractedImages.length > 0) {
           allPages.push({
             id: node.id,
