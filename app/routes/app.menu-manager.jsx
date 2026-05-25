@@ -186,7 +186,7 @@ export const action = async ({ request }) => {
     const res = await admin.graphql(`
       mutation menuDelete($id: ID!) {
         menuDelete(id: $id) {
-          deletedId
+          deletedMenuId
           userErrors { message }
         }
       }
