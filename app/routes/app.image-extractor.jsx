@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { json } from "@remix-run/node";
-import { useLoaderData, useSubmit, useNavigation, useActionData, useNavigate } from "@remix-run/react";
+import { useLoaderData, useSubmit, useNavigation, useActionData, useNavigate } from "react-router";
 import {
   Page, Layout, Card, BlockStack, InlineStack, Text, TextField, Button,
   Badge, Spinner, Checkbox, Box, Divider, Modal, Frame, Toast, Icon
@@ -143,11 +142,11 @@ export const loader = async ({ request }) => {
       cycleCount++;
     }
 
-    return json({ pages: allPages, savedPool, excludedHandlesStr, success: true });
+    return { pages: allPages, savedPool, excludedHandlesStr, success: true };
 
   } catch (error) {
     console.error("LOADER FAULT:", error.message);
-    return json({ error: error.message, success: false });
+    return { error: error.message, success: false };
   }
 };
 
@@ -212,11 +211,11 @@ export const action = async ({ request }) => {
       });
     }
 
-    return json({ success: true, timestamp: new Date().toLocaleTimeString() });
+    return { success: true, timestamp: new Date().toLocaleTimeString() };
 
   } catch (error) {
     console.error("ACTION FAULT:", error.message);
-    return json({ error: error.message, success: false });
+    return { error: error.message, success: false };
   }
 };
 
