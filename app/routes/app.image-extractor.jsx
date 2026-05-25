@@ -469,3 +469,97 @@ export default function ImageExtractor() {
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: "16px" }}>
                     {page.images.map((img, index) => (
                       <div
+                        key={img.src}
+                        draggable
+                        onDragStart={(e) => handleDragStart(e, page.id, index)}
+                        onDragOver={(e) => e.preventDefault()}
+                        onDrop={(e) => handleDrop(e, page.id, index)}
+                        style={{
+                          position: "relative",
+                          border: img.selected ? "2px solid #005bd3" : "2px solid transparent",
+                          borderRadius: "8px",
+                          overflow: "hidden",
+                          cursor: "grab",
+                          backgroundColor: "#f4f6f8"
+                        }}
+                      >
+                        <div style={{ position: "absolute", top: "8px", left: "8px", zIndex: 10 }}>
+                          <Checkbox
+                            checked={img.selected}
+                            onChange={() => toggleImageSelect(page.id, img.src)}
+                            labelHidden
+                            label={`Select image ${index + 1}`}
+                          />
+                        </div>
+                        <div 
+                          style={{ position: "absolute", top: "8px", right: "8px", zIndex: 10, background: "rgba(255,255,255,0.8)", borderRadius: "4px" }}
+                          aria-label="Drag to reorder"
+                        >
+                          <Icon source={DragHandleIcon} tone="base" />
+                        </div>
+                        
+                        <button
+                          type="button"
+                          onClick={() => setPreviewImage(img.src)}
+                          style={{ border: "none", background: "none", padding: 0, width: "100%", height: "150px", cursor: "pointer", display: "block", minHeight: "48px" }}
+                          aria-label={`Preview image ${index + 1} for ${page.title}`}
+                        >
+                          <img 
+                            src={img.src} 
+                            alt={img.alt || "Extracted image"} 
+                            style={{ width: "100%", height: "100%", objectFit: "cover" }} 
+                          />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </BlockStack>
+              </Card>
+            );
+          })}
+
+          {activePages.length > 0 && (
+            <InlineStack align="end">
+               <Button 
+                 variant="primary" 
+                 size="large" 
+                 loading={isSaving} 
+                 onAction={handleSave}
+                 accessibilityLabel="Save the curated image pool to Shopify Metaobjects"
+               >
+                 Save Pool
+               </Button>
+            </InlineStack>
+          )}
+
+        </BlockStack>
+
+        {toastMsg && (
+          <Toast 
+            content={toastMsg} 
+            error={toastError} 
+            onDismiss={() => setToastMsg("")} 
+            duration={4500} 
+          />
+        )}
+
+        <Modal
+          open={!!previewImage}
+          onClose={() => setPreviewImage(null)}
+          title="Image Preview"
+        >
+          <Modal.Section>
+             {previewImage && (
+               <img 
+                 src={previewImage} 
+                 alt="Preview" 
+                 style={{ width: "100%", height: "auto", display: "block" }} 
+               />
+             )}
+          </Modal.Section>
+        </Modal>
+
+      </Page>
+    </Frame>
+  );
+}
