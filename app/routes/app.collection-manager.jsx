@@ -72,7 +72,7 @@ export async function action({ request }) {
                 title
                 status
                 featuredImage { url altText }
-                originMetafield: metafield(namespace: "custom", key: "origin") { value }
+                originMetafield: metafield(namespace: "custom", key: "origin_location") { value }
               }
             }
           }
@@ -98,7 +98,7 @@ export async function action({ request }) {
               title
               status
               featuredImage { url altText }
-              originMetafield: metafield(namespace: "custom", key: "origin") { value }
+              originMetafield: metafield(namespace: "custom", key: "origin_location") { value }
             }
           }
         }
@@ -121,7 +121,7 @@ export async function action({ request }) {
               title
               status
               featuredImage { url altText }
-              originMetafield: metafield(namespace: "custom", key: "origin") { value }
+              originMetafield: metafield(namespace: "custom", key: "origin_location") { value }
             }
           }
         }
