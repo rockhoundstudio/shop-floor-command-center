@@ -17,7 +17,8 @@ import {
   Thumbnail,
   Icon,
   Banner,
-  Modal
+  Modal,
+  Select
 } from "@shopify/polaris";
 import { SearchIcon, InfoIcon, AlertCircleIcon, ImportIcon } from "@shopify/polaris-icons";
 import { authenticate } from "../shopify.server";
@@ -150,7 +151,7 @@ export async function action({ request }) {
     if (errors.length > 0) {
       return { intent, success: false, errors, message: "Failed to assign product." };
     }
-    return { intent, success: true, message: "Assigned product successfully." };
+    return { intent, success: true, message: "We successfully added the product to your collection." };
   }
 
   if (intent === "removeProduct") {
@@ -171,7 +172,7 @@ export async function action({ request }) {
     if (errors.length > 0) {
       return { intent, success: false, errors, message: "Failed to remove product." };
     }
-    return { intent, success: true, message: "Removed product successfully." };
+    return { intent, success: true, message: "We successfully removed the product from your collection." };
   }
 
   if (intent === "addAllProducts") {
@@ -188,7 +189,7 @@ export async function action({ request }) {
     const productIds = productsJson.data?.products?.edges.map((e) => e.node.id) ? productsJson.data.products.edges.map((e) => e.node.id) : [];
 
     if (productIds.length === 0) {
-      return { intent, success: false, errors: [{ message: "No products in store to add." }] };
+      return { intent, success: false, errors: [{ message: "We could not find any products in your store to add." }] };
     }
 
     const response = await admin.graphql(`
@@ -206,7 +207,7 @@ export async function action({ request }) {
     if (errors.length > 0) {
       return { intent, success: false, errors, message: "Failed to add all products." };
     }
-    return { intent, success: true, message: `Successfully added ${productIds.length} products!` };
+    return { intent, success: true, message: `We successfully added ${productIds.length} products to your collection!` };
   }
 
   if (intent === "clearCollection") {
@@ -226,7 +227,7 @@ export async function action({ request }) {
     const productIds = productsJson.data?.collection?.products?.edges.map((e) => e.node.id) ? productsJson.data.collection.products.edges.map((e) => e.node.id) : [];
 
     if (productIds.length === 0) {
-      return { intent, success: false, errors: [{ message: "Collection is already empty." }] };
+      return { intent, success: false, errors: [{ message: "This collection is already completely empty." }] };
     }
 
     const response = await admin.graphql(`
@@ -244,10 +245,10 @@ export async function action({ request }) {
     if (errors.length > 0) {
       return { intent, success: false, errors, message: "Failed to clear collection." };
     }
-    return { intent, success: true, message: "Cleared all products from collection." };
+    return { intent, success: true, message: "We successfully cleared all products from your collection." };
   }
 
-  return { intent, success: false, errors: [{ message: "Unknown command." }] };
+  return { intent, success: false, errors: [{ message: "We didn't recognize that command. Please try again." }] };
 }
 
 // --- CLIENT: COMPONENT ---
@@ -262,6 +263,7 @@ export default function CollectionManager() {
   const [collectionQuery, setCollectionQuery] = useState("");
   const [assignedQuery, setAssignedQuery] = useState("");
   const [unassignedQuery, setUnassignedQuery] = useState("");
+  const [sortMode, setSortMode] = useState("default");
   
   const [activeCollectionId, setActiveCollectionId] = useState("");
   const [viewingOrphans, setViewingOrphans] = useState(false);
@@ -273,7 +275,6 @@ export default function CollectionManager() {
   const openModal = useCallback((type, targetId) => setModalState({ active: true, type, targetId }), []);
   const closeModal = useCallback(() => setModalState({ active: false, type: "", targetId: "" }), []);
 
-  // Fetch data when active collection changes
   useEffect(() => {
     if (activeCollectionId !== "") {
       colProductsFetcher.submit(
@@ -287,15 +288,14 @@ export default function CollectionManager() {
     }
   }, [activeCollectionId]);
 
-  // Handle action responses
   useEffect(() => {
     const data = actionFetcher.data;
     if (data) {
       const isSuccess = data.success ? true : false;
+      const isError = isSuccess ? false : true;
+      const message = data.message ? data.message : (isError ? "Oops! Something went wrong." : "Action completed successfully.");
       
-      if (data.message) {
-        setToastState({ active: true, message: data.message, isError: isSuccess ? false : true });
-      }
+      setToastState({ active: true, message: message, isError: isError });
 
       const requiresModalClose = data.intent === "addAllProducts" ? true : data.intent === "clearCollection" ? true : false;
       if (requiresModalClose) {
@@ -393,23 +393,45 @@ export default function CollectionManager() {
     return match ? match : null;
   }, [collections, activeCollectionId]);
 
+  const sortProducts = useCallback((products) => {
+    const sorted = [...products];
+    sorted.sort((a, b) => {
+      if (sortMode === "origin_asc" ? true : sortMode === "origin_desc" ? true : false) {
+        const originA = a.originMetafield?.value ? a.originMetafield.value : "";
+        const originB = b.originMetafield?.value ? b.originMetafield.value : "";
+        if (originA < originB) {
+          return sortMode === "origin_asc" ? -1 : 1;
+        }
+        if (originA > originB) {
+          return sortMode === "origin_asc" ? 1 : -1;
+        }
+      }
+      return 0;
+    });
+    return sorted;
+  }, [sortMode]);
+
   const assignedProducts = useMemo(() => {
     const allAssigned = colProductsFetcher.data?.products ? colProductsFetcher.data.products : [];
     const lowerQuery = assignedQuery.toLowerCase();
-    return allAssigned.filter((p) => p.title.toLowerCase().includes(lowerQuery));
-  }, [colProductsFetcher.data, assignedQuery]);
+    const filtered = allAssigned.filter((p) => p.title.toLowerCase().includes(lowerQuery));
+    return sortProducts(filtered);
+  }, [colProductsFetcher.data, assignedQuery, sortProducts]);
 
   const unassignedProducts = useMemo(() => {
     const allSearched = searchProductsFetcher.data?.products ? searchProductsFetcher.data.products : [];
+    let filtered = [];
     if (viewingOrphans) {
-      return allSearched;
+      filtered = allSearched;
+    } else {
+      const assignedIds = colProductsFetcher.data?.products ? colProductsFetcher.data.products.map(p => p.id) : [];
+      filtered = allSearched.filter((p) => {
+        const isAssigned = assignedIds.includes(p.id) ? true : false;
+        return isAssigned ? false : true;
+      });
     }
-    const assignedIds = colProductsFetcher.data?.products ? colProductsFetcher.data.products.map(p => p.id) : [];
-    return allSearched.filter((p) => {
-      const isAssigned = assignedIds.includes(p.id) ? true : false;
-      return isAssigned ? false : true;
-    });
-  }, [searchProductsFetcher.data, colProductsFetcher.data, viewingOrphans]);
+    return sortProducts(filtered);
+  }, [searchProductsFetcher.data, colProductsFetcher.data, viewingOrphans, sortProducts]);
 
   const isActionLoading = actionFetcher.state !== "idle" ? true : false;
   const isSearchLoading = searchProductsFetcher.state !== "idle" ? true : false;
@@ -516,7 +538,7 @@ export default function CollectionManager() {
       <Page
         fullWidth
         title="Shop Floor Command Center"
-        subtitle="Manage collections, assign products, and keep your store organized."
+        subtitle="Manage collections, assign products, and keep your store organized in plain English."
         backAction={{ content: "Dashboard", onAction: () => navigate("/app") }}
       >
         <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 120px)', gap: '16px' }}>
@@ -524,7 +546,7 @@ export default function CollectionManager() {
           {/* ======================= */}
           {/* SECTION 1: COLLECTION PICKER */}
           {/* ======================= */}
-          <div style={{ flex: '0 0 220px', display: 'flex', flexDirection: 'column', backgroundColor: 'var(--p-color-bg-surface-default, #fff)', borderRadius: 'var(--p-border-radius-200, 8px)', boxShadow: 'var(--p-shadow-100, 0 1px 3px rgba(0,0,0,0.1))', overflow: 'visible' }}>
+          <div style={{ flex: '0 0 220px', overflowY: 'auto', display: 'flex', flexDirection: 'column', backgroundColor: 'var(--p-color-bg-surface-default, #fff)', borderRadius: 'var(--p-border-radius-200, 8px)', boxShadow: 'var(--p-shadow-100, 0 1px 3px rgba(0,0,0,0.1))' }}>
             <div style={{ padding: '16px', borderBottom: '1px solid var(--p-color-border-default, #ebebeb)', flexShrink: 0 }}>
               <InlineStack align="space-between" blockAlign="center">
                 <Box width="60%">
@@ -548,7 +570,7 @@ export default function CollectionManager() {
                     accessibilityLabel="Find products not assigned to any collection"
                     disabled={isSearchLoading}
                   >
-                    Find Orphans
+                    Find Orphaned Products
                   </Button>
                 </div>
               </InlineStack>
@@ -619,12 +641,12 @@ export default function CollectionManager() {
           {/* ======================= */}
           {activeCollectionId === "" ? (
             viewingOrphans ? (
-              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', backgroundColor: 'var(--p-color-bg-surface-default, #fff)', borderRadius: 'var(--p-border-radius-200, 8px)', boxShadow: 'var(--p-shadow-100, 0 1px 3px rgba(0,0,0,0.1))', overflow: 'visible' }}>
+              <div style={{ flex: '1 1 0', minHeight: 0, display: 'flex', flexDirection: 'column', backgroundColor: 'var(--p-color-bg-surface-default, #fff)', borderRadius: 'var(--p-border-radius-200, 8px)', boxShadow: 'var(--p-shadow-100, 0 1px 3px rgba(0,0,0,0.1))', overflow: 'hidden' }}>
                 <div style={{ padding: '16px', borderBottom: '1px solid var(--p-color-border-default, #ebebeb)', flexShrink: 0, backgroundColor: 'var(--p-color-bg-surface-warning, #ffea8a)' }}>
                   <Text variant="headingSm" as="h2">Orphaned Products</Text>
-                  <Text variant="bodyMd" as="p">These products have no collection. Click assign to send them to your first available collection.</Text>
+                  <Text variant="bodyMd" as="p">These products are currently not assigned to any collection. Click the button next to them to assign them to your first available collection.</Text>
                 </div>
-                <div style={{ flex: 1, overflowY: 'auto', padding: '16px' }}>
+                <div style={{ flex: 1, height: '100%', overflowY: 'auto', padding: '16px' }}>
                    {unassignedProducts.length > 0 ? (
                     <Box paddingBlock="200">
                       {unassignedProducts.map(renderAvailableItem)}
@@ -637,33 +659,51 @@ export default function CollectionManager() {
                 </div>
               </div>
             ) : (
-              <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'var(--p-color-bg-surface-default, #fff)', borderRadius: 'var(--p-border-radius-200, 8px)', boxShadow: 'var(--p-shadow-100, 0 1px 3px rgba(0,0,0,0.1))' }}>
+              <div style={{ flex: '1 1 0', minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'var(--p-color-bg-surface-default, #fff)', borderRadius: 'var(--p-border-radius-200, 8px)', boxShadow: 'var(--p-shadow-100, 0 1px 3px rgba(0,0,0,0.1))' }}>
                 <EmptySearchResult
                   title="No Collection Selected"
-                  description="Select a collection from the top panel to begin managing its products."
+                  description="Please select a collection from the list on the top to start assigning or removing products."
                   withIllustration
                 />
               </div>
             )
           ) : (
-            <div style={{ flex: '1 1 0', display: 'flex', flexDirection: 'row', gap: '16px', minHeight: 0 }}>
+            <div style={{ flex: '1 1 0', minHeight: 0, display: 'flex', flexDirection: 'row', gap: '16px' }}>
               
               {/* LEFT COLUMN: IN COLLECTION */}
-              <div style={{ flex: '1 1 50%', display: 'flex', flexDirection: 'column', backgroundColor: 'var(--p-color-bg-surface-default, #fff)', borderRadius: 'var(--p-border-radius-200, 8px)', boxShadow: 'var(--p-shadow-100, 0 1px 3px rgba(0,0,0,0.1))', overflow: 'visible' }}>
+              <div style={{ flex: 1, height: '100%', overflowY: 'auto', display: 'flex', flexDirection: 'column', backgroundColor: 'var(--p-color-bg-surface-default, #fff)', borderRadius: 'var(--p-border-radius-200, 8px)', boxShadow: 'var(--p-shadow-100, 0 1px 3px rgba(0,0,0,0.1))' }}>
                 <div style={{ padding: '16px', borderBottom: '1px solid var(--p-color-border-default, #ebebeb)', flexShrink: 0 }}>
                   <Text variant="headingSm" as="h2">In {activeCollection ? activeCollection.title : "Collection"}</Text>
                   <div style={{ marginTop: '16px' }}>
-                    <TextField
-                      label="Filter assigned products"
-                      labelHidden
-                      value={assignedQuery}
-                      onChange={handleAssignedSearch}
-                      autoComplete="off"
-                      placeholder="Filter assigned products..."
-                      accessibilityLabel="Filter assigned products text input"
-                      clearButton
-                      onClearButtonClick={() => setAssignedQuery("")}
-                    />
+                    <InlineStack gap="300" wrap={false} blockAlign="center">
+                      <div style={{ flex: 1 }}>
+                        <TextField
+                          label="Filter assigned products"
+                          labelHidden
+                          value={assignedQuery}
+                          onChange={handleAssignedSearch}
+                          autoComplete="off"
+                          placeholder="Filter assigned products..."
+                          accessibilityLabel="Filter assigned products text input"
+                          clearButton
+                          onClearButtonClick={() => setAssignedQuery("")}
+                        />
+                      </div>
+                      <Box width="35%">
+                        <Select
+                          label="Sort Products"
+                          labelHidden
+                          options={[
+                            { label: "Default Sorting", value: "default" },
+                            { label: "Origin (A-Z)", value: "origin_asc" },
+                            { label: "Origin (Z-A)", value: "origin_desc" }
+                          ]}
+                          value={sortMode}
+                          onChange={setSortMode}
+                          accessibilityLabel="Sort products dropdown"
+                        />
+                      </Box>
+                    </InlineStack>
                   </div>
                 </div>
                 <div style={{ flex: 1, overflowY: 'auto' }}>
@@ -684,7 +724,7 @@ export default function CollectionManager() {
               </div>
 
               {/* RIGHT COLUMN: ADD PRODUCTS */}
-              <div style={{ flex: '1 1 50%', display: 'flex', flexDirection: 'column', backgroundColor: 'var(--p-color-bg-surface-default, #fff)', borderRadius: 'var(--p-border-radius-200, 8px)', boxShadow: 'var(--p-shadow-100, 0 1px 3px rgba(0,0,0,0.1))', overflow: 'visible' }}>
+              <div style={{ flex: 1, height: '100%', overflowY: 'auto', display: 'flex', flexDirection: 'column', backgroundColor: 'var(--p-color-bg-surface-default, #fff)', borderRadius: 'var(--p-border-radius-200, 8px)', boxShadow: 'var(--p-shadow-100, 0 1px 3px rgba(0,0,0,0.1))' }}>
                 <div style={{ padding: '16px', borderBottom: '1px solid var(--p-color-border-default, #ebebeb)', flexShrink: 0 }}>
                   <Text variant="headingSm" as="h2">Add Products</Text>
                   <div style={{ marginTop: '16px' }}>
@@ -746,7 +786,7 @@ export default function CollectionManager() {
               destructive: modalState.type === "clearAll" ? true : false,
               loading: isActionLoading
             }}
-            secondaryActions={[{ content: "Cancel", onAction: closeModal, disabled: isActionLoading }]}
+            secondaryActions={[{ content: "Cancel and go back", onAction: closeModal, disabled: isActionLoading }]}
           >
             <Modal.Section>
               <Text variant="bodyLg" as="p">
@@ -774,6 +814,3 @@ function ImageIcon() {
     </div>
   );
 }
-
-
-
