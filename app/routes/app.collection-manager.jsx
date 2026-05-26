@@ -541,7 +541,7 @@ export default function CollectionManager() {
         subtitle="Manage collections, assign products, and keep your store organized in plain English."
         backAction={{ content: "Dashboard", onAction: () => navigate("/app") }}
       >
-        <div style={{ display: 'flex', flexDirection: 'column', minHeight: '80vh', gap: '16px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', gap: '16px' }}>
           
           {/* ======================= */}
           {/* SECTION 1: COLLECTION PICKER */}
@@ -641,7 +641,7 @@ export default function CollectionManager() {
           {/* ======================= */}
           {activeCollectionId === "" ? (
             viewingOrphans ? (
-              <div style={{ flex: '1 1 0', minHeight: 0, display: 'flex', flexDirection: 'column', backgroundColor: 'var(--p-color-bg-surface-default, #fff)', borderRadius: 'var(--p-border-radius-200, 8px)', boxShadow: 'var(--p-shadow-100, 0 1px 3px rgba(0,0,0,0.1))', overflow: 'hidden' }}>
+              <div style={{ flex: '1 1 0', minHeight: '600px', display: 'flex', flexDirection: 'column', backgroundColor: 'var(--p-color-bg-surface-default, #fff)', borderRadius: 'var(--p-border-radius-200, 8px)', boxShadow: 'var(--p-shadow-100, 0 1px 3px rgba(0,0,0,0.1))', overflow: 'hidden' }}>
                 <div style={{ padding: '16px', borderBottom: '1px solid var(--p-color-border-default, #ebebeb)', flexShrink: 0, backgroundColor: 'var(--p-color-bg-surface-warning, #ffea8a)' }}>
                   <Text variant="headingSm" as="h2">Orphaned Products</Text>
                   <Text variant="bodyMd" as="p">These products are currently not assigned to any collection. Click the button next to them to assign them to your first available collection.</Text>
@@ -659,7 +659,7 @@ export default function CollectionManager() {
                 </div>
               </div>
             ) : (
-              <div style={{ flex: '1 1 0', minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'var(--p-color-bg-surface-default, #fff)', borderRadius: 'var(--p-border-radius-200, 8px)', boxShadow: 'var(--p-shadow-100, 0 1px 3px rgba(0,0,0,0.1))' }}>
+              <div style={{ flex: '1 1 0', minHeight: '600px', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'var(--p-color-bg-surface-default, #fff)', borderRadius: 'var(--p-border-radius-200, 8px)', boxShadow: 'var(--p-shadow-100, 0 1px 3px rgba(0,0,0,0.1))' }}>
                 <EmptySearchResult
                   title="No Collection Selected"
                   description="Please select a collection from the list on the top to start assigning or removing products."
@@ -668,10 +668,10 @@ export default function CollectionManager() {
               </div>
             )
           ) : (
-            <div style={{ flex: '1 1 0', minHeight: 0, display: 'flex', flexDirection: 'row', gap: '16px' }}>
+            <div style={{ flex: '1 1 0', minHeight: '600px', display: 'flex', flexDirection: 'row', gap: '16px' }}>
               
               {/* LEFT COLUMN: IN COLLECTION */}
-              <div style={{ flex: 1, height: '100%', overflowY: 'auto', display: 'flex', flexDirection: 'column', backgroundColor: 'var(--p-color-bg-surface-default, #fff)', borderRadius: 'var(--p-border-radius-200, 8px)', boxShadow: 'var(--p-shadow-100, 0 1px 3px rgba(0,0,0,0.1))' }}>
+              <div style={{ flex: 1, height: '100%', overflowY: 'auto', minHeight: '600px', display: 'flex', flexDirection: 'column', backgroundColor: 'var(--p-color-bg-surface-default, #fff)', borderRadius: 'var(--p-border-radius-200, 8px)', boxShadow: 'var(--p-shadow-100, 0 1px 3px rgba(0,0,0,0.1))' }}>
                 <div style={{ padding: '16px', borderBottom: '1px solid var(--p-color-border-default, #ebebeb)', flexShrink: 0 }}>
                   <Text variant="headingSm" as="h2">In {activeCollection ? activeCollection.title : "Collection"}</Text>
                   <div style={{ marginTop: '16px' }}>
@@ -724,7 +724,7 @@ export default function CollectionManager() {
               </div>
 
               {/* RIGHT COLUMN: ADD PRODUCTS */}
-              <div style={{ flex: 1, height: '100%', overflowY: 'auto', display: 'flex', flexDirection: 'column', backgroundColor: 'var(--p-color-bg-surface-default, #fff)', borderRadius: 'var(--p-border-radius-200, 8px)', boxShadow: 'var(--p-shadow-100, 0 1px 3px rgba(0,0,0,0.1))' }}>
+              <div style={{ flex: 1, height: '100%', overflowY: 'auto', minHeight: '600px', display: 'flex', flexDirection: 'column', backgroundColor: 'var(--p-color-bg-surface-default, #fff)', borderRadius: 'var(--p-border-radius-200, 8px)', boxShadow: 'var(--p-shadow-100, 0 1px 3px rgba(0,0,0,0.1))' }}>
                 <div style={{ padding: '16px', borderBottom: '1px solid var(--p-color-border-default, #ebebeb)', flexShrink: 0 }}>
                   <Text variant="headingSm" as="h2">Add Products</Text>
                   <div style={{ marginTop: '16px' }}>
@@ -814,5 +814,3 @@ function ImageIcon() {
     </div>
   );
 }
-
-
