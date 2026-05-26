@@ -1,0 +1,26 @@
+# Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
+
+client_id = "00f3c6ab3b24a3dcd552cd526cc8b79b"
+name = "Shop Floor Command Center"
+application_url = "https://shop-floor-command-center.onrender.com"
+embedded = true
+
+[webhooks]
+api_version = "2026-07"
+
+  [[webhooks.subscriptions]]
+  topics = [ "app/scopes_update" ]
+  uri = "/webhooks/app/scopes_update"
+
+  [[webhooks.subscriptions]]
+  topics = [ "app/uninstalled" ]
+  uri = "/webhooks/app/uninstalled"
+
+[access_scopes]
+# Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
+scopes = "read_content,read_files,read_metaobject_definitions,read_metaobjects,read_online_store_navigation,read_products,read_themes,write_content,write_files,write_metaobject_definitions,write_metaobjects,write_online_store_navigation,write_products,write_themes"
+
+[auth]
+redirect_urls = [
+  "https://shop-floor-command-center.onrender.com/auth/callback"
+]

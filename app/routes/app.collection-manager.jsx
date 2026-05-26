@@ -2,8 +2,6 @@ import React, { useState, useCallback, useMemo, useEffect } from "react";
 import { useLoaderData, useFetcher, useNavigate } from "react-router";
 import {
   Page,
-  Layout,
-  Card,
   ResourceList,
   ResourceItem,
   Text,
@@ -18,7 +16,6 @@ import {
   Frame,
   Toast,
   Thumbnail,
-  Divider,
   Icon,
   Banner,
   Select
@@ -146,10 +143,7 @@ export async function action({ request }) {
       #graphql
       mutation assignProduct($id: ID!, $productIds: [ID!]!) {
         collectionAddProducts(id: $id, productIds: $productIds) {
-          userErrors {
-            field
-            message
-          }
+          userErrors { field message }
         }
       }
     `, { variables: { id: collectionId, productIds: [productId] } });
@@ -158,7 +152,6 @@ export async function action({ request }) {
     const errors = json.data?.collectionAddProducts?.userErrors || [];
     
     if (errors.length > 0) {
-      console.error("Assign Product Errors:", errors);
       return { intent, success: false, errors, message: "Failed to assign product." };
     }
     return { intent, success: true, message: "Assigned product successfully." };
@@ -171,10 +164,7 @@ export async function action({ request }) {
       #graphql
       mutation removeProduct($id: ID!, $productIds: [ID!]!) {
         collectionRemoveProducts(id: $id, productIds: $productIds) {
-          userErrors {
-            field
-            message
-          }
+          userErrors { field message }
         }
       }
     `, { variables: { id: collectionId, productIds: [productId] } });
@@ -183,7 +173,6 @@ export async function action({ request }) {
     const errors = json.data?.collectionRemoveProducts?.userErrors || [];
     
     if (errors.length > 0) {
-      console.error("Remove Product Errors:", errors);
       return { intent, success: false, errors, message: "Failed to remove product." };
     }
     return { intent, success: true, message: "Removed product successfully." };
@@ -287,7 +276,6 @@ export default function CollectionManager() {
   const openModal = useCallback((type, targetId) => setModalState({ active: true, type, targetId }), []);
   const closeModal = useCallback(() => setModalState({ active: false, type: "", targetId: "" }), []);
 
-  // Fetch a collection's existing products when selected
   useEffect(() => {
     if (activeCollectionId && !viewingOrphans) {
       collectionProductsFetcher.submit(
@@ -297,7 +285,6 @@ export default function CollectionManager() {
     }
   }, [activeCollectionId, viewingOrphans]);
 
-  // Handle action responses
   useEffect(() => {
     const data = actionFetcher.data;
     if (data) {
@@ -311,7 +298,6 @@ export default function CollectionManager() {
         closeModal();
       }
 
-      // Re-fetch data to keep UI perfectly in sync after an assignment/removal
       if (data.intent === "assignProduct" || data.intent === "removeProduct" || data.intent === "addAllProducts" || data.intent === "clearCollection") {
         if (viewingOrphans) {
           searchFetcher.submit({ intent: "findOrphans" }, { method: "post" });
@@ -367,7 +353,6 @@ export default function CollectionManager() {
     return collections.find((c) => c.id === activeCollectionId) || null;
   }, [collections, activeCollectionId]);
 
-  // Combine and sort products
   const combinedProducts = useMemo(() => {
     const searchResults = searchFetcher.data?.products || [];
     const collectionProducts = collectionProductsFetcher.data?.products || [];
@@ -382,11 +367,9 @@ export default function CollectionManager() {
       const aAssigned = a.collections?.edges?.some(c => c.node.id === activeCollectionId) || collectionProducts.some(cp => cp.id === a.id);
       const bAssigned = b.collections?.edges?.some(c => c.node.id === activeCollectionId) || collectionProducts.some(cp => cp.id === b.id);
 
-      // 1. Assigned items float to the top
       if (aAssigned && !bAssigned) return -1;
       if (!aAssigned && bAssigned) return 1;
 
-      // 2. Sort by Origin if requested
       if (sortMode === "origin_asc" || sortMode === "origin_desc") {
         const originA = a.originMetafield?.value || "";
         const originB = b.originMetafield?.value || "";
@@ -403,6 +386,8 @@ export default function CollectionManager() {
   const isActionLoading = actionFetcher.state !== "idle";
   const isSearchLoading = searchFetcher.state !== "idle" || collectionProductsFetcher.state !== "idle";
   const actionErrors = actionFetcher.data?.errors || [];
+
+  const tapTargetStyle = { minWidth: '48px', minHeight: '48px', display: 'flex', alignItems: 'center', justifyContent: 'center' };
 
   const renderCollectionItem = useCallback((item) => {
     const { id, title, handle, productsCount } = item;
@@ -437,21 +422,16 @@ export default function CollectionManager() {
     const imageAlt = featuredImage?.altText || title;
     const origin = product.originMetafield?.value || "Unknown";
     
-    // Check if product is in the active collection
     const collectionProducts = collectionProductsFetcher.data?.products || [];
     const isAssignedToActive = product.collections?.edges?.some(c => c.node.id === activeCollectionId) || collectionProducts.some(cp => cp.id === id);
     
-    const tapTargetStyle = { minWidth: '48px', minHeight: '48px', display: 'flex', alignItems: 'center' };
-
     let actionButtonMarkup = null;
     
     if (viewingOrphans) {
       actionButtonMarkup = (
         <div style={tapTargetStyle}>
           <Button
-            onClick={() => {
-              if (collections.length > 0) assignProduct(id, collections[0].id);
-            }}
+            onClick={() => collections.length > 0 && assignProduct(id, collections[0].id)}
             disabled={isActionLoading || collections.length === 0}
             accessibilityLabel={`Assign ${title} to first available collection`}
           >
@@ -488,7 +468,7 @@ export default function CollectionManager() {
     }
 
     return (
-      <Box padding="400" borderBlockEndWidth="025" borderColor="border" key={id}>
+      <Box padding="400" borderBlockEndWidth="025" borderColor="border-default" key={id}>
         <InlineStack align="space-between" blockAlign="center" wrap={false}>
           <InlineStack gap="400" blockAlign="center" wrap={false}>
             <Thumbnail source={imageUrl || ImageIcon} alt={imageAlt} size="medium" />
@@ -507,51 +487,40 @@ export default function CollectionManager() {
     );
   }, [activeCollectionId, viewingOrphans, isActionLoading, assignProduct, removeProduct, collections, collectionProductsFetcher.data]);
 
-  const tapTargetStyle = { minWidth: '48px', minHeight: '48px', display: 'flex', alignItems: 'center', justifyContent: 'center' };
-
   return (
     <Frame>
       <Page
+        fullWidth
         title="Shop Floor Command Center"
-        subtitle="Manage collections, assign products, and keep your store organized in plain English."
+        subtitle="Manage collections, assign products, and keep your store organized."
         backAction={{ content: "Dashboard", onAction: () => navigate("/app") }}
       >
-        <Layout>
-          <Layout.Section>
-            <Box paddingBlockEnd="400">
-              <InlineStack gap="400" blockAlign="center" align="end">
-                <div style={tapTargetStyle}>
-                  <Button
-                    icon={SearchIcon}
-                    onClick={submitFindOrphans}
-                    accessibilityLabel="Find products not assigned to any collection"
-                    disabled={isSearchLoading}
-                  >
-                    Find Orphaned Products
-                  </Button>
-                </div>
-              </InlineStack>
-            </Box>
-          </Layout.Section>
-
-          <Layout.Section variant="oneThird">
-            <Card padding="0">
-              <Box padding="400" borderBlockEndWidth="025" borderColor="border">
-                <Text variant="headingSm" as="h2">1. Select a Collection</Text>
-              </Box>
-              <Box padding="300">
+        <div style={{ display: 'flex', flexDirection: 'row', gap: '16px', height: 'calc(100vh - 160px)', width: '100%', alignItems: 'stretch' }}>
+          
+          {/* ======================= */}
+          {/* LEFT COLUMN: COLLECTIONS */}
+          {/* ======================= */}
+          <div style={{ flex: '1 1 50%', display: 'flex', flexDirection: 'column', backgroundColor: 'var(--p-color-bg-surface-default, #fff)', borderRadius: 'var(--p-border-radius-200, 8px)', boxShadow: 'var(--p-shadow-100, 0 1px 3px rgba(0,0,0,0.1))', overflow: 'hidden', minWidth: 0 }}>
+            {/* Left Header (Fixed) */}
+            <div style={{ padding: '16px', borderBottom: '1px solid var(--p-color-border-default, #ebebeb)', flexShrink: 0 }}>
+              <Text variant="headingSm" as="h2">1. Select a Collection</Text>
+              <div style={{ marginTop: '16px' }}>
                 <TextField
-                  label="Search your collections by name"
-                  labelHidden={false}
+                  label="Search collections"
+                  labelHidden
                   value={collectionQuery}
                   onChange={handleCollectionSearch}
                   autoComplete="off"
-                  placeholder="e.g. Summer Sale"
-                  clearButton={true}
+                  placeholder="Filter collections..."
+                  clearButton
                   onClearButtonClick={() => setCollectionQuery("")}
                   accessibilityLabel="Search collections text input"
                 />
-              </Box>
+              </div>
+            </div>
+            
+            {/* Left Scrollable Area */}
+            <div style={{ flex: 1, overflowY: 'auto' }}>
               <ResourceList
                 resourceName={{ singular: "collection", plural: "collections" }}
                 items={filteredCollections}
@@ -561,91 +530,74 @@ export default function CollectionManager() {
                     <EmptySearchResult
                       title="No collections found"
                       description={`We could not find anything matching "${collectionQuery}".`}
-                      withIllustration={true}
+                      withIllustration
                     />
                   )
                 }
               />
-            </Card>
-          </Layout.Section>
+            </div>
+          </div>
 
-          <Layout.Section variant="twoThirds">
-            <Card padding="0">
-              <Box padding="400" borderBlockEndWidth="025" borderColor="border">
+          {/* ======================= */}
+          {/* RIGHT COLUMN: PRODUCTS */}
+          {/* ======================= */}
+          <div style={{ flex: '1 1 50%', display: 'flex', flexDirection: 'column', backgroundColor: 'var(--p-color-bg-surface-default, #fff)', borderRadius: 'var(--p-border-radius-200, 8px)', boxShadow: 'var(--p-shadow-100, 0 1px 3px rgba(0,0,0,0.1))', overflow: 'hidden', minWidth: 0 }}>
+            
+            {/* Right Header (Fixed) */}
+            <div style={{ padding: '16px', borderBottom: '1px solid var(--p-color-border-default, #ebebeb)', flexShrink: 0 }}>
+              <InlineStack align="space-between" blockAlign="center">
                 <Text variant="headingSm" as="h2">
-                  {viewingOrphans ? "Orphaned Products" : "2. Manage Products"}
+                  {viewingOrphans ? "Orphaned Products" : activeCollectionId ? `2. Manage: ${activeCollection.title}` : "2. Manage Products"}
                 </Text>
-              </Box>
+                <div style={tapTargetStyle}>
+                  <Button
+                    icon={SearchIcon}
+                    onClick={submitFindOrphans}
+                    accessibilityLabel="Find products not assigned to any collection"
+                    disabled={isSearchLoading}
+                  >
+                    Find Orphans
+                  </Button>
+                </div>
+              </InlineStack>
 
-              {actionErrors.length > 0 && (
-                <Box padding="400">
-                  <Banner tone="critical" title="There was a problem updating the collection">
-                    <BlockStack gap="200">
-                      {actionErrors.map((error, index) => (
-                        <Text key={index} as="p">{error.message}</Text>
-                      ))}
-                    </BlockStack>
-                  </Banner>
-                </Box>
+              {activeCollectionId && !viewingOrphans && (
+                <div style={{ marginTop: '16px', marginBottom: '16px' }}>
+                  <InlineStack gap="300">
+                    <div style={tapTargetStyle}>
+                      <Button
+                        icon={ImportIcon}
+                        onClick={() => openModal("addAll", activeCollection.id)}
+                        accessibilityLabel={`Add all products to ${activeCollection.title}`}
+                      >
+                        Add All
+                      </Button>
+                    </div>
+                    <div style={tapTargetStyle}>
+                      <Button
+                        tone="critical"
+                        icon={AlertCircleIcon}
+                        onClick={() => openModal("clearAll", activeCollection.id)}
+                        accessibilityLabel={`Clear ${activeCollection.title}`}
+                      >
+                        Clear All
+                      </Button>
+                    </div>
+                  </InlineStack>
+                </div>
               )}
 
-              {viewingOrphans ? (
-                <Box padding="400" background="bg-surface-warning">
-                  <Text variant="bodyMd" as="p">
-                    These products are currently not assigned to any collection. Click the button next to them to assign them to your first available collection.
-                  </Text>
-                </Box>
-              ) : activeCollectionId ? (
-                <Box padding="400" background="bg-surface-secondary">
-                  <BlockStack gap="400">
-                    <Text variant="headingMd" as="h2">Managing: {activeCollection.title}</Text>
-                    <InlineStack gap="300">
-                      <div style={tapTargetStyle}>
-                        <Button
-                          icon={ImportIcon}
-                          onClick={() => openModal("addAll", activeCollection.id)}
-                          accessibilityLabel={`Add all products in store to ${activeCollection.title}`}
-                        >
-                          Add All Store Products
-                        </Button>
-                      </div>
-                      <div style={tapTargetStyle}>
-                        <Button
-                          tone="critical"
-                          icon={AlertCircleIcon}
-                          onClick={() => openModal("clearAll", activeCollection.id)}
-                          accessibilityLabel={`Remove all products from ${activeCollection.title}`}
-                        >
-                          Clear Collection Entirely
-                        </Button>
-                      </div>
-                    </InlineStack>
-                  </BlockStack>
-                </Box>
-              ) : (
-                <Box padding="800">
-                  <BlockStack align="center" inlineAlign="center" gap="400">
-                    <Text variant="headingLg" as="h3" alignment="center">No Collection Selected</Text>
-                    <Text variant="bodyLg" as="p" alignment="center" color="subdued">
-                      Please select a collection from the list on the left to start assigning or removing products.
-                    </Text>
-                  </BlockStack>
-                </Box>
-              )}
-
-              <Divider />
-
-              <Box padding="400">
-                <BlockStack gap="400">
+              <div style={{ marginTop: '16px' }}>
+                <BlockStack gap="300">
                   <InlineStack align="space-between" blockAlign="end" wrap={false}>
                     <Box width="60%">
                       <TextField
-                        label="Find products to assign or remove"
-                        labelHidden={false}
+                        label="Search products"
+                        labelHidden
                         value={productQuery}
                         onChange={handleProductSearchInput}
                         autoComplete="off"
-                        placeholder="e.g. Red T-Shirt"
+                        placeholder="Search products..."
                         accessibilityLabel="Search products text input"
                         clearButton
                         onClearButtonClick={() => setProductQuery("")}
@@ -654,8 +606,9 @@ export default function CollectionManager() {
                     <Box width="35%">
                       <Select
                         label="Sort Products"
+                        labelHidden
                         options={[
-                          { label: "Default Sorting", value: "default" },
+                          { label: "Default Sort", value: "default" },
                           { label: "Origin (A-Z)", value: "origin_asc" },
                           { label: "Origin (Z-A)", value: "origin_desc" }
                         ]}
@@ -672,31 +625,53 @@ export default function CollectionManager() {
                       accessibilityLabel="Execute product search"
                       fullWidth
                     >
-                      Search Products
+                      Search
                     </Button>
                   </div>
                 </BlockStack>
-              </Box>
+              </div>
+            </div>
 
-              <Divider />
+            {/* Right Scrollable Area */}
+            <div style={{ flex: 1, overflowY: 'auto' }}>
+              {actionErrors.length > 0 && (
+                <Box padding="400">
+                  <Banner tone="critical" title="There was a problem updating the collection">
+                    <BlockStack gap="200">
+                      {actionErrors.map((error, index) => (
+                        <Text key={index} as="p">{error.message}</Text>
+                      ))}
+                    </BlockStack>
+                  </Banner>
+                </Box>
+              )}
 
-              {combinedProducts.length > 0 ? (
-                <Box>
+              {!activeCollectionId && !viewingOrphans ? (
+                <Box padding="800">
+                  <EmptySearchResult
+                    title="No Collection Selected"
+                    description="Select a collection from the left panel to begin managing products."
+                    withIllustration
+                  />
+                </Box>
+              ) : combinedProducts.length > 0 ? (
+                <Box paddingBlock="200">
                   {combinedProducts.map(renderProductItem)}
                 </Box>
               ) : (
                 <Box padding="800">
                   <EmptySearchResult
                     title="No products found"
-                    description="Try adjusting your search terms or selecting a different collection."
-                    withIllustration={true}
+                    description="Try adjusting your search terms."
+                    withIllustration
                   />
                 </Box>
               )}
-            </Card>
-          </Layout.Section>
-        </Layout>
+            </div>
+          </div>
+        </div>
 
+        {/* Modals & Toasts */}
         {modalState.active && (
           <Modal
             open={true}
@@ -708,24 +683,20 @@ export default function CollectionManager() {
               destructive: modalState.type === "clearAll",
               loading: isActionLoading
             }}
-            secondaryActions={[{ content: "Cancel and go back", onAction: closeModal, disabled: isActionLoading }]}
+            secondaryActions={[{ content: "Cancel", onAction: closeModal, disabled: isActionLoading }]}
           >
             <Modal.Section>
               <Text variant="bodyLg" as="p">
                 {modalState.type === "addAll"
-                  ? "This action will take up to 250 of your most recent products and place them directly into this collection. This might change what your customers see on your storefront immediately."
-                  : "Are you completely sure you want to remove every single product from this collection? This action cannot be easily undone, and your customers will no longer see these items grouped together."}
+                  ? "This will add up to 250 of your recent products directly into this collection."
+                  : "Are you sure you want to completely empty this collection?"}
               </Text>
             </Modal.Section>
           </Modal>
         )}
 
         {toastState.active && (
-          <Toast
-            content={toastState.message}
-            error={toastState.isError}
-            onDismiss={closeToast}
-          />
+          <Toast content={toastState.message} error={toastState.isError} onDismiss={closeToast} />
         )}
       </Page>
     </Frame>
