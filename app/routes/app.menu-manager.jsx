@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useMemo, useEffect } from "react";
-import { useLoaderData, useFetcher, useNavigate } from "@remix-run/react";
+import { useLoaderData, useFetcher, useNavigate } from "react-router";
 import {
   Page, Layout, Card, Text, TextField, Button, Badge, BlockStack, InlineStack, Box,
   Tabs, DataTable, Select, Checkbox, Modal, Banner, Toast, Frame, ResourceList,
@@ -433,7 +433,7 @@ export default function MetaInjectorV2() {
       }
       if (isSuccess) {
         closeModal();
-        if (activeProductId && selectedTab === 2) { // Tab 2 is Inspector now
+        if (activeProductId && selectedTab === 2) { 
            inspectorFetcher.submit({ intent: "fetchSingleProduct", productId: activeProductId }, { method: "post" });
         }
       }
@@ -467,7 +467,6 @@ export default function MetaInjectorV2() {
   }, [actionFetcher, saveSnapshot]);
 
   // --- EFFECTS ---
-  // Inspector Data Hydration
   const activeProduct = inspectorFetcher.data?.product || products.find(p => p.id === activeProductId);
   const isInspectorLoading = inspectorFetcher.state !== "idle";
 
@@ -493,14 +492,12 @@ export default function MetaInjectorV2() {
     }
   }, [activeProduct, getMetafieldValue]);
 
-  // Origin Fixer Fetching
   useEffect(() => {
     if (selectedTab === 4 && !originFetcher.data) {
       originFetcher.submit({ intent: "fetchOrigins" }, { method: "post" });
     }
   }, [selectedTab, originFetcher]);
 
-  // Profile GID Validation Listener
   const activeProfile = dbProfiles[profileSelectedIndex];
   useEffect(() => {
     if (profileFetcher.data?.intent === "validateGIDs") {
@@ -522,7 +519,7 @@ export default function MetaInjectorV2() {
 
 
   // ==========================================
-  // RENDER SECTIONS (Extracted to inline functions)
+  // RENDER SECTIONS
   // ==========================================
   const tapTargetStyle = { minHeight: '48px', minWidth: '48px', display: 'flex', alignItems: 'center', justifyContent: 'center' };
 
@@ -925,7 +922,6 @@ export default function MetaInjectorV2() {
       if (payload.length === 0) return setToastState({ active: true, message: "No empty fields to fill. Profiles operate in FILL ONLY mode.", isError: false });
 
       if (gidsToCheck.length > 0) {
-        // Validation handles modal opening inside its useEffect
         profileFetcher.submit({ intent: "validateGIDs", gids: JSON.stringify([...new Set(gidsToCheck)]) }, { method: "post" });
       } else {
         setModalConfig({
