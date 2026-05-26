@@ -3,7 +3,7 @@ import { useLoaderData, useFetcher, useNavigate } from "react-router";
 import {
   Page, Layout, Card, Text, TextField, Button, Badge, BlockStack, InlineStack, Box,
   Tabs, DataTable, Select, Checkbox, Modal, Banner, Toast, Frame, ResourceList,
-  ResourceItem, Divider, Scrollable, ChoiceList, Spinner
+  ResourceItem, Divider, Scrollable, ChoiceList, Spinner, EmptySearchResult
 } from "@shopify/polaris";
 import { InfoIcon, AlertCircleIcon, UndoIcon, ImportIcon, ExportIcon } from "@shopify/polaris-icons";
 import { authenticate } from "../shopify.server";
