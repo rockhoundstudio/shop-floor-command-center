@@ -1,1661 +1,1129 @@
-import { useState, useEffect, useMemo, useRef } from "react";
-import { useLoaderData, useFetcher, data, useNavigate } from "react-router";
-import { authenticate } from "../shopify.server";
-import prisma from "../db.server";
+import React, { useState, useCallback, useMemo, useEffect } from "react";
+import { useLoaderData, useFetcher, useNavigate } from "@remix-run/react";
 import {
-  Page, Layout, Card, Text, BlockStack, InlineStack, Button,
-  TextField, Badge, Banner, Box, Select, Divider, Checkbox, List,
-  Icon, Frame, Toast, Modal
+  Page, Layout, Card, Text, TextField, Button, Badge, BlockStack, InlineStack, Box,
+  Tabs, DataTable, Select, Checkbox, Modal, Banner, Toast, Frame, ResourceList,
+  ResourceItem, Divider, Scrollable, ChoiceList, Spinner
 } from "@shopify/polaris";
-import {
-  PlusIcon, AlertTriangleIcon, MagicIcon, DragHandleIcon, CheckIcon, ReplaceIcon
-} from "@shopify/polaris-icons";
+import { InfoIcon, AlertCircleIcon, UndoIcon, ImportIcon, ExportIcon } from "@shopify/polaris-icons";
+import { authenticate } from "../shopify.server";
 
 // ==========================================
-// STATIC MAPPINGS & HELPERS
+// CONFIGURATION & EXCLUSIONS
 // ==========================================
-const KNOWN_FIXES = {
-  "/pages/rockhound-logbook-hub": "/pages/the-rockhound-logbook",
-  "/pages/animal-tails": "/pages/tails-and-trails",
-  "/pages/chipper-lore": "/pages/the-chipper-lore-wood-pile-rescue-eight-generations",
-  "/pages/spencer-opal-mine-and-sox": "/pages/the-shop-lore-spencer-opal-mine-sox-the-manx",
-  "/collections/all": "/collections/all-collections",
-  "/pages/the-richardson-rock-ranch-strike": "/pages/the-richardson-strike",
-  "/pages/the-shop-lore-frankenstein-lapidary-line-v2": "/pages/frankenstein-lapidary-line",
-  "/collections/small-batches-the-vault": "/collections/all-collections",
-  "/collections/the-yakima-canyon-collection": "/collections/all-collections",
-  "/collections/nickel-back": "/collections/all-collections",
-  "/collections/the-3-000-mile-run": "/collections/the-3-000-mile-run-1",
-  "/pages/stabilizing-stone": "UNBUILT",
-  "/pages/spokane-river-tales": "UNBUILT"
+const EXCLUDED_TITLES = ["Black Cord Necklace", "Sterling Silver Pinch Bail"];
+
+// Taxonomy GID Dictionaries
+const colorOptions = [
+  { label: "Select Color...", value: "" },
+  { label: "Green", value: '["gid://shopify/Metaobject/151768563963"]' },
+  { label: "Black", value: '["gid://shopify/Metaobject/151768596731"]' },
+  { label: "Blue flash", value: '["gid://shopify/Metaobject/151792943355"]' },
+  { label: "Red", value: '["gid://shopify/Metaobject/151881154811"]' },
+  { label: "White", value: '["gid://shopify/Metaobject/151881810171"]' },
+  { label: "Multicolor", value: '["gid://shopify/Metaobject/151950098683"]' },
+  { label: "Gold", value: '["gid://shopify/Metaobject/151950754043"]' },
+  { label: "Floral", value: '["gid://shopify/Metaobject/151951048955"]' },
+  { label: "Pink", value: '["gid://shopify/Metaobject/151951507707"]' },
+  { label: "Striped", value: '["gid://shopify/Metaobject/152875892987"]' },
+  { label: "Beige", value: '["gid://shopify/Metaobject/152947491067"]' },
+  { label: "Brown", value: '["gid://shopify/Metaobject/152947523835"]' },
+  { label: "Clear", value: '["gid://shopify/Metaobject/152947556603"]' },
+  { label: "Orange", value: '["gid://shopify/Metaobject/152947589371"]' },
+  { label: "Yellow", value: '["gid://shopify/Metaobject/152947622139"]' },
+  { label: "Bronze", value: '["gid://shopify/Metaobject/152947654907"]' },
+  { label: "Yellow veins", value: '["gid://shopify/Metaobject/152948146427"]' },
+  { label: "Landscape", value: '["gid://shopify/Metaobject/152951488763"]' },
+  { label: "Blue", value: '["gid://shopify/Metaobject/152951816443"]' },
+  { label: "Gray", value: '["gid://shopify/Metaobject/152951849211"]' },
+  { label: "Silver", value: '["gid://shopify/Metaobject/152951881979"]' },
+  { label: "Spots", value: '["gid://shopify/Metaobject/152952111355"]' },
+  { label: "Dots", value: '["gid://shopify/Metaobject/152952144123"]' },
+  { label: "Purple", value: '["gid://shopify/Metaobject/155539931387"]' }
+];
+
+const authOptions = [
+  { label: "Select Authenticity...", value: "" },
+  { label: "Genuine", value: '["gid://shopify/Metaobject/151951114491"]' },
+  { label: "Replica", value: '["gid://shopify/Metaobject/156128346363"]' }
+];
+
+const rarityOptions = [
+  { label: "Select Rarity...", value: "" },
+  { label: "Common", value: '["gid://shopify/Metaobject/151951147259"]' },
+  { label: "Rare", value: '["gid://shopify/Metaobject/154252050683"]' }
+];
+
+const crystalOptions = [
+  { label: "Select Crystal System...", value: "" },
+  { label: "Monoclinic", value: '["gid://shopify/Metaobject/151951212795"]' },
+  { label: "Trigonal", value: '["gid://shopify/Metaobject/154252116219"]' },
+  { label: "Hexagonal", value: '["gid://shopify/Metaobject/154307625211"]' },
+  { label: "Triclinic", value: '["gid://shopify/Metaobject/154308706555"]' }
+];
+
+const eraOptions = [
+  { label: "Select Geological Era...", value: "" },
+  { label: "Precambrian", value: '["gid://shopify/Metaobject/151951245563"]' },
+  { label: "Mesozoic", value: '["gid://shopify/Metaobject/154252083451"]' },
+  { label: "Cenozoic", value: '["gid://shopify/Metaobject/154307854587"]' },
+  { label: "Paleozoic", value: '["gid://shopify/Metaobject/156128379131"]' },
+  { label: "Other", value: '["gid://shopify/Metaobject/156128444667"]' }
+];
+
+const mineralClassOptions = [
+  { label: "Select Mineral Class...", value: "" },
+  { label: "Silicates", value: '["gid://shopify/Metaobject/151951278331"]' },
+  { label: "Oxides", value: '["gid://shopify/Metaobject/155431371003"]' },
+  { label: "Carbonates", value: '["gid://shopify/Metaobject/156128313595"]' }
+];
+
+const rockCompOptions = [
+  { label: "Select Rock Composition...", value: "" },
+  { label: "Granite", value: '["gid://shopify/Metaobject/151951311099"]' },
+  { label: "Obsidian", value: '["gid://shopify/Metaobject/155431338235"]' },
+  { label: "Andesite", value: '["gid://shopify/Metaobject/156128411899"]' },
+  { label: "Schist", value: '["gid://shopify/Metaobject/156128477435"]' },
+  { label: "Jasper", value: '["gid://shopify/Metaobject/166239764731"]' }
+];
+
+const rockFormOptions = [
+  { label: "Select Rock Formation...", value: "" },
+  { label: "Metamorphic", value: '["gid://shopify/Metaobject/151951343867"]' },
+  { label: "Igneous", value: '["gid://shopify/Metaobject/154251985147"]' },
+  { label: "Sedimentary", value: '["gid://shopify/Metaobject/154307657979"]' }
+];
+
+const METAFIELD_CONFIG = [
+  { namespace: "custom", key: "official_name", type: "single_line_text_field", label: "Official Name (North Star)" },
+  { namespace: "shopify", key: "color-pattern", type: "list.metaobject_reference", label: "Color / Pattern", options: colorOptions },
+  { namespace: "shopify", key: "authenticity", type: "list.metaobject_reference", label: "Authenticity", options: authOptions },
+  { namespace: "shopify", key: "rarity", type: "list.metaobject_reference", label: "Rarity", options: rarityOptions },
+  { namespace: "shopify", key: "crystal-system", type: "list.metaobject_reference", label: "Crystal System", options: crystalOptions },
+  { namespace: "shopify", key: "geological-era", type: "list.metaobject_reference", label: "Geological Era", options: eraOptions },
+  { namespace: "shopify", key: "mineral-class", type: "list.metaobject_reference", label: "Mineral Class", options: mineralClassOptions },
+  { namespace: "shopify", key: "rock-composition", type: "list.metaobject_reference", label: "Rock Composition", options: rockCompOptions },
+  { namespace: "shopify", key: "rock-formation", type: "list.metaobject_reference", label: "Rock Formation", options: rockFormOptions },
+  { namespace: "custom", key: "hardness", type: "number_decimal", label: "Hardness (Mohs)" },
+  { namespace: "custom", key: "luster", type: "single_line_text_field", label: "Luster" },
+  { namespace: "custom", key: "fracture", type: "single_line_text_field", label: "Fracture" },
+  { namespace: "custom", key: "cleavage", type: "single_line_text_field", label: "Cleavage" },
+  { namespace: "custom", key: "specific_gravity", type: "number_decimal", label: "Specific Gravity" },
+  { namespace: "custom", key: "diaphaneity", type: "single_line_text_field", label: "Diaphaneity" },
+  { namespace: "custom", key: "origin_location", type: "single_line_text_field", label: "Origin Location" },
+  { namespace: "custom", key: "meta_status", type: "json", label: "Data Integrity Status", hidden: true }
+];
+
+const getLabelForValue = (key, value) => {
+  const config = METAFIELD_CONFIG.find(c => c.key === key);
+  if (config && config.options) {
+    const match = config.options.find(o => o.value === value);
+    return match ? match.label : value;
+  }
+  return value;
 };
 
-function levenshtein(a, b) {
-  if (a.length === 0) return b.length;
-  if (b.length === 0) return a.length;
-  const matrix = [];
-  for (let i = 0; i <= b.length; i++) matrix[i] = [i];
-  for (let j = 0; j <= a.length; j++) matrix[0][j] = j;
-  for (let i = 1; i <= b.length; i++) {
-    for (let j = 1; j <= a.length; j++) {
-      if (b.charAt(i - 1) === a.charAt(j - 1)) {
-        matrix[i][j] = matrix[i - 1][j - 1];
-      } else {
-        matrix[i][j] = Math.min(matrix[i - 1][j - 1] + 1, matrix[i][j - 1] + 1, matrix[i - 1][j] + 1);
-      }
+// ==========================================
+// RENDER DB FETCH STUB
+// ==========================================
+async function fetchProfilesFromRenderDB() {
+  // TODO: Replace this entirely with your fetch or Prisma call to Render DB
+  return [
+    { 
+      name: "Quartz", 
+      data: { 
+        hardness: "7", luster: "Vitreous", "crystal-system": '["gid://shopify/Metaobject/154252116219"]', 
+        fracture: "Conchoidal", cleavage: "None", specific_gravity: "2.65", 
+        "mineral-class": '["gid://shopify/Metaobject/151951278331"]', diaphaneity: "Transparent to Opaque" 
+      } 
+    },
+    { 
+      name: "Labradorite", 
+      data: { 
+        hardness: "6", luster: "Vitreous to Pearly", "crystal-system": '["gid://shopify/Metaobject/154308706555"]', 
+        fracture: "Uneven", cleavage: "Perfect", specific_gravity: "2.70", diaphaneity: "Translucent" 
+      } 
     }
-  }
-  return matrix[b.length][a.length];
-}
-
-function getClosestHandle(target, handles) {
-  if (!handles || handles.length === 0) return null;
-  let bestMatch = null;
-  let bestScore = Infinity;
-  for (const h of handles) {
-    let score = levenshtein(target, h);
-    if (score < bestScore) {
-      bestScore = score;
-      bestMatch = h;
-    }
-  }
-  return bestScore <= 5 ? bestMatch : null; 
-}
-
-function getDestinationStatus(url, liveCollectionHandles, livePageHandles) {
-  if (!url || url.trim() === "" || url === "#") return "dead";
-  if (url === "/" || url === "/collections/all") return "live";
-  
-  if (KNOWN_FIXES[url] === "UNBUILT") return "unbuilt";
-  if (KNOWN_FIXES[url]) return "stale";
-
-  const collMatch = url.match(/^\/collections\/(.+)$/);
-  if (collMatch) return liveCollectionHandles.includes(collMatch[1]) ? "live" : "dead";
-  const pageMatch = url.match(/^\/pages\/(.+)$/);
-  if (pageMatch) return livePageHandles.includes(pageMatch[1]) ? "live" : "draft";
-  if (url.startsWith("http")) return "external";
-  return "unknown";
-}
-
-function StatusBadge({ status }) {
-  const map = {
-    live:     { tone: "success",  label: "🟢 Live" },
-    draft:    { tone: "warning",  label: "🟡 Draft / Unverified" },
-    dead:     { tone: "critical", label: "🔴 Dead" },
-    stale:    { tone: "warning",  label: "🟠 Stale Handle" },
-    unbuilt:  { tone: "info",     label: "🛠️ Not Built Yet" },
-    external: { tone: "info",     label: "🔗 External" },
-    unknown:  { tone: "warning",  label: "⚠️ Unknown" },
-  };
-  const { tone, label } = map[status] || map.unknown;
-  return <Badge tone={tone}>{label}</Badge>;
-}
-
-function countByStatus(items, liveCollectionHandles, livePageHandles) {
-  let live = 0, draft = 0, dead = 0, stale = 0;
-  const check = (url) => {
-    const s = getDestinationStatus(url, liveCollectionHandles, livePageHandles);
-    if (s === "live" || s === "external") live++;
-    else if (s === "draft" || s === "unknown") draft++;
-    else if (s === "stale") stale++;
-    else if (s === "dead") dead++;
-  };
-  items.forEach(item => {
-    check(item.url);
-    (item.items || []).forEach(child => check(child.url));
-  });
-  return { live, draft, dead, stale };
-}
-
-function getPageCategory(url, collectionHandles) {
-  if (!url || typeof url !== "string") return { label: "Page", tone: null };
-  const normalizedUrl = url.toLowerCase();
-  const urlParts = normalizedUrl.split("/");
-  const handle = urlParts[urlParts.length - 1];
-
-  if (collectionHandles.includes(handle)) return { label: "Collection", tone: "info" };
-  if (normalizedUrl.includes("/pages/")) return { label: "Story", tone: "success" };
-  
-  return { label: "Page", tone: null };
+  ];
 }
 
 // ==========================================
-// ENGINE: LOADER
+// SERVER: LOADER
 // ==========================================
-export const loader = async ({ request }) => {
+export async function loader({ request }) {
   const { admin } = await authenticate.admin(request);
-  try {
-    const res = await admin.graphql(`
-      query {
-        menus(first: 50) {
+  
+  // 1. Fetch Render DB Profiles
+  const dbProfiles = await fetchProfilesFromRenderDB();
+
+  // 2. Fetch ALL products via cursor pagination
+  let allRawProducts = [];
+  let hasNextPage = true;
+  let cursor = null;
+
+  while (hasNextPage) {
+    const response = await admin.graphql(`
+      query GetAllProducts($cursor: String) {
+        products(first: 50, after: $cursor, sortKey: TITLE) {
+          pageInfo { hasNextPage endCursor }
           edges {
             node {
-              id title handle
-              items {
-                id title url type
-                items { id title url type }
+              id title status featuredImage { url altText }
+              metafields(first: 50) {
+                edges { node { id namespace key value type } }
               }
             }
           }
         }
-        collections(first: 250) {
-          edges { node { id title handle } }
-        }
-        pages(first: 250) {
-          edges { node { id title handle body } } 
+      }
+    `, { variables: { cursor } });
+
+    const parsed = await response.json();
+    const productsData = parsed.data?.products ? parsed.data.products : null;
+    
+    if (productsData) {
+      allRawProducts = [...allRawProducts, ...productsData.edges.map(e => e.node)];
+      hasNextPage = productsData.pageInfo.hasNextPage ? true : false;
+      cursor = productsData.pageInfo.endCursor ? productsData.pageInfo.endCursor : null;
+    } else {
+      hasNextPage = false;
+    }
+  }
+  
+  const products = allRawProducts.filter(p => !EXCLUDED_TITLES.includes(p.title));
+
+  // 3. Fetch stored snapshots from Metaobjects
+  const snapResponse = await admin.graphql(`
+    query GetSnapshots {
+      metaobjects(type: "meta_injector_snapshot", first: 10, sortKey: "updated_at", reverse: true) {
+        edges {
+          node {
+            id
+            timestamp: field(key: "timestamp") { value }
+            scope: field(key: "scope") { value }
+            action: field(key: "action") { value }
+            payload: field(key: "payload") { value }
+          }
         }
       }
-    `);
-    const json = await res.json();
-    const menus = (json.data?.menus?.edges || []).map(e => e.node);
-    const collections = (json.data?.collections?.edges || []).map(e => e.node);
-    const pages = (json.data?.pages?.edges || []).map(e => e.node);
-    
-    const liveCollectionHandles = collections.map(c => c.handle);
-    const livePageHandles = pages.map(p => p.handle);
+    }
+  `);
+  
+  const snapParsed = await snapResponse.json();
+  const rawSnapshots = snapParsed.data?.metaobjects?.edges.map(e => e.node) ? snapParsed.data.metaobjects.edges.map(e => e.node) : [];
+  
+  const snapshots = rawSnapshots.map(s => ({
+    id: s.id,
+    date: s.timestamp?.value ? s.timestamp.value : "Unknown Date",
+    action: s.action?.value ? s.action.value : "Snapshot",
+    scopeCount: s.scope?.value ? s.scope.value : "0",
+    payloadStr: s.payload?.value ? s.payload.value : "[]"
+  }));
 
-    const dbSettings = await prisma.menuSetting.findMany();
-    const dbHistoryRaw = await prisma.menuHistory.findMany({
-      orderBy: { createdAt: 'desc' }
-    });
-
-    const dbHistory = {};
-    dbHistoryRaw.forEach(h => {
-      if (!dbHistory[h.menuHandle]) dbHistory[h.menuHandle] = [];
-      if (dbHistory[h.menuHandle].length < 5) dbHistory[h.menuHandle].push(h);
-    });
-
-    return data({ menus, collections, pages, liveCollectionHandles, livePageHandles, collectionHandles: liveCollectionHandles, dbSettings, dbHistory });
-  } catch (error) {
-    return data({ menus: [], collections: [], pages: [], liveCollectionHandles: [], livePageHandles: [], collectionHandles: [], dbSettings: [], dbHistory: {} });
-  }
-};
+  return { products, snapshots, dbProfiles };
+}
 
 // ==========================================
-// ENGINE: ACTION
+// SERVER: ACTION (GraphQL Intent Engine)
 // ==========================================
-export const action = async ({ request }) => {
+export async function action({ request }) {
   const { admin } = await authenticate.admin(request);
   const formData = await request.formData();
   const intent = formData.get("intent");
 
-  if (intent === "deleteMenu") {
-    const id = formData.get("id");
-    const title = formData.get("title") || "Menu";
-
-    const res = await admin.graphql(`
-      mutation menuDelete($id: ID!) {
-        menuDelete(id: $id) {
-          deletedMenuId
-          userErrors { message }
-        }
-      }
-    `, { variables: { id } });
-
-    const json = await res.json();
-    if (json.data?.menuDelete?.userErrors?.length) {
-      return data({ ok: false, error: json.data.menuDelete.userErrors[0].message });
+  if (intent === "saveMetafields") {
+    const payload = JSON.parse(formData.get("payload"));
+    const chunks = [];
+    for (let i = 0; i < payload.length; i += 3) {
+      chunks.push(payload.slice(i, i + 3));
     }
 
-    await prisma.menuHistory.create({
-      data: { menuHandle: "deleted-menu", message: `Deleted menu: ${title}` }
-    });
-
-    return data({ ok: true, message: "Menu deleted", deleted: true });
-  }
-
-  if (intent === "fetchPageBatch") {
-    const cursor = formData.get("cursor");
-    const res = await admin.graphql(`
-      query GetPageBatch($cursor: String) {
-        pages(first: 10, after: $cursor) {
-          pageInfo { hasNextPage endCursor }
-          edges { node { id title handle body } }
+    let allErrors = [];
+    for (const chunk of chunks) {
+      const response = await admin.graphql(`
+        mutation MetafieldsSet($metafields: [MetafieldsSetInput!]!) {
+          metafieldsSet(metafields: $metafields) {
+            userErrors { field message }
+          }
         }
-      }
-    `, { variables: { cursor: cursor === "null" ? null : cursor } });
-    
-    const json = await res.json();
-    if (json.errors) return data({ ok: false, error: json.errors[0].message });
-    
-    return data({
-      ok: true,
-      requestCursor: cursor,
-      batch: json.data?.pages?.edges?.map(e => e.node) || [],
-      pageInfo: json.data?.pages?.pageInfo || {}
-    });
-  }
-
-  if (intent === "createAllStoriesMenu") {
-    const resPages = await admin.graphql(`
-      query { pages(first: 250) { edges { node { title handle body } } } }
-    `);
-    const jsonPages = await resPages.json();
-    const allPages = jsonPages.data?.pages?.edges?.map(e => e.node) || [];
-    
-    const imagePages = allPages.filter(p => p.body && /<img[^>]+>/i.test(p.body));
-    
-    const items = imagePages.map(p => ({
-      title: p.title,
-      url: `/pages/${p.handle}`,
-      type: "HTTP"
-    }));
-
-    const res = await admin.graphql(`
-      mutation menuCreate($title: String!, $handle: String!, $items: [MenuItemCreateInput!]!) {
-        menuCreate(title: $title, handle: $handle, items: $items) {
-          menu { id title handle }
-          userErrors { message }
-        }
-      }
-    `, { variables: { title: "All Stories", handle: "all-stories", items } });
-
-    const json = await res.json();
-    if (json.data?.menuCreate?.userErrors?.length) {
-      return data({ ok: false, error: json.data.menuCreate.userErrors[0].message });
+      `, { variables: { metafields: chunk } });
+      const json = await response.json();
+      const errors = json.data?.metafieldsSet?.userErrors ? json.data.metafieldsSet.userErrors : [];
+      if (errors.length > 0) allErrors = [...allErrors, ...errors];
     }
 
-    await prisma.menuHistory.create({
-      data: { menuHandle: "all-stories", message: `Generated All Stories menu with ${items.length} image pages.` }
-    });
-
-    return data({ ok: true, message: `All Stories Menu created with ${items.length} pages!` });
+    if (allErrors.length > 0) {
+      return { success: false, errors: allErrors, message: "Failed to save some metafields." };
+    }
+    return { success: true, message: "Metafields securely updated in batches." };
   }
 
-  if (intent === "fixPageLinks") {
-    const fixesRaw = formData.get("fixes");
-    const fixes = JSON.parse(fixesRaw);
-    let successCount = 0;
+  if (intent === "fetchSingleProduct") {
+    const productId = formData.get("productId");
+    const response = await admin.graphql(`
+      query GetSingleProduct($id: ID!) {
+        product(id: $id) {
+          id title status featuredImage { url altText }
+          metafields(first: 50) {
+            edges { node { id namespace key value type } }
+          }
+        }
+      }
+    `, { variables: { id: productId } });
+    const json = await response.json();
+    return { success: true, product: json.data?.product ? json.data.product : null };
+  }
 
-    for (const fix of fixes) {
-      const pageRes = await admin.graphql(`query { page(id: "${fix.pageId}") { body } }`);
-      const pageData = await pageRes.json();
-      const currentBody = pageData.data?.page?.body;
-      
-      if (currentBody) {
-        const newBody = currentBody.replace(fix.exactMatch, fix.replacementMatch);
-        const updateRes = await admin.graphql(`
-          mutation pageUpdate($id: ID!, $page: PageUpdateInput!) {
-            pageUpdate(id: $id, page: $page) {
-              userErrors { message }
+  if (intent === "fetchOrigins") {
+    let allRaw = [];
+    let hasNext = true;
+    let cursor = null;
+
+    while (hasNext) {
+      const response = await admin.graphql(`
+        query GetOrigins($cursor: String) {
+          products(first: 50, after: $cursor) {
+            pageInfo { hasNextPage endCursor }
+            edges {
+              node {
+                id title
+                originMetafield: metafield(namespace: "custom", key: "origin_location") { value }
+              }
             }
           }
-        `, { variables: { id: fix.pageId, page: { body: newBody } } });
-        
-        const updateData = await updateRes.json();
-        if (!updateData.data?.pageUpdate?.userErrors?.length) {
-          successCount++;
+        }
+      `, { variables: { cursor } });
+      const json = await response.json();
+      const data = json.data?.products ? json.data.products : null;
+      if (data) {
+        allRaw = [...allRaw, ...data.edges.map(e => e.node)];
+        hasNext = data.pageInfo.hasNextPage ? true : false;
+        cursor = data.pageInfo.endCursor ? data.pageInfo.endCursor : null;
+      } else {
+        hasNext = false;
+      }
+    }
+    const filtered = allRaw.filter(p => !EXCLUDED_TITLES.includes(p.title));
+    return { success: true, origins: filtered };
+  }
+
+  if (intent === "validateGIDs") {
+    const gids = JSON.parse(formData.get("gids"));
+    const response = await admin.graphql(`
+      query ValidateGIDs($ids: [ID!]!) {
+        nodes(ids: $ids) { id }
+      }
+    `, { variables: { ids: gids } });
+    const json = await response.json();
+    const nodes = json.data?.nodes ? json.data.nodes : [];
+    const isInvalid = nodes.some(n => n === null);
+    return { success: true, isValid: !isInvalid };
+  }
+
+  if (intent === "saveSnapshot") {
+    const actionName = formData.get("actionName");
+    const payloadStr = formData.get("payloadStr");
+    const scopeCount = formData.get("scopeCount");
+    
+    const createRes = await admin.graphql(`
+      mutation CreateSnapshot($metaobject: MetaobjectCreateInput!) {
+        metaobjectCreate(metaobject: $metaobject) {
+          metaobject { id }
+          userErrors { field message }
         }
       }
-    }
-
-    return data({ ok: true, message: `Successfully applied ${successCount} link fixes!` });
-  }
-
-  if (intent === "createMenu") {
-    const title = formData.get("title");
-    const handle = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
-    const itemsRaw = formData.get("items");
-    const items = JSON.parse(itemsRaw).map(item => ({
-      title: item.title,
-      url: item.url,
-      type: "HTTP"
-    }));
-
-    const res = await admin.graphql(`
-      mutation menuCreate($title: String!, $handle: String!, $items: [MenuItemCreateInput!]!) {
-        menuCreate(title: $title, handle: $handle, items: $items) {
-          menu { id title handle }
-          userErrors { message }
+    `, {
+      variables: {
+        metaobject: {
+          type: "meta_injector_snapshot",
+          capabilities: { publishable: { status: "ACTIVE" } },
+          fields: [
+            { key: "timestamp", value: new Date().toLocaleString() },
+            { key: "action", value: actionName },
+            { key: "scope", value: scopeCount },
+            { key: "payload", value: payloadStr }
+          ]
         }
       }
-    `, { variables: { title, handle, items } });
+    });
 
-    const json = await res.json();
-    if (json.data?.menuCreate?.userErrors?.length) {
-      return data({ ok: false, error: json.data.menuCreate.userErrors[0].message });
+    const createJson = await createRes.json();
+    const errors = createJson.data?.metaobjectCreate?.userErrors ? createJson.data.metaobjectCreate.userErrors : [];
+    
+    if (errors.length > 0 && errors[0].message.includes("type must exist")) {
+       return { success: false, errors: [{ message: "Requires Metaobject Definition: 'meta_injector_snapshot' with fields: timestamp, action, scope, payload." }] };
     }
 
-    const newMenu = json.data?.menuCreate?.menu;
-    await prisma.menuHistory.create({
-      data: { menuHandle: newMenu.handle || "new-menu", message: "New menu created via Menu Manager." }
-    });
-
-    return data({ ok: true, message: `Menu "${title}" created successfully!` });
-  }
-
-  if (intent === "updateMenu") {
-    const id = formData.get("id");
-    const title = formData.get("title");
-    const handle = formData.get("handle");
-    const itemsRaw = formData.get("items");
-    const logMessage = formData.get("logMessage") || "Menu structure manually updated and saved.";
-
-    const formatItem = (item) => {
-      const formatted = {
-        title: item.title,
-        url: item.url || "#",
-        type: "HTTP",
-        items: item.items && item.items.length > 0 ? item.items.map(formatItem) : []
-      };
-      if (item.id && typeof item.id === "string" && item.id.includes("gid://")) {
-        formatted.id = item.id;
-      }
-      return formatted;
-    };
-
-    const items = JSON.parse(itemsRaw).map(formatItem);
-
-    const res = await admin.graphql(`
-      mutation menuUpdate($id: ID!, $title: String!, $handle: String!, $items: [MenuItemUpdateInput!]!) {
-        menuUpdate(id: $id, title: $title, handle: $handle, items: $items) {
-          userErrors { message }
-        }
-      }
-    `, { variables: { id, title, handle, items } });
-
-    const json = await res.json();
-    if (json.data?.menuUpdate?.userErrors?.length) {
-      return data({ ok: false, error: json.data.menuUpdate.userErrors[0].message });
+    const existingIds = JSON.parse(formData.get("existingIds") ? formData.get("existingIds") : "[]");
+    if (existingIds.length >= 5) {
+      const oldestId = existingIds[existingIds.length - 1];
+      await admin.graphql(`
+        mutation DeleteSnapshot($id: ID!) { metaobjectDelete(id: $id) { userErrors { message } } }
+      `, { variables: { id: oldestId } });
     }
 
-    await prisma.menuHistory.create({
-      data: { menuHandle: handle, message: logMessage }
-    });
-
-    return data({ ok: true, message: "Menu saved successfully!" });
+    return { success: true };
   }
 
-  if (intent === "toggleLock") {
-    const menuHandle = formData.get("menuHandle");
-    const isLocked = formData.get("isLocked") === "true";
-    await prisma.menuSetting.upsert({
-      where: { menuHandle }, update: { isLocked }, create: { menuHandle, isLocked }
-    });
-    return data({ ok: true });
-  }
-
-  if (intent === "toggleAutoSync") {
-    const menuHandle = formData.get("menuHandle");
-    const autoSync = formData.get("autoSync") === "true";
-    await prisma.menuSetting.upsert({
-      where: { menuHandle }, update: { autoSync }, create: { menuHandle, autoSync }
-    });
-    return data({ ok: true });
-  }
-
-  return data({ ok: false });
-};
-
-// ==========================================
-// CHASSIS: CREATOR COMPONENT
-// ==========================================
-function MenuCreator({ pages, fetcher, onCancel, collectionHandles }) {
-  const [title, setTitle] = useState("");
-  const [selectedPages, setSelectedPages] = useState([]);
-
-  const handleAddPage = (page) => {
-    if (!selectedPages.find(p => p.id === page.id)) {
-      setSelectedPages([...selectedPages, page]);
-    }
-  };
-
-  const handleRemovePage = (pageId) => {
-    setSelectedPages(selectedPages.filter(p => p.id !== pageId));
-  };
-
-  const handleSave = () => {
-    const fd = new FormData();
-    fd.append("intent", "createMenu");
-    fd.append("title", title);
-    const items = selectedPages.map(p => ({ title: p.title, url: `/pages/${p.handle}` }));
-    fd.append("items", JSON.stringify(items));
-    fetcher.submit(fd, { method: "post" });
-  };
-
-  const availablePages = pages.filter(p => !selectedPages.find(sp => sp.id === p.id));
-
-  return (
-    <Card>
-      <BlockStack gap="400">
-        <InlineStack align="space-between" blockAlign="center">
-          <BlockStack gap="100">
-            <Text variant="headingLg" as="h2">Create New Menu</Text>
-            <Text tone="subdued" as="p">Build a new menu by selecting pages from your store.</Text>
-          </BlockStack>
-          <Button onClick={onCancel} aria-label="Cancel creating new menu" size="large">Cancel</Button>
-        </InlineStack>
-        <Divider />
-
-        <BlockStack gap="400">
-          <TextField
-            label="Menu Title"
-            value={title}
-            onChange={setTitle}
-            autoComplete="off"
-            helpText="Give your new menu a clear name, like 'Holiday Sale Navigation'."
-            aria-label="Input field for new menu title"
-          />
-
-          <InlineStack align="end">
-            <Button
-              variant="primary"
-              size="large"
-              onClick={handleSave}
-              disabled={title.trim() === ""}
-              aria-label="Save and Create Menu in Shopify"
-            >
-              Create Menu
-            </Button>
-          </InlineStack>
-        </BlockStack>
-
-        <Box paddingBlockStart="400">
-          <Text variant="headingSm" as="h3">Available Pages</Text>
-          <Text tone="subdued" variant="bodySm" as="p">Click to add pages to your new menu.</Text>
-
-          {availablePages.length > 0 ? (
-            <Box paddingBlockStart="200" style={{ maxHeight: "300px", overflowY: "auto" }}>
-              <Card background="bg-surface-secondary">
-                <List type="bullet">
-                  {availablePages.map(page => {
-                    const generatedUrl = `/pages/${page.handle}`;
-                    const category = getPageCategory(generatedUrl, collectionHandles);
-                    return (
-                      <List.Item key={page.id}>
-                        <InlineStack align="space-between" blockAlign="center">
-                          <InlineStack gap="200" blockAlign="center">
-                            <Text as="span">{page.title}</Text>
-                            {category.tone ? (
-                              <Badge tone={category.tone}>{category.label}</Badge>
-                            ) : (
-                              <Badge>{category.label}</Badge>
-                            )}
-                          </InlineStack>
-                          <Button
-                            size="large"
-                            onClick={() => handleAddPage(page)}
-                            aria-label={`Add page ${page.title} to the new menu list`}
-                          >
-                            Add Link
-                          </Button>
-                        </InlineStack>
-                      </List.Item>
-                    );
-                  })}
-                </List>
-              </Card>
-            </Box>
-          ) : (
-            <Box padding="400" background="bg-surface-secondary" borderRadius="100" paddingBlockStart="200">
-              <Text tone="subdued" as="p">No more pages available to add.</Text>
-            </Box>
-          )}
-        </Box>
-
-        <Box paddingBlockStart="400">
-          <Text variant="headingSm" as="h3">Selected Links in this Menu</Text>
-          {selectedPages.length === 0 ? (
-            <Box padding="400" background="bg-surface-secondary" borderRadius="100">
-              <Text tone="subdued" as="p">No pages added yet. Select pages from the list above.</Text>
-            </Box>
-          ) : (
-            <BlockStack gap="200">
-              {selectedPages.map((page) => {
-                const generatedUrl = `/pages/${page.handle}`;
-                const category = getPageCategory(generatedUrl, collectionHandles);
-                return (
-                  <Card key={page.id} background="bg-surface-secondary">
-                    <InlineStack align="space-between" blockAlign="center">
-                      <BlockStack gap="100">
-                        <InlineStack gap="200" blockAlign="center">
-                          <Text fontWeight="bold" as="span">{page.title}</Text>
-                          {category.tone ? (
-                            <Badge tone={category.tone}>{category.label}</Badge>
-                          ) : (
-                            <Badge>{category.label}</Badge>
-                          )}
-                        </InlineStack>
-                        <Text tone="subdued" variant="bodySm" as="span">{generatedUrl}</Text>
-                      </BlockStack>
-                      <Button
-                        tone="critical"
-                        size="large"
-                        onClick={() => handleRemovePage(page.id)}
-                        aria-label={`Remove page ${page.title} from the new menu list`}
-                      >
-                        Remove
-                      </Button>
-                    </InlineStack>
-                  </Card>
-                );
-              })}
-            </BlockStack>
-          )}
-        </Box>
-      </BlockStack>
-    </Card>
-  );
+  return { success: false, errors: [{ message: "Unknown command" }] };
 }
 
 // ==========================================
-// CHASSIS: MAIN DASHBOARD
+// CLIENT: COMPONENT
 // ==========================================
-export default function MenuManager() {
+export default function MetaInjectorV2() {
+  const { products, snapshots: initialSnapshots, dbProfiles } = useLoaderData();
   const navigate = useNavigate();
-  const { menus, collections, pages, liveCollectionHandles, livePageHandles, dbSettings, dbHistory, collectionHandles } = useLoaderData();
-  const fetcher = useFetcher();
-  const scanFetcher = useFetcher({ key: "deepScanner" });
-
-  const [activeMenu, setActiveMenu] = useState(null);
-  const [isCreatingMenu, setIsCreatingMenu] = useState(false);
-  const [menuItems, setMenuItems] = useState([]);
-  const [menuTitle, setMenuTitle] = useState("");
-  const [scanned, setScanned] = useState(false);
-  const [globalScan, setGlobalScan] = useState(null);
-
-  const [isSaving, setIsSaving] = useState(false);
-  const [savingMenuData, setSavingMenuData] = useState(null);
-  const [savedOverrides, setSavedOverrides] = useState({});
-
-  const [isDeepScanning, setIsDeepScanning] = useState(false);
-  const [scanProgress, setScanProgress] = useState(0);
-  const [deepScanResults, setDeepScanResults] = useState(null);
-  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   
-  const [toastActive, setToastActive] = useState(false);
-  const [toastContent, setToastContent] = useState("");
-  const [toastError, setToastError] = useState(false);
+  const actionFetcher = useFetcher();
+  const inspectorFetcher = useFetcher();
+  const originFetcher = useFetcher();
+  const profileFetcher = useFetcher();
+  const snapshotFetcher = useFetcher();
 
-  const accumulatedPagesRef = useRef([]);
-  const lastCursorRef = useRef(null);
+  // --- TOP LEVEL STATE ---
+  const [selectedTab, setSelectedTab] = useState(0);
+  const [toastState, setToastState] = useState({ active: false, message: "", isError: false });
+  const [snapshots, setSnapshots] = useState(initialSnapshots || []);
+  const [modalConfig, setModalConfig] = useState({ active: false, title: "", body: null, onConfirm: null, diffs: [] });
+  const [actionErrors, setActionErrors] = useState([]);
+  const [activeProductId, setActiveProductId] = useState("");
+  
+  // Matrix State
+  const [matrixMissingFilter, setMatrixMissingFilter] = useState("");
+  
+  // Inspector State
+  const [inspectorLocalData, setInspectorLocalData] = useState({});
+  const [inspectorFieldErrors, setInspectorFieldErrors] = useState({});
+  
+  // Bulk State
+  const [bulkMode, setBulkMode] = useState("fill");
+  const [bulkFormData, setBulkFormData] = useState({});
+  const [bulkSelectedProductIds, setBulkSelectedProductIds] = useState([]);
+  
+  // Profile State
+  const [profileSelectedIndex, setProfileSelectedIndex] = useState(0);
+  const [profileSelectedProductIds, setProfileSelectedProductIds] = useState([]);
 
-  const allStoriesMenuExists = useMemo(() => menus.some(m => m.handle === "all-stories"), [menus]);
+  // --- HELPERS ---
+  const closeToast = useCallback(() => setToastState(prev => ({ ...prev, active: false })), []);
+  const closeModal = useCallback(() => setModalConfig({ active: false, title: "", body: null, onConfirm: null, diffs: [] }), []);
 
-  const showToast = (message, error = false) => {
-    setToastContent(message);
-    setToastError(error);
-    setToastActive(true);
-  };
+  const getMetafieldValue = useCallback((product, key) => {
+    if (!product || !product.metafields) return "";
+    const mf = product.metafields.edges.find(e => e.node.key === key);
+    return mf ? mf.node.value : "";
+  }, []);
 
-  // Handle Fetcher State Completion
+  const resolveMetafieldType = useCallback((product, fieldConfig, newValue) => {
+    if (fieldConfig.options) return "list.metaobject_reference";
+    const existingMf = product.metafields.edges.find(e => e.node.key === fieldConfig.key);
+    if (existingMf) return existingMf.node.type;
+    const isNumberType = fieldConfig.type.includes("number");
+    const containsDash = newValue ? /[\-–—]/.test(newValue) : false;
+    return isNumberType ? (containsDash ? "single_line_text_field" : fieldConfig.type) : fieldConfig.type;
+  }, []);
+
+  // --- MUTATION HANDLING ---
   useEffect(() => {
-    const isSubmitUpdate = fetcher.state === "submitting" && fetcher.formData?.get("intent") === "updateMenu";
+    if (actionFetcher.data) {
+      const isSuccess = !!actionFetcher.data.success;
+      if (actionFetcher.data.message) {
+        setToastState({ active: true, message: actionFetcher.data.message, isError: !isSuccess });
+      }
+      if (isSuccess) {
+        closeModal();
+        if (activeProductId && selectedTab === 2) { // Tab 2 is Inspector now
+           inspectorFetcher.submit({ intent: "fetchSingleProduct", productId: activeProductId }, { method: "post" });
+        }
+      }
+      setActionErrors(actionFetcher.data.errors || []);
+    }
+  }, [actionFetcher.data, closeModal, activeProductId, selectedTab, inspectorFetcher]);
+
+  // --- SNAPSHOTS ---
+  const saveSnapshot = useCallback((productsToSnapshot, actionName) => {
+    const data = productsToSnapshot.map(p => ({
+      id: p.id,
+      metafields: p.metafields.edges.map(e => ({ namespace: e.node.namespace, key: e.node.key, value: e.node.value, type: e.node.type }))
+    }));
+    const payloadStr = JSON.stringify(data);
     
-    if (isSubmitUpdate) {
-      setIsSaving(true);
-      setSavingMenuData({
-        id: fetcher.formData.get("id"),
-        title: fetcher.formData.get("title"),
-        items: JSON.parse(fetcher.formData.get("items"))
+    const newSnap = { id: "temp", date: new Date().toLocaleString(), action: actionName, scopeCount: data.length.toString(), payloadStr };
+    setSnapshots(prev => [newSnap, ...prev].slice(0, 5));
+
+    snapshotFetcher.submit({
+      intent: "saveSnapshot",
+      actionName,
+      scopeCount: data.length.toString(),
+      payloadStr,
+      existingIds: JSON.stringify(snapshots.map(s => s.id))
+    }, { method: "post" });
+  }, [snapshots, snapshotFetcher]);
+
+  const submitMetafields = useCallback((payload, actionName, relevantProducts) => {
+    saveSnapshot(relevantProducts, actionName);
+    actionFetcher.submit({ intent: "saveMetafields", payload: JSON.stringify(payload) }, { method: "post" });
+  }, [actionFetcher, saveSnapshot]);
+
+  // --- EFFECTS ---
+  // Inspector Data Hydration
+  const activeProduct = inspectorFetcher.data?.product || products.find(p => p.id === activeProductId);
+  const isInspectorLoading = inspectorFetcher.state !== "idle";
+
+  useEffect(() => {
+    if (activeProductId && selectedTab === 2) {
+      inspectorFetcher.submit({ intent: "fetchSingleProduct", productId: activeProductId }, { method: "post" });
+    }
+  }, [activeProductId, selectedTab]);
+
+  useEffect(() => {
+    if (activeProduct) {
+      const initial = {};
+      const errors = {};
+      METAFIELD_CONFIG.forEach(f => {
+        const val = getMetafieldValue(activeProduct, f.key);
+        initial[f.key] = val;
+        if (f.type.includes("number") && val && !/^[\d\.\s\-–—]+$/.test(val)) {
+          errors[f.key] = "Only numbers and ranges allowed.";
+        }
       });
+      setInspectorLocalData(initial);
+      setInspectorFieldErrors(errors);
     }
+  }, [activeProduct, getMetafieldValue]);
 
-    if (fetcher.state === "idle") {
-      setIsSaving(false);
-
-      if (fetcher.data?.message) {
-        showToast(fetcher.data.message, false);
-      } else if (fetcher.data?.error) {
-        showToast(fetcher.data.error, true);
-      }
-      
-      if (fetcher.data?.ok && savingMenuData && fetcher.formData?.get("intent") === "updateMenu") {
-        setSavedOverrides(prev => ({
-          ...prev,
-          [savingMenuData.id]: { items: savingMenuData.items, title: savingMenuData.title }
-        }));
-        if (globalScan) {
-          setGlobalScan(prev => ({
-            ...prev,
-            [savingMenuData.id]: countByStatus(savingMenuData.items, liveCollectionHandles, livePageHandles)
-          }));
-        }
-      }
-
-      const isCreateSuccess = fetcher.data?.ok && fetcher.data?.message?.includes("created");
-      if (isCreateSuccess) {
-        setIsCreatingMenu(false);
-      }
-
-      const isDeleteSuccess = fetcher.data?.ok && fetcher.data?.deleted;
-      if (isDeleteSuccess) {
-        setActiveMenu(null);
-        setIsDeleteModalOpen(false);
-      }
-
-      const isFixLinksSuccess = fetcher.data?.ok && fetcher.formData?.get("intent") === "fixPageLinks";
-      if (isFixLinksSuccess) {
-        setDeepScanResults(prev => prev.filter(r => !JSON.parse(fetcher.formData.get("fixes")).some(f => f.pageId === r.pageId && f.exactMatch === r.exactMatch)));
-      }
-    }
-  }, [fetcher.state, fetcher.data, globalScan, liveCollectionHandles, livePageHandles, savingMenuData]);
-
-  // Deep Scan Fetch Loop
+  // Origin Fixer Fetching
   useEffect(() => {
-    const canProcessScan = isDeepScanning && scanFetcher.state === "idle";
-    
-    if (canProcessScan) {
-      if (scanFetcher.data?.error) {
-        setIsDeepScanning(false);
-        showToast(scanFetcher.data.error, true);
-        return;
-      }
-      
-      if (scanFetcher.data?.batch) {
-        const { batch, pageInfo, requestCursor } = scanFetcher.data;
+    if (selectedTab === 4 && !originFetcher.data) {
+      originFetcher.submit({ intent: "fetchOrigins" }, { method: "post" });
+    }
+  }, [selectedTab, originFetcher]);
 
-        if (lastCursorRef.current === requestCursor) return;
-        lastCursorRef.current = requestCursor;
-
-        const newPages = [...accumulatedPagesRef.current, ...batch];
-        accumulatedPagesRef.current = newPages;
-        setScanProgress(newPages.length);
-
-        if (pageInfo?.hasNextPage) {
-          const fd = new FormData();
-          fd.append("intent", "fetchPageBatch");
-          fd.append("cursor", pageInfo.endCursor);
-          scanFetcher.submit(fd, { method: "post" });
-        } else {
-          processScanResults(newPages);
-          setIsDeepScanning(false);
-        }
+  // Profile GID Validation Listener
+  const activeProfile = dbProfiles[profileSelectedIndex];
+  useEffect(() => {
+    if (profileFetcher.data?.intent === "validateGIDs") {
+      if (!profileFetcher.data.isValid) {
+        setToastState({ active: true, message: "Profile contains a deleted taxonomy entry — update the profile before applying.", isError: true });
+      } else {
+        const selectedProducts = products.filter(p => profileSelectedProductIds.includes(p.id));
+        const payload = profileFetcher.data.stagedPayload || [];
+        setModalConfig({
+          active: true,
+          title: `Apply ${activeProfile?.name} Profile`,
+          body: `Injecting validated data into empty fields across ${selectedProducts.length} products. Existing data is safe.`,
+          diffs: [],
+          onConfirm: () => submitMetafields(payload, `Profile Applied: ${activeProfile?.name}`, selectedProducts)
+        });
       }
     }
-  }, [isDeepScanning, scanFetcher.state, scanFetcher.data]);
+  }, [profileFetcher.data, activeProfile, products, profileSelectedProductIds, submitMetafields]);
 
-  const processScanResults = (fetchedPages) => {
-    const brokenLinks = [];
-    const regex = /href=["'](?:https?:\/\/[^\/]+)?\/?(pages|collections)\/([^"'\?\#>]+)["']/gi;
 
-    fetchedPages.forEach(page => {
-      if (!page.body) return;
-      let match;
-      regex.lastIndex = 0;
-      
-      while ((match = regex.exec(page.body)) !== null) {
-        const fullMatchStr = match[0];
-        const type = match[1].toLowerCase();
-        const handle = match[2];
-        const urlToCheck = `/${type}/${handle}`;
-        
-        const isLive = type === 'pages' ? livePageHandles.includes(handle) : liveCollectionHandles.includes(handle);
-        const hardcodedFix = KNOWN_FIXES[urlToCheck];
+  // ==========================================
+  // RENDER SECTIONS (Extracted to inline functions)
+  // ==========================================
+  const tapTargetStyle = { minHeight: '48px', minWidth: '48px', display: 'flex', alignItems: 'center', justifyContent: 'center' };
 
-        if (!isLive) {
-          let suggestion = null;
-          let isUnbuilt = false;
-
-          if (hardcodedFix) {
-            if (hardcodedFix === "UNBUILT") {
-              isUnbuilt = true;
-            } else {
-              suggestion = hardcodedFix;
-            }
-          } else {
-            suggestion = getClosestHandle(handle, type === 'pages' ? livePageHandles : liveCollectionHandles);
-            if (suggestion) {
-              suggestion = `/${type}/${suggestion}`;
-            }
-          }
-
-          brokenLinks.push({
-            pageId: page.id,
-            sourcePage: page.title,
-            sourceHandle: page.handle,
-            brokenType: type,
-            brokenUrl: urlToCheck,
-            suggestion: suggestion,
-            isUnbuilt: isUnbuilt,
-            isStale: !!hardcodedFix && hardcodedFix !== "UNBUILT",
-            exactMatch: fullMatchStr,
-            replacementMatch: suggestion ? fullMatchStr.replace(urlToCheck, suggestion) : null
+  const renderNorthStarView = () => {
+    const matchedProducts = [];
+    products.forEach(p => {
+      const officialName = getMetafieldValue(p, "official_name");
+      if (officialName) {
+        const profileMatch = dbProfiles.find(prof => prof.name.toLowerCase() === officialName.toLowerCase());
+        if (profileMatch) {
+          let fieldsToFill = 0;
+          METAFIELD_CONFIG.forEach(field => {
+            if (field.hidden) return;
+            const profileVal = profileMatch.data[field.key];
+            if (profileVal && !getMetafieldValue(p, field.key)) fieldsToFill++;
           });
+          if (fieldsToFill > 0) matchedProducts.push({ product: p, profile: profileMatch, fillCount: fieldsToFill });
         }
       }
     });
-    setDeepScanResults(brokenLinks);
-  };
 
-  const handleStartDeepScan = () => {
-    setIsDeepScanning(true);
-    setScanProgress(0);
-    setDeepScanResults(null);
-    accumulatedPagesRef.current = [];
-    lastCursorRef.current = "START";
-
-    const fd = new FormData();
-    fd.append("intent", "fetchPageBatch");
-    fd.append("cursor", "null");
-    scanFetcher.submit(fd, { method: "post" });
-  };
-
-  const displayMenus = menus.map(menu => {
-    const override = savedOverrides[menu.id];
-    if (override) {
-      return { ...menu, items: override.items, title: override.title };
-    }
-    return menu;
-  });
-
-  const globalTotals = useMemo(() => {
-    if (!globalScan) return null;
-    let live = 0, draft = 0, dead = 0, stale = 0;
-    Object.values(globalScan).forEach(counts => {
-      live += counts.live; draft += counts.draft; dead += counts.dead; stale += counts.stale;
-    });
-    return { live, draft, dead, stale };
-  }, [globalScan]);
-
-  const unlinkedPages = useMemo(() => {
-    if (!scanned) return [];
-    const allUsedUrls = new Set();
-    displayMenus.forEach(menu => {
-      menu.items.forEach(item => {
-        allUsedUrls.add(item.url);
-        (item.items || []).forEach(child => allUsedUrls.add(child.url));
+    const handleCascadeData = () => {
+      if (matchedProducts.length === 0) return setToastState({ active: true, message: "No matched products require filling.", isError: false });
+      const payload = [];
+      const relevantProducts = [];
+      matchedProducts.forEach(match => {
+        relevantProducts.push(match.product);
+        METAFIELD_CONFIG.forEach(field => {
+          if (field.hidden) return;
+          const profileVal = match.profile.data[field.key];
+          if (profileVal && !getMetafieldValue(match.product, field.key)) {
+            const resolvedType = resolveMetafieldType(match.product, field, profileVal);
+            payload.push({ ownerId: match.product.id, namespace: field.namespace, key: field.key, type: resolvedType, value: profileVal });
+          }
+        });
       });
-    });
-    return pages.filter(p => !allUsedUrls.has(`/pages/${p.handle}`));
-  }, [scanned, displayMenus, pages]);
-
-  const linkOptions = [
-    { label: "✏️ Type Custom Link...", value: "custom" },
-    { label: "🏠 Home Page", value: "/" },
-    { label: "🛍️ All Products", value: "/collections/all" },
-    ...collections.map(c => ({ label: `📦 ${c.title}`, value: `/collections/${c.handle}` })),
-    ...pages.map(p => ({ label: `📄 ${p.title}`, value: `/pages/${p.handle}` }))
-  ];
-
-  const handleSelectMenu = (menu) => {
-    setIsCreatingMenu(false);
-    setActiveMenu(menu);
-    setMenuTitle(menu.title);
-    setMenuItems(menu.items.map(item => ({
-      id: item.id || Math.random().toString(),
-      title: item.title,
-      url: item.url || "",
-      items: (item.items || []).map(child => ({
-        id: child.id || Math.random().toString(),
-        title: child.title,
-        url: child.url || ""
-      }))
-    })));
-    setScanned(globalScan !== null);
-  };
-
-  const activeMenuSetting = dbSettings?.find(s => s.menuHandle === activeMenu?.handle) || {};
-  const isLocked = activeMenu?.handle === "main-menu" && activeMenuSetting.isLocked;
-  const autoSyncFooter = activeMenuSetting.autoSync || false;
-  const activeMenuHistory = dbHistory[activeMenu?.handle] || [];
-
-  // Data Mutators
-  const toggleLock = () => {
-    const fd = new FormData();
-    fd.append("intent", "toggleLock");
-    fd.append("menuHandle", activeMenu.handle);
-    fd.append("isLocked", (!isLocked).toString());
-    fetcher.submit(fd, { method: "post" });
-  };
-
-  const handleAutoSyncChange = (newVal) => {
-    const fd = new FormData();
-    fd.append("intent", "toggleAutoSync");
-    fd.append("menuHandle", activeMenu.handle);
-    fd.append("autoSync", newVal.toString());
-    fetcher.submit(fd, { method: "post" });
-  };
-
-  const handleAddLink = () => {
-    if (isLocked) return;
-    setMenuItems(prev => [...prev, { id: Math.random().toString(), title: "New Link", url: "", items: [] }]);
-    setScanned(false);
-  };
-
-  const handleAddSubLink = (parentId) => {
-    if (isLocked) return;
-    setMenuItems(prev => prev.map(item => {
-      if (item.id === parentId) {
-        return {
-          ...item,
-          items: [...(item.items || []), { id: Math.random().toString(), title: "New Sub-link", url: "" }]
-        };
-      }
-      return item;
-    }));
-    setScanned(false);
-  };
-
-  const handleUpdateLink = (id, field, value) => {
-    if (isLocked) return;
-    setMenuItems(prev => prev.map(item => item.id === id ? { ...item, [field]: value } : item));
-    setScanned(false);
-  };
-
-  const handleUpdateSubLink = (parentId, childId, field, value) => {
-    if (isLocked) return;
-    setMenuItems(prev => prev.map(item => {
-      if (item.id === parentId) {
-        return {
-          ...item,
-          items: (item.items || []).map(child => child.id === childId ? { ...child, [field]: value } : child)
-        };
-      }
-      return item;
-    }));
-    setScanned(false);
-  };
-
-  const handleDeleteLink = (e, id) => {
-    e.stopPropagation(); e.preventDefault();
-    if (isLocked) return;
-    setMenuItems(prev => prev.filter(item => item.id !== id));
-  };
-
-  const handleDeleteSubLink = (e, parentId, childId) => {
-    e.stopPropagation(); e.preventDefault();
-    if (isLocked) return;
-    setMenuItems(prev => prev.map(item => {
-      if (item.id === parentId) {
-        return { ...item, items: (item.items || []).filter(child => child.id !== childId) };
-      }
-      return item;
-    }));
-  };
-
-  // Button Arrow Fallbacks
-  const handleMoveLink = (e, index, direction) => {
-    e.stopPropagation(); e.preventDefault();
-    if (isLocked) return;
-    const newItems = [...menuItems];
-    if (direction === "up" && index > 0) {
-      [newItems[index - 1], newItems[index]] = [newItems[index], newItems[index - 1]];
-    } else if (direction === "down" && index < newItems.length - 1) {
-      [newItems[index], newItems[index + 1]] = [newItems[index + 1], newItems[index]];
-    }
-    setMenuItems(newItems);
-  };
-
-  const handleMoveSubLink = (e, parentIndex, childIndex, direction) => {
-    e.stopPropagation(); e.preventDefault();
-    if (isLocked) return;
-    const newItems = [...menuItems];
-    const parent = { ...newItems[parentIndex] };
-    const children = [...(parent.items || [])];
-    
-    if (direction === "up" && childIndex > 0) {
-      [children[childIndex - 1], children[childIndex]] = [children[childIndex], children[childIndex - 1]];
-    } else if (direction === "down" && childIndex < children.length - 1) {
-      [children[childIndex], children[childIndex + 1]] = [children[childIndex + 1], children[childIndex]];
-    }
-    
-    parent.items = children;
-    newItems[parentIndex] = parent;
-    setMenuItems(newItems);
-  };
-
-  // Drag and Drop Ordering
-  const handleDragStart = (e, id, parentId = "") => {
-    if (isLocked) { e.preventDefault(); return; }
-    e.dataTransfer.effectAllowed = "move";
-    e.dataTransfer.setData("dragId", id);
-    e.dataTransfer.setData("parentId", parentId);
-  };
-
-  const handleDrop = (e, dropId, targetParentId = "") => {
-    e.preventDefault();
-    if (isLocked) return;
-    
-    const dragId = e.dataTransfer.getData("dragId");
-    const sourceParentId = e.dataTransfer.getData("parentId");
-    if (!dragId || dragId === dropId) return;
-
-    if (targetParentId === "" && sourceParentId === "") {
-      setMenuItems(prev => {
-        const newItems = [...prev];
-        const dragIdx = newItems.findIndex(i => i.id === dragId);
-        const dropIdx = newItems.findIndex(i => i.id === dropId);
-        if (dragIdx === -1 || dropIdx === -1) return prev;
-        const [dragged] = newItems.splice(dragIdx, 1);
-        newItems.splice(dropIdx, 0, dragged);
-        return newItems;
+      setModalConfig({
+        active: true, title: "Cascade North Star Data",
+        body: `Injecting data into ${payload.length} empty fields across ${relevantProducts.length} products using DB profiles. Existing data will not be overwritten.`,
+        diffs: [], onConfirm: () => submitMetafields(payload, "North Star Cascade", relevantProducts)
       });
-    } else if (targetParentId !== "" && sourceParentId === targetParentId) {
-      setMenuItems(prev => prev.map(item => {
-        if (item.id === targetParentId) {
-          const newChildren = [...(item.items || [])];
-          const dragIdx = newChildren.findIndex(c => c.id === dragId);
-          const dropIdx = newChildren.findIndex(c => c.id === dropId);
-          if (dragIdx === -1 || dropIdx === -1) return item;
-          const [dragged] = newChildren.splice(dragIdx, 1);
-          newChildren.splice(dropIdx, 0, dragged);
-          return { ...item, items: newChildren };
-        }
-        return item;
-      }));
-    }
-  };
+    };
 
-  const handleFixIt = (e, id) => {
-    e.stopPropagation();
-    if (isLocked) return;
-    const el = document.getElementById(`quick-select-${id}`);
-    if (el) {
-      el.scrollIntoView({ behavior: "smooth", block: "center" });
-      el.focus();
-    }
-  };
-
-  const handleScan = () => setScanned(true);
-
-  const handleGlobalScan = () => {
-    const result = {};
-    displayMenus.forEach(menu => {
-      result[menu.id] = countByStatus(menu.items, liveCollectionHandles, livePageHandles);
-    });
-    setGlobalScan(result);
-    setScanned(true);
-  };
-
-  const autoFillCollections = () => {
-    if (activeMenu?.handle !== "footer" || isLocked) return;
-    
-    const existingUrls = new Set();
-    menuItems.forEach(item => {
-      existingUrls.add(item.url);
-      (item.items || []).forEach(child => existingUrls.add(child.url));
-    });
-
-    const newLinks = collections
-      .filter(c => !existingUrls.has(`/collections/${c.handle}`))
-      .map(c => ({
-        id: Math.random().toString(),
-        title: c.title,
-        url: `/collections/${c.handle}`,
-        items: []
-      }));
-
-    if (newLinks.length > 0) {
-      setMenuItems(prev => [...prev, ...newLinks]);
-      setScanned(false);
-    }
-  };
-
-  const autoCleanDeadLinks = () => {
-    if (isLocked) return;
-    setMenuItems(prev => prev
-      .map(item => ({
-        ...item,
-        items: (item.items || []).filter(child => getDestinationStatus(child.url, liveCollectionHandles, livePageHandles) !== "dead")
-      }))
-      .filter(item => getDestinationStatus(item.url, liveCollectionHandles, livePageHandles) !== "dead" || (item.items && item.items.length > 0))
+    return (
+      <BlockStack gap="400">
+        <InlineStack align="space-between" blockAlign="center">
+          <BlockStack gap="200">
+            <Text variant="headingMd" as="h2">North Star Auto-Fill Engine</Text>
+            <Text variant="bodyMd" as="p" color="subdued">Matches the "Official Name" metafield to your Render DB profiles and automatically fills in blank geological data.</Text>
+          </BlockStack>
+          <div style={tapTargetStyle}>
+            <Button tone="success" onClick={handleCascadeData} disabled={matchedProducts.length === 0} accessibilityLabel="Cascade data from DB">Cascade Data to Products</Button>
+          </div>
+        </InlineStack>
+        <Box background="bg-surface" borderRadius="200" shadow="100">
+          <DataTable
+            columnContentTypes={["text", "text", "numeric"]}
+            headings={["Product", "Official Name (Matched Profile)", "Empty Fields to Fill"]}
+            rows={matchedProducts.map(m => [ m.product.title, <Badge tone="info">{m.profile.name}</Badge>, m.fillCount.toString() ])}
+          />
+          {matchedProducts.length === 0 && (
+            <Box padding="400">
+              <EmptySearchResult title="All caught up" description="No products found that need profile data filled." withIllustration={false} />
+            </Box>
+          )}
+        </Box>
+      </BlockStack>
     );
-    setScanned(true);
   };
 
-  const handleSaveMenu = () => {
-    const fd = new FormData();
-    fd.append("intent", "updateMenu");
-    fd.append("id", activeMenu.id);
-    fd.append("title", menuTitle);
-    fd.append("handle", activeMenu.handle);
-    fd.append("items", JSON.stringify(menuItems));
-    fd.append("logMessage", "Menu structure manually updated and saved.");
-    fetcher.submit(fd, { method: "post" });
-  };
+  const renderMatrixView = () => {
+    const displayFields = METAFIELD_CONFIG.filter(c => !c.hidden);
+    let filtered = products;
+    if (matrixMissingFilter) filtered = products.filter(p => !getMetafieldValue(p, matrixMissingFilter));
+    
+    const rows = filtered.map(p => {
+      const rowData = [
+        <Button variant="plain" onClick={() => { setActiveProductId(p.id); setSelectedTab(2); }} accessibilityLabel={`Inspect ${p.title}`}>{p.title}</Button>
+      ];
+      const statusStr = getMetafieldValue(p, "meta_status");
+      let statusObj = {};
+      try { statusObj = statusStr ? JSON.parse(statusStr) : {}; } catch(e){}
 
-  const handleDeleteMenu = () => {
-    const fd = new FormData();
-    fd.append("intent", "deleteMenu");
-    fd.append("id", activeMenu.id);
-    fd.append("title", menuTitle);
-    fetcher.submit(fd, { method: "post" });
-  };
-
-  const handleCreateAllStoriesMenu = () => {
-    if (allStoriesMenuExists) return;
-    const fd = new FormData();
-    fd.append("intent", "createAllStoriesMenu");
-    fetcher.submit(fd, { method: "post" });
-  };
-
-  const handleAssignOrphanToStories = (page) => {
-    if (!allStoriesMenuExists) {
-      alert("The 'All Stories' menu does not exist yet. Please create it first using the button at the top.");
-      return;
-    }
-    const storiesMenu = displayMenus.find(m => m.handle === "all-stories");
-    if (!storiesMenu) return;
-
-    const newItems = [...storiesMenu.items, {
-      title: page.title,
-      url: `/pages/${page.handle}`,
-      type: "HTTP",
-      items: []
-    }];
-
-    const fd = new FormData();
-    fd.append("intent", "updateMenu");
-    fd.append("id", storiesMenu.id);
-    fd.append("title", storiesMenu.title);
-    fd.append("handle", storiesMenu.handle);
-    fd.append("items", JSON.stringify(newItems));
-    fd.append("logMessage", `⚡ Auto-assigned orphaned page to All Stories: ${page.title}`);
-    fetcher.submit(fd, { method: "post" });
-  };
-
-  const handleAcceptFix = (fix) => {
-    if (!fix.suggestion) return;
-    const fd = new FormData();
-    fd.append("intent", "fixPageLinks");
-    fd.append("fixes", JSON.stringify([fix]));
-    fetcher.submit(fd, { method: "post" });
-  };
-
-  const handleFixAll = () => {
-    const fixable = deepScanResults.filter(r => r.suggestion && !r.isUnbuilt);
-    if (fixable.length === 0) return;
-    const fd = new FormData();
-    fd.append("intent", "fixPageLinks");
-    fd.append("fixes", JSON.stringify(fixable));
-    fetcher.submit(fd, { method: "post" });
-  };
-
-  const handleOpenCreator = () => {
-    setActiveMenu(null);
-    setIsCreatingMenu(true);
-  };
-
-  const handleCancelCreator = () => {
-    setIsCreatingMenu(false);
-  };
-
-  const activeCounts = scanned && activeMenu ? countByStatus(menuItems, liveCollectionHandles, livePageHandles) : null;
-  const shouldCalculateOrphanCollections = scanned && activeMenu?.handle === "footer";
-  
-  let orphanedCollections = [];
-  if (shouldCalculateOrphanCollections) {
-    const activeUrls = new Set();
-    menuItems.forEach(item => {
-      activeUrls.add(item.url);
-      (item.items || []).forEach(child => activeUrls.add(child.url));
+      displayFields.forEach(field => {
+        const rawVal = getMetafieldValue(p, field.key);
+        const displayVal = getLabelForValue(field.key, rawVal);
+        const isVerified = statusObj[field.key] === "verified";
+        const tone = rawVal ? (isVerified ? "success" : "warning") : "critical";
+        const text = rawVal ? (displayVal.length > 15 ? displayVal.substring(0, 15) + "..." : displayVal) : "Empty";
+        rowData.push(<Badge tone={tone}>{text}</Badge>);
+      });
+      return rowData;
     });
-    orphanedCollections = collections.filter(c => !activeUrls.has(`/collections/${c.handle}`));
-  }
 
-  const actionBtnStyle = {
-    background: "none", border: "none", cursor: isLocked ? "not-allowed" : "pointer",
-    fontSize: "16px", color: isLocked ? "#a6a6a6" : "#5c5f62",
-    minHeight: "48px", minWidth: "48px", display: "flex", alignItems: "center", justifyContent: "center"
+    return (
+      <BlockStack gap="400">
+        <InlineStack gap="400" blockAlign="center">
+          <Box width="300px">
+            <Select
+              label="Filter by missing data"
+              options={[{ label: "Show All Products", value: "" }, ...displayFields.map(f => ({ label: `Missing: ${f.label}`, value: f.key }))]}
+              value={matrixMissingFilter} onChange={setMatrixMissingFilter} accessibilityLabel="Filter matrix by missing metafield"
+            />
+          </Box>
+          <InlineStack gap="200">
+            <Badge tone="success">Verified & Filled</Badge>
+            <Badge tone="warning">Filled (Unverified Bulk)</Badge>
+            <Badge tone="critical">Empty</Badge>
+          </InlineStack>
+        </InlineStack>
+        <Box background="bg-surface" borderRadius="200" shadow="100">
+          <Scrollable style={{ maxHeight: '60vh' }}>
+            <DataTable columnContentTypes={["text", ...displayFields.map(() => "text")]} headings={["Product", ...displayFields.map(f => f.label)]} rows={rows} hasZebraStriping />
+          </Scrollable>
+        </Box>
+      </BlockStack>
+    );
   };
-  const dragBtnStyle = { ...actionBtnStyle, cursor: isLocked ? "not-allowed" : "grab" };
-  const deleteBtnStyle = { ...actionBtnStyle, color: isLocked ? "#a6a6a6" : "#d72c0d" };
+
+  const renderInspectorView = () => {
+    if (!activeProductId) {
+      return (
+        <BlockStack gap="400">
+          <Select label="Select a product to inspect" options={[{ label: "Select...", value: "" }, ...products.map(p => ({ label: p.title, value: p.id }))]} value={activeProductId} onChange={setActiveProductId} accessibilityLabel="Select product for inspector" />
+          <EmptySearchResult title="No product selected" description="Select a product to fetch fresh data and edit." withIllustration />
+        </BlockStack>
+      );
+    }
+
+    const handleFieldChange = (key, val, isNumeric) => {
+      setInspectorLocalData(prev => ({ ...prev, [key]: val }));
+      if (isNumeric) {
+        if (val) {
+          const isValid = /^[\d\.\s\-–—]+$/.test(val);
+          setInspectorFieldErrors(prev => {
+            const newE = { ...prev };
+            if (!isValid) newE[key] = "Only numbers and ranges allowed (e.g. 7 or 6.5-7).";
+            else delete newE[key];
+            return newE;
+          });
+        } else {
+          setInspectorFieldErrors(prev => { const newE = { ...prev }; delete newE[key]; return newE; });
+        }
+      }
+    };
+
+    const handleSaveSingle = () => {
+      if (Object.keys(inspectorFieldErrors).length > 0) return setToastState({ active: true, message: "Please fix validation errors before saving.", isError: true });
+
+      const payload = [];
+      const diffs = [];
+      const statusStr = getMetafieldValue(activeProduct, "meta_status");
+      let statusObj = {};
+      try { statusObj = statusStr ? JSON.parse(statusStr) : {}; } catch(e){}
+
+      METAFIELD_CONFIG.forEach(field => {
+        if (field.hidden) return;
+        const currentVal = getMetafieldValue(activeProduct, field.key);
+        const newVal = inspectorLocalData[field.key] || "";
+        
+        if (currentVal !== newVal) {
+          diffs.push({ field: field.label, old: getLabelForValue(field.key, currentVal) || "(empty)", new: getLabelForValue(field.key, newVal) || "(empty)" });
+          const resolvedType = resolveMetafieldType(activeProduct, field, newVal);
+          payload.push({ ownerId: activeProduct.id, namespace: field.namespace, key: field.key, type: resolvedType, value: newVal });
+          statusObj[field.key] = "verified";
+        }
+      });
+
+      if (diffs.length === 0) return setToastState({ active: true, message: "No changes detected.", isError: false });
+      payload.push({ ownerId: activeProduct.id, namespace: "custom", key: "meta_status", type: "json", value: JSON.stringify(statusObj) });
+
+      setModalConfig({
+        active: true, title: `Confirm changes for ${activeProduct.title}`, diffs,
+        onConfirm: () => submitMetafields(payload, `Manual Edit: ${activeProduct.title}`, [activeProduct])
+      });
+    };
+
+    return (
+      <BlockStack gap="400">
+        <InlineStack align="space-between" blockAlign="center">
+          <InlineStack gap="300" blockAlign="center">
+            <Box width="400px">
+              <Select label="Select Product" options={products.map(p => ({ label: p.title, value: p.id }))} value={activeProductId} onChange={setActiveProductId} accessibilityLabel="Change product in inspector" />
+            </Box>
+            {isInspectorLoading && <Spinner size="small" />}
+          </InlineStack>
+          <div style={tapTargetStyle}>
+            <Button tone="success" onClick={handleSaveSingle} disabled={isInspectorLoading} accessibilityLabel={`Save changes for ${activeProduct?.title}`}>Verify & Save Changes</Button>
+          </div>
+        </InlineStack>
+        <Divider />
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
+          {METAFIELD_CONFIG.filter(f => !f.hidden).map(field => {
+            if (field.options) {
+              return (
+                <Box key={field.key} padding="300" background="bg-surface" borderRadius="200" shadow="100">
+                  <Select label={field.label} options={field.options} value={inspectorLocalData[field.key] || ""} onChange={(val) => handleFieldChange(field.key, val, false)} accessibilityLabel={`Select ${field.label}`} disabled={isInspectorLoading} />
+                </Box>
+              );
+            }
+            const isNumber = field.type.includes("number");
+            return (
+              <Box key={field.key} padding="300" background="bg-surface" borderRadius="200" shadow="100">
+                <TextField label={field.label} value={inspectorLocalData[field.key] || ""} onChange={(val) => handleFieldChange(field.key, val, isNumber)} autoComplete="off" type="text" error={inspectorFieldErrors[field.key]} helpText={isNumber && !inspectorFieldErrors[field.key] ? "Numbers and ranges allowed (e.g. 7, 6.5-7.5)" : ""} accessibilityLabel={`Edit ${field.label}`} disabled={isInspectorLoading} />
+              </Box>
+            );
+          })}
+        </div>
+      </BlockStack>
+    );
+  };
+
+  const renderBulkInjectorView = () => {
+    const toggleProduct = (id) => setBulkSelectedProductIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+
+    const handleBulkSubmit = () => {
+      const selectedProducts = products.filter(p => bulkSelectedProductIds.includes(p.id));
+      if (selectedProducts.length === 0) return setToastState({ active: true, message: "Select at least one product.", isError: true });
+
+      const payload = [];
+      const diffSummary = [];
+      let changesCount = 0;
+
+      selectedProducts.forEach(product => {
+        const statusStr = getMetafieldValue(product, "meta_status");
+        let statusObj = {};
+        try { statusObj = statusStr ? JSON.parse(statusStr) : {}; } catch(e){}
+        let productChanged = false;
+
+        METAFIELD_CONFIG.forEach(field => {
+          if (field.hidden) return;
+          const newVal = bulkFormData[field.key] || "";
+          if (!newVal) return;
+
+          const currentVal = getMetafieldValue(product, field.key);
+          if (bulkMode === "fill" && currentVal) return;
+          if (currentVal === newVal) return;
+
+          const resolvedType = resolveMetafieldType(product, field, newVal);
+          payload.push({ ownerId: product.id, namespace: field.namespace, key: field.key, type: resolvedType, value: newVal });
+          statusObj[field.key] = "bulk_unverified";
+          productChanged = true;
+          changesCount++;
+        });
+
+        if (productChanged) payload.push({ ownerId: product.id, namespace: "custom", key: "meta_status", type: "json", value: JSON.stringify(statusObj) });
+      });
+
+      if (payload.length === 0) return setToastState({ active: true, message: "No changes to apply based on current mode and inputs.", isError: false });
+
+      diffSummary.push({ field: "Total Updates", old: "Current State", new: `${changesCount} updates across ${selectedProducts.length} products` });
+
+      setModalConfig({
+        active: true, title: `Confirm Bulk Injection (${bulkMode.toUpperCase()})`,
+        body: bulkMode === "overwrite" ? "WARNING: OVERWRITE mode destroys existing verified data." : "FILL ONLY mode. Existing data is safe.",
+        diffs: diffSummary, onConfirm: () => submitMetafields(payload, `Bulk Inject (${bulkMode})`, selectedProducts)
+      });
+    };
+
+    return (
+      <div style={{ display: 'flex', flexDirection: 'row', gap: '24px', minHeight: '600px' }}>
+        <div style={{ flex: '0 0 350px', display: 'flex', flexDirection: 'column' }}>
+          <Box padding="300" background="bg-surface-secondary" borderRadius="200">
+            <BlockStack gap="300">
+              <Text variant="headingSm" as="h3">1. Select Targets ({bulkSelectedProductIds.length})</Text>
+              <div style={tapTargetStyle}>
+                <Button onClick={() => setBulkSelectedProductIds(bulkSelectedProductIds.length === products.length ? [] : products.map(p => p.id))} accessibilityLabel="Select all or none">
+                  {bulkSelectedProductIds.length === products.length ? "Deselect All" : "Select All"}
+                </Button>
+              </div>
+              <Scrollable style={{ height: '500px' }}>
+                <BlockStack gap="100">
+                  {products.map(p => (
+                    <Checkbox key={p.id} label={p.title} checked={bulkSelectedProductIds.includes(p.id)} onChange={() => toggleProduct(p.id)} />
+                  ))}
+                </BlockStack>
+              </Scrollable>
+            </BlockStack>
+          </Box>
+        </div>
+        <div style={{ flex: 1 }}>
+          <Box padding="400" background="bg-surface" borderRadius="200" shadow="100">
+            <BlockStack gap="400">
+              <Text variant="headingSm" as="h3">2. Define Injection Data</Text>
+              <ChoiceList title="Injection Mode" choices={[{ label: 'FILL ONLY: Skip products that already have data', value: 'fill' }, { label: 'OVERWRITE: Force data (Dangerous)', value: 'overwrite' }]} selected={[bulkMode]} onChange={(val) => setBulkMode(val[0])} />
+              <Divider />
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                {METAFIELD_CONFIG.filter(f => !f.hidden).map(field => {
+                  if (field.options) {
+                    return <Select key={field.key} label={field.label} options={field.options} value={bulkFormData[field.key] || ""} onChange={(val) => setBulkFormData(prev => ({ ...prev, [field.key]: val }))} accessibilityLabel={`Bulk input for ${field.label}`} />;
+                  }
+                  return <TextField key={field.key} label={field.label} value={bulkFormData[field.key] || ""} onChange={(val) => setBulkFormData(prev => ({ ...prev, [field.key]: val }))} placeholder="Leave blank to skip" autoComplete="off" type="text" accessibilityLabel={`Bulk input for ${field.label}`} />;
+                })}
+              </div>
+              <Divider />
+              <div style={tapTargetStyle}>
+                <Button tone="success" size="large" onClick={handleBulkSubmit} accessibilityLabel="Preview bulk injection">Preview & Run Bulk Inject</Button>
+              </div>
+            </BlockStack>
+          </Box>
+        </div>
+      </div>
+    );
+  };
+
+  const renderOriginFixerView = () => {
+    const liveOrigins = originFetcher.data?.origins || [];
+    const isLoading = originFetcher.state !== "idle";
+
+    const parsedOrigins = liveOrigins.map(p => {
+      const parts = p.title.split(/\s[—-]\s/);
+      const currentOrigin = p.originMetafield?.value || null;
+      let suggested = "";
+      let status = "Missing";
+      let tone = "critical";
+
+      if (parts.length >= 3) suggested = parts[1].trim();
+
+      if (currentOrigin && suggested && currentOrigin.toLowerCase() === suggested.toLowerCase()) {
+        status = "Match"; tone = "success";
+      } else if (currentOrigin && suggested) {
+        status = "Mismatch"; tone = "warning";
+      } else if (currentOrigin && !suggested) {
+        status = "Cannot Parse Title"; tone = "info";
+      } else if (!currentOrigin && suggested) {
+        status = "Ready to Inject"; tone = "magic";
+      }
+      return { id: p.id, title: p.title, current: currentOrigin, suggested, status, tone };
+    });
+
+    const handleApproveAll = () => {
+      const targets = parsedOrigins.filter(r => r.suggested && r.status !== "Match");
+      if (targets.length === 0) return setToastState({ active: true, message: "No actionable origins found.", isError: true });
+
+      const payload = targets.map(r => ({ ownerId: r.id, namespace: "custom", key: "origin_location", type: "single_line_text_field", value: r.suggested }));
+      const relevantProducts = targets.map(r => products.find(p => p.id === r.id)).filter(Boolean);
+      
+      setModalConfig({
+        active: true, title: "Approve All Suggested Origins",
+        body: `This will update the origin location for ${targets.length} products.`,
+        diffs: [], onConfirm: () => submitMetafields(payload, "Bulk Origin Fix", relevantProducts)
+      });
+    };
+
+    return (
+      <BlockStack gap="400">
+        <InlineStack align="space-between" blockAlign="center">
+          <InlineStack gap="300" blockAlign="center">
+            <Text variant="headingMd" as="h2">Auto-Extract Origin from Titles</Text>
+            {isLoading && <Spinner size="small" />}
+          </InlineStack>
+          <div style={tapTargetStyle}>
+            <Button tone="success" onClick={handleApproveAll} disabled={isLoading} accessibilityLabel="Approve all suggested origins">Approve All Suggestions</Button>
+          </div>
+        </InlineStack>
+        <Box background="bg-surface" borderRadius="200" shadow="100">
+          <DataTable
+            columnContentTypes={["text", "text", "text", "text", "text"]}
+            headings={["Product", "Current Origin", "Suggested Extract", "Status", "Action"]}
+            rows={parsedOrigins.map(r => [
+              r.title, r.current || "-", r.suggested || "-", <Badge tone={r.tone}>{r.status}</Badge>,
+              <div style={tapTargetStyle}>
+                <Button disabled={!r.suggested || r.status === "Match"} onClick={() => {
+                   const p = products.find(prod => prod.id === r.id);
+                   if (p) submitMetafields([{ ownerId: r.id, namespace: "custom", key: "origin_location", type: "single_line_text_field", value: r.suggested }], `Origin Fix: ${r.title}`, [p]);
+                }} accessibilityLabel={`Approve origin for ${r.title}`}>Approve</Button>
+              </div>
+            ])}
+          />
+        </Box>
+      </BlockStack>
+    );
+  };
+
+  const renderProfileView = () => {
+    if (dbProfiles.length === 0) return <Box padding="800"><EmptySearchResult title="No Profiles Found" description="Could not load profiles from the Render DB." withIllustration /></Box>;
+
+    const handleApplyProfile = () => {
+      if (profileSelectedProductIds.length === 0) return setToastState({ active: true, message: "Select products from the list on the left first.", isError: true });
+      
+      const selectedProducts = products.filter(p => profileSelectedProductIds.includes(p.id));
+      const payload = [];
+      const gidsToCheck = [];
+
+      selectedProducts.forEach(product => {
+        METAFIELD_CONFIG.forEach(field => {
+          if (field.hidden) return;
+          const profileVal = activeProfile.data[field.key];
+          if (!profileVal || getMetafieldValue(product, field.key)) return;
+
+          const resolvedType = resolveMetafieldType(product, field, profileVal);
+          payload.push({ ownerId: product.id, namespace: field.namespace, key: field.key, type: resolvedType, value: profileVal });
+          
+          if (resolvedType === "list.metaobject_reference") {
+            try { const g = JSON.parse(profileVal); if (g[0]) gidsToCheck.push(g[0]); } catch(e){}
+          }
+        });
+      });
+
+      if (payload.length === 0) return setToastState({ active: true, message: "No empty fields to fill. Profiles operate in FILL ONLY mode.", isError: false });
+
+      if (gidsToCheck.length > 0) {
+        // Validation handles modal opening inside its useEffect
+        profileFetcher.submit({ intent: "validateGIDs", gids: JSON.stringify([...new Set(gidsToCheck)]) }, { method: "post" });
+      } else {
+        setModalConfig({
+          active: true, title: `Apply ${activeProfile.name} Profile`,
+          body: `Injecting data into ${payload.length} empty fields across ${selectedProducts.length} products.`,
+          diffs: [], onConfirm: () => submitMetafields(payload, `Profile Applied: ${activeProfile.name}`, selectedProducts)
+        });
+      }
+    };
+
+    return (
+      <div style={{ display: 'flex', flexDirection: 'row', gap: '24px', minHeight: '600px' }}>
+        <div style={{ flex: '0 0 350px' }}>
+          <Box padding="300" background="bg-surface-secondary" borderRadius="200">
+            <BlockStack gap="300">
+              <Text variant="headingSm" as="h3">1. Select Target Products ({profileSelectedProductIds.length})</Text>
+              <Scrollable style={{ height: '500px' }}>
+                <BlockStack gap="100">
+                  {products.map(p => (
+                    <Checkbox key={p.id} label={p.title} checked={profileSelectedProductIds.includes(p.id)} onChange={() => {
+                      setProfileSelectedProductIds(prev => prev.includes(p.id) ? prev.filter(x => x !== p.id) : [...prev, p.id]);
+                    }} />
+                  ))}
+                </BlockStack>
+              </Scrollable>
+            </BlockStack>
+          </Box>
+        </div>
+        <div style={{ flex: 1 }}>
+          <BlockStack gap="400">
+            <Select
+              label="Select Mineral Profile (From Render DB)"
+              options={dbProfiles.map((p, i) => ({ label: p.name, value: i.toString() }))}
+              value={profileSelectedIndex.toString()} onChange={(v) => setProfileSelectedIndex(parseInt(v, 10))} accessibilityLabel="Select mineral profile template"
+            />
+            <Card>
+              <BlockStack gap="300">
+                <Text variant="headingMd" as="h3">{activeProfile.name} Data Points</Text>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                  {Object.entries(activeProfile.data).map(([key, val]) => {
+                    const matchConfig = METAFIELD_CONFIG.find(f => f.key === key);
+                    const label = matchConfig?.label || key;
+                    const displayVal = getLabelForValue(key, val);
+                    return <Text key={key} as="p"><b>{label}:</b> {displayVal}</Text>;
+                  })}
+                </div>
+                <div style={tapTargetStyle}>
+                  <Button tone="success" onClick={handleApplyProfile} loading={profileFetcher.state !== "idle"} accessibilityLabel={`Apply ${activeProfile.name} profile`}>Apply Profile (Fill Only)</Button>
+                </div>
+              </BlockStack>
+            </Card>
+          </BlockStack>
+        </div>
+      </div>
+    );
+  };
+
+  const renderSnapshotView = () => {
+    const handleRestore = (snapshot) => {
+      const payload = [];
+      const parsedData = JSON.parse(snapshot.payloadStr);
+      parsedData.forEach(pData => {
+        pData.metafields.forEach(mf => { payload.push({ ownerId: pData.id, namespace: mf.namespace, key: mf.key, type: mf.type, value: mf.value }); });
+      });
+
+      setModalConfig({
+        active: true, title: `Restore Snapshot: ${snapshot.action}`,
+        body: `This will revert ${snapshot.scopeCount} products back to their exact state on ${snapshot.date}.`,
+        diffs: [], onConfirm: () => {
+          actionFetcher.submit({ intent: "saveMetafields", payload: JSON.stringify(payload) }, { method: "post" });
+          const relevantProducts = products.filter(p => parsedData.some(sd => sd.id === p.id));
+          saveSnapshot(relevantProducts, `Undo Restored: ${snapshot.action}`);
+        }
+      });
+    };
+
+    return (
+      <BlockStack gap="400">
+        <Banner tone="info" title="Persistent Safety Net">Snapshots are saved to Shopify Metaobjects and survive page reloads. Maximum 5 snapshots retained.</Banner>
+        {snapshots.length === 0 ? (
+          <EmptySearchResult title="No snapshots found" description="Perform an action to generate a backup snapshot." withIllustration />
+        ) : (
+          <ResourceList resourceName={{ singular: "snapshot", plural: "snapshots" }} items={snapshots} renderItem={(item) => (
+            <ResourceItem id={item.id} accessibilityLabel={`Snapshot ${item.action}`}>
+              <InlineStack align="space-between" blockAlign="center">
+                <BlockStack gap="100">
+                  <Text variant="bodyMd" fontWeight="bold">{item.action}</Text>
+                  <Text variant="bodySm" color="subdued">{item.date} • {item.scopeCount} products tracked</Text>
+                </BlockStack>
+                <div style={tapTargetStyle}><Button icon={UndoIcon} onClick={() => handleRestore(item)} accessibilityLabel={`Restore ${item.action}`}>Restore This State</Button></div>
+              </InlineStack>
+            </ResourceItem>
+          )} />
+        )}
+      </BlockStack>
+    );
+  };
+
+  const renderCSVView = () => {
+    const handleExport = () => {
+      const displayFields = METAFIELD_CONFIG.filter(c => !c.hidden);
+      const header = ["Product ID", "Title", ...displayFields.map(f => f.key)].join(",");
+      const rows = products.map(p => {
+        const row = [p.id, `"${p.title.replace(/"/g, '""')}"`];
+        displayFields.forEach(f => {
+          const val = getMetafieldValue(p, f.key) || "";
+          row.push(`"${val.replace(/"/g, '""')}"`);
+        });
+        return row.join(",");
+      });
+      const csvContent = [header, ...rows].join("\n");
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.setAttribute("href", url); link.setAttribute("download", `metafield_export_${Date.now()}.csv`);
+      document.body.appendChild(link); link.click(); document.body.removeChild(link);
+    };
+
+    return (
+      <BlockStack gap="400">
+        <Card>
+          <BlockStack gap="400">
+            <Text variant="headingMd" as="h2">CSV Synchronization</Text>
+            <Text as="p">Export your matrix to CSV. Re-importing requires UI parsing architecture to be built.</Text>
+            <InlineStack gap="300">
+              <div style={tapTargetStyle}><Button icon={ExportIcon} onClick={handleExport} accessibilityLabel="Export matrix to CSV">Download CSV Export</Button></div>
+              <div style={tapTargetStyle}><Button icon={ImportIcon} disabled accessibilityLabel="Import CSV">Upload CSV (UI Parsing Placeholder)</Button></div>
+            </InlineStack>
+          </BlockStack>
+        </Card>
+      </BlockStack>
+    );
+  };
+
+  const tabs = [
+    { id: 'northstar', content: '⭐ North Star Auto-Fill', panelID: 'panel-northstar' },
+    { id: 'health', content: 'Data Health Matrix', panelID: 'panel-health' },
+    { id: 'inspector', content: 'Product Inspector', panelID: 'panel-inspector' },
+    { id: 'bulk', content: 'Smart Bulk Injector', panelID: 'panel-bulk' },
+    { id: 'origin', content: 'Origin Fixer', panelID: 'panel-origin' },
+    { id: 'profiles', content: 'DB Profiles', panelID: 'panel-profiles' },
+    { id: 'snapshots', content: 'Snapshots', panelID: 'panel-snapshots' },
+    { id: 'csv', content: 'CSV Sync', panelID: 'panel-csv' }
+  ];
 
   return (
     <Frame>
       <Page
-        title="Menu Manager 🗂️"
-        subtitle="Link Governance — Nav Audit & Repair"
-        backAction={{
-          content: "Back",
-          onAction: () => navigate("/app"),
-          accessibilityLabel: "Navigate back to Command Center",
-        }}
-        primaryAction={{
-          content: "🔍 Scan All Menus",
-          onAction: handleGlobalScan,
-          accessibilityLabel: "Execute global scan across all store menus"
-        }}
+        fullWidth title="Meta Injector v2" subtitle="Data Integrity Command Center"
+        backAction={{ content: "Dashboard", onAction: () => navigate("/app") }}
       >
         <Layout>
-
-          {globalTotals && (
-            <Layout.Section>
-              <Card background="bg-surface-secondary">
-                <BlockStack gap="300" align="center" inlineAlign="center">
-                  <Text variant="headingMd" as="h2">Global Menu Diagnostics</Text>
-                  <InlineStack gap="300">
-                    <Badge tone="success">🟢 {globalTotals.live} Live</Badge>
-                    {globalTotals.stale > 0 && <Badge tone="warning">🟠 {globalTotals.stale} Stale Handles</Badge>}
-                    {globalTotals.draft > 0 && <Badge tone="warning">🟡 {globalTotals.draft} Draft/Unverified</Badge>}
-                    {globalTotals.dead > 0 && <Badge tone="critical">🔴 {globalTotals.dead} Dead</Badge>}
-                  </InlineStack>
-                </BlockStack>
-              </Card>
-            </Layout.Section>
-          )}
-
-          <Layout.Section variant="oneThird">
-            <BlockStack gap="400">
-
-              {!allStoriesMenuExists && (
-                <Card background="bg-surface-info">
-                  <BlockStack gap="300">
-                    <Text variant="headingSm" as="h3">Automated Menu Builder</Text>
-                    <Text as="p" tone="subdued">Generate an "All Stories" menu populated with every page containing images.</Text>
-                    <Button 
-                      size="large" 
-                      variant="primary" 
-                      onClick={handleCreateAllStoriesMenu}
-                      loading={fetcher.state === "submitting" && fetcher.formData?.get("intent") === "createAllStoriesMenu"}
-                      aria-label="Create All Stories Menu automatically"
-                    >
-                      Create All Stories Menu
-                    </Button>
-                  </BlockStack>
-                </Card>
-              )}
-
-              <Card>
-                <BlockStack gap="300">
-                  <InlineStack align="space-between" blockAlign="center">
-                    <Text variant="headingMd" as="h3">Your Menus</Text>
-                    <Button icon={PlusIcon} size="large" onClick={handleOpenCreator} aria-label="Create a new store menu">Create Menu</Button>
-                  </InlineStack>
-                  <Divider />
-                  {displayMenus.map((menu) => {
-                    const counts = globalScan?.[menu.id];
-                    const setting = dbSettings?.find(s => s.menuHandle === menu.handle);
-                    const menuIsLocked = menu.handle === "main-menu" && setting?.isLocked;
-
-                    return (
-                      <Box
-                        key={menu.id}
-                        padding="300"
-                        background={activeMenu?.id === menu.id ? "bg-surface-active" : "bg-surface"}
-                        borderWidth="025"
-                        borderColor="border"
-                        borderRadius="100"
-                        onClick={() => handleSelectMenu(menu)}
-                        style={{ cursor: "pointer", minHeight: "48px" }}
-                        role="button"
-                        aria-label={`Edit ${menu.title} menu`}
-                      >
-                        <BlockStack gap="100">
-                          <InlineStack align="space-between" blockAlign="center">
-                            <InlineStack gap="200" blockAlign="center">
-                              <Text fontWeight={activeMenu?.id === menu.id ? "bold" : "regular"} as="span">
-                                {menu.title}
-                              </Text>
-                              {menuIsLocked && <Badge tone="info">Locked</Badge>}
-                            </InlineStack>
-                            <Badge tone="info">{menu.items.length} Links</Badge>
-                          </InlineStack>
-                          {counts && (
-                            <InlineStack gap="100">
-                              <Badge tone="success">🟢 {counts.live}</Badge>
-                              {counts.stale > 0 && <Badge tone="warning">🟠 {counts.stale}</Badge>}
-                              {counts.draft > 0 && <Badge tone="warning">🟡 {counts.draft}</Badge>}
-                              {counts.dead > 0 && <Badge tone="critical">🔴 {counts.dead}</Badge>}
-                            </InlineStack>
-                          )}
-                        </BlockStack>
-                      </Box>
-                    );
-                  })}
-                </BlockStack>
-              </Card>
-
-              {scanned && unlinkedPages.length > 0 && (
-                <Card>
-                  <BlockStack gap="300">
-                    <BlockStack>
-                      <Text variant="headingSm" tone="warning" as="h3">True Orphans</Text>
-                      <Text variant="bodySm" tone="subdued" as="p">Pages existing in Shopify but not linked in any navigational menu.</Text>
-                    </BlockStack>
-                    <Box style={{ maxHeight: "300px", overflowY: "auto" }}>
-                      <BlockStack gap="200">
-                        {unlinkedPages.map(p => {
-                          const hasImages = p.body && /<img[^>]+>/i.test(p.body);
-                          return (
-                            <InlineStack key={p.id} align="space-between" blockAlign="center">
-                              <Badge tone="info">{p.title}</Badge>
-                              {hasImages && (
-                                <Button 
-                                  size="large"
-                                  onClick={() => handleAssignOrphanToStories(p)}
-                                  aria-label={`Add orphaned page ${p.title} to All Stories menu`}
-                                >
-                                  Add to All Stories
-                                </Button>
-                              )}
-                            </InlineStack>
-                          );
-                        })}
-                      </BlockStack>
-                    </Box>
-                  </BlockStack>
-                </Card>
-              )}
-
-              <Card>
-                <BlockStack gap="300">
-                  <InlineStack align="space-between" blockAlign="center">
-                    <BlockStack>
-                      <Text variant="headingSm" as="h3">Deep Link Scanner</Text>
-                      <Text variant="bodySm" tone="subdued" as="p">Scans page body content for broken internal links.</Text>
-                    </BlockStack>
-                    <InlineStack gap="300" blockAlign="center">
-                      {isDeepScanning && (
-                        <Text tone="subdued" variant="bodySm" as="span">
-                          Scanning {scanProgress} / {Math.max(scanProgress, pages.length)}...
-                        </Text>
-                      )}
-                      <Button size="large" onClick={handleStartDeepScan} loading={isDeepScanning} aria-label="Start deep scanning for broken body content links">
-                        Scan Content
-                      </Button>
-                    </InlineStack>
-                  </InlineStack>
-                  
-                  {deepScanResults !== null && !isDeepScanning && (
-                    <Box paddingBlockStart="200">
-                      {deepScanResults.length === 0 ? (
-                        <Banner tone="success">All internal links are healthy ✅</Banner>
-                      ) : (
-                        <BlockStack gap="300">
-                          <InlineStack align="space-between" blockAlign="center">
-                            <Badge tone="critical">{deepScanResults.length} broken links found</Badge>
-                            {deepScanResults.some(r => r.suggestion && !r.isUnbuilt) && (
-                              <Button 
-                                onClick={handleFixAll} 
-                                icon={CheckIcon}
-                                aria-label="Accept all available link fixes"
-                              >
-                                Fix All
-                              </Button>
-                            )}
-                          </InlineStack>
-                          <List type="bullet">
-                            {deepScanResults.map((err, i) => (
-                              <List.Item key={i}>
-                                <BlockStack gap="100">
-                                  <Text fontWeight="bold" as="span">{err.sourcePage}</Text>
-                                  <InlineStack wrap gap="100" blockAlign="center">
-                                    <Text tone="critical" as="span">/{err.brokenType}/{err.brokenHandle}</Text>
-                                    {err.isUnbuilt && <Badge tone="info">Page Not Built Yet</Badge>}
-                                    {err.isStale && <Badge tone="warning">Stale Handle</Badge>}
-                                    {!err.isUnbuilt && !err.isStale && <Badge tone="critical">Dead Link</Badge>}
-                                  </InlineStack>
-                                  {err.suggestion && !err.isUnbuilt && (
-                                    <InlineStack blockAlign="center" gap="200">
-                                      <Text tone="success" variant="bodySm" as="span">
-                                        → Suggestion: {err.suggestion}
-                                      </Text>
-                                      <Button 
-                                        size="micro" 
-                                        variant="plain" 
-                                        icon={ReplaceIcon}
-                                        onClick={() => handleAcceptFix(err)}
-                                        aria-label={`Fix link to ${err.suggestion}`}
-                                      >
-                                        Accept Fix
-                                      </Button>
-                                    </InlineStack>
-                                  )}
-                                </BlockStack>
-                              </List.Item>
-                            ))}
-                          </List>
-                        </BlockStack>
-                      )}
-                    </Box>
-                  )}
-                </BlockStack>
-              </Card>
-
-            </BlockStack>
-          </Layout.Section>
-
           <Layout.Section>
-            {isCreatingMenu ? (
-              <MenuCreator pages={pages} fetcher={fetcher} onCancel={handleCancelCreator} collectionHandles={collectionHandles} />
-            ) : !activeMenu ? (
-              <Card>
-                <Box padding="800" textAlign="center">
-                  <Text variant="headingLg" tone="subdued" as="h2">Select a menu on the left to start editing, or create a new one.</Text>
-                </Box>
-              </Card>
-            ) : (
-              <BlockStack gap="400">
-
-                <InlineStack align="space-between" blockAlign="center">
-                  <Button
-                    tone="critical"
-                    size="large"
-                    onClick={() => setIsDeleteModalOpen(true)}
-                    disabled={isLocked}
-                    aria-label="Delete current menu"
-                  >
-                    Delete Menu
-                  </Button>
-                  <Button
-                    variant="primary"
-                    size="large"
-                    onClick={handleSaveMenu}
-                    loading={fetcher.state === "submitting" && fetcher.formData?.get("intent") === "updateMenu"}
-                    disabled={isLocked}
-                    aria-label="Save current menu configuration"
-                  >
-                    Save Menu
-                  </Button>
-                </InlineStack>
-
-                {isLocked && (
-                  <Banner tone="warning" title="Main Menu is Locked">
-                    <Text as="p">This menu is structurally locked to prevent accidental modifications. Unlock it using the button below to enable editing controls.</Text>
-                  </Banner>
-                )}
-
-                {activeCounts && (
-                  <Banner tone={activeCounts.dead > 0 ? "critical" : (activeCounts.stale > 0 ? "warning" : "success")}>
-                    <Text as="p">
-                      Scan complete — 🟢 {activeCounts.live} live &nbsp;|&nbsp;
-                      {activeCounts.stale > 0 && `🟠 ${activeCounts.stale} stale  | `}
-                      🟡 {activeCounts.draft} draft/unverified &nbsp;|&nbsp;
-                      🔴 {activeCounts.dead} dead
-                    </Text>
-                  </Banner>
-                )}
-
-                {shouldCalculateOrphanCollections && orphanedCollections.length > 0 && (
-                  <Card>
-                    <BlockStack gap="300">
-                      <Text variant="headingSm" tone="critical" as="h3">Orphaned Collections — not in this menu</Text>
-                      <InlineStack gap="200" wrap>
-                        {orphanedCollections.map(c => (
-                          <Badge key={c.id} tone="warning">{c.title}</Badge>
-                        ))}
-                      </InlineStack>
-                    </BlockStack>
-                  </Card>
-                )}
-
-                <Card>
-                  <BlockStack gap="300">
-                    <Text variant="headingSm" as="h3">✨ Quick Actions</Text>
-                    <InlineStack gap="200" wrap>
-                      {activeMenu.handle === "footer" && (
-                        <Button size="large" icon={MagicIcon} onClick={autoFillCollections} disabled={isLocked} aria-label="Auto fill missing collections">🪄 Auto-Fill Missing Collections</Button>
-                      )}
-                      <Button size="large" icon={AlertTriangleIcon} onClick={autoCleanDeadLinks} disabled={isLocked} aria-label="Remove dead links from menu">🧹 Remove Dead Links</Button>
-                      <Button size="large" onClick={handleScan} aria-label="Scan current active menu">🔍 Scan This Menu</Button>
-                    </InlineStack>
-                    {activeMenu.handle === "footer" && (
-                      <Box paddingBlockStart="200">
-                        <Checkbox
-                          label="Auto-sync collections to footer"
-                          checked={autoSyncFooter}
-                          onChange={handleAutoSyncChange}
-                          helpText="Automatically injects new collections when created in Shopify."
-                          aria-label="Toggle auto sync collections to footer menu checkbox"
-                        />
-                      </Box>
-                    )}
-                  </BlockStack>
-                </Card>
-
-                <Card>
-                  <BlockStack gap="500">
-                    <TextField
-                      label="Menu Title"
-                      value={menuTitle}
-                      onChange={setMenuTitle}
-                      autoComplete="off"
-                      disabled={isLocked}
-                      aria-label="Input field for editing current menu title"
-                    />
-
-                    <Box padding="400" borderRadius="200" borderWidth="025" borderColor="border">
-                      <BlockStack gap="400">
-                        <InlineStack align="space-between">
-                          <InlineStack gap="300" blockAlign="center">
-                            <Text variant="headingSm" as="h3">Menu Links ({menuItems.length})</Text>
-                            {activeMenu.handle === "main-menu" && (
-                              <Button size="large" onClick={toggleLock} loading={fetcher.state === "submitting" && fetcher.formData?.get("intent") === "toggleLock"} aria-label="Toggle menu lock status">
-                                {isLocked ? "🔓 Unlock Menu" : "🔒 Lock Menu"}
-                              </Button>
-                            )}
-                          </InlineStack>
-                          <Button size="large" icon={PlusIcon} variant="primary" onClick={handleAddLink} disabled={isLocked} aria-label="Add new parent link to menu">Add Link</Button>
-                        </InlineStack>
-
-                        {menuItems.map((item, index) => {
-                          const status = scanned
-                            ? getDestinationStatus(item.url, liveCollectionHandles, livePageHandles)
-                            : null;
-                          
-                          return (
-                            <div 
-                              key={item.id}
-                              draggable={!isLocked}
-                              onDragStart={(e) => handleDragStart(e, item.id)}
-                              onDragOver={(e) => e.preventDefault()}
-                              onDrop={(e) => handleDrop(e, item.id)}
-                            >
-                              <Card background="bg-surface">
-                                <BlockStack gap="300">
-                                  
-                                  {/* PARENT LINK */}
-                                  <BlockStack gap="200">
-                                    <InlineStack align="space-between" blockAlign="center">
-                                      <InlineStack gap="200" blockAlign="center">
-                                        <div style={dragBtnStyle} title="Drag to reorder" aria-hidden="true">
-                                          <Icon source={DragHandleIcon} tone="base" />
-                                        </div>
-                                        {status ? <StatusBadge status={status} /> : <Badge tone="info">Not scanned</Badge>}
-                                        {status === "dead" && !isLocked && (
-                                          <Button size="large" onClick={(e) => handleFixIt(e, item.id)} aria-label={`Fix dead link for ${item.title}`}>Fix It</Button>
-                                        )}
-                                      </InlineStack>
-                                      <div style={{ display: "flex", gap: "4px", alignItems: "center" }}>
-                                        <button disabled={index === 0 || isLocked} onClick={(e) => handleMoveLink(e, index, "up")} style={actionBtnStyle} title="Move Up" aria-label={`Move link ${item.title} up`}>↑</button>
-                                        <button disabled={index === menuItems.length - 1 || isLocked} onClick={(e) => handleMoveLink(e, index, "down")} style={actionBtnStyle} title="Move Down" aria-label={`Move link ${item.title} down`}>↓</button>
-                                        <button disabled={isLocked} onClick={(e) => handleDeleteLink(e, item.id)} style={deleteBtnStyle} title="Delete link" aria-label={`Delete link ${item.title}`}>✕</button>
-                                      </div>
-                                    </InlineStack>
-                                    
-                                    <InlineStack blockAlign="end" gap="300" wrap>
-                                      <div style={{ flex: 1, minWidth: "140px" }}>
-                                        <TextField
-                                          label="Display Name"
-                                          value={item.title}
-                                          onChange={(v) => handleUpdateLink(item.id, "title", v)}
-                                          autoComplete="off"
-                                          disabled={isLocked}
-                                          aria-label={`Input field for link display name ${item.title}`}
-                                        />
-                                      </div>
-                                      <div style={{ flex: 1, minWidth: "180px" }}>
-                                        <Select
-                                          id={`quick-select-${item.id}`}
-                                          label="Quick Select"
-                                          options={linkOptions}
-                                          value={linkOptions.find(o => o.value === item.url) ? item.url : "custom"}
-                                          onChange={(v) => v !== "custom" && handleUpdateLink(item.id, "url", v)}
-                                          disabled={isLocked}
-                                          aria-label={`Quick select destination for link ${item.title}`}
-                                        />
-                                      </div>
-                                      <div style={{ flex: 1, minWidth: "180px" }}>
-                                        <TextField
-                                          label="URL Path"
-                                          value={item.url}
-                                          onChange={(v) => handleUpdateLink(item.id, "url", v)}
-                                          autoComplete="off"
-                                          disabled={isLocked}
-                                          aria-label={`Input field for URL path for link ${item.title}`}
-                                          error={
-                                            scanned ? (status === "dead" ? "Dead link — destination not found" : (status === "stale" ? "Stale handle" : undefined)) : undefined
-                                          }
-                                        />
-                                      </div>
-                                    </InlineStack>
-                                  </BlockStack>
-
-                                  {/* SUB-LINKS SECTION */}
-                                  <Box paddingInlineStart="400" borderWidth="0" borderInlineStartWidth="025" borderColor="border">
-                                    <BlockStack gap="400">
-                                      {(item.items || []).map((child, childIndex) => {
-                                        const childStatus = scanned
-                                          ? getDestinationStatus(child.url, liveCollectionHandles, livePageHandles)
-                                          : null;
-
-                                        return (
-                                          <div 
-                                            key={child.id}
-                                            draggable={!isLocked}
-                                            onDragStart={(e) => handleDragStart(e, child.id, item.id)}
-                                            onDragOver={(e) => e.preventDefault()}
-                                            onDrop={(e) => handleDrop(e, child.id, item.id)}
-                                          >
-                                            <BlockStack gap="200">
-                                              <InlineStack align="space-between" blockAlign="center">
-                                                <InlineStack gap="200" blockAlign="center">
-                                                  <div style={dragBtnStyle} title="Drag to reorder" aria-hidden="true">
-                                                    <Icon source={DragHandleIcon} tone="base" />
-                                                  </div>
-                                                  {childStatus ? <StatusBadge status={childStatus} /> : <Badge tone="info">Not scanned</Badge>}
-                                                  {childStatus === "dead" && !isLocked && (
-                                                    <Button size="large" onClick={(e) => handleFixIt(e, child.id)} aria-label={`Fix dead sub-link for ${child.title}`}>Fix It</Button>
-                                                  )}
-                                                </InlineStack>
-                                                <div style={{ display: "flex", gap: "4px", alignItems: "center" }}>
-                                                  <button disabled={childIndex === 0 || isLocked} onClick={(e) => handleMoveSubLink(e, index, childIndex, "up")} style={actionBtnStyle} title="Move Up" aria-label={`Move sub-link ${child.title} up`}>↑</button>
-                                                  <button disabled={childIndex === (item.items || []).length - 1 || isLocked} onClick={(e) => handleMoveSubLink(e, index, childIndex, "down")} style={actionBtnStyle} title="Move Down" aria-label={`Move sub-link ${child.title} down`}>↓</button>
-                                                  <button disabled={isLocked} onClick={(e) => handleDeleteSubLink(e, item.id, child.id)} style={deleteBtnStyle} title="Delete sub-link" aria-label={`Delete sub-link ${child.title}`}>✕</button>
-                                                </div>
-                                              </InlineStack>
-                                              
-                                              <InlineStack blockAlign="end" gap="300" wrap>
-                                                <div style={{ flex: 1, minWidth: "140px" }}>
-                                                  <TextField
-                                                    label="Sub-link Name"
-                                                    value={child.title}
-                                                    onChange={(v) => handleUpdateSubLink(item.id, child.id, "title", v)}
-                                                    autoComplete="off"
-                                                    disabled={isLocked}
-                                                    aria-label={`Input field for sub-link display name ${child.title}`}
-                                                  />
-                                                </div>
-                                                <div style={{ flex: 1, minWidth: "180px" }}>
-                                                  <Select
-                                                    id={`quick-select-${child.id}`}
-                                                    label="Quick Select"
-                                                    options={linkOptions}
-                                                    value={linkOptions.find(o => o.value === child.url) ? child.url : "custom"}
-                                                    onChange={(v) => v !== "custom" && handleUpdateSubLink(item.id, child.id, "url", v)}
-                                                    disabled={isLocked}
-                                                    aria-label={`Quick select destination for sub-link ${child.title}`}
-                                                  />
-                                                </div>
-                                                <div style={{ flex: 1, minWidth: "180px" }}>
-                                                  <TextField
-                                                    label="URL Path"
-                                                    value={child.url}
-                                                    onChange={(v) => handleUpdateSubLink(item.id, child.id, "url", v)}
-                                                    autoComplete="off"
-                                                    disabled={isLocked}
-                                                    aria-label={`Input field for URL path for sub-link ${child.title}`}
-                                                    error={
-                                                      scanned ? (childStatus === "dead" ? "Dead link — destination not found" : (childStatus === "stale" ? "Stale handle" : undefined)) : undefined
-                                                    }
-                                                  />
-                                                </div>
-                                              </InlineStack>
-                                            </BlockStack>
-                                          </div>
-                                        );
-                                      })}
-                                      <InlineStack>
-                                        <Button size="large" icon={PlusIcon} onClick={() => handleAddSubLink(item.id)} disabled={isLocked} aria-label={`Add new sub-link under ${item.title}`}>Add Sub-link</Button>
-                                      </InlineStack>
-                                    </BlockStack>
-                                  </Box>
-
-                                </BlockStack>
-                              </Card>
-                            </div>
-                          );
-                        })}
-                      </BlockStack>
-                    </Box>
-
-                    <InlineStack align="space-between" blockAlign="center">
-                      <Button
-                        tone="critical"
-                        size="large"
-                        onClick={() => setIsDeleteModalOpen(true)}
-                        disabled={isLocked}
-                        aria-label="Delete current menu"
-                      >
-                        Delete Menu
-                      </Button>
-                      <Button
-                        variant="primary"
-                        size="large"
-                        onClick={handleSaveMenu}
-                        loading={fetcher.state === "submitting" && fetcher.formData?.get("intent") === "updateMenu"}
-                        disabled={isLocked}
-                        aria-label="Save current menu configuration"
-                      >
-                        Save Menu
-                      </Button>
-                    </InlineStack>
-                  </BlockStack>
-                </Card>
-
-                {activeMenuHistory.length > 0 && (
-                  <Card>
-                    <BlockStack gap="300">
-                      <Text variant="headingSm" as="h3">Change History</Text>
-                      <List type="bullet">
-                        {activeMenuHistory.map((entry) => (
-                          <List.Item key={entry.id}>
-                            <Text tone="subdued" as="span">
-                              {new Date(entry.createdAt).toLocaleString()} — {entry.message}
-                            </Text>
-                          </List.Item>
-                        ))}
-                      </List>
-                    </BlockStack>
-                  </Card>
-                )}
-
-              </BlockStack>
+            {actionErrors.length > 0 && (
+              <Box paddingBlockEnd="400">
+                <Banner tone="critical" title="GraphQL Mutation Errors Detected">
+                  <BlockStack gap="200">{actionErrors.map((err, i) => <Text key={i} as="p">{err.message}</Text>)}</BlockStack>
+                </Banner>
+              </Box>
             )}
+
+            <Card padding="0">
+              <Tabs tabs={tabs} selected={selectedTab} onSelect={setSelectedTab} fitted>
+                <Box padding="400">
+                  {selectedTab === 0 && renderNorthStarView()}
+                  {selectedTab === 1 && renderMatrixView()}
+                  {selectedTab === 2 && renderInspectorView()}
+                  {selectedTab === 3 && renderBulkInjectorView()}
+                  {selectedTab === 4 && renderOriginFixerView()}
+                  {selectedTab === 5 && renderProfileView()}
+                  {selectedTab === 6 && renderSnapshotView()}
+                  {selectedTab === 7 && renderCSVView()}
+                </Box>
+              </Tabs>
+            </Card>
           </Layout.Section>
         </Layout>
 
-        {toastActive && (
-          <Toast 
-            content={toastContent} 
-            error={toastError} 
-            onDismiss={() => setToastActive(false)} 
-            duration={toastError ? 10000 : 4500} 
-          />
+        {modalConfig.active && (
+          <Modal
+            open={true} onClose={closeModal} title={modalConfig.title}
+            primaryAction={{ content: "Confirm & Execute", onAction: modalConfig.onConfirm, tone: "success" }}
+            secondaryActions={[{ content: "Cancel", onAction: closeModal }]}
+          >
+            <Modal.Section>
+              <BlockStack gap="400">
+                {modalConfig.body && <Text variant="bodyLg" as="p" fontWeight="bold">{modalConfig.body}</Text>}
+                {modalConfig.diffs.length > 0 && (
+                  <Box background="bg-surface-secondary" padding="300" borderRadius="200">
+                    <DataTable columnContentTypes={["text", "text", "text"]} headings={["Field", "Old Value", "New Value"]} rows={modalConfig.diffs.map(d => [d.field, d.old, d.new])} />
+                  </Box>
+                )}
+              </BlockStack>
+            </Modal.Section>
+          </Modal>
         )}
 
-        <Modal
-          open={isDeleteModalOpen}
-          onClose={() => setIsDeleteModalOpen(false)}
-          title="Delete Menu?"
-          primaryAction={{
-            content: "Delete",
-            onAction: handleDeleteMenu,
-            destructive: true,
-            loading: fetcher.state === "submitting" && fetcher.formData?.get("intent") === "deleteMenu"
-          }}
-          secondaryActions={[{
-            content: "Cancel",
-            onAction: () => setIsDeleteModalOpen(false)
-          }]}
-        >
-          <Modal.Section>
-            <Text as="p">Are you sure you want to delete <strong>{menuTitle}</strong>? This cannot be undone.</Text>
-          </Modal.Section>
-        </Modal>
-
+        {toastState.active && <Toast content={toastState.message} error={toastState.isError} onDismiss={closeToast} />}
       </Page>
     </Frame>
   );
