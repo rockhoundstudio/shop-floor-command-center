@@ -524,7 +524,7 @@ export default function CollectionManager() {
           {/* ======================= */}
           {/* SECTION 1: COLLECTION PICKER */}
           {/* ======================= */}
-          <div style={{ flex: '0 0 250px', display: 'flex', flexDirection: 'column', backgroundColor: 'var(--p-color-bg-surface-default, #fff)', borderRadius: 'var(--p-border-radius-200, 8px)', boxShadow: 'var(--p-shadow-100, 0 1px 3px rgba(0,0,0,0.1))', overflow: 'visible' }}>
+          <div style={{ flex: '1 1 auto', display: 'flex', flexDirection: 'column', backgroundColor: 'var(--p-color-bg-surface-default, #fff)', borderRadius: 'var(--p-border-radius-200, 8px)', boxShadow: 'var(--p-shadow-100, 0 1px 3px rgba(0,0,0,0.1))', overflow: 'visible' }}>
             <div style={{ padding: '16px', borderBottom: '1px solid var(--p-color-border-default, #ebebeb)', flexShrink: 0 }}>
               <InlineStack align="space-between" blockAlign="center">
                 <Box width="60%">
@@ -774,3 +774,4 @@ function ImageIcon() {
     </div>
   );
 }
+
