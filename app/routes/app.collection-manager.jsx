@@ -541,7 +541,7 @@ export default function CollectionManager() {
         subtitle="Manage collections, assign products, and keep your store organized in plain English."
         backAction={{ content: "Dashboard", onAction: () => navigate("/app") }}
       >
-        <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 120px)', gap: '16px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 56px)', gap: '16px' }}>
           
           {/* ======================= */}
           {/* SECTION 1: COLLECTION PICKER */}
