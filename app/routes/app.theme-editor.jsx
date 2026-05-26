@@ -100,20 +100,43 @@ export const action = async ({ request }) => {
 
     if (intent === "saveAsset" || intent === "createAsset" || intent === "duplicateAsset") {
       const content = formData.get("content");
-      const response = await fetch(`https://${shop}/admin/api/2024-10/themes/${THEME_ID}/assets.json`, {
-        method: "PUT",
-        headers: { 
-          "Content-Type": "application/json",
-          "X-Shopify-Access-Token": accessToken,
-        },
-        body: JSON.stringify({
-          asset: { key: assetKey, value: content },
-        }),
-      });
       
-      if (!response.ok) throw new Error(`Failed to save asset: ${assetKey}`);
-      
-      return Response.json({ intent, assetKey, content, success: true, message: `Saved ${assetKey} successfully.`, timestamp });
+      try {
+        const response = await fetch(`https://${shop}/admin/api/2024-10/themes/${THEME_ID}/assets.json`, {
+          method: "PUT",
+          headers: { 
+            "Content-Type": "application/json",
+            "X-Shopify-Access-Token": accessToken,
+          },
+          body: JSON.stringify({
+            asset: { key: assetKey, value: content },
+          }),
+        });
+        
+        if (!response.ok) {
+          const errorBody = await response.text();
+          console.error(`Shopify API Asset Save Error [${response.status}] for ${assetKey}:`, errorBody);
+          
+          let errorMessage = `Failed to save asset: ${assetKey}. Status: ${response.status}`;
+          try {
+            const parsedError = JSON.parse(errorBody);
+            if (parsedError.errors) {
+              errorMessage = typeof parsedError.errors === 'string' 
+                ? parsedError.errors 
+                : JSON.stringify(parsedError.errors);
+            }
+          } catch (e) {
+            errorMessage = `${errorMessage} - ${errorBody}`;
+          }
+          
+          return Response.json({ intent, assetKey, success: false, error: errorMessage, timestamp });
+        }
+        
+        return Response.json({ intent, assetKey, content, success: true, message: `Saved ${assetKey} successfully.`, timestamp });
+      } catch (fetchErr) {
+        console.error("Fetch Exception during asset save:", fetchErr);
+        return Response.json({ intent, assetKey, success: false, error: fetchErr.message, timestamp });
+      }
     }
 
     if (intent === "deleteAsset") {
@@ -125,7 +148,11 @@ export const action = async ({ request }) => {
         },
       });
 
-      if (!response.ok) throw new Error(`Failed to delete asset: ${assetKey}`);
+      if (!response.ok) {
+        const errorBody = await response.text();
+        console.error("Delete Asset Error:", errorBody);
+        return Response.json({ intent, assetKey, success: false, error: `Failed to delete asset: ${errorBody}`, timestamp });
+      }
       
       return Response.json({ intent, assetKey, success: true, message: `Deleted ${assetKey} successfully.`, timestamp });
     }
@@ -150,7 +177,11 @@ export const action = async ({ request }) => {
         }),
       });
 
-      if (!copyResponse.ok) throw new Error(`Failed to copy file from ${assetKey} to ${newKey}. Check for invalid naming.`);
+      if (!copyResponse.ok) {
+        const errorBody = await copyResponse.text();
+        console.error("Rename Copy Error:", errorBody);
+        return Response.json({ intent, success: false, error: `Rename copy failed: ${errorBody}`, timestamp });
+      }
 
       const deleteResponse = await fetch(`https://${shop}/admin/api/2024-10/themes/${THEME_ID}/assets.json?asset[key]=${encodeURIComponent(assetKey)}`, {
         method: "DELETE",
@@ -160,7 +191,9 @@ export const action = async ({ request }) => {
         },
       });
 
-      if (!deleteResponse.ok) throw new Error(`Successfully created ${newKey} but failed to delete original file ${assetKey}.`);
+      if (!deleteResponse.ok) {
+        return Response.json({ intent, success: false, error: `Successfully created ${newKey} but failed to delete original file ${assetKey}.`, timestamp });
+      }
 
       return Response.json({ intent, oldKey: assetKey, assetKey: newKey, content, success: true, message: `Renamed to ${newKey}.`, timestamp });
     }
@@ -171,7 +204,7 @@ export const action = async ({ request }) => {
         headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": accessToken }
       });
       const assetData = await assetRes.json();
-      if (!assetData.asset?.value) throw new Error("Could not load templates/index.json");
+      if (!assetData.asset?.value) return Response.json({ intent, success: false, error: "Could not load templates/index.json", timestamp });
 
       const templateData = JSON.parse(assetData.asset.value);
 
@@ -257,7 +290,11 @@ export const action = async ({ request }) => {
         })
       });
 
-      if (!saveRes.ok) throw new Error("Failed to save populated index.json to theme.");
+      if (!saveRes.ok) {
+        const errorBody = await saveRes.text();
+        console.error("Populate Mosaic Save Error:", errorBody);
+        return Response.json({ intent, success: false, error: `Failed to save populated index.json to theme: ${errorBody}`, timestamp });
+      }
 
       return Response.json({ 
         intent, 
@@ -475,7 +512,7 @@ export default function ThemeEditorTab() {
       }
     }
     return null;
-  };
+  }
 
   const lineCount = currentContent.split("\n").length;
   const charCount = currentContent.length;
