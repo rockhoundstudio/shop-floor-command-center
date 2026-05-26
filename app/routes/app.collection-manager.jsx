@@ -524,7 +524,7 @@ export default function CollectionManager() {
           {/* ======================= */}
           {/* SECTION 1: COLLECTION PICKER */}
           {/* ======================= */}
-          <div style={{ flex: '0 0 250px', display: 'flex', flexDirection: 'column', backgroundColor: 'var(--p-color-bg-surface-default, #fff)', borderRadius: 'var(--p-border-radius-200, 8px)', boxShadow: 'var(--p-shadow-100, 0 1px 3px rgba(0,0,0,0.1))', overflow: 'hidden' }}>
+          <div style={{ flex: '0 0 250px', display: 'flex', flexDirection: 'column', backgroundColor: 'var(--p-color-bg-surface-default, #fff)', borderRadius: 'var(--p-border-radius-200, 8px)', boxShadow: 'var(--p-shadow-100, 0 1px 3px rgba(0,0,0,0.1))', overflow: 'visible' }}>
             <div style={{ padding: '16px', borderBottom: '1px solid var(--p-color-border-default, #ebebeb)', flexShrink: 0 }}>
               <InlineStack align="space-between" blockAlign="center">
                 <Box width="60%">
@@ -619,7 +619,7 @@ export default function CollectionManager() {
           {/* ======================= */}
           {activeCollectionId === "" ? (
             viewingOrphans ? (
-              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', backgroundColor: 'var(--p-color-bg-surface-default, #fff)', borderRadius: 'var(--p-border-radius-200, 8px)', boxShadow: 'var(--p-shadow-100, 0 1px 3px rgba(0,0,0,0.1))', overflow: 'hidden' }}>
+              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', backgroundColor: 'var(--p-color-bg-surface-default, #fff)', borderRadius: 'var(--p-border-radius-200, 8px)', boxShadow: 'var(--p-shadow-100, 0 1px 3px rgba(0,0,0,0.1))', overflow: 'visible' }}>
                 <div style={{ padding: '16px', borderBottom: '1px solid var(--p-color-border-default, #ebebeb)', flexShrink: 0, backgroundColor: 'var(--p-color-bg-surface-warning, #ffea8a)' }}>
                   <Text variant="headingSm" as="h2">Orphaned Products</Text>
                   <Text variant="bodyMd" as="p">These products have no collection. Click assign to send them to your first available collection.</Text>
@@ -649,7 +649,7 @@ export default function CollectionManager() {
             <div style={{ flex: 1, display: 'flex', flexDirection: 'row', gap: '16px', minHeight: 0 }}>
               
               {/* LEFT COLUMN: IN COLLECTION */}
-              <div style={{ flex: '1 1 50%', display: 'flex', flexDirection: 'column', backgroundColor: 'var(--p-color-bg-surface-default, #fff)', borderRadius: 'var(--p-border-radius-200, 8px)', boxShadow: 'var(--p-shadow-100, 0 1px 3px rgba(0,0,0,0.1))', overflow: 'hidden' }}>
+              <div style={{ flex: '1 1 50%', display: 'flex', flexDirection: 'column', backgroundColor: 'var(--p-color-bg-surface-default, #fff)', borderRadius: 'var(--p-border-radius-200, 8px)', boxShadow: 'var(--p-shadow-100, 0 1px 3px rgba(0,0,0,0.1))', overflow: 'visible' }}>
                 <div style={{ padding: '16px', borderBottom: '1px solid var(--p-color-border-default, #ebebeb)', flexShrink: 0 }}>
                   <Text variant="headingSm" as="h2">In {activeCollection ? activeCollection.title : "Collection"}</Text>
                   <div style={{ marginTop: '16px' }}>
@@ -684,7 +684,7 @@ export default function CollectionManager() {
               </div>
 
               {/* RIGHT COLUMN: ADD PRODUCTS */}
-              <div style={{ flex: '1 1 50%', display: 'flex', flexDirection: 'column', backgroundColor: 'var(--p-color-bg-surface-default, #fff)', borderRadius: 'var(--p-border-radius-200, 8px)', boxShadow: 'var(--p-shadow-100, 0 1px 3px rgba(0,0,0,0.1))', overflow: 'hidden' }}>
+              <div style={{ flex: '1 1 50%', display: 'flex', flexDirection: 'column', backgroundColor: 'var(--p-color-bg-surface-default, #fff)', borderRadius: 'var(--p-border-radius-200, 8px)', boxShadow: 'var(--p-shadow-100, 0 1px 3px rgba(0,0,0,0.1))', overflow: 'visible' }}>
                 <div style={{ padding: '16px', borderBottom: '1px solid var(--p-color-border-default, #ebebeb)', flexShrink: 0 }}>
                   <Text variant="headingSm" as="h2">Add Products</Text>
                   <div style={{ marginTop: '16px' }}>
