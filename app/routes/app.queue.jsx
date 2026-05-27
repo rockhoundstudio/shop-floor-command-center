@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { useLoaderData, useNavigate, useRevalidator } from "react-router";
+import { useLoaderData, useNavigate, useRevalidator } from "@remix-run/react";
 import {
   Page, Layout, Card, Text, BlockStack, Badge, IndexTable, 
   Box, InlineStack, EmptySearchResult, Banner
