@@ -1,4 +1,4 @@
-import { useNavigate } from "@remix-run/react";
+import { useNavigate } from "react-router";
 
 export default function AdditionalPage() {
   const navigate = useNavigate();
