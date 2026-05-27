@@ -36,5 +36,6 @@ scopes = "read_content,read_metaobject_definitions,read_metaobjects,read_online_
 
 [auth]
 redirect_urls = [
-  "https://shop-floor-command-center.onrender.com/auth/callback"
+  "https://shop-floor-command-center.onrender.com/auth/callback",
+  "https://shop-floor-command-center.onrender.com/auth/shopify/callback"
 ]
