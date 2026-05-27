@@ -2,36 +2,23 @@ import "@shopify/shopify-app-react-router/adapters/node";
 import {
   ApiVersion,
   AppDistribution,
-  DeliveryMethod,
   shopifyApp,
 } from "@shopify/shopify-app-react-router/server";
 import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prisma";
 import prisma from "./db.server";
 
-// ==========================================
-// ENGINE: SHOPIFY MASTER CONFIGURATION
-// ==========================================
-// This file controls the main connection to Shopify, including auth, 
-// sessions, and the unauthenticated API bridge used by Sidekick.
-
 const shopify = shopifyApp({
-  apiKey: process.env.SHOPIFY_API_KEY || "",
+  apiKey: process.env.SHOPIFY_API_KEY,
   apiSecretKey: process.env.SHOPIFY_API_SECRET || "",
-  apiVersion: ApiVersion.October25,
-  // Safety fallback added: If .env drops the SCOPES variable, the app won't crash
-  scopes: process.env.SCOPES ? process.env.SCOPES.split(",") : ["read_products", "write_products"],
-  appUrl: process.env.SHOPIFY_APP_URL || "https://shop-floor-command-center.onrender.com",
+  apiVersion: ApiVersion.July24,
+  scopes: process.env.SCOPES?.split(","),
+  appUrl: process.env.SHOPIFY_APP_URL || "",
   authPathPrefix: "/auth",
   sessionStorage: new PrismaSessionStorage(prisma),
   distribution: AppDistribution.AppStore,
+  isEmbeddedApp: true,
   future: {
-    expiringOfflineAccessTokens: true,
-  },
-  webhooks: {
-    COLLECTIONS_CREATE: {
-      deliveryMethod: DeliveryMethod.Http,
-      callbackUrl: "/webhooks",
-    },
+    unstable_newEmbeddedAuthStrategy: true,
   },
   ...(process.env.SHOP_CUSTOM_DOMAIN
     ? { customShopDomains: [process.env.SHOP_CUSTOM_DOMAIN] }
@@ -39,10 +26,9 @@ const shopify = shopifyApp({
 });
 
 export default shopify;
-export const apiVersion = ApiVersion.October25;
-export const addDocumentResponseHeaders = shopify.addDocumentResponseHeaders;
 export const authenticate = shopify.authenticate;
-export const unauthenticated = shopify.unauthenticated; // CRITICAL: Used by Sidekick AI Hooks
 export const login = shopify.login;
+export const unauthenticated = shopify.unauthenticated;
 export const registerWebhooks = shopify.registerWebhooks;
 export const sessionStorage = shopify.sessionStorage;
+export const addDocumentResponseHeaders = shopify.addDocumentResponseHeaders;
