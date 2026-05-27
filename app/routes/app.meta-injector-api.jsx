@@ -1,6 +1,6 @@
 import { data } from "react-router";
 import { authenticate } from "../shopify.server";
-import prisma from "../db.server"; // Connects to your Prisma database
+import prisma from "../db.server";
 
 function chunkArray(arr, size) {
   const chunks = [];
@@ -10,7 +10,6 @@ function chunkArray(arr, size) {
   return chunks;
 }
 
-// Helper function to figure out what stone we are looking at based on the title
 function extractStoneName(title) {
   const knownStones = ["Jasper", "Agate", "Amethyst", "Quartz", "Turquoise", "Obsidian", "Jade", "Opal"];
   const upperTitle = title.toUpperCase();
@@ -24,8 +23,6 @@ function extractStoneName(title) {
 
 export const action = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
-  
-  // 🚀 CRITICAL FIX: The frontend sends a Form, so we must read it as a Form!
   const formData = await request.formData();
   const intent = formData.get("intent");
 
@@ -45,15 +42,11 @@ export const action = async ({ request }) => {
     }
 
     try {
-      // 1. Check if we already have this stone in the new database drawer!
       let cachedStone = await prisma.stoneCache.findUnique({
         where: { stoneName: stoneName }
       });
 
-      // 2. If it's not in the database, fetch/generate the data and save it
       if (!cachedStone) {
-        // NOTE: This acts as your "Local Geo Library" fallback for now.
-        // You can plug your live Mindat API fetch right here later!
         const lapidaryData = {
           "custom.mineral_class": "Silicate",
           "custom.mohs_hardness": stoneName === "Jasper" || stoneName === "Agate" ? "6.5 - 7" : "Varies",
@@ -62,7 +55,6 @@ export const action = async ({ request }) => {
           "custom.stone_story": `A beautiful piece of natural ${stoneName}.`
         };
 
-        // Save it to Prisma so we never have to "fetch" it again
         cachedStone = await prisma.stoneCache.create({
           data: {
             stoneName: stoneName,
@@ -71,7 +63,6 @@ export const action = async ({ request }) => {
         });
       }
 
-      // 3. Send the data back to the frontend to fill the boxes
       return data({
         success: true,
         message: `Loaded data for ${stoneName} from database.`,
@@ -92,17 +83,20 @@ export const action = async ({ request }) => {
     const rawMetafields = formData.get("metafields");
     const metafieldsObj = JSON.parse(rawMetafields);
 
-    // Reformat the flat frontend data into the array Shopify expects
+    // GID Standardization (Command Center Rule)
+    const resolvedId = productId.startsWith("gid://")
+      ? productId
+      : `gid://shopify/Product/${productId.split("/").pop()}`;
+
     const setMetafields = Object.entries(metafieldsObj)
       .filter(([key, value]) => value !== null && String(value).trim() !== "")
       .map(([fullKey, value]) => {
-        // If your key is "custom.mohs_hardness", split it. Otherwise default to "custom"
         const parts = fullKey.split(".");
         const namespace = parts.length > 1 ? parts[0] : "custom";
         const key = parts.length > 1 ? parts[1] : fullKey;
 
         return {
-          ownerId: productId,
+          ownerId: resolvedId,
           namespace: namespace,
           key: key,
           value: String(value),
@@ -114,10 +108,10 @@ export const action = async ({ request }) => {
       return data({ success: true, message: "No fields to save." });
     }
 
-    const chunks = chunkArray(setMetafields, 25);
+    // Chunk at 3 to avoid timeout jams on Render
+    const chunks = chunkArray(setMetafields, 3);
     const allErrors = [];
 
-    // Push to Shopify
     for (const chunk of chunks) {
       const response = await admin.graphql(
         `#graphql
@@ -132,18 +126,14 @@ export const action = async ({ request }) => {
 
       const result = await response.json();
       const errors = result?.data?.metafieldsSet?.userErrors || [];
-      
-      // Filter out strict definition errors like your original code did
       const realErrors = errors.filter(e => !e.message.includes("must be consistent with the definition"));
       allErrors.push(...realErrors);
     }
 
     if (allErrors.length > 0) {
-      return data({ success: false, message: "Saved with some definition errors.", errors: allErrors });
+      return data({ success: false, message: "Saved with errors.", errors: allErrors });
     }
 
-    return data({ success: true, message: "Successfully locked data to Shopify!" });
+    return data({ success: true, message: "All metafields locked in." });
   }
-
-  return data({ success: false, message: "Unknown button clicked." }, { status: 400 });
 };

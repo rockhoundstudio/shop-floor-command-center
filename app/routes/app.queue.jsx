@@ -1,12 +1,19 @@
-import { useLoaderData, useFetcher } from "react-router";
-import { authenticate } from "../shopify.server";
-import { Page, Layout, Card, Text, BlockStack, Badge, DataTable } from "@shopify/polaris";
 import { useEffect } from "react";
+import { useLoaderData, useNavigate, useRevalidator } from "@remix-run/react";
+import {
+  Page, Layout, Card, Text, BlockStack, Badge, IndexTable, 
+  Box, InlineStack, EmptySearchResult, Banner
+} from "@shopify/polaris";
+import { authenticate } from "../shopify.server";
 
+// ==========================================
+// 1. ENGINE: FETCH JOBS
+// ==========================================
 export const loader = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
 
-  const setupMutation = `
+  // Note: We should move this to the afterAuth hook later to save loader speed!
+  const setupMutation = `#graphql
     mutation {
       metaobjectDefinitionCreate(definition: {
         name: "Sidekick Queue",
@@ -21,7 +28,7 @@ export const loader = async ({ request }) => {
       }) { metaobjectDefinition { id } }
     }
   `;
-  try { await admin.graphql(setupMutation); } catch(e) { }
+  try { await admin.graphql(setupMutation); } catch(e) { /* Silently ignore if it already exists */ }
 
   try {
     const response = await admin.graphql(`
@@ -48,54 +55,115 @@ export const loader = async ({ request }) => {
         status: fields.status || "pending",
       };
     });
-    return Response.json({ jobs });
+    
+    return Response.json({ jobs, success: true });
   } catch (error) {
-    return Response.json({ jobs: [] });
+    console.error("Sidekick Queue Loader Error:", error);
+    return Response.json({ jobs: [], success: false, error: error.message });
   }
 };
 
+// ==========================================
+// 2. CHASSIS: UI DASHBOARD
+// ==========================================
 export default function SidekickQueueTab() {
-  const { jobs } = useLoaderData();
-  const fetcher = useFetcher();
+  const { jobs = [], error } = useLoaderData();
+  const navigate = useNavigate();
+  
+  // Remix's native way to refresh loader data safely
+  const { revalidate, state } = useRevalidator();
 
+  // Auto-refresh every 30 seconds
   useEffect(() => {
     const interval = setInterval(() => {
-      if (fetcher.state === "idle") fetcher.load("/app/queue");
+      if (state === "idle") {
+        revalidate();
+      }
     }, 30000);
     return () => clearInterval(interval);
-  }, [fetcher]);
+  }, [state, revalidate]);
 
-  const rows = jobs.map((job) => [
-    job.id.split('/').pop(),
-    job.productId.split('/').pop(),
-    job.targetKey,
-    job.targetValue,
-    <Badge tone={job.status === "pending" ? "warning" : job.status === "complete" ? "success" : "critical"}>
-      {job.status}
-    </Badge>,
-  ]);
+  const rowMarkup = jobs.map((job, index) => (
+    <IndexTable.Row id={job.id} key={job.id} position={index}>
+      <IndexTable.Cell>
+        <Text variant="bodyMd" fontWeight="bold" as="span">
+          {job.id.split('/').pop()}
+        </Text>
+      </IndexTable.Cell>
+      <IndexTable.Cell>
+        <Text as="span">{job.productId.split('/').pop()}</Text>
+      </IndexTable.Cell>
+      <IndexTable.Cell>
+        <Text as="span" tone="subdued">{job.targetKey}</Text>
+      </IndexTable.Cell>
+      <IndexTable.Cell>
+        <Text as="span">{job.targetValue}</Text>
+      </IndexTable.Cell>
+      <IndexTable.Cell>
+        <Badge tone={job.status === "pending" ? "warning" : job.status === "complete" ? "success" : "critical"}>
+          {job.status.toUpperCase()}
+        </Badge>
+      </IndexTable.Cell>
+    </IndexTable.Row>
+  ));
 
   return (
-    <Page title="Sidekick Queue">
-      <Layout>
-        <Layout.Section>
-          <Card>
-            <BlockStack gap="400">
-              <Text as="h2" variant="headingMd">Rockhound Studio - AI Command Queue</Text>
-              <Text as="p">Live feed of jobs sent by Sidekick. This dashboard auto-refreshes every 30 seconds.</Text>
-              {jobs.length > 0 ? (
-                <DataTable
-                  columnContentTypes={['text', 'text', 'text', 'text', 'text']}
-                  headings={['Job ID', 'Product ID', 'Metafield', 'Value', 'Status']}
-                  rows={rows}
-                />
-              ) : (
-                <Text as="p">Waiting for Sidekick... No jobs in the queue yet. (Database is linked and ready!)</Text>
+    <Page 
+      title="Sidekick Command Queue"
+      subtitle="Live feed of AI jobs sent by Sidekick."
+      fullWidth
+      backAction={{ content: "Dashboard", onAction: () => navigate("/app") }}
+    >
+      <BlockStack gap="600">
+        
+        {error && <Banner tone="critical">{error}</Banner>}
+
+        <Layout>
+          <Layout.Section>
+            <Card padding="0">
+              <Box padding="400" borderBottom="025" borderColor="border">
+                <InlineStack align="space-between" blockAlign="center">
+                  <BlockStack gap="100">
+                    <Text variant="headingMd" as="h2">Rockhound Studio - Job Queue</Text>
+                    <Text tone="subdued" as="span">Auto-refreshes every 30 seconds.</Text>
+                  </BlockStack>
+                  <Badge tone={state === "loading" ? "info" : "success"}>
+                    {state === "loading" ? "Syncing..." : "Live"}
+                  </Badge>
+                </InlineStack>
+              </Box>
+
+              {jobs.length === 0 && (
+                <Box padding="800">
+                  <EmptySearchResult
+                    title="Waiting for Sidekick..."
+                    description="No jobs in the queue yet. The database is linked and standing by."
+                    withIllustration
+                  />
+                </Box>
               )}
-            </BlockStack>
-          </Card>
-        </Layout.Section>
-      </Layout>
+
+              {jobs.length > 0 && (
+                <IndexTable
+                  resourceName={{ singular: 'job', plural: 'jobs' }}
+                  itemCount={jobs.length}
+                  selectable={false}
+                  headings={[
+                    { title: 'Job ID' },
+                    { title: 'Product ID' },
+                    { title: 'Metafield' },
+                    { title: 'Value' },
+                    { title: 'Status' },
+                  ]}
+                >
+                  {rowMarkup}
+                </IndexTable>
+              )}
+            </Card>
+          </Layout.Section>
+        </Layout>
+
+      </BlockStack>
     </Page>
   );
 }

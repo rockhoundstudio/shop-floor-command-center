@@ -5,6 +5,9 @@ name = "Shop Floor Command Center"
 application_url = "https://shop-floor-command-center.onrender.com"
 embedded = true
 
+[build]
+automatically_update_urls_on_dev = false
+
 [webhooks]
 api_version = "2026-07"
 
@@ -16,8 +19,19 @@ api_version = "2026-07"
   topics = [ "app/uninstalled" ]
   uri = "/webhooks/app/uninstalled"
 
+  [[webhooks.subscriptions]]
+  topics = [ "pages/create", "pages/update" ]
+  uri = "/webhooks"
+
+  [[webhooks.subscriptions]]
+  topics = [ "collections/create" ]
+  uri = "/webhooks"
+
+  [[webhooks.subscriptions]]
+  topics = [ "customers/data_request", "customers/redact", "shop/redact" ]
+  uri = "/webhooks"
+
 [access_scopes]
-# Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
 scopes = "read_content,read_files,read_metaobject_definitions,read_metaobjects,read_online_store_navigation,read_products,read_themes,write_content,write_files,write_metaobject_definitions,write_metaobjects,write_online_store_navigation,write_products,write_themes"
 
 [auth]

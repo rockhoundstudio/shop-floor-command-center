@@ -1,6 +1,12 @@
+import { useNavigate } from "@remix-run/react";
+
 export default function AdditionalPage() {
+  const navigate = useNavigate();
   return (
-    <s-page heading="🪨 Tools">
+    <s-page
+      heading="🪨 Tools"
+      backAction={{ onAction: () => navigate("/app") }}
+    >
       <s-section heading="Coming Soon">
         <s-paragraph>
           Additional tools will appear here. Use the navigation to access your current tools.

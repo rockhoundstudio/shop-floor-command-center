@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useLoaderData, useActionData, useSubmit, useNavigation, useNavigate } from "react-router";
-import { Page, Layout, Card, BlockStack, InlineStack, Text, Button, TextField, Banner, Thumbnail, Box, Divider, Badge } from "@shopify/polaris";
+import { Page, Layout, Card, BlockStack, InlineStack, Text, Button, TextField, Banner, Thumbnail, Box, Divider, Badge, EmptySearchResult } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 
 // ==========================================
@@ -173,7 +173,7 @@ export default function SeoAltTextTab() {
       title="SEO Alt Text Command"
       subtitle="Manage and auto-generate image alt text across all products"
       fullWidth
-      backAction={{ content: "Home", onAction: () => navigate("/app") }}
+      backAction={{ content: "Dashboard", onAction: () => navigate("/app") }}
     >
       {error && <Banner tone="critical">{error}</Banner>}
       <Layout>
@@ -187,9 +187,13 @@ export default function SeoAltTextTab() {
             </Box>
             <Box padding="400">
               {images.length === 0 && (
-                <div style={{ minHeight: "48px", display: "flex", alignItems: "center" }}>
-                  <Text tone="subdued">No images found on the shop floor.</Text>
-                </div>
+                <Box padding="800">
+                  <EmptySearchResult 
+                    title="No images found" 
+                    description="It looks like your shop floor is empty. Upload some product images to start generating SEO text." 
+                    withIllustration 
+                  />
+                </Box>
               )}
               
               {images.length > 0 && (

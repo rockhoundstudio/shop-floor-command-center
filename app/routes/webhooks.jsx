@@ -37,7 +37,6 @@ export const action = async ({ request }) => {
   const { topic, shop, session, admin, payload } = await authenticate.webhook(request);
 
   if (!admin) {
-    // The admin context isn't available if the webhook is fired after a shop uninstalls the app
     throw new Response();
   }
 
@@ -53,7 +52,6 @@ export const action = async ({ request }) => {
     // ==========================================
     case "COLLECTIONS_CREATE":
       try {
-        // 1. Check if Footer Auto-Sync is turned on in the database
         const footerSetting = await prisma.menuSetting.findUnique({
           where: { menuHandle: "footer" }
         });
@@ -63,8 +61,7 @@ export const action = async ({ request }) => {
           const collectionHandle = payload.handle;
           const newUrl = `/collections/${collectionHandle}`;
 
-          // 2. Fetch the current footer menu from Shopify
-          const menuRes = await admin.graphql(`
+          const menuRes = await admin.graphql(`#graphql
             query {
               menus(first: 1, query: "handle:footer") {
                 edges {
@@ -92,7 +89,6 @@ export const action = async ({ request }) => {
           const footerMenu = menuJson.data?.menus?.edges[0]?.node;
 
           if (footerMenu) {
-            // 3. Format existing items so Shopify accepts them back
             const formatItem = (item) => ({
               title: item.title,
               url: item.url || "#",
@@ -101,12 +97,9 @@ export const action = async ({ request }) => {
             });
 
             const currentItems = footerMenu.items.map(formatItem);
-            
-            // Safety Check: Don't add it if it somehow already exists
             const alreadyExists = currentItems.some(item => item.url === newUrl);
 
             if (!alreadyExists) {
-              // Append the new collection to the end of the menu
               currentItems.push({
                 title: collectionTitle,
                 url: newUrl,
@@ -114,8 +107,7 @@ export const action = async ({ request }) => {
                 items: []
               });
 
-              // 4. Update the menu in Shopify
-              await admin.graphql(`
+              await admin.graphql(`#graphql
                 mutation menuUpdate($id: ID!, $title: String!, $handle: String!, $items: [MenuItemUpdateInput!]!) {
                   menuUpdate(id: $id, title: $title, handle: $handle, items: $items) {
                     userErrors { message }
@@ -130,7 +122,6 @@ export const action = async ({ request }) => {
                 }
               });
 
-              // 5. Log the action to the MenuHistory table in Prisma
               await prisma.menuHistory.create({
                 data: {
                   menuHandle: "footer",
@@ -152,10 +143,9 @@ export const action = async ({ request }) => {
     case "PAGES_UPDATE":
       try {
         if (!payload.body_html || !payload.handle || !payload.title) {
-          break; // Nothing to extract
+          break; 
         }
 
-        // 1. Fetch Global Excludes (e.g. contact, privacy-policy)
         const settingsQuery = `#graphql
           query {
             shop {
@@ -171,22 +161,51 @@ export const action = async ({ request }) => {
         const excludedHandlesStr = settingsData.data?.shop?.metafield?.value || "";
         const excludedHandles = excludedHandlesStr.split(",").map(s => s.trim().toLowerCase());
 
-        // 2. Bail out immediately if this page is excluded
         if (excludedHandles.includes(payload.handle.toLowerCase())) {
           console.log(`[Image Extractor] Skipped excluded page: ${payload.handle}`);
           break;
         }
 
-        // 3. Extract Images
         const extractedImages = extractImagesFromHtml(payload.body_html);
         
-        // Bail out if there are no images
         if (extractedImages.length === 0) {
           console.log(`[Image Extractor] No images found on page: ${payload.handle}`);
           break;
         }
 
-        // 4. Save to Metaobject Pool
+        const liveImageUrls = extractedImages.map(img => img.src);
+        let finalDisplayOrder = [...liveImageUrls];
+
+        // Fetch existing metaobject to preserve drag-and-drop order
+        const existingMetaQuery = `#graphql
+          query getExistingMetaobject($handle: MetaobjectHandleInput!) {
+            metaobject(handle: $handle) {
+              fields {
+                key
+                value
+              }
+            }
+          }
+        `;
+        const existingRes = await admin.graphql(existingMetaQuery, {
+          variables: { handle: { type: "story_slideshow_pool", handle: payload.handle } }
+        });
+        const existingData = await existingRes.json();
+        const existingFields = existingData.data?.metaobject?.fields || [];
+        const orderField = existingFields.find(f => f.key === "display_order");
+
+        // Merge logic: Preserve sorting, remove deleted images, append new ones
+        if (orderField && orderField.value) {
+          try {
+            const savedOrder = JSON.parse(orderField.value);
+            const preservedOrder = savedOrder.filter(url => liveImageUrls.includes(url));
+            const newUrls = liveImageUrls.filter(url => !savedOrder.includes(url));
+            finalDisplayOrder = [...preservedOrder, ...newUrls];
+          } catch (e) {
+            console.error("Failed to parse existing display_order", e);
+          }
+        }
+
         const upsertQuery = `#graphql
           mutation metaobjectUpsert($handle: MetaobjectHandleInput!, $metaobject: MetaobjectUpsertInput!) {
             metaobjectUpsert(handle: $handle, metaobject: $metaobject) {
@@ -203,9 +222,9 @@ export const action = async ({ request }) => {
             fields: [
               { key: "page_title", value: payload.title },
               { key: "page_url", value: `https://rockhoundstudio.com/pages/${payload.handle}` },
-              { key: "image_urls", value: JSON.stringify(extractedImages.map(img => img.src)) },
+              { key: "image_urls", value: JSON.stringify(liveImageUrls) },
               { key: "image_alts", value: JSON.stringify(extractedImages.map(img => (!img.alt || img.alt.trim() === "") ? payload.title : img.alt)) },
-              { key: "display_order", value: JSON.stringify(extractedImages.map(img => img.src)) }
+              { key: "display_order", value: JSON.stringify(finalDisplayOrder) }
             ]
           }
         };
@@ -227,12 +246,11 @@ export const action = async ({ request }) => {
     case "CUSTOMERS_DATA_REQUEST":
     case "CUSTOMERS_REDACT":
     case "SHOP_REDACT":
-      // Shopify Mandatory Privacy Webhooks
       break;
 
     default:
       throw new Response("Unhandled webhook topic", { status: 404 });
   }
 
-  throw new Response(); // Returns 200 OK to Shopify
+  throw new Response(); 
 };

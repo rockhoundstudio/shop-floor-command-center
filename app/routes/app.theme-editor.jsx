@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback, useRef } from "react";
-import { useLoaderData, useActionData, useSubmit, useNavigation, useNavigate } from "react-router";
+dimport { useState, useEffect, useCallback, useRef } from "react";
+import { useLoaderData, useActionData, useSubmit, useNavigation, useNavigate } from "@remix-run/react";
 import {
   Page, Layout, Card, BlockStack, InlineStack, Text, List, Button, TextField,
   Tabs, Badge, Box, Divider, Banner, Scrollable, Modal, Select, FormLayout, ButtonGroup
@@ -50,6 +50,7 @@ export const loader = async ({ request }) => {
   try {
     const theme = await getActiveTheme(admin);
     
+    // Note: Theme Asset manipulation currently requires REST API in Shopify
     const response = await fetch(`https://${shop}/admin/api/2024-10/themes/${theme.id}/assets.json?_t=${Date.now()}`, {
       method: "GET",
       headers: {
@@ -63,7 +64,7 @@ export const loader = async ({ request }) => {
     }
     
     const data = await response.json();
-    return Response.json({ theme, files: data.assets ? data.assets : [] });
+    return Response.json({ theme, files: data.assets || [] });
   } catch (error) {
     console.error("Failed to load theme assets:", error);
     return Response.json({ theme: null, files: [], error: `Failed to load theme files: ${error.message}` });
@@ -95,7 +96,7 @@ export const action = async ({ request }) => {
       if (!response.ok) throw new Error("Failed to fetch asset content.");
       
       const data = await response.json();
-      return Response.json({ intent, assetKey, content: data.asset?.value ? data.asset.value : "", timestamp });
+      return Response.json({ intent, assetKey, content: data.asset?.value || "", timestamp });
     }
 
     if (intent === "saveAsset" || intent === "createAsset" || intent === "duplicateAsset") {
@@ -227,23 +228,12 @@ export const action = async ({ request }) => {
         });
       }
 
-      const collectionsRes = await fetch(`https://${shop}/admin/api/2024-10/graphql.json`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": accessToken },
-        body: JSON.stringify({
-          query: `query { collections(first: 50, query: "published_status:published") { edges { node { handle } } } }`
-        })
-      });
+      // Converted to native admin.graphql calls
+      const collectionsRes = await admin.graphql(`query { collections(first: 50, query: "published_status:published") { edges { node { handle } } } }`);
       const collectionsData = await collectionsRes.json();
       const collections = collectionsData.data.collections.edges.map(e => e.node.handle);
 
-      const pagesRes = await fetch(`https://${shop}/admin/api/2024-10/graphql.json`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": accessToken },
-        body: JSON.stringify({
-          query: `query { pages(first: 50, query: "published_status:published") { edges { node { handle } } } }`
-        })
-      });
+      const pagesRes = await admin.graphql(`query { pages(first: 50, query: "published_status:published") { edges { node { handle } } } }`);
       const pagesData = await pagesRes.json();
       const pages = pagesData.data.pages.edges.map(e => e.node.handle);
 
@@ -319,7 +309,7 @@ export const action = async ({ request }) => {
         });
         clearTimeout(timeoutId);
         const data = await res.json();
-        const modifiedContent = data.candidates?.[0]?.content?.parts?.[0]?.text ? data.candidates[0].content.parts[0].text : content;
+        const modifiedContent = data.candidates?.[0]?.content?.parts?.[0]?.text || content;
         return Response.json({ intent, assetKey, modifiedContent, timestamp });
       } catch (error) {
         clearTimeout(timeoutId);
@@ -341,7 +331,7 @@ export const action = async ({ request }) => {
         });
         clearTimeout(timeoutId);
         const data = await res.json();
-        const researchContent = data.candidates?.[0]?.content?.parts?.[0]?.text ? data.candidates[0].content.parts[0].text : "No results returned.";
+        const researchContent = data.candidates?.[0]?.content?.parts?.[0]?.text || "No results returned.";
         return Response.json({ intent, assetKey, researchContent, timestamp });
       } catch (error) {
         clearTimeout(timeoutId);
@@ -368,7 +358,6 @@ export default function ThemeEditorTab() {
   const navigate = useNavigate();
 
   const [localFiles, setLocalFiles] = useState([]);
-
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedTab, setSelectedTab] = useState(0);
   const [selectedFile, setSelectedFile] = useState(null);
@@ -531,7 +520,9 @@ export default function ThemeEditorTab() {
   const renderFileGroup = (folderName) => {
     const folderFiles = filteredFiles.filter((a) => a.key.startsWith(`${folderName}/`) && !PINNED_FILES.includes(a.key));
     
-    return folderFiles.length > 0 ? (
+    if (folderFiles.length === 0) return null;
+
+    return (
       <Box paddingBlockEnd="400" key={folderName}>
         <Text variant="headingSm" as="h6" fontWeight="bold">{folderName.toUpperCase()}</Text>
         <List type="bullet">
@@ -551,110 +542,7 @@ export default function ThemeEditorTab() {
           ))}
         </List>
       </Box>
-    ) : null;
-  };
-
-  const renderNewFileModal = () => {
-    return isNewModalOpen ? (
-      <Modal
-        open={isNewModalOpen}
-        onClose={() => setIsNewModalOpen(false)}
-        title="Create New File"
-        primaryAction={{ content: "Create", onAction: handleCreateNew, loading: isNavigating, accessibilityLabel: "Confirm create new file" }}
-        secondaryActions={[{ content: "Cancel", onAction: () => setIsNewModalOpen(false), accessibilityLabel: "Cancel create new file" }]}
-      >
-        <Modal.Section>
-          <FormLayout>
-            <div style={{ minHeight: "48px", display: "flex", width: "100%", alignItems: "center" }}>
-              <Select
-                label="Folder"
-                options={[
-                  { label: "Sections", value: "sections" },
-                  { label: "Snippets", value: "snippets" },
-                  { label: "Templates", value: "templates" },
-                  { label: "Assets", value: "assets" }
-                ]}
-                value={newFileType}
-                onChange={setNewFileType}
-              />
-            </div>
-            <div style={{ minHeight: "48px", display: "flex", width: "100%", alignItems: "center" }}>
-              <TextField
-                label="Filename (without extension)"
-                value={newFileName}
-                onChange={setNewFileName}
-                autoComplete="off"
-                accessibilityLabel="New filename input"
-              />
-            </div>
-          </FormLayout>
-        </Modal.Section>
-      </Modal>
-    ) : null;
-  };
-
-  const renderRenameModal = () => {
-    return isRenameModalOpen ? (
-      <Modal
-        open={isRenameModalOpen}
-        onClose={() => setIsRenameModalOpen(false)}
-        title="Rename File"
-        primaryAction={{ content: "Rename", onAction: handleRename, loading: isNavigating, accessibilityLabel: "Confirm rename file" }}
-        secondaryActions={[{ content: "Cancel", onAction: () => setIsRenameModalOpen(false), accessibilityLabel: "Cancel rename file" }]}
-      >
-        <Modal.Section>
-          <div style={{ minHeight: "48px", display: "flex", width: "100%", alignItems: "center" }}>
-            <TextField
-              label="New File Path (e.g., snippets/new-name.liquid)"
-              value={renameInput}
-              onChange={setRenameInput}
-              autoComplete="off"
-              accessibilityLabel="Rename file path input"
-            />
-          </div>
-        </Modal.Section>
-      </Modal>
-    ) : null;
-  };
-
-  const renderDeleteModal = () => {
-    return isDeleteModalOpen ? (
-      <Modal
-        open={isDeleteModalOpen}
-        onClose={() => setIsDeleteModalOpen(false)}
-        title="Delete File"
-        primaryAction={{ content: "Delete", onAction: handleDelete, destructive: true, loading: isNavigating, accessibilityLabel: "Confirm delete file" }}
-        secondaryActions={[{ content: "Cancel", onAction: () => setIsDeleteModalOpen(false), accessibilityLabel: "Cancel delete file" }]}
-      >
-        <Modal.Section>
-          <Text as="p">Are you sure you want to delete {selectedFile}? This cannot be undone.</Text>
-        </Modal.Section>
-      </Modal>
-    ) : null;
-  };
-
-  const renderDuplicateModal = () => {
-    return isDuplicateModalOpen ? (
-      <Modal
-        open={isDuplicateModalOpen}
-        onClose={() => setIsDuplicateModalOpen(false)}
-        title="Duplicate File"
-        primaryAction={{ content: "Duplicate", onAction: handleDuplicate, loading: isNavigating, accessibilityLabel: "Confirm duplicate file" }}
-        secondaryActions={[{ content: "Cancel", onAction: () => setIsDuplicateModalOpen(false), accessibilityLabel: "Cancel duplicate file" }]}
-      >
-        <Modal.Section>
-          <div style={{ minHeight: "48px", display: "flex", width: "100%", alignItems: "center" }}>
-            <TextField
-              label="New File Path (e.g., sections/copy.liquid)"
-              value={duplicateInput}
-              onChange={setDuplicateInput}
-              autoComplete="off"
-              accessibilityLabel="Duplicate file path input"
-            />
-          </div>
-        </Modal.Section>
-      </Modal>
-    ) : null;
+    );
   };
 
   return (
@@ -677,11 +565,103 @@ export default function ThemeEditorTab() {
         </Box>
       )}
 
-      {renderNewFileModal()}
-      {renderRenameModal()}
-      {renderDeleteModal()}
-      {renderDuplicateModal()}
+      {/* MODALS */}
+      {isNewModalOpen && (
+        <Modal
+          open={true}
+          onClose={() => setIsNewModalOpen(false)}
+          title="Create New File"
+          primaryAction={{ content: "Create", onAction: handleCreateNew, loading: isNavigating, accessibilityLabel: "Confirm create new file" }}
+          secondaryActions={[{ content: "Cancel", onAction: () => setIsNewModalOpen(false), accessibilityLabel: "Cancel create new file" }]}
+        >
+          <Modal.Section>
+            <FormLayout>
+              <div style={{ minHeight: "48px", display: "flex", width: "100%", alignItems: "center" }}>
+                <Select
+                  label="Folder"
+                  options={[
+                    { label: "Sections", value: "sections" },
+                    { label: "Snippets", value: "snippets" },
+                    { label: "Templates", value: "templates" },
+                    { label: "Assets", value: "assets" }
+                  ]}
+                  value={newFileType}
+                  onChange={setNewFileType}
+                />
+              </div>
+              <div style={{ minHeight: "48px", display: "flex", width: "100%", alignItems: "center" }}>
+                <TextField
+                  label="Filename (without extension)"
+                  value={newFileName}
+                  onChange={setNewFileName}
+                  autoComplete="off"
+                  accessibilityLabel="New filename input"
+                />
+              </div>
+            </FormLayout>
+          </Modal.Section>
+        </Modal>
+      )}
 
+      {isRenameModalOpen && (
+        <Modal
+          open={true}
+          onClose={() => setIsRenameModalOpen(false)}
+          title="Rename File"
+          primaryAction={{ content: "Rename", onAction: handleRename, loading: isNavigating, accessibilityLabel: "Confirm rename file" }}
+          secondaryActions={[{ content: "Cancel", onAction: () => setIsRenameModalOpen(false), accessibilityLabel: "Cancel rename file" }]}
+        >
+          <Modal.Section>
+            <div style={{ minHeight: "48px", display: "flex", width: "100%", alignItems: "center" }}>
+              <TextField
+                label="New File Path (e.g., snippets/new-name.liquid)"
+                value={renameInput}
+                onChange={setRenameInput}
+                autoComplete="off"
+                accessibilityLabel="Rename file path input"
+              />
+            </div>
+          </Modal.Section>
+        </Modal>
+      )}
+
+      {isDeleteModalOpen && (
+        <Modal
+          open={true}
+          onClose={() => setIsDeleteModalOpen(false)}
+          title="Delete File"
+          primaryAction={{ content: "Delete", onAction: handleDelete, destructive: true, loading: isNavigating, accessibilityLabel: "Confirm delete file" }}
+          secondaryActions={[{ content: "Cancel", onAction: () => setIsDeleteModalOpen(false), accessibilityLabel: "Cancel delete file" }]}
+        >
+          <Modal.Section>
+            <Text as="p">Are you sure you want to delete {selectedFile}? This cannot be undone.</Text>
+          </Modal.Section>
+        </Modal>
+      )}
+
+      {isDuplicateModalOpen && (
+        <Modal
+          open={true}
+          onClose={() => setIsDuplicateModalOpen(false)}
+          title="Duplicate File"
+          primaryAction={{ content: "Duplicate", onAction: handleDuplicate, loading: isNavigating, accessibilityLabel: "Confirm duplicate file" }}
+          secondaryActions={[{ content: "Cancel", onAction: () => setIsDuplicateModalOpen(false), accessibilityLabel: "Cancel duplicate file" }]}
+        >
+          <Modal.Section>
+            <div style={{ minHeight: "48px", display: "flex", width: "100%", alignItems: "center" }}>
+              <TextField
+                label="New File Path (e.g., sections/copy.liquid)"
+                value={duplicateInput}
+                onChange={setDuplicateInput}
+                autoComplete="off"
+                accessibilityLabel="Duplicate file path input"
+              />
+            </div>
+          </Modal.Section>
+        </Modal>
+      )}
+
+      {/* AUTOMATION HEADER */}
       <Box paddingBlockEnd="400">
         <Card>
           <InlineStack align="space-between" blockAlign="center">
@@ -706,6 +686,7 @@ export default function ThemeEditorTab() {
         </Card>
       </Box>
 
+      {/* DUAL PANE EDITOR */}
       <Layout>
         <Layout.Section variant="oneThird">
           <Card padding="0">

@@ -1,102 +1,70 @@
 import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
-import { Link } from "react-router";
+import { Link } from "@remix-run/react";
+import { Page, Layout, Card, Text, BlockStack, Grid } from "@shopify/polaris";
 
+// ==========================================
+// 1. ENGINE: AUTHENTICATION
+// ==========================================
 export const loader = async ({ request }) => {
   await authenticate.admin(request);
   return null;
 };
 
+// ==========================================
+// 2. CHASSIS: MASTER DASHBOARD
+// ==========================================
 export default function Index() {
+  
+  // The complete roster of Command Center Tools
+  const tools = [
+    { title: "Meta Injector", desc: "Inject geological metafields into stone products.", path: "/app/meta-injector", icon: "💎" },
+    { title: "Menu Manager", desc: "Build and edit your store navigation menus.", path: "/app/menu-manager", icon: "🗂️" },
+    { title: "Collection Manager", desc: "Organize and manage your store collections.", path: "/app/collection-manager", icon: "📁" },
+    { title: "Dwell Web Manager", desc: "Manage dwell time and internal link loops.", path: "/app/dwell-web-manager", icon: "🕸️" },
+    { title: "SEO & Alt Text", desc: "Scan and fix product SEO and image alt text.", path: "/app/seo-alt-text", icon: "🔍" },
+    { title: "Theme Editor", desc: "Read and edit Prestige theme files directly.", path: "/app/theme-editor", icon: "🎨" },
+    { title: "Image Extractor", desc: "Build the story slideshow image pool from page content.", path: "/app/image-extractor", icon: "🖼️" },
+    { title: "Store Operator", desc: "Advanced store operations and data management.", path: "/app/operator", icon: "⚙️" },
+    { title: "AI Content Forge", desc: "Batch generate premium descriptions and SEO metadata safely.", path: "/app/ai-content-forge", icon: "🤖" },
+    { title: "Bulk Editor", desc: "Rapidly mutate product statuses and tags.", path: "/app/bulk-edit", icon: "📦" },
+    { title: "Sidekick Queue", desc: "Live feed of AI jobs sent by Sidekick.", path: "/app/sidekick-queue", icon: "⚡" },
+    { title: "Custom Polishing", desc: "Manage your dedicated service page blueprint.", path: "/app/additional", icon: "✨" },
+  ];
+
   return (
-    <div style={{ padding: "40px", fontFamily: "sans-serif" }}>
-      <h1 style={{ fontSize: "32px", marginBottom: "8px" }}>🪨 Rockhound Studio</h1>
-      <h2 style={{ fontSize: "20px", color: "#555", marginBottom: "40px" }}>Shop Floor Command Center</h2>
-
-      <div style={{ display: "flex", gap: "24px", flexWrap: "wrap" }}>
-
-        <Link to="/app/meta-injector" style={{
-          display: "block", padding: "32px 40px", backgroundColor: "#1a1a1a",
-          color: "#fff", borderRadius: "12px", textDecoration: "none",
-          fontSize: "22px", fontWeight: "bold", minWidth: "220px"
-        }}>
-          💎 Meta Injector
-          <div style={{ fontSize: "14px", fontWeight: "normal", marginTop: "8px", color: "#aaa" }}>
-            Inject geological metafields into stone products
-          </div>
-        </Link>
-
-        <Link to="/app/menu-manager" style={{
-          display: "block", padding: "32px 40px", backgroundColor: "#1a3a1a",
-          color: "#fff", borderRadius: "12px", textDecoration: "none",
-          fontSize: "22px", fontWeight: "bold", minWidth: "220px"
-        }}>
-          🗂️ Menu Manager
-          <div style={{ fontSize: "14px", fontWeight: "normal", marginTop: "8px", color: "#aaa" }}>
-            Build and edit your store navigation menus
-          </div>
-        </Link>
-
-        <Link to="/app/collection-manager" style={{
-          display: "block", padding: "32px 40px", backgroundColor: "#1a1a3a",
-          color: "#fff", borderRadius: "12px", textDecoration: "none",
-          fontSize: "22px", fontWeight: "bold", minWidth: "220px"
-        }}>
-          📁 Collection Manager
-          <div style={{ fontSize: "14px", fontWeight: "normal", marginTop: "8px", color: "#aaa" }}>
-            Organize and manage your store collections
-          </div>
-        </Link>
-
-        <Link to="/app/dwell-web-manager" style={{
-          display: "block", padding: "32px 40px", backgroundColor: "#3a1a1a",
-          color: "#fff", borderRadius: "12px", textDecoration: "none",
-          fontSize: "22px", fontWeight: "bold", minWidth: "220px"
-        }}>
-          🕸️ Dwell Web Manager
-          <div style={{ fontSize: "14px", fontWeight: "normal", marginTop: "8px", color: "#aaa" }}>
-            Manage dwell time and content engagement
-          </div>
-        </Link>
-
-        <Link to="/app/seo-alt-text" style={{
-          display: "block", padding: "32px 40px", backgroundColor: "#2a1a3a",
-          color: "#fff", borderRadius: "12px", textDecoration: "none",
-          fontSize: "22px", fontWeight: "bold", minWidth: "220px"
-        }}>
-          🔍 SEO & Alt Text
-          <div style={{ fontSize: "14px", fontWeight: "normal", marginTop: "8px", color: "#aaa" }}>
-            Scan and fix product SEO and image alt text
-          </div>
-        </Link>
-
-        <Link to="/app/theme-editor" style={{
-          display: "block", padding: "32px 40px", backgroundColor: "#1a2a3a",
-          color: "#fff", borderRadius: "12px", textDecoration: "none",
-          fontSize: "22px", fontWeight: "bold", minWidth: "220px"
-        }}>
-          🎨 Theme Editor
-          <div style={{ fontSize: "14px", fontWeight: "normal", marginTop: "8px", color: "#aaa" }}>
-            Read and edit Prestige theme files directly
-          </div>
-        </Link>
-
-        <Link to="/app/image-extractor" style={{
-          display: "block", padding: "32px 40px", backgroundColor: "#1a3a2a",
-          color: "#fff", borderRadius: "12px", textDecoration: "none",
-          fontSize: "22px", fontWeight: "bold", minWidth: "220px"
-        }}>
-          🖼️ Image Extractor
-          <div style={{ fontSize: "14px", fontWeight: "normal", marginTop: "8px", color: "#aaa" }}>
-            Build the story slideshow image pool from page content
-          </div>
-        </Link>
-
-      </div>
-    </div>
+    <Page 
+      title="🪨 Rockhound Studio: Command Center" 
+      subtitle="Shop Floor operations and Shopify data governance."
+      fullWidth
+    >
+      <Layout>
+        <Layout.Section>
+          <Grid>
+            {tools.map((tool, index) => (
+              <Grid.Cell key={index} columnSpan={{ xs: 6, sm: 6, md: 4, lg: 3, xl: 3 }}>
+                <Link 
+                  to={tool.path} 
+                  style={{ textDecoration: "none", color: "inherit", display: "block", height: "100%" }}
+                  aria-label={`Open the ${tool.title} tool`}
+                >
+                  <Card background="bg-surface-secondary">
+                    <BlockStack gap="200">
+                      <Text variant="headingLg" as="h3">{tool.icon} {tool.title}</Text>
+                      <Text tone="subdued" as="p">{tool.desc}</Text>
+                    </BlockStack>
+                  </Card>
+                </Link>
+              </Grid.Cell>
+            ))}
+          </Grid>
+        </Layout.Section>
+      </Layout>
+    </Page>
   );
 }
 
+// Ensure Shopify error boundaries are respected
 export const headers = (headersArgs) => {
   return boundary.headers(headersArgs);
 };

@@ -1,8 +1,8 @@
 import { useState, useEffect } from "react";
-import { useLoaderData, useSubmit, useNavigation, useActionData, useNavigate } from "react-router";
+import { useLoaderData, useSubmit, useNavigation, useActionData, useNavigate } from "@remix-run/react";
 import {
   Page, Card, BlockStack, InlineStack, Text, TextField, Button,
-  Badge, Checkbox, Box, Divider, Modal, Frame, Toast, Icon, Banner
+  Badge, Checkbox, Box, Divider, Modal, Frame, Icon, Banner, EmptySearchResult
 } from "@shopify/polaris";
 import { DragHandleIcon, RefreshIcon } from "@shopify/polaris-icons";
 import { authenticate } from "../shopify.server";
@@ -230,14 +230,8 @@ export const action = async ({ request }) => {
         }
       };
 
-      console.log(`\n--- UPSERT PAYLOAD FOR: ${page.handle} ---`);
-      console.log(JSON.stringify(variables, null, 2));
-
       const upsertRes = await admin.graphql(upsertQuery, { variables });
       const upsertData = await upsertRes.json();
-
-      console.log(`\n--- UPSERT RESPONSE FOR: ${page.handle} ---`);
-      console.log(JSON.stringify(upsertData, null, 2));
 
       if (upsertData.errors) {
         throw new Error(`GraphQL Root Error: ${JSON.stringify(upsertData.errors)}`);
@@ -315,11 +309,9 @@ export default function ImageExtractor() {
 
   useEffect(() => {
     if (actionData?.success) {
-      setToastError(false);
-      setToastMsg(`Pool saved successfully at ${actionData.timestamp}`);
+      shopify.toast.show(`Pool saved successfully at ${actionData.timestamp}`);
     } else if (actionData?.error) {
-      setToastError(true);
-      setToastMsg(`Save failed: ${actionData.error}`);
+      shopify.toast.show(`Save failed: ${actionData.error}`, { isError: true });
     }
   }, [actionData]);
 
@@ -384,8 +376,7 @@ export default function ImageExtractor() {
       });
     });
 
-    setToastError(false);
-    setToastMsg(orphansRemoved > 0 ? `Swept ${orphansRemoved} orphaned images.` : "Pool is perfectly synced.");
+    shopify.toast.show(orphansRemoved > 0 ? `Swept ${orphansRemoved} orphaned images.` : "Pool is perfectly synced.");
   };
 
   const handleSave = () => {
@@ -461,9 +452,13 @@ export default function ImageExtractor() {
           )}
 
           {activePages.length === 0 && loaderData?.success && (
-            <Card padding="400">
-              <Box padding="400" textAlign="center">
-                <Text tone="subdued">No images found or all pages are excluded.</Text>
+            <Card padding="0">
+              <Box padding="800">
+                <EmptySearchResult
+                  title="No images found"
+                  description="All pages are excluded or contain no valid images."
+                  withIllustration
+                />
               </Box>
             </Card>
           )}
@@ -486,9 +481,7 @@ export default function ImageExtractor() {
                       </Badge>
                       <Button 
                         onClick={() => toggleSelectAll(page.id, !allSelected)}
-                        size="micro"
                         accessibilityLabel={`Select or deselect all images for ${page.title}`}
-                        minHeight="48px"
                       >
                         {allSelected ? "Deselect All" : "Select All"}
                       </Button>
@@ -532,7 +525,7 @@ export default function ImageExtractor() {
                         <button
                           type="button"
                           onClick={() => setPreviewImage(img.src)}
-                          style={{ border: "none", background: "none", padding: 0, width: "100%", height: "150px", cursor: "pointer", display: "block", minHeight: "48px" }}
+                          style={{ border: "none", background: "none", padding: 0, width: "100%", height: "150px", cursor: "pointer", display: "block" }}
                           aria-label={`Preview image ${index + 1} for ${page.title}`}
                         >
                           <img 
@@ -578,7 +571,7 @@ export default function ImageExtractor() {
                  variant="primary" 
                  size="large" 
                  loading={isSaving} 
-                 onAction={handleSave}
+                 onClick={handleSave}
                  accessibilityLabel="Save the curated image pool to Shopify Metaobjects"
                >
                  Save Pool
@@ -587,15 +580,6 @@ export default function ImageExtractor() {
           )}
 
         </BlockStack>
-
-        {toastMsg && (
-          <Toast 
-            content={toastMsg} 
-            error={toastError} 
-            onDismiss={() => setToastMsg("")} 
-            duration={toastError ? 10000 : 4500} 
-          />
-        )}
 
         <Modal
           open={!!previewImage}
