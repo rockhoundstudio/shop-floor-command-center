@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { useLoaderData, useNavigate, useRevalidator } from "@remix-run/react";
+import { useLoaderData, useNavigate, useRevalidator } from "react-router";
 import {
   Page, Layout, Card, Text, BlockStack, Badge, IndexTable, 
   Box, InlineStack, EmptySearchResult, Banner
@@ -31,8 +31,7 @@ export const loader = async ({ request }) => {
   try { await admin.graphql(setupMutation); } catch(e) { /* Silently ignore if it already exists */ }
 
   try {
-    const response = await admin.graphql(`
-      #graphql
+    const response = await admin.graphql(`#graphql
       query {
         metaobjects(type: "sidekick_queue", first: 20, reverse: true) {
           edges { node { id fields { key value } } }
@@ -70,7 +69,7 @@ export default function SidekickQueueTab() {
   const { jobs = [], error } = useLoaderData();
   const navigate = useNavigate();
   
-  // Remix's native way to refresh loader data safely
+  // Native way to refresh loader data safely
   const { revalidate, state } = useRevalidator();
 
   // Auto-refresh every 30 seconds
