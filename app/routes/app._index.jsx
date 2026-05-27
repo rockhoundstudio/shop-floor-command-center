@@ -1,6 +1,6 @@
 import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
-import { Link } from "@remix-run/react";
+import { Link } from "react-router";
 import { Page, Layout, Card, Text, BlockStack, Grid } from "@shopify/polaris";
 
 // ==========================================

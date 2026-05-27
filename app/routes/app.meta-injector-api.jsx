@@ -1,4 +1,4 @@
-import { data } from "@remix-run/react";
+import { data } from "react-router";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 
