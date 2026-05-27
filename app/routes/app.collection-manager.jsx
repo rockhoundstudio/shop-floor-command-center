@@ -1,11 +1,11 @@
 import React, { useState, useCallback, useEffect } from "react";
-import { useLoaderData, useFetcher, useNavigate } from "react-router";
+import { useLoaderData, useFetcher, useNavigate } from "@remix-run/react";
 import {
   Page, Layout, Card, Text, Button, Badge, BlockStack, InlineStack, Box,
-  TextField, Modal, Banner, Toast, Frame, ResourceList,
+  TextField, Modal, Banner, Frame, ResourceList, Scrollable,
   ResourceItem, Divider, Spinner, EmptySearchResult, Thumbnail
 } from "@shopify/polaris";
-import { DeleteIcon, PlusIcon, ExternalIcon, CollectionsIcon, ImageIcon } from "@shopify/polaris-icons";
+import { DeleteIcon, PlusIcon, ExternalIcon, CollectionIcon, ImageIcon } from "@shopify/polaris-icons";
 import { authenticate } from "../shopify.server";
 
 // ==========================================
@@ -14,7 +14,7 @@ import { authenticate } from "../shopify.server";
 export async function loader({ request }) {
   const { admin } = await authenticate.admin(request);
   
-  const response = await admin.graphql(`
+  const response = await admin.graphql(`#graphql
     query GetAllCollections {
       collections(first: 50, sortKey: TITLE) {
         edges {
@@ -35,7 +35,7 @@ export async function loader({ request }) {
   const parsed = await response.json();
   const collections = parsed.data?.collections?.edges.map(e => e.node) || [];
 
-  return { collections };
+  return Response.json({ collections });
 }
 
 // ==========================================
@@ -48,8 +48,10 @@ export async function action({ request }) {
 
   // --- FETCH SINGLE COLLECTION (Live Inspector) ---
   if (intent === "fetchSingleCollection") {
-    const collectionId = formData.get("collectionId");
-    const response = await admin.graphql(`
+    const rawId = formData.get("collectionId");
+    const safeId = rawId.includes("gid://shopify/") ? rawId : `gid://shopify/Collection/${rawId.split('/').pop()}`;
+
+    const response = await admin.graphql(`#graphql
       query GetSingleCollection($id: ID!) {
         collection(id: $id) {
           id
@@ -77,10 +79,10 @@ export async function action({ request }) {
           }
         }
       }
-    `, { variables: { id: collectionId } });
+    `, { variables: { id: safeId } });
     
     const json = await response.json();
-    return { success: true, collection: json.data?.collection || null };
+    return Response.json({ success: true, collection: json.data?.collection || null });
   }
 
   // --- CREATE COLLECTION ---
@@ -88,8 +90,7 @@ export async function action({ request }) {
     const title = formData.get("title");
     const handle = formData.get("handle");
     
-    // Creating a basic manual collection
-    const response = await admin.graphql(`
+    const response = await admin.graphql(`#graphql
       mutation CollectionCreate($input: CollectionInput!) {
         collectionCreate(input: $input) {
           collection { id title }
@@ -101,30 +102,32 @@ export async function action({ request }) {
     const json = await response.json();
     const errors = json.data?.collectionCreate?.userErrors || [];
     
-    if (errors.length > 0) return { success: false, errors, message: "Failed to create collection." };
-    return { success: true, message: `Collection "${title}" created successfully.` };
+    if (errors.length > 0) return Response.json({ success: false, errors, message: "Failed to create collection." });
+    return Response.json({ success: true, message: `Collection "${title}" created successfully.` });
   }
 
   // --- DELETE COLLECTION ---
   if (intent === "deleteCollection") {
-    const id = formData.get("collectionId");
-    const response = await admin.graphql(`
+    const rawId = formData.get("collectionId");
+    const safeId = rawId.includes("gid://shopify/") ? rawId : `gid://shopify/Collection/${rawId.split('/').pop()}`;
+
+    const response = await admin.graphql(`#graphql
       mutation CollectionDelete($input: CollectionDeleteInput!) {
         collectionDelete(input: $input) {
           deletedCollectionId
           userErrors { field message }
         }
       }
-    `, { variables: { input: { id } } });
+    `, { variables: { input: { id: safeId } } });
 
     const json = await response.json();
     const errors = json.data?.collectionDelete?.userErrors || [];
 
-    if (errors.length > 0) return { success: false, errors, message: "Failed to delete collection." };
-    return { success: true, message: "Collection deleted successfully." };
+    if (errors.length > 0) return Response.json({ success: false, errors, message: "Failed to delete collection." });
+    return Response.json({ success: true, message: "Collection deleted successfully." });
   }
 
-  return { success: false, errors: [{ message: "Unknown command" }] };
+  return Response.json({ success: false, errors: [{ message: "Unknown command" }] }, { status: 400 });
 }
 
 // ==========================================
@@ -138,7 +141,6 @@ export default function CollectionManager() {
   const inspectorFetcher = useFetcher();
 
   // --- STATE ---
-  const [toastState, setToastState] = useState({ active: false, message: "", isError: false });
   const [activeCollectionId, setActiveCollectionId] = useState("");
   const [actionErrors, setActionErrors] = useState([]);
   
@@ -149,21 +151,23 @@ export default function CollectionManager() {
   const [collectionToDelete, setCollectionToDelete] = useState(null);
 
   // --- HELPERS ---
-  const closeToast = useCallback(() => setToastState(prev => ({ ...prev, active: false })), []);
   const tapTargetStyle = { minHeight: '48px', minWidth: '48px', display: 'flex', alignItems: 'center', justifyContent: 'center' };
 
   // --- MUTATION HANDLING ---
   useEffect(() => {
     if (actionFetcher.data) {
       const isSuccess = !!actionFetcher.data.success;
+      
       if (actionFetcher.data.message) {
-        setToastState({ active: true, message: actionFetcher.data.message, isError: !isSuccess });
+        shopify.toast.show(actionFetcher.data.message, { isError: !isSuccess });
       }
+      
       if (isSuccess) {
         setIsCreateModalOpen(false);
         setCollectionToDelete(null);
         setNewCollectionTitle("");
         setNewCollectionHandle("");
+        
         // If we deleted the currently viewed collection, clear the inspector
         if (actionFetcher.formData?.get("intent") === "deleteCollection" && actionFetcher.formData?.get("collectionId") === activeCollectionId) {
           setActiveCollectionId("");
@@ -185,7 +189,10 @@ export default function CollectionManager() {
 
   // --- ACTIONS ---
   const handleCreateCollection = () => {
-    if (!newCollectionTitle) return setToastState({ active: true, message: "Title is required", isError: true });
+    if (!newCollectionTitle) {
+      shopify.toast.show("Title is required", { isError: true });
+      return;
+    }
     actionFetcher.submit(
       { intent: "createCollection", title: newCollectionTitle, handle: newCollectionHandle },
       { method: "post" }
@@ -230,7 +237,7 @@ export default function CollectionManager() {
               {/* LEFT PANE: COLLECTION LIST */}
               <div style={{ flex: '0 0 400px', display: 'flex', flexDirection: 'column' }}>
                 <Card padding="0">
-                  <Box padding="400" borderBottom="1px solid var(--p-color-border-subdued)">
+                  <Box padding="400" borderBottom="025" borderColor="border">
                     <Text variant="headingMd" as="h2">Store Collections ({collections.length})</Text>
                   </Box>
                   <Scrollable style={{ height: '65vh' }}>
@@ -239,34 +246,37 @@ export default function CollectionManager() {
                         <EmptySearchResult title="No collections found" description="Create a new collection to get started." withIllustration />
                       </Box>
                     )}
-                    <ResourceList
-                      resourceName={{ singular: "collection", plural: "collections" }}
-                      items={collections}
-                      renderItem={(item) => {
-                        const isActive = item.id === activeCollectionId;
-                        return (
-                          <ResourceItem
-                            id={item.id}
-                            onClick={() => setActiveCollectionId(item.id)}
-                            accessibilityLabel={`View collection ${item.title}`}
-                          >
-                            <Box background={isActive ? "bg-surface-secondary" : "transparent"} padding="200" borderRadius="200">
-                              <InlineStack align="start" blockAlign="center" gap="300">
-                                <Thumbnail
-                                  source={item.image?.url || CollectionsIcon}
-                                  alt={item.image?.altText || item.title}
-                                  size="small"
-                                />
-                                <BlockStack gap="100">
-                                  <Text variant="bodyMd" fontWeight={isActive ? "bold" : "regular"}>{item.title}</Text>
-                                  <Text variant="bodySm" color="subdued">Handle: {item.handle}</Text>
-                                </BlockStack>
-                              </InlineStack>
-                            </Box>
-                          </ResourceItem>
-                        );
-                      }}
-                    />
+                    
+                    {collections.length > 0 && (
+                      <ResourceList
+                        resourceName={{ singular: "collection", plural: "collections" }}
+                        items={collections}
+                        renderItem={(item) => {
+                          const isActive = item.id === activeCollectionId;
+                          return (
+                            <ResourceItem
+                              id={item.id}
+                              onClick={() => setActiveCollectionId(item.id)}
+                              accessibilityLabel={`View collection ${item.title}`}
+                            >
+                              <Box background={isActive ? "bg-surface-secondary" : "transparent"} padding="200" borderRadius="200">
+                                <InlineStack align="start" blockAlign="center" gap="300">
+                                  <Thumbnail
+                                    source={item.image?.url || CollectionIcon}
+                                    alt={item.image?.altText || item.title}
+                                    size="small"
+                                  />
+                                  <BlockStack gap="100">
+                                    <Text variant="bodyMd" fontWeight={isActive ? "bold" : "regular"} as="span">{item.title}</Text>
+                                    <Text variant="bodySm" tone="subdued" as="span">Handle: {item.handle}</Text>
+                                  </BlockStack>
+                                </InlineStack>
+                              </Box>
+                            </ResourceItem>
+                          );
+                        }}
+                      />
+                    )}
                   </Scrollable>
                 </Card>
               </div>
@@ -331,10 +341,12 @@ export default function CollectionManager() {
                               />
                               <Text as="p"><strong>Handle:</strong> {activeDetails?.handle}</Text>
                               <Text as="p"><strong>Description:</strong></Text>
-                              {activeDetails?.descriptionHtml ? (
+                              
+                              {activeDetails?.descriptionHtml && (
                                 <div dangerouslySetInnerHTML={{ __html: activeDetails.descriptionHtml }} style={{ fontSize: '14px', color: 'var(--p-color-text-subdued)' }} />
-                              ) : (
-                                <Text color="subdued" as="span">No description provided.</Text>
+                              )}
+                              {!activeDetails?.descriptionHtml && (
+                                <Text tone="subdued" as="span">No description provided.</Text>
                               )}
                             </BlockStack>
                           </Box>
@@ -363,8 +375,8 @@ export default function CollectionManager() {
                                     size="small"
                                   />
                                   <BlockStack>
-                                    <Text variant="bodyMd" fontWeight="bold">{product.title}</Text>
-                                    <Badge tone={product.status === "ACTIVE" ? "success" : "default"}>{product.status}</Badge>
+                                    <Text variant="bodyMd" fontWeight="bold" as="span">{product.title}</Text>
+                                    <Badge tone={product.status === "ACTIVE" ? "success" : "info"}>{product.status}</Badge>
                                   </BlockStack>
                                 </InlineStack>
                               </Card>
@@ -435,11 +447,6 @@ export default function CollectionManager() {
               </Text>
             </Modal.Section>
           </Modal>
-        )}
-
-        {/* TOASTS */}
-        {toastState.active && (
-          <Toast content={toastState.message} error={toastState.isError} onDismiss={closeToast} />
         )}
       </Page>
     </Frame>
