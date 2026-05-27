@@ -1,10 +1,8 @@
 import { boundary } from "@shopify/shopify-app-react-router/server";
-import { authenticate } from "../shopify.server";
+import { login } from "../shopify.server";
 
 export const loader = async ({ request }) => {
-  await authenticate.admin(request);
-
-  return null;
+  return login(request);
 };
 
 export const headers = (headersArgs) => {
