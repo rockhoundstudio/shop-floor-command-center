@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useLoaderData, useFetcher, useNavigate, useRevalidator } from "react-router";
-import { redirect } from "@remix-run/node";
+import { redirect } from "react-router";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server"; 
 import {
