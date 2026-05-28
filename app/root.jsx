@@ -1,9 +1,14 @@
-import { Links, Meta, Outlet, Scripts, ScrollRestoration, useRouteError } from "react-router";
+import { Links, Meta, Outlet, Scripts, ScrollRestoration, useRouteError, useLoaderData } from "react-router";
 import { AppProvider } from "@shopify/polaris";
 import polarisTranslations from "@shopify/polaris/locales/en.json";
 import "@shopify/polaris/build/esm/styles.css";
 
+export const loader = async () => {
+  return { apiKey: process.env.SHOPIFY_API_KEY || "" };
+};
+
 export default function App() {
+  const { apiKey } = useLoaderData();
   return (
     <html lang="en">
       <head>
@@ -19,6 +24,10 @@ export default function App() {
       </head>
       <body>
         <AppProvider i18n={polarisTranslations}>
+          <script
+            src="https://cdn.shopify.com/shopifycloud/app-bridge.js"
+            data-api-key={apiKey}
+          />
           <Outlet />
         </AppProvider>
         <ScrollRestoration />
