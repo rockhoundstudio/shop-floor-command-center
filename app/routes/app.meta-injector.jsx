@@ -8,8 +8,10 @@ import {
 import { UndoIcon, ImportIcon, ExportIcon } from "@shopify/polaris-icons";
 import { METAFIELD_CONFIG, getLabelForValue } from "./app.meta-injector.constants";
 
-// Re-export server functions from the renamed loader file
-export { loader, action } from "./app.meta-injector.loader";
+// Explicitly import and re-export server functions to satisfy Remix/Vite AST analysis
+import { loader as _loader, action as _action } from "./app.meta-injector.loader";
+export const loader = _loader;
+export const action = _action;
 
 export default function MetaInjectorV2() {
   const { products, snapshots: initialSnapshots, dbProfiles } = useLoaderData();
