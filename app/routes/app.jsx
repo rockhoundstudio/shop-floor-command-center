@@ -1,7 +1,6 @@
-import { Outlet } from "react-router";
-import { AppProvider } from "@shopify/shopify-app-remix/react";
+import { Outlet, useLoaderData } from "react-router";
+import { AppProvider } from "@shopify/shopify-app-react-router/react";
 import { authenticate } from "../shopify.server";
-import { useLoaderData } from "react-router";
 
 export const loader = async ({ request }) => {
   await authenticate.admin(request);
