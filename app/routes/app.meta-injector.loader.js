@@ -66,7 +66,7 @@ export async function loader({ request }) {
                 // simple extraction if it's a raw string list
                 const matches = mf.value.match(/gid:\/\/shopify\/Metaobject\/\d+/g);
                 if (matches) {
-                    matches.forEach(gid => gidsToResolve.add(gid));
+                  matches.forEach(gid => gidsToResolve.add(gid));
                 }
             }
           }
@@ -145,40 +145,61 @@ export async function action({ request }) {
   const intent = formData.get("intent");
 
   if (intent === "saveMetafields") {
-    let payload = JSON.parse(formData.get("payload"));
+    let rawPayload = JSON.parse(formData.get("payload"));
 
-    payload = payload.map(mf => {
-      if (mf.key === "moh_hardness" || mf.key === "hardness") {
-        mf.key = "mohs_hardness";
-        mf.namespace = "custom";
+    // Confirm payload shape, conditionally format, and skip leaks via reduce
+    let payload = rawPayload.reduce((acc, mf) => {
+      let cleanMf = {
+        ownerId: mf.ownerId,
+        namespace: "custom", // Unconditionally forced to "custom"
+        key: mf.key,
+        value: mf.value,
+        type: mf.type
+      };
+
+      if (cleanMf.key === "moh_hardness" || cleanMf.key === "hardness") {
+        cleanMf.key = "mohs_hardness";
       }
-      if (mf.key === "official_name" && typeof mf.value === "string" && /gid:\/\/shopify/.test(mf.value)) {
-        console.warn(`GID Leak intercepted on official_name for ${mf.ownerId}. Stripping GID payload.`);
-        mf.value = mf.value.replace(/[\[\]"]/g, '');
-        mf.type = "single_line_text_field";
+
+      // Universal GID Leak Guard
+      if (typeof cleanMf.value === "string" && cleanMf.value.includes("gid://shopify")) {
+        console.warn(`GID Leak intercepted on ${cleanMf.key} for ${cleanMf.ownerId}. Skipping this metafield.`);
+        return acc;
       }
-      return mf;
-    });
+
+      acc.push(cleanMf);
+      return acc;
+    }, []);
 
     const chunks = [];
-    for (let i = 0; i < payload.length; i += 3) {
-      chunks.push(payload.slice(i, i + 3));
+    for (let i = 0; i < payload.length; i += 10) {
+      chunks.push(payload.slice(i, i + 10));
     }
 
     let allErrors = [];
     for (const chunk of chunks) {
-      const response = await admin.graphql(`
-        #graphql
-        mutation MetafieldsSet($metafields: [MetafieldsSetInput!]!) {
-          metafieldsSet(metafields: $metafields) {
-            userErrors { field message }
+      console.log("Sending metafieldsSet chunk:", JSON.stringify(chunk, null, 2));
+
+      try {
+        const response = await admin.graphql(`
+          #graphql
+          mutation MetafieldsSet($metafields: [MetafieldsSetInput!]!) {
+            metafieldsSet(metafields: $metafields) {
+              userErrors { field message }
+            }
           }
+        `, { variables: { metafields: chunk } });
+        
+        const json = await response.json();
+        console.log("Received metafieldsSet response:", JSON.stringify(json, null, 2));
+        
+        const errors = json.data?.metafieldsSet?.userErrors ? json.data.metafieldsSet.userErrors : [];
+        if (errors.length > 0) {
+          allErrors = [...allErrors, ...errors];
         }
-      `, { variables: { metafields: chunk } });
-      const json = await response.json();
-      const errors = json.data?.metafieldsSet?.userErrors ? json.data.metafieldsSet.userErrors : [];
-      if (errors.length > 0) {
-        allErrors = [...allErrors, ...errors];
+      } catch (error) {
+        console.error("GraphQL execution failed for chunk:", error);
+        allErrors.push({ field: ["graphql"], message: error.message });
       }
     }
 
