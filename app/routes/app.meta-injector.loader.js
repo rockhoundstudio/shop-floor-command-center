@@ -21,13 +21,6 @@ export async function loader({ request }) {
                 edges { 
                   node { 
                     id namespace key value type 
-                    references(first: 5) {
-                      edges {
-                        node {
-                          ... on Metaobject { handle }
-                        }
-                      }
-                    }
                   } 
                 }
               }
@@ -38,12 +31,12 @@ export async function loader({ request }) {
     `, { variables: { cursor } });
 
     const parsed = await response.json();
-    const productsData = parsed.data?.products ? parsed.data.products : null;
+    const productsData = parsed.data?.products || null;
 
     if (productsData) {
       allRawProducts = [...allRawProducts, ...productsData.edges.map(e => e.node)];
-      hasNextPage = productsData.pageInfo.hasNextPage ? true : false;
-      cursor = productsData.pageInfo.endCursor ? productsData.pageInfo.endCursor : null;
+      hasNextPage = productsData.pageInfo.hasNextPage || false;
+      cursor = productsData.pageInfo.endCursor || null;
     } else {
       hasNextPage = false;
     }
@@ -51,6 +44,70 @@ export async function loader({ request }) {
 
   const products = allRawProducts.filter(p => !EXCLUDED_TITLES.includes(p.title));
 
+  // --- METAOBJECT GID RESOLUTION ---
+  const gidsToResolve = new Set();
+  
+  products.forEach(p => {
+    if (p.metafields && p.metafields.edges) {
+      p.metafields.edges.forEach(edge => {
+        const mf = edge.node;
+        if (mf.type === "list.metaobject_reference" || mf.type === "metaobject_reference") {
+          try {
+            // value could be a string '["gid://..."]' or just '"gid://..."'
+            const parsedValue = JSON.parse(mf.value);
+            if (Array.isArray(parsedValue)) {
+              parsedValue.forEach(gid => gidsToResolve.add(gid));
+            } else if (typeof parsedValue === "string") {
+              gidsToResolve.add(parsedValue);
+            }
+          } catch (e) {
+            // Fallback if value isn't JSON parseable but looks like a GID
+            if (typeof mf.value === "string" && mf.value.includes("gid://shopify/Metaobject/")) {
+                // simple extraction if it's a raw string list
+                const matches = mf.value.match(/gid:\/\/shopify\/Metaobject\/\d+/g);
+                if (matches) {
+                    matches.forEach(gid => gidsToResolve.add(gid));
+                }
+            }
+          }
+        }
+      });
+    }
+  });
+
+  const uniqueGids = Array.from(gidsToResolve);
+  const metaobjectHandles = {};
+
+  // Batch fetch in chunks of 10
+  const chunks = [];
+  for (let i = 0; i < uniqueGids.length; i += 10) {
+    chunks.push(uniqueGids.slice(i, i + 10));
+  }
+
+  for (const chunk of chunks) {
+    const resolveResponse = await admin.graphql(`
+      #graphql
+      query ResolveNodes($ids: [ID!]!) {
+        nodes(ids: $ids) {
+          ... on Metaobject {
+            id
+            handle
+          }
+        }
+      }
+    `, { variables: { ids: chunk } });
+
+    const resolveParsed = await resolveResponse.json();
+    const nodes = resolveParsed.data?.nodes || [];
+    
+    nodes.forEach(node => {
+      if (node && node.id && node.handle) {
+        metaobjectHandles[node.id] = node.handle;
+      }
+    });
+  }
+
+  // --- SNAPSHOT FETCHING ---
   const snapResponse = await admin.graphql(`
     #graphql
     query GetSnapshots {
@@ -79,7 +136,7 @@ export async function loader({ request }) {
     payloadStr: s.payload?.value ? s.payload.value : "[]"
   }));
 
-  return { products, snapshots };
+  return { products, snapshots, metaobjectHandles };
 }
 
 export async function action({ request }) {
@@ -142,13 +199,6 @@ export async function action({ request }) {
             edges { 
               node { 
                 id namespace key value type 
-                references(first: 5) {
-                  edges {
-                    node {
-                      ... on Metaobject { handle }
-                    }
-                  }
-                }
               } 
             }
           }
