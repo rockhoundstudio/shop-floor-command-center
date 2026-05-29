@@ -7,7 +7,29 @@ import {
 } from "@shopify/polaris";
 import { UndoIcon, ImportIcon, ExportIcon } from "@shopify/polaris-icons";
 import { authenticate } from "../shopify.server";
-import { METAFIELD_CONFIG, getLabelForValue, EXCLUDED_TITLES } from "./app.meta-injector.constants";
+import { METAFIELD_CONFIG as RAW_METAFIELD_CONFIG, getLabelForValue, EXCLUDED_TITLES } from "./app.meta-injector.constants";
+
+// Apply the verified key mapping patch globally for the UI
+const METAFIELD_CONFIG = RAW_METAFIELD_CONFIG.map(field => {
+  if (field.label === "Official Name" || field.key === "official_name") return { ...field, namespace: "custom", key: "official_name" };
+  if (field.label === "Color / Pattern" || field.key === "color-pattern") return { ...field, namespace: "shopify", key: "color-pattern", type: "list.metaobject_reference" };
+  if (field.label === "Authenticity" || field.key === "authenticity") return { ...field, namespace: "shopify", key: "authenticity", type: "list.metaobject_reference" };
+  if (field.label === "Rarity" || field.key === "rarity") return { ...field, namespace: "shopify", key: "rarity", type: "list.metaobject_reference" };
+  if (field.label === "Crystal System" || field.key === "crystal-system") return { ...field, namespace: "shopify", key: "crystal-system", type: "list.metaobject_reference" };
+  if (field.label === "Geological Era" || field.key === "geological-era") return { ...field, namespace: "shopify", key: "geological-era", type: "list.metaobject_reference" };
+  if (field.label === "Mineral Class" || field.key === "mineral-class") return { ...field, namespace: "shopify", key: "mineral-class", type: "list.metaobject_reference" };
+  if (field.label === "Rock Composition" || field.key === "rock-composition") return { ...field, namespace: "shopify", key: "rock-composition", type: "list.metaobject_reference" };
+  if (field.label === "Rock Formation" || field.key === "rock-formation") return { ...field, namespace: "shopify", key: "rock-formation", type: "list.metaobject_reference" };
+  if (field.label === "Hardness (Mohs)" || field.key === "moh_hardness" || field.key === "hardness") return { ...field, namespace: "custom", key: "mohs_hardness" };
+  if (field.label === "Luster" || field.key === "luster") return { ...field, namespace: "custom", key: "luster" };
+  if (field.label === "Fracture" || field.key === "fracture") return { ...field, namespace: "custom", key: "fracture_pattern" };
+  if (field.label === "Cleavage" || field.key === "cleavage") return { ...field, namespace: "custom", key: "cleavage" };
+  if (field.label === "Specific Gravity" || field.key === "specific_gravity") return { ...field, namespace: "custom", key: "specific_gravity" };
+  if (field.label === "Diaphaneity" || field.key === "diaphaneity") return { ...field, namespace: "custom", key: "diaphaneity" };
+  if (field.label === "Origin Location" || field.key === "origin_location") return { ...field, namespace: "custom", key: "origin_location" };
+  
+  return field;
+});
 
 export async function loader({ request }) {
   const { admin } = await authenticate.admin(request);
@@ -35,12 +57,12 @@ export async function loader({ request }) {
     `, { variables: { cursor } });
 
     const parsed = await response.json();
-    const productsData = parsed.data?.products ? parsed.data.products : null;
+    const productsData = parsed.data?.products || null;
 
     if (productsData) {
       allRawProducts = [...allRawProducts, ...productsData.edges.map(e => e.node)];
-      hasNextPage = productsData.pageInfo.hasNextPage ? true : false;
-      cursor = productsData.pageInfo.endCursor ? productsData.pageInfo.endCursor : null;
+      hasNextPage = productsData.pageInfo.hasNextPage || false;
+      cursor = productsData.pageInfo.endCursor || null;
     } else {
       hasNextPage = false;
     }
@@ -66,14 +88,14 @@ export async function loader({ request }) {
   `);
 
   const snapParsed = await snapResponse.json();
-  const rawSnapshots = snapParsed.data?.metaobjects?.edges.map(e => e.node) ? snapParsed.data.metaobjects.edges.map(e => e.node) : [];
+  const rawSnapshots = snapParsed.data?.metaobjects?.edges.map(e => e.node) || [];
 
   const snapshots = rawSnapshots.map(s => ({
     id: s.id,
-    date: s.timestamp?.value ? s.timestamp.value : "Unknown Date",
-    action: s.action?.value ? s.action.value : "Snapshot",
-    scopeCount: s.scope?.value ? s.scope.value : "0",
-    payloadStr: s.payload?.value ? s.payload.value : "[]"
+    date: s.timestamp?.value || "Unknown Date",
+    action: s.action?.value || "Snapshot",
+    scopeCount: s.scope?.value || "0",
+    payloadStr: s.payload?.value || "[]"
   }));
 
   return { products, snapshots };
@@ -102,7 +124,7 @@ export async function action({ request }) {
         }
       `, { variables: { metafields: chunk } });
       const json = await response.json();
-      const errors = json.data?.metafieldsSet?.userErrors ? json.data.metafieldsSet.userErrors : [];
+      const errors = json.data?.metafieldsSet?.userErrors || [];
       if (errors.length > 0) allErrors = [...allErrors, ...errors];
     }
 
@@ -126,7 +148,7 @@ export async function action({ request }) {
       }
     `, { variables: { id: productId } });
     const json = await response.json();
-    return { success: true, product: json.data?.product ? json.data.product : null };
+    return { success: true, product: json.data?.product || null };
   }
 
   if (intent === "fetchOrigins") {
@@ -150,11 +172,11 @@ export async function action({ request }) {
         }
       `, { variables: { cursor } });
       const json = await response.json();
-      const data = json.data?.products ? json.data.products : null;
+      const data = json.data?.products || null;
       if (data) {
         allRaw = [...allRaw, ...data.edges.map(e => e.node)];
-        hasNext = data.pageInfo.hasNextPage ? true : false;
-        cursor = data.pageInfo.endCursor ? data.pageInfo.endCursor : null;
+        hasNext = data.pageInfo.hasNextPage || false;
+        cursor = data.pageInfo.endCursor || null;
       } else {
         hasNext = false;
       }
@@ -172,7 +194,7 @@ export async function action({ request }) {
       }
     `, { variables: { ids: gids } });
     const json = await response.json();
-    const nodes = json.data?.nodes ? json.data.nodes : [];
+    const nodes = json.data?.nodes || [];
     const isInvalid = nodes.some(n => n === null);
     return { success: true, isValid: !isInvalid };
   }
@@ -206,13 +228,13 @@ export async function action({ request }) {
     });
 
     const createJson = await createRes.json();
-    const errors = createJson.data?.metaobjectCreate?.userErrors ? createJson.data.metaobjectCreate.userErrors : [];
+    const errors = createJson.data?.metaobjectCreate?.userErrors || [];
 
     if (errors.length > 0 && errors[0].message.includes("type must exist")) {
       return { success: false, errors: [{ message: "Requires Metaobject Definition: 'meta_injector_snapshot' with fields: timestamp, action, scope, payload." }] };
     }
 
-    const existingIds = JSON.parse(formData.get("existingIds") ? formData.get("existingIds") : "[]");
+    const existingIds = JSON.parse(formData.get("existingIds") || "[]");
     if (existingIds.length >= 5) {
       const oldestId = existingIds[existingIds.length - 1];
       await admin.graphql(`
