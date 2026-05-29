@@ -18,7 +18,18 @@ export async function loader({ request }) {
             node {
               id title status featuredImage { url altText }
               metafields(first: 50) {
-                edges { node { id namespace key value type } }
+                edges { 
+                  node { 
+                    id namespace key value type 
+                    references(first: 5) {
+                      edges {
+                        node {
+                          ... on Metaobject { handle }
+                        }
+                      }
+                    }
+                  } 
+                }
               }
             }
           }
@@ -39,55 +50,6 @@ export async function loader({ request }) {
   }
 
   const products = allRawProducts.filter(p => !EXCLUDED_TITLES.includes(p.title));
-
-  // Collect all metaobject GIDs from reference fields
-  const gidSet = new Set();
-  for (const product of products) {
-    for (const edge of product.metafields.edges) {
-      const mf = edge.node;
-      if (mf.type === "list.metaobject_reference" || mf.type === "metaobject_reference") {
-        try {
-          const parsed = JSON.parse(mf.value);
-          const gids = Array.isArray(parsed) ? parsed : [parsed];
-          for (const gid of gids) {
-            if (typeof gid === "string" && gid.startsWith("gid://")) {
-              gidSet.add(gid);
-            }
-          }
-        } catch (e) {
-          // skip unparseable values
-        }
-      }
-    }
-  }
-
-  // Batch-fetch metaobject display names
-  const metaobjectNames = {};
-  const allGids = Array.from(gidSet);
-  const GID_BATCH_SIZE = 10;
-
-  for (let i = 0; i < allGids.length; i += GID_BATCH_SIZE) {
-    const batch = allGids.slice(i, i + GID_BATCH_SIZE);
-    const nodesResponse = await admin.graphql(`
-      #graphql
-      query ResolveMetaobjects($ids: [ID!]!) {
-        nodes(ids: $ids) {
-          ... on Metaobject {
-            id
-            displayName: field(key: "name") { value }
-          }
-        }
-      }
-    `, { variables: { ids: batch } });
-
-    const nodesJson = await nodesResponse.json();
-    const nodes = nodesJson.data?.nodes ? nodesJson.data.nodes : [];
-    for (const node of nodes) {
-      if (node && node.id) {
-        metaobjectNames[node.id] = node.displayName?.value ? node.displayName.value : node.id;
-      }
-    }
-  }
 
   const snapResponse = await admin.graphql(`
     #graphql
@@ -117,7 +79,7 @@ export async function loader({ request }) {
     payloadStr: s.payload?.value ? s.payload.value : "[]"
   }));
 
-  return { products, snapshots, metaobjectNames };
+  return { products, snapshots };
 }
 
 export async function action({ request }) {
@@ -126,7 +88,21 @@ export async function action({ request }) {
   const intent = formData.get("intent");
 
   if (intent === "saveMetafields") {
-    const payload = JSON.parse(formData.get("payload"));
+    let payload = JSON.parse(formData.get("payload"));
+
+    payload = payload.map(mf => {
+      if (mf.key === "moh_hardness" || mf.key === "hardness") {
+        mf.key = "mohs_hardness";
+        mf.namespace = "custom";
+      }
+      if (mf.key === "official_name" && typeof mf.value === "string" && /gid:\/\/shopify/.test(mf.value)) {
+        console.warn(`GID Leak intercepted on official_name for ${mf.ownerId}. Stripping GID payload.`);
+        mf.value = mf.value.replace(/[\[\]"]/g, '');
+        mf.type = "single_line_text_field";
+      }
+      return mf;
+    });
+
     const chunks = [];
     for (let i = 0; i < payload.length; i += 3) {
       chunks.push(payload.slice(i, i + 3));
@@ -163,13 +139,33 @@ export async function action({ request }) {
         product(id: $id) {
           id title status featuredImage { url altText }
           metafields(first: 50) {
-            edges { node { id namespace key value type } }
+            edges { 
+              node { 
+                id namespace key value type 
+                references(first: 5) {
+                  edges {
+                    node {
+                      ... on Metaobject { handle }
+                    }
+                  }
+                }
+              } 
+            }
           }
         }
       }
     `, { variables: { id: productId } });
     const json = await response.json();
-    return { success: true, product: json.data?.product ? json.data.product : null };
+    const product = json.data?.product ? json.data.product : null;
+
+    if (product) {
+      const officialNameMf = product.metafields.edges.find(e => e.node.key === "official_name");
+      if (officialNameMf && /gid:\/\/shopify/.test(officialNameMf.node.value)) {
+        console.warn(`Guard Triggered: official_name is a raw GID. Bypassing DB lookup to prevent hang.`);
+      }
+    }
+
+    return { success: true, product };
   }
 
   if (intent === "fetchOrigins") {
@@ -260,8 +256,7 @@ export async function action({ request }) {
       return { success: false, errors: [{ message: "Requires Metaobject Definition: 'meta_injector_snapshot' with fields: timestamp, action, scope, payload." }] };
     }
 
-    const existingIdsRaw = formData.get("existingIds");
-    const existingIds = existingIdsRaw ? JSON.parse(existingIdsRaw) : [];
+    const existingIds = JSON.parse(formData.get("existingIds") ? formData.get("existingIds") : "[]");
     if (existingIds.length >= 5) {
       const oldestId = existingIds[existingIds.length - 1];
       await admin.graphql(`
