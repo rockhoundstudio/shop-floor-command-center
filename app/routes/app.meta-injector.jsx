@@ -1,376 +1,16 @@
-import React, { useState, useCallback, useMemo, useEffect } from "react";
+import React, { useState, useCallback, useEffect } from "react";
 import { useLoaderData, useFetcher, useNavigate } from "react-router";
 import {
   Page, Layout, Card, Text, TextField, Button, Badge, BlockStack, InlineStack, Box,
   Tabs, DataTable, Select, Checkbox, Modal, Banner, Toast, Frame, ResourceList,
   ResourceItem, Divider, Scrollable, ChoiceList, Spinner, EmptySearchResult
 } from "@shopify/polaris";
-import { InfoIcon, AlertCircleIcon, UndoIcon, ImportIcon, ExportIcon } from "@shopify/polaris-icons";
-import { authenticate } from "../shopify.server";
+import { UndoIcon, ImportIcon, ExportIcon } from "@shopify/polaris-icons";
+import { METAFIELD_CONFIG, getLabelForValue } from "./app.meta-injector.constants";
 
-// ==========================================
-// CONFIGURATION & EXCLUSIONS
-// ==========================================
-const EXCLUDED_TITLES = ["Black Cord Necklace", "Sterling Silver Pinch Bail"];
+// Re-export server functions from the renamed loader file
+export { loader, action } from "./app.meta-injector.loader";
 
-// Taxonomy GID Dictionaries
-const colorOptions = [
-  { label: "Select Color...", value: "" },
-  { label: "Green", value: '["gid://shopify/Metaobject/151768563963"]' },
-  { label: "Black", value: '["gid://shopify/Metaobject/151768596731"]' },
-  { label: "Blue flash", value: '["gid://shopify/Metaobject/151792943355"]' },
-  { label: "Red", value: '["gid://shopify/Metaobject/151881154811"]' },
-  { label: "White", value: '["gid://shopify/Metaobject/151881810171"]' },
-  { label: "Multicolor", value: '["gid://shopify/Metaobject/151950098683"]' },
-  { label: "Gold", value: '["gid://shopify/Metaobject/151950754043"]' },
-  { label: "Floral", value: '["gid://shopify/Metaobject/151951048955"]' },
-  { label: "Pink", value: '["gid://shopify/Metaobject/151951507707"]' },
-  { label: "Striped", value: '["gid://shopify/Metaobject/152875892987"]' },
-  { label: "Beige", value: '["gid://shopify/Metaobject/152947491067"]' },
-  { label: "Brown", value: '["gid://shopify/Metaobject/152947523835"]' },
-  { label: "Clear", value: '["gid://shopify/Metaobject/152947556603"]' },
-  { label: "Orange", value: '["gid://shopify/Metaobject/152947589371"]' },
-  { label: "Yellow", value: '["gid://shopify/Metaobject/152947622139"]' },
-  { label: "Bronze", value: '["gid://shopify/Metaobject/152947654907"]' },
-  { label: "Yellow veins", value: '["gid://shopify/Metaobject/152948146427"]' },
-  { label: "Landscape", value: '["gid://shopify/Metaobject/152951488763"]' },
-  { label: "Blue", value: '["gid://shopify/Metaobject/152951816443"]' },
-  { label: "Gray", value: '["gid://shopify/Metaobject/152951849211"]' },
-  { label: "Silver", value: '["gid://shopify/Metaobject/152951881979"]' },
-  { label: "Spots", value: '["gid://shopify/Metaobject/152952111355"]' },
-  { label: "Dots", value: '["gid://shopify/Metaobject/152952144123"]' },
-  { label: "Purple", value: '["gid://shopify/Metaobject/155539931387"]' }
-];
-
-const authOptions = [
-  { label: "Select Authenticity...", value: "" },
-  { label: "Genuine", value: '["gid://shopify/Metaobject/151951114491"]' },
-  { label: "Replica", value: '["gid://shopify/Metaobject/156128346363"]' }
-];
-
-const rarityOptions = [
-  { label: "Select Rarity...", value: "" },
-  { label: "Common", value: '["gid://shopify/Metaobject/151951147259"]' },
-  { label: "Rare", value: '["gid://shopify/Metaobject/154252050683"]' }
-];
-
-const crystalOptions = [
-  { label: "Select Crystal System...", value: "" },
-  { label: "Monoclinic", value: '["gid://shopify/Metaobject/151951212795"]' },
-  { label: "Trigonal", value: '["gid://shopify/Metaobject/154252116219"]' },
-  { label: "Hexagonal", value: '["gid://shopify/Metaobject/154307625211"]' },
-  { label: "Triclinic", value: '["gid://shopify/Metaobject/154308706555"]' }
-];
-
-const eraOptions = [
-  { label: "Select Geological Era...", value: "" },
-  { label: "Precambrian", value: '["gid://shopify/Metaobject/151951245563"]' },
-  { label: "Mesozoic", value: '["gid://shopify/Metaobject/154252083451"]' },
-  { label: "Cenozoic", value: '["gid://shopify/Metaobject/154307854587"]' },
-  { label: "Paleozoic", value: '["gid://shopify/Metaobject/156128379131"]' },
-  { label: "Other", value: '["gid://shopify/Metaobject/156128444667"]' }
-];
-
-const mineralClassOptions = [
-  { label: "Select Mineral Class...", value: "" },
-  { label: "Silicates", value: '["gid://shopify/Metaobject/151951278331"]' },
-  { label: "Oxides", value: '["gid://shopify/Metaobject/155431371003"]' },
-  { label: "Carbonates", value: '["gid://shopify/Metaobject/156128313595"]' }
-];
-
-const rockCompOptions = [
-  { label: "Select Rock Composition...", value: "" },
-  { label: "Granite", value: '["gid://shopify/Metaobject/151951311099"]' },
-  { label: "Obsidian", value: '["gid://shopify/Metaobject/155431338235"]' },
-  { label: "Andesite", value: '["gid://shopify/Metaobject/156128411899"]' },
-  { label: "Schist", value: '["gid://shopify/Metaobject/156128477435"]' },
-  { label: "Jasper", value: '["gid://shopify/Metaobject/166239764731"]' }
-];
-
-const rockFormOptions = [
-  { label: "Select Rock Formation...", value: "" },
-  { label: "Metamorphic", value: '["gid://shopify/Metaobject/151951343867"]' },
-  { label: "Igneous", value: '["gid://shopify/Metaobject/154251985147"]' },
-  { label: "Sedimentary", value: '["gid://shopify/Metaobject/154307657979"]' }
-];
-
-const METAFIELD_CONFIG = [
-  { namespace: "custom", key: "official_name", type: "single_line_text_field", label: "Official Name (North Star)" },
-  { namespace: "shopify", key: "color-pattern", type: "list.metaobject_reference", label: "Color / Pattern", options: colorOptions },
-  { namespace: "shopify", key: "authenticity", type: "list.metaobject_reference", label: "Authenticity", options: authOptions },
-  { namespace: "shopify", key: "rarity", type: "list.metaobject_reference", label: "Rarity", options: rarityOptions },
-  { namespace: "shopify", key: "crystal-system", type: "list.metaobject_reference", label: "Crystal System", options: crystalOptions },
-  { namespace: "shopify", key: "geological-era", type: "list.metaobject_reference", label: "Geological Era", options: eraOptions },
-  { namespace: "shopify", key: "mineral-class", type: "list.metaobject_reference", label: "Mineral Class", options: mineralClassOptions },
-  { namespace: "shopify", key: "rock-composition", type: "list.metaobject_reference", label: "Rock Composition", options: rockCompOptions },
-  { namespace: "shopify", key: "rock-formation", type: "list.metaobject_reference", label: "Rock Formation", options: rockFormOptions },
-  { namespace: "custom", key: "hardness", type: "number_decimal", label: "Hardness (Mohs)" },
-  { namespace: "custom", key: "luster", type: "single_line_text_field", label: "Luster" },
-  { namespace: "custom", key: "fracture", type: "single_line_text_field", label: "Fracture" },
-  { namespace: "custom", key: "cleavage", type: "single_line_text_field", label: "Cleavage" },
-  { namespace: "custom", key: "specific_gravity", type: "number_decimal", label: "Specific Gravity" },
-  { namespace: "custom", key: "diaphaneity", type: "single_line_text_field", label: "Diaphaneity" },
-  { namespace: "custom", key: "origin_location", type: "single_line_text_field", label: "Origin Location" },
-  { namespace: "custom", key: "meta_status", type: "json", label: "Data Integrity Status", hidden: true }
-];
-
-const getLabelForValue = (key, value) => {
-  const config = METAFIELD_CONFIG.find(c => c.key === key);
-  if (config && config.options) {
-    const match = config.options.find(o => o.value === value);
-    return match ? match.label : value;
-  }
-  return value;
-};
-
-// ==========================================
-// RENDER DB FETCH STUB
-// ==========================================
-async function fetchProfilesFromRenderDB() {
-  // TODO: Replace this entirely with your fetch or Prisma call to Render DB
-  return [
-    { 
-      name: "Quartz", 
-      data: { 
-        hardness: "7", luster: "Vitreous", "crystal-system": '["gid://shopify/Metaobject/154252116219"]', 
-        fracture: "Conchoidal", cleavage: "None", specific_gravity: "2.65", 
-        "mineral-class": '["gid://shopify/Metaobject/151951278331"]', diaphaneity: "Transparent to Opaque" 
-      } 
-    },
-    { 
-      name: "Labradorite", 
-      data: { 
-        hardness: "6", luster: "Vitreous to Pearly", "crystal-system": '["gid://shopify/Metaobject/154308706555"]', 
-        fracture: "Uneven", cleavage: "Perfect", specific_gravity: "2.70", diaphaneity: "Translucent" 
-      } 
-    }
-  ];
-}
-
-// ==========================================
-// SERVER: LOADER
-// ==========================================
-export async function loader({ request }) {
-  const { admin } = await authenticate.admin(request);
-  
-  // 1. Fetch Render DB Profiles
-  const dbProfiles = await fetchProfilesFromRenderDB();
-
-  // 2. Fetch ALL products via cursor pagination
-  let allRawProducts = [];
-  let hasNextPage = true;
-  let cursor = null;
-
-  while (hasNextPage) {
-    const response = await admin.graphql(`
-      query GetAllProducts($cursor: String) {
-        products(first: 50, after: $cursor, sortKey: TITLE) {
-          pageInfo { hasNextPage endCursor }
-          edges {
-            node {
-              id title status featuredImage { url altText }
-              metafields(first: 50) {
-                edges { node { id namespace key value type } }
-              }
-            }
-          }
-        }
-      }
-    `, { variables: { cursor } });
-
-    const parsed = await response.json();
-    const productsData = parsed.data?.products ? parsed.data.products : null;
-    
-    if (productsData) {
-      allRawProducts = [...allRawProducts, ...productsData.edges.map(e => e.node)];
-      hasNextPage = productsData.pageInfo.hasNextPage ? true : false;
-      cursor = productsData.pageInfo.endCursor ? productsData.pageInfo.endCursor : null;
-    } else {
-      hasNextPage = false;
-    }
-  }
-  
-  const products = allRawProducts.filter(p => !EXCLUDED_TITLES.includes(p.title));
-
-  // 3. Fetch stored snapshots from Metaobjects
-  const snapResponse = await admin.graphql(`
-    query GetSnapshots {
-      metaobjects(type: "meta_injector_snapshot", first: 10, sortKey: "updated_at", reverse: true) {
-        edges {
-          node {
-            id
-            timestamp: field(key: "timestamp") { value }
-            scope: field(key: "scope") { value }
-            action: field(key: "action") { value }
-            payload: field(key: "payload") { value }
-          }
-        }
-      }
-    }
-  `);
-  
-  const snapParsed = await snapResponse.json();
-  const rawSnapshots = snapParsed.data?.metaobjects?.edges.map(e => e.node) ? snapParsed.data.metaobjects.edges.map(e => e.node) : [];
-  
-  const snapshots = rawSnapshots.map(s => ({
-    id: s.id,
-    date: s.timestamp?.value ? s.timestamp.value : "Unknown Date",
-    action: s.action?.value ? s.action.value : "Snapshot",
-    scopeCount: s.scope?.value ? s.scope.value : "0",
-    payloadStr: s.payload?.value ? s.payload.value : "[]"
-  }));
-
-  return { products, snapshots, dbProfiles };
-}
-
-// ==========================================
-// SERVER: ACTION (GraphQL Intent Engine)
-// ==========================================
-export async function action({ request }) {
-  const { admin } = await authenticate.admin(request);
-  const formData = await request.formData();
-  const intent = formData.get("intent");
-
-  if (intent === "saveMetafields") {
-    const payload = JSON.parse(formData.get("payload"));
-    const chunks = [];
-    for (let i = 0; i < payload.length; i += 3) {
-      chunks.push(payload.slice(i, i + 3));
-    }
-
-    let allErrors = [];
-    for (const chunk of chunks) {
-      const response = await admin.graphql(`
-        mutation MetafieldsSet($metafields: [MetafieldsSetInput!]!) {
-          metafieldsSet(metafields: $metafields) {
-            userErrors { field message }
-          }
-        }
-      `, { variables: { metafields: chunk } });
-      const json = await response.json();
-      const errors = json.data?.metafieldsSet?.userErrors ? json.data.metafieldsSet.userErrors : [];
-      if (errors.length > 0) allErrors = [...allErrors, ...errors];
-    }
-
-    if (allErrors.length > 0) {
-      return { success: false, errors: allErrors, message: "Failed to save some metafields." };
-    }
-    return { success: true, message: "Metafields securely updated in batches." };
-  }
-
-  if (intent === "fetchSingleProduct") {
-    const productId = formData.get("productId");
-    const response = await admin.graphql(`
-      query GetSingleProduct($id: ID!) {
-        product(id: $id) {
-          id title status featuredImage { url altText }
-          metafields(first: 50) {
-            edges { node { id namespace key value type } }
-          }
-        }
-      }
-    `, { variables: { id: productId } });
-    const json = await response.json();
-    return { success: true, product: json.data?.product ? json.data.product : null };
-  }
-
-  if (intent === "fetchOrigins") {
-    let allRaw = [];
-    let hasNext = true;
-    let cursor = null;
-
-    while (hasNext) {
-      const response = await admin.graphql(`
-        query GetOrigins($cursor: String) {
-          products(first: 50, after: $cursor) {
-            pageInfo { hasNextPage endCursor }
-            edges {
-              node {
-                id title
-                originMetafield: metafield(namespace: "custom", key: "origin_location") { value }
-              }
-            }
-          }
-        }
-      `, { variables: { cursor } });
-      const json = await response.json();
-      const data = json.data?.products ? json.data.products : null;
-      if (data) {
-        allRaw = [...allRaw, ...data.edges.map(e => e.node)];
-        hasNext = data.pageInfo.hasNextPage ? true : false;
-        cursor = data.pageInfo.endCursor ? data.pageInfo.endCursor : null;
-      } else {
-        hasNext = false;
-      }
-    }
-    const filtered = allRaw.filter(p => !EXCLUDED_TITLES.includes(p.title));
-    return { success: true, origins: filtered };
-  }
-
-  if (intent === "validateGIDs") {
-    const gids = JSON.parse(formData.get("gids"));
-    const response = await admin.graphql(`
-      query ValidateGIDs($ids: [ID!]!) {
-        nodes(ids: $ids) { id }
-      }
-    `, { variables: { ids: gids } });
-    const json = await response.json();
-    const nodes = json.data?.nodes ? json.data.nodes : [];
-    const isInvalid = nodes.some(n => n === null);
-    return { success: true, isValid: !isInvalid };
-  }
-
-  if (intent === "saveSnapshot") {
-    const actionName = formData.get("actionName");
-    const payloadStr = formData.get("payloadStr");
-    const scopeCount = formData.get("scopeCount");
-    
-    const createRes = await admin.graphql(`
-      mutation CreateSnapshot($metaobject: MetaobjectCreateInput!) {
-        metaobjectCreate(metaobject: $metaobject) {
-          metaobject { id }
-          userErrors { field message }
-        }
-      }
-    `, {
-      variables: {
-        metaobject: {
-          type: "meta_injector_snapshot",
-          capabilities: { publishable: { status: "ACTIVE" } },
-          fields: [
-            { key: "timestamp", value: new Date().toLocaleString() },
-            { key: "action", value: actionName },
-            { key: "scope", value: scopeCount },
-            { key: "payload", value: payloadStr }
-          ]
-        }
-      }
-    });
-
-    const createJson = await createRes.json();
-    const errors = createJson.data?.metaobjectCreate?.userErrors ? createJson.data.metaobjectCreate.userErrors : [];
-    
-    if (errors.length > 0 && errors[0].message.includes("type must exist")) {
-       return { success: false, errors: [{ message: "Requires Metaobject Definition: 'meta_injector_snapshot' with fields: timestamp, action, scope, payload." }] };
-    }
-
-    const existingIds = JSON.parse(formData.get("existingIds") ? formData.get("existingIds") : "[]");
-    if (existingIds.length >= 5) {
-      const oldestId = existingIds[existingIds.length - 1];
-      await admin.graphql(`
-        mutation DeleteSnapshot($id: ID!) { metaobjectDelete(id: $id) { userErrors { message } } }
-      `, { variables: { id: oldestId } });
-    }
-
-    return { success: true };
-  }
-
-  return { success: false, errors: [{ message: "Unknown command" }] };
-}
-
-// ==========================================
-// CLIENT: COMPONENT
-// ==========================================
 export default function MetaInjectorV2() {
   const { products, snapshots: initialSnapshots, dbProfiles } = useLoaderData();
   const navigate = useNavigate();
@@ -381,7 +21,6 @@ export default function MetaInjectorV2() {
   const profileFetcher = useFetcher();
   const snapshotFetcher = useFetcher();
 
-  // --- TOP LEVEL STATE ---
   const [selectedTab, setSelectedTab] = useState(0);
   const [toastState, setToastState] = useState({ active: false, message: "", isError: false });
   const [snapshots, setSnapshots] = useState(initialSnapshots || []);
@@ -389,23 +28,18 @@ export default function MetaInjectorV2() {
   const [actionErrors, setActionErrors] = useState([]);
   const [activeProductId, setActiveProductId] = useState("");
   
-  // Matrix State
   const [matrixMissingFilter, setMatrixMissingFilter] = useState("");
   
-  // Inspector State
   const [inspectorLocalData, setInspectorLocalData] = useState({});
   const [inspectorFieldErrors, setInspectorFieldErrors] = useState({});
   
-  // Bulk State
   const [bulkMode, setBulkMode] = useState("fill");
   const [bulkFormData, setBulkFormData] = useState({});
   const [bulkSelectedProductIds, setBulkSelectedProductIds] = useState([]);
   
-  // Profile State
   const [profileSelectedIndex, setProfileSelectedIndex] = useState(0);
   const [profileSelectedProductIds, setProfileSelectedProductIds] = useState([]);
 
-  // --- HELPERS ---
   const closeToast = useCallback(() => setToastState(prev => ({ ...prev, active: false })), []);
   const closeModal = useCallback(() => setModalConfig({ active: false, title: "", body: null, onConfirm: null, diffs: [] }), []);
 
@@ -424,7 +58,6 @@ export default function MetaInjectorV2() {
     return isNumberType ? (containsDash ? "single_line_text_field" : fieldConfig.type) : fieldConfig.type;
   }, []);
 
-  // --- MUTATION HANDLING ---
   useEffect(() => {
     if (actionFetcher.data) {
       const isSuccess = !!actionFetcher.data.success;
@@ -441,7 +74,6 @@ export default function MetaInjectorV2() {
     }
   }, [actionFetcher.data, closeModal, activeProductId, selectedTab, inspectorFetcher]);
 
-  // --- SNAPSHOTS ---
   const saveSnapshot = useCallback((productsToSnapshot, actionName) => {
     const data = productsToSnapshot.map(p => ({
       id: p.id,
@@ -466,7 +98,6 @@ export default function MetaInjectorV2() {
     actionFetcher.submit({ intent: "saveMetafields", payload: JSON.stringify(payload) }, { method: "post" });
   }, [actionFetcher, saveSnapshot]);
 
-  // --- EFFECTS ---
   const activeProduct = inspectorFetcher.data?.product || products.find(p => p.id === activeProductId);
   const isInspectorLoading = inspectorFetcher.state !== "idle";
 
@@ -474,7 +105,7 @@ export default function MetaInjectorV2() {
     if (activeProductId && selectedTab === 2) {
       inspectorFetcher.submit({ intent: "fetchSingleProduct", productId: activeProductId }, { method: "post" });
     }
-  }, [activeProductId, selectedTab]);
+  }, [activeProductId, selectedTab, inspectorFetcher]);
 
   useEffect(() => {
     if (activeProduct) {
@@ -499,6 +130,7 @@ export default function MetaInjectorV2() {
   }, [selectedTab, originFetcher]);
 
   const activeProfile = dbProfiles[profileSelectedIndex];
+  
   useEffect(() => {
     if (profileFetcher.data?.intent === "validateGIDs") {
       if (!profileFetcher.data.isValid) {
@@ -517,10 +149,6 @@ export default function MetaInjectorV2() {
     }
   }, [profileFetcher.data, activeProfile, products, profileSelectedProductIds, submitMetafields]);
 
-
-  // ==========================================
-  // RENDER SECTIONS
-  // ==========================================
   const tapTargetStyle = { minHeight: '48px', minWidth: '48px', display: 'flex', alignItems: 'center', justifyContent: 'center' };
 
   const renderNorthStarView = () => {
@@ -597,7 +225,9 @@ export default function MetaInjectorV2() {
     
     const rows = filtered.map(p => {
       const rowData = [
-        <Button variant="plain" onClick={() => { setActiveProductId(p.id); setSelectedTab(2); }} accessibilityLabel={`Inspect ${p.title}`}>{p.title}</Button>
+        <div style={tapTargetStyle} key={`btn-${p.id}`}>
+          <Button variant="plain" onClick={() => { setActiveProductId(p.id); setSelectedTab(2); }} accessibilityLabel={`Inspect ${p.title}`}>{p.title}</Button>
+        </div>
       ];
       const statusStr = getMetafieldValue(p, "meta_status");
       let statusObj = {};
@@ -609,7 +239,7 @@ export default function MetaInjectorV2() {
         const isVerified = statusObj[field.key] === "verified";
         const tone = rawVal ? (isVerified ? "success" : "warning") : "critical";
         const text = rawVal ? (displayVal.length > 15 ? displayVal.substring(0, 15) + "..." : displayVal) : "Empty";
-        rowData.push(<Badge tone={tone}>{text}</Badge>);
+        rowData.push(<Badge tone={tone} key={`badge-${field.key}`}>{text}</Badge>);
       });
       return rowData;
     });
@@ -723,7 +353,7 @@ export default function MetaInjectorV2() {
             const isNumber = field.type.includes("number");
             return (
               <Box key={field.key} padding="300" background="bg-surface" borderRadius="200" shadow="100">
-                <TextField label={field.label} value={inspectorLocalData[field.key] || ""} onChange={(val) => handleFieldChange(field.key, val, isNumber)} autoComplete="off" type="text" error={inspectorFieldErrors[field.key]} helpText={isNumber && !inspectorFieldErrors[field.key] ? "Numbers and ranges allowed (e.g. 7, 6.5-7.5)" : ""} accessibilityLabel={`Edit ${field.label}`} disabled={isInspectorLoading} />
+                <TextField label={field.label} value={inspectorLocalData[field.key] || ""} onChange={(val) => handleFieldChange(field.key, val, isNumber)} autoComplete="off" type="text" error={inspectorFieldErrors[field.key]} helpText={(isNumber && !inspectorFieldErrors[field.key]) ? "Numbers and ranges allowed (e.g. 7, 6.5-7.5)" : ""} accessibilityLabel={`Edit ${field.label}`} disabled={isInspectorLoading} />
               </Box>
             );
           })}
@@ -881,7 +511,7 @@ export default function MetaInjectorV2() {
             headings={["Product", "Current Origin", "Suggested Extract", "Status", "Action"]}
             rows={parsedOrigins.map(r => [
               r.title, r.current || "-", r.suggested || "-", <Badge tone={r.tone}>{r.status}</Badge>,
-              <div style={tapTargetStyle}>
+              <div style={tapTargetStyle} key={`btn-${r.id}`}>
                 <Button disabled={!r.suggested || r.status === "Match"} onClick={() => {
                    const p = products.find(prod => prod.id === r.id);
                    if (p) submitMetafields([{ ownerId: r.id, namespace: "custom", key: "origin_location", type: "single_line_text_field", value: r.suggested }], `Origin Fix: ${r.title}`, [p]);
@@ -895,7 +525,13 @@ export default function MetaInjectorV2() {
   };
 
   const renderProfileView = () => {
-    if (dbProfiles.length === 0) return <Box padding="800"><EmptySearchResult title="No Profiles Found" description="Could not load profiles from the Render DB." withIllustration /></Box>;
+    if (dbProfiles.length === 0) {
+      return (
+        <Box padding="800">
+          <EmptySearchResult title="No Profiles Found" description="Could not load profiles from the Render DB." withIllustration />
+        </Box>
+      );
+    }
 
     const handleApplyProfile = () => {
       if (profileSelectedProductIds.length === 0) return setToastState({ active: true, message: "Select products from the list on the left first.", isError: true });
