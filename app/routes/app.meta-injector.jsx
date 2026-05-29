@@ -803,3 +803,205 @@ export default function MetaInjectorV2() {
       } else {
         setModalConfig({
           active: true, title: `Apply ${activeProfile.name} Profile`,
+          body: `Injecting data into ${payload.length} empty fields across ${selectedProducts.length} products.`,
+          diffs: [], onConfirm: () => submitMetafields(payload, `Profile Applied: ${activeProfile.name}`, selectedProducts)
+        });
+      }
+    };
+
+    return (
+      <div style={{ display: 'flex', flexDirection: 'row', gap: '24px', minHeight: '600px' }}>
+        <div style={{ flex: '0 0 350px' }}>
+          <Box padding="300" background="bg-surface-secondary" borderRadius="200">
+            <BlockStack gap="300">
+              <Text variant="headingSm" as="h3">1. Select Target Products ({profileSelectedProductIds.length})</Text>
+              <Scrollable style={{ height: '500px' }}>
+                <BlockStack gap="100">
+                  {products.map(p => (
+                    <div style={inputTapTargetStyle} key={p.id}>
+                      <Checkbox label={p.title} checked={profileSelectedProductIds.includes(p.id)} onChange={() => {
+                        setProfileSelectedProductIds(prev => prev.includes(p.id) ? prev.filter(x => x !== p.id) : [...prev, p.id]);
+                      }} accessibilityLabel={`Select ${p.title}`} />
+                    </div>
+                  ))}
+                </BlockStack>
+              </Scrollable>
+            </BlockStack>
+          </Box>
+        </div>
+        <div style={{ flex: 1 }}>
+          <BlockStack gap="400">
+            <div style={inputTapTargetStyle}>
+              <Select
+                label="Select Mineral Profile (From Render DB)"
+                options={dbProfiles.map((p, i) => ({ label: p.name, value: i.toString() }))}
+                value={profileSelectedIndex.toString()} onChange={(v) => setProfileSelectedIndex(parseInt(v, 10))} accessibilityLabel="Select mineral profile template"
+              />
+            </div>
+            <Card>
+              <BlockStack gap="300">
+                <Text variant="headingMd" as="h3">{activeProfile.name} Data Points</Text>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                  {Object.entries(activeProfile.data).map(([key, val]) => {
+                    const matchConfig = METAFIELD_CONFIG.find(f => f.key === key);
+                    const label = matchConfig?.label || key;
+                    const displayVal = getLabelForValue(key, val);
+                    return <Text key={key} as="p"><b>{label}:</b> {displayVal}</Text>;
+                  })}
+                </div>
+                <div style={tapTargetStyle}>
+                  <Button tone="success" onClick={handleApplyProfile} loading={profileFetcher.state !== "idle"} accessibilityLabel={`Apply ${activeProfile.name} profile`}>Apply Profile (Fill Only)</Button>
+                </div>
+              </BlockStack>
+            </Card>
+          </BlockStack>
+        </div>
+      </div>
+    );
+  };
+
+  const renderSnapshotView = () => {
+    const handleRestore = (snapshot) => {
+      const payload = [];
+      const parsedData = JSON.parse(snapshot.payloadStr);
+      parsedData.forEach(pData => {
+        pData.metafields.forEach(mf => { payload.push({ ownerId: pData.id, namespace: mf.namespace, key: mf.key, type: mf.type, value: mf.value }); });
+      });
+
+      setModalConfig({
+        active: true, title: `Restore Snapshot: ${snapshot.action}`,
+        body: `This will revert ${snapshot.scopeCount} products back to their exact state on ${snapshot.date}.`,
+        diffs: [], onConfirm: () => {
+          actionFetcher.submit({ intent: "saveMetafields", payload: JSON.stringify(payload) }, { method: "post" });
+          const relevantProducts = products.filter(p => parsedData.some(sd => sd.id === p.id));
+          saveSnapshot(relevantProducts, `Undo Restored: ${snapshot.action}`);
+        }
+      });
+    };
+
+    return (
+      <BlockStack gap="400">
+        <Banner tone="info" title="Persistent Safety Net">Snapshots are saved to Shopify Metaobjects and survive page reloads. Maximum 5 snapshots retained.</Banner>
+        {snapshots.length === 0 ? (
+          <EmptySearchResult title="No snapshots found" description="Perform an action to generate a backup snapshot." withIllustration />
+        ) : (
+          <ResourceList resourceName={{ singular: "snapshot", plural: "snapshots" }} items={snapshots} renderItem={(item) => (
+            <ResourceItem id={item.id} accessibilityLabel={`Snapshot ${item.action}`}>
+              <InlineStack align="space-between" blockAlign="center">
+                <BlockStack gap="100">
+                  <Text variant="bodyMd" fontWeight="bold">{item.action}</Text>
+                  <Text variant="bodySm" color="subdued">{item.date} • {item.scopeCount} products tracked</Text>
+                </BlockStack>
+                <div style={tapTargetStyle}><Button icon={UndoIcon} onClick={() => handleRestore(item)} accessibilityLabel={`Restore ${item.action}`}>Restore This State</Button></div>
+              </InlineStack>
+            </ResourceItem>
+          )} />
+        )}
+      </BlockStack>
+    );
+  };
+
+  const renderCSVView = () => {
+    const handleExport = () => {
+      const displayFields = METAFIELD_CONFIG.filter(c => !c.hidden);
+      const header = ["Product ID", "Title", ...displayFields.map(f => f.key)].join(",");
+      const rows = products.map(p => {
+        const row = [p.id, `"${p.title.replace(/"/g, '""')}"`];
+        displayFields.forEach(f => {
+          const val = getMetafieldValue(p, f.key) || "";
+          row.push(`"${val.replace(/"/g, '""')}"`);
+        });
+        return row.join(",");
+      });
+      const csvContent = [header, ...rows].join("\n");
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.setAttribute("href", url); link.setAttribute("download", `metafield_export_${Date.now()}.csv`);
+      document.body.appendChild(link); link.click(); document.body.removeChild(link);
+    };
+
+    return (
+      <BlockStack gap="400">
+        <Card>
+          <BlockStack gap="400">
+            <Text variant="headingMd" as="h2">CSV Synchronization</Text>
+            <Text as="p">Export your matrix to CSV. Re-importing requires UI parsing architecture to be built.</Text>
+            <InlineStack gap="300">
+              <div style={tapTargetStyle}><Button icon={ExportIcon} onClick={handleExport} accessibilityLabel="Export matrix to CSV">Download CSV Export</Button></div>
+              <div style={tapTargetStyle}><Button icon={ImportIcon} disabled accessibilityLabel="Import CSV">Upload CSV (UI Parsing Placeholder)</Button></div>
+            </InlineStack>
+          </BlockStack>
+        </Card>
+      </BlockStack>
+    );
+  };
+
+  const tabs = [
+    { id: 'northstar', content: '⭐ North Star Auto-Fill', panelID: 'panel-northstar' },
+    { id: 'health', content: 'Data Health Matrix', panelID: 'panel-health' },
+    { id: 'inspector', content: 'Product Inspector', panelID: 'panel-inspector' },
+    { id: 'bulk', content: 'Smart Bulk Injector', panelID: 'panel-bulk' },
+    { id: 'origin', content: 'Origin Fixer', panelID: 'panel-origin' },
+    { id: 'profiles', content: 'DB Profiles', panelID: 'panel-profiles' },
+    { id: 'snapshots', content: 'Snapshots', panelID: 'panel-snapshots' },
+    { id: 'csv', content: 'CSV Sync', panelID: 'panel-csv' }
+  ];
+
+  return (
+    <Frame>
+      <Page
+        fullWidth title="Meta Injector v2" subtitle="Data Integrity Command Center"
+        backAction={{ content: "Dashboard", onAction: () => navigate("/app"), accessibilityLabel: "Back to Dashboard" }}
+      >
+        <Layout>
+          <Layout.Section>
+            {actionErrors.length > 0 && (
+              <Box paddingBlockEnd="400">
+                <Banner tone="critical" title="GraphQL Mutation Errors Detected">
+                  <BlockStack gap="200">{actionErrors.map((err, i) => <Text key={i} as="p">{err.message}</Text>)}</BlockStack>
+                </Banner>
+              </Box>
+            )}
+
+            <Card padding="0">
+              <Tabs tabs={tabs} selected={selectedTab} onSelect={setSelectedTab} fitted>
+                <Box padding="400">
+                  {selectedTab === 0 && renderNorthStarView()}
+                  {selectedTab === 1 && renderMatrixView()}
+                  {selectedTab === 2 && renderInspectorView()}
+                  {selectedTab === 3 && renderBulkInjectorView()}
+                  {selectedTab === 4 && renderOriginFixerView()}
+                  {selectedTab === 5 && renderProfileView()}
+                  {selectedTab === 6 && renderSnapshotView()}
+                  {selectedTab === 7 && renderCSVView()}
+                </Box>
+              </Tabs>
+            </Card>
+          </Layout.Section>
+        </Layout>
+
+        {modalConfig.active && (
+          <Modal
+            open={true} onClose={closeModal} title={modalConfig.title}
+            primaryAction={{ content: "Confirm & Execute", onAction: modalConfig.onConfirm, tone: "success", accessibilityLabel: "Confirm and execute action" }}
+            secondaryActions={[{ content: "Cancel", onAction: closeModal, accessibilityLabel: "Cancel action" }]}
+          >
+            <Modal.Section>
+              <BlockStack gap="400">
+                {modalConfig.body && <Text variant="bodyLg" as="p" fontWeight="bold">{modalConfig.body}</Text>}
+                {modalConfig.diffs.length > 0 && (
+                  <Box background="bg-surface-secondary" padding="300" borderRadius="200">
+                    <DataTable columnContentTypes={["text", "text", "text"]} headings={["Field", "Old Value", "New Value"]} rows={modalConfig.diffs.map(d => [d.field, d.old, d.new])} />
+                  </Box>
+                )}
+              </BlockStack>
+            </Modal.Section>
+          </Modal>
+        )}
+
+        {toastState.active && <Toast content={toastState.message} error={toastState.isError} onDismiss={closeToast} />}
+      </Page>
+    </Frame>
+  );
+}
