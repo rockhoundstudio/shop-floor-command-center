@@ -12,7 +12,7 @@ export async function loader({ request }) {
     const response = await admin.graphql(`
       #graphql
       query GetAllProducts($cursor: String) {
-        products(first: 50, after: $cursor, sortKey: TITLE) {
+        products(first: 10, after: $cursor, sortKey: TITLE) {
           pageInfo { hasNextPage endCursor }
           edges {
             node {
@@ -40,6 +40,55 @@ export async function loader({ request }) {
 
   const products = allRawProducts.filter(p => !EXCLUDED_TITLES.includes(p.title));
 
+  // Collect all metaobject GIDs from reference fields
+  const gidSet = new Set();
+  for (const product of products) {
+    for (const edge of product.metafields.edges) {
+      const mf = edge.node;
+      if (mf.type === "list.metaobject_reference" || mf.type === "metaobject_reference") {
+        try {
+          const parsed = JSON.parse(mf.value);
+          const gids = Array.isArray(parsed) ? parsed : [parsed];
+          for (const gid of gids) {
+            if (typeof gid === "string" && gid.startsWith("gid://")) {
+              gidSet.add(gid);
+            }
+          }
+        } catch (e) {
+          // skip unparseable values
+        }
+      }
+    }
+  }
+
+  // Batch-fetch metaobject display names
+  const metaobjectNames = {};
+  const allGids = Array.from(gidSet);
+  const GID_BATCH_SIZE = 10;
+
+  for (let i = 0; i < allGids.length; i += GID_BATCH_SIZE) {
+    const batch = allGids.slice(i, i + GID_BATCH_SIZE);
+    const nodesResponse = await admin.graphql(`
+      #graphql
+      query ResolveMetaobjects($ids: [ID!]!) {
+        nodes(ids: $ids) {
+          ... on Metaobject {
+            id
+            displayName: field(key: "name") { value }
+          }
+        }
+      }
+    `, { variables: { ids: batch } });
+
+    const nodesJson = await nodesResponse.json();
+    const nodes = nodesJson.data?.nodes ? nodesJson.data.nodes : [];
+    for (const node of nodes) {
+      if (node && node.id) {
+        metaobjectNames[node.id] = node.displayName?.value ? node.displayName.value : node.id;
+      }
+    }
+  }
+
   const snapResponse = await admin.graphql(`
     #graphql
     query GetSnapshots {
@@ -58,7 +107,7 @@ export async function loader({ request }) {
   `);
 
   const snapParsed = await snapResponse.json();
-  const rawSnapshots = snapParsed.data?.metaobjects?.edges.map(e => e.node) ? snapParsed.data.metaobjects.edges.map(e => e.node) : [];
+  const rawSnapshots = snapParsed.data?.metaobjects?.edges ? snapParsed.data.metaobjects.edges.map(e => e.node) : [];
 
   const snapshots = rawSnapshots.map(s => ({
     id: s.id,
@@ -68,7 +117,7 @@ export async function loader({ request }) {
     payloadStr: s.payload?.value ? s.payload.value : "[]"
   }));
 
-  return { products, snapshots };
+  return { products, snapshots, metaobjectNames };
 }
 
 export async function action({ request }) {
@@ -95,7 +144,9 @@ export async function action({ request }) {
       `, { variables: { metafields: chunk } });
       const json = await response.json();
       const errors = json.data?.metafieldsSet?.userErrors ? json.data.metafieldsSet.userErrors : [];
-      if (errors.length > 0) allErrors = [...allErrors, ...errors];
+      if (errors.length > 0) {
+        allErrors = [...allErrors, ...errors];
+      }
     }
 
     if (allErrors.length > 0) {
@@ -125,12 +176,14 @@ export async function action({ request }) {
     let allRaw = [];
     let hasNext = true;
     let cursor = null;
+    let batchCount = 0;
+    const MAX_BATCHES = 10;
 
-    while (hasNext) {
+    while (hasNext && batchCount < MAX_BATCHES) {
       const response = await admin.graphql(`
         #graphql
         query GetOrigins($cursor: String) {
-          products(first: 50, after: $cursor) {
+          products(first: 10, after: $cursor) {
             pageInfo { hasNextPage endCursor }
             edges {
               node {
@@ -147,12 +200,15 @@ export async function action({ request }) {
         allRaw = [...allRaw, ...data.edges.map(e => e.node)];
         hasNext = data.pageInfo.hasNextPage ? true : false;
         cursor = data.pageInfo.endCursor ? data.pageInfo.endCursor : null;
+        batchCount = batchCount + 1;
       } else {
         hasNext = false;
       }
     }
+
     const filtered = allRaw.filter(p => !EXCLUDED_TITLES.includes(p.title));
-    return { success: true, origins: filtered };
+    const hasMore = hasNext ? true : false;
+    return { success: true, origins: filtered, hasMore };
   }
 
   if (intent === "validateGIDs") {
@@ -204,7 +260,8 @@ export async function action({ request }) {
       return { success: false, errors: [{ message: "Requires Metaobject Definition: 'meta_injector_snapshot' with fields: timestamp, action, scope, payload." }] };
     }
 
-    const existingIds = JSON.parse(formData.get("existingIds") ? formData.get("existingIds") : "[]");
+    const existingIdsRaw = formData.get("existingIds");
+    const existingIds = existingIdsRaw ? JSON.parse(existingIdsRaw) : [];
     if (existingIds.length >= 5) {
       const oldestId = existingIds[existingIds.length - 1];
       await admin.graphql(`
