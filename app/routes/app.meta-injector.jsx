@@ -497,8 +497,14 @@ export default function MetaInjectorV2() {
             const handles = mfNode.references.edges.map(refEdge => refEdge.node.handle || "").filter(Boolean);
             if (handles.length > 0) {
               displayVal = handles.join(", ");
+            } else {
+              displayVal = "—";
             }
+          } else if (rawVal && /gid:\/\/shopify/.test(rawVal)) {
+            displayVal = "—";
           }
+        } else if (displayVal && typeof displayVal === "string" && /gid:\/\/shopify/.test(displayVal)) {
+           displayVal = "—";
         }
 
         const isVerified = statusObj[field.key] === "verified";
