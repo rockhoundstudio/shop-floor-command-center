@@ -448,7 +448,7 @@ export default function MetaInjectorV2() {
             <BlockStack gap="400">
               <Text variant="headingSm" as="h3">2. Define Injection Data</Text>
               <div style={inputTapTargetStyle}>
-                <ChoiceList title="Injection Mode" choices={[{ label: 'FILL ONLY: Skip products that already have data', value: 'fill' }, { label: 'OVERWRITE: Force data (Dangerous)', value: 'overwrite' }]} selected={[bulkMode]} onChange={(val) => setBulkMode(val[0])} accessibilityLabel="Select injection mode" />
+                <ChoiceList title="Injection Mode" choices={[{ label: 'FILL ONLY: Skip products that already have data', value: 'fill' }, { label: 'OVERWRITE: Force data (Dangerous)', value: 'overwrite' }]} selected={[bulkMode]} onChange={(val) => setBulkMode(val[0])} />
               </div>
               <Divider />
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
