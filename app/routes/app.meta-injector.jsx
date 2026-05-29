@@ -440,7 +440,12 @@ export default function MetaInjectorV2() {
   const renderMatrixView = () => {
     const displayFields = METAFIELD_CONFIG.filter(c => !c.hidden);
     let filtered = products;
-    if (matrixMissingFilter) filtered = products.filter(p => !getMetafieldValue(p, matrixMissingFilter));
+    if (matrixMissingFilter) {
+      filtered = products.filter(p => {
+        const val = getMetafieldValue(p, matrixMissingFilter);
+        return val ? false : true;
+      });
+    }
     
     const rows = filtered.map(p => {
       const rowData = [
@@ -448,13 +453,32 @@ export default function MetaInjectorV2() {
           <Button variant="plain" onClick={() => { setActiveProductId(p.id); setSelectedTab(2); }} accessibilityLabel={`Inspect ${p.title}`}>{p.title}</Button>
         </div>
       ];
+      
       const statusStr = getMetafieldValue(p, "meta_status");
       let statusObj = {};
       try { statusObj = statusStr ? JSON.parse(statusStr) : {}; } catch(e) {}
 
       displayFields.forEach(field => {
         const rawVal = getMetafieldValue(p, field.key);
-        const displayVal = getLabelForValue(field.key, rawVal);
+        let displayVal = getLabelForValue(field.key, rawVal);
+
+        let mfNode = null;
+        if (p.metafields && p.metafields.edges) {
+          const edge = p.metafields.edges.find(e => e.node.key === field.key);
+          if (edge) {
+            mfNode = edge.node;
+          }
+        }
+
+        if (mfNode && (mfNode.type === "list.metaobject_reference" || mfNode.type === "metaobject_reference")) {
+          if (mfNode.references && mfNode.references.edges && mfNode.references.edges.length > 0) {
+            const handles = mfNode.references.edges.map(refEdge => refEdge.node.handle || "").filter(Boolean);
+            if (handles.length > 0) {
+              displayVal = handles.join(", ");
+            }
+          }
+        }
+
         const isVerified = statusObj[field.key] === "verified";
         const tone = rawVal ? (isVerified ? "success" : "warning") : "critical";
         const text = rawVal ? (displayVal.length > 15 ? displayVal.substring(0, 15) + "..." : displayVal) : "Empty";
@@ -882,9 +906,10 @@ export default function MetaInjectorV2() {
     return (
       <BlockStack gap="400">
         <Banner tone="info" title="Persistent Safety Net">Snapshots are saved to Shopify Metaobjects and survive page reloads. Maximum 5 snapshots retained.</Banner>
-        {snapshots.length === 0 ? (
+        {snapshots.length === 0 && (
           <EmptySearchResult title="No snapshots found" description="Perform an action to generate a backup snapshot." withIllustration />
-        ) : (
+        )}
+        {snapshots.length > 0 && (
           <ResourceList resourceName={{ singular: "snapshot", plural: "snapshots" }} items={snapshots} renderItem={(item) => (
             <ResourceItem id={item.id} accessibilityLabel={`Snapshot ${item.action}`}>
               <InlineStack align="space-between" blockAlign="center">
