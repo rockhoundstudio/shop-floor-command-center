@@ -276,6 +276,7 @@ export default function MetaInjectorV2() {
   const [bulkMode, setBulkMode] = useState("fill");
   const [bulkFormData, setBulkFormData] = useState({});
   const [bulkSelectedProductIds, setBulkSelectedProductIds] = useState([]);
+  const [bulkSearchQuery, setBulkSearchQuery] = useState("");
   
   const [profileSelectedIndex, setProfileSelectedIndex] = useState(0);
   const [profileSelectedProductIds, setProfileSelectedProductIds] = useState([]);
@@ -690,20 +691,51 @@ export default function MetaInjectorV2() {
       });
     };
 
+    let visibleProducts = products;
+    if (bulkSearchQuery.trim() !== "") {
+      const lowerQuery = bulkSearchQuery.toLowerCase();
+      visibleProducts = products.filter(p => p.title.toLowerCase().includes(lowerQuery));
+    }
+
     return (
       <div style={{ display: 'flex', flexDirection: 'row', gap: '24px', minHeight: '600px' }}>
         <div style={{ flex: '0 0 350px', display: 'flex', flexDirection: 'column' }}>
           <Box padding="300" background="bg-surface-secondary" borderRadius="200">
             <BlockStack gap="300">
               <Text variant="headingSm" as="h3">1. Select Targets ({bulkSelectedProductIds.length})</Text>
+              
+              <div style={inputTapTargetStyle}>
+                <TextField
+                  placeholder="Search products..."
+                  value={bulkSearchQuery}
+                  onChange={setBulkSearchQuery}
+                  autoComplete="off"
+                  clearButton
+                  onClearButtonClick={() => setBulkSearchQuery("")}
+                  accessibilityLabel="Search products"
+                />
+              </div>
+
+              {bulkSearchQuery.trim() !== "" && (
+                <Text variant="bodySm" color="subdued">
+                  Showing {visibleProducts.length} of {products.length} products
+                </Text>
+              )}
+
               <div style={tapTargetStyle}>
-                <Button onClick={() => setBulkSelectedProductIds(bulkSelectedProductIds.length === products.length ? [] : products.map(p => p.id))} accessibilityLabel="Select all or none">
-                  {bulkSelectedProductIds.length === products.length ? "Deselect All" : "Select All"}
+                <Button onClick={() => setBulkSelectedProductIds(bulkSelectedProductIds.length === visibleProducts.length ? [] : visibleProducts.map(p => p.id))} accessibilityLabel="Select all or none">
+                  {bulkSelectedProductIds.length === visibleProducts.length && visibleProducts.length > 0 ? "Deselect All" : "Select All"}
                 </Button>
               </div>
+
               <Scrollable style={{ height: '500px' }}>
                 <BlockStack gap="100">
-                  {products.map(p => (
+                  {visibleProducts.length === 0 && (
+                     <Box padding="400">
+                       <Text as="p" color="subdued" alignment="center">No products match your search.</Text>
+                     </Box>
+                  )}
+                  {visibleProducts.map(p => (
                     <div style={inputTapTargetStyle} key={p.id}>
                       <Checkbox label={p.title} checked={bulkSelectedProductIds.includes(p.id)} onChange={() => toggleProduct(p.id)} accessibilityLabel={`Select ${p.title}`} />
                     </div>
