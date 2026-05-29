@@ -14,25 +14,50 @@ import { authenticate } from "../shopify.server";
 export async function loader({ request }) {
   const { admin } = await authenticate.admin(request);
   
-  const response = await admin.graphql(`
-    query GetAllMenus {
-      menus(first: 50) {
-        edges {
-          node {
-            id
-            title
-            handle
-            itemsCount
+  try {
+    const response = await admin.graphql(`
+      query GetAllMenus {
+        menus(first: 50) {
+          edges {
+            node {
+              id
+              title
+              handle
+              itemsCount
+            }
           }
         }
       }
+    `, { 
+      apiVersion: "2026-07" // Enforce the correct API version
+    });
+
+    const parsed = await response.json();
+
+    // Catch GraphQL errors that return a 200 OK HTTP status
+    if (parsed.errors) {
+      console.error("GraphQL Errors in loader:", JSON.stringify(parsed.errors, null, 2));
+      return { menus: [] }; // Safe fallback
     }
-  `);
 
-  const parsed = await response.json();
-  const menus = parsed.data?.menus?.edges.map(e => e.node) || [];
+    const menus = parsed.data?.menus?.edges.map(e => e.node) || [];
+    return { menus };
 
-  return { menus };
+  } catch (error) {
+    console.error("Loader failed to fetch menus:", error);
+    
+    // Log the full graphQLErrors array to console for debugging
+    if (error.graphQLErrors) {
+      console.error("Full graphQLErrors array:", JSON.stringify(error.graphQLErrors, null, 2));
+    } else if (error.response?.errors) {
+      console.error("Full response errors array:", JSON.stringify(error.response.errors, null, 2));
+    } else {
+      console.error("Error message:", error.message);
+    }
+    
+    // Return safe fallback instead of crashing the route
+    return { menus: [] };
+  }
 }
 
 // ==========================================
@@ -43,77 +68,98 @@ export async function action({ request }) {
   const formData = await request.formData();
   const intent = formData.get("intent");
 
-  // --- FETCH SINGLE MENU (Live Inspector) ---
-  if (intent === "fetchSingleMenu") {
-    const menuId = formData.get("menuId");
-    const response = await admin.graphql(`
-      query GetSingleMenu($id: ID!) {
-        menu(id: $id) {
-          id
-          title
-          handle
-          itemsCount
-          items {
+  try {
+    // --- FETCH SINGLE MENU (Live Inspector) ---
+    if (intent === "fetchSingleMenu") {
+      const menuId = formData.get("menuId");
+      const response = await admin.graphql(`
+        query GetSingleMenu($id: ID!) {
+          menu(id: $id) {
             id
             title
-            url
-            type
+            handle
+            itemsCount
             items {
               id
               title
               url
               type
+              items {
+                id
+                title
+                url
+                type
+              }
             }
           }
         }
+      `, { 
+        variables: { id: menuId },
+        apiVersion: "2026-07"
+      });
+      
+      const json = await response.json();
+      if (json.errors) {
+        console.error("GraphQL Errors fetching single menu:", JSON.stringify(json.errors, null, 2));
       }
-    `, { variables: { id: menuId } });
-    
-    const json = await response.json();
-    return { success: true, menu: json.data?.menu || null };
-  }
+      return { success: true, menu: json.data?.menu || null };
+    }
 
-  // --- CREATE MENU ---
-  if (intent === "createMenu") {
-    const title = formData.get("title");
-    const handle = formData.get("handle");
-    
-    const response = await admin.graphql(`
-      mutation MenuCreate($menu: MenuCreateInput!) {
-        menuCreate(menu: $menu) {
-          menu { id title }
-          userErrors { field message }
+    // --- CREATE MENU ---
+    if (intent === "createMenu") {
+      const title = formData.get("title");
+      const handle = formData.get("handle");
+      
+      const response = await admin.graphql(`
+        mutation MenuCreate($menu: MenuCreateInput!) {
+          menuCreate(menu: $menu) {
+            menu { id title }
+            userErrors { field message }
+          }
         }
-      }
-    `, { variables: { menu: { title, handle } } });
+      `, { 
+        variables: { menu: { title, handle } },
+        apiVersion: "2026-07"
+      });
 
-    const json = await response.json();
-    const errors = json.data?.menuCreate?.userErrors || [];
-    
-    if (errors.length > 0) return { success: false, errors, message: "Failed to create menu." };
-    return { success: true, message: `Menu "${title}" created successfully.` };
-  }
+      const json = await response.json();
+      const errors = json.data?.menuCreate?.userErrors || [];
+      
+      if (errors.length > 0) return { success: false, errors, message: "Failed to create menu." };
+      return { success: true, message: `Menu "${title}" created successfully.` };
+    }
 
-  // --- DELETE MENU ---
-  if (intent === "deleteMenu") {
-    const id = formData.get("menuId");
-    const response = await admin.graphql(`
-      mutation MenuDelete($id: ID!) {
-        menuDelete(id: $id) {
-          deletedId
-          userErrors { field message }
+    // --- DELETE MENU ---
+    if (intent === "deleteMenu") {
+      const id = formData.get("menuId");
+      const response = await admin.graphql(`
+        mutation MenuDelete($id: ID!) {
+          menuDelete(id: $id) {
+            deletedId
+            userErrors { field message }
+          }
         }
-      }
-    `, { variables: { id } });
+      `, { 
+        variables: { id },
+        apiVersion: "2026-07"
+      });
 
-    const json = await response.json();
-    const errors = json.data?.menuDelete?.userErrors || [];
+      const json = await response.json();
+      const errors = json.data?.menuDelete?.userErrors || [];
 
-    if (errors.length > 0) return { success: false, errors, message: "Failed to delete menu." };
-    return { success: true, message: "Menu deleted successfully." };
+      if (errors.length > 0) return { success: false, errors, message: "Failed to delete menu." };
+      return { success: true, message: "Menu deleted successfully." };
+    }
+
+    return { success: false, errors: [{ message: "Unknown command" }] };
+    
+  } catch (error) {
+    console.error("Action Error:", error);
+    if (error.graphQLErrors) {
+      console.error("Full graphQLErrors:", JSON.stringify(error.graphQLErrors, null, 2));
+    }
+    return { success: false, errors: [{ message: "Server error occurred during GraphQL operation." }] };
   }
-
-  return { success: false, errors: [{ message: "Unknown command" }] };
 }
 
 // ==========================================
