@@ -150,6 +150,7 @@ export default function MetaInjectorV2() {
   }, [profileFetcher.data, activeProfile, products, profileSelectedProductIds, submitMetafields]);
 
   const tapTargetStyle = { minHeight: '48px', minWidth: '48px', display: 'flex', alignItems: 'center', justifyContent: 'center' };
+  const inputTapTargetStyle = { minHeight: '48px', display: 'flex', flexDirection: 'column', justifyContent: 'center' };
 
   const renderNorthStarView = () => {
     const matchedProducts = [];
@@ -206,7 +207,7 @@ export default function MetaInjectorV2() {
           <DataTable
             columnContentTypes={["text", "text", "numeric"]}
             headings={["Product", "Official Name (Matched Profile)", "Empty Fields to Fill"]}
-            rows={matchedProducts.map(m => [ m.product.title, <Badge tone="info">{m.profile.name}</Badge>, m.fillCount.toString() ])}
+            rows={matchedProducts.map(m => [ m.product.title, <Badge tone="info" key={`badge-${m.product.id}`}>{m.profile.name}</Badge>, m.fillCount.toString() ])}
           />
           {matchedProducts.length === 0 && (
             <Box padding="400">
@@ -231,7 +232,7 @@ export default function MetaInjectorV2() {
       ];
       const statusStr = getMetafieldValue(p, "meta_status");
       let statusObj = {};
-      try { statusObj = statusStr ? JSON.parse(statusStr) : {}; } catch(e){}
+      try { statusObj = statusStr ? JSON.parse(statusStr) : {}; } catch(e) {}
 
       displayFields.forEach(field => {
         const rawVal = getMetafieldValue(p, field.key);
@@ -239,7 +240,7 @@ export default function MetaInjectorV2() {
         const isVerified = statusObj[field.key] === "verified";
         const tone = rawVal ? (isVerified ? "success" : "warning") : "critical";
         const text = rawVal ? (displayVal.length > 15 ? displayVal.substring(0, 15) + "..." : displayVal) : "Empty";
-        rowData.push(<Badge tone={tone} key={`badge-${field.key}`}>{text}</Badge>);
+        rowData.push(<Badge tone={tone} key={`badge-${p.id}-${field.key}`}>{text}</Badge>);
       });
       return rowData;
     });
@@ -248,11 +249,13 @@ export default function MetaInjectorV2() {
       <BlockStack gap="400">
         <InlineStack gap="400" blockAlign="center">
           <Box width="300px">
-            <Select
-              label="Filter by missing data"
-              options={[{ label: "Show All Products", value: "" }, ...displayFields.map(f => ({ label: `Missing: ${f.label}`, value: f.key }))]}
-              value={matrixMissingFilter} onChange={setMatrixMissingFilter} accessibilityLabel="Filter matrix by missing metafield"
-            />
+            <div style={inputTapTargetStyle}>
+              <Select
+                label="Filter by missing data"
+                options={[{ label: "Show All Products", value: "" }, ...displayFields.map(f => ({ label: `Missing: ${f.label}`, value: f.key }))]}
+                value={matrixMissingFilter} onChange={setMatrixMissingFilter} accessibilityLabel="Filter matrix by missing metafield"
+              />
+            </div>
           </Box>
           <InlineStack gap="200">
             <Badge tone="success">Verified & Filled</Badge>
@@ -273,7 +276,9 @@ export default function MetaInjectorV2() {
     if (!activeProductId) {
       return (
         <BlockStack gap="400">
-          <Select label="Select a product to inspect" options={[{ label: "Select...", value: "" }, ...products.map(p => ({ label: p.title, value: p.id }))]} value={activeProductId} onChange={setActiveProductId} accessibilityLabel="Select product for inspector" />
+          <div style={inputTapTargetStyle}>
+            <Select label="Select a product to inspect" options={[{ label: "Select...", value: "" }, ...products.map(p => ({ label: p.title, value: p.id }))]} value={activeProductId} onChange={setActiveProductId} accessibilityLabel="Select product for inspector" />
+          </div>
           <EmptySearchResult title="No product selected" description="Select a product to fetch fresh data and edit." withIllustration />
         </BlockStack>
       );
@@ -303,7 +308,7 @@ export default function MetaInjectorV2() {
       const diffs = [];
       const statusStr = getMetafieldValue(activeProduct, "meta_status");
       let statusObj = {};
-      try { statusObj = statusStr ? JSON.parse(statusStr) : {}; } catch(e){}
+      try { statusObj = statusStr ? JSON.parse(statusStr) : {}; } catch(e) {}
 
       METAFIELD_CONFIG.forEach(field => {
         if (field.hidden) return;
@@ -332,7 +337,9 @@ export default function MetaInjectorV2() {
         <InlineStack align="space-between" blockAlign="center">
           <InlineStack gap="300" blockAlign="center">
             <Box width="400px">
-              <Select label="Select Product" options={products.map(p => ({ label: p.title, value: p.id }))} value={activeProductId} onChange={setActiveProductId} accessibilityLabel="Change product in inspector" />
+              <div style={inputTapTargetStyle}>
+                <Select label="Select Product" options={products.map(p => ({ label: p.title, value: p.id }))} value={activeProductId} onChange={setActiveProductId} accessibilityLabel="Change product in inspector" />
+              </div>
             </Box>
             {isInspectorLoading && <Spinner size="small" />}
           </InlineStack>
@@ -346,14 +353,18 @@ export default function MetaInjectorV2() {
             if (field.options) {
               return (
                 <Box key={field.key} padding="300" background="bg-surface" borderRadius="200" shadow="100">
-                  <Select label={field.label} options={field.options} value={inspectorLocalData[field.key] || ""} onChange={(val) => handleFieldChange(field.key, val, false)} accessibilityLabel={`Select ${field.label}`} disabled={isInspectorLoading} />
+                  <div style={inputTapTargetStyle}>
+                    <Select label={field.label} options={field.options} value={inspectorLocalData[field.key] || ""} onChange={(val) => handleFieldChange(field.key, val, false)} accessibilityLabel={`Select ${field.label}`} disabled={isInspectorLoading} />
+                  </div>
                 </Box>
               );
             }
             const isNumber = field.type.includes("number");
             return (
               <Box key={field.key} padding="300" background="bg-surface" borderRadius="200" shadow="100">
-                <TextField label={field.label} value={inspectorLocalData[field.key] || ""} onChange={(val) => handleFieldChange(field.key, val, isNumber)} autoComplete="off" type="text" error={inspectorFieldErrors[field.key]} helpText={(isNumber && !inspectorFieldErrors[field.key]) ? "Numbers and ranges allowed (e.g. 7, 6.5-7.5)" : ""} accessibilityLabel={`Edit ${field.label}`} disabled={isInspectorLoading} />
+                <div style={inputTapTargetStyle}>
+                  <TextField label={field.label} value={inspectorLocalData[field.key] || ""} onChange={(val) => handleFieldChange(field.key, val, isNumber)} autoComplete="off" type="text" error={inspectorFieldErrors[field.key]} helpText={(isNumber && !inspectorFieldErrors[field.key]) ? "Numbers and ranges allowed (e.g. 7, 6.5-7.5)" : ""} accessibilityLabel={`Edit ${field.label}`} disabled={isInspectorLoading} />
+                </div>
               </Box>
             );
           })}
@@ -376,7 +387,7 @@ export default function MetaInjectorV2() {
       selectedProducts.forEach(product => {
         const statusStr = getMetafieldValue(product, "meta_status");
         let statusObj = {};
-        try { statusObj = statusStr ? JSON.parse(statusStr) : {}; } catch(e){}
+        try { statusObj = statusStr ? JSON.parse(statusStr) : {}; } catch(e) {}
         let productChanged = false;
 
         METAFIELD_CONFIG.forEach(field => {
@@ -423,7 +434,9 @@ export default function MetaInjectorV2() {
               <Scrollable style={{ height: '500px' }}>
                 <BlockStack gap="100">
                   {products.map(p => (
-                    <Checkbox key={p.id} label={p.title} checked={bulkSelectedProductIds.includes(p.id)} onChange={() => toggleProduct(p.id)} />
+                    <div style={inputTapTargetStyle} key={p.id}>
+                      <Checkbox label={p.title} checked={bulkSelectedProductIds.includes(p.id)} onChange={() => toggleProduct(p.id)} accessibilityLabel={`Select ${p.title}`} />
+                    </div>
                   ))}
                 </BlockStack>
               </Scrollable>
@@ -434,14 +447,24 @@ export default function MetaInjectorV2() {
           <Box padding="400" background="bg-surface" borderRadius="200" shadow="100">
             <BlockStack gap="400">
               <Text variant="headingSm" as="h3">2. Define Injection Data</Text>
-              <ChoiceList title="Injection Mode" choices={[{ label: 'FILL ONLY: Skip products that already have data', value: 'fill' }, { label: 'OVERWRITE: Force data (Dangerous)', value: 'overwrite' }]} selected={[bulkMode]} onChange={(val) => setBulkMode(val[0])} />
+              <div style={inputTapTargetStyle}>
+                <ChoiceList title="Injection Mode" choices={[{ label: 'FILL ONLY: Skip products that already have data', value: 'fill' }, { label: 'OVERWRITE: Force data (Dangerous)', value: 'overwrite' }]} selected={[bulkMode]} onChange={(val) => setBulkMode(val[0])} accessibilityLabel="Select injection mode" />
+              </div>
               <Divider />
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                 {METAFIELD_CONFIG.filter(f => !f.hidden).map(field => {
                   if (field.options) {
-                    return <Select key={field.key} label={field.label} options={field.options} value={bulkFormData[field.key] || ""} onChange={(val) => setBulkFormData(prev => ({ ...prev, [field.key]: val }))} accessibilityLabel={`Bulk input for ${field.label}`} />;
+                    return (
+                      <div style={inputTapTargetStyle} key={field.key}>
+                        <Select label={field.label} options={field.options} value={bulkFormData[field.key] || ""} onChange={(val) => setBulkFormData(prev => ({ ...prev, [field.key]: val }))} accessibilityLabel={`Bulk input for ${field.label}`} />
+                      </div>
+                    );
                   }
-                  return <TextField key={field.key} label={field.label} value={bulkFormData[field.key] || ""} onChange={(val) => setBulkFormData(prev => ({ ...prev, [field.key]: val }))} placeholder="Leave blank to skip" autoComplete="off" type="text" accessibilityLabel={`Bulk input for ${field.label}`} />;
+                  return (
+                    <div style={inputTapTargetStyle} key={field.key}>
+                      <TextField label={field.label} value={bulkFormData[field.key] || ""} onChange={(val) => setBulkFormData(prev => ({ ...prev, [field.key]: val }))} placeholder="Leave blank to skip" autoComplete="off" type="text" accessibilityLabel={`Bulk input for ${field.label}`} />
+                    </div>
+                  );
                 })}
               </div>
               <Divider />
@@ -510,7 +533,7 @@ export default function MetaInjectorV2() {
             columnContentTypes={["text", "text", "text", "text", "text"]}
             headings={["Product", "Current Origin", "Suggested Extract", "Status", "Action"]}
             rows={parsedOrigins.map(r => [
-              r.title, r.current || "-", r.suggested || "-", <Badge tone={r.tone}>{r.status}</Badge>,
+              r.title, r.current || "-", r.suggested || "-", <Badge tone={r.tone} key={`badge-${r.id}`}>{r.status}</Badge>,
               <div style={tapTargetStyle} key={`btn-${r.id}`}>
                 <Button disabled={!r.suggested || r.status === "Match"} onClick={() => {
                    const p = products.find(prod => prod.id === r.id);
@@ -550,7 +573,7 @@ export default function MetaInjectorV2() {
           payload.push({ ownerId: product.id, namespace: field.namespace, key: field.key, type: resolvedType, value: profileVal });
           
           if (resolvedType === "list.metaobject_reference") {
-            try { const g = JSON.parse(profileVal); if (g[0]) gidsToCheck.push(g[0]); } catch(e){}
+            try { const g = JSON.parse(profileVal); if (g[0]) gidsToCheck.push(g[0]); } catch(e) {}
           }
         });
       });
@@ -577,9 +600,11 @@ export default function MetaInjectorV2() {
               <Scrollable style={{ height: '500px' }}>
                 <BlockStack gap="100">
                   {products.map(p => (
-                    <Checkbox key={p.id} label={p.title} checked={profileSelectedProductIds.includes(p.id)} onChange={() => {
-                      setProfileSelectedProductIds(prev => prev.includes(p.id) ? prev.filter(x => x !== p.id) : [...prev, p.id]);
-                    }} />
+                    <div style={inputTapTargetStyle} key={p.id}>
+                      <Checkbox label={p.title} checked={profileSelectedProductIds.includes(p.id)} onChange={() => {
+                        setProfileSelectedProductIds(prev => prev.includes(p.id) ? prev.filter(x => x !== p.id) : [...prev, p.id]);
+                      }} accessibilityLabel={`Select ${p.title}`} />
+                    </div>
                   ))}
                 </BlockStack>
               </Scrollable>
@@ -588,11 +613,13 @@ export default function MetaInjectorV2() {
         </div>
         <div style={{ flex: 1 }}>
           <BlockStack gap="400">
-            <Select
-              label="Select Mineral Profile (From Render DB)"
-              options={dbProfiles.map((p, i) => ({ label: p.name, value: i.toString() }))}
-              value={profileSelectedIndex.toString()} onChange={(v) => setProfileSelectedIndex(parseInt(v, 10))} accessibilityLabel="Select mineral profile template"
-            />
+            <div style={inputTapTargetStyle}>
+              <Select
+                label="Select Mineral Profile (From Render DB)"
+                options={dbProfiles.map((p, i) => ({ label: p.name, value: i.toString() }))}
+                value={profileSelectedIndex.toString()} onChange={(v) => setProfileSelectedIndex(parseInt(v, 10))} accessibilityLabel="Select mineral profile template"
+              />
+            </div>
             <Card>
               <BlockStack gap="300">
                 <Text variant="headingMd" as="h3">{activeProfile.name} Data Points</Text>
@@ -707,7 +734,7 @@ export default function MetaInjectorV2() {
     <Frame>
       <Page
         fullWidth title="Meta Injector v2" subtitle="Data Integrity Command Center"
-        backAction={{ content: "Dashboard", onAction: () => navigate("/app") }}
+        backAction={{ content: "Dashboard", onAction: () => navigate("/app"), accessibilityLabel: "Back to Dashboard" }}
       >
         <Layout>
           <Layout.Section>
@@ -739,8 +766,8 @@ export default function MetaInjectorV2() {
         {modalConfig.active && (
           <Modal
             open={true} onClose={closeModal} title={modalConfig.title}
-            primaryAction={{ content: "Confirm & Execute", onAction: modalConfig.onConfirm, tone: "success" }}
-            secondaryActions={[{ content: "Cancel", onAction: closeModal }]}
+            primaryAction={{ content: "Confirm & Execute", onAction: modalConfig.onConfirm, tone: "success", accessibilityLabel: "Confirm and execute action" }}
+            secondaryActions={[{ content: "Cancel", onAction: closeModal, accessibilityLabel: "Cancel action" }]}
           >
             <Modal.Section>
               <BlockStack gap="400">

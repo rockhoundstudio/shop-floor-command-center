@@ -1,30 +1,8 @@
 import { authenticate } from "../shopify.server";
 import { EXCLUDED_TITLES } from "./app.meta-injector.constants";
 
-async function fetchProfilesFromRenderDB() {
-  return [
-    { 
-      name: "Quartz", 
-      data: { 
-        hardness: "7", luster: "Vitreous", "crystal-system": '["gid://shopify/Metaobject/154252116219"]', 
-        fracture: "Conchoidal", cleavage: "None", specific_gravity: "2.65", 
-        "mineral-class": '["gid://shopify/Metaobject/151951278331"]', diaphaneity: "Transparent to Opaque" 
-      } 
-    },
-    { 
-      name: "Labradorite", 
-      data: { 
-        hardness: "6", luster: "Vitreous to Pearly", "crystal-system": '["gid://shopify/Metaobject/154308706555"]', 
-        fracture: "Uneven", cleavage: "Perfect", specific_gravity: "2.70", diaphaneity: "Translucent" 
-      } 
-    }
-  ];
-}
-
 export async function loader({ request }) {
   const { admin } = await authenticate.admin(request);
-  
-  const dbProfiles = await fetchProfilesFromRenderDB();
 
   let allRawProducts = [];
   let hasNextPage = true;
@@ -32,6 +10,7 @@ export async function loader({ request }) {
 
   while (hasNextPage) {
     const response = await admin.graphql(`
+      #graphql
       query GetAllProducts($cursor: String) {
         products(first: 50, after: $cursor, sortKey: TITLE) {
           pageInfo { hasNextPage endCursor }
@@ -49,7 +28,7 @@ export async function loader({ request }) {
 
     const parsed = await response.json();
     const productsData = parsed.data?.products ? parsed.data.products : null;
-    
+
     if (productsData) {
       allRawProducts = [...allRawProducts, ...productsData.edges.map(e => e.node)];
       hasNextPage = productsData.pageInfo.hasNextPage ? true : false;
@@ -58,12 +37,13 @@ export async function loader({ request }) {
       hasNextPage = false;
     }
   }
-  
+
   const products = allRawProducts.filter(p => !EXCLUDED_TITLES.includes(p.title));
 
   const snapResponse = await admin.graphql(`
+    #graphql
     query GetSnapshots {
-      metaobjects(type: "meta_injector_snapshot", first: 10, sortKey: "updated_at", reverse: true) {
+      metaobjects(type: "meta_injector_snapshot", first: 10, reverse: true) {
         edges {
           node {
             id
@@ -76,10 +56,10 @@ export async function loader({ request }) {
       }
     }
   `);
-  
+
   const snapParsed = await snapResponse.json();
   const rawSnapshots = snapParsed.data?.metaobjects?.edges.map(e => e.node) ? snapParsed.data.metaobjects.edges.map(e => e.node) : [];
-  
+
   const snapshots = rawSnapshots.map(s => ({
     id: s.id,
     date: s.timestamp?.value ? s.timestamp.value : "Unknown Date",
@@ -88,7 +68,7 @@ export async function loader({ request }) {
     payloadStr: s.payload?.value ? s.payload.value : "[]"
   }));
 
-  return { products, snapshots, dbProfiles };
+  return { products, snapshots };
 }
 
 export async function action({ request }) {
@@ -106,6 +86,7 @@ export async function action({ request }) {
     let allErrors = [];
     for (const chunk of chunks) {
       const response = await admin.graphql(`
+        #graphql
         mutation MetafieldsSet($metafields: [MetafieldsSetInput!]!) {
           metafieldsSet(metafields: $metafields) {
             userErrors { field message }
@@ -126,6 +107,7 @@ export async function action({ request }) {
   if (intent === "fetchSingleProduct") {
     const productId = formData.get("productId");
     const response = await admin.graphql(`
+      #graphql
       query GetSingleProduct($id: ID!) {
         product(id: $id) {
           id title status featuredImage { url altText }
@@ -146,6 +128,7 @@ export async function action({ request }) {
 
     while (hasNext) {
       const response = await admin.graphql(`
+        #graphql
         query GetOrigins($cursor: String) {
           products(first: 50, after: $cursor) {
             pageInfo { hasNextPage endCursor }
@@ -175,6 +158,7 @@ export async function action({ request }) {
   if (intent === "validateGIDs") {
     const gids = JSON.parse(formData.get("gids"));
     const response = await admin.graphql(`
+      #graphql
       query ValidateGIDs($ids: [ID!]!) {
         nodes(ids: $ids) { id }
       }
@@ -189,8 +173,9 @@ export async function action({ request }) {
     const actionName = formData.get("actionName");
     const payloadStr = formData.get("payloadStr");
     const scopeCount = formData.get("scopeCount");
-    
+
     const createRes = await admin.graphql(`
+      #graphql
       mutation CreateSnapshot($metaobject: MetaobjectCreateInput!) {
         metaobjectCreate(metaobject: $metaobject) {
           metaobject { id }
@@ -214,16 +199,19 @@ export async function action({ request }) {
 
     const createJson = await createRes.json();
     const errors = createJson.data?.metaobjectCreate?.userErrors ? createJson.data.metaobjectCreate.userErrors : [];
-    
+
     if (errors.length > 0 && errors[0].message.includes("type must exist")) {
-       return { success: false, errors: [{ message: "Requires Metaobject Definition: 'meta_injector_snapshot' with fields: timestamp, action, scope, payload." }] };
+      return { success: false, errors: [{ message: "Requires Metaobject Definition: 'meta_injector_snapshot' with fields: timestamp, action, scope, payload." }] };
     }
 
     const existingIds = JSON.parse(formData.get("existingIds") ? formData.get("existingIds") : "[]");
     if (existingIds.length >= 5) {
       const oldestId = existingIds[existingIds.length - 1];
       await admin.graphql(`
-        mutation DeleteSnapshot($id: ID!) { metaobjectDelete(id: $id) { userErrors { message } } }
+        #graphql
+        mutation DeleteSnapshot($id: ID!) {
+          metaobjectDelete(id: $id) { userErrors { message } }
+        }
       `, { variables: { id: oldestId } });
     }
 
