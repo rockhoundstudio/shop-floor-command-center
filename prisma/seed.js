@@ -19,6 +19,7 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [] }) {
   const [bulkFormData, setBulkFormData] = useState({});
   const [bulkSelectedProductIds, setBulkSelectedProductIds] = useState([]);
   const [bulkSearchQuery, setBulkSearchQuery] = useState("");
+  const [dynamicCustomFields, setDynamicCustomFields] = useState([]);
   const [modalConfig, setModalConfig] = useState({ active: false, title: "", body: null, diffs: [], payload: [] });
 
   const tapTargetStyle = { minHeight: '48px', minWidth: '48px', display: 'flex', alignItems: 'center', justifyContent: 'center' };
@@ -43,17 +44,16 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [] }) {
     setBulkSelectedProductIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   };
 
-  // --- UPGRADED: DICTIONARY AUTO-FILL via base_stone_type ---
+  // --- UPGRADED: AUTO-FILL FROM OFFICIAL NAME ---
   const handleAutoFill = () => {
-    // Look at what Janyce typed into the Base Stone Type field
-    const baseStoneType = bulkFormData["base_stone_type"] || "";
+    const baseStoneType = bulkFormData["official_name"] || "";
 
     if (!baseStoneType.trim()) {
-      if (shopify && shopify.toast) shopify.toast.show("Please type a base stone (e.g., 'Jasper') into 'Base Stone Type' first!", { isError: true });
+      if (shopify && shopify.toast) shopify.toast.show("Please type a base stone into 'Store Official Name' first!", { isError: true });
       return;
     }
 
-    // Search the DbProfile dictionary for a match (case-insensitive)
+    // Find the matching dictionary profile based on what she typed (case-insensitive)
     const profile = dbProfiles.find(db => 
       baseStoneType.toLowerCase().includes(db.title.toLowerCase()) || 
       db.title.toLowerCase().includes(baseStoneType.toLowerCase())
@@ -64,19 +64,15 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [] }) {
       return;
     }
 
-    // Map exact Google and Shopify data to the form, leaving unique fields alone
+    // Map database fields to the UI form (leaving color/origin alone)
     setBulkFormData(prev => ({
       ...prev,
-      authenticity: profile.googleAuthenticity || prev.authenticity || "",
-      rarity: profile.googleRarity || prev.rarity || "",
       crystal_system: profile.googleCrystalSystem || prev.crystal_system || "",
       geological_era: profile.googleGeologicalEra || prev.geological_era || "",
       mineral_class: profile.googleMineralClass || prev.mineral_class || "",
       rock_composition: profile.googleRockComposition || prev.rock_composition || "",
       rock_formation: profile.googleRockFormation || prev.rock_formation || "",
-      
-      mohs_hardness: profile.storeHardness || prev.mohs_hardness || "",
-      hardness: profile.storeHardness || prev.hardness || "", // Mapping both possible keys just in case
+      hardness_mohs: profile.storeHardness || prev.hardness_mohs || "",
       luster: profile.storeLuster || prev.luster || "",
       fracture: profile.storeFracture || prev.fracture || "",
       cleavage: profile.storeCleavage || prev.cleavage || "",
@@ -84,7 +80,7 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [] }) {
       diaphaneity: profile.storeDiaphaneity || prev.diaphaneity || ""
     }));
 
-    if (shopify && shopify.toast) shopify.toast.show(`${profile.title} science successfully loaded from dictionary!`, { isError: false });
+    if (shopify && shopify.toast) shopify.toast.show(`${profile.title} science loaded successfully!`, { isError: false });
   };
 
   const handleBulkSubmit = () => {
@@ -156,7 +152,6 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [] }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'row', gap: '24px', minHeight: '600px' }}>
       
-      {/* COLUMN 1: TARGETS */}
       <div style={{ flex: '0 0 350px', display: 'flex', flexDirection: 'column' }}>
         <Box padding="300" background="bg-surface-secondary" borderRadius="200">
           <BlockStack gap="300">
@@ -203,7 +198,6 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [] }) {
         </Box>
       </div>
 
-      {/* COLUMN 2: INJECTION */}
       <div style={{ flex: 1 }}>
         <Box padding="400" background="bg-surface" borderRadius="200" shadow="100">
           <BlockStack gap="400">
@@ -232,44 +226,21 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [] }) {
 
             <Divider />
 
-            {/* AUTO FILL BUTTON BLOCK */}
-            <Box padding="300" background="bg-surface-secondary" borderRadius="100">
-              <BlockStack gap="300">
-                <Text as="p" variant="bodyMd">
-                  <strong>Dictionary Auto-Fill:</strong> Type a base stone (e.g., "Jasper") into the <strong>Base Stone Type</strong> field below, then click this button to load its hard science data.
-                </Text>
-                <div style={tapTargetStyle}>
-                  <Button size="large" variant="primary" tone="success" onClick={handleAutoFill}>
-                    ⭐ Auto-Fill Science from Dictionary
-                  </Button>
-                </div>
-              </BlockStack>
-            </Box>
+            <InlineStack gap="300" align="start">
+                <Text as="p" variant="bodyMd">Type a base stone (e.g., "Jasper") into the Official Name field, then click Auto-Fill.</Text>
+                <Button variant="primary" onClick={handleAutoFill}>
+                   Auto-Fill Science from Dictionary
+                </Button>
+            </InlineStack>
 
             <Divider />
 
-            {/* DYNAMIC FIELDS MAP */}
             {METAFIELD_CONFIG.map(field => {
                if (field.hidden) return null;
-               
-               // Render ChoiceLists if options exist, otherwise TextField
-               if (field.options && field.options.length > 0) {
-                 return (
-                   <div style={inputTapTargetStyle} key={field.key}>
-                     <Select
-                       label={`${field.namespace === 'google' ? '🔵' : '🪨'} ${field.name || field.label || field.key}`}
-                       options={[{label: `Select ${field.label || field.key}...`, value: ''}, ...field.options.map(opt => ({label: opt.label, value: opt.value}))]}
-                       value={bulkFormData[field.key] || ""}
-                       onChange={(val) => setBulkFormData(prev => ({ ...prev, [field.key]: val }))}
-                     />
-                   </div>
-                 );
-               }
-
                return (
                  <div style={inputTapTargetStyle} key={field.key}>
                     <TextField
-                       label={`${field.namespace === 'google' ? '🔵' : '🪨'} ${field.name || field.label || field.key}`}
+                       label={`${field.namespace === 'google' ? '🔵' : '🪨'} ${field.name || field.key}`}
                        value={bulkFormData[field.key] || ""}
                        onChange={(val) => setBulkFormData(prev => ({ ...prev, [field.key]: val }))}
                        autoComplete="off"

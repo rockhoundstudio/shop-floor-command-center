@@ -81,7 +81,9 @@ export const rockFormOptions = [
 ];
 
 export const METAFIELD_CONFIG = [
-  { namespace: "custom", key: "official_name", type: "single_line_text_field", label: "Official Name (North Star)" },
+  // --- UPGRADED: Set anchor to base_stone_type ---
+  { namespace: "custom", key: "base_stone_type", type: "single_line_text_field", label: "Base Stone Type (North Star)" },
+  
   { namespace: "shopify", key: "color-pattern", type: "list.metaobject_reference", label: "Color / Pattern", options: colorOptions },
   { namespace: "shopify", key: "authenticity", type: "list.metaobject_reference", label: "Authenticity", options: authOptions },
   { namespace: "shopify", key: "rarity", type: "list.metaobject_reference", label: "Rarity", options: rarityOptions },
@@ -90,6 +92,7 @@ export const METAFIELD_CONFIG = [
   { namespace: "shopify", key: "mineral-class", type: "list.metaobject_reference", label: "Mineral Class", options: mineralClassOptions },
   { namespace: "shopify", key: "rock-composition", type: "list.metaobject_reference", label: "Rock Composition", options: rockCompOptions },
   { namespace: "shopify", key: "rock-formation", type: "list.metaobject_reference", label: "Rock Formation", options: rockFormOptions },
+  
   { namespace: "custom", key: "hardness", type: "number_decimal", label: "Hardness (Mohs)" },
   { namespace: "custom", key: "luster", type: "single_line_text_field", label: "Luster" },
   { namespace: "custom", key: "fracture", type: "single_line_text_field", label: "Fracture" },

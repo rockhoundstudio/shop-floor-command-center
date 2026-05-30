@@ -1,8 +1,30 @@
 import { authenticate } from "../shopify.server";
 import { EXCLUDED_TITLES } from "./app.meta-injector.constants";
+import db from "../db.server"; // --- Import Prisma Database ---
 
 export async function loader({ request }) {
   const { admin } = await authenticate.admin(request);
+
+  // --- UPGRADED: Fetch from the permanent StoneProfile dictionary ---
+  const rawStoneProfiles = await db.stoneProfile.findMany();
+  
+  // Map it so the UI can read it perfectly without needing UI changes
+  const dbProfiles = rawStoneProfiles.map(sp => ({
+    title: sp.stoneName,
+    googleAuthenticity: sp.authenticity,
+    googleRarity: sp.rarity,
+    googleCrystalSystem: sp.crystalSystem,
+    googleGeologicalEra: sp.geologicalEra,
+    googleMineralClass: sp.mineralClass,
+    googleRockComposition: sp.rockComposition,
+    googleRockFormation: sp.rockFormation,
+    storeHardness: sp.hardness,
+    storeLuster: sp.luster,
+    storeFracture: sp.fracture,
+    storeCleavage: sp.cleavage,
+    storeSpecificGravity: sp.specificGravity,
+    storeDiaphaneity: sp.diaphaneity
+  }));
 
   let allRawProducts = [];
   let hasNextPage = true;
@@ -53,7 +75,6 @@ export async function loader({ request }) {
         const mf = edge.node;
         if (mf.type === "list.metaobject_reference" || mf.type === "metaobject_reference") {
           try {
-            // value could be a string '["gid://..."]' or just '"gid://..."'
             const parsedValue = JSON.parse(mf.value);
             if (Array.isArray(parsedValue)) {
               parsedValue.forEach(gid => gidsToResolve.add(gid));
@@ -61,9 +82,7 @@ export async function loader({ request }) {
               gidsToResolve.add(parsedValue);
             }
           } catch (e) {
-            // Fallback if value isn't JSON parseable but looks like a GID
             if (typeof mf.value === "string" && mf.value.includes("gid://shopify/Metaobject/")) {
-                // simple extraction if it's a raw string list
                 const matches = mf.value.match(/gid:\/\/shopify\/Metaobject\/\d+/g);
                 if (matches) {
                   matches.forEach(gid => gidsToResolve.add(gid));
@@ -78,7 +97,6 @@ export async function loader({ request }) {
   const uniqueGids = Array.from(gidsToResolve);
   const metaobjectHandles = {};
 
-  // Batch fetch in chunks of 10
   const chunks = [];
   for (let i = 0; i < uniqueGids.length; i += 10) {
     chunks.push(uniqueGids.slice(i, i + 10));
@@ -136,7 +154,8 @@ export async function loader({ request }) {
     payloadStr: s.payload?.value ? s.payload.value : "[]"
   }));
 
-  return { products, snapshots, metaobjectHandles };
+  // --- Return dbProfiles to the UI ---
+  return { products, snapshots, metaobjectHandles, dbProfiles }; 
 }
 
 export async function action({ request }) {
@@ -147,11 +166,10 @@ export async function action({ request }) {
   if (intent === "saveMetafields") {
     let rawPayload = JSON.parse(formData.get("payload"));
 
-    // Confirm payload shape, conditionally format, and skip leaks via reduce
     let payload = rawPayload.reduce((acc, mf) => {
       let cleanMf = {
         ownerId: mf.ownerId,
-        namespace: "custom", // Unconditionally forced to "custom"
+        namespace: "custom", 
         key: mf.key,
         value: mf.value,
         type: mf.type
@@ -161,7 +179,6 @@ export async function action({ request }) {
         cleanMf.key = "mohs_hardness";
       }
 
-      // Universal GID Leak Guard
       if (typeof cleanMf.value === "string" && cleanMf.value.includes("gid://shopify")) {
         console.warn(`GID Leak intercepted on ${cleanMf.key} for ${cleanMf.ownerId}. Skipping this metafield.`);
         return acc;
