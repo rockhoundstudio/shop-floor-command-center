@@ -46,7 +46,7 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [] }) {
     setBulkSelectedProductIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   };
 
-  // --- UPGRADED: DICTIONARY AUTO-FILL via base_stone_type ---
+  // --- FIXED: DICTIONARY AUTO-FILL (Correct Keys) ---
   const handleAutoFill = () => {
     const baseStoneType = bulkFormData["base_stone_type"] || "";
 
@@ -67,20 +67,20 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [] }) {
 
     setBulkFormData(prev => ({
       ...prev,
-      authenticity: profile.googleAuthenticity || prev.authenticity || "",
-      rarity: profile.googleRarity || prev.rarity || "",
-      "crystal-system": profile.googleCrystalSystem || prev["crystal-system"] || "",
-      "geological-era": profile.googleGeologicalEra || prev["geological-era"] || "",
-      "mineral-class": profile.googleMineralClass || prev["mineral-class"] || "",
-      "rock-composition": profile.googleRockComposition || prev["rock-composition"] || "",
-      "rock-formation": profile.googleRockFormation || prev["rock-formation"] || "",
+      google_authenticity: profile.googleAuthenticity || prev.google_authenticity || "",
+      google_rarity: profile.googleRarity || prev.google_rarity || "",
+      google_crystal_system: profile.googleCrystalSystem || prev.google_crystal_system || "",
+      google_geological_era: profile.googleGeologicalEra || prev.google_geological_era || "",
+      google_mineral_class: profile.googleMineralClass || prev.google_mineral_class || "",
+      google_rock_composition: profile.googleRockComposition || prev.google_rock_composition || "",
+      google_rock_formation: profile.googleRockFormation || prev.google_rock_formation || "",
       
-      hardness: profile.storeHardness || prev.hardness || "",
-      luster: profile.storeLuster || prev.luster || "",
-      fracture: profile.storeFracture || prev.fracture || "",
-      cleavage: profile.storeCleavage || prev.cleavage || "",
-      specific_gravity: profile.storeSpecificGravity || prev.specific_gravity || "",
-      diaphaneity: profile.storeDiaphaneity || prev.diaphaneity || ""
+      store_hardness: profile.storeHardness || prev.store_hardness || "",
+      store_luster: profile.storeLuster || prev.store_luster || "",
+      store_fracture: profile.storeFracture || prev.store_fracture || "",
+      store_cleavage: profile.storeCleavage || prev.store_cleavage || "",
+      store_specific_gravity: profile.storeSpecificGravity || prev.store_specific_gravity || "",
+      store_diaphaneity: profile.storeDiaphaneity || prev.store_diaphaneity || ""
     }));
 
     if (shopify && shopify.toast) shopify.toast.show(`${profile.title} science successfully loaded from dictionary!`, { isError: false });
@@ -116,7 +116,14 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [] }) {
         if (currentVal === newVal) return;
 
         const resolvedType = resolveMetafieldType(product, field, newVal);
-        payload.push({ ownerId: product.id, namespace: field.namespace, key: field.key, type: resolvedType, value: newVal });
+        
+        // 💥 THE FIX: THE JSON TRAP FOR LIST FIELDS
+        let finalValue = newVal;
+        if (resolvedType.includes("list.")) {
+          finalValue = JSON.stringify([newVal]);
+        }
+
+        payload.push({ ownerId: product.id, namespace: field.namespace, key: field.key, type: resolvedType, value: finalValue });
         statusObj[field.key] = "bulk_unverified";
         productChanged = true;
         changesCount++;
@@ -262,17 +269,17 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [] }) {
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
               {METAFIELD_CONFIG.filter(f => !f.hidden).map(field => {
                 const isGoogle = field.namespace === "shopify";
-                const label = isGoogle ? `🔵 Google ${field.label}` : `🪨 Store ${field.label}`;
+                const label = isGoogle ? `🔵 Google ${field.name.replace('Google ', '')}` : `🪨 Store ${field.name.replace('Store ', '')}`;
 
                 if (isGoogle || field.options) {
                   return (
                     <div style={inputTapTargetStyle} key={field.key}>
                       <Select 
                         label={label} 
-                        options={field.options || [{label: "Select...", value: ""}]} 
+                        options={field.options ? [{label: "Select...", value: ""}, ...field.options.map(o => ({label: o, value: o}))] : [{label: "Select...", value: ""}]} 
                         value={bulkFormData[field.key] || ""} 
                         onChange={(val) => setBulkFormData(prev => ({ ...prev, [field.key]: val }))} 
-                        accessibilityLabel={`Bulk input for ${field.label}`} 
+                        accessibilityLabel={`Bulk input for ${field.name}`} 
                       />
                     </div>
                   );
@@ -287,7 +294,7 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [] }) {
                       placeholder="Leave blank to skip" 
                       autoComplete="off" 
                       type="text" 
-                      accessibilityLabel={`Bulk input for ${field.label}`} 
+                      accessibilityLabel={`Bulk input for ${field.name}`} 
                     />
                   </div>
                 );
