@@ -16,7 +16,7 @@ import {
 } from "@shopify/polaris";
 import { METAFIELD_CONFIG } from "./app.meta-injector.constants";
 
-export default function SmartBulkInjector({ products, fetcher, shopify }) {
+export function InjectorTab({ products, fetcher, shopify }) {
   const [bulkMode, setBulkMode] = useState("fill");
   const [bulkFormData, setBulkFormData] = useState({});
   const [bulkSelectedProductIds, setBulkSelectedProductIds] = useState([]);
