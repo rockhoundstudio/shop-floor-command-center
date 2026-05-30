@@ -40,17 +40,17 @@ export function NorthStarTab({ fetcher, products = [], dbProfiles = [] }) {
 
   // --- Translation Map for the New Prisma Database (FIXED KEY NAMES) ---
   const profileKeyMap = {
-    hardness_mohs: 'hardness',
-    luster: 'luster',
-    fracture: 'fracture',
-    cleavage: 'cleavage',
-    specific_gravity: 'specificGravity',
-    diaphaneity: 'diaphaneity',
-    crystal_system: 'crystalSystem',
-    geological_era: 'geologicalEra',
-    mineral_class: 'mineralClass',
-    rock_composition: 'rockComposition',
-    rock_formation: 'rockFormation'
+    store_hardness: 'hardness',
+    store_luster: 'luster',
+    store_fracture: 'fracture',
+    store_cleavage: 'cleavage',
+    store_specific_gravity: 'specificGravity',
+    store_diaphaneity: 'diaphaneity',
+    google_crystal_system: 'crystalSystem',
+    google_geological_era: 'geologicalEra',
+    google_mineral_class: 'mineralClass',
+    google_rock_composition: 'rockComposition',
+    google_rock_formation: 'rockFormation'
   };
 
   const matchedProducts = [];
