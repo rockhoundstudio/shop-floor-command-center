@@ -23,6 +23,7 @@ export function OriginsTab({ fetcher }) {
 
   const liveOrigins = fetcher.data?.origins || [];
   const isLoading = fetcher.state !== "idle";
+  const hasLoaded = fetcher.data?.origins !== undefined;
 
   const parsedOrigins = liveOrigins.map(p => {
     const parts = p.title.split(/\s[—-]\s/);
@@ -34,16 +35,16 @@ export function OriginsTab({ fetcher }) {
     if (parts.length >= 3) suggested = parts[1].trim();
 
     if (currentOrigin && suggested && currentOrigin.toLowerCase() === suggested.toLowerCase()) {
-      status = "Match"; 
+      status = "Match";
       tone = "success";
     } else if (currentOrigin && suggested) {
-      status = "Mismatch"; 
+      status = "Mismatch";
       tone = "warning";
     } else if (currentOrigin && !suggested) {
-      status = "Cannot Parse Title"; 
+      status = "Cannot Parse Title";
       tone = "info";
     } else if (!currentOrigin && suggested) {
-      status = "Ready to Inject"; 
+      status = "Ready to Inject";
       tone = "magic";
     }
     return { id: p.id, title: p.title, current: currentOrigin, suggested, status, tone, rawProduct: p };
@@ -55,30 +56,28 @@ export function OriginsTab({ fetcher }) {
       setToastState({ active: true, message: "No actionable origins found.", isError: true });
       return;
     }
-
-    const payload = targets.map(r => ({ 
-      ownerId: r.id, 
-      namespace: "custom", 
-      key: "origin_location", 
-      type: "single_line_text_field", 
-      value: r.suggested 
+    const payload = targets.map(r => ({
+      ownerId: r.id,
+      namespace: "custom",
+      key: "origin_location",
+      type: "single_line_text_field",
+      value: r.suggested
     }));
-    
     setModalConfig({
-      active: true, 
+      active: true,
       title: "Approve All Suggested Origins",
       body: `This will update the origin location for ${targets.length} products.`,
-      diffs: [], 
+      diffs: [],
       payload
     });
   };
 
   const handleApproveSingle = (row) => {
     setModalConfig({
-      active: true, 
+      active: true,
       title: `Approve Origin for ${row.title}`,
       body: `Setting origin to: ${row.suggested}`,
-      diffs: [], 
+      diffs: [],
       payload: [{ ownerId: row.id, namespace: "custom", key: "origin_location", type: "single_line_text_field", value: row.suggested }]
     });
   };
@@ -95,44 +94,60 @@ export function OriginsTab({ fetcher }) {
             <Text variant="headingMd" as="h2">Auto-Extract Origin from Titles</Text>
             {isLoading && <Spinner size="small" accessibilityLabel="Loading origins data" />}
           </InlineStack>
-          <div style={tapTargetStyle}>
-            <Button 
-              tone="success" 
-              onClick={handleApproveAll} 
-              disabled={isLoading} 
-              accessibilityLabel="Approve all suggested origins"
-            >
-              Approve All Suggestions
-            </Button>
-          </div>
-        </InlineStack>
-        <Box background="bg-surface" borderRadius="200" shadow="100">
-          <DataTable
-            columnContentTypes={["text", "text", "text", "text", "text"]}
-            headings={["Product", "Current Origin", "Suggested Extract", "Status", "Action"]}
-            rows={parsedOrigins.map(r => [
-              r.title, 
-              r.current || "-", 
-              r.suggested || "-", 
-              <Badge tone={r.tone} key={`badge-${r.id}`}>{r.status}</Badge>,
-              <div style={tapTargetStyle} key={`btn-${r.id}`}>
-                <Button 
-                  disabled={!r.suggested || r.status === "Match"} 
-                  onClick={() => handleApproveSingle(r)} 
-                  accessibilityLabel={`Approve origin for ${r.title}`}
+          <InlineStack gap="300">
+            <div style={tapTargetStyle}>
+              <Button
+                onClick={() => fetcher.submit({ intent: "fetchOrigins" }, { method: "post" })}
+                loading={isLoading}
+                accessibilityLabel="Load origins from product titles"
+              >
+                Load Origins
+              </Button>
+            </div>
+            {hasLoaded && (
+              <div style={tapTargetStyle}>
+                <Button
+                  tone="success"
+                  onClick={handleApproveAll}
+                  disabled={isLoading}
+                  accessibilityLabel="Approve all suggested origins"
                 >
-                  Approve
+                  Approve All Suggestions
                 </Button>
               </div>
-            ])}
-          />
-        </Box>
+            )}
+          </InlineStack>
+        </InlineStack>
+
+        {hasLoaded && (
+          <Box background="bg-surface" borderRadius="200" shadow="100">
+            <DataTable
+              columnContentTypes={["text", "text", "text", "text", "text"]}
+              headings={["Product", "Current Origin", "Suggested Extract", "Status", "Action"]}
+              rows={parsedOrigins.map(r => [
+                r.title,
+                r.current || "-",
+                r.suggested || "-",
+                <Badge tone={r.tone} key={`badge-${r.id}`}>{r.status}</Badge>,
+                <div style={tapTargetStyle} key={`btn-${r.id}`}>
+                  <Button
+                    disabled={!r.suggested || r.status === "Match"}
+                    onClick={() => handleApproveSingle(r)}
+                    accessibilityLabel={`Approve origin for ${r.title}`}
+                  >
+                    Approve
+                  </Button>
+                </div>
+              ])}
+            />
+          </Box>
+        )}
       </BlockStack>
 
       {modalConfig.active && (
         <Modal
-          open={true} 
-          onClose={closeModal} 
+          open={true}
+          onClose={closeModal}
           title={modalConfig.title}
           primaryAction={{ content: "Confirm & Execute", onAction: executeSave, tone: "success", accessibilityLabel: "Confirm and execute action" }}
           secondaryActions={[{ content: "Cancel", onAction: closeModal, accessibilityLabel: "Cancel action" }]}
@@ -146,10 +161,10 @@ export function OriginsTab({ fetcher }) {
       )}
 
       {toastState.active && (
-        <Toast 
-          content={toastState.message} 
-          error={toastState.isError} 
-          onDismiss={closeToast} 
+        <Toast
+          content={toastState.message}
+          error={toastState.isError}
+          onDismiss={closeToast}
         />
       )}
     </Box>
