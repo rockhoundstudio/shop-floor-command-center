@@ -3,70 +3,95 @@ import { PrismaClient } from '@prisma/client';
 const prisma = new PrismaClient();
 
 async function main() {
-  console.log(`Start seeding StoneProfile dictionary...`);
+  console.log(`Starting PNW God-Mode Lapidary Database Seed (All Mohs, Metals & River Rocks)...`);
 
-  // Clear existing to avoid duplicates
   await prisma.stoneProfile.deleteMany({});
 
   const stones = [
-    {
-      stoneName: 'Jasper',
-      authenticity: '100% Natural Earth-Mined',
-      rarity: 'Common',
-      crystalSystem: 'Trigonal',
-      geologicalEra: 'Various',
-      mineralClass: 'Silicates (Chalcedony)',
-      rockComposition: 'Silicon Dioxide (SiO2) with iron oxides',
-      rockFormation: 'Sedimentary or Hydrothermal',
-      hardness: '6.5 - 7.0',
-      luster: 'Vitreous to Dull',
-      fracture: 'Conchoidal',
-      cleavage: 'None',
-      specificGravity: '2.5 - 2.9',
-      diaphaneity: 'Opaque'
-    },
-    {
-      stoneName: 'Labradorite',
-      authenticity: '100% Natural Earth-Mined',
-      rarity: 'Uncommon',
-      crystalSystem: 'Triclinic',
-      geologicalEra: 'Precambrian',
-      mineralClass: 'Silicates (Feldspar Group)',
-      rockComposition: 'Calcium sodium aluminum silicate',
-      rockFormation: 'Igneous (Mafic Rocks)',
-      hardness: '6.0 - 6.5',
-      luster: 'Vitreous to Pearly',
-      fracture: 'Uneven to Conchoidal',
-      cleavage: 'Perfect in two directions',
-      specificGravity: '2.68 - 2.72',
-      diaphaneity: 'Translucent to Opaque'
-    },
-    {
-      stoneName: 'Feldspar',
-      authenticity: '100% Natural Earth-Mined',
-      rarity: 'Common',
-      crystalSystem: 'Triclinic or Monoclinic',
-      geologicalEra: 'Various',
-      mineralClass: 'Silicates (Feldspar Group)',
-      rockComposition: 'Potassium, sodium, or calcium aluminum silicates',
-      rockFormation: 'Igneous, Metamorphic, and Sedimentary',
-      hardness: '6.0 - 6.5',
-      luster: 'Vitreous to Pearly',
-      fracture: 'Uneven to Conchoidal',
-      cleavage: 'Perfect in two directions',
-      specificGravity: '2.56 - 2.76',
-      diaphaneity: 'Transparent to Opaque'
-    }
+    // --- THE JASPERS & PNW LEGENDS (Trigonal, Silicates, Mohs 6.5 - 7.0) ---
+    { stoneName: 'Jasper', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Trigonal', geologicalEra: 'Precambrian', mineralClass: 'Silicates', rockComposition: 'Jasper', rockFormation: 'Sedimentary', hardness: '6.5 - 7.0', luster: 'Vitreous to Dull', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.5 - 2.9', diaphaneity: 'Opaque' },
+    { stoneName: 'Picture Jasper', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Trigonal', geologicalEra: 'Precambrian', mineralClass: 'Silicates', rockComposition: 'Jasper', rockFormation: 'Sedimentary', hardness: '6.5 - 7.0', luster: 'Vitreous', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.5 - 2.9', diaphaneity: 'Opaque' },
+    { stoneName: 'Owyhee Jasper', authenticity: 'Genuine', rarity: 'Rare', crystalSystem: 'Trigonal', geologicalEra: 'Cenozoic', mineralClass: 'Silicates', rockComposition: 'Jasper', rockFormation: 'Sedimentary', hardness: '6.5 - 7.0', luster: 'Vitreous', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.6', diaphaneity: 'Opaque' },
+    { stoneName: 'Biggs Jasper', authenticity: 'Genuine', rarity: 'Rare', crystalSystem: 'Trigonal', geologicalEra: 'Cenozoic', mineralClass: 'Silicates', rockComposition: 'Jasper', rockFormation: 'Sedimentary', hardness: '6.5 - 7.0', luster: 'Vitreous', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.6', diaphaneity: 'Opaque' },
+    { stoneName: 'Morrisonite', authenticity: 'Genuine', rarity: 'Rare', crystalSystem: 'Trigonal', geologicalEra: 'Cenozoic', mineralClass: 'Silicates', rockComposition: 'Jasper', rockFormation: 'Sedimentary', hardness: '6.5 - 7.0', luster: 'Vitreous', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.6', diaphaneity: 'Opaque' },
+    { stoneName: 'Red Jasper', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Trigonal', geologicalEra: 'Precambrian', mineralClass: 'Silicates', rockComposition: 'Jasper', rockFormation: 'Sedimentary', hardness: '6.5 - 7.0', luster: 'Vitreous', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.6', diaphaneity: 'Opaque' },
+    { stoneName: 'Brecciated Jasper', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Trigonal', geologicalEra: 'Precambrian', mineralClass: 'Silicates', rockComposition: 'Jasper', rockFormation: 'Sedimentary', hardness: '6.5 - 7.0', luster: 'Vitreous', fracture: 'Uneven', cleavage: 'None', specificGravity: '2.6', diaphaneity: 'Opaque' },
+    { stoneName: 'Bloodstone', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Trigonal', geologicalEra: 'Precambrian', mineralClass: 'Silicates', rockComposition: 'Jasper', rockFormation: 'Igneous', hardness: '6.5 - 7.0', luster: 'Vitreous', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.6', diaphaneity: 'Opaque' },
+    
+    // --- THE AGATES & CHALCEDONIES (Trigonal, Silicates, Mohs 6.5 - 7.0) ---
+    { stoneName: 'Agate', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Trigonal', geologicalEra: 'Cenozoic', mineralClass: 'Silicates', rockComposition: 'Jasper', rockFormation: 'Igneous', hardness: '6.5 - 7.0', luster: 'Waxy', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.58 - 2.64', diaphaneity: 'Translucent' },
+    { stoneName: 'Montana Agate', authenticity: 'Genuine', rarity: 'Rare', crystalSystem: 'Trigonal', geologicalEra: 'Cenozoic', mineralClass: 'Silicates', rockComposition: 'Jasper', rockFormation: 'Igneous', hardness: '6.5 - 7.0', luster: 'Waxy', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.6', diaphaneity: 'Translucent' },
+    { stoneName: 'Botswana Agate', authenticity: 'Genuine', rarity: 'Rare', crystalSystem: 'Trigonal', geologicalEra: 'Cenozoic', mineralClass: 'Silicates', rockComposition: 'Jasper', rockFormation: 'Igneous', hardness: '6.5 - 7.0', luster: 'Waxy', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.6', diaphaneity: 'Translucent to Opaque' },
+    { stoneName: 'Ellensburg Blue Agate', authenticity: 'Genuine', rarity: 'Rare', crystalSystem: 'Trigonal', geologicalEra: 'Cenozoic', mineralClass: 'Silicates', rockComposition: 'Jasper', rockFormation: 'Igneous', hardness: '6.5 - 7.0', luster: 'Waxy', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.6', diaphaneity: 'Translucent' },
+    { stoneName: 'Plume Agate', authenticity: 'Genuine', rarity: 'Rare', crystalSystem: 'Trigonal', geologicalEra: 'Cenozoic', mineralClass: 'Silicates', rockComposition: 'Jasper', rockFormation: 'Igneous', hardness: '6.5 - 7.0', luster: 'Waxy', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.6', diaphaneity: 'Translucent' },
+    { stoneName: 'Moss Agate', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Trigonal', geologicalEra: 'Cenozoic', mineralClass: 'Silicates', rockComposition: 'Jasper', rockFormation: 'Igneous', hardness: '6.5 - 7.0', luster: 'Waxy', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.6', diaphaneity: 'Translucent' },
+    { stoneName: 'Chalcedony', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Trigonal', geologicalEra: 'Cenozoic', mineralClass: 'Silicates', rockComposition: 'Jasper', rockFormation: 'Igneous', hardness: '6.5 - 7.0', luster: 'Waxy', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.59 - 2.61', diaphaneity: 'Translucent' },
+    { stoneName: 'Carnelian', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Trigonal', geologicalEra: 'Cenozoic', mineralClass: 'Silicates', rockComposition: 'Jasper', rockFormation: 'Igneous', hardness: '6.5 - 7.0', luster: 'Vitreous', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.59', diaphaneity: 'Translucent' },
+
+    // --- MACROCRYSTALLINE QUARTZ (Trigonal, Silicates, Mohs 7.0) ---
+    { stoneName: 'Quartz', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Trigonal', geologicalEra: 'Precambrian', mineralClass: 'Silicates', rockComposition: 'Granite', rockFormation: 'Igneous', hardness: '7.0', luster: 'Vitreous', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.65', diaphaneity: 'Transparent to Opaque' },
+    { stoneName: 'Amethyst', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Trigonal', geologicalEra: 'Precambrian', mineralClass: 'Silicates', rockComposition: 'Granite', rockFormation: 'Igneous', hardness: '7.0', luster: 'Vitreous', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.65', diaphaneity: 'Transparent to Translucent' },
+    { stoneName: 'Citrine', authenticity: 'Genuine', rarity: 'Rare', crystalSystem: 'Trigonal', geologicalEra: 'Precambrian', mineralClass: 'Silicates', rockComposition: 'Granite', rockFormation: 'Igneous', hardness: '7.0', luster: 'Vitreous', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.65', diaphaneity: 'Transparent to Translucent' },
+    { stoneName: 'Rose Quartz', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Trigonal', geologicalEra: 'Precambrian', mineralClass: 'Silicates', rockComposition: 'Granite', rockFormation: 'Igneous', hardness: '7.0', luster: 'Vitreous', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.65', diaphaneity: 'Translucent' },
+    { stoneName: 'Smoky Quartz', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Trigonal', geologicalEra: 'Precambrian', mineralClass: 'Silicates', rockComposition: 'Granite', rockFormation: 'Igneous', hardness: '7.0', luster: 'Vitreous', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.65', diaphaneity: 'Transparent to Translucent' },
+    { stoneName: 'Tiger\'s Eye', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Trigonal', geologicalEra: 'Precambrian', mineralClass: 'Silicates', rockComposition: 'Schist', rockFormation: 'Metamorphic', hardness: '6.5 - 7.0', luster: 'Silky', fracture: 'Fibrous', cleavage: 'None', specificGravity: '2.64 - 2.71', diaphaneity: 'Opaque' },
+    { stoneName: 'Aventurine', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Trigonal', geologicalEra: 'Precambrian', mineralClass: 'Silicates', rockComposition: 'Schist', rockFormation: 'Metamorphic', hardness: '6.5 - 7.0', luster: 'Vitreous to Glistening', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.64 - 2.69', diaphaneity: 'Translucent to Opaque' },
+
+    // --- PNW FORAGING & COMMON RIVER ROCKS (Mohs Varies) ---
+    { stoneName: 'Petrified Wood', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Trigonal', geologicalEra: 'Cenozoic', mineralClass: 'Silicates', rockComposition: 'Jasper', rockFormation: 'Sedimentary', hardness: '6.5 - 7.0', luster: 'Waxy to Vitreous', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.58 - 2.91', diaphaneity: 'Opaque' },
+    { stoneName: 'Basalt', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Other', geologicalEra: 'Cenozoic', mineralClass: 'Silicates', rockComposition: 'Obsidian', rockFormation: 'Igneous', hardness: '5.5 - 6.0', luster: 'Dull', fracture: 'Uneven', cleavage: 'None', specificGravity: '2.8 - 3.0', diaphaneity: 'Opaque' },
+    { stoneName: 'Rhyolite', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Other', geologicalEra: 'Cenozoic', mineralClass: 'Silicates', rockComposition: 'Granite', rockFormation: 'Igneous', hardness: '6.0 - 7.0', luster: 'Dull to Vitreous', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.4 - 2.6', diaphaneity: 'Opaque' },
+    { stoneName: 'Thunderegg', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Other', geologicalEra: 'Cenozoic', mineralClass: 'Silicates', rockComposition: 'Granite', rockFormation: 'Igneous', hardness: '6.0 - 7.0', luster: 'Varies', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.5 - 2.7', diaphaneity: 'Opaque' },
+    { stoneName: 'Granite', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Other', geologicalEra: 'Precambrian', mineralClass: 'Silicates', rockComposition: 'Granite', rockFormation: 'Igneous', hardness: '6.0 - 7.0', luster: 'Vitreous', fracture: 'Uneven', cleavage: 'None', specificGravity: '2.6 - 2.8', diaphaneity: 'Opaque' },
+    { stoneName: 'Quartzite', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Trigonal', geologicalEra: 'Precambrian', mineralClass: 'Silicates', rockComposition: 'Other', rockFormation: 'Metamorphic', hardness: '7.0', luster: 'Vitreous', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.65', diaphaneity: 'Translucent to Opaque' },
+    { stoneName: 'Argillite', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Other', geologicalEra: 'Precambrian', mineralClass: 'Silicates', rockComposition: 'Schist', rockFormation: 'Sedimentary', hardness: '3.0 - 4.0', luster: 'Dull', fracture: 'Uneven', cleavage: 'Good', specificGravity: '2.6', diaphaneity: 'Opaque' },
+    { stoneName: 'Dallasite', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Other', geologicalEra: 'Mesozoic', mineralClass: 'Silicates', rockComposition: 'Andesite', rockFormation: 'Igneous', hardness: '6.0 - 7.0', luster: 'Vitreous', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.6 - 2.8', diaphaneity: 'Opaque' },
+
+    // --- THE FELDSPARS (Triclinic/Monoclinic, Silicates, Mohs 6.0 - 6.5) ---
+    { stoneName: 'Feldspar', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Triclinic', geologicalEra: 'Precambrian', mineralClass: 'Silicates', rockComposition: 'Granite', rockFormation: 'Igneous', hardness: '6.0 - 6.5', luster: 'Vitreous to Pearly', fracture: 'Uneven', cleavage: 'Perfect', specificGravity: '2.56 - 2.76', diaphaneity: 'Translucent to Opaque' },
+    { stoneName: 'Labradorite', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Triclinic', geologicalEra: 'Precambrian', mineralClass: 'Silicates', rockComposition: 'Andesite', rockFormation: 'Igneous', hardness: '6.0 - 6.5', luster: 'Vitreous to Pearly', fracture: 'Uneven', cleavage: 'Perfect', specificGravity: '2.68 - 2.72', diaphaneity: 'Translucent to Opaque' },
+    { stoneName: 'Moonstone', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Monoclinic', geologicalEra: 'Precambrian', mineralClass: 'Silicates', rockComposition: 'Granite', rockFormation: 'Igneous', hardness: '6.0 - 6.5', luster: 'Vitreous to Pearly', fracture: 'Uneven', cleavage: 'Perfect', specificGravity: '2.56 - 2.59', diaphaneity: 'Translucent' },
+    { stoneName: 'Oregon Sunstone', authenticity: 'Genuine', rarity: 'Rare', crystalSystem: 'Triclinic', geologicalEra: 'Cenozoic', mineralClass: 'Silicates', rockComposition: 'Andesite', rockFormation: 'Igneous', hardness: '6.0 - 6.5', luster: 'Vitreous', fracture: 'Uneven', cleavage: 'Perfect', specificGravity: '2.62 - 2.65', diaphaneity: 'Transparent to Translucent' },
+
+    // --- OBSIDIANS (Amorphous, Silicates, Mohs 5.0 - 5.5) ---
+    { stoneName: 'Obsidian', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Amorphous', geologicalEra: 'Cenozoic', mineralClass: 'Silicates', rockComposition: 'Obsidian', rockFormation: 'Igneous', hardness: '5.0 - 5.5', luster: 'Vitreous', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.35 - 2.60', diaphaneity: 'Translucent to Opaque' },
+    { stoneName: 'Snowflake Obsidian', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Amorphous', geologicalEra: 'Cenozoic', mineralClass: 'Silicates', rockComposition: 'Obsidian', rockFormation: 'Igneous', hardness: '5.0 - 5.5', luster: 'Vitreous', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.35 - 2.60', diaphaneity: 'Opaque' },
+    { stoneName: 'Mahogany Obsidian', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Amorphous', geologicalEra: 'Cenozoic', mineralClass: 'Silicates', rockComposition: 'Obsidian', rockFormation: 'Igneous', hardness: '5.0 - 5.5', luster: 'Vitreous', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.35 - 2.60', diaphaneity: 'Opaque' },
+
+    // --- SOFT / CABBING & COPPER BEAUTIES (Mohs 2.5 - 5.0) ---
+    { stoneName: 'Malachite', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Monoclinic', geologicalEra: 'Paleozoic', mineralClass: 'Carbonates', rockComposition: 'Other', rockFormation: 'Sedimentary', hardness: '3.5 - 4.0', luster: 'Silky to Dull', fracture: 'Uneven', cleavage: 'Perfect', specificGravity: '3.6 - 4.0', diaphaneity: 'Opaque' },
+    { stoneName: 'Chrysocolla', authenticity: 'Genuine', rarity: 'Rare', crystalSystem: 'Amorphous', geologicalEra: 'Paleozoic', mineralClass: 'Silicates', rockComposition: 'Other', rockFormation: 'Sedimentary', hardness: '2.5 - 3.5', luster: 'Vitreous to Earthy', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.0 - 2.4', diaphaneity: 'Opaque' },
+    { stoneName: 'Azurite', authenticity: 'Genuine', rarity: 'Rare', crystalSystem: 'Monoclinic', geologicalEra: 'Paleozoic', mineralClass: 'Carbonates', rockComposition: 'Other', rockFormation: 'Sedimentary', hardness: '3.5 - 4.0', luster: 'Vitreous to Dull', fracture: 'Conchoidal', cleavage: 'Perfect', specificGravity: '3.7 - 3.9', diaphaneity: 'Opaque' },
+    { stoneName: 'Turquoise', authenticity: 'Genuine', rarity: 'Rare', crystalSystem: 'Triclinic', geologicalEra: 'Cenozoic', mineralClass: 'Phosphates', rockComposition: 'Other', rockFormation: 'Sedimentary', hardness: '5.0 - 6.0', luster: 'Waxy', fracture: 'Conchoidal', cleavage: 'Good', specificGravity: '2.60 - 2.90', diaphaneity: 'Opaque' },
+    { stoneName: 'Variscite', authenticity: 'Genuine', rarity: 'Rare', crystalSystem: 'Other', geologicalEra: 'Paleozoic', mineralClass: 'Phosphates', rockComposition: 'Other', rockFormation: 'Sedimentary', hardness: '4.0 - 5.0', luster: 'Waxy', fracture: 'Conchoidal', cleavage: 'Good', specificGravity: '2.5 - 2.6', diaphaneity: 'Opaque' },
+    { stoneName: 'Serpentine', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Monoclinic', geologicalEra: 'Precambrian', mineralClass: 'Silicates', rockComposition: 'Other', rockFormation: 'Metamorphic', hardness: '2.5 - 5.5', luster: 'Greasy to Waxy', fracture: 'Conchoidal', cleavage: 'Perfect', specificGravity: '2.5 - 2.6', diaphaneity: 'Translucent to Opaque' },
+    { stoneName: 'Rhodochrosite', authenticity: 'Genuine', rarity: 'Rare', crystalSystem: 'Trigonal', geologicalEra: 'Cenozoic', mineralClass: 'Carbonates', rockComposition: 'Other', rockFormation: 'Sedimentary', hardness: '3.5 - 4.0', luster: 'Vitreous to Pearly', fracture: 'Uneven', cleavage: 'Perfect', specificGravity: '3.5 - 3.7', diaphaneity: 'Translucent to Opaque' },
+    { stoneName: 'Fluorite', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Other', geologicalEra: 'Paleozoic', mineralClass: 'Halides', rockComposition: 'Other', rockFormation: 'Sedimentary', hardness: '4.0', luster: 'Vitreous', fracture: 'Subconchoidal', cleavage: 'Perfect', specificGravity: '3.0 - 3.3', diaphaneity: 'Transparent to Translucent' },
+    { stoneName: 'Calcite', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Trigonal', geologicalEra: 'Paleozoic', mineralClass: 'Carbonates', rockComposition: 'Other', rockFormation: 'Sedimentary', hardness: '3.0', luster: 'Vitreous', fracture: 'Conchoidal', cleavage: 'Perfect', specificGravity: '2.7', diaphaneity: 'Transparent to Opaque' },
+    { stoneName: 'Howlite', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Monoclinic', geologicalEra: 'Cenozoic', mineralClass: 'Silicates', rockComposition: 'Other', rockFormation: 'Sedimentary', hardness: '3.5 - 3.5', luster: 'Dull to Earthy', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.5 - 2.6', diaphaneity: 'Opaque' },
+    { stoneName: 'Magnesite', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Trigonal', geologicalEra: 'Paleozoic', mineralClass: 'Carbonates', rockComposition: 'Other', rockFormation: 'Sedimentary', hardness: '3.5 - 4.5', luster: 'Dull', fracture: 'Conchoidal', cleavage: 'Perfect', specificGravity: '3.0 - 3.2', diaphaneity: 'Opaque' },
+    { stoneName: 'Apatite', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Hexagonal', geologicalEra: 'Paleozoic', mineralClass: 'Phosphates', rockComposition: 'Granite', rockFormation: 'Igneous', hardness: '5.0', luster: 'Vitreous', fracture: 'Conchoidal', cleavage: 'Indistinct', specificGravity: '3.1 - 3.2', diaphaneity: 'Transparent to Opaque' },
+    
+    // --- NATIVE METALS (Mohs 2.5 - 3.0) ---
+    { stoneName: 'Gold', authenticity: 'Genuine', rarity: 'Rare', crystalSystem: 'Other', geologicalEra: 'Precambrian', mineralClass: 'Native Elements', rockComposition: 'Other', rockFormation: 'Igneous', hardness: '2.5 - 3.0', luster: 'Metallic', fracture: 'Hackly', cleavage: 'None', specificGravity: '19.3', diaphaneity: 'Opaque' },
+    { stoneName: 'Silver', authenticity: 'Genuine', rarity: 'Rare', crystalSystem: 'Other', geologicalEra: 'Precambrian', mineralClass: 'Native Elements', rockComposition: 'Other', rockFormation: 'Igneous', hardness: '2.5 - 3.0', luster: 'Metallic', fracture: 'Hackly', cleavage: 'None', specificGravity: '10.5', diaphaneity: 'Opaque' },
+    { stoneName: 'Copper', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Other', geologicalEra: 'Precambrian', mineralClass: 'Native Elements', rockComposition: 'Other', rockFormation: 'Igneous', hardness: '2.5 - 3.0', luster: 'Metallic', fracture: 'Hackly', cleavage: 'None', specificGravity: '8.9', diaphaneity: 'Opaque' },
+
+    // --- OTHER CABBING SILICATES ---
+    { stoneName: 'Garnet', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Other', geologicalEra: 'Paleozoic', mineralClass: 'Silicates', rockComposition: 'Schist', rockFormation: 'Metamorphic', hardness: '6.5 - 7.5', luster: 'Vitreous', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '3.5 - 4.3', diaphaneity: 'Transparent to Opaque' },
+    { stoneName: 'Star Garnet', authenticity: 'Genuine', rarity: 'Rare', crystalSystem: 'Other', geologicalEra: 'Paleozoic', mineralClass: 'Silicates', rockComposition: 'Schist', rockFormation: 'Metamorphic', hardness: '6.5 - 7.5', luster: 'Vitreous', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '3.5 - 4.3', diaphaneity: 'Opaque' }
   ];
 
   for (const stone of stones) {
     const profile = await prisma.stoneProfile.create({
       data: stone,
     });
-    console.log(`Created dictionary entry for: ${profile.stoneName}`);
+    console.log(`Created dictionary entry for: ${profile.stoneName} (Mohs: ${profile.hardness})`);
   }
 
-  console.log(`Seeding finished successfully.`);
+  console.log(`\n======================================================`);
+  console.log(`💥 SUCCESS: Seeded ${stones.length} PNW Master Lapidary Stones!`);
+  console.log(`======================================================\n`);
 }
 
 main()

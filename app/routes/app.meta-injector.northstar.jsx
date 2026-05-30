@@ -38,28 +38,28 @@ export function NorthStarTab({ fetcher, products = [], dbProfiles = [] }) {
     return fieldConfig.type;
   }, []);
 
-  // --- Translation Map for the New Prisma Database ---
+  // --- Translation Map for the New Prisma Database (FIXED KEY NAMES) ---
   const profileKeyMap = {
-    hardness_mohs: 'storeHardness',
-    luster: 'storeLuster',
-    fracture: 'storeFracture',
-    cleavage: 'storeCleavage',
-    specific_gravity: 'storeSpecificGravity',
-    diaphaneity: 'storeDiaphaneity',
-    crystal_system: 'googleCrystalSystem',
-    geological_era: 'googleGeologicalEra',
-    mineral_class: 'googleMineralClass',
-    rock_composition: 'googleRockComposition',
-    rock_formation: 'googleRockFormation'
+    hardness_mohs: 'hardness',
+    luster: 'luster',
+    fracture: 'fracture',
+    cleavage: 'cleavage',
+    specific_gravity: 'specificGravity',
+    diaphaneity: 'diaphaneity',
+    crystal_system: 'crystalSystem',
+    geological_era: 'geologicalEra',
+    mineral_class: 'mineralClass',
+    rock_composition: 'rockComposition',
+    rock_formation: 'rockFormation'
   };
 
   const matchedProducts = [];
+  const unmatchedProducts = [];
   
   products.forEach(p => {
-    // FIX: Properly anchor to base_stone_type
     const baseStone = getMetafieldValue(p, "base_stone_type");
     if (baseStone) {
-      const profileMatch = dbProfiles.find(prof => prof.title && prof.title.toLowerCase() === baseStone.toLowerCase());
+      const profileMatch = dbProfiles.find(prof => prof.stoneName && prof.stoneName.toLowerCase() === baseStone.toLowerCase());
       
       if (profileMatch) {
         let fieldsToFill = 0;
@@ -73,6 +73,9 @@ export function NorthStarTab({ fetcher, products = [], dbProfiles = [] }) {
         if (fieldsToFill > 0) {
           matchedProducts.push({ product: p, profile: profileMatch, fillCount: fieldsToFill, matchedStoneName: baseStone });
         }
+      } else {
+        // NO MATCH IN DICTIONARY - CATCH FOR MANUAL ENTRY
+        unmatchedProducts.push({ product: p, baseStone: baseStone });
       }
     }
   });
@@ -131,13 +134,15 @@ export function NorthStarTab({ fetcher, products = [], dbProfiles = [] }) {
             </Button>
           </div>
         </InlineStack>
+        
+        {/* TABLE 1: PERFECT MATCHES */}
         <Box background="bg-surface" borderRadius="200" shadow="100">
           <DataTable
             columnContentTypes={["text", "text", "numeric"]}
             headings={["Product", "Base Stone (Matched Profile)", "Empty Fields to Fill"]}
             rows={matchedProducts.map(m => [ 
               m.product.title, 
-              <Badge tone="info" key={`badge-${m.product.id}`}>{m.profile.title}</Badge>, 
+              <Badge tone="success" key={`badge-${m.product.id}`}>{m.profile.stoneName}</Badge>, 
               m.fillCount.toString() 
             ])}
           />
@@ -147,6 +152,26 @@ export function NorthStarTab({ fetcher, products = [], dbProfiles = [] }) {
             </Box>
           )}
         </Box>
+
+        {/* TABLE 2: UNMATCHED / MANUAL ENTRY */}
+        {unmatchedProducts.length > 0 && (
+          <Box background="bg-surface" borderRadius="200" shadow="100">
+            <Box padding="400" paddingBlockEnd="0">
+                <Text variant="headingSm" as="h3" tone="caution">⚠️ Requires Manual Entry (Not in Dictionary)</Text>
+                <Text variant="bodyMd" as="p" color="subdued">These products have a Base Stone assigned, but it doesn't match anything in your database. Add them via the Profiles tab, or use the standard Injector to fill them manually.</Text>
+            </Box>
+            <Box padding="400">
+              <DataTable
+                columnContentTypes={["text", "text"]}
+                headings={["Product", "Unknown Base Stone"]}
+                rows={unmatchedProducts.map(u => [ 
+                  u.product.title, 
+                  <Badge tone="warning" key={`unmatched-${u.product.id}`}>{u.baseStone}</Badge> 
+                ])}
+              />
+            </Box>
+          </Box>
+        )}
       </BlockStack>
 
       {modalConfig.active && (
