@@ -38,7 +38,6 @@ export function NorthStarTab({ fetcher, products = [], dbProfiles = [] }) {
     return fieldConfig.type;
   }, []);
 
-  // --- Translation Map for the New Prisma Database (FIXED KEY NAMES) ---
   const profileKeyMap = {
     store_hardness: 'hardness',
     store_luster: 'luster',
@@ -59,7 +58,8 @@ export function NorthStarTab({ fetcher, products = [], dbProfiles = [] }) {
   products.forEach(p => {
     const baseStone = getMetafieldValue(p, "base_stone_type");
     if (baseStone) {
-      const profileMatch = dbProfiles.find(prof => prof.stoneName && prof.stoneName.toLowerCase() === baseStone.toLowerCase());
+      // 💥 THE FIX: Looking for 'title' instead of 'stoneName'
+      const profileMatch = dbProfiles.find(prof => prof.title && prof.title.toLowerCase() === baseStone.toLowerCase());
       
       if (profileMatch) {
         let fieldsToFill = 0;
@@ -74,7 +74,6 @@ export function NorthStarTab({ fetcher, products = [], dbProfiles = [] }) {
           matchedProducts.push({ product: p, profile: profileMatch, fillCount: fieldsToFill, matchedStoneName: baseStone });
         }
       } else {
-        // NO MATCH IN DICTIONARY - CATCH FOR MANUAL ENTRY
         unmatchedProducts.push({ product: p, baseStone: baseStone });
       }
     }
@@ -98,7 +97,13 @@ export function NorthStarTab({ fetcher, products = [], dbProfiles = [] }) {
         
         if (profileVal && !getMetafieldValue(match.product, field.key)) {
           const resolvedType = resolveMetafieldType(match.product, field, profileVal);
-          payload.push({ ownerId: match.product.id, namespace: field.namespace, key: field.key, type: resolvedType, value: profileVal });
+          
+          let finalValue = profileVal;
+          if (resolvedType.includes("list.")) {
+            finalValue = JSON.stringify([profileVal]);
+          }
+
+          payload.push({ ownerId: match.product.id, namespace: field.namespace, key: field.key, type: resolvedType, value: finalValue });
         }
       });
     });
@@ -142,7 +147,7 @@ export function NorthStarTab({ fetcher, products = [], dbProfiles = [] }) {
             headings={["Product", "Base Stone (Matched Profile)", "Empty Fields to Fill"]}
             rows={matchedProducts.map(m => [ 
               m.product.title, 
-              <Badge tone="success" key={`badge-${m.product.id}`}>{m.profile.stoneName}</Badge>, 
+              <Badge tone="success" key={`badge-${m.product.id}`}>{m.profile.title}</Badge>, 
               m.fillCount.toString() 
             ])}
           />
