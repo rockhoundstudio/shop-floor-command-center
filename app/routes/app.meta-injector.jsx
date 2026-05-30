@@ -5,6 +5,7 @@ import {
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { EXCLUDED_TITLES } from "./app.meta-injector.constants";
+import { db } from "../db.server";
 
 import { NorthStarTab } from "./app.meta-injector.northstar";
 import { MatrixTab } from "./app.meta-injector.matrix";
@@ -82,7 +83,9 @@ export async function loader({ request }) {
     payloadStr: s.payload?.value || "[]"
   }));
 
-  return { products, snapshots };
+  const dbProfiles = await db.stoneProfile.findMany({ orderBy: { stoneName: "asc" } });
+  
+  return { products, snapshots, dbProfiles };
 }
 
 export async function action({ request }) {
@@ -230,6 +233,36 @@ export async function action({ request }) {
     }
 
     return { success: true };
+  }
+
+  if (intent === "lookupMindat") {
+    const stoneName = formData.get("stoneName");
+    const dictionary = { "Jasper": "Quartz", "Agate": "Quartz", "Chalcedony": "Quartz", "Labradorite": "Labradorite", "Obsidian": "Obsidian", "Variscite": "Variscite", "Serpentine": "Serpentine", "Quartzite": "Quartz", "Andesite": "Andesite", "Feldspar": "Feldspar", "Aventurine": "Quartz", "Hornblende": "Hornblende", "Ironstone": "Goethite" };
+    const baseMineralName = dictionary[stoneName] || stoneName;
+    const cached = await db.stoneCache.findUnique({ where: { stoneName: baseMineralName } });
+    const cacheAge = cached ? (Date.now() - new Date(cached.updatedAt).getTime()) / (1000 * 60 * 60 * 24) : 999;
+    if (cached && cacheAge < 30) {
+      return { success: true, mindatData: JSON.parse(cached.data), fromCache: true };
+    }
+    const res = await fetch(`https://api.mindat.org/minerals/?name=${encodeURIComponent(baseMineralName)}&format=json`, { headers: { Authorization: `Token ${process.env.MINDAT_API_KEY}` } });
+    const json = await res.json();
+    const mineral = json.results?.[0] || {};
+    const mapped = { hardness: mineral.hardness_max || mineral.hardness_min || "", crystalSystem: mineral.crystal_system || "", luster: mineral.luster || "", fracture: mineral.fracture || "", cleavage: mineral.cleavage || "", specificGravity: mineral.specific_gravity || "", diaphaneity: mineral.transparency || "", mineralClass: mineral.mineral_class || "" };
+    await db.stoneCache.upsert({ where: { stoneName: baseMineralName }, update: { data: JSON.stringify(mapped), updatedAt: new Date() }, create: { stoneName: baseMineralName, data: JSON.stringify(mapped) } });
+    return { success: true, mindatData: mapped, fromCache: false };
+  }
+
+  if (intent === "saveStoneProfile") {
+    const stoneName = formData.get("stoneName");
+    const fields = { baseMineralName: formData.get("baseMineralName") || "", colorPattern: formData.get("colorPattern") || "", authenticity: formData.get("authenticity") || "", rarity: formData.get("rarity") || "", crystalSystem: formData.get("crystalSystem") || "", geologicalEra: formData.get("geologicalEra") || "", mineralClass: formData.get("mineralClass") || "", rockComposition: formData.get("rockComposition") || "", rockFormation: formData.get("rockFormation") || "", hardness: formData.get("hardness") || "", luster: formData.get("luster") || "", fracture: formData.get("fracture") || "", cleavage: formData.get("cleavage") || "", specificGravity: formData.get("specificGravity") || "", diaphaneity: formData.get("diaphaneity") || "" };
+    await db.stoneProfile.upsert({ where: { stoneName }, update: { ...fields, updatedAt: new Date() }, create: { stoneName, ...fields } });
+    return { success: true, message: "Stone profile saved." };
+  }
+
+  if (intent === "deleteStoneProfile") {
+    const id = formData.get("id");
+    await db.stoneProfile.delete({ where: { id } });
+    return { success: true, message: "Profile deleted." };
   }
 
   return { success: false, errors: [{ message: "Unknown command" }] };
