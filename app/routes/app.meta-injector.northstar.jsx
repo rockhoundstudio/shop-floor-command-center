@@ -38,21 +38,40 @@ export function NorthStarTab({ fetcher, products = [], dbProfiles = [] }) {
     return fieldConfig.type;
   }, []);
 
+  // --- Translation Map for the New Prisma Database ---
+  const profileKeyMap = {
+    hardness_mohs: 'storeHardness',
+    luster: 'storeLuster',
+    fracture: 'storeFracture',
+    cleavage: 'storeCleavage',
+    specific_gravity: 'storeSpecificGravity',
+    diaphaneity: 'storeDiaphaneity',
+    crystal_system: 'googleCrystalSystem',
+    geological_era: 'googleGeologicalEra',
+    mineral_class: 'googleMineralClass',
+    rock_composition: 'googleRockComposition',
+    rock_formation: 'googleRockFormation'
+  };
+
   const matchedProducts = [];
   
   products.forEach(p => {
-    const officialName = getMetafieldValue(p, "official_name");
-    if (officialName) {
-      const profileMatch = dbProfiles.find(prof => prof.name.toLowerCase() === officialName.toLowerCase());
+    // FIX: Properly anchor to base_stone_type
+    const baseStone = getMetafieldValue(p, "base_stone_type");
+    if (baseStone) {
+      const profileMatch = dbProfiles.find(prof => prof.title && prof.title.toLowerCase() === baseStone.toLowerCase());
+      
       if (profileMatch) {
         let fieldsToFill = 0;
         METAFIELD_CONFIG.forEach(field => {
           if (field.hidden) return;
-          const profileVal = profileMatch.data[field.key];
+          const dbKey = profileKeyMap[field.key];
+          const profileVal = dbKey ? profileMatch[dbKey] : null;
+          
           if (profileVal && !getMetafieldValue(p, field.key)) fieldsToFill++;
         });
         if (fieldsToFill > 0) {
-          matchedProducts.push({ product: p, profile: profileMatch, fillCount: fieldsToFill });
+          matchedProducts.push({ product: p, profile: profileMatch, fillCount: fieldsToFill, matchedStoneName: baseStone });
         }
       }
     }
@@ -71,7 +90,9 @@ export function NorthStarTab({ fetcher, products = [], dbProfiles = [] }) {
       relevantProducts.push(match.product);
       METAFIELD_CONFIG.forEach(field => {
         if (field.hidden) return;
-        const profileVal = match.profile.data[field.key];
+        const dbKey = profileKeyMap[field.key];
+        const profileVal = dbKey ? match.profile[dbKey] : null;
+        
         if (profileVal && !getMetafieldValue(match.product, field.key)) {
           const resolvedType = resolveMetafieldType(match.product, field, profileVal);
           payload.push({ ownerId: match.product.id, namespace: field.namespace, key: field.key, type: resolvedType, value: profileVal });
@@ -97,7 +118,7 @@ export function NorthStarTab({ fetcher, products = [], dbProfiles = [] }) {
         <InlineStack align="space-between" blockAlign="center">
           <BlockStack gap="200">
             <Text variant="headingMd" as="h2">North Star Auto-Fill Engine</Text>
-            <Text variant="bodyMd" as="p" color="subdued">Matches the "Official Name" metafield to your Render DB profiles and automatically fills in blank geological data.</Text>
+            <Text variant="bodyMd" as="p" color="subdued">Matches the "Base Stone Type" metafield to your Render DB profiles and automatically fills in blank geological data.</Text>
           </BlockStack>
           <div style={tapTargetStyle}>
             <Button 
@@ -113,10 +134,10 @@ export function NorthStarTab({ fetcher, products = [], dbProfiles = [] }) {
         <Box background="bg-surface" borderRadius="200" shadow="100">
           <DataTable
             columnContentTypes={["text", "text", "numeric"]}
-            headings={["Product", "Official Name (Matched Profile)", "Empty Fields to Fill"]}
+            headings={["Product", "Base Stone (Matched Profile)", "Empty Fields to Fill"]}
             rows={matchedProducts.map(m => [ 
               m.product.title, 
-              <Badge tone="info" key={`badge-${m.product.id}`}>{m.profile.name}</Badge>, 
+              <Badge tone="info" key={`badge-${m.product.id}`}>{m.profile.title}</Badge>, 
               m.fillCount.toString() 
             ])}
           />
