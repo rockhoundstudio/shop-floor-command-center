@@ -111,6 +111,34 @@ export async function action({ request }) {
   const formData = await request.formData();
   const intent = formData.get("intent");
 
+  // --- NEW: Handle Popup Form Data and Save to Prisma ---
+  if (intent === "createStoneProfile") {
+    const payload = JSON.parse(formData.get("payload"));
+    try {
+      await db.stoneProfile.create({
+        data: {
+          stoneName: payload.stoneName,
+          authenticity: payload.authenticity || "100% Natural Earth-Mined",
+          rarity: payload.rarity || "Common",
+          crystalSystem: payload.crystalSystem || "",
+          geologicalEra: payload.geologicalEra || "",
+          mineralClass: payload.mineralClass || "",
+          rockComposition: payload.rockComposition || "",
+          rockFormation: payload.rockFormation || "",
+          hardness: payload.hardness || "",
+          luster: payload.luster || "",
+          fracture: payload.fracture || "",
+          cleavage: payload.cleavage || "",
+          specificGravity: payload.specificGravity || "",
+          diaphaneity: payload.diaphaneity || ""
+        }
+      });
+      return { success: true, message: `Successfully added ${payload.stoneName} to the dictionary.` };
+    } catch (error) {
+      return { success: false, errors: [{ message: "Database error: Could not save new stone." }] };
+    }
+  }
+
   if (intent === "saveMetafields") {
     const payload = JSON.parse(formData.get("payload"));
     const chunks = [];
