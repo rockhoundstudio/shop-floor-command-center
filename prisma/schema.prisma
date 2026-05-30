@@ -81,3 +81,26 @@ model StoneProfile {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 }
+
+model DbProfile {
+  id                    String   @id @default(uuid())
+  productGid            String   @unique
+  title                 String
+  googleColorPattern    String?
+  googleAuthenticity    String?
+  googleRarity          String?
+  googleCrystalSystem   String?
+  googleGeologicalEra   String?
+  googleMineralClass    String?
+  googleRockComposition String?
+  googleRockFormation   String?
+  storeHardness         String?
+  storeLuster           String?
+  storeFracture         String?
+  storeCleavage         String?
+  storeSpecificGravity  String?
+  storeDiaphaneity      String?
+  storeOriginLocation   String?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+}

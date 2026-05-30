@@ -1,380 +1,331 @@
-import React, { useState } from "react";
-import { useLoaderData, useActionData, useFetcher, useNavigate } from "react-router";
+import React, { useState, useCallback } from "react";
 import {
-  Page, Layout, Card, Text, Banner, BlockStack, Box, Tabs, Frame
+  Box,
+  BlockStack,
+  InlineStack,
+  Text,
+  TextField,
+  Button,
+  Checkbox,
+  ChoiceList,
+  Divider,
+  Select,
+  Scrollable,
+  Modal,
+  DataTable
 } from "@shopify/polaris";
-import { authenticate } from "../shopify.server";
-import { EXCLUDED_TITLES } from "./app.meta-injector.constants";
-import { db } from "../db.server";
+import { METAFIELD_CONFIG } from "./app.meta-injector.constants";
 
-import { NorthStarTab } from "./app.meta-injector.northstar";
-import { MatrixTab } from "./app.meta-injector.matrix";
-import { InspectorTab } from "./app.meta-injector.inspector";
-import { InjectorTab } from "./app.meta-injector.injector";
-import { OriginsTab } from "./app.meta-injector.origins";
-import { ProfilesTab } from "./app.meta-injector.profiles";
-import { SnapshotsTab } from "./app.meta-injector.snapshots";
-import { CsvTab } from "./app.meta-injector.csv";
+export function InjectorTab({ products, fetcher, shopify }) {
+  const [bulkMode, setBulkMode] = useState("fill");
+  const [bulkFormData, setBulkFormData] = useState({});
+  const [bulkSelectedProductIds, setBulkSelectedProductIds] = useState([]);
+  const [bulkSearchQuery, setBulkSearchQuery] = useState("");
+  const [dynamicCustomFields, setDynamicCustomFields] = useState([]);
+  const [modalConfig, setModalConfig] = useState({ active: false, title: "", body: null, diffs: [], payload: [] });
 
-export async function loader({ request }) {
-  const { admin } = await authenticate.admin(request);
+  const tapTargetStyle = { minHeight: '48px', minWidth: '48px', display: 'flex', alignItems: 'center', justifyContent: 'center' };
+  const inputTapTargetStyle = { minHeight: '48px', display: 'flex', flexDirection: 'column', justifyContent: 'center' };
 
-  let allRawProducts = [];
-  let hasNextPage = true;
-  let cursor = null;
+  const getMetafieldValue = useCallback((product, key) => {
+    if (!product || !product.metafields) return "";
+    const mf = product.metafields.edges.find(e => e.node.key === key);
+    return mf ? mf.node.value : "";
+  }, []);
 
-  while (hasNextPage) {
-    const response = await admin.graphql(`
-      #graphql
-      query GetAllProducts($cursor: String) {
-        products(first: 50, after: $cursor, sortKey: TITLE) {
-          pageInfo { hasNextPage endCursor }
-          edges {
-            node {
-              id title status featuredImage { url altText }
-              metafields(first: 50) {
-                edges { node { id namespace key value type } }
-              }
-            }
-          }
-        }
-      }
-    `, { variables: { cursor } });
+  const resolveMetafieldType = useCallback((product, fieldConfig, newValue) => {
+    if (fieldConfig.options) return "list.metaobject_reference";
+    const existingMf = product.metafields.edges.find(e => e.node.key === fieldConfig.key);
+    if (existingMf) return existingMf.node.type;
+    const isNumberType = fieldConfig.type.includes("number");
+    const containsDash = newValue ? /[\-–—]/.test(newValue) : false;
+    return isNumberType ? (containsDash ? "single_line_text_field" : fieldConfig.type) : fieldConfig.type;
+  }, []);
 
-    const parsed = await response.json();
-    const productsData = parsed.data?.products || null;
+  const toggleProduct = (id) => {
+    setBulkSelectedProductIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  };
 
-    if (productsData) {
-      allRawProducts = [...allRawProducts, ...productsData.edges.map(e => e.node)];
-      hasNextPage = productsData.pageInfo.hasNextPage || false;
-      cursor = productsData.pageInfo.endCursor || null;
-    } else {
-      hasNextPage = false;
-    }
-  }
-
-  const products = allRawProducts.filter(p => !EXCLUDED_TITLES.includes(p.title));
-
-  const snapResponse = await admin.graphql(`
-    #graphql
-    query GetSnapshots {
-      metaobjects(type: "meta_injector_snapshot", first: 10, reverse: true) {
-        edges {
-          node {
-            id
-            timestamp: field(key: "timestamp") { value }
-            scope: field(key: "scope") { value }
-            action: field(key: "action") { value }
-            payload: field(key: "payload") { value }
-          }
-        }
-      }
-    }
-  `);
-
-  const snapParsed = await snapResponse.json();
-  const rawSnapshots = snapParsed.data?.metaobjects?.edges.map(e => e.node) || [];
-
-  const snapshots = rawSnapshots.map(s => ({
-    id: s.id,
-    date: s.timestamp?.value || "Unknown Date",
-    action: s.action?.value || "Snapshot",
-    scopeCount: s.scope?.value || "0",
-    payloadStr: s.payload?.value || "[]"
-  }));
-
-  const dbProfiles = await db.stoneProfile.findMany({ orderBy: { stoneName: "asc" } });
-  
-  return { products, snapshots, dbProfiles };
-}
-
-export async function action({ request }) {
-  const { admin } = await authenticate.admin(request);
-  const formData = await request.formData();
-  const intent = formData.get("intent");
-
-  if (intent === "saveMetafields") {
-    const payload = JSON.parse(formData.get("payload"));
-    const chunks = [];
-    for (let i = 0; i < payload.length; i += 3) {
-      chunks.push(payload.slice(i, i + 3));
+  const handleBulkSubmit = () => {
+    const selectedProducts = products.filter(p => bulkSelectedProductIds.includes(p.id));
+    if (selectedProducts.length === 0) {
+      if (shopify && shopify.toast) shopify.toast.show("Select at least one product.", { isError: true });
+      return;
     }
 
-    let allErrors = [];
-    for (const chunk of chunks) {
-      const response = await admin.graphql(`
-        #graphql
-        mutation MetafieldsSet($metafields: [MetafieldsSetInput!]!) {
-          metafieldsSet(metafields: $metafields) {
-            userErrors { field message }
-          }
-        }
-      `, { variables: { metafields: chunk } });
-      const json = await response.json();
-      const errors = json.data?.metafieldsSet?.userErrors || [];
-      if (errors.length > 0) allErrors = [...allErrors, ...errors];
-    }
+    const payload = [];
+    const diffSummary = [];
+    let changesCount = 0;
 
-    if (allErrors.length > 0) {
-      return { success: false, errors: allErrors, message: "Failed to save some metafields." };
-    }
-    return { success: true, message: "Metafields securely updated in batches." };
-  }
+    selectedProducts.forEach(product => {
+      const statusStr = getMetafieldValue(product, "meta_status");
+      let statusObj = {};
+      try { 
+        statusObj = statusStr ? JSON.parse(statusStr) : {}; 
+      } catch(e) {}
+      
+      let productChanged = false;
 
-  if (intent === "fetchSingleProduct") {
-    const productId = formData.get("productId");
-    const response = await admin.graphql(`
-      #graphql
-      query GetSingleProduct($id: ID!) {
-        product(id: $id) {
-          id title status featuredImage { url altText }
-          metafields(first: 50) {
-            edges { node { id namespace key value type } }
-          }
-        }
-      }
-    `, { variables: { id: productId } });
-    const json = await response.json();
-    return { success: true, product: json.data?.product || null };
-  }
+      METAFIELD_CONFIG.forEach(field => {
+        if (field.hidden) return;
+        const newVal = bulkFormData[field.key] || "";
+        if (!newVal) return;
 
-  if (intent === "fetchOrigins") {
-    let allRaw = [];
-    let hasNext = true;
-    let cursor = null;
+        const currentVal = getMetafieldValue(product, field.key);
+        if (bulkMode === "fill" && currentVal) return;
+        if (currentVal === newVal) return;
 
-    while (hasNext) {
-      const response = await admin.graphql(`
-        #graphql
-        query GetOrigins($cursor: String) {
-          products(first: 50, after: $cursor) {
-            pageInfo { hasNextPage endCursor }
-            edges {
-              node {
-                id title
-                originMetafield: metafield(namespace: "custom", key: "origin_location") { value }
-              }
-            }
-          }
-        }
-      `, { variables: { cursor } });
-      const json = await response.json();
-      const data = json.data?.products || null;
-      if (data) {
-        allRaw = [...allRaw, ...data.edges.map(e => e.node)];
-        hasNext = data.pageInfo.hasNextPage || false;
-        cursor = data.pageInfo.endCursor || null;
-      } else {
-        hasNext = false;
-      }
-    }
-    const filtered = allRaw.filter(p => !EXCLUDED_TITLES.includes(p.title));
-    return { success: true, origins: filtered };
-  }
+        const resolvedType = resolveMetafieldType(product, field, newVal);
+        payload.push({ ownerId: product.id, namespace: field.namespace, key: field.key, type: resolvedType, value: newVal });
+        statusObj[field.key] = "bulk_unverified";
+        productChanged = true;
+        changesCount++;
+      });
 
-  if (intent === "validateGIDs") {
-    const gids = JSON.parse(formData.get("gids"));
-    const response = await admin.graphql(`
-      #graphql
-      query ValidateGIDs($ids: [ID!]!) {
-        nodes(ids: $ids) { id }
-      }
-    `, { variables: { ids: gids } });
-    const json = await response.json();
-    const nodes = json.data?.nodes || [];
-    const isInvalid = nodes.some(n => n === null);
-    return { success: true, isValid: !isInvalid };
-  }
+      dynamicCustomFields.forEach(df => {
+        if (!df.key || !df.value) return;
+        const currentVal = getMetafieldValue(product, df.key);
+        if (bulkMode === "fill" && currentVal) return;
+        if (currentVal === df.value) return;
 
-  if (intent === "saveSnapshot") {
-    const actionName = formData.get("actionName");
-    const payloadStr = formData.get("payloadStr");
-    const scopeCount = formData.get("scopeCount");
+        payload.push({ ownerId: product.id, namespace: "custom", key: df.key, type: "single_line_text_field", value: df.value });
+        statusObj[df.key] = "bulk_unverified";
+        productChanged = true;
+        changesCount++;
+      });
 
-    const createRes = await admin.graphql(`
-      #graphql
-      mutation CreateSnapshot($metaobject: MetaobjectCreateInput!) {
-        metaobjectCreate(metaobject: $metaobject) {
-          metaobject { id }
-          userErrors { field message }
-        }
-      }
-    `, {
-      variables: {
-        metaobject: {
-          type: "meta_injector_snapshot",
-          capabilities: { publishable: { status: "ACTIVE" } },
-          fields: [
-            { key: "timestamp", value: new Date().toLocaleString() },
-            { key: "action", value: actionName },
-            { key: "scope", value: scopeCount },
-            { key: "payload", value: payloadStr }
-          ]
-        }
+      if (productChanged) {
+        payload.push({ ownerId: product.id, namespace: "custom", key: "meta_status", type: "json", value: JSON.stringify(statusObj) });
       }
     });
 
-    const createJson = await createRes.json();
-    const errors = createJson.data?.metaobjectCreate?.userErrors || [];
-
-    if (errors.length > 0 && errors[0].message.includes("type must exist")) {
-      return { success: false, errors: [{ message: "Requires Metaobject Definition: 'meta_injector_snapshot' with fields: timestamp, action, scope, payload." }] };
+    if (payload.length === 0) {
+      if (shopify && shopify.toast) shopify.toast.show("No changes to apply based on current mode and inputs.", { isError: false });
+      return;
     }
 
-    const existingIds = JSON.parse(formData.get("existingIds") || "[]");
-    if (existingIds.length >= 5) {
-      const oldestId = existingIds[existingIds.length - 1];
-      await admin.graphql(`
-        #graphql
-        mutation DeleteSnapshot($id: ID!) {
-          metaobjectDelete(id: $id) { userErrors { message } }
-        }
-      `, { variables: { id: oldestId } });
-    }
+    diffSummary.push({ field: "Total Updates", old: "Current State", new: `${changesCount} updates across ${selectedProducts.length} products` });
 
-    return { success: true };
+    setModalConfig({
+      active: true, 
+      title: `Confirm Bulk Injection (${bulkMode.toUpperCase()})`,
+      body: bulkMode === "overwrite" ? "WARNING: OVERWRITE mode destroys existing verified data." : "FILL ONLY mode. Existing data is safe.",
+      diffs: diffSummary, 
+      payload: payload
+    });
+  };
+
+  const executeBulkSubmit = () => {
+    fetcher.submit({ intent: "saveMetafields", payload: JSON.stringify(modalConfig.payload) }, { method: "post" });
+    setModalConfig({ active: false, title: "", body: null, diffs: [], payload: [] });
+  };
+
+  let visibleProducts = products;
+  if (bulkSearchQuery.trim() !== "") {
+    const lowerQuery = bulkSearchQuery.toLowerCase();
+    visibleProducts = products.filter(p => p.title.toLowerCase().includes(lowerQuery));
   }
-
-  if (intent === "lookupMindat") {
-    const stoneName = formData.get("stoneName");
-    const dictionary = { "Jasper": "Quartz", "Agate": "Quartz", "Chalcedony": "Quartz", "Labradorite": "Labradorite", "Obsidian": "Obsidian", "Variscite": "Variscite", "Serpentine": "Serpentine", "Quartzite": "Quartz", "Andesite": "Andesite", "Feldspar": "Feldspar", "Aventurine": "Quartz", "Hornblende": "Hornblende", "Ironstone": "Goethite" };
-    const baseMineralName = dictionary[stoneName] || stoneName;
-    const cached = await db.stoneCache.findUnique({ where: { stoneName: baseMineralName } });
-    const cacheAge = cached ? (Date.now() - new Date(cached.updatedAt).getTime()) / (1000 * 60 * 60 * 24) : 999;
-    if (cached && cacheAge < 30) {
-      return { success: true, mindatData: JSON.parse(cached.data), fromCache: true };
-    }
-    const res = await fetch(`https://api.mindat.org/minerals/?name=${encodeURIComponent(baseMineralName)}&format=json`, { headers: { Authorization: `Token ${process.env.MINDAT_API_KEY}` } });
-    const json = await res.json();
-    const mineral = json.results?.[0] || {};
-    const mapped = { hardness: mineral.hardness_max || mineral.hardness_min || "", crystalSystem: mineral.crystal_system || "", luster: mineral.luster || "", fracture: mineral.fracture || "", cleavage: mineral.cleavage || "", specificGravity: mineral.specific_gravity || "", diaphaneity: mineral.transparency || "", mineralClass: mineral.mineral_class || "" };
-    await db.stoneCache.upsert({ where: { stoneName: baseMineralName }, update: { data: JSON.stringify(mapped), updatedAt: new Date() }, create: { stoneName: baseMineralName, data: JSON.stringify(mapped) } });
-    return { success: true, mindatData: mapped, fromCache: false };
-  }
-
-  if (intent === "saveStoneProfile") {
-    const stoneName = formData.get("stoneName");
-    const fields = { baseMineralName: formData.get("baseMineralName") || "", colorPattern: formData.get("colorPattern") || "", authenticity: formData.get("authenticity") || "", rarity: formData.get("rarity") || "", crystalSystem: formData.get("crystalSystem") || "", geologicalEra: formData.get("geologicalEra") || "", mineralClass: formData.get("mineralClass") || "", rockComposition: formData.get("rockComposition") || "", rockFormation: formData.get("rockFormation") || "", hardness: formData.get("hardness") || "", luster: formData.get("luster") || "", fracture: formData.get("fracture") || "", cleavage: formData.get("cleavage") || "", specificGravity: formData.get("specificGravity") || "", diaphaneity: formData.get("diaphaneity") || "" };
-    await db.stoneProfile.upsert({ where: { stoneName }, update: { ...fields, updatedAt: new Date() }, create: { stoneName, ...fields } });
-    return { success: true, message: "Stone profile saved." };
-  }
-
-  if (intent === "deleteStoneProfile") {
-    const id = formData.get("id");
-    await db.stoneProfile.delete({ where: { id } });
-    return { success: true, message: "Profile deleted." };
-  }
-
-  return { success: false, errors: [{ message: "Unknown command" }] };
-}
-
-export default function MetaInjectorV2() {
-  const { products, snapshots = [], dbProfiles = [], metaobjectHandles = {} } = useLoaderData();
-  const actionData = useActionData();
-  const navigate = useNavigate();
-  
-  const actionFetcher = useFetcher();
-  const inspectorFetcher = useFetcher();
-  const originFetcher = useFetcher();
-  const profileFetcher = useFetcher();
-  const snapshotFetcher = useFetcher();
-
-  const [selectedTab, setSelectedTab] = useState(0);
-
-  const tabs = [
-    { id: 'northstar', content: '⭐ North Star Auto-Fill', panelID: 'panel-northstar' },
-    { id: 'health', content: 'Data Health Matrix', panelID: 'panel-health' },
-    { id: 'inspector', content: 'Product Inspector', panelID: 'panel-inspector' },
-    { id: 'bulk', content: 'Smart Bulk Injector', panelID: 'panel-bulk' },
-    { id: 'origin', content: 'Origin Fixer', panelID: 'panel-origin' },
-    { id: 'profiles', content: 'DB Profiles', panelID: 'panel-profiles' },
-    { id: 'snapshots', content: 'Snapshots', panelID: 'panel-snapshots' },
-    { id: 'csv', content: 'CSV Sync', panelID: 'panel-csv' }
-  ];
 
   return (
-    <Frame>
-      <Page
-        fullWidth 
-        title="Meta Injector v2" 
-        subtitle="Data Integrity Command Center"
-        backAction={{ content: "Dashboard", onAction: () => navigate("/app"), accessibilityLabel: "Back to Dashboard" }}
-      >
-        <Layout>
-          <Layout.Section>
-            {actionFetcher.data?.errors?.length > 0 && (
-              <Box paddingBlockEnd="400">
-                <Banner tone="critical" title="GraphQL Mutation Errors Detected">
-                  <BlockStack gap="200">
-                    {actionFetcher.data.errors.map((err, i) => (
-                      <Text key={i} as="p">{err.message}</Text>
-                    ))}
-                  </BlockStack>
-                </Banner>
-              </Box>
+    <div style={{ display: 'flex', flexDirection: 'row', gap: '24px', minHeight: '600px' }}>
+      <div style={{ flex: '0 0 350px', display: 'flex', flexDirection: 'column' }}>
+        <Box padding="300" background="bg-surface-secondary" borderRadius="200">
+          <BlockStack gap="300">
+            <Text variant="headingSm" as="h3">1. Select Targets ({bulkSelectedProductIds.length})</Text>
+            
+            <div style={inputTapTargetStyle}>
+              <TextField
+                placeholder="Search products..."
+                value={bulkSearchQuery}
+                onChange={setBulkSearchQuery}
+                autoComplete="off"
+                clearButton
+                onClearButtonClick={() => setBulkSearchQuery("")}
+                accessibilityLabel="Search products"
+              />
+            </div>
+
+            {bulkSearchQuery.trim() !== "" && (
+              <Text variant="bodySm" color="subdued">
+                Showing {visibleProducts.length} of {products.length} products
+              </Text>
             )}
 
-            <Card padding="0">
-              <Tabs tabs={tabs} selected={selectedTab} onSelect={setSelectedTab} fitted>
-                <Box padding="400">
-                  {selectedTab === 0 && (
-                    <NorthStarTab 
-                      fetcher={actionFetcher} 
-                      products={products} 
-                      dbProfiles={dbProfiles} 
+            <div style={tapTargetStyle}>
+              <Button onClick={() => setBulkSelectedProductIds(bulkSelectedProductIds.length === visibleProducts.length ? [] : visibleProducts.map(p => p.id))} accessibilityLabel="Select all or none">
+                {bulkSelectedProductIds.length === visibleProducts.length && visibleProducts.length > 0 ? "Deselect All" : "Select All"}
+              </Button>
+            </div>
+
+            <Scrollable style={{ height: '500px' }}>
+              <BlockStack gap="100">
+                {visibleProducts.length === 0 && (
+                   <Box padding="400">
+                     <Text as="p" color="subdued" alignment="center">No products match your search.</Text>
+                   </Box>
+                )}
+                {visibleProducts.map(p => (
+                  <div style={inputTapTargetStyle} key={p.id}>
+                    <Checkbox 
+                      label={p.title} 
+                      checked={bulkSelectedProductIds.includes(p.id)} 
+                      onChange={() => toggleProduct(p.id)} 
+                      accessibilityLabel={`Select ${p.title}`} 
                     />
-                  )}
-                  {selectedTab === 1 && (
-                    <MatrixTab 
-                      fetcher={actionFetcher} 
-                      products={products} 
-                      metaobjectHandles={metaobjectHandles} 
-                      onInspectProduct={() => setSelectedTab(2)} 
+                  </div>
+                ))}
+              </BlockStack>
+            </Scrollable>
+          </BlockStack>
+        </Box>
+      </div>
+
+      <div style={{ flex: 1 }}>
+        <Box padding="400" background="bg-surface" borderRadius="200" shadow="100">
+          <BlockStack gap="400">
+            <Text variant="headingSm" as="h3">2. Define Injection Data</Text>
+            <Box paddingBlockEnd="200">
+              <InlineStack gap="400">
+                <Text as="span">🔵 <strong style={{ fontWeight: 600 }}>Google</strong> = Required for Google Shopping</Text>
+                <Text as="span">🪨 <strong style={{ fontWeight: 600 }}>Store</strong> = Your OOAK storefront data</Text>
+              </InlineStack>
+            </Box>
+            <div style={inputTapTargetStyle}>
+              <ChoiceList 
+                title="Injection Mode" 
+                choices={[
+                  { label: 'FILL ONLY: Skip products that already have data', value: 'fill' }, 
+                  { label: 'OVERWRITE: Force data (Dangerous)', value: 'overwrite' }
+                ]} 
+                selected={[bulkMode]} 
+                onChange={(val) => setBulkMode(val[0])} 
+              />
+            </div>
+            <Divider />
+            
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+              {METAFIELD_CONFIG.filter(f => !f.hidden).map(field => {
+                const isGoogle = field.namespace === "shopify";
+                const label = isGoogle ? `🔵 Google ${field.label}` : `🪨 Store ${field.label}`;
+
+                if (isGoogle) {
+                  return (
+                    <div style={inputTapTargetStyle} key={field.key}>
+                      <Select 
+                        label={label} 
+                        options={field.options || [{label: "Select...", value: ""}]} 
+                        value={bulkFormData[field.key] || ""} 
+                        onChange={(val) => setBulkFormData(prev => ({ ...prev, [field.key]: val }))} 
+                        accessibilityLabel={`Bulk input for ${field.label}`} 
+                      />
+                    </div>
+                  );
+                }
+                
+                return (
+                  <div style={inputTapTargetStyle} key={field.key}>
+                    <TextField 
+                      label={label} 
+                      value={bulkFormData[field.key] || ""} 
+                      onChange={(val) => setBulkFormData(prev => ({ ...prev, [field.key]: val }))} 
+                      placeholder="Leave blank to skip" 
+                      autoComplete="off" 
+                      type="text" 
+                      accessibilityLabel={`Bulk input for ${field.label}`} 
                     />
-                  )}
-                  {selectedTab === 2 && (
-                    <InspectorTab 
-                      fetcher={inspectorFetcher} 
-                      products={products} 
-                    />
-                  )}
-                  {selectedTab === 3 && (
-                    <InjectorTab 
-                      fetcher={actionFetcher} 
-                      products={products} 
-                      shopify={typeof window !== 'undefined' ? window.shopify : undefined} 
-                    />
-                  )}
-                  {selectedTab === 4 && (
-                    <OriginsTab 
-                      fetcher={originFetcher} 
-                    />
-                  )}
-                  {selectedTab === 5 && (
-                    <ProfilesTab 
-                      fetcher={profileFetcher} 
-                      products={products} 
-                      dbProfiles={dbProfiles} 
-                    />
-                  )}
-                  {selectedTab === 6 && (
-                    <SnapshotsTab 
-                      fetcher={snapshotFetcher} 
-                      snapshots={snapshots} 
-                    />
-                  )}
-                  {selectedTab === 7 && (
-                    <CsvTab 
-                      fetcher={actionFetcher} 
-                      products={products} 
-                    />
-                  )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {dynamicCustomFields.length > 0 && (
+              <BlockStack gap="300">
+                <Divider />
+                <Text variant="headingSm" as="h4">Custom Store Fields</Text>
+                {dynamicCustomFields.map((df, idx) => (
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: '16px' }} key={`dynamic-${idx}`}>
+                    <div style={inputTapTargetStyle}>
+                      <TextField 
+                        label="🪨 Store Field Key" 
+                        value={df.key} 
+                        onChange={(val) => {
+                          const newFields = [...dynamicCustomFields];
+                          newFields[idx].key = val;
+                          setDynamicCustomFields(newFields);
+                        }} 
+                        placeholder="e.g. mine_name" 
+                        autoComplete="off" 
+                        type="text" 
+                        accessibilityLabel="Custom store field key" 
+                      />
+                    </div>
+                    <div style={inputTapTargetStyle}>
+                      <TextField 
+                        label="Value" 
+                        value={df.value} 
+                        onChange={(val) => {
+                          const newFields = [...dynamicCustomFields];
+                          newFields[idx].value = val;
+                          setDynamicCustomFields(newFields);
+                        }} 
+                        placeholder="Value" 
+                        autoComplete="off" 
+                        type="text" 
+                        accessibilityLabel="Custom store field value" 
+                      />
+                    </div>
+                    <div style={tapTargetStyle}>
+                      <Button tone="critical" onClick={() => {
+                        const newFields = [...dynamicCustomFields];
+                        newFields.splice(idx, 1);
+                        setDynamicCustomFields(newFields);
+                      }} accessibilityLabel="Remove custom field">X</Button>
+                    </div>
+                  </div>
+                ))}
+              </BlockStack>
+            )}
+            
+            <div style={tapTargetStyle}>
+              <Button onClick={() => setDynamicCustomFields([...dynamicCustomFields, { key: '', value: '' }])} accessibilityLabel="Add custom store field">
+                Add Custom Field
+              </Button>
+            </div>
+
+            <Divider />
+            <div style={tapTargetStyle}>
+              <Button tone="success" size="large" onClick={handleBulkSubmit} accessibilityLabel="Preview bulk injection">
+                Preview & Run Bulk Inject
+              </Button>
+            </div>
+          </BlockStack>
+        </Box>
+      </div>
+
+      {modalConfig.active && (
+        <Modal
+          open={true} 
+          onClose={() => setModalConfig({ active: false, title: "", body: null, diffs: [], payload: [] })} 
+          title={modalConfig.title}
+          primaryAction={{ content: "Confirm & Execute", onAction: executeBulkSubmit, tone: "success", accessibilityLabel: "Confirm and execute action" }}
+          secondaryActions={[{ content: "Cancel", onAction: () => setModalConfig({ active: false, title: "", body: null, diffs: [], payload: [] }), accessibilityLabel: "Cancel action" }]}
+        >
+          <Modal.Section>
+            <BlockStack gap="400">
+              {modalConfig.body && <Text variant="bodyLg" as="p" fontWeight="bold">{modalConfig.body}</Text>}
+              {modalConfig.diffs.length > 0 && (
+                <Box background="bg-surface-secondary" padding="300" borderRadius="200">
+                  <DataTable 
+                    columnContentTypes={["text", "text", "text"]} 
+                    headings={["Field", "Old Value", "New Value"]} 
+                    rows={modalConfig.diffs.map(d => [d.field, d.old, d.new])} 
+                  />
                 </Box>
-              </Tabs>
-            </Card>
-          </Layout.Section>
-        </Layout>
-      </Page>
-    </Frame>
+              )}
+            </BlockStack>
+          </Modal.Section>
+        </Modal>
+      )}
+    </div>
   );
 }
