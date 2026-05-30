@@ -16,7 +16,7 @@ import {
 } from "@shopify/polaris";
 import { METAFIELD_CONFIG } from "./app.meta-injector.constants";
 
-export function InjectorTab({ products, fetcher, shopify }) {
+export function InjectorTab({ products, fetcher, shopify, dbProfiles = [] }) {
   const [bulkMode, setBulkMode] = useState("fill");
   const [bulkFormData, setBulkFormData] = useState({});
   const [bulkSelectedProductIds, setBulkSelectedProductIds] = useState([]);
@@ -44,6 +44,46 @@ export function InjectorTab({ products, fetcher, shopify }) {
 
   const toggleProduct = (id) => {
     setBulkSelectedProductIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  };
+
+  // --- UPGRADED: DICTIONARY AUTO-FILL via base_stone_type ---
+  const handleAutoFill = () => {
+    const baseStoneType = bulkFormData["base_stone_type"] || "";
+
+    if (!baseStoneType.trim()) {
+      if (shopify && shopify.toast) shopify.toast.show("Please type a base stone (e.g., 'Jasper') into 'Base Stone Type' first!", { isError: true });
+      return;
+    }
+
+    const profile = dbProfiles.find(db => 
+      baseStoneType.toLowerCase().includes(db.title.toLowerCase()) || 
+      db.title.toLowerCase().includes(baseStoneType.toLowerCase())
+    );
+    
+    if (!profile) {
+      if (shopify && shopify.toast) shopify.toast.show(`No dictionary entry found for "${baseStoneType}".`, { isError: true });
+      return;
+    }
+
+    setBulkFormData(prev => ({
+      ...prev,
+      authenticity: profile.googleAuthenticity || prev.authenticity || "",
+      rarity: profile.googleRarity || prev.rarity || "",
+      "crystal-system": profile.googleCrystalSystem || prev["crystal-system"] || "",
+      "geological-era": profile.googleGeologicalEra || prev["geological-era"] || "",
+      "mineral-class": profile.googleMineralClass || prev["mineral-class"] || "",
+      "rock-composition": profile.googleRockComposition || prev["rock-composition"] || "",
+      "rock-formation": profile.googleRockFormation || prev["rock-formation"] || "",
+      
+      hardness: profile.storeHardness || prev.hardness || "",
+      luster: profile.storeLuster || prev.luster || "",
+      fracture: profile.storeFracture || prev.fracture || "",
+      cleavage: profile.storeCleavage || prev.cleavage || "",
+      specific_gravity: profile.storeSpecificGravity || prev.specific_gravity || "",
+      diaphaneity: profile.storeDiaphaneity || prev.diaphaneity || ""
+    }));
+
+    if (shopify && shopify.toast) shopify.toast.show(`${profile.title} science successfully loaded from dictionary!`, { isError: false });
   };
 
   const handleBulkSubmit = () => {
@@ -201,6 +241,22 @@ export function InjectorTab({ products, fetcher, shopify }) {
                 onChange={(val) => setBulkMode(val[0])} 
               />
             </div>
+            
+            <Divider />
+
+            <Box padding="300" background="bg-surface-secondary" borderRadius="100">
+              <BlockStack gap="300">
+                <Text as="p" variant="bodyMd">
+                  <strong>Dictionary Auto-Fill:</strong> Type a base stone (e.g., "Jasper") into the <strong>Base Stone Type</strong> field below, then click this button to load its hard science data.
+                </Text>
+                <div style={tapTargetStyle}>
+                  <Button size="large" variant="primary" tone="success" onClick={handleAutoFill}>
+                    ⭐ Auto-Fill Science from Dictionary
+                  </Button>
+                </div>
+              </BlockStack>
+            </Box>
+            
             <Divider />
             
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
@@ -208,7 +264,7 @@ export function InjectorTab({ products, fetcher, shopify }) {
                 const isGoogle = field.namespace === "shopify";
                 const label = isGoogle ? `🔵 Google ${field.label}` : `🪨 Store ${field.label}`;
 
-                if (isGoogle) {
+                if (isGoogle || field.options) {
                   return (
                     <div style={inputTapTargetStyle} key={field.key}>
                       <Select 
