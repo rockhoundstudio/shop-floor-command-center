@@ -5,6 +5,7 @@ import {
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { EXCLUDED_TITLES } from "./app.meta-injector.constants";
+import db from "../db.server";
 
 import { NorthStarTab } from "./app.meta-injector.northstar";
 import { MatrixTab } from "./app.meta-injector.matrix";
@@ -18,6 +19,26 @@ import { CsvTab } from "./app.meta-injector.csv";
 export async function loader({ request }) {
   const { admin } = await authenticate.admin(request);
 
+  // --- NEW: Fetch Hard Science Dictionary from Prisma ---
+  const rawStoneProfiles = await db.stoneProfile.findMany();
+  const dbProfiles = rawStoneProfiles.map(sp => ({
+    title: sp.stoneName,
+    googleAuthenticity: sp.authenticity,
+    googleRarity: sp.rarity,
+    googleCrystalSystem: sp.crystalSystem,
+    googleGeologicalEra: sp.geologicalEra,
+    googleMineralClass: sp.mineralClass,
+    googleRockComposition: sp.rockComposition,
+    googleRockFormation: sp.rockFormation,
+    storeHardness: sp.hardness,
+    storeLuster: sp.luster,
+    storeFracture: sp.fracture,
+    storeCleavage: sp.cleavage,
+    storeSpecificGravity: sp.specificGravity,
+    storeDiaphaneity: sp.diaphaneity
+  }));
+
+  // --- Existing Shopify Fetching ---
   let allRawProducts = [];
   let hasNextPage = true;
   let cursor = null;
@@ -82,7 +103,7 @@ export async function loader({ request }) {
     payloadStr: s.payload?.value || "[]"
   }));
 
-  return { products, snapshots };
+  return { products, snapshots, dbProfiles };
 }
 
 export async function action({ request }) {
@@ -310,6 +331,7 @@ export default function MetaInjectorV2() {
                       fetcher={actionFetcher} 
                       products={products} 
                       shopify={typeof window !== 'undefined' ? window.shopify : undefined} 
+                      dbProfiles={dbProfiles} 
                     />
                   )}
                   {selectedTab === 4 && (
