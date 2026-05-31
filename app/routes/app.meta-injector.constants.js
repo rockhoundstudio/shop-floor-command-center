@@ -86,7 +86,7 @@ export const rockFormOptions = [
 ];
 
 export const METAFIELD_CONFIG = [
-  { namespace: "custom", key: "base_stone_type", type: "single_line_text_field", label: "Base Stone Type (North Star)" },
+  { namespace: "custom", key: "official_name", type: "single_line_text_field", label: "🪨 Official Name" },
 
   { namespace: "shopify", key: "color-pattern", type: "list.metaobject_reference", label: "Color / Pattern", options: colorOptions },
   { namespace: "shopify", key: "authenticity", type: "list.metaobject_reference", label: "Authenticity", options: authOptions },
@@ -116,4 +116,4 @@ export const getLabelForValue = (key, value) => {
     return match ? match.label : value;
   }
   return value;
-}; 
+};

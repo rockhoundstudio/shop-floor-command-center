@@ -50,7 +50,7 @@ export function NorthStarTab({ products, fetcher, shopify, dbProfiles = [] }) {
     const baseStoneType = bulkFormData["official_name"] || "";
 
     if (!baseStoneType.trim()) {
-      if (shopify && shopify.toast) shopify.toast.show("Please type a base stone (e.g., 'Jasper') into 'Base Stone Type' first!", { isError: true });
+      if (shopify && shopify.toast) shopify.toast.show("Please type a stone name \(e.g., 'Jasper'\) into 'Official Name' first!", { isError: true });
       return;
     }
 
@@ -251,7 +251,7 @@ export function NorthStarTab({ products, fetcher, shopify, dbProfiles = [] }) {
             <Box padding="300" background="bg-surface-secondary" borderRadius="100">
               <BlockStack gap="300">
                 <Text as="p" variant="bodyMd">
-                  <strong>Dictionary Auto-Fill:</strong> Type a base stone (e.g., "Jasper") into the <strong>Base Stone Type</strong> field below, then click this button to load its hard science data.
+                  <strong>Dictionary Auto-Fill:</strong> Type a stone name \(e.g., "Jasper"\) into the <strong>Official Name</strong> field below, then click this button to load its hard science data.
                 </Text>
                 <div style={tapTargetStyle}>
                   <Button size="large" variant="primary" tone="success" onClick={handleAutoFill}>
