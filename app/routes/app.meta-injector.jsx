@@ -30,12 +30,12 @@ export async function loader({ request }) {
     googleMineralClass: sp.mineralClass,
     googleRockComposition: sp.rockComposition,
     googleRockFormation: sp.rockFormation,
-    storeHardness: sp.hardness,
-    storeLuster: sp.luster,
-    storeFracture: sp.fracture,
-    storeCleavage: sp.cleavage,
-    storeSpecificGravity: sp.specificGravity,
-    storeDiaphaneity: sp.diaphaneity
+    stoneHardness: sp.hardness,
+    stoneLuster: sp.luster,
+    stoneFracture: sp.fracture,
+    stoneCleavage: sp.cleavage,
+    stoneSpecificGravity: sp.specificGravity,
+    stoneDiaphaneity: sp.diaphaneity
   }));
 
   // --- Existing Shopify Fetching ---
@@ -228,7 +228,7 @@ export async function action({ request }) {
     `, { variables: { ids: gids } });
     const json = await response.json();
     const nodes = json.data?.nodes || [];
-    const isInvalid = nodes.some(n => n === null);
+    const isInvalid = nodes.nodes.some(n => n === null);
     return { success: true, isValid: !isInvalid };
   }
 
@@ -359,7 +359,7 @@ export default function MetaInjectorV2() {
                     <InjectorTab 
                       fetcher={actionFetcher} 
                       products={products} 
-                      shopify={typeof window !== 'undefined' ? window.shopify : undefined} 
+                      shopify={shopify} 
                       dbProfiles={dbProfiles} 
                     />
                   )}
