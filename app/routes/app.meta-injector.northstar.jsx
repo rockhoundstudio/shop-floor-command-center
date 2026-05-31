@@ -47,7 +47,7 @@ export function NorthStarTab({ products, fetcher, shopify, dbProfiles = [] }) {
   };
 
   const handleAutoFill = () => {
-    const baseStoneType = bulkFormData["base_stone_type"] || "";
+    const baseStoneType = bulkFormData["official_name"] || "";
 
     if (!baseStoneType.trim()) {
       if (shopify && shopify.toast) shopify.toast.show("Please type a base stone (e.g., 'Jasper') into 'Base Stone Type' first!", { isError: true });
@@ -66,19 +66,19 @@ export function NorthStarTab({ products, fetcher, shopify, dbProfiles = [] }) {
 
     setBulkFormData(prev => ({
       ...prev,
-      google_authenticity: profile.authenticity || prev.google_authenticity || "",
-      google_rarity: profile.rarity || prev.google_rarity || "",
-      google_crystal_system: profile.crystalSystem || prev.google_crystal_system || "",
-      google_geological_era: profile.geologicalEra || prev.google_geological_era || "",
-      google_mineral_class: profile.mineralClass || prev.google_mineral_class || "",
-      google_rock_composition: profile.rockComposition || prev.google_rock_composition || "",
-      google_rock_formation: profile.rockFormation || prev.google_rock_formation || "",
-      store_hardness: profile.hardness || prev.store_hardness || "",
-      store_luster: profile.luster || prev.store_luster || "",
-      store_fracture: profile.fracture || prev.store_fracture || "",
-      store_cleavage: profile.cleavage || prev.store_cleavage || "",
-      store_specific_gravity: profile.specificGravity || prev.store_specific_gravity || "",
-      store_diaphaneity: profile.diaphaneity || prev.store_diaphaneity || ""
+      google_authenticity: profile.googleAuthenticity || prev.google_authenticity || "",
+      google_rarity: profile.googleRarity || prev.google_rarity || "",
+      google_crystal_system: profile.googleCrystalSystem || prev.google_crystal_system || "",
+      google_geological_era: profile.googleGeologicalEra || prev.google_geological_era || "",
+      google_mineral_class: profile.googleMineralClass || prev.google_mineral_class || "",
+      google_rock_composition: profile.googleRockComposition || prev.google_rock_composition || "",
+      google_rock_formation: profile.googleRockFormation || prev.google_rock_formation || "",
+      store_hardness: profile.storeHardness || prev.store_hardness || "",
+      store_luster: profile.storeLuster || prev.store_luster || "",
+      store_fracture: profile.storeFracture || prev.store_fracture || "",
+      store_cleavage: profile.storeCleavage || prev.store_cleavage || "",
+      store_specific_gravity: profile.storeSpecificGravity || prev.store_specific_gravity || "",
+      store_diaphaneity: profile.storeDiaphaneity || prev.store_diaphaneity || ""
     }));
 
     if (shopify && shopify.toast) shopify.toast.show(`${profile.stoneName} science successfully loaded from dictionary!`, { isError: false });
