@@ -384,7 +384,7 @@ export function NorthStarTab({ products, fetcher, shopify, dbProfiles = [] }) {
               )}
             </BlockStack>
           </Modal.Section>
-        </Modal>
+        </Modal> 
       )}
     </div>
   );
