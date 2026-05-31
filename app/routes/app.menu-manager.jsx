@@ -23,7 +23,7 @@ export async function loader({ request }) {
               id
               title
               handle
-              itemsCount
+
             }
           }
         }
@@ -78,7 +78,7 @@ export async function action({ request }) {
             id
             title
             handle
-            itemsCount
+
             items {
               id
               title
@@ -323,7 +323,7 @@ export default function MenuManager() {
                                   <Text variant="bodyMd" fontWeight={isActive ? "bold" : "regular"}>{item.title}</Text>
                                   <Text variant="bodySm" color="subdued">Handle: {item.handle}</Text>
                                 </BlockStack>
-                                <Badge tone={item.itemsCount > 0 ? "success" : "warning"}>{item.itemsCount} items</Badge>
+                                <Badge tone={item.> 0 ? "success" : "warning"}>{item.} items</Badge>
                               </InlineStack>
                             </Box>
                           </ResourceItem>
