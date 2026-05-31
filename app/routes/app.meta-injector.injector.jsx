@@ -75,12 +75,12 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [] }) {
       google_rock_composition: profile.googleRockComposition || prev.google_rock_composition || "",
       google_rock_formation: profile.googleRockFormation || prev.google_rock_formation || "",
       
-      store_hardness: profile.storeHardness || prev.store_hardness || "",
-      store_luster: profile.storeLuster || prev.store_luster || "",
-      store_fracture: profile.storeFracture || prev.store_fracture || "",
-      store_cleavage: profile.storeCleavage || prev.store_cleavage || "",
-      store_specific_gravity: profile.storeSpecificGravity || prev.store_specific_gravity || "",
-      store_diaphaneity: profile.storeDiaphaneity || prev.store_diaphaneity || ""
+      stone_hardness: profile.stoneHardness || prev.stone_hardness || "",
+      stone_luster: profile.stoneLuster || prev.stone_luster || "",
+      stone_fracture: profile.stoneFracture || prev.stone_fracture || "",
+      stone_cleavage: profile.stoneCleavage || prev.stone_cleavage || "",
+      stone_specific_gravity: profile.stoneSpecificGravity || prev.stone_specific_gravity || "",
+      stone_diaphaneity: profile.stoneDiaphaneity || prev.stone_diaphaneity || ""
     }));
 
     if (shopify && shopify.toast) shopify.toast.show(`${profile.title} science successfully loaded from dictionary!`, { isError: false });
@@ -174,221 +174,222 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [] }) {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'row', gap: '24px', minHeight: '600px' }}>
-      <div style={{ flex: '0 0 350px', display: 'flex', flexDirection: 'column' }}>
-        <Box padding="300" background="bg-surface-secondary" borderRadius="200">
-          <BlockStack gap="300">
-            <Text variant="headingSm" as="h3">1. Select Targets ({bulkSelectedProductIds.length})</Text>
-            
-            <div style={inputTapTargetStyle}>
-              <TextField
-                placeholder="Search products..."
-                value={bulkSearchQuery}
-                onChange={setBulkSearchQuery}
-                autoComplete="off"
-                clearButton
-                onClearButtonClick={() => setBulkSearchQuery("")}
-                accessibilityLabel="Search products"
-              />
-            </div>
-
-            {bulkSearchQuery.trim() !== "" && (
-              <Text variant="bodySm" color="subdued">
-                Showing {visibleProducts.length} of {products.length} products
-              </Text>
-            )}
-
-            <div style={tapTargetStyle}>
-              <Button onClick={() => setBulkSelectedProductIds(bulkSelectedProductIds.length === visibleProducts.length ? [] : visibleProducts.map(p => p.id))} accessibilityLabel="Select all or none">
-                {bulkSelectedProductIds.length === visibleProducts.length && visibleProducts.length > 0 ? "Deselect All" : "Select All"}
-              </Button>
-            </div>
-
-            <Scrollable style={{ height: '500px' }}>
-              <BlockStack gap="100">
-                {visibleProducts.length === 0 && (
-                   <Box padding="400">
-                     <Text as="p" color="subdued" alignment="center">No products match your search.</Text>
-                   </Box>
-                )}
-                {visibleProducts.map(p => (
-                  <div style={inputTapTargetStyle} key={p.id}>
-                    <Checkbox 
-                      label={p.title} 
-                      checked={bulkSelectedProductIds.includes(p.id)} 
-                      onChange={() => toggleProduct(p.id)} 
-                      accessibilityLabel={`Select ${p.title}`} 
-                    />
-                  </div>
-                ))}
-              </BlockStack>
-            </Scrollable>
-          </BlockStack>
-        </Box>
+    <BlockStack gap="500">
+      <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
+        <Button tone="success" size="large" onClick={handleBulkSubmit} accessibilityLabel="Preview bulk injection">
+          Preview & Run Bulk Inject
+        </Button>
       </div>
+      <div style={{ display: 'flex', flexDirection: 'row', gap: '24px', minHeight: '600px' }}>
+        <div style={{ flex: '0 0 350px', display: 'flex', flexDirection: 'column' }}>
+          <Box padding="300" background="bg-surface-secondary" borderRadius="200">
+            <BlockStack gap="300">
+              <Text variant="headingSm" as="h3">1. Select Targets ({bulkSelectedProductIds.length})</Text>
+              
+              <div style={inputTapTargetStyle}>
+                <TextField
+                  placeholder="Search products..."
+                  value={bulkSearchQuery}
+                  onChange={setBulkSearchQuery}
+                  autoComplete="off"
+                  clearButton
+                  onClearButtonClick={() => setBulkSearchQuery("")}
+                  accessibilityLabel="Search products"
+                />
+              </div>
 
-      <div style={{ flex: 1 }}>
-        <Box padding="400" background="bg-surface" borderRadius="200" shadow="100">
-          <BlockStack gap="400">
-            <Text variant="headingSm" as="h3">2. Define Injection Data</Text>
-            <Box paddingBlockEnd="200">
-              <InlineStack gap="400">
-                <Text as="span">🔵 <strong style={{ fontWeight: 600 }}>Google</strong> = Required for Google Shopping</Text>
-                <Text as="span">🪨 <strong style={{ fontWeight: 600 }}>Store</strong> = Your OOAK storefront data</Text>
-              </InlineStack>
-            </Box>
-            <div style={inputTapTargetStyle}>
-              <ChoiceList 
-                title="Injection Mode" 
-                choices={[
-                  { label: 'FILL ONLY: Skip products that already have data', value: 'fill' }, 
-                  { label: 'OVERWRITE: Force data (Dangerous)', value: 'overwrite' }
-                ]} 
-                selected={[bulkMode]} 
-                onChange={(val) => setBulkMode(val[0])} 
-              />
-            </div>
-            
-            <Divider />
-
-            <Box padding="300" background="bg-surface-secondary" borderRadius="100">
-              <BlockStack gap="300">
-                <Text as="p" variant="bodyMd">
-                  <strong>Dictionary Auto-Fill:</strong> Type a base stone (e.g., "Jasper") into the <strong>Base Stone Type</strong> field below, then click this button to load its hard science data.
+              {bulkSearchQuery.trim() !== "" && (
+                <Text variant="bodySm" color="subdued">
+                  Showing {visibleProducts.length} of {products.length} products
                 </Text>
-                <div style={tapTargetStyle}>
-                  <Button size="large" variant="primary" tone="success" onClick={handleAutoFill}>
-                    ⭐ Auto-Fill Science from Dictionary
-                  </Button>
-                </div>
-              </BlockStack>
-            </Box>
-            
-            <Divider />
-            
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-              {METAFIELD_CONFIG.filter(f => !f.hidden).map(field => {
-                const isGoogle = field.namespace === "shopify";
-                const label = isGoogle ? `🔵 Google ${field.name.replace('Google ', '')}` : `🪨 Store ${field.name.replace('Store ', '')}`;
+              )}
 
-                if (isGoogle || field.options) {
+              <div style={tapTargetStyle}>
+                <Button onClick={() => setBulkSelectedProductIds(bulkSelectedProductIds.length === visibleProducts.length ? [] : visibleProducts.map(p => p.id))} accessibilityLabel="Select all or none">
+                  {bulkSelectedProductIds.length === visibleProducts.length && visibleProducts.length > 0 ? "Deselect All" : "Select All"}
+                </Button>
+              </div>
+
+              <Scrollable style={{ height: '500px' }}>
+                <BlockStack gap="100">
+                  {visibleProducts.length === 0 && (
+                     <Box padding="400">
+                       <Text as="p" color="subdued" alignment="center">No products match your search.</Text>
+                     </Box>
+                  )}
+                  {visibleProducts.map(p => (
+                    <div style={inputTapTargetStyle} key={p.id}>
+                      <Checkbox 
+                        label={p.title} 
+                        checked={bulkSelectedProductIds.includes(p.id)} 
+                        onChange={() => toggleProduct(p.id)} 
+                        accessibilityLabel={`Select ${p.title}`} 
+                      />
+                    </div>
+                  ))}
+                </BlockStack>
+              </Scrollable>
+            </BlockStack>
+          </Box>
+        </div>
+
+        <div style={{ flex: 1 }}>
+          <Box padding="400" background="bg-surface" borderRadius="200" shadow="100">
+            <BlockStack gap="400">
+              <Text variant="headingSm" as="h3">2. Define Injection Data</Text>
+              <Box paddingBlockEnd="200">
+                <InlineStack gap="400">
+                  <Text as="span">🔵 <strong style={{ fontWeight: 600 }}>Google</strong> = Required for Google Shopping</Text>
+                  <Text as="span">🪨 <strong style={{ fontWeight: 600 }}>Stone</strong> = Your OOAK storefront data</Text>
+                </InlineStack>
+              </Box>
+              <div style={inputTapTargetStyle}>
+                <ChoiceList 
+                  title="Injection Mode" 
+                  choices={[
+                    { label: 'FILL ONLY: Skip products that already have data', value: 'fill' }, 
+                    { label: 'OVERWRITE: Force data (Dangerous)', value: 'overwrite' }
+                  ]} 
+                  selected={[bulkMode]} 
+                  onChange={(val) => setBulkMode(val[0])} 
+                />
+              </div>
+              
+              <Divider />
+
+              <Box padding="300" background="bg-surface-secondary" borderRadius="100">
+                <BlockStack gap="300">
+                  <Text as="p" variant="bodyMd">
+                    <strong>Dictionary Auto-Fill:</strong> Type a base stone (e.g., "Jasper") into the <strong>Base Stone Type</strong> field below, then click this button to load its hard science data.
+                  </Text>
+                  <div style={tapTargetStyle}>
+                    <Button size="large" variant="primary" tone="success" onClick={handleAutoFill}>
+                      ⭐ Auto-Fill Science from Dictionary
+                    </Button>
+                  </div>
+                </BlockStack>
+              </Box>
+              
+              <Divider />
+              
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                {METAFIELD_CONFIG.filter(f => !f.hidden).map(field => {
+                  const isGoogle = field.namespace === "shopify";
+                  const label = isGoogle ? `🔵 Google ${field.name.replace('Google ', '')}` : `🪨 Stone ${field.name.replace('Store ', '')}`;
+
+                  if (isGoogle || field.options) {
+                    return (
+                      <div style={inputTapTargetStyle} key={field.key}>
+                        <Select 
+                          label={label} 
+                          options={field.options ? [{label: "Select...", value: ""}, ...field.options.map(o => ({label: o, value: o}))] : [{label: "Select...", value: ""}]} 
+                          value={bulkFormData[field.key] || ""} 
+                          onChange={(val) => setBulkFormData(prev => ({ ...prev, [field.key]: val }))} 
+                          accessibilityLabel={`Bulk input for ${field.name}`} 
+                        />
+                      </div>
+                    );
+                  }
+                  
                   return (
                     <div style={inputTapTargetStyle} key={field.key}>
-                      <Select 
+                      <TextField 
                         label={label} 
-                        options={field.options ? [{label: "Select...", value: ""}, ...field.options.map(o => ({label: o, value: o}))] : [{label: "Select...", value: ""}]} 
                         value={bulkFormData[field.key] || ""} 
                         onChange={(val) => setBulkFormData(prev => ({ ...prev, [field.key]: val }))} 
+                        placeholder="Leave blank to skip" 
+                        autoComplete="off" 
+                        type="text" 
                         accessibilityLabel={`Bulk input for ${field.name}`} 
                       />
                     </div>
                   );
-                }
-                
-                return (
-                  <div style={inputTapTargetStyle} key={field.key}>
-                    <TextField 
-                      label={label} 
-                      value={bulkFormData[field.key] || ""} 
-                      onChange={(val) => setBulkFormData(prev => ({ ...prev, [field.key]: val }))} 
-                      placeholder="Leave blank to skip" 
-                      autoComplete="off" 
-                      type="text" 
-                      accessibilityLabel={`Bulk input for ${field.name}`} 
-                    />
-                  </div>
-                );
-              })}
-            </div>
+                })}
+              </div>
 
-            {dynamicCustomFields.length > 0 && (
-              <BlockStack gap="300">
-                <Divider />
-                <Text variant="headingSm" as="h4">Custom Store Fields</Text>
-                {dynamicCustomFields.map((df, idx) => (
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: '16px' }} key={`dynamic-${idx}`}>
-                    <div style={inputTapTargetStyle}>
-                      <TextField 
-                        label="🪨 Store Field Key" 
-                        value={df.key} 
-                        onChange={(val) => {
+              {dynamicCustomFields.length > 0 && (
+                <BlockStack gap="300">
+                  <Divider />
+                  <Text variant="headingSm" as="h4">Custom Stone Fields</Text>
+                  {dynamicCustomFields.map((df, idx) => (
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: '16px' }} key={`dynamic-${idx}`}>
+                      <div style={inputTapTargetStyle}>
+                        <TextField 
+                          label="🪨 Stone Field Key" 
+                          value={df.key} 
+                          onChange={(val) => {
+                            const newFields = [...dynamicCustomFields];
+                            newFields[idx].key = val;
+                            setDynamicCustomFields(newFields);
+                          }} 
+                          placeholder="e.g. mine_name" 
+                          autoComplete="off" 
+                          type="text" 
+                          accessibilityLabel="Custom stone field key" 
+                        />
+                      </div>
+                      <div style={inputTapTargetStyle}>
+                        <TextField 
+                          label="Value" 
+                          value={df.value} 
+                          onChange={(val) => {
+                            const newFields = [...dynamicCustomFields];
+                            newFields[idx].value = val;
+                            setDynamicCustomFields(newFields);
+                          }} 
+                          placeholder="Value" 
+                          autoComplete="off" 
+                          type="text" 
+                          accessibilityLabel="Custom stone field value" 
+                        />
+                      </div>
+                      <div style={tapTargetStyle}>
+                        <Button tone="critical" onClick={() => {
                           const newFields = [...dynamicCustomFields];
-                          newFields[idx].key = val;
+                          newFields.splice(idx, 1);
                           setDynamicCustomFields(newFields);
-                        }} 
-                        placeholder="e.g. mine_name" 
-                        autoComplete="off" 
-                        type="text" 
-                        accessibilityLabel="Custom store field key" 
-                      />
+                        }} accessibilityLabel="Remove custom field">X</Button>
+                      </div>
                     </div>
-                    <div style={inputTapTargetStyle}>
-                      <TextField 
-                        label="Value" 
-                        value={df.value} 
-                        onChange={(val) => {
-                          const newFields = [...dynamicCustomFields];
-                          newFields[idx].value = val;
-                          setDynamicCustomFields(newFields);
-                        }} 
-                        placeholder="Value" 
-                        autoComplete="off" 
-                        type="text" 
-                        accessibilityLabel="Custom store field value" 
-                      />
-                    </div>
-                    <div style={tapTargetStyle}>
-                      <Button tone="critical" onClick={() => {
-                        const newFields = [...dynamicCustomFields];
-                        newFields.splice(idx, 1);
-                        setDynamicCustomFields(newFields);
-                      }} accessibilityLabel="Remove custom field">X</Button>
-                    </div>
-                  </div>
-                ))}
-              </BlockStack>
-            )}
-            
-            <div style={tapTargetStyle}>
-              <Button onClick={() => setDynamicCustomFields([...dynamicCustomFields, { key: '', value: '' }])} accessibilityLabel="Add custom store field">
-                Add Custom Field
-              </Button>
-            </div>
-
-            <Divider />
-            <div style={tapTargetStyle}>
-              <Button tone="success" size="large" onClick={handleBulkSubmit} accessibilityLabel="Preview bulk injection">
-                Preview & Run Bulk Inject
-              </Button>
-            </div>
-          </BlockStack>
-        </Box>
-      </div>
-
-      {modalConfig.active && (
-        <Modal
-          open={true} 
-          onClose={() => setModalConfig({ active: false, title: "", body: null, diffs: [], payload: [] })} 
-          title={modalConfig.title}
-          primaryAction={{ content: "Confirm & Execute", onAction: executeBulkSubmit, tone: "success", accessibilityLabel: "Confirm and execute action" }}
-          secondaryActions={[{ content: "Cancel", onAction: () => setModalConfig({ active: false, title: "", body: null, diffs: [], payload: [] }), accessibilityLabel: "Cancel action" }]}
-        >
-          <Modal.Section>
-            <BlockStack gap="400">
-              {modalConfig.body && <Text variant="bodyLg" as="p" fontWeight="bold">{modalConfig.body}</Text>}
-              {modalConfig.diffs.length > 0 && (
-                <Box background="bg-surface-secondary" padding="300" borderRadius="200">
-                  <DataTable 
-                    columnContentTypes={["text", "text", "text"]} 
-                    headings={["Field", "Old Value", "New Value"]} 
-                    rows={modalConfig.diffs.map(d => [d.field, d.old, d.new])} 
-                  />
-                </Box>
+                  ))}
+                </BlockStack>
               )}
+              
+              <div style={tapTargetStyle}>
+                <Button onClick={() => setDynamicCustomFields([...dynamicCustomFields, { key: '', value: '' }])} accessibilityLabel="Add custom stone field">
+                  Add Custom Field
+                </Button>
+              </div>
+
             </BlockStack>
-          </Modal.Section>
-        </Modal>
-      )}
-    </div>
+          </Box>
+        </div>
+
+        {modalConfig.active && (
+          <Modal
+            open={true} 
+            onClose={() => setModalConfig({ active: false, title: "", body: null, diffs: [], payload: [] })} 
+            title={modalConfig.title}
+            primaryAction={{ content: "Confirm & Execute", onAction: executeBulkSubmit, tone: "success", accessibilityLabel: "Confirm and execute action" }}
+            secondaryActions={[{ content: "Cancel", onAction: () => setModalConfig({ active: false, title: "", body: null, diffs: [], payload: [] }), accessibilityLabel: "Cancel action" }]}
+          >
+            <Modal.Section>
+              <BlockStack gap="400">
+                {modalConfig.body && <Text variant="bodyLg" as="p" fontWeight="bold">{modalConfig.body}</Text>}
+                {modalConfig.diffs.length > 0 && (
+                  <Box background="bg-surface-secondary" padding="300" borderRadius="200">
+                    <DataTable 
+                      columnContentTypes={["text", "text", "text"]} 
+                      headings={["Field", "Old Value", "New Value"]} 
+                      rows={modalConfig.diffs.map(d => [d.field, d.old, d.new])} 
+                    />
+                  </Box>
+                )}
+              </BlockStack>
+            </Modal.Section>
+          </Modal>
+        )}
+      </div>
+    </BlockStack>
   );
 }
