@@ -1,6 +1,6 @@
 
       if (typeof cleanMf.value === "string" && cleanMf.value.includes("gid://shopify")) {
-        console.warn(`GID Leak intercepted on ${cleanMf.key} for ${cleanMf.ownerId}. Skippinimport { authenticate } from "../shopify.server";
+        console.warn(`GID Leak intercepted on ${cleanMf.key} for ${cleanMf.ownerId}. import { authenticate } from "../shopify.server";
 import { EXCLUDED_TITLES } from "./app.meta-injector.constants";
 import db from "../db.server"; // --- Import Prisma Database ---
 
