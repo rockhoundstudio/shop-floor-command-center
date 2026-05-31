@@ -98,13 +98,13 @@ export function NorthStarTab({ products, fetcher, shopify, dbProfiles = [] }) {
     const baseStoneType = bulkFormData["official_name"] || "";
 
     if (!baseStoneType.trim()) {
-      if (shopify && shopify.toast) shopify.toast.show("Please type a stone name \(e.g., 'Jasper'\) into 'Official Name' first!", { isError: true });
+      if (shopify && shopify.toast) shopify.toast.show("Please type a stone name (e.g., 'Jasper') into 'Official Name' first!", { isError: true });
       return;
     }
 
     const profile = dbProfiles.find(db => 
-      baseStoneType.toLowerCase().includes((db.stoneName || "").toLowerCase()) || 
-      (db.stoneName || "").toLowerCase().includes(baseStoneType.toLowerCase())
+      baseStoneType.toLowerCase().includes((db.stoneName || db.title || "").toLowerCase()) || 
+      (db.stoneName || db.title || "").toLowerCase().includes(baseStoneType.toLowerCase())
     );
     
     if (!profile) {
@@ -114,22 +114,22 @@ export function NorthStarTab({ products, fetcher, shopify, dbProfiles = [] }) {
 
     setBulkFormData(prev => ({
       ...prev,
-      google_authenticity:     toGid("authenticity",     profile.googleAuthenticity)     || prev.google_authenticity     || "",
-      google_rarity:           toGid("rarity",           profile.googleRarity)           || prev.google_rarity           || "",
-      google_crystal_system:   toGid("crystalSystem",    profile.googleCrystalSystem)    || prev.google_crystal_system   || "",
-      google_geological_era:   toGid("geologicalEra",    profile.googleGeologicalEra)    || prev.google_geological_era   || "",
-      google_mineral_class:    toGid("mineralClass",     profile.googleMineralClass)     || prev.google_mineral_class    || "",
-      google_rock_composition: toGid("rockComposition",  profile.googleRockComposition)  || prev.google_rock_composition || "",
-      google_rock_formation:   toGid("rockFormation",    profile.googleRockFormation)    || prev.google_rock_formation   || "",
-      store_hardness: profile.storeHardness || prev.store_hardness || "",
-      store_luster: profile.storeLuster || prev.store_luster || "",
-      store_fracture: profile.storeFracture || prev.store_fracture || "",
-      store_cleavage: profile.storeCleavage || prev.store_cleavage || "",
-      store_specific_gravity: profile.storeSpecificGravity || prev.store_specific_gravity || "",
-      store_diaphaneity: profile.storeDiaphaneity || prev.store_diaphaneity || ""
+      google_authenticity:     toGid("authenticity",     profile.googleAuthenticity || profile.authenticity)     || prev.google_authenticity     || "",
+      google_rarity:           toGid("rarity",           profile.googleRarity || profile.rarity)               || prev.google_rarity           || "",
+      google_crystal_system:   toGid("crystalSystem",    profile.googleCrystalSystem || profile.crystalSystem)    || prev.google_crystal_system   || "",
+      google_geological_era:   toGid("geologicalEra",    profile.googleGeologicalEra || profile.geologicalEra)    || prev.google_geological_era   || "",
+      google_mineral_class:    toGid("mineralClass",     profile.googleMineralClass || profile.mineralClass)     || prev.google_mineral_class    || "",
+      google_rock_composition: toGid("rockComposition",  profile.googleRockComposition || profile.rockComposition) || prev.google_rock_composition || "",
+      google_rock_formation:   toGid("rockFormation",    profile.googleRockFormation || profile.rockFormation)    || prev.google_rock_formation   || "",
+      store_hardness: profile.storeHardness || profile.hardness || prev.store_hardness || "",
+      store_luster: profile.storeLuster || profile.luster || prev.store_luster || "",
+      store_fracture: profile.storeFracture || profile.fracture || prev.store_fracture || "",
+      store_cleavage: profile.storeCleavage || profile.cleavage || prev.store_cleavage || "",
+      store_specific_gravity: profile.storeSpecificGravity || profile.specificGravity || prev.store_specific_gravity || "",
+      store_diaphaneity: profile.storeDiaphaneity || profile.diaphaneity || prev.store_diaphaneity || ""
     }));
 
-    if (shopify && shopify.toast) shopify.toast.show(`${profile.stoneName} science successfully loaded from dictionary!`, { isError: false });
+    if (shopify && shopify.toast) shopify.toast.show(`${profile.stoneName || profile.title} science successfully loaded from dictionary!`, { isError: false });
   };
 
   const handleBulkSubmit = () => {
@@ -253,7 +253,7 @@ export function NorthStarTab({ products, fetcher, shopify, dbProfiles = [] }) {
               <BlockStack gap="100">
                 {visibleProducts.length === 0 && (
                    <Box padding="400">
-                     <Text as="p" color="subdued" alignment="center">No products match your search.</Text>
+                     <Text as="p" color="subdued" alignment="center">No products match your search.</Text>
                    </Box>
                 )}
                 {visibleProducts.map(p => (
@@ -299,7 +299,7 @@ export function NorthStarTab({ products, fetcher, shopify, dbProfiles = [] }) {
             <Box padding="300" background="bg-surface-secondary" borderRadius="100">
               <BlockStack gap="300">
                 <Text as="p" variant="bodyMd">
-                  <strong>Dictionary Auto-Fill:</strong> Type a stone name \(e.g., "Jasper"\) into the <strong>Official Name</strong> field below, then click this button to load its hard science data.
+                  <strong>Dictionary Auto-Fill:</strong> Type a stone name (e.g., "Jasper") into the <strong>Official Name</strong> field below, then click this button to load its hard science data.
                 </Text>
                 <div style={tapTargetStyle}>
                   <Button size="large" variant="primary" tone="success" onClick={handleAutoFill}>
