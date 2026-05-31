@@ -117,10 +117,10 @@ export function NorthStarTab({ products, fetcher, shopify, dbProfiles = [] }) {
       "authenticity":       toGid("authenticity",    profile.googleAuthenticity || profile.authenticity)         || prev["authenticity"]       || "",
       "rarity":             toGid("rarity",          profile.googleRarity || profile.rarity)                     || prev["rarity"]             || "",
       "crystal-system":     toGid("crystalSystem",   profile.googleCrystalSystem || profile.crystalSystem)       || prev["crystal-system"]     || "",
-      "geological-era":     toGid("geologicalEra",   profile.googleGeologicalEra || profile.geologicalEra)       || prev["geological-era"]     || "",
+      "geological-era":     toGid("geologicalEra",   profile.googleGeologicalEra || profile.geologicalEra)       || prev["geological-era"]     || "",
       "mineral-class":      toGid("mineralClass",    profile.googleMineralClass || profile.mineralClass)         || prev["mineral-class"]      || "",
       "rock-composition":   toGid("rockComposition", profile.googleRockComposition || profile.rockComposition)   || prev["rock-composition"]   || "",
-      "rock-formation":     toGid("rockFormation",   profile.googleRockFormation || profile.rockFormation)       || prev["rock-formation"]     || "",
+      "rock-formation":     toGid("rockFormation",   profile.googleRockFormation || profile.rockFormation)       || prev["rock-formation"]     || "",
       store_hardness: profile.storeHardness || profile.hardness || prev.store_hardness || "",
       store_luster: profile.storeLuster || profile.luster || prev.store_luster || "",
       store_fracture: profile.storeFracture || profile.fracture || prev.store_fracture || "",
@@ -165,7 +165,12 @@ export function NorthStarTab({ products, fetcher, shopify, dbProfiles = [] }) {
         
         let finalValue = newVal;
         if (resolvedType.includes("list.")) {
-          finalValue = JSON.stringify([newVal]);
+          try {
+            JSON.parse(newVal);
+            finalValue = newVal;
+          } catch {
+            finalValue = JSON.stringify([newVal]);
+          }
         }
 
         payload.push({ ownerId: product.id, namespace: field.namespace, key: field.key, type: resolvedType, value: finalValue });
