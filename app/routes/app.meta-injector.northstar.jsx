@@ -38,7 +38,7 @@ const GOOGLE_GID_MAP = {
     "Carbonates": '["gid://shopify/Metaobject/156128313595"]',
     "Phosphates": '["gid://shopify/Metaobject/178206212347"]',
     "Sulfides":   '["gid://shopify/Metaobject/178206310651"]',
-  },
+  },
   rockComposition: {
     "Granite":  '["gid://shopify/Metaobject/151951311099"]',
     "Obsidian": '["gid://shopify/Metaobject/155431338235"]',
@@ -67,7 +67,7 @@ const toGid = (category, value) => GOOGLE_GID_MAP[category]?.[value] || "";
 export function NorthStarTab({ products, fetcher, shopify, dbProfiles = [] }) {
   const [bulkMode, setBulkMode] = useState("fill");
   const [bulkFormData, setBulkFormData] = useState({});
-maxSelectedProductIds:  const [bulkSelectedProductIds, setBulkSelectedProductIds] = useState([]);
+  const [bulkSelectedProductIds, setBulkSelectedProductIds] = useState([]);
   const [bulkSearchQuery, setBulkSearchQuery] = useState("");
   const [dynamicCustomFields, setDynamicCustomFields] = useState([]);
   const [modalConfig, setModalConfig] = useState({ active: false, title: "", body: null, diffs: [], payload: [] });
@@ -119,7 +119,7 @@ maxSelectedProductIds:  const [bulkSelectedProductIds, setBulkSelectedProductId
       google_crystal_system:   toGid("crystalSystem",    profile.googleCrystalSystem)    || prev.google_crystal_system   || "",
       google_geological_era:   toGid("geologicalEra",    profile.googleGeologicalEra)    || prev.google_geological_era   || "",
       google_mineral_class:    toGid("mineralClass",     profile.googleMineralClass)     || prev.google_mineral_class    || "",
-      google_rock_composition: toGid("rockComposition",  profile.googleRockComposition)  || prev.google_rock_composition || "",
+      google_rock_composition: toGid("rockComposition",  profile.googleRockComposition)  || prev.google_rock_composition || "",
       google_rock_formation:   toGid("rockFormation",    profile.googleRockFormation)    || prev.google_rock_formation   || "",
       store_hardness: profile.storeHardness || prev.store_hardness || "",
       store_luster: profile.storeLuster || prev.store_luster || "",
@@ -416,7 +416,7 @@ maxSelectedProductIds:  const [bulkSelectedProductIds, setBulkSelectedProductId
           onClose={() => setModalConfig({ active: false, title: "", body: null, diffs: [], payload: [] })} 
           title={modalConfig.title}
           primaryAction={{ content: "Confirm & Execute", onAction: executeBulkSubmit, tone: "success", accessibilityLabel: "Confirm and execute action" }}
-          secondaryActions={[{ content: "Cancel", onAction: () => setModalConfig({ active: false, title: "", body: null, diffs: [], payload: [] }), accessibilityLabel: "Cancel action" }]}
+          secondaryActions={[{ content: "Cancel", onAction: () => setModalConfig({ active: false, title: "", body: null, diffs: [], payload: [] }), accessibilityLabel: "Cancel action" }]}
         >
           <Modal.Section>
             <BlockStack gap="400">
