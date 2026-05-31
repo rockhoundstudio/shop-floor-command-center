@@ -40,5 +40,8 @@
   "author": "elega",
   "prisma": {
     "seed": "node prisma/seed.js"
+  },
+  "devDependencies": {
+    "vite-tsconfig-paths": "^6.1.1"
   }
 }
