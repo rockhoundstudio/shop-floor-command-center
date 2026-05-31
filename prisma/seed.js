@@ -1,149 +1,450 @@
-import { PrismaClient } from '@prisma/client';
+import React, { useState, useCallback } from "react";
+import {
+  Box,
+  BlockStack,
+  InlineStack,
+  Text,
+  TextField,
+  Button,
+  Checkbox,
+  ChoiceList,
+  Divider,
+  Select,
+  Scrollable,
+  Modal,
+  DataTable
+} from "@shopify/polaris";
+import { METAFIELD_CONFIG } from "./app.meta-injector.constants";
 
-const prisma = new PrismaClient();
+const GOOGLE_GID_MAP = {
+  crystalSystem: {
+    "Amorphous":  '["gid://shopify/Metaobject/178206015739"]',
+    "Monoclinic": '["gid://shopify/Metaobject/151951212795"]',
+    "Trigonal":   '["gid://shopify/Metaobject/154252116219"]',
+    "Hexagonal":  '["gid://shopify/Metaobject/154307625211"]',
+    "Triclinic":  '["gid://shopify/Metaobject/154308706555"]',
+    "Other":      '["gid://shopify/Metaobject/178222989563"]',
+  },
+  geologicalEra: {
+    "Precambrian": '["gid://shopify/Metaobject/151951245563"]',
+    "Mesozoic":    '["gid://shopify/Metaobject/154252083451"]',
+    "Cenozoic":    '["gid://shopify/Metaobject/154307854587"]',
+    "Paleozoic":   '["gid://shopify/Metaobject/156128379131"]',
+    "Other":       '["gid://shopify/Metaobject/156128444667"]',
+  },
+  mineralClass: {
+    "Silicates":  '["gid://shopify/Metaobject/151951278331"]',
+    "Oxides":     '["gid://shopify/Metaobject/155431371003"]',
+    "Carbonates": '["gid://shopify/Metaobject/156128313595"]',
+    "Phosphates": '["gid://shopify/Metaobject/178206212347"]',
+    "Sulfides":   '["gid://shopify/Metaobject/178206310651"]',
+  },
+  rockComposition: {
+    "Granite":  '["gid://shopify/Metaobject/151951311099"]',
+    "Obsidian": '["gid://shopify/Metaobject/155431338235"]',
+    "Andesite": '["gid://shopify/Metaobject/156128411899"]',
+    "Schist":   '["gid://shopify/Metaobject/156128477435"]',
+    "Jasper":   '["gid://shopify/Metaobject/166239764731"]',
+    "Other":    '["gid://shopify/Metaobject/178206376187"]',
+  },
+  rockFormation: {
+    "Metamorphic": '["gid://shopify/Metaobject/151951343867"]',
+    "Igneous":     '["gid://shopify/Metaobject/154251985147"]',
+    "Sedimentary": '["gid://shopify/Metaobject/154307657979"]',
+  },
+  authenticity: {
+    "Genuine": '["gid://shopify/Metaobject/151951114491"]',
+    "Replica": '["gid://shopify/Metaobject/156128346363"]',
+  },
+  rarity: {
+    "Common": '["gid://shopify/Metaobject/151951147259"]',
+    "Rare":   '["gid://shopify/Metaobject/154252050683"]',
+  },
+};
 
-async function main() {
-  console.log(`Starting TRUE PNW God-Mode Lapidary Database Seed (100 Stones)...`);
+const toGid = (category, value) => GOOGLE_GID_MAP[category]?.[value] || "";
 
-  await prisma.stoneProfile.deleteMany({});
+export function NorthStarTab({ products, fetcher, shopify, dbProfiles = [] }) {
+  const [bulkMode, setBulkMode] = useState("fill");
+  const [bulkFormData, setBulkFormData] = useState({});
+  const [bulkSelectedProductIds, setBulkSelectedProductIds] = useState([]);
+  const [bulkSearchQuery, setBulkSearchQuery] = useState("");
+  const [dynamicCustomFields, setDynamicCustomFields] = useState([]);
+  const [modalConfig, setModalConfig] = useState({ active: false, title: "", body: null, diffs: [], payload: [] });
 
-  const stones = [
-    // --- THE JASPERS (14) ---
-    { stoneName: 'Jasper', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Trigonal', geologicalEra: 'Precambrian', mineralClass: 'Silicates', rockComposition: 'Jasper', rockFormation: 'Sedimentary', hardness: '6.5 - 7.0', luster: 'Vitreous to Dull', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.5 - 2.9', diaphaneity: 'Opaque' },
-    { stoneName: 'Picture Jasper', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Trigonal', geologicalEra: 'Precambrian', mineralClass: 'Silicates', rockComposition: 'Jasper', rockFormation: 'Sedimentary', hardness: '6.5 - 7.0', luster: 'Vitreous', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.5 - 2.9', diaphaneity: 'Opaque' },
-    { stoneName: 'Owyhee Jasper', authenticity: 'Genuine', rarity: 'Rare', crystalSystem: 'Trigonal', geologicalEra: 'Cenozoic', mineralClass: 'Silicates', rockComposition: 'Jasper', rockFormation: 'Sedimentary', hardness: '6.5 - 7.0', luster: 'Vitreous', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.6', diaphaneity: 'Opaque' },
-    { stoneName: 'Biggs Jasper', authenticity: 'Genuine', rarity: 'Rare', crystalSystem: 'Trigonal', geologicalEra: 'Cenozoic', mineralClass: 'Silicates', rockComposition: 'Jasper', rockFormation: 'Sedimentary', hardness: '6.5 - 7.0', luster: 'Vitreous', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.6', diaphaneity: 'Opaque' },
-    { stoneName: 'Morrisonite', authenticity: 'Genuine', rarity: 'Rare', crystalSystem: 'Trigonal', geologicalEra: 'Cenozoic', mineralClass: 'Silicates', rockComposition: 'Jasper', rockFormation: 'Sedimentary', hardness: '6.5 - 7.0', luster: 'Vitreous', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.6', diaphaneity: 'Opaque' },
-    { stoneName: 'Red Jasper', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Trigonal', geologicalEra: 'Precambrian', mineralClass: 'Silicates', rockComposition: 'Jasper', rockFormation: 'Sedimentary', hardness: '6.5 - 7.0', luster: 'Vitreous', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.6', diaphaneity: 'Opaque' },
-    { stoneName: 'Yellow Jasper', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Trigonal', geologicalEra: 'Precambrian', mineralClass: 'Silicates', rockComposition: 'Jasper', rockFormation: 'Sedimentary', hardness: '6.5 - 7.0', luster: 'Vitreous', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.6', diaphaneity: 'Opaque' },
-    { stoneName: 'Ocean Jasper', authenticity: 'Genuine', rarity: 'Rare', crystalSystem: 'Trigonal', geologicalEra: 'Cenozoic', mineralClass: 'Silicates', rockComposition: 'Jasper', rockFormation: 'Igneous', hardness: '6.5 - 7.0', luster: 'Vitreous', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.6', diaphaneity: 'Opaque' },
-    { stoneName: 'Mookaite', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Trigonal', geologicalEra: 'Mesozoic', mineralClass: 'Silicates', rockComposition: 'Jasper', rockFormation: 'Sedimentary', hardness: '6.5 - 7.0', luster: 'Vitreous to Dull', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.6', diaphaneity: 'Opaque' },
-    { stoneName: 'Brecciated Jasper', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Trigonal', geologicalEra: 'Precambrian', mineralClass: 'Silicates', rockComposition: 'Jasper', rockFormation: 'Sedimentary', hardness: '6.5 - 7.0', luster: 'Vitreous', fracture: 'Uneven', cleavage: 'None', specificGravity: '2.6', diaphaneity: 'Opaque' },
-    { stoneName: 'Dalmatian Stone', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Trigonal', geologicalEra: 'Other', mineralClass: 'Silicates', rockComposition: 'Granite', rockFormation: 'Igneous', hardness: '5.5 - 7.0', luster: 'Vitreous', fracture: 'Uneven', cleavage: 'None', specificGravity: '2.6', diaphaneity: 'Opaque' },
-    { stoneName: 'Bloodstone', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Trigonal', geologicalEra: 'Precambrian', mineralClass: 'Silicates', rockComposition: 'Jasper', rockFormation: 'Igneous', hardness: '6.5 - 7.0', luster: 'Vitreous', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.6', diaphaneity: 'Opaque' },
-    { stoneName: 'Bumblebee Jasper', authenticity: 'Genuine', rarity: 'Rare', crystalSystem: 'Trigonal', geologicalEra: 'Cenozoic', mineralClass: 'Carbonates', rockComposition: 'Other', rockFormation: 'Sedimentary', hardness: '3.0 - 4.0', luster: 'Vitreous', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.6', diaphaneity: 'Opaque' },
-    { stoneName: 'Kambaba Jasper', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Trigonal', geologicalEra: 'Precambrian', mineralClass: 'Silicates', rockComposition: 'Other', rockFormation: 'Sedimentary', hardness: '6.5 - 7.0', luster: 'Vitreous', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.6', diaphaneity: 'Opaque' },
-    
-    // --- THE AGATES & CHALCEDONIES (15) ---
-    { stoneName: 'Agate', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Trigonal', geologicalEra: 'Cenozoic', mineralClass: 'Silicates', rockComposition: 'Jasper', rockFormation: 'Igneous', hardness: '6.5 - 7.0', luster: 'Waxy', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.58 - 2.64', diaphaneity: 'Translucent' },
-    { stoneName: 'Montana Agate', authenticity: 'Genuine', rarity: 'Rare', crystalSystem: 'Trigonal', geologicalEra: 'Cenozoic', mineralClass: 'Silicates', rockComposition: 'Jasper', rockFormation: 'Igneous', hardness: '6.5 - 7.0', luster: 'Waxy', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.6', diaphaneity: 'Translucent' },
-    { stoneName: 'Botswana Agate', authenticity: 'Genuine', rarity: 'Rare', crystalSystem: 'Trigonal', geologicalEra: 'Cenozoic', mineralClass: 'Silicates', rockComposition: 'Jasper', rockFormation: 'Igneous', hardness: '6.5 - 7.0', luster: 'Waxy', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.6', diaphaneity: 'Translucent to Opaque' },
-    { stoneName: 'Ellensburg Blue Agate', authenticity: 'Genuine', rarity: 'Rare', crystalSystem: 'Trigonal', geologicalEra: 'Cenozoic', mineralClass: 'Silicates', rockComposition: 'Jasper', rockFormation: 'Igneous', hardness: '6.5 - 7.0', luster: 'Waxy', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.6', diaphaneity: 'Translucent' },
-    { stoneName: 'Plume Agate', authenticity: 'Genuine', rarity: 'Rare', crystalSystem: 'Trigonal', geologicalEra: 'Cenozoic', mineralClass: 'Silicates', rockComposition: 'Jasper', rockFormation: 'Igneous', hardness: '6.5 - 7.0', luster: 'Waxy', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.6', diaphaneity: 'Translucent' },
-    { stoneName: 'Moss Agate', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Trigonal', geologicalEra: 'Cenozoic', mineralClass: 'Silicates', rockComposition: 'Jasper', rockFormation: 'Igneous', hardness: '6.5 - 7.0', luster: 'Waxy', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.6', diaphaneity: 'Translucent' },
-    { stoneName: 'Tree Agate', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Trigonal', geologicalEra: 'Cenozoic', mineralClass: 'Silicates', rockComposition: 'Jasper', rockFormation: 'Igneous', hardness: '6.5 - 7.0', luster: 'Waxy', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.6', diaphaneity: 'Opaque' },
-    { stoneName: 'Lace Agate', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Trigonal', geologicalEra: 'Cenozoic', mineralClass: 'Silicates', rockComposition: 'Jasper', rockFormation: 'Igneous', hardness: '6.5 - 7.0', luster: 'Waxy', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.6', diaphaneity: 'Translucent' },
-    { stoneName: 'Crazy Lace Agate', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Trigonal', geologicalEra: 'Cenozoic', mineralClass: 'Silicates', rockComposition: 'Jasper', rockFormation: 'Igneous', hardness: '6.5 - 7.0', luster: 'Waxy', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.6', diaphaneity: 'Opaque' },
-    { stoneName: 'Blue Lace Agate', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Trigonal', geologicalEra: 'Precambrian', mineralClass: 'Silicates', rockComposition: 'Jasper', rockFormation: 'Igneous', hardness: '6.5 - 7.0', luster: 'Waxy', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.6', diaphaneity: 'Translucent' },
-    { stoneName: 'Dendritic Agate', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Trigonal', geologicalEra: 'Cenozoic', mineralClass: 'Silicates', rockComposition: 'Jasper', rockFormation: 'Igneous', hardness: '6.5 - 7.0', luster: 'Waxy', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.6', diaphaneity: 'Translucent' },
-    { stoneName: 'Fire Agate', authenticity: 'Genuine', rarity: 'Rare', crystalSystem: 'Trigonal', geologicalEra: 'Cenozoic', mineralClass: 'Silicates', rockComposition: 'Jasper', rockFormation: 'Igneous', hardness: '6.5 - 7.0', luster: 'Waxy', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.6', diaphaneity: 'Translucent to Opaque' },
-    { stoneName: 'Chalcedony', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Trigonal', geologicalEra: 'Cenozoic', mineralClass: 'Silicates', rockComposition: 'Jasper', rockFormation: 'Igneous', hardness: '6.5 - 7.0', luster: 'Waxy', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.59 - 2.61', diaphaneity: 'Translucent' },
-    { stoneName: 'Carnelian', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Trigonal', geologicalEra: 'Cenozoic', mineralClass: 'Silicates', rockComposition: 'Jasper', rockFormation: 'Igneous', hardness: '6.5 - 7.0', luster: 'Vitreous', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.59', diaphaneity: 'Translucent' },
-    { stoneName: 'Chrysoprase', authenticity: 'Genuine', rarity: 'Rare', crystalSystem: 'Trigonal', geologicalEra: 'Precambrian', mineralClass: 'Silicates', rockComposition: 'Jasper', rockFormation: 'Sedimentary', hardness: '6.5 - 7.0', luster: 'Waxy', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.58 - 2.64', diaphaneity: 'Translucent' },
+  const tapTargetStyle = { minHeight: '48px', minWidth: '48px', display: 'flex', alignItems: 'center', justifyContent: 'center' };
+  const inputTapTargetStyle = { minHeight: '48px', display: 'flex', flexDirection: 'column', justifyContent: 'center' };
 
-    // --- MACROCRYSTALLINE QUARTZ (11) ---
-    { stoneName: 'Quartz', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Trigonal', geologicalEra: 'Precambrian', mineralClass: 'Silicates', rockComposition: 'Granite', rockFormation: 'Igneous', hardness: '7.0', luster: 'Vitreous', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.65', diaphaneity: 'Transparent to Opaque' },
-    { stoneName: 'Amethyst', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Trigonal', geologicalEra: 'Precambrian', mineralClass: 'Silicates', rockComposition: 'Granite', rockFormation: 'Igneous', hardness: '7.0', luster: 'Vitreous', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.65', diaphaneity: 'Transparent to Translucent' },
-    { stoneName: 'Citrine', authenticity: 'Genuine', rarity: 'Rare', crystalSystem: 'Trigonal', geologicalEra: 'Precambrian', mineralClass: 'Silicates', rockComposition: 'Granite', rockFormation: 'Igneous', hardness: '7.0', luster: 'Vitreous', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.65', diaphaneity: 'Transparent to Translucent' },
-    { stoneName: 'Rose Quartz', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Trigonal', geologicalEra: 'Precambrian', mineralClass: 'Silicates', rockComposition: 'Granite', rockFormation: 'Igneous', hardness: '7.0', luster: 'Vitreous', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.65', diaphaneity: 'Translucent' },
-    { stoneName: 'Smoky Quartz', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Trigonal', geologicalEra: 'Precambrian', mineralClass: 'Silicates', rockComposition: 'Granite', rockFormation: 'Igneous', hardness: '7.0', luster: 'Vitreous', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.65', diaphaneity: 'Transparent to Translucent' },
-    { stoneName: 'Prasiolite', authenticity: 'Genuine', rarity: 'Rare', crystalSystem: 'Trigonal', geologicalEra: 'Precambrian', mineralClass: 'Silicates', rockComposition: 'Granite', rockFormation: 'Igneous', hardness: '7.0', luster: 'Vitreous', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.65', diaphaneity: 'Transparent to Translucent' },
-    { stoneName: 'Tourmalinated Quartz', authenticity: 'Genuine', rarity: 'Rare', crystalSystem: 'Trigonal', geologicalEra: 'Precambrian', mineralClass: 'Silicates', rockComposition: 'Granite', rockFormation: 'Igneous', hardness: '7.0', luster: 'Vitreous', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.65', diaphaneity: 'Transparent with Inclusions' },
-    { stoneName: 'Rutilated Quartz', authenticity: 'Genuine', rarity: 'Rare', crystalSystem: 'Trigonal', geologicalEra: 'Precambrian', mineralClass: 'Silicates', rockComposition: 'Granite', rockFormation: 'Igneous', hardness: '7.0', luster: 'Vitreous', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.65', diaphaneity: 'Transparent with Inclusions' },
-    { stoneName: 'Tiger\'s Eye', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Trigonal', geologicalEra: 'Precambrian', mineralClass: 'Silicates', rockComposition: 'Schist', rockFormation: 'Metamorphic', hardness: '6.5 - 7.0', luster: 'Silky', fracture: 'Fibrous', cleavage: 'None', specificGravity: '2.64 - 2.71', diaphaneity: 'Opaque' },
-    { stoneName: 'Hawk\'s Eye', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Trigonal', geologicalEra: 'Precambrian', mineralClass: 'Silicates', rockComposition: 'Schist', rockFormation: 'Metamorphic', hardness: '6.5 - 7.0', luster: 'Silky', fracture: 'Fibrous', cleavage: 'None', specificGravity: '2.64', diaphaneity: 'Opaque' },
-    { stoneName: 'Aventurine', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Trigonal', geologicalEra: 'Precambrian', mineralClass: 'Silicates', rockComposition: 'Schist', rockFormation: 'Metamorphic', hardness: '6.5 - 7.0', luster: 'Vitreous to Glistening', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.64 - 2.69', diaphaneity: 'Translucent to Opaque' },
+  const getMetafieldValue = useCallback((product, key) => {
+    if (!product || !product.metafields) return "";
+    const mf = product.metafields.edges.find(e => e.node.key === key);
+    return mf ? mf.node.value : "";
+  }, []);
 
-    // --- PNW FORAGING & COMMON RIVER ROCKS (9) ---
-    { stoneName: 'Petrified Wood', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Trigonal', geologicalEra: 'Cenozoic', mineralClass: 'Silicates', rockComposition: 'Jasper', rockFormation: 'Sedimentary', hardness: '6.5 - 7.0', luster: 'Waxy to Vitreous', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.58 - 2.91', diaphaneity: 'Opaque' },
-    { stoneName: 'Basalt', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Other', geologicalEra: 'Cenozoic', mineralClass: 'Silicates', rockComposition: 'Obsidian', rockFormation: 'Igneous', hardness: '5.5 - 6.0', luster: 'Dull', fracture: 'Uneven', cleavage: 'None', specificGravity: '2.8 - 3.0', diaphaneity: 'Opaque' },
-    { stoneName: 'Rhyolite', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Other', geologicalEra: 'Cenozoic', mineralClass: 'Silicates', rockComposition: 'Granite', rockFormation: 'Igneous', hardness: '6.0 - 7.0', luster: 'Dull to Vitreous', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.4 - 2.6', diaphaneity: 'Opaque' },
-    { stoneName: 'Thunderegg', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Other', geologicalEra: 'Cenozoic', mineralClass: 'Silicates', rockComposition: 'Granite', rockFormation: 'Igneous', hardness: '6.0 - 7.0', luster: 'Varies', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.5 - 2.7', diaphaneity: 'Opaque' },
-    { stoneName: 'Granite', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Other', geologicalEra: 'Precambrian', mineralClass: 'Silicates', rockComposition: 'Granite', rockFormation: 'Igneous', hardness: '6.0 - 7.0', luster: 'Vitreous', fracture: 'Uneven', cleavage: 'None', specificGravity: '2.6 - 2.8', diaphaneity: 'Opaque' },
-    { stoneName: 'Quartzite', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Trigonal', geologicalEra: 'Precambrian', mineralClass: 'Silicates', rockComposition: 'Other', rockFormation: 'Metamorphic', hardness: '7.0', luster: 'Vitreous', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.65', diaphaneity: 'Translucent to Opaque' },
-    { stoneName: 'Argillite', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Other', geologicalEra: 'Precambrian', mineralClass: 'Silicates', rockComposition: 'Schist', rockFormation: 'Sedimentary', hardness: '3.0 - 4.0', luster: 'Dull', fracture: 'Uneven', cleavage: 'Good', specificGravity: '2.6', diaphaneity: 'Opaque' },
-    { stoneName: 'Dallasite', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Other', geologicalEra: 'Mesozoic', mineralClass: 'Silicates', rockComposition: 'Andesite', rockFormation: 'Igneous', hardness: '6.0 - 7.0', luster: 'Vitreous', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.6 - 2.8', diaphaneity: 'Opaque' },
-    { stoneName: 'Pumice', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Amorphous', geologicalEra: 'Cenozoic', mineralClass: 'Silicates', rockComposition: 'Obsidian', rockFormation: 'Igneous', hardness: '5.5 - 6.0', luster: 'Dull', fracture: 'Uneven', cleavage: 'None', specificGravity: '0.2 - 0.3', diaphaneity: 'Opaque' },
+  const resolveMetafieldType = useCallback((product, fieldConfig, newValue) => {
+    if (fieldConfig.options) return "list.metaobject_reference";
+    const existingMf = product.metafields.edges.find(e => e.node.key === fieldConfig.key);
+    if (existingMf) return existingMf.node.type;
+    const isNumberType = fieldConfig.type.includes("number");
+    const containsDash = newValue ? /[\-–—]/.test(newValue) : false;
+    return isNumberType ? (containsDash ? "single_line_text_field" : fieldConfig.type) : fieldConfig.type;
+  }, []);
 
-    // --- THE FELDSPARS (6) ---
-    { stoneName: 'Feldspar', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Triclinic', geologicalEra: 'Precambrian', mineralClass: 'Silicates', rockComposition: 'Granite', rockFormation: 'Igneous', hardness: '6.0 - 6.5', luster: 'Vitreous to Pearly', fracture: 'Uneven', cleavage: 'Perfect', specificGravity: '2.56 - 2.76', diaphaneity: 'Translucent to Opaque' },
-    { stoneName: 'Labradorite', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Triclinic', geologicalEra: 'Precambrian', mineralClass: 'Silicates', rockComposition: 'Andesite', rockFormation: 'Igneous', hardness: '6.0 - 6.5', luster: 'Vitreous to Pearly', fracture: 'Uneven', cleavage: 'Perfect', specificGravity: '2.68 - 2.72', diaphaneity: 'Translucent to Opaque' },
-    { stoneName: 'Moonstone', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Monoclinic', geologicalEra: 'Precambrian', mineralClass: 'Silicates', rockComposition: 'Granite', rockFormation: 'Igneous', hardness: '6.0 - 6.5', luster: 'Vitreous to Pearly', fracture: 'Uneven', cleavage: 'Perfect', specificGravity: '2.56 - 2.59', diaphaneity: 'Translucent' },
-    { stoneName: 'Sunstone', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Triclinic', geologicalEra: 'Precambrian', mineralClass: 'Silicates', rockComposition: 'Andesite', rockFormation: 'Igneous', hardness: '6.0 - 6.5', luster: 'Vitreous', fracture: 'Uneven', cleavage: 'Perfect', specificGravity: '2.62 - 2.65', diaphaneity: 'Translucent to Opaque' },
-    { stoneName: 'Amazonite', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Triclinic', geologicalEra: 'Precambrian', mineralClass: 'Silicates', rockComposition: 'Granite', rockFormation: 'Igneous', hardness: '6.0 - 6.5', luster: 'Vitreous', fracture: 'Uneven', cleavage: 'Perfect', specificGravity: '2.56 - 2.58', diaphaneity: 'Opaque' },
-    { stoneName: 'Larvikite', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Triclinic', geologicalEra: 'Paleozoic', mineralClass: 'Silicates', rockComposition: 'Other', rockFormation: 'Igneous', hardness: '6.0 - 6.5', luster: 'Vitreous', fracture: 'Uneven', cleavage: 'Perfect', specificGravity: '2.7 - 2.8', diaphaneity: 'Opaque' },
+  const toggleProduct = (id) => {
+    setBulkSelectedProductIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  };
 
-    // --- OBSIDIANS (6) ---
-    { stoneName: 'Obsidian', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Amorphous', geologicalEra: 'Cenozoic', mineralClass: 'Silicates', rockComposition: 'Obsidian', rockFormation: 'Igneous', hardness: '5.0 - 5.5', luster: 'Vitreous', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.35 - 2.60', diaphaneity: 'Translucent to Opaque' },
-    { stoneName: 'Snowflake Obsidian', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Amorphous', geologicalEra: 'Cenozoic', mineralClass: 'Silicates', rockComposition: 'Obsidian', rockFormation: 'Igneous', hardness: '5.0 - 5.5', luster: 'Vitreous', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.35 - 2.60', diaphaneity: 'Opaque' },
-    { stoneName: 'Mahogany Obsidian', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Amorphous', geologicalEra: 'Cenozoic', mineralClass: 'Silicates', rockComposition: 'Obsidian', rockFormation: 'Igneous', hardness: '5.0 - 5.5', luster: 'Vitreous', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.35 - 2.60', diaphaneity: 'Opaque' },
-    { stoneName: 'Rainbow Obsidian', authenticity: 'Genuine', rarity: 'Rare', crystalSystem: 'Amorphous', geologicalEra: 'Cenozoic', mineralClass: 'Silicates', rockComposition: 'Obsidian', rockFormation: 'Igneous', hardness: '5.0 - 5.5', luster: 'Vitreous', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.35 - 2.60', diaphaneity: 'Opaque' },
-    { stoneName: 'Gold Sheen Obsidian', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Amorphous', geologicalEra: 'Cenozoic', mineralClass: 'Silicates', rockComposition: 'Obsidian', rockFormation: 'Igneous', hardness: '5.0 - 5.5', luster: 'Vitreous', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.35 - 2.60', diaphaneity: 'Opaque' },
-    { stoneName: 'Silver Sheen Obsidian', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Amorphous', geologicalEra: 'Cenozoic', mineralClass: 'Silicates', rockComposition: 'Obsidian', rockFormation: 'Igneous', hardness: '5.0 - 5.5', luster: 'Vitreous', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.35 - 2.60', diaphaneity: 'Opaque' },
+  const handleAutoFill = () => {
+    const baseStoneType = bulkFormData["official_name"] || "";
 
-    // --- SOFT / CABBING & COPPER BEAUTIES (15) ---
-    { stoneName: 'Malachite', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Monoclinic', geologicalEra: 'Paleozoic', mineralClass: 'Carbonates', rockComposition: 'Other', rockFormation: 'Sedimentary', hardness: '3.5 - 4.0', luster: 'Silky to Dull', fracture: 'Uneven', cleavage: 'Perfect', specificGravity: '3.6 - 4.0', diaphaneity: 'Opaque' },
-    { stoneName: 'Chrysocolla', authenticity: 'Genuine', rarity: 'Rare', crystalSystem: 'Amorphous', geologicalEra: 'Paleozoic', mineralClass: 'Silicates', rockComposition: 'Other', rockFormation: 'Sedimentary', hardness: '2.5 - 3.5', luster: 'Vitreous to Earthy', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.0 - 2.4', diaphaneity: 'Opaque' },
-    { stoneName: 'Azurite', authenticity: 'Genuine', rarity: 'Rare', crystalSystem: 'Monoclinic', geologicalEra: 'Paleozoic', mineralClass: 'Carbonates', rockComposition: 'Other', rockFormation: 'Sedimentary', hardness: '3.5 - 4.0', luster: 'Vitreous to Dull', fracture: 'Conchoidal', cleavage: 'Perfect', specificGravity: '3.7 - 3.9', diaphaneity: 'Opaque' },
-    { stoneName: 'Turquoise', authenticity: 'Genuine', rarity: 'Rare', crystalSystem: 'Triclinic', geologicalEra: 'Cenozoic', mineralClass: 'Phosphates', rockComposition: 'Other', rockFormation: 'Sedimentary', hardness: '5.0 - 6.0', luster: 'Waxy', fracture: 'Conchoidal', cleavage: 'Good', specificGravity: '2.60 - 2.90', diaphaneity: 'Opaque' },
-    { stoneName: 'Variscite', authenticity: 'Genuine', rarity: 'Rare', crystalSystem: 'Other', geologicalEra: 'Paleozoic', mineralClass: 'Phosphates', rockComposition: 'Other', rockFormation: 'Sedimentary', hardness: '4.0 - 5.0', luster: 'Waxy', fracture: 'Conchoidal', cleavage: 'Good', specificGravity: '2.5 - 2.6', diaphaneity: 'Opaque' },
-    { stoneName: 'Serpentine', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Monoclinic', geologicalEra: 'Precambrian', mineralClass: 'Silicates', rockComposition: 'Other', rockFormation: 'Metamorphic', hardness: '2.5 - 5.5', luster: 'Greasy to Waxy', fracture: 'Conchoidal', cleavage: 'Perfect', specificGravity: '2.5 - 2.6', diaphaneity: 'Translucent to Opaque' },
-    { stoneName: 'Rhodochrosite', authenticity: 'Genuine', rarity: 'Rare', crystalSystem: 'Trigonal', geologicalEra: 'Cenozoic', mineralClass: 'Carbonates', rockComposition: 'Other', rockFormation: 'Sedimentary', hardness: '3.5 - 4.0', luster: 'Vitreous to Pearly', fracture: 'Uneven', cleavage: 'Perfect', specificGravity: '3.5 - 3.7', diaphaneity: 'Translucent to Opaque' },
-    { stoneName: 'Fluorite', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Other', geologicalEra: 'Paleozoic', mineralClass: 'Carbonates', rockComposition: 'Other', rockFormation: 'Sedimentary', hardness: '4.0', luster: 'Vitreous', fracture: 'Subconchoidal', cleavage: 'Perfect', specificGravity: '3.0 - 3.3', diaphaneity: 'Transparent to Translucent' },
-    { stoneName: 'Calcite', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Trigonal', geologicalEra: 'Paleozoic', mineralClass: 'Carbonates', rockComposition: 'Other', rockFormation: 'Sedimentary', hardness: '3.0', luster: 'Vitreous', fracture: 'Conchoidal', cleavage: 'Perfect', specificGravity: '2.7', diaphaneity: 'Transparent to Opaque' },
-    { stoneName: 'Howlite', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Monoclinic', geologicalEra: 'Cenozoic', mineralClass: 'Silicates', rockComposition: 'Other', rockFormation: 'Sedimentary', hardness: '3.5', luster: 'Dull to Earthy', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.5 - 2.6', diaphaneity: 'Opaque' },
-    { stoneName: 'Magnesite', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Trigonal', geologicalEra: 'Paleozoic', mineralClass: 'Carbonates', rockComposition: 'Other', rockFormation: 'Sedimentary', hardness: '3.5 - 4.5', luster: 'Dull', fracture: 'Conchoidal', cleavage: 'Perfect', specificGravity: '3.0 - 3.2', diaphaneity: 'Opaque' },
-    { stoneName: 'Apatite', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Hexagonal', geologicalEra: 'Paleozoic', mineralClass: 'Phosphates', rockComposition: 'Granite', rockFormation: 'Igneous', hardness: '5.0', luster: 'Vitreous', fracture: 'Conchoidal', cleavage: 'Indistinct', specificGravity: '3.1 - 3.2', diaphaneity: 'Transparent to Opaque' },
-    { stoneName: 'Lepidolite', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Monoclinic', geologicalEra: 'Precambrian', mineralClass: 'Silicates', rockComposition: 'Granite', rockFormation: 'Igneous', hardness: '2.5 - 3.0', luster: 'Pearly', fracture: 'Uneven', cleavage: 'Perfect', specificGravity: '2.8 - 2.9', diaphaneity: 'Translucent to Opaque' },
-    { stoneName: 'Onyx Marble', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Trigonal', geologicalEra: 'Cenozoic', mineralClass: 'Carbonates', rockComposition: 'Other', rockFormation: 'Sedimentary', hardness: '3.0', luster: 'Vitreous', fracture: 'Conchoidal', cleavage: 'Perfect', specificGravity: '2.7', diaphaneity: 'Translucent' },
-    { stoneName: 'Smithsonite', authenticity: 'Genuine', rarity: 'Rare', crystalSystem: 'Trigonal', geologicalEra: 'Paleozoic', mineralClass: 'Carbonates', rockComposition: 'Other', rockFormation: 'Sedimentary', hardness: '4.5', luster: 'Pearly', fracture: 'Uneven', cleavage: 'Perfect', specificGravity: '4.3 - 4.4', diaphaneity: 'Translucent to Opaque' },
-    
-    // --- NATIVE METALS & IRON (6) ---
-    { stoneName: 'Gold', authenticity: 'Genuine', rarity: 'Rare', crystalSystem: 'Other', geologicalEra: 'Precambrian', mineralClass: 'Sulfides', rockComposition: 'Other', rockFormation: 'Igneous', hardness: '2.5 - 3.0', luster: 'Metallic', fracture: 'Hackly', cleavage: 'None', specificGravity: '19.3', diaphaneity: 'Opaque' },
-    { stoneName: 'Silver', authenticity: 'Genuine', rarity: 'Rare', crystalSystem: 'Other', geologicalEra: 'Precambrian', mineralClass: 'Sulfides', rockComposition: 'Other', rockFormation: 'Igneous', hardness: '2.5 - 3.0', luster: 'Metallic', fracture: 'Hackly', cleavage: 'None', specificGravity: '10.5', diaphaneity: 'Opaque' },
-    { stoneName: 'Copper', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Other', geologicalEra: 'Precambrian', mineralClass: 'Sulfides', rockComposition: 'Other', rockFormation: 'Igneous', hardness: '2.5 - 3.0', luster: 'Metallic', fracture: 'Hackly', cleavage: 'None', specificGravity: '8.9', diaphaneity: 'Opaque' },
-    { stoneName: 'Hematite', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Trigonal', geologicalEra: 'Precambrian', mineralClass: 'Oxides', rockComposition: 'Other', rockFormation: 'Sedimentary', hardness: '5.5 - 6.5', luster: 'Metallic', fracture: 'Uneven', cleavage: 'None', specificGravity: '5.0 - 5.3', diaphaneity: 'Opaque' },
-    { stoneName: 'Pyrite', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Other', geologicalEra: 'Paleozoic', mineralClass: 'Sulfides', rockComposition: 'Other', rockFormation: 'Sedimentary', hardness: '6.0 - 6.5', luster: 'Metallic', fracture: 'Conchoidal', cleavage: 'Poor', specificGravity: '4.95 - 5.10', diaphaneity: 'Opaque' },
-    { stoneName: 'Ironstone Matrix', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Other', geologicalEra: 'Other', mineralClass: 'Oxides', rockComposition: 'Other', rockFormation: 'Sedimentary', hardness: '5.5 - 6.5', luster: 'Dull to Earthy', fracture: 'Uneven', cleavage: 'None', specificGravity: '3.0 - 4.0', diaphaneity: 'Opaque' },
+    if (!baseStoneType.trim()) {
+      if (shopify && shopify.toast) shopify.toast.show("Please type a stone name (e.g., 'Jasper') into 'Official Name' first!", { isError: true });
+      return;
+    }
 
-    // --- TOUGH CABBING & HIGH END SILICATES (18) ---
-    { stoneName: 'Jadeite', authenticity: 'Genuine', rarity: 'Rare', crystalSystem: 'Monoclinic', geologicalEra: 'Mesozoic', mineralClass: 'Silicates', rockComposition: 'Other', rockFormation: 'Metamorphic', hardness: '6.5 - 7.0', luster: 'Vitreous to Greasy', fracture: 'Splintery', cleavage: 'Good', specificGravity: '3.24 - 3.43', diaphaneity: 'Translucent to Opaque' },
-    { stoneName: 'Nephrite', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Monoclinic', geologicalEra: 'Precambrian', mineralClass: 'Silicates', rockComposition: 'Other', rockFormation: 'Metamorphic', hardness: '6.0 - 6.5', luster: 'Vitreous to Greasy', fracture: 'Splintery', cleavage: 'Good', specificGravity: '2.90 - 3.03', diaphaneity: 'Translucent to Opaque' },
-    { stoneName: 'Rhodonite', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Triclinic', geologicalEra: 'Paleozoic', mineralClass: 'Silicates', rockComposition: 'Other', rockFormation: 'Metamorphic', hardness: '5.5 - 6.5', luster: 'Vitreous', fracture: 'Conchoidal', cleavage: 'Perfect', specificGravity: '3.5 - 3.7', diaphaneity: 'Translucent to Opaque' },
-    { stoneName: 'Lapis Lazuli', authenticity: 'Genuine', rarity: 'Rare', crystalSystem: 'Other', geologicalEra: 'Precambrian', mineralClass: 'Silicates', rockComposition: 'Other', rockFormation: 'Metamorphic', hardness: '5.0 - 5.5', luster: 'Vitreous to Greasy', fracture: 'Uneven', cleavage: 'Imperfect', specificGravity: '2.7 - 2.9', diaphaneity: 'Opaque' },
-    { stoneName: 'Sodalite', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Other', geologicalEra: 'Precambrian', mineralClass: 'Silicates', rockComposition: 'Other', rockFormation: 'Igneous', hardness: '5.5 - 6.0', luster: 'Vitreous to Greasy', fracture: 'Conchoidal', cleavage: 'Poor', specificGravity: '2.14 - 2.40', diaphaneity: 'Translucent to Opaque' },
-    { stoneName: 'Unakite', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Monoclinic', geologicalEra: 'Precambrian', mineralClass: 'Silicates', rockComposition: 'Granite', rockFormation: 'Metamorphic', hardness: '6.0 - 7.0', luster: 'Vitreous', fracture: 'Uneven', cleavage: 'Good', specificGravity: '3.3 - 3.5', diaphaneity: 'Opaque' },
-    { stoneName: 'Charoite', authenticity: 'Genuine', rarity: 'Rare', crystalSystem: 'Monoclinic', geologicalEra: 'Mesozoic', mineralClass: 'Silicates', rockComposition: 'Other', rockFormation: 'Metamorphic', hardness: '5.0 - 6.0', luster: 'Vitreous to Pearly', fracture: 'Conchoidal', cleavage: 'Good', specificGravity: '2.54 - 2.58', diaphaneity: 'Translucent to Opaque' },
-    { stoneName: 'Pietersite', authenticity: 'Genuine', rarity: 'Rare', crystalSystem: 'Trigonal', geologicalEra: 'Precambrian', mineralClass: 'Silicates', rockComposition: 'Other', rockFormation: 'Metamorphic', hardness: '6.5 - 7.0', luster: 'Silky', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '2.6', diaphaneity: 'Opaque' },
-    { stoneName: 'Prehnite', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Other', geologicalEra: 'Mesozoic', mineralClass: 'Silicates', rockComposition: 'Other', rockFormation: 'Igneous', hardness: '6.0 - 6.5', luster: 'Vitreous', fracture: 'Uneven', cleavage: 'Good', specificGravity: '2.8 - 2.9', diaphaneity: 'Translucent' },
-    { stoneName: 'Kyanite', authenticity: 'Genuine', rarity: 'Rare', crystalSystem: 'Triclinic', geologicalEra: 'Precambrian', mineralClass: 'Silicates', rockComposition: 'Schist', rockFormation: 'Metamorphic', hardness: '4.5 - 7.0', luster: 'Vitreous to Pearly', fracture: 'Splintery', cleavage: 'Perfect', specificGravity: '3.53 - 3.65', diaphaneity: 'Transparent to Translucent' },
-    { stoneName: 'Dumortierite', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Other', geologicalEra: 'Precambrian', mineralClass: 'Silicates', rockComposition: 'Schist', rockFormation: 'Metamorphic', hardness: '7.0 - 8.5', luster: 'Vitreous', fracture: 'Uneven', cleavage: 'Good', specificGravity: '3.2 - 3.4', diaphaneity: 'Opaque' },
-    { stoneName: 'Garnet', authenticity: 'Genuine', rarity: 'Common', crystalSystem: 'Other', geologicalEra: 'Paleozoic', mineralClass: 'Silicates', rockComposition: 'Schist', rockFormation: 'Metamorphic', hardness: '6.5 - 7.5', luster: 'Vitreous', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '3.5 - 4.3', diaphaneity: 'Transparent to Opaque' },
-    { stoneName: 'Star Garnet', authenticity: 'Genuine', rarity: 'Rare', crystalSystem: 'Other', geologicalEra: 'Paleozoic', mineralClass: 'Silicates', rockComposition: 'Schist', rockFormation: 'Metamorphic', hardness: '6.5 - 7.5', luster: 'Vitreous', fracture: 'Conchoidal', cleavage: 'None', specificGravity: '3.5 - 4.3', diaphaneity: 'Opaque' },
-    { stoneName: 'Tourmaline', authenticity: 'Genuine', rarity: 'Rare', crystalSystem: 'Trigonal', geologicalEra: 'Precambrian', mineralClass: 'Silicates', rockComposition: 'Granite', rockFormation: 'Igneous', hardness: '7.0 - 7.5', luster: 'Vitreous', fracture: 'Uneven', cleavage: 'Indistinct', specificGravity: '3.0 - 3.26', diaphaneity: 'Transparent to Opaque' },
-    { stoneName: 'Beryl', authenticity: 'Genuine', rarity: 'Rare', crystalSystem: 'Hexagonal', geologicalEra: 'Precambrian', mineralClass: 'Silicates', rockComposition: 'Granite', rockFormation: 'Igneous', hardness: '7.5 - 8.0', luster: 'Vitreous', fracture: 'Conchoidal', cleavage: 'Imperfect', specificGravity: '2.63 - 2.90', diaphaneity: 'Transparent to Opaque' },
-    { stoneName: 'Aquamarine', authenticity: 'Genuine', rarity: 'Rare', crystalSystem: 'Hexagonal', geologicalEra: 'Precambrian', mineralClass: 'Silicates', rockComposition: 'Granite', rockFormation: 'Igneous', hardness: '7.5 - 8.0', luster: 'Vitreous', fracture: 'Conchoidal', cleavage: 'Imperfect', specificGravity: '2.68 - 2.74', diaphaneity: 'Transparent to Translucent' },
-    { stoneName: 'Topaz', authenticity: 'Genuine', rarity: 'Rare', crystalSystem: 'Other', geologicalEra: 'Other', mineralClass: 'Silicates', rockComposition: 'Granite', rockFormation: 'Igneous', hardness: '8.0', luster: 'Vitreous', fracture: 'Conchoidal', cleavage: 'Perfect', specificGravity: '3.49 - 3.57', diaphaneity: 'Transparent' },
-    { stoneName: 'Spinel', authenticity: 'Genuine', rarity: 'Rare', crystalSystem: 'Other', geologicalEra: 'Paleozoic', mineralClass: 'Oxides', rockComposition: 'Schist', rockFormation: 'Metamorphic', hardness: '8.0', luster: 'Vitreous', fracture: 'Conchoidal', cleavage: 'Indistinct', specificGravity: '3.54 - 3.63', diaphaneity: 'Transparent to Opaque' }
-  ];
+    const profile = dbProfiles.find(db => 
+      baseStoneType.toLowerCase().includes((db.stoneName || db.title || "").toLowerCase()) || 
+      (db.stoneName || db.title || "").toLowerCase().includes(baseStoneType.toLowerCase())
+    );
+    
+    if (!profile) {
+      if (shopify && shopify.toast) shopify.toast.show(`No dictionary entry found for "${baseStoneType}".`, { isError: true });
+      return;
+    }
 
-  for (const stone of stones) {
-    const profile = await prisma.stoneProfile.create({
-      data: stone,
-    });
-    console.log(`Created dictionary entry for: ${profile.stoneName} (Mohs: ${profile.hardness})`);
-  }
+    console.log("PROFILE DUMP:", JSON.stringify(profile));
 
-  console.log(`\n======================================================`);
-  console.log(`💥 SUCCESS: Seeded exactly ${stones.length} PNW Master Lapidary Stones!`);
-  console.log(`======================================================\n`);
+    setBulkFormData(prev => ({
+      ...prev,
+      "authenticity":       toGid("authenticity",    profile.googleAuthenticity || profile.authenticity)         || prev["authenticity"]       || "",
+      "rarity":             toGid("rarity",          profile.googleRarity || profile.rarity)                     || prev["rarity"]             || "",
+      "crystal-system":     toGid("crystalSystem",   profile.googleCrystalSystem || profile.crystalSystem)       || prev["crystal-system"]     || "",
+      "geological-era":     toGid("geologicalEra",   profile.googleGeologicalEra || profile.geologicalEra)       || prev["geological-era"]     || "",
+      "mineral-class":      toGid("mineralClass",    profile.googleMineralClass || profile.mineralClass)         || prev["mineral-class"]      || "",
+      "rock-composition":   toGid("rockComposition", profile.googleRockComposition || profile.rockComposition)   || prev["rock-composition"]   || "",
+      "rock-formation":     toGid("rockFormation",   profile.googleRockFormation || profile.rockFormation)       || prev["rock-formation"]     || "",
+      store_hardness: profile.storeHardness || profile.hardness || prev.store_hardness || "",
+      store_luster: profile.storeLuster || profile.luster || prev.store_luster || "",
+      store_fracture: profile.storeFracture || profile.fracture || prev.store_fracture || "",
+      store_cleavage: profile.storeCleavage || profile.cleavage || prev.store_cleavage || "",
+      store_specific_gravity: profile.storeSpecificGravity || profile.specificGravity || prev.store_specific_gravity || "",
+      store_diaphaneity: profile.storeDiaphaneity || profile.diaphaneity || prev.store_diaphaneity || ""
+    }));
+
+    if (shopify && shopify.toast) shopify.toast.show(`${profile.stoneName || profile.title} science successfully loaded from dictionary!`, { isError: false });
+  };
+
+  const handleBulkSubmit = () => {
+    const selectedProducts = products.filter(p => bulkSelectedProductIds.includes(p.id));
+    if (selectedProducts.length === 0) {
+      if (shopify && shopify.toast) shopify.toast.show("Select at least one product.", { isError: true });
+      return;
+    }
+
+    const payload = [];
+    const diffSummary = [];
+    let changesCount = 0;
+
+    selectedProducts.forEach(product => {
+      const statusStr = getMetafieldValue(product, "meta_status");
+      let statusObj = {};
+      try { 
+        statusObj = statusStr ? JSON.parse(statusStr) : {}; 
+      } catch(e) {}
+      
+      let productChanged = false;
+
+      METAFIELD_CONFIG.forEach(field => {
+        if (field.hidden) return;
+        const newVal = bulkFormData[field.key] || "";
+        if (!newVal) return;
+
+        const currentVal = getMetafieldValue(product, field.key);
+        if (bulkMode === "fill" && currentVal) return;
+        if (currentVal === newVal) return;
+
+        const resolvedType = resolveMetafieldType(product, field, newVal);
+        
+        let finalValue = newVal;
+        if (resolvedType.includes("list.")) {
+          try {
+            JSON.parse(newVal);
+            finalValue = newVal;
+          } catch {
+            finalValue = JSON.stringify([newVal]);
+          }
+        }
+
+        payload.push({ ownerId: product.id, namespace: field.namespace, key: field.key, type: resolvedType, value: finalValue });
+        statusObj[field.key] = "bulk_unverified";
+        productChanged = true;
+        changesCount++;
+      });
+
+      dynamicCustomFields.forEach(df => {
+        if (!df.key || !df.value) return;
+        const currentVal = getMetafieldValue(product, df.key);
+        if (bulkMode === "fill" && currentVal) return;
+        if (currentVal === df.value) return;
+
+        payload.push({ ownerId: product.id, namespace: "custom", key: df.key, type: "single_line_text_field", value: df.value });
+        statusObj[df.key] = "bulk_unverified";
+        productChanged = true;
+        changesCount++;
+      });
+
+      if (productChanged) {
+        payload.push({ ownerId: product.id, namespace: "custom", key: "meta_status", type: "json", value: JSON.stringify(statusObj) });
+      }
+    });
+
+    if (payload.length === 0) {
+      if (shopify && shopify.toast) shopify.toast.show("No changes to apply based on current mode and inputs.", { isError: false });
+      return;
+    }
+
+    diffSummary.push({ field: "Total Updates", old: "Current State", new: `${changesCount} updates across ${selectedProducts.length} products` });
+
+    setModalConfig({
+      active: true, 
+      title: `Confirm Bulk Injection (${bulkMode.toUpperCase()})`,
+      body: bulkMode === "overwrite" ? "WARNING: OVERWRITE mode destroys existing verified data." : "FILL ONLY mode. Existing data is safe.",
+      diffs: diffSummary, 
+      payload: payload
+    });
+  };
+
+  const executeBulkSubmit = () => {
+    fetcher.submit({ intent: "saveMetafields", payload: JSON.stringify(modalConfig.payload) }, { method: "post" });
+    setModalConfig({ active: false, title: "", body: null, diffs: [], payload: [] });
+  };
+
+  let visibleProducts = products;
+  if (bulkSearchQuery.trim() !== "") {
+    const lowerQuery = bulkSearchQuery.toLowerCase();
+    visibleProducts = products.filter(p => p.title.toLowerCase().includes(lowerQuery));
+  }
+
+  return (
+    <BlockStack gap="500">
+      {/* FIX 1: Preview & Run button relocated to the absolute top */}
+      <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
+        <Button tone="success" size="large" onClick={handleBulkSubmit} accessibilityLabel="Preview bulk injection">
+          Preview & Run Bulk Inject
+        </Button>
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'row', gap: '24px', minHeight: '600px' }}>
+        <div style={{ flex: '0 0 350px', display: 'flex', flexDirection: 'column' }}>
+          <Box padding="300" background="bg-surface-secondary" borderRadius="200">
+            <BlockStack gap="300">
+              <Text variant="headingSm" as="h3">1. Select Targets ({bulkSelectedProductIds.length})</Text>
+              
+              <div style={inputTapTargetStyle}>
+                <TextField
+                  placeholder="Search products..."
+                  value={bulkSearchQuery}
+                  onChange={setBulkSearchQuery}
+                  autoComplete="off"
+                  clearButton
+                  onClearButtonClick={() => setBulkSearchQuery("")}
+                  accessibilityLabel="Search products"
+                />
+              </div>
+
+              {bulkSearchQuery.trim() !== "" && (
+                <Text variant="bodySm" color="subdued">
+                  Showing {visibleProducts.length} of {products.length} products
+                </Text>
+              )}
+
+              <div style={tapTargetStyle}>
+                <Button onClick={() => setBulkSelectedProductIds(bulkSelectedProductIds.length === visibleProducts.length ? [] : visibleProducts.map(p => p.id))} accessibilityLabel="Select all or none">
+                  {bulkSelectedProductIds.length === visibleProducts.length && visibleProducts.length > 0 ? "Deselect All" : "Select All"}
+                </Button>
+              </div>
+
+              <Scrollable style={{ height: '500px' }}>
+                <BlockStack gap="100">
+                  {visibleProducts.length === 0 && (
+                     <Box padding="400">
+                       <Text as="p" color="subdued" alignment="center">No products match your search.</Text>
+                     </Box>
+                  )}
+                  {visibleProducts.map(p => (
+                    <div style={inputTapTargetStyle} key={p.id}>
+                      <Checkbox 
+                        label={p.title} 
+                        checked={bulkSelectedProductIds.includes(p.id)} 
+                        onChange={() => toggleProduct(p.id)} 
+                        accessibilityLabel={`Select ${p.title}`} 
+                      />
+                    </div>
+                  ))}
+                </BlockStack>
+              </Scrollable>
+            </BlockStack>
+          </Box>
+        </div>
+
+        <div style={{ flex: 1 }}>
+          <Box padding="400" background="bg-surface" borderRadius="200" shadow="100">
+            <BlockStack gap="400">
+              <Text variant="headingSm" as="h3">2. Define Injection Data</Text>
+              <Box paddingBlockEnd="200">
+                <InlineStack gap="400">
+                  <Text as="span">🔵 <strong style={{ fontWeight: 600 }}>Google</strong> = Required for Google Shopping</Text>
+                  {/* FIX 2: Legend updated to say "Stone" */}
+                  <Text as="span">🪨 <strong style={{ fontWeight: 600 }}>Stone</strong> = Your OOAK storefront data</Text>
+                </InlineStack>
+              </Box>
+              <div style={inputTapTargetStyle}>
+                <ChoiceList 
+                  title="Injection Mode" 
+                  choices={[
+                    { label: 'FILL ONLY: Skip products that already have data', value: 'fill' }, 
+                    { label: 'OVERWRITE: Force data (Dangerous)', value: 'overwrite' }
+                  ]} 
+                  selected={[bulkMode]} 
+                  onChange={(val) => setBulkMode(val[0])} 
+                />
+              </div>
+              
+              <Divider />
+
+              <Box padding="300" background="bg-surface-secondary" borderRadius="100">
+                <BlockStack gap="300">
+                  <Text as="p" variant="bodyMd">
+                    <strong>Dictionary Auto-Fill:</strong> Type a stone name (e.g., "Jasper") into the <strong>Official Name</strong> field below, then click this button to load its hard science data.
+                  </Text>
+                  <div style={tapTargetStyle}>
+                    <Button size="large" variant="primary" tone="success" onClick={handleAutoFill}>
+                      ⭐ Auto-Fill Science from Dictionary
+                    </Button>
+                  </div>
+                </BlockStack>
+              </Box>
+              
+              <Divider />
+              
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                {METAFIELD_CONFIG.filter(f => !f.hidden).map(field => {
+                  const isGoogle = field.namespace === "shopify";
+                  // FIX 2: Storefront form label logic changed to say "Stone"
+                  const label = isGoogle ? `🔵 Google ${(field.label || '').replace('Google ', '')}` : `🪨 Stone ${(field.label || '').replace('Store ', '')}`;
+
+                  if (isGoogle || field.options) {
+                    return (
+                      <div style={inputTapTargetStyle} key={field.key}>
+                        <Select 
+                          label={label} 
+                          options={field.options ? field.options : [{label: "Select...", value: ""}]}
+                          value={bulkFormData[field.key] || ""} 
+                          onChange={(val) => setBulkFormData(prev => ({ ...prev, [field.key]: val }))} 
+                          accessibilityLabel={`Bulk input for ${field.label}`} 
+                        />
+                      </div>
+                    );
+                  }
+                  
+                  return (
+                    <div style={inputTapTargetStyle} key={field.key}>
+                      <TextField 
+                        label={label} 
+                        value={bulkFormData[field.key] || ""} 
+                        onChange={(val) => setBulkFormData(prev => ({ ...prev, [field.key]: val }))} 
+                        placeholder="Leave blank to skip" 
+                        autoComplete="off" 
+                        type="text" 
+                        accessibilityLabel={`Bulk input for ${field.label}`} 
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+
+              {dynamicCustomFields.length > 0 && (
+                <BlockStack gap="300">
+                  <Divider />
+                  <Text variant="headingSm" as="h4">Custom Store Fields</Text>
+                  {dynamicCustomFields.map((df, idx) => (
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: '16px' }} key={`dynamic-${idx}`}>
+                      <div style={inputTapTargetStyle}>
+                        <TextField 
+                          label="🪨 Stone Field Key" // FIX 2: Updated Custom field label
+                          value={df.key} 
+                          onChange={(val) => {
+                            const newFields = [...dynamicCustomFields];
+                            newFields[idx].key = val;
+                            setDynamicCustomFields(newFields);
+                          }} 
+                          placeholder="e.g. mine_name" 
+                          autoComplete="off" 
+                          type="text" 
+                          accessibilityLabel="Custom stone field key" 
+                        />
+                      </div>
+                      <div style={inputTapTargetStyle}>
+                        <TextField 
+                          label="Value" 
+                          value={df.value} 
+                          onChange={(val) => {
+                            const newFields = [...dynamicCustomFields];
+                            newFields[idx].value = val;
+                            setDynamicCustomFields(newFields);
+                          }} 
+                          placeholder="Value" 
+                          autoComplete="off" 
+                          type="text" 
+                          accessibilityLabel="Custom stone field value" 
+                        />
+                      </div>
+                      <div style={tapTargetStyle}>
+                        <Button tone="critical" onClick={() => {
+                          const newFields = [...dynamicCustomFields];
+                          newFields.splice(idx, 1);
+                          setDynamicCustomFields(newFields);
+                        }} accessibilityLabel="Remove custom field">X</Button>
+                      </div>
+                    </div>
+                  ))}
+                </BlockStack>
+              )}
+              
+              <div style={tapTargetStyle}>
+                <Button onClick={() => setDynamicCustomFields([...dynamicCustomFields, { key: '', value: '' }])} accessibilityLabel="Add custom store field">
+                  Add Custom Field
+                </Button>
+              </div>
+            </BlockStack>
+          </Box>
+        </div>
+
+        {modalConfig.active && (
+          <Modal
+            open={true} 
+            onClose={() => setModalConfig({ active: false, title: "", body: null, diffs: [], payload: [] })} 
+            title={modalConfig.title}
+            primaryAction={{ content: "Confirm & Execute", onAction: executeBulkSubmit, tone: "success", accessibilityLabel: "Confirm and execute action" }}
+            secondaryActions={[{ content: "Cancel", onAction: () => setModalConfig({ active: false, title: "", body: null, diffs: [], payload: [] }), accessibilityLabel: "Cancel action" }]}
+          >
+            <Modal.Section>
+              <BlockStack gap="400">
+                {modalConfig.body && <Text variant="bodyLg" as="p" fontWeight="bold">{modalConfig.body}</Text>}
+                {modalConfig.diffs.length > 0 && (
+                  <Box background="bg-surface-secondary" padding="300" borderRadius="200">
+                    <DataTable 
+                      columnContentTypes={["text", "text", "text"]} 
+                      headings={["Field", "Old Value", "New Value"]} 
+                      rows={modalConfig.diffs.map(d => [d.field, d.old, d.new])} 
+                    />
+                  </Box>
+                )}
+              </BlockStack>
+            </Modal.Section>
+          </Modal> 
+        )}
+      </div>
+    </BlockStack>
+  );
 }
-
-main()
-  .catch((e) => {
-    console.error(e);
-    process.exit(1);
-  })
-  .finally(async () => {
-    await prisma.$disconnect();
-  });
