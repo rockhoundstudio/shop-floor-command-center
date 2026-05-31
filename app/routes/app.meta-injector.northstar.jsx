@@ -16,7 +16,7 @@ import {
 } from "@shopify/polaris";
 import { METAFIELD_CONFIG } from "./app.meta-injector.constants";
 
-export function InjectorTab({ products, fetcher, shopify, dbProfiles = [] }) {
+export function NorthStarTab({ products, fetcher, shopify, dbProfiles = [] }) {
   const [bulkMode, setBulkMode] = useState("fill");
   const [bulkFormData, setBulkFormData] = useState({});
   const [bulkSelectedProductIds, setBulkSelectedProductIds] = useState([]);
