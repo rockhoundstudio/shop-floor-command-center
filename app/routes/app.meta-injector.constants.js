@@ -81,24 +81,28 @@ export const rockFormOptions = [
 ];
 
 export const METAFIELD_CONFIG = [
-  // --- UPGRADED: Set anchor to base_stone_type ---
+  // 💥 MASTER FIELD NAME REFERENCE LOCKED IN 💥
   { namespace: "custom", key: "base_stone_type", type: "single_line_text_field", label: "Base Stone Type (North Star)" },
   
   { namespace: "shopify", key: "color-pattern", type: "list.metaobject_reference", label: "Color / Pattern", options: colorOptions },
   { namespace: "shopify", key: "authenticity", type: "list.metaobject_reference", label: "Authenticity", options: authOptions },
   { namespace: "shopify", key: "rarity", type: "list.metaobject_reference", label: "Rarity", options: rarityOptions },
+  
+  // Google Fields (Hyphens, as per Shopify Definitions)
   { namespace: "shopify", key: "crystal-system", type: "list.metaobject_reference", label: "Crystal System", options: crystalOptions },
   { namespace: "shopify", key: "geological-era", type: "list.metaobject_reference", label: "Geological Era", options: eraOptions },
   { namespace: "shopify", key: "mineral-class", type: "list.metaobject_reference", label: "Mineral Class", options: mineralClassOptions },
   { namespace: "shopify", key: "rock-composition", type: "list.metaobject_reference", label: "Rock Composition", options: rockCompOptions },
   { namespace: "shopify", key: "rock-formation", type: "list.metaobject_reference", label: "Rock Formation", options: rockFormOptions },
   
-  { namespace: "custom", key: "hardness", type: "number_decimal", label: "Hardness (Mohs)" },
-  { namespace: "custom", key: "luster", type: "single_line_text_field", label: "Luster" },
-  { namespace: "custom", key: "fracture", type: "single_line_text_field", label: "Fracture" },
-  { namespace: "custom", key: "cleavage", type: "single_line_text_field", label: "Cleavage" },
-  { namespace: "custom", key: "specific_gravity", type: "number_decimal", label: "Specific Gravity" },
-  { namespace: "custom", key: "diaphaneity", type: "single_line_text_field", label: "Diaphaneity" },
+  // Store Fields (Mapped exactly to Master Reference)
+  { namespace: "custom", key: "store_hardness", type: "number_decimal", label: "Hardness (Mohs)" },
+  { namespace: "custom", key: "store_luster", type: "single_line_text_field", label: "Luster" },
+  { namespace: "custom", key: "store_fracture", type: "single_line_text_field", label: "Fracture" },
+  { namespace: "custom", key: "store_cleavage", type: "single_line_text_field", label: "Cleavage" },
+  { namespace: "custom", key: "store_specific_gravity", type: "number_decimal", label: "Specific Gravity" },
+  { namespace: "custom", key: "store_diaphaneity", type: "single_line_text_field", label: "Diaphaneity" },
+  
   { namespace: "custom", key: "origin_location", type: "single_line_text_field", label: "Origin Location" },
   { namespace: "custom", key: "meta_status", type: "json", label: "Data Integrity Status", hidden: true }
 ];
