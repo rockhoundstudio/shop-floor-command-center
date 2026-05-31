@@ -10,7 +10,7 @@ export async function loader({ request }) {
   
   // Map it so the UI can read it perfectly without needing UI changes
   const dbProfiles = rawStoneProfiles.map(sp => ({
-    title: sp.stoneName,
+    title: sp.stoneName, stoneName: sp.stoneName,
     googleAuthenticity: sp.authenticity,
     googleRarity: sp.rarity,
     googleCrystalSystem: sp.crystalSystem,
