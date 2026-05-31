@@ -295,7 +295,7 @@ export default function MetaInjectorV2() {
   const profileFetcher = useFetcher();
   const snapshotFetcher = useFetcher();
 
-  const shopify = typeof window !== "undefined" ? window.shopify : undefined;`n  const [selectedTab, setSelectedTab] = useState(0);
+  const shopify = typeof window !== "undefined" ? window.shopify : undefined;
 
   const tabs = [
     { id: 'northstar', content: '⭐ North Star Auto-Fill', panelID: 'panel-northstar' },
