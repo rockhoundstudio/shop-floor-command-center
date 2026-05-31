@@ -42,10 +42,12 @@ export const rarityOptions = [
 
 export const crystalOptions = [
   { label: "Select Crystal System...", value: "" },
+  { label: "Amorphous", value: '["gid://shopify/Metaobject/178206015739"]' },
   { label: "Monoclinic", value: '["gid://shopify/Metaobject/151951212795"]' },
   { label: "Trigonal", value: '["gid://shopify/Metaobject/154252116219"]' },
   { label: "Hexagonal", value: '["gid://shopify/Metaobject/154307625211"]' },
-  { label: "Triclinic", value: '["gid://shopify/Metaobject/154308706555"]' }
+  { label: "Triclinic", value: '["gid://shopify/Metaobject/154308706555"]' },
+  { label: "Other", value: '["gid://shopify/Metaobject/178222989563"]' }
 ];
 
 export const eraOptions = [
@@ -61,7 +63,9 @@ export const mineralClassOptions = [
   { label: "Select Mineral Class...", value: "" },
   { label: "Silicates", value: '["gid://shopify/Metaobject/151951278331"]' },
   { label: "Oxides", value: '["gid://shopify/Metaobject/155431371003"]' },
-  { label: "Carbonates", value: '["gid://shopify/Metaobject/156128313595"]' }
+  { label: "Carbonates", value: '["gid://shopify/Metaobject/156128313595"]' },
+  { label: "Phosphates", value: '["gid://shopify/Metaobject/178206212347"]' },
+  { label: "Sulfides", value: '["gid://shopify/Metaobject/178206310651"]' }
 ];
 
 export const rockCompOptions = [
@@ -70,7 +74,8 @@ export const rockCompOptions = [
   { label: "Obsidian", value: '["gid://shopify/Metaobject/155431338235"]' },
   { label: "Andesite", value: '["gid://shopify/Metaobject/156128411899"]' },
   { label: "Schist", value: '["gid://shopify/Metaobject/156128477435"]' },
-  { label: "Jasper", value: '["gid://shopify/Metaobject/166239764731"]' }
+  { label: "Jasper", value: '["gid://shopify/Metaobject/166239764731"]' },
+  { label: "Other", value: '["gid://shopify/Metaobject/178206376187"]' }
 ];
 
 export const rockFormOptions = [
@@ -81,28 +86,25 @@ export const rockFormOptions = [
 ];
 
 export const METAFIELD_CONFIG = [
-  // 💥 MASTER FIELD NAME REFERENCE LOCKED IN 💥
   { namespace: "custom", key: "base_stone_type", type: "single_line_text_field", label: "Base Stone Type (North Star)" },
-  
+
   { namespace: "shopify", key: "color-pattern", type: "list.metaobject_reference", label: "Color / Pattern", options: colorOptions },
   { namespace: "shopify", key: "authenticity", type: "list.metaobject_reference", label: "Authenticity", options: authOptions },
   { namespace: "shopify", key: "rarity", type: "list.metaobject_reference", label: "Rarity", options: rarityOptions },
-  
-  // Google Fields (Hyphens, as per Shopify Definitions)
+
   { namespace: "shopify", key: "crystal-system", type: "list.metaobject_reference", label: "Crystal System", options: crystalOptions },
   { namespace: "shopify", key: "geological-era", type: "list.metaobject_reference", label: "Geological Era", options: eraOptions },
   { namespace: "shopify", key: "mineral-class", type: "list.metaobject_reference", label: "Mineral Class", options: mineralClassOptions },
   { namespace: "shopify", key: "rock-composition", type: "list.metaobject_reference", label: "Rock Composition", options: rockCompOptions },
   { namespace: "shopify", key: "rock-formation", type: "list.metaobject_reference", label: "Rock Formation", options: rockFormOptions },
-  
-  // Store Fields (Mapped exactly to Master Reference)
-  { namespace: "custom", key: "store_hardness", type: "number_decimal", label: "Hardness (Mohs)" },
+
+  { namespace: "custom", key: "store_hardness", type: "single_line_text_field", label: "Hardness (Mohs)" },
   { namespace: "custom", key: "store_luster", type: "single_line_text_field", label: "Luster" },
   { namespace: "custom", key: "store_fracture", type: "single_line_text_field", label: "Fracture" },
   { namespace: "custom", key: "store_cleavage", type: "single_line_text_field", label: "Cleavage" },
-  { namespace: "custom", key: "store_specific_gravity", type: "number_decimal", label: "Specific Gravity" },
+  { namespace: "custom", key: "store_specific_gravity", type: "single_line_text_field", label: "Specific Gravity" },
   { namespace: "custom", key: "store_diaphaneity", type: "single_line_text_field", label: "Diaphaneity" },
-  
+
   { namespace: "custom", key: "origin_location", type: "single_line_text_field", label: "Origin Location" },
   { namespace: "custom", key: "meta_status", type: "json", label: "Data Integrity Status", hidden: true }
 ];
