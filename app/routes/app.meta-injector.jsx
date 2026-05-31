@@ -337,7 +337,7 @@ export default function MetaInjectorV2() {
                     <NorthStarTab 
                       fetcher={actionFetcher} 
                       products={products} 
-                      dbProfiles={dbProfiles} 
+                      dbProfiles={dbProfiles} shopify={shopify} 
                     />
                   )}
                   {selectedTab === 1 && (
@@ -359,7 +359,7 @@ export default function MetaInjectorV2() {
                       fetcher={actionFetcher} 
                       products={products} 
                       shopify={typeof window !== 'undefined' ? window.shopify : undefined} 
-                      dbProfiles={dbProfiles} 
+                      dbProfiles={dbProfiles} shopify={shopify} 
                     />
                   )}
                   {selectedTab === 4 && (
@@ -371,7 +371,7 @@ export default function MetaInjectorV2() {
                     <ProfilesTab 
                       fetcher={profileFetcher} 
                       products={products} 
-                      dbProfiles={dbProfiles} 
+                      dbProfiles={dbProfiles} shopify={shopify} 
                     />
                   )}
                   {selectedTab === 6 && (
