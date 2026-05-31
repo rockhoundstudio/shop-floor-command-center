@@ -56,7 +56,7 @@ const GOOGLE_GID_MAP = {
     "Genuine": '["gid://shopify/Metaobject/151951114491"]',
     "Replica": '["gid://shopify/Metaobject/156128346363"]',
   },
-  rarity: {
+ rarity: {
     "Common": '["gid://shopify/Metaobject/151951147259"]',
     "Rare":   '["gid://shopify/Metaobject/154252050683"]',
   },
@@ -112,15 +112,17 @@ export function NorthStarTab({ products, fetcher, shopify, dbProfiles = [] }) {
       return;
     }
 
+    console.log("PROFILE DUMP:", JSON.stringify(profile));
+
     setBulkFormData(prev => ({
       ...prev,
-      "authenticity":       toGid("authenticity",    profile.googleAuthenticity || profile.authenticity)         || prev["authenticity"]       || "",
-      "rarity":             toGid("rarity",          profile.googleRarity || profile.rarity)                     || prev["rarity"]             || "",
-      "crystal-system":     toGid("crystalSystem",   profile.googleCrystalSystem || profile.crystalSystem)       || prev["crystal-system"]     || "",
-      "geological-era":     toGid("geologicalEra",   profile.googleGeologicalEra || profile.geologicalEra)       || prev["geological-era"]     || "",
-      "mineral-class":      toGid("mineralClass",    profile.googleMineralClass || profile.mineralClass)         || prev["mineral-class"]      || "",
-      "rock-composition":   toGid("rockComposition", profile.googleRockComposition || profile.rockComposition)   || prev["rock-composition"]   || "",
-      "rock-formation":     toGid("rockFormation",   profile.googleRockFormation || profile.rockFormation)       || prev["rock-formation"]     || "",
+      "authenticity":       toGid("authenticity",    profile.googleAuthenticity || profile.authenticity)         || prev["authenticity"]       || "",
+      "rarity":             toGid("rarity",          profile.googleRarity || profile.rarity)                     || prev["rarity"]             || "",
+      "crystal-system":     toGid("crystalSystem",   profile.googleCrystalSystem || profile.crystalSystem)        || prev["crystal-system"]     || "",
+      "geological-era":     toGid("geologicalEra",   profile.googleGeologicalEra || profile.geologicalEra)        || prev["geological-era"]     || "",
+      "mineral-class":      toGid("mineralClass",    profile.googleMineralClass || profile.mineralClass)          || prev["mineral-class"]      || "",
+      "rock-composition":   toGid("rockComposition", profile.googleRockComposition || profile.rockComposition)   || prev["rock-composition"]   || "",
+      "rock-formation":     toGid("rockFormation",   profile.googleRockFormation || profile.rockFormation)        || prev["rock-formation"]     || "",
       store_hardness: profile.storeHardness || profile.hardness || prev.store_hardness || "",
       store_luster: profile.storeLuster || profile.luster || prev.store_luster || "",
       store_fracture: profile.storeFracture || profile.fracture || prev.store_fracture || "",
@@ -170,7 +172,7 @@ export function NorthStarTab({ products, fetcher, shopify, dbProfiles = [] }) {
             finalValue = newVal;
           } catch {
             finalValue = JSON.stringify([newVal]);
-          }
+          }
         }
 
         payload.push({ ownerId: product.id, namespace: field.namespace, key: field.key, type: resolvedType, value: finalValue });
@@ -266,7 +268,7 @@ maxSelectedProductIds:        if (bulkMode === "fill" && currentVal) return;
                     <Checkbox 
                       label={p.title} 
                       checked={bulkSelectedProductIds.includes(p.id)} 
-                      onChange={() => toggleProduct(p.id)} 
+ inversion_flag:       onChange={() => toggleProduct(p.id)} 
                       accessibilityLabel={`Select ${p.title}`} 
                     />
                   </div>
