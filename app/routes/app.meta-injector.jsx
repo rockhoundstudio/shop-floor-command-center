@@ -1,6 +1,5 @@
-﻿import React, { useState } from "react";
+import React, { useState } from "react";
 import { useLoaderData, useActionData, useFetcher, useNavigate } from "react-router";
-import { useAppBridge } from "@shopify/app-bridge-react";
 import {
   Page, Layout, Card, Text, Banner, BlockStack, Box, Tabs, Frame
 } from "@shopify/polaris";
@@ -296,7 +295,7 @@ export default function MetaInjectorV2() {
   const profileFetcher = useFetcher();
   const snapshotFetcher = useFetcher();
 
-  const shopify = useAppBridge();
+  const shopify = typeof window !== 'undefined' ? window.shopify : undefined;
   const [selectedTab, setSelectedTab] = useState(0);
 
   const tabs = [
@@ -361,7 +360,7 @@ export default function MetaInjectorV2() {
                       fetcher={actionFetcher} 
                       products={products} 
                       shopify={typeof window !== 'undefined' ? window.shopify : undefined} 
-                      dbProfiles={dbProfiles} shopify={shopify} 
+                      dbProfiles={dbProfiles} 
                     />
                   )}
                   {selectedTab === 4 && (
