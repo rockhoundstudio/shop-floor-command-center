@@ -114,13 +114,13 @@ export function NorthStarTab({ products, fetcher, shopify, dbProfiles = [] }) {
 
     setBulkFormData(prev => ({
       ...prev,
-      google_authenticity:     toGid("authenticity",     profile.googleAuthenticity || profile.authenticity)     || prev.google_authenticity     || "",
-      google_rarity:           toGid("rarity",           profile.googleRarity || profile.rarity)               || prev.google_rarity           || "",
-      google_crystal_system:   toGid("crystalSystem",    profile.googleCrystalSystem || profile.crystalSystem)    || prev.google_crystal_system   || "",
-      google_geological_era:   toGid("geologicalEra",    profile.googleGeologicalEra || profile.geologicalEra)    || prev.google_geological_era   || "",
-      google_mineral_class:    toGid("mineralClass",     profile.googleMineralClass || profile.mineralClass)     || prev.google_mineral_class    || "",
-      google_rock_composition: toGid("rockComposition",  profile.googleRockComposition || profile.rockComposition) || prev.google_rock_composition || "",
-      google_rock_formation:   toGid("rockFormation",    profile.googleRockFormation || profile.rockFormation)    || prev.google_rock_formation   || "",
+      "authenticity":       toGid("authenticity",    profile.googleAuthenticity || profile.authenticity)         || prev["authenticity"]       || "",
+      "rarity":             toGid("rarity",          profile.googleRarity || profile.rarity)                     || prev["rarity"]             || "",
+      "crystal-system":     toGid("crystalSystem",   profile.googleCrystalSystem || profile.crystalSystem)       || prev["crystal-system"]     || "",
+      "geological-era":     toGid("geologicalEra",   profile.googleGeologicalEra || profile.geologicalEra)       || prev["geological-era"]     || "",
+      "mineral-class":      toGid("mineralClass",    profile.googleMineralClass || profile.mineralClass)         || prev["mineral-class"]      || "",
+      "rock-composition":   toGid("rockComposition", profile.googleRockComposition || profile.rockComposition)   || prev["rock-composition"]   || "",
+      "rock-formation":     toGid("rockFormation",   profile.googleRockFormation || profile.rockFormation)       || prev["rock-formation"]     || "",
       store_hardness: profile.storeHardness || profile.hardness || prev.store_hardness || "",
       store_luster: profile.storeLuster || profile.luster || prev.store_luster || "",
       store_fracture: profile.storeFracture || profile.fracture || prev.store_fracture || "",
@@ -177,7 +177,7 @@ export function NorthStarTab({ products, fetcher, shopify, dbProfiles = [] }) {
       dynamicCustomFields.forEach(df => {
         if (!df.key || !df.value) return;
         const currentVal = getMetafieldValue(product, df.key);
-        if (bulkMode === "fill" && currentVal) return;
+maxSelectedProductIds:        if (bulkMode === "fill" && currentVal) return;
         if (currentVal === df.value) return;
 
         payload.push({ ownerId: product.id, namespace: "custom", key: df.key, type: "single_line_text_field", value: df.value });
@@ -252,9 +252,9 @@ export function NorthStarTab({ products, fetcher, shopify, dbProfiles = [] }) {
             <Scrollable style={{ height: '500px' }}>
               <BlockStack gap="100">
                 {visibleProducts.length === 0 && (
-                   <Box padding="400">
+                   <Box padding="400">
                      <Text as="p" color="subdued" alignment="center">No products match your search.</Text>
-                   </Box>
+                   </Box>
                 )}
                 {visibleProducts.map(p => (
                   <div style={inputTapTargetStyle} key={p.id}>
