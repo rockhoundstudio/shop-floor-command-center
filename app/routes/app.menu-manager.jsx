@@ -323,7 +323,7 @@ export default function MenuManager() {
                                   <Text variant="bodyMd" fontWeight={isActive ? "bold" : "regular"}>{item.title}</Text>
                                   <Text variant="bodySm" color="subdued">Handle: {item.handle}</Text>
                                 </BlockStack>
-                                <Badge tone={item.> 0 ? "success" : "warning"}>{item.} items</Badge>
+                                <Badge tone="success">Active</Badge>
                               </InlineStack>
                             </Box>
                           </ResourceItem>
