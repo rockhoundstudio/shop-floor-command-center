@@ -1,4 +1,4 @@
-﻿
+
       if (typeof cleanMf.value === "string" && cleanMf.value.includes("gid://shopify")) {
         console.warn(`GID Leak intercepted on ${cleanMf.key} for ${cleanMf.ownerId}. Skippinimport { authenticate } from "../shopify.server";
 import { EXCLUDED_TITLES } from "./app.meta-injector.constants";
@@ -192,7 +192,6 @@ export async function action({ request }) {
       if (cleanMf.key === "moh_hardness" || cleanMf.key === "hardness") {
         cleanMf.key = "mohs_hardness";
       }
-g this metafield.`);
         return acc;
       }
 
