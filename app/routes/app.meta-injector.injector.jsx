@@ -47,10 +47,11 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [] }) {
   };
 
   const handleAutoFill = () => {
-    const baseStoneType = bulkFormData["base_stone_type"] || "";
+    // FIXED: Form now properly reads from 'official_name' which matches your config
+    const baseStoneType = bulkFormData["official_name"] || bulkFormData["base_stone_type"] || "";
 
     if (!baseStoneType.trim()) {
-      if (shopify && shopify.toast) shopify.toast.show("Please type a base stone (e.g., 'Jasper') into 'Base Stone Type' first!", { isError: true });
+      if (shopify && shopify.toast) shopify.toast.show("Please type a stone name (e.g., 'Jasper') into 'Official Name' first!", { isError: true });
       return;
     }
 
@@ -74,13 +75,13 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [] }) {
       google_rock_composition: profile.googleRockComposition || prev.google_rock_composition || "",
       google_rock_formation: profile.googleRockFormation || prev.google_rock_formation || "",
       
-      // FIXED: Safely maps the profile.stoneHardness (from DB loader) back to store_hardness (Shopify key)
-      store_hardness: profile.stoneHardness || prev.store_hardness || "",
-      store_luster: profile.stoneLuster || prev.store_luster || "",
-      store_fracture: profile.stoneFracture || prev.store_fracture || "",
-      store_cleavage: profile.stoneCleavage || prev.store_cleavage || "",
-      store_specific_gravity: profile.stoneSpecificGravity || prev.store_specific_gravity || "",
-      store_diaphaneity: profile.stoneDiaphaneity || prev.store_diaphaneity || ""
+      // FIXED: Reading exactly what the loader passes (profile.storeHardness)
+      store_hardness: profile.storeHardness || prev.store_hardness || "",
+      store_luster: profile.storeLuster || prev.store_luster || "",
+      store_fracture: profile.storeFracture || prev.store_fracture || "",
+      store_cleavage: profile.storeCleavage || prev.store_cleavage || "",
+      store_specific_gravity: profile.storeSpecificGravity || prev.store_specific_gravity || "",
+      store_diaphaneity: profile.storeDiaphaneity || prev.store_diaphaneity || ""
     }));
 
     if (shopify && shopify.toast) shopify.toast.show(`${profile.title || profile.stoneName} science successfully loaded from dictionary!`, { isError: false });
@@ -259,7 +260,7 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [] }) {
               <Box padding="300" background="bg-surface-secondary" borderRadius="100">
                 <BlockStack gap="300">
                   <Text as="p" variant="bodyMd">
-                    <strong>Dictionary Auto-Fill:</strong> Type a base stone (e.g., "Jasper") into the <strong>Base Stone Type</strong> field below, then click this button to load its hard science data.
+                    <strong>Dictionary Auto-Fill:</strong> Type a stone name (e.g., "Jasper") into the <strong>Official Name</strong> field below, then click this button to load its hard science data.
                   </Text>
                   <div style={tapTargetStyle}>
                     <Button size="large" variant="primary" tone="success" onClick={handleAutoFill}>
@@ -275,9 +276,16 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [] }) {
                 {METAFIELD_CONFIG.filter(f => !f.hidden).map(field => {
                   const isGoogle = field.namespace === "shopify";
                   const rawLabelText = field.name || field.label || "";
-                  const label = isGoogle 
-                    ? `🔵 Google ${rawLabelText.replace('Google ', '')}` 
-                    : `🪨 Stone ${rawLabelText.replace('Store ', '')}`;
+                  
+                  let cleanName = rawLabelText
+                    .replace(/🔵/g, '')
+                    .replace(/🪨/g, '')
+                    .replace(/Google/gi, '')
+                    .replace(/Store/gi, '')
+                    .replace(/Stone/gi, '')
+                    .trim();
+
+                  const label = isGoogle ? `🔵 Google ${cleanName}` : `🪨 Stone ${cleanName}`;
 
                   if (isGoogle || field.options) {
                     return (
@@ -287,7 +295,7 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [] }) {
                           options={field.options ? [{label: "Select...", value: ""}, ...field.options.map(o => ({label: o, value: o}))] : [{label: "Select...", value: ""}]} 
                           value={bulkFormData[field.key] || ""} 
                           onChange={(val) => setBulkFormData(prev => ({ ...prev, [field.key]: val }))} 
-                          accessibilityLabel={`Bulk input for ${rawLabelText}`} 
+                          accessibilityLabel={`Bulk input for ${cleanName}`} 
                         />
                       </div>
                     );
@@ -302,7 +310,7 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [] }) {
                         placeholder="Leave blank to skip" 
                         autoComplete="off" 
                         type="text" 
-                        accessibilityLabel={`Bulk input for ${rawLabelText}`} 
+                        accessibilityLabel={`Bulk input for ${cleanName}`} 
                       />
                     </div>
                   );
