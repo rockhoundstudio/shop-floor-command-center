@@ -32,27 +32,35 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [], dynam
   const getMetafieldValue = useCallback((product, key) => {
     if (!product || !product.metafields) return "";
     const mf = product.metafields.edges.find(e => e.node.key === key);
-    return mf ? mf.node.value : "";
+    if (mf) return mf.node.value;
+    return "";
   }, []);
 
   const resolveMetafieldType = useCallback((product, fieldConfig, newValue) => {
-    // PHASE 3 UPGRADE: Checks metaobjectType instead of options
     if (fieldConfig.metaobjectType) return "list.metaobject_reference";
     const existingMf = product.metafields.edges.find(e => e.node.key === fieldConfig.key);
     if (existingMf) return existingMf.node.type;
     const isNumberType = fieldConfig.type.includes("number");
-    const containsDash = newValue ? /[\-–—]/.test(newValue) : false;
-    return isNumberType ? (containsDash ? "single_line_text_field" : fieldConfig.type) : fieldConfig.type;
+    const containsDash = newValue && /[\-–—]/.test(newValue);
+    if (isNumberType && containsDash) return "single_line_text_field";
+    if (isNumberType && !containsDash) return fieldConfig.type;
+    return fieldConfig.type;
   }, []);
 
   const toggleProduct = (id) => {
-    setBulkSelectedProductIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+    setBulkSelectedProductIds(prev => {
+      const isSelected = prev.includes(id);
+      if (isSelected) return prev.filter(x => x !== id);
+      if (!isSelected) return [...prev, id];
+      return prev;
+    });
   };
 
   const handleAutoFill = () => {
     const baseStoneType = bulkFormData["official_name"] || bulkFormData["base_stone_type"] || "";
 
-    if (!baseStoneType.trim()) {
+    const isMissingStoneType = baseStoneType.trim() === "";
+    if (isMissingStoneType) {
       if (shopify && shopify.toast) shopify.toast.show("Please type a stone name (e.g., 'Jasper') into 'Official Name' first!", { isError: true });
       return;
     }
@@ -62,7 +70,8 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [], dynam
       (db.title || db.stoneName || "").toLowerCase().includes(baseStoneType.toLowerCase())
     );
     
-    if (!profile) {
+    const isMissingProfile = !profile;
+    if (isMissingProfile) {
       if (shopify && shopify.toast) shopify.toast.show(`No dictionary entry found for "${baseStoneType}".`, { isError: true });
       return;
     }
@@ -73,34 +82,36 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [], dynam
       if (!field.key) return;
       const key = field.key.toLowerCase();
       
-      // Google Science Fields
-      if (key.includes('authenticity')) updates[field.key] = profile.googleAuthenticity || updates[field.key] || "";
-      if (key.includes('rarity')) updates[field.key] = profile.googleRarity || updates[field.key] || "";
-      if (key.includes('crystal_system') || key.includes('crystal-system')) updates[field.key] = profile.googleCrystalSystem || updates[field.key] || "";
-      if (key.includes('geological_era') || key.includes('geological-era')) updates[field.key] = profile.googleGeologicalEra || updates[field.key] || "";
-      if (key.includes('mineral_class') || key.includes('mineral-class')) updates[field.key] = profile.googleMineralClass || updates[field.key] || "";
-      if (key.includes('rock_composition') || key.includes('rock-composition')) updates[field.key] = profile.googleRockComposition || updates[field.key] || "";
-      if (key.includes('rock_formation') || key.includes('rock-formation')) updates[field.key] = profile.googleRockFormation || updates[field.key] || "";
+      // Strict mapping to Shopify keys per METAFIELD KEY LAW
+      if (key === 'google_authenticity') updates[field.key] = profile.authenticity || profile.google_authenticity || updates[field.key] || "";
+      if (key === 'google_rarity') updates[field.key] = profile.rarity || profile.google_rarity || updates[field.key] || "";
+      if (key === 'google_crystal_system') updates[field.key] = profile.google_crystal_system || updates[field.key] || "";
+      if (key === 'google_geological_era') updates[field.key] = profile.google_geological_era || updates[field.key] || "";
+      if (key === 'google_mineral_class') updates[field.key] = profile.google_mineral_class || updates[field.key] || "";
+      if (key === 'google_rock_composition') updates[field.key] = profile.google_rock_composition || updates[field.key] || "";
+      if (key === 'google_rock_formation') updates[field.key] = profile.google_rock_formation || updates[field.key] || "";
       
-      // Store/Stone Hard Science Fields
-      if (key.includes('hardness')) updates[field.key] = profile.stoneHardness || updates[field.key] || "";
-      if (key.includes('luster')) updates[field.key] = profile.stoneLuster || updates[field.key] || "";
-      if (key.includes('fracture')) updates[field.key] = profile.stoneFracture || updates[field.key] || "";
-      if (key.includes('cleavage')) updates[field.key] = profile.stoneCleavage || updates[field.key] || "";
-      if (key.includes('specific_gravity') || key.includes('specificgravity')) updates[field.key] = profile.stoneSpecificGravity || updates[field.key] || "";
-      if (key.includes('diaphaneity')) updates[field.key] = profile.stoneDiaphaneity || updates[field.key] || "";
+      if (key === 'store_hardness') updates[field.key] = profile.store_hardness || updates[field.key] || "";
+      if (key === 'store_luster') updates[field.key] = profile.store_luster || updates[field.key] || "";
+      if (key === 'store_fracture') updates[field.key] = profile.store_fracture || updates[field.key] || "";
+      if (key === 'store_cleavage') updates[field.key] = profile.store_cleavage || updates[field.key] || "";
+      if (key === 'store_specific_gravity') updates[field.key] = profile.store_specific_gravity || updates[field.key] || "";
+      if (key === 'store_diaphaneity') updates[field.key] = profile.store_diaphaneity || updates[field.key] || "";
     });
 
-    // PHASE 3 UPGRADE: Translate Dictionary Text to Shopify GIDs for Dropdowns
+    // Translate Dictionary Text to Shopify GIDs for Dropdowns
     METAFIELD_CONFIG.forEach(field => {
-      if (field.metaobjectType && updates[field.key]) {
+      const hasMetaobjectTypeAndValue = field.metaobjectType && updates[field.key];
+      if (hasMetaobjectTypeAndValue) {
         const rawValue = updates[field.key];
-        if (!rawValue.includes("gid://")) {
+        const isNotGid = !rawValue.includes("gid://");
+        if (isNotGid) {
           const liveOptions = dynamicMetaobjectOptions[field.metaobjectType] || [];
           const matchedOption = liveOptions.find(opt => opt.label.toLowerCase() === rawValue.toLowerCase());
           if (matchedOption) {
             updates[field.key] = matchedOption.value;
-          } else {
+          }
+          if (!matchedOption) {
             updates[field.key] = ""; // Keep blank if the term doesn't exist in Shopify yet
           }
         }
@@ -114,7 +125,8 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [], dynam
 
   const handleBulkSubmit = () => {
     const selectedProducts = products.filter(p => bulkSelectedProductIds.includes(p.id));
-    if (selectedProducts.length === 0) {
+    const isNoProductsSelected = selectedProducts.length === 0;
+    if (isNoProductsSelected) {
       if (shopify && shopify.toast) shopify.toast.show("Select at least one product.", { isError: true });
       return;
     }
@@ -127,7 +139,9 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [], dynam
       const statusStr = getMetafieldValue(product, "meta_status");
       let statusObj = {};
       try { 
-        statusObj = statusStr ? JSON.parse(statusStr) : {}; 
+        if (statusStr) {
+          statusObj = JSON.parse(statusStr); 
+        }
       } catch(e) {}
       
       let productChanged = false;
@@ -138,18 +152,23 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [], dynam
         if (!newVal) return;
 
         const currentVal = getMetafieldValue(product, field.key);
-        if (bulkMode === "fill" && currentVal) return;
-        if (currentVal === newVal) return;
+        const isFillModeAndHasValue = bulkMode === "fill" && currentVal !== "";
+        if (isFillModeAndHasValue) return;
+        const isSameValue = currentVal === newVal;
+        if (isSameValue) return;
 
         const resolvedType = resolveMetafieldType(product, field, newVal);
         
         let finalValue = newVal;
-        if (resolvedType.includes("list.")) {
+        const isListType = resolvedType.includes("list.");
+        if (isListType) {
           try {
             const parsed = JSON.parse(newVal);
-            if (Array.isArray(parsed)) {
+            const isArray = Array.isArray(parsed);
+            if (isArray) {
               finalValue = newVal; 
-            } else {
+            }
+            if (!isArray) {
               finalValue = JSON.stringify([newVal]); 
             }
           } catch {
@@ -164,10 +183,14 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [], dynam
       });
 
       dynamicCustomFields.forEach(df => {
-        if (!df.key || !df.value) return;
+        const isInvalidCustomField = !df.key || !df.value;
+        if (isInvalidCustomField) return;
+        
         const currentVal = getMetafieldValue(product, df.key);
-        if (bulkMode === "fill" && currentVal) return;
-        if (currentVal === df.value) return;
+        const isFillModeAndHasValue = bulkMode === "fill" && currentVal !== "";
+        if (isFillModeAndHasValue) return;
+        const isSameValue = currentVal === df.value;
+        if (isSameValue) return;
 
         payload.push({ ownerId: product.id, namespace: "custom", key: df.key, type: "single_line_text_field", value: df.value });
         statusObj[df.key] = "bulk_unverified";
@@ -180,17 +203,20 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [], dynam
       }
     });
 
-    if (payload.length === 0) {
+    const isPayloadEmpty = payload.length === 0;
+    if (isPayloadEmpty) {
       if (shopify && shopify.toast) shopify.toast.show("No changes to apply based on current mode and inputs.", { isError: false });
       return;
     }
 
     diffSummary.push({ field: "Total Updates", old: "Current State", new: `${changesCount} updates across ${selectedProducts.length} products` });
 
+    const isOverwriteMode = bulkMode === "overwrite";
+    
     setModalConfig({
       active: true, 
       title: `Confirm Bulk Injection (${bulkMode.toUpperCase()})`,
-      body: bulkMode === "overwrite" ? "WARNING: OVERWRITE mode destroys existing verified data." : "FILL ONLY mode. Existing data is safe.",
+      body: isOverwriteMode ? "WARNING: OVERWRITE mode destroys existing verified data." : "FILL ONLY mode. Existing data is safe.",
       diffs: diffSummary, 
       payload: payload
     });
@@ -202,17 +228,22 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [], dynam
   };
 
   let visibleProducts = products;
-  if (bulkSearchQuery.trim() !== "") {
+  const hasSearchQuery = bulkSearchQuery.trim() !== "";
+  if (hasSearchQuery) {
     const lowerQuery = bulkSearchQuery.toLowerCase();
     visibleProducts = products.filter(p => p.title.toLowerCase().includes(lowerQuery));
   }
 
+  const allVisibleSelected = bulkSelectedProductIds.length === visibleProducts.length && visibleProducts.length > 0;
+
   return (
     <BlockStack gap="500">
       <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
-        <Button tone="success" size="large" onClick={handleBulkSubmit} accessibilityLabel="Preview bulk injection">
-          Preview & Run Bulk Inject
-        </Button>
+        <div style={tapTargetStyle}>
+          <Button tone="success" size="large" onClick={handleBulkSubmit} accessibilityLabel="Preview bulk injection">
+            Preview & Run Bulk Inject
+          </Button>
+        </div>
       </div>
       <div style={{ display: 'flex', flexDirection: 'row', gap: '24px', minHeight: '600px' }}>
         <div style={{ flex: '0 0 350px', display: 'flex', flexDirection: 'column' }}>
@@ -232,15 +263,19 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [], dynam
                 />
               </div>
 
-              {bulkSearchQuery.trim() !== "" && (
-                <Text variant="bodySm" color="subdued">
+              {hasSearchQuery && (
+                <Text variant="bodySm" tone="subdued" as="p">
                   Showing {visibleProducts.length} of {products.length} products
                 </Text>
               )}
 
               <div style={tapTargetStyle}>
-                <Button onClick={() => setBulkSelectedProductIds(bulkSelectedProductIds.length === visibleProducts.length ? [] : visibleProducts.map(p => p.id))} accessibilityLabel="Select all or none">
-                  {bulkSelectedProductIds.length === visibleProducts.length && visibleProducts.length > 0 ? "Deselect All" : "Select All"}
+                <Button 
+                  onClick={() => setBulkSelectedProductIds(allVisibleSelected ? [] : visibleProducts.map(p => p.id))} 
+                  accessibilityLabel="Select all or none"
+                >
+                  {allVisibleSelected && "Deselect All"}
+                  {!allVisibleSelected && "Select All"}
                 </Button>
               </div>
 
@@ -248,7 +283,7 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [], dynam
                 <BlockStack gap="100">
                   {visibleProducts.length === 0 && (
                      <Box padding="400">
-                       <Text as="p" color="subdued" alignment="center">No products match your search.</Text>
+                       <Text as="p" tone="subdued" alignment="center">No products match your search.</Text>
                      </Box>
                   )}
                   {visibleProducts.map(p => (
@@ -297,7 +332,7 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [], dynam
                     <strong>Dictionary Auto-Fill:</strong> Type a stone name (e.g., "Jasper") into the <strong>Official Name</strong> field below, then click this button to load its hard science data.
                   </Text>
                   <div style={tapTargetStyle}>
-                    <Button size="large" variant="primary" tone="success" onClick={handleAutoFill}>
+                    <Button size="large" variant="primary" tone="success" onClick={handleAutoFill} accessibilityLabel="Auto-Fill Science from Dictionary">
                       ⭐ Auto-Fill Science from Dictionary
                     </Button>
                   </div>
@@ -320,40 +355,35 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [], dynam
                     .trim();
 
                   const label = isGoogle ? `🔵 Google ${cleanName}` : `🪨 Stone ${cleanName}`;
+                  const hasMetaobjectType = !!field.metaobjectType;
+                  const isAddingNew = inlineAddState.fieldKey === field.key;
 
-                  // PHASE 4 UPGRADE: The Dropdown + Auto-Mint UI
-                  if (field.metaobjectType) {
-                    const liveOptions = dynamicMetaobjectOptions[field.metaobjectType] || [];
-                    const dropdownOptions = [
-                      { label: "Select...", value: "" },
-                      ...liveOptions
-                    ];
-
-                    // Check if this specific field is currently in "Add New" mode
-                    const isAddingNew = inlineAddState.fieldKey === field.key;
-
-                    return (
-                      <div style={{ ...inputTapTargetStyle, minHeight: 'auto' }} key={field.key}>
-                        {isAddingNew ? (
-                          <BlockStack gap="200">
-                            <TextField
-                              label={`➕ New ${cleanName}`}
-                              value={inlineAddState.value}
-                              onChange={(val) => setInlineAddState(prev => ({ ...prev, value: val }))}
-                              placeholder="e.g., Dragonstone"
-                              autoComplete="off"
-                              disabled={inlineAddState.loading}
-                            />
-                            <InlineStack gap="200">
+                  return (
+                    <div style={{ ...inputTapTargetStyle, minHeight: 'auto' }} key={field.key}>
+                      {hasMetaobjectType && isAddingNew && (
+                        <BlockStack gap="200">
+                          <TextField
+                            label={`➕ New ${cleanName}`}
+                            value={inlineAddState.value}
+                            onChange={(val) => setInlineAddState(prev => ({ ...prev, value: val }))}
+                            placeholder="e.g., Dragonstone"
+                            autoComplete="off"
+                            disabled={inlineAddState.loading}
+                            accessibilityLabel={`Type new ${cleanName} value`}
+                          />
+                          <InlineStack gap="200">
+                            <div style={tapTargetStyle}>
                               <Button 
                                 tone="success" 
                                 variant="primary"
                                 loading={inlineAddState.loading}
+                                accessibilityLabel="Save new dictionary term"
                                 onClick={() => {
-                                  if (!inlineAddState.value.trim()) return;
+                                  const isInvalidValue = !inlineAddState.value.trim();
+                                  if (isInvalidValue) return;
+                                  
                                   setInlineAddState(prev => ({ ...prev, loading: true }));
                                   
-                                  // Fire Push 1 (The Dictionary Push)
                                   const formData = new FormData();
                                   formData.append("intent", "createMetaobject");
                                   formData.append("type", field.metaobjectType);
@@ -361,8 +391,6 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [], dynam
                                   
                                   fetcher.submit(formData, { method: "post" });
                                   
-                                  // The Remix fetcher automatically re-runs the loader, 
-                                  // so the new word will appear in the dropdown in ~1 second.
                                   setTimeout(() => {
                                     setInlineAddState({ fieldKey: null, metaobjectType: null, value: "", loading: false });
                                     if (shopify && shopify.toast) shopify.toast.show(`Added to Dictionary!`, { isError: false });
@@ -371,22 +399,28 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [], dynam
                               >
                                 Save to Dictionary
                               </Button>
-                              <Button onClick={() => setInlineAddState({ fieldKey: null, metaobjectType: null, value: "", loading: false })}>
+                            </div>
+                            <div style={tapTargetStyle}>
+                              <Button onClick={() => setInlineAddState({ fieldKey: null, metaobjectType: null, value: "", loading: false })} accessibilityLabel="Cancel adding term">
                                 Cancel
                               </Button>
-                            </InlineStack>
-                          </BlockStack>
-                        ) : (
-                          <div style={{ display: 'flex', alignItems: 'flex-end', gap: '8px' }}>
-                            <div style={{ flex: 1 }}>
-                              <Select 
-                                label={label} 
-                                options={dropdownOptions} 
-                                value={bulkFormData[field.key] || ""} 
-                                onChange={(val) => setBulkFormData(prev => ({ ...prev, [field.key]: val }))} 
-                                accessibilityLabel={`Bulk input for ${cleanName}`} 
-                              />
                             </div>
+                          </InlineStack>
+                        </BlockStack>
+                      )}
+
+                      {hasMetaobjectType && !isAddingNew && (
+                        <div style={{ display: 'flex', alignItems: 'flex-end', gap: '8px' }}>
+                          <div style={{ flex: 1 }}>
+                            <Select 
+                              label={label} 
+                              options={[{ label: "Select...", value: "" }, ...(dynamicMetaobjectOptions[field.metaobjectType] || [])]} 
+                              value={bulkFormData[field.key] || ""} 
+                              onChange={(val) => setBulkFormData(prev => ({ ...prev, [field.key]: val }))} 
+                              accessibilityLabel={`Bulk input for ${cleanName}`} 
+                            />
+                          </div>
+                          <div style={tapTargetStyle}>
                             <Button 
                               accessibilityLabel={`Add new ${cleanName}`}
                               onClick={() => setInlineAddState({ fieldKey: field.key, metaobjectType: field.metaobjectType, value: "", loading: false })}
@@ -394,22 +428,20 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [], dynam
                               ➕
                             </Button>
                           </div>
-                        )}
-                      </div>
-                    );
-                  }
-                  
-                  return (
-                    <div style={inputTapTargetStyle} key={field.key}>
-                      <TextField 
-                        label={label} 
-                        value={bulkFormData[field.key] || ""} 
-                        onChange={(val) => setBulkFormData(prev => ({ ...prev, [field.key]: val }))} 
-                        placeholder="Leave blank to skip" 
-                        autoComplete="off" 
-                        type="text" 
-                        accessibilityLabel={`Bulk input for ${cleanName}`} 
-                      />
+                        </div>
+                      )}
+
+                      {!hasMetaobjectType && (
+                        <TextField 
+                          label={label} 
+                          value={bulkFormData[field.key] || ""} 
+                          onChange={(val) => setBulkFormData(prev => ({ ...prev, [field.key]: val }))} 
+                          placeholder="Leave blank to skip" 
+                          autoComplete="off" 
+                          type="text" 
+                          accessibilityLabel={`Bulk input for ${cleanName}`} 
+                        />
+                      )}
                     </div>
                   );
                 })}
