@@ -2,8 +2,59 @@ import { authenticate } from "../shopify.server";
 import { EXCLUDED_TITLES } from "./app.meta-injector.constants";
 import db from "../db.server"; // --- Import Prisma Database ---
 
+// --- PHASE 2 WELD: Fetch live dictionaries from Shopify ---
+async function fetchDynamicMetaobjects(admin) {
+  const types = [
+    "shopify--color-pattern", "shopify--authenticity", "shopify--rarity",
+    "shopify--crystal-system", "shopify--geological-era", "shopify--mineral-class",
+    "shopify--rock-composition", "shopify--rock-formation"
+  ];
+
+  let dynamicOptions = {};
+
+  await Promise.all(types.map(async (type) => {
+    const response = await admin.graphql(`
+      query getMetaobjects($type: String!) {
+        metaobjects(type: $type, first: 250) {
+          edges {
+            node {
+              id
+              handle
+              fields {
+                key
+                value
+              }
+            }
+          }
+        }
+      }
+    `, { variables: { type } });
+
+    const data = await response.json();
+    
+    if (data.data && data.data.metaobjects) {
+      dynamicOptions[type] = data.data.metaobjects.edges.map(({ node }) => {
+        const labelField = node.fields.find(f => f.key === 'name' || f.key === 'label');
+        const displayLabel = labelField ? labelField.value : node.handle;
+        return {
+          label: displayLabel,
+          value: `["${node.id}"]`
+        };
+      });
+      dynamicOptions[type].sort((a, b) => a.label.localeCompare(b.label));
+    } else {
+      dynamicOptions[type] = [];
+    }
+  }));
+
+  return dynamicOptions;
+}
+
 export async function loader({ request }) {
   const { admin } = await authenticate.admin(request);
+
+  // Grab the live dictionaries using the helper function above
+  const dynamicMetaobjectOptions = await fetchDynamicMetaobjects(admin);
 
   // --- UPGRADED: Fetch from the permanent StoneProfile dictionary ---
   const rawStoneProfiles = await db.stoneProfile.findMany();
@@ -166,8 +217,8 @@ export async function loader({ request }) {
     payloadStr: s.payload?.value ? s.payload.value : "[]"
   }));
 
-  // --- Return dbProfiles to the UI ---
-  return { products, snapshots, metaobjectHandles, dbProfiles }; 
+  // --- Return dbProfiles and dynamicMetaobjectOptions to the UI ---
+  return { products, snapshots, metaobjectHandles, dbProfiles, dynamicMetaobjectOptions }; 
 }
 
 export async function action({ request }) {
@@ -175,13 +226,45 @@ export async function action({ request }) {
   const formData = await request.formData();
   const intent = formData.get("intent");
 
+  // --- PHASE 4 WELD: THE DICTIONARY PUSH (Creates new terms via + button) ---
+  if (intent === "createMetaobject") {
+    const type = formData.get("type");   
+    const value = formData.get("value"); 
+
+    try {
+      const response = await admin.graphql(`
+        mutation CreateTaxonomyTerm($metaobject: MetaobjectCreateInput!) {
+          metaobjectCreate(metaobject: $metaobject) {
+            metaobject { id handle }
+            userErrors { field message }
+          }
+        }
+      `, {
+        variables: {
+          metaobject: {
+            type: type,
+            capabilities: { publishable: { status: "ACTIVE" } },
+            fields: [{ key: "name", value: value }] 
+          }
+        }
+      });
+      const data = await response.json();
+      if (data.data?.metaobjectCreate?.userErrors?.length > 0) {
+        return { success: false, errors: data.data.metaobjectCreate.userErrors };
+      }
+      return { success: true, newGid: data.data.metaobjectCreate.metaobject.id };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  }
+
   if (intent === "saveMetafields") {
     let rawPayload = JSON.parse(formData.get("payload"));
 
     let payload = rawPayload.reduce((acc, mf) => {
       let cleanMf = {
         ownerId: mf.ownerId,
-        namespace: "custom", 
+        namespace: mf.namespace || "custom", // FIXED: Respects UI namespace
         key: mf.key,
         value: mf.value,
         type: mf.type
@@ -191,8 +274,10 @@ export async function action({ request }) {
         cleanMf.key = "mohs_hardness";
       }
 
-      // Restored GID intercept guard logic correctly inside the loop
-      if (typeof cleanMf.value === "string" && cleanMf.value.includes("gid://shopify")) {
+      // FIXED: Only block GIDs if the field is NOT a metaobject reference
+      const isMetaobjectType = cleanMf.type && cleanMf.type.includes("metaobject_reference");
+      
+      if (!isMetaobjectType && typeof cleanMf.value === "string" && cleanMf.value.includes("gid://shopify")) {
         console.warn(`GID Leak intercepted on ${cleanMf.key} for ${cleanMf.ownerId}. Skipping this metafield.`);
         return acc;
       }
@@ -202,8 +287,8 @@ export async function action({ request }) {
     }, []);
 
     const chunks = [];
-    for (let i = 0; i < payload.length; i += 10) {
-      chunks.push(payload.slice(i, i + 10));
+    for (let i = 0; i < payload.length; i += 25) { // Optimized API chunk size
+      chunks.push(payload.slice(i, i + 25));
     }
 
     let allErrors = [];

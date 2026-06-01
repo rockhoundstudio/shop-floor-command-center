@@ -16,13 +16,15 @@ import {
 } from "@shopify/polaris";
 import { METAFIELD_CONFIG } from "./app.meta-injector.constants";
 
-export function InjectorTab({ products, fetcher, shopify, dbProfiles = [] }) {
+export function InjectorTab({ products, fetcher, shopify, dbProfiles = [], dynamicMetaobjectOptions = {} }) {
   const [bulkMode, setBulkMode] = useState("fill");
   const [bulkFormData, setBulkFormData] = useState({});
   const [bulkSelectedProductIds, setBulkSelectedProductIds] = useState([]);
   const [bulkSearchQuery, setBulkSearchQuery] = useState("");
   const [dynamicCustomFields, setDynamicCustomFields] = useState([]);
   const [modalConfig, setModalConfig] = useState({ active: false, title: "", body: null, diffs: [], payload: [] });
+  // PHASE 4 STATE: Controls the inline text box for creating new terms
+  const [inlineAddState, setInlineAddState] = useState({ fieldKey: null, metaobjectType: null, value: "", loading: false });
 
   const tapTargetStyle = { minHeight: '48px', minWidth: '48px', display: 'flex', alignItems: 'center', justifyContent: 'center' };
   const inputTapTargetStyle = { minHeight: '48px', display: 'flex', flexDirection: 'column', justifyContent: 'center' };
@@ -34,7 +36,8 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [] }) {
   }, []);
 
   const resolveMetafieldType = useCallback((product, fieldConfig, newValue) => {
-    if (fieldConfig.options) return "list.metaobject_reference";
+    // PHASE 3 UPGRADE: Checks metaobjectType instead of options
+    if (fieldConfig.metaobjectType) return "list.metaobject_reference";
     const existingMf = product.metafields.edges.find(e => e.node.key === fieldConfig.key);
     if (existingMf) return existingMf.node.type;
     const isNumberType = fieldConfig.type.includes("number");
@@ -47,7 +50,6 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [] }) {
   };
 
   const handleAutoFill = () => {
-    // FIXED: Form now properly reads from 'official_name' which matches your config
     const baseStoneType = bulkFormData["official_name"] || bulkFormData["base_stone_type"] || "";
 
     if (!baseStoneType.trim()) {
@@ -65,24 +67,47 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [] }) {
       return;
     }
 
-    setBulkFormData(prev => ({
-      ...prev,
-      google_authenticity: profile.googleAuthenticity || prev.google_authenticity || "",
-      google_rarity: profile.googleRarity || prev.google_rarity || "",
-      google_crystal_system: profile.googleCrystalSystem || prev.google_crystal_system || "",
-      google_geological_era: profile.googleGeologicalEra || prev.google_geological_era || "",
-      google_mineral_class: profile.googleMineralClass || prev.google_mineral_class || "",
-      google_rock_composition: profile.googleRockComposition || prev.google_rock_composition || "",
-      google_rock_formation: profile.googleRockFormation || prev.google_rock_formation || "",
+    let updates = { ...bulkFormData };
+
+    METAFIELD_CONFIG.forEach(field => {
+      if (!field.key) return;
+      const key = field.key.toLowerCase();
       
-      // FIXED: Reading exactly what the loader passes (profile.storeHardness)
-      store_hardness: profile.storeHardness || prev.store_hardness || "",
-      store_luster: profile.storeLuster || prev.store_luster || "",
-      store_fracture: profile.storeFracture || prev.store_fracture || "",
-      store_cleavage: profile.storeCleavage || prev.store_cleavage || "",
-      store_specific_gravity: profile.storeSpecificGravity || prev.store_specific_gravity || "",
-      store_diaphaneity: profile.storeDiaphaneity || prev.store_diaphaneity || ""
-    }));
+      // Google Science Fields
+      if (key.includes('authenticity')) updates[field.key] = profile.googleAuthenticity || updates[field.key] || "";
+      if (key.includes('rarity')) updates[field.key] = profile.googleRarity || updates[field.key] || "";
+      if (key.includes('crystal_system') || key.includes('crystal-system')) updates[field.key] = profile.googleCrystalSystem || updates[field.key] || "";
+      if (key.includes('geological_era') || key.includes('geological-era')) updates[field.key] = profile.googleGeologicalEra || updates[field.key] || "";
+      if (key.includes('mineral_class') || key.includes('mineral-class')) updates[field.key] = profile.googleMineralClass || updates[field.key] || "";
+      if (key.includes('rock_composition') || key.includes('rock-composition')) updates[field.key] = profile.googleRockComposition || updates[field.key] || "";
+      if (key.includes('rock_formation') || key.includes('rock-formation')) updates[field.key] = profile.googleRockFormation || updates[field.key] || "";
+      
+      // Store/Stone Hard Science Fields
+      if (key.includes('hardness')) updates[field.key] = profile.stoneHardness || updates[field.key] || "";
+      if (key.includes('luster')) updates[field.key] = profile.stoneLuster || updates[field.key] || "";
+      if (key.includes('fracture')) updates[field.key] = profile.stoneFracture || updates[field.key] || "";
+      if (key.includes('cleavage')) updates[field.key] = profile.stoneCleavage || updates[field.key] || "";
+      if (key.includes('specific_gravity') || key.includes('specificgravity')) updates[field.key] = profile.stoneSpecificGravity || updates[field.key] || "";
+      if (key.includes('diaphaneity')) updates[field.key] = profile.stoneDiaphaneity || updates[field.key] || "";
+    });
+
+    // PHASE 3 UPGRADE: Translate Dictionary Text to Shopify GIDs for Dropdowns
+    METAFIELD_CONFIG.forEach(field => {
+      if (field.metaobjectType && updates[field.key]) {
+        const rawValue = updates[field.key];
+        if (!rawValue.includes("gid://")) {
+          const liveOptions = dynamicMetaobjectOptions[field.metaobjectType] || [];
+          const matchedOption = liveOptions.find(opt => opt.label.toLowerCase() === rawValue.toLowerCase());
+          if (matchedOption) {
+            updates[field.key] = matchedOption.value;
+          } else {
+            updates[field.key] = ""; // Keep blank if the term doesn't exist in Shopify yet
+          }
+        }
+      }
+    });
+
+    setBulkFormData(updates);
 
     if (shopify && shopify.toast) shopify.toast.show(`${profile.title || profile.stoneName} science successfully loaded from dictionary!`, { isError: false });
   };
@@ -120,7 +145,16 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [] }) {
         
         let finalValue = newVal;
         if (resolvedType.includes("list.")) {
-          finalValue = JSON.stringify([newVal]);
+          try {
+            const parsed = JSON.parse(newVal);
+            if (Array.isArray(parsed)) {
+              finalValue = newVal; 
+            } else {
+              finalValue = JSON.stringify([newVal]); 
+            }
+          } catch {
+            finalValue = JSON.stringify([newVal]);
+          }
         }
 
         payload.push({ ownerId: product.id, namespace: field.namespace, key: field.key, type: resolvedType, value: finalValue });
@@ -287,16 +321,80 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [] }) {
 
                   const label = isGoogle ? `🔵 Google ${cleanName}` : `🪨 Stone ${cleanName}`;
 
-                  if (isGoogle || field.options) {
+                  // PHASE 4 UPGRADE: The Dropdown + Auto-Mint UI
+                  if (field.metaobjectType) {
+                    const liveOptions = dynamicMetaobjectOptions[field.metaobjectType] || [];
+                    const dropdownOptions = [
+                      { label: "Select...", value: "" },
+                      ...liveOptions
+                    ];
+
+                    // Check if this specific field is currently in "Add New" mode
+                    const isAddingNew = inlineAddState.fieldKey === field.key;
+
                     return (
-                      <div style={inputTapTargetStyle} key={field.key}>
-                        <Select 
-                          label={label} 
-                          options={field.options ? [{label: "Select...", value: ""}, ...field.options.map(o => ({label: o, value: o}))] : [{label: "Select...", value: ""}]} 
-                          value={bulkFormData[field.key] || ""} 
-                          onChange={(val) => setBulkFormData(prev => ({ ...prev, [field.key]: val }))} 
-                          accessibilityLabel={`Bulk input for ${cleanName}`} 
-                        />
+                      <div style={{ ...inputTapTargetStyle, minHeight: 'auto' }} key={field.key}>
+                        {isAddingNew ? (
+                          <BlockStack gap="200">
+                            <TextField
+                              label={`➕ New ${cleanName}`}
+                              value={inlineAddState.value}
+                              onChange={(val) => setInlineAddState(prev => ({ ...prev, value: val }))}
+                              placeholder="e.g., Dragonstone"
+                              autoComplete="off"
+                              disabled={inlineAddState.loading}
+                            />
+                            <InlineStack gap="200">
+                              <Button 
+                                tone="success" 
+                                variant="primary"
+                                loading={inlineAddState.loading}
+                                onClick={() => {
+                                  if (!inlineAddState.value.trim()) return;
+                                  setInlineAddState(prev => ({ ...prev, loading: true }));
+                                  
+                                  // Fire Push 1 (The Dictionary Push)
+                                  const formData = new FormData();
+                                  formData.append("intent", "createMetaobject");
+                                  formData.append("type", field.metaobjectType);
+                                  formData.append("value", inlineAddState.value);
+                                  
+                                  fetcher.submit(formData, { method: "post" });
+                                  
+                                  // The Remix fetcher automatically re-runs the loader, 
+                                  // so the new word will appear in the dropdown in ~1 second.
+                                  setTimeout(() => {
+                                    setInlineAddState({ fieldKey: null, metaobjectType: null, value: "", loading: false });
+                                    if (shopify && shopify.toast) shopify.toast.show(`Added to Dictionary!`, { isError: false });
+                                  }, 1500); 
+                                }}
+                              >
+                                Save to Dictionary
+                              </Button>
+                              <Button onClick={() => setInlineAddState({ fieldKey: null, metaobjectType: null, value: "", loading: false })}>
+                                Cancel
+                              </Button>
+                            </InlineStack>
+                          </BlockStack>
+                        ) : (
+                          <div style={{ display: 'flex', alignItems: 'flex-end', gap: '8px' }}>
+                            <div style={{ flex: 1 }}>
+                              <Select 
+                                label={label} 
+                                options={dropdownOptions} 
+                                value={bulkFormData[field.key] || ""} 
+                                onChange={(val) => setBulkFormData(prev => ({ ...prev, [field.key]: val }))} 
+                                accessibilityLabel={`Bulk input for ${cleanName}`} 
+                              />
+                            </div>
+                            <Button 
+                              accessibilityLabel={`Add new ${cleanName}`}
+                              onClick={() => setInlineAddState({ fieldKey: field.key, metaobjectType: field.metaobjectType, value: "", loading: false })}
+                            >
+                              ➕
+                            </Button>
+                          </div>
+                        )}
                       </div>
                     );
                   }
