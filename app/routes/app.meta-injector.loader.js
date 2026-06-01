@@ -1,6 +1,4 @@
-
-      if (typeof cleanMf.value === "string" && cleanMf.value.includes("gid://shopify")) {
-        console.warn(`GID Leak intercepted on ${cleanMf.key} for ${cleanMf.ownerId}. import { authenticate } from "../shopify.server";
+import { authenticate } from "../shopify.server";
 import { EXCLUDED_TITLES } from "./app.meta-injector.constants";
 import db from "../db.server"; // --- Import Prisma Database ---
 
@@ -20,12 +18,12 @@ export async function loader({ request }) {
     googleMineralClass: sp.mineralClass,
     googleRockComposition: sp.rockComposition,
     googleRockFormation: sp.rockFormation,
-    storeHardness: sp.hardness,
-    storeLuster: sp.luster,
-    storeFracture: sp.fracture,
-    storeCleavage: sp.cleavage,
-    storeSpecificGravity: sp.specificGravity,
-    storeDiaphaneity: sp.diaphaneity
+    stoneHardness: sp.hardness,
+    stoneLuster: sp.luster,
+    stoneFracture: sp.fracture,
+    stoneCleavage: sp.cleavage,
+    stoneSpecificGravity: sp.specificGravity,
+    stoneDiaphaneity: sp.diaphaneity
   }));
 
   let allRawProducts = [];
@@ -192,6 +190,10 @@ export async function action({ request }) {
       if (cleanMf.key === "moh_hardness" || cleanMf.key === "hardness") {
         cleanMf.key = "mohs_hardness";
       }
+
+      // Restored GID intercept guard logic correctly inside the loop
+      if (typeof cleanMf.value === "string" && cleanMf.value.includes("gid://shopify")) {
+        console.warn(`GID Leak intercepted on ${cleanMf.key} for ${cleanMf.ownerId}. Skipping this metafield.`);
         return acc;
       }
 
