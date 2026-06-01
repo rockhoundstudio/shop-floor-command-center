@@ -1,505 +1,352 @@
-import { authenticate } from "../shopify.server";
-import { EXCLUDED_TITLES } from "./app.meta-injector.constants";
-import db from "../db.server";
+import React, { useState, useCallback, useEffect } from "react";
+import {
+  BlockStack, Box, Text, Scrollable, Checkbox, Select, Card, Button, Modal, Toast, EmptySearchResult, InlineStack, FormLayout, TextField
+} from "@shopify/polaris";
+import { METAFIELD_CONFIG, getLabelForValue } from "./app.meta-injector.constants";
 
-// --- PHASE 2 WELD: Fetch live dictionaries from Shopify ---
-async function fetchDynamicMetaobjects(admin) {
-  const types = [
-    "shopify--color-pattern", "shopify--authenticity", "shopify--rarity",
-    "shopify--crystal-system", "shopify--geological-era", "shopify--mineral-class",
-    "shopify--rock-composition", "shopify--rock-formation"
-  ];
-
-  let dynamicOptions = {};
-
-  await Promise.all(types.map(async (type) => {
-    const response = await admin.graphql(`
-      query getMetaobjects($type: String!) {
-        metaobjects(type: $type, first: 250) {
-          edges {
-            node {
-              id
-              handle
-              fields {
-                key
-                value
-              }
-            }
-          }
-        }
-      }
-    `, { variables: { type } });
-
-    const data = await response.json();
-    
-    if (data.data && data.data.metaobjects) {
-      dynamicOptions[type] = data.data.metaobjects.edges.map(({ node }) => {
-        const labelField = node.fields.find(f => f.key === 'name' || f.key === 'label');
-        const displayLabel = labelField ? labelField.value : node.handle;
-        return {
-          label: displayLabel,
-          value: `["${node.id}"]`
-        };
-      });
-      dynamicOptions[type].sort((a, b) => a.label.localeCompare(b.label));
-    } else {
-      dynamicOptions[type] = [];
-    }
-  }));
-
-  return dynamicOptions;
-}
-
-export async function loader({ request }) {
-  const { admin } = await authenticate.admin(request);
-
-  const dynamicMetaobjectOptions = await fetchDynamicMetaobjects(admin);
-
-  const rawStoneProfiles = await db.stoneProfile.findMany();
+export function ProfilesTab({ fetcher, products = [], dbProfiles = [] }) {
+  const [profileSelectedIndex, setProfileSelectedIndex] = useState(0);
+  const [profileSelectedProductIds, setProfileSelectedProductIds] = useState([]);
+  const [modalConfig, setModalConfig] = useState({ active: false, title: "", body: null, diffs: [], payload: [] });
+  const [toastState, setToastState] = useState({ active: false, message: "", isError: false });
+  const [stagedPayload, setStagedPayload] = useState([]);
   
-  // --- RESTORED: Strict Mapping to Prisma Columns per METAFIELD KEY LAW ---
-  const dbProfiles = rawStoneProfiles.map(sp => ({
-    id: sp.id,
-    title: sp.stoneName, stoneName: sp.stoneName,
-    authenticity: sp.authenticity,
-    rarity: sp.rarity,
-    google_crystal_system: sp.crystalSystem,
-    google_geological_era: sp.geologicalEra,
-    google_mineral_class: sp.mineralClass,
-    google_rock_composition: sp.rockComposition,
-    google_rock_formation: sp.rockFormation,
-    store_hardness: sp.hardness,
-    store_luster: sp.luster,
-    store_fracture: sp.fracture,
-    store_cleavage: sp.cleavage,
-    store_specific_gravity: sp.specificGravity,
-    store_diaphaneity: sp.diaphaneity
-  }));
-
-  let allRawProducts = [];
-  let hasNextPage = true;
-  let cursor = null;
-
-  while (hasNextPage) {
-    let response;
-    try {
-      response = await admin.graphql(`
-        #graphql
-        query GetAllProducts($cursor: String) {
-          products(first: 10, after: $cursor, sortKey: TITLE) {
-            pageInfo { hasNextPage endCursor }
-            edges {
-              node {
-                id title status featuredImage { url altText }
-                metafields(first: 50) {
-                  edges { 
-                    node { 
-                      id namespace key value type 
-                    } 
-                  }
-                }
-              }
-            }
-          }
-        }
-      `, { variables: { cursor } });
-    } catch (error) {
-      console.log("GetAllProducts error:", JSON.stringify(error.graphQLErrors, null, 2));
-      throw error;
-    }
-
-    const parsed = await response.json();
-    const productsData = parsed.data?.products || null;
-
-    if (productsData) {
-      allRawProducts = [...allRawProducts, ...productsData.edges.map(e => e.node)];
-      hasNextPage = productsData.pageInfo.hasNextPage || false;
-      cursor = productsData.pageInfo.endCursor || null;
-    } else {
-      hasNextPage = false;
-    }
-  }
-
-  const products = allRawProducts.filter(p => !EXCLUDED_TITLES.includes(p.title));
-
-  const gidsToResolve = new Set();
-  
-  products.forEach(p => {
-    if (p.metafields && p.metafields.edges) {
-      p.metafields.edges.forEach(edge => {
-        const mf = edge.node;
-        if (mf.type === "list.metaobject_reference" || mf.type === "metaobject_reference") {
-          try {
-            const parsedValue = JSON.parse(mf.value);
-            if (Array.isArray(parsedValue)) {
-              parsedValue.forEach(gid => gidsToResolve.add(gid));
-            } else if (typeof parsedValue === "string") {
-              gidsToResolve.add(parsedValue);
-            }
-          } catch (e) {
-            if (typeof mf.value === "string" && mf.value.includes("gid://shopify/Metaobject/")) {
-                const matches = mf.value.match(/gid:\/\/shopify\/Metaobject\/\d+/g);
-                if (matches) {
-                  matches.forEach(gid => gidsToResolve.add(gid));
-                }
-            }
-          }
-        }
-      });
-    }
+  // --- STATE: Add / Edit Stone Modal ---
+  const [isStoneModalOpen, setIsStoneModalOpen] = useState(false);
+  const [isEditMode, setIsEditMode] = useState(false);
+  const [formData, setFormData] = useState({
+    id: null, stoneName: "", authenticity: "100% Natural Earth-Mined", rarity: "Common", crystalSystem: "", geologicalEra: "", mineralClass: "", rockComposition: "", rockFormation: "", hardness: "", luster: "", fracture: "", cleavage: "", specificGravity: "", diaphaneity: ""
   });
 
-  const uniqueGids = Array.from(gidsToResolve);
-  const metaobjectHandles = {};
+  const tapTargetStyle = { minHeight: '48px', minWidth: '48px', display: 'flex', alignItems: 'center', justifyContent: 'center' };
+  const inputTapTargetStyle = { minHeight: '48px', display: 'flex', flexDirection: 'column', justifyContent: 'center' };
 
-  const chunks = [];
-  for (let i = 0; i < uniqueGids.length; i += 10) {
-    chunks.push(uniqueGids.slice(i, i + 10));
-  }
+  const closeToast = useCallback(() => setToastState(prev => ({ ...prev, active: false })), []);
+  const closeModal = useCallback(() => setModalConfig({ active: false, title: "", body: null, diffs: [], payload: [] }), []);
+  
+  const handleTextChange = useCallback((value, id) => setFormData((prev) => ({ ...prev, [id]: value })), []);
 
-  for (const chunk of chunks) {
-    const resolveResponse = await admin.graphql(`
-      #graphql
-      query ResolveNodes($ids: [ID!]!) {
-        nodes(ids: $ids) {
-          ... on Metaobject {
-            id
-            handle
-          }
-        }
+  const getMetafieldValue = useCallback((product, key) => {
+    if (!product || !product.metafields) return "";
+    const mf = product.metafields.edges.find(e => e.node.key === key);
+    if (mf) return mf.node.value;
+    return "";
+  }, []);
+
+  const resolveMetafieldType = useCallback((product, fieldConfig, newValue) => {
+    if (fieldConfig.options) return "list.metaobject_reference";
+    const existingMf = product.metafields.edges.find(e => e.node.key === fieldConfig.key);
+    if (existingMf) return existingMf.node.type;
+    const isNumberType = fieldConfig.type.includes("number");
+    const containsDash = newValue && /[\-–—]/.test(newValue);
+    if (isNumberType && containsDash) return "single_line_text_field";
+    return fieldConfig.type;
+  }, []);
+
+  const activeProfile = dbProfiles[profileSelectedIndex];
+
+  useEffect(() => {
+    const data = fetcher.data;
+    if (data && data.isValid !== undefined) {
+      if (!data.isValid) {
+        setToastState({ active: true, message: "Profile contains a deleted taxonomy entry — update the profile before applying.", isError: true });
       }
-    `, { variables: { ids: chunk } });
+      if (data.isValid) {
+        const selectedProducts = products.filter(p => profileSelectedProductIds.includes(p.id));
+        setModalConfig({
+          active: true,
+          title: `Apply ${activeProfile?.title} Profile`,
+          body: `Injecting validated data into empty fields across ${selectedProducts.length} products. Existing data is safe.`,
+          diffs: [],
+          payload: stagedPayload
+        });
+      }
+    }
+    if (data && data.message && data.isValid === undefined) {
+      setToastState({ active: true, message: data.message, isError: !data.success });
+      if (data.success) {
+        closeModal();
+      }
+    }
+  }, [fetcher.data, activeProfile, products, profileSelectedProductIds, stagedPayload, closeModal]);
 
-    const resolveParsed = await resolveResponse.json();
-    const nodes = resolveParsed.data?.nodes || [];
+  const handleApplyProfile = () => {
+    const hasNoProducts = profileSelectedProductIds.length === 0;
+    if (hasNoProducts) {
+      setToastState({ active: true, message: "Select products from the list on the left first.", isError: true });
+      return;
+    }
     
-    nodes.forEach(node => {
-      if (node && node.id && node.handle) {
-        metaobjectHandles[node.id] = node.handle;
-      }
-    });
-  }
+    const selectedProducts = products.filter(p => profileSelectedProductIds.includes(p.id));
+    const payload = [];
+    const gidsToCheck = [];
 
-  let snapResponse;
-  try {
-    snapResponse = await admin.graphql(`
-      #graphql
-      query GetSnapshots {
-        metaobjects(type: "meta_injector_snapshot", first: 10, reverse: true) {
-          edges {
-            node {
-              id
-              timestamp: field(key: "timestamp") { value }
-              scope: field(key: "scope") { value }
-              action: field(key: "action") { value }
-              payload: field(key: "payload") { value }
-            }
-          }
-        }
-      }
-    `);
-  } catch (error) {
-    console.log("GetSnapshots error:", JSON.stringify(error.graphQLErrors, null, 2));
-    throw error;
-  }
-
-  const snapParsed = await snapResponse.json();
-  const rawSnapshots = snapParsed.data?.metaobjects?.edges ? snapParsed.data.metaobjects.edges.map(e => e.node) : [];
-
-  const snapshots = rawSnapshots.map(s => ({
-    id: s.id,
-    date: s.timestamp?.value ? s.timestamp.value : "Unknown Date",
-    action: s.action?.value ? s.action.value : "Snapshot",
-    scopeCount: s.scope?.value ? s.scope.value : "0",
-    payloadStr: s.payload?.value ? s.payload.value : "[]"
-  }));
-
-  return { products, snapshots, metaobjectHandles, dbProfiles, dynamicMetaobjectOptions }; 
-}
-
-export async function action({ request }) {
-  const { admin } = await authenticate.admin(request);
-  const formData = await request.formData();
-  const intent = formData.get("intent");
-
-  if (intent === "createMetaobject") {
-    const type = formData.get("type");   
-    const value = formData.get("value"); 
-
-    try {
-      const response = await admin.graphql(`
-        mutation CreateTaxonomyTerm($metaobject: MetaobjectCreateInput!) {
-          metaobjectCreate(metaobject: $metaobject) {
-            metaobject { id handle }
-            userErrors { field message }
-          }
-        }
-      `, {
-        variables: {
-          metaobject: {
-            type: type,
-            capabilities: { publishable: { status: "ACTIVE" } },
-            fields: [{ key: "name", value: value }] 
-          }
-        }
-      });
-      const data = await response.json();
-      if (data.data?.metaobjectCreate?.userErrors?.length > 0) {
-        return { success: false, errors: data.data.metaobjectCreate.userErrors };
-      }
-      return { success: true, newGid: data.data.metaobjectCreate.metaobject.id };
-    } catch (error) {
-      return { success: false, error: error.message };
-    }
-  }
-
-  // --- NEW: Handle updating existing stones ---
-  if (intent === "updateStoneProfile") {
-    const payload = JSON.parse(formData.get("payload"));
-    try {
-      await db.stoneProfile.updateMany({
-        where: { stoneName: payload.stoneName },
-        data: {
-          authenticity: payload.authenticity || "100% Natural Earth-Mined",
-          rarity: payload.rarity || "Common",
-          crystalSystem: payload.crystalSystem || "",
-          geologicalEra: payload.geologicalEra || "",
-          mineralClass: payload.mineralClass || "",
-          rockComposition: payload.rockComposition || "",
-          rockFormation: payload.rockFormation || "",
-          hardness: payload.hardness || "",
-          luster: payload.luster || "",
-          fracture: payload.fracture || "",
-          cleavage: payload.cleavage || "",
-          specificGravity: payload.specificGravity || "",
-          diaphaneity: payload.diaphaneity || ""
-        }
-      });
-      return { success: true, message: `Successfully updated ${payload.stoneName} in the dictionary.` };
-    } catch (error) {
-      return { success: false, errors: [{ message: `Database error: Could not update ${payload.stoneName}.` }] };
-    }
-  }
-
-  if (intent === "createStoneProfile") {
-    const payload = JSON.parse(formData.get("payload"));
-    try {
-      await db.stoneProfile.create({
-        data: {
-          stoneName: payload.stoneName,
-          authenticity: payload.authenticity || "100% Natural Earth-Mined",
-          rarity: payload.rarity || "Common",
-          crystalSystem: payload.crystalSystem || "",
-          geologicalEra: payload.geologicalEra || "",
-          mineralClass: payload.mineralClass || "",
-          rockComposition: payload.rockComposition || "",
-          rockFormation: payload.rockFormation || "",
-          hardness: payload.hardness || "",
-          luster: payload.luster || "",
-          fracture: payload.fracture || "",
-          cleavage: payload.cleavage || "",
-          specificGravity: payload.specificGravity || "",
-          diaphaneity: payload.diaphaneity || ""
-        }
-      });
-      return { success: true, message: `Successfully added ${payload.stoneName} to the dictionary.` };
-    } catch (error) {
-      return { success: false, errors: [{ message: "Database error: Could not save new stone." }] };
-    }
-  }
-
-  if (intent === "saveMetafields") {
-    let rawPayload = JSON.parse(formData.get("payload"));
-
-    let payload = rawPayload.reduce((acc, mf) => {
-      let cleanMf = {
-        ownerId: mf.ownerId,
-        namespace: mf.namespace || "custom",
-        key: mf.key,
-        value: mf.value,
-        type: mf.type
-      };
-
-      if (cleanMf.key === "moh_hardness" || cleanMf.key === "hardness") {
-        cleanMf.key = "mohs_hardness";
-      }
-
-      const isMetaobjectType = cleanMf.type && cleanMf.type.includes("metaobject_reference");
-      
-      if (!isMetaobjectType && typeof cleanMf.value === "string" && cleanMf.value.includes("gid://shopify")) {
-        console.warn(`GID Leak intercepted on ${cleanMf.key} for ${cleanMf.ownerId}. Skipping this metafield.`);
-        return acc;
-      }
-
-      acc.push(cleanMf);
-      return acc;
-    }, []);
-
-    const chunks = [];
-    for (let i = 0; i < payload.length; i += 25) {
-      chunks.push(payload.slice(i, i + 25));
-    }
-
-    let allErrors = [];
-    for (const chunk of chunks) {
-      try {
-        const response = await admin.graphql(`
-          #graphql
-          mutation MetafieldsSet($metafields: [MetafieldsSetInput!]!) {
-            metafieldsSet(metafields: $metafields) {
-              userErrors { field message }
-            }
-          }
-        `, { variables: { metafields: chunk } });
+    selectedProducts.forEach(product => {
+      METAFIELD_CONFIG.forEach(field => {
+        if (field.hidden) return;
         
-        const json = await response.json();
-        const errors = json.data?.metafieldsSet?.userErrors ? json.data.metafieldsSet.userErrors : [];
-        if (errors.length > 0) {
-          allErrors = [...allErrors, ...errors];
+        // Map UI keys to DB profile keys
+        const profileKeyMap = {
+          hardness_mohs: 'storeHardness',
+          luster: 'storeLuster',
+          fracture: 'storeFracture',
+          cleavage: 'storeCleavage',
+          specific_gravity: 'storeSpecificGravity',
+          diaphaneity: 'storeDiaphaneity',
+          crystal_system: 'googleCrystalSystem',
+          geological_era: 'googleGeologicalEra',
+          mineral_class: 'googleMineralClass',
+          rock_composition: 'googleRockComposition',
+          rock_formation: 'googleRockFormation'
+        };
+
+        const dbKey = profileKeyMap[field.key];
+        const profileVal = activeProfile[dbKey];
+        const currentVal = getMetafieldValue(product, field.key);
+        
+        if (!profileVal) return;
+        if (currentVal) return;
+
+        const resolvedType = resolveMetafieldType(product, field, profileVal);
+        payload.push({ ownerId: product.id, namespace: field.namespace, key: field.key, type: resolvedType, value: profileVal });
+        
+        const isReference = resolvedType === "list.metaobject_reference";
+        if (isReference) {
+          try { 
+            const g = JSON.parse(profileVal); 
+            if (g[0]) gidsToCheck.push(g[0]); 
+          } catch(e) {}
         }
-      } catch (error) {
-        console.error("GraphQL execution failed for chunk:", error);
-        allErrors.push({ field: ["graphql"], message: error.message });
-      }
-    }
-
-    if (allErrors.length > 0) {
-      return { success: false, errors: allErrors, message: "Failed to save some metafields." };
-    }
-    return { success: true, message: "Metafields securely updated in batches." };
-  }
-
-  if (intent === "fetchSingleProduct") {
-    const productId = formData.get("productId");
-    const response = await admin.graphql(`
-      #graphql
-      query GetSingleProduct($id: ID!) {
-        product(id: $id) {
-          id title status featuredImage { url altText }
-          metafields(first: 50) {
-            edges { 
-              node { 
-                id namespace key value type 
-              } 
-            }
-          }
-        }
-      }
-    `, { variables: { id: productId } });
-    const json = await response.json();
-    const product = json.data?.product ? json.data.product : null;
-
-    if (product) {
-      const officialNameMf = product.metafields.edges.find(e => e.node.key === "official_name");
-      if (officialNameMf && /gid:\/\/shopify/.test(officialNameMf.node.value)) {
-        console.warn(`Guard Triggered: official_name is a raw GID. Bypassing DB lookup to prevent hang.`);
-      }
-    }
-
-    return { success: true, product };
-  }
-
-  if (intent === "fetchOrigins") {
-    let allRaw = [];
-    let hasNext = true;
-    let cursor = null;
-    let batchCount = 0;
-    const MAX_BATCHES = 10;
-
-    while (hasNext && batchCount < MAX_BATCHES) {
-      const response = await admin.graphql(`
-        #graphql
-        query GetOrigins($cursor: String) {
-          products(first: 10, after: $cursor) {
-            pageInfo { hasNextPage endCursor }
-            edges {
-              node {
-                id title
-                originMetafield: metafield(namespace: "custom", key: "origin_location") { value }
-              }
-            }
-          }
-        }
-      `, { variables: { cursor } });
-      const json = await response.json();
-      const data = json.data?.products ? json.data.products : null;
-      if (data) {
-        allRaw = [...allRaw, ...data.edges.map(e => e.node)];
-        hasNext = data.pageInfo.hasNextPage ? true : false;
-        cursor = data.pageInfo.endCursor ? data.pageInfo.endCursor : null;
-        batchCount = batchCount + 1;
-      } else {
-        hasNext = false;
-      }
-    }
-
-    const filtered = allRaw.filter(p => !EXCLUDED_TITLES.includes(p.title));
-    const hasMore = hasNext ? true : false;
-    return { success: true, origins: filtered, hasMore };
-  }
-
-  if (intent === "validateGIDs") {
-    const gids = JSON.parse(formData.get("gids"));
-    const response = await admin.graphql(`
-      #graphql
-      query ValidateGIDs($ids: [ID!]!) {
-        nodes(ids: $ids) { id }
-      }
-    `, { variables: { ids: gids } });
-    const json = await response.json();
-    const nodes = json.data?.nodes ? json.data.nodes : [];
-    const isInvalid = nodes.some(n => n === null);
-    return { success: true, isValid: !isInvalid };
-  }
-
-  if (intent === "saveSnapshot") {
-    const actionName = formData.get("actionName");
-    const payloadStr = formData.get("payloadStr");
-    const scopeCount = formData.get("scopeCount");
-
-    const createRes = await admin.graphql(`
-      #graphql
-      mutation CreateSnapshot($metaobject: MetaobjectCreateInput!) {
-        metaobjectCreate(metaobject: $metaobject) {
-          metaobject { id }
-          userErrors { field message }
-        }
-      }
-    `, {
-      variables: {
-        metaobject: {
-          type: "meta_injector_snapshot",
-          capabilities: { publishable: { status: "ACTIVE" } },
-          fields: [
-            { key: "timestamp", value: new Date().toLocaleString() },
-            { key: "action", value: actionName },
-            { key: "scope", value: scopeCount },
-            { key: "payload", value: payloadStr }
-          ]
-        }
-      }
+      });
     });
 
-    const createJson = await createRes.json();
-    const errors = createJson.data?.metaobjectCreate?.userErrors ? createJson.data.metaobjectCreate.userErrors : [];
-
-    if (errors.length > 0 && errors[0].message.includes("type must exist")) {
-      return { success: false, errors: [{ message: "Requires Metaobject Definition: 'meta_injector_snapshot' with fields: timestamp, action, scope, payload." }] };
+    const hasNoPayload = payload.length === 0;
+    if (hasNoPayload) {
+      setToastState({ active: true, message: "No empty fields to fill. Profiles operate in FILL ONLY mode.", isError: false });
+      return;
     }
 
-    const existingIds = JSON.parse(formData.get("existingIds") ? formData.get("existingIds") : "[]");
-    if (existingIds.length >= 5) {
-      const oldestId = existingIds[existingIds.length - 1];
-      await admin.graphql(`
-        #graphql
-        mutation DeleteSnapshot($id: ID!) {
-          metaobjectDelete(id: $id) { userErrors { message } }
-        }
-      `, { variables: { id: oldestId } });
+    const hasGids = gidsToCheck.length > 0;
+    if (hasGids) {
+      setStagedPayload(payload);
+      fetcher.submit({ intent: "validateGIDs", gids: JSON.stringify([...new Set(gidsToCheck)]) }, { method: "post" });
     }
+    if (!hasGids) {
+      setModalConfig({
+        active: true, 
+        title: `Apply ${activeProfile.title} Profile`,
+        body: `Injecting data into ${payload.length} empty fields across ${selectedProducts.length} products.`,
+        diffs: [], 
+        payload
+      });
+    }
+  };
 
-    return { success: true };
-  }
+  const executeApply = () => {
+    fetcher.submit({ intent: "saveMetafields", payload: JSON.stringify(modalConfig.payload) }, { method: "post" });
+  };
+  
+  // --- Execute Save (Creates OR Updates based on intent) ---
+  const handleSaveStone = () => {
+    if (!formData.stoneName) {
+      setToastState({ active: true, message: "Stone Name is required", isError: true });
+      return;
+    }
+    const intent = isEditMode ? "updateStoneProfile" : "createStoneProfile";
+    fetcher.submit({ intent: intent, payload: JSON.stringify(formData) }, { method: "post" });
+    setIsStoneModalOpen(false);
+    setFormData({
+      id: null, stoneName: "", authenticity: "100% Natural Earth-Mined", rarity: "Common", crystalSystem: "", geologicalEra: "", mineralClass: "", rockComposition: "", rockFormation: "", hardness: "", luster: "", fracture: "", cleavage: "", specificGravity: "", diaphaneity: ""
+    });
+  };
 
-  return { success: false, errors: [{ message: "Unknown command" }] };
+  const openAddModal = () => {
+    setIsEditMode(false);
+    setFormData({
+      id: null, stoneName: "", authenticity: "100% Natural Earth-Mined", rarity: "Common", crystalSystem: "", geologicalEra: "", mineralClass: "", rockComposition: "", rockFormation: "", hardness: "", luster: "", fracture: "", cleavage: "", specificGravity: "", diaphaneity: ""
+    });
+    setIsStoneModalOpen(true);
+  };
+
+  const openEditModal = () => {
+    if (!activeProfile) return;
+    setIsEditMode(true);
+    setFormData({
+      id: activeProfile.id || null, 
+      stoneName: activeProfile.title || "",
+      authenticity: activeProfile.googleAuthenticity || "",
+      rarity: activeProfile.googleRarity || "",
+      crystalSystem: activeProfile.googleCrystalSystem || "",
+      geologicalEra: activeProfile.googleGeologicalEra || "",
+      mineralClass: activeProfile.googleMineralClass || "",
+      rockComposition: activeProfile.googleRockComposition || "",
+      rockFormation: activeProfile.googleRockFormation || "",
+      hardness: activeProfile.storeHardness || "",
+      luster: activeProfile.storeLuster || "",
+      fracture: activeProfile.storeFracture || "",
+      cleavage: activeProfile.storeCleavage || "",
+      specificGravity: activeProfile.storeSpecificGravity || "",
+      diaphaneity: activeProfile.storeDiaphaneity || ""
+    });
+    setIsStoneModalOpen(true);
+  };
+
+  const toggleProductSelection = (id) => {
+    setProfileSelectedProductIds(prev => {
+      const isSelected = prev.includes(id);
+      if (isSelected) return prev.filter(x => x !== id);
+      return [...prev, id];
+    });
+  };
+
+  return (
+    <Box>
+      <InlineStack align="end" blockAlign="center" gap="400">
+         <div style={tapTargetStyle}>
+           <Button variant="primary" onClick={openAddModal}>
+             + Add New Stone to Dictionary
+           </Button>
+         </div>
+      </InlineStack>
+
+      <Box paddingBlockStart="400">
+        {dbProfiles.length === 0 && (
+          <Box padding="800">
+            <EmptySearchResult title="No Profiles Found" description="Could not load profiles from the Render DB." withIllustration />
+          </Box>
+        )}
+
+        {dbProfiles.length > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'row', gap: '24px', minHeight: '600px' }}>
+            <div style={{ flex: '0 0 350px' }}>
+              <Box padding="300" background="bg-surface-secondary" borderRadius="200">
+                <BlockStack gap="300">
+                  <Text variant="headingSm" as="h3">1. Select Target Products ({profileSelectedProductIds.length})</Text>
+                  <Scrollable style={{ height: '500px' }}>
+                    <BlockStack gap="100">
+                      {products.map(p => (
+                        <div style={inputTapTargetStyle} key={p.id}>
+                          <Checkbox 
+                            label={p.title} 
+                            checked={profileSelectedProductIds.includes(p.id)} 
+                            onChange={() => toggleProductSelection(p.id)} 
+                            accessibilityLabel={`Select ${p.title}`} 
+                          />
+                        </div>
+                      ))}
+                    </BlockStack>
+                  </Scrollable>
+                </BlockStack>
+              </Box>
+            </div>
+            <div style={{ flex: 1 }}>
+              <BlockStack gap="400">
+                <div style={inputTapTargetStyle}>
+                  <Select
+                    label="Select Mineral Profile (From Render DB)"
+                    options={dbProfiles.map((p, i) => ({ label: p.title, value: i.toString() }))}
+                    value={profileSelectedIndex.toString()} 
+                    onChange={(v) => setProfileSelectedIndex(parseInt(v, 10))} 
+                    accessibilityLabel="Select mineral profile template"
+                  />
+                </div>
+                <Card>
+                  <BlockStack gap="300">
+                    <InlineStack align="space-between" blockAlign="center">
+                      <Text variant="headingMd" as="h3">{activeProfile.title} Data Points</Text>
+                      <Button onClick={openEditModal} accessibilityLabel={`Edit ${activeProfile.title}`}>✏️ Edit Profile Data</Button>
+                    </InlineStack>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                      <Text as="p"><span style={{ fontWeight: "bold" }}>Hardness:</span> {activeProfile.storeHardness || "-"}</Text>
+                      <Text as="p"><span style={{ fontWeight: "bold" }}>Crystal System:</span> {activeProfile.googleCrystalSystem || "-"}</Text>
+                      <Text as="p"><span style={{ fontWeight: "bold" }}>Mineral Class:</span> {activeProfile.googleMineralClass || "-"}</Text>
+                      <Text as="p"><span style={{ fontWeight: "bold" }}>Rock Comp:</span> {activeProfile.googleRockComposition || "-"}</Text>
+                      <Text as="p"><span style={{ fontWeight: "bold" }}>Luster:</span> {activeProfile.storeLuster || "-"}</Text>
+                      <Text as="p"><span style={{ fontWeight: "bold" }}>Cleavage:</span> {activeProfile.storeCleavage || "-"}</Text>
+                    </div>
+                    <div style={tapTargetStyle}>
+                      <Button 
+                        tone="success" 
+                        onClick={handleApplyProfile} 
+                        loading={fetcher.state !== "idle"} 
+                        accessibilityLabel={`Apply ${activeProfile.title} profile`}
+                      >
+                        Apply Profile (Fill Only)
+                      </Button>
+                    </div>
+                  </BlockStack>
+                </Card>
+              </BlockStack>
+            </div>
+          </div>
+        )}
+      </Box>
+
+      {/* --- ADD / EDIT STONE MODAL --- */}
+      <Modal
+        open={isStoneModalOpen}
+        onClose={() => setIsStoneModalOpen(false)}
+        title={isEditMode ? `Edit ${formData.stoneName} Profile` : "Add New Stone to Dictionary"}
+        primaryAction={{ content: 'Save to Database', onAction: handleSaveStone }}
+        secondaryActions={[{ content: 'Cancel', onAction: () => setIsStoneModalOpen(false) }]}
+      >
+        <Modal.Section>
+          <FormLayout>
+            <FormLayout.Group>
+              <TextField label="Stone Name (e.g. Jasper)" id="stoneName" value={formData.stoneName} onChange={handleTextChange} autoComplete="off" disabled={isEditMode} />
+              <TextField label="Mohs Hardness" id="hardness" value={formData.hardness} onChange={handleTextChange} autoComplete="off" />
+            </FormLayout.Group>
+            <FormLayout.Group>
+              <TextField label="Authenticity" id="authenticity" value={formData.authenticity} onChange={handleTextChange} autoComplete="off" />
+              <TextField label="Rarity" id="rarity" value={formData.rarity} onChange={handleTextChange} autoComplete="off" />
+            </FormLayout.Group>
+            <FormLayout.Group>
+              <TextField label="Crystal System" id="crystalSystem" value={formData.crystalSystem} onChange={handleTextChange} autoComplete="off" />
+              <TextField label="Mineral Class" id="mineralClass" value={formData.mineralClass} onChange={handleTextChange} autoComplete="off" />
+            </FormLayout.Group>
+            <FormLayout.Group>
+              <TextField label="Geological Era" id="geologicalEra" value={formData.geologicalEra} onChange={handleTextChange} autoComplete="off" />
+              <TextField label="Rock Formation" id="rockFormation" value={formData.rockFormation} onChange={handleTextChange} autoComplete="off" />
+            </FormLayout.Group>
+            <FormLayout.Group>
+              <TextField label="Rock Composition" id="rockComposition" value={formData.rockComposition} onChange={handleTextChange} autoComplete="off" />
+              <TextField label="Luster" id="luster" value={formData.luster} onChange={handleTextChange} autoComplete="off" />
+            </FormLayout.Group>
+            <FormLayout.Group>
+              <TextField label="Fracture" id="fracture" value={formData.fracture} onChange={handleTextChange} autoComplete="off" />
+              <TextField label="Cleavage" id="cleavage" value={formData.cleavage} onChange={handleTextChange} autoComplete="off" />
+            </FormLayout.Group>
+            <FormLayout.Group>
+              <TextField label="Specific Gravity" id="specificGravity" value={formData.specificGravity} onChange={handleTextChange} autoComplete="off" />
+              <TextField label="Diaphaneity (Transparency)" id="diaphaneity" value={formData.diaphaneity} onChange={handleTextChange} autoComplete="off" />
+            </FormLayout.Group>
+          </FormLayout>
+        </Modal.Section>
+      </Modal>
+
+      {modalConfig.active && (
+        <Modal
+          open={true} 
+          onClose={closeModal} 
+          title={modalConfig.title}
+          primaryAction={{ content: "Confirm & Execute", onAction: executeApply, tone: "success", accessibilityLabel: "Confirm and execute profile application" }}
+          secondaryActions={[{ content: "Cancel", onAction: closeModal, accessibilityLabel: "Cancel action" }]}
+        >
+          <Modal.Section>
+            <BlockStack gap="400">
+              {modalConfig.body && <Text variant="bodyLg" as="p" fontWeight="bold">{modalConfig.body}</Text>}
+            </BlockStack>
+          </Modal.Section>
+        </Modal>
+      )}
+
+      {toastState.active && (
+        <Toast 
+          content={toastState.message} 
+          error={toastState.isError} 
+          onDismiss={closeToast} 
+        />
+      )}
+    </Box>
+  );
 }
