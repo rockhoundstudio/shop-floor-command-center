@@ -8,7 +8,6 @@ import {
 import { loader as engineLoader, action as engineAction } from "./app.meta-injector.loader";
 
 // --- IMPORT THE TABS ---
-import { NorthStarTab } from "./app.meta-injector.northstar";
 import { MatrixTab } from "./app.meta-injector.matrix";
 import { InspectorTab } from "./app.meta-injector.inspector";
 import { InjectorTab } from "./app.meta-injector.injector";
@@ -25,7 +24,7 @@ export default function MetaInjectorV2() {
   const { products, snapshots = [], dbProfiles = [], metaobjectHandles = {}, dynamicMetaobjectOptions = {} } = useLoaderData();
   const actionData = useActionData();
   const navigate = useNavigate();
-  
+
   const actionFetcher = useFetcher();
   const inspectorFetcher = useFetcher();
   const originFetcher = useFetcher();
@@ -39,7 +38,6 @@ export default function MetaInjectorV2() {
     { id: 'northstar', content: '⭐ North Star Auto-Fill', panelID: 'panel-northstar' },
     { id: 'health', content: 'Data Health Matrix', panelID: 'panel-health' },
     { id: 'inspector', content: 'Product Inspector', panelID: 'panel-inspector' },
-    { id: 'bulk', content: 'Smart Bulk Injector', panelID: 'panel-bulk' },
     { id: 'origin', content: 'Origin Fixer', panelID: 'panel-origin' },
     { id: 'profiles', content: 'DB Profiles', panelID: 'panel-profiles' },
     { id: 'snapshots', content: 'Snapshots', panelID: 'panel-snapshots' },
@@ -49,8 +47,8 @@ export default function MetaInjectorV2() {
   return (
     <Frame>
       <Page
-        fullWidth 
-        title="Meta Injector v2" 
+        fullWidth
+        title="Meta Injector v2"
         subtitle="Data Integrity Command Center"
         backAction={{ content: "Dashboard", onAction: () => navigate("/app"), accessibilityLabel: "Back to Dashboard" }}
       >
@@ -72,57 +70,51 @@ export default function MetaInjectorV2() {
               <Tabs tabs={tabs} selected={selectedTab} onSelect={setSelectedTab} fitted>
                 <Box padding="400">
                   {selectedTab === 0 && (
-                    <NorthStarTab 
-                      fetcher={actionFetcher} 
-                      products={products} 
-                      dbProfiles={dbProfiles} shopify={shopify} 
+                    <InjectorTab
+                      fetcher={actionFetcher}
+                      products={products}
+                      shopify={shopify}
+                      dbProfiles={dbProfiles}
+                      dynamicMetaobjectOptions={dynamicMetaobjectOptions}
                     />
                   )}
                   {selectedTab === 1 && (
-                    <MatrixTab 
-                      fetcher={actionFetcher} 
-                      products={products} 
-                      metaobjectHandles={metaobjectHandles} 
-                      onInspectProduct={() => setSelectedTab(2)} 
+                    <MatrixTab
+                      fetcher={actionFetcher}
+                      products={products}
+                      metaobjectHandles={metaobjectHandles}
+                      onInspectProduct={() => setSelectedTab(2)}
                     />
                   )}
                   {selectedTab === 2 && (
-                    <InspectorTab 
-                      fetcher={inspectorFetcher} 
-                      products={products} 
+                    <InspectorTab
+                      fetcher={inspectorFetcher}
+                      products={products}
                     />
                   )}
                   {selectedTab === 3 && (
-                    <InjectorTab 
-                      fetcher={actionFetcher} 
-                      products={products} 
-                      shopify={shopify} 
-                      dbProfiles={dbProfiles}
-                      dynamicMetaobjectOptions={dynamicMetaobjectOptions} 
+                    <OriginsTab
+                      fetcher={originFetcher}
                     />
                   )}
                   {selectedTab === 4 && (
-                    <OriginsTab 
-                      fetcher={originFetcher} 
+                    <ProfilesTab
+                      fetcher={profileFetcher}
+                      products={products}
+                      dbProfiles={dbProfiles}
+                      shopify={shopify}
                     />
                   )}
                   {selectedTab === 5 && (
-                    <ProfilesTab 
-                      fetcher={profileFetcher} 
-                      products={products} 
-                      dbProfiles={dbProfiles} shopify={shopify} 
+                    <SnapshotsTab
+                      fetcher={snapshotFetcher}
+                      snapshots={snapshots}
                     />
                   )}
                   {selectedTab === 6 && (
-                    <SnapshotsTab 
-                      fetcher={snapshotFetcher} 
-                      snapshots={snapshots} 
-                    />
-                  )}
-                  {selectedTab === 7 && (
-                    <CsvTab 
-                      fetcher={actionFetcher} 
-                      products={products} 
+                    <CsvTab
+                      fetcher={actionFetcher}
+                      products={products}
                     />
                   )}
                 </Box>
