@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { useLoaderData, useActionData, useFetcher, useNavigate } from "react-router";
+import { useLoaderData, useFetcher, useNavigate } from "react-router";
 import {
   Page, Layout, Card, Text, Banner, BlockStack, Box, Tabs, Frame
 } from "@shopify/polaris";
@@ -22,7 +22,6 @@ export const action = engineAction;
 
 export default function MetaInjectorV2() {
   const { products, snapshots = [], dbProfiles = [], metaobjectHandles = {}, dynamicMetaobjectOptions = {} } = useLoaderData();
-  const actionData = useActionData();
   const navigate = useNavigate();
 
   const actionFetcher = useFetcher();
