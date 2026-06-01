@@ -57,22 +57,23 @@ export async function loader({ request }) {
 
   const rawStoneProfiles = await db.stoneProfile.findMany();
   
+  // --- RESTORED: Strict Mapping to Prisma Columns per METAFIELD KEY LAW ---
   const dbProfiles = rawStoneProfiles.map(sp => ({
     id: sp.id,
     title: sp.stoneName, stoneName: sp.stoneName,
-    googleAuthenticity: sp.authenticity,
-    googleRarity: sp.rarity,
-    googleCrystalSystem: sp.crystalSystem,
-    googleGeologicalEra: sp.geologicalEra,
-    googleMineralClass: sp.mineralClass,
-    googleRockComposition: sp.rockComposition,
-    googleRockFormation: sp.rockFormation,
-    storeHardness: sp.hardness,
-    storeLuster: sp.luster,
-    storeFracture: sp.fracture,
-    storeCleavage: sp.cleavage,
-    storeSpecificGravity: sp.specificGravity,
-    storeDiaphaneity: sp.diaphaneity
+    authenticity: sp.authenticity,
+    rarity: sp.rarity,
+    google_crystal_system: sp.crystalSystem,
+    google_geological_era: sp.geologicalEra,
+    google_mineral_class: sp.mineralClass,
+    google_rock_composition: sp.rockComposition,
+    google_rock_formation: sp.rockFormation,
+    store_hardness: sp.hardness,
+    store_luster: sp.luster,
+    store_fracture: sp.fracture,
+    store_cleavage: sp.cleavage,
+    store_specific_gravity: sp.specificGravity,
+    store_diaphaneity: sp.diaphaneity
   }));
 
   let allRawProducts = [];
