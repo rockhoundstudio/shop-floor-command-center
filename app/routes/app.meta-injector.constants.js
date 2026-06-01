@@ -24,3 +24,26 @@ export const METAFIELD_CONFIG = [
   { namespace: "custom", key: "origin_location", type: "single_line_text_field", label: "Origin Location" },
   { namespace: "custom", key: "meta_status", type: "json", label: "Data Integrity Status", hidden: true }
 ];
+
+// --- ADDED: Helper function to translate GIDs into readable text for the UI ---
+export function getLabelForValue(value, metaobjectHandles = {}) {
+  if (!value) return "-";
+  
+  try {
+    const parsed = JSON.parse(value);
+    if (Array.isArray(parsed)) {
+      return parsed.map(gid => {
+        // Look up the handle, or fallback to the raw ID if handle isn't found
+        return metaobjectHandles[gid] || gid.split('/').pop();
+      }).join(", ");
+    }
+  } catch (e) {
+    // If it's not JSON, it will fall through to the string check below
+  }
+
+  if (typeof value === "string" && value.includes("gid://shopify/Metaobject/")) {
+    return metaobjectHandles[value] || value.split('/').pop();
+  }
+
+  return value;
+}
