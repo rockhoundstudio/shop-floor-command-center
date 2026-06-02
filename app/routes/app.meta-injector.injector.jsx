@@ -23,7 +23,6 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [], dynam
   const [bulkSearchQuery, setBulkSearchQuery] = useState("");
   const [dynamicCustomFields, setDynamicCustomFields] = useState([]);
   const [modalConfig, setModalConfig] = useState({ active: false, title: "", body: null, diffs: [], payload: [] });
-  // PHASE 4 STATE: Controls the inline text box for creating new terms
   const [inlineAddState, setInlineAddState] = useState({ fieldKey: null, metaobjectType: null, value: "", loading: false });
 
   const tapTargetStyle = { minHeight: '48px', minWidth: '48px', display: 'flex', alignItems: 'center', justifyContent: 'center' };
@@ -51,82 +50,75 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [], dynam
     setBulkSelectedProductIds(prev => {
       const isSelected = prev.includes(id);
       if (isSelected) return prev.filter(x => x !== id);
-      if (!isSelected) return [...prev, id];
-      return prev;
+      return [...prev, id];
     });
+  };
+
+  // MASTER FIELD MAP — keys must match METAFIELD_CONFIG keys AND dbProfiles keys exactly
+  const PROFILE_FIELD_MAP = {
+    "mohs_hardness":      (p) => p.mohs_hardness,
+    "luster":             (p) => p.luster,
+    "fracture_pattern":   (p) => p.fracture_pattern,
+    "cleavage":           (p) => p.cleavage,
+    "specific_gravity":   (p) => p.specific_gravity,
+    "diaphaneity":        (p) => p.diaphaneity,
+    "authenticity":       (p) => p.authenticity || p.google_authenticity,
+    "rarity":             (p) => p.rarity || p.google_rarity,
+    "crystal-system":     (p) => p.google_crystal_system,
+    "geological-era":     (p) => p.google_geological_era,
+    "mineral-class":      (p) => p.google_mineral_class,
+    "rock-composition":   (p) => p.google_rock_composition,
+    "rock-formation":     (p) => p.google_rock_formation,
   };
 
   const handleAutoFill = () => {
     const baseStoneType = bulkFormData["official_name"] || bulkFormData["base_stone_type"] || "";
 
-    const isMissingStoneType = baseStoneType.trim() === "";
-    if (isMissingStoneType) {
+    if (baseStoneType.trim() === "") {
       if (shopify && shopify.toast) shopify.toast.show("Please type a stone name (e.g., 'Jasper') into 'Official Name' first!", { isError: true });
       return;
     }
 
-    const profile = dbProfiles.find(db => 
-      baseStoneType.toLowerCase().includes((db.title || db.stoneName || "").toLowerCase()) || 
+    const profile = dbProfiles.find(db =>
+      baseStoneType.toLowerCase().includes((db.title || db.stoneName || "").toLowerCase()) ||
       (db.title || db.stoneName || "").toLowerCase().includes(baseStoneType.toLowerCase())
     );
-    
-    const isMissingProfile = !profile;
-    if (isMissingProfile) {
+
+    if (!profile) {
       if (shopify && shopify.toast) shopify.toast.show(`No dictionary entry found for "${baseStoneType}".`, { isError: true });
       return;
     }
 
     let updates = { ...bulkFormData };
 
+    // Direct key-to-key mapping — no hardcoded string checks
     METAFIELD_CONFIG.forEach(field => {
       if (!field.key) return;
-      const key = field.key.toLowerCase();
-      
-      // Strict mapping to Shopify keys per METAFIELD KEY LAW
-      if (key === 'google_authenticity') updates[field.key] = profile.authenticity || profile.google_authenticity || updates[field.key] || "";
-      if (key === 'google_rarity') updates[field.key] = profile.rarity || profile.google_rarity || updates[field.key] || "";
-      if (key === 'google_crystal_system') updates[field.key] = profile.google_crystal_system || updates[field.key] || "";
-      if (key === 'google_geological_era') updates[field.key] = profile.google_geological_era || updates[field.key] || "";
-      if (key === 'google_mineral_class') updates[field.key] = profile.google_mineral_class || updates[field.key] || "";
-      if (key === 'google_rock_composition') updates[field.key] = profile.google_rock_composition || updates[field.key] || "";
-      if (key === 'google_rock_formation') updates[field.key] = profile.google_rock_formation || updates[field.key] || "";
-      
-      if (key === 'store_hardness') updates[field.key] = profile.store_hardness || updates[field.key] || "";
-      if (key === 'store_luster') updates[field.key] = profile.store_luster || updates[field.key] || "";
-      if (key === 'store_fracture') updates[field.key] = profile.store_fracture || updates[field.key] || "";
-      if (key === 'store_cleavage') updates[field.key] = profile.store_cleavage || updates[field.key] || "";
-      if (key === 'store_specific_gravity') updates[field.key] = profile.store_specific_gravity || updates[field.key] || "";
-      if (key === 'store_diaphaneity') updates[field.key] = profile.store_diaphaneity || updates[field.key] || "";
+      const mapper = PROFILE_FIELD_MAP[field.key];
+      if (!mapper) return;
+      const profileValue = mapper(profile);
+      if (profileValue) updates[field.key] = profileValue;
     });
 
-    // Translate Dictionary Text to Shopify GIDs for Dropdowns
+    // Translate text values to Shopify GIDs for dropdown fields
     METAFIELD_CONFIG.forEach(field => {
-      const hasMetaobjectTypeAndValue = field.metaobjectType && updates[field.key];
-      if (hasMetaobjectTypeAndValue) {
+      if (field.metaobjectType && updates[field.key]) {
         const rawValue = updates[field.key];
-        const isNotGid = !rawValue.includes("gid://");
-        if (isNotGid) {
+        if (!rawValue.includes("gid://")) {
           const liveOptions = dynamicMetaobjectOptions[field.metaobjectType] || [];
           const matchedOption = liveOptions.find(opt => opt.label.toLowerCase() === rawValue.toLowerCase());
-          if (matchedOption) {
-            updates[field.key] = matchedOption.value;
-          }
-          if (!matchedOption) {
-            updates[field.key] = ""; // Keep blank if the term doesn't exist in Shopify yet
-          }
+          updates[field.key] = matchedOption ? matchedOption.value : "";
         }
       }
     });
 
     setBulkFormData(updates);
-
-    if (shopify && shopify.toast) shopify.toast.show(`${profile.title || profile.stoneName} science successfully loaded from dictionary!`, { isError: false });
+    if (shopify && shopify.toast) shopify.toast.show(`${profile.title || profile.stoneName} science loaded from dictionary!`, { isError: false });
   };
 
   const handleBulkSubmit = () => {
     const selectedProducts = products.filter(p => bulkSelectedProductIds.includes(p.id));
-    const isNoProductsSelected = selectedProducts.length === 0;
-    if (isNoProductsSelected) {
+    if (selectedProducts.length === 0) {
       if (shopify && shopify.toast) shopify.toast.show("Select at least one product.", { isError: true });
       return;
     }
@@ -138,12 +130,10 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [], dynam
     selectedProducts.forEach(product => {
       const statusStr = getMetafieldValue(product, "meta_status");
       let statusObj = {};
-      try { 
-        if (statusStr) {
-          statusObj = JSON.parse(statusStr); 
-        }
+      try {
+        if (statusStr) statusObj = JSON.parse(statusStr);
       } catch(e) {}
-      
+
       let productChanged = false;
 
       METAFIELD_CONFIG.forEach(field => {
@@ -152,25 +142,16 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [], dynam
         if (!newVal) return;
 
         const currentVal = getMetafieldValue(product, field.key);
-        const isFillModeAndHasValue = bulkMode === "fill" && currentVal !== "";
-        if (isFillModeAndHasValue) return;
-        const isSameValue = currentVal === newVal;
-        if (isSameValue) return;
+        if (bulkMode === "fill" && currentVal !== "") return;
+        if (currentVal === newVal) return;
 
         const resolvedType = resolveMetafieldType(product, field, newVal);
-        
+
         let finalValue = newVal;
-        const isListType = resolvedType.includes("list.");
-        if (isListType) {
+        if (resolvedType.includes("list.")) {
           try {
             const parsed = JSON.parse(newVal);
-            const isArray = Array.isArray(parsed);
-            if (isArray) {
-              finalValue = newVal; 
-            }
-            if (!isArray) {
-              finalValue = JSON.stringify([newVal]); 
-            }
+            finalValue = Array.isArray(parsed) ? newVal : JSON.stringify([newVal]);
           } catch {
             finalValue = JSON.stringify([newVal]);
           }
@@ -183,15 +164,10 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [], dynam
       });
 
       dynamicCustomFields.forEach(df => {
-        const isInvalidCustomField = !df.key || !df.value;
-        if (isInvalidCustomField) return;
-        
+        if (!df.key || !df.value) return;
         const currentVal = getMetafieldValue(product, df.key);
-        const isFillModeAndHasValue = bulkMode === "fill" && currentVal !== "";
-        if (isFillModeAndHasValue) return;
-        const isSameValue = currentVal === df.value;
-        if (isSameValue) return;
-
+        if (bulkMode === "fill" && currentVal !== "") return;
+        if (currentVal === df.value) return;
         payload.push({ ownerId: product.id, namespace: "custom", key: df.key, type: "single_line_text_field", value: df.value });
         statusObj[df.key] = "bulk_unverified";
         productChanged = true;
@@ -203,21 +179,18 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [], dynam
       }
     });
 
-    const isPayloadEmpty = payload.length === 0;
-    if (isPayloadEmpty) {
+    if (payload.length === 0) {
       if (shopify && shopify.toast) shopify.toast.show("No changes to apply based on current mode and inputs.", { isError: false });
       return;
     }
 
     diffSummary.push({ field: "Total Updates", old: "Current State", new: `${changesCount} updates across ${selectedProducts.length} products` });
 
-    const isOverwriteMode = bulkMode === "overwrite";
-    
     setModalConfig({
-      active: true, 
+      active: true,
       title: `Confirm Bulk Injection (${bulkMode.toUpperCase()})`,
-      body: isOverwriteMode ? "WARNING: OVERWRITE mode destroys existing verified data." : "FILL ONLY mode. Existing data is safe.",
-      diffs: diffSummary, 
+      body: bulkMode === "overwrite" ? "WARNING: OVERWRITE mode destroys existing verified data." : "FILL ONLY mode. Existing data is safe.",
+      diffs: diffSummary,
       payload: payload
     });
   };
@@ -228,8 +201,7 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [], dynam
   };
 
   let visibleProducts = products;
-  const hasSearchQuery = bulkSearchQuery.trim() !== "";
-  if (hasSearchQuery) {
+  if (bulkSearchQuery.trim() !== "") {
     const lowerQuery = bulkSearchQuery.toLowerCase();
     visibleProducts = products.filter(p => p.title.toLowerCase().includes(lowerQuery));
   }
@@ -250,7 +222,7 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [], dynam
           <Box padding="300" background="bg-surface-secondary" borderRadius="200">
             <BlockStack gap="300">
               <Text variant="headingSm" as="h3">1. Select Targets ({bulkSelectedProductIds.length})</Text>
-              
+
               <div style={inputTapTargetStyle}>
                 <TextField
                   placeholder="Search products..."
@@ -263,36 +235,35 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [], dynam
                 />
               </div>
 
-              {hasSearchQuery && (
+              {bulkSearchQuery.trim() !== "" && (
                 <Text variant="bodySm" tone="subdued" as="p">
                   Showing {visibleProducts.length} of {products.length} products
                 </Text>
               )}
 
               <div style={tapTargetStyle}>
-                <Button 
-                  onClick={() => setBulkSelectedProductIds(allVisibleSelected ? [] : visibleProducts.map(p => p.id))} 
+                <Button
+                  onClick={() => setBulkSelectedProductIds(allVisibleSelected ? [] : visibleProducts.map(p => p.id))}
                   accessibilityLabel="Select all or none"
                 >
-                  {allVisibleSelected && "Deselect All"}
-                  {!allVisibleSelected && "Select All"}
+                  {allVisibleSelected ? "Deselect All" : "Select All"}
                 </Button>
               </div>
 
               <Scrollable style={{ height: '500px' }}>
                 <BlockStack gap="100">
                   {visibleProducts.length === 0 && (
-                     <Box padding="400">
-                       <Text as="p" tone="subdued" alignment="center">No products match your search.</Text>
-                     </Box>
+                    <Box padding="400">
+                      <Text as="p" tone="subdued" alignment="center">No products match your search.</Text>
+                    </Box>
                   )}
                   {visibleProducts.map(p => (
                     <div style={inputTapTargetStyle} key={p.id}>
-                      <Checkbox 
-                        label={p.title} 
-                        checked={bulkSelectedProductIds.includes(p.id)} 
-                        onChange={() => toggleProduct(p.id)} 
-                        accessibilityLabel={`Select ${p.title}`} 
+                      <Checkbox
+                        label={p.title}
+                        checked={bulkSelectedProductIds.includes(p.id)}
+                        onChange={() => toggleProduct(p.id)}
+                        accessibilityLabel={`Select ${p.title}`}
                       />
                     </div>
                   ))}
@@ -313,17 +284,17 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [], dynam
                 </InlineStack>
               </Box>
               <div style={inputTapTargetStyle}>
-                <ChoiceList 
-                  title="Injection Mode" 
+                <ChoiceList
+                  title="Injection Mode"
                   choices={[
-                    { label: 'FILL ONLY: Skip products that already have data', value: 'fill' }, 
+                    { label: 'FILL ONLY: Skip products that already have data', value: 'fill' },
                     { label: 'OVERWRITE: Force data (Dangerous)', value: 'overwrite' }
-                  ]} 
-                  selected={[bulkMode]} 
-                  onChange={(val) => setBulkMode(val[0])} 
+                  ]}
+                  selected={[bulkMode]}
+                  onChange={(val) => setBulkMode(val[0])}
                 />
               </div>
-              
+
               <Divider />
 
               <Box padding="300" background="bg-surface-secondary" borderRadius="100">
@@ -338,14 +309,14 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [], dynam
                   </div>
                 </BlockStack>
               </Box>
-              
+
               <Divider />
-              
+
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                 {METAFIELD_CONFIG.filter(f => !f.hidden).map(field => {
                   const isGoogle = field.namespace === "shopify";
                   const rawLabelText = field.name || field.label || "";
-                  
+
                   let cleanName = rawLabelText
                     .replace(/🔵/g, '')
                     .replace(/🪨/g, '')
@@ -373,28 +344,23 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [], dynam
                           />
                           <InlineStack gap="200">
                             <div style={tapTargetStyle}>
-                              <Button 
-                                tone="success" 
+                              <Button
+                                tone="success"
                                 variant="primary"
                                 loading={inlineAddState.loading}
                                 accessibilityLabel="Save new dictionary term"
                                 onClick={() => {
-                                  const isInvalidValue = !inlineAddState.value.trim();
-                                  if (isInvalidValue) return;
-                                  
+                                  if (!inlineAddState.value.trim()) return;
                                   setInlineAddState(prev => ({ ...prev, loading: true }));
-                                  
                                   const formData = new FormData();
                                   formData.append("intent", "createMetaobject");
                                   formData.append("type", field.metaobjectType);
                                   formData.append("value", inlineAddState.value);
-                                  
                                   fetcher.submit(formData, { method: "post" });
-                                  
                                   setTimeout(() => {
                                     setInlineAddState({ fieldKey: null, metaobjectType: null, value: "", loading: false });
                                     if (shopify && shopify.toast) shopify.toast.show(`Added to Dictionary!`, { isError: false });
-                                  }, 1500); 
+                                  }, 1500);
                                 }}
                               >
                                 Save to Dictionary
@@ -412,16 +378,16 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [], dynam
                       {hasMetaobjectType && !isAddingNew && (
                         <div style={{ display: 'flex', alignItems: 'flex-end', gap: '8px' }}>
                           <div style={{ flex: 1 }}>
-                            <Select 
-                              label={label} 
-                              options={[{ label: "Select...", value: "" }, ...(dynamicMetaobjectOptions[field.metaobjectType] || [])]} 
-                              value={bulkFormData[field.key] || ""} 
-                              onChange={(val) => setBulkFormData(prev => ({ ...prev, [field.key]: val }))} 
-                              accessibilityLabel={`Bulk input for ${cleanName}`} 
+                            <Select
+                              label={label}
+                              options={[{ label: "Select...", value: "" }, ...(dynamicMetaobjectOptions[field.metaobjectType] || [])]}
+                              value={bulkFormData[field.key] || ""}
+                              onChange={(val) => setBulkFormData(prev => ({ ...prev, [field.key]: val }))}
+                              accessibilityLabel={`Bulk input for ${cleanName}`}
                             />
                           </div>
                           <div style={tapTargetStyle}>
-                            <Button 
+                            <Button
                               accessibilityLabel={`Add new ${cleanName}`}
                               onClick={() => setInlineAddState({ fieldKey: field.key, metaobjectType: field.metaobjectType, value: "", loading: false })}
                             >
@@ -432,14 +398,14 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [], dynam
                       )}
 
                       {!hasMetaobjectType && (
-                        <TextField 
-                          label={label} 
-                          value={bulkFormData[field.key] || ""} 
-                          onChange={(val) => setBulkFormData(prev => ({ ...prev, [field.key]: val }))} 
-                          placeholder="Leave blank to skip" 
-                          autoComplete="off" 
-                          type="text" 
-                          accessibilityLabel={`Bulk input for ${cleanName}`} 
+                        <TextField
+                          label={label}
+                          value={bulkFormData[field.key] || ""}
+                          onChange={(val) => setBulkFormData(prev => ({ ...prev, [field.key]: val }))}
+                          placeholder="Leave blank to skip"
+                          autoComplete="off"
+                          type="text"
+                          accessibilityLabel={`Bulk input for ${cleanName}`}
                         />
                       )}
                     </div>
@@ -454,33 +420,33 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [], dynam
                   {dynamicCustomFields.map((df, idx) => (
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: '16px' }} key={`dynamic-${idx}`}>
                       <div style={inputTapTargetStyle}>
-                        <TextField 
-                          label="🪨 Stone Field Key" 
-                          value={df.key} 
+                        <TextField
+                          label="🪨 Stone Field Key"
+                          value={df.key}
                           onChange={(val) => {
                             const newFields = [...dynamicCustomFields];
                             newFields[idx].key = val;
                             setDynamicCustomFields(newFields);
-                          }} 
-                          placeholder="e.g. mine_name" 
-                          autoComplete="off" 
-                          type="text" 
-                          accessibilityLabel="Custom stone field key" 
+                          }}
+                          placeholder="e.g. mine_name"
+                          autoComplete="off"
+                          type="text"
+                          accessibilityLabel="Custom stone field key"
                         />
                       </div>
                       <div style={inputTapTargetStyle}>
-                        <TextField 
-                          label="Value" 
-                          value={df.value} 
+                        <TextField
+                          label="Value"
+                          value={df.value}
                           onChange={(val) => {
                             const newFields = [...dynamicCustomFields];
                             newFields[idx].value = val;
                             setDynamicCustomFields(newFields);
-                          }} 
-                          placeholder="Value" 
-                          autoComplete="off" 
-                          type="text" 
-                          accessibilityLabel="Custom stone field value" 
+                          }}
+                          placeholder="Value"
+                          autoComplete="off"
+                          type="text"
+                          accessibilityLabel="Custom stone field value"
                         />
                       </div>
                       <div style={tapTargetStyle}>
@@ -494,7 +460,7 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [], dynam
                   ))}
                 </BlockStack>
               )}
-              
+
               <div style={tapTargetStyle}>
                 <Button onClick={() => setDynamicCustomFields([...dynamicCustomFields, { key: '', value: '' }])} accessibilityLabel="Add custom stone field">
                   Add Custom Field
@@ -507,8 +473,8 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [], dynam
 
         {modalConfig.active && (
           <Modal
-            open={true} 
-            onClose={() => setModalConfig({ active: false, title: "", body: null, diffs: [], payload: [] })} 
+            open={true}
+            onClose={() => setModalConfig({ active: false, title: "", body: null, diffs: [], payload: [] })}
             title={modalConfig.title}
             primaryAction={{ content: "Confirm & Execute", onAction: executeBulkSubmit, tone: "success", accessibilityLabel: "Confirm and execute action" }}
             secondaryActions={[{ content: "Cancel", onAction: () => setModalConfig({ active: false, title: "", body: null, diffs: [], payload: [] }), accessibilityLabel: "Cancel action" }]}
@@ -518,10 +484,10 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [], dynam
                 {modalConfig.body && <Text variant="bodyLg" as="p" fontWeight="bold">{modalConfig.body}</Text>}
                 {modalConfig.diffs.length > 0 && (
                   <Box background="bg-surface-secondary" padding="300" borderRadius="200">
-                    <DataTable 
-                      columnContentTypes={["text", "text", "text"]} 
-                      headings={["Field", "Old Value", "New Value"]} 
-                      rows={modalConfig.diffs.map(d => [d.field, d.old, d.new])} 
+                    <DataTable
+                      columnContentTypes={["text", "text", "text"]}
+                      headings={["Field", "Old Value", "New Value"]}
+                      rows={modalConfig.diffs.map(d => [d.field, d.old, d.new])}
                     />
                   </Box>
                 )}
