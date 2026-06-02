@@ -15,7 +15,7 @@ export const METAFIELD_CONFIG = [
 
   { namespace: "custom", key: "mohs_hardness", type: "single_line_text_field", label: "Hardness (Mohs)" },
   { namespace: "custom", key: "luster", type: "single_line_text_field", label: "Luster" },
-  { namespace: "custom", key: "fracture_pattern", type: "single_line_text_field", label: "Fracture" },
+  { namespace: "custom", key: "fracture", type: "single_line_text_field", label: "Fracture" },
   { namespace: "custom", key: "cleavage", type: "single_line_text_field", label: "Cleavage" },
   { namespace: "custom", key: "specific_gravity", type: "single_line_text_field", label: "Specific Gravity" },
   { namespace: "custom", key: "diaphaneity", type: "single_line_text_field", label: "Diaphaneity" },
