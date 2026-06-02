@@ -1,8 +1,7 @@
 import { authenticate } from "../shopify.server";
 import { EXCLUDED_TITLES } from "./app.meta-injector.constants";
-import db from "../db.server"; // --- Import Prisma Database ---
+import db from "../db.server";
 
-// --- PHASE 2 WELD: Fetch live dictionaries from Shopify ---
 async function fetchDynamicMetaobjects(admin) {
   const types = [
     "shopify--color-pattern", "shopify--authenticity", "shopify--rarity",
@@ -31,7 +30,7 @@ async function fetchDynamicMetaobjects(admin) {
     `, { variables: { type } });
 
     const data = await response.json();
-    
+
     if (data.data && data.data.metaobjects) {
       dynamicOptions[type] = data.data.metaobjects.edges.map(({ node }) => {
         const labelField = node.fields.find(f => f.key === 'name' || f.key === 'label');
@@ -53,28 +52,29 @@ async function fetchDynamicMetaobjects(admin) {
 export async function loader({ request }) {
   const { admin } = await authenticate.admin(request);
 
-  // Grab the live dictionaries using the helper function above
   const dynamicMetaobjectOptions = await fetchDynamicMetaobjects(admin);
 
-  // --- UPGRADED: Fetch from the permanent StoneProfile dictionary ---
   const rawStoneProfiles = await db.stoneProfile.findMany();
-  
-  // Map it so the UI can read it perfectly without needing UI changes
+
+  // KEY LAW — these keys must match exactly what InjectorTab looks for
   const dbProfiles = rawStoneProfiles.map(sp => ({
-    title: sp.stoneName, stoneName: sp.stoneName,
-    googleAuthenticity: sp.authenticity,
-    googleRarity: sp.rarity,
-    googleCrystalSystem: sp.crystalSystem,
-    googleGeologicalEra: sp.geologicalEra,
-    googleMineralClass: sp.mineralClass,
-    googleRockComposition: sp.rockComposition,
-    googleRockFormation: sp.rockFormation,
-    stoneHardness: sp.hardness,
-    stoneLuster: sp.luster,
-    stoneFracture: sp.fracture,
-    stoneCleavage: sp.cleavage,
-    stoneSpecificGravity: sp.specificGravity,
-    stoneDiaphaneity: sp.diaphaneity
+    title: sp.stoneName,
+    stoneName: sp.stoneName,
+    authenticity: sp.authenticity,
+    google_authenticity: sp.authenticity,
+    rarity: sp.rarity,
+    google_rarity: sp.rarity,
+    google_crystal_system: sp.crystalSystem,
+    google_geological_era: sp.geologicalEra,
+    google_mineral_class: sp.mineralClass,
+    google_rock_composition: sp.rockComposition,
+    google_rock_formation: sp.rockFormation,
+    store_hardness: sp.hardness,
+    store_luster: sp.luster,
+    store_fracture: sp.fracture,
+    store_cleavage: sp.cleavage,
+    store_specific_gravity: sp.specificGravity,
+    store_diaphaneity: sp.diaphaneity
   }));
 
   let allRawProducts = [];
@@ -93,10 +93,10 @@ export async function loader({ request }) {
               node {
                 id title status featuredImage { url altText }
                 metafields(first: 50) {
-                  edges { 
-                    node { 
-                      id namespace key value type 
-                    } 
+                  edges {
+                    node {
+                      id namespace key value type
+                    }
                   }
                 }
               }
@@ -123,9 +123,8 @@ export async function loader({ request }) {
 
   const products = allRawProducts.filter(p => !EXCLUDED_TITLES.includes(p.title));
 
-  // --- METAOBJECT GID RESOLUTION ---
   const gidsToResolve = new Set();
-  
+
   products.forEach(p => {
     if (p.metafields && p.metafields.edges) {
       p.metafields.edges.forEach(edge => {
@@ -140,10 +139,10 @@ export async function loader({ request }) {
             }
           } catch (e) {
             if (typeof mf.value === "string" && mf.value.includes("gid://shopify/Metaobject/")) {
-                const matches = mf.value.match(/gid:\/\/shopify\/Metaobject\/\d+/g);
-                if (matches) {
-                  matches.forEach(gid => gidsToResolve.add(gid));
-                }
+              const matches = mf.value.match(/gid:\/\/shopify\/Metaobject\/\d+/g);
+              if (matches) {
+                matches.forEach(gid => gidsToResolve.add(gid));
+              }
             }
           }
         }
@@ -174,7 +173,7 @@ export async function loader({ request }) {
 
     const resolveParsed = await resolveResponse.json();
     const nodes = resolveParsed.data?.nodes || [];
-    
+
     nodes.forEach(node => {
       if (node && node.id && node.handle) {
         metaobjectHandles[node.id] = node.handle;
@@ -182,7 +181,6 @@ export async function loader({ request }) {
     });
   }
 
-  // --- SNAPSHOT FETCHING ---
   let snapResponse;
   try {
     snapResponse = await admin.graphql(`
@@ -217,8 +215,7 @@ export async function loader({ request }) {
     payloadStr: s.payload?.value ? s.payload.value : "[]"
   }));
 
-  // --- Return dbProfiles and dynamicMetaobjectOptions to the UI ---
-  return { products, snapshots, metaobjectHandles, dbProfiles, dynamicMetaobjectOptions }; 
+  return { products, snapshots, metaobjectHandles, dbProfiles, dynamicMetaobjectOptions };
 }
 
 export async function action({ request }) {
@@ -226,10 +223,9 @@ export async function action({ request }) {
   const formData = await request.formData();
   const intent = formData.get("intent");
 
-  // --- PHASE 4 WELD: THE DICTIONARY PUSH (Creates new terms via + button) ---
   if (intent === "createMetaobject") {
-    const type = formData.get("type");   
-    const value = formData.get("value"); 
+    const type = formData.get("type");
+    const value = formData.get("value");
 
     try {
       const response = await admin.graphql(`
@@ -244,7 +240,7 @@ export async function action({ request }) {
           metaobject: {
             type: type,
             capabilities: { publishable: { status: "ACTIVE" } },
-            fields: [{ key: "name", value: value }] 
+            fields: [{ key: "name", value: value }]
           }
         }
       });
@@ -264,7 +260,7 @@ export async function action({ request }) {
     let payload = rawPayload.reduce((acc, mf) => {
       let cleanMf = {
         ownerId: mf.ownerId,
-        namespace: mf.namespace || "custom", // FIXED: Respects UI namespace
+        namespace: mf.namespace || "custom",
         key: mf.key,
         value: mf.value,
         type: mf.type
@@ -274,9 +270,8 @@ export async function action({ request }) {
         cleanMf.key = "mohs_hardness";
       }
 
-      // FIXED: Only block GIDs if the field is NOT a metaobject reference
       const isMetaobjectType = cleanMf.type && cleanMf.type.includes("metaobject_reference");
-      
+
       if (!isMetaobjectType && typeof cleanMf.value === "string" && cleanMf.value.includes("gid://shopify")) {
         console.warn(`GID Leak intercepted on ${cleanMf.key} for ${cleanMf.ownerId}. Skipping this metafield.`);
         return acc;
@@ -287,7 +282,7 @@ export async function action({ request }) {
     }, []);
 
     const chunks = [];
-    for (let i = 0; i < payload.length; i += 25) { // Optimized API chunk size
+    for (let i = 0; i < payload.length; i += 25) {
       chunks.push(payload.slice(i, i + 25));
     }
 
@@ -304,10 +299,10 @@ export async function action({ request }) {
             }
           }
         `, { variables: { metafields: chunk } });
-        
+
         const json = await response.json();
         console.log("Received metafieldsSet response:", JSON.stringify(json, null, 2));
-        
+
         const errors = json.data?.metafieldsSet?.userErrors ? json.data.metafieldsSet.userErrors : [];
         if (errors.length > 0) {
           allErrors = [...allErrors, ...errors];
@@ -332,10 +327,10 @@ export async function action({ request }) {
         product(id: $id) {
           id title status featuredImage { url altText }
           metafields(first: 50) {
-            edges { 
-              node { 
-                id namespace key value type 
-              } 
+            edges {
+              node {
+                id namespace key value type
+              }
             }
           }
         }
