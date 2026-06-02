@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useEffect } from "react";
 import {
   Box,
   BlockStack,
@@ -12,7 +12,8 @@ import {
   Select,
   Scrollable,
   Modal,
-  DataTable
+  DataTable,
+  Banner
 } from "@shopify/polaris";
 import { METAFIELD_CONFIG } from "./app.meta-injector.constants";
 
@@ -24,9 +25,24 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [], dynam
   const [dynamicCustomFields, setDynamicCustomFields] = useState([]);
   const [modalConfig, setModalConfig] = useState({ active: false, title: "", body: null, diffs: [], payload: [] });
   const [inlineAddState, setInlineAddState] = useState({ fieldKey: null, metaobjectType: null, value: "", loading: false });
+  const [resultBanner, setResultBanner] = useState(null); // { tone: "success"|"critical", message: "" }
 
   const tapTargetStyle = { minHeight: '48px', minWidth: '48px', display: 'flex', alignItems: 'center', justifyContent: 'center' };
   const inputTapTargetStyle = { minHeight: '48px', display: 'flex', flexDirection: 'column', justifyContent: 'center' };
+
+  // Watch fetcher result and show persistent banner
+  useEffect(() => {
+    if (fetcher.state === "idle" && fetcher.data) {
+      if (fetcher.data.success) {
+        setResultBanner({ tone: "success", message: "✅ Injection complete — metafields saved to Shopify successfully." });
+      } else {
+        const errorMsg = fetcher.data.errors
+          ? fetcher.data.errors.map(e => e.message).join(" | ")
+          : fetcher.data.message || "Unknown error occurred.";
+        setResultBanner({ tone: "critical", message: `❌ Injection failed: ${errorMsg}` });
+      }
+    }
+  }, [fetcher.state, fetcher.data]);
 
   const getMetafieldValue = useCallback((product, key) => {
     if (!product || !product.metafields) return "";
@@ -54,7 +70,6 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [], dynam
     });
   };
 
-  // MASTER FIELD MAP — keys must match METAFIELD_CONFIG keys AND dbProfiles keys exactly
   const PROFILE_FIELD_MAP = {
     "mohs_hardness":      (p) => p.mohs_hardness,
     "luster":             (p) => p.luster,
@@ -91,7 +106,6 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [], dynam
 
     let updates = { ...bulkFormData };
 
-    // Direct key-to-key mapping — no hardcoded string checks
     METAFIELD_CONFIG.forEach(field => {
       if (!field.key) return;
       const mapper = PROFILE_FIELD_MAP[field.key];
@@ -100,7 +114,6 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [], dynam
       if (profileValue) updates[field.key] = profileValue;
     });
 
-    // Translate text values to Shopify GIDs for dropdown fields
     METAFIELD_CONFIG.forEach(field => {
       if (field.metaobjectType && updates[field.key]) {
         const rawValue = updates[field.key];
@@ -119,7 +132,7 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [], dynam
   const handleBulkSubmit = () => {
     const selectedProducts = products.filter(p => bulkSelectedProductIds.includes(p.id));
     if (selectedProducts.length === 0) {
-      if (shopify && shopify.toast) shopify.toast.show("Select at least one product.", { isError: true });
+      setResultBanner({ tone: "critical", message: "Select at least one product before injecting." });
       return;
     }
 
@@ -180,11 +193,11 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [], dynam
     });
 
     if (payload.length === 0) {
-      if (shopify && shopify.toast) shopify.toast.show("No changes to apply based on current mode and inputs.", { isError: false });
+      setResultBanner({ tone: "warning", message: `No changes to apply. All selected products already have this data in FILL ONLY mode. Switch to OVERWRITE to force update.` });
       return;
     }
 
-    diffSummary.push({ field: "Total Updates", old: "Current State", new: `${changesCount} updates across ${selectedProducts.length} products` });
+    diffSummary.push({ field: "Total Updates", old: "Current State", new: `${changesCount} field updates across ${selectedProducts.length} products` });
 
     setModalConfig({
       active: true,
@@ -196,6 +209,7 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [], dynam
   };
 
   const executeBulkSubmit = () => {
+    setResultBanner({ tone: "info", message: "⏳ Injecting — please wait..." });
     fetcher.submit({ intent: "saveMetafields", payload: JSON.stringify(modalConfig.payload) }, { method: "post" });
     setModalConfig({ active: false, title: "", body: null, diffs: [], payload: [] });
   };
@@ -210,6 +224,16 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [], dynam
 
   return (
     <BlockStack gap="500">
+
+      {resultBanner && (
+        <Banner
+          tone={resultBanner.tone}
+          onDismiss={() => setResultBanner(null)}
+        >
+          <Text as="p">{resultBanner.message}</Text>
+        </Banner>
+      )}
+
       <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
         <div style={tapTargetStyle}>
           <Button tone="success" size="large" onClick={handleBulkSubmit} accessibilityLabel="Preview bulk injection">
@@ -217,6 +241,7 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [], dynam
           </Button>
         </div>
       </div>
+
       <div style={{ display: 'flex', flexDirection: 'row', gap: '24px', minHeight: '600px' }}>
         <div style={{ flex: '0 0 350px', display: 'flex', flexDirection: 'column' }}>
           <Box padding="300" background="bg-surface-secondary" borderRadius="200">
