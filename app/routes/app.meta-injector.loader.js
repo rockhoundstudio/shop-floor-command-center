@@ -272,7 +272,12 @@ export async function action({ request }) {
 
       const isMetaobjectType = cleanMf.type && cleanMf.type.includes("metaobject_reference");
 
-      if (!isMetaobjectType && typeof cleanMf.value === "string" && cleanMf.value.includes("gid://shopify")) {
+      if (
+        cleanMf.namespace === "custom" &&
+        !isMetaobjectType &&
+        typeof cleanMf.value === "string" &&
+        cleanMf.value.includes("gid://shopify")
+      ) {
         console.warn(`GID Leak intercepted on ${cleanMf.key} for ${cleanMf.ownerId}. Skipping this metafield.`);
         return acc;
       }
