@@ -69,12 +69,12 @@ export async function loader({ request }) {
     google_mineral_class: sp.mineralClass,
     google_rock_composition: sp.rockComposition,
     google_rock_formation: sp.rockFormation,
-    store_hardness: sp.hardness,
-    store_luster: sp.luster,
-    store_fracture: sp.fracture,
-    store_cleavage: sp.cleavage,
-    store_specific_gravity: sp.specificGravity,
-    store_diaphaneity: sp.diaphaneity
+    mohs_hardness: sp.hardness,
+    luster: sp.luster,
+    fracture_pattern: sp.fracture,
+    cleavage: sp.cleavage,
+    specific_gravity: sp.specificGravity,
+    diaphaneity: sp.diaphaneity
   }));
 
   let allRawProducts = [];
