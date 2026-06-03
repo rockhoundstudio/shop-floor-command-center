@@ -1,0 +1,826 @@
+[
+  {
+    "stoneName": "Labradorite",
+    "luster": "Vitreous to Pearly",
+    "fracture": "Uneven to Conchoidal",
+    "cleavage": "Perfect",
+    "specificGravity": "2.68-2.72",
+    "diaphaneity": "Translucent to Opaque"
+  },
+  {
+    "stoneName": "Variscite",
+    "luster": "Waxy to Dull",
+    "fracture": "Uneven to Conchoidal",
+    "cleavage": "Perfect",
+    "specificGravity": "2.57-2.61",
+    "diaphaneity": "Translucent to Opaque"
+  },
+  {
+    "stoneName": "Andesite",
+    "luster": "Dull",
+    "fracture": "Uneven",
+    "cleavage": "None",
+    "specificGravity": "2.5-2.8",
+    "diaphaneity": "Opaque"
+  },
+  {
+    "stoneName": "Hornblende",
+    "luster": "Vitreous to Dull",
+    "fracture": "Uneven",
+    "cleavage": "Perfect",
+    "specificGravity": "3.0-3.5",
+    "diaphaneity": "Opaque"
+  },
+  {
+    "stoneName": "Ironstone",
+    "luster": "Earthy to Submetallic",
+    "fracture": "Uneven",
+    "cleavage": "None",
+    "specificGravity": "3.3-3.8",
+    "diaphaneity": "Opaque"
+  },
+  {
+    "stoneName": "Jasper",
+    "luster": "Waxy to Dull",
+    "fracture": "Conchoidal",
+    "cleavage": "None",
+    "specificGravity": "2.58-2.91",
+    "diaphaneity": "Opaque"
+  },
+  {
+    "stoneName": "Agate",
+    "luster": "Waxy",
+    "fracture": "Conchoidal",
+    "cleavage": "None",
+    "specificGravity": "2.58-2.64",
+    "diaphaneity": "Translucent"
+  },
+  {
+    "stoneName": "Picture Jasper",
+    "luster": "Vitreous",
+    "fracture": "Conchoidal",
+    "cleavage": "None",
+    "specificGravity": "2.5 - 2.9",
+    "diaphaneity": "Opaque"
+  },
+  {
+    "stoneName": "Owyhee Jasper",
+    "luster": "Vitreous",
+    "fracture": "Conchoidal",
+    "cleavage": "None",
+    "specificGravity": "2.6",
+    "diaphaneity": "Opaque"
+  },
+  {
+    "stoneName": "Biggs Jasper",
+    "luster": "Vitreous",
+    "fracture": "Conchoidal",
+    "cleavage": "None",
+    "specificGravity": "2.6",
+    "diaphaneity": "Opaque"
+  },
+  {
+    "stoneName": "Morrisonite",
+    "luster": "Vitreous",
+    "fracture": "Conchoidal",
+    "cleavage": "None",
+    "specificGravity": "2.6",
+    "diaphaneity": "Opaque"
+  },
+  {
+    "stoneName": "Red Jasper",
+    "luster": "Vitreous",
+    "fracture": "Conchoidal",
+    "cleavage": "None",
+    "specificGravity": "2.6",
+    "diaphaneity": "Opaque"
+  },
+  {
+    "stoneName": "Yellow Jasper",
+    "luster": "Vitreous",
+    "fracture": "Conchoidal",
+    "cleavage": "None",
+    "specificGravity": "2.6",
+    "diaphaneity": "Opaque"
+  },
+  {
+    "stoneName": "Ocean Jasper",
+    "luster": "Vitreous",
+    "fracture": "Conchoidal",
+    "cleavage": "None",
+    "specificGravity": "2.6",
+    "diaphaneity": "Opaque"
+  },
+  {
+    "stoneName": "Mookaite",
+    "luster": "Vitreous to Dull",
+    "fracture": "Conchoidal",
+    "cleavage": "None",
+    "specificGravity": "2.6",
+    "diaphaneity": "Opaque"
+  },
+  {
+    "stoneName": "Brecciated Jasper",
+    "luster": "Vitreous",
+    "fracture": "Uneven",
+    "cleavage": "None",
+    "specificGravity": "2.6",
+    "diaphaneity": "Opaque"
+  },
+  {
+    "stoneName": "Dalmatian Stone",
+    "luster": "Vitreous",
+    "fracture": "Uneven",
+    "cleavage": "None",
+    "specificGravity": "2.6",
+    "diaphaneity": "Opaque"
+  },
+  {
+    "stoneName": "Bloodstone",
+    "luster": "Vitreous",
+    "fracture": "Conchoidal",
+    "cleavage": "None",
+    "specificGravity": "2.6",
+    "diaphaneity": "Opaque"
+  },
+  {
+    "stoneName": "Bumblebee Jasper",
+    "luster": "Vitreous",
+    "fracture": "Conchoidal",
+    "cleavage": "None",
+    "specificGravity": "2.6",
+    "diaphaneity": "Opaque"
+  },
+  {
+    "stoneName": "Kambaba Jasper",
+    "luster": "Vitreous",
+    "fracture": "Conchoidal",
+    "cleavage": "None",
+    "specificGravity": "2.6",
+    "diaphaneity": "Opaque"
+  },
+  {
+    "stoneName": "Montana Agate",
+    "luster": "Waxy",
+    "fracture": "Conchoidal",
+    "cleavage": "None",
+    "specificGravity": "2.6",
+    "diaphaneity": "Translucent"
+  },
+  {
+    "stoneName": "Botswana Agate",
+    "luster": "Waxy",
+    "fracture": "Conchoidal",
+    "cleavage": "None",
+    "specificGravity": "2.6",
+    "diaphaneity": "Translucent to Opaque"
+  },
+  {
+    "stoneName": "Ellensburg Blue Agate",
+    "luster": "Waxy",
+    "fracture": "Conchoidal",
+    "cleavage": "None",
+    "specificGravity": "2.6",
+    "diaphaneity": "Translucent"
+  },
+  {
+    "stoneName": "Plume Agate",
+    "luster": "Waxy",
+    "fracture": "Conchoidal",
+    "cleavage": "None",
+    "specificGravity": "2.6",
+    "diaphaneity": "Translucent"
+  },
+  {
+    "stoneName": "Moss Agate",
+    "luster": "Waxy",
+    "fracture": "Conchoidal",
+    "cleavage": "None",
+    "specificGravity": "2.6",
+    "diaphaneity": "Translucent"
+  },
+  {
+    "stoneName": "Tree Agate",
+    "luster": "Waxy",
+    "fracture": "Conchoidal",
+    "cleavage": "None",
+    "specificGravity": "2.6",
+    "diaphaneity": "Opaque"
+  },
+  {
+    "stoneName": "Lace Agate",
+    "luster": "Waxy",
+    "fracture": "Conchoidal",
+    "cleavage": "None",
+    "specificGravity": "2.6",
+    "diaphaneity": "Translucent"
+  },
+  {
+    "stoneName": "Crazy Lace Agate",
+    "luster": "Waxy",
+    "fracture": "Conchoidal",
+    "cleavage": "None",
+    "specificGravity": "2.6",
+    "diaphaneity": "Opaque"
+  },
+  {
+    "stoneName": "Blue Lace Agate",
+    "luster": "Waxy",
+    "fracture": "Conchoidal",
+    "cleavage": "None",
+    "specificGravity": "2.6",
+    "diaphaneity": "Translucent"
+  },
+  {
+    "stoneName": "Dendritic Agate",
+    "luster": "Waxy",
+    "fracture": "Conchoidal",
+    "cleavage": "None",
+    "specificGravity": "2.6",
+    "diaphaneity": "Translucent"
+  },
+  {
+    "stoneName": "Fire Agate",
+    "luster": "Waxy",
+    "fracture": "Conchoidal",
+    "cleavage": "None",
+    "specificGravity": "2.6",
+    "diaphaneity": "Translucent to Opaque"
+  },
+  {
+    "stoneName": "Chalcedony",
+    "luster": "Waxy",
+    "fracture": "Conchoidal",
+    "cleavage": "None",
+    "specificGravity": "2.59 - 2.61",
+    "diaphaneity": "Translucent"
+  },
+  {
+    "stoneName": "Carnelian",
+    "luster": "Vitreous",
+    "fracture": "Conchoidal",
+    "cleavage": "None",
+    "specificGravity": "2.59",
+    "diaphaneity": "Translucent"
+  },
+  {
+    "stoneName": "Chrysoprase",
+    "luster": "Waxy",
+    "fracture": "Conchoidal",
+    "cleavage": "None",
+    "specificGravity": "2.58 - 2.64",
+    "diaphaneity": "Translucent"
+  },
+  {
+    "stoneName": "Amethyst",
+    "luster": "Vitreous",
+    "fracture": "Conchoidal",
+    "cleavage": "None",
+    "specificGravity": "2.65",
+    "diaphaneity": "Transparent to Translucent"
+  },
+  {
+    "stoneName": "Citrine",
+    "luster": "Vitreous",
+    "fracture": "Conchoidal",
+    "cleavage": "None",
+    "specificGravity": "2.65",
+    "diaphaneity": "Transparent to Translucent"
+  },
+  {
+    "stoneName": "Rose Quartz",
+    "luster": "Vitreous",
+    "fracture": "Conchoidal",
+    "cleavage": "None",
+    "specificGravity": "2.65",
+    "diaphaneity": "Translucent"
+  },
+  {
+    "stoneName": "Smoky Quartz",
+    "luster": "Vitreous",
+    "fracture": "Conchoidal",
+    "cleavage": "None",
+    "specificGravity": "2.65",
+    "diaphaneity": "Transparent to Translucent"
+  },
+  {
+    "stoneName": "Prasiolite",
+    "luster": "Vitreous",
+    "fracture": "Conchoidal",
+    "cleavage": "None",
+    "specificGravity": "2.65",
+    "diaphaneity": "Transparent to Translucent"
+  },
+  {
+    "stoneName": "Tourmalinated Quartz",
+    "luster": "Vitreous",
+    "fracture": "Conchoidal",
+    "cleavage": "None",
+    "specificGravity": "2.65",
+    "diaphaneity": "Transparent with Inclusions"
+  },
+  {
+    "stoneName": "Rutilated Quartz",
+    "luster": "Vitreous",
+    "fracture": "Conchoidal",
+    "cleavage": "None",
+    "specificGravity": "2.65",
+    "diaphaneity": "Transparent with Inclusions"
+  },
+  {
+    "stoneName": "Tiger's Eye",
+    "luster": "Silky",
+    "fracture": "Fibrous",
+    "cleavage": "None",
+    "specificGravity": "2.64 - 2.71",
+    "diaphaneity": "Opaque"
+  },
+  {
+    "stoneName": "Hawk's Eye",
+    "luster": "Silky",
+    "fracture": "Fibrous",
+    "cleavage": "None",
+    "specificGravity": "2.64",
+    "diaphaneity": "Opaque"
+  },
+  {
+    "stoneName": "Thunderegg",
+    "luster": "Varies",
+    "fracture": "Conchoidal",
+    "cleavage": "None",
+    "specificGravity": "2.5 - 2.7",
+    "diaphaneity": "Opaque"
+  },
+  {
+    "stoneName": "Granite",
+    "luster": "Vitreous",
+    "fracture": "Uneven",
+    "cleavage": "None",
+    "specificGravity": "2.6 - 2.8",
+    "diaphaneity": "Opaque"
+  },
+  {
+    "stoneName": "Argillite",
+    "luster": "Dull",
+    "fracture": "Uneven",
+    "cleavage": "Good",
+    "specificGravity": "2.6",
+    "diaphaneity": "Opaque"
+  },
+  {
+    "stoneName": "Dallasite",
+    "luster": "Vitreous",
+    "fracture": "Conchoidal",
+    "cleavage": "None",
+    "specificGravity": "2.6 - 2.8",
+    "diaphaneity": "Opaque"
+  },
+  {
+    "stoneName": "Pumice",
+    "luster": "Dull",
+    "fracture": "Uneven",
+    "cleavage": "None",
+    "specificGravity": "0.2 - 0.3",
+    "diaphaneity": "Opaque"
+  },
+  {
+    "stoneName": "Moonstone",
+    "luster": "Vitreous to Pearly",
+    "fracture": "Uneven",
+    "cleavage": "Perfect",
+    "specificGravity": "2.56 - 2.59",
+    "diaphaneity": "Translucent"
+  },
+  {
+    "stoneName": "Sunstone",
+    "luster": "Vitreous",
+    "fracture": "Uneven",
+    "cleavage": "Perfect",
+    "specificGravity": "2.62 - 2.65",
+    "diaphaneity": "Translucent to Opaque"
+  },
+  {
+    "stoneName": "Amazonite",
+    "luster": "Vitreous",
+    "fracture": "Uneven",
+    "cleavage": "Perfect",
+    "specificGravity": "2.56 - 2.58",
+    "diaphaneity": "Opaque"
+  },
+  {
+    "stoneName": "Larvikite",
+    "luster": "Vitreous",
+    "fracture": "Uneven",
+    "cleavage": "Perfect",
+    "specificGravity": "2.7 - 2.8",
+    "diaphaneity": "Opaque"
+  },
+  {
+    "stoneName": "Snowflake Obsidian",
+    "luster": "Vitreous",
+    "fracture": "Conchoidal",
+    "cleavage": "None",
+    "specificGravity": "2.35 - 2.60",
+    "diaphaneity": "Opaque"
+  },
+  {
+    "stoneName": "Quartzite",
+    "luster": "Vitreous to Greasy",
+    "fracture": "Uneven to Conchoidal",
+    "cleavage": "None",
+    "specificGravity": "2.64-2.69",
+    "diaphaneity": "Translucent to Opaque"
+  },
+  {
+    "stoneName": "Feldspar",
+    "luster": "Vitreous to Pearly",
+    "fracture": "Uneven to Conchoidal",
+    "cleavage": "Perfect",
+    "specificGravity": "2.55-2.76",
+    "diaphaneity": "Transparent to Opaque"
+  },
+  {
+    "stoneName": "Quartz",
+    "luster": "Vitreous",
+    "fracture": "Conchoidal",
+    "cleavage": "None",
+    "specificGravity": "2.65",
+    "diaphaneity": "Transparent to Opaque"
+  },
+  {
+    "stoneName": "Aventurine",
+    "luster": "Vitreous to Glistening",
+    "fracture": "Uneven to Conchoidal",
+    "cleavage": "None",
+    "specificGravity": "2.64-2.69",
+    "diaphaneity": "Translucent to Opaque"
+  },
+  {
+    "stoneName": "Rhyolite",
+    "luster": "Dull",
+    "fracture": "Uneven",
+    "cleavage": "None",
+    "specificGravity": "2.4-2.6",
+    "diaphaneity": "Opaque"
+  },
+  {
+    "stoneName": "Basalt",
+    "luster": "Dull",
+    "fracture": "Uneven",
+    "cleavage": "None",
+    "specificGravity": "2.8-3.0",
+    "diaphaneity": "Opaque"
+  },
+  {
+    "stoneName": "Petrified Wood",
+    "luster": "Waxy to Dull",
+    "fracture": "Conchoidal",
+    "cleavage": "None",
+    "specificGravity": "2.58-2.91",
+    "diaphaneity": "Opaque"
+  },
+  {
+    "stoneName": "Obsidian",
+    "luster": "Vitreous",
+    "fracture": "Conchoidal",
+    "cleavage": "None",
+    "specificGravity": "2.35-2.60",
+    "diaphaneity": "Translucent to Opaque"
+  },
+  {
+    "stoneName": "Mahogany Obsidian",
+    "luster": "Vitreous",
+    "fracture": "Conchoidal",
+    "cleavage": "None",
+    "specificGravity": "2.35 - 2.60",
+    "diaphaneity": "Opaque"
+  },
+  {
+    "stoneName": "Rainbow Obsidian",
+    "luster": "Vitreous",
+    "fracture": "Conchoidal",
+    "cleavage": "None",
+    "specificGravity": "2.35 - 2.60",
+    "diaphaneity": "Opaque"
+  },
+  {
+    "stoneName": "Gold Sheen Obsidian",
+    "luster": "Vitreous",
+    "fracture": "Conchoidal",
+    "cleavage": "None",
+    "specificGravity": "2.35 - 2.60",
+    "diaphaneity": "Opaque"
+  },
+  {
+    "stoneName": "Silver Sheen Obsidian",
+    "luster": "Vitreous",
+    "fracture": "Conchoidal",
+    "cleavage": "None",
+    "specificGravity": "2.35 - 2.60",
+    "diaphaneity": "Opaque"
+  },
+  {
+    "stoneName": "Malachite",
+    "luster": "Silky to Dull",
+    "fracture": "Uneven",
+    "cleavage": "Perfect",
+    "specificGravity": "3.6 - 4.0",
+    "diaphaneity": "Opaque"
+  },
+  {
+    "stoneName": "Chrysocolla",
+    "luster": "Vitreous to Earthy",
+    "fracture": "Conchoidal",
+    "cleavage": "None",
+    "specificGravity": "2.0 - 2.4",
+    "diaphaneity": "Opaque"
+  },
+  {
+    "stoneName": "Azurite",
+    "luster": "Vitreous to Dull",
+    "fracture": "Conchoidal",
+    "cleavage": "Perfect",
+    "specificGravity": "3.7 - 3.9",
+    "diaphaneity": "Opaque"
+  },
+  {
+    "stoneName": "Turquoise",
+    "luster": "Waxy",
+    "fracture": "Conchoidal",
+    "cleavage": "Good",
+    "specificGravity": "2.60 - 2.90",
+    "diaphaneity": "Opaque"
+  },
+  {
+    "stoneName": "Rhodochrosite",
+    "luster": "Vitreous to Pearly",
+    "fracture": "Uneven",
+    "cleavage": "Perfect",
+    "specificGravity": "3.5 - 3.7",
+    "diaphaneity": "Translucent to Opaque"
+  },
+  {
+    "stoneName": "Fluorite",
+    "luster": "Vitreous",
+    "fracture": "Subconchoidal",
+    "cleavage": "Perfect",
+    "specificGravity": "3.0 - 3.3",
+    "diaphaneity": "Transparent to Translucent"
+  },
+  {
+    "stoneName": "Calcite",
+    "luster": "Vitreous",
+    "fracture": "Conchoidal",
+    "cleavage": "Perfect",
+    "specificGravity": "2.7",
+    "diaphaneity": "Transparent to Opaque"
+  },
+  {
+    "stoneName": "Howlite",
+    "luster": "Dull to Earthy",
+    "fracture": "Conchoidal",
+    "cleavage": "None",
+    "specificGravity": "2.5 - 2.6",
+    "diaphaneity": "Opaque"
+  },
+  {
+    "stoneName": "Magnesite",
+    "luster": "Dull",
+    "fracture": "Conchoidal",
+    "cleavage": "Perfect",
+    "specificGravity": "3.0 - 3.2",
+    "diaphaneity": "Opaque"
+  },
+  {
+    "stoneName": "Apatite",
+    "luster": "Vitreous",
+    "fracture": "Conchoidal",
+    "cleavage": "Indistinct",
+    "specificGravity": "3.1 - 3.2",
+    "diaphaneity": "Transparent to Opaque"
+  },
+  {
+    "stoneName": "Lepidolite",
+    "luster": "Pearly",
+    "fracture": "Uneven",
+    "cleavage": "Perfect",
+    "specificGravity": "2.8 - 2.9",
+    "diaphaneity": "Translucent to Opaque"
+  },
+  {
+    "stoneName": "Onyx Marble",
+    "luster": "Vitreous",
+    "fracture": "Conchoidal",
+    "cleavage": "Perfect",
+    "specificGravity": "2.7",
+    "diaphaneity": "Translucent"
+  },
+  {
+    "stoneName": "Smithsonite",
+    "luster": "Pearly",
+    "fracture": "Uneven",
+    "cleavage": "Perfect",
+    "specificGravity": "4.3 - 4.4",
+    "diaphaneity": "Translucent to Opaque"
+  },
+  {
+    "stoneName": "Gold",
+    "luster": "Metallic",
+    "fracture": "Hackly",
+    "cleavage": "None",
+    "specificGravity": "19.3",
+    "diaphaneity": "Opaque"
+  },
+  {
+    "stoneName": "Silver",
+    "luster": "Metallic",
+    "fracture": "Hackly",
+    "cleavage": "None",
+    "specificGravity": "10.5",
+    "diaphaneity": "Opaque"
+  },
+  {
+    "stoneName": "Copper",
+    "luster": "Metallic",
+    "fracture": "Hackly",
+    "cleavage": "None",
+    "specificGravity": "8.9",
+    "diaphaneity": "Opaque"
+  },
+  {
+    "stoneName": "Hematite",
+    "luster": "Metallic",
+    "fracture": "Uneven",
+    "cleavage": "None",
+    "specificGravity": "5.0 - 5.3",
+    "diaphaneity": "Opaque"
+  },
+  {
+    "stoneName": "Pyrite",
+    "luster": "Metallic",
+    "fracture": "Conchoidal",
+    "cleavage": "Poor",
+    "specificGravity": "4.95 - 5.10",
+    "diaphaneity": "Opaque"
+  },
+  {
+    "stoneName": "Ironstone Matrix",
+    "luster": "Dull to Earthy",
+    "fracture": "Uneven",
+    "cleavage": "None",
+    "specificGravity": "3.0 - 4.0",
+    "diaphaneity": "Opaque"
+  },
+  {
+    "stoneName": "Jadeite",
+    "luster": "Vitreous to Greasy",
+    "fracture": "Splintery",
+    "cleavage": "Good",
+    "specificGravity": "3.24 - 3.43",
+    "diaphaneity": "Translucent to Opaque"
+  },
+  {
+    "stoneName": "Nephrite",
+    "luster": "Vitreous to Greasy",
+    "fracture": "Splintery",
+    "cleavage": "Good",
+    "specificGravity": "2.90 - 3.03",
+    "diaphaneity": "Translucent to Opaque"
+  },
+  {
+    "stoneName": "Rhodonite",
+    "luster": "Vitreous",
+    "fracture": "Conchoidal",
+    "cleavage": "Perfect",
+    "specificGravity": "3.5 - 3.7",
+    "diaphaneity": "Translucent to Opaque"
+  },
+  {
+    "stoneName": "Lapis Lazuli",
+    "luster": "Vitreous to Greasy",
+    "fracture": "Uneven",
+    "cleavage": "Imperfect",
+    "specificGravity": "2.7 - 2.9",
+    "diaphaneity": "Opaque"
+  },
+  {
+    "stoneName": "Sodalite",
+    "luster": "Vitreous to Greasy",
+    "fracture": "Conchoidal",
+    "cleavage": "Poor",
+    "specificGravity": "2.14 - 2.40",
+    "diaphaneity": "Translucent to Opaque"
+  },
+  {
+    "stoneName": "Unakite",
+    "luster": "Vitreous",
+    "fracture": "Uneven",
+    "cleavage": "Good",
+    "specificGravity": "3.3 - 3.5",
+    "diaphaneity": "Opaque"
+  },
+  {
+    "stoneName": "Charoite",
+    "luster": "Vitreous to Pearly",
+    "fracture": "Conchoidal",
+    "cleavage": "Good",
+    "specificGravity": "2.54 - 2.58",
+    "diaphaneity": "Translucent to Opaque"
+  },
+  {
+    "stoneName": "Pietersite",
+    "luster": "Silky",
+    "fracture": "Conchoidal",
+    "cleavage": "None",
+    "specificGravity": "2.6",
+    "diaphaneity": "Opaque"
+  },
+  {
+    "stoneName": "Prehnite",
+    "luster": "Vitreous",
+    "fracture": "Uneven",
+    "cleavage": "Good",
+    "specificGravity": "2.8 - 2.9",
+    "diaphaneity": "Translucent"
+  },
+  {
+    "stoneName": "Kyanite",
+    "luster": "Vitreous to Pearly",
+    "fracture": "Splintery",
+    "cleavage": "Perfect",
+    "specificGravity": "3.53 - 3.65",
+    "diaphaneity": "Transparent to Translucent"
+  },
+  {
+    "stoneName": "Dumortierite",
+    "luster": "Vitreous",
+    "fracture": "Uneven",
+    "cleavage": "Good",
+    "specificGravity": "3.2 - 3.4",
+    "diaphaneity": "Opaque"
+  },
+  {
+    "stoneName": "Garnet",
+    "luster": "Vitreous",
+    "fracture": "Conchoidal",
+    "cleavage": "None",
+    "specificGravity": "3.5 - 4.3",
+    "diaphaneity": "Transparent to Opaque"
+  },
+  {
+    "stoneName": "Star Garnet",
+    "luster": "Vitreous",
+    "fracture": "Conchoidal",
+    "cleavage": "None",
+    "specificGravity": "3.5 - 4.3",
+    "diaphaneity": "Opaque"
+  },
+  {
+    "stoneName": "Serpentine",
+    "luster": "Greasy, Waxy, or Silky",
+    "fracture": "Subconchoidal to Uneven",
+    "cleavage": "None",
+    "specificGravity": "2.44-2.62",
+    "diaphaneity": "Translucent to Opaque"
+  },
+  {
+    "stoneName": "Tourmaline",
+    "luster": "Vitreous",
+    "fracture": "Uneven",
+    "cleavage": "Indistinct",
+    "specificGravity": "3.0 - 3.26",
+    "diaphaneity": "Transparent to Opaque"
+  },
+  {
+    "stoneName": "Beryl",
+    "luster": "Vitreous",
+    "fracture": "Conchoidal",
+    "cleavage": "Imperfect",
+    "specificGravity": "2.63 - 2.90",
+    "diaphaneity": "Transparent to Opaque"
+  },
+  {
+    "stoneName": "Aquamarine",
+    "luster": "Vitreous",
+    "fracture": "Conchoidal",
+    "cleavage": "Imperfect",
+    "specificGravity": "2.68 - 2.74",
+    "diaphaneity": "Transparent to Translucent"
+  },
+  {
+    "stoneName": "Topaz",
+    "luster": "Vitreous",
+    "fracture": "Conchoidal",
+    "cleavage": "Perfect",
+    "specificGravity": "3.49 - 3.57",
+    "diaphaneity": "Transparent"
+  },
+  {
+    "stoneName": "Spinel",
+    "luster": "Vitreous",
+    "fracture": "Conchoidal",
+    "cleavage": "Indistinct",
+    "specificGravity": "3.54 - 3.63",
+    "diaphaneity": "Transparent to Opaque"
+  }
+]

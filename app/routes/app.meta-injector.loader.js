@@ -71,7 +71,7 @@ export async function loader({ request }) {
     google_rock_formation: sp.rockFormation,
     mohs_hardness: sp.hardness,
     luster: sp.luster,
-    fracture_pattern: sp.fracture,
+    fracture: sp.fracture,
     cleavage: sp.cleavage,
     specific_gravity: sp.specificGravity,
     diaphaneity: sp.diaphaneity
