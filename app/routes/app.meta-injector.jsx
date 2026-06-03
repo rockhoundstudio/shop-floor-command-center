@@ -4,7 +4,7 @@ import {
   Page, Layout, Card, Text, Banner, BlockStack, Box, Tabs, Frame,
   TextField, Select, Button, Combobox, Listbox, Icon, InlineStack, FormLayout
 } from "@shopify/polaris";
-import { SearchIcon } from "@shopify/polaris-icons";
+import { SearchIcon, MagicIcon } from "@shopify/polaris-icons";
 
 // --- IMPORT THE ENGINE (Loader & Action) ---
 import { loader as engineLoader, action as engineAction } from "./app.meta-injector.loader";
@@ -29,6 +29,7 @@ function InjectorUI({ fetcher, products, shopify }) {
   const [selectedProductId, setSelectedProductId] = useState("");
   const [comboboxValue, setComboboxValue] = useState("");
   const [formState, setFormState] = useState({});
+  const [currentProductTitle, setCurrentProductTitle] = useState("");
 
   const filteredProducts = useMemo(() => {
     if (!comboboxValue) return products;
@@ -40,6 +41,7 @@ function InjectorUI({ fetcher, products, shopify }) {
     const product = products.find(p => p.id === value);
     if (product) {
       setComboboxValue(product.title);
+      setCurrentProductTitle(product.title);
       const newForm = {};
       if (product.metafields && product.metafields.edges) {
         product.metafields.edges.forEach(({ node }) => {
@@ -61,8 +63,72 @@ function InjectorUI({ fetcher, products, shopify }) {
     setFormState({});
     setSelectedProductId("");
     setComboboxValue("");
+    setCurrentProductTitle("");
     if (shopify) shopify.toast.show("Form cleared");
   }, [shopify]);
+
+  const handleAutoFill = useCallback(() => {
+    if (!selectedProductId) {
+      if (shopify) shopify.toast.show("Please select a product first", { isError: true });
+      return;
+    }
+
+    setFormState(prev => {
+      const newState = { ...prev };
+      
+      const setIfEmpty = (key, value) => {
+        if (!newState[key] || newState[key].trim() === "") {
+          newState[key] = value;
+        }
+      };
+
+      setIfEmpty("handcrafted_by", "Bob and Janyce");
+      setIfEmpty("is_one_of_a_kind", "Yes");
+      setIfEmpty("treated", "No");
+      setIfEmpty("found_object", "Yes");
+      setIfEmpty("surface_finish", "Polished");
+
+      const titleLower = currentProductTitle.toLowerCase();
+      
+      const stoneFamilies = ["Jasper", "Agate", "Obsidian", "Opal", "Labradorite", "Serpentine", "Chert", "Quartz", "Chalcedony", "Petrified Wood", "Breccia"];
+      for (const family of stoneFamilies) {
+        if (titleLower.includes(family.toLowerCase())) {
+          setIfEmpty("stone_family", family);
+          setIfEmpty("material", family);
+          break;
+        }
+      }
+
+      const colors = ["Red", "Orange", "Yellow", "Green", "Blue", "Purple", "Pink", "Brown", "Black", "White", "Grey", "Gray", "Cream", "Tan", "Gold", "Silver", "Multi"];
+      for (const color of colors) {
+        if (titleLower.includes(color.toLowerCase())) {
+          setIfEmpty("color", color);
+          break;
+        }
+      }
+
+      const product = products.find(p => p.id === selectedProductId);
+      if (product && product.collections && product.collections.edges) {
+        const collectionTitles = product.collections.edges.map(e => e.node.title);
+        
+        if (collectionTitles.length > 0) {
+          setIfEmpty("collection_name", collectionTitles.join(", "));
+          
+          const knownTrips = ["Richardson Strike", "3000-Mile Run", "Nickel Back Collection", "Yakima River", "Spencer Opal Mine"];
+          for (const trip of knownTrips) {
+            if (collectionTitles.some(title => title.toLowerCase().includes(trip.toLowerCase()))) {
+              setIfEmpty("trip_or_series", trip);
+              break;
+            }
+          }
+        }
+      }
+
+      return newState;
+    });
+
+    if (shopify) shopify.toast.show("Auto-Fill applied to empty fields");
+  }, [selectedProductId, currentProductTitle, products, shopify]);
 
   const handleInject = useCallback(() => {
     if (!selectedProductId) {
@@ -107,7 +173,19 @@ function InjectorUI({ fetcher, products, shopify }) {
     <BlockStack gap="600">
       <Card padding="400">
         <BlockStack gap="400">
-          <Text variant="headingLg" as="h2">Select a Piece</Text>
+          <InlineStack align="space-between" blockAlign="center">
+            <Text variant="headingLg" as="h2">Select a Piece</Text>
+            {selectedProductId && (
+              <Button 
+                icon={MagicIcon} 
+                onClick={handleAutoFill} 
+                accessibilityLabel="Auto-Fill Empty Fields"
+                tone="success"
+              >
+                Auto-Fill
+              </Button>
+            )}
+          </InlineStack>
           <Combobox
             allowMultiple={false}
             activator={
@@ -188,7 +266,7 @@ function InjectorUI({ fetcher, products, shopify }) {
           <Button size="large" onClick={handleClear} accessibilityLabel="Clear all fields">Clear Form</Button>
         </div>
         <div style={{ minHeight: '52px', minWidth: '180px' }}>
-          <Button size="large" variant="primary" onClick={handleInject} accessibilityLabel="Inject Metafields" loading={fetcher.state !== "idle"}>Inject Metafields</Button>
+          <Button size="large" variant="primary" onClick={handleInject} accessibilityLabel="Save to Shopify" loading={fetcher.state !== "idle"}>Save to Shopify</Button>
         </div>
       </InlineStack>
     </BlockStack>
