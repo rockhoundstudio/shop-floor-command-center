@@ -2,80 +2,17 @@ import { authenticate } from "../shopify.server";
 import { EXCLUDED_TITLES } from "./app.meta-injector.constants";
 import db from "../db.server";
 
-async function fetchDynamicMetaobjects(admin) {
-  const types = [
-    "shopify--color-pattern", "shopify--authenticity", "shopify--rarity",
-    "shopify--crystal-system", "shopify--geological-era", "shopify--mineral-class",
-    "shopify--rock-composition", "shopify--rock-formation"
-  ];
-
-  let dynamicOptions = {};
-
-  await Promise.all(types.map(async (type) => {
-    const response = await admin.graphql(`
-      query getMetaobjects($type: String!) {
-        metaobjects(type: $type, first: 250) {
-          edges {
-            node {
-              id
-              handle
-              fields {
-                key
-                value
-              }
-            }
-          }
-        }
-      }
-    `, { variables: { type } });
-
-    const data = await response.json();
-
-    if (data.data && data.data.metaobjects) {
-      dynamicOptions[type] = data.data.metaobjects.edges.map(({ node }) => {
-        const labelField = node.fields.find(f => f.key === 'name' || f.key === 'label');
-        const displayLabel = labelField ? labelField.value : node.handle;
-        return {
-          label: displayLabel,
-          value: `["${node.id}"]`
-        };
-      });
-      dynamicOptions[type].sort((a, b) => a.label.localeCompare(b.label));
-    } else {
-      dynamicOptions[type] = [];
-    }
-  }));
-
-  return dynamicOptions;
-}
-
 export async function loader({ request }) {
   const { admin } = await authenticate.admin(request);
 
-  const dynamicMetaobjectOptions = await fetchDynamicMetaobjects(admin);
-
   const rawStoneProfiles = await db.stoneProfile.findMany();
 
-  // KEY LAW — these keys must match exactly what InjectorTab looks for
-  const dbProfiles = rawStoneProfiles.map(sp => ({
-    title: sp.stoneName,
-    stoneName: sp.stoneName,
-    authenticity: sp.authenticity,
-    google_authenticity: sp.authenticity,
-    rarity: sp.rarity,
-    google_rarity: sp.rarity,
-    google_crystal_system: sp.crystalSystem,
-    google_geological_era: sp.geologicalEra,
-    google_mineral_class: sp.mineralClass,
-    google_rock_composition: sp.rockComposition,
-    google_rock_formation: sp.rockFormation,
-    mohs_hardness: sp.hardness,
-    luster: sp.luster,
-    fracture: sp.fracture,
-    cleavage: sp.cleavage,
-    specific_gravity: sp.specificGravity,
-    diaphaneity: sp.diaphaneity
-  }));
+  const dbProfiles = rawStoneProfiles.map((sp) => {
+    return {
+      title: sp.stoneName,
+      stoneName: sp.stoneName
+    };
+  });
 
   let allRawProducts = [];
   let hasNextPage = true;
@@ -87,12 +24,15 @@ export async function loader({ request }) {
       response = await admin.graphql(`
         #graphql
         query GetAllProducts($cursor: String) {
-          products(first: 10, after: $cursor, sortKey: TITLE) {
+          products(first: 50, after: $cursor, sortKey: TITLE) {
             pageInfo { hasNextPage endCursor }
             edges {
               node {
-                id title status featuredImage { url altText }
-                metafields(first: 50) {
+                id
+                title
+                handle
+                featuredImage { url altText }
+                metafields(first: 50, namespace: "custom") {
                   edges {
                     node {
                       id namespace key value type
@@ -110,76 +50,20 @@ export async function loader({ request }) {
     }
 
     const parsed = await response.json();
-    const productsData = parsed.data?.products || null;
+    const productsData = parsed.data && parsed.data.products;
 
     if (productsData) {
       allRawProducts = [...allRawProducts, ...productsData.edges.map(e => e.node)];
-      hasNextPage = productsData.pageInfo.hasNextPage || false;
-      cursor = productsData.pageInfo.endCursor || null;
+      hasNextPage = productsData.pageInfo && productsData.pageInfo.hasNextPage;
+      cursor = productsData.pageInfo && productsData.pageInfo.endCursor;
     } else {
       hasNextPage = false;
     }
   }
 
-  const products = allRawProducts.filter(p => !EXCLUDED_TITLES.includes(p.title));
-
-  const gidsToResolve = new Set();
-
-  products.forEach(p => {
-    if (p.metafields && p.metafields.edges) {
-      p.metafields.edges.forEach(edge => {
-        const mf = edge.node;
-        if (mf.type === "list.metaobject_reference" || mf.type === "metaobject_reference") {
-          try {
-            const parsedValue = JSON.parse(mf.value);
-            if (Array.isArray(parsedValue)) {
-              parsedValue.forEach(gid => gidsToResolve.add(gid));
-            } else if (typeof parsedValue === "string") {
-              gidsToResolve.add(parsedValue);
-            }
-          } catch (e) {
-            if (typeof mf.value === "string" && mf.value.includes("gid://shopify/Metaobject/")) {
-              const matches = mf.value.match(/gid:\/\/shopify\/Metaobject\/\d+/g);
-              if (matches) {
-                matches.forEach(gid => gidsToResolve.add(gid));
-              }
-            }
-          }
-        }
-      });
-    }
+  const products = allRawProducts.filter((p) => {
+    return !EXCLUDED_TITLES.includes(p.title);
   });
-
-  const uniqueGids = Array.from(gidsToResolve);
-  const metaobjectHandles = {};
-
-  const chunks = [];
-  for (let i = 0; i < uniqueGids.length; i += 10) {
-    chunks.push(uniqueGids.slice(i, i + 10));
-  }
-
-  for (const chunk of chunks) {
-    const resolveResponse = await admin.graphql(`
-      #graphql
-      query ResolveNodes($ids: [ID!]!) {
-        nodes(ids: $ids) {
-          ... on Metaobject {
-            id
-            handle
-          }
-        }
-      }
-    `, { variables: { ids: chunk } });
-
-    const resolveParsed = await resolveResponse.json();
-    const nodes = resolveParsed.data?.nodes || [];
-
-    nodes.forEach(node => {
-      if (node && node.id && node.handle) {
-        metaobjectHandles[node.id] = node.handle;
-      }
-    });
-  }
 
   let snapResponse;
   try {
@@ -205,17 +89,20 @@ export async function loader({ request }) {
   }
 
   const snapParsed = await snapResponse.json();
-  const rawSnapshots = snapParsed.data?.metaobjects?.edges ? snapParsed.data.metaobjects.edges.map(e => e.node) : [];
+  const metaobjectsEdges = snapParsed.data && snapParsed.data.metaobjects && snapParsed.data.metaobjects.edges;
+  const rawSnapshots = metaobjectsEdges ? metaobjectsEdges.map(e => e.node) : [];
 
-  const snapshots = rawSnapshots.map(s => ({
-    id: s.id,
-    date: s.timestamp?.value ? s.timestamp.value : "Unknown Date",
-    action: s.action?.value ? s.action.value : "Snapshot",
-    scopeCount: s.scope?.value ? s.scope.value : "0",
-    payloadStr: s.payload?.value ? s.payload.value : "[]"
-  }));
+  const snapshots = rawSnapshots.map((s) => {
+    return {
+      id: s.id,
+      date: (s.timestamp && s.timestamp.value) || "Unknown Date",
+      action: (s.action && s.action.value) || "Snapshot",
+      scopeCount: (s.scope && s.scope.value) || "0",
+      payloadStr: (s.payload && s.payload.value) || "[]"
+    };
+  });
 
-  return { products, snapshots, metaobjectHandles, dbProfiles, dynamicMetaobjectOptions };
+  return { products, snapshots, dbProfiles };
 }
 
 export async function action({ request }) {
@@ -223,97 +110,60 @@ export async function action({ request }) {
   const formData = await request.formData();
   const intent = formData.get("intent");
 
-  if (intent === "createMetaobject") {
-    const type = formData.get("type");
-    const value = formData.get("value");
-
-    try {
-      const response = await admin.graphql(`
-        mutation CreateTaxonomyTerm($metaobject: MetaobjectCreateInput!) {
-          metaobjectCreate(metaobject: $metaobject) {
-            metaobject { id handle }
-            userErrors { field message }
-          }
-        }
-      `, {
-        variables: {
-          metaobject: {
-            type: type,
-            capabilities: { publishable: { status: "ACTIVE" } },
-            fields: [{ key: "name", value: value }]
-          }
-        }
-      });
-      const data = await response.json();
-      if (data.data?.metaobjectCreate?.userErrors?.length > 0) {
-        return { success: false, errors: data.data.metaobjectCreate.userErrors };
-      }
-      return { success: true, newGid: data.data.metaobjectCreate.metaobject.id };
-    } catch (error) {
-      return { success: false, error: error.message };
-    }
-  }
-
   if (intent === "saveMetafields") {
     let rawPayload = JSON.parse(formData.get("payload"));
+    let productsToUpdate = {};
 
-    let payload = rawPayload.reduce((acc, mf) => {
+    rawPayload.forEach((mf) => {
+      let ownerIdStr = String(mf.ownerId);
+      let normalizedOwnerId = ownerIdStr.includes("gid://shopify/Product/") 
+        ? ownerIdStr 
+        : `gid://shopify/Product/${ownerIdStr}`;
+
+      if (!productsToUpdate[normalizedOwnerId]) {
+        productsToUpdate[normalizedOwnerId] = [];
+      }
+
       let cleanMf = {
-        ownerId: mf.ownerId,
         namespace: mf.namespace || "custom",
         key: mf.key,
         value: mf.value,
-        type: mf.type
+        type: mf.type || "single_line_text_field"
       };
 
-      if (cleanMf.key === "moh_hardness" || cleanMf.key === "hardness") {
-        cleanMf.key = "mohs_hardness";
-      }
-
-      const isMetaobjectType = cleanMf.type && cleanMf.type.includes("metaobject_reference");
-
-      if (
-        cleanMf.namespace === "custom" &&
-        !isMetaobjectType &&
-        typeof cleanMf.value === "string" &&
-        cleanMf.value.includes("gid://shopify")
-      ) {
-        console.warn(`GID Leak intercepted on ${cleanMf.key} for ${cleanMf.ownerId}. Skipping this metafield.`);
-        return acc;
-      }
-
-      acc.push(cleanMf);
-      return acc;
-    }, []);
-
-    const chunks = [];
-    for (let i = 0; i < payload.length; i += 25) {
-      chunks.push(payload.slice(i, i + 25));
-    }
+      productsToUpdate[normalizedOwnerId].push(cleanMf);
+    });
 
     let allErrors = [];
-    for (const chunk of chunks) {
-      console.log("Sending metafieldsSet chunk:", JSON.stringify(chunk, null, 2));
 
+    for (const [productId, metafields] of Object.entries(productsToUpdate)) {
       try {
         const response = await admin.graphql(`
           #graphql
-          mutation MetafieldsSet($metafields: [MetafieldsSetInput!]!) {
-            metafieldsSet(metafields: $metafields) {
+          mutation ProductMetafieldsUpdate($input: ProductInput!) {
+            productUpdate(input: $input) {
+              product { id }
               userErrors { field message }
             }
           }
-        `, { variables: { metafields: chunk } });
+        `, {
+          variables: {
+            input: {
+              id: productId,
+              metafields: metafields
+            }
+          }
+        });
 
         const json = await response.json();
-        console.log("Received metafieldsSet response:", JSON.stringify(json, null, 2));
+        const productUpdateData = json.data && json.data.productUpdate;
+        const errors = productUpdateData && productUpdateData.userErrors ? productUpdateData.userErrors : [];
 
-        const errors = json.data?.metafieldsSet?.userErrors ? json.data.metafieldsSet.userErrors : [];
         if (errors.length > 0) {
           allErrors = [...allErrors, ...errors];
         }
       } catch (error) {
-        console.error("GraphQL execution failed for chunk:", error);
+        console.error("GraphQL productUpdate failed for product:", productId, error);
         allErrors.push({ field: ["graphql"], message: error.message });
       }
     }
@@ -321,17 +171,21 @@ export async function action({ request }) {
     if (allErrors.length > 0) {
       return { success: false, errors: allErrors, message: "Failed to save some metafields." };
     }
-    return { success: true, message: "Metafields securely updated in batches." };
+    return { success: true, message: "Metafields securely updated via productUpdate." };
   }
 
   if (intent === "fetchSingleProduct") {
-    const productId = formData.get("productId");
+    const rawProductId = formData.get("productId");
+    const normalizedId = rawProductId.includes("gid://shopify/Product/") 
+      ? rawProductId 
+      : `gid://shopify/Product/${rawProductId}`;
+
     const response = await admin.graphql(`
       #graphql
       query GetSingleProduct($id: ID!) {
         product(id: $id) {
-          id title status featuredImage { url altText }
-          metafields(first: 50) {
+          id title handle status featuredImage { url altText }
+          metafields(first: 50, namespace: "custom") {
             edges {
               node {
                 id namespace key value type
@@ -340,16 +194,10 @@ export async function action({ request }) {
           }
         }
       }
-    `, { variables: { id: productId } });
-    const json = await response.json();
-    const product = json.data?.product ? json.data.product : null;
+    `, { variables: { id: normalizedId } });
 
-    if (product) {
-      const officialNameMf = product.metafields.edges.find(e => e.node.key === "official_name");
-      if (officialNameMf && /gid:\/\/shopify/.test(officialNameMf.node.value)) {
-        console.warn(`Guard Triggered: official_name is a raw GID. Bypassing DB lookup to prevent hang.`);
-      }
-    }
+    const json = await response.json();
+    const product = json.data && json.data.product;
 
     return { success: true, product };
   }
@@ -365,45 +213,55 @@ export async function action({ request }) {
       const response = await admin.graphql(`
         #graphql
         query GetOrigins($cursor: String) {
-          products(first: 10, after: $cursor) {
+          products(first: 50, after: $cursor) {
             pageInfo { hasNextPage endCursor }
             edges {
               node {
-                id title
-                originMetafield: metafield(namespace: "custom", key: "origin_location") { value }
+                id title handle
+                originMetafield: metafield(namespace: "custom", key: "origin_story") { value }
               }
             }
           }
         }
       `, { variables: { cursor } });
+
       const json = await response.json();
-      const data = json.data?.products ? json.data.products : null;
+      const data = json.data && json.data.products;
+
       if (data) {
         allRaw = [...allRaw, ...data.edges.map(e => e.node)];
-        hasNext = data.pageInfo.hasNextPage ? true : false;
-        cursor = data.pageInfo.endCursor ? data.pageInfo.endCursor : null;
+        hasNext = data.pageInfo && data.pageInfo.hasNextPage;
+        cursor = data.pageInfo && data.pageInfo.endCursor;
         batchCount = batchCount + 1;
       } else {
         hasNext = false;
       }
     }
 
-    const filtered = allRaw.filter(p => !EXCLUDED_TITLES.includes(p.title));
-    const hasMore = hasNext ? true : false;
-    return { success: true, origins: filtered, hasMore };
+    const filtered = allRaw.filter((p) => {
+      return !EXCLUDED_TITLES.includes(p.title);
+    });
+
+    return { success: true, origins: filtered, hasMore: hasNext };
   }
 
   if (intent === "validateGIDs") {
     const gids = JSON.parse(formData.get("gids"));
+    const normalizedGids = gids.map(gid => {
+      return gid.includes("gid://shopify/") ? gid : `gid://shopify/Product/${gid}`;
+    });
+
     const response = await admin.graphql(`
       #graphql
       query ValidateGIDs($ids: [ID!]!) {
         nodes(ids: $ids) { id }
       }
-    `, { variables: { ids: gids } });
+    `, { variables: { ids: normalizedGids } });
+
     const json = await response.json();
-    const nodes = json.data?.nodes ? json.data.nodes : [];
+    const nodes = json.data && json.data.nodes ? json.data.nodes : [];
     const isInvalid = nodes.some(n => n === null);
+    
     return { success: true, isValid: !isInvalid };
   }
 
@@ -436,21 +294,28 @@ export async function action({ request }) {
     });
 
     const createJson = await createRes.json();
-    const errors = createJson.data?.metaobjectCreate?.userErrors ? createJson.data.metaobjectCreate.userErrors : [];
+    const metaobjectCreateData = createJson.data && createJson.data.metaobjectCreate;
+    const errors = metaobjectCreateData && metaobjectCreateData.userErrors ? metaobjectCreateData.userErrors : [];
 
     if (errors.length > 0 && errors[0].message.includes("type must exist")) {
       return { success: false, errors: [{ message: "Requires Metaobject Definition: 'meta_injector_snapshot' with fields: timestamp, action, scope, payload." }] };
     }
 
-    const existingIds = JSON.parse(formData.get("existingIds") ? formData.get("existingIds") : "[]");
+    const rawExistingIds = formData.get("existingIds");
+    const existingIds = JSON.parse(rawExistingIds || "[]");
+
     if (existingIds.length >= 5) {
       const oldestId = existingIds[existingIds.length - 1];
+      const normalizedOldestId = oldestId.includes("gid://shopify/Metaobject/") 
+        ? oldestId 
+        : `gid://shopify/Metaobject/${oldestId}`;
+
       await admin.graphql(`
         #graphql
         mutation DeleteSnapshot($id: ID!) {
           metaobjectDelete(id: $id) { userErrors { message } }
         }
-      `, { variables: { id: oldestId } });
+      `, { variables: { id: normalizedOldestId } });
     }
 
     return { success: true };
