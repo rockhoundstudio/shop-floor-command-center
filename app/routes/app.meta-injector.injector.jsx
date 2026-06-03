@@ -113,7 +113,8 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [], dynam
     "authenticity":       (p) => p.authenticity || p.google_authenticity,
     "rarity":             (p) => p.rarity || p.google_rarity,
     "crystal-system":     (p) => p.google_crystal_system,
-    "geological-era":     (p) => p.google_geological_era,
+    "geological-era":     (p) => p.geological_age || p.google_geological_era,
+    "geological_age":     (p) => p.geological_age || p.google_geological_era,
     "mineral-class":      (p) => p.google_mineral_class,
     "rock-composition":   (p) => p.google_rock_composition,
     "rock-formation":     (p) => p.google_rock_formation,
@@ -146,7 +147,6 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [], dynam
       
       const profileValue = mapper(profile);
       if (profileValue) {
-        // Find matching capitalization for static options if it exists
         const staticOptions = getStaticOptions(field.name || field.label, field.key);
         if (staticOptions) {
           const matchedStatic = staticOptions.find(opt => opt.toLowerCase() === profileValue.toLowerCase());
@@ -449,7 +449,10 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [], dynam
                           <div style={{ flex: 1 }}>
                             <Select
                               label={label}
-                              options={[{ label: "Leave blank to skip", value: "" }, ...(dynamicMetaobjectOptions[field.metaobjectType] || [])]}
+                              options={[
+                                { label: "Leave blank to skip", value: "" },
+                                ...(dynamicMetaobjectOptions[field.metaobjectType] || []).filter(opt => opt.value !== "")
+                              ]}
                               value={bulkFormData[field.key] || ""}
                               onChange={(val) => setBulkFormData(prev => ({ ...prev, [field.key]: val }))}
                               accessibilityLabel={`Bulk input for ${cleanName}`}
@@ -471,7 +474,7 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [], dynam
                           label={label}
                           options={[
                             { label: "Leave blank to skip", value: "" },
-                            ...staticOptions.map(opt => ({ label: opt, value: opt }))
+                            ...staticOptions.filter(opt => opt !== "").map(opt => ({ label: opt, value: opt }))
                           ]}
                           value={bulkFormData[field.key] || ""}
                           onChange={(val) => setBulkFormData(prev => ({ ...prev, [field.key]: val }))}
