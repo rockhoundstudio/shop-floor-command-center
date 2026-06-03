@@ -17,6 +17,40 @@ import {
 } from "@shopify/polaris";
 import { METAFIELD_CONFIG } from "./app.meta-injector.constants";
 
+const getStaticOptions = (cleanName, fieldKey) => {
+  const normalizedName = (cleanName || "").toLowerCase().trim();
+  const normalizedKey = (fieldKey || "").toLowerCase().trim();
+
+  if (normalizedName.includes("luster") || normalizedKey.includes("luster")) {
+    return ["Vitreous", "Waxy", "Silky", "Pearly", "Metallic", "Dull", "Earthy", "Greasy", "Resinous", "Vitreous to Pearly", "Vitreous to Dull", "Vitreous to Greasy", "Vitreous to Earthy", "Waxy to Dull", "Silky to Dull", "Dull to Earthy"];
+  }
+  if (normalizedName.includes("fracture") || normalizedKey.includes("fracture")) {
+    return ["Conchoidal", "Uneven", "Uneven to Conchoidal", "Subconchoidal", "Subconchoidal to Uneven", "Splintery", "Irregular", "Hackly", "Earthy"];
+  }
+  if (normalizedName.includes("cleavage") || normalizedKey.includes("cleavage")) {
+    return ["Perfect", "Good", "Indistinct", "Imperfect", "Poor", "None"];
+  }
+  if (normalizedName.includes("diaphaneity") || normalizedKey.includes("diaphaneity")) {
+    return ["Transparent", "Translucent", "Opaque", "Transparent to Translucent", "Translucent to Opaque", "Transparent to Opaque", "Transparent with Inclusions"];
+  }
+  if (normalizedName.includes("geological age") || normalizedKey.includes("geological_age") || normalizedName.includes("geological era") || normalizedKey.includes("geological-era")) {
+    return ["Hadean", "Archean", "Proterozoic", "Precambrian", "Paleozoic", "Mesozoic", "Cenozoic", "Quaternary"];
+  }
+  if (normalizedName.includes("stone shape") || normalizedKey.includes("shape")) {
+    return ["Cabochon", "Freeform", "Tumbled", "Rough", "Slab", "Round", "Oval", "Teardrop", "Cushion"];
+  }
+  if (normalizedName.includes("surface finish") || normalizedKey.includes("finish")) {
+    return ["Polished", "Matte", "Natural", "High Polish"];
+  }
+  if (normalizedName.includes("treatment") || normalizedKey.includes("treatment")) {
+    return ["Natural", "Stabilized", "Dyed", "Heat Treated", "Irradiated"];
+  }
+  if (normalizedName.includes("one of a kind") || normalizedKey.includes("one_of_a_kind")) {
+    return ["Yes", "No"];
+  }
+  return null;
+};
+
 export function InjectorTab({ products, fetcher, shopify, dbProfiles = [], dynamicMetaobjectOptions = {} }) {
   const [bulkMode, setBulkMode] = useState("fill");
   const [bulkFormData, setBulkFormData] = useState({});
@@ -25,12 +59,11 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [], dynam
   const [dynamicCustomFields, setDynamicCustomFields] = useState([]);
   const [modalConfig, setModalConfig] = useState({ active: false, title: "", body: null, diffs: [], payload: [] });
   const [inlineAddState, setInlineAddState] = useState({ fieldKey: null, metaobjectType: null, value: "", loading: false });
-  const [resultBanner, setResultBanner] = useState(null); // { tone: "success"|"critical", message: "" }
+  const [resultBanner, setResultBanner] = useState(null);
 
   const tapTargetStyle = { minHeight: '48px', minWidth: '48px', display: 'flex', alignItems: 'center', justifyContent: 'center' };
   const inputTapTargetStyle = { minHeight: '48px', display: 'flex', flexDirection: 'column', justifyContent: 'center' };
 
-  // Watch fetcher result and show persistent banner
   useEffect(() => {
     if (fetcher.state === "idle" && fetcher.data) {
       if (fetcher.data.success) {
@@ -110,8 +143,18 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [], dynam
       if (!field.key) return;
       const mapper = PROFILE_FIELD_MAP[field.key];
       if (!mapper) return;
+      
       const profileValue = mapper(profile);
-      if (profileValue) updates[field.key] = profileValue;
+      if (profileValue) {
+        // Find matching capitalization for static options if it exists
+        const staticOptions = getStaticOptions(field.name || field.label, field.key);
+        if (staticOptions) {
+          const matchedStatic = staticOptions.find(opt => opt.toLowerCase() === profileValue.toLowerCase());
+          updates[field.key] = matchedStatic || profileValue;
+        } else {
+          updates[field.key] = profileValue;
+        }
+      }
     });
 
     METAFIELD_CONFIG.forEach(field => {
@@ -353,6 +396,7 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [], dynam
                   const label = isGoogle ? `🔵 Google ${cleanName}` : `🪨 Stone ${cleanName}`;
                   const hasMetaobjectType = !!field.metaobjectType;
                   const isAddingNew = inlineAddState.fieldKey === field.key;
+                  const staticOptions = getStaticOptions(cleanName, field.key);
 
                   return (
                     <div style={{ ...inputTapTargetStyle, minHeight: 'auto' }} key={field.key}>
@@ -405,7 +449,7 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [], dynam
                           <div style={{ flex: 1 }}>
                             <Select
                               label={label}
-                              options={[{ label: "Select...", value: "" }, ...(dynamicMetaobjectOptions[field.metaobjectType] || [])]}
+                              options={[{ label: "Leave blank to skip", value: "" }, ...(dynamicMetaobjectOptions[field.metaobjectType] || [])]}
                               value={bulkFormData[field.key] || ""}
                               onChange={(val) => setBulkFormData(prev => ({ ...prev, [field.key]: val }))}
                               accessibilityLabel={`Bulk input for ${cleanName}`}
@@ -422,7 +466,20 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [], dynam
                         </div>
                       )}
 
-                      {!hasMetaobjectType && (
+                      {!hasMetaobjectType && staticOptions && (
+                        <Select
+                          label={label}
+                          options={[
+                            { label: "Leave blank to skip", value: "" },
+                            ...staticOptions.map(opt => ({ label: opt, value: opt }))
+                          ]}
+                          value={bulkFormData[field.key] || ""}
+                          onChange={(val) => setBulkFormData(prev => ({ ...prev, [field.key]: val }))}
+                          accessibilityLabel={`Bulk input for ${cleanName}`}
+                        />
+                      )}
+
+                      {!hasMetaobjectType && !staticOptions && (
                         <TextField
                           label={label}
                           value={bulkFormData[field.key] || ""}
