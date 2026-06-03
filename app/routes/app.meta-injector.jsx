@@ -1,16 +1,20 @@
-import React, { useState } from "react";
+import React, { useState, useMemo, useEffect, useCallback } from "react";
 import { useLoaderData, useFetcher, useNavigate } from "react-router";
 import {
-  Page, Layout, Card, Text, Banner, BlockStack, Box, Tabs, Frame
+  Page, Layout, Card, Text, Banner, BlockStack, Box, Tabs, Frame,
+  TextField, Select, Button, Combobox, Listbox, Icon, InlineStack, FormLayout
 } from "@shopify/polaris";
+import { SearchIcon } from "@shopify/polaris-icons";
 
 // --- IMPORT THE ENGINE (Loader & Action) ---
 import { loader as engineLoader, action as engineAction } from "./app.meta-injector.loader";
 
+// --- IMPORT THE CONSTANTS ---
+import { METAFIELD_CONFIG } from "./app.meta-injector.constants";
+
 // --- IMPORT THE TABS ---
 import { MatrixTab } from "./app.meta-injector.matrix";
 import { InspectorTab } from "./app.meta-injector.inspector";
-import { InjectorTab } from "./app.meta-injector.injector";
 import { OriginsTab } from "./app.meta-injector.origins";
 import { ProfilesTab } from "./app.meta-injector.profiles";
 import { SnapshotsTab } from "./app.meta-injector.snapshots";
@@ -20,6 +24,178 @@ import { CsvTab } from "./app.meta-injector.csv";
 export const loader = engineLoader;
 export const action = engineAction;
 
+// --- INJECTOR UI (Replaces standard import to ensure Janyce-proof architecture) ---
+function InjectorUI({ fetcher, products, shopify }) {
+  const [selectedProductId, setSelectedProductId] = useState("");
+  const [comboboxValue, setComboboxValue] = useState("");
+  const [formState, setFormState] = useState({});
+
+  const filteredProducts = useMemo(() => {
+    if (!comboboxValue) return products;
+    return products.filter(p => p.title.toLowerCase().includes(comboboxValue.toLowerCase()));
+  }, [products, comboboxValue]);
+
+  const handleProductSelect = useCallback((value) => {
+    setSelectedProductId(value);
+    const product = products.find(p => p.id === value);
+    if (product) {
+      setComboboxValue(product.title);
+      const newForm = {};
+      if (product.metafields && product.metafields.edges) {
+        product.metafields.edges.forEach(({ node }) => {
+          if (node.namespace === "custom") {
+            newForm[node.key] = node.value;
+          }
+        });
+      }
+      setFormState(newForm);
+      if (shopify) shopify.toast.show(`Loaded fields for ${product.title}`);
+    }
+  }, [products, shopify]);
+
+  const handleFieldChange = useCallback((key, value) => {
+    setFormState(prev => ({ ...prev, [key]: value }));
+  }, []);
+
+  const handleClear = useCallback(() => {
+    setFormState({});
+    setSelectedProductId("");
+    setComboboxValue("");
+    if (shopify) shopify.toast.show("Form cleared");
+  }, [shopify]);
+
+  const handleInject = useCallback(() => {
+    if (!selectedProductId) {
+      if (shopify) shopify.toast.show("Please select a product first", { isError: true });
+      return;
+    }
+
+    const payload = Object.entries(formState).map(([key, value]) => ({
+      ownerId: selectedProductId,
+      namespace: "custom",
+      key,
+      value: value.toString(),
+      type: "single_line_text_field" 
+    })).filter(mf => mf.value !== "");
+
+    const formData = new FormData();
+    formData.append("intent", "saveMetafields");
+    formData.append("payload", JSON.stringify(payload));
+
+    fetcher.submit(formData, { method: "post" });
+  }, [selectedProductId, formState, fetcher, shopify]);
+
+  useEffect(() => {
+    if (fetcher.state === "idle" && fetcher.data) {
+      if (fetcher.data.success) {
+        if (shopify) shopify.toast.show(fetcher.data.message || "Metafields securely updated");
+      } else if (fetcher.data.errors && fetcher.data.errors.length > 0) {
+        if (shopify) shopify.toast.show("Failed to save some fields. Check errors above.", { isError: true });
+      }
+    }
+  }, [fetcher.state, fetcher.data, shopify]);
+
+  const UI_GROUPS = [
+    { id: "green", title: "Always Fill", hex: "#2E7D32", keys: ["piece_name", "primary_medium", "handcrafted_by", "is_one_of_a_kind", "treated"] },
+    { id: "blue", title: "Stone Fields", hex: "#1565C0", keys: ["material", "stone_family", "color", "cut_and_shape", "surface_finish", "dimensions_mm", "weight_grams"] },
+    { id: "orange", title: "Story & Lore", hex: "#E65100", keys: ["origin_story", "trip_or_series", "honest_flaws_and_character", "artist_notes", "collection_name"] },
+    { id: "purple", title: "Mixed Media", hex: "#6A1B9A", keys: ["secondary_medium", "found_object"] },
+    { id: "yellow", title: "Google / SEO", hex: "#F9A825", keys: ["primary_use", "setting_ready", "bail_included"] }
+  ];
+
+  return (
+    <BlockStack gap="600">
+      <Card padding="400">
+        <BlockStack gap="400">
+          <Text variant="headingLg" as="h2">Select a Piece</Text>
+          <Combobox
+            allowMultiple={false}
+            activator={
+              <Combobox.TextField
+                prefix={<Icon source={SearchIcon} />}
+                onChange={setComboboxValue}
+                label="Search Products"
+                labelHidden
+                value={comboboxValue}
+                placeholder="Search for a piece to inject..."
+                autoComplete="off"
+                accessibilityLabel="Search Products"
+              />
+            }
+          >
+            {filteredProducts.length > 0 && (
+              <Listbox onSelect={handleProductSelect}>
+                {filteredProducts.map(p => (
+                  <Listbox.Option key={p.id} value={p.id} selected={selectedProductId === p.id} accessibilityLabel={p.title}>
+                    {p.title}
+                  </Listbox.Option>
+                ))}
+              </Listbox>
+            )}
+          </Combobox>
+        </BlockStack>
+      </Card>
+
+      {UI_GROUPS.map(group => {
+        const groupFields = METAFIELD_CONFIG.filter(f => group.keys.includes(f.key));
+        if (groupFields.length === 0) return null;
+
+        return (
+          <Box key={group.id} paddingBlockEnd="400">
+            <div style={{ backgroundColor: group.hex, padding: "16px", borderTopLeftRadius: "8px", borderTopRightRadius: "8px" }}>
+              <Text variant="headingMd" as="h3" tone="textInverse">{group.title}</Text>
+            </div>
+            <div style={{ backgroundColor: "#FFFFFF", padding: "24px", borderBottomLeftRadius: "8px", borderBottomRightRadius: "8px", border: "1px solid #E1E3E5", borderTop: "none" }}>
+              <FormLayout>
+                {groupFields.map(field => {
+                  const value = formState[field.key] || "";
+                  const isLargeField = ["origin_story", "honest_flaws_and_character", "artist_notes"].includes(field.key);
+                  
+                  if (field.options && field.options.length > 0) {
+                    const uniqueOptions = [{ label: "Select...", value: "" }, ...field.options.map(o => (typeof o === 'string' ? { label: o, value: o } : o))];
+                    return (
+                      <Select
+                        key={field.key}
+                        label={field.label}
+                        options={uniqueOptions}
+                        value={value}
+                        onChange={(val) => handleFieldChange(field.key, val)}
+                        accessibilityLabel={field.label}
+                      />
+                    );
+                  }
+                  
+                  return (
+                    <TextField
+                      key={field.key}
+                      label={field.label}
+                      value={value}
+                      onChange={(val) => handleFieldChange(field.key, val)}
+                      autoComplete="off"
+                      accessibilityLabel={field.label}
+                      multiline={isLargeField ? 3 : false}
+                    />
+                  );
+                })}
+              </FormLayout>
+            </div>
+          </Box>
+        );
+      })}
+
+      <InlineStack gap="400" align="end">
+        <div style={{ minHeight: '52px', minWidth: '140px' }}>
+          <Button size="large" onClick={handleClear} accessibilityLabel="Clear all fields">Clear Form</Button>
+        </div>
+        <div style={{ minHeight: '52px', minWidth: '180px' }}>
+          <Button size="large" variant="primary" onClick={handleInject} accessibilityLabel="Inject Metafields" loading={fetcher.state !== "idle"}>Inject Metafields</Button>
+        </div>
+      </InlineStack>
+    </BlockStack>
+  );
+}
+
+// --- MAIN SHELL COMPONENT ---
 export default function MetaInjectorV2() {
   const { products, snapshots = [], dbProfiles = [], metaobjectHandles = {}, dynamicMetaobjectOptions = {} } = useLoaderData();
   const navigate = useNavigate();
@@ -53,7 +229,7 @@ export default function MetaInjectorV2() {
       >
         <Layout>
           <Layout.Section>
-            {actionFetcher.data?.errors && actionFetcher.data.errors.length > 0 && (
+            {actionFetcher.data && actionFetcher.data.errors && actionFetcher.data.errors.length > 0 && (
               <Box paddingBlockEnd="400">
                 <Banner tone="critical" title="GraphQL Mutation Errors Detected">
                   <BlockStack gap="200">
@@ -67,14 +243,12 @@ export default function MetaInjectorV2() {
 
             <Card padding="0">
               <Tabs tabs={tabs} selected={selectedTab} onSelect={setSelectedTab} fitted>
-                <Box padding="400">
+                <Box padding="600">
                   {selectedTab === 0 && (
-                    <InjectorTab
+                    <InjectorUI
                       fetcher={actionFetcher}
                       products={products}
                       shopify={shopify}
-                      dbProfiles={dbProfiles}
-                      dynamicMetaobjectOptions={dynamicMetaobjectOptions}
                     />
                   )}
                   {selectedTab === 1 && (
