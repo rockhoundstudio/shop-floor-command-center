@@ -1,4 +1,3 @@
-import { json } from "@remix-run/node";
 import { useActionData, useNavigate, useSubmit } from "react-router";
 import { authenticate } from "../shopify.server";
 
@@ -49,7 +48,7 @@ export async function action({ request }) {
     results.push({ key: field.key, action: "create", ok: createErrors.length === 0, error: createErrors[0]?.message });
   }
 
-  return json({ results });
+  return { results };
 }
 
 export default function FixMetafields() {
