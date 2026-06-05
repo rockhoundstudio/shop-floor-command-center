@@ -2,9 +2,9 @@ import React, { useState, useMemo, useEffect, useCallback } from "react";
 import { useLoaderData, useFetcher, useNavigate } from "react-router";
 import {
   Page, Layout, Card, Text, Banner, BlockStack, Box, Tabs, Frame,
-  TextField, Select, Button, Icon, InlineStack, Checkbox
+  TextField, Select, Button, Icon, InlineStack, Checkbox, Modal
 } from "@shopify/polaris";
-import { SearchIcon, MagicIcon } from "@shopify/polaris-icons";
+import { SearchIcon, MagicIcon, PlusIcon, DeleteIcon, AnalyticsIcon } from "@shopify/polaris-icons";
 
 // --- IMPORT THE ENGINE (Loader & Action) ---
 import { loader as engineLoader, action as engineAction } from "./app.meta-injector.loader";
@@ -24,46 +24,96 @@ import { CsvTab } from "./app.meta-injector.csv";
 export const loader = engineLoader;
 export const action = engineAction;
 
+const EXACT_METAFIELDS = [
+  { key: "piece_name", label: "Piece Name", type: "single_line_text_field" },
+  { key: "primary_medium", label: "Primary Medium", type: "single_line_text_field" },
+  { key: "secondary_medium", label: "Secondary Medium", type: "single_line_text_field" },
+  { key: "handcrafted_by", label: "Handcrafted By", type: "single_line_text_field" },
+  { key: "material", label: "Material", type: "single_line_text_field" },
+  { key: "stone_family", label: "Stone Family", type: "single_line_text_field" },
+  { key: "color", label: "Color", type: "single_line_text_field" },
+  { key: "cut_and_shape", label: "Cut and Shape", type: "single_line_text_field" },
+  { key: "surface_finish", label: "Surface Finish", isDropdown: true },
+  { key: "dimensions_mm", label: "Dimensions (mm)", type: "single_line_text_field" },
+  { key: "weight_grams", label: "Weight (grams)", type: "single_line_text_field" },
+  { key: "trip_or_series", label: "Trip or Series", type: "single_line_text_field" },
+  { key: "collection_name", label: "Collection Name", type: "single_line_text_field" },
+  { key: "collection_location", label: "Collection Location", type: "single_line_text_field" },
+  { key: "collection_date", label: "Collection Date", type: "single_line_text_field" },
+  { key: "inspired_by", label: "Inspired By", type: "single_line_text_field" },
+  { key: "primary_use", label: "Primary Use", isDropdown: true },
+  { key: "setting_ready", label: "Setting Ready", isDropdown: true },
+  { key: "bail_included", label: "Bail Included", isDropdown: true },
+  { key: "is_one_of_a_kind", label: "Is One of a Kind", isDropdown: true },
+  { key: "treated", label: "Treated", isDropdown: true },
+  { key: "found_object", label: "Found Object", isDropdown: true },
+  { key: "wire_material", label: "Wire Material", isDropdown: true },
+  { key: "submitted_by", label: "Submitted By", type: "single_line_text_field" },
+  { key: "origin_story", label: "Origin Story", type: "single_line_text_field", multiline: true },
+  { key: "honest_flaws_and_character", label: "Honest Flaws and Character", type: "single_line_text_field", multiline: true },
+  { key: "artist_notes", label: "Artist Notes", type: "single_line_text_field", multiline: true }
+];
+
+const DEFAULT_DROPDOWNS = {
+  surface_finish: ["High polish lapidary finish", "Satin lapidary finish", "Raw natural surface", "Partial polish", "Tumble polished", "Hand rubbed finish"],
+  primary_use: ["Wearable pendant", "Lapidary cabochon for setting", "Wire wrapped jewelry", "Display specimen", "Collector piece", "Freeform stone art", "Bezel setting ready", "Rockhound specimen"],
+  setting_ready: ["Yes — bezel ready", "Yes — prong ready", "Needs evaluation", "No — display only"],
+  bail_included: ["No bail", "Pinch bail included", "Custom copper wire bail", "Custom gold plated bail", "Soldered bail"],
+  is_one_of_a_kind: ["Yes — one of a kind", "No — series piece"],
+  treated: ["Untreated — natural", "Stabilized", "Dyed", "Coated", "Heat treated"],
+  found_object: ["Wild collected — Bob and Janyce", "Customer submission", "Purchased rough", "Gifted specimen", "Rescued material"],
+  wire_material: ["Copper wire", "Brass wire", "Sterling silver wire", "Gold plated wire", "Copper and brass mixed"]
+};
+
 const StatusIcon = ({ value }) => {
   const valStr = (value || "").toString().trim().toLowerCase();
   
-  let color = "#C62828"; // 🔴 Red: Completely empty
+  let color = "#C62828";
   let label = "Empty field";
   
-  if (valStr === "n/a") {
-    color = "#F9A825"; // 🟡 Yellow: N/A acknowledged
+  if (valStr === "n/a" || valStr === "n/a") {
+    color = "#F9A825";
     label = "N/A value";
   } else if (valStr !== "") {
-    color = "#2E7D32"; // 🟢 Green: Has real value
+    color = "#2E7D32";
     label = "Field complete";
   }
 
   return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 14 14"
-      aria-label={label}
-      role="img"
-      style={{ flexShrink: 0 }}
-    >
-      <circle cx="7" cy="7" r="7" fill={color} />
-    </svg>
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minWidth: '24px', minHeight: '24px' }}>
+      <svg
+        width="14"
+        height="14"
+        viewBox="0 0 14 14"
+        aria-label={label}
+        role="img"
+        style={{ flexShrink: 0 }}
+      >
+        <circle cx="7" cy="7" r="7" fill={color} />
+      </svg>
+    </div>
   );
 };
 
-// --- INJECTOR UI (2-Column Architecture) ---
-function InjectorUI({ fetcher, products, shopify }) {
+function InjectorUI({ fetcher, products, shopify, pageInfo, metafieldDefinitions = [] }) {
   const [isBulkMode, setIsBulkMode] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [formState, setFormState] = useState({});
+  const [dropdownLists, setDropdownLists] = useState(DEFAULT_DROPDOWNS);
   
-  // Single Mode State
   const [selectedProductId, setSelectedProductId] = useState("");
   const [currentProductTitle, setCurrentProductTitle] = useState("");
-  
-  // Bulk Mode State
   const [selectedProductIds, setSelectedProductIds] = useState([]);
+  
+  const [addingNewTermFor, setAddingNewTermFor] = useState(null);
+  const [newTermValue, setNewTermValue] = useState("");
+
+  const [isTrendModalOpen, setIsTrendModalOpen] = useState(false);
+  const [trendTargetDropdowns, setTrendTargetDropdowns] = useState({});
+
+  const [newSchemaKey, setNewSchemaKey] = useState("");
+  const [newSchemaName, setNewSchemaName] = useState("");
+  const [newSchemaType, setNewSchemaType] = useState("single_line_text_field");
 
   const filteredProducts = useMemo(() => {
     if (!searchQuery) return products;
@@ -116,69 +166,22 @@ function InjectorUI({ fetcher, products, shopify }) {
   }, [isBulkMode, shopify]);
 
   const handleAutoFill = useCallback(() => {
-    if (isBulkMode) return; // Auto-fill disabled in bulk mode
+    if (isBulkMode) return;
     
     if (!selectedProductId) {
       if (shopify) shopify.toast.show("Please select a product first", { isError: true });
       return;
     }
 
-    setFormState(prev => {
-      const newState = { ...prev };
-      
-      const setIfEmpty = (key, value) => {
-        if (!newState[key] || newState[key].trim() === "") {
-          newState[key] = value;
-        }
-      };
-
-      setIfEmpty("handcrafted_by", "Bob and Janyce");
-      setIfEmpty("is_one_of_a_kind", "Yes");
-      setIfEmpty("treated", "No");
-      setIfEmpty("found_object", "Yes");
-      setIfEmpty("surface_finish", "Polished");
-
-      const titleLower = currentProductTitle.toLowerCase();
-      
-      const stoneFamilies = ["Jasper", "Agate", "Obsidian", "Opal", "Labradorite", "Serpentine", "Chert", "Quartz", "Chalcedony", "Petrified Wood", "Breccia"];
-      for (const family of stoneFamilies) {
-        if (titleLower.includes(family.toLowerCase())) {
-          setIfEmpty("stone_family", family);
-          setIfEmpty("material", family);
-          break;
-        }
-      }
-
-      const colors = ["Red", "Orange", "Yellow", "Green", "Blue", "Purple", "Pink", "Brown", "Black", "White", "Grey", "Gray", "Cream", "Tan", "Gold", "Silver", "Multi"];
-      for (const color of colors) {
-        if (titleLower.includes(color.toLowerCase())) {
-          setIfEmpty("color", color);
-          break;
-        }
-      }
-
-      const product = products.find(p => p.id === selectedProductId);
-      if (product && product.collections && product.collections.edges) {
-        const collectionTitles = product.collections.edges.map(e => e.node.title);
-        
-        if (collectionTitles.length > 0) {
-          setIfEmpty("collection_name", collectionTitles.join(", "));
-          
-          const knownTrips = ["Richardson Strike", "3000-Mile Run", "Nickel Back Collection", "Yakima River", "Spencer Opal Mine"];
-          for (const trip of knownTrips) {
-            if (collectionTitles.some(title => title.toLowerCase().includes(trip.toLowerCase()))) {
-              setIfEmpty("trip_or_series", trip);
-              break;
-            }
-          }
-        }
-      }
-
-      return newState;
-    });
-
-    if (shopify) shopify.toast.show("Auto-Fill applied to empty fields");
-  }, [selectedProductId, currentProductTitle, products, isBulkMode, shopify]);
+    const payload = {
+      intent: "geminiAutoFill",
+      productId: selectedProductId,
+      title: currentProductTitle
+    };
+    
+    fetcher.submit({ payload: JSON.stringify(payload) }, { method: "post" });
+    if (shopify) shopify.toast.show("Requesting Gemini Auto-Fill...");
+  }, [selectedProductId, currentProductTitle, isBulkMode, fetcher, shopify]);
 
   const handleInject = useCallback(() => {
     const targetIds = isBulkMode ? selectedProductIds : (selectedProductId ? [selectedProductId] : []);
@@ -199,7 +202,7 @@ function InjectorUI({ fetcher, products, shopify }) {
     
     targetIds.forEach(id => {
       validEntries.forEach(([key, value]) => {
-        const config = METAFIELD_CONFIG.find(f => f.key === key);
+        const config = EXACT_METAFIELDS.find(f => f.key === key);
         const fieldType = config && config.type ? config.type : "single_line_text_field";
 
         payload.push({
@@ -219,28 +222,80 @@ function InjectorUI({ fetcher, products, shopify }) {
     fetcher.submit(formData, { method: "post" });
   }, [selectedProductId, selectedProductIds, isBulkMode, formState, fetcher, shopify]);
 
+  const confirmNewTerm = useCallback((fieldKey) => {
+    if (!newTermValue.trim()) return;
+    setDropdownLists(prev => ({
+      ...prev,
+      [fieldKey]: [...(prev[fieldKey] || []), newTermValue.trim()]
+    }));
+    handleFieldChange(fieldKey, newTermValue.trim());
+    setAddingNewTermFor(null);
+    setNewTermValue("");
+    if (shopify) shopify.toast.show("Term added permanently");
+  }, [newTermValue, handleFieldChange, shopify]);
+
+  const handleTrendWatchCall = useCallback(() => {
+    const prompt = "You are an SEO expert in the handcrafted stone jewelry, lapidary, rockhound, wire wrapped jewelry, and artisan gemstone communities. Review these dropdown terms currently in use and suggest 3-5 hot trending alternatives or additions that real buyers are searching right now. Be specific — no generic terms.";
+    
+    const payload = {
+      intent: "geminiTrendWatch",
+      prompt,
+      currentLists: dropdownLists
+    };
+    fetcher.submit({ payload: JSON.stringify(payload) }, { method: "post" });
+  }, [dropdownLists, fetcher]);
+
+  const handleAddTrend = useCallback((term, dropdownKey) => {
+    setDropdownLists(prev => ({
+      ...prev,
+      [dropdownKey]: [...(prev[dropdownKey] || []), term]
+    }));
+    if (shopify) shopify.toast.show(`Added "${term}" to ${dropdownKey}`);
+  }, [shopify]);
+
+  const handleCreateDefinition = useCallback(() => {
+    if (!newSchemaKey || !newSchemaName) {
+      if (shopify) shopify.toast.show("Key and Display Name are required", { isError: true });
+      return;
+    }
+    const payload = {
+      intent: "createMetafieldDefinition",
+      namespace: "rockhound",
+      key: newSchemaKey,
+      name: newSchemaName,
+      type: newSchemaType
+    };
+    fetcher.submit({ payload: JSON.stringify(payload) }, { method: "post" });
+    setNewSchemaKey("");
+    setNewSchemaName("");
+  }, [newSchemaKey, newSchemaName, newSchemaType, fetcher, shopify]);
+
+  const handleRemoveDefinition = useCallback((definitionId) => {
+    const payload = {
+      intent: "deleteMetafieldDefinition",
+      id: definitionId
+    };
+    fetcher.submit({ payload: JSON.stringify(payload) }, { method: "post" });
+  }, [fetcher]);
+
   useEffect(() => {
     if (fetcher.state === "idle" && fetcher.data) {
       if (fetcher.data.success) {
-        if (shopify) shopify.toast.show(fetcher.data.message || "Metafields securely updated");
-        // Clear form immediately after successful bulk save to prevent accidental overwrites
-        if (isBulkMode) {
+        if (shopify && fetcher.data.intent === "saveMetafields") shopify.toast.show("Metafields securely updated");
+        if (isBulkMode && fetcher.data.intent === "saveMetafields") {
             setFormState({});
             setSelectedProductIds([]);
         }
-      } else if (fetcher.data.errors && fetcher.data.errors.length > 0) {
-        if (shopify) shopify.toast.show("Failed to save some fields. Check errors above.", { isError: true });
+      }
+      if (fetcher.data.geminiFillSuccess && fetcher.data.autoFillData) {
+        setFormState(prev => ({ ...prev, ...fetcher.data.autoFillData }));
+        if (shopify) shopify.toast.show("Gemini applied auto-fill values");
       }
     }
   }, [fetcher.state, fetcher.data, isBulkMode, shopify]);
 
-  const UI_GROUPS = [
-    { id: "green", title: "Always Fill", hex: "#2E7D32", keys: ["piece_name", "primary_medium", "handcrafted_by", "is_one_of_a_kind", "treated"] },
-    { id: "blue", title: "Stone Fields", hex: "#1565C0", keys: ["material", "stone_family", "color", "cut_and_shape", "surface_finish", "dimensions_mm", "weight_grams"] },
-    { id: "orange", title: "Story & Lore", hex: "#E65100", keys: ["origin_story", "trip_or_series", "honest_flaws_and_character", "artist_notes", "collection_name"] },
-    { id: "purple", title: "Mixed Media", hex: "#6A1B9A", keys: ["secondary_medium", "found_object"] },
-    { id: "yellow", title: "Google / SEO", hex: "#F9A825", keys: ["primary_use", "setting_ready", "bail_included"] }
-  ];
+  const trendSuggestions = (fetcher.data && fetcher.data.trendSuggestions) ? fetcher.data.trendSuggestions : [];
+  const dropdownKeys = Object.keys(dropdownLists);
 
   return (
     <BlockStack gap="600">
@@ -248,7 +303,7 @@ function InjectorUI({ fetcher, products, shopify }) {
         <InlineStack align="space-between" blockAlign="center">
           <Text variant="headingLg" as="h2">Database Injector</Text>
           <InlineStack gap="300">
-            <div style={{ minHeight: "44px" }}>
+            <div style={{ minHeight: "48px" }}>
               <Button 
                 size="large" 
                 pressed={!isBulkMode} 
@@ -258,7 +313,7 @@ function InjectorUI({ fetcher, products, shopify }) {
                 Single Product
               </Button>
             </div>
-            <div style={{ minHeight: "44px" }}>
+            <div style={{ minHeight: "48px" }}>
               <Button 
                 size="large" 
                 pressed={isBulkMode} 
@@ -268,24 +323,39 @@ function InjectorUI({ fetcher, products, shopify }) {
                 Bulk Edit
               </Button>
             </div>
+            <div style={{ minHeight: "48px" }}>
+              <Button 
+                size="large" 
+                icon={AnalyticsIcon}
+                tone="magic"
+                onClick={() => setIsTrendModalOpen(true)}
+                accessibilityLabel="Open SEO Trend Watch Modal"
+              >
+                Trend Watch
+              </Button>
+            </div>
           </InlineStack>
         </InlineStack>
       </Card>
 
-      <Layout>
-        <Layout.Section variant="oneThird">
+      <div style={{ display: "flex", width: "100%", gap: "24px", alignItems: "flex-start" }}>
+        
+        {/* LEFT COLUMN - 30% */}
+        <div style={{ flex: "0 0 calc(30% - 12px)", width: "calc(30% - 12px)" }}>
           <Card padding="400">
             <BlockStack gap="400">
-              <TextField
-                prefix={<Icon source={SearchIcon} />}
-                onChange={setSearchQuery}
-                label="Search Products"
-                labelHidden
-                value={searchQuery}
-                placeholder="Search inventory..."
-                autoComplete="off"
-                accessibilityLabel="Search inventory"
-              />
+              <div style={{ minHeight: '48px' }}>
+                <TextField
+                  prefix={<Icon source={SearchIcon} />}
+                  onChange={setSearchQuery}
+                  label="Search Products"
+                  labelHidden
+                  value={searchQuery}
+                  placeholder="Search inventory..."
+                  autoComplete="off"
+                  accessibilityLabel="Search inventory"
+                />
+              </div>
               
               <div style={{ maxHeight: "65vh", overflowY: "auto", display: "flex", flexDirection: "column", gap: "8px", paddingRight: "4px" }}>
                 {filteredProducts.map(p => {
@@ -297,7 +367,7 @@ function InjectorUI({ fetcher, products, shopify }) {
                       onClick={() => isBulkMode ? toggleBulkSelection(p.id) : handleSingleSelect(p)}
                       style={{
                         padding: "16px 20px",
-                        minHeight: "64px",
+                        minHeight: "48px",
                         border: isSelected ? "2px solid #2E7D32" : "1px solid #E1E3E5",
                         borderRadius: "8px",
                         cursor: "pointer",
@@ -312,8 +382,8 @@ function InjectorUI({ fetcher, products, shopify }) {
                       aria-pressed={isSelected}
                     >
                       {isBulkMode && (
-                        <div style={{ pointerEvents: "none" }}>
-                          <Checkbox checked={isSelected} onChange={() => {}} ariaDescribedBy={`Select ${p.title}`} />
+                        <div style={{ pointerEvents: "none", minHeight: '48px', display: 'flex', alignItems: 'center' }}>
+                          <Checkbox checked={isSelected} onChange={() => {}} label={p.title} labelHidden ariaDescribedBy={`Select ${p.title}`} />
                         </div>
                       )}
                       <Text fontWeight={isSelected ? "bold" : "regular"} as="span">{p.title}</Text>
@@ -322,121 +392,275 @@ function InjectorUI({ fetcher, products, shopify }) {
                 })}
                 {filteredProducts.length === 0 && (
                   <Box padding="400">
-                    <Text tone="subdued" alignment="center">No products found matching "{searchQuery}"</Text>
+                    <Text tone="subdued" alignment="center">No products found</Text>
                   </Box>
+                )}
+                {pageInfo && pageInfo.hasNextPage && (
+                  <div style={{ minHeight: '48px', marginTop: '16px' }}>
+                     <Button 
+                        fullWidth 
+                        size="large" 
+                        onClick={() => fetcher.submit({ intent: "loadMoreProducts" }, { method: "post" })}
+                        accessibilityLabel="Load more products"
+                     >
+                        Load More
+                     </Button>
+                  </div>
                 )}
               </div>
             </BlockStack>
           </Card>
-        </Layout.Section>
+        </div>
 
-        <Layout.Section>
-          <BlockStack gap="400">
-            {(!isBulkMode && selectedProductId) && (
-              <InlineStack align="end">
-                <Button 
-                  icon={MagicIcon} 
-                  onClick={handleAutoFill} 
-                  accessibilityLabel="Auto-Fill Empty Fields"
-                  tone="success"
-                  size="large"
-                >
-                  Auto-Fill
-                </Button>
-              </InlineStack>
-            )}
+        {/* RIGHT COLUMN - 70% */}
+        <div style={{ flex: "0 0 calc(70% - 12px)", width: "calc(70% - 12px)", display: "flex", flexDirection: "column", gap: "24px" }}>
+          
+          <Card padding="400">
+            <BlockStack gap="400">
+              {(!isBulkMode && selectedProductId) && (
+                <InlineStack align="end">
+                  <div style={{ minHeight: '48px' }}>
+                    <Button 
+                      icon={MagicIcon} 
+                      onClick={handleAutoFill} 
+                      accessibilityLabel="Auto-Fill Empty Fields via Gemini"
+                      tone="success"
+                      size="large"
+                      loading={fetcher.state !== "idle" && fetcher.formData?.get("intent") === "geminiAutoFill"}
+                    >
+                      Auto-Fill
+                    </Button>
+                  </div>
+                </InlineStack>
+              )}
 
-            {isBulkMode && (
-              <Banner tone="info" title="Bulk Edit Mode Active">
-                <p>Fields left empty will be safely skipped. Filling a field will overwrite that data on <b>all {selectedProductIds.length} selected products</b>.</p>
-              </Banner>
-            )}
+              {isBulkMode && (
+                <Banner tone="info" title="Bulk Edit Mode Active">
+                  <p>Fields left empty will be safely skipped. Filling a field will overwrite that data on <b>all {selectedProductIds.length} selected products</b>.</p>
+                </Banner>
+              )}
 
-            <div style={{ maxHeight: "65vh", overflowY: "auto", display: "flex", flexDirection: "column", gap: "16px", paddingRight: "4px" }}>
-              {UI_GROUPS.map(group => {
-                const groupFields = METAFIELD_CONFIG.filter(f => group.keys.includes(f.key));
-                if (groupFields.length === 0) return null;
+              <div style={{ maxHeight: "55vh", overflowY: "auto", display: "flex", flexDirection: "column", gap: "16px", paddingRight: "4px" }}>
+                {EXACT_METAFIELDS.map(field => {
+                  const value = formState[field.key] || "";
+                  
+                  const labelWithIcon = (
+                    <span style={{ display: "flex", alignItems: "center", gap: "8px", minHeight: '32px' }}>
+                      <StatusIcon value={value} />
+                      <Text as="span" variant="bodyMd" fontWeight="semibold">{field.label}</Text>
+                    </span>
+                  );
+                  
+                  if (field.isDropdown) {
+                    const options = [...(dropdownLists[field.key] || []), "Add New..."];
+                    const uniqueOptions = [{ label: "Select...", value: "" }, ...options.map(o => ({ label: o, value: o }))];
 
-                const totalInGroup = groupFields.length;
-                const completedCount = groupFields.filter(f => {
-                  const valStr = (formState[f.key] || "").toString().trim().toLowerCase();
-                  return valStr !== "" && valStr !== "n/a";
-                }).length;
-
-                return (
-                  <Box key={group.id}>
-                    <div style={{ backgroundColor: group.hex, padding: "16px", borderTopLeftRadius: "8px", borderTopRightRadius: "8px" }}>
-                      <Text variant="headingMd" as="h3" tone="textInverse">
-                        {group.title} {!isBulkMode && `— ${completedCount} / ${totalInGroup} active`}
-                      </Text>
-                    </div>
-                    <div style={{ backgroundColor: "#FFFFFF", padding: "24px", borderBottomLeftRadius: "8px", borderBottomRightRadius: "8px", border: "1px solid #E1E3E5", borderTop: "none" }}>
-                      <BlockStack gap="400">
-                        {groupFields.map(field => {
-                          const value = formState[field.key] || "";
-                          const isLargeField = ["origin_story", "honest_flaws_and_character", "artist_notes"].includes(field.key);
-                          
-                          const labelWithIcon = (
-                            <span style={{ display: "inline-flex", alignItems: "center", gap: "8px" }}>
-                              <StatusIcon value={value} />
-                              {field.label}
-                            </span>
-                          );
-                          
-                          if (field.options && field.options.length > 0) {
-                            const uniqueOptions = [{ label: "Select...", value: "" }, ...field.options.map(o => (typeof o === 'string' ? { label: o, value: o } : o))];
-                            return (
-                              <Select
-                                key={field.key}
-                                label={labelWithIcon}
-                                options={uniqueOptions}
-                                value={value}
-                                onChange={(val) => handleFieldChange(field.key, val)}
-                                accessibilityLabel={field.label}
+                    if (addingNewTermFor === field.key) {
+                      return (
+                        <BlockStack gap="200" key={field.key}>
+                          {labelWithIcon}
+                          <InlineStack gap="200" blockAlign="center">
+                            <div style={{ flexGrow: 1, minHeight: '48px' }}>
+                              <TextField
+                                value={newTermValue}
+                                onChange={setNewTermValue}
+                                accessibilityLabel={`New term for ${field.label}`}
+                                placeholder="Type new term..."
+                                autoComplete="off"
                               />
-                            );
-                          }
-                          
-                          return (
-                            <TextField
-                              key={field.key}
-                              label={labelWithIcon}
-                              value={value}
-                              onChange={(val) => handleFieldChange(field.key, val)}
-                              autoComplete="off"
-                              accessibilityLabel={field.label}
-                              multiline={isLargeField ? 3 : false}
-                            />
-                          );
-                        })}
-                      </BlockStack>
+                            </div>
+                            <div style={{ minHeight: '48px' }}>
+                              <Button size="large" tone="success" onClick={() => confirmNewTerm(field.key)} accessibilityLabel={`Confirm new term for ${field.label}`}>Confirm</Button>
+                            </div>
+                            <div style={{ minHeight: '48px' }}>
+                              <Button size="large" onClick={() => setAddingNewTermFor(null)} accessibilityLabel={`Cancel adding new term for ${field.label}`}>Cancel</Button>
+                            </div>
+                          </InlineStack>
+                        </BlockStack>
+                      );
+                    }
+
+                    return (
+                      <div key={field.key} style={{ minHeight: '48px' }}>
+                        <Select
+                          label={labelWithIcon}
+                          options={uniqueOptions}
+                          value={value}
+                          onChange={(val) => {
+                            if (val === "Add New...") {
+                              setAddingNewTermFor(field.key);
+                              setNewTermValue("");
+                            } else {
+                              handleFieldChange(field.key, val);
+                            }
+                          }}
+                          accessibilityLabel={field.label}
+                        />
+                      </div>
+                    );
+                  }
+                  
+                  return (
+                    <div key={field.key} style={{ minHeight: '48px' }}>
+                      <TextField
+                        label={labelWithIcon}
+                        value={value}
+                        onChange={(val) => handleFieldChange(field.key, val)}
+                        autoComplete="off"
+                        accessibilityLabel={field.label}
+                        multiline={field.multiline ? 3 : false}
+                      />
                     </div>
-                  </Box>
-                );
-              })}
-            </div>
-
-            <InlineStack gap="400" align="end">
-              <div style={{ minHeight: '52px', minWidth: '140px' }}>
-                <Button size="large" onClick={handleClear} accessibilityLabel="Clear all fields">Clear Form</Button>
+                  );
+                })}
               </div>
-              <div style={{ minHeight: '52px', minWidth: '180px' }}>
-                <Button size="large" variant="primary" onClick={handleInject} accessibilityLabel="Save to Shopify" loading={fetcher.state !== "idle"}>
-                  {isBulkMode ? `Save to ${selectedProductIds.length} Products` : "Save to Shopify"}
-                </Button>
-              </div>
-            </InlineStack>
 
+              <InlineStack gap="400" align="end">
+                <div style={{ minHeight: '52px', minWidth: '140px' }}>
+                  <Button size="large" onClick={handleClear} accessibilityLabel="Clear all fields">Clear Form</Button>
+                </div>
+                <div style={{ minHeight: '52px', minWidth: '180px' }}>
+                  <Button 
+                    size="large" 
+                    variant="primary" 
+                    onClick={handleInject} 
+                    accessibilityLabel="Save to Shopify" 
+                    loading={fetcher.state !== "idle" && fetcher.formData?.get("intent") === "saveMetafields"}
+                  >
+                    {isBulkMode ? `Save to ${selectedProductIds.length} Products` : "Save to Shopify"}
+                  </Button>
+                </div>
+              </InlineStack>
+            </BlockStack>
+          </Card>
+
+          {/* SCHEMA MANAGER SECTION */}
+          <Card padding="400">
+             <BlockStack gap="400">
+                <Text variant="headingLg" as="h3">Manage Fields</Text>
+                <Text tone="subdued">Current metafield definitions in the <b>rockhound</b> namespace.</Text>
+                
+                {metafieldDefinitions.length > 0 && (
+                   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      {metafieldDefinitions.map(def => (
+                         <div key={def.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', border: '1px solid #E1E3E5', borderRadius: '8px' }}>
+                            <Text>{def.name} ({def.key})</Text>
+                            <div style={{ minHeight: '48px' }}>
+                              <Button 
+                                tone="critical" 
+                                icon={DeleteIcon} 
+                                onClick={() => handleRemoveDefinition(def.id)}
+                                accessibilityLabel={`Remove field definition for ${def.name}`}
+                              >
+                                Remove
+                              </Button>
+                            </div>
+                         </div>
+                      ))}
+                   </div>
+                )}
+
+                <div style={{ padding: '16px', backgroundColor: '#F4F6F8', borderRadius: '8px', marginTop: '16px' }}>
+                   <BlockStack gap="400">
+                      <Text variant="headingMd">Add Field Definition</Text>
+                      <InlineStack gap="400" blockAlign="end">
+                         <div style={{ flexGrow: 1, minHeight: '48px' }}>
+                            <TextField 
+                               label="Field Key" 
+                               value={newSchemaKey} 
+                               onChange={setNewSchemaKey} 
+                               autoComplete="off" 
+                               accessibilityLabel="New field key" 
+                            />
+                         </div>
+                         <div style={{ flexGrow: 1, minHeight: '48px' }}>
+                            <TextField 
+                               label="Display Name" 
+                               value={newSchemaName} 
+                               onChange={setNewSchemaName} 
+                               autoComplete="off" 
+                               accessibilityLabel="New field display name" 
+                            />
+                         </div>
+                         <div style={{ flexGrow: 1, minHeight: '48px' }}>
+                            <Select 
+                               label="Type" 
+                               options={[{ label: 'Single Line Text', value: 'single_line_text_field' }]} 
+                               value={newSchemaType} 
+                               onChange={setNewSchemaType} 
+                               accessibilityLabel="New field type" 
+                            />
+                         </div>
+                         <div style={{ minHeight: '48px' }}>
+                            <Button size="large" icon={PlusIcon} onClick={handleCreateDefinition} accessibilityLabel="Create new metafield definition">Add Field</Button>
+                         </div>
+                      </InlineStack>
+                   </BlockStack>
+                </div>
+             </BlockStack>
+          </Card>
+
+        </div>
+      </div>
+
+      <Modal
+        open={isTrendModalOpen}
+        onClose={() => setIsTrendModalOpen(false)}
+        title="SEO Trend Watch"
+        primaryAction={{
+          content: "Ask Gemini for Trends",
+          onAction: handleTrendWatchCall,
+          loading: fetcher.state !== "idle" && fetcher.formData?.get("intent") === "geminiTrendWatch",
+          accessibilityLabel: "Ask Gemini for SEO Trends"
+        }}
+      >
+        <Modal.Section>
+          <BlockStack gap="400">
+            <Text>Submit your current dropdown terminology to Gemini to discover what real buyers are searching for right now.</Text>
+            
+            {trendSuggestions && trendSuggestions.length > 0 && (
+              <BlockStack gap="400">
+                <Text variant="headingMd">Gemini Suggestions</Text>
+                {trendSuggestions.map((suggestion, index) => (
+                  <div key={index} style={{ padding: '16px', border: '1px solid #E1E3E5', borderRadius: '8px' }}>
+                    <BlockStack gap="200">
+                      <Text variant="bodyLg" fontWeight="bold">{suggestion}</Text>
+                      <InlineStack gap="300" blockAlign="center">
+                        <div style={{ flexGrow: 1, minHeight: '48px' }}>
+                          <Select
+                            label="Target Dropdown"
+                            labelHidden
+                            options={dropdownKeys.map(k => ({ label: k, value: k }))}
+                            value={trendTargetDropdowns[index] || dropdownKeys[0]}
+                            onChange={(val) => setTrendTargetDropdowns(prev => ({ ...prev, [index]: val }))}
+                            accessibilityLabel={`Select target dropdown for ${suggestion}`}
+                          />
+                        </div>
+                        <div style={{ minHeight: '48px' }}>
+                          <Button 
+                            onClick={() => handleAddTrend(suggestion, trendTargetDropdowns[index] || dropdownKeys[0])}
+                            accessibilityLabel={`Add ${suggestion} to list`}
+                          >
+                            Add to List
+                          </Button>
+                        </div>
+                      </InlineStack>
+                    </BlockStack>
+                  </div>
+                ))}
+              </BlockStack>
+            )}
           </BlockStack>
-        </Layout.Section>
-      </Layout>
+        </Modal.Section>
+      </Modal>
+
     </BlockStack>
   );
 }
 
 // --- MAIN SHELL COMPONENT ---
 export default function MetaInjectorV2() {
-  const { products, snapshots = [], dbProfiles = [], metaobjectHandles = {}, dynamicMetaobjectOptions = {} } = useLoaderData();
+  const { products, snapshots = [], dbProfiles = [], metaobjectHandles = {}, dynamicMetaobjectOptions = {}, metafieldDefinitions = [], pageInfo } = useLoaderData();
   const navigate = useNavigate();
 
   const actionFetcher = useFetcher();
@@ -488,6 +712,8 @@ export default function MetaInjectorV2() {
                       fetcher={actionFetcher}
                       products={products}
                       shopify={shopify}
+                      pageInfo={pageInfo}
+                      metafieldDefinitions={metafieldDefinitions}
                     />
                   )}
                   {selectedTab === 1 && (
