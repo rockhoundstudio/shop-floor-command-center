@@ -16,6 +16,7 @@ export default function Index() {
           ["Theme Editor", "/app/theme-editor"],
           ["Store Health Check", "/app/store-health-check"],
           ["Image Extractor", "/app/image-extractor"],
+          ["Setup Metafields", "/app/setup-metafields"]
         ].map(([label, path]) => (
           <button
             key={path}
