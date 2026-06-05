@@ -3,6 +3,7 @@ import { useNavigate } from "react-router";
 const TOOLS = [
   { label: "Meta Injector", path: "/app/meta-injector", color: "#2E7D32" },
   { label: "Setup Metafields", path: "/app/setup-metafields", color: "#2E7D32" },
+  { label: "Fix Metafields", path: "/app/fix-metafields", color: "#2E7D32" },
   { label: "Bulk Edit", path: "/app/bulk-edit", color: "#2E7D32" },
   { label: "Menu Manager", path: "/app/menu-manager", color: "#1565C0" },
   { label: "Collection Manager", path: "/app/collection-manager", color: "#1565C0" },
