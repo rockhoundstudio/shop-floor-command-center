@@ -167,13 +167,19 @@ function InjectorUI({ fetcher, products, shopify }) {
       return;
     }
 
-    const payload = Object.entries(formState).map(([key, value]) => ({
-      ownerId: selectedProductId,
-      namespace: "custom",
-      key,
-      value: value.toString(),
-      type: "single_line_text_field" 
-    })).filter(mf => mf.value !== "");
+    const payload = Object.entries(formState).map(([key, value]) => {
+      // Find the field in our master config to get its correct type
+      const config = METAFIELD_CONFIG.find(f => f.key === key);
+      const fieldType = config && config.type ? config.type : "single_line_text_field";
+
+      return {
+        ownerId: selectedProductId,
+        namespace: "custom",
+        key,
+        value: value.toString(),
+        type: fieldType 
+      };
+    }).filter(mf => mf.value !== "");
 
     const formData = new FormData();
     formData.append("intent", "saveMetafields");
