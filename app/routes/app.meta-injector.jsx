@@ -76,7 +76,7 @@ function InjectorUI({ fetcher, products, shopify }) {
       const newForm = {};
       if (product.metafields && product.metafields.edges) {
         product.metafields.edges.forEach(({ node }) => {
-          if (node.namespace === "custom") {
+          if (node.namespace === "rockhound") { // UPDATED: Now targeting the new namespace
             newForm[node.key] = node.value;
           }
         });
@@ -174,7 +174,7 @@ function InjectorUI({ fetcher, products, shopify }) {
 
       return {
         ownerId: selectedProductId,
-        namespace: "custom",
+        namespace: "rockhound", // UPDATED: Now targeting the new namespace
         key,
         value: value.toString(),
         type: fieldType 
