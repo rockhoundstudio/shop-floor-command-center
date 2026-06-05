@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect, useCallback } from "react";
 import { useLoaderData, useFetcher, useNavigate } from "react-router";
 import {
   Page, Layout, Card, Text, Banner, BlockStack, Box, Tabs, Frame,
-  TextField, Select, Button, Combobox, Listbox, Icon, InlineStack
+  TextField, Select, Button, Icon, InlineStack, Checkbox
 } from "@shopify/polaris";
 import { SearchIcon, MagicIcon } from "@shopify/polaris-icons";
 
@@ -24,67 +24,81 @@ import { CsvTab } from "./app.meta-injector.csv";
 export const loader = engineLoader;
 export const action = engineAction;
 
-const REQUIRED_FIELDS = [
-  "piece_name", "primary_medium", "handcrafted_by", "is_one_of_a_kind", "treated",
-  "material", "stone_family", "color", "cut_and_shape", "surface_finish", "dimensions_mm", "weight_grams"
-];
-
-const StatusIcon = ({ isComplete, isRequired }) => {
-  let color = "#F9A825"; // yellow / optional
-  let label = "Optional field, currently empty";
+const StatusIcon = ({ value }) => {
+  const valStr = (value || "").toString().trim().toLowerCase();
   
-  if (isComplete) {
-    color = "#2E7D32"; // green
+  let color = "#C62828"; // 🔴 Red: Completely empty
+  let label = "Empty field";
+  
+  if (valStr === "n/a") {
+    color = "#F9A825"; // 🟡 Yellow: N/A acknowledged
+    label = "N/A value";
+  } else if (valStr !== "") {
+    color = "#2E7D32"; // 🟢 Green: Has real value
     label = "Field complete";
-  } else if (isRequired) {
-    color = "#C62828"; // red
-    label = "Required field, currently empty";
   }
 
   return (
     <svg
-      width="12"
-      height="12"
-      viewBox="0 0 12 12"
+      width="14"
+      height="14"
+      viewBox="0 0 14 14"
       aria-label={label}
       role="img"
       style={{ flexShrink: 0 }}
     >
-      <circle cx="6" cy="6" r="6" fill={color} />
+      <circle cx="7" cy="7" r="7" fill={color} />
     </svg>
   );
 };
 
-// --- INJECTOR UI (Replaces standard import to ensure Janyce-proof architecture) ---
+// --- INJECTOR UI (2-Column Architecture) ---
 function InjectorUI({ fetcher, products, shopify }) {
-  const [selectedProductId, setSelectedProductId] = useState("");
-  const [comboboxValue, setComboboxValue] = useState("");
+  const [isBulkMode, setIsBulkMode] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
   const [formState, setFormState] = useState({});
+  
+  // Single Mode State
+  const [selectedProductId, setSelectedProductId] = useState("");
   const [currentProductTitle, setCurrentProductTitle] = useState("");
+  
+  // Bulk Mode State
+  const [selectedProductIds, setSelectedProductIds] = useState([]);
 
   const filteredProducts = useMemo(() => {
-    if (!comboboxValue) return products;
-    return products.filter(p => p.title.toLowerCase().includes(comboboxValue.toLowerCase()));
-  }, [products, comboboxValue]);
+    if (!searchQuery) return products;
+    return products.filter(p => p.title.toLowerCase().includes(searchQuery.toLowerCase()));
+  }, [products, searchQuery]);
 
-  const handleProductSelect = useCallback((value) => {
-    setSelectedProductId(value);
-    const product = products.find(p => p.id === value);
-    if (product) {
-      setComboboxValue(product.title);
-      setCurrentProductTitle(product.title);
-      const newForm = {};
-      if (product.metafields && product.metafields.edges) {
-        product.metafields.edges.forEach(({ node }) => {
-          if (node.namespace === "rockhound") { // UPDATED: Now targeting the new namespace
-            newForm[node.key] = node.value;
-          }
-        });
-      }
-      setFormState(newForm);
-      if (shopify) shopify.toast.show(`Loaded fields for ${product.title}`);
+  const handleModeToggle = useCallback((bulk) => {
+    setIsBulkMode(bulk);
+    setFormState({});
+    setSelectedProductId("");
+    setSelectedProductIds([]);
+    setCurrentProductTitle("");
+  }, []);
+
+  const handleSingleSelect = useCallback((product) => {
+    setSelectedProductId(product.id);
+    setCurrentProductTitle(product.title);
+    
+    const newForm = {};
+    if (product.metafields && product.metafields.edges) {
+      product.metafields.edges.forEach(({ node }) => {
+        if (node.namespace === "rockhound") {
+          newForm[node.key] = node.value;
+        }
+      });
     }
-  }, [products, shopify]);
+    setFormState(newForm);
+    if (shopify) shopify.toast.show(`Loaded fields for ${product.title}`);
+  }, [shopify]);
+
+  const toggleBulkSelection = useCallback((id) => {
+    setSelectedProductIds(prev => 
+      prev.includes(id) ? prev.filter(pid => pid !== id) : [...prev, id]
+    );
+  }, []);
 
   const handleFieldChange = useCallback((key, value) => {
     setFormState(prev => ({ ...prev, [key]: value }));
@@ -92,13 +106,18 @@ function InjectorUI({ fetcher, products, shopify }) {
 
   const handleClear = useCallback(() => {
     setFormState({});
-    setSelectedProductId("");
-    setComboboxValue("");
-    setCurrentProductTitle("");
+    if (!isBulkMode) {
+      setSelectedProductId("");
+      setCurrentProductTitle("");
+    } else {
+      setSelectedProductIds([]);
+    }
     if (shopify) shopify.toast.show("Form cleared");
-  }, [shopify]);
+  }, [isBulkMode, shopify]);
 
   const handleAutoFill = useCallback(() => {
+    if (isBulkMode) return; // Auto-fill disabled in bulk mode
+    
     if (!selectedProductId) {
       if (shopify) shopify.toast.show("Please select a product first", { isError: true });
       return;
@@ -159,44 +178,61 @@ function InjectorUI({ fetcher, products, shopify }) {
     });
 
     if (shopify) shopify.toast.show("Auto-Fill applied to empty fields");
-  }, [selectedProductId, currentProductTitle, products, shopify]);
+  }, [selectedProductId, currentProductTitle, products, isBulkMode, shopify]);
 
   const handleInject = useCallback(() => {
-    if (!selectedProductId) {
-      if (shopify) shopify.toast.show("Please select a product first", { isError: true });
+    const targetIds = isBulkMode ? selectedProductIds : (selectedProductId ? [selectedProductId] : []);
+
+    if (targetIds.length === 0) {
+      if (shopify) shopify.toast.show(`Please select ${isBulkMode ? 'at least one' : 'a'} product first`, { isError: true });
       return;
     }
 
-    const payload = Object.entries(formState).map(([key, value]) => {
-      // Find the field in our master config to get its correct type
-      const config = METAFIELD_CONFIG.find(f => f.key === key);
-      const fieldType = config && config.type ? config.type : "single_line_text_field";
+    const validEntries = Object.entries(formState).filter(([key, value]) => value !== undefined && value.toString().trim() !== "");
 
-      return {
-        ownerId: selectedProductId,
-        namespace: "rockhound", // UPDATED: Now targeting the new namespace
-        key,
-        value: value.toString(),
-        type: fieldType 
-      };
-    }).filter(mf => mf.value !== "");
+    if (validEntries.length === 0) {
+      if (shopify) shopify.toast.show("No fields filled out to save.", { isError: true });
+      return;
+    }
+
+    const payload = [];
+    
+    targetIds.forEach(id => {
+      validEntries.forEach(([key, value]) => {
+        const config = METAFIELD_CONFIG.find(f => f.key === key);
+        const fieldType = config && config.type ? config.type : "single_line_text_field";
+
+        payload.push({
+          ownerId: id,
+          namespace: "rockhound",
+          key,
+          value: value.toString(),
+          type: fieldType 
+        });
+      });
+    });
 
     const formData = new FormData();
     formData.append("intent", "saveMetafields");
     formData.append("payload", JSON.stringify(payload));
 
     fetcher.submit(formData, { method: "post" });
-  }, [selectedProductId, formState, fetcher, shopify]);
+  }, [selectedProductId, selectedProductIds, isBulkMode, formState, fetcher, shopify]);
 
   useEffect(() => {
     if (fetcher.state === "idle" && fetcher.data) {
       if (fetcher.data.success) {
         if (shopify) shopify.toast.show(fetcher.data.message || "Metafields securely updated");
+        // Clear form immediately after successful bulk save to prevent accidental overwrites
+        if (isBulkMode) {
+            setFormState({});
+            setSelectedProductIds([]);
+        }
       } else if (fetcher.data.errors && fetcher.data.errors.length > 0) {
         if (shopify) shopify.toast.show("Failed to save some fields. Check errors above.", { isError: true });
       }
     }
-  }, [fetcher.state, fetcher.data, shopify]);
+  }, [fetcher.state, fetcher.data, isBulkMode, shopify]);
 
   const UI_GROUPS = [
     { id: "green", title: "Always Fill", hex: "#2E7D32", keys: ["piece_name", "primary_medium", "handcrafted_by", "is_one_of_a_kind", "treated"] },
@@ -209,122 +245,191 @@ function InjectorUI({ fetcher, products, shopify }) {
   return (
     <BlockStack gap="600">
       <Card padding="400">
-        <BlockStack gap="400">
-          <InlineStack align="space-between" blockAlign="center">
-            <Text variant="headingLg" as="h2">Select a Piece</Text>
-            {selectedProductId && (
+        <InlineStack align="space-between" blockAlign="center">
+          <Text variant="headingLg" as="h2">Database Injector</Text>
+          <InlineStack gap="300">
+            <div style={{ minHeight: "44px" }}>
               <Button 
-                icon={MagicIcon} 
-                onClick={handleAutoFill} 
-                accessibilityLabel="Auto-Fill Empty Fields"
-                tone="success"
+                size="large" 
+                pressed={!isBulkMode} 
+                onClick={() => handleModeToggle(false)}
+                accessibilityLabel="Switch to Single Product Mode"
               >
-                Auto-Fill
+                Single Product
               </Button>
-            )}
+            </div>
+            <div style={{ minHeight: "44px" }}>
+              <Button 
+                size="large" 
+                pressed={isBulkMode} 
+                onClick={() => handleModeToggle(true)}
+                accessibilityLabel="Switch to Bulk Edit Mode"
+              >
+                Bulk Edit
+              </Button>
+            </div>
           </InlineStack>
-          <Combobox
-            allowMultiple={false}
-            activator={
-              <Combobox.TextField
-                prefix={<Icon source={SearchIcon} />}
-                onChange={setComboboxValue}
-                label="Search Products"
-                labelHidden
-                value={comboboxValue}
-                placeholder="Search for a piece to inject..."
-                autoComplete="off"
-                accessibilityLabel="Search Products"
-              />
-            }
-          >
-            {filteredProducts.length > 0 && (
-              <Listbox onSelect={handleProductSelect}>
-                {filteredProducts.map(p => (
-                  <Listbox.Option key={p.id} value={p.id} selected={selectedProductId === p.id} accessibilityLabel={p.title}>
-                    {p.title}
-                  </Listbox.Option>
-                ))}
-              </Listbox>
-            )}
-          </Combobox>
-        </BlockStack>
+        </InlineStack>
       </Card>
 
-      <div style={{ maxHeight: "60vh", overflowY: "auto", display: "flex", flexDirection: "column", gap: "16px", paddingRight: "4px" }}>
-        {UI_GROUPS.map(group => {
-          const groupFields = METAFIELD_CONFIG.filter(f => group.keys.includes(f.key));
-          if (groupFields.length === 0) return null;
-
-          const totalInGroup = groupFields.length;
-          const completedCount = groupFields.filter(f => {
-            const val = formState[f.key];
-            return val && val.trim() !== "";
-          }).length;
-
-          return (
-            <Box key={group.id}>
-              <div style={{ backgroundColor: group.hex, padding: "16px", borderTopLeftRadius: "8px", borderTopRightRadius: "8px" }}>
-                <Text variant="headingMd" as="h3" tone="textInverse">
-                  {group.title} — {completedCount} / {totalInGroup} complete
-                </Text>
+      <Layout>
+        <Layout.Section variant="oneThird">
+          <Card padding="400">
+            <BlockStack gap="400">
+              <TextField
+                prefix={<Icon source={SearchIcon} />}
+                onChange={setSearchQuery}
+                label="Search Products"
+                labelHidden
+                value={searchQuery}
+                placeholder="Search inventory..."
+                autoComplete="off"
+                accessibilityLabel="Search inventory"
+              />
+              
+              <div style={{ maxHeight: "65vh", overflowY: "auto", display: "flex", flexDirection: "column", gap: "8px", paddingRight: "4px" }}>
+                {filteredProducts.map(p => {
+                  const isSelected = isBulkMode ? selectedProductIds.includes(p.id) : selectedProductId === p.id;
+                  
+                  return (
+                    <div
+                      key={p.id}
+                      onClick={() => isBulkMode ? toggleBulkSelection(p.id) : handleSingleSelect(p)}
+                      style={{
+                        padding: "16px 20px",
+                        minHeight: "64px",
+                        border: isSelected ? "2px solid #2E7D32" : "1px solid #E1E3E5",
+                        borderRadius: "8px",
+                        cursor: "pointer",
+                        backgroundColor: isSelected ? "#F3F8F4" : "#FFFFFF",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "16px",
+                        transition: "all 0.15s ease-in-out"
+                      }}
+                      role="button"
+                      aria-label={`Select ${p.title}`}
+                      aria-pressed={isSelected}
+                    >
+                      {isBulkMode && (
+                        <div style={{ pointerEvents: "none" }}>
+                          <Checkbox checked={isSelected} onChange={() => {}} ariaDescribedBy={`Select ${p.title}`} />
+                        </div>
+                      )}
+                      <Text fontWeight={isSelected ? "bold" : "regular"} as="span">{p.title}</Text>
+                    </div>
+                  );
+                })}
+                {filteredProducts.length === 0 && (
+                  <Box padding="400">
+                    <Text tone="subdued" alignment="center">No products found matching "{searchQuery}"</Text>
+                  </Box>
+                )}
               </div>
-              <div style={{ backgroundColor: "#FFFFFF", padding: "24px", borderBottomLeftRadius: "8px", borderBottomRightRadius: "8px", border: "1px solid #E1E3E5", borderTop: "none" }}>
-                <BlockStack gap="400">
-                  {groupFields.map(field => {
-                    const value = formState[field.key] || "";
-                    const isLargeField = ["origin_story", "honest_flaws_and_character", "artist_notes"].includes(field.key);
-                    const isComplete = value && value.trim() !== "";
-                    const isRequired = REQUIRED_FIELDS.includes(field.key);
-                    
-                    const labelWithIcon = (
-                      <span style={{ display: "inline-flex", alignItems: "center", gap: "8px" }}>
-                        <StatusIcon isComplete={isComplete} isRequired={isRequired} />
-                        {field.label}
-                      </span>
-                    );
-                    
-                    if (field.options && field.options.length > 0) {
-                      const uniqueOptions = [{ label: "Select...", value: "" }, ...field.options.map(o => (typeof o === 'string' ? { label: o, value: o } : o))];
-                      return (
-                        <Select
-                          key={field.key}
-                          label={labelWithIcon}
-                          options={uniqueOptions}
-                          value={value}
-                          onChange={(val) => handleFieldChange(field.key, val)}
-                          accessibilityLabel={field.label}
-                        />
-                      );
-                    }
-                    
-                    return (
-                      <TextField
-                        key={field.key}
-                        label={labelWithIcon}
-                        value={value}
-                        onChange={(val) => handleFieldChange(field.key, val)}
-                        autoComplete="off"
-                        accessibilityLabel={field.label}
-                        multiline={isLargeField ? 3 : false}
-                      />
-                    );
-                  })}
-                </BlockStack>
-              </div>
-            </Box>
-          );
-        })}
-      </div>
+            </BlockStack>
+          </Card>
+        </Layout.Section>
 
-      <InlineStack gap="400" align="end">
-        <div style={{ minHeight: '52px', minWidth: '140px' }}>
-          <Button size="large" onClick={handleClear} accessibilityLabel="Clear all fields">Clear Form</Button>
-        </div>
-        <div style={{ minHeight: '52px', minWidth: '180px' }}>
-          <Button size="large" variant="primary" onClick={handleInject} accessibilityLabel="Save to Shopify" loading={fetcher.state !== "idle"}>Save to Shopify</Button>
-        </div>
-      </InlineStack>
+        <Layout.Section>
+          <BlockStack gap="400">
+            {(!isBulkMode && selectedProductId) && (
+              <InlineStack align="end">
+                <Button 
+                  icon={MagicIcon} 
+                  onClick={handleAutoFill} 
+                  accessibilityLabel="Auto-Fill Empty Fields"
+                  tone="success"
+                  size="large"
+                >
+                  Auto-Fill
+                </Button>
+              </InlineStack>
+            )}
+
+            {isBulkMode && (
+              <Banner tone="info" title="Bulk Edit Mode Active">
+                <p>Fields left empty will be safely skipped. Filling a field will overwrite that data on <b>all {selectedProductIds.length} selected products</b>.</p>
+              </Banner>
+            )}
+
+            <div style={{ maxHeight: "65vh", overflowY: "auto", display: "flex", flexDirection: "column", gap: "16px", paddingRight: "4px" }}>
+              {UI_GROUPS.map(group => {
+                const groupFields = METAFIELD_CONFIG.filter(f => group.keys.includes(f.key));
+                if (groupFields.length === 0) return null;
+
+                const totalInGroup = groupFields.length;
+                const completedCount = groupFields.filter(f => {
+                  const valStr = (formState[f.key] || "").toString().trim().toLowerCase();
+                  return valStr !== "" && valStr !== "n/a";
+                }).length;
+
+                return (
+                  <Box key={group.id}>
+                    <div style={{ backgroundColor: group.hex, padding: "16px", borderTopLeftRadius: "8px", borderTopRightRadius: "8px" }}>
+                      <Text variant="headingMd" as="h3" tone="textInverse">
+                        {group.title} {!isBulkMode && `— ${completedCount} / ${totalInGroup} active`}
+                      </Text>
+                    </div>
+                    <div style={{ backgroundColor: "#FFFFFF", padding: "24px", borderBottomLeftRadius: "8px", borderBottomRightRadius: "8px", border: "1px solid #E1E3E5", borderTop: "none" }}>
+                      <BlockStack gap="400">
+                        {groupFields.map(field => {
+                          const value = formState[field.key] || "";
+                          const isLargeField = ["origin_story", "honest_flaws_and_character", "artist_notes"].includes(field.key);
+                          
+                          const labelWithIcon = (
+                            <span style={{ display: "inline-flex", alignItems: "center", gap: "8px" }}>
+                              <StatusIcon value={value} />
+                              {field.label}
+                            </span>
+                          );
+                          
+                          if (field.options && field.options.length > 0) {
+                            const uniqueOptions = [{ label: "Select...", value: "" }, ...field.options.map(o => (typeof o === 'string' ? { label: o, value: o } : o))];
+                            return (
+                              <Select
+                                key={field.key}
+                                label={labelWithIcon}
+                                options={uniqueOptions}
+                                value={value}
+                                onChange={(val) => handleFieldChange(field.key, val)}
+                                accessibilityLabel={field.label}
+                              />
+                            );
+                          }
+                          
+                          return (
+                            <TextField
+                              key={field.key}
+                              label={labelWithIcon}
+                              value={value}
+                              onChange={(val) => handleFieldChange(field.key, val)}
+                              autoComplete="off"
+                              accessibilityLabel={field.label}
+                              multiline={isLargeField ? 3 : false}
+                            />
+                          );
+                        })}
+                      </BlockStack>
+                    </div>
+                  </Box>
+                );
+              })}
+            </div>
+
+            <InlineStack gap="400" align="end">
+              <div style={{ minHeight: '52px', minWidth: '140px' }}>
+                <Button size="large" onClick={handleClear} accessibilityLabel="Clear all fields">Clear Form</Button>
+              </div>
+              <div style={{ minHeight: '52px', minWidth: '180px' }}>
+                <Button size="large" variant="primary" onClick={handleInject} accessibilityLabel="Save to Shopify" loading={fetcher.state !== "idle"}>
+                  {isBulkMode ? `Save to ${selectedProductIds.length} Products` : "Save to Shopify"}
+                </Button>
+              </div>
+            </InlineStack>
+
+          </BlockStack>
+        </Layout.Section>
+      </Layout>
     </BlockStack>
   );
 }
@@ -344,7 +449,7 @@ export default function MetaInjectorV2() {
   const [selectedTab, setSelectedTab] = useState(0);
 
   const tabs = [
-    { id: 'northstar', content: '⭐ North Star Auto-Fill', panelID: 'panel-northstar' },
+    { id: 'northstar', content: '⭐ Command Center', panelID: 'panel-northstar' },
     { id: 'health', content: 'Data Health Matrix', panelID: 'panel-health' },
     { id: 'inspector', content: 'Product Inspector', panelID: 'panel-inspector' },
     { id: 'origin', content: 'Origin Fixer', panelID: 'panel-origin' },
