@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect, useCallback } from "react";
 import { useLoaderData, useFetcher, useNavigate } from "react-router";
 import {
   Page, Layout, Card, Text, Banner, BlockStack, Box, Tabs, Frame,
-  TextField, Select, Button, Combobox, Listbox, Icon, InlineStack, FormLayout
+  TextField, Select, Button, Combobox, Listbox, Icon, InlineStack
 } from "@shopify/polaris";
 import { SearchIcon, MagicIcon } from "@shopify/polaris-icons";
 
@@ -23,6 +23,37 @@ import { CsvTab } from "./app.meta-injector.csv";
 // --- EXPORT THE ENGINE FOR REMIX TO RUN ---
 export const loader = engineLoader;
 export const action = engineAction;
+
+const REQUIRED_FIELDS = [
+  "piece_name", "primary_medium", "handcrafted_by", "is_one_of_a_kind", "treated",
+  "material", "stone_family", "color", "cut_and_shape", "surface_finish", "dimensions_mm", "weight_grams"
+];
+
+const StatusIcon = ({ isComplete, isRequired }) => {
+  let color = "#F9A825"; // yellow / optional
+  let label = "Optional field, currently empty";
+  
+  if (isComplete) {
+    color = "#2E7D32"; // green
+    label = "Field complete";
+  } else if (isRequired) {
+    color = "#C62828"; // red
+    label = "Required field, currently empty";
+  }
+
+  return (
+    <svg
+      width="12"
+      height="12"
+      viewBox="0 0 12 12"
+      aria-label={label}
+      role="img"
+      style={{ flexShrink: 0 }}
+    >
+      <circle cx="6" cy="6" r="6" fill={color} />
+    </svg>
+  );
+};
 
 // --- INJECTOR UI (Replaces standard import to ensure Janyce-proof architecture) ---
 function InjectorUI({ fetcher, products, shopify }) {
@@ -214,52 +245,71 @@ function InjectorUI({ fetcher, products, shopify }) {
         </BlockStack>
       </Card>
 
-      {UI_GROUPS.map(group => {
-        const groupFields = METAFIELD_CONFIG.filter(f => group.keys.includes(f.key));
-        if (groupFields.length === 0) return null;
+      <div style={{ maxHeight: "60vh", overflowY: "auto", display: "flex", flexDirection: "column", gap: "16px", paddingRight: "4px" }}>
+        {UI_GROUPS.map(group => {
+          const groupFields = METAFIELD_CONFIG.filter(f => group.keys.includes(f.key));
+          if (groupFields.length === 0) return null;
 
-        return (
-          <Box key={group.id} paddingBlockEnd="400">
-            <div style={{ backgroundColor: group.hex, padding: "16px", borderTopLeftRadius: "8px", borderTopRightRadius: "8px" }}>
-              <Text variant="headingMd" as="h3" tone="textInverse">{group.title}</Text>
-            </div>
-            <div style={{ backgroundColor: "#FFFFFF", padding: "24px", borderBottomLeftRadius: "8px", borderBottomRightRadius: "8px", border: "1px solid #E1E3E5", borderTop: "none" }}>
-              <FormLayout>
-                {groupFields.map(field => {
-                  const value = formState[field.key] || "";
-                  const isLargeField = ["origin_story", "honest_flaws_and_character", "artist_notes"].includes(field.key);
-                  
-                  if (field.options && field.options.length > 0) {
-                    const uniqueOptions = [{ label: "Select...", value: "" }, ...field.options.map(o => (typeof o === 'string' ? { label: o, value: o } : o))];
+          const totalInGroup = groupFields.length;
+          const completedCount = groupFields.filter(f => {
+            const val = formState[f.key];
+            return val && val.trim() !== "";
+          }).length;
+
+          return (
+            <Box key={group.id}>
+              <div style={{ backgroundColor: group.hex, padding: "16px", borderTopLeftRadius: "8px", borderTopRightRadius: "8px" }}>
+                <Text variant="headingMd" as="h3" tone="textInverse">
+                  {group.title} — {completedCount} / {totalInGroup} complete
+                </Text>
+              </div>
+              <div style={{ backgroundColor: "#FFFFFF", padding: "24px", borderBottomLeftRadius: "8px", borderBottomRightRadius: "8px", border: "1px solid #E1E3E5", borderTop: "none" }}>
+                <BlockStack gap="400">
+                  {groupFields.map(field => {
+                    const value = formState[field.key] || "";
+                    const isLargeField = ["origin_story", "honest_flaws_and_character", "artist_notes"].includes(field.key);
+                    const isComplete = value && value.trim() !== "";
+                    const isRequired = REQUIRED_FIELDS.includes(field.key);
+                    
+                    const labelWithIcon = (
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: "8px" }}>
+                        <StatusIcon isComplete={isComplete} isRequired={isRequired} />
+                        {field.label}
+                      </span>
+                    );
+                    
+                    if (field.options && field.options.length > 0) {
+                      const uniqueOptions = [{ label: "Select...", value: "" }, ...field.options.map(o => (typeof o === 'string' ? { label: o, value: o } : o))];
+                      return (
+                        <Select
+                          key={field.key}
+                          label={labelWithIcon}
+                          options={uniqueOptions}
+                          value={value}
+                          onChange={(val) => handleFieldChange(field.key, val)}
+                          accessibilityLabel={field.label}
+                        />
+                      );
+                    }
+                    
                     return (
-                      <Select
+                      <TextField
                         key={field.key}
-                        label={field.label}
-                        options={uniqueOptions}
+                        label={labelWithIcon}
                         value={value}
                         onChange={(val) => handleFieldChange(field.key, val)}
+                        autoComplete="off"
                         accessibilityLabel={field.label}
+                        multiline={isLargeField ? 3 : false}
                       />
                     );
-                  }
-                  
-                  return (
-                    <TextField
-                      key={field.key}
-                      label={field.label}
-                      value={value}
-                      onChange={(val) => handleFieldChange(field.key, val)}
-                      autoComplete="off"
-                      accessibilityLabel={field.label}
-                      multiline={isLargeField ? 3 : false}
-                    />
-                  );
-                })}
-              </FormLayout>
-            </div>
-          </Box>
-        );
-      })}
+                  })}
+                </BlockStack>
+              </div>
+            </Box>
+          );
+        })}
+      </div>
 
       <InlineStack gap="400" align="end">
         <div style={{ minHeight: '52px', minWidth: '140px' }}>
