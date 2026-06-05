@@ -20,7 +20,6 @@ const Dot = ({ color }) => (
 
 export default function Index() {
   const navigate = useNavigate();
-
   return (
     <div style={{ padding: "40px", fontFamily: "sans-serif" }}>
       <h1 style={{ fontSize: "32px", marginBottom: "24px" }}>Shop Floor Command Center</h1>
@@ -30,20 +29,7 @@ export default function Index() {
             key={path}
             onClick={() => navigate(path)}
             aria-label={`Open ${label}`}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "16px",
-              minHeight: "60px",
-              padding: "0 20px",
-              fontSize: "20px",
-              cursor: "pointer",
-              borderRadius: "8px",
-              border: "none",
-              background: "#fff",
-              textAlign: "left",
-              transition: "background 0.15s",
-            }}
+            style={{ display: "flex", alignItems: "center", gap: "16px", minHeight: "60px", padding: "0 20px", fontSize: "20px", cursor: "pointer", borderRadius: "8px", border: "none", background: "#fff", textAlign: "left", transition: "background 0.15s" }}
             onMouseEnter={e => e.currentTarget.style.background = "#f3f3f3"}
             onMouseLeave={e => e.currentTarget.style.background = "#fff"}
           >
