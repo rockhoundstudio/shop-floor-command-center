@@ -65,6 +65,11 @@ export async function action({ request }) {
   return json({ results });
 }
 
+export async function loader({ request }) {
+  const { authenticate: auth } = await import("../shopify.server");
+  return null;
+}
+
 export default function FixMetafields() {
   const actionData = useActionData();
   const navigate = useNavigate();
