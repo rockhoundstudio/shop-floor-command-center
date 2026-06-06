@@ -17,7 +17,8 @@ export default function Index() {
           ["Store Health Check", "/app/store-health-check"],
           ["Image Extractor", "/app/image-extractor"],
           ["Setup Metafields", "/app/setup-metafields"],
-          ["Fix Metafields", "/app/fix-metafields"] // <-- Added the access button here!
+          ["Fix Metafields", "/app/fix-metafields"],
+          ["Data Migration Engine", "/app/migrate-data"]
         ].map(([label, path]) => (
           <button
             key={path}
