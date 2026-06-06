@@ -157,7 +157,8 @@ function InjectorUI({ fetcher, products, shopify, pageInfo, metafieldDefinitions
 
     // 3. Description Parser
     if (productToFill && productToFill.descriptionHtml) {
-      // Replace block-level tags with newlines first so lines don't get mushed together, then strip html and entities
+      console.log("DESC HTML:", productToFill.descriptionHtml.substring(0, 200));
+      
       const cleanHtml = productToFill.descriptionHtml
         .replace(/<br\s*[\/]?>/gi, '\n')
         .replace(/<\/(p|div|li|h[1-6])>/gi, '\n')
@@ -183,6 +184,8 @@ function InjectorUI({ fetcher, products, shopify, pageInfo, metafieldDefinitions
            }
         }
       });
+    } else {
+      console.log("NO DESCRIPTION FOUND");
     }
 
     // 4. Smart Defaults
