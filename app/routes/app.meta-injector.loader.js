@@ -5,15 +5,6 @@ import db from "../db.server";
 export async function loader({ request }) {
   const { admin } = await authenticate.admin(request);
 
-  const rawStoneProfiles = await db.stoneProfile.findMany();
-
-  const dbProfiles = rawStoneProfiles.map((sp) => {
-    return {
-      title: sp.stoneName,
-      stoneName: sp.stoneName
-    };
-  });
-
   let allRawProducts = [];
   let hasNextPage = true;
   let cursor = null;
@@ -32,7 +23,7 @@ export async function loader({ request }) {
                 title
                 handle
                 featuredImage { url altText }
-                metafields(first: 50, namespace: "custom") {
+                metafields(first: 50, namespace: "rockhound") {
                   edges {
                     node {
                       id namespace key value type
@@ -50,7 +41,7 @@ export async function loader({ request }) {
     }
 
     const parsed = await response.json();
-    const productsData = parsed.data && parsed.data.products;
+    const productsData = parsed.data && productsData.products;
 
     if (productsData) {
       allRawProducts = [...allRawProducts, ...productsData.edges.map(e => e.node)];
@@ -65,50 +56,56 @@ export async function loader({ request }) {
     return !EXCLUDED_TITLES.includes(p.title);
   });
 
-  let snapResponse;
+  let metafieldDefinitions = [];
   try {
-    snapResponse = await admin.graphql(`
+    const defResponse = await admin.graphql(`
       #graphql
-      query GetSnapshots {
-        metaobjects(type: "meta_injector_snapshot", first: 10, reverse: true) {
+      query GetDefinitions {
+        metafieldDefinitions(first: 100, ownerType: PRODUCT, namespace: "rockhound") {
           edges {
             node {
               id
-              timestamp: field(key: "timestamp") { value }
-              scope: field(key: "scope") { value }
-              action: field(key: "action") { value }
-              payload: field(key: "payload") { value }
+              name
+              key
+              type { name }
             }
           }
         }
       }
     `);
+    const defJson = await defResponse.json();
+    const edges = defJson.data && defJson.data.metafieldDefinitions && defJson.data.metafieldDefinitions.edges;
+    if (edges) {
+      metafieldDefinitions = edges.map(e => ({
+        id: e.node.id,
+        name: e.node.name,
+        key: e.node.key,
+        type: (e.node.type && e.node.type.name) ? e.node.type.name : "single_line_text_field"
+      }));
+    }
   } catch (error) {
-    console.log("GetSnapshots error:", JSON.stringify(error.graphQLErrors, null, 2));
-    throw error;
+    console.log("GetDefinitions error:", error);
   }
 
-  const snapParsed = await snapResponse.json();
-  const metaobjectsEdges = snapParsed.data && snapParsed.data.metaobjects && snapParsed.data.metaobjects.edges;
-  const rawSnapshots = metaobjectsEdges ? metaobjectsEdges.map(e => e.node) : [];
+  const snapshots = [];
+  const dbProfiles = [];
 
-  const snapshots = rawSnapshots.map((s) => {
-    return {
-      id: s.id,
-      date: (s.timestamp && s.timestamp.value) || "Unknown Date",
-      action: (s.action && s.action.value) || "Snapshot",
-      scopeCount: (s.scope && s.scope.value) || "0",
-      payloadStr: (s.payload && s.payload.value) || "[]"
-    };
-  });
-
-  return { products, snapshots, dbProfiles };
+  return { products, snapshots, dbProfiles, metafieldDefinitions };
 }
 
 export async function action({ request }) {
   const { admin } = await authenticate.admin(request);
+  
+  if (request.method === "GET") {
+    return new Response("Method Not Allowed", { status: 405 });
+  }
+
   const formData = await request.formData();
   const intent = formData.get("intent");
+
+  if (!intent) {
+    return { success: false, errors: [] };
+  }
 
   if (intent === "saveMetafields") {
     let rawPayload = JSON.parse(formData.get("payload"));
@@ -125,7 +122,7 @@ export async function action({ request }) {
       }
 
       let cleanMf = {
-        namespace: mf.namespace || "custom",
+        namespace: mf.namespace || "rockhound",
         key: mf.key,
         value: mf.value,
         type: mf.type || "single_line_text_field"
@@ -171,7 +168,59 @@ export async function action({ request }) {
     if (allErrors.length > 0) {
       return { success: false, errors: allErrors, message: "Failed to save some metafields." };
     }
-    return { success: true, message: "Metafields securely updated via productUpdate." };
+    return { success: true, message: "Metafields securely updated via productUpdate.", intent };
+  }
+
+  if (intent === "createMetafieldDefinition") {
+    const namespace = formData.get("namespace") || "rockhound";
+    const key = formData.get("key");
+    const name = formData.get("name");
+    const type = formData.get("type") || "single_line_text_field";
+
+    const response = await admin.graphql(`
+      #graphql
+      mutation CreateMetafieldDefinition($definition: MetafieldDefinitionInput!) {
+        metafieldDefinitionCreate(definition: $definition) {
+          createdDefinition { id name }
+          userErrors { field message }
+        }
+      }
+    `, {
+      variables: {
+        definition: {
+          namespace,
+          key,
+          name,
+          ownerType: "PRODUCT",
+          type
+        }
+      }
+    });
+    const json = await response.json();
+    const errors = json.data && json.data.metafieldDefinitionCreate && json.data.metafieldDefinitionCreate.userErrors ? json.data.metafieldDefinitionCreate.userErrors : [];
+    if (errors.length > 0) return { success: false, errors };
+    return { success: true, intent };
+  }
+
+  if (intent === "deleteMetafieldDefinition") {
+    const id = formData.get("id");
+    const response = await admin.graphql(`
+      #graphql
+      mutation DeleteMetafieldDefinition($id: ID!) {
+        metafieldDefinitionDelete(id: $id) {
+          deletedDefinitionId
+          userErrors { field message }
+        }
+      }
+    `, { variables: { id } });
+    const json = await response.json();
+    const errors = json.data && json.data.metafieldDefinitionDelete && json.data.metafieldDefinitionDelete.userErrors ? json.data.metafieldDefinitionDelete.userErrors : [];
+    if (errors.length > 0) return { success: false, errors };
+    return { success: true, intent };
+  }
+
+  if (intent === "geminiAutoFill" || intent === "geminiTrendWatch") {
+    return { success: false, errors: [{ message: "Gemini AI endpoint not yet configured on backend." }] };
   }
 
   if (intent === "fetchSingleProduct") {
@@ -185,7 +234,7 @@ export async function action({ request }) {
       query GetSingleProduct($id: ID!) {
         product(id: $id) {
           id title handle status featuredImage { url altText }
-          metafields(first: 50, namespace: "custom") {
+          metafields(first: 50, namespace: "rockhound") {
             edges {
               node {
                 id namespace key value type
@@ -218,7 +267,7 @@ export async function action({ request }) {
             edges {
               node {
                 id title handle
-                originMetafield: metafield(namespace: "custom", key: "origin_story") { value }
+                originMetafield: metafield(namespace: "rockhound", key: "origin_story") { value }
               }
             }
           }
@@ -321,5 +370,5 @@ export async function action({ request }) {
     return { success: true };
   }
 
-  return { success: false, errors: [{ message: "Unknown command" }] };
+  return { success: true, errors: [] };
 }
