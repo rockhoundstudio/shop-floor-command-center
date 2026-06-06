@@ -157,7 +157,7 @@ function InjectorUI({ fetcher, products, shopify, pageInfo, metafieldDefinitions
 
     // 3. Smart Defaults
     if (!newForm.is_one_of_a_kind) {
-      newForm.is_one_of_a_kind = "true";
+      newForm.is_one_of_a_kind = "Yes — one of a kind";
     }
     if (!newForm.handcrafted_by) {
       newForm.handcrafted_by = "Robert";
