@@ -339,8 +339,8 @@ function InjectorUI({ fetcher, products, shopify, pageInfo, metafieldDefinitions
 
       <div style={{ display: "flex", width: "100%", gap: "24px", alignItems: "flex-start" }}>
         
-        {/* LEFT COLUMN - 30% */}
-        <div style={{ flex: "0 0 calc(30% - 12px)", width: "calc(30% - 12px)" }}>
+        {/* LEFT COLUMN - 50% */}
+        <div style={{ flex: "0 0 calc(50% - 12px)", width: "calc(50% - 12px)" }}>
           <Card padding="400">
             <BlockStack gap="400">
               <div style={{ minHeight: '48px' }}>
@@ -397,12 +397,12 @@ function InjectorUI({ fetcher, products, shopify, pageInfo, metafieldDefinitions
                 {pageInfo && pageInfo.hasNextPage && (
                   <div style={{ minHeight: '48px', marginTop: '16px' }}>
                      <Button 
-                        fullWidth 
-                        size="large" 
-                        onClick={() => fetcher.submit({ intent: "loadMoreProducts" }, { method: "post" })}
-                        accessibilityLabel="Load more products"
+                       fullWidth 
+                       size="large" 
+                       onClick={() => fetcher.submit({ intent: "loadMoreProducts" }, { method: "post" })}
+                       accessibilityLabel="Load more products"
                      >
-                        Load More
+                       Load More
                      </Button>
                   </div>
                 )}
@@ -411,8 +411,8 @@ function InjectorUI({ fetcher, products, shopify, pageInfo, metafieldDefinitions
           </Card>
         </div>
 
-        {/* RIGHT COLUMN - 70% */}
-        <div style={{ flex: "0 0 calc(70% - 12px)", width: "calc(70% - 12px)", display: "flex", flexDirection: "column", gap: "24px" }}>
+        {/* RIGHT COLUMN - 50% */}
+        <div style={{ flex: "0 0 calc(50% - 12px)", width: "calc(50% - 12px)", display: "flex", flexDirection: "column", gap: "24px" }}>
           
           <Card padding="400">
             <BlockStack gap="400">
