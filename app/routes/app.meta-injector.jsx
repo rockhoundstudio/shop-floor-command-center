@@ -146,29 +146,7 @@ function InjectorUI({ fetcher, products, shopify, pageInfo, metafieldDefinitions
       }
     }
 
-    // 2. Description Parser
-    if (productToFill && productToFill.descriptionHtml) {
-      const strippedHtml = productToFill.descriptionHtml.replace(/<[^>]*>?/gm, '');
-      const lines = strippedHtml.split('\n');
-      
-      lines.forEach(line => {
-        const trimmed = line.trim();
-        if (trimmed.startsWith("Dimensions:")) {
-          newForm.dimensions_mm = trimmed.replace("Dimensions:", "").trim();
-        } else if (trimmed.startsWith("Finish:")) {
-          newForm.surface_finish = trimmed.replace("Finish:", "").trim();
-        } else if (trimmed.startsWith("Mohs:")) {
-          newForm.artist_notes = `Mohs: ${trimmed.replace("Mohs:", "").trim()}`;
-        } else if (trimmed.startsWith("One of a Kind:")) {
-           const val = trimmed.replace("One of a Kind:", "").trim();
-           if(val.toLowerCase() === "yes"){
-              newForm.is_one_of_a_kind = "true";
-           }
-        }
-      });
-    }
-
-    // 3. Existing Metafields (overwrites parsed title and description data)
+    // 2. Existing Metafields (overwrites parsed title data, loaded before description to prevent overwriting)
     if (productToFill && productToFill.metafields && productToFill.metafields.edges) {
       productToFill.metafields.edges.forEach(({ node }) => {
         if (node.namespace === "rockhound" && node.value) {
@@ -177,9 +155,39 @@ function InjectorUI({ fetcher, products, shopify, pageInfo, metafieldDefinitions
       });
     }
 
+    // 3. Description Parser
+    if (productToFill && productToFill.descriptionHtml) {
+      // Replace block-level tags with newlines first so lines don't get mushed together, then strip html and entities
+      const cleanHtml = productToFill.descriptionHtml
+        .replace(/<br\s*[\/]?>/gi, '\n')
+        .replace(/<\/(p|div|li|h[1-6])>/gi, '\n')
+        .replace(/<[^>]*>?/gm, '')
+        .replace(/&nbsp;/g, ' ');
+        
+      console.log("Stripped Description:\n", cleanHtml);
+      
+      const lines = cleanHtml.split('\n');
+      
+      lines.forEach(line => {
+        const trimmed = line.trim();
+        if (trimmed.startsWith("Dimensions:") && !newForm.dimensions_mm) {
+          newForm.dimensions_mm = trimmed.replace("Dimensions:", "").trim();
+        } else if (trimmed.startsWith("Finish:") && !newForm.surface_finish) {
+          newForm.surface_finish = trimmed.replace("Finish:", "").trim();
+        } else if (trimmed.startsWith("Mohs:") && !newForm.artist_notes) {
+          newForm.artist_notes = `Mohs: ${trimmed.replace("Mohs:", "").trim()}`;
+        } else if (trimmed.startsWith("One of a Kind:") && !newForm.is_one_of_a_kind) {
+           const val = trimmed.replace("One of a Kind:", "").trim();
+           if(val.toLowerCase() === "yes"){
+              newForm.is_one_of_a_kind = "true";
+           }
+        }
+      });
+    }
+
     // 4. Smart Defaults
     if (!newForm.is_one_of_a_kind) {
-      newForm.is_one_of_a_kind = "Yes — one of a kind";
+      newForm.is_one_of_a_kind = "true";
     }
     if (!newForm.handcrafted_by) {
       newForm.handcrafted_by = "Robert";
