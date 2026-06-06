@@ -1,7 +1,7 @@
 import React, { useEffect } from "react";
 import { useFetcher, useNavigate } from "react-router";
 import {
-  Page, Layout, Card, Text, Button, BlockStack, Box, InlineStack, Divider, Banner
+  Page, Layout, Card, Text, Button, BlockStack, Box, Divider, Banner
 } from "@shopify/polaris";
 
 import { authenticate } from "../shopify.server";
@@ -13,14 +13,106 @@ export async function loader({ request }) {
 
 export async function action({ request }) {
   const { admin } = await authenticate.admin(request);
-  
+  const formData = await request.formData();
+  const intent = formData.get("intent");
+
+  // ── STANDARDIZE ONE OF A KIND ──────────────────────────────────────────────
+  if (intent === "standardizeOneOfAKind") {
+    const results = [];
+    let fixed = 0;
+
+    try {
+      const queryResponse = await admin.graphql(`
+        #graphql
+        query GetProductsForStandardize {
+          products(first: 250) {
+            edges {
+              node {
+                id
+                title
+                metafields(first: 50, namespace: "rockhound") {
+                  edges {
+                    node {
+                      id
+                      key
+                      value
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      `);
+
+      const json = await queryResponse.json();
+      const products = json.data && json.data.products && json.data.products.edges
+        ? json.data.products.edges.map(e => e.node)
+        : [];
+
+      const toFix = [];
+
+      products.forEach(product => {
+        if (product.metafields && product.metafields.edges) {
+          product.metafields.edges.forEach(edge => {
+            if (edge.node.key === "is_one_of_a_kind" && edge.node.value === "true") {
+              toFix.push({
+                ownerId: product.id,
+                namespace: "rockhound",
+                key: "is_one_of_a_kind",
+                value: "Yes — one of a kind",
+                type: "single_line_text_field"
+              });
+            }
+          });
+        }
+      });
+
+      if (toFix.length === 0) {
+        results.push({ status: "success", message: "All products already standardized. Nothing to update." });
+      } else {
+        const chunks = [];
+        for (let i = 0; i < toFix.length; i += 25) {
+          chunks.push(toFix.slice(i, i + 25));
+        }
+
+        for (const chunk of chunks) {
+          const setResponse = await admin.graphql(`
+            #graphql
+            mutation MetafieldsSet($metafields: [MetafieldsSetInput!]!) {
+              metafieldsSet(metafields: $metafields) {
+                userErrors { field message }
+              }
+            }
+          `, { variables: { metafields: chunk } });
+
+          const setJson = await setResponse.json();
+          const errors = setJson.data && setJson.data.metafieldsSet && setJson.data.metafieldsSet.userErrors
+            ? setJson.data.metafieldsSet.userErrors
+            : [];
+
+          if (errors.length > 0) {
+            results.push({ status: "error", message: `Chunk failed: ${errors[0].message}` });
+          } else {
+            fixed += chunk.length;
+          }
+        }
+
+        results.push({ status: "success", message: `Done. Updated ${fixed} products to "Yes — one of a kind".` });
+      }
+    } catch (error) {
+      results.push({ status: "error", message: `Standardize failed: ${error.message}` });
+    }
+
+    return { intent, results, fixed };
+  }
+
+  // ── LEGACY MIGRATION ───────────────────────────────────────────────────────
   const results = [];
   let productsProcessed = 0;
   let fieldsMigrated = 0;
 
   try {
-    // 1. Fetch products and their current metafields from the rockhound namespace
-    // Grabbing a solid chunk of 250 products to process in one click
     const queryResponse = await admin.graphql(`
       #graphql
       query GetAllProductsForMigration {
@@ -42,13 +134,14 @@ export async function action({ request }) {
         }
       }
     `);
-    
+
     const json = await queryResponse.json();
-    const products = json.data && json.data.products && json.data.products.edges ? json.data.products.edges.map(e => e.node) : [];
+    const products = json.data && json.data.products && json.data.products.edges
+      ? json.data.products.edges.map(e => e.node)
+      : [];
 
     const allNewMetafields = [];
 
-    // 2. Loop through products and map the old data
     products.forEach(product => {
       if (product.metafields && product.metafields.edges && product.metafields.edges.length > 0) {
         const mfs = product.metafields.edges.map(e => e.node);
@@ -57,15 +150,12 @@ export async function action({ request }) {
           return field ? field.value : null;
         };
 
-        // Extract old values
         const stoneStory = getVal("stone_story");
         const originLocation = getVal("origin_location");
         const characterMarks = getVal("character_marks");
         const treatmentStatus = getVal("treatment_status");
         const stoneShape = getVal("stone_shape");
         const rescuedBy = getVal("rescued_by");
-        
-        // Extract the science fields for the bundle
         const mohs = getVal("mohs_hardness") || getVal("hardness");
         const fracture = getVal("fracture");
         const cleavage = getVal("cleavage");
@@ -75,33 +165,27 @@ export async function action({ request }) {
 
         let productUpdates = [];
 
-        // MAPPING: Origin Story (Merge location and story)
         const newOrigin = [stoneStory, originLocation].filter(Boolean).join(" — ");
         if (newOrigin) {
           productUpdates.push({ ownerId: product.id, namespace: "rockhound", key: "origin_story", value: newOrigin, type: "single_line_text_field" });
         }
 
-        // MAPPING: Honest Flaws
         if (characterMarks) {
           productUpdates.push({ ownerId: product.id, namespace: "rockhound", key: "honest_flaws_and_character", value: characterMarks, type: "single_line_text_field" });
         }
 
-        // MAPPING: Treated
         if (treatmentStatus) {
           productUpdates.push({ ownerId: product.id, namespace: "rockhound", key: "treated", value: treatmentStatus, type: "single_line_text_field" });
         }
 
-        // MAPPING: Cut and Shape
         if (stoneShape) {
           productUpdates.push({ ownerId: product.id, namespace: "rockhound", key: "cut_and_shape", value: stoneShape, type: "single_line_text_field" });
         }
 
-        // MAPPING: Handcrafted By
         if (rescuedBy) {
           productUpdates.push({ ownerId: product.id, namespace: "rockhound", key: "handcrafted_by", value: rescuedBy, type: "single_line_text_field" });
         }
 
-        // MAPPING: The Science Bundle -> Artist Notes
         const specs = [
           mohs ? `Mohs: ${mohs}` : null,
           fracture ? `Fracture: ${fracture}` : null,
@@ -112,8 +196,7 @@ export async function action({ request }) {
         ].filter(Boolean).join(" | ");
 
         if (specs) {
-          const shopSpecsNote = `[Shop Specs] ${specs}`;
-          productUpdates.push({ ownerId: product.id, namespace: "rockhound", key: "artist_notes", value: shopSpecsNote, type: "single_line_text_field" });
+          productUpdates.push({ ownerId: product.id, namespace: "rockhound", key: "artist_notes", value: `[Shop Specs] ${specs}`, type: "single_line_text_field" });
         }
 
         if (productUpdates.length > 0) {
@@ -123,7 +206,6 @@ export async function action({ request }) {
       }
     });
 
-    // 3. Save the new mappings in chunks of 25 (Shopify limit for metafieldsSet)
     const chunks = [];
     for (let i = 0; i < allNewMetafields.length; i += 25) {
       chunks.push(allNewMetafields.slice(i, i + 25));
@@ -140,8 +222,10 @@ export async function action({ request }) {
       `, { variables: { metafields: chunk } });
 
       const setJson = await setResponse.json();
-      const errors = setJson.data && setJson.data.metafieldsSet && setJson.data.metafieldsSet.userErrors ? setJson.data.metafieldsSet.userErrors : [];
-      
+      const errors = setJson.data && setJson.data.metafieldsSet && setJson.data.metafieldsSet.userErrors
+        ? setJson.data.metafieldsSet.userErrors
+        : [];
+
       if (errors.length > 0) {
         results.push({ status: "error", message: `Chunk failed: ${errors[0].message}` });
       } else {
@@ -155,33 +239,53 @@ export async function action({ request }) {
     results.push({ status: "error", message: `Migration completely failed: ${error.message}` });
   }
 
-  return { results, productsProcessed, fieldsMigrated };
+  return { intent: "migrate", results, productsProcessed, fieldsMigrated };
 }
 
 export default function MigrateDataRoute() {
   const navigate = useNavigate();
-  const fetcher = useFetcher();
-  const shopify = typeof window !== 'undefined' ? window.shopify : undefined;
+  const migrateFetcher = useFetcher();
+  const standardizeFetcher = useFetcher();
+  const shopify = typeof window !== "undefined" ? window.shopify : undefined;
 
-  const isSubmitting = fetcher.state !== "idle";
-  const data = fetcher.data;
+  const isMigrating = migrateFetcher.state !== "idle";
+  const isStandardizing = standardizeFetcher.state !== "idle";
+  const migrateData = migrateFetcher.data;
+  const standardizeData = standardizeFetcher.data;
 
   const handleRunMigration = () => {
-    fetcher.submit({}, { method: "post" });
+    migrateFetcher.submit({ intent: "migrate" }, { method: "post" });
+  };
+
+  const handleStandardize = () => {
+    standardizeFetcher.submit({ intent: "standardizeOneOfAKind" }, { method: "post" });
   };
 
   useEffect(() => {
-    if (fetcher.state === "idle" && data && data.results) {
+    if (migrateFetcher.state === "idle" && migrateData && migrateData.results) {
       if (shopify) {
-        const hasErrors = data.results.some(r => r.status === "error");
+        const hasErrors = migrateData.results.some(r => r.status === "error");
         if (hasErrors) {
           shopify.toast.show("Migration finished with some errors.", { isError: true });
         } else {
-          shopify.toast.show(`Successfully migrated ${data.fieldsMigrated} fields!`);
+          shopify.toast.show(`Successfully migrated ${migrateData.fieldsMigrated} fields!`);
         }
       }
     }
-  }, [fetcher.state, data, shopify]);
+  }, [migrateFetcher.state, migrateData, shopify]);
+
+  useEffect(() => {
+    if (standardizeFetcher.state === "idle" && standardizeData && standardizeData.results) {
+      if (shopify) {
+        const hasErrors = standardizeData.results.some(r => r.status === "error");
+        if (hasErrors) {
+          shopify.toast.show("Standardize finished with some errors.", { isError: true });
+        } else {
+          shopify.toast.show(`Done. ${standardizeData.fixed} products updated.`);
+        }
+      }
+    }
+  }, [standardizeFetcher.state, standardizeData, shopify]);
 
   const StatusIcon = ({ status }) => {
     if (status === "success") return <span style={{ color: "#2E7D32" }}>✅</span>;
@@ -197,6 +301,7 @@ export default function MigrateDataRoute() {
       <Layout>
         <Layout.Section>
           <BlockStack gap="500">
+
             <Banner tone="info" title="The Data Bundling Strategy">
               <p>
                 This script safely grabs your old science fields (Mohs, cleavage, diaphaneity, etc.) and bundles them into a clean <b>Shop Specs</b> text string inside the new <b>Artist Notes</b> field. This keeps Google happy with keywords without forcing you to manage useless fields manually.
@@ -207,35 +312,34 @@ export default function MigrateDataRoute() {
               <BlockStack gap="400">
                 <Text variant="headingLg" as="h2">Run Legacy Migration</Text>
                 <Text as="p">
-                  Clicking this button will scan your products, map the old data over to the new Freeform Revolution schema, and build the Shop Specs bundles. 
-                  (It is safe to run multiple times—it will just overwrite the new fields with the exact same legacy data).
+                  Clicking this button will scan your products, map the old data over to the new Freeform Revolution schema, and build the Shop Specs bundles.
+                  (It is safe to run multiple times — it will just overwrite the new fields with the exact same legacy data).
                 </Text>
-                
                 <Box paddingBlockStart="400">
-                  <div style={{ minHeight: '60px', minWidth: '100%' }}>
-                    <Button 
-                      size="large" 
-                      variant="primary" 
-                      fullWidth 
-                      onClick={handleRunMigration} 
-                      loading={isSubmitting}
+                  <div style={{ minHeight: "60px", minWidth: "100%" }}>
+                    <Button
+                      size="large"
+                      variant="primary"
+                      fullWidth
+                      onClick={handleRunMigration}
+                      loading={isMigrating}
                       accessibilityLabel="Run Data Migration"
                     >
-                      {isSubmitting ? "Scanning and Migrating Data..." : "Run Auto-Migration"}
+                      {isMigrating ? "Scanning and Migrating Data..." : "Run Auto-Migration"}
                     </Button>
                   </div>
                 </Box>
               </BlockStack>
             </Card>
 
-            {data && data.results && (
+            {migrateData && migrateData.results && (
               <Card padding="600">
                 <BlockStack gap="500">
                   <Text variant="headingLg" as="h3">Migration Report</Text>
                   <Divider />
                   <BlockStack gap="300">
-                    {data.results.map((result, idx) => (
-                      <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 0', borderBottom: '1px solid #E1E3E5' }}>
+                    {migrateData.results.map((result, idx) => (
+                      <div key={idx} style={{ display: "flex", alignItems: "center", gap: "8px", padding: "8px 0", borderBottom: "1px solid #E1E3E5" }}>
                         <StatusIcon status={result.status} />
                         <Text as="span" tone={result.status === "error" ? "critical" : "base"}>
                           {result.message}
@@ -246,6 +350,49 @@ export default function MigrateDataRoute() {
                 </BlockStack>
               </Card>
             )}
+
+            <Card padding="600">
+              <BlockStack gap="400">
+                <Text variant="headingLg" as="h2">Standardize One of a Kind Values</Text>
+                <Text as="p">
+                  Finds every product where is_one_of_a_kind is set to "true" and updates it to "Yes — one of a kind" for consistent SEO and storefront display.
+                </Text>
+                <Box paddingBlockStart="400">
+                  <div style={{ minHeight: "60px", minWidth: "100%" }}>
+                    <Button
+                      size="large"
+                      variant="primary"
+                      fullWidth
+                      onClick={handleStandardize}
+                      loading={isStandardizing}
+                      accessibilityLabel="Standardize One of a Kind Values"
+                    >
+                      {isStandardizing ? "Standardizing..." : "Standardize One of a Kind Values"}
+                    </Button>
+                  </div>
+                </Box>
+              </BlockStack>
+            </Card>
+
+            {standardizeData && standardizeData.results && (
+              <Card padding="600">
+                <BlockStack gap="500">
+                  <Text variant="headingLg" as="h3">Standardize Report</Text>
+                  <Divider />
+                  <BlockStack gap="300">
+                    {standardizeData.results.map((result, idx) => (
+                      <div key={idx} style={{ display: "flex", alignItems: "center", gap: "8px", padding: "8px 0", borderBottom: "1px solid #E1E3E5" }}>
+                        <StatusIcon status={result.status} />
+                        <Text as="span" tone={result.status === "error" ? "critical" : "base"}>
+                          {result.message}
+                        </Text>
+                      </div>
+                    ))}
+                  </BlockStack>
+                </BlockStack>
+              </Card>
+            )}
+
           </BlockStack>
         </Layout.Section>
       </Layout>
