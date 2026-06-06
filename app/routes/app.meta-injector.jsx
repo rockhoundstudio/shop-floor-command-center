@@ -4,7 +4,7 @@ import {
   Page, Layout, Card, Text, Banner, BlockStack, Box, Tabs, Frame,
   TextField, Select, Button, Icon, InlineStack, Checkbox, Modal
 } from "@shopify/polaris";
-import { SearchIcon, MagicIcon, PlusIcon, DeleteIcon, AnalyticsIcon } from "@shopify/polaris-icons";
+import { SearchIcon, MagicIcon, PlusIcon, DeleteIcon, TrendingUpIcon } from "@shopify/polaris-icons";
 
 // --- IMPORT THE ENGINE (Loader & Action) ---
 import { loader as engineLoader, action as engineAction } from "./app.meta-injector.loader";
@@ -57,11 +57,11 @@ const EXACT_METAFIELDS = [
 const DEFAULT_DROPDOWNS = {
   surface_finish: ["High polish lapidary finish", "Satin lapidary finish", "Raw natural surface", "Partial polish", "Tumble polished", "Hand rubbed finish"],
   primary_use: ["Wearable pendant", "Lapidary cabochon for setting", "Wire wrapped jewelry", "Display specimen", "Collector piece", "Freeform stone art", "Bezel setting ready", "Rockhound specimen"],
-  setting_ready: ["Yes — bezel ready", "Yes — prong ready", "Needs evaluation", "No — display only"],
+  setting_ready: ["Yes ??? bezel ready", "Yes ??? prong ready", "Needs evaluation", "No ??? display only"],
   bail_included: ["No bail", "Pinch bail included", "Custom copper wire bail", "Custom gold plated bail", "Soldered bail"],
-  is_one_of_a_kind: ["Yes — one of a kind", "No — series piece"],
-  treated: ["Untreated — natural", "Stabilized", "Dyed", "Coated", "Heat treated"],
-  found_object: ["Wild collected — Bob and Janyce", "Customer submission", "Purchased rough", "Gifted specimen", "Rescued material"],
+  is_one_of_a_kind: ["Yes ??? one of a kind", "No ??? series piece"],
+  treated: ["Untreated ??? natural", "Stabilized", "Dyed", "Coated", "Heat treated"],
+  found_object: ["Wild collected ??? Bob and Janyce", "Customer submission", "Purchased rough", "Gifted specimen", "Rescued material"],
   wire_material: ["Copper wire", "Brass wire", "Sterling silver wire", "Gold plated wire", "Copper and brass mixed"]
 };
 
@@ -235,7 +235,7 @@ function InjectorUI({ fetcher, products, shopify, pageInfo, metafieldDefinitions
   }, [newTermValue, handleFieldChange, shopify]);
 
   const handleTrendWatchCall = useCallback(() => {
-    const prompt = "You are an SEO expert in the handcrafted stone jewelry, lapidary, rockhound, wire wrapped jewelry, and artisan gemstone communities. Review these dropdown terms currently in use and suggest 3-5 hot trending alternatives or additions that real buyers are searching right now. Be specific — no generic terms.";
+    const prompt = "You are an SEO expert in the handcrafted stone jewelry, lapidary, rockhound, wire wrapped jewelry, and artisan gemstone communities. Review these dropdown terms currently in use and suggest 3-5 hot trending alternatives or additions that real buyers are searching right now. Be specific ??? no generic terms.";
     
     const payload = {
       intent: "geminiTrendWatch",
@@ -326,7 +326,7 @@ function InjectorUI({ fetcher, products, shopify, pageInfo, metafieldDefinitions
             <div style={{ minHeight: "48px" }}>
               <Button 
                 size="large" 
-                icon={AnalyticsIcon}
+                icon={TrendingUpIcon}
                 tone="magic"
                 onClick={() => setIsTrendModalOpen(true)}
                 accessibilityLabel="Open SEO Trend Watch Modal"
@@ -673,7 +673,7 @@ export default function MetaInjectorV2() {
   const [selectedTab, setSelectedTab] = useState(0);
 
   const tabs = [
-    { id: 'northstar', content: '⭐ Command Center', panelID: 'panel-northstar' },
+    { id: 'northstar', content: '??? Command Center', panelID: 'panel-northstar' },
     { id: 'health', content: 'Data Health Matrix', panelID: 'panel-health' },
     { id: 'inspector', content: 'Product Inspector', panelID: 'panel-inspector' },
     { id: 'origin', content: 'Origin Fixer', panelID: 'panel-origin' },
