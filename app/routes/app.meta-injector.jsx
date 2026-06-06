@@ -4,7 +4,7 @@ import {
   Page, Layout, Card, Text, Banner, BlockStack, Box, Tabs, Frame,
   TextField, Select, Button, Icon, InlineStack, Checkbox, Modal
 } from "@shopify/polaris";
-import { SearchIcon, MagicIcon, PlusIcon, DeleteIcon, AnalyticsIcon } from "@shopify/polaris-icons";
+import { SearchIcon, MagicIcon } from "@shopify/polaris-icons";
 
 // --- IMPORT THE ENGINE (Loader & Action) ---
 import { loader as engineLoader, action as engineAction } from "./app.meta-injector.loader";
@@ -326,7 +326,6 @@ function InjectorUI({ fetcher, products, shopify, pageInfo, metafieldDefinitions
             <div style={{ minHeight: "48px" }}>
               <Button 
                 size="large" 
-                icon={AnalyticsIcon}
                 tone="magic"
                 onClick={() => setIsTrendModalOpen(true)}
                 accessibilityLabel="Open SEO Trend Watch Modal"
@@ -548,7 +547,6 @@ function InjectorUI({ fetcher, products, shopify, pageInfo, metafieldDefinitions
                             <div style={{ minHeight: '48px' }}>
                               <Button 
                                 tone="critical" 
-                                icon={DeleteIcon} 
                                 onClick={() => handleRemoveDefinition(def.id)}
                                 accessibilityLabel={`Remove field definition for ${def.name}`}
                               >
@@ -592,7 +590,7 @@ function InjectorUI({ fetcher, products, shopify, pageInfo, metafieldDefinitions
                             />
                          </div>
                          <div style={{ minHeight: '48px' }}>
-                            <Button size="large" icon={PlusIcon} onClick={handleCreateDefinition} accessibilityLabel="Create new metafield definition">Add Field</Button>
+                            <Button size="large" onClick={handleCreateDefinition} accessibilityLabel="Create new metafield definition">Add Field</Button>
                          </div>
                       </InlineStack>
                    </BlockStack>
