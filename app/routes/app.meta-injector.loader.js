@@ -247,6 +247,7 @@ export async function loader({ request }) {
 
 export async function action({ request }) {
   const { admin } = await authenticate.admin(request);
+  
   const formData = await request.formData();
   const intent = formData.get("intent");
 
