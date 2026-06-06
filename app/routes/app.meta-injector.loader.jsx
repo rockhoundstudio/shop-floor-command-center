@@ -24,6 +24,7 @@ export async function loader({ request }) {
                 title
                 handle
                 status
+                descriptionHtml
                 metafields(namespace: "rockhound", first: 50) {
                   edges {
                     node {

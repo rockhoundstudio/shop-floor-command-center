@@ -146,7 +146,29 @@ function InjectorUI({ fetcher, products, shopify, pageInfo, metafieldDefinitions
       }
     }
 
-    // 2. Existing Metafields (overwrites parsed title data)
+    // 2. Description Parser
+    if (productToFill && productToFill.descriptionHtml) {
+      const strippedHtml = productToFill.descriptionHtml.replace(/<[^>]*>?/gm, '');
+      const lines = strippedHtml.split('\n');
+      
+      lines.forEach(line => {
+        const trimmed = line.trim();
+        if (trimmed.startsWith("Dimensions:")) {
+          newForm.dimensions_mm = trimmed.replace("Dimensions:", "").trim();
+        } else if (trimmed.startsWith("Finish:")) {
+          newForm.surface_finish = trimmed.replace("Finish:", "").trim();
+        } else if (trimmed.startsWith("Mohs:")) {
+          newForm.artist_notes = `Mohs: ${trimmed.replace("Mohs:", "").trim()}`;
+        } else if (trimmed.startsWith("One of a Kind:")) {
+           const val = trimmed.replace("One of a Kind:", "").trim();
+           if(val.toLowerCase() === "yes"){
+              newForm.is_one_of_a_kind = "true";
+           }
+        }
+      });
+    }
+
+    // 3. Existing Metafields (overwrites parsed title and description data)
     if (productToFill && productToFill.metafields && productToFill.metafields.edges) {
       productToFill.metafields.edges.forEach(({ node }) => {
         if (node.namespace === "rockhound" && node.value) {
@@ -155,7 +177,7 @@ function InjectorUI({ fetcher, products, shopify, pageInfo, metafieldDefinitions
       });
     }
 
-    // 3. Smart Defaults
+    // 4. Smart Defaults
     if (!newForm.is_one_of_a_kind) {
       newForm.is_one_of_a_kind = "Yes — one of a kind";
     }
@@ -209,7 +231,7 @@ function InjectorUI({ fetcher, products, shopify, pageInfo, metafieldDefinitions
     if (product) {
       const autoFilledForm = performLocalAutoFill(product);
       setFormState(autoFilledForm);
-      if (shopify) shopify.toast.show("Auto-filled from title and defaults");
+      if (shopify) shopify.toast.show("Auto-filled from title, description, and defaults");
     }
   }, [selectedProductId, isBulkMode, products, performLocalAutoFill, shopify]);
 
