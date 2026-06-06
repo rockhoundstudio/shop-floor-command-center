@@ -128,21 +128,53 @@ function InjectorUI({ fetcher, products, shopify, pageInfo, metafieldDefinitions
     setCurrentProductTitle("");
   }, []);
 
-  const handleSingleSelect = useCallback((product) => {
-    setSelectedProductId(product.id);
-    setCurrentProductTitle(product.title);
-    
+  const performLocalAutoFill = useCallback((productToFill) => {
     const newForm = {};
-    if (product.metafields && product.metafields.edges) {
-      product.metafields.edges.forEach(({ node }) => {
-        if (node.namespace === "rockhound") {
+
+    // 1. Title Parser
+    if (productToFill && productToFill.title) {
+      const parts = productToFill.title.split(" — ");
+      if (parts.length === 1) {
+        newForm.piece_name = parts[0];
+      } else if (parts.length === 2) {
+        newForm.material = parts[0];
+        newForm.piece_name = parts[1];
+      } else if (parts.length >= 3) {
+        newForm.material = parts[0];
+        newForm.collection_location = parts[1];
+        newForm.piece_name = parts[parts.length - 1];
+      }
+    }
+
+    // 2. Existing Metafields (overwrites parsed title data)
+    if (productToFill && productToFill.metafields && productToFill.metafields.edges) {
+      productToFill.metafields.edges.forEach(({ node }) => {
+        if (node.namespace === "rockhound" && node.value) {
           newForm[node.key] = node.value;
         }
       });
     }
-    setFormState(newForm);
+
+    // 3. Smart Defaults
+    if (!newForm.is_one_of_a_kind) {
+      newForm.is_one_of_a_kind = "true";
+    }
+    if (!newForm.handcrafted_by) {
+      newForm.handcrafted_by = "Robert";
+    }
+
+    return newForm;
+  }, []);
+
+  const handleSingleSelect = useCallback((product) => {
+    setSelectedProductId(product.id);
+    setCurrentProductTitle(product.title);
+    
+    const autoFilledForm = performLocalAutoFill(product);
+    setFormState(autoFilledForm);
+    
     if (shopify) shopify.toast.show(`Loaded fields for ${product.title}`);
-  }, [shopify]);
+  }, [shopify, performLocalAutoFill]);
 
   const toggleBulkSelection = useCallback((id) => {
     setSelectedProductIds(prev => 
@@ -173,15 +205,13 @@ function InjectorUI({ fetcher, products, shopify, pageInfo, metafieldDefinitions
       return;
     }
 
-    const payload = {
-      intent: "geminiAutoFill",
-      productId: selectedProductId,
-      title: currentProductTitle
-    };
-    
-    fetcher.submit({ payload: JSON.stringify(payload) }, { method: "post" });
-    if (shopify) shopify.toast.show("Requesting Gemini Auto-Fill...");
-  }, [selectedProductId, currentProductTitle, isBulkMode, fetcher, shopify]);
+    const product = products.find(p => p.id === selectedProductId);
+    if (product) {
+      const autoFilledForm = performLocalAutoFill(product);
+      setFormState(autoFilledForm);
+      if (shopify) shopify.toast.show("Auto-filled from title and defaults");
+    }
+  }, [selectedProductId, isBulkMode, products, performLocalAutoFill, shopify]);
 
   const handleInject = useCallback(() => {
     const targetIds = isBulkMode ? selectedProductIds : (selectedProductId ? [selectedProductId] : []);
@@ -422,10 +452,9 @@ function InjectorUI({ fetcher, products, shopify, pageInfo, metafieldDefinitions
                     <Button 
                       icon={MagicIcon} 
                       onClick={handleAutoFill} 
-                      accessibilityLabel="Auto-Fill Empty Fields via Gemini"
+                      accessibilityLabel="Auto-Fill Empty Fields"
                       tone="success"
                       size="large"
-                      loading={fetcher.state !== "idle" && fetcher.formData?.get("intent") === "geminiAutoFill"}
                     >
                       Auto-Fill
                     </Button>
