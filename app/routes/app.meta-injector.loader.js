@@ -200,6 +200,7 @@ export async function loader({ request }) {
   
   // 1. Fetch ALL products recursively using the helper
   const products = await fetchAllProducts(admin.graphql);
+  console.log("fetchAllProducts returned:", products.length, "products");
 
   // 2. Fetch definitions and snapshots concurrently
   const [definitionsRes, snapshotsRes] = await Promise.all([
