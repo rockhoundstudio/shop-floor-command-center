@@ -70,8 +70,6 @@ export default function IntakeEngine({ products, fetcher, shopify }) {
   };
 
   // --- SINGLE VS BULK FORM LOGIC ---
-  // If exactly ONE stone is selected, auto-load its current database values.
-  // If MULTIPLE stones are selected, present a blank form for batch stamping.
   useEffect(() => {
     if (selectedIds.length === 1) {
       const product = products.find(p => p.id === selectedIds[0]);
@@ -107,7 +105,6 @@ export default function IntakeEngine({ products, fetcher, shopify }) {
     const payload = [];
     const validEntries = Object.entries(formState).filter(([key, value]) => value !== undefined && value.toString().trim() !== "");
     
-    // Build payload for ALL selected products (Single or Bulk)
     selectedIds.forEach(productId => {
       validEntries.forEach(([key, value]) => {
         const config = ROCKHOUND_FIELDS.find(f => f.key === key);
@@ -165,7 +162,7 @@ export default function IntakeEngine({ products, fetcher, shopify }) {
 
           <InlineStack gap="400" align="start" blockAlign="stretch">
             {/* TRAY COLUMN (Left) */}
-            <div style={{ flex: "1 1 40%", minWidth: "300px" }}>
+            <div style={{ flex: "1 1 35%", minWidth: "300px" }}>
               <BlockStack gap="300">
                 <TextField
                   value={searchQuery}
@@ -185,7 +182,7 @@ export default function IntakeEngine({ products, fetcher, shopify }) {
                   </InlineStack>
                 </InlineStack>
 
-                <div style={{ maxHeight: "400px", overflowY: "auto", border: "1px solid #E1E3E5", borderRadius: "8px", padding: "8px" }}>
+                <div style={{ maxHeight: "550px", overflowY: "auto", border: "1px solid #E1E3E5", borderRadius: "8px", padding: "8px" }}>
                   {filteredProducts.map(p => {
                     const isChecked = selectedIds.includes(p.id);
                     return (
@@ -205,7 +202,7 @@ export default function IntakeEngine({ products, fetcher, shopify }) {
             </div>
 
             {/* FORM COLUMN (Right) */}
-            <div style={{ flex: "1 1 60%", minWidth: "400px" }}>
+            <div style={{ flex: "1 1 65%", minWidth: "450px" }}>
               {selectedIds.length === 0 ? (
                 <Box padding="600" background="bg-surface-secondary" borderRadius="200">
                   <Text alignment="center" tone="subdued">Select one or more stones from the tray to begin intake.</Text>
@@ -234,11 +231,22 @@ export default function IntakeEngine({ products, fetcher, shopify }) {
                     </Box>
                   )}
 
-                  <div style={{ maxHeight: "400px", overflowY: "auto", paddingRight: "12px", display: "flex", flexDirection: "column", gap: "16px" }}>
+                  {/* 2-COLUMN GRID WRAPPER */}
+                  <div style={{ 
+                    maxHeight: "550px", 
+                    overflowY: "auto", 
+                    paddingRight: "12px", 
+                    display: "grid", 
+                    gridTemplateColumns: "1fr 1fr", 
+                    gap: "16px", 
+                    alignItems: "start" 
+                  }}>
                     {ROCKHOUND_FIELDS.map(field => {
                       const val = formState[field.key] || "";
+                      const isFullWidth = field.multiline; // Artist notes span both columns
+
                       return (
-                        <div key={field.key} style={{ minHeight: "54px" }}>
+                        <div key={field.key} style={{ gridColumn: isFullWidth ? "span 2" : "span 1" }}>
                           {field.isDropdown ? (
                             <Select
                               label={field.label}
@@ -259,28 +267,30 @@ export default function IntakeEngine({ products, fetcher, shopify }) {
                       );
                     })}
 
-                    <Divider />
-                    
-                    {/* INLINE FIELD MANAGER */}
-                    <Box paddingBlockStart="200">
-                      <Button plain icon={PlusIcon} onClick={() => setIsFieldManagerOpen(!isFieldManagerOpen)}>
-                        Add Custom Metafield
-                      </Button>
-                      <Collapsible open={isFieldManagerOpen} id="inline-field-manager">
-                        <Box paddingBlockStart="400" padding="400" background="bg-surface-secondary" borderRadius="200">
-                          <BlockStack gap="300">
-                            <Text variant="headingSm">New Shopify Metafield Definition</Text>
-                            <InlineStack gap="300" blockAlign="end">
-                              <TextField label="Key (e.g. mohs_hardness)" value={newKey} onChange={setNewKey} autoComplete="off" />
-                              <TextField label="Display Name" value={newName} onChange={setNewName} autoComplete="off" />
-                              <Button onClick={handleAddField} loading={fetcher.state !== "idle" && fetcher.formData?.get("intent") === "addFieldDefinition"}>
-                                Register Field
-                              </Button>
-                            </InlineStack>
-                          </BlockStack>
-                        </Box>
-                      </Collapsible>
-                    </Box>
+                    <div style={{ gridColumn: "span 2" }}>
+                      <Divider />
+                      
+                      {/* INLINE FIELD MANAGER */}
+                      <Box paddingBlockStart="400">
+                        <Button plain icon={PlusIcon} onClick={() => setIsFieldManagerOpen(!isFieldManagerOpen)}>
+                          Add Custom Metafield
+                        </Button>
+                        <Collapsible open={isFieldManagerOpen} id="inline-field-manager">
+                          <Box paddingBlockStart="400" padding="400" background="bg-surface-secondary" borderRadius="200">
+                            <BlockStack gap="300">
+                              <Text variant="headingSm">New Shopify Metafield Definition</Text>
+                              <InlineStack gap="300" blockAlign="end">
+                                <TextField label="Key (e.g. mohs_hardness)" value={newKey} onChange={setNewKey} autoComplete="off" />
+                                <TextField label="Display Name" value={newName} onChange={setNewName} autoComplete="off" />
+                                <Button onClick={handleAddField} loading={fetcher.state !== "idle" && fetcher.formData?.get("intent") === "addFieldDefinition"}>
+                                  Register Field
+                                </Button>
+                              </InlineStack>
+                            </BlockStack>
+                          </Box>
+                        </Collapsible>
+                      </Box>
+                    </div>
 
                   </div>
                 </BlockStack>
