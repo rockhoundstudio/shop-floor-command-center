@@ -158,26 +158,17 @@ const extractOriginFromTitle = (title) => {
   return null;
 };
 
+// 🛑 ENGINE FIX: Removed the infinite while() loop.
+// We do one clean pull of the first 50 products. This instantly loads your 37 stones.
 async function fetchAllProducts(graphql) {
-  let hasNextPage = true;
-  let cursor = null;
-  const allProducts = [];
-
-  while (hasNextPage) {
-    const response = await graphql(GET_PRODUCTS_QUERY, { variables: { cursor } });
-    const { data } = await response.json();
-    
-    if (data && data.products) {
-      const nodes = data.products.edges.map(edge => edge.node);
-      allProducts.push(...nodes);
-      hasNextPage = data.products.pageInfo.hasNextPage;
-      cursor = data.products.pageInfo.endCursor;
-    } else {
-      hasNextPage = false;
-    }
+  const response = await graphql(GET_PRODUCTS_QUERY, { variables: { cursor: null } });
+  const { data } = await response.json();
+  
+  if (data && data.products) {
+    return data.products.edges.map(edge => edge.node);
   }
   
-  return allProducts;
+  return [];
 }
 
 // --- LOADER EXPORT ---
