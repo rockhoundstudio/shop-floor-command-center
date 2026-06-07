@@ -2,9 +2,9 @@ import React, { useState, useMemo, useEffect, useCallback } from "react";
 import { useLoaderData, useFetcher, useNavigate, Form } from "react-router";
 import {
   Page, Layout, Card, Text, Banner, BlockStack, Box, Tabs, Frame,
-  TextField, Select, Button, InlineStack, DataTable, Badge
+  TextField, Select, Button, InlineStack, DataTable, Badge, Icon
 } from "@shopify/polaris";
-import { MagicIcon, ExportIcon, SaveIcon, DatabaseIcon } from "@shopify/polaris-icons";
+import { MagicIcon, ExportIcon, SaveIcon, DatabaseIcon, SearchIcon } from "@shopify/polaris-icons";
 
 // --- IMPORT THE ENGINE (Loader & Action) ---
 import { loader as engineLoader, action as engineAction } from "./app.meta-injector.loader";
@@ -144,14 +144,22 @@ function FieldMatrixTab({ products }) {
 // --- TAB 2: PRODUCT EDITOR ---
 function ProductEditorTab({ products, fetcher, shopify }) {
   const [selectedProductId, setSelectedProductId] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
   const [formState, setFormState] = useState({});
   const [dropdownLists, setDropdownLists] = useState(DEFAULT_DROPDOWNS);
 
   const productOptions = useMemo(() => {
-    const opts = (products || []).map(p => ({ label: p.title, value: p.id }));
+    let filtered = products || [];
+    
+    if (searchQuery) {
+      const lowerCaseQuery = searchQuery.toLowerCase();
+      filtered = filtered.filter(p => p.title.toLowerCase().includes(lowerCaseQuery));
+    }
+
+    const opts = filtered.map(p => ({ label: p.title, value: p.id }));
     opts.unshift({ label: "Select a product...", value: "" });
     return opts;
-  }, [products]);
+  }, [products, searchQuery]);
 
   const handleSelectProduct = useCallback((id) => {
     setSelectedProductId(id);
@@ -217,6 +225,20 @@ function ProductEditorTab({ products, fetcher, shopify }) {
     <BlockStack gap="400">
       <Card padding="400">
         <BlockStack gap="400">
+          <div style={{ minHeight: "48px" }}>
+            <TextField
+              label="Search / Filter Products"
+              value={searchQuery}
+              onChange={setSearchQuery}
+              prefix={<Icon source={SearchIcon} />}
+              clearButton
+              onClearButtonClick={() => setSearchQuery("")}
+              autoComplete="off"
+              accessibilityLabel="Search products to filter the dropdown list below"
+              placeholder="Start typing a product name..."
+            />
+          </div>
+
           <div style={{ minHeight: "48px" }}>
             <Select
               label="Select Product"
