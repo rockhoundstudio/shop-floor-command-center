@@ -51,10 +51,84 @@ const DEFAULT_DROPDOWNS = {
 
 // --- TAB 1: FIELD MATRIX ---
 function FieldMatrixTab({ products }) {
+  const fetcher = useFetcher();
   const [filterMissing, setFilterMissing] = useState(false);
+  const [enrichedProducts, setEnrichedProducts] = useState([]);
+  
+  const [batchState, setBatchState] = useState({
+    isActive: true,
+    currentIndex: 0,
+    status: "idle"
+  });
+
+  const chunks = useMemo(() => {
+    if (!products) return [];
+    const arr = [];
+    for (let i = 0; i < products.length; i += 10) {
+      arr.push(products.slice(i, i + 10));
+    }
+    return arr;
+  }, [products]);
+
+  useEffect(() => {
+    if (products && enrichedProducts.length === 0) {
+      setEnrichedProducts(products);
+    }
+  }, [products, enrichedProducts.length]);
+
+  // Phase 1: Fire Chunk Fetch
+  useEffect(() => {
+    if (batchState.isActive && batchState.status === "idle" && chunks.length > 0) {
+      const currentChunk = chunks[batchState.currentIndex];
+      if (currentChunk) {
+        setBatchState(prev => ({ ...prev, status: "submitting" }));
+        const ids = currentChunk.map(p => p.id);
+        fetcher.submit(
+          { intent: "fetchMetafieldsBatch", productIds: JSON.stringify(ids) },
+          { method: "post" }
+        );
+      }
+      if (!currentChunk) {
+        setBatchState(prev => ({ ...prev, isActive: false, status: "complete" }));
+      }
+    }
+  }, [batchState, chunks, fetcher]);
+
+  // Phase 2: Wait for fetcher
+  useEffect(() => {
+    if (batchState.status === "submitting" && fetcher.state !== "idle") {
+      setBatchState(prev => ({ ...prev, status: "waiting_for_idle" }));
+    }
+  }, [batchState.status, fetcher.state]);
+
+  // Phase 3: Process payload & pause governor
+  useEffect(() => {
+    if (batchState.status === "waiting_for_idle" && fetcher.state === "idle") {
+      if (fetcher.data && fetcher.data.intent === "fetchMetafieldsBatch" && fetcher.data.success && fetcher.data.products) {
+        setEnrichedProducts(prev => {
+          const updated = [...prev];
+          fetcher.data.products.forEach(fetchedProd => {
+            const idx = updated.findIndex(p => p.id === fetchedProd.id);
+            if (idx !== -1) {
+              updated[idx] = { ...updated[idx], metafields: fetchedProd.metafields };
+            }
+          });
+          return updated;
+        });
+      }
+      
+      setTimeout(() => {
+        setBatchState(prev => ({ 
+          ...prev, 
+          currentIndex: prev.currentIndex + 1, 
+          status: "idle" 
+        }));
+      }, 500); 
+    }
+  }, [batchState.status, fetcher.state, fetcher.data]);
 
   const tableData = useMemo(() => {
-    let filtered = products || [];
+    let filtered = enrichedProducts || [];
     
     if (filterMissing) {
       filtered = filtered.filter(p => {
@@ -102,38 +176,56 @@ function FieldMatrixTab({ products }) {
       });
       return row;
     });
-  }, [products, filterMissing]);
+  }, [enrichedProducts, filterMissing]);
 
   return (
     <BlockStack gap="400">
       <Card padding="400">
-        <InlineStack align="space-between" blockAlign="center">
-          <Text variant="headingMd" as="h2">Field Health Matrix</Text>
-          <div style={{ minHeight: "54px" }}>
-            <Button 
-              onClick={() => setFilterMissing(!filterMissing)}
-              accessibilityLabel="Filter by missing data"
-              size="large"
-            >
-              {filterMissing ? "Show All" : "Filter Missing Data"}
-            </Button>
-          </div>
-        </InlineStack>
-        <Box paddingBlockStart="400">
-          <InlineStack gap="400">
-            <Badge tone="success">Success (Verified)</Badge>
-            <Badge tone="warning">Warning (Bulk/Unverified)</Badge>
-            <Badge tone="critical">Critical (Empty)</Badge>
-            <Text tone="subdued" as="span">| Google Required vs Store OOAK Fields mapped below</Text>
+        <BlockStack gap="400">
+          <InlineStack align="space-between" blockAlign="center">
+            <Text variant="headingMd" as="h2">Field Health Matrix</Text>
+            <div style={{ minHeight: "54px" }}>
+              <Button 
+                onClick={() => setFilterMissing(!filterMissing)}
+                accessibilityLabel="Filter by missing data"
+                size="large"
+              >
+                {filterMissing && "Show All"}
+                {!filterMissing && "Filter Missing Data"}
+              </Button>
+            </div>
           </InlineStack>
-        </Box>
+
+          {batchState.isActive && (
+            <Box padding="300" background="bg-surface-secondary" borderRadius="200">
+              <BlockStack gap="200">
+                <Text as="p" variant="bodySm" tone="subdued">
+                  Fetching product data (Batch {batchState.currentIndex + 1} of {chunks.length})...
+                </Text>
+                <div style={{ width: "100%", height: "8px", backgroundColor: "#E1E3E5", borderRadius: "4px", overflow: "hidden" }}>
+                  <div style={{ width: `${((batchState.currentIndex) / chunks.length) * 100}%`, height: "100%", backgroundColor: "#2C6ECB", transition: "width 0.3s ease" }}></div>
+                </div>
+              </BlockStack>
+            </Box>
+          )}
+
+          <Box paddingBlockStart="200">
+            <InlineStack gap="400">
+              <Badge tone="success">Success (Verified)</Badge>
+              <Badge tone="warning">Warning (Bulk/Unverified)</Badge>
+              <Badge tone="critical">Critical (Empty)</Badge>
+              <Text tone="subdued" as="span">| Google Required vs Store OOAK Fields mapped below</Text>
+            </InlineStack>
+          </Box>
+        </BlockStack>
       </Card>
       <Card padding="0">
-        <div style={{ overflowX: "auto" }}>
+        <div style={{ overflowX: "auto", overflowY: "auto", maxHeight: "60vh" }}>
           <DataTable
             columnContentTypes={["text", ...ROCKHOUND_FIELDS.map(() => "text")]}
             headings={["Product", ...ROCKHOUND_FIELDS.map(f => f.label)]}
             rows={tableData}
+            stickyHeader
           />
         </div>
       </Card>
@@ -160,8 +252,6 @@ function ProductEditorTab({ products, fetcher, shopify }) {
     ];
   }, [products, searchQuery]);
 
-  // Ensure that if a user filters the list and the currently selected product is excluded, 
-  // the select element clears to prevent UI desyncs.
   useEffect(() => {
     if (selectedProductId && searchQuery) {
       const selected = products?.find(p => p.id === selectedProductId);
@@ -188,7 +278,6 @@ function ProductEditorTab({ products, fetcher, shopify }) {
 
   const handleAutoFill = useCallback(() => {
     if (!selectedProductId) return;
-    // Pass flat object for x-www-form-urlencoded to prevent stream locking
     fetcher.submit(
       { intent: "autoFill", productId: selectedProductId },
       { method: "post" }
@@ -214,14 +303,12 @@ function ProductEditorTab({ products, fetcher, shopify }) {
       });
     });
 
-    // Pass flat object for x-www-form-urlencoded to prevent stream locking
     fetcher.submit(
       { intent: "saveProduct", payload: JSON.stringify(payload) },
       { method: "post" }
     );
   }, [selectedProductId, formState, fetcher]);
 
-  // Listen for autoFill response
   useEffect(() => {
     if (fetcher.state === "idle" && fetcher.data && fetcher.data.intent === "autoFill" && fetcher.data.success) {
       setFormState(prev => ({ ...prev, ...fetcher.data.autoFillData }));
@@ -380,7 +467,6 @@ function BulkToolsTab({ products, fetcher, shopify }) {
     });
   };
 
-  // State Machine Phase 1: Fire Payload
   useEffect(() => {
     if (batchState.isActive && batchState.status === "processing") {
       const currentChunk = batchState.productChunks[batchState.currentIndex];
@@ -428,14 +514,12 @@ function BulkToolsTab({ products, fetcher, shopify }) {
     }
   }, [batchState, formState, fetcher, shopify]);
 
-  // State Machine Phase 2: Wait for Network Lock
   useEffect(() => {
     if (batchState.status === "waiting_for_submitting_state" && fetcher.state !== "idle") {
       setBatchState(prev => ({ ...prev, status: "waiting_for_idle" }));
     }
   }, [batchState.status, fetcher.state]);
 
-  // State Machine Phase 3: Wait for Network Idle & Governor Pause
   useEffect(() => {
     if (batchState.status === "waiting_for_idle" && fetcher.state === "idle") {
       setBatchState(prev => ({ ...prev, status: "paused" }));
@@ -445,7 +529,7 @@ function BulkToolsTab({ products, fetcher, shopify }) {
           currentIndex: prev.currentIndex + 1,
           status: "processing"
         }));
-      }, 1000); // Hard 1-second pause to respect rate limits between chunk sets
+      }, 1000); 
     }
   }, [batchState.status, fetcher.state]);
 
