@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect, useCallback } from "react";
 import { 
   Card, BlockStack, InlineStack, Text, Box, DataTable, Badge, Button, Form 
 } from "@shopify/polaris";
-import { ExportIcon, DatabaseIcon, LightningIcon } from "@shopify/polaris-icons";
+import { ExportIcon, DatabaseIcon, MagicIcon } from "@shopify/polaris-icons";
 
 // --- THE FIELD DICTIONARY (For Matrix Columns) ---
 const ROCKHOUND_FIELDS = [
@@ -120,14 +120,14 @@ export default function OperationsMatrix({ products, fetcher, shopify }) {
             <Text as="p" tone="subdued">Execute logic across all 37 stones simultaneously.</Text>
             <InlineStack gap="300">
               <Button 
-                icon={LightningIcon} 
+                icon={MagicIcon} 
                 onClick={handleExtractOrigin}
                 loading={fetcher.state !== "idle" && fetcher.formData?.get("intent") === "autoExtractAll"}
               >
                 Extract Origins from Titles
               </Button>
               <Button 
-                icon={LightningIcon} 
+                icon={MagicIcon} 
                 onClick={handleStandardizeOOAK}
                 loading={fetcher.state !== "idle" && fetcher.formData?.get("intent") === "standardizeOOAK"}
               >
