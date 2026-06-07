@@ -149,12 +149,10 @@ function ProductEditorTab({ products, fetcher, shopify }) {
   const [dropdownLists, setDropdownLists] = useState(DEFAULT_DROPDOWNS);
 
   const productOptions = useMemo(() => {
-    const allProducts = Array.isArray(products) ? products : [];
-    const query = (searchQuery || "").trim().toLowerCase();
-
-    const filtered = query
-      ? allProducts.filter(p => p?.title && p.title.toLowerCase().includes(query))
-      : allProducts;
+    const safeProducts = products || [];
+    const filtered = searchQuery
+      ? safeProducts.filter(p => p.title.toLowerCase().includes(searchQuery.toLowerCase()))
+      : safeProducts;
 
     return [
       { label: "Select a product...", value: "" },
@@ -166,9 +164,8 @@ function ProductEditorTab({ products, fetcher, shopify }) {
   // the select element clears to prevent UI desyncs.
   useEffect(() => {
     if (selectedProductId && searchQuery) {
-      const query = searchQuery.trim().toLowerCase();
       const selected = products?.find(p => p.id === selectedProductId);
-      if (selected && !selected.title.toLowerCase().includes(query)) {
+      if (selected && !selected.title.toLowerCase().includes(searchQuery.toLowerCase())) {
         setSelectedProductId("");
         setFormState({});
       }
