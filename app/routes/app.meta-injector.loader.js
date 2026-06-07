@@ -13,18 +13,6 @@ const GET_PRODUCTS_QUERY = `
         node {
           id
           title
-          tags
-          metafields(namespace: "rockhound", first: 50) {
-            edges {
-              node {
-                id
-                key
-                value
-                namespace
-                type
-              }
-            }
-          }
         }
       }
     }
