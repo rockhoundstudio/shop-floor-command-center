@@ -246,6 +246,7 @@ export async function loader({ request }) {
 // --- ACTION EXPORT ---
 
 export async function action({ request }) {
+  // authenticate.admin(request) must be called before ANY body parsing occurs
   const { admin } = await authenticate.admin(request);
   
   const formData = await request.formData();
