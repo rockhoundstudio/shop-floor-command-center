@@ -109,7 +109,7 @@ function FieldMatrixTab({ products }) {
       <Card padding="400">
         <InlineStack align="space-between" blockAlign="center">
           <Text variant="headingMd" as="h2">Field Health Matrix</Text>
-          <div style={{ minHeight: "48px" }}>
+          <div style={{ minHeight: "54px" }}>
             <Button 
               onClick={() => setFilterMissing(!filterMissing)}
               accessibilityLabel="Filter by missing data"
@@ -149,17 +149,31 @@ function ProductEditorTab({ products, fetcher, shopify }) {
   const [dropdownLists, setDropdownLists] = useState(DEFAULT_DROPDOWNS);
 
   const productOptions = useMemo(() => {
-    let filtered = products || [];
-    
-    if (searchQuery) {
-      const lowerCaseQuery = searchQuery.toLowerCase();
-      filtered = filtered.filter(p => p.title.toLowerCase().includes(lowerCaseQuery));
-    }
+    const allProducts = Array.isArray(products) ? products : [];
+    const query = (searchQuery || "").trim().toLowerCase();
 
-    const opts = filtered.map(p => ({ label: p.title, value: p.id }));
-    opts.unshift({ label: "Select a product...", value: "" });
-    return opts;
+    const filtered = query
+      ? allProducts.filter(p => p?.title && p.title.toLowerCase().includes(query))
+      : allProducts;
+
+    return [
+      { label: "Select a product...", value: "" },
+      ...filtered.map(p => ({ label: p.title, value: p.id }))
+    ];
   }, [products, searchQuery]);
+
+  // Ensure that if a user filters the list and the currently selected product is excluded, 
+  // the select element clears to prevent UI desyncs.
+  useEffect(() => {
+    if (selectedProductId && searchQuery) {
+      const query = searchQuery.trim().toLowerCase();
+      const selected = products?.find(p => p.id === selectedProductId);
+      if (selected && !selected.title.toLowerCase().includes(query)) {
+        setSelectedProductId("");
+        setFormState({});
+      }
+    }
+  }, [searchQuery, selectedProductId, products]);
 
   const handleSelectProduct = useCallback((id) => {
     setSelectedProductId(id);
@@ -225,7 +239,7 @@ function ProductEditorTab({ products, fetcher, shopify }) {
     <BlockStack gap="400">
       <Card padding="400">
         <BlockStack gap="400">
-          <div style={{ minHeight: "48px" }}>
+          <div style={{ minHeight: "54px" }}>
             <TextField
               label="Search / Filter Products"
               value={searchQuery}
@@ -239,7 +253,7 @@ function ProductEditorTab({ products, fetcher, shopify }) {
             />
           </div>
 
-          <div style={{ minHeight: "48px" }}>
+          <div style={{ minHeight: "54px" }}>
             <Select
               label="Select Product"
               options={productOptions}
@@ -251,7 +265,7 @@ function ProductEditorTab({ products, fetcher, shopify }) {
           
           {selectedProductId !== "" && (
             <InlineStack gap="300" align="end">
-              <div style={{ minHeight: "48px" }}>
+              <div style={{ minHeight: "54px" }}>
                 <Button 
                   icon={MagicIcon} 
                   onClick={handleAutoFill}
@@ -262,7 +276,7 @@ function ProductEditorTab({ products, fetcher, shopify }) {
                   Auto-Fill Title & Tags
                 </Button>
               </div>
-              <div style={{ minHeight: "48px" }}>
+              <div style={{ minHeight: "54px" }}>
                 <Button 
                   icon={SaveIcon} 
                   tone="success" 
@@ -289,7 +303,7 @@ function ProductEditorTab({ products, fetcher, shopify }) {
               if (field.isDropdown) {
                 const opts = [{ label: "Select...", value: "" }, ...(dropdownLists[field.key] || []).map(o => ({ label: o, value: o }))];
                 return (
-                  <div key={field.key} style={{ minHeight: "48px" }}>
+                  <div key={field.key} style={{ minHeight: "54px" }}>
                     <Select
                       label={field.label}
                       options={opts}
@@ -302,7 +316,7 @@ function ProductEditorTab({ products, fetcher, shopify }) {
               }
 
               return (
-                <div key={field.key} style={{ minHeight: "48px" }}>
+                <div key={field.key} style={{ minHeight: "54px" }}>
                   <TextField
                     label={field.label}
                     value={val}
@@ -348,7 +362,7 @@ function BulkToolsTab({ fetcher, shopify }) {
           
           <Box paddingBlockStart="200">
             <InlineStack gap="400">
-              <div style={{ minHeight: "48px" }}>
+              <div style={{ minHeight: "54px" }}>
                 <Button 
                   size="large" 
                   onClick={handleExtractOrigin}
@@ -358,7 +372,7 @@ function BulkToolsTab({ fetcher, shopify }) {
                   Auto-Extract Origin from Titles
                 </Button>
               </div>
-              <div style={{ minHeight: "48px" }}>
+              <div style={{ minHeight: "54px" }}>
                 <Button 
                   size="large" 
                   onClick={handleStandardizeOOAK}
@@ -394,7 +408,7 @@ function SnapshotsExportTab({ snapshots, fetcher, shopify }) {
         <BlockStack gap="400">
           <InlineStack align="space-between" blockAlign="center">
             <Text variant="headingMd" as="h2">Database Snapshots</Text>
-            <div style={{ minHeight: "48px" }}>
+            <div style={{ minHeight: "54px" }}>
               <Button 
                 size="large" 
                 icon={DatabaseIcon} 
@@ -430,7 +444,7 @@ function SnapshotsExportTab({ snapshots, fetcher, shopify }) {
         <BlockStack gap="400">
           <Text variant="headingMd" as="h2">CSV Pipeline</Text>
           <InlineStack gap="400">
-            <div style={{ minHeight: "48px" }}>
+            <div style={{ minHeight: "54px" }}>
               {/* Native form reload prevents fetcher intercept and allows direct file attachment download */}
               <Form method="post" reloadDocument>
                 <input type="hidden" name="intent" value="exportCSV" />
@@ -444,7 +458,7 @@ function SnapshotsExportTab({ snapshots, fetcher, shopify }) {
                 </Button>
               </Form>
             </div>
-            <div style={{ minHeight: "48px" }}>
+            <div style={{ minHeight: "54px" }}>
               <Button 
                 size="large" 
                 disabled 
@@ -508,7 +522,7 @@ function FieldManagerTab({ metafieldDefinitions, fetcher, shopify }) {
         <BlockStack gap="400">
           <Text variant="headingMd" as="h3">Add New Definition</Text>
           <InlineStack gap="400" blockAlign="end">
-            <div style={{ flexGrow: 1, minHeight: "48px" }}>
+            <div style={{ flexGrow: 1, minHeight: "54px" }}>
               <TextField 
                 label="Key" 
                 value={newKey} 
@@ -517,7 +531,7 @@ function FieldManagerTab({ metafieldDefinitions, fetcher, shopify }) {
                 accessibilityLabel="New field key" 
               />
             </div>
-            <div style={{ flexGrow: 1, minHeight: "48px" }}>
+            <div style={{ flexGrow: 1, minHeight: "54px" }}>
               <TextField 
                 label="Display Name" 
                 value={newName} 
@@ -526,7 +540,7 @@ function FieldManagerTab({ metafieldDefinitions, fetcher, shopify }) {
                 accessibilityLabel="New field display name" 
               />
             </div>
-            <div style={{ flexGrow: 1, minHeight: "48px" }}>
+            <div style={{ flexGrow: 1, minHeight: "54px" }}>
               <Select 
                 label="Type" 
                 options={[{ label: 'Single Line Text', value: 'single_line_text_field' }]} 
@@ -535,7 +549,7 @@ function FieldManagerTab({ metafieldDefinitions, fetcher, shopify }) {
                 accessibilityLabel="New field type" 
               />
             </div>
-            <div style={{ minHeight: "48px" }}>
+            <div style={{ minHeight: "54px" }}>
               <Button 
                 size="large" 
                 onClick={handleAdd} 
