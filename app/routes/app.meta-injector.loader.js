@@ -4,7 +4,7 @@ import { authenticate } from "../shopify.server";
 
 const GET_PRODUCTS_QUERY = `
   query GetProducts($cursor: String) {
-    products(first: 250, after: $cursor) {
+    products(first: 50, after: $cursor) {
       pageInfo {
         hasNextPage
         endCursor
@@ -195,22 +195,23 @@ async function fetchAllProducts(graphql) {
 // --- LOADER EXPORT ---
 
 export async function loader({ request }) {
+  // authenticate.admin(request) MUST be called before any request parsing
   const { admin } = await authenticate.admin(request);
-  const url = new URL(request.url);
-  const cursor = url.searchParams.get("cursor") || null;
+  
+  // 1. Fetch ALL products recursively using the helper
+  const products = await fetchAllProducts(admin.graphql);
 
-  const [productsRes, definitionsRes, snapshotsRes] = await Promise.all([
-    admin.graphql(GET_PRODUCTS_QUERY, { variables: { cursor } }),
+  // 2. Fetch definitions and snapshots concurrently
+  const [definitionsRes, snapshotsRes] = await Promise.all([
     admin.graphql(GET_METAFIELD_DEFINITIONS_QUERY),
     admin.graphql(GET_SNAPSHOTS_QUERY)
   ]);
 
-  const productsData = await productsRes.json();
   const definitionsData = await definitionsRes.json();
   const snapshotsData = await snapshotsRes.json();
 
-  const products = productsData.data?.products?.edges.map(edge => edge.node) || [];
-  const pageInfo = productsData.data?.products?.pageInfo || { hasNextPage: false, endCursor: null };
+  // 3. Format the data for the UI
+  const pageInfo = { hasNextPage: false, endCursor: null }; // Cursor loop is complete
   const metafieldDefinitions = definitionsData.data?.metafieldDefinitions?.edges.map(edge => edge.node) || [];
   
   const rawSnapshots = snapshotsData.data?.metaobjects?.edges.map(edge => edge.node) || [];
