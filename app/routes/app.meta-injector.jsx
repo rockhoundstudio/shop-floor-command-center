@@ -238,18 +238,12 @@ function ProductEditorTab({ products, fetcher, shopify }) {
   const [selectedProductId, setSelectedProductId] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [formState, setFormState] = useState({});
-  const [dropdownLists, setDropdownLists] = useState(DEFAULT_DROPDOWNS);
+  const [dropdownLists] = useState(DEFAULT_DROPDOWNS);
 
-  const productOptions = useMemo(() => {
+  const filteredProducts = useMemo(() => {
     const safeProducts = products || [];
-    const filtered = searchQuery
-      ? safeProducts.filter(p => p.title.toLowerCase().includes(searchQuery.toLowerCase()))
-      : safeProducts;
-
-    return [
-      { label: "Select a product...", value: "" },
-      ...filtered.map(p => ({ label: p.title, value: p.id }))
-    ];
+    if (!searchQuery) return safeProducts;
+    return safeProducts.filter(p => p.title.toLowerCase().includes(searchQuery.toLowerCase()));
   }, [products, searchQuery]);
 
   useEffect(() => {
@@ -332,20 +326,40 @@ function ProductEditorTab({ products, fetcher, shopify }) {
               clearButton
               onClearButtonClick={() => setSearchQuery("")}
               autoComplete="off"
-              accessibilityLabel="Search products to filter the dropdown list below"
+              accessibilityLabel="Search products to filter the list below"
               placeholder="Start typing a product name..."
             />
           </div>
 
-          <div style={{ minHeight: "54px" }}>
-            <Select
-              label="Select Product"
-              options={productOptions}
-              value={selectedProductId}
-              onChange={handleSelectProduct}
-              accessibilityLabel="Select a product to edit"
-            />
-          </div>
+          <Box paddingBlockStart="200">
+            <Text variant="headingSm" as="h3">Target Roster ({filteredProducts.length})</Text>
+            <div style={{ maxHeight: "250px", overflowY: "auto", border: "1px solid #E1E3E5", padding: "8px", borderRadius: "8px", marginTop: "8px" }}>
+              {filteredProducts.map(p => {
+                const isSelected = selectedProductId === p.id;
+                return (
+                  <div
+                    key={p.id}
+                    onClick={() => handleSelectProduct(p.id)}
+                    style={{
+                      padding: "12px",
+                      borderBottom: "1px solid #F0F2F4",
+                      cursor: "pointer",
+                      backgroundColor: isSelected ? "#F3F4F6" : "transparent",
+                      fontWeight: isSelected ? "bold" : "normal",
+                      borderRadius: "4px"
+                    }}
+                  >
+                    {p.title}
+                  </div>
+                );
+              })}
+              {filteredProducts.length === 0 && (
+                <Box padding="200">
+                  <Text tone="subdued" as="p">No products match your search.</Text>
+                </Box>
+              )}
+            </div>
+          </Box>
           
           {selectedProductId !== "" && (
             <InlineStack gap="300" align="end">
@@ -384,30 +398,34 @@ function ProductEditorTab({ products, fetcher, shopify }) {
             {ROCKHOUND_FIELDS.map(field => {
               const val = formState[field.key] || "";
               
-              {field.isDropdown && (
-                <div key={field.key} style={{ minHeight: "54px" }}>
-                  <Select
-                    label={field.label}
-                    options={[{ label: "Select...", value: "" }, ...(dropdownLists[field.key] || []).map(o => ({ label: o, value: o }))]}
-                    value={val}
-                    onChange={(v) => setFormState(prev => ({ ...prev, [field.key]: v }))}
-                    accessibilityLabel={field.label}
-                  />
-                </div>
-              )}
+              return (
+                <React.Fragment key={field.key}>
+                  {field.isDropdown && (
+                    <div style={{ minHeight: "54px" }}>
+                      <Select
+                        label={field.label}
+                        options={[{ label: "Select...", value: "" }, ...(dropdownLists[field.key] || []).map(o => ({ label: o, value: o }))]}
+                        value={val}
+                        onChange={(v) => setFormState(prev => ({ ...prev, [field.key]: v }))}
+                        accessibilityLabel={field.label}
+                      />
+                    </div>
+                  )}
 
-              {!field.isDropdown && (
-                <div key={field.key} style={{ minHeight: "54px" }}>
-                  <TextField
-                    label={field.label}
-                    value={val}
-                    onChange={(v) => setFormState(prev => ({ ...prev, [field.key]: v }))}
-                    autoComplete="off"
-                    accessibilityLabel={field.label}
-                    multiline={field.multiline && 3}
-                  />
-                </div>
-              )}
+                  {!field.isDropdown && (
+                    <div style={{ minHeight: "54px" }}>
+                      <TextField
+                        label={field.label}
+                        value={val}
+                        onChange={(v) => setFormState(prev => ({ ...prev, [field.key]: v }))}
+                        autoComplete="off"
+                        accessibilityLabel={field.label}
+                        multiline={field.multiline && 3}
+                      />
+                    </div>
+                  )}
+                </React.Fragment>
+              );
             })}
           </div>
         </Card>
@@ -477,479 +495,4 @@ function BulkToolsTab({ products, fetcher, shopify }) {
         const payload = [];
         const validEntries = Object.entries(formState).filter(([k, v]) => v !== undefined && v.toString().trim() !== "");
 
-        currentChunk.forEach(productId => {
-          validEntries.forEach(([key, value]) => {
-            const config = ROCKHOUND_FIELDS.find(f => f.key === key);
-            
-            let fieldType = "single_line_text_field";
-            if (config && config.type) {
-              fieldType = config.type;
-            }
-            
-            let formatId = `gid://shopify/Product/${productId}`;
-            if (productId.includes("gid://")) {
-              formatId = productId;
-            }
-
-            payload.push({
-              ownerId: formatId,
-              namespace: "rockhound",
-              key,
-              value: value.toString(),
-              type: fieldType
-            });
-          });
-        });
-
-        fetcher.submit(
-          { intent: "saveProduct", payload: JSON.stringify(payload) },
-          { method: "post" }
-        );
-      }
-      
-      if (!currentChunk) {
-        setBatchState(prev => ({ ...prev, isActive: false, status: "complete" }));
-        if (shopify) shopify.toast.show("Batch press completed for all selected products.");
-      }
-    }
-  }, [batchState, formState, fetcher, shopify]);
-
-  useEffect(() => {
-    if (batchState.status === "waiting_for_submitting_state" && fetcher.state !== "idle") {
-      setBatchState(prev => ({ ...prev, status: "waiting_for_idle" }));
-    }
-  }, [batchState.status, fetcher.state]);
-
-  useEffect(() => {
-    if (batchState.status === "waiting_for_idle" && fetcher.state === "idle") {
-      setBatchState(prev => ({ ...prev, status: "paused" }));
-      setTimeout(() => {
-        setBatchState(prev => ({
-          ...prev,
-          currentIndex: prev.currentIndex + 1,
-          status: "processing"
-        }));
-      }, 1000); 
-    }
-  }, [batchState.status, fetcher.state]);
-
-  const handleExtractOrigin = useCallback(() => {
-    fetcher.submit({ intent: "autoExtractAll" }, { method: "post" });
-  }, [fetcher]);
-
-  const handleStandardizeOOAK = useCallback(() => {
-    fetcher.submit({ intent: "standardizeOOAK" }, { method: "post" });
-  }, [fetcher]);
-
-  useEffect(() => {
-    if (fetcher.state === "idle" && fetcher.data && fetcher.data.success) {
-      if (fetcher.data.intent === "autoExtractAll" || fetcher.data.intent === "standardizeOOAK") {
-        if (shopify) shopify.toast.show(`Bulk operation complete. Updated ${fetcher.data.updatedCount} products.`);
-      }
-    }
-  }, [fetcher.state, fetcher.data, shopify]);
-
-  return (
-    <BlockStack gap="400">
-      <Card padding="400">
-        <BlockStack gap="400">
-          <Text variant="headingLg" as="h2">Batch Press</Text>
-          <Text as="p" tone="subdued">Apply shared metafield values to multiple products simultaneously. Governed to 10 products per network batch.</Text>
-          
-          <Box paddingBlockStart="200">
-            <Text variant="headingMd" as="h3">1. Select Target Products</Text>
-            <div style={{ marginTop: "8px", marginBottom: "8px" }}>
-              <InlineStack gap="300" blockAlign="center">
-                <div style={{ minHeight: "54px" }}>
-                  <Button onClick={selectAll} accessibilityLabel="Select All Products" size="large">Select All</Button>
-                </div>
-                <div style={{ minHeight: "54px" }}>
-                  <Button onClick={clearAll} accessibilityLabel="Clear Selection" size="large">Clear All</Button>
-                </div>
-                <Text as="span">{selectedIds.length} products selected</Text>
-              </InlineStack>
-            </div>
-            <div style={{ maxHeight: "250px", overflowY: "auto", border: "1px solid #E1E3E5", padding: "8px", borderRadius: "8px" }}>
-              {products && products.map(p => {
-                const isChecked = selectedIds.includes(p.id);
-                return (
-                  <div key={p.id} style={{ display: "flex", alignItems: "center", gap: "12px", padding: "8px 4px", borderBottom: "1px solid #F0F2F4" }}>
-                    <input
-                      type="checkbox"
-                      id={`check-${p.id}`}
-                      checked={isChecked}
-                      onChange={() => toggleProduct(p.id)}
-                      aria-label={`Select product ${p.title}`}
-                      style={{ width: "24px", height: "24px", cursor: "pointer" }}
-                    />
-                    <label htmlFor={`check-${p.id}`} style={{ flexGrow: 1, cursor: "pointer", fontSize: "15px", lineHeight: "24px" }}>{p.title}</label>
-                  </div>
-                );
-              })}
-            </div>
-          </Box>
-
-          <Box paddingBlockStart="200">
-            <Text variant="headingMd" as="h3">2. Define Shared Metafields</Text>
-            <Text as="p" tone="subdued">Only populated fields will be injected into the target products.</Text>
-            <div style={{ maxHeight: "300px", overflowY: "auto", paddingRight: "8px", marginTop: "16px", display: "flex", flexDirection: "column", gap: "16px" }}>
-              {ROCKHOUND_FIELDS.map(field => {
-                const val = formState[field.key] || "";
-                const opts = [{ label: "Select...", value: "" }, ...(dropdownLists[field.key] || []).map(o => ({ label: o, value: o }))];
-
-                return (
-                  <div key={field.key} style={{ minHeight: "54px" }}>
-                    {field.isDropdown && (
-                      <Select
-                        label={field.label}
-                        options={opts}
-                        value={val}
-                        onChange={(v) => updateFormState(field.key, v)}
-                        accessibilityLabel={`Select shared value for ${field.label}`}
-                      />
-                    )}
-                    {!field.isDropdown && (
-                      <TextField
-                        label={field.label}
-                        value={val}
-                        onChange={(v) => updateFormState(field.key, v)}
-                        autoComplete="off"
-                        accessibilityLabel={`Enter shared value for ${field.label}`}
-                        multiline={field.multiline && 3}
-                      />
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </Box>
-
-          <Box paddingBlockStart="200">
-            <Text variant="headingMd" as="h3">3. Execute Injector</Text>
-            <BlockStack gap="400">
-              {batchState.isActive && (
-                <Box padding="400" background="bg-surface-secondary" borderRadius="200">
-                  <BlockStack gap="200">
-                    <Text as="p" fontWeight="bold">Processing Batch {batchState.currentIndex + 1} of {batchState.productChunks.length}</Text>
-                    <Text as="p" tone="subdued">Status: {batchState.status}</Text>
-                    <div style={{ width: "100%", height: "12px", backgroundColor: "#E1E3E5", borderRadius: "6px", overflow: "hidden", marginTop: "8px" }}>
-                      <div style={{ width: `${((batchState.currentIndex) / batchState.productChunks.length) * 100}%`, height: "100%", backgroundColor: "#2C6ECB", transition: "width 0.3s ease" }}></div>
-                    </div>
-                  </BlockStack>
-                </Box>
-              )}
-              {batchState.status === "complete" && (
-                <Banner tone="success">Batch Press completed successfully.</Banner>
-              )}
-              
-              <div style={{ minHeight: "54px" }}>
-                <Button
-                  size="large"
-                  variant="primary"
-                  onClick={handleStartBatch}
-                  accessibilityLabel="Execute Batch Press"
-                  loading={batchState.isActive}
-                  fullWidth
-                >
-                  Execute Batch Press
-                </Button>
-              </div>
-            </BlockStack>
-          </Box>
-        </BlockStack>
-      </Card>
-
-      <Card padding="400">
-        <BlockStack gap="400">
-          <Text variant="headingMd" as="h3">Database-Wide Sweeps</Text>
-          <Text as="p" tone="subdued">Execute specialized bulk updates across the entire catalog.</Text>
-          <InlineStack gap="400">
-            <div style={{ minHeight: "54px" }}>
-              <Button 
-                size="large" 
-                onClick={handleExtractOrigin}
-                accessibilityLabel="Auto-Extract Origin from Titles"
-                loading={fetcher.state !== "idle" && fetcher.formData?.get("intent") === "autoExtractAll"}
-              >
-                Auto-Extract Origin from Titles
-              </Button>
-            </div>
-            <div style={{ minHeight: "54px" }}>
-              <Button 
-                size="large" 
-                onClick={handleStandardizeOOAK}
-                accessibilityLabel="Standardize One of a Kind Values"
-                loading={fetcher.state !== "idle" && fetcher.formData?.get("intent") === "standardizeOOAK"}
-              >
-                Standardize "One of a Kind"
-              </Button>
-            </div>
-          </InlineStack>
-        </BlockStack>
-      </Card>
-    </BlockStack>
-  );
-}
-
-// --- TAB 4: SNAPSHOTS & EXPORT ---
-function SnapshotsExportTab({ snapshots, fetcher, shopify }) {
-  const handleCreateSnapshot = useCallback(() => {
-    fetcher.submit({ intent: "saveSnapshot" }, { method: "post" });
-  }, [fetcher]);
-
-  useEffect(() => {
-    if (fetcher.state === "idle" && fetcher.data && fetcher.data.intent === "saveSnapshot" && fetcher.data.success) {
-      if (shopify) shopify.toast.show("Database snapshot saved successfully.");
-    }
-  }, [fetcher.state, fetcher.data, shopify]);
-
-  return (
-    <BlockStack gap="400">
-      <Card padding="400">
-        <BlockStack gap="400">
-          <InlineStack align="space-between" blockAlign="center">
-            <Text variant="headingMd" as="h2">Database Snapshots</Text>
-            <div style={{ minHeight: "54px" }}>
-              <Button 
-                size="large" 
-                icon={DatabaseIcon} 
-                onClick={handleCreateSnapshot}
-                accessibilityLabel="Create New Snapshot"
-                loading={fetcher.state !== "idle" && fetcher.formData?.get("intent") === "saveSnapshot"}
-              >
-                Create Snapshot
-              </Button>
-            </div>
-          </InlineStack>
-          <Text as="p" tone="subdued">Save current field state to Shopify Metaobjects. Maximum of 5 persistent backups.</Text>
-          
-          {snapshots && snapshots.length > 0 && (
-            <BlockStack gap="200">
-              {snapshots.map((s, i) => (
-                <div key={i} style={{ padding: "16px", border: "1px solid #E1E3E5", borderRadius: "8px" }}>
-                  <Text fontWeight="bold">Snapshot: {s.createdAt}</Text>
-                  <Text tone="subdued">Records: {s.count}</Text>
-                </div>
-              ))}
-            </BlockStack>
-          )}
-          {(!snapshots || snapshots.length === 0) && (
-            <Box padding="400">
-              <Text alignment="center" tone="subdued">No snapshots currently saved.</Text>
-            </Box>
-          )}
-        </BlockStack>
-      </Card>
-
-      <Card padding="400">
-        <BlockStack gap="400">
-          <Text variant="headingMd" as="h2">CSV Pipeline</Text>
-          <InlineStack gap="400">
-            <div style={{ minHeight: "54px" }}>
-              {/* Native form reload prevents fetcher intercept and allows direct file attachment download */}
-              <Form method="post" reloadDocument>
-                <input type="hidden" name="intent" value="exportCSV" />
-                <Button 
-                  size="large" 
-                  icon={ExportIcon} 
-                  submit
-                  accessibilityLabel="Export Full Matrix to CSV"
-                >
-                  Export Matrix to CSV
-                </Button>
-              </Form>
-            </div>
-            <div style={{ minHeight: "54px" }}>
-              <Button 
-                size="large" 
-                disabled 
-                accessibilityLabel="Import Matrix from CSV"
-              >
-                Import CSV (Not yet built)
-              </Button>
-            </div>
-          </InlineStack>
-        </BlockStack>
-      </Card>
-    </BlockStack>
-  );
-}
-
-// --- TAB 5: FIELD MANAGER ---
-function FieldManagerTab({ metafieldDefinitions, fetcher, shopify }) {
-  const [newKey, setNewKey] = useState("");
-  const [newName, setNewName] = useState("");
-  const [newType, setNewType] = useState("single_line_text_field");
-
-  const handleAdd = useCallback(() => {
-    if (!newKey || !newName) return;
-    fetcher.submit(
-      { intent: "addFieldDefinition", key: newKey, name: newName, type: newType }, 
-      { method: "post" }
-    );
-    setNewKey("");
-    setNewName("");
-  }, [newKey, newName, newType, fetcher]);
-
-  useEffect(() => {
-    if (fetcher.state === "idle" && fetcher.data && fetcher.data.intent === "addFieldDefinition" && fetcher.data.success) {
-      if (shopify) shopify.toast.show("New metafield definition added to rockhound namespace.");
-    }
-  }, [fetcher.state, fetcher.data, shopify]);
-
-  return (
-    <BlockStack gap="400">
-      <Card padding="400">
-        <BlockStack gap="400">
-          <Text variant="headingMd" as="h2">Active Namespace: rockhound</Text>
-          
-          {metafieldDefinitions && metafieldDefinitions.length > 0 && (
-            <BlockStack gap="200">
-              {metafieldDefinitions.map((def, idx) => (
-                <div key={idx} style={{ padding: "12px", border: "1px solid #E1E3E5", borderRadius: "8px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <Text fontWeight="bold">{def.name} <Text as="span" tone="subdued">({def.key})</Text></Text>
-                  <Text tone="subdued">{def.type.name}</Text>
-                </div>
-              ))}
-            </BlockStack>
-          )}
-          {(!metafieldDefinitions || metafieldDefinitions.length === 0) && (
-            <Text tone="subdued">No definitions found.</Text>
-          )}
-        </BlockStack>
-      </Card>
-
-      <Card padding="400">
-        <BlockStack gap="400">
-          <Text variant="headingMd" as="h3">Add New Definition</Text>
-          <InlineStack gap="400" blockAlign="end">
-            <div style={{ flexGrow: 1, minHeight: "54px" }}>
-              <TextField 
-                label="Key" 
-                value={newKey} 
-                onChange={setNewKey} 
-                autoComplete="off" 
-                accessibilityLabel="New field key" 
-              />
-            </div>
-            <div style={{ flexGrow: 1, minHeight: "54px" }}>
-              <TextField 
-                label="Display Name" 
-                value={newName} 
-                onChange={setNewName} 
-                autoComplete="off" 
-                accessibilityLabel="New field display name" 
-              />
-            </div>
-            <div style={{ flexGrow: 1, minHeight: "54px" }}>
-              <Select 
-                label="Type" 
-                options={[{ label: 'Single Line Text', value: 'single_line_text_field' }]} 
-                value={newType} 
-                onChange={setNewType} 
-                accessibilityLabel="New field type" 
-              />
-            </div>
-            <div style={{ minHeight: "54px" }}>
-              <Button 
-                size="large" 
-                onClick={handleAdd} 
-                accessibilityLabel="Create new metafield definition" 
-                variant="primary"
-                loading={fetcher.state !== "idle" && fetcher.formData?.get("intent") === "addFieldDefinition"}
-              >
-                Add Field
-              </Button>
-            </div>
-          </InlineStack>
-        </BlockStack>
-      </Card>
-    </BlockStack>
-  );
-}
-
-// --- MAIN SHELL COMPONENT ---
-export default function MetaInjectorV2() {
-  const { products, snapshots = [], metafieldDefinitions = [] } = useLoaderData() || {};
-  const navigate = useNavigate();
-
-  const primaryFetcher = useFetcher();
-
-  const shopify = typeof window !== 'undefined' ? window.shopify : undefined;
-  const [selectedTab, setSelectedTab] = useState(0);
-
-  const tabs = [
-    { id: 'matrix', content: 'Field Matrix', accessibilityLabel: 'Field Matrix Tab' },
-    { id: 'editor', content: 'Product Editor', accessibilityLabel: 'Product Editor Tab' },
-    { id: 'bulk', content: 'Bulk Tools', accessibilityLabel: 'Bulk Tools Tab' },
-    { id: 'snapshots', content: 'Snapshots & Export', accessibilityLabel: 'Snapshots and Export Tab' },
-    { id: 'manager', content: 'Field Manager', accessibilityLabel: 'Field Manager Tab' }
-  ];
-
-  return (
-    <Frame>
-      <Page
-        fullWidth
-        title="Meta Injector v2"
-        subtitle="Data Integrity Command Center"
-        backAction={{ content: "Dashboard", onAction: () => navigate("/app"), accessibilityLabel: "Back to Dashboard" }}
-      >
-        <Layout>
-          <Layout.Section>
-            {primaryFetcher.data && primaryFetcher.data.errors && primaryFetcher.data.errors.length > 0 && (
-              <Box paddingBlockEnd="400">
-                <Banner tone="critical" title="GraphQL Mutation Errors Detected">
-                  <BlockStack gap="200">
-                    {primaryFetcher.data.errors.map((err, i) => (
-                      <Text key={i} as="p">{err.message}</Text>
-                    ))}
-                  </BlockStack>
-                </Banner>
-              </Box>
-            )}
-
-            <Card padding="0">
-              <Tabs tabs={tabs} selected={selectedTab} onSelect={setSelectedTab} fitted>
-                <Box padding="600">
-                  {selectedTab === 0 && (
-                    <FieldMatrixTab 
-                      products={products} 
-                    />
-                  )}
-                  {selectedTab === 1 && (
-                    <ProductEditorTab 
-                      products={products} 
-                      fetcher={primaryFetcher} 
-                      shopify={shopify} 
-                    />
-                  )}
-                  {selectedTab === 2 && (
-                    <BulkToolsTab 
-                      products={products}
-                      fetcher={primaryFetcher} 
-                      shopify={shopify}
-                    />
-                  )}
-                  {selectedTab === 3 && (
-                    <SnapshotsExportTab 
-                      snapshots={snapshots} 
-                      fetcher={primaryFetcher} 
-                      shopify={shopify}
-                    />
-                  )}
-                  {selectedTab === 4 && (
-                    <FieldManagerTab 
-                      metafieldDefinitions={metafieldDefinitions} 
-                      fetcher={primaryFetcher} 
-                      shopify={shopify}
-                    />
-                  )}
-                </Box>
-              </Tabs>
-            </Card>
-          </Layout.Section>
-        </Layout>
-      </Page>
-    </Frame>
-  );
-}
+        current
