@@ -195,7 +195,9 @@ async function fetchAllProducts(graphql) {
 // --- LOADER EXPORT ---
 
 export async function loader({ request }) {
+  // 1. Authenticate FIRST before touching request
   const { admin } = await authenticate.admin(request);
+  
   const url = new URL(request.url);
   const cursor = url.searchParams.get("cursor") || null;
 
@@ -246,9 +248,10 @@ export async function loader({ request }) {
 // --- ACTION EXPORT ---
 
 export async function action({ request }) {
-  // authenticate.admin(request) must be called before ANY body parsing occurs
+  // 1. Authenticate FIRST before parsing formData to preserve the request stream
   const { admin } = await authenticate.admin(request);
   
+  // 2. NOW we can safely parse the body
   const formData = await request.formData();
   const intent = formData.get("intent");
 
