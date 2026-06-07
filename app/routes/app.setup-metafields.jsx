@@ -192,6 +192,7 @@ export default function SetupMetafieldsRoute() {
                       <Badge tone="critical" size="large">{data.summary.errorCount} Errors</Badge>
                     )}
                   </InlineStack>
+meta-injector.loader
 
                   <Divider />
 

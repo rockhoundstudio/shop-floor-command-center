@@ -1,10 +1,10 @@
 import React, { useState, useMemo, useEffect, useCallback } from "react";
-import { useLoaderData, useFetcher, useNavigate } from "react-router";
+import { useLoaderData, useFetcher, useNavigate, Form } from "react-router";
 import {
   Page, Layout, Card, Text, Banner, BlockStack, Box, Tabs, Frame,
-  TextField, Select, Button, Icon, InlineStack, Checkbox, Modal, DataTable, Badge
+  TextField, Select, Button, InlineStack, DataTable, Badge
 } from "@shopify/polaris";
-import { SearchIcon, MagicIcon, ExportIcon, SaveIcon, DatabaseIcon } from "@shopify/polaris-icons";
+import { MagicIcon, ExportIcon, SaveIcon, DatabaseIcon } from "@shopify/polaris-icons";
 
 // --- IMPORT THE ENGINE (Loader & Action) ---
 import { loader as engineLoader, action as engineAction } from "./app.meta-injector.loader";
@@ -115,8 +115,7 @@ function FieldMatrixTab({ products }) {
               accessibilityLabel="Filter by missing data"
               size="large"
             >
-              {filterMissing && "Show All"}
-              {!filterMissing && "Filter Missing Data"}
+              {filterMissing ? "Show All" : "Filter Missing Data"}
             </Button>
           </div>
         </InlineStack>
@@ -169,27 +168,13 @@ function ProductEditorTab({ products, fetcher, shopify }) {
   }, [products]);
 
   const handleAutoFill = useCallback(() => {
-    const product = products.find(p => p.id === selectedProductId);
-    if (!product) return;
-    
-    const newForm = { ...formState };
-    const parts = product.title.split(" ");
-    
-    if (product.title && !newForm.piece_name) {
-      newForm.piece_name = product.title;
-    }
-    if (product.tags && product.tags.length > 0) {
-      const locationTag = product.tags.find(t => t.toLowerCase().includes("mine") || t.toLowerCase().includes("ridge") || t.toLowerCase().includes("county"));
-      if (locationTag && !newForm.collection_location) {
-        newForm.collection_location = locationTag;
-      }
-      const colorTag = product.tags.find(t => ["red", "blue", "green", "black", "white", "purple", "yellow", "orange", "brown", "pink", "clear"].some(c => t.toLowerCase().includes(c)));
-      if (colorTag && !newForm.color) {
-        newForm.color = colorTag;
-      }
-    }
-    setFormState(newForm);
-  }, [selectedProductId, products, formState]);
+    if (!selectedProductId) return;
+    // Pass flat object for x-www-form-urlencoded to prevent stream locking
+    fetcher.submit(
+      { intent: "autoFill", productId: selectedProductId },
+      { method: "post" }
+    );
+  }, [selectedProductId, fetcher]);
 
   const handleSave = useCallback(() => {
     if (!selectedProductId) return;
@@ -210,11 +195,23 @@ function ProductEditorTab({ products, fetcher, shopify }) {
       });
     });
 
-    const formData = new FormData();
-    formData.append("intent", "saveMetafields");
-    formData.append("payload", JSON.stringify(payload));
-    fetcher.submit(formData, { method: "post" });
+    // Pass flat object for x-www-form-urlencoded to prevent stream locking
+    fetcher.submit(
+      { intent: "saveProduct", payload: JSON.stringify(payload) },
+      { method: "post" }
+    );
   }, [selectedProductId, formState, fetcher]);
+
+  // Listen for autoFill response
+  useEffect(() => {
+    if (fetcher.state === "idle" && fetcher.data && fetcher.data.intent === "autoFill" && fetcher.data.success) {
+      setFormState(prev => ({ ...prev, ...fetcher.data.autoFillData }));
+      if (shopify) shopify.toast.show("Auto-filled from Shopify data");
+    }
+    if (fetcher.state === "idle" && fetcher.data && fetcher.data.intent === "saveProduct" && fetcher.data.success) {
+      if (shopify) shopify.toast.show("Metafields saved successfully");
+    }
+  }, [fetcher.state, fetcher.data, shopify]);
 
   return (
     <BlockStack gap="400">
@@ -238,6 +235,7 @@ function ProductEditorTab({ products, fetcher, shopify }) {
                   onClick={handleAutoFill}
                   accessibilityLabel="Auto-Fill Fields"
                   size="large"
+                  loading={fetcher.state !== "idle" && fetcher.formData?.get("intent") === "autoFill"}
                 >
                   Auto-Fill Title & Tags
                 </Button>
@@ -250,7 +248,7 @@ function ProductEditorTab({ products, fetcher, shopify }) {
                   onClick={handleSave}
                   accessibilityLabel="Save to Shopify"
                   size="large"
-                  loading={fetcher.state !== "idle"}
+                  loading={fetcher.state !== "idle" && fetcher.formData?.get("intent") === "saveProduct"}
                 >
                   Save to Shopify
                 </Button>
@@ -289,7 +287,7 @@ function ProductEditorTab({ products, fetcher, shopify }) {
                     onChange={(v) => setFormState(prev => ({ ...prev, [field.key]: v }))}
                     autoComplete="off"
                     accessibilityLabel={field.label}
-                    multiline={field.multiline && 3 || false}
+                    multiline={field.multiline ? 3 : false}
                   />
                 </div>
               );
@@ -302,18 +300,22 @@ function ProductEditorTab({ products, fetcher, shopify }) {
 }
 
 // --- TAB 3: BULK TOOLS ---
-function BulkToolsTab({ fetcher }) {
+function BulkToolsTab({ fetcher, shopify }) {
   const handleExtractOrigin = useCallback(() => {
-    const formData = new FormData();
-    formData.append("intent", "bulkExtractOrigins");
-    fetcher.submit(formData, { method: "post" });
+    fetcher.submit({ intent: "autoExtractAll" }, { method: "post" });
   }, [fetcher]);
 
   const handleStandardizeOOAK = useCallback(() => {
-    const formData = new FormData();
-    formData.append("intent", "bulkStandardizeOOAK");
-    fetcher.submit(formData, { method: "post" });
+    fetcher.submit({ intent: "standardizeOOAK" }, { method: "post" });
   }, [fetcher]);
+
+  useEffect(() => {
+    if (fetcher.state === "idle" && fetcher.data && fetcher.data.success) {
+      if (fetcher.data.intent === "autoExtractAll" || fetcher.data.intent === "standardizeOOAK") {
+        if (shopify) shopify.toast.show(`Bulk operation complete. Updated ${fetcher.data.updatedCount} products.`);
+      }
+    }
+  }, [fetcher.state, fetcher.data, shopify]);
 
   return (
     <BlockStack gap="400">
@@ -329,6 +331,7 @@ function BulkToolsTab({ fetcher }) {
                   size="large" 
                   onClick={handleExtractOrigin}
                   accessibilityLabel="Auto-Extract Origin from Titles"
+                  loading={fetcher.state !== "idle" && fetcher.formData?.get("intent") === "autoExtractAll"}
                 >
                   Auto-Extract Origin from Titles
                 </Button>
@@ -338,6 +341,7 @@ function BulkToolsTab({ fetcher }) {
                   size="large" 
                   onClick={handleStandardizeOOAK}
                   accessibilityLabel="Standardize One of a Kind Values"
+                  loading={fetcher.state !== "idle" && fetcher.formData?.get("intent") === "standardizeOOAK"}
                 >
                   Standardize "One of a Kind"
                 </Button>
@@ -351,18 +355,16 @@ function BulkToolsTab({ fetcher }) {
 }
 
 // --- TAB 4: SNAPSHOTS & EXPORT ---
-function SnapshotsExportTab({ snapshots, fetcher }) {
-  const handleExport = useCallback(() => {
-    const formData = new FormData();
-    formData.append("intent", "exportCSV");
-    fetcher.submit(formData, { method: "post" });
+function SnapshotsExportTab({ snapshots, fetcher, shopify }) {
+  const handleCreateSnapshot = useCallback(() => {
+    fetcher.submit({ intent: "saveSnapshot" }, { method: "post" });
   }, [fetcher]);
 
-  const handleCreateSnapshot = useCallback(() => {
-    const formData = new FormData();
-    formData.append("intent", "createSnapshot");
-    fetcher.submit(formData, { method: "post" });
-  }, [fetcher]);
+  useEffect(() => {
+    if (fetcher.state === "idle" && fetcher.data && fetcher.data.intent === "saveSnapshot" && fetcher.data.success) {
+      if (shopify) shopify.toast.show("Database snapshot saved successfully.");
+    }
+  }, [fetcher.state, fetcher.data, shopify]);
 
   return (
     <BlockStack gap="400">
@@ -376,6 +378,7 @@ function SnapshotsExportTab({ snapshots, fetcher }) {
                 icon={DatabaseIcon} 
                 onClick={handleCreateSnapshot}
                 accessibilityLabel="Create New Snapshot"
+                loading={fetcher.state !== "idle" && fetcher.formData?.get("intent") === "saveSnapshot"}
               >
                 Create Snapshot
               </Button>
@@ -406,14 +409,18 @@ function SnapshotsExportTab({ snapshots, fetcher }) {
           <Text variant="headingMd" as="h2">CSV Pipeline</Text>
           <InlineStack gap="400">
             <div style={{ minHeight: "48px" }}>
-              <Button 
-                size="large" 
-                icon={ExportIcon} 
-                onClick={handleExport}
-                accessibilityLabel="Export Full Matrix to CSV"
-              >
-                Export Matrix to CSV
-              </Button>
+              {/* Native form reload prevents fetcher intercept and allows direct file attachment download */}
+              <Form method="post" reloadDocument>
+                <input type="hidden" name="intent" value="exportCSV" />
+                <Button 
+                  size="large" 
+                  icon={ExportIcon} 
+                  submit
+                  accessibilityLabel="Export Full Matrix to CSV"
+                >
+                  Export Matrix to CSV
+                </Button>
+              </Form>
             </div>
             <div style={{ minHeight: "48px" }}>
               <Button 
@@ -432,23 +439,26 @@ function SnapshotsExportTab({ snapshots, fetcher }) {
 }
 
 // --- TAB 5: FIELD MANAGER ---
-function FieldManagerTab({ metafieldDefinitions, fetcher }) {
+function FieldManagerTab({ metafieldDefinitions, fetcher, shopify }) {
   const [newKey, setNewKey] = useState("");
   const [newName, setNewName] = useState("");
   const [newType, setNewType] = useState("single_line_text_field");
 
   const handleAdd = useCallback(() => {
     if (!newKey || !newName) return;
-    const formData = new FormData();
-    formData.append("intent", "createMetafieldDefinition");
-    formData.append("namespace", "rockhound");
-    formData.append("key", newKey);
-    formData.append("name", newName);
-    formData.append("type", newType);
-    fetcher.submit(formData, { method: "post" });
+    fetcher.submit(
+      { intent: "addFieldDefinition", key: newKey, name: newName, type: newType }, 
+      { method: "post" }
+    );
     setNewKey("");
     setNewName("");
   }, [newKey, newName, newType, fetcher]);
+
+  useEffect(() => {
+    if (fetcher.state === "idle" && fetcher.data && fetcher.data.intent === "addFieldDefinition" && fetcher.data.success) {
+      if (shopify) shopify.toast.show("New metafield definition added to rockhound namespace.");
+    }
+  }, [fetcher.state, fetcher.data, shopify]);
 
   return (
     <BlockStack gap="400">
@@ -504,7 +514,13 @@ function FieldManagerTab({ metafieldDefinitions, fetcher }) {
               />
             </div>
             <div style={{ minHeight: "48px" }}>
-              <Button size="large" onClick={handleAdd} accessibilityLabel="Create new metafield definition" variant="primary">
+              <Button 
+                size="large" 
+                onClick={handleAdd} 
+                accessibilityLabel="Create new metafield definition" 
+                variant="primary"
+                loading={fetcher.state !== "idle" && fetcher.formData?.get("intent") === "addFieldDefinition"}
+              >
                 Add Field
               </Button>
             </div>
@@ -522,7 +538,7 @@ export default function MetaInjectorV2() {
 
   const primaryFetcher = useFetcher();
 
-  const shopify = typeof window !== 'undefined' && window.shopify || undefined;
+  const shopify = typeof window !== 'undefined' ? window.shopify : undefined;
   const [selectedTab, setSelectedTab] = useState(0);
 
   const tabs = [
@@ -573,18 +589,21 @@ export default function MetaInjectorV2() {
                   {selectedTab === 2 && (
                     <BulkToolsTab 
                       fetcher={primaryFetcher} 
+                      shopify={shopify}
                     />
                   )}
                   {selectedTab === 3 && (
                     <SnapshotsExportTab 
                       snapshots={snapshots} 
                       fetcher={primaryFetcher} 
+                      shopify={shopify}
                     />
                   )}
                   {selectedTab === 4 && (
                     <FieldManagerTab 
                       metafieldDefinitions={metafieldDefinitions} 
                       fetcher={primaryFetcher} 
+                      shopify={shopify}
                     />
                   )}
                 </Box>
