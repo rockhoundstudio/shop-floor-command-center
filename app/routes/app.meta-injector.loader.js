@@ -261,7 +261,7 @@ export async function action({ request }) {
         type: field.type || "single_line_text_field"
       }));
 
-      const chunks = chunkArray(metafieldsInputs, 25);
+      const chunks = chunkArray(metafieldsInputs, 10);
       
       for (const chunk of chunks) {
         const response = await admin.graphql(SET_METAFIELDS_MUTATION, {
@@ -355,7 +355,7 @@ export async function action({ request }) {
       });
 
       if (updates.length > 0) {
-        const chunks = chunkArray(updates, 25);
+        const chunks = chunkArray(updates, 10);
         for (const chunk of chunks) {
           const response = await admin.graphql(SET_METAFIELDS_MUTATION, {
             variables: { metafields: chunk }
@@ -400,7 +400,7 @@ export async function action({ request }) {
       });
 
       if (updates.length > 0) {
-        const chunks = chunkArray(updates, 25);
+        const chunks = chunkArray(updates, 10);
         for (const chunk of chunks) {
           const response = await admin.graphql(SET_METAFIELDS_MUTATION, {
             variables: { metafields: chunk }

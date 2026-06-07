@@ -297,22 +297,19 @@ function ProductEditorTab({ products, fetcher, shopify }) {
             {ROCKHOUND_FIELDS.map(field => {
               const val = formState[field.key] || "";
               
-              if (field.isDropdown) {
-                const opts = [{ label: "Select...", value: "" }, ...(dropdownLists[field.key] || []).map(o => ({ label: o, value: o }))];
-                return (
-                  <div key={field.key} style={{ minHeight: "54px" }}>
-                    <Select
-                      label={field.label}
-                      options={opts}
-                      value={val}
-                      onChange={(v) => setFormState(prev => ({ ...prev, [field.key]: v }))}
-                      accessibilityLabel={field.label}
-                    />
-                  </div>
-                );
-              }
+              {field.isDropdown && (
+                <div key={field.key} style={{ minHeight: "54px" }}>
+                  <Select
+                    label={field.label}
+                    options={[{ label: "Select...", value: "" }, ...(dropdownLists[field.key] || []).map(o => ({ label: o, value: o }))]}
+                    value={val}
+                    onChange={(v) => setFormState(prev => ({ ...prev, [field.key]: v }))}
+                    accessibilityLabel={field.label}
+                  />
+                </div>
+              )}
 
-              return (
+              {!field.isDropdown && (
                 <div key={field.key} style={{ minHeight: "54px" }}>
                   <TextField
                     label={field.label}
@@ -320,10 +317,10 @@ function ProductEditorTab({ products, fetcher, shopify }) {
                     onChange={(v) => setFormState(prev => ({ ...prev, [field.key]: v }))}
                     autoComplete="off"
                     accessibilityLabel={field.label}
-                    multiline={field.multiline ? 3 : false}
+                    multiline={field.multiline && 3}
                   />
                 </div>
-              );
+              )}
             })}
           </div>
         </Card>
@@ -332,8 +329,126 @@ function ProductEditorTab({ products, fetcher, shopify }) {
   );
 }
 
-// --- TAB 3: BULK TOOLS ---
-function BulkToolsTab({ fetcher, shopify }) {
+// --- TAB 3: BULK TOOLS (BATCH PRESS) ---
+function BulkToolsTab({ products, fetcher, shopify }) {
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [formState, setFormState] = useState({});
+  const [dropdownLists] = useState(DEFAULT_DROPDOWNS);
+  const [batchState, setBatchState] = useState({
+    isActive: false,
+    productChunks: [],
+    currentIndex: 0,
+    status: "idle"
+  });
+
+  const chunkArray = (array, size) => {
+    const chunked = [];
+    for (let i = 0; i < array.length; i += size) {
+      chunked.push(array.slice(i, i + size));
+    }
+    return chunked;
+  };
+
+  const toggleProduct = (id) => {
+    setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  };
+
+  const selectAll = () => {
+    const allIds = (products || []).map(p => p.id);
+    setSelectedIds(allIds);
+  };
+
+  const clearAll = () => {
+    setSelectedIds([]);
+  };
+
+  const updateFormState = (key, value) => {
+    setFormState(prev => ({ ...prev, [key]: value }));
+  };
+
+  const handleStartBatch = () => {
+    const validEntries = Object.entries(formState).filter(([k, v]) => v !== undefined && v.toString().trim() !== "");
+    if (validEntries.length === 0) return;
+    if (selectedIds.length === 0) return;
+
+    const chunks = chunkArray(selectedIds, 10);
+    setBatchState({
+      isActive: true,
+      productChunks: chunks,
+      currentIndex: 0,
+      status: "processing"
+    });
+  };
+
+  // State Machine Phase 1: Fire Payload
+  useEffect(() => {
+    if (batchState.isActive && batchState.status === "processing") {
+      const currentChunk = batchState.productChunks[batchState.currentIndex];
+      
+      if (currentChunk) {
+        setBatchState(prev => ({ ...prev, status: "waiting_for_submitting_state" }));
+
+        const payload = [];
+        const validEntries = Object.entries(formState).filter(([k, v]) => v !== undefined && v.toString().trim() !== "");
+
+        currentChunk.forEach(productId => {
+          validEntries.forEach(([key, value]) => {
+            const config = ROCKHOUND_FIELDS.find(f => f.key === key);
+            
+            let fieldType = "single_line_text_field";
+            if (config && config.type) {
+              fieldType = config.type;
+            }
+            
+            let formatId = `gid://shopify/Product/${productId}`;
+            if (productId.includes("gid://")) {
+              formatId = productId;
+            }
+
+            payload.push({
+              ownerId: formatId,
+              namespace: "rockhound",
+              key,
+              value: value.toString(),
+              type: fieldType
+            });
+          });
+        });
+
+        fetcher.submit(
+          { intent: "saveProduct", payload: JSON.stringify(payload) },
+          { method: "post" }
+        );
+      }
+      
+      if (!currentChunk) {
+        setBatchState(prev => ({ ...prev, isActive: false, status: "complete" }));
+        if (shopify) shopify.toast.show("Batch press completed for all selected products.");
+      }
+    }
+  }, [batchState, formState, fetcher, shopify]);
+
+  // State Machine Phase 2: Wait for Network Lock
+  useEffect(() => {
+    if (batchState.status === "waiting_for_submitting_state" && fetcher.state !== "idle") {
+      setBatchState(prev => ({ ...prev, status: "waiting_for_idle" }));
+    }
+  }, [batchState.status, fetcher.state]);
+
+  // State Machine Phase 3: Wait for Network Idle & Governor Pause
+  useEffect(() => {
+    if (batchState.status === "waiting_for_idle" && fetcher.state === "idle") {
+      setBatchState(prev => ({ ...prev, status: "paused" }));
+      setTimeout(() => {
+        setBatchState(prev => ({
+          ...prev,
+          currentIndex: prev.currentIndex + 1,
+          status: "processing"
+        }));
+      }, 1000); // Hard 1-second pause to respect rate limits between chunk sets
+    }
+  }, [batchState.status, fetcher.state]);
+
   const handleExtractOrigin = useCallback(() => {
     fetcher.submit({ intent: "autoExtractAll" }, { method: "post" });
   }, [fetcher]);
@@ -354,33 +469,138 @@ function BulkToolsTab({ fetcher, shopify }) {
     <BlockStack gap="400">
       <Card padding="400">
         <BlockStack gap="400">
-          <Text variant="headingLg" as="h2">Bulk Operations</Text>
-          <Text as="p" tone="subdued">Execute widespread database changes across all Rockhound products.</Text>
+          <Text variant="headingLg" as="h2">Batch Press</Text>
+          <Text as="p" tone="subdued">Apply shared metafield values to multiple products simultaneously. Governed to 10 products per network batch.</Text>
           
           <Box paddingBlockStart="200">
-            <InlineStack gap="400">
-              <div style={{ minHeight: "54px" }}>
-                <Button 
-                  size="large" 
-                  onClick={handleExtractOrigin}
-                  accessibilityLabel="Auto-Extract Origin from Titles"
-                  loading={fetcher.state !== "idle" && fetcher.formData?.get("intent") === "autoExtractAll"}
-                >
-                  Auto-Extract Origin from Titles
-                </Button>
-              </div>
-              <div style={{ minHeight: "54px" }}>
-                <Button 
-                  size="large" 
-                  onClick={handleStandardizeOOAK}
-                  accessibilityLabel="Standardize One of a Kind Values"
-                  loading={fetcher.state !== "idle" && fetcher.formData?.get("intent") === "standardizeOOAK"}
-                >
-                  Standardize "One of a Kind"
-                </Button>
-              </div>
-            </InlineStack>
+            <Text variant="headingMd" as="h3">1. Select Target Products</Text>
+            <div style={{ marginTop: "8px", marginBottom: "8px" }}>
+              <InlineStack gap="300" blockAlign="center">
+                <div style={{ minHeight: "54px" }}>
+                  <Button onClick={selectAll} accessibilityLabel="Select All Products" size="large">Select All</Button>
+                </div>
+                <div style={{ minHeight: "54px" }}>
+                  <Button onClick={clearAll} accessibilityLabel="Clear Selection" size="large">Clear All</Button>
+                </div>
+                <Text as="span">{selectedIds.length} products selected</Text>
+              </InlineStack>
+            </div>
+            <div style={{ maxHeight: "250px", overflowY: "auto", border: "1px solid #E1E3E5", padding: "8px", borderRadius: "8px" }}>
+              {products && products.map(p => {
+                const isChecked = selectedIds.includes(p.id);
+                return (
+                  <div key={p.id} style={{ display: "flex", alignItems: "center", gap: "12px", padding: "8px 4px", borderBottom: "1px solid #F0F2F4" }}>
+                    <input
+                      type="checkbox"
+                      id={`check-${p.id}`}
+                      checked={isChecked}
+                      onChange={() => toggleProduct(p.id)}
+                      aria-label={`Select product ${p.title}`}
+                      style={{ width: "24px", height: "24px", cursor: "pointer" }}
+                    />
+                    <label htmlFor={`check-${p.id}`} style={{ flexGrow: 1, cursor: "pointer", fontSize: "15px", lineHeight: "24px" }}>{p.title}</label>
+                  </div>
+                );
+              })}
+            </div>
           </Box>
+
+          <Box paddingBlockStart="200">
+            <Text variant="headingMd" as="h3">2. Define Shared Metafields</Text>
+            <Text as="p" tone="subdued">Only populated fields will be injected into the target products.</Text>
+            <div style={{ maxHeight: "300px", overflowY: "auto", paddingRight: "8px", marginTop: "16px", display: "flex", flexDirection: "column", gap: "16px" }}>
+              {ROCKHOUND_FIELDS.map(field => {
+                const val = formState[field.key] || "";
+                const opts = [{ label: "Select...", value: "" }, ...(dropdownLists[field.key] || []).map(o => ({ label: o, value: o }))];
+
+                return (
+                  <div key={field.key} style={{ minHeight: "54px" }}>
+                    {field.isDropdown && (
+                      <Select
+                        label={field.label}
+                        options={opts}
+                        value={val}
+                        onChange={(v) => updateFormState(field.key, v)}
+                        accessibilityLabel={`Select shared value for ${field.label}`}
+                      />
+                    )}
+                    {!field.isDropdown && (
+                      <TextField
+                        label={field.label}
+                        value={val}
+                        onChange={(v) => updateFormState(field.key, v)}
+                        autoComplete="off"
+                        accessibilityLabel={`Enter shared value for ${field.label}`}
+                        multiline={field.multiline && 3}
+                      />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </Box>
+
+          <Box paddingBlockStart="200">
+            <Text variant="headingMd" as="h3">3. Execute Injector</Text>
+            <BlockStack gap="400">
+              {batchState.isActive && (
+                <Box padding="400" background="bg-surface-secondary" borderRadius="200">
+                  <BlockStack gap="200">
+                    <Text as="p" fontWeight="bold">Processing Batch {batchState.currentIndex + 1} of {batchState.productChunks.length}</Text>
+                    <Text as="p" tone="subdued">Status: {batchState.status}</Text>
+                    <div style={{ width: "100%", height: "12px", backgroundColor: "#E1E3E5", borderRadius: "6px", overflow: "hidden", marginTop: "8px" }}>
+                      <div style={{ width: `${((batchState.currentIndex) / batchState.productChunks.length) * 100}%`, height: "100%", backgroundColor: "#2C6ECB", transition: "width 0.3s ease" }}></div>
+                    </div>
+                  </BlockStack>
+                </Box>
+              )}
+              {batchState.status === "complete" && (
+                <Banner tone="success">Batch Press completed successfully.</Banner>
+              )}
+              
+              <div style={{ minHeight: "54px" }}>
+                <Button
+                  size="large"
+                  variant="primary"
+                  onClick={handleStartBatch}
+                  accessibilityLabel="Execute Batch Press"
+                  loading={batchState.isActive}
+                  fullWidth
+                >
+                  Execute Batch Press
+                </Button>
+              </div>
+            </BlockStack>
+          </Box>
+        </BlockStack>
+      </Card>
+
+      <Card padding="400">
+        <BlockStack gap="400">
+          <Text variant="headingMd" as="h3">Database-Wide Sweeps</Text>
+          <Text as="p" tone="subdued">Execute specialized bulk updates across the entire catalog.</Text>
+          <InlineStack gap="400">
+            <div style={{ minHeight: "54px" }}>
+              <Button 
+                size="large" 
+                onClick={handleExtractOrigin}
+                accessibilityLabel="Auto-Extract Origin from Titles"
+                loading={fetcher.state !== "idle" && fetcher.formData?.get("intent") === "autoExtractAll"}
+              >
+                Auto-Extract Origin from Titles
+              </Button>
+            </div>
+            <div style={{ minHeight: "54px" }}>
+              <Button 
+                size="large" 
+                onClick={handleStandardizeOOAK}
+                accessibilityLabel="Standardize One of a Kind Values"
+                loading={fetcher.state !== "idle" && fetcher.formData?.get("intent") === "standardizeOOAK"}
+              >
+                Standardize "One of a Kind"
+              </Button>
+            </div>
+          </InlineStack>
         </BlockStack>
       </Card>
     </BlockStack>
@@ -621,6 +841,7 @@ export default function MetaInjectorV2() {
                   )}
                   {selectedTab === 2 && (
                     <BulkToolsTab 
+                      products={products}
                       fetcher={primaryFetcher} 
                       shopify={shopify}
                     />
