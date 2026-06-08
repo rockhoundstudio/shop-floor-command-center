@@ -580,12 +580,15 @@ export async function action({ request }) {
           createdCount++;
 
           const combinedData = { ...sharedFields, ...row };
+          console.log("DEBUG combinedData:", JSON.stringify(combinedData));
+
           let metafieldsInputs = keysList
             .map(key => {
               const val = combinedData[key] !== undefined && combinedData[key] !== null ? combinedData[key].toString().trim() : "";
               return { ownerId: safeProductId, namespace: "rockhound", key, value: val, type: "single_line_text_field" };
             })
             .filter(mf => mf.value !== "");
+          console.log("DEBUG metafieldsInputs count:", metafieldsInputs.length, JSON.stringify(metafieldsInputs));
 
           metafieldsInputs.push({
             ownerId: safeProductId,
