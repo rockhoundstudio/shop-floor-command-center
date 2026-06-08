@@ -74,7 +74,12 @@ function IntakeBenchTab({ products, fetcher }) {
       });
     }
     setFormState(newForm);
-  }, [products]);
+
+    fetcher.submit(
+      { intent: "smartAutoFill", productId: id },
+      { method: "post" }
+    );
+  }, [products, fetcher]);
 
   const updateFormState = useCallback((key, value) => {
     setFormState(prev => ({ ...prev, [key]: value }));
@@ -139,13 +144,25 @@ function IntakeBenchTab({ products, fetcher }) {
     const hasData = fetcher.data !== undefined && fetcher.data !== null;
     
     if (isIdle && hasData) {
-      const isAutoFill = fetcher.data.intent === "autoFill";
+      const isAutoFill = fetcher.data.intent === "autoFill" || fetcher.data.intent === "smartAutoFill";
       const isSaveProduct = fetcher.data.intent === "saveProduct";
       const isSuccess = fetcher.data.success === true;
       const isError = fetcher.data.success === false;
 
       if (isAutoFill && isSuccess) {
-        setFormState(prev => ({ ...prev, ...fetcher.data.autoFillData }));
+        setFormState(prev => {
+          const updatedState = { ...prev };
+          if (fetcher.data.autoFillData) {
+            Object.entries(fetcher.data.autoFillData).forEach(([key, val]) => {
+              const isMissing = !updatedState[key] || updatedState[key].toString().trim() === "";
+              const hasNewValue = val !== undefined && val !== null && val.toString().trim() !== "";
+              if (isMissing && hasNewValue) {
+                updatedState[key] = val;
+              }
+            });
+          }
+          return updatedState;
+        });
         setStatusMessage("Title and tags successfully parsed and loaded into fields.");
       }
 
@@ -160,13 +177,13 @@ function IntakeBenchTab({ products, fetcher }) {
   }, [fetcher.state, fetcher.data]);
 
   const safeProducts = products || [];
-  const isAutoFilling = fetcher.state !== "idle" && fetcher.formData?.get("intent") === "autoFill";
+  const isAutoFilling = fetcher.state !== "idle" && (fetcher.formData?.get("intent") === "autoFill" || fetcher.formData?.get("intent") === "smartAutoFill");
   const isSaving = fetcher.state !== "idle" && fetcher.formData?.get("intent") === "saveProduct";
 
   return (
     <BlockStack gap="400">
-      <Layout>
-        <Layout.Section variant="oneHalf">
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "24px", alignItems: "start" }}>
+        <div>
           <Card padding="400">
             <BlockStack gap="400">
               <Text variant="headingMd" as="h2">1. Select Raw Inventory</Text>
@@ -191,9 +208,9 @@ function IntakeBenchTab({ products, fetcher }) {
               </div>
             </BlockStack>
           </Card>
-        </Layout.Section>
+        </div>
 
-        <Layout.Section variant="oneHalf">
+        <div>
           <Card padding="400">
             <BlockStack gap="400">
               <Text variant="headingMd" as="h2">2. Data Sieve & Injection</Text>
@@ -219,13 +236,13 @@ function IntakeBenchTab({ products, fetcher }) {
                   <Button 
                     icon={MagicIcon} 
                     onClick={handleAutoFill}
-                    accessibilityLabel="Auto-Fill Fields"
+                    accessibilityLabel="Re-Run Auto-Fill Fields"
                     size="large"
                     fullWidth
                     disabled={!selectedProductId}
                     loading={isAutoFilling}
                   >
-                    Auto-Fill From Title
+                    Re-Run Auto-Fill
                   </Button>
                 </div>
                 <div style={{ minHeight: "54px", flexGrow: 1 }}>
@@ -281,8 +298,8 @@ function IntakeBenchTab({ products, fetcher }) {
               </div>
             </BlockStack>
           </Card>
-        </Layout.Section>
-      </Layout>
+        </div>
+      </div>
     </BlockStack>
   );
 }
@@ -291,6 +308,7 @@ function IntakeBenchTab({ products, fetcher }) {
 function OperationsMatrixTab({ products, fetcher }) {
   const safeProducts = products || [];
   const [selectedProductId, setSelectedProductId] = useState("");
+  const [selectedIds, setSelectedIds] = useState(new Set());
 
   // --- Section 1: AI Forge State ---
   const [aiPrompt, setAiPrompt] = useState("You are a gritty, mechanic-style copywriter for a lapidary and handcrafted stone jewelry studio. Write a 160-character SEO meta description for this product. Be specific, earthy, and direct. No fluff.");
@@ -319,6 +337,29 @@ function OperationsMatrixTab({ products, fetcher }) {
     setGeneratedOutput("");
   }, []);
 
+  const handleToggleProductSelection = useCallback((id) => {
+    setSelectedIds(prev => {
+      const newSet = new Set(prev);
+      const isSelected = newSet.has(id);
+      if (isSelected) {
+        newSet.delete(id);
+      }
+      if (!isSelected) {
+        newSet.add(id);
+      }
+      return newSet;
+    });
+  }, []);
+
+  const handleSelectAll = useCallback(() => {
+    const allIds = safeProducts.map(p => p.id);
+    setSelectedIds(new Set(allIds));
+  }, [safeProducts]);
+
+  const handleClearAll = useCallback(() => {
+    setSelectedIds(new Set());
+  }, []);
+
   // --- Handlers: AI Forge ---
   const handleGenerateSEO = useCallback(() => {
     if (!productTitle) return;
@@ -334,9 +375,14 @@ function OperationsMatrixTab({ products, fetcher }) {
 
   // --- Handlers: Global Sweeps ---
   const startBatchSweep = useCallback((type) => {
+    const hasSelectedProducts = selectedIds.size > 0;
+    const targetProducts = hasSelectedProducts 
+      ? safeProducts.filter(p => selectedIds.has(p.id)) 
+      : safeProducts;
+
     const newChunks = [];
-    for (let i = 0; i < safeProducts.length; i += 10) {
-      newChunks.push(safeProducts.slice(i, i + 10));
+    for (let i = 0; i < targetProducts.length; i += 10) {
+      newChunks.push(targetProducts.slice(i, i + 10));
     }
     
     setBatchState({
@@ -348,7 +394,7 @@ function OperationsMatrixTab({ products, fetcher }) {
       message: "",
       error: ""
     });
-  }, [safeProducts]);
+  }, [safeProducts, selectedIds]);
 
   // Handle batch processing steps
   useEffect(() => {
@@ -361,7 +407,10 @@ function OperationsMatrixTab({ products, fetcher }) {
         setBatchState(prev => ({ ...prev, status: "waiting_for_network" }));
         const payload = [];
 
-        if (batchState.type === "ooak") {
+        const isOoak = batchState.type === "ooak";
+        const isOrigins = batchState.type === "origins";
+
+        if (isOoak) {
           currentChunk.forEach(p => {
             const formatId = p.id.includes("gid://") ? p.id : `gid://shopify/Product/${p.id}`;
             payload.push({
@@ -374,7 +423,7 @@ function OperationsMatrixTab({ products, fetcher }) {
           });
         }
 
-        if (batchState.type === "origins") {
+        if (isOrigins) {
           currentChunk.forEach(p => {
             const parts = p.title.split(" — ");
             const hasOriginPart = parts.length >= 3;
@@ -403,7 +452,7 @@ function OperationsMatrixTab({ products, fetcher }) {
       }
       
       if (!currentChunk) {
-        setBatchState(prev => ({ ...prev, isActive: false, status: "complete", message: "Sweep completed successfully across all products." }));
+        setBatchState(prev => ({ ...prev, isActive: false, status: "complete", message: "Sweep completed successfully across target products." }));
       }
     }
   }, [batchState, fetcher]);
@@ -527,35 +576,58 @@ function OperationsMatrixTab({ products, fetcher }) {
 
   return (
     <BlockStack gap="600">
-      <Layout>
-        <Layout.Section variant="oneHalf">
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "24px", alignItems: "start" }}>
+        <div>
           <Card padding="400">
             <BlockStack gap="400">
               <Text variant="headingMd" as="h2">Target Product Selection</Text>
-              <div style={{ maxHeight: "70vh", overflowY: "auto", paddingRight: "8px", display: "flex", flexDirection: "column", gap: "8px" }}>
+              <Text as="p" tone="subdued">{selectedIds.size} of {safeProducts.length} selected for sweeps</Text>
+              
+              <InlineStack gap="300">
+                <div style={{ minHeight: "54px", flexGrow: 1 }}>
+                  <Button size="large" fullWidth onClick={handleSelectAll} accessibilityLabel="Select all products for batch operations">Select All</Button>
+                </div>
+                <div style={{ minHeight: "54px", flexGrow: 1 }}>
+                  <Button size="large" fullWidth onClick={handleClearAll} accessibilityLabel="Clear product selection">Clear All</Button>
+                </div>
+              </InlineStack>
+
+              <div style={{ maxHeight: "60vh", overflowY: "auto", paddingRight: "8px", display: "flex", flexDirection: "column", gap: "8px" }}>
                 {safeProducts.map(p => {
                   const isSelected = selectedProductId === p.id;
+                  const isChecked = selectedIds.has(p.id);
                   return (
-                    <div key={p.id} style={{ minHeight: "54px" }}>
-                      <Button
-                        fullWidth
-                        size="large"
-                        textAlign="left"
-                        variant={isSelected ? "primary" : "secondary"}
-                        onClick={() => handleSelectProduct(p.id, p.title)}
-                        accessibilityLabel={`Select product ${p.title} for operations`}
-                      >
-                        {p.title}
-                      </Button>
+                    <div key={p.id} style={{ display: "flex", alignItems: "center", gap: "12px", minHeight: "54px" }}>
+                      <div style={{ display: "flex", alignItems: "center", height: "54px" }}>
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={() => handleToggleProductSelection(p.id)}
+                          aria-label={`Select product ${p.title} for batch sweeps`}
+                          style={{ width: "24px", height: "24px", cursor: "pointer" }}
+                        />
+                      </div>
+                      <div style={{ flexGrow: 1, minHeight: "54px" }}>
+                        <Button
+                          fullWidth
+                          size="large"
+                          textAlign="left"
+                          variant={isSelected ? "primary" : "secondary"}
+                          onClick={() => handleSelectProduct(p.id, p.title)}
+                          accessibilityLabel={`Load product ${p.title} into AI Forge`}
+                        >
+                          {p.title}
+                        </Button>
+                      </div>
                     </div>
                   );
                 })}
               </div>
             </BlockStack>
           </Card>
-        </Layout.Section>
+        </div>
 
-        <Layout.Section variant="oneHalf">
+        <div>
           <BlockStack gap="600">
             <Card padding="400">
               <BlockStack gap="400">
@@ -652,7 +724,7 @@ function OperationsMatrixTab({ products, fetcher }) {
                       size="large"
                       fullWidth
                       onClick={() => startBatchSweep("ooak")}
-                      accessibilityLabel="Standardize OOAK across all products"
+                      accessibilityLabel="Standardize OOAK across target products"
                       disabled={batchState.isActive}
                     >
                       Standardize OOAK
@@ -663,7 +735,7 @@ function OperationsMatrixTab({ products, fetcher }) {
                       size="large"
                       fullWidth
                       onClick={() => startBatchSweep("origins")}
-                      accessibilityLabel="Sweep Origins across all products"
+                      accessibilityLabel="Sweep Origins across target products"
                       disabled={batchState.isActive}
                     >
                       Sweep Origins
@@ -718,8 +790,8 @@ function OperationsMatrixTab({ products, fetcher }) {
               </BlockStack>
             </Card>
           </BlockStack>
-        </Layout.Section>
-      </Layout>
+        </div>
+      </div>
     </BlockStack>
   );
 }
