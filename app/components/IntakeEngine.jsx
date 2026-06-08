@@ -28,7 +28,12 @@ const ROCKHOUND_FIELDS = [
   { key: "treated", label: "Treated", isDropdown: true },
   { key: "found_object", label: "Found Object", isDropdown: true },
   { key: "wire_material", label: "Wire Material", isDropdown: true },
-  { key: "artist_notes", label: "Artist Notes", type: "single_line_text_field", multiline: true }
+  { key: "artist_notes", label: "Artist Notes", type: "single_line_text_field", multiline: true },
+  
+  // --- NEW: DWELL WEB ROUTING FIELDS ---
+  { key: "lore_story_handle", label: "Lore Page (Shopify Handle)", type: "single_line_text_field", placeholder: "e.g., the-chipper-woodpile" },
+  { key: "lapidary_trick_handle", label: "Lapidary Trick Page (Handle)", type: "single_line_text_field", placeholder: "e.g., banshee-flat-lap" },
+  { key: "collection_hub_handle", label: "Collection Hub (Handle)", type: "single_line_text_field", placeholder: "e.g., spokane-river-collection" }
 ];
 
 const DEFAULT_DROPDOWNS = {
@@ -99,6 +104,22 @@ export default function IntakeEngine({ products, fetcher, shopify }) {
     );
   }, [selectedIds, fetcher, shopify]);
 
+  const handleGenerateSEO = useCallback(() => {
+    if (selectedIds.length !== 1) {
+      if (shopify) shopify.toast.show("SEO generation requires exactly 1 stone selected.");
+      return;
+    }
+    // We send the current form data so Gemini has the context to write the description
+    fetcher.submit(
+      { 
+        intent: "generateSEO", 
+        productId: selectedIds[0],
+        formData: JSON.stringify(formState)
+      },
+      { method: "post" }
+    );
+  }, [selectedIds, formState, fetcher, shopify]);
+
   const handleSave = useCallback(() => {
     if (selectedIds.length === 0) return;
     
@@ -144,6 +165,11 @@ export default function IntakeEngine({ products, fetcher, shopify }) {
       if (fetcher.data.intent === "autoFill" && fetcher.data.success) {
         setFormState(prev => ({ ...prev, ...fetcher.data.autoFillData }));
         if (shopify) shopify.toast.show("Title parsed & tags pulled.");
+      }
+      if (fetcher.data.intent === "generateSEO" && fetcher.data.success) {
+        // Automatically inject the generated SEO into the form
+        setFormState(prev => ({ ...prev, generated_seo: fetcher.data.seoDescription }));
+        if (shopify) shopify.toast.show("Rockhound SEO generated.");
       }
       if (fetcher.data.intent === "saveProduct" && fetcher.data.success) {
         if (shopify) shopify.toast.show(`Saved ${selectedIds.length} product(s) to Shopify.`);
@@ -215,9 +241,14 @@ export default function IntakeEngine({ products, fetcher, shopify }) {
                     </Text>
                     <InlineStack gap="200">
                       {selectedIds.length === 1 && (
-                        <Button icon={MagicIcon} onClick={handleAutoFill} loading={fetcher.state !== "idle" && fetcher.formData?.get("intent") === "autoFill"}>
-                          Parse Title
-                        </Button>
+                        <>
+                          <Button icon={MagicIcon} onClick={handleAutoFill} loading={fetcher.state !== "idle" && fetcher.formData?.get("intent") === "autoFill"}>
+                            Parse Title
+                          </Button>
+                          <Button icon={MagicIcon} onClick={handleGenerateSEO} loading={fetcher.state !== "idle" && fetcher.formData?.get("intent") === "generateSEO"}>
+                            Generate SEO
+                          </Button>
+                        </>
                       )}
                       <Button icon={SaveIcon} tone="success" variant="primary" onClick={handleSave} loading={fetcher.state !== "idle" && fetcher.formData?.get("intent") === "saveProduct"}>
                         Save
@@ -243,7 +274,7 @@ export default function IntakeEngine({ products, fetcher, shopify }) {
                   }}>
                     {ROCKHOUND_FIELDS.map(field => {
                       const val = formState[field.key] || "";
-                      const isFullWidth = field.multiline; // Artist notes span both columns
+                      const isFullWidth = field.multiline || field.key.includes("dwell"); 
 
                       return (
                         <div key={field.key} style={{ gridColumn: isFullWidth ? "span 2" : "span 1" }}>
@@ -257,6 +288,7 @@ export default function IntakeEngine({ products, fetcher, shopify }) {
                           ) : (
                             <TextField
                               label={field.label}
+                              placeholder={field.placeholder || ""}
                               value={val}
                               onChange={(v) => setFormState(prev => ({ ...prev, [field.key]: v }))}
                               autoComplete="off"
@@ -266,6 +298,19 @@ export default function IntakeEngine({ products, fetcher, shopify }) {
                         </div>
                       );
                     })}
+
+                    {/* DYNAMIC SEO BOX */}
+                    {formState.generated_seo && (
+                       <div style={{ gridColumn: "span 2" }}>
+                          <TextField
+                            label="Generated Rockhound SEO (Edit before save)"
+                            value={formState.generated_seo}
+                            onChange={(v) => setFormState(prev => ({ ...prev, generated_seo: v }))}
+                            autoComplete="off"
+                            multiline={3}
+                          />
+                       </div>
+                    )}
 
                     <div style={{ gridColumn: "span 2" }}>
                       <Divider />

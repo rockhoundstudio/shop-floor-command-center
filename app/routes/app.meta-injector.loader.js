@@ -145,9 +145,11 @@ const chunkArray = (array, size) => {
   return chunked;
 };
 
-const formatGid = (id, type) => {
-  if (id.includes("gid://")) return id;
-  return `gid://shopify/${type}/${id}`;
+// 🛑 ENGINE FIX: Fortified GID Stripper & Formatter
+const formatStrictGid = (id, type) => {
+  // Strip out everything except numbers to ensure we don't double-stack "gid://"
+  const numericId = id.toString().replace(/\D/g, ""); 
+  return `gid://shopify/${type}/${numericId}`;
 };
 
 const extractOriginFromTitle = (title) => {
@@ -158,8 +160,6 @@ const extractOriginFromTitle = (title) => {
   return null;
 };
 
-// 🛑 ENGINE FIX: Removed the infinite while() loop.
-// We do one clean pull of the first 50 products. This instantly loads your 37 stones.
 async function fetchAllProducts(graphql) {
   const response = await graphql(GET_PRODUCTS_QUERY, { variables: { cursor: null } });
   const { data } = await response.json();
@@ -174,14 +174,11 @@ async function fetchAllProducts(graphql) {
 // --- LOADER EXPORT ---
 
 export async function loader({ request }) {
-  // authenticate.admin(request) MUST be called before any request parsing
   const { admin } = await authenticate.admin(request);
   
-  // 1. Fetch ALL products recursively using the helper
   const products = await fetchAllProducts(admin.graphql);
   console.log("fetchAllProducts returned:", products.length, "products");
 
-  // 2. Fetch definitions and snapshots concurrently
   const [definitionsRes, snapshotsRes] = await Promise.all([
     admin.graphql(GET_METAFIELD_DEFINITIONS_QUERY),
     admin.graphql(GET_SNAPSHOTS_QUERY)
@@ -190,8 +187,7 @@ export async function loader({ request }) {
   const definitionsData = await definitionsRes.json();
   const snapshotsData = await snapshotsRes.json();
 
-  // 3. Format the data for the UI
-  const pageInfo = { hasNextPage: false, endCursor: null }; // Cursor loop is complete
+  const pageInfo = { hasNextPage: false, endCursor: null }; 
   const metafieldDefinitions = definitionsData.data?.metafieldDefinitions?.edges.map(edge => edge.node) || [];
   
   const rawSnapshots = snapshotsData.data?.metaobjects?.edges.map(edge => edge.node) || [];
@@ -227,10 +223,8 @@ export async function loader({ request }) {
 // --- ACTION EXPORT ---
 
 export async function action({ request }) {
-  // authenticate.admin(request) MUST be called before any request parsing
   const { admin } = await authenticate.admin(request);
   
-  // Safe to parse x-www-form-urlencoded now without breaking session re-auth
   const formData = await request.formData();
   const intent = formData.get("intent");
 
@@ -244,28 +238,55 @@ export async function action({ request }) {
       }
 
       const payload = JSON.parse(payloadStr);
-      const metafieldsInputs = payload.map(field => ({
-        ownerId: formatGid(field.ownerId, "Product"),
-        namespace: "rockhound",
-        key: field.key,
-        value: field.value.toString(),
-        type: field.type || "single_line_text_field"
-      }));
+      
+      const metafieldsInputs = payload.map(field => {
+        // Force absolute strict GID
+        const strictOwnerId = formatStrictGid(field.ownerId, "Product");
+        
+        let finalValue = field.value.toString();
+        const finalType = field.type || "single_line_text_field";
+        
+        // 🛑 ENGINE FIX: Array Wrap for Metaobject References
+        if (finalType === "list.metaobject_reference" && !finalValue.startsWith("[")) {
+          finalValue = `["${finalValue}"]`;
+        }
 
-      const chunks = chunkArray(metafieldsInputs, 10);
+        return {
+          ownerId: strictOwnerId,
+          namespace: "rockhound", 
+          key: field.key,
+          value: finalValue,
+          type: finalType
+        };
+      });
+
+      // 🛑 ENGINE FIX: The Pacing (Lowered from 10 to 3)
+      const chunks = chunkArray(metafieldsInputs, 3);
       
       for (const chunk of chunks) {
-        const response = await admin.graphql(SET_METAFIELDS_MUTATION, {
-          variables: { metafields: chunk }
-        });
-        const result = await response.json();
-        
-        if (result.data?.metafieldsSet?.userErrors?.length > 0) {
-          errors.push(...result.data.metafieldsSet.userErrors);
+        try {
+          const response = await admin.graphql(SET_METAFIELDS_MUTATION, {
+            variables: { metafields: chunk }
+          });
+          const result = await response.json();
+          
+          if (result.data?.metafieldsSet?.userErrors?.length > 0) {
+            errors.push(...result.data.metafieldsSet.userErrors);
+          }
+        } catch (e) {
+          console.error("GraphQL Error during chunk execution:", e);
+          errors.push({ field: ["network"], message: e.message });
         }
       }
 
-      return new Response(JSON.stringify({ success: errors.length === 0, intent, errors }), {
+      if (errors.length > 0) {
+        return new Response(JSON.stringify({ success: false, intent, errors }), {
+          status: 422,
+          headers: { "Content-Type": "application/json" }
+        });
+      }
+
+      return new Response(JSON.stringify({ success: true, intent, errors: [] }), {
         status: 200,
         headers: { "Content-Type": "application/json" }
       });
@@ -273,29 +294,22 @@ export async function action({ request }) {
 
     case "autoFill": {
       const productId = formData.get("productId");
-      if (!productId) {
-        return new Response(JSON.stringify({ success: false, error: "Missing productId" }), { status: 400 });
-      }
+      if (!productId) return new Response(JSON.stringify({ success: false, error: "Missing productId" }), { status: 400 });
 
       const response = await admin.graphql(GET_SINGLE_PRODUCT_QUERY, {
-        variables: { id: formatGid(productId, "Product") }
+        variables: { id: formatStrictGid(productId, "Product") }
       });
       const result = await response.json();
       const product = result.data?.product;
 
-      if (!product) {
-        return new Response(JSON.stringify({ success: false, error: "Product not found" }), { status: 404 });
-      }
+      if (!product) return new Response(JSON.stringify({ success: false, error: "Product not found" }), { status: 404 });
 
       const autoFillData = {};
       const titleParts = product.title.split(" — ");
       
-      if (titleParts.length === 1) {
-        autoFillData.piece_name = titleParts[0];
-      } else if (titleParts.length === 2) {
-        autoFillData.material = titleParts[0];
-        autoFillData.piece_name = titleParts[1];
-      } else if (titleParts.length >= 3) {
+      if (titleParts.length === 1) autoFillData.piece_name = titleParts[0];
+      else if (titleParts.length === 2) { autoFillData.material = titleParts[0]; autoFillData.piece_name = titleParts[1]; }
+      else if (titleParts.length >= 3) {
         autoFillData.material = titleParts[0];
         autoFillData.collection_location = titleParts[1];
         autoFillData.piece_name = titleParts[titleParts.length - 1];
@@ -303,14 +317,10 @@ export async function action({ request }) {
 
       if (product.tags && product.tags.length > 0) {
         const colorTag = product.tags.find(t => ["red", "blue", "green", "black", "white", "purple", "yellow", "orange", "brown", "pink", "clear"].some(c => t.toLowerCase().includes(c)));
-        if (colorTag && !autoFillData.color) {
-          autoFillData.color = colorTag;
-        }
+        if (colorTag && !autoFillData.color) autoFillData.color = colorTag;
 
         const locationTag = product.tags.find(t => t.toLowerCase().includes("mine") || t.toLowerCase().includes("ridge") || t.toLowerCase().includes("county"));
-        if (locationTag && !autoFillData.collection_location) {
-          autoFillData.collection_location = locationTag;
-        }
+        if (locationTag && !autoFillData.collection_location) autoFillData.collection_location = locationTag;
       }
 
       return new Response(JSON.stringify({ success: true, intent, autoFillData }), {
@@ -336,7 +346,7 @@ export async function action({ request }) {
 
         if (!hasOrigin) {
           updates.push({
-            ownerId: formatGid(product.id, "Product"),
+            ownerId: formatStrictGid(product.id, "Product"),
             namespace: "rockhound",
             key: "collection_location",
             value: origin,
@@ -346,15 +356,11 @@ export async function action({ request }) {
       });
 
       if (updates.length > 0) {
-        const chunks = chunkArray(updates, 10);
+        const chunks = chunkArray(updates, 3);
         for (const chunk of chunks) {
-          const response = await admin.graphql(SET_METAFIELDS_MUTATION, {
-            variables: { metafields: chunk }
-          });
+          const response = await admin.graphql(SET_METAFIELDS_MUTATION, { variables: { metafields: chunk } });
           const result = await response.json();
-          if (result.data?.metafieldsSet?.userErrors?.length > 0) {
-            errors.push(...result.data.metafieldsSet.userErrors);
-          }
+          if (result.data?.metafieldsSet?.userErrors?.length > 0) errors.push(...result.data.metafieldsSet.userErrors);
         }
       }
 
@@ -374,14 +380,12 @@ export async function action({ request }) {
           const ooakField = product.metafields.edges.find(edge => 
             edge.node.namespace === "rockhound" && edge.node.key === "is_one_of_a_kind"
           );
-          if (ooakField && ooakField.node.value === "Yes — one of a kind") {
-            isStandardized = true;
-          }
+          if (ooakField && ooakField.node.value === "Yes — one of a kind") isStandardized = true;
         }
 
         if (!isStandardized) {
           updates.push({
-            ownerId: formatGid(product.id, "Product"),
+            ownerId: formatStrictGid(product.id, "Product"),
             namespace: "rockhound",
             key: "is_one_of_a_kind",
             value: "Yes — one of a kind",
@@ -391,15 +395,11 @@ export async function action({ request }) {
       });
 
       if (updates.length > 0) {
-        const chunks = chunkArray(updates, 10);
+        const chunks = chunkArray(updates, 3);
         for (const chunk of chunks) {
-          const response = await admin.graphql(SET_METAFIELDS_MUTATION, {
-            variables: { metafields: chunk }
-          });
+          const response = await admin.graphql(SET_METAFIELDS_MUTATION, { variables: { metafields: chunk } });
           const result = await response.json();
-          if (result.data?.metafieldsSet?.userErrors?.length > 0) {
-            errors.push(...result.data.metafieldsSet.userErrors);
-          }
+          if (result.data?.metafieldsSet?.userErrors?.length > 0) errors.push(...result.data.metafieldsSet.userErrors);
         }
       }
 
@@ -415,15 +415,9 @@ export async function action({ request }) {
       const snapshotData = allProducts.map(p => {
         const fieldData = {};
         if (p.metafields && p.metafields.edges) {
-          p.metafields.edges.forEach(edge => {
-            fieldData[edge.node.key] = edge.node.value;
-          });
+          p.metafields.edges.forEach(edge => { fieldData[edge.node.key] = edge.node.value; });
         }
-        return {
-          id: p.id,
-          title: p.title,
-          fields: fieldData
-        };
+        return { id: p.id, title: p.title, fields: fieldData };
       });
 
       const existingSnapshotsRes = await admin.graphql(GET_SNAPSHOTS_QUERY);
@@ -434,9 +428,7 @@ export async function action({ request }) {
         const oldestId = existingNodes[existingNodes.length - 1].id;
         const delRes = await admin.graphql(DELETE_METAOBJECT_MUTATION, { variables: { id: oldestId } });
         const delResult = await delRes.json();
-        if (delResult.data?.metaobjectDelete?.userErrors?.length > 0) {
-            errors.push(...delResult.data.metaobjectDelete.userErrors);
-        }
+        if (delResult.data?.metaobjectDelete?.userErrors?.length > 0) errors.push(...delResult.data.metaobjectDelete.userErrors);
       }
 
       const timestamp = new Date().toISOString();
@@ -446,22 +438,14 @@ export async function action({ request }) {
             type: "rockhound_snapshot",
             handle: `snapshot-${Date.now()}`,
             fields: [
-              {
-                key: "created_at",
-                value: timestamp
-              },
-              {
-                key: "snapshot_data",
-                value: JSON.stringify(snapshotData)
-              }
+              { key: "created_at", value: timestamp },
+              { key: "snapshot_data", value: JSON.stringify(snapshotData) }
             ]
           }
         }
       });
       const createResult = await createRes.json();
-      if (createResult.data?.metaobjectCreate?.userErrors?.length > 0) {
-        errors.push(...createResult.data.metaobjectCreate.userErrors);
-      }
+      if (createResult.data?.metaobjectCreate?.userErrors?.length > 0) errors.push(...createResult.data.metaobjectCreate.userErrors);
 
       return new Response(JSON.stringify({ success: errors.length === 0, intent, errors }), {
         status: 200,
@@ -486,66 +470,4 @@ export async function action({ request }) {
         const row = [`"${product.id}"`, `"${product.title.replace(/"/g, '""')}"`];
         
         const fieldMap = {};
-        if (product.metafields && product.metafields.edges) {
-          product.metafields.edges.forEach(edge => {
-            fieldMap[edge.node.key] = edge.node.value;
-          });
-        }
-
-        keys.forEach(key => {
-          const val = fieldMap[key] || "";
-          row.push(`"${val.toString().replace(/"/g, '""')}"`);
-        });
-
-        csv += row.join(",") + "\n";
-      });
-
-      return new Response(csv, {
-        status: 200,
-        headers: {
-          "Content-Type": "text/csv",
-          "Content-Disposition": 'attachment; filename="rockhound_matrix_export.csv"'
-        }
-      });
-    }
-
-    case "addFieldDefinition": {
-      const key = formData.get("key");
-      const name = formData.get("name");
-      const type = formData.get("type") || "single_line_text_field";
-
-      if (!key || !name) {
-        return new Response(JSON.stringify({ success: false, error: "Missing required fields" }), { status: 400 });
-      }
-
-      const response = await admin.graphql(CREATE_METAFIELD_DEFINITION_MUTATION, {
-        variables: {
-          definition: {
-            name,
-            namespace: "rockhound",
-            key,
-            type,
-            ownerType: "PRODUCT"
-          }
-        }
-      });
-
-      const result = await response.json();
-      if (result.data?.metafieldDefinitionCreate?.userErrors?.length > 0) {
-        errors.push(...result.data.metafieldDefinitionCreate.userErrors);
-      }
-
-      return new Response(JSON.stringify({ success: errors.length === 0, intent, errors }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" }
-      });
-    }
-
-    default: {
-      return new Response(JSON.stringify({ success: false, error: "Unknown intent" }), {
-        status: 400,
-        headers: { "Content-Type": "application/json" }
-      });
-    }
-  }
-}
+        if (product.metafields && product
