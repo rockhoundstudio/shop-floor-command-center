@@ -131,6 +131,19 @@ function NewProductIntakeTab({ fetcher }) {
   const combinedData = { ...sharedFields, ...(pieces[0] || {}) };
   const scanKeys = [...ROCKHOUND_FIELDS.map(f => f.key), "price"];
 
+  const actionData = fetcher.data;
+  const useSaved = actionData?.success === true;
+  const savedMap = {};
+  if (actionData && actionData.savedMetafields) {
+    actionData.savedMetafields.forEach(mf => { savedMap[mf.key] = mf.value; });
+  }
+
+  const renderLabel = (text, value, isRequired) => {
+    const isFilled = value !== undefined && value !== null && value.toString().trim() !== "";
+    const dotColor = isFilled ? "#008060" : (isRequired ? "#D72C0D" : "#FFC453");
+    return <span><span style={{color: dotColor, fontSize: 10, marginRight: 4}}>●</span>{text}</span>;
+  };
+
   return (
     <BlockStack gap="600">
       <Card padding="400">
@@ -139,7 +152,7 @@ function NewProductIntakeTab({ fetcher }) {
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "24px" }}>
             <div style={{ minHeight: "54px" }}>
               <TextField
-                label="Material"
+                label={renderLabel("Material", sharedFields.material, true)}
                 value={sharedFields.material}
                 onChange={(v) => handleSharedFieldChange("material", v)}
                 autoComplete="off"
@@ -148,7 +161,7 @@ function NewProductIntakeTab({ fetcher }) {
             </div>
             <div style={{ minHeight: "54px" }}>
               <TextField
-                label="Stone Family"
+                label={renderLabel("Stone Family", sharedFields.stone_family, false)}
                 value={sharedFields.stone_family}
                 onChange={(v) => handleSharedFieldChange("stone_family", v)}
                 autoComplete="off"
@@ -157,7 +170,7 @@ function NewProductIntakeTab({ fetcher }) {
             </div>
             <div style={{ minHeight: "54px" }}>
               <TextField
-                label="Collection Location"
+                label={renderLabel("Collection Location", sharedFields.collection_location, false)}
                 value={sharedFields.collection_location}
                 onChange={(v) => handleSharedFieldChange("collection_location", v)}
                 autoComplete="off"
@@ -166,7 +179,7 @@ function NewProductIntakeTab({ fetcher }) {
             </div>
             <div style={{ minHeight: "54px" }}>
               <TextField
-                label="Collection Date"
+                label={renderLabel("Collection Date", sharedFields.collection_date, false)}
                 value={sharedFields.collection_date}
                 onChange={(v) => handleSharedFieldChange("collection_date", v)}
                 autoComplete="off"
@@ -175,7 +188,7 @@ function NewProductIntakeTab({ fetcher }) {
             </div>
             <div style={{ minHeight: "54px" }}>
               <TextField
-                label="Origin Story"
+                label={renderLabel("Origin Story", sharedFields.origin_story, false)}
                 value={sharedFields.origin_story}
                 onChange={(v) => handleSharedFieldChange("origin_story", v)}
                 autoComplete="off"
@@ -185,7 +198,7 @@ function NewProductIntakeTab({ fetcher }) {
             </div>
             <div style={{ minHeight: "54px" }}>
               <Select
-                label="Treated"
+                label={renderLabel("Treated", sharedFields.treated, false)}
                 options={[{ label: "Select...", value: "" }, ...DEFAULT_DROPDOWNS.treated.map(o => ({ label: o, value: o }))]}
                 value={sharedFields.treated}
                 onChange={(v) => handleSharedFieldChange("treated", v)}
@@ -194,7 +207,7 @@ function NewProductIntakeTab({ fetcher }) {
             </div>
             <div style={{ minHeight: "54px" }}>
               <Select
-                label="Product Type"
+                label={renderLabel("Product Type", sharedFields.primary_use, false)}
                 options={[{ label: "Select...", value: "" }, ...productTypeOptions.map(o => ({ label: o, value: o }))]}
                 value={sharedFields.primary_use}
                 onChange={(v) => handleSharedFieldChange("primary_use", v)}
@@ -213,7 +226,7 @@ function NewProductIntakeTab({ fetcher }) {
               <div key={piece.id} style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr auto", gap: "16px", alignItems: "end" }}>
                 <div style={{ minHeight: "54px" }}>
                   <TextField
-                    label="Piece Name"
+                    label={renderLabel("Piece Name", piece.piece_name, true)}
                     value={piece.piece_name}
                     onChange={(v) => handlePieceChange(piece.id, "piece_name", v)}
                     autoComplete="off"
@@ -222,7 +235,7 @@ function NewProductIntakeTab({ fetcher }) {
                 </div>
                 <div style={{ minHeight: "54px" }}>
                   <TextField
-                    label="Dimensions (mm)"
+                    label={renderLabel("Dimensions (mm)", piece.dimensions_mm, false)}
                     value={piece.dimensions_mm}
                     onChange={(v) => handlePieceChange(piece.id, "dimensions_mm", v)}
                     autoComplete="off"
@@ -231,7 +244,7 @@ function NewProductIntakeTab({ fetcher }) {
                 </div>
                 <div style={{ minHeight: "54px" }}>
                   <TextField
-                    label="Cut & Shape"
+                    label={renderLabel("Cut & Shape", piece.cut_and_shape, false)}
                     value={piece.cut_and_shape}
                     onChange={(v) => handlePieceChange(piece.id, "cut_and_shape", v)}
                     autoComplete="off"
@@ -240,7 +253,7 @@ function NewProductIntakeTab({ fetcher }) {
                 </div>
                 <div style={{ minHeight: "54px" }}>
                   <TextField
-                    label="Price"
+                    label={renderLabel("Price", piece.price, true)}
                     value={piece.price}
                     onChange={(v) => handlePieceChange(piece.id, "price", v)}
                     autoComplete="off"
@@ -312,7 +325,7 @@ function NewProductIntakeTab({ fetcher }) {
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
             {scanKeys.map(key => {
               const isRequired = key === "piece_name" || key === "price" || key === "material";
-              const val = combinedData[key];
+              const val = useSaved ? savedMap[key] : combinedData[key];
               const isFilled = val !== undefined && val !== null && val.toString().trim() !== "";
               const isOptionalEmpty = !isRequired && !isFilled;
               const isRequiredEmpty = isRequired && !isFilled;
@@ -323,7 +336,7 @@ function NewProductIntakeTab({ fetcher }) {
                   {isFilled && <span style={{ color: "#008060" }}>●</span>}
                   {isOptionalEmpty && <span style={{ color: "#FFC453" }}>●</span>}
                   {isRequiredEmpty && <span style={{ color: "#D72C0D" }}>●</span>}
-                  <Text as="span">{labelText}</Text>
+                  <Text as="span">{labelText}{useSaved && isFilled ? ` — ${val}` : ""}</Text>
                 </div>
               );
             })}
