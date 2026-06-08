@@ -55,9 +55,9 @@ const GET_SNAPSHOTS_QUERY = `
   }
 `;
 
-const PRODUCT_SET_MUTATION = `
-  mutation ProductSet($input: ProductSetInput!) {
-    productSet(input: $input) {
+const PRODUCT_CREATE_MUTATION = `
+  mutation ProductCreate($input: ProductInput!) {
+    productCreate(input: $input) {
       product { id }
       userErrors { field message }
     }
@@ -553,27 +553,26 @@ export async function action({ request }) {
       for (const row of rows) {
         const title = sharedFields.material ? `${sharedFields.material} — ${row.piece_name}` : row.piece_name;
 
-        const productSetInput = {
+        const productInput = {
           title: title,
           vendor: "Rockhound Studio",
-          status: "DRAFT",
-          variants: [{ price: row.price ? row.price.toString().replace(/[^0-9.]/g, "") : "0.00" }]
+          status: "DRAFT"
         };
 
         try {
-          const createRes = await admin.graphql(PRODUCT_SET_MUTATION, {
-            variables: { input: productSetInput }
+          const createRes = await admin.graphql(PRODUCT_CREATE_MUTATION, {
+            variables: { input: productInput }
           });
           const createResult = await createRes.json();
           
-          if (createResult.data?.productSet?.userErrors?.length > 0) {
-            errors.push(...createResult.data.productSet.userErrors);
+          if (createResult.data?.productCreate?.userErrors?.length > 0) {
+            errors.push(...createResult.data.productCreate.userErrors);
             continue;
           }
 
-          const newProductId = createResult.data?.productSet?.product?.id;
+          const newProductId = createResult.data?.productCreate?.product?.id;
           if (!newProductId) {
-             errors.push({ field: ["productSet"], message: "Failed to retrieve product ID." });
+             errors.push({ field: ["productCreate"], message: "Failed to retrieve product ID." });
              continue;
           }
 
@@ -590,6 +589,14 @@ export async function action({ request }) {
               value: val,
               type: "single_line_text_field"
             };
+          });
+
+          metafieldsInputs.push({
+            ownerId: safeProductId,
+            namespace: "rockhound",
+            key: "price",
+            value: row.price ? row.price.toString().replace(/[^0-9.]/g, "") : "0.00",
+            type: "single_line_text_field"
           });
 
           const chunks = chunkArray(metafieldsInputs, 3);
