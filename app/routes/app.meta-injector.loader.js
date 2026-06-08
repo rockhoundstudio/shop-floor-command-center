@@ -557,7 +557,8 @@ export async function action({ request }) {
           title: title,
           vendor: "Rockhound Studio",
           status: "DRAFT",
-          variants: [{ price: row.price ? row.price.toString() : "0.00" }]
+          options: [{ name: "Title", values: [{ name: "Default Title" }] }],
+          variants: [{ price: row.price ? row.price.toString().replace(/[^0-9.]/g, "") : "0.00", optionValues: [{ optionName: "Title", name: "Default Title" }] }]
         };
 
         try {
