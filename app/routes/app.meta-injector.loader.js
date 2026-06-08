@@ -541,14 +541,9 @@ export async function action({ request }) {
       const sharedFields = piecesData.sharedFields || {};
       const rows = piecesData.rows || [];
       let createdCount = 0;
+      let savedMetafields = [];
 
-      const keysList = [
-        "piece_name", "primary_medium", "secondary_medium", "handcrafted_by", 
-        "material", "stone_family", "color", "cut_and_shape", "surface_finish", 
-        "dimensions_mm", "weight_grams", "collection_name", "collection_location", 
-        "collection_date", "primary_use", "setting_ready", "bail_included", 
-        "is_one_of_a_kind", "treated", "found_object", "wire_material", "artist_notes"
-      ];
+      const keysList = ["piece_name","material","stone_family","color","cut_and_shape","surface_finish","dimensions_mm","weight_grams","collection_name","collection_location","collection_date","primary_use","setting_ready","bail_included","is_one_of_a_kind","treated","found_object","wire_material","artist_notes","origin_story","primary_medium","secondary_medium","handcrafted_by","price"];
 
       for (const row of rows) {
         const title = sharedFields.material ? `${sharedFields.material} — ${row.piece_name}` : row.piece_name;
@@ -580,7 +575,6 @@ export async function action({ request }) {
           createdCount++;
 
           const combinedData = { ...sharedFields, ...row };
-          console.log("DEBUG combinedData:", JSON.stringify(combinedData));
 
           let metafieldsInputs = keysList
             .map(key => {
@@ -588,7 +582,6 @@ export async function action({ request }) {
               return { ownerId: safeProductId, namespace: "rockhound", key, value: val, type: "single_line_text_field" };
             })
             .filter(mf => mf.value !== "");
-          console.log("DEBUG metafieldsInputs count:", metafieldsInputs.length, JSON.stringify(metafieldsInputs));
 
           metafieldsInputs.push({
             ownerId: safeProductId,
@@ -597,6 +590,8 @@ export async function action({ request }) {
             value: row.price ? row.price.toString().replace(/[^0-9.]/g, "") : "0.00",
             type: "single_line_text_field"
           });
+
+          savedMetafields = metafieldsInputs.map(mf => ({ key: mf.key, value: mf.value }));
 
           const chunks = chunkArray(metafieldsInputs, 3);
           for (const chunk of chunks) {
@@ -611,7 +606,7 @@ export async function action({ request }) {
         }
       }
 
-      return new Response(JSON.stringify({ success: errors.length === 0, intent, createdCount, errors }), { status: 200, headers: { "Content-Type": "application/json" } });
+      return new Response(JSON.stringify({ success: errors.length === 0, intent, createdCount, errors, savedMetafields }), { status: 200, headers: { "Content-Type": "application/json" } });
     }
 
     default:
