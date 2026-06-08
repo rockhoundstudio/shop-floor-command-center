@@ -52,3 +52,4 @@ const handleInjectFields = () => {
     formData.append("payload", JSON.stringify(payload));
     fetcher.submit(formData, { method: "post" });
   };
+export default IntakeEngine;
