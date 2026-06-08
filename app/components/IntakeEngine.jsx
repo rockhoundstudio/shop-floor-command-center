@@ -11,40 +11,69 @@ export default function IntakeEngine({ products, fetcher, shopify }) {
   const isSaving = fetcher.state === "submitting" && fetcher.formData?.get("intent") === "saveProduct";
   const isAutoFilling = fetcher.state === "submitting" && fetcher.formData?.get("intent") === "autoFill";
 
-  // Watch for successful Auto-Fill transmissions from the backend loader
+  // Watch for transmissions from the backend loader/action
   useEffect(() => {
+    // 1. Handle Auto-Fill Success
     if (fetcher.data?.success && fetcher.data?.intent === "autoFill") {
       const data = fetcher.data.autoFillData;
       setMaterial(data.material || "");
       setOrigin(data.collection_location || "");
       setPieceName(data.piece_name || "");
-      if (data.color) setColor(data.color);
+      setColor(data.color || "");
       
       if (shopify) {
         shopify.toast.show("Title data parsed cleanly");
       }
     }
-  }, [fetcher.data, shopify]);
+
+    // 2. Handle Save Product Success: Clear the bench for the next run
+    if (fetcher.data?.success && fetcher.data?.intent === "saveProduct" && !isSaving) {
+      setSelectedItems([]);
+      setMaterial("");
+      setOrigin("");
+      setPieceName("");
+      setColor("");
+      if (shopify) {
+        shopify.toast.show("Metafields injected cleanly");
+      }
+    }
+  }, [fetcher.data, isSaving, shopify]);
 
   const handleAutoFillClick = () => {
     if (selectedItems.length === 0) return;
     const formData = new FormData();
     formData.append("intent", "autoFill");
-    formData.append("productId", selectedItems[0]); // Extract based on first selected stone
+    formData.append("productId", selectedItems[0]); 
     fetcher.submit(formData, { method: "post" });
   };
 
   const handleInjectFields = () => {
     if (selectedItems.length === 0) return;
 
-    // Package data for transmission across the structural loops
-    const payload = selectedItems.flatMap(id => [
-      { ownerId: id, key: "material", value: material, type: "single_line_text_field" },
-      { ownerId: id, key: "collection_location", value: origin, type: "single_line_text_field" },
-      { ownerId: id, key: "piece_name", value: pieceName, type: "single_line_text_field" },
-      { ownerId: id, key: "color", value: color, type: "single_line_text_field" },
-      { ownerId: id, key: "is_one_of_a_kind", value: "Yes — one of a kind", type: "single_line_text_field" }
-    ]);
+    // Build raw specs and sieve out blanks before packaging the payload
+    const payload = selectedItems.flatMap(id => {
+      const fieldSpecs = [
+        { key: "material", value: material },
+        { key: "collection_location", value: origin },
+        { key: "piece_name", value: pieceName },
+        { key: "color", value: color },
+        { key: "is_one_of_a_kind", value: "Yes — one of a kind" } // Always stamped on intake
+      ];
+
+      return fieldSpecs
+        .filter(field => field.value && field.value.toString().trim() !== "")
+        .map(field => ({
+          ownerId: id,
+          key: field.key,
+          value: field.value.toString().trim(),
+          type: "single_line_text_field"
+        }));
+    });
+
+    if (payload.length === 0) {
+      if (shopify) shopify.toast.show("Fill at least one field before injecting");
+      return;
+    }
 
     const formData = new FormData();
     formData.append("intent", "saveProduct");
