@@ -144,12 +144,13 @@ function IntakeBenchTab({ products, fetcher }) {
     const hasData = fetcher.data !== undefined && fetcher.data !== null;
     
     if (isIdle && hasData) {
-      const isAutoFill = fetcher.data.intent === "autoFill" || fetcher.data.intent === "smartAutoFill";
+      const isAutoFill = fetcher.data.intent === "autoFill";
+      const isSmartAutoFill = fetcher.data.intent === "smartAutoFill";
       const isSaveProduct = fetcher.data.intent === "saveProduct";
       const isSuccess = fetcher.data.success === true;
       const isError = fetcher.data.success === false;
 
-      if (isAutoFill && isSuccess) {
+      if ((isAutoFill || isSmartAutoFill) && isSuccess) {
         setFormState(prev => {
           const updatedState = { ...prev };
           if (fetcher.data.autoFillData) {
@@ -163,7 +164,14 @@ function IntakeBenchTab({ products, fetcher }) {
           }
           return updatedState;
         });
-        setStatusMessage("Title and tags successfully parsed and loaded into fields.");
+
+        if (isSmartAutoFill) {
+          setStatusMessage("Smart Auto-Fill complete — fields populated from all available data sources.");
+        }
+        
+        if (isAutoFill) {
+          setStatusMessage("Title and tags successfully parsed and loaded into fields.");
+        }
       }
 
       if (isSaveProduct && isSuccess) {
@@ -268,13 +276,25 @@ function IntakeBenchTab({ products, fetcher }) {
                   const isDropdown = field.isDropdown === true;
                   const isText = !field.isDropdown;
                   
+                  let safeVal = val;
+                  let options = [];
+
+                  if (isDropdown) {
+                    const dropdownOptions = DEFAULT_DROPDOWNS[field.key] || [];
+                    safeVal = dropdownOptions.includes(val) ? val : "";
+                    options = [
+                      { label: safeVal !== "" ? safeVal : "Select...", value: safeVal },
+                      ...dropdownOptions.filter(o => o !== safeVal).map(o => ({ label: o, value: o }))
+                    ];
+                  }
+                  
                   return (
                     <div key={field.key} style={{ minHeight: "54px" }}>
                       {isDropdown && (
                         <Select
                           label={field.label}
-                          options={[{ label: "Select...", value: "" }, ...(DEFAULT_DROPDOWNS[field.key] || []).map(o => ({ label: o, value: o }))]}
-                          value={val}
+                          options={options}
+                          value={safeVal}
                           onChange={(v) => updateFormState(field.key, v)}
                           accessibilityLabel={`Select value for ${field.label}`}
                           disabled={!selectedProductId}
