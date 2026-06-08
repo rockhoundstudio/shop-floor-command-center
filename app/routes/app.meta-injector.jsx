@@ -1,10 +1,10 @@
-import React, { useState, useMemo, useEffect, useCallback } from "react";
-import { useLoaderData, useFetcher, useNavigate, Form } from "react-router";
+import React, { useState, useEffect, useCallback } from "react";
+import { useLoaderData, useFetcher, useNavigate } from "react-router";
 import {
   Page, Layout, Card, Text, Banner, BlockStack, Box, Tabs, Frame,
-  TextField, Select, Button, InlineStack, DataTable, Badge, Icon
+  TextField, Select, Button, InlineStack, Icon
 } from "@shopify/polaris";
-import { MagicIcon, ExportIcon, SaveIcon, DatabaseIcon, SearchIcon } from "@shopify/polaris-icons";
+import { MagicIcon, SaveIcon } from "@shopify/polaris-icons";
 
 // --- IMPORT THE ENGINE (Loader & Action) ---
 import { loader as engineLoader, action as engineAction } from "./app.meta-injector.loader";
@@ -49,136 +49,26 @@ const DEFAULT_DROPDOWNS = {
   wire_material: ["Copper wire", "Brass wire", "Sterling silver wire", "Gold plated wire", "Copper and brass mixed"]
 };
 
-// --- TAB 1: FIELD MATRIX ---
-function FieldMatrixTab({ products }) {
-  const [filterMissing, setFilterMissing] = useState(false);
-
-  const tableData = useMemo(() => {
-    let filtered = products || [];
-    
-    if (filterMissing) {
-      filtered = filtered.filter(p => {
-        let hasEmpty = false;
-        ROCKHOUND_FIELDS.forEach(f => {
-          let val = null;
-          if (p.metafields && p.metafields.edges) {
-            const edge = p.metafields.edges.find(({ node }) => node.key === f.key && node.namespace === "rockhound");
-            if (edge) val = edge.node.value;
-          }
-          if (!val) hasEmpty = true;
-        });
-        return hasEmpty;
-      });
-    }
-
-    return filtered.map(p => {
-      const row = [p.title];
-      ROCKHOUND_FIELDS.forEach(f => {
-        let valStr = "";
-        if (p.metafields && p.metafields.edges) {
-          const edge = p.metafields.edges.find(({ node }) => node.key === f.key && node.namespace === "rockhound");
-          if (edge && edge.node.value) valStr = edge.node.value.toString().trim().toLowerCase();
-        }
-
-        let dotColor = "#C62828";
-        let ariaText = "Critical Empty";
-        
-        if (valStr !== "") {
-          dotColor = "#2E7D32";
-          ariaText = "Success Verified";
-        }
-        if (valStr === "n/a" || valStr === "bulk") {
-          dotColor = "#F9A825";
-          ariaText = "Warning Unverified";
-        }
-
-        row.push(
-          <div style={{ display: 'flex', justifyContent: 'center' }} aria-label={ariaText}>
-            <svg width="14" height="14" viewBox="0 0 14 14" role="img" aria-label={ariaText}>
-              <circle cx="7" cy="7" r="7" fill={dotColor} />
-            </svg>
-          </div>
-        );
-      });
-      return row;
-    });
-  }, [products, filterMissing]);
-
-  return (
-    <BlockStack gap="400">
-      <Card padding="400">
-        <InlineStack align="space-between" blockAlign="center">
-          <Text variant="headingMd" as="h2">Field Health Matrix</Text>
-          <div style={{ minHeight: "54px" }}>
-            <Button 
-              onClick={() => setFilterMissing(!filterMissing)}
-              accessibilityLabel="Filter by missing data"
-              size="large"
-            >
-              {filterMissing ? "Show All" : "Filter Missing Data"}
-            </Button>
-          </div>
-        </InlineStack>
-        <Box paddingBlockStart="400">
-          <InlineStack gap="400">
-            <Badge tone="success">Success (Verified)</Badge>
-            <Badge tone="warning">Warning (Bulk/Unverified)</Badge>
-            <Badge tone="critical">Critical (Empty)</Badge>
-            <Text tone="subdued" as="span">| Google Required vs Store OOAK Fields mapped below</Text>
-          </InlineStack>
-        </Box>
-      </Card>
-      <Card padding="0">
-        <div style={{ overflowX: "auto" }}>
-          <DataTable
-            columnContentTypes={["text", ...ROCKHOUND_FIELDS.map(() => "text")]}
-            headings={["Product", ...ROCKHOUND_FIELDS.map(f => f.label)]}
-            rows={tableData}
-          />
-        </div>
-      </Card>
-    </BlockStack>
-  );
-}
-
-// --- TAB 2: PRODUCT EDITOR ---
-function ProductEditorTab({ products, fetcher, shopify }) {
+// --- TAB 1: THE INTAKE BENCH ---
+function IntakeBenchTab({ products, fetcher }) {
   const [selectedProductId, setSelectedProductId] = useState("");
-  const [searchQuery, setSearchQuery] = useState("");
   const [formState, setFormState] = useState({});
-  const [dropdownLists, setDropdownLists] = useState(DEFAULT_DROPDOWNS);
-
-  const productOptions = useMemo(() => {
-    const safeProducts = products || [];
-    const filtered = searchQuery
-      ? safeProducts.filter(p => p.title.toLowerCase().includes(searchQuery.toLowerCase()))
-      : safeProducts;
-
-    return [
-      { label: "Select a product...", value: "" },
-      ...filtered.map(p => ({ label: p.title, value: p.id }))
-    ];
-  }, [products, searchQuery]);
-
-  // Ensure that if a user filters the list and the currently selected product is excluded, 
-  // the select element clears to prevent UI desyncs.
-  useEffect(() => {
-    if (selectedProductId && searchQuery) {
-      const selected = products?.find(p => p.id === selectedProductId);
-      if (selected && !selected.title.toLowerCase().includes(searchQuery.toLowerCase())) {
-        setSelectedProductId("");
-        setFormState({});
-      }
-    }
-  }, [searchQuery, selectedProductId, products]);
+  const [statusMessage, setStatusMessage] = useState("");
+  const [errorMessage, setErrorMessage] = useState("");
 
   const handleSelectProduct = useCallback((id) => {
     setSelectedProductId(id);
+    setStatusMessage("");
+    setErrorMessage("");
     const product = products.find(p => p.id === id);
     const newForm = {};
-    if (product && product.metafields && product.metafields.edges) {
+    const hasMetafields = product && product.metafields && product.metafields.edges;
+    
+    if (hasMetafields) {
       product.metafields.edges.forEach(({ node }) => {
-        if (node.namespace === "rockhound" && node.value) {
+        const isRockhound = node.namespace === "rockhound";
+        const hasValue = node.value !== null && node.value !== undefined;
+        if (isRockhound && hasValue) {
           newForm[node.key] = node.value;
         }
       });
@@ -186,598 +76,225 @@ function ProductEditorTab({ products, fetcher, shopify }) {
     setFormState(newForm);
   }, [products]);
 
+  const updateFormState = useCallback((key, value) => {
+    setFormState(prev => ({ ...prev, [key]: value }));
+  }, []);
+
   const handleAutoFill = useCallback(() => {
     if (!selectedProductId) return;
-    // Pass flat object for x-www-form-urlencoded to prevent stream locking
+    setStatusMessage("");
+    setErrorMessage("");
     fetcher.submit(
       { intent: "autoFill", productId: selectedProductId },
       { method: "post" }
     );
   }, [selectedProductId, fetcher]);
 
-  const handleSave = useCallback(() => {
+  const handleInject = useCallback(() => {
     if (!selectedProductId) return;
-    const payload = [];
-    const validEntries = Object.entries(formState).filter(([key, value]) => value !== undefined && value.toString().trim() !== "");
+    setStatusMessage("");
+    setErrorMessage("");
     
-    validEntries.forEach(([key, value]) => {
-      const config = ROCKHOUND_FIELDS.find(f => f.key === key);
-      const fieldType = config && config.type ? config.type : "single_line_text_field";
-      const formatId = selectedProductId.includes("gid://") ? selectedProductId : `gid://shopify/Product/${selectedProductId}`;
+    const payload = [];
+    const entries = Object.entries(formState);
+    
+    entries.forEach(([key, value]) => {
+      const isPopulated = value !== undefined && value !== null && value.toString().trim() !== "";
+      
+      if (isPopulated) {
+        const config = ROCKHOUND_FIELDS.find(f => f.key === key);
+        let fieldType = "single_line_text_field";
+        if (config && config.type) {
+          fieldType = config.type;
+        }
+        
+        let formatId = `gid://shopify/Product/${selectedProductId}`;
+        if (selectedProductId.includes("gid://")) {
+          formatId = selectedProductId;
+        }
 
-      payload.push({
-        ownerId: formatId,
-        namespace: "rockhound",
-        key,
-        value: value.toString(),
-        type: fieldType 
-      });
+        payload.push({
+          ownerId: formatId,
+          namespace: "rockhound",
+          key: key,
+          value: value.toString().trim(),
+          type: fieldType 
+        });
+      }
     });
 
-    // Pass flat object for x-www-form-urlencoded to prevent stream locking
+    if (payload.length === 0) {
+      setErrorMessage("No fields are populated. Fill at least one field to inject.");
+      return;
+    }
+
     fetcher.submit(
       { intent: "saveProduct", payload: JSON.stringify(payload) },
       { method: "post" }
     );
   }, [selectedProductId, formState, fetcher]);
 
-  // Listen for autoFill response
   useEffect(() => {
-    if (fetcher.state === "idle" && fetcher.data && fetcher.data.intent === "autoFill" && fetcher.data.success) {
-      setFormState(prev => ({ ...prev, ...fetcher.data.autoFillData }));
-      if (shopify) shopify.toast.show("Auto-filled from Shopify data");
+    const isIdle = fetcher.state === "idle";
+    const hasData = fetcher.data !== undefined && fetcher.data !== null;
+    
+    if (isIdle && hasData) {
+      const isAutoFill = fetcher.data.intent === "autoFill";
+      const isSaveProduct = fetcher.data.intent === "saveProduct";
+      const isSuccess = fetcher.data.success === true;
+      const isError = fetcher.data.success === false;
+
+      if (isAutoFill && isSuccess) {
+        setFormState(prev => ({ ...prev, ...fetcher.data.autoFillData }));
+        setStatusMessage("Title and tags successfully parsed and loaded into fields.");
+      }
+
+      if (isSaveProduct && isSuccess) {
+        setStatusMessage("Metafields injected cleanly into Shopify database.");
+      }
+
+      if (isError) {
+        setErrorMessage(fetcher.data.error || "An unknown error occurred during the operation.");
+      }
     }
-    if (fetcher.state === "idle" && fetcher.data && fetcher.data.intent === "saveProduct" && fetcher.data.success) {
-      if (shopify) shopify.toast.show("Metafields saved successfully");
-    }
-  }, [fetcher.state, fetcher.data, shopify]);
+  }, [fetcher.state, fetcher.data]);
+
+  const safeProducts = products || [];
+  const isAutoFilling = fetcher.state !== "idle" && fetcher.formData?.get("intent") === "autoFill";
+  const isSaving = fetcher.state !== "idle" && fetcher.formData?.get("intent") === "saveProduct";
 
   return (
     <BlockStack gap="400">
-      <Card padding="400">
-        <BlockStack gap="400">
-          <div style={{ minHeight: "54px" }}>
-            <TextField
-              label="Search / Filter Products"
-              value={searchQuery}
-              onChange={setSearchQuery}
-              prefix={<Icon source={SearchIcon} />}
-              clearButton
-              onClearButtonClick={() => setSearchQuery("")}
-              autoComplete="off"
-              accessibilityLabel="Search products to filter the dropdown list below"
-              placeholder="Start typing a product name..."
-            />
-          </div>
-
-          <div style={{ minHeight: "54px" }}>
-            <Select
-              label="Select Product"
-              options={productOptions}
-              value={selectedProductId}
-              onChange={handleSelectProduct}
-              accessibilityLabel="Select a product to edit"
-            />
-          </div>
-          
-          {selectedProductId !== "" && (
-            <InlineStack gap="300" align="end">
-              <div style={{ minHeight: "54px" }}>
-                <Button 
-                  icon={MagicIcon} 
-                  onClick={handleAutoFill}
-                  accessibilityLabel="Auto-Fill Fields"
-                  size="large"
-                  loading={fetcher.state !== "idle" && fetcher.formData?.get("intent") === "autoFill"}
-                >
-                  Auto-Fill Title & Tags
-                </Button>
-              </div>
-              <div style={{ minHeight: "54px" }}>
-                <Button 
-                  icon={SaveIcon} 
-                  tone="success" 
-                  variant="primary" 
-                  onClick={handleSave}
-                  accessibilityLabel="Save to Shopify"
-                  size="large"
-                  loading={fetcher.state !== "idle" && fetcher.formData?.get("intent") === "saveProduct"}
-                >
-                  Save to Shopify
-                </Button>
-              </div>
-            </InlineStack>
-          )}
-        </BlockStack>
-      </Card>
-
-      {selectedProductId !== "" && (
-        <Card padding="400">
-          <div style={{ maxHeight: "60vh", overflowY: "auto", paddingRight: "8px", display: "flex", flexDirection: "column", gap: "16px" }}>
-            {ROCKHOUND_FIELDS.map(field => {
-              const val = formState[field.key] || "";
-              
-              {field.isDropdown && (
-                <div key={field.key} style={{ minHeight: "54px" }}>
-                  <Select
-                    label={field.label}
-                    options={[{ label: "Select...", value: "" }, ...(dropdownLists[field.key] || []).map(o => ({ label: o, value: o }))]}
-                    value={val}
-                    onChange={(v) => setFormState(prev => ({ ...prev, [field.key]: v }))}
-                    accessibilityLabel={field.label}
-                  />
-                </div>
-              )}
-
-              {!field.isDropdown && (
-                <div key={field.key} style={{ minHeight: "54px" }}>
-                  <TextField
-                    label={field.label}
-                    value={val}
-                    onChange={(v) => setFormState(prev => ({ ...prev, [field.key]: v }))}
-                    autoComplete="off"
-                    accessibilityLabel={field.label}
-                    multiline={field.multiline && 3}
-                  />
-                </div>
-              )}
-            })}
-          </div>
-        </Card>
-      )}
-    </BlockStack>
-  );
-}
-
-// --- TAB 3: BULK TOOLS (BATCH PRESS) ---
-function BulkToolsTab({ products, fetcher, shopify }) {
-  const [selectedIds, setSelectedIds] = useState([]);
-  const [formState, setFormState] = useState({});
-  const [dropdownLists] = useState(DEFAULT_DROPDOWNS);
-  const [batchState, setBatchState] = useState({
-    isActive: false,
-    productChunks: [],
-    currentIndex: 0,
-    status: "idle"
-  });
-
-  const chunkArray = (array, size) => {
-    const chunked = [];
-    for (let i = 0; i < array.length; i += size) {
-      chunked.push(array.slice(i, i + size));
-    }
-    return chunked;
-  };
-
-  const toggleProduct = (id) => {
-    setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
-  };
-
-  const selectAll = () => {
-    const allIds = (products || []).map(p => p.id);
-    setSelectedIds(allIds);
-  };
-
-  const clearAll = () => {
-    setSelectedIds([]);
-  };
-
-  const updateFormState = (key, value) => {
-    setFormState(prev => ({ ...prev, [key]: value }));
-  };
-
-  const handleStartBatch = () => {
-    const validEntries = Object.entries(formState).filter(([k, v]) => v !== undefined && v.toString().trim() !== "");
-    if (validEntries.length === 0) return;
-    if (selectedIds.length === 0) return;
-
-    const chunks = chunkArray(selectedIds, 10);
-    setBatchState({
-      isActive: true,
-      productChunks: chunks,
-      currentIndex: 0,
-      status: "processing"
-    });
-  };
-
-  // State Machine Phase 1: Fire Payload
-  useEffect(() => {
-    if (batchState.isActive && batchState.status === "processing") {
-      const currentChunk = batchState.productChunks[batchState.currentIndex];
-      
-      if (currentChunk) {
-        setBatchState(prev => ({ ...prev, status: "waiting_for_submitting_state" }));
-
-        const payload = [];
-        const validEntries = Object.entries(formState).filter(([k, v]) => v !== undefined && v.toString().trim() !== "");
-
-        currentChunk.forEach(productId => {
-          validEntries.forEach(([key, value]) => {
-            const config = ROCKHOUND_FIELDS.find(f => f.key === key);
-            
-            let fieldType = "single_line_text_field";
-            if (config && config.type) {
-              fieldType = config.type;
-            }
-            
-            let formatId = `gid://shopify/Product/${productId}`;
-            if (productId.includes("gid://")) {
-              formatId = productId;
-            }
-
-            payload.push({
-              ownerId: formatId,
-              namespace: "rockhound",
-              key,
-              value: value.toString(),
-              type: fieldType
-            });
-          });
-        });
-
-        fetcher.submit(
-          { intent: "saveProduct", payload: JSON.stringify(payload) },
-          { method: "post" }
-        );
-      }
-      
-      if (!currentChunk) {
-        setBatchState(prev => ({ ...prev, isActive: false, status: "complete" }));
-        if (shopify) shopify.toast.show("Batch press completed for all selected products.");
-      }
-    }
-  }, [batchState, formState, fetcher, shopify]);
-
-  // State Machine Phase 2: Wait for Network Lock
-  useEffect(() => {
-    if (batchState.status === "waiting_for_submitting_state" && fetcher.state !== "idle") {
-      setBatchState(prev => ({ ...prev, status: "waiting_for_idle" }));
-    }
-  }, [batchState.status, fetcher.state]);
-
-  // State Machine Phase 3: Wait for Network Idle & Governor Pause
-  useEffect(() => {
-    if (batchState.status === "waiting_for_idle" && fetcher.state === "idle") {
-      setBatchState(prev => ({ ...prev, status: "paused" }));
-      setTimeout(() => {
-        setBatchState(prev => ({
-          ...prev,
-          currentIndex: prev.currentIndex + 1,
-          status: "processing"
-        }));
-      }, 1000); // Hard 1-second pause to respect rate limits between chunk sets
-    }
-  }, [batchState.status, fetcher.state]);
-
-  const handleExtractOrigin = useCallback(() => {
-    fetcher.submit({ intent: "autoExtractAll" }, { method: "post" });
-  }, [fetcher]);
-
-  const handleStandardizeOOAK = useCallback(() => {
-    fetcher.submit({ intent: "standardizeOOAK" }, { method: "post" });
-  }, [fetcher]);
-
-  useEffect(() => {
-    if (fetcher.state === "idle" && fetcher.data && fetcher.data.success) {
-      if (fetcher.data.intent === "autoExtractAll" || fetcher.data.intent === "standardizeOOAK") {
-        if (shopify) shopify.toast.show(`Bulk operation complete. Updated ${fetcher.data.updatedCount} products.`);
-      }
-    }
-  }, [fetcher.state, fetcher.data, shopify]);
-
-  return (
-    <BlockStack gap="400">
-      <Card padding="400">
-        <BlockStack gap="400">
-          <Text variant="headingLg" as="h2">Batch Press</Text>
-          <Text as="p" tone="subdued">Apply shared metafield values to multiple products simultaneously. Governed to 10 products per network batch.</Text>
-          
-          <Box paddingBlockStart="200">
-            <Text variant="headingMd" as="h3">1. Select Target Products</Text>
-            <div style={{ marginTop: "8px", marginBottom: "8px" }}>
-              <InlineStack gap="300" blockAlign="center">
-                <div style={{ minHeight: "54px" }}>
-                  <Button onClick={selectAll} accessibilityLabel="Select All Products" size="large">Select All</Button>
-                </div>
-                <div style={{ minHeight: "54px" }}>
-                  <Button onClick={clearAll} accessibilityLabel="Clear Selection" size="large">Clear All</Button>
-                </div>
-                <Text as="span">{selectedIds.length} products selected</Text>
-              </InlineStack>
-            </div>
-            <div style={{ maxHeight: "250px", overflowY: "auto", border: "1px solid #E1E3E5", padding: "8px", borderRadius: "8px" }}>
-              {products && products.map(p => {
-                const isChecked = selectedIds.includes(p.id);
-                return (
-                  <div key={p.id} style={{ display: "flex", alignItems: "center", gap: "12px", padding: "8px 4px", borderBottom: "1px solid #F0F2F4" }}>
-                    <input
-                      type="checkbox"
-                      id={`check-${p.id}`}
-                      checked={isChecked}
-                      onChange={() => toggleProduct(p.id)}
-                      aria-label={`Select product ${p.title}`}
-                      style={{ width: "24px", height: "24px", cursor: "pointer" }}
-                    />
-                    <label htmlFor={`check-${p.id}`} style={{ flexGrow: 1, cursor: "pointer", fontSize: "15px", lineHeight: "24px" }}>{p.title}</label>
-                  </div>
-                );
-              })}
-            </div>
-          </Box>
-
-          <Box paddingBlockStart="200">
-            <Text variant="headingMd" as="h3">2. Define Shared Metafields</Text>
-            <Text as="p" tone="subdued">Only populated fields will be injected into the target products.</Text>
-            <div style={{ maxHeight: "300px", overflowY: "auto", paddingRight: "8px", marginTop: "16px", display: "flex", flexDirection: "column", gap: "16px" }}>
-              {ROCKHOUND_FIELDS.map(field => {
-                const val = formState[field.key] || "";
-                const opts = [{ label: "Select...", value: "" }, ...(dropdownLists[field.key] || []).map(o => ({ label: o, value: o }))];
-
-                return (
-                  <div key={field.key} style={{ minHeight: "54px" }}>
-                    {field.isDropdown && (
-                      <Select
-                        label={field.label}
-                        options={opts}
-                        value={val}
-                        onChange={(v) => updateFormState(field.key, v)}
-                        accessibilityLabel={`Select shared value for ${field.label}`}
-                      />
-                    )}
-                    {!field.isDropdown && (
-                      <TextField
-                        label={field.label}
-                        value={val}
-                        onChange={(v) => updateFormState(field.key, v)}
-                        autoComplete="off"
-                        accessibilityLabel={`Enter shared value for ${field.label}`}
-                        multiline={field.multiline && 3}
-                      />
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </Box>
-
-          <Box paddingBlockStart="200">
-            <Text variant="headingMd" as="h3">3. Execute Injector</Text>
+      <Layout>
+        <Layout.Section variant="oneHalf">
+          <Card padding="400">
             <BlockStack gap="400">
-              {batchState.isActive && (
-                <Box padding="400" background="bg-surface-secondary" borderRadius="200">
-                  <BlockStack gap="200">
-                    <Text as="p" fontWeight="bold">Processing Batch {batchState.currentIndex + 1} of {batchState.productChunks.length}</Text>
-                    <Text as="p" tone="subdued">Status: {batchState.status}</Text>
-                    <div style={{ width: "100%", height: "12px", backgroundColor: "#E1E3E5", borderRadius: "6px", overflow: "hidden", marginTop: "8px" }}>
-                      <div style={{ width: `${((batchState.currentIndex) / batchState.productChunks.length) * 100}%`, height: "100%", backgroundColor: "#2C6ECB", transition: "width 0.3s ease" }}></div>
+              <Text variant="headingMd" as="h2">1. Select Raw Inventory</Text>
+              <div style={{ maxHeight: "70vh", overflowY: "auto", paddingRight: "8px", display: "flex", flexDirection: "column", gap: "8px" }}>
+                {safeProducts.map(p => {
+                  const isSelected = selectedProductId === p.id;
+                  return (
+                    <div key={p.id} style={{ minHeight: "54px" }}>
+                      <Button
+                        fullWidth
+                        size="large"
+                        textAlign="left"
+                        variant={isSelected ? "primary" : "secondary"}
+                        onClick={() => handleSelectProduct(p.id)}
+                        accessibilityLabel={`Select product ${p.title}`}
+                      >
+                        {p.title}
+                      </Button>
                     </div>
-                  </BlockStack>
-                </Box>
-              )}
-              {batchState.status === "complete" && (
-                <Banner tone="success">Batch Press completed successfully.</Banner>
-              )}
-              
-              <div style={{ minHeight: "54px" }}>
-                <Button
-                  size="large"
-                  variant="primary"
-                  onClick={handleStartBatch}
-                  accessibilityLabel="Execute Batch Press"
-                  loading={batchState.isActive}
-                  fullWidth
-                >
-                  Execute Batch Press
-                </Button>
+                  );
+                })}
               </div>
             </BlockStack>
-          </Box>
-        </BlockStack>
-      </Card>
+          </Card>
+        </Layout.Section>
 
-      <Card padding="400">
-        <BlockStack gap="400">
-          <Text variant="headingMd" as="h3">Database-Wide Sweeps</Text>
-          <Text as="p" tone="subdued">Execute specialized bulk updates across the entire catalog.</Text>
-          <InlineStack gap="400">
-            <div style={{ minHeight: "54px" }}>
-              <Button 
-                size="large" 
-                onClick={handleExtractOrigin}
-                accessibilityLabel="Auto-Extract Origin from Titles"
-                loading={fetcher.state !== "idle" && fetcher.formData?.get("intent") === "autoExtractAll"}
-              >
-                Auto-Extract Origin from Titles
-              </Button>
-            </div>
-            <div style={{ minHeight: "54px" }}>
-              <Button 
-                size="large" 
-                onClick={handleStandardizeOOAK}
-                accessibilityLabel="Standardize One of a Kind Values"
-                loading={fetcher.state !== "idle" && fetcher.formData?.get("intent") === "standardizeOOAK"}
-              >
-                Standardize "One of a Kind"
-              </Button>
-            </div>
-          </InlineStack>
-        </BlockStack>
-      </Card>
+        <Layout.Section variant="oneHalf">
+          <Card padding="400">
+            <BlockStack gap="400">
+              <Text variant="headingMd" as="h2">2. Data Sieve & Injection</Text>
+              
+              {statusMessage !== "" && (
+                <div style={{ minHeight: "54px" }}>
+                  <Banner tone="success" title="Operation Successful">
+                    <Text as="p">{statusMessage}</Text>
+                  </Banner>
+                </div>
+              )}
+
+              {errorMessage !== "" && (
+                <div style={{ minHeight: "54px" }}>
+                  <Banner tone="critical" title="Operation Failed">
+                    <Text as="p">{errorMessage}</Text>
+                  </Banner>
+                </div>
+              )}
+
+              <InlineStack gap="300" align="space-between">
+                <div style={{ minHeight: "54px", flexGrow: 1 }}>
+                  <Button 
+                    icon={MagicIcon} 
+                    onClick={handleAutoFill}
+                    accessibilityLabel="Auto-Fill Fields"
+                    size="large"
+                    fullWidth
+                    disabled={!selectedProductId}
+                    loading={isAutoFilling}
+                  >
+                    Auto-Fill From Title
+                  </Button>
+                </div>
+                <div style={{ minHeight: "54px", flexGrow: 1 }}>
+                  <Button 
+                    icon={SaveIcon} 
+                    tone="success" 
+                    variant="primary" 
+                    onClick={handleInject}
+                    accessibilityLabel="Inject Metafields"
+                    size="large"
+                    fullWidth
+                    disabled={!selectedProductId}
+                    loading={isSaving}
+                  >
+                    Inject Metafields
+                  </Button>
+                </div>
+              </InlineStack>
+
+              <div style={{ maxHeight: "60vh", overflowY: "auto", paddingRight: "8px", display: "flex", flexDirection: "column", gap: "16px" }}>
+                {ROCKHOUND_FIELDS.map(field => {
+                  const val = formState[field.key] || "";
+                  const isDropdown = field.isDropdown === true;
+                  const isText = !field.isDropdown;
+                  
+                  return (
+                    <div key={field.key} style={{ minHeight: "54px" }}>
+                      {isDropdown && (
+                        <Select
+                          label={field.label}
+                          options={[{ label: "Select...", value: "" }, ...(DEFAULT_DROPDOWNS[field.key] || []).map(o => ({ label: o, value: o }))]}
+                          value={val}
+                          onChange={(v) => updateFormState(field.key, v)}
+                          accessibilityLabel={`Select value for ${field.label}`}
+                          disabled={!selectedProductId}
+                        />
+                      )}
+
+                      {isText && (
+                        <TextField
+                          label={field.label}
+                          value={val}
+                          onChange={(v) => updateFormState(field.key, v)}
+                          autoComplete="off"
+                          accessibilityLabel={`Enter text for ${field.label}`}
+                          multiline={field.multiline && 3}
+                          disabled={!selectedProductId}
+                        />
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </BlockStack>
+          </Card>
+        </Layout.Section>
+      </Layout>
     </BlockStack>
   );
 }
 
-// --- TAB 4: SNAPSHOTS & EXPORT ---
-function SnapshotsExportTab({ snapshots, fetcher, shopify }) {
-  const handleCreateSnapshot = useCallback(() => {
-    fetcher.submit({ intent: "saveSnapshot" }, { method: "post" });
-  }, [fetcher]);
-
-  useEffect(() => {
-    if (fetcher.state === "idle" && fetcher.data && fetcher.data.intent === "saveSnapshot" && fetcher.data.success) {
-      if (shopify) shopify.toast.show("Database snapshot saved successfully.");
-    }
-  }, [fetcher.state, fetcher.data, shopify]);
-
+// --- TAB 2: OPERATIONS MATRIX (PLACEHOLDER) ---
+function OperationsMatrixTab() {
   return (
     <BlockStack gap="400">
-      <Card padding="400">
-        <BlockStack gap="400">
-          <InlineStack align="space-between" blockAlign="center">
-            <Text variant="headingMd" as="h2">Database Snapshots</Text>
-            <div style={{ minHeight: "54px" }}>
-              <Button 
-                size="large" 
-                icon={DatabaseIcon} 
-                onClick={handleCreateSnapshot}
-                accessibilityLabel="Create New Snapshot"
-                loading={fetcher.state !== "idle" && fetcher.formData?.get("intent") === "saveSnapshot"}
-              >
-                Create Snapshot
-              </Button>
-            </div>
-          </InlineStack>
-          <Text as="p" tone="subdued">Save current field state to Shopify Metaobjects. Maximum of 5 persistent backups.</Text>
-          
-          {snapshots && snapshots.length > 0 && (
-            <BlockStack gap="200">
-              {snapshots.map((s, i) => (
-                <div key={i} style={{ padding: "16px", border: "1px solid #E1E3E5", borderRadius: "8px" }}>
-                  <Text fontWeight="bold">Snapshot: {s.createdAt}</Text>
-                  <Text tone="subdued">Records: {s.count}</Text>
-                </div>
-              ))}
-            </BlockStack>
-          )}
-          {(!snapshots || snapshots.length === 0) && (
-            <Box padding="400">
-              <Text alignment="center" tone="subdued">No snapshots currently saved.</Text>
-            </Box>
-          )}
-        </BlockStack>
-      </Card>
-
-      <Card padding="400">
-        <BlockStack gap="400">
-          <Text variant="headingMd" as="h2">CSV Pipeline</Text>
-          <InlineStack gap="400">
-            <div style={{ minHeight: "54px" }}>
-              {/* Native form reload prevents fetcher intercept and allows direct file attachment download */}
-              <Form method="post" reloadDocument>
-                <input type="hidden" name="intent" value="exportCSV" />
-                <Button 
-                  size="large" 
-                  icon={ExportIcon} 
-                  submit
-                  accessibilityLabel="Export Full Matrix to CSV"
-                >
-                  Export Matrix to CSV
-                </Button>
-              </Form>
-            </div>
-            <div style={{ minHeight: "54px" }}>
-              <Button 
-                size="large" 
-                disabled 
-                accessibilityLabel="Import Matrix from CSV"
-              >
-                Import CSV (Not yet built)
-              </Button>
-            </div>
-          </InlineStack>
-        </BlockStack>
-      </Card>
-    </BlockStack>
-  );
-}
-
-// --- TAB 5: FIELD MANAGER ---
-function FieldManagerTab({ metafieldDefinitions, fetcher, shopify }) {
-  const [newKey, setNewKey] = useState("");
-  const [newName, setNewName] = useState("");
-  const [newType, setNewType] = useState("single_line_text_field");
-
-  const handleAdd = useCallback(() => {
-    if (!newKey || !newName) return;
-    fetcher.submit(
-      { intent: "addFieldDefinition", key: newKey, name: newName, type: newType }, 
-      { method: "post" }
-    );
-    setNewKey("");
-    setNewName("");
-  }, [newKey, newName, newType, fetcher]);
-
-  useEffect(() => {
-    if (fetcher.state === "idle" && fetcher.data && fetcher.data.intent === "addFieldDefinition" && fetcher.data.success) {
-      if (shopify) shopify.toast.show("New metafield definition added to rockhound namespace.");
-    }
-  }, [fetcher.state, fetcher.data, shopify]);
-
-  return (
-    <BlockStack gap="400">
-      <Card padding="400">
-        <BlockStack gap="400">
-          <Text variant="headingMd" as="h2">Active Namespace: rockhound</Text>
-          
-          {metafieldDefinitions && metafieldDefinitions.length > 0 && (
-            <BlockStack gap="200">
-              {metafieldDefinitions.map((def, idx) => (
-                <div key={idx} style={{ padding: "12px", border: "1px solid #E1E3E5", borderRadius: "8px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <Text fontWeight="bold">{def.name} <Text as="span" tone="subdued">({def.key})</Text></Text>
-                  <Text tone="subdued">{def.type.name}</Text>
-                </div>
-              ))}
-            </BlockStack>
-          )}
-          {(!metafieldDefinitions || metafieldDefinitions.length === 0) && (
-            <Text tone="subdued">No definitions found.</Text>
-          )}
-        </BlockStack>
-      </Card>
-
-      <Card padding="400">
-        <BlockStack gap="400">
-          <Text variant="headingMd" as="h3">Add New Definition</Text>
-          <InlineStack gap="400" blockAlign="end">
-            <div style={{ flexGrow: 1, minHeight: "54px" }}>
-              <TextField 
-                label="Key" 
-                value={newKey} 
-                onChange={setNewKey} 
-                autoComplete="off" 
-                accessibilityLabel="New field key" 
-              />
-            </div>
-            <div style={{ flexGrow: 1, minHeight: "54px" }}>
-              <TextField 
-                label="Display Name" 
-                value={newName} 
-                onChange={setNewName} 
-                autoComplete="off" 
-                accessibilityLabel="New field display name" 
-              />
-            </div>
-            <div style={{ flexGrow: 1, minHeight: "54px" }}>
-              <Select 
-                label="Type" 
-                options={[{ label: 'Single Line Text', value: 'single_line_text_field' }]} 
-                value={newType} 
-                onChange={setNewType} 
-                accessibilityLabel="New field type" 
-              />
-            </div>
-            <div style={{ minHeight: "54px" }}>
-              <Button 
-                size="large" 
-                onClick={handleAdd} 
-                accessibilityLabel="Create new metafield definition" 
-                variant="primary"
-                loading={fetcher.state !== "idle" && fetcher.formData?.get("intent") === "addFieldDefinition"}
-              >
-                Add Field
-              </Button>
-            </div>
-          </InlineStack>
+      <Card padding="600">
+        <BlockStack gap="400" align="center" inlineAlign="center">
+          <Text variant="headingLg" as="h2" alignment="center">Operations Matrix</Text>
+          <Text variant="bodyLg" as="p" alignment="center" tone="subdued">Coming Soon</Text>
         </BlockStack>
       </Card>
     </BlockStack>
@@ -786,33 +303,32 @@ function FieldManagerTab({ metafieldDefinitions, fetcher, shopify }) {
 
 // --- MAIN SHELL COMPONENT ---
 export default function MetaInjectorV2() {
-  const { products, snapshots = [], metafieldDefinitions = [] } = useLoaderData() || {};
+  const { products } = useLoaderData() || {};
   const navigate = useNavigate();
-
   const primaryFetcher = useFetcher();
 
-  const shopify = typeof window !== 'undefined' ? window.shopify : undefined;
   const [selectedTab, setSelectedTab] = useState(0);
 
   const tabs = [
-    { id: 'matrix', content: 'Field Matrix', accessibilityLabel: 'Field Matrix Tab' },
-    { id: 'editor', content: 'Product Editor', accessibilityLabel: 'Product Editor Tab' },
-    { id: 'bulk', content: 'Bulk Tools', accessibilityLabel: 'Bulk Tools Tab' },
-    { id: 'snapshots', content: 'Snapshots & Export', accessibilityLabel: 'Snapshots and Export Tab' },
-    { id: 'manager', content: 'Field Manager', accessibilityLabel: 'Field Manager Tab' }
+    { id: 'intake', content: '1. Intake Bench (Janyce)', accessibilityLabel: 'Intake Bench Tab' },
+    { id: 'ops', content: '2. Operations Matrix', accessibilityLabel: 'Operations Matrix Tab' }
   ];
+
+  const hasErrors = primaryFetcher.data && primaryFetcher.data.errors && primaryFetcher.data.errors.length > 0;
+  const isTabOne = selectedTab === 0;
+  const isTabTwo = selectedTab === 1;
 
   return (
     <Frame>
       <Page
         fullWidth
-        title="Meta Injector v2"
-        subtitle="Data Integrity Command Center"
+        title="Shop Floor Command Center"
+        subtitle="Data Integrity & Operations Hub"
         backAction={{ content: "Dashboard", onAction: () => navigate("/app"), accessibilityLabel: "Back to Dashboard" }}
       >
         <Layout>
           <Layout.Section>
-            {primaryFetcher.data && primaryFetcher.data.errors && primaryFetcher.data.errors.length > 0 && (
+            {hasErrors && (
               <Box paddingBlockEnd="400">
                 <Banner tone="critical" title="GraphQL Mutation Errors Detected">
                   <BlockStack gap="200">
@@ -826,40 +342,9 @@ export default function MetaInjectorV2() {
 
             <Card padding="0">
               <Tabs tabs={tabs} selected={selectedTab} onSelect={setSelectedTab} fitted>
-                <Box padding="600">
-                  {selectedTab === 0 && (
-                    <FieldMatrixTab 
-                      products={products} 
-                    />
-                  )}
-                  {selectedTab === 1 && (
-                    <ProductEditorTab 
-                      products={products} 
-                      fetcher={primaryFetcher} 
-                      shopify={shopify} 
-                    />
-                  )}
-                  {selectedTab === 2 && (
-                    <BulkToolsTab 
-                      products={products}
-                      fetcher={primaryFetcher} 
-                      shopify={shopify}
-                    />
-                  )}
-                  {selectedTab === 3 && (
-                    <SnapshotsExportTab 
-                      snapshots={snapshots} 
-                      fetcher={primaryFetcher} 
-                      shopify={shopify}
-                    />
-                  )}
-                  {selectedTab === 4 && (
-                    <FieldManagerTab 
-                      metafieldDefinitions={metafieldDefinitions} 
-                      fetcher={primaryFetcher} 
-                      shopify={shopify}
-                    />
-                  )}
+                <Box padding="600" background="bg-surface-secondary">
+                  {isTabOne && <IntakeBenchTab products={products} fetcher={primaryFetcher} />}
+                  {isTabTwo && <OperationsMatrixTab />}
                 </Box>
               </Tabs>
             </Card>
