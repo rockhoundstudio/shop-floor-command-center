@@ -580,16 +580,12 @@ export async function action({ request }) {
           createdCount++;
 
           const combinedData = { ...sharedFields, ...row };
-          const metafieldsInputs = keysList.map(key => {
-            const val = combinedData[key] !== undefined && combinedData[key] !== null ? combinedData[key].toString().trim() : "";
-            return {
-              ownerId: safeProductId,
-              namespace: "rockhound",
-              key: key,
-              value: val,
-              type: "single_line_text_field"
-            };
-          });
+          let metafieldsInputs = keysList
+            .map(key => {
+              const val = combinedData[key] !== undefined && combinedData[key] !== null ? combinedData[key].toString().trim() : "";
+              return { ownerId: safeProductId, namespace: "rockhound", key, value: val, type: "single_line_text_field" };
+            })
+            .filter(mf => mf.value !== "");
 
           metafieldsInputs.push({
             ownerId: safeProductId,
