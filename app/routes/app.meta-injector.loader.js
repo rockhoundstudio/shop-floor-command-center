@@ -55,6 +55,15 @@ const GET_SNAPSHOTS_QUERY = `
   }
 `;
 
+const PRODUCT_SET_MUTATION = `
+  mutation ProductSet($input: ProductSetInput!) {
+    productSet(input: $input) {
+      product { id title }
+      userErrors { field message }
+    }
+  }
+`;
+
 const SET_METAFIELDS_MUTATION = `
   mutation MetafieldsSet($metafields: [MetafieldsSetInput!]!) {
     metafieldsSet(metafields: $metafields) {
@@ -343,6 +352,84 @@ export async function action({ request }) {
       }
 
       return new Response(JSON.stringify({ success: true, intent, autoFillData }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+
+    case "createProduct": {
+      const piecesStr = formData.get("pieces");
+      if (!piecesStr) return new Response(JSON.stringify({ success: false, error: "No pieces data provided" }), { status: 400 });
+
+      const pieces = JSON.parse(piecesStr);
+      let createdCount = 0;
+
+      const ALL_22_KEYS = [
+        "piece_name", "primary_medium", "secondary_medium", "handcrafted_by", 
+        "material", "stone_family", "color", "cut_and_shape", "surface_finish", 
+        "dimensions_mm", "weight_grams", "collection_name", "collection_location", 
+        "collection_date", "primary_use", "setting_ready", "bail_included", 
+        "is_one_of_a_kind", "treated", "found_object", "wire_material", "artist_notes"
+      ];
+
+      for (const item of pieces) {
+        const { shared, piece } = item;
+        
+        let productTitle = piece.piece_name;
+        if (shared && shared.material && shared.material.trim() !== "") {
+          productTitle = `${shared.material} — ${piece.piece_name}`;
+        }
+
+        const productInput = {
+          title: productTitle,
+          vendor: "Rockhound Studio",
+          status: "DRAFT",
+          variants: [{ price: piece.price ? piece.price.toString() : "0.00" }]
+        };
+
+        try {
+          const createRes = await admin.graphql(PRODUCT_SET_MUTATION, { variables: { input: productInput } });
+          const createResult = await createRes.json();
+
+          if (createResult.data?.productSet?.userErrors?.length > 0) {
+            errors.push(...createResult.data.productSet.userErrors);
+            continue;
+          }
+
+          const newProductId = createResult.data?.productSet?.product?.id;
+
+          if (newProductId) {
+            createdCount++;
+            const safeProductId = formatStrictGid(newProductId, "Product");
+            
+            const combinedFields = { ...shared, ...piece };
+            const metafieldsInputs = [];
+
+            ALL_22_KEYS.forEach(key => {
+              const val = combinedFields[key];
+              metafieldsInputs.push({
+                ownerId: safeProductId,
+                namespace: "rockhound",
+                key: key,
+                value: (val !== undefined && val !== null) ? val.toString().trim() : "",
+                type: "single_line_text_field"
+              });
+            });
+
+            if (metafieldsInputs.length > 0) {
+              const chunks = chunkArray(metafieldsInputs, 3);
+              for (const chunk of chunks) {
+                const mfRes = await admin.graphql(SET_METAFIELDS_MUTATION, { variables: { metafields: chunk } });
+                const mfResult = await mfRes.json();
+                if (mfResult.data?.metafieldsSet?.userErrors?.length > 0) {
+                  errors.push(...mfResult.data.metafieldsSet.userErrors);
+                }
+              }
+            }
+          }
+        } catch (e) {
+          errors.push({ field: ["network"], message: e.message });
+        }
+      }
+
+      return new Response(JSON.stringify({ success: errors.length === 0, intent, createdCount, errors }), { status: 200, headers: { "Content-Type": "application/json" } });
     }
 
     case "saveProduct": {

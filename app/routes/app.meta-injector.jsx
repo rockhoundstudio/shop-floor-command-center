@@ -1,871 +1,617 @@
-import React, { useState, useEffect, useCallback } from "react";
-import { useLoaderData, useFetcher, useNavigate } from "react-router";
-import {
-  Page, Layout, Card, Text, Banner, BlockStack, Box, Tabs, Frame,
-  TextField, Select, Button, InlineStack, Icon
-} from "@shopify/polaris";
-import { MagicIcon, SaveIcon } from "@shopify/polaris-icons";
+import { authenticate } from "../shopify.server";
+import lookupStone from "../utils/geoLibrary";
 
-// --- IMPORT THE ENGINE (Loader & Action) ---
-import { loader as engineLoader, action as engineAction } from "./app.meta-injector.loader";
+// ==========================================
+// 1. ENGINE BLOCK: GRAPHQL QUERIES
+// ==========================================
+const GET_PRODUCTS_QUERY = `
+  query GetProducts($cursor: String) {
+    products(first: 50, after: $cursor) {
+      pageInfo { hasNextPage endCursor }
+      edges { node { id title } }
+    }
+  }
+`;
 
-// --- EXPORT THE ENGINE FOR REMIX TO RUN ---
-export const loader = engineLoader;
-export const action = engineAction;
+const GET_SINGLE_PRODUCT_QUERY = `
+  query GetSingleProduct($id: ID!) {
+    product(id: $id) {
+      id
+      title
+      tags
+      descriptionHtml
+      collections(first: 5) {
+        edges { node { id title } }
+      }
+      rockhound: metafields(namespace: "rockhound", first: 50) {
+        edges { node { id key value namespace type } }
+      }
+      custom: metafields(namespace: "custom", first: 50) {
+        edges { node { id key value namespace type } }
+      }
+      geology: metafields(namespace: "geology", first: 50) {
+        edges { node { id key value namespace type } }
+      }
+      global: metafields(namespace: "global", first: 50) {
+        edges { node { id key value namespace type } }
+      }
+    }
+  }
+`;
 
-const ROCKHOUND_FIELDS = [
-  { key: "piece_name", label: "Piece Name", type: "single_line_text_field" },
-  { key: "primary_medium", label: "Primary Medium", type: "single_line_text_field" },
-  { key: "secondary_medium", label: "Secondary Medium", type: "single_line_text_field" },
-  { key: "handcrafted_by", label: "Handcrafted By", type: "single_line_text_field" },
-  { key: "material", label: "Material", type: "single_line_text_field" },
-  { key: "stone_family", label: "Stone Family", type: "single_line_text_field" },
-  { key: "color", label: "Color", type: "single_line_text_field" },
-  { key: "cut_and_shape", label: "Cut and Shape", type: "single_line_text_field" },
-  { key: "surface_finish", label: "Surface Finish", isDropdown: true },
-  { key: "dimensions_mm", label: "Dimensions (mm)", type: "single_line_text_field" },
-  { key: "weight_grams", label: "Weight (grams)", type: "single_line_text_field" },
-  { key: "collection_name", label: "Collection Name", type: "single_line_text_field" },
-  { key: "collection_location", label: "Collection Location", type: "single_line_text_field" },
-  { key: "collection_date", label: "Collection Date", type: "single_line_text_field" },
-  { key: "primary_use", label: "Primary Use", isDropdown: true },
-  { key: "setting_ready", label: "Setting Ready", isDropdown: true },
-  { key: "bail_included", label: "Bail Included", isDropdown: true },
-  { key: "is_one_of_a_kind", label: "Is One of a Kind", isDropdown: true },
-  { key: "treated", label: "Treated", isDropdown: true },
-  { key: "found_object", label: "Found Object", isDropdown: true },
-  { key: "wire_material", label: "Wire Material", isDropdown: true },
-  { key: "artist_notes", label: "Artist Notes", type: "single_line_text_field", multiline: true }
-];
+const GET_METAFIELD_DEFINITIONS_QUERY = `
+  query GetMetafieldDefinitions {
+    metafieldDefinitions(first: 50, ownerType: PRODUCT, namespace: "rockhound") {
+      edges { node { id name key type { name } } }
+    }
+  }
+`;
 
-const DEFAULT_DROPDOWNS = {
-  surface_finish: ["High polish lapidary finish", "Satin lapidary finish", "Raw natural surface", "Partial polish", "Tumble polished", "Hand rubbed finish"],
-  primary_use: ["Wearable pendant", "Lapidary cabochon for setting", "Wire wrapped jewelry", "Display specimen", "Collector piece", "Freeform stone art", "Bezel setting ready", "Rockhound specimen"],
-  setting_ready: ["Yes — bezel ready", "Yes — prong ready", "Needs evaluation", "No — display only"],
-  bail_included: ["No bail", "Pinch bail included", "Custom copper wire bail", "Custom gold plated bail", "Soldered bail"],
-  is_one_of_a_kind: ["Yes — one of a kind", "No — series piece"],
-  treated: ["Untreated — natural", "Stabilized", "Dyed", "Coated", "Heat treated"],
-  found_object: ["Wild collected — Bob and Janyce", "Customer submission", "Purchased rough", "Gifted specimen", "Rescued material"],
-  wire_material: ["Copper wire", "Brass wire", "Sterling silver wire", "Gold plated wire", "Copper and brass mixed"]
+const GET_SNAPSHOTS_QUERY = `
+  query GetSnapshots {
+    metaobjects(type: "rockhound_snapshot", first: 10, sortKey: "updated_at", reverse: true) {
+      edges { node { id handle updatedAt fields { key value } } }
+    }
+  }
+`;
+
+const PRODUCT_SET_MUTATION = `
+  mutation ProductSet($input: ProductSetInput!) {
+    productSet(input: $input) {
+      product { id title }
+      userErrors { field message }
+    }
+  }
+`;
+
+const SET_METAFIELDS_MUTATION = `
+  mutation MetafieldsSet($metafields: [MetafieldsSetInput!]!) {
+    metafieldsSet(metafields: $metafields) {
+      metafields { id key value }
+      userErrors { field message }
+    }
+  }
+`;
+
+const CREATE_METAFIELD_DEFINITION_MUTATION = `
+  mutation CreateMetafieldDefinition($definition: MetafieldDefinitionInput!) {
+    metafieldDefinitionCreate(definition: $definition) {
+      createdDefinition { id name }
+      userErrors { field message }
+    }
+  }
+`;
+
+const CREATE_METAOBJECT_MUTATION = `
+  mutation CreateMetaobject($metaobject: MetaobjectCreateInput!) {
+    metaobjectCreate(metaobject: $metaobject) {
+      metaobject { id handle }
+      userErrors { field message }
+    }
+  }
+`;
+
+const DELETE_METAOBJECT_MUTATION = `
+  mutation DeleteMetaobject($id: ID!) {
+    metaobjectDelete(id: $id) {
+      deletedId
+      userErrors { field message }
+    }
+  }
+`;
+
+// --- UTILITY FUNCTIONS ---
+const chunkArray = (array, size) => {
+  const chunked = [];
+  for (let i = 0; i < array.length; i += size) chunked.push(array.slice(i, i + size));
+  return chunked;
 };
 
-// --- TAB 1: THE INTAKE BENCH ---
-function IntakeBenchTab({ products, fetcher }) {
-  const [selectedProductId, setSelectedProductId] = useState("");
-  const [formState, setFormState] = useState({});
-  const [statusMessage, setStatusMessage] = useState("");
-  const [errorMessage, setErrorMessage] = useState("");
+const formatStrictGid = (id, type) => {
+  const numericId = id.toString().replace(/\D/g, ""); 
+  return `gid://shopify/${type}/${numericId}`;
+};
 
-  const handleSelectProduct = useCallback((id) => {
-    setSelectedProductId(id);
-    setStatusMessage("");
-    setErrorMessage("");
-    const product = products.find(p => p.id === id);
-    const newForm = {};
-    const hasMetafields = product && product.metafields && product.metafields.edges;
-    
-    if (hasMetafields) {
-      product.metafields.edges.forEach(({ node }) => {
-        const isRockhound = node.namespace === "rockhound";
-        const hasValue = node.value !== null && node.value !== undefined;
-        if (isRockhound && hasValue) {
-          newForm[node.key] = node.value;
-        }
-      });
-    }
-    setFormState(newForm);
+const extractOriginFromTitle = (title) => {
+  const parts = title.split(" — ");
+  if (parts.length >= 3) return parts[1].trim();
+  return null;
+};
 
-    fetcher.submit(
-      { intent: "smartAutoFill", productId: id },
-      { method: "post" }
-    );
-  }, [products, fetcher]);
-
-  const updateFormState = useCallback((key, value) => {
-    setFormState(prev => ({ ...prev, [key]: value }));
-  }, []);
-
-  const handleAutoFill = useCallback(() => {
-    if (!selectedProductId) return;
-    setStatusMessage("");
-    setErrorMessage("");
-    fetcher.submit(
-      { intent: "autoFill", productId: selectedProductId },
-      { method: "post" }
-    );
-  }, [selectedProductId, fetcher]);
-
-  const handleInject = useCallback(() => {
-    if (!selectedProductId) return;
-    setStatusMessage("");
-    setErrorMessage("");
-    
-    const payload = [];
-    const entries = Object.entries(formState);
-    
-    entries.forEach(([key, value]) => {
-      const isPopulated = value !== undefined && value !== null && value.toString().trim() !== "";
-      
-      if (isPopulated) {
-        const config = ROCKHOUND_FIELDS.find(f => f.key === key);
-        let fieldType = "single_line_text_field";
-        if (config && config.type) {
-          fieldType = config.type;
-        }
-        
-        let formatId = `gid://shopify/Product/${selectedProductId}`;
-        if (selectedProductId.includes("gid://")) {
-          formatId = selectedProductId;
-        }
-
-        payload.push({
-          ownerId: formatId,
-          namespace: "rockhound",
-          key: key,
-          value: value.toString().trim(),
-          type: fieldType 
-        });
-      }
-    });
-
-    if (payload.length === 0) {
-      setErrorMessage("No fields are populated. Fill at least one field to inject.");
-      return;
-    }
-
-    fetcher.submit(
-      { intent: "saveProduct", payload: JSON.stringify(payload) },
-      { method: "post" }
-    );
-  }, [selectedProductId, formState, fetcher]);
-
-  useEffect(() => {
-    const isIdle = fetcher.state === "idle";
-    const hasData = fetcher.data !== undefined && fetcher.data !== null;
-    
-    if (isIdle && hasData) {
-      const isAutoFill = fetcher.data.intent === "autoFill";
-      const isSmartAutoFill = fetcher.data.intent === "smartAutoFill";
-      const isSaveProduct = fetcher.data.intent === "saveProduct";
-      const isSuccess = fetcher.data.success === true;
-      const isError = fetcher.data.success === false;
-
-      if ((isAutoFill || isSmartAutoFill) && isSuccess) {
-        setFormState(prev => {
-          const updatedState = { ...prev };
-          if (fetcher.data.autoFillData) {
-            Object.entries(fetcher.data.autoFillData).forEach(([key, val]) => {
-              const isMissing = !updatedState[key] || updatedState[key].toString().trim() === "";
-              const hasNewValue = val !== undefined && val !== null && val.toString().trim() !== "";
-              if (isMissing && hasNewValue) {
-                updatedState[key] = val;
-              }
-            });
-          }
-          return updatedState;
-        });
-
-        if (isSmartAutoFill) {
-          setStatusMessage("Smart Auto-Fill complete — fields populated from all available data sources.");
-        }
-        
-        if (isAutoFill) {
-          setStatusMessage("Title and tags successfully parsed and loaded into fields.");
-        }
-      }
-
-      if (isSaveProduct && isSuccess) {
-        setStatusMessage("Metafields injected cleanly into Shopify database.");
-      }
-
-      if (isError) {
-        setErrorMessage(fetcher.data.error || "An unknown error occurred during the operation.");
-      }
-    }
-  }, [fetcher.state, fetcher.data]);
-
-  const safeProducts = products || [];
-  const isAutoFilling = fetcher.state !== "idle" && (fetcher.formData?.get("intent") === "autoFill" || fetcher.formData?.get("intent") === "smartAutoFill");
-  const isSaving = fetcher.state !== "idle" && fetcher.formData?.get("intent") === "saveProduct";
-
-  return (
-    <BlockStack gap="400">
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "24px", alignItems: "start" }}>
-        <div>
-          <Card padding="400">
-            <BlockStack gap="400">
-              <Text variant="headingMd" as="h2">1. Select Raw Inventory</Text>
-              <div style={{ maxHeight: "70vh", overflowY: "auto", paddingRight: "8px", display: "flex", flexDirection: "column", gap: "8px" }}>
-                {safeProducts.map(p => {
-                  const isSelected = selectedProductId === p.id;
-                  return (
-                    <div key={p.id} style={{ minHeight: "54px" }}>
-                      <Button
-                        fullWidth
-                        size="large"
-                        textAlign="left"
-                        variant={isSelected ? "primary" : "secondary"}
-                        onClick={() => handleSelectProduct(p.id)}
-                        accessibilityLabel={`Select product ${p.title}`}
-                      >
-                        {p.title}
-                      </Button>
-                    </div>
-                  );
-                })}
-              </div>
-            </BlockStack>
-          </Card>
-        </div>
-
-        <div>
-          <Card padding="400">
-            <BlockStack gap="400">
-              <Text variant="headingMd" as="h2">2. Data Sieve & Injection</Text>
-              
-              {statusMessage !== "" && (
-                <div style={{ minHeight: "54px" }}>
-                  <Banner tone="success" title="Operation Successful">
-                    <Text as="p">{statusMessage}</Text>
-                  </Banner>
-                </div>
-              )}
-
-              {errorMessage !== "" && (
-                <div style={{ minHeight: "54px" }}>
-                  <Banner tone="critical" title="Operation Failed">
-                    <Text as="p">{errorMessage}</Text>
-                  </Banner>
-                </div>
-              )}
-
-              <InlineStack gap="300" align="space-between">
-                <div style={{ minHeight: "54px", flexGrow: 1 }}>
-                  <Button 
-                    icon={MagicIcon} 
-                    onClick={handleAutoFill}
-                    accessibilityLabel="Re-Run Auto-Fill Fields"
-                    size="large"
-                    fullWidth
-                    disabled={!selectedProductId}
-                    loading={isAutoFilling}
-                  >
-                    Re-Run Auto-Fill
-                  </Button>
-                </div>
-                <div style={{ minHeight: "54px", flexGrow: 1 }}>
-                  <Button 
-                    icon={SaveIcon} 
-                    tone="success" 
-                    variant="primary" 
-                    onClick={handleInject}
-                    accessibilityLabel="Inject Metafields"
-                    size="large"
-                    fullWidth
-                    disabled={!selectedProductId}
-                    loading={isSaving}
-                  >
-                    Inject Metafields
-                  </Button>
-                </div>
-              </InlineStack>
-
-              <div style={{ maxHeight: "60vh", overflowY: "auto", paddingRight: "8px", display: "flex", flexDirection: "column", gap: "16px" }}>
-                {ROCKHOUND_FIELDS.map(field => {
-                  const val = formState[field.key] || "";
-                  const isDropdown = field.isDropdown === true;
-                  const isText = !field.isDropdown;
-                  
-                  let safeVal = val;
-                  let options = [];
-
-                  if (isDropdown) {
-                    const dropdownOptions = DEFAULT_DROPDOWNS[field.key] || [];
-                    safeVal = dropdownOptions.includes(val) ? val : "";
-                    options = [
-                      { label: safeVal !== "" ? safeVal : "Select...", value: safeVal },
-                      ...dropdownOptions.filter(o => o !== safeVal).map(o => ({ label: o, value: o }))
-                    ];
-                  }
-                  
-                  return (
-                    <div key={field.key} style={{ minHeight: "54px" }}>
-                      {isDropdown && (
-                        <Select
-                          label={field.label}
-                          options={options}
-                          value={safeVal}
-                          onChange={(v) => updateFormState(field.key, v)}
-                          accessibilityLabel={`Select value for ${field.label}`}
-                          disabled={!selectedProductId}
-                        />
-                      )}
-
-                      {isText && (
-                        <TextField
-                          label={field.label}
-                          value={val}
-                          onChange={(v) => updateFormState(field.key, v)}
-                          autoComplete="off"
-                          accessibilityLabel={`Enter text for ${field.label}`}
-                          multiline={field.multiline && 3}
-                          disabled={!selectedProductId}
-                        />
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </BlockStack>
-          </Card>
-        </div>
-      </div>
-    </BlockStack>
-  );
+async function fetchAllProducts(graphql) {
+  const response = await graphql(GET_PRODUCTS_QUERY, { variables: { cursor: null } });
+  const { data } = await response.json();
+  if (data && data.products) return data.products.edges.map(edge => edge.node);
+  return [];
 }
 
-// --- TAB 2: OPERATIONS MATRIX ---
-function OperationsMatrixTab({ products, fetcher }) {
-  const safeProducts = products || [];
-  const [selectedProductId, setSelectedProductId] = useState("");
-  const [selectedIds, setSelectedIds] = useState(new Set());
+// ==========================================
+// 2. TRANSMISSION: BACKEND LOADER & ACTION
+// ==========================================
+export async function loader({ request }) {
+  const { admin } = await authenticate.admin(request);
+  
+  const products = await fetchAllProducts(admin.graphql);
+  const [definitionsRes, snapshotsRes] = await Promise.all([
+    admin.graphql(GET_METAFIELD_DEFINITIONS_QUERY),
+    admin.graphql(GET_SNAPSHOTS_QUERY)
+  ]);
 
-  // --- Section 1: AI Forge State ---
-  const [aiPrompt, setAiPrompt] = useState("You are a gritty, mechanic-style copywriter for a lapidary and handcrafted stone jewelry studio. Write a 160-character SEO meta description for this product. Be specific, earthy, and direct. No fluff.");
-  const [productTitle, setProductTitle] = useState("");
-  const [generatedOutput, setGeneratedOutput] = useState("");
+  const definitionsData = await definitionsRes.json();
+  const snapshotsData = await snapshotsRes.json();
 
-  // --- Section 2: Global Sweeps State ---
-  const [batchState, setBatchState] = useState({
-    isActive: false,
-    type: "",
-    chunks: [],
-    currentIndex: 0,
-    status: "idle",
-    message: "",
-    error: ""
+  const pageInfo = { hasNextPage: false, endCursor: null }; 
+  const metafieldDefinitions = definitionsData.data?.metafieldDefinitions?.edges.map(edge => edge.node) || [];
+  
+  const rawSnapshots = snapshotsData.data?.metaobjects?.edges.map(edge => edge.node) || [];
+  const snapshots = rawSnapshots.map(snap => {
+    const dataField = snap.fields.find(f => f.key === "snapshot_data");
+    let count = 0;
+    if (dataField && dataField.value) {
+      try { count = JSON.parse(dataField.value).length || 0; } 
+      catch (e) { count = "Unknown"; }
+    }
+    return { id: snap.id, createdAt: new Date(snap.updatedAt).toLocaleString(), count };
   });
 
-  // --- Section 3: Safety Nets State ---
-  const [safetyMessage, setSafetyMessage] = useState("");
-  const [safetyError, setSafetyError] = useState("");
-
-  // --- Handlers: Left Column Selection ---
-  const handleSelectProduct = useCallback((id, title) => {
-    setSelectedProductId(id);
-    setProductTitle(title);
-    setGeneratedOutput("");
-  }, []);
-
-  const handleToggleProductSelection = useCallback((id) => {
-    setSelectedIds(prev => {
-      const newSet = new Set(prev);
-      const isSelected = newSet.has(id);
-      if (isSelected) {
-        newSet.delete(id);
-      }
-      if (!isSelected) {
-        newSet.add(id);
-      }
-      return newSet;
-    });
-  }, []);
-
-  const handleSelectAll = useCallback(() => {
-    const allIds = safeProducts.map(p => p.id);
-    setSelectedIds(new Set(allIds));
-  }, [safeProducts]);
-
-  const handleClearAll = useCallback(() => {
-    setSelectedIds(new Set());
-  }, []);
-
-  // --- Handlers: AI Forge ---
-  const handleGenerateSEO = useCallback(() => {
-    if (!productTitle) return;
-    setGeneratedOutput("");
-    const payload = JSON.stringify({ title: productTitle, instructions: aiPrompt });
-    fetcher.submit({ intent: "generateSEO", formData: payload }, { method: "post" });
-  }, [productTitle, aiPrompt, fetcher]);
-
-  const handleCopyOutput = useCallback(() => {
-    if (!generatedOutput) return;
-    navigator.clipboard.writeText(generatedOutput);
-  }, [generatedOutput]);
-
-  // --- Handlers: Global Sweeps ---
-  const startBatchSweep = useCallback((type) => {
-    const hasSelectedProducts = selectedIds.size > 0;
-    const targetProducts = hasSelectedProducts 
-      ? safeProducts.filter(p => selectedIds.has(p.id)) 
-      : safeProducts;
-
-    const newChunks = [];
-    for (let i = 0; i < targetProducts.length; i += 10) {
-      newChunks.push(targetProducts.slice(i, i + 10));
-    }
-    
-    setBatchState({
-      isActive: true,
-      type: type,
-      chunks: newChunks,
-      currentIndex: 0,
-      status: "processing",
-      message: "",
-      error: ""
-    });
-  }, [safeProducts, selectedIds]);
-
-  // Handle batch processing steps
-  useEffect(() => {
-    const isProcessing = batchState.isActive && batchState.status === "processing";
-    
-    if (isProcessing) {
-      const currentChunk = batchState.chunks[batchState.currentIndex];
-      
-      if (currentChunk) {
-        setBatchState(prev => ({ ...prev, status: "waiting_for_network" }));
-        const payload = [];
-
-        const isOoak = batchState.type === "ooak";
-        const isOrigins = batchState.type === "origins";
-
-        if (isOoak) {
-          currentChunk.forEach(p => {
-            const formatId = p.id.includes("gid://") ? p.id : `gid://shopify/Product/${p.id}`;
-            payload.push({
-              ownerId: formatId,
-              namespace: "rockhound",
-              key: "is_one_of_a_kind",
-              value: "Yes — one of a kind",
-              type: "single_line_text_field"
-            });
-          });
-        }
-
-        if (isOrigins) {
-          currentChunk.forEach(p => {
-            const parts = p.title.split(" — ");
-            const hasOriginPart = parts.length >= 3;
-            if (hasOriginPart) {
-              const origin = parts[1].trim();
-              const formatId = p.id.includes("gid://") ? p.id : `gid://shopify/Product/${p.id}`;
-              payload.push({
-                ownerId: formatId,
-                namespace: "rockhound",
-                key: "collection_location",
-                value: origin,
-                type: "single_line_text_field"
-              });
-            }
-          });
-        }
-
-        const hasUpdates = payload.length > 0;
-        if (hasUpdates) {
-          fetcher.submit({ intent: "saveProduct", payload: JSON.stringify(payload) }, { method: "post" });
-        }
-        
-        if (!hasUpdates) {
-          setBatchState(prev => ({ ...prev, status: "waiting_for_idle" }));
-        }
-      }
-      
-      if (!currentChunk) {
-        setBatchState(prev => ({ ...prev, isActive: false, status: "complete", message: "Sweep completed successfully across target products." }));
-      }
-    }
-  }, [batchState, fetcher]);
-
-  // Handle network lock for batch processor
-  useEffect(() => {
-    const isWaitingForNetwork = batchState.status === "waiting_for_network";
-    const isFetcherActive = fetcher.state !== "idle";
-    
-    if (isWaitingForNetwork && isFetcherActive) {
-      setBatchState(prev => ({ ...prev, status: "waiting_for_idle" }));
-    }
-  }, [batchState.status, fetcher.state]);
-
-  // Handle 10-product governor pause between chunks
-  useEffect(() => {
-    const isWaitingForIdle = batchState.status === "waiting_for_idle";
-    const isFetcherIdle = fetcher.state === "idle";
-    
-    if (isWaitingForIdle && isFetcherIdle) {
-      setBatchState(prev => ({ ...prev, status: "paused" }));
-      setTimeout(() => {
-        setBatchState(prev => ({ ...prev, currentIndex: prev.currentIndex + 1, status: "processing" }));
-      }, 1000); // 1-second pause limits server hammering
-    }
-  }, [batchState.status, fetcher.state]);
-
-  // --- Listeners: AI Forge Fetcher Responses ---
-  useEffect(() => {
-    const isIdle = fetcher.state === "idle";
-    const hasData = fetcher.data !== undefined && fetcher.data !== null;
-
-    if (isIdle && hasData) {
-      const isGenerateSEO = fetcher.data.intent === "generateSEO";
-      const isSuccess = fetcher.data.success === true;
-      
-      if (isGenerateSEO && isSuccess) {
-        setGeneratedOutput(fetcher.data.seoDescription || fetcher.data.text || "");
-      }
-    }
-  }, [fetcher.state, fetcher.data]);
-
-  // --- Handlers: Safety Nets ---
-  const handleExportCSV = useCallback(() => {
-    setSafetyMessage("");
-    setSafetyError("");
-    try {
-      const headers = ["Product ID", "Title", ...ROCKHOUND_FIELDS.map(f => f.key)];
-      let csv = headers.join(",") + "\n";
-      
-      safeProducts.forEach(p => {
-        const row = [`"${p.id}"`, `"${p.title.replace(/"/g, '""')}"`];
-        const fieldMap = {};
-        
-        const hasMetafields = p.metafields && p.metafields.edges;
-        if (hasMetafields) {
-          p.metafields.edges.forEach(({ node }) => {
-            const isRockhound = node.namespace === "rockhound";
-            if (isRockhound) {
-              fieldMap[node.key] = node.value;
-            }
-          });
-        }
-        
-        ROCKHOUND_FIELDS.forEach(f => {
-          const val = fieldMap[f.key] || "";
-          row.push(`"${val.toString().replace(/"/g, '""')}"`);
-        });
-        
-        csv += row.join(",") + "\n";
-      });
-      
-      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.setAttribute("download", `rockhound_inventory_${Date.now()}.csv`);
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      setSafetyMessage("CSV Export compiled and downloaded successfully.");
-    } catch (e) {
-      setSafetyError("Failed to compile CSV export.");
-    }
-  }, [safeProducts]);
-
-  const handleJSONSnapshot = useCallback(() => {
-    setSafetyMessage("");
-    setSafetyError("");
-    try {
-      const data = safeProducts.map(p => {
-        const fields = {};
-        const hasMetafields = p.metafields && p.metafields.edges;
-        
-        if (hasMetafields) {
-          p.metafields.edges.forEach(({ node }) => {
-            const isRockhound = node.namespace === "rockhound";
-            if (isRockhound) {
-              fields[node.key] = node.value;
-            }
-          });
-        }
-        return { id: p.id, title: p.title, fields: fields };
-      });
-      
-      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.setAttribute("download", `rockhound_snapshot_${Date.now()}.json`);
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      setSafetyMessage("Full JSON snapshot compiled and downloaded successfully.");
-    } catch (e) {
-      setSafetyError("Failed to compile JSON snapshot.");
-    }
-  }, [safeProducts]);
-
-  const isGeneratingSEO = fetcher.state !== "idle" && fetcher.formData?.get("intent") === "generateSEO";
-
-  return (
-    <BlockStack gap="600">
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "24px", alignItems: "start" }}>
-        <div>
-          <Card padding="400">
-            <BlockStack gap="400">
-              <Text variant="headingMd" as="h2">Target Product Selection</Text>
-              <Text as="p" tone="subdued">{selectedIds.size} of {safeProducts.length} selected for sweeps</Text>
-              
-              <InlineStack gap="300">
-                <div style={{ minHeight: "54px", flexGrow: 1 }}>
-                  <Button size="large" fullWidth onClick={handleSelectAll} accessibilityLabel="Select all products for batch operations">Select All</Button>
-                </div>
-                <div style={{ minHeight: "54px", flexGrow: 1 }}>
-                  <Button size="large" fullWidth onClick={handleClearAll} accessibilityLabel="Clear product selection">Clear All</Button>
-                </div>
-              </InlineStack>
-
-              <div style={{ maxHeight: "60vh", overflowY: "auto", paddingRight: "8px", display: "flex", flexDirection: "column", gap: "8px" }}>
-                {safeProducts.map(p => {
-                  const isSelected = selectedProductId === p.id;
-                  const isChecked = selectedIds.has(p.id);
-                  return (
-                    <div key={p.id} style={{ display: "flex", alignItems: "center", gap: "12px", minHeight: "54px" }}>
-                      <div style={{ display: "flex", alignItems: "center", height: "54px" }}>
-                        <input
-                          type="checkbox"
-                          checked={isChecked}
-                          onChange={() => handleToggleProductSelection(p.id)}
-                          aria-label={`Select product ${p.title} for batch sweeps`}
-                          style={{ width: "24px", height: "24px", cursor: "pointer" }}
-                        />
-                      </div>
-                      <div style={{ flexGrow: 1, minHeight: "54px" }}>
-                        <Button
-                          fullWidth
-                          size="large"
-                          textAlign="left"
-                          variant={isSelected ? "primary" : "secondary"}
-                          onClick={() => handleSelectProduct(p.id, p.title)}
-                          accessibilityLabel={`Load product ${p.title} into AI Forge`}
-                        >
-                          {p.title}
-                        </Button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </BlockStack>
-          </Card>
-        </div>
-
-        <div>
-          <BlockStack gap="600">
-            <Card padding="400">
-              <BlockStack gap="400">
-                <Text variant="headingLg" as="h2">Section 1: AI Forge</Text>
-                <div style={{ minHeight: "54px" }}>
-                  <TextField
-                    label="AI Persona Prompt"
-                    value={aiPrompt}
-                    onChange={setAiPrompt}
-                    multiline={3}
-                    accessibilityLabel="Edit AI Persona Prompt"
-                    autoComplete="off"
-                  />
-                </div>
-                <div style={{ minHeight: "54px" }}>
-                  <TextField
-                    label="Product Title"
-                    value={productTitle}
-                    onChange={setProductTitle}
-                    accessibilityLabel="Enter Product Title for SEO generation"
-                    autoComplete="off"
-                  />
-                </div>
-                <div style={{ minHeight: "54px" }}>
-                  <Button
-                    size="large"
-                    variant="primary"
-                    onClick={handleGenerateSEO}
-                    accessibilityLabel="Generate Description"
-                    loading={isGeneratingSEO}
-                    disabled={!productTitle}
-                  >
-                    Generate Description
-                  </Button>
-                </div>
-                <div style={{ minHeight: "54px" }}>
-                  <TextField
-                    label="Generated Output"
-                    value={generatedOutput}
-                    multiline={4}
-                    readOnly
-                    accessibilityLabel="Generated SEO Description Output"
-                    autoComplete="off"
-                  />
-                </div>
-                <div style={{ minHeight: "54px" }}>
-                  <Button
-                    size="large"
-                    onClick={handleCopyOutput}
-                    accessibilityLabel="Copy output to clipboard"
-                    disabled={!generatedOutput}
-                  >
-                    Copy to Clipboard
-                  </Button>
-                </div>
-              </BlockStack>
-            </Card>
-
-            <Card padding="400">
-              <BlockStack gap="400">
-                <Text variant="headingLg" as="h2">Section 2: Global Sweeps</Text>
-                
-                {batchState.message !== "" && (
-                  <div style={{ minHeight: "54px" }}>
-                    <Banner tone="success" title="Sweep Complete">
-                      <Text as="p">{batchState.message}</Text>
-                    </Banner>
-                  </div>
-                )}
-
-                {batchState.error !== "" && (
-                  <div style={{ minHeight: "54px" }}>
-                    <Banner tone="critical" title="Sweep Error">
-                      <Text as="p">{batchState.error}</Text>
-                    </Banner>
-                  </div>
-                )}
-
-                {batchState.isActive && (
-                  <Box padding="400" background="bg-surface-secondary" borderRadius="200">
-                    <BlockStack gap="200">
-                      <Text as="p" fontWeight="bold">Processing Batch {batchState.currentIndex + 1} of {batchState.chunks.length}</Text>
-                      <Text as="p" tone="subdued">System Governor active. Status: {batchState.status}</Text>
-                      <div style={{ width: "100%", height: "12px", backgroundColor: "#E1E3E5", borderRadius: "6px", overflow: "hidden", marginTop: "8px" }}>
-                        <div style={{ width: `${((batchState.currentIndex) / batchState.chunks.length) * 100}%`, height: "100%", backgroundColor: "#2C6ECB", transition: "width 0.3s ease" }}></div>
-                      </div>
-                    </BlockStack>
-                  </Box>
-                )}
-
-                <InlineStack gap="300">
-                  <div style={{ minHeight: "54px", flexGrow: 1 }}>
-                    <Button
-                      size="large"
-                      fullWidth
-                      onClick={() => startBatchSweep("ooak")}
-                      accessibilityLabel="Standardize OOAK across target products"
-                      disabled={batchState.isActive}
-                    >
-                      Standardize OOAK
-                    </Button>
-                  </div>
-                  <div style={{ minHeight: "54px", flexGrow: 1 }}>
-                    <Button
-                      size="large"
-                      fullWidth
-                      onClick={() => startBatchSweep("origins")}
-                      accessibilityLabel="Sweep Origins across target products"
-                      disabled={batchState.isActive}
-                    >
-                      Sweep Origins
-                    </Button>
-                  </div>
-                </InlineStack>
-              </BlockStack>
-            </Card>
-
-            <Card padding="400">
-              <BlockStack gap="400">
-                <Text variant="headingLg" as="h2">Section 3: Safety Nets</Text>
-                
-                {safetyMessage !== "" && (
-                  <div style={{ minHeight: "54px" }}>
-                    <Banner tone="success" title="File Download Started">
-                      <Text as="p">{safetyMessage}</Text>
-                    </Banner>
-                  </div>
-                )}
-
-                {safetyError !== "" && (
-                  <div style={{ minHeight: "54px" }}>
-                    <Banner tone="critical" title="File Creation Failed">
-                      <Text as="p">{safetyError}</Text>
-                    </Banner>
-                  </div>
-                )}
-
-                <InlineStack gap="300">
-                  <div style={{ minHeight: "54px", flexGrow: 1 }}>
-                    <Button
-                      size="large"
-                      fullWidth
-                      onClick={handleExportCSV}
-                      accessibilityLabel="Export CSV of all Metafields"
-                    >
-                      Export CSV
-                    </Button>
-                  </div>
-                  <div style={{ minHeight: "54px", flexGrow: 1 }}>
-                    <Button
-                      size="large"
-                      fullWidth
-                      onClick={handleJSONSnapshot}
-                      accessibilityLabel="Download JSON Snapshot"
-                    >
-                      JSON Snapshot
-                    </Button>
-                  </div>
-                </InlineStack>
-              </BlockStack>
-            </Card>
-          </BlockStack>
-        </div>
-      </div>
-    </BlockStack>
-  );
+  return new Response(JSON.stringify({ products, pageInfo, metafieldDefinitions, snapshots }), {
+    status: 200, headers: { "Content-Type": "application/json" }
+  });
 }
 
-// --- MAIN SHELL COMPONENT ---
-export default function MetaInjectorV2() {
-  const { products } = useLoaderData() || {};
-  const navigate = useNavigate();
-  const primaryFetcher = useFetcher();
+export async function action({ request }) {
+  const { admin } = await authenticate.admin(request);
+  const formData = await request.formData();
+  const intent = formData.get("intent");
+  const errors = [];
 
-  const [selectedTab, setSelectedTab] = useState(0);
+  switch (intent) {
+    case "generateSEO": {
+      const formDataStr = formData.get("formData");
+      if (!formDataStr) return new Response(JSON.stringify({ success: false, error: "No form data provided" }), { status: 400 });
 
-  const tabs = [
-    { id: 'intake', content: '1. Intake Bench (Janyce)', accessibilityLabel: 'Intake Bench Tab' },
-    { id: 'ops', content: '2. Operations Matrix', accessibilityLabel: 'Operations Matrix Tab' }
-  ];
+      const stoneData = JSON.parse(formDataStr);
+      const apiKey = process.env.GEMINI_API_KEY;
 
-  const hasErrors = primaryFetcher.data && primaryFetcher.data.errors && primaryFetcher.data.errors.length > 0;
-  const isTabOne = selectedTab === 0;
-  const isTabTwo = selectedTab === 1;
+      if (!apiKey) return new Response(JSON.stringify({ success: false, error: "GEMINI_API_KEY missing from server." }), { status: 500 });
 
-  return (
-    <Frame>
-      <Page
-        fullWidth
-        title="Shop Floor Command Center"
-        subtitle="Data Integrity & Operations Hub"
-        backAction={{ content: "Dashboard", onAction: () => navigate("/app"), accessibilityLabel: "Back to Dashboard" }}
-      >
-        <Layout>
-          <Layout.Section>
-            {hasErrors && (
-              <Box paddingBlockEnd="400">
-                <Banner tone="critical" title="GraphQL Mutation Errors Detected">
-                  <BlockStack gap="200">
-                    {primaryFetcher.data.errors.map((err, i) => (
-                      <Text key={i} as="p">{err.message}</Text>
-                    ))}
-                  </BlockStack>
-                </Banner>
-              </Box>
-            )}
+      const dataPoints = Object.entries(stoneData)
+        .filter(([key, value]) => value && key !== 'generated_seo')
+        .map(([key, value]) => `- ${key.replace(/_/g, ' ').toUpperCase()}: ${value}`)
+        .join("\n");
 
-            <Card padding="0">
-              <Tabs tabs={tabs} selected={selectedTab} onSelect={setSelectedTab} fitted>
-                <Box padding="600" background="bg-surface-secondary">
-                  {isTabOne && <IntakeBenchTab products={products} fetcher={primaryFetcher} />}
-                  {isTabTwo && <OperationsMatrixTab products={products} fetcher={primaryFetcher} />}
-                </Box>
-              </Tabs>
-            </Card>
-          </Layout.Section>
-        </Layout>
-      </Page>
-    </Frame>
-  );
+      const prompt = `You are Bob, a 27-year mechanic turned lapidary artist in Spokane Valley. You built your lapidary machines out of scrap car parts and sheer willpower. You write spare, honest, and mechanically detailed product descriptions. Do not use marketing fluff, exclamation points, or words like 'stunning,' 'gorgeous,' or 'must-have.' Focus on the raw materials, the physical trial-and-error of the cut, and the origin of the stone. Your philosophy is: 'The rock tells you what it needs.' 
+      
+      Based on the following intake data for a specific piece, write one punchy, story-driven SEO meta description. 
+      
+      STRICT RULES: 
+      1. Must be strictly under 160 characters. 
+      2. No markdown formatting, quotes, or hashtags.
+      3. Never use generic sales words. Sound like a mechanic.
+      
+      STONE DATA:
+      ${dataPoints}`;
+
+      try {
+        const aiRes = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+          }
+        );
+
+        const aiData = await aiRes.json();
+        let generatedDescription = aiData.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "";
+        generatedDescription = generatedDescription.replace(/^["']|["']$/g, '').trim();
+
+        return new Response(JSON.stringify({ success: true, intent, seoDescription: generatedDescription }), {
+          status: 200, headers: { "Content-Type": "application/json" }
+        });
+
+      } catch (error) {
+        console.error("Gemini AI Error:", error);
+        return new Response(JSON.stringify({ success: false, error: "Failed to connect to AI Forge" }), { status: 500 });
+      }
+    }
+
+    case "smartAutoFill": {
+      const productId = formData.get("productId");
+      if (!productId) return new Response(JSON.stringify({ success: false, error: "Missing productId" }), { status: 400 });
+
+      const response = await admin.graphql(GET_SINGLE_PRODUCT_QUERY, { variables: { id: formatStrictGid(productId, "Product") } });
+      const result = await response.json();
+      const product = result.data?.product;
+
+      if (!product) return new Response(JSON.stringify({ success: false, error: "Product not found" }), { status: 404 });
+
+      const autoFillData = {};
+      const setIfEmpty = (key, value) => {
+        if (!autoFillData[key] && value !== undefined && value !== null && value !== "") {
+          autoFillData[key] = value.toString().trim();
+        }
+      };
+
+      // 1. Parse title
+      const titleParts = product.title ? product.title.split(" — ") : [];
+      if (titleParts.length === 1) {
+        setIfEmpty("piece_name", titleParts[0]);
+      } else if (titleParts.length === 2) {
+        setIfEmpty("material", titleParts[0]);
+        setIfEmpty("piece_name", titleParts[1]);
+      } else if (titleParts.length >= 3) {
+        setIfEmpty("material", titleParts[0]);
+        setIfEmpty("collection_location", titleParts[1]);
+        setIfEmpty("piece_name", titleParts[titleParts.length - 1]);
+      }
+
+      // 2. Read tags
+      if (product.tags && product.tags.length > 0) {
+        product.tags.forEach(tag => {
+          const lowerTag = tag.toLowerCase();
+          if (lowerTag.startsWith("color:")) {
+            setIfEmpty("color", tag.substring(6).trim());
+          }
+          if (lowerTag.includes("mine") || lowerTag.includes("ridge") || lowerTag.includes("county")) {
+            setIfEmpty("collection_location", tag);
+          }
+          if (["jasper", "agate", "obsidian", "quartz", "chalcedony", "feldspar", "labradorite", "serpentine", "variscite"].some(f => lowerTag.includes(f))) {
+            setIfEmpty("stone_family", tag);
+          }
+        });
+      }
+
+      // 3. Read rockhound namespace
+      if (product.rockhound && product.rockhound.edges) {
+        product.rockhound.edges.forEach(({ node }) => {
+          setIfEmpty(node.key, node.value);
+        });
+      }
+
+      // 4. Read custom namespace
+      if (product.custom && product.custom.edges) {
+        const customMf = {};
+        product.custom.edges.forEach(({ node }) => { customMf[node.key] = node.value; });
+
+        setIfEmpty("cut_and_shape", customMf["stone_shape"]);
+        setIfEmpty("treated", customMf["treatment_status"]);
+        setIfEmpty("handcrafted_by", customMf["rescued_by"]);
+        setIfEmpty("honest_flaws_and_character", customMf["character_marks"]);
+        setIfEmpty("dimensions_mm", customMf["dimensions_mm"] || customMf["dimensions"]);
+        setIfEmpty("surface_finish", customMf["surface_finish"]);
+        setIfEmpty("color", customMf["primary_color"]);
+        setIfEmpty("collection_location", customMf["origin_location"]);
+        setIfEmpty("origin_story", customMf["stone_story"]);
+        setIfEmpty("stone_family", customMf["base_stone_type"]);
+      }
+
+      // 5. Read geology namespace
+      if (product.geology && product.geology.edges) {
+        const geoMf = {};
+        product.geology.edges.forEach(({ node }) => { geoMf[node.key] = node.value; });
+        if (geoMf["hardness"]) {
+          const mohs = `Mohs: ${geoMf["hardness"]}`;
+          if (!autoFillData["artist_notes"]) {
+            autoFillData["artist_notes"] = mohs;
+          } else if (!autoFillData["artist_notes"].includes("Mohs")) {
+            autoFillData["artist_notes"] += `\n${mohs}`;
+          }
+        }
+      }
+
+      // 6. Read global namespace -> ignore per instructions
+
+      // 7. Parse descriptionHtml
+      if (product.descriptionHtml) {
+        const desc = product.descriptionHtml;
+        const dimMatch = desc.match(/Dimensions:\s*([\d.]+\s*x\s*[\d.]+\s*x\s*[\d.]+\s*mm)/i);
+        if (dimMatch) setIfEmpty("dimensions_mm", dimMatch[1].trim());
+
+        const finishMatch = desc.match(/Finish:\s*([^<]+)/i);
+        if (finishMatch) setIfEmpty("surface_finish", finishMatch[1].trim());
+
+        const mohsMatch = desc.match(/Mohs:\s*([^<]+)/i);
+        if (mohsMatch) {
+          const mohsStr = `Mohs: ${mohsMatch[1].trim()}`;
+          if (!autoFillData["artist_notes"]) {
+            autoFillData["artist_notes"] = mohsStr;
+          } else if (!autoFillData["artist_notes"].includes("Mohs")) {
+            autoFillData["artist_notes"] += `\n${mohsStr}`;
+          }
+        }
+
+        if (desc.match(/One of a Kind:\s*Yes/i)) {
+          setIfEmpty("is_one_of_a_kind", "Yes — one of a kind");
+        }
+
+        const bailMatch = desc.match(/set with a ([a-zA-Z\s]+) bail/i);
+        if (bailMatch) {
+          setIfEmpty("bail_included", bailMatch[0].trim());
+        } else if (desc.match(/pinch bail/i)) {
+          setIfEmpty("bail_included", "Pinch bail included");
+        }
+
+        if (desc.match(/Natural\/Untreated/i)) {
+          setIfEmpty("treated", "Untreated — natural");
+        }
+      }
+
+      // 8. Import lookupStone execution
+      if (autoFillData.material) {
+        try {
+          const geoData = lookupStone(autoFillData.material);
+          if (geoData) {
+            Object.entries(geoData).forEach(([k, v]) => {
+              setIfEmpty(k, v);
+            });
+          }
+        } catch (error) {
+          // Silent fallback if geoLibrary doesn't match
+        }
+      }
+
+      return new Response(JSON.stringify({ success: true, intent, autoFillData }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+
+    case "createProduct": {
+      const piecesStr = formData.get("pieces");
+      if (!piecesStr) return new Response(JSON.stringify({ success: false, error: "No pieces data provided" }), { status: 400 });
+
+      const pieces = JSON.parse(piecesStr);
+      let createdCount = 0;
+
+      const ALL_22_KEYS = [
+        "piece_name", "primary_medium", "secondary_medium", "handcrafted_by", 
+        "material", "stone_family", "color", "cut_and_shape", "surface_finish", 
+        "dimensions_mm", "weight_grams", "collection_name", "collection_location", 
+        "collection_date", "primary_use", "setting_ready", "bail_included", 
+        "is_one_of_a_kind", "treated", "found_object", "wire_material", "artist_notes"
+      ];
+
+      for (const item of pieces) {
+        const { shared, piece } = item;
+        
+        let productTitle = piece.piece_name;
+        if (shared && shared.material && shared.material.trim() !== "") {
+          productTitle = `${shared.material} — ${piece.piece_name}`;
+        }
+
+        const productInput = {
+          title: productTitle,
+          vendor: "Rockhound Studio",
+          status: "DRAFT",
+          variants: [{ price: piece.price ? piece.price.toString() : "0.00" }]
+        };
+
+        try {
+          const createRes = await admin.graphql(PRODUCT_SET_MUTATION, { variables: { input: productInput } });
+          const createResult = await createRes.json();
+
+          if (createResult.data?.productSet?.userErrors?.length > 0) {
+            errors.push(...createResult.data.productSet.userErrors);
+            continue;
+          }
+
+          const newProductId = createResult.data?.productSet?.product?.id;
+
+          if (newProductId) {
+            createdCount++;
+            const safeProductId = formatStrictGid(newProductId, "Product");
+            
+            const combinedFields = { ...shared, ...piece };
+            const metafieldsInputs = [];
+
+            ALL_22_KEYS.forEach(key => {
+              const val = combinedFields[key];
+              metafieldsInputs.push({
+                ownerId: safeProductId,
+                namespace: "rockhound",
+                key: key,
+                value: (val !== undefined && val !== null) ? val.toString().trim() : "",
+                type: "single_line_text_field"
+              });
+            });
+
+            if (metafieldsInputs.length > 0) {
+              const chunks = chunkArray(metafieldsInputs, 3);
+              for (const chunk of chunks) {
+                const mfRes = await admin.graphql(SET_METAFIELDS_MUTATION, { variables: { metafields: chunk } });
+                const mfResult = await mfRes.json();
+                if (mfResult.data?.metafieldsSet?.userErrors?.length > 0) {
+                  errors.push(...mfResult.data.metafieldsSet.userErrors);
+                }
+              }
+            }
+          }
+        } catch (e) {
+          errors.push({ field: ["network"], message: e.message });
+        }
+      }
+
+      return new Response(JSON.stringify({ success: errors.length === 0, intent, createdCount, errors }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+
+    case "saveProduct": {
+      const payloadStr = formData.get("payload");
+      if (!payloadStr) return new Response(JSON.stringify({ success: false, error: "No payload provided" }), { status: 400 });
+
+      const payload = JSON.parse(payloadStr);
+      const metafieldsInputs = payload.map(field => {
+        const strictOwnerId = formatStrictGid(field.ownerId, "Product");
+        let finalValue = field.value.toString();
+        const finalType = field.type || "single_line_text_field";
+        
+        if (finalType === "list.metaobject_reference" && !finalValue.startsWith("[")) {
+          finalValue = `["${finalValue}"]`;
+        }
+
+        return { ownerId: strictOwnerId, namespace: "rockhound", key: field.key, value: finalValue, type: finalType };
+      });
+
+      const chunks = chunkArray(metafieldsInputs, 3);
+      for (const chunk of chunks) {
+        try {
+          const response = await admin.graphql(SET_METAFIELDS_MUTATION, { variables: { metafields: chunk } });
+          const result = await response.json();
+          if (result.data?.metafieldsSet?.userErrors?.length > 0) errors.push(...result.data.metafieldsSet.userErrors);
+        } catch (e) { errors.push({ field: ["network"], message: e.message }); }
+      }
+
+      if (errors.length > 0) return new Response(JSON.stringify({ success: false, intent, errors }), { status: 422, headers: { "Content-Type": "application/json" } });
+      return new Response(JSON.stringify({ success: true, intent, errors: [] }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+
+    case "autoFill": {
+      const productId = formData.get("productId");
+      if (!productId) return new Response(JSON.stringify({ success: false, error: "Missing productId" }), { status: 400 });
+
+      const response = await admin.graphql(GET_SINGLE_PRODUCT_QUERY, { variables: { id: formatStrictGid(productId, "Product") } });
+      const result = await response.json();
+      const product = result.data?.product;
+
+      if (!product) return new Response(JSON.stringify({ success: false, error: "Product not found" }), { status: 404 });
+
+      const autoFillData = {};
+      const titleParts = product.title.split(" — ");
+      
+      if (titleParts.length === 1) autoFillData.piece_name = titleParts[0];
+      else if (titleParts.length === 2) { autoFillData.material = titleParts[0]; autoFillData.piece_name = titleParts[1]; }
+      else if (titleParts.length >= 3) {
+        autoFillData.material = titleParts[0];
+        autoFillData.collection_location = titleParts[1];
+        autoFillData.piece_name = titleParts[titleParts.length - 1];
+      }
+
+      if (product.tags && product.tags.length > 0) {
+        const colorTag = product.tags.find(t => ["red", "blue", "green", "black", "white", "purple", "yellow", "orange", "brown", "pink", "clear"].some(c => t.toLowerCase().includes(c)));
+        if (colorTag && !autoFillData.color) autoFillData.color = colorTag;
+
+        const locationTag = product.tags.find(t => t.toLowerCase().includes("mine") || t.toLowerCase().includes("ridge") || t.toLowerCase().includes("county"));
+        if (locationTag && !autoFillData.collection_location) autoFillData.collection_location = locationTag;
+      }
+
+      return new Response(JSON.stringify({ success: true, intent, autoFillData }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+
+    case "autoExtractAll": {
+      const allProducts = await fetchAllProducts(admin.graphql);
+      const updates = [];
+
+      allProducts.forEach(product => {
+        const origin = extractOriginFromTitle(product.title);
+        if (!origin) return;
+
+        let hasOrigin = false;
+        if (product.metafields && product.metafields.edges) {
+          hasOrigin = product.metafields.edges.some(edge => edge.node.namespace === "rockhound" && edge.node.key === "collection_location" && edge.node.value !== "");
+        }
+
+        if (!hasOrigin) {
+          updates.push({ ownerId: formatStrictGid(product.id, "Product"), namespace: "rockhound", key: "collection_location", value: origin, type: "single_line_text_field" });
+        }
+      });
+
+      if (updates.length > 0) {
+        const chunks = chunkArray(updates, 3);
+        for (const chunk of chunks) {
+          const response = await admin.graphql(SET_METAFIELDS_MUTATION, { variables: { metafields: chunk } });
+          const result = await response.json();
+          if (result.data?.metafieldsSet?.userErrors?.length > 0) errors.push(...result.data.metafieldsSet.userErrors);
+        }
+      }
+
+      return new Response(JSON.stringify({ success: errors.length === 0, intent, updatedCount: updates.length, errors }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+
+    case "standardizeOOAK": {
+      const allProducts = await fetchAllProducts(admin.graphql);
+      const updates = [];
+
+      allProducts.forEach(product => {
+        let isStandardized = false;
+        if (product.metafields && product.metafields.edges) {
+          const ooakField = product.metafields.edges.find(edge => edge.node.namespace === "rockhound" && edge.node.key === "is_one_of_a_kind");
+          if (ooakField && ooakField.node.value === "Yes — one of a kind") isStandardized = true;
+        }
+
+        if (!isStandardized) {
+          updates.push({ ownerId: formatStrictGid(product.id, "Product"), namespace: "rockhound", key: "is_one_of_a_kind", value: "Yes — one of a kind", type: "single_line_text_field" });
+        }
+      });
+
+      if (updates.length > 0) {
+        const chunks = chunkArray(updates, 3);
+        for (const chunk of chunks) {
+          const response = await admin.graphql(SET_METAFIELDS_MUTATION, { variables: { metafields: chunk } });
+          const result = await response.json();
+          if (result.data?.metafieldsSet?.userErrors?.length > 0) errors.push(...result.data.metafieldsSet.userErrors);
+        }
+      }
+
+      return new Response(JSON.stringify({ success: errors.length === 0, intent, updatedCount: updates.length, errors }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+
+    case "saveSnapshot": {
+      const allProducts = await fetchAllProducts(admin.graphql);
+      const snapshotData = allProducts.map(p => {
+        const fieldData = {};
+        if (p.metafields && p.metafields.edges) p.metafields.edges.forEach(edge => { fieldData[edge.node.key] = edge.node.value; });
+        return { id: p.id, title: p.title, fields: fieldData };
+      });
+
+      const existingSnapshotsRes = await admin.graphql(GET_SNAPSHOTS_QUERY);
+      const existingData = await existingSnapshotsRes.json();
+      const existingNodes = existingData.data?.metaobjects?.edges.map(e => e.node) || [];
+
+      if (existingNodes.length >= 5) {
+        const oldestId = existingNodes[existingNodes.length - 1].id;
+        const delRes = await admin.graphql(DELETE_METAOBJECT_MUTATION, { variables: { id: oldestId } });
+        const delResult = await delRes.json();
+        if (delResult.data?.metaobjectDelete?.userErrors?.length > 0) errors.push(...delResult.data.metaobjectDelete.userErrors);
+      }
+
+      const timestamp = new Date().toISOString();
+      const createRes = await admin.graphql(CREATE_METAOBJECT_MUTATION, {
+        variables: {
+          metaobject: {
+            type: "rockhound_snapshot", handle: `snapshot-${Date.now()}`,
+            fields: [ { key: "created_at", value: timestamp }, { key: "snapshot_data", value: JSON.stringify(snapshotData) } ]
+          }
+        }
+      });
+      const createResult = await createRes.json();
+      if (createResult.data?.metaobjectCreate?.userErrors?.length > 0) errors.push(...createResult.data.metaobjectCreate.userErrors);
+
+      return new Response(JSON.stringify({ success: errors.length === 0, intent, errors }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+
+    case "exportCSV": {
+      const allProducts = await fetchAllProducts(admin.graphql);
+      const keys = [
+        "piece_name", "primary_medium", "secondary_medium", "handcrafted_by", 
+        "material", "stone_family", "color", "cut_and_shape", "surface_finish", 
+        "dimensions_mm", "weight_grams", "collection_name", "collection_location", 
+        "collection_date", "primary_use", "setting_ready", "bail_included", 
+        "is_one_of_a_kind", "treated", "found_object", "wire_material", "artist_notes"
+      ];
+
+      let csv = "Product ID,Product Title," + keys.join(",") + "\n";
+
+      allProducts.forEach(product => {
+        const row = [`"${product.id}"`, `"${product.title.replace(/"/g, '""')}"`];
+        const fieldMap = {};
+        if (product.metafields && product.metafields.edges) {
+          product.metafields.edges.forEach(edge => { fieldMap[edge.node.key] = edge.node.value; });
+        }
+        keys.forEach(key => { row.push(`"${(fieldMap[key] || "").toString().replace(/"/g, '""')}"`); });
+        csv += row.join(",") + "\n";
+      });
+
+      return new Response(JSON.stringify({ success: true, intent, csv }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+
+    default:
+      return new Response(JSON.stringify({ success: false, error: "Unknown intent" }), { status: 400 });
+  }
 }
