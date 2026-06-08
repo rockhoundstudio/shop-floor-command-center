@@ -289,6 +289,9 @@ function IntakeBenchTab({ products, fetcher }) {
 
 // --- TAB 2: OPERATIONS MATRIX ---
 function OperationsMatrixTab({ products, fetcher }) {
+  const safeProducts = products || [];
+  const [selectedProductId, setSelectedProductId] = useState("");
+
   // --- Section 1: AI Forge State ---
   const [aiPrompt, setAiPrompt] = useState("You are a gritty, mechanic-style copywriter for a lapidary and handcrafted stone jewelry studio. Write a 160-character SEO meta description for this product. Be specific, earthy, and direct. No fluff.");
   const [productTitle, setProductTitle] = useState("");
@@ -309,6 +312,13 @@ function OperationsMatrixTab({ products, fetcher }) {
   const [safetyMessage, setSafetyMessage] = useState("");
   const [safetyError, setSafetyError] = useState("");
 
+  // --- Handlers: Left Column Selection ---
+  const handleSelectProduct = useCallback((id, title) => {
+    setSelectedProductId(id);
+    setProductTitle(title);
+    setGeneratedOutput("");
+  }, []);
+
   // --- Handlers: AI Forge ---
   const handleGenerateSEO = useCallback(() => {
     if (!productTitle) return;
@@ -324,7 +334,6 @@ function OperationsMatrixTab({ products, fetcher }) {
 
   // --- Handlers: Global Sweeps ---
   const startBatchSweep = useCallback((type) => {
-    const safeProducts = products || [];
     const newChunks = [];
     for (let i = 0; i < safeProducts.length; i += 10) {
       newChunks.push(safeProducts.slice(i, i + 10));
@@ -339,7 +348,7 @@ function OperationsMatrixTab({ products, fetcher }) {
       message: "",
       error: ""
     });
-  }, [products]);
+  }, [safeProducts]);
 
   // Handle batch processing steps
   useEffect(() => {
@@ -442,7 +451,6 @@ function OperationsMatrixTab({ products, fetcher }) {
     setSafetyMessage("");
     setSafetyError("");
     try {
-      const safeProducts = products || [];
       const headers = ["Product ID", "Title", ...ROCKHOUND_FIELDS.map(f => f.key)];
       let csv = headers.join(",") + "\n";
       
@@ -480,13 +488,12 @@ function OperationsMatrixTab({ products, fetcher }) {
     } catch (e) {
       setSafetyError("Failed to compile CSV export.");
     }
-  }, [products]);
+  }, [safeProducts]);
 
   const handleJSONSnapshot = useCallback(() => {
     setSafetyMessage("");
     setSafetyError("");
     try {
-      const safeProducts = products || [];
       const data = safeProducts.map(p => {
         const fields = {};
         const hasMetafields = p.metafields && p.metafields.edges;
@@ -514,172 +521,205 @@ function OperationsMatrixTab({ products, fetcher }) {
     } catch (e) {
       setSafetyError("Failed to compile JSON snapshot.");
     }
-  }, [products]);
+  }, [safeProducts]);
 
   const isGeneratingSEO = fetcher.state !== "idle" && fetcher.formData?.get("intent") === "generateSEO";
 
   return (
     <BlockStack gap="600">
-      <Card padding="400">
-        <BlockStack gap="400">
-          <Text variant="headingLg" as="h2">Section 1: AI Forge</Text>
-          <div style={{ minHeight: "54px" }}>
-            <TextField
-              label="AI Persona Prompt"
-              value={aiPrompt}
-              onChange={setAiPrompt}
-              multiline={3}
-              accessibilityLabel="Edit AI Persona Prompt"
-              autoComplete="off"
-            />
-          </div>
-          <div style={{ minHeight: "54px" }}>
-            <TextField
-              label="Product Title"
-              value={productTitle}
-              onChange={setProductTitle}
-              accessibilityLabel="Enter Product Title for SEO generation"
-              autoComplete="off"
-            />
-          </div>
-          <div style={{ minHeight: "54px" }}>
-            <Button
-              size="large"
-              variant="primary"
-              onClick={handleGenerateSEO}
-              accessibilityLabel="Generate Description"
-              loading={isGeneratingSEO}
-              disabled={!productTitle}
-            >
-              Generate Description
-            </Button>
-          </div>
-          <div style={{ minHeight: "54px" }}>
-            <TextField
-              label="Generated Output"
-              value={generatedOutput}
-              multiline={4}
-              readOnly
-              accessibilityLabel="Generated SEO Description Output"
-              autoComplete="off"
-            />
-          </div>
-          <div style={{ minHeight: "54px" }}>
-            <Button
-              size="large"
-              onClick={handleCopyOutput}
-              accessibilityLabel="Copy output to clipboard"
-              disabled={!generatedOutput}
-            >
-              Copy to Clipboard
-            </Button>
-          </div>
-        </BlockStack>
-      </Card>
+      <Layout>
+        <Layout.Section variant="oneHalf">
+          <Card padding="400">
+            <BlockStack gap="400">
+              <Text variant="headingMd" as="h2">Target Product Selection</Text>
+              <div style={{ maxHeight: "70vh", overflowY: "auto", paddingRight: "8px", display: "flex", flexDirection: "column", gap: "8px" }}>
+                {safeProducts.map(p => {
+                  const isSelected = selectedProductId === p.id;
+                  return (
+                    <div key={p.id} style={{ minHeight: "54px" }}>
+                      <Button
+                        fullWidth
+                        size="large"
+                        textAlign="left"
+                        variant={isSelected ? "primary" : "secondary"}
+                        onClick={() => handleSelectProduct(p.id, p.title)}
+                        accessibilityLabel={`Select product ${p.title} for operations`}
+                      >
+                        {p.title}
+                      </Button>
+                    </div>
+                  );
+                })}
+              </div>
+            </BlockStack>
+          </Card>
+        </Layout.Section>
 
-      <Card padding="400">
-        <BlockStack gap="400">
-          <Text variant="headingLg" as="h2">Section 2: Global Sweeps</Text>
-          
-          {batchState.message !== "" && (
-            <div style={{ minHeight: "54px" }}>
-              <Banner tone="success" title="Sweep Complete">
-                <Text as="p">{batchState.message}</Text>
-              </Banner>
-            </div>
-          )}
-
-          {batchState.error !== "" && (
-            <div style={{ minHeight: "54px" }}>
-              <Banner tone="critical" title="Sweep Error">
-                <Text as="p">{batchState.error}</Text>
-              </Banner>
-            </div>
-          )}
-
-          {batchState.isActive && (
-            <Box padding="400" background="bg-surface-secondary" borderRadius="200">
-              <BlockStack gap="200">
-                <Text as="p" fontWeight="bold">Processing Batch {batchState.currentIndex + 1} of {batchState.chunks.length}</Text>
-                <Text as="p" tone="subdued">System Governor active. Status: {batchState.status}</Text>
-                <div style={{ width: "100%", height: "12px", backgroundColor: "#E1E3E5", borderRadius: "6px", overflow: "hidden", marginTop: "8px" }}>
-                  <div style={{ width: `${((batchState.currentIndex) / batchState.chunks.length) * 100}%`, height: "100%", backgroundColor: "#2C6ECB", transition: "width 0.3s ease" }}></div>
+        <Layout.Section variant="oneHalf">
+          <BlockStack gap="600">
+            <Card padding="400">
+              <BlockStack gap="400">
+                <Text variant="headingLg" as="h2">Section 1: AI Forge</Text>
+                <div style={{ minHeight: "54px" }}>
+                  <TextField
+                    label="AI Persona Prompt"
+                    value={aiPrompt}
+                    onChange={setAiPrompt}
+                    multiline={3}
+                    accessibilityLabel="Edit AI Persona Prompt"
+                    autoComplete="off"
+                  />
+                </div>
+                <div style={{ minHeight: "54px" }}>
+                  <TextField
+                    label="Product Title"
+                    value={productTitle}
+                    onChange={setProductTitle}
+                    accessibilityLabel="Enter Product Title for SEO generation"
+                    autoComplete="off"
+                  />
+                </div>
+                <div style={{ minHeight: "54px" }}>
+                  <Button
+                    size="large"
+                    variant="primary"
+                    onClick={handleGenerateSEO}
+                    accessibilityLabel="Generate Description"
+                    loading={isGeneratingSEO}
+                    disabled={!productTitle}
+                  >
+                    Generate Description
+                  </Button>
+                </div>
+                <div style={{ minHeight: "54px" }}>
+                  <TextField
+                    label="Generated Output"
+                    value={generatedOutput}
+                    multiline={4}
+                    readOnly
+                    accessibilityLabel="Generated SEO Description Output"
+                    autoComplete="off"
+                  />
+                </div>
+                <div style={{ minHeight: "54px" }}>
+                  <Button
+                    size="large"
+                    onClick={handleCopyOutput}
+                    accessibilityLabel="Copy output to clipboard"
+                    disabled={!generatedOutput}
+                  >
+                    Copy to Clipboard
+                  </Button>
                 </div>
               </BlockStack>
-            </Box>
-          )}
+            </Card>
 
-          <InlineStack gap="300">
-            <div style={{ minHeight: "54px", flexGrow: 1 }}>
-              <Button
-                size="large"
-                fullWidth
-                onClick={() => startBatchSweep("ooak")}
-                accessibilityLabel="Standardize OOAK across all products"
-                disabled={batchState.isActive}
-              >
-                Standardize OOAK
-              </Button>
-            </div>
-            <div style={{ minHeight: "54px", flexGrow: 1 }}>
-              <Button
-                size="large"
-                fullWidth
-                onClick={() => startBatchSweep("origins")}
-                accessibilityLabel="Sweep Origins across all products"
-                disabled={batchState.isActive}
-              >
-                Sweep Origins
-              </Button>
-            </div>
-          </InlineStack>
-        </BlockStack>
-      </Card>
+            <Card padding="400">
+              <BlockStack gap="400">
+                <Text variant="headingLg" as="h2">Section 2: Global Sweeps</Text>
+                
+                {batchState.message !== "" && (
+                  <div style={{ minHeight: "54px" }}>
+                    <Banner tone="success" title="Sweep Complete">
+                      <Text as="p">{batchState.message}</Text>
+                    </Banner>
+                  </div>
+                )}
 
-      <Card padding="400">
-        <BlockStack gap="400">
-          <Text variant="headingLg" as="h2">Section 3: Safety Nets</Text>
-          
-          {safetyMessage !== "" && (
-            <div style={{ minHeight: "54px" }}>
-              <Banner tone="success" title="File Download Started">
-                <Text as="p">{safetyMessage}</Text>
-              </Banner>
-            </div>
-          )}
+                {batchState.error !== "" && (
+                  <div style={{ minHeight: "54px" }}>
+                    <Banner tone="critical" title="Sweep Error">
+                      <Text as="p">{batchState.error}</Text>
+                    </Banner>
+                  </div>
+                )}
 
-          {safetyError !== "" && (
-            <div style={{ minHeight: "54px" }}>
-              <Banner tone="critical" title="File Creation Failed">
-                <Text as="p">{safetyError}</Text>
-              </Banner>
-            </div>
-          )}
+                {batchState.isActive && (
+                  <Box padding="400" background="bg-surface-secondary" borderRadius="200">
+                    <BlockStack gap="200">
+                      <Text as="p" fontWeight="bold">Processing Batch {batchState.currentIndex + 1} of {batchState.chunks.length}</Text>
+                      <Text as="p" tone="subdued">System Governor active. Status: {batchState.status}</Text>
+                      <div style={{ width: "100%", height: "12px", backgroundColor: "#E1E3E5", borderRadius: "6px", overflow: "hidden", marginTop: "8px" }}>
+                        <div style={{ width: `${((batchState.currentIndex) / batchState.chunks.length) * 100}%`, height: "100%", backgroundColor: "#2C6ECB", transition: "width 0.3s ease" }}></div>
+                      </div>
+                    </BlockStack>
+                  </Box>
+                )}
 
-          <InlineStack gap="300">
-            <div style={{ minHeight: "54px", flexGrow: 1 }}>
-              <Button
-                size="large"
-                fullWidth
-                onClick={handleExportCSV}
-                accessibilityLabel="Export CSV of all Metafields"
-              >
-                Export CSV
-              </Button>
-            </div>
-            <div style={{ minHeight: "54px", flexGrow: 1 }}>
-              <Button
-                size="large"
-                fullWidth
-                onClick={handleJSONSnapshot}
-                accessibilityLabel="Download JSON Snapshot"
-              >
-                JSON Snapshot
-              </Button>
-            </div>
-          </InlineStack>
-        </BlockStack>
-      </Card>
+                <InlineStack gap="300">
+                  <div style={{ minHeight: "54px", flexGrow: 1 }}>
+                    <Button
+                      size="large"
+                      fullWidth
+                      onClick={() => startBatchSweep("ooak")}
+                      accessibilityLabel="Standardize OOAK across all products"
+                      disabled={batchState.isActive}
+                    >
+                      Standardize OOAK
+                    </Button>
+                  </div>
+                  <div style={{ minHeight: "54px", flexGrow: 1 }}>
+                    <Button
+                      size="large"
+                      fullWidth
+                      onClick={() => startBatchSweep("origins")}
+                      accessibilityLabel="Sweep Origins across all products"
+                      disabled={batchState.isActive}
+                    >
+                      Sweep Origins
+                    </Button>
+                  </div>
+                </InlineStack>
+              </BlockStack>
+            </Card>
+
+            <Card padding="400">
+              <BlockStack gap="400">
+                <Text variant="headingLg" as="h2">Section 3: Safety Nets</Text>
+                
+                {safetyMessage !== "" && (
+                  <div style={{ minHeight: "54px" }}>
+                    <Banner tone="success" title="File Download Started">
+                      <Text as="p">{safetyMessage}</Text>
+                    </Banner>
+                  </div>
+                )}
+
+                {safetyError !== "" && (
+                  <div style={{ minHeight: "54px" }}>
+                    <Banner tone="critical" title="File Creation Failed">
+                      <Text as="p">{safetyError}</Text>
+                    </Banner>
+                  </div>
+                )}
+
+                <InlineStack gap="300">
+                  <div style={{ minHeight: "54px", flexGrow: 1 }}>
+                    <Button
+                      size="large"
+                      fullWidth
+                      onClick={handleExportCSV}
+                      accessibilityLabel="Export CSV of all Metafields"
+                    >
+                      Export CSV
+                    </Button>
+                  </div>
+                  <div style={{ minHeight: "54px", flexGrow: 1 }}>
+                    <Button
+                      size="large"
+                      fullWidth
+                      onClick={handleJSONSnapshot}
+                      accessibilityLabel="Download JSON Snapshot"
+                    >
+                      JSON Snapshot
+                    </Button>
+                  </div>
+                </InlineStack>
+              </BlockStack>
+            </Card>
+          </BlockStack>
+        </Layout.Section>
+      </Layout>
     </BlockStack>
   );
 }
