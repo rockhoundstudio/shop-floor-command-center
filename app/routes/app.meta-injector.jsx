@@ -57,7 +57,8 @@ function NewProductIntakeTab({ fetcher }) {
     collection_date: "",
     origin_story: "",
     treated: "",
-    stone_family: ""
+    stone_family: "",
+    primary_use: ""
   });
 
   const [pieces, setPieces] = useState([
@@ -122,11 +123,13 @@ function NewProductIntakeTab({ fetcher }) {
   }, [fetcher.state, fetcher.data]);
 
   const isSubmitting = fetcher.state !== "idle" && fetcher.formData?.get("intent") === "createProduct";
-  const safeTreatedVal = DEFAULT_DROPDOWNS.treated.includes(sharedFields.treated) ? sharedFields.treated : "";
-  const treatedOptions = [
-    { label: safeTreatedVal !== "" ? safeTreatedVal : "Select...", value: safeTreatedVal },
-    ...DEFAULT_DROPDOWNS.treated.filter(o => o !== safeTreatedVal).map(o => ({ label: o, value: o }))
+  
+  const productTypeOptions = [
+    "Cabochon", "Pendant", "Necklace", "Earrings", "Ring", "Bracelet", "Wire Wrap", "Driftwood Art", "Display Specimen", "Collector Piece", "Other"
   ];
+
+  const combinedData = { ...sharedFields, ...(pieces[0] || {}) };
+  const scanKeys = [...ROCKHOUND_FIELDS.map(f => f.key), "price"];
 
   return (
     <BlockStack gap="600">
@@ -183,10 +186,19 @@ function NewProductIntakeTab({ fetcher }) {
             <div style={{ minHeight: "54px" }}>
               <Select
                 label="Treated"
-                options={treatedOptions}
-                value={DEFAULT_DROPDOWNS.treated?.includes(sharedFields.treated) ? sharedFields.treated : ""}
+                options={[{ label: "Select...", value: "" }, ...DEFAULT_DROPDOWNS.treated.map(o => ({ label: o, value: o }))]}
+                value={sharedFields.treated}
                 onChange={(v) => handleSharedFieldChange("treated", v)}
                 accessibilityLabel="Select shared treated status"
+              />
+            </div>
+            <div style={{ minHeight: "54px" }}>
+              <Select
+                label="Product Type"
+                options={[{ label: "Select...", value: "" }, ...productTypeOptions.map(o => ({ label: o, value: o }))]}
+                value={sharedFields.primary_use}
+                onChange={(v) => handleSharedFieldChange("primary_use", v)}
+                accessibilityLabel="Select product type"
               />
             </div>
           </div>
@@ -293,6 +305,31 @@ function NewProductIntakeTab({ fetcher }) {
           Create All Pieces
         </Button>
       </div>
+
+      <Card padding="400">
+        <BlockStack gap="400">
+          <Text variant="headingMd" as="h2">Meta Scan</Text>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
+            {scanKeys.map(key => {
+              const isRequired = key === "piece_name" || key === "price" || key === "material";
+              const val = combinedData[key];
+              const isFilled = val !== undefined && val !== null && val.toString().trim() !== "";
+              const isOptionalEmpty = !isRequired && !isFilled;
+              const isRequiredEmpty = isRequired && !isFilled;
+              const labelText = key.charAt(0).toUpperCase() + key.slice(1).replace(/_/g, ' ');
+
+              return (
+                <div key={key} style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  {isFilled && <span style={{ color: "#008060" }}>●</span>}
+                  {isOptionalEmpty && <span style={{ color: "#FFC453" }}>●</span>}
+                  {isRequiredEmpty && <span style={{ color: "#D72C0D" }}>●</span>}
+                  <Text as="span">{labelText}</Text>
+                </div>
+              );
+            })}
+          </div>
+        </BlockStack>
+      </Card>
     </BlockStack>
   );
 }
