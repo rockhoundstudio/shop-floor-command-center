@@ -1,6 +1,6 @@
 import { authenticate } from "../shopify.server";
 import lookupStone from "../utils/geoLibrary";
-import { json } from "@remix-run/node";
+import { json } from "react-router";
 
 // ==========================================
 // 1. ENGINE BLOCK: GRAPHQL QUERIES
