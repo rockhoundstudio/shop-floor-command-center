@@ -2,7 +2,7 @@ import React, { useState, useCallback, useEffect } from "react";
 import {
   BlockStack, InlineStack, Box, Select, TextField, Button, EmptySearchResult, Spinner, Divider, Modal, DataTable, Toast, Text
 } from "@shopify/polaris";
-import { METAFIELD_CONFIG, getLabelForValue } from "./app.meta-injector.constants";
+import { METAFIELD_CONFIG, getLabelForValue } from "../utils/meta-injector.constants";
 
 export function InspectorTab({ products, fetcher }) {
   const [activeProductId, setActiveProductId] = useState("");
@@ -180,7 +180,7 @@ export function InspectorTab({ products, fetcher }) {
               >
                 Verify & Save Changes
               </Button>
-            </div>
+              </div>
           </InlineStack>
           <Divider />
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>

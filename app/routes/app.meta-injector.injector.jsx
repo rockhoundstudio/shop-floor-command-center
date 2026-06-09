@@ -15,7 +15,7 @@ import {
   DataTable,
   Banner
 } from "@shopify/polaris";
-import { METAFIELD_CONFIG } from "./app.meta-injector.constants";
+import { METAFIELD_CONFIG } from "../utils/meta-injector.constants";
 
 const getStaticOptions = (cleanName, fieldKey) => {
   const normalizedName = (cleanName || "").toLowerCase().trim();

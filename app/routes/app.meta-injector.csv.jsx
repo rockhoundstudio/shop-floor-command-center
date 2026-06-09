@@ -1,7 +1,7 @@
 import React, { useCallback } from "react";
 import { BlockStack, Card, Text, InlineStack, Button, Box } from "@shopify/polaris";
 import { ExportIcon, ImportIcon } from "@shopify/polaris-icons";
-import { METAFIELD_CONFIG } from "./app.meta-injector.constants";
+import { METAFIELD_CONFIG } from "../utils/meta-injector.constants";
 
 export function CsvTab({ fetcher, products = [] }) {
   const tapTargetStyle = { minHeight: '48px', minWidth: '48px', display: 'flex', alignItems: 'center', justifyContent: 'center' };

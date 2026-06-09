@@ -10,7 +10,7 @@ import {
   Text,
   Button
 } from "@shopify/polaris";
-import { METAFIELD_CONFIG, getLabelForValue } from "./app.meta-injector.constants";
+import { METAFIELD_CONFIG, getLabelForValue } from "../utils/meta-injector.constants";
 
 export function MatrixTab({ fetcher, products = [], metaobjectHandles = {}, onInspectProduct }) {
   const [matrixMissingFilter, setMatrixMissingFilter] = useState("");

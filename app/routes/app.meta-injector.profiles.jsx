@@ -2,7 +2,7 @@ import React, { useState, useCallback, useEffect } from "react";
 import {
   BlockStack, Box, Text, Scrollable, Checkbox, Select, Card, Button, Modal, Toast, EmptySearchResult, InlineStack, FormLayout, TextField
 } from "@shopify/polaris";
-import { METAFIELD_CONFIG, getLabelForValue } from "./app.meta-injector.constants";
+import { METAFIELD_CONFIG, getLabelForValue } from "../utils/meta-injector.constants";
 
 export function ProfilesTab({ fetcher, products = [], dbProfiles = [] }) {
   const [profileSelectedIndex, setProfileSelectedIndex] = useState(0);
