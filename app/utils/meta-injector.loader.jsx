@@ -1,4 +1,4 @@
-import { json } from "@remix-run/node";
+import { data as json } from "react-router";
 import { authenticate } from "../shopify.server";
 
 const GET_PRODUCTS_QUERY = `
