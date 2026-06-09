@@ -20,7 +20,7 @@ const GET_METAFIELD_DEFINITIONS_QUERY = `
 
 const GET_SNAPSHOTS_QUERY = `
   query GetSnapshots {
-    metaobjects(type: "rockhound_snapshot", first: 10, sortKey: "updated_at", reverse: true) {
+    metaobjects(type: "rockhound_snapshot", first: 10) {
       edges { node { id handle updatedAt fields { key value } } }
     }
   }
