@@ -49,6 +49,11 @@ const DEFAULT_DROPDOWNS = {
   wire_material: ["Copper wire", "Brass wire", "Sterling silver wire", "Gold plated wire", "Copper and brass mixed"]
 };
 
+const REQUIRED_FIELDS = [
+  "piece_name", "primary_medium", "handcrafted_by", "is_one_of_a_kind", 
+  "treated", "material", "origin_story", "collection_name", "primary_use", "price"
+];
+
 // --- TAB 1: NEW PRODUCT INTAKE ---
 function NewProductIntakeTab({ fetcher }) {
   const [sharedFields, setSharedFields] = useState({
@@ -129,7 +134,7 @@ function NewProductIntakeTab({ fetcher }) {
   ];
 
   const combinedData = { ...sharedFields, ...(pieces[0] || {}) };
-  const scanKeys = [...ROCKHOUND_FIELDS.map(f => f.key), "price"];
+  const scanKeys = [...ROCKHOUND_FIELDS.map(f => f.key), "origin_story", "price"];
 
   const actionData = fetcher.data;
   const useSaved = actionData?.success === true;
@@ -138,10 +143,16 @@ function NewProductIntakeTab({ fetcher }) {
     actionData.savedMetafields.forEach(mf => { savedMap[mf.key] = mf.value; });
   }
 
-  const renderLabel = (text, value, isRequired) => {
+  const renderLabel = (text, key, value) => {
+    const isRequired = REQUIRED_FIELDS.includes(key);
     const isFilled = value !== undefined && value !== null && value.toString().trim() !== "";
     const dotColor = isFilled ? "#008060" : (isRequired ? "#D72C0D" : "#FFC453");
-    return <span><span style={{color: dotColor, fontSize: 10, marginRight: 4}}>●</span>{text}</span>;
+    return (
+      <span>
+        <span style={{color: dotColor, fontSize: "18px", lineHeight: "18px", width: "18px", display: "inline-block", textAlign: "center", marginRight: "4px"}}>●</span>
+        {text}
+      </span>
+    );
   };
 
   return (
@@ -152,7 +163,7 @@ function NewProductIntakeTab({ fetcher }) {
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "24px" }}>
             <div style={{ minHeight: "54px" }}>
               <TextField
-                label={renderLabel("Material", sharedFields.material, true)}
+                label={renderLabel("Material", "material", sharedFields.material)}
                 value={sharedFields.material}
                 onChange={(v) => handleSharedFieldChange("material", v)}
                 autoComplete="off"
@@ -161,7 +172,7 @@ function NewProductIntakeTab({ fetcher }) {
             </div>
             <div style={{ minHeight: "54px" }}>
               <TextField
-                label={renderLabel("Stone Family", sharedFields.stone_family, false)}
+                label={renderLabel("Stone Family", "stone_family", sharedFields.stone_family)}
                 value={sharedFields.stone_family}
                 onChange={(v) => handleSharedFieldChange("stone_family", v)}
                 autoComplete="off"
@@ -170,7 +181,7 @@ function NewProductIntakeTab({ fetcher }) {
             </div>
             <div style={{ minHeight: "54px" }}>
               <TextField
-                label={renderLabel("Collection Location", sharedFields.collection_location, false)}
+                label={renderLabel("Collection Location", "collection_location", sharedFields.collection_location)}
                 value={sharedFields.collection_location}
                 onChange={(v) => handleSharedFieldChange("collection_location", v)}
                 autoComplete="off"
@@ -179,7 +190,7 @@ function NewProductIntakeTab({ fetcher }) {
             </div>
             <div style={{ minHeight: "54px" }}>
               <TextField
-                label={renderLabel("Collection Date", sharedFields.collection_date, false)}
+                label={renderLabel("Collection Date", "collection_date", sharedFields.collection_date)}
                 value={sharedFields.collection_date}
                 onChange={(v) => handleSharedFieldChange("collection_date", v)}
                 autoComplete="off"
@@ -188,7 +199,7 @@ function NewProductIntakeTab({ fetcher }) {
             </div>
             <div style={{ minHeight: "54px" }}>
               <TextField
-                label={renderLabel("Origin Story", sharedFields.origin_story, false)}
+                label={renderLabel("Origin Story", "origin_story", sharedFields.origin_story)}
                 value={sharedFields.origin_story}
                 onChange={(v) => handleSharedFieldChange("origin_story", v)}
                 autoComplete="off"
@@ -198,7 +209,7 @@ function NewProductIntakeTab({ fetcher }) {
             </div>
             <div style={{ minHeight: "54px" }}>
               <Select
-                label={renderLabel("Treated", sharedFields.treated, false)}
+                label={renderLabel("Treated", "treated", sharedFields.treated)}
                 options={[{ label: "Select...", value: "" }, ...DEFAULT_DROPDOWNS.treated.map(o => ({ label: o, value: o }))]}
                 value={sharedFields.treated}
                 onChange={(v) => handleSharedFieldChange("treated", v)}
@@ -207,7 +218,7 @@ function NewProductIntakeTab({ fetcher }) {
             </div>
             <div style={{ minHeight: "54px" }}>
               <Select
-                label={renderLabel("Product Type", sharedFields.primary_use, false)}
+                label={renderLabel("Product Type", "primary_use", sharedFields.primary_use)}
                 options={[{ label: "Select...", value: "" }, ...productTypeOptions.map(o => ({ label: o, value: o }))]}
                 value={sharedFields.primary_use}
                 onChange={(v) => handleSharedFieldChange("primary_use", v)}
@@ -226,7 +237,7 @@ function NewProductIntakeTab({ fetcher }) {
               <div key={piece.id} style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr auto", gap: "16px", alignItems: "end" }}>
                 <div style={{ minHeight: "54px" }}>
                   <TextField
-                    label={renderLabel("Piece Name", piece.piece_name, true)}
+                    label={renderLabel("Piece Name", "piece_name", piece.piece_name)}
                     value={piece.piece_name}
                     onChange={(v) => handlePieceChange(piece.id, "piece_name", v)}
                     autoComplete="off"
@@ -235,7 +246,7 @@ function NewProductIntakeTab({ fetcher }) {
                 </div>
                 <div style={{ minHeight: "54px" }}>
                   <TextField
-                    label={renderLabel("Dimensions (mm)", piece.dimensions_mm, false)}
+                    label={renderLabel("Dimensions (mm)", "dimensions_mm", piece.dimensions_mm)}
                     value={piece.dimensions_mm}
                     onChange={(v) => handlePieceChange(piece.id, "dimensions_mm", v)}
                     autoComplete="off"
@@ -244,7 +255,7 @@ function NewProductIntakeTab({ fetcher }) {
                 </div>
                 <div style={{ minHeight: "54px" }}>
                   <TextField
-                    label={renderLabel("Cut & Shape", piece.cut_and_shape, false)}
+                    label={renderLabel("Cut & Shape", "cut_and_shape", piece.cut_and_shape)}
                     value={piece.cut_and_shape}
                     onChange={(v) => handlePieceChange(piece.id, "cut_and_shape", v)}
                     autoComplete="off"
@@ -253,7 +264,7 @@ function NewProductIntakeTab({ fetcher }) {
                 </div>
                 <div style={{ minHeight: "54px" }}>
                   <TextField
-                    label={renderLabel("Price", piece.price, true)}
+                    label={renderLabel("Price", "price", piece.price)}
                     value={piece.price}
                     onChange={(v) => handlePieceChange(piece.id, "price", v)}
                     autoComplete="off"
@@ -322,9 +333,9 @@ function NewProductIntakeTab({ fetcher }) {
       <Card padding="400">
         <BlockStack gap="400">
           <Text variant="headingMd" as="h2">Meta Scan</Text>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
             {scanKeys.map(key => {
-              const isRequired = key === "piece_name" || key === "price" || key === "material";
+              const isRequired = REQUIRED_FIELDS.includes(key);
               const val = useSaved ? savedMap[key] : combinedData[key];
               const isFilled = val !== undefined && val !== null && val.toString().trim() !== "";
               const isOptionalEmpty = !isRequired && !isFilled;
@@ -332,11 +343,11 @@ function NewProductIntakeTab({ fetcher }) {
               const labelText = key.charAt(0).toUpperCase() + key.slice(1).replace(/_/g, ' ');
 
               return (
-                <div key={key} style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                  {isFilled && <span style={{ color: "#008060" }}>●</span>}
-                  {isOptionalEmpty && <span style={{ color: "#FFC453" }}>●</span>}
-                  {isRequiredEmpty && <span style={{ color: "#D72C0D" }}>●</span>}
-                  <Text as="span">{labelText}{useSaved && isFilled ? ` — ${val}` : ""}</Text>
+                <div key={key} style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "14px" }}>
+                  {isFilled && <span style={{ color: "#008060", fontSize: "18px", lineHeight: "18px", width: "18px", textAlign: "center" }}>●</span>}
+                  {isOptionalEmpty && <span style={{ color: "#FFC453", fontSize: "18px", lineHeight: "18px", width: "18px", textAlign: "center" }}>●</span>}
+                  {isRequiredEmpty && <span style={{ color: "#D72C0D", fontSize: "18px", lineHeight: "18px", width: "18px", textAlign: "center" }}>●</span>}
+                  <Text as="span">{labelText}{useSaved && isFilled && ` — ${val}`}</Text>
                 </div>
               );
             })}
