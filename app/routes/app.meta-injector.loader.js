@@ -73,6 +73,15 @@ const SET_METAFIELDS_MUTATION = `
   }
 `;
 
+const COLLECTION_ADD_PRODUCTS_MUTATION = `
+  mutation CollectionAddProducts($id: ID!, $productIds: [ID!]!) {
+    collectionAddProducts(id: $id, productIds: $productIds) {
+      collection { id }
+      userErrors { field message }
+    }
+  }
+`;
+
 const CREATE_METAFIELD_DEFINITION_MUTATION = `
   mutation CreateMetafieldDefinition($definition: MetafieldDefinitionInput!) {
     metafieldDefinitionCreate(definition: $definition) {
@@ -116,6 +125,18 @@ const extractOriginFromTitle = (title) => {
   const parts = title.split(" — ");
   if (parts.length >= 3) return parts[1].trim();
   return null;
+};
+
+const COLLECTION_MAP = {
+  "Spokane River": "gid://shopify/Collection/454794117371",
+  "Yakima Canyon": "gid://shopify/Collection/452884922619",
+  "Yellowstone River": "gid://shopify/Collection/454795886843",
+  "Richardson's Rock Ranch": "gid://shopify/Collection/452912972027",
+  "The 3,000-Mile Run": "gid://shopify/Collection/452913135867",
+  "Nickel Back": "gid://shopify/Collection/454794871035",
+  "Rufus Serpentine": "gid://shopify/Collection/454841237755",
+  "The Shopped Rock": "gid://shopify/Collection/454840615163",
+  "The Gallery": "gid://shopify/Collection/452886495483"
 };
 
 async function fetchAllProducts(graphql) {
@@ -541,6 +562,7 @@ export async function action({ request }) {
       const sharedFields = piecesData.sharedFields || {};
       const rows = piecesData.rows || [];
       let createdCount = 0;
+      let collectionsAssignedCount = 0;
       let savedMetafields = [];
 
       const keysList = ["piece_name","material","stone_family","color","cut_and_shape","surface_finish","dimensions_mm","weight_grams","collection_name","collection_location","collection_date","primary_use","setting_ready","bail_included","is_one_of_a_kind","treated","found_object","wire_material","artist_notes","origin_story","primary_medium","secondary_medium","handcrafted_by","price"];
@@ -601,12 +623,29 @@ export async function action({ request }) {
               errors.push(...mfResult.data.metafieldsSet.userErrors);
             }
           }
+
+          if (combinedData.collection_location && COLLECTION_MAP[combinedData.collection_location]) {
+            try {
+              const colRes = await admin.graphql(COLLECTION_ADD_PRODUCTS_MUTATION, {
+                variables: { id: COLLECTION_MAP[combinedData.collection_location], productIds: [safeProductId] }
+              });
+              const colResult = await colRes.json();
+              if (colResult.data?.collectionAddProducts?.userErrors?.length > 0) {
+                errors.push(...colResult.data.collectionAddProducts.userErrors);
+              } else {
+                collectionsAssignedCount++;
+              }
+            } catch (e) {
+              errors.push({ field: ["collectionAddProducts"], message: e.message });
+            }
+          }
+
         } catch (e) {
           errors.push({ field: ["network"], message: e.message });
         }
       }
 
-      return new Response(JSON.stringify({ success: errors.length === 0, intent, createdCount, errors, savedMetafields }), { status: 200, headers: { "Content-Type": "application/json" } });
+      return new Response(JSON.stringify({ success: errors.length === 0, intent, createdCount, collectionsAssignedCount, errors, savedMetafields }), { status: 200, headers: { "Content-Type": "application/json" } });
     }
 
     default:
