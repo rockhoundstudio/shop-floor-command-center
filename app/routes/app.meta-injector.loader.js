@@ -1,5 +1,6 @@
 import { authenticate } from "../shopify.server";
 import lookupStone from "../utils/geoLibrary";
+import { json } from "@remix-run/node";
 
 // ==========================================
 // 1. ENGINE BLOCK: GRAPHQL QUERIES
@@ -175,9 +176,7 @@ export async function loader({ request }) {
     return { id: snap.id, createdAt: new Date(snap.updatedAt).toLocaleString(), count };
   });
 
-  return new Response(JSON.stringify({ products, pageInfo, metafieldDefinitions, snapshots }), {
-    status: 200, headers: { "Content-Type": "application/json" }
-  });
+  return json({ products, pageInfo, metafieldDefinitions, snapshots });
 }
 
 export async function action({ request }) {
@@ -189,12 +188,12 @@ export async function action({ request }) {
   switch (intent) {
     case "generateSEO": {
       const formDataStr = formData.get("formData");
-      if (!formDataStr) return new Response(JSON.stringify({ success: false, error: "No form data provided" }), { status: 400 });
+      if (!formDataStr) return json({ success: false, error: "No form data provided" }, { status: 400 });
 
       const stoneData = JSON.parse(formDataStr);
       const apiKey = process.env.GEMINI_API_KEY;
 
-      if (!apiKey) return new Response(JSON.stringify({ success: false, error: "GEMINI_API_KEY missing from server." }), { status: 500 });
+      if (!apiKey) return json({ success: false, error: "GEMINI_API_KEY missing from server." }, { status: 500 });
 
       const dataPoints = Object.entries(stoneData)
         .filter(([key, value]) => value && key !== 'generated_seo')
@@ -227,25 +226,23 @@ export async function action({ request }) {
         let generatedDescription = aiData.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "";
         generatedDescription = generatedDescription.replace(/^["']|["']$/g, '').trim();
 
-        return new Response(JSON.stringify({ success: true, intent, seoDescription: generatedDescription }), {
-          status: 200, headers: { "Content-Type": "application/json" }
-        });
+        return json({ success: true, intent, seoDescription: generatedDescription });
 
       } catch (error) {
         console.error("Gemini AI Error:", error);
-        return new Response(JSON.stringify({ success: false, error: "Failed to connect to AI Forge" }), { status: 500 });
+        return json({ success: false, error: "Failed to connect to AI Forge" }, { status: 500 });
       }
     }
 
     case "smartAutoFill": {
       const productId = formData.get("productId");
-      if (!productId) return new Response(JSON.stringify({ success: false, error: "Missing productId" }), { status: 400 });
+      if (!productId) return json({ success: false, error: "Missing productId" }, { status: 400 });
 
       const response = await admin.graphql(GET_SINGLE_PRODUCT_QUERY, { variables: { id: formatStrictGid(productId, "Product") } });
       const result = await response.json();
       const product = result.data?.product;
 
-      if (!product) return new Response(JSON.stringify({ success: false, error: "Product not found" }), { status: 404 });
+      if (!product) return json({ success: false, error: "Product not found" }, { status: 404 });
 
       const autoFillData = {};
       const setIfEmpty = (key, value) => {
@@ -372,12 +369,12 @@ export async function action({ request }) {
         }
       }
 
-      return new Response(JSON.stringify({ success: true, intent, autoFillData }), { status: 200, headers: { "Content-Type": "application/json" } });
+      return json({ success: true, intent, autoFillData });
     }
 
     case "saveProduct": {
       const payloadStr = formData.get("payload");
-      if (!payloadStr) return new Response(JSON.stringify({ success: false, error: "No payload provided" }), { status: 400 });
+      if (!payloadStr) return json({ success: false, error: "No payload provided" }, { status: 400 });
 
       const payload = JSON.parse(payloadStr);
       const metafieldsInputs = payload.map(field => {
@@ -401,19 +398,19 @@ export async function action({ request }) {
         } catch (e) { errors.push({ field: ["network"], message: e.message }); }
       }
 
-      if (errors.length > 0) return new Response(JSON.stringify({ success: false, intent, errors }), { status: 422, headers: { "Content-Type": "application/json" } });
-      return new Response(JSON.stringify({ success: true, intent, errors: [] }), { status: 200, headers: { "Content-Type": "application/json" } });
+      if (errors.length > 0) return json({ success: false, intent, errors }, { status: 422 });
+      return json({ success: true, intent, errors: [] });
     }
 
     case "autoFill": {
       const productId = formData.get("productId");
-      if (!productId) return new Response(JSON.stringify({ success: false, error: "Missing productId" }), { status: 400 });
+      if (!productId) return json({ success: false, error: "Missing productId" }, { status: 400 });
 
       const response = await admin.graphql(GET_SINGLE_PRODUCT_QUERY, { variables: { id: formatStrictGid(productId, "Product") } });
       const result = await response.json();
       const product = result.data?.product;
 
-      if (!product) return new Response(JSON.stringify({ success: false, error: "Product not found" }), { status: 404 });
+      if (!product) return json({ success: false, error: "Product not found" }, { status: 404 });
 
       const autoFillData = {};
       const titleParts = product.title.split(" — ");
@@ -434,7 +431,7 @@ export async function action({ request }) {
         if (locationTag && !autoFillData.collection_location) autoFillData.collection_location = locationTag;
       }
 
-      return new Response(JSON.stringify({ success: true, intent, autoFillData }), { status: 200, headers: { "Content-Type": "application/json" } });
+      return json({ success: true, intent, autoFillData });
     }
 
     case "autoExtractAll": {
@@ -464,7 +461,7 @@ export async function action({ request }) {
         }
       }
 
-      return new Response(JSON.stringify({ success: errors.length === 0, intent, updatedCount: updates.length, errors }), { status: 200, headers: { "Content-Type": "application/json" } });
+      return json({ success: errors.length === 0, intent, updatedCount: updates.length, errors });
     }
 
     case "standardizeOOAK": {
@@ -492,7 +489,7 @@ export async function action({ request }) {
         }
       }
 
-      return new Response(JSON.stringify({ success: errors.length === 0, intent, updatedCount: updates.length, errors }), { status: 200, headers: { "Content-Type": "application/json" } });
+      return json({ success: errors.length === 0, intent, updatedCount: updates.length, errors });
     }
 
     case "saveSnapshot": {
@@ -526,7 +523,7 @@ export async function action({ request }) {
       const createResult = await createRes.json();
       if (createResult.data?.metaobjectCreate?.userErrors?.length > 0) errors.push(...createResult.data.metaobjectCreate.userErrors);
 
-      return new Response(JSON.stringify({ success: errors.length === 0, intent, errors }), { status: 200, headers: { "Content-Type": "application/json" } });
+      return json({ success: errors.length === 0, intent, errors });
     }
 
     case "exportCSV": {
@@ -551,12 +548,12 @@ export async function action({ request }) {
         csv += row.join(",") + "\n";
       });
 
-      return new Response(JSON.stringify({ success: true, intent, csv }), { status: 200, headers: { "Content-Type": "application/json" } });
+      return json({ success: true, intent, csv });
     }
 
     case "createProduct": {
       const piecesStr = formData.get("pieces");
-      if (!piecesStr) return new Response(JSON.stringify({ success: false, error: "No pieces data provided" }), { status: 400 });
+      if (!piecesStr) return json({ success: false, error: "No pieces data provided" }, { status: 400 });
 
       const piecesData = JSON.parse(piecesStr);
       const sharedFields = piecesData.sharedFields || {};
@@ -645,10 +642,10 @@ export async function action({ request }) {
         }
       }
 
-      return new Response(JSON.stringify({ success: errors.length === 0, intent, createdCount, collectionsAssignedCount, errors, savedMetafields }), { status: 200, headers: { "Content-Type": "application/json" } });
+      return json({ success: errors.length === 0, intent, createdCount, collectionsAssignedCount, errors, savedMetafields });
     }
 
     default:
-      return new Response(JSON.stringify({ success: false, error: "Unknown intent" }), { status: 400 });
+      return json({ success: false, error: "Unknown intent" }, { status: 400 });
   }
 }
