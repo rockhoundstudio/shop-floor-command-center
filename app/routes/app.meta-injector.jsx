@@ -7,7 +7,7 @@ import {
 import { MagicIcon, SaveIcon, PlusIcon } from "@shopify/polaris-icons";
 
 // --- IMPORT THE ENGINE (Loader & Action) ---
-import { loader as engineLoader, action as engineAction } from "./app.meta-injector.loader";
+import { loader as engineLoader, action as engineAction } from "../utils/meta-injector.loader";
 
 // --- EXPORT THE ENGINE FOR REMIX TO RUN ---
 export const loader = engineLoader;
