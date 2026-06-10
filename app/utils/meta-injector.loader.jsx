@@ -157,15 +157,89 @@ export async function action({ request }) {
   }
 
   if (intent === "smartAutoFill") {
-    const productId = formData.get("productId");
-    if (!productId) return json({ success: false, error: "No product ID" });
-    const res = await admin.graphql(
-      "query GetProduct($id: ID!) { product(id: $id) { title descriptionHtml } }",
-      { variables: { id: productId } }
-    );
-    const resData = await res.json();
-    const product = resData.data?.product || {};
-    return json({ success: true, intent: "smartAutoFill", title: product.title || "", description: product.descriptionHtml || "" });
+    try {
+      const productId = formData.get("productId");
+      if (!productId) return json({ success: false, error: "No product ID" });
+      
+      const res = await admin.graphql(
+        "query GetProduct($id: ID!) { product(id: $id) { title descriptionHtml } }",
+        { variables: { id: productId } }
+      );
+      
+      const resData = await res.json();
+      const product = resData.data?.product || {};
+      const productTitle = product.title || "";
+      const productDescription = product.descriptionHtml || "";
+      const promptStyle = formData.get("promptStyle") || "";
+
+      const promptText = [
+        "You are a data extraction assistant. Parse the following product title and description and return a JSON object mapping these exact keys to their best-guess values extracted from the text.",
+        "",
+        "Keys to map: piece_name, primary_medium, secondary_medium, handcrafted_by, material, stone_family, color, cut_and_shape, surface_finish, dimensions_mm, weight_grams, collection_name, collection_location, collection_date, primary_use, setting_ready, bail_included, is_one_of_a_kind, treated, found_object, wire_material, artist_notes.",
+        "",
+        "If a value cannot be confidently determined from the text, leave the string empty (\"\").",
+        "Return ONLY valid JSON with no markdown formatting.",
+        "",
+        "Style Guidelines to follow while extracting or formatting fields: " + promptStyle,
+        "",
+        "Title: " + productTitle,
+        "Description: " + productDescription
+      ].join("\n");
+
+      const geminiRes = await fetch(
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=" + process.env.GEMINI_API_KEY,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            contents: [
+              {
+                parts: [{ text: promptText }]
+              }
+            ],
+            generationConfig: {
+              response_mime_type: "application/json",
+            }
+          })
+        }
+      );
+
+      if (!geminiRes.ok) {
+        throw new Error("Gemini API returned status " + geminiRes.status);
+      }
+
+      const geminiData = await geminiRes.json();
+      const textContent = geminiData.candidates[0]?.content?.parts[0]?.text || "";
+      
+      let cleanJson = textContent.trim();
+      const bt = String.fromCharCode(96, 96, 96);
+      
+      if (cleanJson.startsWith(bt + "json")) {
+        cleanJson = cleanJson.slice(7).trim();
+        if (cleanJson.endsWith(bt)) {
+          cleanJson = cleanJson.slice(0, -3).trim();
+        }
+      } else if (cleanJson.startsWith(bt)) {
+        cleanJson = cleanJson.slice(3).trim();
+        if (cleanJson.endsWith(bt)) {
+          cleanJson = cleanJson.slice(0, -3).trim();
+        }
+      }
+
+      const parsedValues = JSON.parse(cleanJson);
+
+      return json({ 
+        success: true, 
+        intent: "smartAutoFill", 
+        fields: parsedValues,
+        autoFillData: parsedValues 
+      });
+    } catch (error) {
+      console.error("Gemini SmartAutoFill Error:", error);
+      return json({ success: false, error: "Gemini parse failed" });
+    }
   }
 
   if (intent === "autoFill") {
@@ -192,10 +266,18 @@ export async function action({ request }) {
         "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=" + process.env.GEMINI_API_KEY,
         {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+          },
           body: JSON.stringify({
-            contents: [{ parts: [{ text: promptText }] }],
-            generationConfig: { response_mime_type: "application/json" }
+            contents: [
+              {
+                parts: [{ text: promptText }]
+              }
+            ],
+            generationConfig: {
+              response_mime_type: "application/json",
+            }
           })
         }
       );
@@ -206,21 +288,30 @@ export async function action({ request }) {
 
       const geminiData = await geminiRes.json();
       const textContent = geminiData.candidates[0]?.content?.parts[0]?.text || "";
-
+      
       let cleanJson = textContent.trim();
       const bt = String.fromCharCode(96, 96, 96);
-
+      
       if (cleanJson.startsWith(bt + "json")) {
         cleanJson = cleanJson.slice(7).trim();
-        if (cleanJson.endsWith(bt)) { cleanJson = cleanJson.slice(0, -3).trim(); }
+        if (cleanJson.endsWith(bt)) {
+          cleanJson = cleanJson.slice(0, -3).trim();
+        }
       } else if (cleanJson.startsWith(bt)) {
         cleanJson = cleanJson.slice(3).trim();
-        if (cleanJson.endsWith(bt)) { cleanJson = cleanJson.slice(0, -3).trim(); }
+        if (cleanJson.endsWith(bt)) {
+          cleanJson = cleanJson.slice(0, -3).trim();
+        }
       }
 
       const parsedValues = JSON.parse(cleanJson);
-      return json({ success: true, intent: "autoFill", fields: parsedValues });
 
+      return json({ 
+        success: true, 
+        intent: "autoFill", 
+        fields: parsedValues,
+        autoFillData: parsedValues
+      });
     } catch (error) {
       console.error("Gemini AutoFill Error:", error);
       return json({ success: false, error: "Gemini parse failed" });

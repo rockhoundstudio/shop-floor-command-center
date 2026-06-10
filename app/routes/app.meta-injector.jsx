@@ -483,18 +483,15 @@ function IntakeBenchTab({ products, fetcher }) {
       const isSuccess = fetcher.data.success === true;
       const isError = fetcher.data.success === false;
 
-      if ((isAutoFill || isSmartAutoFill) && isSuccess) {
+      if ((isAutoFill || isSmartAutoFill) && isSuccess && fetcher.data.fields) {
         setFormState(prev => {
           const updatedState = { ...prev };
-          if (fetcher.data.autoFillData) {
-            Object.entries(fetcher.data.autoFillData).forEach(([key, val]) => {
-              const isMissing = !updatedState[key] || updatedState[key].toString().trim() === "";
-              const hasNewValue = val !== undefined && val !== null && val.toString().trim() !== "";
-              if (isMissing && hasNewValue) {
-                updatedState[key] = val;
-              }
-            });
-          }
+          Object.entries(fetcher.data.fields).forEach(([key, val]) => {
+            const hasNewValue = val !== undefined && val !== null && val.toString().trim() !== "";
+            if (hasNewValue) {
+              updatedState[key] = val;
+            }
+          });
           return updatedState;
         });
 
