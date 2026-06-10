@@ -156,6 +156,18 @@ export async function action({ request }) {
     return json({ success: true, intent: "createProduct", createdCount: results.filter(r => r.productId).length });
   }
 
+  if (intent === "smartAutoFill") {
+    const productId = formData.get("productId");
+    if (!productId) return json({ success: false, error: "No product ID" });
+    const res = await admin.graphql(
+      "query GetProduct($id: ID!) { product(id: $id) { title descriptionHtml } }",
+      { variables: { id: productId } }
+    );
+    const resData = await res.json();
+    const product = resData.data?.product || {};
+    return json({ success: true, intent: "smartAutoFill", title: product.title || "", description: product.descriptionHtml || "" });
+  }
+
   if (intent === "autoFill") {
     try {
       const productTitle = formData.get("productTitle") || "";
@@ -180,18 +192,10 @@ export async function action({ request }) {
         "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=" + process.env.GEMINI_API_KEY,
         {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            contents: [
-              {
-                parts: [{ text: promptText }]
-              }
-            ],
-            generationConfig: {
-              response_mime_type: "application/json",
-            }
+            contents: [{ parts: [{ text: promptText }] }],
+            generationConfig: { response_mime_type: "application/json" }
           })
         }
       );
@@ -202,25 +206,21 @@ export async function action({ request }) {
 
       const geminiData = await geminiRes.json();
       const textContent = geminiData.candidates[0]?.content?.parts[0]?.text || "";
-      
+
       let cleanJson = textContent.trim();
-      const bt = String.fromCharCode(96, 96, 96); // Safely generate ```
-      
+      const bt = String.fromCharCode(96, 96, 96);
+
       if (cleanJson.startsWith(bt + "json")) {
         cleanJson = cleanJson.slice(7).trim();
-        if (cleanJson.endsWith(bt)) {
-          cleanJson = cleanJson.slice(0, -3).trim();
-        }
+        if (cleanJson.endsWith(bt)) { cleanJson = cleanJson.slice(0, -3).trim(); }
       } else if (cleanJson.startsWith(bt)) {
         cleanJson = cleanJson.slice(3).trim();
-        if (cleanJson.endsWith(bt)) {
-          cleanJson = cleanJson.slice(0, -3).trim();
-        }
+        if (cleanJson.endsWith(bt)) { cleanJson = cleanJson.slice(0, -3).trim(); }
       }
 
       const parsedValues = JSON.parse(cleanJson);
-
       return json({ success: true, intent: "autoFill", fields: parsedValues });
+
     } catch (error) {
       console.error("Gemini AutoFill Error:", error);
       return json({ success: false, error: "Gemini parse failed" });
