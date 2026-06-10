@@ -196,7 +196,4 @@ export async function action({ request }) {
       const textContent = geminiData.candidates[0]?.content?.parts[0]?.text || "";
 
       let cleanJson = textContent.trim();
-      const BACKTICK3 = String.fromCharCode(96, 96, 96);
-      const BACKTICK3JSON = String.fromCharCode(96, 96, 96) + "json";
-      if (cleanJson.startsWith(BACKTICK3JSON)) {
-        cleanJson = cleanJson.slice(BACKTICK3JSON.length).replace(/^\n/, "").replace(/\n?
+      if (cleanJson.slice(0,7) === String.fromCharCode(96,96,96,106,115,111,110)) { cleanJson = cleanJson.slice(7); if (cleanJson[0] === "\n") cleanJson = cleanJson.slice(1); if (cleanJson.slice(-3) === String.fromCharCode(96,96,96)) cleanJson = cleanJson.slice(0,-3).trimEnd(); } else if (cleanJson.slice(0,3) === String.fromCharCode(96,96,96)) { cleanJson = cleanJson.slice(3); if (cleanJson[0] === "\n") cleanJson = cleanJson.slice(1); if (cleanJson.slice(-3) === String.fromCharCode(96,96,96)) cleanJson = cleanJson.slice(0,-3).trimEnd(); }
