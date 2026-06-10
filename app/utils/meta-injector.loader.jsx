@@ -156,5 +156,65 @@ export async function action({ request }) {
     return json({ success: true, intent: "createProduct", createdCount: results.filter(r => r.productId).length });
   }
 
+  if (intent === "autoFill") {
+    try {
+      const productTitle = formData.get("productTitle") || "";
+      const productDescription = formData.get("productDescription") || "";
+
+      const promptText = `
+        You are a data extraction assistant. Parse the following product title and description and return a JSON object mapping these exact keys to their best-guess values extracted from the text.
+        
+        Keys to map: piece_name, primary_medium, secondary_medium, handcrafted_by, material, stone_family, color, cut_and_shape, surface_finish, dimensions_mm, weight_grams, collection_name, collection_location, collection_date, primary_use, setting_ready, bail_included, is_one_of_a_kind, treated, found_object, wire_material, artist_notes.
+        
+        If a value cannot be confidently determined from the text, leave the string empty ("").
+        Return ONLY valid JSON with no markdown formatting.
+
+        Title: ${productTitle}
+        Description: ${productDescription}
+      `;
+
+      const geminiRes = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro-preview-06-05:generateContent?key=${process.env.GEMINI_API_KEY}`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            contents: [
+              {
+                parts: [{ text: promptText }]
+              }
+            ],
+            generationConfig: {
+              response_mime_type: "application/json",
+            }
+          })
+        }
+      );
+
+      if (!geminiRes.ok) {
+        throw new Error(`Gemini API returned status ${geminiRes.status}`);
+      }
+
+      const geminiData = await geminiRes.json();
+      const textContent = geminiData.candidates[0]?.content?.parts[0]?.text || "";
+      
+      let cleanJson = textContent.trim();
+      if (cleanJson.startsWith("```json")) {
+        cleanJson = cleanJson.replace(/^```json\n?/, "").replace(/\n?```$/, "");
+      } else if (cleanJson.startsWith("```")) {
+        cleanJson = cleanJson.replace(/^```\n?/, "").replace(/\n?```$/, "");
+      }
+
+      const parsedValues = JSON.parse(cleanJson);
+
+      return json({ success: true, intent: "autoFill", fields: parsedValues });
+    } catch (error) {
+      console.error("Gemini AutoFill Error:", error);
+      return json({ success: false, error: "Gemini parse failed" });
+    }
+  }
+
   return json({ success: false, error: "Unknown intent" });
 }
