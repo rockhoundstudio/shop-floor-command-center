@@ -157,6 +157,8 @@ export async function action({ request }) {
   }
 
   if (intent === "smartAutoFill") {
+    let geminiStatus = 0;
+    let rawTextOutput = "";
     try {
       const productId = formData.get("productId");
       if (!productId) return json({ success: false, error: "No product ID" });
@@ -206,13 +208,20 @@ export async function action({ request }) {
         }
       );
 
+      geminiStatus = geminiRes.status;
+
       if (!geminiRes.ok) {
-        throw new Error("Gemini API returned status " + geminiRes.status);
+        const errorBody = await geminiRes.text();
+        console.error("Gemini API Error Status:", geminiStatus, "Body:", errorBody);
+        return json({ success: false, error: "Gemini parse failed", status: geminiStatus, raw: errorBody });
       }
 
       const geminiData = await geminiRes.json();
       const textContent = geminiData.candidates[0]?.content?.parts[0]?.text || "";
+      rawTextOutput = textContent;
       
+      console.log("Gemini SmartAutoFill Raw Output textContent:", textContent);
+
       let cleanJson = textContent.trim();
       const firstBrace = cleanJson.indexOf('{');
       const lastBrace = cleanJson.lastIndexOf('}');
@@ -230,12 +239,14 @@ export async function action({ request }) {
         autoFillData: parsedValues 
       });
     } catch (error) {
-      console.error("Gemini SmartAutoFill Error:", error);
-      return json({ success: false, error: "Gemini parse failed" });
+      console.error("Gemini SmartAutoFill Exception Caught:", error);
+      return json({ success: false, error: "Gemini parse failed", status: geminiStatus, raw: rawTextOutput || error.message });
     }
   }
 
   if (intent === "autoFill") {
+    let geminiStatus = 0;
+    let rawTextOutput = "";
     try {
       const productTitle = formData.get("productTitle") || "";
       const productDescription = formData.get("productDescription") || "";
@@ -275,13 +286,20 @@ export async function action({ request }) {
         }
       );
 
+      geminiStatus = geminiRes.status;
+
       if (!geminiRes.ok) {
-        throw new Error("Gemini API returned status " + geminiRes.status);
+        const errorBody = await geminiRes.text();
+        console.error("Gemini API Error Status:", geminiStatus, "Body:", errorBody);
+        return json({ success: false, error: "Gemini parse failed", status: geminiStatus, raw: errorBody });
       }
 
       const geminiData = await geminiRes.json();
       const textContent = geminiData.candidates[0]?.content?.parts[0]?.text || "";
-      
+      rawTextOutput = textContent;
+
+      console.log("Gemini AutoFill Raw Output textContent:", textContent);
+
       let cleanJson = textContent.trim();
       const firstBrace = cleanJson.indexOf('{');
       const lastBrace = cleanJson.lastIndexOf('}');
@@ -299,8 +317,8 @@ export async function action({ request }) {
         autoFillData: parsedValues
       });
     } catch (error) {
-      console.error("Gemini AutoFill Error:", error);
-      return json({ success: false, error: "Gemini parse failed" });
+      console.error("Gemini AutoFill Exception Caught:", error);
+      return json({ success: false, error: "Gemini parse failed", status: geminiStatus, raw: rawTextOutput || error.message });
     }
   }
 
