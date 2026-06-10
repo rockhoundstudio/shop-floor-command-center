@@ -160,21 +160,23 @@ export async function action({ request }) {
     try {
       const productTitle = formData.get("productTitle") || "";
       const productDescription = formData.get("productDescription") || "";
+      const promptStyle = formData.get("promptStyle") || "";
 
       const promptText = `
         You are a data extraction assistant. Parse the following product title and description and return a JSON object mapping these exact keys to their best-guess values extracted from the text.
-        
+
         Keys to map: piece_name, primary_medium, secondary_medium, handcrafted_by, material, stone_family, color, cut_and_shape, surface_finish, dimensions_mm, weight_grams, collection_name, collection_location, collection_date, primary_use, setting_ready, bail_included, is_one_of_a_kind, treated, found_object, wire_material, artist_notes.
-        
+
         If a value cannot be confidently determined from the text, leave the string empty ("").
         Return ONLY valid JSON with no markdown formatting.
 
         Title: ${productTitle}
         Description: ${productDescription}
+        ${promptStyle ? `Presentation style instructions: ${promptStyle}` : ""}
       `;
 
       const geminiRes = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro-preview-06-05:generateContent?key=${process.env.GEMINI_API_KEY}`,
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
         {
           method: "POST",
           headers: {
@@ -199,22 +201,6 @@ export async function action({ request }) {
 
       const geminiData = await geminiRes.json();
       const textContent = geminiData.candidates[0]?.content?.parts[0]?.text || "";
-      
+
       let cleanJson = textContent.trim();
-      if (cleanJson.startsWith("```json")) {
-        cleanJson = cleanJson.replace(/^```json\n?/, "").replace(/\n?```$/, "");
-      } else if (cleanJson.startsWith("```")) {
-        cleanJson = cleanJson.replace(/^```\n?/, "").replace(/\n?```$/, "");
-      }
-
-      const parsedValues = JSON.parse(cleanJson);
-
-      return json({ success: true, intent: "autoFill", fields: parsedValues });
-    } catch (error) {
-      console.error("Gemini AutoFill Error:", error);
-      return json({ success: false, error: "Gemini parse failed" });
-    }
-  }
-
-  return json({ success: false, error: "Unknown intent" });
-}
+      if (cleanJson.startsWith("

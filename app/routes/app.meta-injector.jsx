@@ -376,6 +376,7 @@ function IntakeBenchTab({ products, fetcher }) {
   const [formState, setFormState] = useState({});
   const [statusMessage, setStatusMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
+  const [promptStyle, setPromptStyle] = useState("");
 
   const handleSelectProduct = useCallback((id) => {
     setSelectedProductId(id);
@@ -410,11 +411,22 @@ function IntakeBenchTab({ products, fetcher }) {
     if (!selectedProductId) return;
     setStatusMessage("");
     setErrorMessage("");
+
+    const product = products.find(p => p.id === selectedProductId) || {};
+    const title = product.title || "";
+    const description = product.descriptionHtml || product.description || "";
+
     fetcher.submit(
-      { intent: "autoFill", productId: selectedProductId },
+      { 
+        intent: "autoFill", 
+        productId: selectedProductId,
+        productTitle: title,
+        productDescription: description,
+        promptStyle: promptStyle
+      },
       { method: "post" }
     );
-  }, [selectedProductId, fetcher]);
+  }, [selectedProductId, fetcher, products, promptStyle]);
 
   const handleInject = useCallback(() => {
     if (!selectedProductId) return;
@@ -559,6 +571,18 @@ function IntakeBenchTab({ products, fetcher }) {
                   </Banner>
                 </div>
               )}
+
+              <div style={{ minHeight: "54px" }}>
+                <TextField
+                  label="Gemini Presentation Style"
+                  placeholder="e.g. Write with OOAK grit — raw, earthy, one-of-a-kind stone energy. No corporate language."
+                  value={promptStyle}
+                  onChange={setPromptStyle}
+                  multiline={3}
+                  autoComplete="off"
+                  disabled={!selectedProductId}
+                />
+              </div>
 
               <InlineStack gap="300" align="space-between">
                 <div style={{ minHeight: "54px", flexGrow: 1 }}>
@@ -1160,7 +1184,7 @@ export default function MetaInjectorV2() {
     <Frame>
       <Page
         fullWidth
-        title="Shop Floor Command Center"
+        title="Meta Injector"
         subtitle="Data Integrity & Operations Hub"
         backAction={{ content: "Dashboard", onAction: () => navigate("/app"), accessibilityLabel: "Back to Dashboard" }}
       >
