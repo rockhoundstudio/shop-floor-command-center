@@ -1165,7 +1165,7 @@ function OperationsMatrixTab({ products, fetcher }) {
 export default function MetaInjectorV2() {
   const { products } = useLoaderData() || {};
   const navigate = useNavigate();
-  const primaryFetcher = useFetcher();
+  const fetcher = useFetcher();
 
   const [selectedTab, setSelectedTab] = useState(0);
 
@@ -1175,7 +1175,7 @@ export default function MetaInjectorV2() {
     { id: 'ops', content: '3. Operations Matrix', accessibilityLabel: 'Operations Matrix Tab' }
   ];
 
-  const hasErrors = primaryFetcher.data && primaryFetcher.data.errors && primaryFetcher.data.errors.length > 0;
+  const hasErrors = fetcher.data && fetcher.data.errors && fetcher.data.errors.length > 0;
   const isTabOne = selectedTab === 0;
   const isTabTwo = selectedTab === 1;
   const isTabThree = selectedTab === 2;
@@ -1194,7 +1194,7 @@ export default function MetaInjectorV2() {
               <Box paddingBlockEnd="400">
                 <Banner tone="critical" title="GraphQL Mutation Errors Detected">
                   <BlockStack gap="200">
-                    {primaryFetcher.data.errors.map((err, i) => (
+                    {fetcher.data.errors.map((err, i) => (
                       <Text key={i} as="p">{err.message}</Text>
                     ))}
                   </BlockStack>
@@ -1205,9 +1205,9 @@ export default function MetaInjectorV2() {
             <Card padding="0">
               <Tabs tabs={tabs} selected={selectedTab} onSelect={setSelectedTab} fitted>
                 <Box padding="600" background="bg-surface-secondary">
-                  {isTabOne && <NewProductIntakeTab fetcher={primaryFetcher} />}
-                  {isTabTwo && <IntakeBenchTab products={products} fetcher={primaryFetcher} />}
-                  {isTabThree && <OperationsMatrixTab products={products} fetcher={primaryFetcher} />}
+                  {isTabOne && <NewProductIntakeTab fetcher={fetcher} />}
+                  {isTabTwo && <IntakeBenchTab products={products} fetcher={fetcher} />}
+                  {isTabThree && <OperationsMatrixTab products={products} fetcher={fetcher} />}
                 </Box>
               </Tabs>
             </Card>
