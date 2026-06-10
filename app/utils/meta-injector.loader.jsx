@@ -162,28 +162,36 @@ export async function action({ request }) {
       const productDescription = formData.get("productDescription") || "";
       const promptStyle = formData.get("promptStyle") || "";
 
-      const lines = [
+      const promptText = [
         "You are a data extraction assistant. Parse the following product title and description and return a JSON object mapping these exact keys to their best-guess values extracted from the text.",
         "",
         "Keys to map: piece_name, primary_medium, secondary_medium, handcrafted_by, material, stone_family, color, cut_and_shape, surface_finish, dimensions_mm, weight_grams, collection_name, collection_location, collection_date, primary_use, setting_ready, bail_included, is_one_of_a_kind, treated, found_object, wire_material, artist_notes.",
         "",
-        "If a value cannot be confidently determined from the text, leave the string empty.",
+        "If a value cannot be confidently determined from the text, leave the string empty (\"\").",
         "Return ONLY valid JSON with no markdown formatting.",
+        "",
+        "Style Guidelines to follow while extracting or formatting fields: " + promptStyle,
         "",
         "Title: " + productTitle,
         "Description: " + productDescription
-      ];
-      if (promptStyle) { lines.push("Presentation style instructions: " + promptStyle); }
-      const promptText = lines.join("\n");
+      ].join("\n");
 
       const geminiRes = await fetch(
         "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=" + process.env.GEMINI_API_KEY,
         {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+          },
           body: JSON.stringify({
-            contents: [{ parts: [{ text: promptText }] }],
-            generationConfig: { response_mime_type: "application/json" }
+            contents: [
+              {
+                parts: [{ text: promptText }]
+              }
+            ],
+            generationConfig: {
+              response_mime_type: "application/json",
+            }
           })
         }
       );
@@ -194,6 +202,30 @@ export async function action({ request }) {
 
       const geminiData = await geminiRes.json();
       const textContent = geminiData.candidates[0]?.content?.parts[0]?.text || "";
-
+      
       let cleanJson = textContent.trim();
-      if (cleanJson.slice(0,7) === String.fromCharCode(96,96,96,106,115,111,110)) { cleanJson = cleanJson.slice(7); if (cleanJson[0] === "\n") cleanJson = cleanJson.slice(1); if (cleanJson.slice(-3) === String.fromCharCode(96,96,96)) cleanJson = cleanJson.slice(0,-3).trimEnd(); } else if (cleanJson.slice(0,3) === String.fromCharCode(96,96,96)) { cleanJson = cleanJson.slice(3); if (cleanJson[0] === "\n") cleanJson = cleanJson.slice(1); if (cleanJson.slice(-3) === String.fromCharCode(96,96,96)) cleanJson = cleanJson.slice(0,-3).trimEnd(); }
+      const bt = String.fromCharCode(96, 96, 96); // Safely generate ```
+      
+      if (cleanJson.startsWith(bt + "json")) {
+        cleanJson = cleanJson.slice(7).trim();
+        if (cleanJson.endsWith(bt)) {
+          cleanJson = cleanJson.slice(0, -3).trim();
+        }
+      } else if (cleanJson.startsWith(bt)) {
+        cleanJson = cleanJson.slice(3).trim();
+        if (cleanJson.endsWith(bt)) {
+          cleanJson = cleanJson.slice(0, -3).trim();
+        }
+      }
+
+      const parsedValues = JSON.parse(cleanJson);
+
+      return json({ success: true, intent: "autoFill", fields: parsedValues });
+    } catch (error) {
+      console.error("Gemini AutoFill Error:", error);
+      return json({ success: false, error: "Gemini parse failed" });
+    }
+  }
+
+  return json({ success: false, error: "Unknown intent" });
+}
