@@ -156,6 +156,76 @@ export async function action({ request }) {
     return json({ success: true, intent: "createProduct", createdCount: results.filter(r => r.productId).length });
   }
 
+  if (intent === "saveProduct") {
+    try {
+      let metafieldsToSet = [];
+      const rawPayload = formData.get("payload");
+
+      if (rawPayload) {
+        metafieldsToSet = JSON.parse(rawPayload);
+      } else {
+        const productId = formData.get("productId");
+        if (!productId) {
+          return json({ success: false, error: "Save failed", details: [{ message: "No product ID provided" }] });
+        }
+        
+        const formatId = productId.includes("gid://") ? productId : `gid://shopify/Product/${productId}`;
+        
+        const keysList = [
+          "piece_name", "primary_medium", "secondary_medium", "handcrafted_by",
+          "material", "stone_family", "color", "cut_and_shape", "surface_finish",
+          "dimensions_mm", "weight_grams", "collection_name", "collection_location",
+          "collection_date", "primary_use", "setting_ready", "bail_included",
+          "is_one_of_a_kind", "treated", "found_object", "wire_material",
+          "artist_notes"
+        ];
+
+        keysList.forEach(key => {
+          const val = formData.get(key);
+          if (val && val.toString().trim() !== "") {
+            metafieldsToSet.push({
+              ownerId: formatId,
+              namespace: "rockhound",
+              key: key,
+              value: val.toString().trim(),
+              type: "single_line_text_field"
+            });
+          }
+        });
+      }
+
+      if (metafieldsToSet.length === 0) {
+        return json({ success: false, error: "Save failed", details: [{ message: "No populated fields to save" }] });
+      }
+
+      const chunks = chunkArray(metafieldsToSet, 10);
+      let userErrors = [];
+
+      for (const chunk of chunks) {
+        const res = await admin.graphql(SET_METAFIELDS_MUTATION, {
+          variables: { metafields: chunk }
+        });
+        const resData = await res.json();
+        
+        const errors = resData.data?.metafieldsSet?.userErrors || [];
+        if (errors.length > 0) {
+          userErrors = userErrors.concat(errors);
+        }
+        
+        await new Promise(r => setTimeout(r, 300));
+      }
+
+      if (userErrors.length > 0) {
+        return json({ success: false, error: "Save failed", details: userErrors });
+      }
+
+      return json({ success: true, intent: "saveProduct" });
+    } catch (error) {
+      console.error("Save Product Exception Caught:", error);
+      return json({ success: false, error: "Save failed", details: [{ message: error.message }] });
+    }
+  }
+
   if (intent === "smartAutoFill") {
     let geminiStatus = 0;
     let rawTextOutput = "";
