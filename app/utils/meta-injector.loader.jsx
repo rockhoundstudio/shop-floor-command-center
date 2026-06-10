@@ -214,18 +214,11 @@ export async function action({ request }) {
       const textContent = geminiData.candidates[0]?.content?.parts[0]?.text || "";
       
       let cleanJson = textContent.trim();
-      const bt = String.fromCharCode(96, 96, 96);
+      const firstBrace = cleanJson.indexOf('{');
+      const lastBrace = cleanJson.lastIndexOf('}');
       
-      if (cleanJson.startsWith(bt + "json")) {
-        cleanJson = cleanJson.slice(7).trim();
-        if (cleanJson.endsWith(bt)) {
-          cleanJson = cleanJson.slice(0, -3).trim();
-        }
-      } else if (cleanJson.startsWith(bt)) {
-        cleanJson = cleanJson.slice(3).trim();
-        if (cleanJson.endsWith(bt)) {
-          cleanJson = cleanJson.slice(0, -3).trim();
-        }
+      if (firstBrace !== -1 && lastBrace !== -1) {
+        cleanJson = cleanJson.slice(firstBrace, lastBrace + 1);
       }
 
       const parsedValues = JSON.parse(cleanJson);
@@ -290,18 +283,11 @@ export async function action({ request }) {
       const textContent = geminiData.candidates[0]?.content?.parts[0]?.text || "";
       
       let cleanJson = textContent.trim();
-      const bt = String.fromCharCode(96, 96, 96);
+      const firstBrace = cleanJson.indexOf('{');
+      const lastBrace = cleanJson.lastIndexOf('}');
       
-      if (cleanJson.startsWith(bt + "json")) {
-        cleanJson = cleanJson.slice(7).trim();
-        if (cleanJson.endsWith(bt)) {
-          cleanJson = cleanJson.slice(0, -3).trim();
-        }
-      } else if (cleanJson.startsWith(bt)) {
-        cleanJson = cleanJson.slice(3).trim();
-        if (cleanJson.endsWith(bt)) {
-          cleanJson = cleanJson.slice(0, -3).trim();
-        }
+      if (firstBrace !== -1 && lastBrace !== -1) {
+        cleanJson = cleanJson.slice(firstBrace, lastBrace + 1);
       }
 
       const parsedValues = JSON.parse(cleanJson);
