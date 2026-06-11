@@ -1,6 +1,6 @@
 import { authenticate } from "../shopify.server";
-import { lookupStone } from "../utils/geoLibrary.jsx";
-import { TARGET_KEYS } from "../utils/metaScan.jsx";
+import { lookupStone } from "../utils/geoLibrary";
+import { TARGET_KEYS } from "../utils/metaScan";
 
 // ==========================================
 // ENVIRONMENT VARIABLES & MAPS
