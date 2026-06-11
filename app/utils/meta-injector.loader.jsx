@@ -1,5 +1,6 @@
 import { data as json } from "react-router";
 import { authenticate } from "../shopify.server";
+import prisma from "../db.server";
 
 const GET_PRODUCTS_QUERY = `
   query GetProducts($cursor: String) {
@@ -301,6 +302,56 @@ export async function action({ request }) {
       }
 
       const parsedValues = JSON.parse(cleanJson);
+
+      // >>> DATABASE LOOKUP & GEO NAMESPACE INJECTION <<<
+      const materialName = parsedValues.material || "";
+      
+      if (materialName) {
+        const stoneProfile = await prisma.stoneProfile.findFirst({
+          where: {
+            stoneName: {
+              equals: materialName,
+              mode: 'insensitive'
+            }
+          }
+        });
+
+        if (stoneProfile) {
+          const geoFieldsToInject = [
+            "baseMineralName", "colorPattern", "authenticity", "rarity",
+            "crystalSystem", "geologicalEra", "mineralClass", "rockComposition",
+            "rockFormation", "hardness", "luster", "fracture", "cleavage",
+            "specificGravity", "diaphaneity"
+          ];
+
+          const formatId = productId.includes("gid://") ? productId : `gid://shopify/Product/${productId}`;
+          const geoMetafieldsToSet = [];
+
+          geoFieldsToInject.forEach(key => {
+            const val = stoneProfile[key];
+            if (val !== null && val !== undefined && val.toString().trim() !== "") {
+              geoMetafieldsToSet.push({
+                ownerId: formatId,
+                namespace: "geo",
+                key: key,
+                value: val.toString().trim(),
+                type: "single_line_text_field"
+              });
+            }
+          });
+
+          if (geoMetafieldsToSet.length > 0) {
+            const chunks = chunkArray(geoMetafieldsToSet, 10);
+            for (const chunk of chunks) {
+              await admin.graphql(SET_METAFIELDS_MUTATION, {
+                variables: { metafields: chunk }
+              });
+              await new Promise(r => setTimeout(r, 300));
+            }
+            console.log(`Successfully injected ${geoMetafieldsToSet.length} geo metafields for material: ${materialName}`);
+          }
+        }
+      }
 
       return json({ 
         success: true, 
