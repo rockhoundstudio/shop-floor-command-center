@@ -142,7 +142,7 @@ export function IntakeBenchTab({ products, fetcher }) {
         <div>
           <Card padding="400">
             <BlockStack gap="400">
-              <Text variant="headingMd" as="h2">2. Data Sieve & Injection</Text>
+              <Text variant="headingMd" as="h2">2. Data Sieve &amp; Injection</Text>
               
               {statusMessage !== "" && (
                 <div style={{ minHeight: "54px" }}>
