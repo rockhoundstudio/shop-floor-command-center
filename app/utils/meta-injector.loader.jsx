@@ -431,11 +431,42 @@ export async function action({ request }) {
 
       const parsedValues = JSON.parse(cleanJson);
 
+      let geoFields = {};
+      const materialName = parsedValues.material || "";
+
+      if (materialName) {
+        const stoneProfile = await prisma.stoneProfile.findFirst({
+          where: {
+            stoneName: {
+              contains: materialName,
+              mode: 'insensitive'
+            }
+          }
+        });
+
+        if (stoneProfile) {
+          const geoKeysToExtract = [
+            "baseMineralName", "colorPattern", "authenticity", "rarity",
+            "crystalSystem", "geologicalEra", "mineralClass", "rockComposition",
+            "rockFormation", "hardness", "luster", "fracture", "cleavage",
+            "specificGravity", "diaphaneity"
+          ];
+
+          geoKeysToExtract.forEach(key => {
+            const val = stoneProfile[key];
+            if (val !== null && val !== undefined && val.toString().trim() !== "") {
+              geoFields[key] = val.toString().trim();
+            }
+          });
+        }
+      }
+
       return json({ 
         success: true, 
         intent: "autoFill", 
         fields: parsedValues,
-        autoFillData: parsedValues
+        autoFillData: parsedValues,
+        geoFields
       });
     } catch (error) {
       console.error("Gemini AutoFill Exception Caught:", error);
