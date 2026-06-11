@@ -1,1183 +1,396 @@
-import React, { useState, useEffect, useCallback } from "react";
-import { useLoaderData, useFetcher, useNavigate } from "react-router";
-import {
-  Page, Layout, Card, Text, Banner, BlockStack, Box, Tabs, Frame,
-  TextField, Select, Button, InlineStack, Icon
-} from "@shopify/polaris";
-import { MagicIcon, SaveIcon, PlusIcon } from "@shopify/polaris-icons";
+import { data as json } from "react-router";
+import { authenticate } from "../shopify.server";
 
-// --- IMPORT THE ENGINE (Loader & Action) ---
-import { loader as engineLoader, action as engineAction } from "../utils/meta-injector.loader";
+const GET_PRODUCTS_QUERY = `
+  query GetProducts($cursor: String) {
+    products(first: 50, after: $cursor) {
+      pageInfo { hasNextPage endCursor }
+      edges { node { id title } }
+    }
+  }
+`;
 
-// --- EXPORT THE ENGINE FOR REMIX TO RUN ---
-export const loader = engineLoader;
-export const action = engineAction;
+const GET_METAFIELD_DEFINITIONS_QUERY = `
+  query GetMetafieldDefinitions {
+    metafieldDefinitions(first: 50, ownerType: PRODUCT, namespace: "custom") {
+      edges { node { id name key type { name } } }
+    }
+  }
+`;
 
-const ROCKHOUND_FIELDS = [
-  { key: "piece_name", label: "Piece Name", type: "single_line_text_field" },
-  { key: "primary_medium", label: "Primary Medium", type: "single_line_text_field" },
-  { key: "secondary_medium", label: "Secondary Medium", type: "single_line_text_field" },
-  { key: "handcrafted_by", label: "Handcrafted By", type: "single_line_text_field" },
-  { key: "material", label: "Material", type: "single_line_text_field" },
-  { key: "stone_family", label: "Stone Family", type: "single_line_text_field" },
-  { key: "color", label: "Color", type: "single_line_text_field" },
-  { key: "cut_and_shape", label: "Cut and Shape", type: "single_line_text_field" },
-  { key: "surface_finish", label: "Surface Finish", isDropdown: true },
-  { key: "dimensions_mm", label: "Dimensions (mm)", type: "single_line_text_field" },
-  { key: "weight_grams", label: "Weight (grams)", type: "single_line_text_field" },
-  { key: "collection_name", label: "Collection Name", type: "single_line_text_field" },
-  { key: "collection_location", label: "Collection Location", type: "single_line_text_field" },
-  { key: "collection_date", label: "Collection Date", type: "single_line_text_field" },
-  { key: "primary_use", label: "Primary Use", isDropdown: true },
-  { key: "setting_ready", label: "Setting Ready", isDropdown: true },
-  { key: "bail_included", label: "Bail Included", isDropdown: true },
-  { key: "is_one_of_a_kind", label: "Is One of a Kind", isDropdown: true },
-  { key: "treated", label: "Treated", isDropdown: true },
-  { key: "found_object", label: "Found Object", isDropdown: true },
-  { key: "wire_material", label: "Wire Material", isDropdown: true },
-  { key: "artist_notes", label: "Artist Notes", type: "single_line_text_field", multiline: true }
-];
+const GET_SNAPSHOTS_QUERY = `
+  query GetSnapshots {
+    metaobjects(type: "rockhound_snapshot", first: 10) {
+      edges { node { id handle updatedAt fields { key value } } }
+    }
+  }
+`;
 
-const DEFAULT_DROPDOWNS = {
-  surface_finish: ["High polish lapidary finish", "Satin lapidary finish", "Raw natural surface", "Partial polish", "Tumble polished", "Hand rubbed finish"],
-  primary_use: ["Wearable pendant", "Lapidary cabochon for setting", "Wire wrapped jewelry", "Display specimen", "Collector piece", "Freeform stone art", "Bezel setting ready", "Rockhound specimen"],
-  setting_ready: ["Yes — bezel ready", "Yes — prong ready", "Needs evaluation", "No — display only"],
-  bail_included: ["No bail", "Pinch bail included", "Custom copper wire bail", "Custom gold plated bail", "Soldered bail"],
-  is_one_of_a_kind: ["Yes — one of a kind", "No — series piece"],
-  treated: ["Untreated — natural", "Stabilized", "Dyed", "Coated", "Heat treated"],
-  found_object: ["Wild collected — Bob and Janyce", "Customer submission", "Purchased rough", "Gifted specimen", "Rescued material"],
-  wire_material: ["Copper wire", "Brass wire", "Sterling silver wire", "Gold plated wire", "Copper and brass mixed"]
+const PRODUCT_CREATE_MUTATION = `
+  mutation ProductCreate($input: ProductInput!) {
+    productCreate(input: $input) {
+      product { id }
+      userErrors { field message }
+    }
+  }
+`;
+
+const SET_METAFIELDS_MUTATION = `
+  mutation MetafieldsSet($metafields: [MetafieldsSetInput!]!) {
+    metafieldsSet(metafields: $metafields) {
+      metafields { id key value }
+      userErrors { field message }
+    }
+  }
+`;
+
+const COLLECTION_ADD_PRODUCTS_MUTATION = `
+  mutation CollectionAddProducts($id: ID!, $productIds: [ID!]!) {
+    collectionAddProducts(id: $id, productIds: $productIds) {
+      collection { id }
+      userErrors { field message }
+    }
+  }
+`;
+
+const COLLECTION_MAP = {
+  "Spokane River": "gid://shopify/Collection/454794117371",
+  "Yakima Canyon": "gid://shopify/Collection/452884922619",
+  "Yellowstone River": "gid://shopify/Collection/454795886843",
+  "Richardson's Rock Ranch": "gid://shopify/Collection/452912972027",
+  "The 3,000-Mile Run": "gid://shopify/Collection/452913135867",
+  "Nickel Back": "gid://shopify/Collection/454794871035",
+  "Rufus Serpentine": "gid://shopify/Collection/454841237755",
+  "The Shopped Rock": "gid://shopify/Collection/454840615163",
+  "The Gallery": "gid://shopify/Collection/452886495483"
 };
 
-const REQUIRED_FIELDS = [
-  "piece_name", "primary_medium", "handcrafted_by", "is_one_of_a_kind", 
-  "treated", "material", "origin_story", "collection_name", "primary_use"
-];
+const chunkArray = (array, size) => {
+  const chunked = [];
+  for (let i = 0; i < array.length; i += size) chunked.push(array.slice(i, i + size));
+  return chunked;
+};
 
-// --- TAB 1: NEW PRODUCT INTAKE ---
-function NewProductIntakeTab({ fetcher }) {
-  const [sharedFields, setSharedFields] = useState({
-    material: "",
-    collection_location: "",
-    collection_date: "",
-    origin_story: "",
-    treated: "",
-    stone_family: "",
-    primary_use: ""
-  });
+async function fetchAllProducts(graphql) {
+  const response = await graphql(GET_PRODUCTS_QUERY, { variables: { cursor: null } });
+  const { data } = await response.json();
+  if (data && data.products) return data.products.edges.map(edge => edge.node);
+  return [];
+}
 
-  const [pieces, setPieces] = useState([
-    { id: Date.now().toString(), piece_name: "", dimensions_mm: "", cut_and_shape: "", price: "" }
+export async function loader({ request }) {
+  const { admin } = await authenticate.admin(request);
+  const products = await fetchAllProducts(admin.graphql);
+  const [definitionsRes, snapshotsRes] = await Promise.all([
+    admin.graphql(GET_METAFIELD_DEFINITIONS_QUERY),
+    admin.graphql(GET_SNAPSHOTS_QUERY)
   ]);
-
-  const [statusMessage, setStatusMessage] = useState("");
-  const [errorMessage, setErrorMessage] = useState("");
-
-  const handleSharedFieldChange = useCallback((key, value) => {
-    setSharedFields(prev => ({ ...prev, [key]: value }));
-  }, []);
-
-  const handlePieceChange = useCallback((id, key, value) => {
-    setPieces(prev => prev.map(p => p.id === id ? { ...p, [key]: value } : p));
-  }, []);
-
-  const handleAddRow = useCallback(() => {
-    setPieces(prev => [
-      ...prev,
-      { id: Date.now().toString() + Math.random().toString(), piece_name: "", dimensions_mm: "", cut_and_shape: "", price: "" }
-    ]);
-  }, []);
-
-  const handleRemoveRow = useCallback((id) => {
-    setPieces(prev => prev.filter(p => p.id !== id));
-  }, []);
-
-  const handleCreateAll = useCallback(() => {
-    setStatusMessage("");
-    setErrorMessage("");
-
-    const payload = {
-      sharedFields,
-      rows: pieces
-    };
-
-    fetcher.submit(
-      { intent: "createProduct", pieces: JSON.stringify(payload) },
-      { method: "post" }
-    );
-  }, [sharedFields, pieces, fetcher]);
-
-  useEffect(() => {
-    const isIdle = fetcher.state === "idle";
-    const hasData = fetcher.data !== undefined && fetcher.data !== null;
-
-    if (isIdle && hasData) {
-      const isCreate = fetcher.data.intent === "createProduct";
-      const isSuccess = fetcher.data.success === true;
-      const isError = fetcher.data.success === false;
-
-      if (isCreate && isSuccess) {
-        setStatusMessage(`Successfully created ${fetcher.data.createdCount || 0} pieces.`);
-        setPieces([{ id: Date.now().toString(), piece_name: "", dimensions_mm: "", cut_and_shape: "", price: "" }]);
-      }
-
-      if (isCreate && isError) {
-        setErrorMessage(fetcher.data.error || "An error occurred during product creation.");
-      }
+  const definitionsData = await definitionsRes.json();
+  const snapshotsData = await snapshotsRes.json();
+  const metafieldDefinitions = definitionsData.data?.metafieldDefinitions?.edges.map(e => e.node) || [];
+  const rawSnapshots = snapshotsData.data?.metaobjects?.edges.map(e => e.node) || [];
+  const snapshots = rawSnapshots.map(snap => {
+    const dataField = snap.fields.find(f => f.key === "snapshot_data");
+    let count = 0;
+    if (dataField && dataField.value) {
+      try { count = JSON.parse(dataField.value).length || 0; } catch (e) { count = "Unknown"; }
     }
-  }, [fetcher.state, fetcher.data]);
+    return { id: snap.id, createdAt: new Date(snap.updatedAt).toLocaleString(), count };
+  });
+  return json({ products, pageInfo: { hasNextPage: false, endCursor: null }, metafieldDefinitions, snapshots });
+}
 
-  const isSubmitting = fetcher.state !== "idle" && fetcher.formData?.get("intent") === "createProduct";
-  
-  const productTypeOptions = [
-    "Cabochon", "Pendant", "Necklace", "Earrings", "Ring", "Bracelet", "Wire Wrap", "Driftwood Art", "Display Specimen", "Collector Piece", "Other"
-  ];
+export async function action({ request }) {
+  const { admin } = await authenticate.admin(request);
+  const formData = await request.formData();
+  const intent = formData.get("intent");
 
-  const collectionLocationOptions = [
-    "Spokane River",
-    "Yakima Canyon",
-    "Yellowstone River",
-    "Richardson's Rock Ranch",
-    "The 3,000-Mile Run",
-    "Nickel Back",
-    "Rufus Serpentine",
-    "The Shopped Rock",
-    "The Gallery"
-  ];
+  if (intent === "createProduct") {
+    const raw = formData.get("pieces");
+    if (!raw) return json({ success: false, error: "No data received" });
+    const payload = JSON.parse(raw);
+    const { sharedFields, rows } = payload;
+    const results = [];
 
-  const combinedData = { ...sharedFields, ...(pieces[0] || {}) };
-  const scanKeys = [...ROCKHOUND_FIELDS.map(f => f.key), "origin_story", "price"];
+    for (const row of rows) {
+      const title = [sharedFields.material, sharedFields.collection_location, row.piece_name]
+        .filter(Boolean).join(" — ");
 
-  const actionData = fetcher.data;
-  const useSaved = actionData?.success === true;
-  const savedMap = {};
-  if (actionData && actionData.savedMetafields) {
-    actionData.savedMetafields.forEach(mf => { savedMap[mf.key] = mf.value; });
+      const createRes = await admin.graphql(PRODUCT_CREATE_MUTATION, {
+        variables: { input: { title, status: "DRAFT", variants: [{ price: row.price || "0.00" }] } }
+      });
+      const createData = await createRes.json();
+      const productId = createData.data?.productCreate?.product?.id;
+      if (!productId) { results.push({ error: "Product create failed" }); continue; }
+
+      const keysList = [
+        "piece_name", "primary_medium", "secondary_medium", "handcrafted_by",
+        "material", "stone_family", "color", "cut_and_shape", "surface_finish",
+        "dimensions_mm", "weight_grams", "collection_name", "collection_location",
+        "collection_date", "primary_use", "setting_ready", "bail_included",
+        "is_one_of_a_kind", "treated", "found_object", "wire_material",
+        "artist_notes", "origin_story", "honest_flaws_and_character"
+      ];
+
+      const allValues = { ...sharedFields, ...row };
+      const metafields = keysList
+        .filter(key => allValues[key] && allValues[key].toString().trim() !== "")
+        .map(key => ({ namespace: "custom", key, type: "single_line_text_field", value: allValues[key].toString().trim(), ownerId: productId }));
+
+      const chunks = chunkArray(metafields, 10);
+      for (const chunk of chunks) {
+        await admin.graphql(SET_METAFIELDS_MUTATION, { variables: { metafields: chunk } });
+        await new Promise(r => setTimeout(r, 300));
+      }
+
+      const collectionId = COLLECTION_MAP[sharedFields.collection_location];
+      if (collectionId) {
+        await admin.graphql(COLLECTION_ADD_PRODUCTS_MUTATION, {
+          variables: { id: collectionId, productIds: [productId] }
+        });
+      }
+
+      results.push({ productId });
+    }
+
+    return json({ success: true, intent: "createProduct", createdCount: results.filter(r => r.productId).length });
   }
 
-  const renderLabel = (text, key, value) => {
-    const isRequired = REQUIRED_FIELDS.includes(key);
-    const isFilled = value !== undefined && value !== null && value.toString().trim() !== "";
-    const dotColor = isFilled ? "#008060" : (isRequired ? "#D72C0D" : "#FFC453");
-    return (
-      <span>
-        <span style={{color: dotColor, fontSize: "18px", lineHeight: "18px", width: "18px", height: "18px", display: "inline-block", textAlign: "center", marginRight: "4px"}}>●</span>
-        {text}
-      </span>
-    );
-  };
+  if (intent === "saveProduct") {
+    try {
+      let metafieldsToSet = [];
+      const rawPayload = formData.get("payload");
 
-  return (
-    <BlockStack gap="600">
-      <Card padding="400">
-        <BlockStack gap="400">
-          <Text variant="headingMd" as="h2">Section A: Shared Batch Fields</Text>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "24px" }}>
-            <div style={{ minHeight: "54px" }}>
-              <TextField
-                label={renderLabel("Material", "material", sharedFields.material)}
-                value={sharedFields.material}
-                onChange={(v) => handleSharedFieldChange("material", v)}
-                autoComplete="off"
-                accessibilityLabel="Enter shared material"
-              />
-            </div>
-            <div style={{ minHeight: "54px" }}>
-              <TextField
-                label={renderLabel("Stone Family", "stone_family", sharedFields.stone_family)}
-                value={sharedFields.stone_family}
-                onChange={(v) => handleSharedFieldChange("stone_family", v)}
-                autoComplete="off"
-                accessibilityLabel="Enter shared stone family"
-              />
-            </div>
-            <div style={{ minHeight: "54px" }}>
-              <Select
-                label={renderLabel("Collection Location", "collection_location", sharedFields.collection_location)}
-                options={[{ label: "Select location...", value: "" }, ...collectionLocationOptions.map(o => ({ label: o, value: o }))]}
-                value={sharedFields.collection_location}
-                onChange={(v) => handleSharedFieldChange("collection_location", v)}
-                accessibilityLabel="Select collection location"
-              />
-            </div>
-            <div style={{ minHeight: "54px" }}>
-              <TextField
-                label={renderLabel("Collection Date", "collection_date", sharedFields.collection_date)}
-                value={sharedFields.collection_date}
-                onChange={(v) => handleSharedFieldChange("collection_date", v)}
-                autoComplete="off"
-                accessibilityLabel="Enter shared collection date"
-              />
-            </div>
-            <div style={{ minHeight: "54px" }}>
-              <TextField
-                label={renderLabel("Origin Story", "origin_story", sharedFields.origin_story)}
-                value={sharedFields.origin_story}
-                onChange={(v) => handleSharedFieldChange("origin_story", v)}
-                autoComplete="off"
-                multiline={2}
-                accessibilityLabel="Enter shared origin story"
-              />
-            </div>
-            <div style={{ minHeight: "54px" }}>
-              <Select
-                label={renderLabel("Treated", "treated", sharedFields.treated)}
-                options={[{ label: "Select...", value: "" }, ...DEFAULT_DROPDOWNS.treated.map(o => ({ label: o, value: o }))]}
-                value={sharedFields.treated}
-                onChange={(v) => handleSharedFieldChange("treated", v)}
-                accessibilityLabel="Select shared treated status"
-              />
-            </div>
-            <div style={{ minHeight: "54px" }}>
-              <Select
-                label={renderLabel("Product Type", "primary_use", sharedFields.primary_use)}
-                options={[{ label: "Select...", value: "" }, ...productTypeOptions.map(o => ({ label: o, value: o }))]}
-                value={sharedFields.primary_use}
-                onChange={(v) => handleSharedFieldChange("primary_use", v)}
-                accessibilityLabel="Select product type"
-              />
-            </div>
-          </div>
-        </BlockStack>
-      </Card>
-
-      <Card padding="400">
-        <BlockStack gap="400">
-          <Text variant="headingMd" as="h2">Section B: Per-Piece Rows</Text>
-          <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
-            {pieces.map((piece, index) => (
-              <div key={piece.id} style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr auto", gap: "16px", alignItems: "end" }}>
-                <div style={{ minHeight: "54px" }}>
-                  <TextField
-                    label={renderLabel("Piece Name", "piece_name", piece.piece_name)}
-                    value={piece.piece_name}
-                    onChange={(v) => handlePieceChange(piece.id, "piece_name", v)}
-                    autoComplete="off"
-                    accessibilityLabel={`Enter Piece Name for row ${index + 1}`}
-                  />
-                </div>
-                <div style={{ minHeight: "54px" }}>
-                  <TextField
-                    label={renderLabel("Dimensions (mm)", "dimensions_mm", piece.dimensions_mm)}
-                    value={piece.dimensions_mm}
-                    onChange={(v) => handlePieceChange(piece.id, "dimensions_mm", v)}
-                    autoComplete="off"
-                    accessibilityLabel={`Enter Dimensions for row ${index + 1}`}
-                  />
-                </div>
-                <div style={{ minHeight: "54px" }}>
-                  <TextField
-                    label={renderLabel("Cut & Shape", "cut_and_shape", piece.cut_and_shape)}
-                    value={piece.cut_and_shape}
-                    onChange={(v) => handlePieceChange(piece.id, "cut_and_shape", v)}
-                    autoComplete="off"
-                    accessibilityLabel={`Enter Cut and Shape for row ${index + 1}`}
-                  />
-                </div>
-                <div style={{ minHeight: "54px" }}>
-                  <TextField
-                    label={renderLabel("Price", "price", piece.price)}
-                    value={piece.price}
-                    onChange={(v) => handlePieceChange(piece.id, "price", v)}
-                    autoComplete="off"
-                    accessibilityLabel={`Enter Price for row ${index + 1}`}
-                  />
-                </div>
-                <div style={{ minHeight: "54px", width: "120px" }}>
-                  <Button
-                    size="large"
-                    tone="critical"
-                    fullWidth
-                    onClick={() => handleRemoveRow(piece.id)}
-                    disabled={pieces.length <= 1}
-                    accessibilityLabel={`Remove row ${index + 1}`}
-                  >
-                    Remove
-                  </Button>
-                </div>
-              </div>
-            ))}
-          </div>
-          
-          <div style={{ minHeight: "54px", marginTop: "16px" }}>
-            <Button
-              icon={PlusIcon}
-              size="large"
-              onClick={handleAddRow}
-              accessibilityLabel="Add new piece row"
-            >
-              Add Row
-            </Button>
-          </div>
-        </BlockStack>
-      </Card>
-
-      {statusMessage !== "" && (
-        <div style={{ minHeight: "54px" }}>
-          <Banner tone="success" title="Operation Successful">
-            <Text as="p">{statusMessage}</Text>
-          </Banner>
-        </div>
-      )}
-
-      {errorMessage !== "" && (
-        <div style={{ minHeight: "54px" }}>
-          <Banner tone="critical" title="Operation Failed">
-            <Text as="p">{errorMessage}</Text>
-          </Banner>
-        </div>
-      )}
-
-      <div style={{ minHeight: "54px" }}>
-        <Button
-          size="large"
-          variant="primary"
-          tone="success"
-          fullWidth
-          onClick={handleCreateAll}
-          loading={isSubmitting}
-          accessibilityLabel="Submit and Create All Pieces"
-        >
-          Create All Pieces
-        </Button>
-      </div>
-
-      <Card padding="400">
-        <BlockStack gap="400">
-          <Text variant="headingMd" as="h2">Meta Scan</Text>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
-            {scanKeys.map(key => {
-              const isRequired = REQUIRED_FIELDS.includes(key);
-              const val = useSaved ? savedMap[key] : combinedData[key];
-              const isFilled = val !== undefined && val !== null && val.toString().trim() !== "";
-              const isOptionalEmpty = !isRequired && !isFilled;
-              const isRequiredEmpty = isRequired && !isFilled;
-              const labelText = key.charAt(0).toUpperCase() + key.slice(1).replace(/_/g, ' ');
-
-              return (
-                <div key={key} style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                  {isFilled && <span style={{ color: "#008060", fontSize: "18px", lineHeight: "18px", width: "18px", height: "18px", display: "inline-block", textAlign: "center" }}>●</span>}
-                  {isOptionalEmpty && <span style={{ color: "#FFC453", fontSize: "18px", lineHeight: "18px", width: "18px", height: "18px", display: "inline-block", textAlign: "center" }}>●</span>}
-                  {isRequiredEmpty && <span style={{ color: "#D72C0D", fontSize: "18px", lineHeight: "18px", width: "18px", height: "18px", display: "inline-block", textAlign: "center" }}>●</span>}
-                  <span style={{ fontSize: "15px", fontWeight: "500" }}>{labelText}{useSaved && isFilled && ` — ${val}`}</span>
-                </div>
-              );
-            })}
-          </div>
-        </BlockStack>
-      </Card>
-    </BlockStack>
-  );
-}
-
-// --- TAB 2: THE INTAKE BENCH ---
-function IntakeBenchTab({ products, fetcher }) {
-  const [selectedProductId, setSelectedProductId] = useState("");
-  const [formState, setFormState] = useState({});
-  const [statusMessage, setStatusMessage] = useState("");
-  const [errorMessage, setErrorMessage] = useState("");
-  const [promptStyle, setPromptStyle] = useState("");
-
-  const handleSelectProduct = useCallback((id) => {
-    setSelectedProductId(id);
-    setStatusMessage("");
-    setErrorMessage("");
-    const product = products.find(p => p.id === id);
-    const newForm = {};
-    const hasMetafields = product && product.metafields && product.metafields.edges;
-    
-    if (hasMetafields) {
-      product.metafields.edges.forEach(({ node }) => {
-        const isRockhound = node.namespace === "rockhound";
-        const hasValue = node.value !== null && node.value !== undefined;
-        if (isRockhound && hasValue) {
-          newForm[node.key] = node.value;
-        }
-      });
-    }
-    setFormState(newForm);
-
-    fetcher.submit(
-      { intent: "smartAutoFill", productId: id },
-      { method: "post" }
-    );
-  }, [products, fetcher]);
-
-  const updateFormState = useCallback((key, value) => {
-    setFormState(prev => ({ ...prev, [key]: value }));
-  }, []);
-
-  const handleAutoFill = useCallback(() => {
-    if (!selectedProductId) return;
-    setStatusMessage("");
-    setErrorMessage("");
-
-    const product = products.find(p => p.id === selectedProductId) || {};
-    const title = product.title || "";
-    const description = product.descriptionHtml || product.description || "";
-
-    fetcher.submit(
-      { 
-        intent: "autoFill", 
-        productId: selectedProductId,
-        productTitle: title,
-        productDescription: description,
-        promptStyle: promptStyle
-      },
-      { method: "post" }
-    );
-  }, [selectedProductId, fetcher, products, promptStyle]);
-
-  useEffect(() => {
-    const isIdle = fetcher.state === "idle";
-    const hasData = fetcher.data !== undefined && fetcher.data !== null;
-    
-    if (isIdle && hasData) {
-      const isAutoFill = fetcher.data.intent === "autoFill";
-      const isSmartAutoFill = fetcher.data.intent === "smartAutoFill";
-      const isSaveProduct = fetcher.data.intent === "saveProduct";
-      const isSuccess = fetcher.data.success === true;
-      const isError = fetcher.data.success === false;
-
-      if ((isAutoFill || isSmartAutoFill) && isSuccess && fetcher.data.fields) {
-        setFormState(prev => {
-          const updatedState = { ...prev };
-          Object.entries(fetcher.data.fields).forEach(([key, val]) => {
-            const hasNewValue = val !== undefined && val !== null && val.toString().trim() !== "";
-            if (hasNewValue) {
-              updatedState[key] = val;
-            }
-          });
-          return updatedState;
-        });
-
-        if (isSmartAutoFill) {
-          setStatusMessage("Smart Auto-Fill complete — fields populated from all available data sources.");
+      if (rawPayload) {
+        metafieldsToSet = JSON.parse(rawPayload);
+      } else {
+        const productId = formData.get("productId");
+        if (!productId) {
+          return json({ success: false, error: "Save failed", details: [{ message: "No product ID provided" }] });
         }
         
-        if (isAutoFill) {
-          setStatusMessage("Title and tags successfully parsed and loaded into fields.");
-        }
-      }
+        const formatId = productId.includes("gid://") ? productId : `gid://shopify/Product/${productId}`;
+        
+        const keysList = [
+          "piece_name", "primary_medium", "secondary_medium", "handcrafted_by",
+          "material", "stone_family", "color", "cut_and_shape", "surface_finish",
+          "dimensions_mm", "weight_grams", "collection_name", "collection_location",
+          "collection_date", "primary_use", "setting_ready", "bail_included",
+          "is_one_of_a_kind", "treated", "found_object", "wire_material",
+          "artist_notes"
+        ];
 
-      if (isSaveProduct && isSuccess) {
-        setStatusMessage("Metafields injected cleanly into Shopify database.");
-      }
-
-      if (isError) {
-        setErrorMessage(fetcher.data.error || "An unknown error occurred during the operation.");
-      }
-    }
-  }, [fetcher.state, fetcher.data]);
-
-  const safeProducts = products || [];
-  const isAutoFilling = fetcher.state !== "idle" && (fetcher.formData?.get("intent") === "autoFill" || fetcher.formData?.get("intent") === "smartAutoFill");
-  const isSaving = fetcher.state !== "idle" && fetcher.formData?.get("intent") === "saveProduct";
-
-  return (
-    <BlockStack gap="400">
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "24px", alignItems: "start" }}>
-        <div>
-          <Card padding="400">
-            <BlockStack gap="400">
-              <Text variant="headingMd" as="h2">1. Select Raw Inventory</Text>
-              <div style={{ maxHeight: "70vh", overflowY: "auto", paddingRight: "8px", display: "flex", flexDirection: "column", gap: "8px" }}>
-                {safeProducts.map(p => {
-                  const isSelected = selectedProductId === p.id;
-                  return (
-                    <div key={p.id} style={{ minHeight: "54px" }}>
-                      <Button
-                        fullWidth
-                        size="large"
-                        textAlign="left"
-                        variant={isSelected ? "primary" : "secondary"}
-                        onClick={() => handleSelectProduct(p.id)}
-                        accessibilityLabel={`Select product ${p.title}`}
-                      >
-                        {p.title}
-                      </Button>
-                    </div>
-                  );
-                })}
-              </div>
-            </BlockStack>
-          </Card>
-        </div>
-
-        <div>
-          <Card padding="400">
-            <BlockStack gap="400">
-              <Text variant="headingMd" as="h2">2. Data Sieve & Injection</Text>
-              
-              {statusMessage !== "" && (
-                <div style={{ minHeight: "54px" }}>
-                  <Banner tone="success" title="Operation Successful">
-                    <Text as="p">{statusMessage}</Text>
-                  </Banner>
-                </div>
-              )}
-
-              {errorMessage !== "" && (
-                <div style={{ minHeight: "54px" }}>
-                  <Banner tone="critical" title="Operation Failed">
-                    <Text as="p">{errorMessage}</Text>
-                  </Banner>
-                </div>
-              )}
-
-              <div style={{ minHeight: "54px" }}>
-                <TextField
-                  label="Gemini Presentation Style"
-                  placeholder="e.g. Write with OOAK grit — raw, earthy, one-of-a-kind stone energy. No corporate language."
-                  value={promptStyle}
-                  onChange={setPromptStyle}
-                  multiline={3}
-                  autoComplete="off"
-                  disabled={!selectedProductId}
-                  accessibilityLabel="Enter Gemini Presentation Style"
-                />
-              </div>
-
-              <fetcher.Form method="post" style={{ width: "100%" }}>
-                <input type="hidden" name="intent" value="saveProduct" />
-                {selectedProductId !== "" && (
-                  <input type="hidden" name="productId" value={selectedProductId} />
-                )}
-
-                <InlineStack gap="300" align="space-between">
-                  <div style={{ minHeight: "54px", flexGrow: 1 }}>
-                    <Button 
-                      icon={MagicIcon} 
-                      onClick={handleAutoFill}
-                      accessibilityLabel="Re-Run Auto-Fill Fields"
-                      size="large"
-                      fullWidth
-                      disabled={!selectedProductId}
-                      loading={isAutoFilling}
-                    >
-                      Re-Run Auto-Fill
-                    </Button>
-                  </div>
-                  <div style={{ minHeight: "54px", flexGrow: 1 }}>
-                    <Button 
-                      submit
-                      icon={SaveIcon} 
-                      tone="success" 
-                      variant="primary" 
-                      accessibilityLabel="Inject Metafields"
-                      size="large"
-                      fullWidth
-                      disabled={!selectedProductId}
-                      loading={isSaving}
-                    >
-                      Inject Metafields
-                    </Button>
-                  </div>
-                </InlineStack>
-
-                <div style={{ maxHeight: "60vh", overflowY: "auto", paddingRight: "8px", display: "flex", flexDirection: "column", gap: "16px", marginTop: "16px" }}>
-                  {ROCKHOUND_FIELDS.map(field => {
-                    const val = formState[field.key] || "";
-                    const isDropdown = field.isDropdown === true;
-                    const isText = !field.isDropdown;
-                    
-                    let safeVal = val;
-                    let options = [];
-
-                    if (isDropdown) {
-                      const dropdownOptions = DEFAULT_DROPDOWNS[field.key] || [];
-                      safeVal = dropdownOptions.includes(val) ? val : "";
-                      options = [
-                        { label: safeVal !== "" ? safeVal : "Select...", value: safeVal },
-                        ...dropdownOptions.filter(o => o !== safeVal).map(o => ({ label: o, value: o }))
-                      ];
-                    }
-                    
-                    return (
-                      <div key={field.key} style={{ minHeight: "54px" }}>
-                        {isDropdown && (
-                          <Select
-                            name={field.key}
-                            label={field.label}
-                            options={options}
-                            value={DEFAULT_DROPDOWNS[field.key]?.includes(val) ? val : ""}
-                            onChange={(v) => updateFormState(field.key, v)}
-                            accessibilityLabel={`Select value for ${field.label}`}
-                            disabled={!selectedProductId}
-                          />
-                        )}
-
-                        {isText && (
-                          <TextField
-                            name={field.key}
-                            label={field.label}
-                            value={val}
-                            onChange={(v) => updateFormState(field.key, v)}
-                            autoComplete="off"
-                            accessibilityLabel={`Enter text for ${field.label}`}
-                            multiline={field.multiline && 3}
-                            disabled={!selectedProductId}
-                          />
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </fetcher.Form>
-
-            </BlockStack>
-          </Card>
-        </div>
-      </div>
-    </BlockStack>
-  );
-}
-
-// --- TAB 3: OPERATIONS MATRIX ---
-function OperationsMatrixTab({ products, fetcher }) {
-  const safeProducts = products || [];
-  const [selectedProductId, setSelectedProductId] = useState("");
-  const [selectedIds, setSelectedIds] = useState(new Set());
-
-  // --- Section 1: AI Forge State ---
-  const [aiPrompt, setAiPrompt] = useState("You are a gritty, mechanic-style copywriter for a lapidary and handcrafted stone jewelry studio. Write a 160-character SEO meta description for this product. Be specific, earthy, and direct. No fluff.");
-  const [productTitle, setProductTitle] = useState("");
-  const [generatedOutput, setGeneratedOutput] = useState("");
-
-  // --- Section 2: Global Sweeps State ---
-  const [batchState, setBatchState] = useState({
-    isActive: false,
-    type: "",
-    chunks: [],
-    currentIndex: 0,
-    status: "idle",
-    message: "",
-    error: ""
-  });
-
-  // --- Section 3: Safety Nets State ---
-  const [safetyMessage, setSafetyMessage] = useState("");
-  const [safetyError, setSafetyError] = useState("");
-
-  // --- Handlers: Left Column Selection ---
-  const handleSelectProduct = useCallback((id, title) => {
-    setSelectedProductId(id);
-    setProductTitle(title);
-    setGeneratedOutput("");
-  }, []);
-
-  const handleToggleProductSelection = useCallback((id) => {
-    setSelectedIds(prev => {
-      const newSet = new Set(prev);
-      const isSelected = newSet.has(id);
-      if (isSelected) {
-        newSet.delete(id);
-      }
-      if (!isSelected) {
-        newSet.add(id);
-      }
-      return newSet;
-    });
-  }, []);
-
-  const handleSelectAll = useCallback(() => {
-    const allIds = safeProducts.map(p => p.id);
-    setSelectedIds(new Set(allIds));
-  }, [safeProducts]);
-
-  const handleClearAll = useCallback(() => {
-    setSelectedIds(new Set());
-  }, []);
-
-  // --- Handlers: AI Forge ---
-  const handleGenerateSEO = useCallback(() => {
-    if (!productTitle) return;
-    setGeneratedOutput("");
-    const payload = JSON.stringify({ title: productTitle, instructions: aiPrompt });
-    fetcher.submit({ intent: "generateSEO", formData: payload }, { method: "post" });
-  }, [productTitle, aiPrompt, fetcher]);
-
-  const handleCopyOutput = useCallback(() => {
-    if (!generatedOutput) return;
-    navigator.clipboard.writeText(generatedOutput);
-  }, [generatedOutput]);
-
-  // --- Handlers: Global Sweeps ---
-  const startBatchSweep = useCallback((type) => {
-    const hasSelectedProducts = selectedIds.size > 0;
-    const targetProducts = hasSelectedProducts 
-      ? safeProducts.filter(p => selectedIds.has(p.id)) 
-      : safeProducts;
-
-    const newChunks = [];
-    for (let i = 0; i < targetProducts.length; i += 10) {
-      newChunks.push(targetProducts.slice(i, i + 10));
-    }
-    
-    setBatchState({
-      isActive: true,
-      type: type,
-      chunks: newChunks,
-      currentIndex: 0,
-      status: "processing",
-      message: "",
-      error: ""
-    });
-  }, [safeProducts, selectedIds]);
-
-  // Handle batch processing steps
-  useEffect(() => {
-    const isProcessing = batchState.isActive && batchState.status === "processing";
-    
-    if (isProcessing) {
-      const currentChunk = batchState.chunks[batchState.currentIndex];
-      
-      if (currentChunk) {
-        setBatchState(prev => ({ ...prev, status: "waiting_for_network" }));
-        const payload = [];
-
-        const isOoak = batchState.type === "ooak";
-        const isOrigins = batchState.type === "origins";
-
-        if (isOoak) {
-          currentChunk.forEach(p => {
-            const formatId = p.id.includes("gid://") ? p.id : `gid://shopify/Product/${p.id}`;
-            payload.push({
+        keysList.forEach(key => {
+          const val = formData.get(key);
+          if (val && val.toString().trim() !== "") {
+            metafieldsToSet.push({
               ownerId: formatId,
               namespace: "rockhound",
-              key: "is_one_of_a_kind",
-              value: "Yes — one of a kind",
+              key: key,
+              value: val.toString().trim(),
               type: "single_line_text_field"
             });
-          });
-        }
-
-        if (isOrigins) {
-          currentChunk.forEach(p => {
-            const parts = p.title.split(" — ");
-            const hasOriginPart = parts.length >= 3;
-            if (hasOriginPart) {
-              const origin = parts[1].trim();
-              const formatId = p.id.includes("gid://") ? p.id : `gid://shopify/Product/${p.id}`;
-              payload.push({
-                ownerId: formatId,
-                namespace: "rockhound",
-                key: "collection_location",
-                value: origin,
-                type: "single_line_text_field"
-              });
-            }
-          });
-        }
-
-        const hasUpdates = payload.length > 0;
-        if (hasUpdates) {
-          fetcher.submit({ intent: "saveProduct", payload: JSON.stringify(payload) }, { method: "post" });
-        }
-        
-        if (!hasUpdates) {
-          setBatchState(prev => ({ ...prev, status: "waiting_for_idle" }));
-        }
-      }
-      
-      if (!currentChunk) {
-        setBatchState(prev => ({ ...prev, isActive: false, status: "complete", message: "Sweep completed successfully across target products." }));
-      }
-    }
-  }, [batchState, fetcher]);
-
-  // Handle network lock for batch processor
-  useEffect(() => {
-    const isWaitingForNetwork = batchState.status === "waiting_for_network";
-    const isFetcherActive = fetcher.state !== "idle";
-    
-    if (isWaitingForNetwork && isFetcherActive) {
-      setBatchState(prev => ({ ...prev, status: "waiting_for_idle" }));
-    }
-  }, [batchState.status, fetcher.state]);
-
-  // Handle 10-product governor pause between chunks
-  useEffect(() => {
-    const isWaitingForIdle = batchState.status === "waiting_for_idle";
-    const isFetcherIdle = fetcher.state === "idle";
-    
-    if (isWaitingForIdle && isFetcherIdle) {
-      setBatchState(prev => ({ ...prev, status: "paused" }));
-      setTimeout(() => {
-        setBatchState(prev => ({ ...prev, currentIndex: prev.currentIndex + 1, status: "processing" }));
-      }, 1000); // 1-second pause limits server hammering
-    }
-  }, [batchState.status, fetcher.state]);
-
-  // --- Listeners: AI Forge Fetcher Responses ---
-  useEffect(() => {
-    const isIdle = fetcher.state === "idle";
-    const hasData = fetcher.data !== undefined && fetcher.data !== null;
-
-    if (isIdle && hasData) {
-      const isGenerateSEO = fetcher.data.intent === "generateSEO";
-      const isSuccess = fetcher.data.success === true;
-      
-      if (isGenerateSEO && isSuccess) {
-        setGeneratedOutput(fetcher.data.seoDescription || fetcher.data.text || "");
-      }
-    }
-  }, [fetcher.state, fetcher.data]);
-
-  // --- Handlers: Safety Nets ---
-  const handleExportCSV = useCallback(() => {
-    setSafetyMessage("");
-    setSafetyError("");
-    try {
-      const headers = ["Product ID", "Title", ...ROCKHOUND_FIELDS.map(f => f.key)];
-      let csv = headers.join(",") + "\n";
-      
-      safeProducts.forEach(p => {
-        const row = [`"${p.id}"`, `"${p.title.replace(/"/g, '""')}"`];
-        const fieldMap = {};
-        
-        const hasMetafields = p.metafields && p.metafields.edges;
-        if (hasMetafields) {
-          p.metafields.edges.forEach(({ node }) => {
-            const isRockhound = node.namespace === "rockhound";
-            if (isRockhound) {
-              fieldMap[node.key] = node.value;
-            }
-          });
-        }
-        
-        ROCKHOUND_FIELDS.forEach(f => {
-          const val = fieldMap[f.key] || "";
-          row.push(`"${val.toString().replace(/"/g, '""')}"`);
+          }
         });
-        
-        csv += row.join(",") + "\n";
-      });
-      
-      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.setAttribute("download", `rockhound_inventory_${Date.now()}.csv`);
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      setSafetyMessage("CSV Export compiled and downloaded successfully.");
-    } catch (e) {
-      setSafetyError("Failed to compile CSV export.");
-    }
-  }, [safeProducts]);
+      }
 
-  const handleJSONSnapshot = useCallback(() => {
-    setSafetyMessage("");
-    setSafetyError("");
-    try {
-      const data = safeProducts.map(p => {
-        const fields = {};
-        const hasMetafields = p.metafields && p.metafields.edges;
+      if (metafieldsToSet.length === 0) {
+        return json({ success: false, error: "Save failed", details: [{ message: "No populated fields to save" }] });
+      }
+
+      const chunks = chunkArray(metafieldsToSet, 10);
+      let userErrors = [];
+
+      for (const chunk of chunks) {
+        const res = await admin.graphql(SET_METAFIELDS_MUTATION, {
+          variables: { metafields: chunk }
+        });
+        const resData = await res.json();
         
-        if (hasMetafields) {
-          p.metafields.edges.forEach(({ node }) => {
-            const isRockhound = node.namespace === "rockhound";
-            if (isRockhound) {
-              fields[node.key] = node.value;
-            }
-          });
+        const errors = resData.data?.metafieldsSet?.userErrors || [];
+        if (errors.length > 0) {
+          userErrors = userErrors.concat(errors);
         }
-        return { id: p.id, title: p.title, fields: fields };
-      });
-      
-      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.setAttribute("download", `rockhound_snapshot_${Date.now()}.json`);
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      setSafetyMessage("Full JSON snapshot compiled and downloaded successfully.");
-    } catch (e) {
-      setSafetyError("Failed to compile JSON snapshot.");
+        
+        await new Promise(r => setTimeout(r, 300));
+      }
+
+      if (userErrors.length > 0) {
+        return json({ success: false, error: "Save failed", details: userErrors });
+      }
+
+      return json({ success: true, intent: "saveProduct" });
+    } catch (error) {
+      console.error("Save Product Exception Caught:", error);
+      return json({ success: false, error: "Save failed", details: [{ message: error.message }] });
     }
-  }, [safeProducts]);
+  }
 
-  const isGeneratingSEO = fetcher.state !== "idle" && fetcher.formData?.get("intent") === "generateSEO";
+  if (intent === "smartAutoFill") {
+    let geminiStatus = 0;
+    let rawTextOutput = "";
+    try {
+      const productId = formData.get("productId");
+      if (!productId) return json({ success: false, error: "No product ID" });
+      
+      const res = await admin.graphql(
+        "query GetProduct($id: ID!) { product(id: $id) { title descriptionHtml } }",
+        { variables: { id: productId } }
+      );
+      
+      const resData = await res.json();
+      const product = resData.data?.product || {};
+      const productTitle = product.title || "";
+      const productDescription = product.descriptionHtml || "";
+      const promptStyle = formData.get("promptStyle") || "";
 
-  return (
-    <BlockStack gap="600">
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "24px", alignItems: "start" }}>
-        <div>
-          <Card padding="400">
-            <BlockStack gap="400">
-              <Text variant="headingMd" as="h2">Target Product Selection</Text>
-              <Text as="p" tone="subdued">{selectedIds.size} of {safeProducts.length} selected for sweeps</Text>
-              
-              <InlineStack gap="300">
-                <div style={{ minHeight: "54px", flexGrow: 1 }}>
-                  <Button size="large" fullWidth onClick={handleSelectAll} accessibilityLabel="Select all products for batch operations">Select All</Button>
-                </div>
-                <div style={{ minHeight: "54px", flexGrow: 1 }}>
-                  <Button size="large" fullWidth onClick={handleClearAll} accessibilityLabel="Clear product selection">Clear All</Button>
-                </div>
-              </InlineStack>
+      const promptText = [
+        "You are a data extraction assistant. Parse the following product title and description and return a JSON object mapping these exact keys to their best-guess values extracted from the text.",
+        "",
+        "Keys to map: piece_name, primary_medium, secondary_medium, handcrafted_by, material, stone_family, color, cut_and_shape, surface_finish, dimensions_mm, weight_grams, collection_name, collection_location, collection_date, primary_use, setting_ready, bail_included, is_one_of_a_kind, treated, found_object, wire_material, artist_notes.",
+        "",
+        "If a value cannot be confidently determined from the text, leave the string empty (\"\").",
+        "Return ONLY valid JSON with no markdown formatting.",
+        "",
+        "Style Guidelines to follow while extracting or formatting fields: " + promptStyle,
+        "",
+        "Title: " + productTitle,
+        "Description: " + productDescription
+      ].join("\n");
 
-              <div style={{ maxHeight: "60vh", overflowY: "auto", paddingRight: "8px", display: "flex", flexDirection: "column", gap: "8px" }}>
-                {safeProducts.map(p => {
-                  const isSelected = selectedProductId === p.id;
-                  const isChecked = selectedIds.has(p.id);
-                  return (
-                    <div key={p.id} style={{ display: "flex", alignItems: "center", gap: "12px", minHeight: "54px" }}>
-                      <div style={{ display: "flex", alignItems: "center", height: "54px" }}>
-                        <input
-                          type="checkbox"
-                          checked={isChecked}
-                          onChange={() => handleToggleProductSelection(p.id)}
-                          aria-label={`Select product ${p.title} for batch sweeps`}
-                          style={{ width: "24px", height: "24px", cursor: "pointer" }}
-                        />
-                      </div>
-                      <div style={{ flexGrow: 1, minHeight: "54px" }}>
-                        <Button
-                          fullWidth
-                          size="large"
-                          textAlign="left"
-                          variant={isSelected ? "primary" : "secondary"}
-                          onClick={() => handleSelectProduct(p.id, p.title)}
-                          accessibilityLabel={`Load product ${p.title} into AI Forge`}
-                        >
-                          {p.title}
-                        </Button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </BlockStack>
-          </Card>
-        </div>
+      const geminiRes = await fetch(
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key=" + process.env.GEMINI_API_KEY,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            contents: [
+              {
+                parts: [{ text: promptText }]
+              }
+            ],
+            generationConfig: {
+              response_mime_type: "application/json",
+            }
+          })
+        }
+      );
 
-        <div>
-          <BlockStack gap="600">
-            <Card padding="400">
-              <BlockStack gap="400">
-                <Text variant="headingLg" as="h2">Section 1: AI Forge</Text>
-                <div style={{ minHeight: "54px" }}>
-                  <TextField
-                    label="AI Persona Prompt"
-                    value={aiPrompt}
-                    onChange={setAiPrompt}
-                    multiline={3}
-                    accessibilityLabel="Edit AI Persona Prompt"
-                    autoComplete="off"
-                  />
-                </div>
-                <div style={{ minHeight: "54px" }}>
-                  <TextField
-                    label="Product Title"
-                    value={productTitle}
-                    onChange={setProductTitle}
-                    accessibilityLabel="Enter Product Title for SEO generation"
-                    autoComplete="off"
-                  />
-                </div>
-                <div style={{ minHeight: "54px" }}>
-                  <Button
-                    size="large"
-                    variant="primary"
-                    onClick={handleGenerateSEO}
-                    accessibilityLabel="Generate Description"
-                    loading={isGeneratingSEO}
-                    disabled={!productTitle}
-                  >
-                    Generate Description
-                  </Button>
-                </div>
-                <div style={{ minHeight: "54px" }}>
-                  <TextField
-                    label="Generated Output"
-                    value={generatedOutput}
-                    multiline={4}
-                    readOnly
-                    accessibilityLabel="Generated SEO Description Output"
-                    autoComplete="off"
-                  />
-                </div>
-                <div style={{ minHeight: "54px" }}>
-                  <Button
-                    size="large"
-                    onClick={handleCopyOutput}
-                    accessibilityLabel="Copy output to clipboard"
-                    disabled={!generatedOutput}
-                  >
-                    Copy to Clipboard
-                  </Button>
-                </div>
-              </BlockStack>
-            </Card>
+      geminiStatus = geminiRes.status;
 
-            <Card padding="400">
-              <BlockStack gap="400">
-                <Text variant="headingLg" as="h2">Section 2: Global Sweeps</Text>
-                
-                {batchState.message !== "" && (
-                  <div style={{ minHeight: "54px" }}>
-                    <Banner tone="success" title="Sweep Complete">
-                      <Text as="p">{batchState.message}</Text>
-                    </Banner>
-                  </div>
-                )}
+      if (!geminiRes.ok) {
+        const errorBody = await geminiRes.text();
+        console.error("Gemini API Error Status:", geminiStatus, "Body:", errorBody);
+        return json({ success: false, error: "Gemini parse failed", status: geminiStatus, raw: errorBody });
+      }
 
-                {batchState.error !== "" && (
-                  <div style={{ minHeight: "54px" }}>
-                    <Banner tone="critical" title="Sweep Error">
-                      <Text as="p">{batchState.error}</Text>
-                    </Banner>
-                  </div>
-                )}
+      const geminiData = await geminiRes.json();
+      const textContent = geminiData.candidates[0]?.content?.parts[0]?.text || "";
+      rawTextOutput = textContent;
+      
+      console.log("Gemini SmartAutoFill Raw Output textContent:", textContent);
 
-                {batchState.isActive && (
-                  <Box padding="400" background="bg-surface-secondary" borderRadius="200">
-                    <BlockStack gap="200">
-                      <Text as="p" fontWeight="bold">Processing Batch {batchState.currentIndex + 1} of {batchState.chunks.length}</Text>
-                      <Text as="p" tone="subdued">System Governor active. Status: {batchState.status}</Text>
-                      <div style={{ width: "100%", height: "12px", backgroundColor: "#E1E3E5", borderRadius: "6px", overflow: "hidden", marginTop: "8px" }}>
-                        <div style={{ width: `${((batchState.currentIndex) / batchState.chunks.length) * 100}%`, height: "100%", backgroundColor: "#2C6ECB", transition: "width 0.3s ease" }}></div>
-                      </div>
-                    </BlockStack>
-                  </Box>
-                )}
+      let cleanJson = textContent.trim();
+      const firstBrace = cleanJson.indexOf('{');
+      const lastBrace = cleanJson.lastIndexOf('}');
+      
+      if (firstBrace !== -1 && lastBrace !== -1) {
+        cleanJson = cleanJson.slice(firstBrace, lastBrace + 1);
+      }
 
-                <InlineStack gap="300">
-                  <div style={{ minHeight: "54px", flexGrow: 1 }}>
-                    <Button
-                      size="large"
-                      fullWidth
-                      onClick={() => startBatchSweep("ooak")}
-                      accessibilityLabel="Standardize OOAK across target products"
-                      disabled={batchState.isActive}
-                    >
-                      Standardize OOAK
-                    </Button>
-                  </div>
-                  <div style={{ minHeight: "54px", flexGrow: 1 }}>
-                    <Button
-                      size="large"
-                      fullWidth
-                      onClick={() => startBatchSweep("origins")}
-                      accessibilityLabel="Sweep Origins across target products"
-                      disabled={batchState.isActive}
-                    >
-                      Sweep Origins
-                    </Button>
-                  </div>
-                </InlineStack>
-              </BlockStack>
-            </Card>
+      const parsedValues = JSON.parse(cleanJson);
 
-            <Card padding="400">
-              <BlockStack gap="400">
-                <Text variant="headingLg" as="h2">Section 3: Safety Nets</Text>
-                
-                {safetyMessage !== "" && (
-                  <div style={{ minHeight: "54px" }}>
-                    <Banner tone="success" title="File Download Started">
-                      <Text as="p">{safetyMessage}</Text>
-                    </Banner>
-                  </div>
-                )}
+      return json({ 
+        success: true, 
+        intent: "smartAutoFill", 
+        fields: parsedValues,
+        autoFillData: parsedValues 
+      });
+    } catch (error) {
+      console.error("Gemini SmartAutoFill Exception Caught:", error);
+      return json({ success: false, error: "Gemini parse failed", status: geminiStatus, raw: rawTextOutput || error.message });
+    }
+  }
 
-                {safetyError !== "" && (
-                  <div style={{ minHeight: "54px" }}>
-                    <Banner tone="critical" title="File Creation Failed">
-                      <Text as="p">{safetyError}</Text>
-                    </Banner>
-                  </div>
-                )}
+  if (intent === "autoFill") {
+    let geminiStatus = 0;
+    let rawTextOutput = "";
+    try {
+      const productTitle = formData.get("productTitle") || "";
+      const productDescription = formData.get("productDescription") || "";
+      const promptStyle = formData.get("promptStyle") || "";
 
-                <InlineStack gap="300">
-                  <div style={{ minHeight: "54px", flexGrow: 1 }}>
-                    <Button
-                      size="large"
-                      fullWidth
-                      onClick={handleExportCSV}
-                      accessibilityLabel="Export CSV of all Metafields"
-                    >
-                      Export CSV
-                    </Button>
-                  </div>
-                  <div style={{ minHeight: "54px", flexGrow: 1 }}>
-                    <Button
-                      size="large"
-                      fullWidth
-                      onClick={handleJSONSnapshot}
-                      accessibilityLabel="Download JSON Snapshot"
-                    >
-                      JSON Snapshot
-                    </Button>
-                  </div>
-                </InlineStack>
-              </BlockStack>
-            </Card>
-          </BlockStack>
-        </div>
-      </div>
-    </BlockStack>
-  );
-}
+      const promptText = [
+        "You are a data extraction assistant. Parse the following product title and description and return a JSON object mapping these exact keys to their best-guess values extracted from the text.",
+        "",
+        "Keys to map: piece_name, primary_medium, secondary_medium, handcrafted_by, material, stone_family, color, cut_and_shape, surface_finish, dimensions_mm, weight_grams, collection_name, collection_location, collection_date, primary_use, setting_ready, bail_included, is_one_of_a_kind, treated, found_object, wire_material, artist_notes.",
+        "",
+        "If a value cannot be confidently determined from the text, leave the string empty (\"\").",
+        "Return ONLY valid JSON with no markdown formatting.",
+        "",
+        "Style Guidelines to follow while extracting or formatting fields: " + promptStyle,
+        "",
+        "Title: " + productTitle,
+        "Description: " + productDescription
+      ].join("\n");
 
-// --- MAIN SHELL COMPONENT ---
-export default function MetaInjectorV2() {
-  const { products } = useLoaderData() || {};
-  const navigate = useNavigate();
-  const fetcher = useFetcher();
+      const geminiRes = await fetch(
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key=" + process.env.GEMINI_API_KEY,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            contents: [
+              {
+                parts: [{ text: promptText }]
+              }
+            ],
+            generationConfig: {
+              response_mime_type: "application/json",
+            }
+          })
+        }
+      );
 
-  const [selectedTab, setSelectedTab] = useState(0);
+      geminiStatus = geminiRes.status;
 
-  const tabs = [
-    { id: 'new-intake', content: '1. New Product Intake', accessibilityLabel: 'New Product Intake Tab' },
-    { id: 'intake', content: '2. Intake Bench (Janyce)', accessibilityLabel: 'Intake Bench Tab' },
-    { id: 'ops', content: '3. Operations Matrix', accessibilityLabel: 'Operations Matrix Tab' }
-  ];
+      if (!geminiRes.ok) {
+        const errorBody = await geminiRes.text();
+        console.error("Gemini API Error Status:", geminiStatus, "Body:", errorBody);
+        return json({ success: false, error: "Gemini parse failed", status: geminiStatus, raw: errorBody });
+      }
 
-  const hasErrors = fetcher.data && fetcher.data.errors && fetcher.data.errors.length > 0;
-  const isTabOne = selectedTab === 0;
-  const isTabTwo = selectedTab === 1;
-  const isTabThree = selectedTab === 2;
+      const geminiData = await geminiRes.json();
+      const textContent = geminiData.candidates[0]?.content?.parts[0]?.text || "";
+      rawTextOutput = textContent;
 
-  return (
-    <Frame>
-      <Page
-        fullWidth
-        title="Meta Injector"
-        subtitle="Data Integrity & Operations Hub"
-        backAction={{ content: "Dashboard", onAction: () => navigate("/app"), accessibilityLabel: "Back to Dashboard" }}
-      >
-        <Layout>
-          <Layout.Section>
-            {hasErrors && (
-              <Box paddingBlockEnd="400">
-                <Banner tone="critical" title="GraphQL Mutation Errors Detected">
-                  <BlockStack gap="200">
-                    {fetcher.data.errors.map((err, i) => (
-                      <Text key={i} as="p">{err.message}</Text>
-                    ))}
-                  </BlockStack>
-                </Banner>
-              </Box>
-            )}
+      console.log("Gemini AutoFill Raw Output textContent:", textContent);
 
-            <Card padding="0">
-              <Tabs tabs={tabs} selected={selectedTab} onSelect={setSelectedTab} fitted>
-                <Box padding="600" background="bg-surface-secondary">
-                  {isTabOne && <NewProductIntakeTab fetcher={fetcher} />}
-                  {isTabTwo && <IntakeBenchTab products={products} fetcher={fetcher} />}
-                  {isTabThree && <OperationsMatrixTab products={products} fetcher={fetcher} />}
-                </Box>
-              </Tabs>
-            </Card>
-          </Layout.Section>
-        </Layout>
-      </Page>
-    </Frame>
-  );
+      let cleanJson = textContent.trim();
+      const firstBrace = cleanJson.indexOf('{');
+      const lastBrace = cleanJson.lastIndexOf('}');
+      
+      if (firstBrace !== -1 && lastBrace !== -1) {
+        cleanJson = cleanJson.slice(firstBrace, lastBrace + 1);
+      }
+
+      const parsedValues = JSON.parse(cleanJson);
+
+      return json({ 
+        success: true, 
+        intent: "autoFill", 
+        fields: parsedValues,
+        autoFillData: parsedValues
+      });
+    } catch (error) {
+      console.error("Gemini AutoFill Exception Caught:", error);
+      return json({ success: false, error: "Gemini parse failed", status: geminiStatus, raw: rawTextOutput || error.message });
+    }
+  }
+
+  return json({ success: false, error: "Unknown intent" });
 }
