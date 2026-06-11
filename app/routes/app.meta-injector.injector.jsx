@@ -17,6 +17,24 @@ import {
 } from "@shopify/polaris";
 import { METAFIELD_CONFIG } from "../utils/meta-injector.constants";
 
+const GEO_DROPDOWNS = {
+  colorPattern: ["Solid", "Banded", "Spotted", "Mottled", "Dendritic", "Orbicular", "Brecciated", "Chatoyant", "Iridescent", "Multicolor"],
+  authenticity: ["100% Natural", "Heat Treated", "Irradiated", "Dyed", "Coated", "Stabilized", "Synthetic", "Simulant"],
+  rarity: ["Common", "Uncommon", "Rare", "Very Rare", "Exceptional"],
+  crystalSystem: ["Cubic", "Tetragonal", "Orthorhombic", "Hexagonal", "Trigonal", "Monoclinic", "Triclinic", "Amorphous"],
+  geologicalEra: ["Hadean", "Archean", "Proterozoic", "Paleozoic", "Mesozoic", "Cenozoic", "Unknown"],
+  mineralClass: ["Silicates", "Oxides", "Carbonates", "Sulfides", "Sulfates", "Phosphates", "Halides", "Native Elements", "Organic"],
+  rockFormation: ["Igneous", "Sedimentary", "Metamorphic", "Hydrothermal", "Volcanic", "Plutonic"],
+  hardness: ["1", "2", "3", "4", "5", "6", "6.5", "7", "7.5", "8", "9", "10"],
+  luster: ["Adamantine", "Vitreous", "Resinous", "Waxy", "Pearly", "Silky", "Greasy", "Metallic", "Dull", "Earthy"],
+  fracture: ["Conchoidal", "Irregular", "Uneven", "Splintery", "Hackly", "Sub-Conchoidal"],
+  cleavage: ["None", "Perfect", "Good", "Distinct", "Imperfect", "Poor"],
+  diaphaneity: ["Opaque", "Translucent", "Transparent"]
+};
+
+const GEO_TEXT_FIELDS = ["baseMineralName", "rockComposition", "specificGravity"];
+const ALL_GEO_KEYS = [...GEO_TEXT_FIELDS, ...Object.keys(GEO_DROPDOWNS)];
+
 const getStaticOptions = (cleanName, fieldKey) => {
   const normalizedName = (cleanName || "").toLowerCase().trim();
   const normalizedKey = (fieldKey || "").toLowerCase().trim();
@@ -61,13 +79,36 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [], dynam
   const [inlineAddState, setInlineAddState] = useState({ fieldKey: null, metaobjectType: null, value: "", loading: false });
   const [resultBanner, setResultBanner] = useState(null);
 
+  const [geoFields, setGeoFields] = useState({
+    baseMineralName: "", colorPattern: "", authenticity: "", rarity: "",
+    crystalSystem: "", geologicalEra: "", mineralClass: "", rockComposition: "",
+    rockFormation: "", hardness: "", luster: "", fracture: "", cleavage: "",
+    specificGravity: "", diaphaneity: ""
+  });
+
   const tapTargetStyle = { minHeight: '48px', minWidth: '48px', display: 'flex', alignItems: 'center', justifyContent: 'center' };
   const inputTapTargetStyle = { minHeight: '48px', display: 'flex', flexDirection: 'column', justifyContent: 'center' };
+
+  const updateGeoFields = useCallback((key, value) => {
+    setGeoFields(prev => ({ ...prev, [key]: value }));
+  }, []);
 
   useEffect(() => {
     if (fetcher.state === "idle" && fetcher.data) {
       if (fetcher.data.success) {
         setResultBanner({ tone: "success", message: "✅ Injection complete — metafields saved to Shopify successfully." });
+        
+        if (fetcher.data.fields) {
+          setGeoFields(prev => {
+            const updatedGeo = { ...prev };
+            Object.entries(fetcher.data.fields).forEach(([k, v]) => {
+              if (ALL_GEO_KEYS.includes(k) && v !== undefined && v !== null && v.toString().trim() !== "") {
+                updatedGeo[k] = v;
+              }
+            });
+            return updatedGeo;
+          });
+        }
       } else {
         const errorMsg = fetcher.data.errors
           ? fetcher.data.errors.map(e => e.message).join(" | ")
@@ -139,6 +180,7 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [], dynam
     }
 
     let updates = { ...bulkFormData };
+    let updatesGeo = { ...geoFields };
 
     METAFIELD_CONFIG.forEach(field => {
       if (!field.key) return;
@@ -168,7 +210,14 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [], dynam
       }
     });
 
+    ALL_GEO_KEYS.forEach(key => {
+      if (profile[key]) {
+        updatesGeo[key] = profile[key];
+      }
+    });
+
     setBulkFormData(updates);
+    setGeoFields(updatesGeo);
     if (shopify && shopify.toast) shopify.toast.show(`${profile.title || profile.stoneName} science loaded from dictionary!`, { isError: false });
   };
 
@@ -215,6 +264,20 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [], dynam
 
         payload.push({ ownerId: product.id, namespace: field.namespace, key: field.key, type: resolvedType, value: finalValue });
         statusObj[field.key] = "bulk_unverified";
+        productChanged = true;
+        changesCount++;
+      });
+
+      ALL_GEO_KEYS.forEach(fieldKey => {
+        const newVal = geoFields[fieldKey] || "";
+        if (!newVal) return;
+
+        const currentVal = getMetafieldValue(product, fieldKey);
+        if (bulkMode === "fill" && currentVal !== "") return;
+        if (currentVal === newVal) return;
+
+        payload.push({ ownerId: product.id, namespace: "geo", key: fieldKey, type: "single_line_text_field", value: newVal });
+        statusObj[fieldKey] = "bulk_unverified";
         productChanged = true;
         changesCount++;
       });
@@ -342,218 +405,268 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [], dynam
         </div>
 
         <div style={{ flex: 1 }}>
-          <Box padding="400" background="bg-surface" borderRadius="200" shadow="100">
-            <BlockStack gap="400">
-              <Text variant="headingSm" as="h3">2. Define Injection Data</Text>
-              <Box paddingBlockEnd="200">
-                <InlineStack gap="400">
-                  <Text as="span">🔵 <strong style={{ fontWeight: 600 }}>Google</strong> = Required for Google Shopping</Text>
-                  <Text as="span">🪨 <strong style={{ fontWeight: 600 }}>Stone</strong> = Your OOAK storefront data</Text>
-                </InlineStack>
-              </Box>
-              <div style={inputTapTargetStyle}>
-                <ChoiceList
-                  title="Injection Mode"
-                  choices={[
-                    { label: 'FILL ONLY: Skip products that already have data', value: 'fill' },
-                    { label: 'OVERWRITE: Force data (Dangerous)', value: 'overwrite' }
-                  ]}
-                  selected={[bulkMode]}
-                  onChange={(val) => setBulkMode(val[0])}
-                />
-              </div>
+          <BlockStack gap="400">
+            <Box padding="400" background="bg-surface" borderRadius="200" shadow="100">
+              <BlockStack gap="400">
+                <Text variant="headingSm" as="h3">2. Define Injection Data</Text>
+                <Box paddingBlockEnd="200">
+                  <InlineStack gap="400">
+                    <Text as="span">🔵 <strong style={{ fontWeight: 600 }}>Google</strong> = Required for Google Shopping</Text>
+                    <Text as="span">🪨 <strong style={{ fontWeight: 600 }}>Stone</strong> = Your OOAK storefront data</Text>
+                  </InlineStack>
+                </Box>
+                <div style={inputTapTargetStyle}>
+                  <ChoiceList
+                    title="Injection Mode"
+                    choices={[
+                      { label: 'FILL ONLY: Skip products that already have data', value: 'fill' },
+                      { label: 'OVERWRITE: Force data (Dangerous)', value: 'overwrite' }
+                    ]}
+                    selected={[bulkMode]}
+                    onChange={(val) => setBulkMode(val[0])}
+                  />
+                </div>
 
-              <Divider />
+                <Divider />
 
-              <Box padding="300" background="bg-surface-secondary" borderRadius="100">
-                <BlockStack gap="300">
-                  <Text as="p" variant="bodyMd">
-                    <strong>Dictionary Auto-Fill:</strong> Type a stone name (e.g., "Jasper") into the <strong>Official Name</strong> field below, then click this button to load its hard science data.
-                  </Text>
-                  <div style={tapTargetStyle}>
-                    <Button size="large" variant="primary" tone="success" onClick={handleAutoFill} accessibilityLabel="Auto-Fill Science from Dictionary">
-                      ⭐ Auto-Fill Science from Dictionary
-                    </Button>
-                  </div>
-                </BlockStack>
-              </Box>
+                <Box padding="300" background="bg-surface-secondary" borderRadius="100">
+                  <BlockStack gap="300">
+                    <Text as="p" variant="bodyMd">
+                      <strong>Dictionary Auto-Fill:</strong> Type a stone name (e.g., "Jasper") into the <strong>Official Name</strong> field below, then click this button to load its hard science data.
+                    </Text>
+                    <div style={tapTargetStyle}>
+                      <Button size="large" variant="primary" tone="success" onClick={handleAutoFill} accessibilityLabel="Auto-Fill Science from Dictionary">
+                        ⭐ Auto-Fill Science from Dictionary
+                      </Button>
+                    </div>
+                  </BlockStack>
+                </Box>
 
-              <Divider />
+                <Divider />
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-                {METAFIELD_CONFIG.filter(f => !f.hidden).map(field => {
-                  const isGoogle = field.namespace === "shopify";
-                  const rawLabelText = field.name || field.label || "";
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                  {METAFIELD_CONFIG.filter(f => !f.hidden).map(field => {
+                    const isGoogle = field.namespace === "shopify";
+                    const rawLabelText = field.name || field.label || "";
 
-                  let cleanName = rawLabelText
-                    .replace(/🔵/g, '')
-                    .replace(/🪨/g, '')
-                    .replace(/Google/gi, '')
-                    .replace(/Store/gi, '')
-                    .replace(/Stone/gi, '')
-                    .trim();
+                    let cleanName = rawLabelText
+                      .replace(/🔵/g, '')
+                      .replace(/🪨/g, '')
+                      .replace(/Google/gi, '')
+                      .replace(/Store/gi, '')
+                      .replace(/Stone/gi, '')
+                      .trim();
 
-                  const label = isGoogle ? `🔵 Google ${cleanName}` : `🪨 Stone ${cleanName}`;
-                  const hasMetaobjectType = !!field.metaobjectType;
-                  const isAddingNew = inlineAddState.fieldKey === field.key;
-                  const staticOptions = getStaticOptions(cleanName, field.key);
+                    const label = isGoogle ? `🔵 Google ${cleanName}` : `🪨 Stone ${cleanName}`;
+                    const hasMetaobjectType = !!field.metaobjectType;
+                    const isAddingNew = inlineAddState.fieldKey === field.key;
+                    const staticOptions = getStaticOptions(cleanName, field.key);
 
-                  return (
-                    <div style={{ ...inputTapTargetStyle, minHeight: 'auto' }} key={field.key}>
-                      {hasMetaobjectType && isAddingNew && (
-                        <BlockStack gap="200">
-                          <TextField
-                            label={`➕ New ${cleanName}`}
-                            value={inlineAddState.value}
-                            onChange={(val) => setInlineAddState(prev => ({ ...prev, value: val }))}
-                            placeholder="e.g., Dragonstone"
-                            autoComplete="off"
-                            disabled={inlineAddState.loading}
-                            accessibilityLabel={`Type new ${cleanName} value`}
-                          />
-                          <InlineStack gap="200">
+                    return (
+                      <div style={{ ...inputTapTargetStyle, minHeight: 'auto' }} key={field.key}>
+                        {hasMetaobjectType && isAddingNew && (
+                          <BlockStack gap="200">
+                            <TextField
+                              label={`➕ New ${cleanName}`}
+                              value={inlineAddState.value}
+                              onChange={(val) => setInlineAddState(prev => ({ ...prev, value: val }))}
+                              placeholder="e.g., Dragonstone"
+                              autoComplete="off"
+                              disabled={inlineAddState.loading}
+                              accessibilityLabel={`Type new ${cleanName} value`}
+                            />
+                            <InlineStack gap="200">
+                              <div style={tapTargetStyle}>
+                                <Button
+                                  tone="success"
+                                  variant="primary"
+                                  loading={inlineAddState.loading}
+                                  accessibilityLabel="Save new dictionary term"
+                                  onClick={() => {
+                                    if (!inlineAddState.value.trim()) return;
+                                    setInlineAddState(prev => ({ ...prev, loading: true }));
+                                    const formData = new FormData();
+                                    formData.append("intent", "createMetaobject");
+                                    formData.append("type", field.metaobjectType);
+                                    formData.append("value", inlineAddState.value);
+                                    fetcher.submit(formData, { method: "post" });
+                                    setTimeout(() => {
+                                      setInlineAddState({ fieldKey: null, metaobjectType: null, value: "", loading: false });
+                                      if (shopify && shopify.toast) shopify.toast.show(`Added to Dictionary!`, { isError: false });
+                                    }, 1500);
+                                  }}
+                                >
+                                  Save to Dictionary
+                                </Button>
+                              </div>
+                              <div style={tapTargetStyle}>
+                                <Button onClick={() => setInlineAddState({ fieldKey: null, metaobjectType: null, value: "", loading: false })} accessibilityLabel="Cancel adding term">
+                                  Cancel
+                                </Button>
+                              </div>
+                            </InlineStack>
+                          </BlockStack>
+                        )}
+
+                        {hasMetaobjectType && !isAddingNew && (
+                          <div style={{ display: 'flex', alignItems: 'flex-end', gap: '8px' }}>
+                            <div style={{ flex: 1 }}>
+                              <Select
+                                label={label}
+                                options={[
+                                  { label: "Leave blank to skip", value: "" },
+                                  ...(dynamicMetaobjectOptions[field.metaobjectType] || []).filter(opt => opt.value !== "")
+                                ]}
+                                value={bulkFormData[field.key] || ""}
+                                onChange={(val) => setBulkFormData(prev => ({ ...prev, [field.key]: val }))}
+                                accessibilityLabel={`Bulk input for ${cleanName}`}
+                              />
+                            </div>
                             <div style={tapTargetStyle}>
                               <Button
-                                tone="success"
-                                variant="primary"
-                                loading={inlineAddState.loading}
-                                accessibilityLabel="Save new dictionary term"
-                                onClick={() => {
-                                  if (!inlineAddState.value.trim()) return;
-                                  setInlineAddState(prev => ({ ...prev, loading: true }));
-                                  const formData = new FormData();
-                                  formData.append("intent", "createMetaobject");
-                                  formData.append("type", field.metaobjectType);
-                                  formData.append("value", inlineAddState.value);
-                                  fetcher.submit(formData, { method: "post" });
-                                  setTimeout(() => {
-                                    setInlineAddState({ fieldKey: null, metaobjectType: null, value: "", loading: false });
-                                    if (shopify && shopify.toast) shopify.toast.show(`Added to Dictionary!`, { isError: false });
-                                  }, 1500);
-                                }}
+                                accessibilityLabel={`Add new ${cleanName}`}
+                                onClick={() => setInlineAddState({ fieldKey: field.key, metaobjectType: field.metaobjectType, value: "", loading: false })}
                               >
-                                Save to Dictionary
+                                ➕
                               </Button>
                             </div>
-                            <div style={tapTargetStyle}>
-                              <Button onClick={() => setInlineAddState({ fieldKey: null, metaobjectType: null, value: "", loading: false })} accessibilityLabel="Cancel adding term">
-                                Cancel
-                              </Button>
-                            </div>
-                          </InlineStack>
-                        </BlockStack>
-                      )}
+                          </div>
+                        )}
 
-                      {hasMetaobjectType && !isAddingNew && (
-                        <div style={{ display: 'flex', alignItems: 'flex-end', gap: '8px' }}>
-                          <div style={{ flex: 1 }}>
-                            <Select
-                              label={label}
-                              options={[
-                                { label: "Leave blank to skip", value: "" },
-                                ...(dynamicMetaobjectOptions[field.metaobjectType] || []).filter(opt => opt.value !== "")
-                              ]}
-                              value={bulkFormData[field.key] || ""}
-                              onChange={(val) => setBulkFormData(prev => ({ ...prev, [field.key]: val }))}
-                              accessibilityLabel={`Bulk input for ${cleanName}`}
-                            />
-                          </div>
-                          <div style={tapTargetStyle}>
-                            <Button
-                              accessibilityLabel={`Add new ${cleanName}`}
-                              onClick={() => setInlineAddState({ fieldKey: field.key, metaobjectType: field.metaobjectType, value: "", loading: false })}
-                            >
-                              ➕
-                            </Button>
-                          </div>
+                        {!hasMetaobjectType && staticOptions && (
+                          <Select
+                            label={label}
+                            options={[
+                              { label: "Leave blank to skip", value: "" },
+                              ...staticOptions.filter(opt => opt !== "").map(opt => ({ label: opt, value: opt }))
+                            ]}
+                            value={bulkFormData[field.key] || ""}
+                            onChange={(val) => setBulkFormData(prev => ({ ...prev, [field.key]: val }))}
+                            accessibilityLabel={`Bulk input for ${cleanName}`}
+                          />
+                        )}
+
+                        {!hasMetaobjectType && !staticOptions && (
+                          <TextField
+                            label={label}
+                            value={bulkFormData[field.key] || ""}
+                            onChange={(val) => setBulkFormData(prev => ({ ...prev, [field.key]: val }))}
+                            placeholder="Leave blank to skip"
+                            autoComplete="off"
+                            type="text"
+                            accessibilityLabel={`Bulk input for ${cleanName}`}
+                          />
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {dynamicCustomFields.length > 0 && (
+                  <BlockStack gap="300">
+                    <Divider />
+                    <Text variant="headingSm" as="h4">Custom Stone Fields</Text>
+                    {dynamicCustomFields.map((df, idx) => (
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: '16px' }} key={`dynamic-${idx}`}>
+                        <div style={inputTapTargetStyle}>
+                          <TextField
+                            label="🪨 Stone Field Key"
+                            value={df.key}
+                            onChange={(val) => {
+                              const newFields = [...dynamicCustomFields];
+                              newFields[idx].key = val;
+                              setDynamicCustomFields(newFields);
+                            }}
+                            placeholder="e.g. mine_name"
+                            autoComplete="off"
+                            type="text"
+                            accessibilityLabel="Custom stone field key"
+                          />
                         </div>
-                      )}
-
-                      {!hasMetaobjectType && staticOptions && (
-                        <Select
-                          label={label}
-                          options={[
-                            { label: "Leave blank to skip", value: "" },
-                            ...staticOptions.filter(opt => opt !== "").map(opt => ({ label: opt, value: opt }))
-                          ]}
-                          value={bulkFormData[field.key] || ""}
-                          onChange={(val) => setBulkFormData(prev => ({ ...prev, [field.key]: val }))}
-                          accessibilityLabel={`Bulk input for ${cleanName}`}
-                        />
-                      )}
-
-                      {!hasMetaobjectType && !staticOptions && (
-                        <TextField
-                          label={label}
-                          value={bulkFormData[field.key] || ""}
-                          onChange={(val) => setBulkFormData(prev => ({ ...prev, [field.key]: val }))}
-                          placeholder="Leave blank to skip"
-                          autoComplete="off"
-                          type="text"
-                          accessibilityLabel={`Bulk input for ${cleanName}`}
-                        />
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-
-              {dynamicCustomFields.length > 0 && (
-                <BlockStack gap="300">
-                  <Divider />
-                  <Text variant="headingSm" as="h4">Custom Stone Fields</Text>
-                  {dynamicCustomFields.map((df, idx) => (
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: '16px' }} key={`dynamic-${idx}`}>
-                      <div style={inputTapTargetStyle}>
-                        <TextField
-                          label="🪨 Stone Field Key"
-                          value={df.key}
-                          onChange={(val) => {
+                        <div style={inputTapTargetStyle}>
+                          <TextField
+                            label="Value"
+                            value={df.value}
+                            onChange={(val) => {
+                              const newFields = [...dynamicCustomFields];
+                              newFields[idx].value = val;
+                              setDynamicCustomFields(newFields);
+                            }}
+                            placeholder="Value"
+                            autoComplete="off"
+                            type="text"
+                            accessibilityLabel="Custom stone field value"
+                          />
+                        </div>
+                        <div style={tapTargetStyle}>
+                          <Button tone="critical" onClick={() => {
                             const newFields = [...dynamicCustomFields];
-                            newFields[idx].key = val;
+                            newFields.splice(idx, 1);
                             setDynamicCustomFields(newFields);
-                          }}
-                          placeholder="e.g. mine_name"
-                          autoComplete="off"
-                          type="text"
-                          accessibilityLabel="Custom stone field key"
-                        />
+                          }} accessibilityLabel="Remove custom field">X</Button>
+                        </div>
                       </div>
-                      <div style={inputTapTargetStyle}>
-                        <TextField
-                          label="Value"
-                          value={df.value}
-                          onChange={(val) => {
-                            const newFields = [...dynamicCustomFields];
-                            newFields[idx].value = val;
-                            setDynamicCustomFields(newFields);
-                          }}
-                          placeholder="Value"
-                          autoComplete="off"
-                          type="text"
-                          accessibilityLabel="Custom stone field value"
-                        />
-                      </div>
-                      <div style={tapTargetStyle}>
-                        <Button tone="critical" onClick={() => {
-                          const newFields = [...dynamicCustomFields];
-                          newFields.splice(idx, 1);
-                          setDynamicCustomFields(newFields);
-                        }} accessibilityLabel="Remove custom field">X</Button>
-                      </div>
-                    </div>
-                  ))}
-                </BlockStack>
-              )}
+                    ))}
+                  </BlockStack>
+                )}
 
-              <div style={tapTargetStyle}>
-                <Button onClick={() => setDynamicCustomFields([...dynamicCustomFields, { key: '', value: '' }])} accessibilityLabel="Add custom stone field">
-                  Add Custom Field
-                </Button>
-              </div>
+                <div style={tapTargetStyle}>
+                  <Button onClick={() => setDynamicCustomFields([...dynamicCustomFields, { key: '', value: '' }])} accessibilityLabel="Add custom stone field">
+                    Add Custom Field
+                  </Button>
+                </div>
+                
+                {/* Hidden geoFields inputs to satisfy external form-finding requirements */}
+                <div style={{ display: 'none' }}>
+                  {Object.entries(geoFields).map(([key, value]) =>
+                    value && value.toString().trim() !== "" && (
+                      <input key={`geo_${key}`} type="hidden" name={key} value={value.toString().trim()} />
+                    )
+                  )}
+                </div>
 
-            </BlockStack>
-          </Box>
+              </BlockStack>
+            </Box>
+
+            <Box padding="400" background="bg-surface" borderRadius="200" shadow="100">
+              <BlockStack gap="400">
+                <Text variant="headingSm" as="h3">3. Geo Profile Verification</Text>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                  {ALL_GEO_KEYS.map(key => {
+                    const labelText = key.charAt(0).toUpperCase() + key.slice(1).replace(/([A-Z])/g, ' $1');
+                    const val = geoFields[key] || "";
+                    const isDropdown = !GEO_TEXT_FIELDS.includes(key);
+
+                    return (
+                      <div key={key} style={inputTapTargetStyle}>
+                        {isDropdown && (
+                          <Select
+                            label={labelText.trim()}
+                            options={[
+                              { label: "Select...", value: "" },
+                              ...(GEO_DROPDOWNS[key] || []).map(o => ({ label: o, value: o }))
+                            ]}
+                            value={GEO_DROPDOWNS[key]?.includes(val) ? val : ""}
+                            onChange={(v) => updateGeoFields(key, v)}
+                            accessibilityLabel={`Select value for ${labelText.trim()}`}
+                          />
+                        )}
+                        {!isDropdown && (
+                          <TextField
+                            label={labelText.trim()}
+                            value={val}
+                            onChange={(v) => updateGeoFields(key, v)}
+                            autoComplete="off"
+                            accessibilityLabel={`Enter text for ${labelText.trim()}`}
+                          />
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </BlockStack>
+            </Box>
+          </BlockStack>
         </div>
 
         {modalConfig.active && (
