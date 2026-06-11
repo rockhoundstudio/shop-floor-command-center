@@ -6,12 +6,8 @@ import {
 } from "@shopify/polaris";
 import { MagicIcon, SaveIcon, PlusIcon } from "@shopify/polaris-icons";
 
-// --- IMPORT THE ENGINE (Loader & Action) ---
-import { loader as engineLoader, action as engineAction } from "../utils/meta-injector.loader";
-
 // --- EXPORT THE ENGINE FOR REMIX TO RUN ---
-export const loader = engineLoader;
-export const action = engineAction;
+export { loader, action } from "../utils/meta-injector.loader";
 
 const ROCKHOUND_FIELDS = [
   { key: "piece_name", label: "Piece Name", type: "single_line_text_field" },
@@ -428,50 +424,6 @@ function IntakeBenchTab({ products, fetcher }) {
     );
   }, [selectedProductId, fetcher, products, promptStyle]);
 
-  const handleInject = useCallback(() => {
-    if (!selectedProductId) return;
-    setStatusMessage("");
-    setErrorMessage("");
-    
-    const payload = [];
-    const entries = Object.entries(formState);
-    
-    entries.forEach(([key, value]) => {
-      const isPopulated = value !== undefined && value !== null && value.toString().trim() !== "";
-      
-      if (isPopulated) {
-        const config = ROCKHOUND_FIELDS.find(f => f.key === key);
-        let fieldType = "single_line_text_field";
-        if (config && config.type) {
-          fieldType = config.type;
-        }
-        
-        let formatId = `gid://shopify/Product/${selectedProductId}`;
-        if (selectedProductId.includes("gid://")) {
-          formatId = selectedProductId;
-        }
-
-        payload.push({
-          ownerId: formatId,
-          namespace: "rockhound",
-          key: key,
-          value: value.toString().trim(),
-          type: fieldType 
-        });
-      }
-    });
-
-    if (payload.length === 0) {
-      setErrorMessage("No fields are populated. Fill at least one field to inject.");
-      return;
-    }
-
-    fetcher.submit(
-      { intent: "saveProduct", payload: JSON.stringify(payload) },
-      { method: "post" }
-    );
-  }, [selectedProductId, formState, fetcher]);
-
   useEffect(() => {
     const isIdle = fetcher.state === "idle";
     const hasData = fetcher.data !== undefined && fetcher.data !== null;
@@ -578,86 +530,97 @@ function IntakeBenchTab({ products, fetcher }) {
                   multiline={3}
                   autoComplete="off"
                   disabled={!selectedProductId}
+                  accessibilityLabel="Enter Gemini Presentation Style"
                 />
               </div>
 
-              <InlineStack gap="300" align="space-between">
-                <div style={{ minHeight: "54px", flexGrow: 1 }}>
-                  <Button 
-                    icon={MagicIcon} 
-                    onClick={handleAutoFill}
-                    accessibilityLabel="Re-Run Auto-Fill Fields"
-                    size="large"
-                    fullWidth
-                    disabled={!selectedProductId}
-                    loading={isAutoFilling}
-                  >
-                    Re-Run Auto-Fill
-                  </Button>
+              <fetcher.Form method="post" style={{ width: "100%" }}>
+                <input type="hidden" name="intent" value="saveProduct" />
+                {selectedProductId !== "" && (
+                  <input type="hidden" name="productId" value={selectedProductId} />
+                )}
+
+                <InlineStack gap="300" align="space-between">
+                  <div style={{ minHeight: "54px", flexGrow: 1 }}>
+                    <Button 
+                      icon={MagicIcon} 
+                      onClick={handleAutoFill}
+                      accessibilityLabel="Re-Run Auto-Fill Fields"
+                      size="large"
+                      fullWidth
+                      disabled={!selectedProductId}
+                      loading={isAutoFilling}
+                    >
+                      Re-Run Auto-Fill
+                    </Button>
+                  </div>
+                  <div style={{ minHeight: "54px", flexGrow: 1 }}>
+                    <Button 
+                      submit
+                      icon={SaveIcon} 
+                      tone="success" 
+                      variant="primary" 
+                      accessibilityLabel="Inject Metafields"
+                      size="large"
+                      fullWidth
+                      disabled={!selectedProductId}
+                      loading={isSaving}
+                    >
+                      Inject Metafields
+                    </Button>
+                  </div>
+                </InlineStack>
+
+                <div style={{ maxHeight: "60vh", overflowY: "auto", paddingRight: "8px", display: "flex", flexDirection: "column", gap: "16px", marginTop: "16px" }}>
+                  {ROCKHOUND_FIELDS.map(field => {
+                    const val = formState[field.key] || "";
+                    const isDropdown = field.isDropdown === true;
+                    const isText = !field.isDropdown;
+                    
+                    let safeVal = val;
+                    let options = [];
+
+                    if (isDropdown) {
+                      const dropdownOptions = DEFAULT_DROPDOWNS[field.key] || [];
+                      safeVal = dropdownOptions.includes(val) ? val : "";
+                      options = [
+                        { label: safeVal !== "" ? safeVal : "Select...", value: safeVal },
+                        ...dropdownOptions.filter(o => o !== safeVal).map(o => ({ label: o, value: o }))
+                      ];
+                    }
+                    
+                    return (
+                      <div key={field.key} style={{ minHeight: "54px" }}>
+                        {isDropdown && (
+                          <Select
+                            name={field.key}
+                            label={field.label}
+                            options={options}
+                            value={DEFAULT_DROPDOWNS[field.key]?.includes(val) ? val : ""}
+                            onChange={(v) => updateFormState(field.key, v)}
+                            accessibilityLabel={`Select value for ${field.label}`}
+                            disabled={!selectedProductId}
+                          />
+                        )}
+
+                        {isText && (
+                          <TextField
+                            name={field.key}
+                            label={field.label}
+                            value={val}
+                            onChange={(v) => updateFormState(field.key, v)}
+                            autoComplete="off"
+                            accessibilityLabel={`Enter text for ${field.label}`}
+                            multiline={field.multiline && 3}
+                            disabled={!selectedProductId}
+                          />
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
-                <div style={{ minHeight: "54px", flexGrow: 1 }}>
-                  <Button 
-                    icon={SaveIcon} 
-                    tone="success" 
-                    variant="primary" 
-                    onClick={handleInject}
-                    accessibilityLabel="Inject Metafields"
-                    size="large"
-                    fullWidth
-                    disabled={!selectedProductId}
-                    loading={isSaving}
-                  >
-                    Inject Metafields
-                  </Button>
-                </div>
-              </InlineStack>
+              </fetcher.Form>
 
-              <div style={{ maxHeight: "60vh", overflowY: "auto", paddingRight: "8px", display: "flex", flexDirection: "column", gap: "16px" }}>
-                {ROCKHOUND_FIELDS.map(field => {
-                  const val = formState[field.key] || "";
-                  const isDropdown = field.isDropdown === true;
-                  const isText = !field.isDropdown;
-                  
-                  let safeVal = val;
-                  let options = [];
-
-                  if (isDropdown) {
-                    const dropdownOptions = DEFAULT_DROPDOWNS[field.key] || [];
-                    safeVal = dropdownOptions.includes(val) ? val : "";
-                    options = [
-                      { label: safeVal !== "" ? safeVal : "Select...", value: safeVal },
-                      ...dropdownOptions.filter(o => o !== safeVal).map(o => ({ label: o, value: o }))
-                    ];
-                  }
-                  
-                  return (
-                    <div key={field.key} style={{ minHeight: "54px" }}>
-                      {isDropdown && (
-                        <Select
-                          label={field.label}
-                          options={options}
-                          value={DEFAULT_DROPDOWNS[field.key]?.includes(val) ? val : ""}
-                          onChange={(v) => updateFormState(field.key, v)}
-                          accessibilityLabel={`Select value for ${field.label}`}
-                          disabled={!selectedProductId}
-                        />
-                      )}
-
-                      {isText && (
-                        <TextField
-                          label={field.label}
-                          value={val}
-                          onChange={(v) => updateFormState(field.key, v)}
-                          autoComplete="off"
-                          accessibilityLabel={`Enter text for ${field.label}`}
-                          multiline={field.multiline && 3}
-                          disabled={!selectedProductId}
-                        />
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
             </BlockStack>
           </Card>
         </div>
