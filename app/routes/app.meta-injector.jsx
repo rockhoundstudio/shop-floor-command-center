@@ -883,7 +883,7 @@ export default function MetaInjectorV2() {
       <Page
         fullWidth
         title="Meta Injector"
-        subtitle="Data Integrity & Operations Hub"
+        subtitle="Data Integrity &amp; Operations Hub"
         backAction={{ content: "Dashboard", onAction: () => navigate("/app"), accessibilityLabel: "Back to Dashboard" }}
       >
         <Layout>
