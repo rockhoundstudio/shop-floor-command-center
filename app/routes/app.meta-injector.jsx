@@ -539,6 +539,11 @@ function IntakeBenchTab({ products, fetcher }) {
                 {selectedProductId !== "" && (
                   <input type="hidden" name="productId" value={selectedProductId} />
                 )}
+                {Object.entries(formState).map(([key, value]) =>
+                  value && value.toString().trim() !== "" && (
+                    <input key={key} type="hidden" name={key} value={value.toString().trim()} />
+                  )
+                )}
 
                 <InlineStack gap="300" align="space-between">
                   <div style={{ minHeight: "54px", flexGrow: 1 }}>
