@@ -109,6 +109,15 @@ export function InjectorTab({ products, fetcher, shopify, dbProfiles = [], dynam
             return updatedGeo;
           });
         }
+
+        if (fetcher.data.geoFields) {
+          setGeoFields(prev => ({
+            ...prev,
+            ...Object.fromEntries(
+              Object.entries(fetcher.data.geoFields).filter(([k, v]) => v !== undefined && v !== null && v.toString().trim() !== "")
+            )
+          }));
+        }
       } else {
         const errorMsg = fetcher.data.errors
           ? fetcher.data.errors.map(e => e.message).join(" | ")
