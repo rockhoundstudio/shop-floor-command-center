@@ -41,7 +41,23 @@ export async function action({ request }) {
     // 🟡 Google / SEO
     { namespace: "rockhound", key: "primary_use", name: "Primary Use", type: "single_line_text_field", ownerType: "PRODUCT" },
     { namespace: "rockhound", key: "setting_ready", name: "Setting Ready", type: "single_line_text_field", ownerType: "PRODUCT" },
-    { namespace: "rockhound", key: "bail_included", name: "Bail Included", type: "single_line_text_field", ownerType: "PRODUCT" }
+    { namespace: "rockhound", key: "bail_included", name: "Bail Included", type: "single_line_text_field", ownerType: "PRODUCT" },
+    // 🟤 Geo Fields
+    { namespace: "geo", key: "base_mineral_name", name: "Base Mineral Name", type: "single_line_text_field", ownerType: "PRODUCT" },
+    { namespace: "geo", key: "color_pattern", name: "Color Pattern", type: "single_line_text_field", ownerType: "PRODUCT" },
+    { namespace: "geo", key: "authenticity", name: "Authenticity", type: "single_line_text_field", ownerType: "PRODUCT" },
+    { namespace: "geo", key: "rarity", name: "Rarity", type: "single_line_text_field", ownerType: "PRODUCT" },
+    { namespace: "geo", key: "crystal_system", name: "Crystal System", type: "single_line_text_field", ownerType: "PRODUCT" },
+    { namespace: "geo", key: "geological_era", name: "Geological Era", type: "single_line_text_field", ownerType: "PRODUCT" },
+    { namespace: "geo", key: "mineral_class", name: "Mineral Class", type: "single_line_text_field", ownerType: "PRODUCT" },
+    { namespace: "geo", key: "rock_composition", name: "Rock Composition", type: "single_line_text_field", ownerType: "PRODUCT" },
+    { namespace: "geo", key: "rock_formation", name: "Rock Formation", type: "single_line_text_field", ownerType: "PRODUCT" },
+    { namespace: "geo", key: "hardness", name: "Hardness", type: "single_line_text_field", ownerType: "PRODUCT" },
+    { namespace: "geo", key: "luster", name: "Luster", type: "single_line_text_field", ownerType: "PRODUCT" },
+    { namespace: "geo", key: "fracture", name: "Fracture", type: "single_line_text_field", ownerType: "PRODUCT" },
+    { namespace: "geo", key: "cleavage", name: "Cleavage", type: "single_line_text_field", ownerType: "PRODUCT" },
+    { namespace: "geo", key: "specific_gravity", name: "Specific Gravity", type: "single_line_text_field", ownerType: "PRODUCT" },
+    { namespace: "geo", key: "diaphaneity", name: "Diaphaneity", type: "single_line_text_field", ownerType: "PRODUCT" }
   ];
 
   const results = [];
@@ -156,9 +172,9 @@ export default function SetupMetafieldsRoute() {
           <BlockStack gap="500">
             <Card padding="600">
               <BlockStack gap="400">
-                <Text variant="headingLg" as="h2">Initialize 22 Metafields</Text>
+                <Text variant="headingLg" as="h2">Initialize 37 Metafields</Text>
                 <Text as="p">
-                  This tool will create the 22 database receptacles required by the Command Center into your live Shopify Admin settings. 
+                  This tool will create the 37 database receptacles required by the Command Center into your live Shopify Admin settings. 
                   It is safe to run multiple times; if a field already exists, it will simply skip it without breaking.
                 </Text>
                 
@@ -171,9 +187,9 @@ export default function SetupMetafieldsRoute() {
                       fullWidth 
                       onClick={handleRunSetup} 
                       loading={isSubmitting}
-                      accessibilityLabel="Create All 22 Metafields"
+                      accessibilityLabel="Create All 37 Metafields"
                     >
-                      {isSubmitting ? "Running GraphQL Mutations..." : "Create All 22 Metafields"}
+                      {isSubmitting ? "Running GraphQL Mutations..." : "Create All 37 Metafields"}
                     </Button>
                   </div>
                 </Box>
@@ -192,7 +208,6 @@ export default function SetupMetafieldsRoute() {
                       <Badge tone="critical" size="large">{data.summary.errorCount} Errors</Badge>
                     )}
                   </InlineStack>
-meta-injector.loader
 
                   <Divider />
 
@@ -209,6 +224,7 @@ meta-injector.loader
                       </div>
                     ))}
                   </BlockStack>
+
                 </BlockStack>
               </Card>
             )}
