@@ -121,7 +121,15 @@ export async function action({ request }) {
             node {
               id
               title
-              metafields(first: 50, namespace: "rockhound") {
+              customMetafields: metafields(first: 50, namespace: "custom") {
+                edges {
+                  node {
+                    key
+                    value
+                  }
+                }
+              }
+              rockhoundMetafields: metafields(first: 50, namespace: "rockhound") {
                 edges {
                   node {
                     key
@@ -143,66 +151,51 @@ export async function action({ request }) {
     const allNewMetafields = [];
 
     products.forEach(product => {
-      if (product.metafields && product.metafields.edges && product.metafields.edges.length > 0) {
-        const mfs = product.metafields.edges.map(e => e.node);
-        const getVal = (key) => {
-          const field = mfs.find(f => f.key === key);
-          return field ? field.value : null;
-        };
+      const getCustom = (key) => {
+        if (!product.customMetafields || !product.customMetafields.edges) return null;
+        const field = product.customMetafields.edges.find(e => e.node.key === key);
+        return field ? field.value : null;
+      };
 
-        const stoneStory = getVal("stone_story");
-        const originLocation = getVal("origin_location");
-        const characterMarks = getVal("character_marks");
-        const treatmentStatus = getVal("treatment_status");
-        const stoneShape = getVal("stone_shape");
-        const rescuedBy = getVal("rescued_by");
-        const mohs = getVal("mohs_hardness") || getVal("hardness");
-        const fracture = getVal("fracture");
-        const cleavage = getVal("cleavage");
-        const diaphaneity = getVal("diaphaneity");
-        const age = getVal("geological_age");
-        const gravity = getVal("specific_gravity");
+      const getRockhound = (key) => {
+        if (!product.rockhoundMetafields || !product.rockhoundMetafields.edges) return null;
+        const field = product.rockhoundMetafields.edges.find(e => e.node.key === key);
+        return field ? field.value : null;
+      };
 
-        let productUpdates = [];
+      const custDim = getCustom("dimensions_mm");
+      const custTreat = getCustom("treatment_status");
+      const custStory = getCustom("stone_story");
+      const custChar = getCustom("character_marks");
+      const custBench = getCustom("bench_notes");
 
-        const newOrigin = [stoneStory, originLocation].filter(Boolean).join(" — ");
-        if (newOrigin) {
-          productUpdates.push({ ownerId: product.id, namespace: "rockhound", key: "origin_story", value: newOrigin, type: "single_line_text_field" });
-        }
+      const rhDim = getRockhound("dimensions_mm");
+      const rhTreat = getRockhound("treated");
+      const rhStory = getRockhound("origin_story");
+      const rhFlaws = getRockhound("honest_flaws_and_character");
 
-        if (characterMarks) {
-          productUpdates.push({ ownerId: product.id, namespace: "rockhound", key: "honest_flaws_and_character", value: characterMarks, type: "single_line_text_field" });
-        }
+      let productUpdates = [];
 
-        if (treatmentStatus) {
-          productUpdates.push({ ownerId: product.id, namespace: "rockhound", key: "treated", value: treatmentStatus, type: "single_line_text_field" });
-        }
+      if (custDim && !rhDim) {
+        productUpdates.push({ ownerId: product.id, namespace: "rockhound", key: "dimensions_mm", value: custDim, type: "single_line_text_field" });
+      }
 
-        if (stoneShape) {
-          productUpdates.push({ ownerId: product.id, namespace: "rockhound", key: "cut_and_shape", value: stoneShape, type: "single_line_text_field" });
-        }
+      if (custTreat && !rhTreat) {
+        productUpdates.push({ ownerId: product.id, namespace: "rockhound", key: "treated", value: custTreat, type: "single_line_text_field" });
+      }
 
-        if (rescuedBy) {
-          productUpdates.push({ ownerId: product.id, namespace: "rockhound", key: "handcrafted_by", value: rescuedBy, type: "single_line_text_field" });
-        }
+      if (custStory && !rhStory) {
+        productUpdates.push({ ownerId: product.id, namespace: "rockhound", key: "origin_story", value: custStory, type: "multi_line_text_field" });
+      }
 
-        const specs = [
-          mohs ? `Mohs: ${mohs}` : null,
-          fracture ? `Fracture: ${fracture}` : null,
-          cleavage ? `Cleavage: ${cleavage}` : null,
-          diaphaneity ? `Diaphaneity: ${diaphaneity}` : null,
-          age ? `Age: ${age}` : null,
-          gravity ? `Gravity: ${gravity}` : null
-        ].filter(Boolean).join(" | ");
+      if ((custChar || custBench) && !rhFlaws) {
+        const combined = [custChar, custBench].filter(Boolean).join("\n");
+        productUpdates.push({ ownerId: product.id, namespace: "rockhound", key: "honest_flaws_and_character", value: combined, type: "multi_line_text_field" });
+      }
 
-        if (specs) {
-          productUpdates.push({ ownerId: product.id, namespace: "rockhound", key: "artist_notes", value: `[Shop Specs] ${specs}`, type: "single_line_text_field" });
-        }
-
-        if (productUpdates.length > 0) {
-          allNewMetafields.push(...productUpdates);
-          productsProcessed++;
-        }
+      if (productUpdates.length > 0) {
+        allNewMetafields.push(...productUpdates);
+        productsProcessed++;
       }
     });
 
