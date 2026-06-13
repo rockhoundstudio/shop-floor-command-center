@@ -148,7 +148,7 @@ export async function action({ request }) {
       ? json.data.products.edges.map(e => e.node)
       : [];
 
-    const allNewMetafields = [];
+    const pendingUpdates = [];
 
     products.forEach(product => {
       const getCustom = (key) => {
@@ -174,37 +174,62 @@ export async function action({ request }) {
       const rhStory = getRockhound("origin_story");
       const rhFlaws = getRockhound("honest_flaws_and_character");
 
-      let productUpdates = [];
+      let addedToThisProduct = false;
 
+      const pushUpdate = (key, value, type) => {
+        pendingUpdates.push({
+          update: { ownerId: product.id, namespace: "rockhound", key, value, type },
+          title: product.title
+        });
+        addedToThisProduct = true;
+      };
+
+      // custom.dimensions_mm → rockhound.dimensions_mm
       if (custDim && !rhDim) {
-        productUpdates.push({ ownerId: product.id, namespace: "rockhound", key: "dimensions_mm", value: custDim, type: "single_line_text_field" });
+        pushUpdate("dimensions_mm", custDim, "single_line_text_field");
       }
 
+      // custom.treatment_status → rockhound.treated
       if (custTreat && !rhTreat) {
-        productUpdates.push({ ownerId: product.id, namespace: "rockhound", key: "treated", value: custTreat, type: "single_line_text_field" });
+        pushUpdate("treated", custTreat, "single_line_text_field");
       }
 
+      // custom.stone_story → rockhound.origin_story
       if (custStory && !rhStory) {
-        productUpdates.push({ ownerId: product.id, namespace: "rockhound", key: "origin_story", value: custStory, type: "multi_line_text_field" });
+        pushUpdate("origin_story", custStory, "multi_line_text_field");
       }
 
-      if ((custChar || custBench) && !rhFlaws) {
-        const combined = [custChar, custBench].filter(Boolean).join("\n");
-        productUpdates.push({ ownerId: product.id, namespace: "rockhound", key: "honest_flaws_and_character", value: combined, type: "multi_line_text_field" });
+      // custom.character_marks & custom.bench_notes → rockhound.honest_flaws_and_character
+      if (!rhFlaws) {
+        let combinedFlaws = null;
+        
+        if (custChar && custBench) {
+          combinedFlaws = `${custChar}\n${custBench}`;
+        } else if (custChar) {
+          combinedFlaws = custChar;
+        } else if (custBench) {
+          combinedFlaws = custBench;
+        }
+
+        if (combinedFlaws) {
+          pushUpdate("honest_flaws_and_character", combinedFlaws, "multi_line_text_field");
+        }
       }
 
-      if (productUpdates.length > 0) {
-        allNewMetafields.push(...productUpdates);
+      if (addedToThisProduct) {
         productsProcessed++;
       }
     });
 
     const chunks = [];
-    for (let i = 0; i < allNewMetafields.length; i += 25) {
-      chunks.push(allNewMetafields.slice(i, i + 25));
+    for (let i = 0; i < pendingUpdates.length; i += 25) {
+      chunks.push(pendingUpdates.slice(i, i + 25));
     }
 
     for (const chunk of chunks) {
+      // Extract just the Shopify input objects for the mutation
+      const metafields = chunk.map(c => c.update);
+
       const setResponse = await admin.graphql(`
         #graphql
         mutation MetafieldsSet($metafields: [MetafieldsSetInput!]!) {
@@ -212,7 +237,7 @@ export async function action({ request }) {
             userErrors { field message }
           }
         }
-      `, { variables: { metafields: chunk } });
+      `, { variables: { metafields } });
 
       const setJson = await setResponse.json();
       const errors = setJson.data && setJson.data.metafieldsSet && setJson.data.metafieldsSet.userErrors
@@ -223,10 +248,19 @@ export async function action({ request }) {
         results.push({ status: "error", message: `Chunk failed: ${errors[0].message}` });
       } else {
         fieldsMigrated += chunk.length;
+        // Log individual successful migrations to the results array
+        chunk.forEach(c => {
+          results.push({ status: "success", message: `Migrated '${c.update.key}' for product: ${c.title}` });
+        });
       }
     }
 
-    results.push({ status: "success", message: `Scanned ${products.length} products. Migrated ${fieldsMigrated} total fields across ${productsProcessed} items.` });
+    if (fieldsMigrated === 0 && results.length === 0) {
+      results.push({ status: "success", message: `Scanned ${products.length} products. All fields are already migrated or blank.` });
+    } else {
+      // Unshift a grand summary to the top of the report
+      results.unshift({ status: "success", message: `SUMMARY: Scanned ${products.length} products. Migrated ${fieldsMigrated} total fields across ${productsProcessed} items.` });
+    }
 
   } catch (error) {
     results.push({ status: "error", message: `Migration completely failed: ${error.message}` });
