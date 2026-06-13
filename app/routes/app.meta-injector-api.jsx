@@ -91,7 +91,7 @@ export const action = async ({ request }) => {
     const setMetafields = Object.entries(metafieldsObj)
       .filter(([key, value]) => value !== null && String(value).trim() !== "")
       .map(([fullKey, value]) => {
-        const namespace = "rockhound";
+        const namespace = "custom";
         const key = fullKey;
 
         return {
