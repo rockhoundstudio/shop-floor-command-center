@@ -48,11 +48,11 @@ export const action = async ({ request }) => {
 
       if (!cachedStone) {
         const lapidaryData = {
-          "custom.mineral_class": "Silicate",
-          "custom.mohs_hardness": stoneName === "Jasper" || stoneName === "Agate" ? "6.5 - 7" : "Varies",
-          "custom.crystal_system": "Trigonal",
-          "custom.primary_color": "Varies by specimen",
-          "custom.stone_story": `A beautiful piece of natural ${stoneName}.`
+          "mineral_class": "Silicate",
+          "mohs_hardness": stoneName === "Jasper" || stoneName === "Agate" ? "6.5 - 7" : "Varies",
+          "crystal_system": "Trigonal",
+          "primary_color": "Varies by specimen",
+          "stone_story": `A beautiful piece of natural ${stoneName}.`
         };
 
         cachedStone = await prisma.stoneCache.create({
@@ -93,8 +93,7 @@ export const action = async ({ request }) => {
           ownerId: resolvedId,
           namespace: item.namespace || "custom",
           key: item.key,
-          value: String(item.value),
-          type: item.type || "single_line_text_field"
+          value: String(item.value)
         };
       });
 
@@ -119,8 +118,7 @@ export const action = async ({ request }) => {
 
       const result = await response.json();
       const errors = result?.data?.metafieldsSet?.userErrors || [];
-      const realErrors = errors.filter(e => !e.message.includes("must be consistent with the definition"));
-      allErrors.push(...realErrors);
+      allErrors.push(...errors);
     }
 
     if (allErrors.length > 0) {
