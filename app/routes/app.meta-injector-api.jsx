@@ -78,28 +78,23 @@ export const action = async ({ request }) => {
   // ==========================================
   // 🔵 INTENT 2: LOCK DATA TO SHOPIFY
   // ==========================================
-  if (intent === "save_single_meta") {
-    const productId = formData.get("productId");
-    const rawMetafields = formData.get("metafields");
-    const metafieldsObj = JSON.parse(rawMetafields);
+  if (intent === "saveMetafields") {
+    const rawPayload = formData.get("payload");
+    const payloadArray = JSON.parse(rawPayload);
 
-    // GID Standardization (Command Center Rule)
-    const resolvedId = productId.startsWith("gid://")
-      ? productId
-      : `gid://shopify/Product/${productId.split("/").pop()}`;
-
-    const setMetafields = Object.entries(metafieldsObj)
-      .filter(([key, value]) => value !== null && String(value).trim() !== "")
-      .map(([fullKey, value]) => {
-        const namespace = "custom";
-        const key = fullKey;
+    const setMetafields = payloadArray
+      .filter(item => item.value !== null && String(item.value).trim() !== "")
+      .map(item => {
+        const resolvedId = item.ownerId.startsWith("gid://")
+          ? item.ownerId
+          : `gid://shopify/Product/${item.ownerId.split("/").pop()}`;
 
         return {
           ownerId: resolvedId,
-          namespace: namespace,
-          key: key,
-          value: String(value),
-          type: "single_line_text_field"
+          namespace: item.namespace || "custom",
+          key: item.key,
+          value: String(item.value),
+          type: item.type || "single_line_text_field"
         };
       });
 
@@ -107,7 +102,6 @@ export const action = async ({ request }) => {
       return data({ success: true, message: "No fields to save." });
     }
 
-    // Chunk at 3 to avoid timeout jams on Render
     const chunks = chunkArray(setMetafields, 3);
     const allErrors = [];
 
