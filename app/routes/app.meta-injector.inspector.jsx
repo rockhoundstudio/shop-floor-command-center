@@ -1,260 +1,260 @@
 import React, { useState, useCallback, useEffect } from "react";
 import {
-  BlockStack, InlineStack, Box, Select, TextField, Button, EmptySearchResult, Spinner, Divider, Modal, DataTable, Toast, Text
+  BlockStack, InlineStack, Box, Select, Button, EmptySearchResult, Spinner, Divider, Toast, Text, Card
 } from "@shopify/polaris";
-import { METAFIELD_CONFIG, getLabelForValue } from "../utils/meta-injector.constants";
 
 export function InspectorTab({ products, fetcher }) {
   const [activeProductId, setActiveProductId] = useState("");
-  const [inspectorLocalData, setInspectorLocalData] = useState({});
-  const [inspectorFieldErrors, setInspectorFieldErrors] = useState({});
-  const [modalConfig, setModalConfig] = useState({ active: false, title: "", diffs: [], payload: [] });
+  const [localData, setLocalData] = useState({});
+  const [originalData, setOriginalData] = useState({});
+  const [fieldTypes, setFieldTypes] = useState({});
+  const [parsedGroups, setParsedGroups] = useState({});
   const [toastState, setToastState] = useState({ active: false, message: "", isError: false });
 
-  const inputTapTargetStyle = { minHeight: '48px', display: 'flex', flexDirection: 'column', justifyContent: 'center' };
-  const tapTargetStyle = { minHeight: '48px', minWidth: '48px', display: 'flex', alignItems: 'center', justifyContent: 'center' };
-
   const closeToast = useCallback(() => setToastState(prev => ({ ...prev, active: false })), []);
-  const closeModal = useCallback(() => setModalConfig({ active: false, title: "", diffs: [], payload: [] }), []);
-
+  
   const isInspectorLoading = fetcher.state !== "idle";
   const activeProduct = fetcher.data?.product || products.find(p => p.id === activeProductId);
 
-  const getMetafieldValue = useCallback((product, key) => {
-    if (!product || !product.metafields) return "";
-    const mf = product.metafields.edges.find(e => e.node.key === key);
-    return mf ? mf.node.value : "";
-  }, []);
-
-  const resolveMetafieldType = useCallback((product, fieldConfig, newValue) => {
-    if (fieldConfig.options) return "list.metaobject_reference";
-    const existingMf = product.metafields.edges.find(e => e.node.key === fieldConfig.key);
-    if (existingMf) return existingMf.node.type;
-    const isNumberType = fieldConfig.type.includes("number");
-    const containsDash = newValue && /[\-–—]/.test(newValue);
-    if (isNumberType && containsDash) return "single_line_text_field";
-    return fieldConfig.type;
-  }, []);
-
+  // Fetch complete product data when dropdown changes
   useEffect(() => {
     if (activeProductId) {
       fetcher.submit({ intent: "fetchSingleProduct", productId: activeProductId }, { method: "post" });
     }
-  }, [activeProductId, fetcher]);
+  }, [activeProductId]);
 
+  // Parse ALL metafields dynamically from Shopify response
   useEffect(() => {
-    if (activeProduct) {
-      const initial = {};
-      const errors = {};
-      METAFIELD_CONFIG.forEach(f => {
-        const val = getMetafieldValue(activeProduct, f.key);
-        initial[f.key] = val;
-        const isInvalidNumber = f.type.includes("number") && val && !/^[\d\.\s\-–—]+$/.test(val);
-        if (isInvalidNumber) {
-          errors[f.key] = "Only numbers and ranges allowed.";
+    if (activeProduct && activeProduct.metafields && activeProduct.metafields.edges) {
+      const groups = {};
+      const orig = {};
+      const types = {};
+
+      // First pass: catalogue everything present
+      activeProduct.metafields.edges.forEach(({ node }) => {
+        const { namespace, key, value, type } = node;
+        if (!groups[namespace]) groups[namespace] = new Set();
+        groups[namespace].add(key);
+        
+        const compositeKey = `${namespace}.${key}`;
+        orig[compositeKey] = value || "";
+        types[compositeKey] = type;
+      });
+
+      // Second pass: Mirror custom keys into rockhound namespace for cross-referencing
+      if (groups['custom']) {
+        if (!groups['rockhound']) groups['rockhound'] = new Set();
+        groups['custom'].forEach(key => {
+          groups['rockhound'].add(key);
+          const compositeKey = `rockhound.${key}`;
+          if (orig[compositeKey] === undefined) {
+            orig[compositeKey] = "";
+            types[compositeKey] = "single_line_text_field"; // Safe default for new fields
+          }
+        });
+      }
+
+      // Convert Sets to sorted Arrays, forcing rockhound to the top
+      const sortedGroups = {};
+      if (groups['rockhound']) {
+        sortedGroups['rockhound'] = Array.from(groups['rockhound']).sort();
+      }
+      
+      Object.keys(groups).sort().forEach(ns => {
+        if (ns !== 'rockhound') {
+          sortedGroups[ns] = Array.from(groups[ns]).sort();
         }
       });
-      setInspectorLocalData(initial);
-      setInspectorFieldErrors(errors);
-    }
-  }, [activeProduct, getMetafieldValue]);
 
+      setParsedGroups(sortedGroups);
+      setOriginalData(orig);
+      setLocalData(orig); // Initialize editable state
+      setFieldTypes(types);
+    } else {
+      setParsedGroups({});
+      setOriginalData({});
+      setLocalData({});
+      setFieldTypes({});
+    }
+  }, [activeProduct]);
+
+  // Handle Save Notifications
   useEffect(() => {
     if (fetcher.data && fetcher.data.message) {
       setToastState({ active: true, message: fetcher.data.message, isError: !fetcher.data.success });
-      if (fetcher.data.success) {
-        closeModal();
+      
+      // If successful save, lock in the new localData as originalData to reset the diff state
+      if (fetcher.data.success && fetcher.data.intent === "saveMetafields") {
+        setOriginalData(localData);
       }
     }
-  }, [fetcher.data, closeModal]);
+  }, [fetcher.data]);
 
-  const handleFieldChange = (key, val, isNumeric) => {
-    setInspectorLocalData(prev => ({ ...prev, [key]: val }));
-    if (isNumeric) {
-      if (val) {
-        const isValid = /^[\d\.\s\-–—]+$/.test(val);
-        setInspectorFieldErrors(prev => {
-          const newE = { ...prev };
-          if (!isValid) newE[key] = "Only numbers and ranges allowed (e.g. 7 or 6.5-7).";
-          if (isValid) delete newE[key];
-          return newE;
-        });
-      }
-      if (!val) {
-        setInspectorFieldErrors(prev => { 
-          const newE = { ...prev }; 
-          delete newE[key]; 
-          return newE; 
-        });
-      }
-    }
+  const handleFieldChange = (compositeKey, val) => {
+    setLocalData(prev => ({ ...prev, [compositeKey]: val }));
   };
 
-  const handleSaveSingle = () => {
-    const hasErrors = Object.keys(inspectorFieldErrors).length > 0;
-    if (hasErrors) {
-      setToastState({ active: true, message: "Please fix validation errors before saving.", isError: true });
-      return;
-    }
-
+  const handleSaveAll = () => {
     const payload = [];
-    const diffs = [];
-    const statusStr = getMetafieldValue(activeProduct, "meta_status");
-    let statusObj = {};
-    try { 
-      if (statusStr) statusObj = JSON.parse(statusStr); 
-    } catch(e) {}
-
-    METAFIELD_CONFIG.forEach(field => {
-      if (field.hidden) return;
-      const currentVal = getMetafieldValue(activeProduct, field.key);
-      const newVal = inspectorLocalData[field.key] || "";
-      
-      if (currentVal !== newVal) {
-        diffs.push({ field: field.label, old: getLabelForValue(field.key, currentVal) || "(empty)", new: getLabelForValue(field.key, newVal) || "(empty)" });
-        const resolvedType = resolveMetafieldType(activeProduct, field, newVal);
-        payload.push({ ownerId: activeProduct.id, namespace: field.namespace, key: field.key, type: resolvedType, value: newVal });
-        statusObj[field.key] = "verified";
+    
+    // Check what actually changed
+    Object.keys(localData).forEach(compositeKey => {
+      if (localData[compositeKey] !== originalData[compositeKey]) {
+        const [namespace, key] = compositeKey.split(".");
+        payload.push({
+          ownerId: activeProduct.id,
+          namespace: namespace,
+          key: key,
+          type: fieldTypes[compositeKey] || "single_line_text_field",
+          value: localData[compositeKey]
+        });
       }
     });
 
-    if (diffs.length === 0) {
+    if (payload.length === 0) {
       setToastState({ active: true, message: "No changes detected.", isError: false });
       return;
     }
 
-    payload.push({ ownerId: activeProduct.id, namespace: "custom", key: "meta_status", type: "json", value: JSON.stringify(statusObj) });
-
-    setModalConfig({
-      active: true, 
-      title: `Confirm changes for ${activeProduct.title}`, 
-      diffs,
-      payload
-    });
+    fetcher.submit({ intent: "saveMetafields", payload: JSON.stringify(payload) }, { method: "post" });
   };
 
-  const executeSave = () => {
-    fetcher.submit({ intent: "saveMetafields", payload: JSON.stringify(modalConfig.payload) }, { method: "post" });
-  };
+  // Check if any fields differ from original to enable save button
+  const hasUnsavedChanges = Object.keys(localData).some(k => localData[k] !== originalData[k]);
 
   return (
-    <Box>
-      {!activeProductId && (
-        <BlockStack gap="400">
-          <div style={inputTapTargetStyle}>
-            <Select 
-              label="Select a product to inspect" 
-              options={[{ label: "Select...", value: "" }, ...products.map(p => ({ label: p.title, value: p.id }))]} 
-              value={activeProductId} 
-              onChange={setActiveProductId} 
-              accessibilityLabel="Select product for inspector" 
-            />
-          </div>
-          <EmptySearchResult title="No product selected" description="Select a product to fetch fresh data and edit." withIllustration />
-        </BlockStack>
-      )}
-
-      {activeProductId && (
-        <BlockStack gap="400">
+    <Box padding="400">
+      <BlockStack gap="500">
+        
+        {/* Header & Product Selector */}
+        <Card padding="400">
           <InlineStack align="space-between" blockAlign="center">
-            <InlineStack gap="300" blockAlign="center">
+            <BlockStack gap="200">
+              <Text variant="headingLg" as="h2">Live Metafield Inspector</Text>
               <Box width="400px">
-                <div style={inputTapTargetStyle}>
-                  <Select 
-                    label="Select Product" 
-                    options={products.map(p => ({ label: p.title, value: p.id }))} 
-                    value={activeProductId} 
-                    onChange={setActiveProductId} 
-                    accessibilityLabel="Change product in inspector" 
-                  />
-                </div>
+                <Select 
+                  label="Select Product to Inspect" 
+                  labelHidden
+                  options={[{ label: "Select a product...", value: "" }, ...products.map(p => ({ label: p.title, value: p.id }))]} 
+                  value={activeProductId} 
+                  onChange={setActiveProductId} 
+                  accessibilityLabel="Search and select product for inspector" 
+                  disabled={isInspectorLoading}
+                />
               </Box>
-              {isInspectorLoading && <Spinner size="small" accessibilityLabel="Loading product data" />}
-            </InlineStack>
-            <div style={tapTargetStyle}>
-              <Button 
-                tone="success" 
-                onClick={handleSaveSingle} 
-                disabled={isInspectorLoading} 
-                accessibilityLabel={`Save changes for ${activeProduct?.title || 'selected product'}`}
-              >
-                Verify & Save Changes
-              </Button>
-              </div>
-          </InlineStack>
-          <Divider />
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
-            {METAFIELD_CONFIG.filter(f => !f.hidden).map(field => {
-              const hasOptions = !!field.options;
-              const isNumber = field.type.includes("number");
-              
-              return (
-                <Box key={field.key} padding="300" background="bg-surface" borderRadius="200" shadow="100">
-                  {hasOptions && (
-                    <div style={inputTapTargetStyle}>
-                      <Select 
-                        label={field.label} 
-                        options={field.options} 
-                        value={inspectorLocalData[field.key] || ""} 
-                        onChange={(val) => handleFieldChange(field.key, val, false)} 
-                        accessibilityLabel={`Select ${field.label}`} 
-                        disabled={isInspectorLoading} 
-                      />
-                    </div>
-                  )}
-                  {!hasOptions && (
-                    <div style={inputTapTargetStyle}>
-                      <TextField 
-                        label={field.label} 
-                        value={inspectorLocalData[field.key] || ""} 
-                        onChange={(val) => handleFieldChange(field.key, val, isNumber)} 
-                        autoComplete="off" 
-                        type="text" 
-                        error={inspectorFieldErrors[field.key]} 
-                        helpText={(isNumber && !inspectorFieldErrors[field.key]) && "Numbers and ranges allowed (e.g. 7, 6.5-7.5)"} 
-                        accessibilityLabel={`Edit ${field.label}`} 
-                        disabled={isInspectorLoading} 
-                      />
-                    </div>
-                  )}
-                </Box>
-              );
-            })}
-          </div>
-        </BlockStack>
-      )}
-
-      {modalConfig.active && (
-        <Modal
-          open={true} 
-          onClose={closeModal} 
-          title={modalConfig.title}
-          primaryAction={{ content: "Confirm & Execute", onAction: executeSave, tone: "success", accessibilityLabel: "Confirm and execute action" }}
-          secondaryActions={[{ content: "Cancel", onAction: closeModal, accessibilityLabel: "Cancel action" }]}
-        >
-          <Modal.Section>
-            <BlockStack gap="400">
-              {modalConfig.diffs.length > 0 && (
-                <Box background="bg-surface-secondary" padding="300" borderRadius="200">
-                  <DataTable 
-                    columnContentTypes={["text", "text", "text"]} 
-                    headings={["Field", "Old Value", "New Value"]} 
-                    rows={modalConfig.diffs.map(d => [d.field, d.old, d.new])} 
-                  />
-                </Box>
-              )}
             </BlockStack>
-          </Modal.Section>
-        </Modal>
-      )}
 
-      {toastState.active && (
-        <Toast 
-          content={toastState.message} 
-          error={toastState.isError} 
-          onDismiss={closeToast} 
-        />
-      )}
+            {isInspectorLoading && <Spinner size="large" accessibilityLabel="Loading data" />}
+
+            {activeProductId && hasUnsavedChanges && (
+              <Button 
+                size="large" 
+                tone="success" 
+                variant="primary"
+                onClick={handleSaveAll} 
+                disabled={isInspectorLoading} 
+                accessibilityLabel="Save all changed fields to Shopify"
+              >
+                Save Changes
+              </Button>
+            )}
+          </InlineStack>
+        </Card>
+
+        {/* Empty State */}
+        {!activeProductId && (
+          <Box paddingBlockStart="800">
+            <EmptySearchResult 
+              title="No product selected" 
+              description="Select a product from the dropdown above to load all live metafields across all namespaces." 
+              withIllustration 
+            />
+          </Box>
+        )}
+
+        {/* Dynamic Metafield Render */}
+        {activeProductId && Object.keys(parsedGroups).length > 0 && (
+          <BlockStack gap="600">
+            {Object.keys(parsedGroups).map(namespace => (
+              <Card key={namespace} padding="500">
+                <BlockStack gap="400">
+                  
+                  <Box borderBottom="1px solid #E1E3E5" paddingBlockEnd="200">
+                    <Text variant="headingLg" as="h3" fontWeight="bold" textTransform="uppercase">
+                      {namespace} Namespace
+                    </Text>
+                  </Box>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '20px' }}>
+                    {parsedGroups[namespace].map(key => {
+                      const compositeKey = `${namespace}.${key}`;
+                      const val = localData[compositeKey] || "";
+                      const isBlank = val.trim() === "";
+                      const hasCustomEquivalent = !!originalData[`custom.${key}`];
+                      
+                      // Glaucoma & Contrast Visual Logic
+                      let borderColor = "transparent";
+                      if (!isBlank) {
+                        borderColor = "#2E7D32"; // Green: Contains Data
+                      } else if (namespace === "rockhound" && hasCustomEquivalent) {
+                        borderColor = "#FBC02D"; // Yellow: Missing in rockhound but exists in custom
+                      }
+
+                      const bgColor = isBlank ? "#FFEBEE" : "#FFFFFF"; // Red background for empty
+
+                      return (
+                        <Box key={compositeKey}>
+                          <div style={{
+                            borderLeft: `6px solid ${borderColor}`,
+                            paddingLeft: '12px',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: '8px'
+                          }}>
+                            <Text as="span" variant="bodySm" tone="subdued" fontWeight="bold">
+                              {namespace}.{key}
+                            </Text>
+                            
+                            {/* Native textarea ensures 100% control over styling, backgrounds, and accessibility sizes */}
+                            <textarea
+                              value={val}
+                              onChange={(e) => handleFieldChange(compositeKey, e.target.value)}
+                              aria-label={`Edit metafield ${namespace} ${key}`}
+                              disabled={isInspectorLoading}
+                              style={{
+                                width: '100%',
+                                minHeight: '60px', /* Massive tap target */
+                                fontSize: '16px', /* Minimum 14px as requested, larger for accessibility */
+                                padding: '12px',
+                                backgroundColor: bgColor,
+                                color: '#202223',
+                                border: '1px solid #8C9196',
+                                borderRadius: '4px',
+                                resize: 'vertical',
+                                fontFamily: 'inherit'
+                              }}
+                            />
+                          </div>
+                        </Box>
+                      );
+                    })}
+                  </div>
+
+                </BlockStack>
+              </Card>
+            ))}
+          </BlockStack>
+        )}
+
+        {/* Global Toast Notifier */}
+        {toastState.active && (
+          <Toast 
+            content={toastState.message} 
+            error={toastState.isError} 
+            onDismiss={closeToast} 
+          />
+        )}
+      </BlockStack>
     </Box>
   );
 }
