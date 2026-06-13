@@ -1,450 +1,106 @@
-import React, { useState, useCallback } from "react";
-import {
-  Box,
-  BlockStack,
-  InlineStack,
-  Text,
-  TextField,
-  Button,
-  Checkbox,
-  ChoiceList,
-  Divider,
-  Select,
-  Scrollable,
-  Modal,
-  DataTable
-} from "@shopify/polaris";
-import { METAFIELD_CONFIG } from "./app.meta-injector.constants";
+import { PrismaClient } from "@prisma/client";
 
-const GOOGLE_GID_MAP = {
-  crystalSystem: {
-    "Amorphous":  '["gid://shopify/Metaobject/178206015739"]',
-    "Monoclinic": '["gid://shopify/Metaobject/151951212795"]',
-    "Trigonal":   '["gid://shopify/Metaobject/154252116219"]',
-    "Hexagonal":  '["gid://shopify/Metaobject/154307625211"]',
-    "Triclinic":  '["gid://shopify/Metaobject/154308706555"]',
-    "Other":      '["gid://shopify/Metaobject/178222989563"]',
-  },
-  geologicalEra: {
-    "Precambrian": '["gid://shopify/Metaobject/151951245563"]',
-    "Mesozoic":    '["gid://shopify/Metaobject/154252083451"]',
-    "Cenozoic":    '["gid://shopify/Metaobject/154307854587"]',
-    "Paleozoic":   '["gid://shopify/Metaobject/156128379131"]',
-    "Other":       '["gid://shopify/Metaobject/156128444667"]',
-  },
-  mineralClass: {
-    "Silicates":  '["gid://shopify/Metaobject/151951278331"]',
-    "Oxides":     '["gid://shopify/Metaobject/155431371003"]',
-    "Carbonates": '["gid://shopify/Metaobject/156128313595"]',
-    "Phosphates": '["gid://shopify/Metaobject/178206212347"]',
-    "Sulfides":   '["gid://shopify/Metaobject/178206310651"]',
-  },
-  rockComposition: {
-    "Granite":  '["gid://shopify/Metaobject/151951311099"]',
-    "Obsidian": '["gid://shopify/Metaobject/155431338235"]',
-    "Andesite": '["gid://shopify/Metaobject/156128411899"]',
-    "Schist":   '["gid://shopify/Metaobject/156128477435"]',
-    "Jasper":   '["gid://shopify/Metaobject/166239764731"]',
-    "Other":    '["gid://shopify/Metaobject/178206376187"]',
-  },
-  rockFormation: {
-    "Metamorphic": '["gid://shopify/Metaobject/151951343867"]',
-    "Igneous":     '["gid://shopify/Metaobject/154251985147"]',
-    "Sedimentary": '["gid://shopify/Metaobject/154307657979"]',
-  },
-  authenticity: {
-    "Genuine": '["gid://shopify/Metaobject/151951114491"]',
-    "Replica": '["gid://shopify/Metaobject/156128346363"]',
-  },
-  rarity: {
-    "Common": '["gid://shopify/Metaobject/151951147259"]',
-    "Rare":   '["gid://shopify/Metaobject/154252050683"]',
-  },
-};
+const prisma = new PrismaClient();
 
-const toGid = (category, value) => GOOGLE_GID_MAP[category]?.[value] || "";
+const TAXONOMY = [
+  { category: "mineral-class", term: "Silicates", gid: "gid://shopify/Metaobject/151951278331" },
+  { category: "mineral-class", term: "Oxides", gid: "gid://shopify/Metaobject/155431371003" },
+  { category: "mineral-class", term: "Carbonates", gid: "gid://shopify/Metaobject/156128313595" },
+  { category: "mineral-class", term: "Phosphates", gid: "gid://shopify/Metaobject/178206212347" },
+  { category: "mineral-class", term: "Sulfides", gid: "gid://shopify/Metaobject/178206310651" },
+  { category: "rock-formation", term: "Metamorphic", gid: "gid://shopify/Metaobject/151951343867" },
+  { category: "rock-formation", term: "Igneous", gid: "gid://shopify/Metaobject/154251985147" },
+  { category: "rock-formation", term: "Sedimentary", gid: "gid://shopify/Metaobject/154307657979" },
+  { category: "rock-composition", term: "Granite", gid: "gid://shopify/Metaobject/151951311099" },
+  { category: "rock-composition", term: "Obsidian", gid: "gid://shopify/Metaobject/155431338235" },
+  { category: "rock-composition", term: "Andesite", gid: "gid://shopify/Metaobject/156128411899" },
+  { category: "rock-composition", term: "Schist", gid: "gid://shopify/Metaobject/156128477435" },
+  { category: "rock-composition", term: "Jasper", gid: "gid://shopify/Metaobject/166239764731" },
+  { category: "rock-composition", term: "Other", gid: "gid://shopify/Metaobject/178206376187" },
+  { category: "geological-era", term: "Precambrian", gid: "gid://shopify/Metaobject/151951245563" },
+  { category: "geological-era", term: "Paleozoic", gid: "gid://shopify/Metaobject/156128379131" },
+  { category: "geological-era", term: "Mesozoic", gid: "gid://shopify/Metaobject/154252083451" },
+  { category: "geological-era", term: "Cenozoic", gid: "gid://shopify/Metaobject/154307854587" },
+  { category: "geological-era", term: "Other", gid: "gid://shopify/Metaobject/156128444667" },
+  { category: "crystal-system", term: "Monoclinic", gid: "gid://shopify/Metaobject/151951212795" },
+  { category: "crystal-system", term: "Trigonal", gid: "gid://shopify/Metaobject/154252116219" },
+  { category: "crystal-system", term: "Hexagonal", gid: "gid://shopify/Metaobject/154307625211" },
+  { category: "crystal-system", term: "Triclinic", gid: "gid://shopify/Metaobject/154308706555" },
+  { category: "crystal-system", term: "Other", gid: "gid://shopify/Metaobject/178206015739" },
+  { category: "jewelry-material", term: "Gold-plated", gid: "gid://shopify/Metaobject/151881285883" },
+  { category: "jewelry-material", term: "Metal", gid: "gid://shopify/Metaobject/151881777403" },
+  { category: "jewelry-material", term: "Sterling Silver", gid: "gid://shopify/Metaobject/151950196987" },
+  { category: "jewelry-material", term: "Silver-plated", gid: "gid://shopify/Metaobject/151951474939" },
+  { category: "jewelry-material", term: "Nickel", gid: "gid://shopify/Metaobject/152407113979" },
+  { category: "jewelry-material", term: "Stone", gid: "gid://shopify/Metaobject/152416911611" },
+  { category: "jewelry-material", term: "Bronze", gid: "gid://shopify/Metaobject/152416944379" },
+  { category: "jewelry-material", term: "Other", gid: "gid://shopify/Metaobject/153585811707" },
+  { category: "jewelry-material", term: "Nylon", gid: "gid://shopify/Metaobject/154161381627" },
+  { category: "jewelry-material", term: "Cotton", gid: "gid://shopify/Metaobject/154161414395" },
+  { category: "jewelry-material", term: "Silver", gid: "gid://shopify/Metaobject/161238810875" },
+  { category: "jewelry-type", term: "Artisan jewelry", gid: "gid://shopify/Metaobject/151881220347" },
+  { category: "jewelry-type", term: "Fine jewelry", gid: "gid://shopify/Metaobject/152412487931" },
+  { category: "jewelry-type", term: "Accessories", gid: "gid://shopify/Metaobject/153585516795" },
+  { category: "necklace-design", term: "Pendant", gid: "gid://shopify/Metaobject/151881318651" },
+  { category: "necklace-design", term: "Chain", gid: "gid://shopify/Metaobject/151950688507" },
+  { category: "necklace-design", term: "Anklet", gid: "gid://shopify/Metaobject/152415437051" },
+  { category: "necklace-design", term: "Bracelet", gid: "gid://shopify/Metaobject/152415568123" },
+  { category: "color-pattern", term: "Green", gid: "gid://shopify/Metaobject/151768563963" },
+  { category: "color-pattern", term: "Black", gid: "gid://shopify/Metaobject/151768596731" },
+  { category: "color-pattern", term: "Blue flash", gid: "gid://shopify/Metaobject/151792943355" },
+  { category: "color-pattern", term: "Red", gid: "gid://shopify/Metaobject/151881154811" },
+  { category: "color-pattern", term: "White", gid: "gid://shopify/Metaobject/151881810171" },
+  { category: "color-pattern", term: "Floral", gid: "gid://shopify/Metaobject/151951048955" },
+  { category: "color-pattern", term: "Multicolor", gid: "gid://shopify/Metaobject/151950098683" },
+  { category: "color-pattern", term: "Gold", gid: "gid://shopify/Metaobject/151950754043" },
+  { category: "color-pattern", term: "Pink", gid: "gid://shopify/Metaobject/151951507707" },
+  { category: "color-pattern", term: "Striped", gid: "gid://shopify/Metaobject/152875892987" },
+  { category: "color-pattern", term: "Beige", gid: "gid://shopify/Metaobject/152947491067" },
+  { category: "color-pattern", term: "Brown", gid: "gid://shopify/Metaobject/152947523835" },
+  { category: "color-pattern", term: "Clear", gid: "gid://shopify/Metaobject/152947556603" },
+  { category: "color-pattern", term: "Orange", gid: "gid://shopify/Metaobject/152947589371" },
+  { category: "color-pattern", term: "Yellow", gid: "gid://shopify/Metaobject/152947622139" },
+  { category: "color-pattern", term: "Bronze", gid: "gid://shopify/Metaobject/152947654907" },
+  { category: "color-pattern", term: "Yellow veins", gid: "gid://shopify/Metaobject/152948146427" },
+  { category: "color-pattern", term: "Landscape", gid: "gid://shopify/Metaobject/152951488763" },
+  { category: "color-pattern", term: "Blue", gid: "gid://shopify/Metaobject/152951816443" },
+  { category: "color-pattern", term: "Gray", gid: "gid://shopify/Metaobject/152951849211" },
+  { category: "color-pattern", term: "Silver", gid: "gid://shopify/Metaobject/152951881979" },
+  { category: "color-pattern", term: "Spots", gid: "gid://shopify/Metaobject/152952111355" },
+  { category: "color-pattern", term: "Dots", gid: "gid://shopify/Metaobject/152952144123" },
+  { category: "color-pattern", term: "Purple", gid: "gid://shopify/Metaobject/155539931387" },
+  { category: "authenticity", term: "Genuine", gid: "gid://shopify/Metaobject/151951114491" },
+  { category: "authenticity", term: "Replica", gid: "gid://shopify/Metaobject/156128346363" },
+  { category: "rarity", term: "Common", gid: "gid://shopify/Metaobject/151951147259" },
+  { category: "rarity", term: "Rare", gid: "gid://shopify/Metaobject/154252050683" },
+  { category: "condition", term: "Excellent (EX)", gid: "gid://shopify/Metaobject/151951180027" },
+  { category: "condition", term: "Mint (M)", gid: "gid://shopify/Metaobject/154252017915" },
+  { category: "target-gender", term: "Unisex", gid: "gid://shopify/Metaobject/151881253115" },
+  { category: "target-gender", term: "Female", gid: "gid://shopify/Metaobject/151950721275" },
+  { category: "target-gender", term: "Male", gid: "gid://shopify/Metaobject/152469111035" },
+  { category: "target-gender", term: "All", gid: "gid://shopify/Metaobject/152469176571" },
+  { category: "age-group", term: "Adults", gid: "gid://shopify/Metaobject/151881187579" },
+  { category: "age-group", term: "All ages", gid: "gid://shopify/Metaobject/152469078267" },
+  { category: "material", term: "Stone", gid: "gid://shopify/Metaobject/151768760571" },
+  { category: "chain-link-type", term: "Cable", gid: "gid://shopify/Metaobject/154162004219" },
+  { category: "chain-link-type", term: "Silver plated snake chain", gid: "gid://shopify/Metaobject/168392065275" },
+  { category: "chain-link-type", term: "Gold plated snake chain", gid: "gid://shopify/Metaobject/168392130811" },
+  { category: "jewelry-finding-type", term: "Pendant base", gid: "gid://shopify/Metaobject/154164429051" },
+  { category: "jewelry-finding-type", term: "Chain base", gid: "gid://shopify/Metaobject/154453541115" },
+];
 
-export function NorthStarTab({ products, fetcher, shopify, dbProfiles = [] }) {
-  const [bulkMode, setBulkMode] = useState("fill");
-  const [bulkFormData, setBulkFormData] = useState({});
-  const [bulkSelectedProductIds, setBulkSelectedProductIds] = useState([]);
-  const [bulkSearchQuery, setBulkSearchQuery] = useState("");
-  const [dynamicCustomFields, setDynamicCustomFields] = useState([]);
-  const [modalConfig, setModalConfig] = useState({ active: false, title: "", body: null, diffs: [], payload: [] });
-
-  const tapTargetStyle = { minHeight: '48px', minWidth: '48px', display: 'flex', alignItems: 'center', justifyContent: 'center' };
-  const inputTapTargetStyle = { minHeight: '48px', display: 'flex', flexDirection: 'column', justifyContent: 'center' };
-
-  const getMetafieldValue = useCallback((product, key) => {
-    if (!product || !product.metafields) return "";
-    const mf = product.metafields.edges.find(e => e.node.key === key);
-    return mf ? mf.node.value : "";
-  }, []);
-
-  const resolveMetafieldType = useCallback((product, fieldConfig, newValue) => {
-    if (fieldConfig.options) return "list.metaobject_reference";
-    const existingMf = product.metafields.edges.find(e => e.node.key === fieldConfig.key);
-    if (existingMf) return existingMf.node.type;
-    const isNumberType = fieldConfig.type.includes("number");
-    const containsDash = newValue ? /[\-–—]/.test(newValue) : false;
-    return isNumberType ? (containsDash ? "single_line_text_field" : fieldConfig.type) : fieldConfig.type;
-  }, []);
-
-  const toggleProduct = (id) => {
-    setBulkSelectedProductIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
-  };
-
-  const handleAutoFill = () => {
-    const baseStoneType = bulkFormData["official_name"] || "";
-
-    if (!baseStoneType.trim()) {
-      if (shopify && shopify.toast) shopify.toast.show("Please type a stone name (e.g., 'Jasper') into 'Official Name' first!", { isError: true });
-      return;
-    }
-
-    const profile = dbProfiles.find(db => 
-      baseStoneType.toLowerCase().includes((db.stoneName || db.title || "").toLowerCase()) || 
-      (db.stoneName || db.title || "").toLowerCase().includes(baseStoneType.toLowerCase())
-    );
-    
-    if (!profile) {
-      if (shopify && shopify.toast) shopify.toast.show(`No dictionary entry found for "${baseStoneType}".`, { isError: true });
-      return;
-    }
-
-    console.log("PROFILE DUMP:", JSON.stringify(profile));
-
-    setBulkFormData(prev => ({
-      ...prev,
-      "authenticity":       toGid("authenticity",    profile.googleAuthenticity || profile.authenticity)         || prev["authenticity"]       || "",
-      "rarity":             toGid("rarity",          profile.googleRarity || profile.rarity)                     || prev["rarity"]             || "",
-      "crystal-system":     toGid("crystalSystem",   profile.googleCrystalSystem || profile.crystalSystem)       || prev["crystal-system"]     || "",
-      "geological-era":     toGid("geologicalEra",   profile.googleGeologicalEra || profile.geologicalEra)       || prev["geological-era"]     || "",
-      "mineral-class":      toGid("mineralClass",    profile.googleMineralClass || profile.mineralClass)         || prev["mineral-class"]      || "",
-      "rock-composition":   toGid("rockComposition", profile.googleRockComposition || profile.rockComposition)   || prev["rock-composition"]   || "",
-      "rock-formation":     toGid("rockFormation",   profile.googleRockFormation || profile.rockFormation)       || prev["rock-formation"]     || "",
-      store_hardness: profile.storeHardness || profile.hardness || prev.store_hardness || "",
-      store_luster: profile.storeLuster || profile.luster || prev.store_luster || "",
-      store_fracture: profile.storeFracture || profile.fracture || prev.store_fracture || "",
-      store_cleavage: profile.storeCleavage || profile.cleavage || prev.store_cleavage || "",
-      store_specific_gravity: profile.storeSpecificGravity || profile.specificGravity || prev.store_specific_gravity || "",
-      store_diaphaneity: profile.storeDiaphaneity || profile.diaphaneity || prev.store_diaphaneity || ""
-    }));
-
-    if (shopify && shopify.toast) shopify.toast.show(`${profile.stoneName || profile.title} science successfully loaded from dictionary!`, { isError: false });
-  };
-
-  const handleBulkSubmit = () => {
-    const selectedProducts = products.filter(p => bulkSelectedProductIds.includes(p.id));
-    if (selectedProducts.length === 0) {
-      if (shopify && shopify.toast) shopify.toast.show("Select at least one product.", { isError: true });
-      return;
-    }
-
-    const payload = [];
-    const diffSummary = [];
-    let changesCount = 0;
-
-    selectedProducts.forEach(product => {
-      const statusStr = getMetafieldValue(product, "meta_status");
-      let statusObj = {};
-      try { 
-        statusObj = statusStr ? JSON.parse(statusStr) : {}; 
-      } catch(e) {}
-      
-      let productChanged = false;
-
-      METAFIELD_CONFIG.forEach(field => {
-        if (field.hidden) return;
-        const newVal = bulkFormData[field.key] || "";
-        if (!newVal) return;
-
-        const currentVal = getMetafieldValue(product, field.key);
-        if (bulkMode === "fill" && currentVal) return;
-        if (currentVal === newVal) return;
-
-        const resolvedType = resolveMetafieldType(product, field, newVal);
-        
-        let finalValue = newVal;
-        if (resolvedType.includes("list.")) {
-          try {
-            JSON.parse(newVal);
-            finalValue = newVal;
-          } catch {
-            finalValue = JSON.stringify([newVal]);
-          }
-        }
-
-        payload.push({ ownerId: product.id, namespace: field.namespace, key: field.key, type: resolvedType, value: finalValue });
-        statusObj[field.key] = "bulk_unverified";
-        productChanged = true;
-        changesCount++;
-      });
-
-      dynamicCustomFields.forEach(df => {
-        if (!df.key || !df.value) return;
-        const currentVal = getMetafieldValue(product, df.key);
-        if (bulkMode === "fill" && currentVal) return;
-        if (currentVal === df.value) return;
-
-        payload.push({ ownerId: product.id, namespace: "custom", key: df.key, type: "single_line_text_field", value: df.value });
-        statusObj[df.key] = "bulk_unverified";
-        productChanged = true;
-        changesCount++;
-      });
-
-      if (productChanged) {
-        payload.push({ ownerId: product.id, namespace: "custom", key: "meta_status", type: "json", value: JSON.stringify(statusObj) });
-      }
+async function main() {
+  console.log("Seeding TaxonomyGid table...");
+  for (const entry of TAXONOMY) {
+    await prisma.taxonomyGid.upsert({
+      where: { category_term: { category: entry.category, term: entry.term } },
+      update: { gid: entry.gid },
+      create: entry,
     });
-
-    if (payload.length === 0) {
-      if (shopify && shopify.toast) shopify.toast.show("No changes to apply based on current mode and inputs.", { isError: false });
-      return;
-    }
-
-    diffSummary.push({ field: "Total Updates", old: "Current State", new: `${changesCount} updates across ${selectedProducts.length} products` });
-
-    setModalConfig({
-      active: true, 
-      title: `Confirm Bulk Injection (${bulkMode.toUpperCase()})`,
-      body: bulkMode === "overwrite" ? "WARNING: OVERWRITE mode destroys existing verified data." : "FILL ONLY mode. Existing data is safe.",
-      diffs: diffSummary, 
-      payload: payload
-    });
-  };
-
-  const executeBulkSubmit = () => {
-    fetcher.submit({ intent: "saveMetafields", payload: JSON.stringify(modalConfig.payload) }, { method: "post" });
-    setModalConfig({ active: false, title: "", body: null, diffs: [], payload: [] });
-  };
-
-  let visibleProducts = products;
-  if (bulkSearchQuery.trim() !== "") {
-    const lowerQuery = bulkSearchQuery.toLowerCase();
-    visibleProducts = products.filter(p => p.title.toLowerCase().includes(lowerQuery));
   }
-
-  return (
-    <BlockStack gap="500">
-      {/* FIX 1: Preview & Run button relocated to the absolute top */}
-      <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
-        <Button tone="success" size="large" onClick={handleBulkSubmit} accessibilityLabel="Preview bulk injection">
-          Preview & Run Bulk Inject
-        </Button>
-      </div>
-
-      <div style={{ display: 'flex', flexDirection: 'row', gap: '24px', minHeight: '600px' }}>
-        <div style={{ flex: '0 0 350px', display: 'flex', flexDirection: 'column' }}>
-          <Box padding="300" background="bg-surface-secondary" borderRadius="200">
-            <BlockStack gap="300">
-              <Text variant="headingSm" as="h3">1. Select Targets ({bulkSelectedProductIds.length})</Text>
-              
-              <div style={inputTapTargetStyle}>
-                <TextField
-                  placeholder="Search products..."
-                  value={bulkSearchQuery}
-                  onChange={setBulkSearchQuery}
-                  autoComplete="off"
-                  clearButton
-                  onClearButtonClick={() => setBulkSearchQuery("")}
-                  accessibilityLabel="Search products"
-                />
-              </div>
-
-              {bulkSearchQuery.trim() !== "" && (
-                <Text variant="bodySm" color="subdued">
-                  Showing {visibleProducts.length} of {products.length} products
-                </Text>
-              )}
-
-              <div style={tapTargetStyle}>
-                <Button onClick={() => setBulkSelectedProductIds(bulkSelectedProductIds.length === visibleProducts.length ? [] : visibleProducts.map(p => p.id))} accessibilityLabel="Select all or none">
-                  {bulkSelectedProductIds.length === visibleProducts.length && visibleProducts.length > 0 ? "Deselect All" : "Select All"}
-                </Button>
-              </div>
-
-              <Scrollable style={{ height: '500px' }}>
-                <BlockStack gap="100">
-                  {visibleProducts.length === 0 && (
-                     <Box padding="400">
-                       <Text as="p" color="subdued" alignment="center">No products match your search.</Text>
-                     </Box>
-                  )}
-                  {visibleProducts.map(p => (
-                    <div style={inputTapTargetStyle} key={p.id}>
-                      <Checkbox 
-                        label={p.title} 
-                        checked={bulkSelectedProductIds.includes(p.id)} 
-                        onChange={() => toggleProduct(p.id)} 
-                        accessibilityLabel={`Select ${p.title}`} 
-                      />
-                    </div>
-                  ))}
-                </BlockStack>
-              </Scrollable>
-            </BlockStack>
-          </Box>
-        </div>
-
-        <div style={{ flex: 1 }}>
-          <Box padding="400" background="bg-surface" borderRadius="200" shadow="100">
-            <BlockStack gap="400">
-              <Text variant="headingSm" as="h3">2. Define Injection Data</Text>
-              <Box paddingBlockEnd="200">
-                <InlineStack gap="400">
-                  <Text as="span">🔵 <strong style={{ fontWeight: 600 }}>Google</strong> = Required for Google Shopping</Text>
-                  {/* FIX 2: Legend updated to say "Stone" */}
-                  <Text as="span">🪨 <strong style={{ fontWeight: 600 }}>Stone</strong> = Your OOAK storefront data</Text>
-                </InlineStack>
-              </Box>
-              <div style={inputTapTargetStyle}>
-                <ChoiceList 
-                  title="Injection Mode" 
-                  choices={[
-                    { label: 'FILL ONLY: Skip products that already have data', value: 'fill' }, 
-                    { label: 'OVERWRITE: Force data (Dangerous)', value: 'overwrite' }
-                  ]} 
-                  selected={[bulkMode]} 
-                  onChange={(val) => setBulkMode(val[0])} 
-                />
-              </div>
-              
-              <Divider />
-
-              <Box padding="300" background="bg-surface-secondary" borderRadius="100">
-                <BlockStack gap="300">
-                  <Text as="p" variant="bodyMd">
-                    <strong>Dictionary Auto-Fill:</strong> Type a stone name (e.g., "Jasper") into the <strong>Official Name</strong> field below, then click this button to load its hard science data.
-                  </Text>
-                  <div style={tapTargetStyle}>
-                    <Button size="large" variant="primary" tone="success" onClick={handleAutoFill}>
-                      ⭐ Auto-Fill Science from Dictionary
-                    </Button>
-                  </div>
-                </BlockStack>
-              </Box>
-              
-              <Divider />
-              
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-                {METAFIELD_CONFIG.filter(f => !f.hidden).map(field => {
-                  const isGoogle = field.namespace === "shopify";
-                  // FIX 2: Storefront form label logic changed to say "Stone"
-                  const label = isGoogle ? `🔵 Google ${(field.label || '').replace('Google ', '')}` : `🪨 Stone ${(field.label || '').replace('Store ', '')}`;
-
-                  if (isGoogle || field.options) {
-                    return (
-                      <div style={inputTapTargetStyle} key={field.key}>
-                        <Select 
-                          label={label} 
-                          options={field.options ? field.options : [{label: "Select...", value: ""}]}
-                          value={bulkFormData[field.key] || ""} 
-                          onChange={(val) => setBulkFormData(prev => ({ ...prev, [field.key]: val }))} 
-                          accessibilityLabel={`Bulk input for ${field.label}`} 
-                        />
-                      </div>
-                    );
-                  }
-                  
-                  return (
-                    <div style={inputTapTargetStyle} key={field.key}>
-                      <TextField 
-                        label={label} 
-                        value={bulkFormData[field.key] || ""} 
-                        onChange={(val) => setBulkFormData(prev => ({ ...prev, [field.key]: val }))} 
-                        placeholder="Leave blank to skip" 
-                        autoComplete="off" 
-                        type="text" 
-                        accessibilityLabel={`Bulk input for ${field.label}`} 
-                      />
-                    </div>
-                  );
-                })}
-              </div>
-
-              {dynamicCustomFields.length > 0 && (
-                <BlockStack gap="300">
-                  <Divider />
-                  <Text variant="headingSm" as="h4">Custom Store Fields</Text>
-                  {dynamicCustomFields.map((df, idx) => (
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: '16px' }} key={`dynamic-${idx}`}>
-                      <div style={inputTapTargetStyle}>
-                        <TextField 
-                          label="🪨 Stone Field Key" // FIX 2: Updated Custom field label
-                          value={df.key} 
-                          onChange={(val) => {
-                            const newFields = [...dynamicCustomFields];
-                            newFields[idx].key = val;
-                            setDynamicCustomFields(newFields);
-                          }} 
-                          placeholder="e.g. mine_name" 
-                          autoComplete="off" 
-                          type="text" 
-                          accessibilityLabel="Custom stone field key" 
-                        />
-                      </div>
-                      <div style={inputTapTargetStyle}>
-                        <TextField 
-                          label="Value" 
-                          value={df.value} 
-                          onChange={(val) => {
-                            const newFields = [...dynamicCustomFields];
-                            newFields[idx].value = val;
-                            setDynamicCustomFields(newFields);
-                          }} 
-                          placeholder="Value" 
-                          autoComplete="off" 
-                          type="text" 
-                          accessibilityLabel="Custom stone field value" 
-                        />
-                      </div>
-                      <div style={tapTargetStyle}>
-                        <Button tone="critical" onClick={() => {
-                          const newFields = [...dynamicCustomFields];
-                          newFields.splice(idx, 1);
-                          setDynamicCustomFields(newFields);
-                        }} accessibilityLabel="Remove custom field">X</Button>
-                      </div>
-                    </div>
-                  ))}
-                </BlockStack>
-              )}
-              
-              <div style={tapTargetStyle}>
-                <Button onClick={() => setDynamicCustomFields([...dynamicCustomFields, { key: '', value: '' }])} accessibilityLabel="Add custom store field">
-                  Add Custom Field
-                </Button>
-              </div>
-            </BlockStack>
-          </Box>
-        </div>
-
-        {modalConfig.active && (
-          <Modal
-            open={true} 
-            onClose={() => setModalConfig({ active: false, title: "", body: null, diffs: [], payload: [] })} 
-            title={modalConfig.title}
-            primaryAction={{ content: "Confirm & Execute", onAction: executeBulkSubmit, tone: "success", accessibilityLabel: "Confirm and execute action" }}
-            secondaryActions={[{ content: "Cancel", onAction: () => setModalConfig({ active: false, title: "", body: null, diffs: [], payload: [] }), accessibilityLabel: "Cancel action" }]}
-          >
-            <Modal.Section>
-              <BlockStack gap="400">
-                {modalConfig.body && <Text variant="bodyLg" as="p" fontWeight="bold">{modalConfig.body}</Text>}
-                {modalConfig.diffs.length > 0 && (
-                  <Box background="bg-surface-secondary" padding="300" borderRadius="200">
-                    <DataTable 
-                      columnContentTypes={["text", "text", "text"]} 
-                      headings={["Field", "Old Value", "New Value"]} 
-                      rows={modalConfig.diffs.map(d => [d.field, d.old, d.new])} 
-                    />
-                  </Box>
-                )}
-              </BlockStack>
-            </Modal.Section>
-          </Modal> 
-        )}
-      </div>
-    </BlockStack>
-  );
+  console.log(`Done — ${TAXONOMY.length} taxonomy entries seeded.`);
 }
+
+main()
+  .catch((e) => { console.error(e); process.exit(1); })
+  .finally(async () => { await prisma.$disconnect(); });

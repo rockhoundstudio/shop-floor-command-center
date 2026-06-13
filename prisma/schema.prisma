@@ -104,3 +104,14 @@ model DbProfile {
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
 }
+
+model TaxonomyGid {
+  id        String   @id @default(cuid())
+  category  String
+  term      String
+  gid       String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([category, term])
+}
