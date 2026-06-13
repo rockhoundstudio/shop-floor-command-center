@@ -1,7 +1,6 @@
 import { authenticate } from "../shopify.server";
 import { lookupStone } from "../utils/geoLibrary";
 import { TARGET_KEYS } from "../utils/metaScan";
-import * as cheerio from "cheerio";
 
 // ==========================================
 // ENVIRONMENT VARIABLES & MAPS
@@ -71,102 +70,108 @@ export const action = async ({ request }) => {
     };
 
     // ==========================================
-    // PASS 0: HTML DESCRIPTION PARSER
+    // PASS 0: NATIVE HTML DESCRIPTION PARSER
     // ==========================================
     if (description) {
       try {
-        const $ = cheerio.load(description);
+        // --- 1. The Stone Section Extraction ---
+        // Find a heading containing "The Stone" or "The Stone:"
+        const stoneHeadingRegex = /<(h[1-6]|strong|b)[^>]*>[\s\S]*?the stone:?[\s\S]*?<\/\1>/i;
+        const headingMatch = description.match(stoneHeadingRegex);
         
-        // --- The Stone Section Extraction ---
-        // Find the heading that contains "The Stone"
-        let stoneHeading = null;
-        $("h1, h2, h3, h4, h5, h6, strong, b").each((i, el) => {
-          if ($(el).text().trim().toLowerCase() === "the stone" || $(el).text().trim().toLowerCase() === "the stone:") {
-            stoneHeading = el;
-            return false; // break loop
-          }
-        });
+        let beforeStone = description; // Everything before the heading
+        
+        if (headingMatch) {
+          beforeStone = description.substring(0, headingMatch.index);
+          const afterHeading = description.substring(headingMatch.index + headingMatch[0].length);
+          
+          // Find the next heading to know where the Stone section ends
+          const nextHeadingIndex = afterHeading.search(/<h[1-6][^>]*>/i);
+          const stoneHtml = nextHeadingIndex !== -1 ? afterHeading.substring(0, nextHeadingIndex) : afterHeading;
+          
+          // Split content into lines using breaks, closing tags, or literal newlines
+          const lines = stoneHtml.split(/<br\s*\/?>|<\/p>|<\/div>|\n/i);
+          
+          lines.forEach(line => {
+            const cleanedLine = line.replace(/<\/?[^>]+(>|$)/g, "").trim(); // Strip HTML
+            const lowerLine = cleanedLine.toLowerCase();
 
-        if (stoneHeading) {
-          // Get all following siblings until the next heading or end
-          let current = $(stoneHeading).next();
-          while (current.length && !current.is("h1, h2, h3, h4, h5, h6")) {
-            const text = current.text().trim();
-            const lines = text.split(/\r?\n|<br\s*\/?>/i); // Split by physical breaks if packed in one p tag
-            
-            lines.forEach(line => {
-              const cleanedLine = line.replace(/<\/?[^>]+(>|$)/g, "").trim(); // Strip HTML just in case
-              const lowerLine = cleanedLine.toLowerCase();
+            if (lowerLine.startsWith("type:")) safeSet("primary_medium", cleanedLine.substring(5).trim());
+            if (lowerLine.startsWith("origin:")) safeSet("collection_location", cleanedLine.substring(7).trim());
+            if (lowerLine.startsWith("shape:")) safeSet("cut_and_shape", cleanedLine.substring(6).trim());
+            if (lowerLine.startsWith("dimensions:")) safeSet("dimensions_mm", cleanedLine.substring(11).trim());
+            if (lowerLine.startsWith("finish:")) safeSet("surface_finish", cleanedLine.substring(7).trim());
+            if (lowerLine.includes("one of a kind") && lowerLine.includes("yes")) safeSet("is_one_of_a_kind", "true");
+            if (lowerLine.includes("not dyed") || lowerLine.includes("not enhanced") || lowerLine.includes("untreated")) safeSet("treated", "false");
+          });
+        }
 
-              if (lowerLine.startsWith("type:")) safeSet("primary_medium", cleanedLine.substring(5).trim());
-              if (lowerLine.startsWith("origin:")) safeSet("collection_location", cleanedLine.substring(7).trim());
-              if (lowerLine.startsWith("shape:")) safeSet("cut_and_shape", cleanedLine.substring(6).trim());
-              if (lowerLine.startsWith("dimensions:")) safeSet("dimensions_mm", cleanedLine.substring(11).trim());
-              if (lowerLine.startsWith("finish:")) safeSet("surface_finish", cleanedLine.substring(7).trim());
-              if (lowerLine.includes("one of a kind") && lowerLine.includes("yes")) safeSet("is_one_of_a_kind", "true");
-              if (lowerLine.includes("not dyed") || lowerLine.includes("not enhanced") || lowerLine.includes("untreated")) safeSet("treated", "false");
-            });
+        // --- 2. Origin Story Link Extraction ---
+        const ignoreList = [
+          "/pages/tails-and-trails", 
+          "/pages/rockhound-logbook-hub", 
+          "/pages/build-your-setting", 
+          "/pages/the-3-000-mile-run"
+        ];
+        
+        // Try to isolate the rockhound-dwell-links div if it exists
+        let linkSearchArea = description;
+        const dwellLinksDiv = description.match(/<(?:div|section)[^>]*(?:id|class)=["'][^"']*rockhound-dwell-links[^"']*["'][^>]*>([\s\S]*?)<\/(?:div|section)>/i);
+        if (dwellLinksDiv) {
+          linkSearchArea = dwellLinksDiv[1];
+        }
+
+        const linkRegex = /<a[^>]*href=["']([^"']+)["']/gi;
+        let linkMatch;
+        while ((linkMatch = linkRegex.exec(linkSearchArea)) !== null) {
+          let href = linkMatch[1];
+          if (href.includes("/pages/")) {
+            let path = href;
+            try {
+              // Parse URL to cleanly isolate pathname from protocol/domain/query params
+              const urlObj = new URL(href, "https://dummy.com"); 
+              path = urlObj.pathname;
+            } catch (e) {
+              path = href.split('?')[0]; // fallback strip query string
+            }
             
-            current = current.next();
+            if (!ignoreList.includes(path)) {
+              const slug = path.split("/").filter(Boolean).pop();
+              safeSet("origin_story_page_slug", slug);
+              break; // Stop after finding the first valid link
+            }
           }
         }
 
-        // --- Origin Story Link Extraction ---
-        const links = $(".rockhound-dwell-links a, #rockhound-dwell-links a");
-        links.each((i, el) => {
-          const href = $(el).attr("href");
-          if (href && href.includes("/pages/")) {
-            const ignoreList = [
-              "/pages/tails-and-trails", 
-              "/pages/rockhound-logbook-hub", 
-              "/pages/build-your-setting", 
-              "/pages/the-3-000-mile-run"
-            ];
-            
-            // Handle both absolute and relative URLs
-            const urlObj = new URL(href, "https://dummy.com"); 
-            const path = urlObj.pathname;
-            
-            if (!ignoreList.includes(path)) {
-              const slug = path.split("/").pop();
-              safeSet("origin_story_page_slug", slug);
-              return false; // break loop on first valid match
-            }
-          }
-        });
-
-        // --- Story Paragraphs Extraction ---
-        // Get paragraphs before the heading "The Stone", or all paragraphs if heading is missing
-        let storyParagraphs = [];
-        const allParagraphs = $("p");
+        // --- 3. Story Paragraphs Extraction ---
+        // Extract from text physically located before the "The Stone" heading
+        const pRegex = /<p[^>]*>([\s\S]*?)<\/p>/gi;
+        let pMatch;
+        const storyParagraphs = [];
         
-        allParagraphs.each((i, el) => {
-          // If we hit the Stone heading or its container, stop collecting
-          if (stoneHeading && $.contains(el, stoneHeading) || $(el).text().trim().toLowerCase().includes("the stone")) {
-             return false; 
-          }
+        while ((pMatch = pRegex.exec(beforeStone)) !== null) {
+          let pContent = pMatch[1];
           
-          // Clone the element so we can remove anchors without altering the original DOM
-          const clone = $(el).clone();
-          clone.find('a').remove(); // Strip out anchor text
-          const rawText = clone.text().trim();
+          // Remove anchor tags entirely (including their text content)
+          pContent = pContent.replace(/<a\b[^>]*>[\s\S]*?<\/a>/gi, "");
+          // Strip remaining HTML tags
+          pContent = pContent.replace(/<\/?[^>]+(>|$)/g, "").trim();
           
-          if (rawText.length > 0) {
-            storyParagraphs.push(rawText);
+          if (pContent.length > 0) {
+            storyParagraphs.push(pContent);
           }
-        });
+        }
 
         if (storyParagraphs.length > 0) {
-           const combinedStory = storyParagraphs.join("\n\n");
-           safeSet("honest_flaws_and_character", combinedStory); 
+          const combinedStory = storyParagraphs.join("\n\n");
+          safeSet("honest_flaws_and_character", combinedStory); 
         }
 
       } catch (parseError) {
-        console.error("Pass 0 HTML Parsing Fault:", parseError.message);
-        // Continue to Pass 1 rather than hard crashing
+        console.error("Pass 0 Text Parsing Fault:", parseError.message);
+        // Do not crash the endpoint, proceed to Pass 1
       }
     }
-
 
     // ==========================================
     // PASS 1: LOCAL LIBRARY
@@ -192,12 +197,10 @@ export const action = async ({ request }) => {
     // FALLBACKS
     // ==========================================
     safeSet("official_name", title);
-    // Remove the old HTML description fallback to stone_story since Pass 0 handles plain text extraction now
 
     return Response.json({ success: true, merged });
   } catch (error) {
     console.error("Stone Lookup Engine Fault:", error.message);
-    // Return a safe empty merge state if the action hard crashes
     return Response.json(
       { success: false, error: error.message, merged: {} }, 
       { status: 500 }
