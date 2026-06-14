@@ -131,7 +131,7 @@ export function IntakeBenchTab({ products, fetcher }) {
         if (node.namespace === "rockhound" && hasValue) {
           newForm[node.key] = node.value;
         }
-        if (node.namespace === "custom" && hasValue) {
+        if (node.namespace === "rockhound" && hasValue) {
           newFullForm[node.key] = node.value;
         }
       });
@@ -229,7 +229,7 @@ export function IntakeBenchTab({ products, fetcher }) {
       const newValue = value || "";
       if (originalValue !== newValue) {
         changes.push({
-          namespace: "custom",
+          namespace: "rockhound",
           key: key,
           value: newValue,
           type: "single_line_text_field"
