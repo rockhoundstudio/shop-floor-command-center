@@ -301,7 +301,13 @@ export async function action({ request }) {
       const promptText = [
         "You are a data extraction assistant. Parse the following product title and description and return a JSON object mapping these exact keys to their best-guess values extracted from the text.",
         "",
-        "Keys to map: piece_name, primary_medium, secondary_medium, handcrafted_by, material, stone_family, color, cut_and_shape, surface_finish, dimensions_mm, weight_grams, collection_name, collection_location, collection_date, primary_use, setting_ready, bail_included, is_one_of_a_kind, treated, found_object, wire_material, artist_notes.",
+        "Keys to map: piece_name, primary_medium, secondary_medium, handcrafted_by, material, stone_family, color, cut_and_shape, surface_finish, dimensions_mm, weight_grams, collection_name, collection_location, collection_date, primary_use, setting_ready, bail_included, is_one_of_a_kind, treated, found_object, wire_material, artist_notes, origin_story, honest_flaws, honest_flaws_and_character.",
+        "",
+        "Specific Key Instructions:",
+        "- origin_story: the narrative story of how the stone was found and crafted — this is the primary story field",
+        "- honest_flaws: any character marks, flaws, or unique imperfections of the stone",
+        "- artist_notes: the lapidary process notes — how it was cut, shaped, and finished",
+        "- honest_flaws_and_character: copy of honest_flaws for the Full Meta Report",
         "",
         "If a value cannot be confidently determined from the text, leave the string empty (\"\").",
         "Return ONLY valid JSON with no markdown formatting.",
@@ -406,6 +412,10 @@ export async function action({ request }) {
         }
       }
 
+      if (parsedValues.honest_flaws) {
+        parsedValues.honest_flaws_and_character = parsedValues.honest_flaws;
+      }
+
       return json({ 
         success: true, 
         intent: "smartAutoFill", 
@@ -429,7 +439,13 @@ export async function action({ request }) {
       const promptText = [
         "You are a data extraction assistant. Parse the following product title and description and return a JSON object mapping these exact keys to their best-guess values extracted from the text.",
         "",
-        "Keys to map: piece_name, primary_medium, secondary_medium, handcrafted_by, material, stone_family, color, cut_and_shape, surface_finish, dimensions_mm, weight_grams, collection_name, collection_location, collection_date, primary_use, setting_ready, bail_included, is_one_of_a_kind, treated, found_object, wire_material, artist_notes.",
+        "Keys to map: piece_name, primary_medium, secondary_medium, handcrafted_by, material, stone_family, color, cut_and_shape, surface_finish, dimensions_mm, weight_grams, collection_name, collection_location, collection_date, primary_use, setting_ready, bail_included, is_one_of_a_kind, treated, found_object, wire_material, artist_notes, origin_story, honest_flaws, honest_flaws_and_character.",
+        "",
+        "Specific Key Instructions:",
+        "- origin_story: the narrative story of how the stone was found and crafted — this is the primary story field",
+        "- honest_flaws: any character marks, flaws, or unique imperfections of the stone",
+        "- artist_notes: the lapidary process notes — how it was cut, shaped, and finished",
+        "- honest_flaws_and_character: copy of honest_flaws for the Full Meta Report",
         "",
         "If a value cannot be confidently determined from the text, leave the string empty (\"\").",
         "Return ONLY valid JSON with no markdown formatting.",
@@ -512,6 +528,10 @@ export async function action({ request }) {
             }
           });
         }
+      }
+
+      if (parsedValues.honest_flaws) {
+        parsedValues.honest_flaws_and_character = parsedValues.honest_flaws;
       }
 
       return json({ 
