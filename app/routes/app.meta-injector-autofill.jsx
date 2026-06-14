@@ -54,10 +54,10 @@ export const action = async ({ request }) => {
   try {
     await authenticate.admin(request);
     
-    const body = await request.json();
-    const title = body.title || "";
-    const description = body.description || ""; // HTML payload
-    const existingMeta = body.existingMeta || {};
+    const body = await request.formData();
+    const title = body.get("title") || "";
+    const description = body.get("description") || ""; // HTML payload
+    const existingMeta = JSON.parse(body.get("existingMeta") || "{}");
 
     const merged = { ...existingMeta };
     
@@ -66,12 +66,6 @@ export const action = async ({ request }) => {
         if (value && String(value).trim() !== "") {
           merged[key] = String(value).trim();
         }
-      }
-    };
-
-    const alwaysSet = (key, value) => {
-      if (value && String(value).trim() !== "") {
-        merged[key] = String(value).trim();
       }
     };
 
@@ -170,7 +164,7 @@ export const action = async ({ request }) => {
 
         if (storyParagraphs.length > 0) {
           const combinedStory = storyParagraphs.join("\n\n");
-          alwaysSet("origin_story", combinedStory); 
+          safeSet("honest_flaws_and_character", combinedStory); 
         }
 
       } catch (parseError) {
@@ -204,11 +198,11 @@ export const action = async ({ request }) => {
     // ==========================================
     safeSet("official_name", title);
 
-    return Response.json({ success: true, fields: merged });
+    return Response.json({ success: true, merged });
   } catch (error) {
     console.error("Stone Lookup Engine Fault:", error.message);
     return Response.json(
-      { success: false, error: error.message, fields: {} }, 
+      { success: false, error: error.message, merged: {} }, 
       { status: 500 }
     );
   }
