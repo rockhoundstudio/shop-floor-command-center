@@ -215,6 +215,10 @@ export const action = async ({ request }) => {
 
     console.log("FINAL FIELDS RETURNED:", JSON.stringify(merged, null, 2));
 
+    if (merged.honest_flaws_and_character) {
+      merged.honest_flaws = merged.honest_flaws_and_character;
+    }
+
     return Response.json({ success: true, fields: merged });
   } catch (error) {
     console.error("Stone Lookup Engine Fault:", error.message);
