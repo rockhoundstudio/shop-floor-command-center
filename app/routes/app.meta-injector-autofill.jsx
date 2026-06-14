@@ -54,10 +54,10 @@ export const action = async ({ request }) => {
   try {
     await authenticate.admin(request);
     
-    const body = await request.formData();
-    const title = body.get("title") || "";
-    const description = body.get("description") || ""; // HTML payload
-    const existingMeta = JSON.parse(body.get("existingMeta") || "{}");
+    const body = await request.json();
+    const title = body.title || "";
+    const description = body.description || ""; // HTML payload
+    const existingMeta = body.existingMeta || {};
 
     const merged = { ...existingMeta };
     
@@ -164,7 +164,7 @@ export const action = async ({ request }) => {
 
         if (storyParagraphs.length > 0) {
           const combinedStory = storyParagraphs.join("\n\n");
-          safeSet("honest_flaws_and_character", combinedStory); 
+          safeSet("origin_story", combinedStory); 
         }
 
       } catch (parseError) {
