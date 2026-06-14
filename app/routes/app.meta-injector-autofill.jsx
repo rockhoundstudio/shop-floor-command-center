@@ -70,6 +70,12 @@ export const action = async ({ request }) => {
       }
     };
 
+    const alwaysSet = (key, value) => {
+      if (value && String(value).trim() !== "") {
+        merged[key] = String(value).trim();
+      }
+    };
+
     // ==========================================
     // PASS 0: NATIVE HTML DESCRIPTION PARSER
     // ==========================================
@@ -165,7 +171,7 @@ export const action = async ({ request }) => {
 
         if (storyParagraphs.length > 0) {
           const combinedStory = storyParagraphs.join("\n\n");
-          safeSet("honest_flaws_and_character", combinedStory); 
+          alwaysSet("origin_story", combinedStory); 
         }
 
       } catch (parseError) {
@@ -199,11 +205,11 @@ export const action = async ({ request }) => {
     // ==========================================
     safeSet("official_name", title);
 
-    return Response.json({ success: true, merged });
+    return Response.json({ success: true, fields: merged });
   } catch (error) {
     console.error("Stone Lookup Engine Fault:", error.message);
     return Response.json(
-      { success: false, error: error.message, merged: {} }, 
+      { success: false, error: error.message, fields: {} }, 
       { status: 500 }
     );
   }
