@@ -220,6 +220,27 @@ export function IntakeBenchTab({ products, fetcher }) {
     setFullMetaState(prev => ({ ...prev, [key]: value }));
   }, []);
 
+  const handleAutoFill = useCallback(() => {
+    if (!selectedProductId) return;
+    setStatusMessage("");
+    setErrorMessage("");
+
+    const product = products.find(p => p.id === selectedProductId) || {};
+    const title = product.title || "";
+    const description = product.descriptionHtml || product.description || "";
+
+    fetcher.submit(
+      { 
+        intent: "autoFill", 
+        productId: selectedProductId,
+        productTitle: title,
+        productDescription: description,
+        promptStyle: promptStyle
+      },
+      { method: "post" }
+    );
+  }, [selectedProductId, fetcher, products, promptStyle]);
+
   const handleTab2AutoFill = useCallback(async () => {
     if (!selectedProductId) return;
     setTab2StatusMessage("");
@@ -256,7 +277,7 @@ export function IntakeBenchTab({ products, fetcher }) {
                 const updatedState = { ...prev };
                 Object.entries(data.fields).forEach(([key, val]) => {
                     const hasNewValue = val !== undefined && val !== null && val.toString().trim() !== "";
-                    const currentlyEmpty = !updatedState[key] || updatedState[key].trim() === "";
+                    const currentlyEmpty = !updatedState[key] || updatedState[key].trim() === "" || updatedState[key].toLowerCase() === "n/a";
                     
                     if (hasNewValue && currentlyEmpty && val !== "See Shopify metaobject") {
                         updatedState[key] = val;
@@ -264,6 +285,20 @@ export function IntakeBenchTab({ products, fetcher }) {
                 });
                 return updatedState;
             });
+
+            setFormState(prev => {
+                const updatedState = { ...prev };
+                Object.entries(data.fields).forEach(([key, val]) => {
+                    const hasNewValue = val !== undefined && val !== null && val.toString().trim() !== "";
+                    const currentlyEmpty = !updatedState[key] || updatedState[key].trim() === "" || updatedState[key].toLowerCase() === "n/a";
+                    
+                    if (hasNewValue && currentlyEmpty && val !== "See Shopify metaobject") {
+                        updatedState[key] = val;
+                    }
+                });
+                return updatedState;
+            });
+
             setTab2StatusMessage("Auto-Fill complete — review fields before saving");
         } else {
             setTab2ErrorMessage(data.error || "Gemini extraction failed.");
