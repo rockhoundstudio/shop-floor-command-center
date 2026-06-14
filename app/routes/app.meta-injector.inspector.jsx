@@ -358,7 +358,16 @@ export function IntakeBenchTab({ products, fetcher }) {
     }
   }, [selectedProductId, fullMetaState, fetcher]);
 
+  const prevFetcherState = useRef(fetcher.state);
+  const prevFetcherData = useRef(fetcher.data);
+
   useEffect(() => {
+    if (prevFetcherState.current === fetcher.state && prevFetcherData.current === fetcher.data) {
+      return;
+    }
+    prevFetcherState.current = fetcher.state;
+    prevFetcherData.current = fetcher.data;
+
     const isIdle = fetcher.state === "idle";
     const hasData = fetcher.data !== undefined && fetcher.data !== null;
     
@@ -399,7 +408,7 @@ export function IntakeBenchTab({ products, fetcher }) {
         setErrorMessage(fetcher.data.error || "An unknown error occurred during the operation.");
       }
     }
-  }, [fetcher.state, fetcher.data, fullMetaState]);
+  }, [fetcher.state, fetcher.data]);
 
   const safeProducts = products || [];
   const isAutoFilling = fetcher.state !== "idle" && (fetcher.formData?.get("intent") === "autoFill" || fetcher.formData?.get("intent") === "smartAutoFill");
