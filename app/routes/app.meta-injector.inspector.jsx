@@ -141,10 +141,16 @@ export function IntakeBenchTab({ products, fetcher }) {
   const [rawMetafields, setRawMetafields] = useState([]);
   const [isDebugOpen, setIsDebugOpen] = useState(true);
 
+  // Tab 2 Auto-Fill State
+  const [tab2StatusMessage, setTab2StatusMessage] = useState("");
+  const [tab2ErrorMessage, setTab2ErrorMessage] = useState("");
+
   const handleSelectProduct = useCallback((id) => {
     setSelectedProductId(id);
     setStatusMessage("");
     setErrorMessage("");
+    setTab2StatusMessage("");
+    setTab2ErrorMessage("");
     const product = products.find(p => p.id === id);
     const newForm = {};
     const newFullForm = {};
@@ -234,6 +240,60 @@ export function IntakeBenchTab({ products, fetcher }) {
     );
   }, [selectedProductId, fetcher, products, promptStyle]);
 
+  const handleTab2AutoFill = useCallback(() => {
+    if (!selectedProductId) return;
+    setTab2StatusMessage("");
+    setTab2ErrorMessage("");
+
+    const product = products.find(p => p.id === selectedProductId) || {};
+    const title = product.title || "";
+    const description = product.descriptionHtml || product.description || "";
+    
+    // Attempt to extract image URL. If your product query doesn't pull images, this will be blank.
+    let imageUrl = "";
+    if (product.images && product.images.edges && product.images.edges.length > 0) {
+        imageUrl = product.images.edges[0].node.url || "";
+    }
+
+    const promptText = `You are extracting structured product data for a gemstone jewelry store. Parse the following product title, description, and image and return a JSON object with these exact keys:
+
+piece_name — the stone name after the last dash in the title
+primary_medium — the stone type from the title (first segment before first dash)
+collection_location — the location from the title (second segment between dashes)
+color — primary color observed in the image, plain text
+secondary_colors — any secondary colors observed in the image, plain text
+cut_and_shape — the cabochon shape, from image and description
+surface_finish — polish level from description or image
+character_marks — any inclusions, matrix, anomalies, natural flaws observed in image or description, plain text
+dimensions_mm — dimensions from description, plain text
+weight_grams — weight if mentioned, plain text or empty string
+origin_story — the full narrative story paragraphs from the description, preserve line breaks
+artist_notes — any craft process notes or personal reflections from the description
+trip_or_series — any collection or series link mentioned (e.g. The Yakima Collection, The Frankenstein Build)
+collection_name — the named collection if mentioned
+is_one_of_a_kind — Yes or No based on description
+treated — No if description says natural or untreated, Yes if treated
+found_object — Yes if purchased or found, No if raw material
+setting_ready — Yes if already set or mounted, No if loose stone
+bail_included — Yes if bail or wrap mentioned, No if not
+handcrafted_by — always Bob & Janyce, Rockhound Studio
+
+Return only valid JSON. No markdown. No explanation.
+
+Title: ${title}
+Description: ${description}
+Image URL: ${imageUrl}`;
+
+    fetcher.submit(
+      { 
+        intent: "tab2AutoFill", 
+        productId: selectedProductId,
+        prompt: promptText
+      },
+      { method: "post" }
+    );
+  }, [selectedProductId, fetcher, products]);
+
   const handleInject = useCallback(() => {
     if (!selectedProductId) return;
     setStatusMessage("");
@@ -311,6 +371,7 @@ export function IntakeBenchTab({ products, fetcher }) {
     if (isIdle && hasData) {
       const isAutoFill = fetcher.data.intent === "autoFill";
       const isSmartAutoFill = fetcher.data.intent === "smartAutoFill";
+      const isTab2AutoFill = fetcher.data.intent === "tab2AutoFill";
       const isSaveProduct = fetcher.data.intent === "saveProduct";
       const isSaveMetafields = fetcher.data.intent === "saveMetafields";
       const isSuccess = fetcher.data.success === true;
@@ -337,6 +398,27 @@ export function IntakeBenchTab({ products, fetcher }) {
         }
       }
 
+      if (isTab2AutoFill) {
+        if (isSuccess && fetcher.data.fields) {
+            setFullMetaState(prev => {
+                const updatedState = { ...prev };
+                Object.entries(fetcher.data.fields).forEach(([key, val]) => {
+                    const hasNewValue = val !== undefined && val !== null && val.toString().trim() !== "";
+                    // Only fill if currently empty
+                    const currentlyEmpty = !updatedState[key] || updatedState[key].trim() === "";
+                    
+                    if (hasNewValue && currentlyEmpty && val !== "See Shopify metaobject") {
+                        updatedState[key] = val;
+                    }
+                });
+                return updatedState;
+            });
+            setTab2StatusMessage("Auto-Fill complete — review fields before saving");
+        } else if (isError) {
+            setTab2ErrorMessage(fetcher.data.error || "Gemini extraction failed.");
+        }
+      }
+
       if (isSaveProduct && isSuccess) {
         setStatusMessage("Metafields injected cleanly into Shopify database.");
       }
@@ -348,7 +430,7 @@ export function IntakeBenchTab({ products, fetcher }) {
         }
       }
 
-      if (isError) {
+      if (isError && !isTab2AutoFill) {
         setErrorMessage(fetcher.data.error || "An unknown error occurred during the operation.");
       }
     }
@@ -356,6 +438,7 @@ export function IntakeBenchTab({ products, fetcher }) {
 
   const safeProducts = products || [];
   const isAutoFilling = fetcher.state !== "idle" && (fetcher.formData?.get("intent") === "autoFill" || fetcher.formData?.get("intent") === "smartAutoFill");
+  const isTab2AutoFilling = fetcher.state !== "idle" && fetcher.formData?.get("intent") === "tab2AutoFill";
   const isSaving = fetcher.state !== "idle" && fetcher.formData?.get("intent") === "saveProduct";
   const isSavingMetafields = fetcher.state !== "idle" && fetcher.formData?.get("intent") === "saveMetafields";
 
@@ -548,6 +631,36 @@ export function IntakeBenchTab({ products, fetcher }) {
                         )}
                     </div>
                 </Collapsible>
+              </div>
+
+              {tab2StatusMessage !== "" && (
+                <div style={{ minHeight: "54px", marginBottom: "16px" }}>
+                  <Banner tone="success" title="Operation Successful">
+                    <Text as="p">{tab2StatusMessage}</Text>
+                  </Banner>
+                </div>
+              )}
+
+              {tab2ErrorMessage !== "" && (
+                <div style={{ minHeight: "54px", marginBottom: "16px" }}>
+                  <Banner tone="critical" title="Operation Failed">
+                    <Text as="p">{tab2ErrorMessage}</Text>
+                  </Banner>
+                </div>
+              )}
+
+              <div style={{ marginBottom: "24px" }}>
+                <Button 
+                    icon={MagicIcon}
+                    size="large"
+                    fullWidth
+                    onClick={handleTab2AutoFill}
+                    accessibilityLabel="Extract fields from product description and image"
+                    loading={isTab2AutoFilling}
+                    disabled={!selectedProductId}
+                >
+                    Extract from Description & Image
+                </Button>
               </div>
 
               <Text variant="headingLg" as="h3">Full Meta Report</Text>
