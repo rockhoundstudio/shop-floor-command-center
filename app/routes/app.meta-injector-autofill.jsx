@@ -198,11 +198,11 @@ export const action = async ({ request }) => {
     // ==========================================
     safeSet("official_name", title);
 
-    return Response.json({ success: true, merged });
+    return Response.json({ success: true, fields: merged });
   } catch (error) {
     console.error("Stone Lookup Engine Fault:", error.message);
     return Response.json(
-      { success: false, error: error.message, merged: {} }, 
+      { success: false, error: error.message, fields: {} }, 
       { status: 500 }
     );
   }
