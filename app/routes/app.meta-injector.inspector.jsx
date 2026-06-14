@@ -106,6 +106,28 @@ const FULL_META_GROUPS = [
   }
 ];
 
+const NAMESPACE_MAP = {
+  rockhound: [
+    "piece_name", "primary_medium", "secondary_medium", "handcrafted_by", 
+    "material", "stone_family", "color", "cut_and_shape", "surface_finish", 
+    "dimensions_mm", "weight_grams", "collection_name", "collection_location", 
+    "collection_date", "primary_use", "setting_ready", "bail_included", 
+    "is_one_of_a_kind", "treated", "found_object", "wire_material", 
+    "artist_notes", "origin_story", "honest_flaws_and_character", "trip_or_series"
+  ],
+  geo: [
+    "hardness", "luster", "fracture", "cleavage", "specificGravity", 
+    "diaphaneity", "crystalSystem", "geologicalEra", "mineralClass", 
+    "rockComposition", "rockFormation", "authenticity", "rarity"
+  ]
+};
+
+const getNamespaceForKey = (key) => {
+  if (NAMESPACE_MAP.rockhound.includes(key)) return "rockhound";
+  if (NAMESPACE_MAP.geo.includes(key)) return "geo";
+  return "custom";
+};
+
 export function IntakeBenchTab({ products, fetcher }) {
   const [selectedProductId, setSelectedProductId] = useState("");
   const [formState, setFormState] = useState({});
@@ -127,11 +149,8 @@ export function IntakeBenchTab({ products, fetcher }) {
     if (hasMetafields) {
       product.metafields.edges.forEach(({ node }) => {
         const hasValue = node.value !== null && node.value !== undefined;
-        
-        if (node.namespace === "rockhound" && hasValue) {
+        if (hasValue) {
           newForm[node.key] = node.value;
-        }
-        if (node.namespace === "rockhound" && hasValue) {
           newFullForm[node.key] = node.value;
         }
       });
@@ -201,7 +220,7 @@ export function IntakeBenchTab({ products, fetcher }) {
 
         payload.push({
           ownerId: formatId,
-          namespace: "rockhound",
+          namespace: getNamespaceForKey(key),
           key: key,
           value: value.toString().trim(),
           type: fieldType 
@@ -229,7 +248,7 @@ export function IntakeBenchTab({ products, fetcher }) {
       const newValue = value || "";
       if (originalValue !== newValue) {
         changes.push({
-          namespace: "rockhound",
+          namespace: getNamespaceForKey(key),
           key: key,
           value: newValue,
           type: "single_line_text_field"
