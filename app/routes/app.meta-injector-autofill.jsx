@@ -69,6 +69,12 @@ export const action = async ({ request }) => {
       }
     };
 
+    const alwaysSet = (key, value) => {
+      if (value && String(value).trim() !== "") {
+        merged[key] = String(value).trim();
+      }
+    };
+
     // ==========================================
     // PASS 0: NATIVE HTML DESCRIPTION PARSER
     // ==========================================
@@ -164,7 +170,7 @@ export const action = async ({ request }) => {
 
         if (storyParagraphs.length > 0) {
           const combinedStory = storyParagraphs.join("\n\n");
-          safeSet("origin_story", combinedStory); 
+          alwaysSet("origin_story", combinedStory); 
         }
 
       } catch (parseError) {
