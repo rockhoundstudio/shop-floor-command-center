@@ -1,260 +1,301 @@
-import React, { useState, useCallback, useEffect } from "react";
-import {
-  BlockStack, InlineStack, Box, Select, Button, EmptySearchResult, Spinner, Divider, Toast, Text, Card
-} from "@shopify/polaris";
+// FILE 3: app.meta-injector.inspector.jsx
+import React, { useState, useEffect, useCallback } from "react";
+import { BlockStack, Card, Text, Banner, TextField, Select, Button, InlineStack } from "@shopify/polaris";
+import { MagicIcon, SaveIcon } from "@shopify/polaris-icons";
+import { ROCKHOUND_FIELDS, DEFAULT_DROPDOWNS } from "../utils/meta-injector.constants.jsx";
 
-export function InspectorTab({ products, fetcher }) {
-  const [activeProductId, setActiveProductId] = useState("");
-  const [localData, setLocalData] = useState({});
-  const [originalData, setOriginalData] = useState({});
-  const [fieldTypes, setFieldTypes] = useState({});
-  const [parsedGroups, setParsedGroups] = useState({});
-  const [toastState, setToastState] = useState({ active: false, message: "", isError: false });
+export function IntakeBenchTab({ products, fetcher }) {
+  const [selectedProductId, setSelectedProductId] = useState("");
+  const [formState, setFormState] = useState({});
+  const [statusMessage, setStatusMessage] = useState("");
+  const [errorMessage, setErrorMessage] = useState("");
+  const [promptStyle, setPromptStyle] = useState("");
 
-  const closeToast = useCallback(() => setToastState(prev => ({ ...prev, active: false })), []);
-  
-  const isInspectorLoading = fetcher.state !== "idle";
-  const activeProduct = fetcher.data?.product || products.find(p => p.id === activeProductId);
-
-  // Fetch complete product data when dropdown changes
-  useEffect(() => {
-    if (activeProductId) {
-      fetcher.submit({ intent: "fetchSingleProduct", productId: activeProductId }, { method: "post" });
-    }
-  }, [activeProductId]);
-
-  // Parse ALL metafields dynamically from Shopify response
-  useEffect(() => {
-    if (activeProduct && activeProduct.metafields && activeProduct.metafields.edges) {
-      const groups = {};
-      const orig = {};
-      const types = {};
-
-      // First pass: catalogue everything present
-      activeProduct.metafields.edges.forEach(({ node }) => {
-        const { namespace, key, value, type } = node;
-        if (!groups[namespace]) groups[namespace] = new Set();
-        groups[namespace].add(key);
-        
-        const compositeKey = `${namespace}.${key}`;
-        orig[compositeKey] = value || "";
-        types[compositeKey] = type;
-      });
-
-      // Second pass: Mirror custom keys into rockhound namespace for cross-referencing
-      if (groups['custom']) {
-        if (!groups['rockhound']) groups['rockhound'] = new Set();
-        groups['custom'].forEach(key => {
-          groups['rockhound'].add(key);
-          const compositeKey = `rockhound.${key}`;
-          if (orig[compositeKey] === undefined) {
-            orig[compositeKey] = "";
-            types[compositeKey] = "single_line_text_field"; // Safe default for new fields
-          }
-        });
-      }
-
-      // Convert Sets to sorted Arrays, forcing rockhound to the top
-      const sortedGroups = {};
-      if (groups['rockhound']) {
-        sortedGroups['rockhound'] = Array.from(groups['rockhound']).sort();
-      }
-      
-      Object.keys(groups).sort().forEach(ns => {
-        if (ns !== 'rockhound') {
-          sortedGroups[ns] = Array.from(groups[ns]).sort();
+  const handleSelectProduct = useCallback((id) => {
+    setSelectedProductId(id);
+    setStatusMessage("");
+    setErrorMessage("");
+    const product = products.find(p => p.id === id);
+    const newForm = {};
+    const hasMetafields = product && product.metafields && product.metafields.edges;
+    
+    if (hasMetafields) {
+      product.metafields.edges.forEach(({ node }) => {
+        const isRockhound = node.namespace === "rockhound";
+        const hasValue = node.value !== null && node.value !== undefined;
+        if (isRockhound && hasValue) {
+          newForm[node.key] = node.value;
         }
       });
-
-      setParsedGroups(sortedGroups);
-      setOriginalData(orig);
-      setLocalData(orig); // Initialize editable state
-      setFieldTypes(types);
-    } else {
-      setParsedGroups({});
-      setOriginalData({});
-      setLocalData({});
-      setFieldTypes({});
     }
-  }, [activeProduct]);
+    setFormState(newForm);
 
-  // Handle Save Notifications
-  useEffect(() => {
-    if (fetcher.data && fetcher.data.message) {
-      setToastState({ active: true, message: fetcher.data.message, isError: !fetcher.data.success });
-      
-      // If successful save, lock in the new localData as originalData to reset the diff state
-      if (fetcher.data.success && fetcher.data.intent === "saveMetafields") {
-        setOriginalData(localData);
-      }
-    }
-  }, [fetcher.data]);
+    fetcher.submit(
+      { intent: "smartAutoFill", productId: id },
+      { method: "post" }
+    );
+  }, [products, fetcher]);
 
-  const handleFieldChange = (compositeKey, val) => {
-    setLocalData(prev => ({ ...prev, [compositeKey]: val }));
-  };
+  const updateFormState = useCallback((key, value) => {
+    setFormState(prev => ({ ...prev, [key]: value }));
+  }, []);
 
-  const handleSaveAll = () => {
-    const payload = [];
+  const handleAutoFill = useCallback(() => {
+    if (!selectedProductId) return;
+    setStatusMessage("");
+    setErrorMessage("");
+
+    const product = products.find(p => p.id === selectedProductId) || {};
+    const title = product.title || "";
+    const description = product.descriptionHtml || product.description || "";
+
+    fetcher.submit(
+      { 
+        intent: "autoFill", 
+        productId: selectedProductId,
+        productTitle: title,
+        productDescription: description,
+        promptStyle: promptStyle
+      },
+      { method: "post" }
+    );
+  }, [selectedProductId, fetcher, products, promptStyle]);
+
+  const handleInject = useCallback(() => {
+    if (!selectedProductId) return;
+    setStatusMessage("");
+    setErrorMessage("");
     
-    // Check what actually changed
-    Object.keys(localData).forEach(compositeKey => {
-      if (localData[compositeKey] !== originalData[compositeKey]) {
-        const [namespace, key] = compositeKey.split(".");
+    const payload = [];
+    const entries = Object.entries(formState);
+    
+    entries.forEach(([key, value]) => {
+      const isPopulated = value !== undefined && value !== null && value.toString().trim() !== "";
+      
+      if (isPopulated) {
+        const config = ROCKHOUND_FIELDS.find(f => f.key === key);
+        let fieldType = "single_line_text_field";
+        if (config && config.type) {
+          fieldType = config.type;
+        }
+        
+        let formatId = `gid://shopify/Product/${selectedProductId}`;
+        if (selectedProductId.includes("gid://")) {
+          formatId = selectedProductId;
+        }
+
         payload.push({
-          ownerId: activeProduct.id,
-          namespace: namespace,
+          ownerId: formatId,
+          namespace: "rockhound",
           key: key,
-          type: fieldTypes[compositeKey] || "single_line_text_field",
-          value: localData[compositeKey]
+          value: value.toString().trim(),
+          type: fieldType 
         });
       }
     });
 
     if (payload.length === 0) {
-      setToastState({ active: true, message: "No changes detected.", isError: false });
+      setErrorMessage("No fields are populated. Fill at least one field to inject.");
       return;
     }
 
-    fetcher.submit({ intent: "saveMetafields", payload: JSON.stringify(payload) }, { method: "post" });
-  };
+    fetcher.submit(
+      { intent: "saveProduct", payload: JSON.stringify(payload) },
+      { method: "post" }
+    );
+  }, [selectedProductId, formState, fetcher]);
 
-  // Check if any fields differ from original to enable save button
-  const hasUnsavedChanges = Object.keys(localData).some(k => localData[k] !== originalData[k]);
+  useEffect(() => {
+    const isIdle = fetcher.state === "idle";
+    const hasData = fetcher.data !== undefined && fetcher.data !== null;
+    
+    if (isIdle && hasData) {
+      const isAutoFill = fetcher.data.intent === "autoFill";
+      const isSmartAutoFill = fetcher.data.intent === "smartAutoFill";
+      const isSaveProduct = fetcher.data.intent === "saveProduct";
+      const isSuccess = fetcher.data.success === true;
+      const isError = fetcher.data.success === false;
+
+      if ((isAutoFill || isSmartAutoFill) && isSuccess && fetcher.data.fields) {
+        setFormState(prev => {
+          const updatedState = { ...prev };
+          Object.entries(fetcher.data.fields).forEach(([key, val]) => {
+            const hasNewValue = val !== undefined && val !== null && val.toString().trim() !== "";
+            if (hasNewValue) {
+              updatedState[key] = val;
+            }
+          });
+          return updatedState;
+        });
+
+        if (isSmartAutoFill) {
+          setStatusMessage("Smart Auto-Fill complete — fields populated from all available data sources.");
+        }
+        
+        if (isAutoFill) {
+          setStatusMessage("Title and tags successfully parsed and loaded into fields.");
+        }
+      }
+
+      if (isSaveProduct && isSuccess) {
+        setStatusMessage("Metafields injected cleanly into Shopify database.");
+      }
+
+      if (isError) {
+        setErrorMessage(fetcher.data.error || "An unknown error occurred during the operation.");
+      }
+    }
+  }, [fetcher.state, fetcher.data]);
+
+  const safeProducts = products || [];
+  const isAutoFilling = fetcher.state !== "idle" && (fetcher.formData?.get("intent") === "autoFill" || fetcher.formData?.get("intent") === "smartAutoFill");
+  const isSaving = fetcher.state !== "idle" && fetcher.formData?.get("intent") === "saveProduct";
 
   return (
-    <Box padding="400">
-      <BlockStack gap="500">
-        
-        {/* Header & Product Selector */}
-        <Card padding="400">
-          <InlineStack align="space-between" blockAlign="center">
-            <BlockStack gap="200">
-              <Text variant="headingLg" as="h2">Live Metafield Inspector</Text>
-              <Box width="400px">
-                <Select 
-                  label="Select Product to Inspect" 
-                  labelHidden
-                  options={[{ label: "Select a product...", value: "" }, ...products.map(p => ({ label: p.title, value: p.id }))]} 
-                  value={activeProductId} 
-                  onChange={setActiveProductId} 
-                  accessibilityLabel="Search and select product for inspector" 
-                  disabled={isInspectorLoading}
-                />
-              </Box>
+    <BlockStack gap="400">
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "24px", alignItems: "start" }}>
+        <div>
+          <Card padding="400">
+            <BlockStack gap="400">
+              <Text variant="headingMd" as="h2">1. Select Raw Inventory</Text>
+              <div style={{ maxHeight: "70vh", overflowY: "auto", paddingRight: "8px", display: "flex", flexDirection: "column", gap: "8px" }}>
+                {safeProducts.map(p => {
+                  const isSelected = selectedProductId === p.id;
+                  return (
+                    <div key={p.id} style={{ minHeight: "54px" }}>
+                      <Button
+                        fullWidth
+                        size="large"
+                        textAlign="left"
+                        variant={isSelected ? "primary" : "secondary"}
+                        onClick={() => handleSelectProduct(p.id)}
+                        accessibilityLabel={`Select product ${p.title}`}
+                      >
+                        {p.title}
+                      </Button>
+                    </div>
+                  );
+                })}
+              </div>
             </BlockStack>
+          </Card>
+        </div>
 
-            {isInspectorLoading && <Spinner size="large" accessibilityLabel="Loading data" />}
+        <div>
+          <Card padding="400">
+            <BlockStack gap="400">
+              <Text variant="headingMd" as="h2">2. Data Sieve & Injection</Text>
+              
+              {statusMessage !== "" && (
+                <div style={{ minHeight: "54px" }}>
+                  <Banner tone="success" title="Operation Successful">
+                    <Text as="p">{statusMessage}</Text>
+                  </Banner>
+                </div>
+              )}
 
-            {activeProductId && hasUnsavedChanges && (
-              <Button 
-                size="large" 
-                tone="success" 
-                variant="primary"
-                onClick={handleSaveAll} 
-                disabled={isInspectorLoading} 
-                accessibilityLabel="Save all changed fields to Shopify"
-              >
-                Save Changes
-              </Button>
-            )}
-          </InlineStack>
-        </Card>
+              {errorMessage !== "" && (
+                <div style={{ minHeight: "54px" }}>
+                  <Banner tone="critical" title="Operation Failed">
+                    <Text as="p">{errorMessage}</Text>
+                  </Banner>
+                </div>
+              )}
 
-        {/* Empty State */}
-        {!activeProductId && (
-          <Box paddingBlockStart="800">
-            <EmptySearchResult 
-              title="No product selected" 
-              description="Select a product from the dropdown above to load all live metafields across all namespaces." 
-              withIllustration 
-            />
-          </Box>
-        )}
+              <div style={{ minHeight: "54px" }}>
+                <TextField
+                  label="Gemini Presentation Style"
+                  placeholder="e.g. Write with OOAK grit — raw, earthy, one-of-a-kind stone energy. No corporate language."
+                  value={promptStyle}
+                  onChange={setPromptStyle}
+                  multiline={3}
+                  autoComplete="off"
+                  disabled={!selectedProductId}
+                  accessibilityLabel="Enter Gemini Presentation Style instructions"
+                />
+              </div>
 
-        {/* Dynamic Metafield Render */}
-        {activeProductId && Object.keys(parsedGroups).length > 0 && (
-          <BlockStack gap="600">
-            {Object.keys(parsedGroups).map(namespace => (
-              <Card key={namespace} padding="500">
-                <BlockStack gap="400">
+              <InlineStack gap="300" align="space-between">
+                <div style={{ minHeight: "54px", flexGrow: 1 }}>
+                  <Button 
+                    icon={MagicIcon} 
+                    onClick={handleAutoFill}
+                    accessibilityLabel="Re-Run Auto-Fill Fields"
+                    size="large"
+                    fullWidth
+                    disabled={!selectedProductId}
+                    loading={isAutoFilling}
+                  >
+                    Re-Run Auto-Fill
+                  </Button>
+                </div>
+                <div style={{ minHeight: "54px", flexGrow: 1 }}>
+                  <Button 
+                    icon={SaveIcon} 
+                    tone="success" 
+                    variant="primary" 
+                    onClick={handleInject}
+                    accessibilityLabel="Inject Metafields"
+                    size="large"
+                    fullWidth
+                    disabled={!selectedProductId}
+                    loading={isSaving}
+                  >
+                    Inject Metafields
+                  </Button>
+                </div>
+              </InlineStack>
+
+              <div style={{ maxHeight: "60vh", overflowY: "auto", paddingRight: "8px", display: "flex", flexDirection: "column", gap: "16px" }}>
+                {ROCKHOUND_FIELDS.map(field => {
+                  const val = formState[field.key] || "";
+                  const isDropdown = field.isDropdown === true;
+                  const isText = !field.isDropdown;
                   
-                  <Box borderBottom="1px solid #E1E3E5" paddingBlockEnd="200">
-                    <Text variant="headingLg" as="h3" fontWeight="bold" textTransform="uppercase">
-                      {namespace} Namespace
-                    </Text>
-                  </Box>
+                  let safeVal = val;
+                  let options = [];
 
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '20px' }}>
-                    {parsedGroups[namespace].map(key => {
-                      const compositeKey = `${namespace}.${key}`;
-                      const val = localData[compositeKey] || "";
-                      const isBlank = val.trim() === "";
-                      const hasCustomEquivalent = !!originalData[`custom.${key}`];
-                      
-                      // Glaucoma & Contrast Visual Logic
-                      let borderColor = "transparent";
-                      if (!isBlank) {
-                        borderColor = "#2E7D32"; // Green: Contains Data
-                      } else if (namespace === "rockhound" && hasCustomEquivalent) {
-                        borderColor = "#FBC02D"; // Yellow: Missing in rockhound but exists in custom
-                      }
+                  if (isDropdown) {
+                    const dropdownOptions = DEFAULT_DROPDOWNS[field.key] || [];
+                    safeVal = dropdownOptions.includes(val) ? val : "";
+                    options = [
+                      { label: safeVal !== "" ? safeVal.replace(/ΓÇö/g, '—') : "Select...", value: safeVal },
+                      ...dropdownOptions.filter(o => o !== safeVal).map(o => ({ label: o.replace(/ΓÇö/g, '—'), value: o }))
+                    ];
+                  }
+                  
+                  return (
+                    <div key={field.key} style={{ minHeight: "54px" }}>
+                      {isDropdown && (
+                        <Select
+                          label={field.label}
+                          options={options}
+                          value={DEFAULT_DROPDOWNS[field.key]?.includes(val) ? val : ""}
+                          onChange={(v) => updateFormState(field.key, v)}
+                          accessibilityLabel={`Select value for ${field.label}`}
+                          disabled={!selectedProductId}
+                        />
+                      )}
 
-                      const bgColor = isBlank ? "#FFEBEE" : "#FFFFFF"; // Red background for empty
-
-                      return (
-                        <Box key={compositeKey}>
-                          <div style={{
-                            borderLeft: `6px solid ${borderColor}`,
-                            paddingLeft: '12px',
-                            display: 'flex',
-                            flexDirection: 'column',
-                            gap: '8px'
-                          }}>
-                            <Text as="span" variant="bodySm" tone="subdued" fontWeight="bold">
-                              {namespace}.{key}
-                            </Text>
-                            
-                            {/* Native textarea ensures 100% control over styling, backgrounds, and accessibility sizes */}
-                            <textarea
-                              value={val}
-                              onChange={(e) => handleFieldChange(compositeKey, e.target.value)}
-                              aria-label={`Edit metafield ${namespace} ${key}`}
-                              disabled={isInspectorLoading}
-                              style={{
-                                width: '100%',
-                                minHeight: '60px', /* Massive tap target */
-                                fontSize: '16px', /* Minimum 14px as requested, larger for accessibility */
-                                padding: '12px',
-                                backgroundColor: bgColor,
-                                color: '#202223',
-                                border: '1px solid #8C9196',
-                                borderRadius: '4px',
-                                resize: 'vertical',
-                                fontFamily: 'inherit'
-                              }}
-                            />
-                          </div>
-                        </Box>
-                      );
-                    })}
-                  </div>
-
-                </BlockStack>
-              </Card>
-            ))}
-          </BlockStack>
-        )}
-
-        {/* Global Toast Notifier */}
-        {toastState.active && (
-          <Toast 
-            content={toastState.message} 
-            error={toastState.isError} 
-            onDismiss={closeToast} 
-          />
-        )}
-      </BlockStack>
-    </Box>
+                      {isText && (
+                        <TextField
+                          label={field.label}
+                          value={val}
+                          onChange={(v) => updateFormState(field.key, v)}
+                          autoComplete="off"
+                          accessibilityLabel={`Enter text for ${field.label}`}
+                          multiline={field.multiline && 3}
+                          disabled={!selectedProductId}
+                        />
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </BlockStack>
+          </Card>
+        </div>
+      </div>
+    </BlockStack>
   );
 }

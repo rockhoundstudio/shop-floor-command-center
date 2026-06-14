@@ -1,3 +1,4 @@
+// FILE 1: app.meta-injector.jsx
 import React, { useState } from "react";
 import { useLoaderData, useFetcher, useNavigate } from "react-router";
 import {
@@ -5,12 +6,12 @@ import {
 } from "@shopify/polaris";
 
 // --- IMPORT THE ENGINE (Loader & Action) ---
-import { loader as engineLoader, action as engineAction } from "../utils/meta-injector.loader";
+import { loader as engineLoader, action as engineAction } from "../utils/meta-injector.loader.jsx";
 
-// --- IMPORT TAB COMPONENTS ---
-import { NewProductIntakeTab } from "./app.meta-injector.injector";
-import { InspectorTab } from "./app.meta-injector.inspector";
-import { OperationsMatrixTab } from "./app.meta-injector.matrix";
+// --- IMPORT TABS ---
+import { NewProductIntakeTab } from "./app.meta-injector.injector.jsx";
+import { IntakeBenchTab } from "./app.meta-injector.inspector.jsx";
+import { OperationsMatrixTab } from "./app.meta-injector.matrix.jsx";
 
 // --- EXPORT THE ENGINE FOR REMIX TO RUN ---
 export const loader = engineLoader;
@@ -61,7 +62,7 @@ export default function MetaInjectorV2() {
               <Tabs tabs={tabs} selected={selectedTab} onSelect={setSelectedTab} fitted>
                 <Box padding="600" background="bg-surface-secondary">
                   {isTabOne && <NewProductIntakeTab fetcher={fetcher} />}
-                  {isTabTwo && <InspectorTab products={products} fetcher={fetcher} />}
+                  {isTabTwo && <IntakeBenchTab products={products} fetcher={fetcher} />}
                   {isTabThree && <OperationsMatrixTab products={products} fetcher={fetcher} />}
                 </Box>
               </Tabs>

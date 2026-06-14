@@ -1,4 +1,64 @@
-export const EXCLUDED_TITLES = ["Black Cord Necklace", "Sterling Silver Pinch Bail"];
+export const ROCKHOUND_FIELDS = [
+  { key: "piece_name", label: "Piece Name", type: "single_line_text_field" },
+  { key: "primary_medium", label: "Primary Medium", type: "single_line_text_field" },
+  { key: "secondary_medium", label: "Secondary Medium", type: "single_line_text_field" },
+  { key: "handcrafted_by", label: "Handcrafted By", type: "single_line_text_field" },
+  { key: "material", label: "Material", type: "single_line_text_field" },
+  { key: "stone_family", label: "Stone Family", type: "single_line_text_field" },
+  { key: "color", label: "Color", type: "single_line_text_field" },
+  { key: "cut_and_shape", label: "Cut and Shape", type: "single_line_text_field" },
+  { key: "surface_finish", label: "Surface Finish", isDropdown: true },
+  { key: "dimensions_mm", label: "Dimensions (mm)", type: "single_line_text_field" },
+  { key: "weight_grams", label: "Weight (grams)", type: "single_line_text_field" },
+  { key: "collection_name", label: "Collection Name", type: "single_line_text_field" },
+  { key: "collection_location", label: "Collection Location", type: "single_line_text_field" },
+  { key: "collection_date", label: "Collection Date", type: "single_line_text_field" },
+  { key: "primary_use", label: "Primary Use", isDropdown: true },
+  { key: "setting_ready", label: "Setting Ready", isDropdown: true },
+  { key: "bail_included", label: "Bail Included", isDropdown: true },
+  { key: "is_one_of_a_kind", label: "Is One of a Kind", isDropdown: true },
+  { key: "treated", label: "Treated", isDropdown: true },
+  { key: "found_object", label: "Found Object", isDropdown: true },
+  { key: "wire_material", label: "Wire Material", isDropdown: true },
+  { key: "artist_notes", label: "Artist Notes", type: "single_line_text_field", multiline: true }
+];
+
+export const DEFAULT_DROPDOWNS = {
+  surface_finish: ["High polish lapidary finish", "Satin lapidary finish", "Raw natural surface", "Partial polish", "Tumble polished", "Hand rubbed finish"],
+  primary_use: ["Wearable pendant", "Lapidary cabochon for setting", "Wire wrapped jewelry", "Display specimen", "Collector piece", "Freeform stone art", "Bezel setting ready", "Rockhound specimen"],
+  setting_ready: ["Yes — bezel ready", "Yes — prong ready", "Needs evaluation", "No — display only"],
+  bail_included: ["No bail", "Pinch bail included", "Custom copper wire bail", "Custom gold plated bail", "Soldered bail"],
+  is_one_of_a_kind: ["Yes — one of a kind", "No — series piece"],
+  treated: ["Untreated — natural", "Stabilized", "Dyed", "Coated", "Heat treated"],
+  found_object: ["Wild collected — Bob and Janyce", "Customer submission", "Purchased rough", "Gifted specimen", "Rescued material"],
+  wire_material: ["Copper wire", "Brass wire", "Sterling silver wire", "Gold plated wire", "Copper and brass mixed"]
+};
+
+export const REQUIRED_FIELDS = [
+  "piece_name", "primary_medium", "handcrafted_by", "is_one_of_a_kind", 
+  "treated", "material", "origin_story", "collection_name", "primary_use"
+];
+
+export const productTypeOptions = [
+  "Cabochon", "Pendant", "Necklace", "Earrings", "Ring", "Bracelet", "Wire Wrap", "Driftwood Art", "Display Specimen", "Collector Piece", "Other"
+];
+
+export const collectionLocationOptions = [
+  "Spokane River",
+  "Yakima Canyon",
+  "Yellowstone River",
+  "Richardson's Rock Ranch",
+  "The 3,000-Mile Run",
+  "Nickel Back",
+  "Rufus Serpentine",
+  "The Shopped Rock",
+  "The Gallery"
+];
+
+export const EXCLUDED_TITLES = [
+  "Black Cord Necklace", 
+  "Sterling Silver Pinch Bail"
+];
 
 export const COLOR_GROUP_LABELS = {
   green: { label: "Always Fill", color: "#2E7D32" },
