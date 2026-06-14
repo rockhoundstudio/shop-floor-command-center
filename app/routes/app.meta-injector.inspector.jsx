@@ -159,39 +159,37 @@ export function IntakeBenchTab({ products, fetcher }) {
     const hasMetafields = product && product.metafields && product.metafields.edges;
     
     if (hasMetafields) {
-      // Pass 1: Custom
+      // Pass 1 — custom namespace only:
       product.metafields.edges.forEach(({ node }) => {
         const hasValue = node.value !== null && node.value !== undefined;
         if (hasValue && node.namespace === "custom") {
           newForm[node.key] = node.value;
           newFullForm[node.key] = node.value;
-        }
-        if (hasValue) {
-           debugArray.push({ namespace: node.namespace, key: node.key, value: node.value });
+          debugArray.push({ namespace: node.namespace, key: node.key, value: node.value });
         }
       });
 
-      // Pass 2: Geo
+      // Pass 2 — geo namespace only:
       product.metafields.edges.forEach(({ node }) => {
         const hasValue = node.value !== null && node.value !== undefined;
         if (hasValue && node.namespace === "geo") {
           newForm[node.key] = node.value;
           newFullForm[node.key] = node.value;
+          debugArray.push({ namespace: node.namespace, key: node.key, value: node.value });
         }
       });
 
-      // Pass 3: Rockhound (wins all conflicts)
+      // Pass 3 — rockhound namespace (wins all conflicts):
       product.metafields.edges.forEach(({ node }) => {
         const hasValue = node.value !== null && node.value !== undefined;
         if (hasValue && node.namespace === "rockhound") {
           let parsedValue = node.value;
-          
           if (parsedValue.includes("gid://") || parsedValue.startsWith("[")) {
             parsedValue = "See Shopify metaobject";
           }
-          
           newForm[node.key] = parsedValue;
           newFullForm[node.key] = parsedValue;
+          debugArray.push({ namespace: node.namespace, key: node.key, value: node.value });
         }
       });
     }
@@ -716,7 +714,7 @@ Image URL: ${imageUrl}`;
                                   value={val}
                                   onChange={(v) => updateFullMetaState(field.key, v)}
                                   accessibilityLabel={field.label}
-                                  multiline={field.multiline ? 4 : false}
+                                  multiline={field.multiline ? true : false}
                                   autoComplete="off"
                                 />
                               )}
@@ -739,7 +737,7 @@ Image URL: ${imageUrl}`;
                                   value={val}
                                   onChange={(v) => updateFullMetaState(field.key, v)}
                                   accessibilityLabel={field.label}
-                                  multiline={field.multiline ? 4 : false}
+                                  multiline={field.multiline ? true : false}
                                   autoComplete="off"
                                   disabled={val === "See Shopify metaobject"}
                                 />
