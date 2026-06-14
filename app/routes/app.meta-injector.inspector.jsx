@@ -1,7 +1,55 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { BlockStack, Card, Text, Banner, TextField, Select, Button, InlineStack } from "@shopify/polaris";
 import { MagicIcon, SaveIcon } from "@shopify/polaris-icons";
-import { ROCKHOUND_FIELDS, DEFAULT_DROPDOWNS } from "../utils/meta-injector.constants.jsx";
+
+const ROCKHOUND_FIELDS = [
+  // ==========================================
+  // SECTION A: SHARED BATCH FIELDS (The Story & Material)
+  // ==========================================
+  { key: "stone_family", label: "Stone Family", isDropdown: true, isShared: true },
+  { key: "color", label: "Color", isDropdown: true, isShared: true }, 
+  { key: "surface_finish", label: "Surface Finish", isDropdown: true, isShared: true }, 
+  { key: "source_location", label: "Source / Discovery Location", type: "single_line_text_field", isShared: true },
+  { key: "primary_use", label: "Primary Use", isDropdown: true, isShared: true }, 
+  { key: "inspiration", label: "Whisper Theme / Inspiration", isDropdown: true, isShared: true }, 
+  { key: "handcrafted_by", label: "Handcrafted By", type: "single_line_text_field", isShared: true },
+  { key: "origin_story", label: "The Origin Story", type: "single_line_text_field", multiline: true, isShared: true },
+
+  // ==========================================
+  // SECTION B: PER-PIECE ROWS (The Hard Specs)
+  // ==========================================
+  { key: "piece_name", label: "Piece Name", type: "single_line_text_field", isPerPiece: true },
+  { key: "cut_and_shape", label: "Cut / Shape", isDropdown: true, isPerPiece: true }, 
+  { key: "dimensions_mm", label: "Dimensions (mm)", type: "single_line_text_field", isPerPiece: true },
+  { key: "weight_grams", label: "Weight (grams)", type: "single_line_text_field", isPerPiece: true },
+  { key: "honest_flaws", label: "Character Marks (Honest Flaws)", type: "single_line_text_field", multiline: true, isPerPiece: true },
+  { key: "price", label: "Price", type: "single_line_text_field", isPerPiece: true }
+];
+
+const DEFAULT_DROPDOWNS = {
+  stone_family: ["Agate", "Obsidian", "Jasper", "Quartzite", "Chalcedony", "Fire Obsidian", "Serpentine", "Labradorite"],
+  color: ["Green", "Black", "Blue flash", "Red", "White", "Multicolor", "Gold", "Pink", "Yellow", "Silver", "Purple", "Striped", "Clear"],
+  cut_and_shape: ["Freeform", "Standard Cabochon", "Heart", "Teardrop", "Surfboard", "Rough/Raw"],
+  surface_finish: ["High polish lapidary finish", "Satin finish", "Raw natural surface", "Hand rubbed finish"],
+  primary_use: [
+    "Wearable Art",
+    "Standard Cabochon",
+    "Freeform Maker Blank",
+    "Display Specimen",
+    "Pocket Stone / Palm Stone",
+    "Plain Rock / Rough"
+  ],
+  inspiration: [
+    "Rufus", 
+    "Sox", 
+    "Copper", 
+    "Chipper", 
+    "Frankenstein", 
+    "Bob", 
+    "Janyce", 
+    "The 3,000-Mile Adventure"
+  ]
+};
 
 const FULL_META_GROUPS = [
   {
@@ -314,7 +362,7 @@ export function IntakeBenchTab({ products, fetcher }) {
                   disabled={!selectedProductId}
                   accessibilityLabel="Enter Gemini Presentation Style instructions"
                 />
-              </div>
+                </div>
 
               <InlineStack gap="300" align="space-between">
                 <div style={{ minHeight: "54px", flexGrow: 1 }}>
