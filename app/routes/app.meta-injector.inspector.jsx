@@ -1,12 +1,68 @@
-// FILE 3: app.meta-injector.inspector.jsx
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { BlockStack, Card, Text, Banner, TextField, Select, Button, InlineStack } from "@shopify/polaris";
 import { MagicIcon, SaveIcon } from "@shopify/polaris-icons";
 import { ROCKHOUND_FIELDS, DEFAULT_DROPDOWNS } from "../utils/meta-injector.constants.jsx";
 
+const FULL_META_GROUPS = [
+  {
+    heading: "Always Fill",
+    color: "#2E7D32",
+    fields: [
+      { key: "piece_name", label: "Piece Name", type: "text" },
+      { key: "primary_medium", label: "Primary Medium", type: "text" },
+      { key: "handcrafted_by", label: "Handcrafted By", type: "select", options: ["Bob and Janyce", "Bob", "Janyce", "Guest Artist"] },
+      { key: "is_one_of_a_kind", label: "Is One of a Kind", type: "select", options: ["Yes", "No"] },
+      { key: "treated", label: "Treated", type: "select", options: ["Yes", "No"] }
+    ]
+  },
+  {
+    heading: "Stone Fields",
+    color: "#1565C0",
+    fields: [
+      { key: "material", label: "Material", type: "text" },
+      { key: "stone_family", label: "Stone Family", type: "text" },
+      { key: "color", label: "Color", type: "text" },
+      { key: "cut_and_shape", label: "Cut and Shape", type: "text" },
+      { key: "surface_finish", label: "Surface Finish", type: "select", options: ["Polished", "Matte", "Natural", "High Polish"] },
+      { key: "dimensions_mm", label: "Dimensions (mm)", type: "text" },
+      { key: "weight_grams", label: "Weight (grams)", type: "text" }
+    ]
+  },
+  {
+    heading: "Story & Lore",
+    color: "#E65100",
+    fields: [
+      { key: "origin_story", label: "Origin Story", type: "text", multiline: 4 },
+      { key: "trip_or_series", label: "Trip or Series", type: "text" },
+      { key: "honest_flaws_and_character", label: "Honest Flaws and Character", type: "text", multiline: 4 },
+      { key: "artist_notes", label: "Artist Notes", type: "text", multiline: 4 },
+      { key: "collection_name", label: "Collection Name", type: "text" }
+    ]
+  },
+  {
+    heading: "Mixed Media",
+    color: "#6A1B9A",
+    fields: [
+      { key: "secondary_medium", label: "Secondary Medium", type: "text" },
+      { key: "found_object", label: "Found Object", type: "select", options: ["Yes", "No"] }
+    ]
+  },
+  {
+    heading: "Google / SEO",
+    color: "#F9A825",
+    fields: [
+      { key: "primary_use", label: "Primary Use", type: "text" },
+      { key: "setting_ready", label: "Setting Ready", type: "select", options: ["Yes", "No"] },
+      { key: "bail_included", label: "Bail Included", type: "select", options: ["Yes", "No"] }
+    ]
+  }
+];
+
 export function IntakeBenchTab({ products, fetcher }) {
   const [selectedProductId, setSelectedProductId] = useState("");
   const [formState, setFormState] = useState({});
+  const [fullMetaState, setFullMetaState] = useState({});
+  const originalMetaRef = useRef({});
   const [statusMessage, setStatusMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [promptStyle, setPromptStyle] = useState("");
@@ -17,18 +73,25 @@ export function IntakeBenchTab({ products, fetcher }) {
     setErrorMessage("");
     const product = products.find(p => p.id === id);
     const newForm = {};
+    const newFullForm = {};
     const hasMetafields = product && product.metafields && product.metafields.edges;
     
     if (hasMetafields) {
       product.metafields.edges.forEach(({ node }) => {
-        const isRockhound = node.namespace === "rockhound";
         const hasValue = node.value !== null && node.value !== undefined;
-        if (isRockhound && hasValue) {
+        
+        if (node.namespace === "rockhound" && hasValue) {
           newForm[node.key] = node.value;
+        }
+        if (node.namespace === "custom" && hasValue) {
+          newFullForm[node.key] = node.value;
         }
       });
     }
+    
     setFormState(newForm);
+    setFullMetaState(newFullForm);
+    originalMetaRef.current = { ...newFullForm };
 
     fetcher.submit(
       { intent: "smartAutoFill", productId: id },
@@ -38,6 +101,10 @@ export function IntakeBenchTab({ products, fetcher }) {
 
   const updateFormState = useCallback((key, value) => {
     setFormState(prev => ({ ...prev, [key]: value }));
+  }, []);
+
+  const updateFullMetaState = useCallback((key, value) => {
+    setFullMetaState(prev => ({ ...prev, [key]: value }));
   }, []);
 
   const handleAutoFill = useCallback(() => {
@@ -105,6 +172,31 @@ export function IntakeBenchTab({ products, fetcher }) {
     );
   }, [selectedProductId, formState, fetcher]);
 
+  const handleSaveFullMeta = useCallback(() => {
+    if (!selectedProductId) return;
+    const changes = [];
+    
+    Object.entries(fullMetaState).forEach(([key, value]) => {
+      const originalValue = originalMetaRef.current[key] || "";
+      const newValue = value || "";
+      if (originalValue !== newValue) {
+        changes.push({
+          namespace: "custom",
+          key: key,
+          value: newValue,
+          type: "single_line_text_field"
+        });
+      }
+    });
+
+    if (changes.length > 0) {
+      fetcher.submit(
+        { intent: "saveMetafields", productId: selectedProductId, metafields: JSON.stringify(changes) },
+        { method: "post" }
+      );
+    }
+  }, [selectedProductId, fullMetaState, fetcher]);
+
   useEffect(() => {
     const isIdle = fetcher.state === "idle";
     const hasData = fetcher.data !== undefined && fetcher.data !== null;
@@ -113,6 +205,7 @@ export function IntakeBenchTab({ products, fetcher }) {
       const isAutoFill = fetcher.data.intent === "autoFill";
       const isSmartAutoFill = fetcher.data.intent === "smartAutoFill";
       const isSaveProduct = fetcher.data.intent === "saveProduct";
+      const isSaveMetafields = fetcher.data.intent === "saveMetafields";
       const isSuccess = fetcher.data.success === true;
       const isError = fetcher.data.success === false;
 
@@ -141,15 +234,23 @@ export function IntakeBenchTab({ products, fetcher }) {
         setStatusMessage("Metafields injected cleanly into Shopify database.");
       }
 
+      if (isSaveMetafields && isSuccess) {
+        originalMetaRef.current = { ...fullMetaState };
+        if (window.shopify && window.shopify.toast) {
+          window.shopify.toast.show("Changes saved!");
+        }
+      }
+
       if (isError) {
         setErrorMessage(fetcher.data.error || "An unknown error occurred during the operation.");
       }
     }
-  }, [fetcher.state, fetcher.data]);
+  }, [fetcher.state, fetcher.data, fullMetaState]);
 
   const safeProducts = products || [];
   const isAutoFilling = fetcher.state !== "idle" && (fetcher.formData?.get("intent") === "autoFill" || fetcher.formData?.get("intent") === "smartAutoFill");
   const isSaving = fetcher.state !== "idle" && fetcher.formData?.get("intent") === "saveProduct";
+  const isSavingMetafields = fetcher.state !== "idle" && fetcher.formData?.get("intent") === "saveMetafields";
 
   return (
     <BlockStack gap="400">
@@ -296,6 +397,116 @@ export function IntakeBenchTab({ products, fetcher }) {
           </Card>
         </div>
       </div>
+
+      {selectedProductId !== "" && (
+        <div style={{ marginTop: "32px" }}>
+          <Card padding="400">
+            <BlockStack gap="400">
+              <Text variant="headingLg" as="h3">Full Meta Report</Text>
+              
+              {FULL_META_GROUPS.map(group => (
+                <BlockStack key={group.heading} gap="300">
+                  <Text variant="headingMd" as="h4">
+                    <span style={{ color: group.color, fontWeight: 'bold' }}>{group.heading}</span>
+                  </Text>
+                  
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
+                    {group.fields.map(field => {
+                      const val = fullMetaState[field.key] || "";
+                      const isNa = val === "n/a" || val === "N/A" || val === "N/a";
+                      const isFilled = !isNa && val && val.trim() !== "";
+                      const isEmpty = !isNa && (!val || val.trim() === "");
+                      
+                      const labelNode = (
+                        <div style={{ display: 'flex', alignItems: 'center' }}>
+                          <svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg" style={{ minWidth: '18px', marginRight: '8px' }}>
+                            {isEmpty && <circle cx="9" cy="9" r="9" fill="#C62828" />}
+                            {isFilled && <circle cx="9" cy="9" r="9" fill="#2E7D32" />}
+                            {isNa && <circle cx="9" cy="9" r="9" fill="#F9A825" />}
+                          </svg>
+                          <span style={{ fontSize: '14px', fontWeight: '500' }}>{field.label}</span>
+                        </div>
+                      );
+
+                      const isSelect = field.type === "select";
+                      const isText = field.type === "text";
+
+                      const selectOptions = [
+                        { label: "Select...", value: "" },
+                        ...(field.options || []).map(opt => ({ label: opt, value: opt }))
+                      ];
+
+                      return (
+                        <div key={field.key}>
+                          {isEmpty && (
+                            <div style={{ backgroundColor: "#FFF5F5", minHeight: "48px", padding: "8px", borderRadius: "4px" }}>
+                              {isSelect && (
+                                <Select
+                                  label={labelNode}
+                                  options={selectOptions}
+                                  value={val}
+                                  onChange={(v) => updateFullMetaState(field.key, v)}
+                                  accessibilityLabel={field.label}
+                                />
+                              )}
+                              {isText && (
+                                <TextField
+                                  label={labelNode}
+                                  value={val}
+                                  onChange={(v) => updateFullMetaState(field.key, v)}
+                                  accessibilityLabel={field.label}
+                                  multiline={field.multiline}
+                                  autoComplete="off"
+                                />
+                              )}
+                            </div>
+                          )}
+                          {!isEmpty && (
+                            <div style={{ backgroundColor: "transparent", minHeight: "48px", padding: "8px", borderRadius: "4px" }}>
+                              {isSelect && (
+                                <Select
+                                  label={labelNode}
+                                  options={selectOptions}
+                                  value={val}
+                                  onChange={(v) => updateFullMetaState(field.key, v)}
+                                  accessibilityLabel={field.label}
+                                />
+                              )}
+                              {isText && (
+                                <TextField
+                                  label={labelNode}
+                                  value={val}
+                                  onChange={(v) => updateFullMetaState(field.key, v)}
+                                  accessibilityLabel={field.label}
+                                  multiline={field.multiline}
+                                  autoComplete="off"
+                                />
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </BlockStack>
+              ))}
+
+              <div style={{ marginTop: "16px", minHeight: "48px" }}>
+                <Button
+                  variant="primary"
+                  size="large"
+                  onClick={handleSaveFullMeta}
+                  accessibilityLabel="Save all changed metafields to Shopify"
+                  loading={isSavingMetafields}
+                >
+                  Save Changes
+                </Button>
+              </div>
+
+            </BlockStack>
+          </Card>
+        </div>
+      )}
     </BlockStack>
   );
 }
