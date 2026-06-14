@@ -144,6 +144,7 @@ export function IntakeBenchTab({ products, fetcher }) {
   // Tab 2 Auto-Fill State
   const [tab2StatusMessage, setTab2StatusMessage] = useState("");
   const [tab2ErrorMessage, setTab2ErrorMessage] = useState("");
+  const [isTab2AutoFilling, setIsTab2AutoFilling] = useState(false);
 
   const handleSelectProduct = useCallback((id) => {
     setSelectedProductId(id);
@@ -219,80 +220,61 @@ export function IntakeBenchTab({ products, fetcher }) {
     setFullMetaState(prev => ({ ...prev, [key]: value }));
   }, []);
 
-  const handleAutoFill = useCallback(() => {
-    if (!selectedProductId) return;
-    setStatusMessage("");
-    setErrorMessage("");
-
-    const product = products.find(p => p.id === selectedProductId) || {};
-    const title = product.title || "";
-    const description = product.descriptionHtml || product.description || "";
-
-    fetcher.submit(
-      { 
-        intent: "autoFill", 
-        productId: selectedProductId,
-        productTitle: title,
-        productDescription: description,
-        promptStyle: promptStyle
-      },
-      { method: "post" }
-    );
-  }, [selectedProductId, fetcher, products, promptStyle]);
-
-  const handleTab2AutoFill = useCallback(() => {
+  const handleTab2AutoFill = useCallback(async () => {
     if (!selectedProductId) return;
     setTab2StatusMessage("");
     setTab2ErrorMessage("");
+    setIsTab2AutoFilling(true);
 
     const product = products.find(p => p.id === selectedProductId) || {};
     const title = product.title || "";
     const description = product.descriptionHtml || product.description || "";
     
-    // Attempt to extract image URL. If your product query doesn't pull images, this will be blank.
     let imageUrl = "";
     if (product.images && product.images.edges && product.images.edges.length > 0) {
         imageUrl = product.images.edges[0].node.url || "";
     }
 
-    const promptText = `You are extracting structured product data for a gemstone jewelry store. Parse the following product title, description, and image and return a JSON object with these exact keys:
+    try {
+        const response = await fetch("/app/meta-injector-autofill", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                title: title,
+                description: description,
+                imageUrl: imageUrl,
+                existingMeta: fullMetaState
+            })
+        });
 
-piece_name — the stone name after the last dash in the title
-primary_medium — the stone type from the title (first segment before first dash)
-collection_location — the location from the title (second segment between dashes)
-color — primary color observed in the image, plain text
-secondary_colors — any secondary colors observed in the image, plain text
-cut_and_shape — the cabochon shape, from image and description
-surface_finish — polish level from description or image
-character_marks — any inclusions, matrix, anomalies, natural flaws observed in image or description, plain text
-dimensions_mm — dimensions from description, plain text
-weight_grams — weight if mentioned, plain text or empty string
-origin_story — the full narrative story paragraphs from the description, preserve line breaks
-artist_notes — any craft process notes or personal reflections from the description
-trip_or_series — any collection or series link mentioned (e.g. The Yakima Collection, The Frankenstein Build)
-collection_name — the named collection if mentioned
-is_one_of_a_kind — Yes or No based on description
-treated — No if description says natural or untreated, Yes if treated
-found_object — Yes if purchased or found, No if raw material
-setting_ready — Yes if already set or mounted, No if loose stone
-bail_included — Yes if bail or wrap mentioned, No if not
-handcrafted_by — always Bob & Janyce, Rockhound Studio
+        const data = await response.json();
 
-Return only valid JSON. No markdown. No explanation.
-
-Title: ${title}
-Description: ${description}
-Image URL: ${imageUrl}`;
-
-    fetcher.submit(
-      { 
-        intent: "tab2AutoFill", 
-        productId: selectedProductId,
-        prompt: promptText
-      },
-      { method: "post" }
-    );
-  }, [selectedProductId, fetcher, products]);
+        if (data.success && data.fields) {
+            setFullMetaState(prev => {
+                const updatedState = { ...prev };
+                Object.entries(data.fields).forEach(([key, val]) => {
+                    const hasNewValue = val !== undefined && val !== null && val.toString().trim() !== "";
+                    const currentlyEmpty = !updatedState[key] || updatedState[key].trim() === "";
+                    
+                    if (hasNewValue && currentlyEmpty && val !== "See Shopify metaobject") {
+                        updatedState[key] = val;
+                    }
+                });
+                return updatedState;
+            });
+            setTab2StatusMessage("Auto-Fill complete — review fields before saving");
+        } else {
+            setTab2ErrorMessage(data.error || "Gemini extraction failed.");
+        }
+    } catch (error) {
+        console.error("Auto-Fill Fetch Error:", error);
+        setTab2ErrorMessage("A network error occurred while communicating with the extraction service.");
+    } finally {
+        setIsTab2AutoFilling(false);
+    }
+  }, [selectedProductId, products, fullMetaState]);
 
   const handleInject = useCallback(() => {
     if (!selectedProductId) return;
@@ -369,15 +351,13 @@ Image URL: ${imageUrl}`;
     const hasData = fetcher.data !== undefined && fetcher.data !== null;
     
     if (isIdle && hasData) {
-      const isAutoFill = fetcher.data.intent === "autoFill";
       const isSmartAutoFill = fetcher.data.intent === "smartAutoFill";
-      const isTab2AutoFill = fetcher.data.intent === "tab2AutoFill";
       const isSaveProduct = fetcher.data.intent === "saveProduct";
       const isSaveMetafields = fetcher.data.intent === "saveMetafields";
       const isSuccess = fetcher.data.success === true;
       const isError = fetcher.data.success === false;
 
-      if ((isAutoFill || isSmartAutoFill) && isSuccess && fetcher.data.fields) {
+      if (isSmartAutoFill && isSuccess && fetcher.data.fields) {
         setFormState(prev => {
           const updatedState = { ...prev };
           Object.entries(fetcher.data.fields).forEach(([key, val]) => {
@@ -389,34 +369,7 @@ Image URL: ${imageUrl}`;
           return updatedState;
         });
 
-        if (isSmartAutoFill) {
-          setStatusMessage("Smart Auto-Fill complete — fields populated from all available data sources.");
-        }
-        
-        if (isAutoFill) {
-          setStatusMessage("Title and tags successfully parsed and loaded into fields.");
-        }
-      }
-
-      if (isTab2AutoFill) {
-        if (isSuccess && fetcher.data.fields) {
-            setFullMetaState(prev => {
-                const updatedState = { ...prev };
-                Object.entries(fetcher.data.fields).forEach(([key, val]) => {
-                    const hasNewValue = val !== undefined && val !== null && val.toString().trim() !== "";
-                    // Only fill if currently empty
-                    const currentlyEmpty = !updatedState[key] || updatedState[key].trim() === "";
-                    
-                    if (hasNewValue && currentlyEmpty && val !== "See Shopify metaobject") {
-                        updatedState[key] = val;
-                    }
-                });
-                return updatedState;
-            });
-            setTab2StatusMessage("Auto-Fill complete — review fields before saving");
-        } else if (isError) {
-            setTab2ErrorMessage(fetcher.data.error || "Gemini extraction failed.");
-        }
+        setStatusMessage("Smart Auto-Fill complete — fields populated from all available data sources.");
       }
 
       if (isSaveProduct && isSuccess) {
@@ -430,15 +383,13 @@ Image URL: ${imageUrl}`;
         }
       }
 
-      if (isError && !isTab2AutoFill) {
+      if (isError) {
         setErrorMessage(fetcher.data.error || "An unknown error occurred during the operation.");
       }
     }
   }, [fetcher.state, fetcher.data, fullMetaState]);
 
   const safeProducts = products || [];
-  const isAutoFilling = fetcher.state !== "idle" && (fetcher.formData?.get("intent") === "autoFill" || fetcher.formData?.get("intent") === "smartAutoFill");
-  const isTab2AutoFilling = fetcher.state !== "idle" && fetcher.formData?.get("intent") === "tab2AutoFill";
   const isSaving = fetcher.state !== "idle" && fetcher.formData?.get("intent") === "saveProduct";
   const isSavingMetafields = fetcher.state !== "idle" && fetcher.formData?.get("intent") === "saveMetafields";
 
@@ -507,19 +458,6 @@ Image URL: ${imageUrl}`;
                 </div>
 
               <InlineStack gap="300" align="space-between">
-                <div style={{ minHeight: "54px", flexGrow: 1 }}>
-                  <Button 
-                    icon={MagicIcon} 
-                    onClick={handleAutoFill}
-                    accessibilityLabel="Re-Run Auto-Fill Fields"
-                    size="large"
-                    fullWidth
-                    disabled={!selectedProductId}
-                    loading={isAutoFilling}
-                  >
-                    Re-Run Auto-Fill
-                  </Button>
-                </div>
                 <div style={{ minHeight: "54px", flexGrow: 1 }}>
                   <Button 
                     icon={SaveIcon} 
@@ -620,13 +558,14 @@ Image URL: ${imageUrl}`;
                         overflowY: "auto",
                         border: "1px solid #4A5157"
                     }}>
-                        {rawMetafields.length > 0 ? (
+                        {rawMetafields.length > 0 && (
                             rawMetafields.map((meta, index) => (
                                 <div key={index} style={{ marginBottom: "4px", borderBottom: "1px solid #31383D", paddingBottom: "4px" }}>
                                     <span style={{ color: "#4BB543" }}>{meta.namespace}</span> | <span style={{ color: "#2E96FF" }}>{meta.key}</span> | <span>{meta.value}</span>
                                 </div>
                             ))
-                        ) : (
+                        )}
+                        {rawMetafields.length === 0 && (
                             <div style={{ color: "#A6B0B7" }}>No metafields found for this product.</div>
                         )}
                     </div>
@@ -655,11 +594,11 @@ Image URL: ${imageUrl}`;
                     size="large"
                     fullWidth
                     onClick={handleTab2AutoFill}
-                    accessibilityLabel="Extract fields from product description and image"
+                    accessibilityLabel="Auto-Fill from Title, Description & Image"
                     loading={isTab2AutoFilling}
                     disabled={!selectedProductId}
                 >
-                    Extract from Description & Image
+                    {isTab2AutoFilling ? "Extracting..." : "Auto-Fill from Title, Description & Image"}
                 </Button>
               </div>
 
