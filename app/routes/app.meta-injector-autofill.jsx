@@ -60,6 +60,8 @@ export const action = async ({ request }) => {
     const existingMeta = body.existingMeta || {};
     const imageUrl = body.imageUrl || "";
 
+    console.log("AUTOFILL INPUT:", { title, description: description.substring(0, 200), imageUrl, existingMetaKeys: Object.keys(existingMeta) });
+
     const merged = { ...existingMeta };
     
     const safeSet = (key, value) => {
@@ -180,6 +182,8 @@ export const action = async ({ request }) => {
       }
     }
 
+    console.log("AFTER PASS 0:", JSON.stringify(merged, null, 2));
+
     // ==========================================
     // PASS 1: LOCAL LIBRARY
     // ==========================================
@@ -189,6 +193,8 @@ export const action = async ({ request }) => {
         safeSet(key, libData[key]);
       });
     }
+
+    console.log("AFTER PASS 1:", JSON.stringify(merged, null, 2));
 
     // ==========================================
     // PASS 2: MINDAT API EXTERNAL FETCH
@@ -200,10 +206,14 @@ export const action = async ({ request }) => {
       });
     }
 
+    console.log("AFTER PASS 2:", JSON.stringify(merged, null, 2));
+
     // ==========================================
     // FALLBACKS
     // ==========================================
     safeSet("official_name", title);
+
+    console.log("FINAL FIELDS RETURNED:", JSON.stringify(merged, null, 2));
 
     return Response.json({ success: true, fields: merged });
   } catch (error) {
