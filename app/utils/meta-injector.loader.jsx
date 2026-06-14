@@ -7,7 +7,22 @@ const GET_PRODUCTS_QUERY = `
   query GetProducts($cursor: String) {
     products(first: 50, after: $cursor) {
       pageInfo { hasNextPage endCursor }
-      edges { node { id title } }
+      edges {
+        node {
+          id
+          title
+          metafields(first: 50) {
+            edges {
+              node {
+                namespace
+                key
+                value
+                type
+              }
+            }
+          }
+        }
+      }
     }
   }
 `;
