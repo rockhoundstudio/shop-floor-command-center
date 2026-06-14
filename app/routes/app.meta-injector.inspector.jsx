@@ -58,7 +58,7 @@ const FULL_META_GROUPS = [
     fields: [
       { key: "piece_name", label: "Piece Name", type: "text" },
       { key: "primary_medium", label: "Primary Medium", type: "text" },
-      { key: "handcrafted_by", label: "Handcrafted By", type: "select", options: ["Bob and Janyce", "Bob", "Janyce", "Guest Artist"] },
+      { key: "handcrafted_by", label: "Handcrafted By", type: "select", options: ["Bob & Janyce, Rockhound Studio", "Bob", "Janyce", "Guest Artist"] },
       { key: "is_one_of_a_kind", label: "Is One of a Kind", type: "select", options: ["Yes", "No"] },
       { key: "treated", label: "Treated", type: "select", options: ["Yes", "No"] }
     ]
@@ -80,10 +80,10 @@ const FULL_META_GROUPS = [
     heading: "Story & Lore",
     color: "#E65100",
     fields: [
-      { key: "origin_story", label: "Origin Story", type: "text", multiline: 4 },
+      { key: "origin_story", label: "Origin Story", type: "text", multiline: true },
       { key: "trip_or_series", label: "Trip or Series", type: "text" },
-      { key: "honest_flaws_and_character", label: "Honest Flaws and Character", type: "text", multiline: 4 },
-      { key: "artist_notes", label: "Artist Notes", type: "text", multiline: 4 },
+      { key: "honest_flaws_and_character", label: "Honest Flaws and Character", type: "text", multiline: true },
+      { key: "artist_notes", label: "Artist Notes", type: "text", multiline: true },
       { key: "collection_name", label: "Collection Name", type: "text" }
     ]
   },
@@ -147,13 +147,42 @@ export function IntakeBenchTab({ products, fetcher }) {
     const hasMetafields = product && product.metafields && product.metafields.edges;
     
     if (hasMetafields) {
+      // Pass 1: Custom
       product.metafields.edges.forEach(({ node }) => {
         const hasValue = node.value !== null && node.value !== undefined;
-        if (hasValue) {
+        if (hasValue && node.namespace === "custom") {
           newForm[node.key] = node.value;
           newFullForm[node.key] = node.value;
         }
       });
+
+      // Pass 2: Geo
+      product.metafields.edges.forEach(({ node }) => {
+        const hasValue = node.value !== null && node.value !== undefined;
+        if (hasValue && node.namespace === "geo") {
+          newForm[node.key] = node.value;
+          newFullForm[node.key] = node.value;
+        }
+      });
+
+      // Pass 3: Rockhound (wins all conflicts)
+      product.metafields.edges.forEach(({ node }) => {
+        const hasValue = node.value !== null && node.value !== undefined;
+        if (hasValue && node.namespace === "rockhound") {
+          let parsedValue = node.value;
+          
+          if (parsedValue.includes("gid://") || parsedValue.startsWith("[")) {
+            parsedValue = "See Shopify metaobject";
+          }
+          
+          newForm[node.key] = parsedValue;
+          newFullForm[node.key] = parsedValue;
+        }
+      });
+    }
+
+    if (!newFullForm.handcrafted_by || newFullForm.handcrafted_by.trim() === "") {
+        newFullForm.handcrafted_by = "Bob & Janyce, Rockhound Studio";
     }
     
     setFormState(newForm);
@@ -206,7 +235,7 @@ export function IntakeBenchTab({ products, fetcher }) {
     entries.forEach(([key, value]) => {
       const isPopulated = value !== undefined && value !== null && value.toString().trim() !== "";
       
-      if (isPopulated) {
+      if (isPopulated && value !== "See Shopify metaobject") {
         const config = ROCKHOUND_FIELDS.find(f => f.key === key);
         let fieldType = "single_line_text_field";
         if (config && config.type) {
@@ -246,7 +275,8 @@ export function IntakeBenchTab({ products, fetcher }) {
     Object.entries(fullMetaState).forEach(([key, value]) => {
       const originalValue = originalMetaRef.current[key] || "";
       const newValue = value || "";
-      if (originalValue !== newValue) {
+      
+      if (originalValue !== newValue && newValue !== "See Shopify metaobject") {
         changes.push({
           namespace: getNamespaceForKey(key),
           key: key,
@@ -281,7 +311,7 @@ export function IntakeBenchTab({ products, fetcher }) {
           const updatedState = { ...prev };
           Object.entries(fetcher.data.fields).forEach(([key, val]) => {
             const hasNewValue = val !== undefined && val !== null && val.toString().trim() !== "";
-            if (hasNewValue) {
+            if (hasNewValue && val !== "See Shopify metaobject") {
               updatedState[key] = val;
             }
           });
@@ -453,7 +483,7 @@ export function IntakeBenchTab({ products, fetcher }) {
                           autoComplete="off"
                           accessibilityLabel={`Enter text for ${field.label}`}
                           multiline={field.multiline && 3}
-                          disabled={!selectedProductId}
+                          disabled={!selectedProductId || val === "See Shopify metaobject"}
                         />
                       )}
                     </div>
@@ -522,7 +552,7 @@ export function IntakeBenchTab({ products, fetcher }) {
                                   value={val}
                                   onChange={(v) => updateFullMetaState(field.key, v)}
                                   accessibilityLabel={field.label}
-                                  multiline={field.multiline}
+                                  multiline={field.multiline ? 4 : false}
                                   autoComplete="off"
                                 />
                               )}
@@ -545,8 +575,9 @@ export function IntakeBenchTab({ products, fetcher }) {
                                   value={val}
                                   onChange={(v) => updateFullMetaState(field.key, v)}
                                   accessibilityLabel={field.label}
-                                  multiline={field.multiline}
+                                  multiline={field.multiline ? 4 : false}
                                   autoComplete="off"
+                                  disabled={val === "See Shopify metaobject"}
                                 />
                               )}
                             </div>
