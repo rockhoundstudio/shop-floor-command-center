@@ -54,10 +54,11 @@ export const action = async ({ request }) => {
   try {
     await authenticate.admin(request);
     
-    const body = await request.formData();
-    const title = body.get("title") || "";
-    const description = body.get("description") || ""; // HTML payload
-    const existingMeta = JSON.parse(body.get("existingMeta") || "{}");
+    const body = await request.json();
+    const title = body.title || "";
+    const description = body.description || ""; // HTML payload
+    const existingMeta = body.existingMeta || {};
+    const imageUrl = body.imageUrl || "";
 
     const merged = { ...existingMeta };
     
