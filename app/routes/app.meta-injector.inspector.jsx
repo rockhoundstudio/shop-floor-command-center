@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { BlockStack, Card, Text, Banner, TextField, Select, Button, InlineStack } from "@shopify/polaris";
+import { BlockStack, Card, Text, Banner, TextField, Select, Button, InlineStack, Collapsible } from "@shopify/polaris";
 import { MagicIcon, SaveIcon } from "@shopify/polaris-icons";
 
 const ROCKHOUND_FIELDS = [
@@ -136,6 +136,10 @@ export function IntakeBenchTab({ products, fetcher }) {
   const [statusMessage, setStatusMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [promptStyle, setPromptStyle] = useState("");
+  
+  // Debug State
+  const [rawMetafields, setRawMetafields] = useState([]);
+  const [isDebugOpen, setIsDebugOpen] = useState(true);
 
   const handleSelectProduct = useCallback((id) => {
     setSelectedProductId(id);
@@ -144,6 +148,8 @@ export function IntakeBenchTab({ products, fetcher }) {
     const product = products.find(p => p.id === id);
     const newForm = {};
     const newFullForm = {};
+    const debugArray = [];
+    
     const hasMetafields = product && product.metafields && product.metafields.edges;
     
     if (hasMetafields) {
@@ -153,6 +159,9 @@ export function IntakeBenchTab({ products, fetcher }) {
         if (hasValue && node.namespace === "custom") {
           newForm[node.key] = node.value;
           newFullForm[node.key] = node.value;
+        }
+        if (hasValue) {
+           debugArray.push({ namespace: node.namespace, key: node.key, value: node.value });
         }
       });
 
@@ -185,6 +194,7 @@ export function IntakeBenchTab({ products, fetcher }) {
         newFullForm.handcrafted_by = "Bob & Janyce, Rockhound Studio";
     }
     
+    setRawMetafields(debugArray);
     setFormState(newForm);
     setFullMetaState(newFullForm);
     originalMetaRef.current = { ...newFullForm };
@@ -499,6 +509,47 @@ export function IntakeBenchTab({ products, fetcher }) {
         <div style={{ marginTop: "32px" }}>
           <Card padding="400">
             <BlockStack gap="400">
+              
+              <div style={{ marginBottom: "16px" }}>
+                <Button 
+                    onClick={() => setIsDebugOpen(!isDebugOpen)} 
+                    ariaExpanded={isDebugOpen} 
+                    ariaControls="debug-panel"
+                    variant="plain"
+                >
+                    RAW METAFIELD DEBUG — ALL NAMESPACES {isDebugOpen ? '(Hide)' : '(Show)'}
+                </Button>
+                
+                <Collapsible 
+                    open={isDebugOpen} 
+                    id="debug-panel" 
+                    transition={{ duration: '200ms', timingFunction: 'ease-in-out' }}
+                >
+                    <div style={{ 
+                        backgroundColor: "#1C2226", 
+                        color: "#E3E5E7", 
+                        padding: "16px", 
+                        borderRadius: "8px", 
+                        fontFamily: "monospace", 
+                        fontSize: "14px",
+                        marginTop: "8px",
+                        maxHeight: "300px",
+                        overflowY: "auto",
+                        border: "1px solid #4A5157"
+                    }}>
+                        {rawMetafields.length > 0 ? (
+                            rawMetafields.map((meta, index) => (
+                                <div key={index} style={{ marginBottom: "4px", borderBottom: "1px solid #31383D", paddingBottom: "4px" }}>
+                                    <span style={{ color: "#4BB543" }}>{meta.namespace}</span> | <span style={{ color: "#2E96FF" }}>{meta.key}</span> | <span>{meta.value}</span>
+                                </div>
+                            ))
+                        ) : (
+                            <div style={{ color: "#A6B0B7" }}>No metafields found for this product.</div>
+                        )}
+                    </div>
+                </Collapsible>
+              </div>
+
               <Text variant="headingLg" as="h3">Full Meta Report</Text>
               
               {FULL_META_GROUPS.map(group => (
