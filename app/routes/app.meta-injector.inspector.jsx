@@ -275,9 +275,9 @@ export function IntakeBenchTab({ products, fetcher }) {
 
         if (data.success && data.fields) {
             const fields = data.fields;
-            autoFillJustFired.current = true;
             setFormState(prev => ({ ...prev, ...fields }));
             setFullMetaState(prev => ({ ...prev, ...fields }));
+            autoFillJustFired.current = true;
             setTab2StatusMessage("Auto-Fill complete — review fields before saving");
         } else {
             setTab2ErrorMessage(data.error || "Gemini extraction failed.");
