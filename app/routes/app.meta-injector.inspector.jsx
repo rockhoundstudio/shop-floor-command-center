@@ -133,6 +133,7 @@ export function IntakeBenchTab({ products, fetcher }) {
   const [formState, setFormState] = useState({});
   const [fullMetaState, setFullMetaState] = useState({});
   const originalMetaRef = useRef({});
+  const autoFillJustFired = useRef(false);
   const [statusMessage, setStatusMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [promptStyle, setPromptStyle] = useState("");
@@ -274,6 +275,7 @@ export function IntakeBenchTab({ products, fetcher }) {
 
         if (data.success && data.fields) {
             const fields = data.fields;
+            autoFillJustFired.current = true;
             setFormState(prev => ({ ...prev, ...fields }));
             setFullMetaState(prev => ({ ...prev, ...fields }));
             setTab2StatusMessage("Auto-Fill complete — review fields before saving");
@@ -362,6 +364,8 @@ export function IntakeBenchTab({ products, fetcher }) {
   const prevFetcherData = useRef(fetcher.data);
 
   useEffect(() => {
+    if (autoFillJustFired.current) { autoFillJustFired.current = false; return; }
+
     if (prevFetcherState.current === fetcher.state && prevFetcherData.current === fetcher.data) {
       return;
     }
