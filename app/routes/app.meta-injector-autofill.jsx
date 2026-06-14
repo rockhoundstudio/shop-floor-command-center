@@ -54,13 +54,10 @@ export const action = async ({ request }) => {
   try {
     await authenticate.admin(request);
     
-    const body = await request.json();
-    const title = body.title || "";
-    const description = body.description || ""; // HTML payload
-    const existingMeta = body.existingMeta || {};
-    const imageUrl = body.imageUrl || "";
-
-    console.log("AUTOFILL INPUT:", { title, description: description.substring(0, 200), imageUrl, existingMetaKeys: Object.keys(existingMeta) });
+    const body = await request.formData();
+    const title = body.get("title") || "";
+    const description = body.get("description") || ""; // HTML payload
+    const existingMeta = JSON.parse(body.get("existingMeta") || "{}");
 
     const merged = { ...existingMeta };
     
@@ -69,12 +66,6 @@ export const action = async ({ request }) => {
         if (value && String(value).trim() !== "") {
           merged[key] = String(value).trim();
         }
-      }
-    };
-
-    const alwaysSet = (key, value) => {
-      if (value && String(value).trim() !== "") {
-        merged[key] = String(value).trim();
       }
     };
 
@@ -173,7 +164,7 @@ export const action = async ({ request }) => {
 
         if (storyParagraphs.length > 0) {
           const combinedStory = storyParagraphs.join("\n\n");
-          alwaysSet("origin_story", combinedStory); 
+          safeSet("honest_flaws_and_character", combinedStory); 
         }
 
       } catch (parseError) {
@@ -181,8 +172,6 @@ export const action = async ({ request }) => {
         // Do not crash the endpoint, proceed to Pass 1
       }
     }
-
-    console.log("AFTER PASS 0:", JSON.stringify(merged, null, 2));
 
     // ==========================================
     // PASS 1: LOCAL LIBRARY
@@ -194,8 +183,6 @@ export const action = async ({ request }) => {
       });
     }
 
-    console.log("AFTER PASS 1:", JSON.stringify(merged, null, 2));
-
     // ==========================================
     // PASS 2: MINDAT API EXTERNAL FETCH
     // ==========================================
@@ -206,24 +193,16 @@ export const action = async ({ request }) => {
       });
     }
 
-    console.log("AFTER PASS 2:", JSON.stringify(merged, null, 2));
-
     // ==========================================
     // FALLBACKS
     // ==========================================
     safeSet("official_name", title);
 
-    console.log("FINAL FIELDS RETURNED:", JSON.stringify(merged, null, 2));
-
-    if (merged.honest_flaws_and_character) {
-      merged.honest_flaws = merged.honest_flaws_and_character;
-    }
-
-    return Response.json({ success: true, fields: merged });
+    return Response.json({ success: true, merged });
   } catch (error) {
     console.error("Stone Lookup Engine Fault:", error.message);
     return Response.json(
-      { success: false, error: error.message, fields: {} }, 
+      { success: false, error: error.message, merged: {} }, 
       { status: 500 }
     );
   }
