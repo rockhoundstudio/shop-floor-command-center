@@ -176,14 +176,15 @@ export async function action({ request }) {
 
   if (intent === "saveProduct" || intent === "saveMetafields") {
     try {
+      // Reverted to single_line_text_field based on the log output showing type mismatch
       const FIELD_TYPE_MAP = {
-        is_one_of_a_kind: "boolean",
-        treated: "boolean",
-        setting_ready: "boolean",
-        bail_included: "boolean",
-        found_object: "boolean",
-        secondary_colors: "list.single_line_text_field",
-        character_marks: "list.single_line_text_field",
+        is_one_of_a_kind: "single_line_text_field",
+        treated: "single_line_text_field",
+        setting_ready: "single_line_text_field",
+        bail_included: "single_line_text_field",
+        found_object: "single_line_text_field",
+        secondary_colors: "single_line_text_field",
+        character_marks: "single_line_text_field",
       };
 
       let metafieldsToSet = [];
