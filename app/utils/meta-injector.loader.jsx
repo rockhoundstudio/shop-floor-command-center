@@ -222,6 +222,8 @@ export async function action({ request }) {
         const resData = await res.json();
         
         const errors = resData.data?.metafieldsSet?.userErrors || [];
+        console.log("Save userErrors:", JSON.stringify(errors));
+        console.log("Save resData:", JSON.stringify(resData?.data?.metafieldsSet));
         if (errors.length > 0) {
           userErrors = userErrors.concat(errors);
         }
@@ -441,9 +443,11 @@ export async function action({ request }) {
         "",
         "Specific Key Instructions:",
         "- origin_story: the narrative story of how the stone was found and crafted — this is the primary story field",
-        "- honest_flaws: any character marks, flaws, or unique imperfections of the stone",
+        "- honest_flaws: Any character marks, inclusions, matrix, or natural flaws observed — plain text description.",
         "- artist_notes: the lapidary process notes — how it was cut, shaped, and finished",
         "- honest_flaws_and_character: copy of honest_flaws for the Full Meta Report",
+        "- surface_finish: Must be exactly one of: High polish lapidary finish, Satin finish, Raw natural surface, Hand rubbed finish — choose the closest match from the description or image.",
+        "- cut_and_shape: Must be exactly one of: Freeform, Standard Cabochon, Heart, Teardrop, Surfboard, Rough/Raw — choose the closest match from the description or image.",
         "",
         "If a value cannot be confidently determined from the text, leave the string empty (\"\").",
         "Return ONLY valid JSON with no markdown formatting.",
