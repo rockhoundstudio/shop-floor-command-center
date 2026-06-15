@@ -59,8 +59,8 @@ const FULL_META_GROUPS = [
       { key: "piece_name", label: "Piece Name", type: "text" },
       { key: "primary_medium", label: "Primary Medium", type: "text" },
       { key: "handcrafted_by", label: "Handcrafted By", type: "select", options: ["Bob & Janyce, Rockhound Studio", "Bob", "Janyce", "Guest Artist"] },
-      { key: "is_one_of_a_kind", label: "Is One of a Kind", type: "select", options: ["Yes", "No"] },
-      { key: "treated", label: "Treated", type: "select", options: ["Yes", "No"] }
+      { key: "is_one_of_a_kind", label: "Is One of a Kind", type: "select", options: ["true", "false"] },
+      { key: "treated", label: "Treated", type: "select", options: ["true", "false"] }
     ]
   },
   {
@@ -92,7 +92,7 @@ const FULL_META_GROUPS = [
     color: "#6A1B9A",
     fields: [
       { key: "secondary_medium", label: "Secondary Medium", type: "text" },
-      { key: "found_object", label: "Found Object", type: "select", options: ["Yes", "No"] }
+      { key: "found_object", label: "Found Object", type: "select", options: ["true", "false"] }
     ]
   },
   {
@@ -100,8 +100,8 @@ const FULL_META_GROUPS = [
     color: "#F9A825",
     fields: [
       { key: "primary_use", label: "Primary Use", type: "text" },
-      { key: "setting_ready", label: "Setting Ready", type: "select", options: ["Yes", "No"] },
-      { key: "bail_included", label: "Bail Included", type: "select", options: ["Yes", "No"] }
+      { key: "setting_ready", label: "Setting Ready", type: "select", options: ["true", "false"] },
+      { key: "bail_included", label: "Bail Included", type: "select", options: ["true", "false"] }
     ]
   }
 ];
