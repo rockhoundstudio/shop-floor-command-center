@@ -316,11 +316,11 @@ Image URL: ${imageUrl}`;
         }
 
         payload.push({
-          ownerId: formatId,
-          namespace: getNamespaceForKey(key),
+          namespace: "rockhound",
           key: key,
-          value: value.toString().trim(),
-          type: fieldType 
+          type: fieldType,
+          value: value,
+          ownerId: formatId
         });
       }
     });
