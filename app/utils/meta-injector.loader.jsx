@@ -174,7 +174,7 @@ export async function action({ request }) {
     return json({ success: true, intent: "createProduct", createdCount: results.filter(r => r.productId).length });
   }
 
-  if (intent === "saveProduct") {
+  if (intent === "saveProduct" || intent === "saveMetafields") {
     try {
       const FIELD_TYPE_MAP = {
         is_one_of_a_kind: "boolean",
@@ -186,7 +186,7 @@ export async function action({ request }) {
       };
 
       let metafieldsToSet = [];
-      const rawPayload = formData.get("payload");
+      const rawPayload = formData.get("payload") || formData.get("metafields");
 
       if (rawPayload) {
         metafieldsToSet = JSON.parse(rawPayload);
@@ -206,22 +206,36 @@ export async function action({ request }) {
         keysList.forEach(key => {
           const val = formData.get(key);
           if (val && val.toString().trim() !== "") {
-            const rawVal = val.toString().trim();
-            const fieldType = FIELD_TYPE_MAP[key] || "single_line_text_field";
-            const fieldValue = fieldType === "boolean"
-              ? (rawVal === "true" || rawVal === "1" || rawVal === "Yes" ? "true" : "false")
-              : rawVal;
-
             metafieldsToSet.push({
               ownerId: formatId,
               namespace: "rockhound",
               key: key,
-              type: fieldType,
-              value: fieldValue
+              value: val.toString().trim()
             });
           }
         });
       }
+
+      // >>> TYPE RECONCILIATION & FORMATTING PASS <<<
+      metafieldsToSet = metafieldsToSet.map(mf => {
+        const fieldType = FIELD_TYPE_MAP[mf.key] || mf.type || "single_line_text_field";
+        let fieldValue = String(mf.value).trim();
+
+        if (fieldType === "boolean") {
+          const lowerVal = fieldValue.toLowerCase();
+          fieldValue = (lowerVal === "true" || lowerVal === "1" || lowerVal === "yes") ? "true" : "false";
+        } else if (fieldType === "list.single_line_text_field") {
+          if (!fieldValue.startsWith("[")) {
+            fieldValue = JSON.stringify(fieldValue.split(",").map(s => s.trim()).filter(Boolean));
+          }
+        }
+
+        return {
+          ...mf,
+          type: fieldType,
+          value: fieldValue
+        };
+      });
 
       if (metafieldsToSet.length === 0) {
         return json({ success: false, error: "Save failed", details: [{ message: "No populated fields to save" }] });
@@ -250,7 +264,7 @@ export async function action({ request }) {
         return json({ success: false, error: "Save failed", details: userErrors });
       }
 
-      return json({ success: true, intent: "saveProduct" });
+      return json({ success: true, intent: intent });
     } catch (error) {
       console.error("Save Product Exception Caught:", error);
       return json({ success: false, error: "Save failed", details: [{ message: error.message }] });
