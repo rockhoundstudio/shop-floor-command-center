@@ -201,8 +201,8 @@ export async function action({ request }) {
               ownerId: formatId,
               namespace: "rockhound",
               key: key,
-              value: val.toString().trim(),
-              type: "single_line_text_field"
+              type: "single_line_text_field",
+              value: val.toString().trim()
             });
           }
         });
