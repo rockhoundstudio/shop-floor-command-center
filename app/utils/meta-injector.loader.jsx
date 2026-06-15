@@ -11,15 +11,14 @@ const GET_PRODUCTS_QUERY = `
         node {
           id
           title
-          metafields(first: 50) {
-            edges {
-              node {
-                namespace
-                key
-                value
-                type
-              }
-            }
+          customMeta: metafields(first: 50, namespace: "custom") {
+            edges { node { namespace key value type } }
+          }
+          rockhoundMeta: metafields(first: 50, namespace: "rockhound") {
+            edges { node { namespace key value type } }
+          }
+          geoMeta: metafields(first: 50, namespace: "geo") {
+            edges { node { namespace key value type } }
           }
         }
       }
@@ -91,7 +90,18 @@ const chunkArray = (array, size) => {
 async function fetchAllProducts(graphql) {
   const response = await graphql(GET_PRODUCTS_QUERY, { variables: { cursor: null } });
   const { data } = await response.json();
-  if (data && data.products) return data.products.edges.map(edge => edge.node);
+  if (data && data.products) {
+    return data.products.edges.map(edge => {
+      const product = edge.node;
+      const allEdges = [
+        ...(product.customMeta?.edges || []),
+        ...(product.rockhoundMeta?.edges || []),
+        ...(product.geoMeta?.edges || []),
+      ];
+      product.metafields = { edges: allEdges };
+      return product;
+    });
+  }
   return [];
 }
 
