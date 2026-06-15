@@ -176,6 +176,15 @@ export async function action({ request }) {
 
   if (intent === "saveProduct") {
     try {
+      const FIELD_TYPE_MAP = {
+        is_one_of_a_kind: "boolean",
+        treated: "boolean",
+        setting_ready: "boolean",
+        bail_included: "boolean",
+        found_object: "boolean",
+        secondary_colors: "list.single_line_text_field",
+      };
+
       let metafieldsToSet = [];
       const rawPayload = formData.get("payload");
 
@@ -197,12 +206,18 @@ export async function action({ request }) {
         keysList.forEach(key => {
           const val = formData.get(key);
           if (val && val.toString().trim() !== "") {
+            const rawVal = val.toString().trim();
+            const fieldType = FIELD_TYPE_MAP[key] || "single_line_text_field";
+            const fieldValue = fieldType === "boolean"
+              ? (rawVal === "true" || rawVal === "1" || rawVal === "Yes" ? "true" : "false")
+              : rawVal;
+
             metafieldsToSet.push({
               ownerId: formatId,
               namespace: "rockhound",
               key: key,
-              type: "single_line_text_field",
-              value: val.toString().trim()
+              type: fieldType,
+              value: fieldValue
             });
           }
         });
