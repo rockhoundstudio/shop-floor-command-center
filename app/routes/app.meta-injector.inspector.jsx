@@ -380,7 +380,11 @@ Image URL: ${imageUrl}`;
           const updatedState = { ...prev };
           Object.entries(fetcher.data.fields).forEach(([key, val]) => {
             const hasNewValue = val !== undefined && val !== null && val.toString().trim() !== "";
-            if (hasNewValue && val !== "See Shopify metaobject") {
+            
+            // Only fill if currently empty in fullMetaState
+            const currentlyEmpty = !fullMetaState[key] || (typeof fullMetaState[key] === 'string' && fullMetaState[key].trim() === "");
+            
+            if (hasNewValue && currentlyEmpty && val !== "See Shopify metaobject") {
               updatedState[key] = val;
             }
           });
