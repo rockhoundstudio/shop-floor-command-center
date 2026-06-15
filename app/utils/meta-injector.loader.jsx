@@ -183,6 +183,7 @@ export async function action({ request }) {
         bail_included: "boolean",
         found_object: "boolean",
         secondary_colors: "list.single_line_text_field",
+        character_marks: "list.single_line_text_field",
       };
 
       let metafieldsToSet = [];
@@ -225,9 +226,25 @@ export async function action({ request }) {
           const lowerVal = fieldValue.toLowerCase();
           fieldValue = (lowerVal === "true" || lowerVal === "1" || lowerVal === "yes") ? "true" : "false";
         } else if (fieldType === "list.single_line_text_field") {
-          if (!fieldValue.startsWith("[")) {
-            fieldValue = JSON.stringify(fieldValue.split(",").map(s => s.trim()).filter(Boolean));
+          let listVal = fieldValue;
+          try {
+            const parsed = JSON.parse(listVal);
+            if (Array.isArray(parsed)) {
+              // Unwrap any inner JSON strings in the array
+              const unwrapped = parsed.map(item => {
+                try {
+                  const inner = JSON.parse(item);
+                  return Array.isArray(inner) ? inner[0] : inner;
+                } catch {
+                  return item;
+                }
+              });
+              listVal = JSON.stringify(unwrapped);
+            }
+          } catch {
+            listVal = JSON.stringify([listVal]);
           }
+          fieldValue = listVal;
         }
 
         return {
@@ -250,9 +267,13 @@ export async function action({ request }) {
         });
         const resData = await res.json();
         
+        console.log("=== SAVE CHUNK DEBUG ===");
+        console.log("Chunk being sent:", JSON.stringify(chunk, null, 2));
+        console.log("GraphQL response:", JSON.stringify(resData, null, 2));
+        console.log("userErrors:", JSON.stringify(resData?.data?.metafieldsSet?.userErrors, null, 2));
+        console.log("=== END CHUNK DEBUG ===");
+        
         const errors = resData.data?.metafieldsSet?.userErrors || [];
-        console.log("Save userErrors:", JSON.stringify(errors));
-        console.log("Save resData:", JSON.stringify(resData?.data?.metafieldsSet));
         if (errors.length > 0) {
           userErrors = userErrors.concat(errors);
         }
