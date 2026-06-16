@@ -100,13 +100,13 @@ export const action = async ({ request }) => {
                 defaultsToApply.push({ namespace: "rockhound", key: "handcrafted_by", type: "single_line_text_field", value: "Bob & Janyce, Rockhound Studio" });
             }
             if (!existingMetafields.is_one_of_a_kind || existingMetafields.is_one_of_a_kind.trim() === "") {
-                defaultsToApply.push({ namespace: "rockhound", key: "is_one_of_a_kind", type: "single_line_text_field", value: "Yes — one of a kind" });
+                defaultsToApply.push({ namespace: "rockhound", key: "is_one_of_a_kind", type: "single_line_text_field", value: "true" });
             }
             if (!existingMetafields.treated || existingMetafields.treated.trim() === "") {
-                defaultsToApply.push({ namespace: "rockhound", key: "treated", type: "single_line_text_field", value: "Untreated — Natural" });
+                defaultsToApply.push({ namespace: "rockhound", key: "treated", type: "single_line_text_field", value: "false" });
             }
             if (!existingMetafields.found_object || existingMetafields.found_object.trim() === "") {
-                defaultsToApply.push({ namespace: "rockhound", key: "found_object", type: "single_line_text_field", value: "Yes — found in the wild" });
+                defaultsToApply.push({ namespace: "rockhound", key: "found_object", type: "single_line_text_field", value: "true" });
             }
             if (!existingMetafields.primary_use || existingMetafields.primary_use.trim() === "") {
                 defaultsToApply.push({ namespace: "rockhound", key: "primary_use", type: "single_line_text_field", value: "Wearable Art" });
@@ -363,9 +363,9 @@ Return only valid JSON. No explanation. No markdown.`;
     // STORE-WIDE DEFAULTS
     // ==========================================
     safeSet("handcrafted_by", "Bob & Janyce, Rockhound Studio");
-    safeSet("is_one_of_a_kind", "Yes — one of a kind");
-    safeSet("treated", "Untreated — Natural");
-    safeSet("found_object", "Yes — found in the wild");
+    safeSet("is_one_of_a_kind", "true");
+    safeSet("treated", "false");
+    safeSet("found_object", "true");
     safeSet("primary_use", "Wearable Art");
 
     // ==========================================
