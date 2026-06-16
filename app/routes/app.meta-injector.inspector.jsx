@@ -286,7 +286,8 @@ Image URL: ${imageUrl}`;
       { 
         intent: "tab2AutoFill", 
         productId: selectedProductId,
-        prompt: promptText
+        prompt: promptText,
+        imageUrl: imageUrl
       },
       { method: "post" }
     );
