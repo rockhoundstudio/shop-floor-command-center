@@ -52,9 +52,101 @@ async function fetchMindat(title) {
 // ==========================================
 export const action = async ({ request }) => {
   try {
-    await authenticate.admin(request);
+    const { admin } = await authenticate.admin(request);
     
     const body = await request.formData();
+    const actionType = body.get("actionType");
+
+    if (actionType === "applyStoreDefaults") {
+        const rawIds = body.get("productIds");
+        if (!rawIds) return Response.json({ success: false, error: "No product IDs provided." });
+        
+        const productIds = JSON.parse(rawIds);
+        const results = [];
+        
+        for (const productId of productIds) {
+            const getMetafieldsQuery = `
+                query GetProductMetafields($id: ID!) {
+                    product(id: $id) {
+                        id
+                        metafields(first: 50, namespace: "rockhound") {
+                            edges {
+                                node {
+                                    key
+                                    value
+                                }
+                            }
+                        }
+                    }
+                }
+            `;
+            
+            const metaRes = await admin.graphql(getMetafieldsQuery, { variables: { id: productId } });
+            const metaData = await metaRes.json();
+            
+            if (!metaData.data || !metaData.data.product) {
+                console.error(`Failed to load product ${productId} for defaults check`);
+                continue;
+            }
+            
+            const existingMetafields = metaData.data.product.metafields.edges.reduce((acc, edge) => {
+                acc[edge.node.key] = edge.node.value;
+                return acc;
+            }, {});
+            
+            const defaultsToApply = [];
+            
+            if (!existingMetafields.handcrafted_by || existingMetafields.handcrafted_by.trim() === "") {
+                defaultsToApply.push({ namespace: "rockhound", key: "handcrafted_by", type: "single_line_text_field", value: "Bob & Janyce, Rockhound Studio" });
+            }
+            if (!existingMetafields.is_one_of_a_kind || existingMetafields.is_one_of_a_kind.trim() === "") {
+                defaultsToApply.push({ namespace: "rockhound", key: "is_one_of_a_kind", type: "single_line_text_field", value: "Yes — one of a kind" });
+            }
+            if (!existingMetafields.treated || existingMetafields.treated.trim() === "") {
+                defaultsToApply.push({ namespace: "rockhound", key: "treated", type: "single_line_text_field", value: "Untreated — Natural" });
+            }
+            if (!existingMetafields.found_object || existingMetafields.found_object.trim() === "") {
+                defaultsToApply.push({ namespace: "rockhound", key: "found_object", type: "single_line_text_field", value: "Yes — found in the wild" });
+            }
+            if (!existingMetafields.primary_use || existingMetafields.primary_use.trim() === "") {
+                defaultsToApply.push({ namespace: "rockhound", key: "primary_use", type: "single_line_text_field", value: "Wearable Art" });
+            }
+            
+            console.log(`Product ${productId} defaults to apply:`, defaultsToApply.map(m => m.key));
+            
+            if (defaultsToApply.length > 0) {
+                const updateMutation = `
+                    mutation productUpdate($input: ProductInput!) {
+                        productUpdate(input: $input) {
+                            product { id }
+                            userErrors { field message }
+                        }
+                    }
+                `;
+                
+                const updateRes = await admin.graphql(updateMutation, {
+                    variables: {
+                        input: {
+                            id: productId,
+                            metafields: defaultsToApply
+                        }
+                    }
+                });
+                
+                const updateData = await updateRes.json();
+                if (updateData.data?.productUpdate?.userErrors?.length > 0) {
+                    console.error(`Error updating product ${productId}:`, updateData.data.productUpdate.userErrors);
+                } else {
+                    results.push({ id: productId, appliedFields: defaultsToApply.map(m => m.key) });
+                }
+            } else {
+                results.push({ id: productId, appliedFields: [] });
+            }
+        }
+        
+        return Response.json({ success: true, updated: results });
+    }
+
     const title = body.get("title") || "";
     const description = body.get("description") || ""; // HTML payload
     const existingMeta = JSON.parse(body.get("existingMeta") || "{}");
@@ -192,6 +284,15 @@ export const action = async ({ request }) => {
         safeSet(ourKey, mindatData[mindatKey]);
       });
     }
+
+    // ==========================================
+    // STORE-WIDE DEFAULTS
+    // ==========================================
+    safeSet("handcrafted_by", "Bob & Janyce, Rockhound Studio");
+    safeSet("is_one_of_a_kind", "Yes — one of a kind");
+    safeSet("treated", "Untreated — Natural");
+    safeSet("found_object", "Yes — found in the wild");
+    safeSet("primary_use", "Wearable Art");
 
     // ==========================================
     // FALLBACKS
