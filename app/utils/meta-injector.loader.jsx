@@ -610,5 +610,9 @@ export async function action({ request }) {
     }
   }
 
+  if (intent === "tab2AutoFill") {
+    return json({ success: true, intent: "tab2AutoFill" });
+  }
+
   return json({ success: false, error: "Unknown intent" });
 }
