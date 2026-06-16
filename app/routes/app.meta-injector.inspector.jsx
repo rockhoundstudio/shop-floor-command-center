@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { BlockStack, Card, Text, Banner, TextField, Select, Button, InlineStack, Collapsible } from "@shopify/polaris";
 import { MagicIcon, SaveIcon } from "@shopify/polaris-icons";
+import { normalizeDropdownValue } from "../utils/meta-injector.constants.jsx";
 
 const ROCKHOUND_FIELDS = [
   // ==========================================
@@ -202,12 +203,44 @@ export function IntakeBenchTab({ products, fetcher }) {
     setFormState(newForm);
     setFullMetaState(newFullForm);
     originalMetaRef.current = { ...newFullForm };
+  }, [products]);
 
-    fetcher.submit(
-      { intent: "smartAutoFill", productId: id },
-      { method: "post" }
-    );
-  }, [products, fetcher]);
+  // Seed formState from existing rockhound metafields when a product is selected
+  useEffect(() => {
+    if (selectedProductId && products && products.length > 0) {
+      const product = products.find(p => p.id === selectedProductId);
+      if (product && product.metafields && product.metafields.edges) {
+        setFormState(prev => {
+          const updatedState = { ...prev };
+          const dropdownFields = [
+            "handcrafted_by", "is_one_of_a_kind", "treated", "found_object", 
+            "primary_use", "setting_ready", "bail_included", "stone_family", 
+            "color", "cut_and_shape", "surface_finish"
+          ];
+          const textFields = [
+            "piece_name", "primary_medium", "material", "dimensions_mm", 
+            "weight_grams", "origin_story", "trip_or_series", 
+            "honest_flaws_and_character", "artist_notes", "collection_name", 
+            "secondary_medium"
+          ];
+
+          product.metafields.edges.forEach(({ node }) => {
+            if (node.namespace === "rockhound" && node.value && node.value.trim() !== "") {
+              // Only seed if the field is currently empty in formState to avoid overwriting edits
+              if (!updatedState[node.key] || updatedState[node.key].trim() === "") {
+                if (dropdownFields.includes(node.key)) {
+                  updatedState[node.key] = normalizeDropdownValue(node.key, node.value);
+                } else if (textFields.includes(node.key)) {
+                  updatedState[node.key] = node.value;
+                }
+              }
+            }
+          });
+          return updatedState;
+        });
+      }
+    }
+  }, [selectedProductId, products]);
 
   const updateFormState = useCallback((key, value) => {
     setFormState(prev => ({ ...prev, [key]: value }));
