@@ -226,8 +226,7 @@ export function IntakeBenchTab({ products, fetcher }) {
 
           product.metafields.edges.forEach(({ node }) => {
             if (node.namespace === "rockhound" && node.value && node.value.trim() !== "") {
-              // Only seed if the field is currently empty in formState to avoid overwriting edits
-              if (!updatedState[node.key] || updatedState[node.key].trim() === "") {
+              if (true) {
                 if (dropdownFields.includes(node.key)) {
                   updatedState[node.key] = normalizeDropdownValue(node.key, node.value);
                 } else if (textFields.includes(node.key)) {
