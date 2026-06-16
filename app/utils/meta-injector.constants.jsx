@@ -68,15 +68,118 @@ export const COLOR_GROUP_LABELS = {
   yellow: { label: "Google / SEO", color: "#F9A825" }
 };
 
-export const DROPDOWN_OPTIONS = {
-  handcrafted_by: ["Bob and Janyce", "Bob", "Janyce", "Guest Artist"],
-  is_one_of_a_kind: ["Yes", "No"],
-  treated: ["Yes", "No"],
-  surface_finish: ["Polished", "Matte", "Natural", "High Polish"],
-  found_object: ["Yes", "No"],
-  setting_ready: ["Yes", "No"],
-  bail_included: ["Yes", "No"]
-};
+export const DROPDOWN_OPTIONS = {};
+
+DROPDOWN_OPTIONS.stone_family = [
+  { label: "Agate", value: "Agate" },
+  { label: "Andesite", value: "Andesite" },
+  { label: "Aventurine", value: "Aventurine" },
+  { label: "Chalcedony", value: "Chalcedony" },
+  { label: "Jasper", value: "Jasper" },
+  { label: "Jaspagate", value: "Jaspagate" },
+  { label: "Labradorite", value: "Labradorite" },
+  { label: "Obsidian", value: "Obsidian" },
+  { label: "Quartzite", value: "Quartzite" },
+  { label: "Quartz", value: "Quartz" },
+  { label: "Rhyolite", value: "Rhyolite" },
+  { label: "Serpentine", value: "Serpentine" },
+  { label: "Variscite", value: "Variscite" }
+];
+
+DROPDOWN_OPTIONS.surface_finish = [
+  { label: "High Polish", value: "High Polish" },
+  { label: "Satin Polish", value: "Satin Polish" },
+  { label: "Matte", value: "Matte" },
+  { label: "Waxy", value: "Waxy" },
+  { label: "Waxy to Dull", value: "Waxy to Dull" },
+  { label: "Vitreous to Pearly", value: "Vitreous to Pearly" },
+  { label: "Natural / Rough", value: "Natural / Rough" },
+  { label: "Tumbled", value: "Tumbled" }
+];
+
+DROPDOWN_OPTIONS.color = [
+  { label: "Black", value: "Black" },
+  { label: "Blue", value: "Blue" },
+  { label: "Brown", value: "Brown" },
+  { label: "Gold", value: "Gold" },
+  { label: "Green", value: "Green" },
+  { label: "Grey", value: "Grey" },
+  { label: "Orange", value: "Orange" },
+  { label: "Pink", value: "Pink" },
+  { label: "Purple", value: "Purple" },
+  { label: "Red", value: "Red" },
+  { label: "Translucent", value: "Translucent" },
+  { label: "Translucent to Opaque", value: "Translucent to Opaque" },
+  { label: "White", value: "White" },
+  { label: "Yellow", value: "Yellow" }
+];
+
+DROPDOWN_OPTIONS.cut_and_shape = [
+  { label: "Freeform", value: "Freeform" },
+  { label: "Heart", value: "Heart" },
+  { label: "Marquise", value: "Marquise" },
+  { label: "Oval Cabochon", value: "Oval Cabochon" },
+  { label: "Pear", value: "Pear" },
+  { label: "Round Cabochon", value: "Round Cabochon" },
+  { label: "Standard Cabochon", value: "Standard Cabochon" },
+  { label: "Surfboard", value: "Surfboard" },
+  { label: "Teardrop", value: "Teardrop" },
+  { label: "Trillion", value: "Trillion" }
+];
+
+DROPDOWN_OPTIONS.handcrafted_by = [
+  { label: "Bob & Janyce, Rockhound Studio", value: "Bob & Janyce, Rockhound Studio" },
+  { label: "Robert", value: "Robert" },
+  { label: "Janyce", value: "Janyce" }
+];
+
+DROPDOWN_OPTIONS.is_one_of_a_kind = [
+  { label: "Yes — one of a kind", value: "true" },
+  { label: "No", value: "false" }
+];
+
+DROPDOWN_OPTIONS.treated = [
+  { label: "Untreated — Natural", value: "false" },
+  { label: "Stabilized", value: "Stabilized" },
+  { label: "Dyed", value: "Dyed" },
+  { label: "Resined", value: "Resined" },
+  { label: "Enhanced", value: "Enhanced" }
+];
+
+DROPDOWN_OPTIONS.found_object = [
+  { label: "Yes — found in the wild", value: "true" },
+  { label: "No — purchased rough", value: "false" }
+];
+
+DROPDOWN_OPTIONS.primary_use = [
+  { label: "Wearable Art", value: "Wearable Art" },
+  { label: "Pendant", value: "Pendant" },
+  { label: "Display Piece", value: "Display Piece" },
+  { label: "Cabochon — Setting Ready", value: "Cabochon — Setting Ready" },
+  { label: "Collector Specimen", value: "Collector Specimen" }
+];
+
+DROPDOWN_OPTIONS.setting_ready = [
+  { label: "Yes", value: "true" },
+  { label: "No", value: "false" }
+];
+
+DROPDOWN_OPTIONS.bail_included = [
+  { label: "Yes", value: "true" },
+  { label: "No", value: "false" }
+];
+
+export function normalizeDropdownValue(key, rawValue) {
+  if (!rawValue) return rawValue;
+  const options = DROPDOWN_OPTIONS[key];
+  if (!options || options.length === 0) return rawValue;
+  const raw = String(rawValue).toLowerCase().trim();
+  const match = options.find(opt =>
+    String(opt.value).toLowerCase().trim() === raw ||
+    String(opt.label).toLowerCase().trim() === raw
+  );
+  return match ? match.value : rawValue;
+}
 
 export const METAFIELD_CONFIG = [
   // 🟢 ALWAYS FILL
@@ -88,9 +191,9 @@ export const METAFIELD_CONFIG = [
 
   // 🔵 STONE FIELDS
   { namespace: "custom", key: "material", type: "single_line_text_field", label: "Material", colorGroup: "blue", options: [] },
-  { namespace: "custom", key: "stone_family", type: "single_line_text_field", label: "Stone Family", colorGroup: "blue", options: [] },
-  { namespace: "custom", key: "color", type: "single_line_text_field", label: "Color", colorGroup: "blue", options: [] },
-  { namespace: "custom", key: "cut_and_shape", type: "single_line_text_field", label: "Cut and Shape", colorGroup: "blue", options: [] },
+  { namespace: "custom", key: "stone_family", type: "single_line_text_field", label: "Stone Family", colorGroup: "blue", options: DROPDOWN_OPTIONS.stone_family },
+  { namespace: "custom", key: "color", type: "single_line_text_field", label: "Color", colorGroup: "blue", options: DROPDOWN_OPTIONS.color },
+  { namespace: "custom", key: "cut_and_shape", type: "single_line_text_field", label: "Cut and Shape", colorGroup: "blue", options: DROPDOWN_OPTIONS.cut_and_shape },
   { namespace: "custom", key: "surface_finish", type: "single_line_text_field", label: "Surface Finish", colorGroup: "blue", options: DROPDOWN_OPTIONS.surface_finish },
   { namespace: "custom", key: "dimensions_mm", type: "single_line_text_field", label: "Dimensions (mm)", colorGroup: "blue", options: [] },
   { namespace: "custom", key: "weight_grams", type: "single_line_text_field", label: "Weight (grams)", colorGroup: "blue", options: [] },
@@ -107,7 +210,7 @@ export const METAFIELD_CONFIG = [
   { namespace: "custom", key: "found_object", type: "single_line_text_field", label: "Found Object", colorGroup: "purple", options: DROPDOWN_OPTIONS.found_object },
 
   // 🟡 GOOGLE / SEO
-  { namespace: "custom", key: "primary_use", type: "single_line_text_field", label: "Primary Use", colorGroup: "yellow", options: [] },
+  { namespace: "custom", key: "primary_use", type: "single_line_text_field", label: "Primary Use", colorGroup: "yellow", options: DROPDOWN_OPTIONS.primary_use },
   { namespace: "custom", key: "setting_ready", type: "single_line_text_field", label: "Setting Ready", colorGroup: "yellow", options: DROPDOWN_OPTIONS.setting_ready },
   { namespace: "custom", key: "bail_included", type: "single_line_text_field", label: "Bail Included", colorGroup: "yellow", options: DROPDOWN_OPTIONS.bail_included }
 ];
