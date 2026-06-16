@@ -291,6 +291,7 @@ Image URL: ${imageUrl}`;
       },
       { method: "post" }
     );
+    console.log("Tab2 AutoFill imageUrl sent:", imageUrl);
   }, [selectedProductId, fetcher, products]);
 
   const handleInject = useCallback(() => {
