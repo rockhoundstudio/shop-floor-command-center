@@ -286,6 +286,80 @@ export const action = async ({ request }) => {
     }
 
     // ==========================================
+    // PASS 3: GEMINI VISION
+    // ==========================================
+    try {
+      const imageUrl = body.get("imageUrl") || "";
+      if (imageUrl) {
+        const imageRes = await fetch(imageUrl);
+        const imageBuffer = await imageRes.arrayBuffer();
+        const imageBase64 = Buffer.from(imageBuffer).toString("base64");
+        const imageMimeType = imageRes.headers.get("content-type") || "image/jpeg";
+
+        const promptText = `You are a gemologist and lapidary expert analyzing a handcrafted stone cabochon or specimen for an online store called Rockhound Studio. Look at this stone image carefully and return a JSON object with these fields — only include fields you can visually confirm, leave others out:
+{
+  color: (primary color and pattern description, e.g. 'Deep red with grey banding'),
+  surface_finish: (one of: High Polish, Satin Polish, Matte, Natural/Rough, Tumbled),
+  cut_and_shape: (e.g. Freeform, Oval Cabochon, Round Cabochon, Teardrop, Pear, Trillion),
+  stone_family: (e.g. Jasper, Agate, Chalcedony, Labradorite, Obsidian, Quartz),
+  character_marks: (visible inclusions, patterns, streaks, or unique features),
+  alt_text: (a single descriptive sentence for screen readers and SEO, written in plain English describing what is seen in the image)
+}
+Return only valid JSON. No explanation. No markdown.`;
+
+        const geminiRes = await fetch(
+          "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=" + process.env.GEMINI_API_KEY,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              contents: [
+                {
+                  parts: [
+                    { text: promptText },
+                    {
+                      inlineData: {
+                        mimeType: imageMimeType,
+                        data: imageBase64
+                      }
+                    }
+                  ]
+                }
+              ]
+            })
+          }
+        );
+
+        if (geminiRes.ok) {
+          const geminiData = await geminiRes.json();
+          const textContent = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || "";
+          
+          if (textContent) {
+            let cleanJson = textContent.trim();
+            const firstBrace = cleanJson.indexOf("{");
+            const lastBrace = cleanJson.lastIndexOf("}");
+            if (firstBrace !== -1 && lastBrace !== -1) {
+              cleanJson = cleanJson.slice(firstBrace, lastBrace + 1);
+            }
+
+            const visionData = JSON.parse(cleanJson);
+            safeSet("color", visionData.color);
+            safeSet("surface_finish", visionData.surface_finish);
+            safeSet("cut_and_shape", visionData.cut_and_shape);
+            safeSet("stone_family", visionData.stone_family);
+            safeSet("honest_flaws_and_character", visionData.character_marks);
+            safeSet("alt_text", visionData.alt_text);
+          }
+        } else {
+          const errText = await geminiRes.text();
+          console.error("Gemini Vision API Error:", geminiRes.status, errText);
+        }
+      }
+    } catch (error) {
+      console.error("Pass 3 Vision Fault:", error.message);
+    }
+
+    // ==========================================
     // STORE-WIDE DEFAULTS
     // ==========================================
     safeSet("handcrafted_by", "Bob & Janyce, Rockhound Studio");
