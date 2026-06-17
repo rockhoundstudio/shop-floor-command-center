@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { BlockStack, Card, Text, Banner, TextField, Select, Button, InlineStack, Collapsible } from "@shopify/polaris";
 import { MagicIcon, SaveIcon } from "@shopify/polaris-icons";
-import { normalizeDropdownValue } from "../utils/meta-injector.constants.jsx";
+import { normalizeDropdownValue, DROPDOWN_OPTIONS } from "../utils/meta-injector.constants.jsx";
 
 const ROCKHOUND_FIELDS = [
   // ==========================================
@@ -26,31 +26,6 @@ const ROCKHOUND_FIELDS = [
   { key: "honest_flaws", label: "Character Marks (Honest Flaws)", type: "single_line_text_field", multiline: true, isPerPiece: true },
   { key: "price", label: "Price", type: "single_line_text_field", isPerPiece: true }
 ];
-
-const DEFAULT_DROPDOWNS = {
-  stone_family: ["Agate", "Obsidian", "Jasper", "Quartzite", "Chalcedony", "Fire Obsidian", "Serpentine", "Labradorite"],
-  color: ["Green", "Black", "Blue flash", "Red", "White", "Multicolor", "Gold", "Pink", "Yellow", "Silver", "Purple", "Striped", "Clear"],
-  cut_and_shape: ["Freeform", "Standard Cabochon", "Heart", "Teardrop", "Surfboard", "Rough/Raw"],
-  surface_finish: ["High polish lapidary finish", "Satin finish", "Raw natural surface", "Hand rubbed finish"],
-  primary_use: [
-    "Wearable Art",
-    "Standard Cabochon",
-    "Freeform Maker Blank",
-    "Display Specimen",
-    "Pocket Stone / Palm Stone",
-    "Plain Rock / Rough"
-  ],
-  inspiration: [
-    "Rufus", 
-    "Sox", 
-    "Copper", 
-    "Chipper", 
-    "Frankenstein", 
-    "Bob", 
-    "Janyce", 
-    "The 3,000-Mile Adventure"
-  ]
-};
 
 const FULL_META_GROUPS = [
   {
@@ -580,15 +555,9 @@ Image URL: ${imageUrl}`;
                   const isText = !field.isDropdown;
                   
                   let safeVal = val;
-                  let options = [];
 
                   if (isDropdown) {
-                    const dropdownOptions = DEFAULT_DROPDOWNS[field.key] || [];
-                    safeVal = dropdownOptions.includes(val) ? val : "";
-                    options = [
-                      { label: safeVal !== "" ? safeVal.replace(/ΓÇö/g, '—') : "Select...", value: safeVal },
-                      ...dropdownOptions.filter(o => o !== safeVal).map(o => ({ label: o.replace(/ΓÇö/g, '—'), value: o }))
-                    ];
+                    safeVal = DROPDOWN_OPTIONS[field.key]?.some(opt => opt.value === val) ? val : "";
                   }
                   
                   return (
@@ -596,8 +565,8 @@ Image URL: ${imageUrl}`;
                       {isDropdown && (
                         <Select
                           label={field.label}
-                          options={options}
-                          value={DEFAULT_DROPDOWNS[field.key]?.includes(val) ? val : ""}
+                          options={[{ label: safeVal !== "" ? safeVal : "Select...", value: safeVal }, ...(DROPDOWN_OPTIONS[field.key] || []).filter(opt => opt.value !== safeVal)]}
+                          value={DROPDOWN_OPTIONS[field.key]?.some(opt => opt.value === val) ? val : ""}
                           onChange={(v) => updateFormState(field.key, v)}
                           accessibilityLabel={`Select value for ${field.label}`}
                           disabled={!selectedProductId}
@@ -728,11 +697,6 @@ Image URL: ${imageUrl}`;
                       const isSelect = field.type === "select";
                       const isText = field.type === "text";
 
-                      const selectOptions = [
-                        { label: "Select...", value: "" },
-                        ...(field.options || []).map(opt => ({ label: opt, value: opt }))
-                      ];
-
                       return (
                         <div key={field.key}>
                           {isEmpty && (
@@ -740,7 +704,7 @@ Image URL: ${imageUrl}`;
                               {isSelect && (
                                 <Select
                                   label={labelNode}
-                                  options={selectOptions}
+                                  options={[{ label: "Select...", value: "" }, ...(DROPDOWN_OPTIONS[field.key] || [])]}
                                   value={val}
                                   onChange={(v) => updateFullMetaState(field.key, v)}
                                   accessibilityLabel={field.label}
@@ -763,7 +727,7 @@ Image URL: ${imageUrl}`;
                               {isSelect && (
                                 <Select
                                   label={labelNode}
-                                  options={selectOptions}
+                                  options={[{ label: "Select...", value: "" }, ...(DROPDOWN_OPTIONS[field.key] || [])]}
                                   value={val}
                                   onChange={(v) => updateFullMetaState(field.key, v)}
                                   accessibilityLabel={field.label}
