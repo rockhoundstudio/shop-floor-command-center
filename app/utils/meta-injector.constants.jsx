@@ -198,6 +198,61 @@ export function normalizeDropdownValue(key, rawValue) {
   return match ? match.value : String(rawValue);
 }
 
+export const FULL_META_GROUPS = [
+  {
+    heading: "Always Fill",
+    color: "#2E7D32",
+    fields: [
+      { key: "piece_name", label: "Piece Name", type: "text" },
+      { key: "primary_medium", label: "Primary Medium", type: "text" },
+      { key: "handcrafted_by", label: "Handcrafted By", type: "select", options: ["Bob & Janyce, Rockhound Studio", "Bob", "Janyce", "Guest Artist"] },
+      { key: "is_one_of_a_kind", label: "Is One of a Kind", type: "select", options: ["true", "false"] },
+      { key: "treated", label: "Treated", type: "select", options: ["true", "false"] }
+    ]
+  },
+  {
+    heading: "Stone Fields",
+    color: "#1565C0",
+    fields: [
+      { key: "material", label: "Material", type: "text" },
+      { key: "stone_family", label: "Stone Family", type: "select" },
+      { key: "color", label: "Color", type: "select" },
+      { key: "cut_and_shape", label: "Cut and Shape", type: "text" },
+      { key: "surface_finish", label: "Surface Finish", type: "select", options: ["Polished", "Matte", "Natural", "High Polish"] },
+      { key: "dimensions_mm", label: "Dimensions (mm)", type: "text" },
+      { key: "weight_grams", label: "Weight (grams)", type: "text" }
+    ]
+  },
+  {
+    heading: "Story & Lore",
+    color: "#E65100",
+    fields: [
+      { key: "origin_story", label: "Origin Story", type: "text", multiline: true },
+      { key: "trip_or_series", label: "Trip or Series", type: "text" },
+      { key: "honest_flaws_and_character", label: "Honest Flaws and Character", type: "text", multiline: true },
+      { key: "artist_notes", label: "Artist Notes", type: "text", multiline: true },
+      { key: "collection_name", label: "Collection Name", type: "text" }
+    ]
+  },
+  {
+    heading: "Mixed Media",
+    color: "#6A1B9A",
+    fields: [
+      { key: "secondary_medium", label: "Secondary Medium", type: "text" },
+      { key: "found_object", label: "Found Object", type: "select", options: ["true", "false"] }
+    ]
+  },
+  {
+    heading: "Google / SEO",
+    color: "#F9A825",
+    fields: [
+      { key: "primary_use", label: "Primary Use", type: "text" },
+      { key: "setting_ready", label: "Setting Ready", type: "select", options: ["true", "false"] },
+      { key: "bail_included", label: "Bail Included", type: "select", options: ["true", "false"] }
+    ]
+  }
+];
+
 export const METAFIELD_CONFIG = [
   // 🟢 ALWAYS FILL
   { namespace: "custom", key: "piece_name", type: "single_line_text_field", label: "Piece Name", colorGroup: "green", options: [] },
