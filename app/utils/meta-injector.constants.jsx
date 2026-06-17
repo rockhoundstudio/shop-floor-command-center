@@ -208,8 +208,8 @@ export const METAFIELD_CONFIG = [
 
   // 🔵 STONE FIELDS
   { namespace: "custom", key: "material", type: "single_line_text_field", label: "Material", colorGroup: "blue", options: [] },
-  { namespace: "custom", key: "stone_family", type: "single_line_text_field", label: "Stone Family", colorGroup: "blue", options: DROPDOWN_OPTIONS.stone_family },
-  { namespace: "custom", key: "color", type: "single_line_text_field", label: "Color", colorGroup: "blue", options: DROPDOWN_OPTIONS.color },
+  { namespace: "custom", key: "stone_family", type: "select", label: "Stone Family", colorGroup: "blue", options: DROPDOWN_OPTIONS.stone_family },
+  { namespace: "custom", key: "color", type: "select", label: "Color", colorGroup: "blue", options: DROPDOWN_OPTIONS.color },
   { namespace: "custom", key: "cut_and_shape", type: "single_line_text_field", label: "Cut and Shape", colorGroup: "blue", options: DROPDOWN_OPTIONS.cut_and_shape },
   { namespace: "custom", key: "surface_finish", type: "single_line_text_field", label: "Surface Finish", colorGroup: "blue", options: DROPDOWN_OPTIONS.surface_finish },
   { namespace: "custom", key: "dimensions_mm", type: "single_line_text_field", label: "Dimensions (mm)", colorGroup: "blue", options: [] },
