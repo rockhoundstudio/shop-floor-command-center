@@ -34,9 +34,9 @@ const FULL_META_GROUPS = [
     fields: [
       { key: "piece_name", label: "Piece Name", type: "text" },
       { key: "primary_medium", label: "Primary Medium", type: "text" },
-      { key: "handcrafted_by", label: "Handcrafted By", type: "select", options: ["Bob & Janyce, Rockhound Studio", "Bob", "Janyce", "Guest Artist"] },
-      { key: "is_one_of_a_kind", label: "Is One of a Kind", type: "select", options: ["true", "false"] },
-      { key: "treated", label: "Treated", type: "select", options: ["true", "false"] }
+      { key: "handcrafted_by", label: "Handcrafted By", type: "select" },
+      { key: "is_one_of_a_kind", label: "Is One of a Kind", type: "select" },
+      { key: "treated", label: "Treated", type: "select" }
     ]
   },
   {
@@ -44,10 +44,10 @@ const FULL_META_GROUPS = [
     color: "#1565C0",
     fields: [
       { key: "material", label: "Material", type: "text" },
-      { key: "stone_family", label: "Stone Family", type: "text" },
-      { key: "color", label: "Color", type: "text" },
-      { key: "cut_and_shape", label: "Cut and Shape", type: "text" },
-      { key: "surface_finish", label: "Surface Finish", type: "select", options: ["Polished", "Matte", "Natural", "High Polish"] },
+      { key: "stone_family", label: "Stone Family", type: "select" },
+      { key: "color", label: "Color", type: "select" },
+      { key: "cut_and_shape", label: "Cut and Shape", type: "select" },
+      { key: "surface_finish", label: "Surface Finish", type: "select" },
       { key: "dimensions_mm", label: "Dimensions (mm)", type: "text" },
       { key: "weight_grams", label: "Weight (grams)", type: "text" }
     ]
@@ -68,16 +68,16 @@ const FULL_META_GROUPS = [
     color: "#6A1B9A",
     fields: [
       { key: "secondary_medium", label: "Secondary Medium", type: "text" },
-      { key: "found_object", label: "Found Object", type: "select", options: ["true", "false"] }
+      { key: "found_object", label: "Found Object", type: "select" }
     ]
   },
   {
     heading: "Google / SEO",
     color: "#F9A825",
     fields: [
-      { key: "primary_use", label: "Primary Use", type: "text" },
-      { key: "setting_ready", label: "Setting Ready", type: "select", options: ["true", "false"] },
-      { key: "bail_included", label: "Bail Included", type: "select", options: ["true", "false"] }
+      { key: "primary_use", label: "Primary Use", type: "select" },
+      { key: "setting_ready", label: "Setting Ready", type: "select" },
+      { key: "bail_included", label: "Bail Included", type: "select" }
     ]
   }
 ];
@@ -694,8 +694,9 @@ Image URL: ${imageUrl}`;
                         </div>
                       );
 
-                      const isSelect = field.type === "select";
-                      const isText = field.type === "text";
+                      const hasOptions = DROPDOWN_OPTIONS[field.key] && DROPDOWN_OPTIONS[field.key].length > 0;
+                      const isSelect = hasOptions;
+                      const isText = !hasOptions;
 
                       return (
                         <div key={field.key}>
@@ -705,7 +706,7 @@ Image URL: ${imageUrl}`;
                                 <Select
                                   label={labelNode}
                                   options={[{ label: "Select...", value: "" }, ...(DROPDOWN_OPTIONS[field.key] || [])]}
-                                  value={val}
+                                  value={fullMetaState[field.key] || ""}
                                   onChange={(v) => updateFullMetaState(field.key, v)}
                                   accessibilityLabel={field.label}
                                 />
@@ -728,7 +729,7 @@ Image URL: ${imageUrl}`;
                                 <Select
                                   label={labelNode}
                                   options={[{ label: "Select...", value: "" }, ...(DROPDOWN_OPTIONS[field.key] || [])]}
-                                  value={val}
+                                  value={fullMetaState[field.key] || ""}
                                   onChange={(v) => updateFullMetaState(field.key, v)}
                                   accessibilityLabel={field.label}
                                 />
