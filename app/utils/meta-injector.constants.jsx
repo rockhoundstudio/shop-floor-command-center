@@ -121,6 +121,7 @@ DROPDOWN_OPTIONS.cut_and_shape = [
   { label: "Oval Cabochon", value: "Oval Cabochon" },
   { label: "Pear", value: "Pear" },
   { label: "Round Cabochon", value: "Round Cabochon" },
+  { label: "Cabochon", value: "Cabochon" },
   { label: "Standard Cabochon", value: "Standard Cabochon" },
   { label: "Surfboard", value: "Surfboard" },
   { label: "Teardrop", value: "Teardrop" },
@@ -134,7 +135,7 @@ DROPDOWN_OPTIONS.handcrafted_by = [
 ];
 
 DROPDOWN_OPTIONS.is_one_of_a_kind = [
-  { label: "Yes — one of a kind", value: "true" },
+  { label: "Yes — one of a kind", value: "Yes — one of a kind" },
   { label: "No", value: "false" }
 ];
 
