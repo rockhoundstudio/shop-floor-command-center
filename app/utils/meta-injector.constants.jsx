@@ -135,7 +135,7 @@ DROPDOWN_OPTIONS.handcrafted_by = [
 ];
 
 DROPDOWN_OPTIONS.is_one_of_a_kind = [
-  { label: "Yes — one of a kind", value: "Yes — one of a kind" },
+  { label: "Yes — one of a kind", value: "true" },
   { label: "No", value: "false" }
 ];
 
@@ -205,9 +205,9 @@ export const FULL_META_GROUPS = [
     fields: [
       { key: "piece_name", label: "Piece Name", type: "text" },
       { key: "primary_medium", label: "Primary Medium", type: "text" },
-      { key: "handcrafted_by", label: "Handcrafted By", type: "select", options: ["Bob & Janyce, Rockhound Studio", "Bob", "Janyce", "Guest Artist"] },
-      { key: "is_one_of_a_kind", label: "Is One of a Kind", type: "select", options: ["true", "false"] },
-      { key: "treated", label: "Treated", type: "select", options: ["true", "false"] }
+      { key: "handcrafted_by", label: "Handcrafted By", type: "select" },
+      { key: "is_one_of_a_kind", label: "Is One of a Kind", type: "select" },
+      { key: "treated", label: "Treated", type: "select" }
     ]
   },
   {
@@ -217,8 +217,8 @@ export const FULL_META_GROUPS = [
       { key: "material", label: "Material", type: "text" },
       { key: "stone_family", label: "Stone Family", type: "select" },
       { key: "color", label: "Color", type: "select" },
-      { key: "cut_and_shape", label: "Cut and Shape", type: "text" },
-      { key: "surface_finish", label: "Surface Finish", type: "select", options: ["Polished", "Matte", "Natural", "High Polish"] },
+      { key: "cut_and_shape", label: "Cut and Shape", type: "select" },
+      { key: "surface_finish", label: "Surface Finish", type: "select" },
       { key: "dimensions_mm", label: "Dimensions (mm)", type: "text" },
       { key: "weight_grams", label: "Weight (grams)", type: "text" }
     ]
@@ -239,16 +239,16 @@ export const FULL_META_GROUPS = [
     color: "#6A1B9A",
     fields: [
       { key: "secondary_medium", label: "Secondary Medium", type: "text" },
-      { key: "found_object", label: "Found Object", type: "select", options: ["true", "false"] }
+      { key: "found_object", label: "Found Object", type: "select" }
     ]
   },
   {
     heading: "Google / SEO",
     color: "#F9A825",
     fields: [
-      { key: "primary_use", label: "Primary Use", type: "text" },
-      { key: "setting_ready", label: "Setting Ready", type: "select", options: ["true", "false"] },
-      { key: "bail_included", label: "Bail Included", type: "select", options: ["true", "false"] }
+      { key: "primary_use", label: "Primary Use", type: "select" },
+      { key: "setting_ready", label: "Setting Ready", type: "select" },
+      { key: "bail_included", label: "Bail Included", type: "select" }
     ]
   }
 ];
@@ -261,7 +261,7 @@ export const METAFIELD_CONFIG = [
   { namespace: "custom", key: "is_one_of_a_kind", type: "single_line_text_field", label: "Is One of a Kind", colorGroup: "green", options: DROPDOWN_OPTIONS.is_one_of_a_kind },
   { namespace: "custom", key: "treated", type: "single_line_text_field", label: "Treated", colorGroup: "green", options: DROPDOWN_OPTIONS.treated },
 
-  // 🔵 STONE FIELDS
+  // 🔵 STONE Fields
   { namespace: "custom", key: "material", type: "single_line_text_field", label: "Material", colorGroup: "blue", options: [] },
   { namespace: "custom", key: "stone_family", type: "select", label: "Stone Family", colorGroup: "blue", options: DROPDOWN_OPTIONS.stone_family },
   { namespace: "custom", key: "color", type: "select", label: "Color", colorGroup: "blue", options: DROPDOWN_OPTIONS.color },
