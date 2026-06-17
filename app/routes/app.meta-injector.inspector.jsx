@@ -694,14 +694,11 @@ Image URL: ${imageUrl}`;
                         </div>
                       );
 
-                      const isSelect = DROPDOWN_OPTIONS[field.key] && DROPDOWN_OPTIONS[field.key].length > 0;
-                      const isText = !isSelect;
-
                       return (
                         <div key={field.key}>
                           {isEmpty && (
                             <div style={{ backgroundColor: "#FFF5F5", minHeight: "48px", padding: "8px", borderRadius: "4px" }}>
-                              {isSelect && (
+                              {DROPDOWN_OPTIONS[field.key] && DROPDOWN_OPTIONS[field.key].length > 0 ? (
                                 <Select
                                   label={labelNode}
                                   options={[{ label: "Select...", value: "" }, ...(DROPDOWN_OPTIONS[field.key] || [])]}
@@ -709,8 +706,7 @@ Image URL: ${imageUrl}`;
                                   onChange={(v) => updateFullMetaState(field.key, v)}
                                   accessibilityLabel={field.label}
                                 />
-                              )}
-                              {isText && (
+                              ) : (
                                 <TextField
                                   label={labelNode}
                                   value={val}
@@ -724,7 +720,7 @@ Image URL: ${imageUrl}`;
                           )}
                           {!isEmpty && (
                             <div style={{ backgroundColor: "transparent", minHeight: "48px", padding: "8px", borderRadius: "4px" }}>
-                              {isSelect && (
+                              {DROPDOWN_OPTIONS[field.key] && DROPDOWN_OPTIONS[field.key].length > 0 ? (
                                 <Select
                                   label={labelNode}
                                   options={[{ label: "Select...", value: "" }, ...(DROPDOWN_OPTIONS[field.key] || [])]}
@@ -732,8 +728,7 @@ Image URL: ${imageUrl}`;
                                   onChange={(v) => updateFullMetaState(field.key, v)}
                                   accessibilityLabel={field.label}
                                 />
-                              )}
-                              {isText && (
+                              ) : (
                                 <TextField
                                   label={labelNode}
                                   value={val}
