@@ -171,15 +171,31 @@ DROPDOWN_OPTIONS.bail_included = [
 ];
 
 export function normalizeDropdownValue(key, rawValue) {
-  if (!rawValue) return rawValue;
+  if (rawValue === undefined || rawValue === null) return "";
+  
   const options = DROPDOWN_OPTIONS[key];
-  if (!options || options.length === 0) return rawValue;
-  const raw = String(rawValue).toLowerCase().trim();
+  if (!options || options.length === 0) return String(rawValue);
+  
+  // Handle case where Shopify list metafields return as '["Value"]' string
+  let cleanRaw = String(rawValue);
+  if (cleanRaw.startsWith('[') && cleanRaw.endsWith(']')) {
+    try {
+      const parsed = JSON.parse(cleanRaw);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        cleanRaw = String(parsed[0]);
+      }
+    } catch (e) {
+      // Ignore parse failure, fall back to string cleaning below
+    }
+  }
+
+  const raw = cleanRaw.toLowerCase().trim();
   const match = options.find(opt =>
     String(opt.value).toLowerCase().trim() === raw ||
     String(opt.label).toLowerCase().trim() === raw
   );
-  return match ? match.value : rawValue;
+  
+  return match ? match.value : String(rawValue);
 }
 
 export const METAFIELD_CONFIG = [
