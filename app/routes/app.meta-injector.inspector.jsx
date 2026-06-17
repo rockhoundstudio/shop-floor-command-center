@@ -694,9 +694,8 @@ Image URL: ${imageUrl}`;
                         </div>
                       );
 
-                      const hasOptions = DROPDOWN_OPTIONS[field.key] && DROPDOWN_OPTIONS[field.key].length > 0;
-                      const isSelect = hasOptions;
-                      const isText = !hasOptions;
+                      const isSelect = DROPDOWN_OPTIONS[field.key] && DROPDOWN_OPTIONS[field.key].length > 0;
+                      const isText = !isSelect;
 
                       return (
                         <div key={field.key}>
