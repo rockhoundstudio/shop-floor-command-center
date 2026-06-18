@@ -351,7 +351,7 @@ export async function action({ request }) {
       if (!productId) return json({ success: false, error: "No product ID" });
       
       const res = await admin.graphql(
-        "query GetProduct($id: ID!) { product(id: $id) { title descriptionHtml } }",
+        "query GetProduct($id: ID!) { product(id: $id) { title descriptionHtml metafields(first: 50) { edges { node { namespace key value } } } } }",
         { variables: { id: productId } }
       );
       
@@ -360,6 +360,7 @@ export async function action({ request }) {
       const productTitle = product.title || "";
       const productDescription = product.descriptionHtml || "";
       const promptStyle = formData.get("promptStyle") || "";
+      const fetchedMetafields = product.metafields?.edges?.map(e => e.node) || [];
 
       const promptText = [
         "You are a data extraction assistant. Parse the following product title and description and return a JSON object mapping these exact keys to their best-guess values extracted from the text.",
@@ -484,6 +485,30 @@ export async function action({ request }) {
         }
       }
 
+      // Custom namespace fallback mapping
+      const customMeta = {};
+      fetchedMetafields.forEach(m => {
+        if (m.namespace === "custom") {
+          customMeta[m.key] = m.value;
+        }
+      });
+
+      if (!parsedValues.color || parsedValues.color.trim() === "") {
+        if (customMeta.primary_color) parsedValues.color = customMeta.primary_color;
+      }
+      if (!parsedValues.cut_and_shape || parsedValues.cut_and_shape.trim() === "") {
+        if (customMeta.cut_type) parsedValues.cut_and_shape = customMeta.cut_type;
+      }
+      if (!parsedValues.origin_story || parsedValues.origin_story.trim() === "") {
+        if (customMeta.stone_story) parsedValues.origin_story = customMeta.stone_story;
+      }
+      if (!parsedValues.honest_flaws_and_character || parsedValues.honest_flaws_and_character.trim() === "") {
+        if (customMeta.character_marks) parsedValues.honest_flaws_and_character = customMeta.character_marks;
+      }
+      if (!parsedValues.handcrafted_by || parsedValues.handcrafted_by.trim() === "" || parsedValues.handcrafted_by === "Robert") {
+        parsedValues.handcrafted_by = "Bob & Janyce, Rockhound Studio";
+      }
+
       return json({ 
         success: true, 
         intent: "smartAutoFill", 
@@ -510,6 +535,7 @@ export async function action({ request }) {
     let geminiStatus = 0;
     let rawTextOutput = "";
     try {
+      const productId = formData.get("productId");
       const productTitle = formData.get("productTitle") || "";
       const productDescription = formData.get("productDescription") || "";
       const promptStyle = formData.get("promptStyle") || "";
@@ -619,6 +645,37 @@ export async function action({ request }) {
 
       if (parsedValues.honest_flaws) {
         parsedValues.honest_flaws_and_character = parsedValues.honest_flaws;
+      }
+      
+      const res = await admin.graphql(
+        "query GetProduct($id: ID!) { product(id: $id) { metafields(first: 50) { edges { node { namespace key value } } } } }",
+        { variables: { id: productId } }
+      );
+      const resData = await res.json();
+      const fetchedMetafields = resData.data?.product?.metafields?.edges?.map(e => e.node) || [];
+
+      // Custom namespace fallback mapping
+      const customMeta = {};
+      fetchedMetafields.forEach(m => {
+        if (m.namespace === "custom") {
+          customMeta[m.key] = m.value;
+        }
+      });
+
+      if (!parsedValues.color || parsedValues.color.trim() === "") {
+        if (customMeta.primary_color) parsedValues.color = customMeta.primary_color;
+      }
+      if (!parsedValues.cut_and_shape || parsedValues.cut_and_shape.trim() === "") {
+        if (customMeta.cut_type) parsedValues.cut_and_shape = customMeta.cut_type;
+      }
+      if (!parsedValues.origin_story || parsedValues.origin_story.trim() === "") {
+        if (customMeta.stone_story) parsedValues.origin_story = customMeta.stone_story;
+      }
+      if (!parsedValues.honest_flaws_and_character || parsedValues.honest_flaws_and_character.trim() === "") {
+        if (customMeta.character_marks) parsedValues.honest_flaws_and_character = customMeta.character_marks;
+      }
+      if (!parsedValues.handcrafted_by || parsedValues.handcrafted_by.trim() === "" || parsedValues.handcrafted_by === "Robert") {
+        parsedValues.handcrafted_by = "Bob & Janyce, Rockhound Studio";
       }
 
       return json({ 
