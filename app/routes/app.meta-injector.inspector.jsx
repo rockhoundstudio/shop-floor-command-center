@@ -7,12 +7,12 @@ const ROCKHOUND_FIELDS = [
   // ==========================================
   // SECTION A: SHARED BATCH FIELDS (The Story & Material)
   // ==========================================
-  { key: "stone_family", label: "Stone Family", isDropdown: true, isShared: true },
-  { key: "color", label: "Color", isDropdown: true, isShared: true }, 
-  { key: "surface_finish", label: "Surface Finish", isDropdown: true, isShared: true }, 
+  { key: "stone_family", label: "Stone Family", type: "single_line_text_field", isShared: true },
+  { key: "color", label: "Color", type: "single_line_text_field", isShared: true }, 
+  { key: "surface_finish", label: "Surface Finish", type: "single_line_text_field", isShared: true }, 
   { key: "source_location", label: "Source / Discovery Location", type: "single_line_text_field", isShared: true },
-  { key: "primary_use", label: "Primary Use", isDropdown: true, isShared: true }, 
-  { key: "inspiration", label: "Whisper Theme / Inspiration", isDropdown: true, isShared: true }, 
+  { key: "primary_use", label: "Primary Use", type: "single_line_text_field", isShared: true }, 
+  { key: "inspiration", label: "Whisper Theme / Inspiration", type: "single_line_text_field", isShared: true }, 
   { key: "handcrafted_by", label: "Handcrafted By", type: "single_line_text_field", isShared: true },
   { key: "origin_story", label: "The Origin Story", type: "single_line_text_field", multiline: true, isShared: true },
 
@@ -20,7 +20,7 @@ const ROCKHOUND_FIELDS = [
   // SECTION B: PER-PIECE ROWS (The Hard Specs)
   // ==========================================
   { key: "piece_name", label: "Piece Name", type: "single_line_text_field", isPerPiece: true },
-  { key: "cut_and_shape", label: "Cut / Shape", isDropdown: true, isPerPiece: true }, 
+  { key: "cut_and_shape", label: "Cut / Shape", type: "single_line_text_field", isPerPiece: true }, 
   { key: "dimensions_mm", label: "Dimensions (mm)", type: "single_line_text_field", isPerPiece: true },
   { key: "weight_grams", label: "Weight (grams)", type: "single_line_text_field", isPerPiece: true },
   { key: "honest_flaws", label: "Character Marks (Honest Flaws)", type: "single_line_text_field", multiline: true, isPerPiece: true },
@@ -35,8 +35,8 @@ const FULL_META_GROUPS = [
       { key: "piece_name", label: "Piece Name", type: "text" },
       { key: "primary_medium", label: "Primary Medium", type: "text" },
       { key: "handcrafted_by", label: "Handcrafted By", type: "select" },
-      { key: "is_one_of_a_kind", label: "Is One of a Kind", type: "select" },
-      { key: "treated", label: "Treated", type: "select" }
+      { key: "is_one_of_a_kind", label: "Is One of a Kind", type: "text" },
+      { key: "treated", label: "Treated", type: "text" }
     ]
   },
   {
@@ -44,10 +44,10 @@ const FULL_META_GROUPS = [
     color: "#1565C0",
     fields: [
       { key: "material", label: "Material", type: "text" },
-      { key: "stone_family", label: "Stone Family", type: "select" },
-      { key: "color", label: "Color", type: "select" },
-      { key: "cut_and_shape", label: "Cut and Shape", type: "select" },
-      { key: "surface_finish", label: "Surface Finish", type: "select" },
+      { key: "stone_family", label: "Stone Family", type: "text" },
+      { key: "color", label: "Color", type: "text" },
+      { key: "cut_and_shape", label: "Cut and Shape", type: "text" },
+      { key: "surface_finish", label: "Surface Finish", type: "text" },
       { key: "dimensions_mm", label: "Dimensions (mm)", type: "text" },
       { key: "weight_grams", label: "Weight (grams)", type: "text" }
     ]
@@ -68,7 +68,7 @@ const FULL_META_GROUPS = [
     color: "#6A1B9A",
     fields: [
       { key: "secondary_medium", label: "Secondary Medium", type: "text" },
-      { key: "found_object", label: "Found Object", type: "select" }
+      { key: "found_object", label: "Found Object", type: "text" }
     ]
   },
   {
@@ -391,9 +391,11 @@ Image URL: ${imageUrl}`;
             const hasNewValue = val !== undefined && val !== null && val.toString().trim() !== "";
             
             // Only fill if currently empty in fullMetaState
+            const ALWAYS_OVERWRITE = ["color", "cut_and_shape", "stone_family", "surface_finish", "handcrafted_by", "treated", "found_object", "is_one_of_a_kind"];
             const currentlyEmpty = !fullMetaState[key] || (typeof fullMetaState[key] === 'string' && fullMetaState[key].trim() === "");
-            
-            if (hasNewValue && currentlyEmpty && val !== "See Shopify metaobject") {
+            const shouldOverwrite = ALWAYS_OVERWRITE.includes(key);
+
+            if (hasNewValue && (currentlyEmpty || shouldOverwrite) && val !== "See Shopify metaobject") {
               updatedState[key] = val;
             }
           });
@@ -698,7 +700,7 @@ Image URL: ${imageUrl}`;
                         <div key={field.key}>
                           {isEmpty && (
                             <div style={{ backgroundColor: "#FFF5F5", minHeight: "48px", padding: "8px", borderRadius: "4px" }}>
-                              {DROPDOWN_OPTIONS[field.key] && DROPDOWN_OPTIONS[field.key].length > 0 ? (
+                              {field.type !== "text" && DROPDOWN_OPTIONS[field.key] && DROPDOWN_OPTIONS[field.key].length > 0 ? (
                                 <Select
                                   label={labelNode}
                                   options={[{ label: "Select...", value: "" }, ...(DROPDOWN_OPTIONS[field.key] || [])]}
@@ -720,7 +722,7 @@ Image URL: ${imageUrl}`;
                           )}
                           {!isEmpty && (
                             <div style={{ backgroundColor: "transparent", minHeight: "48px", padding: "8px", borderRadius: "4px" }}>
-                              {DROPDOWN_OPTIONS[field.key] && DROPDOWN_OPTIONS[field.key].length > 0 ? (
+                              {field.type !== "text" && DROPDOWN_OPTIONS[field.key] && DROPDOWN_OPTIONS[field.key].length > 0 ? (
                                 <Select
                                   label={labelNode}
                                   options={[{ label: "Select...", value: "" }, ...(DROPDOWN_OPTIONS[field.key] || [])]}
