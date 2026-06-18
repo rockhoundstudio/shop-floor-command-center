@@ -422,8 +422,6 @@ export async function action({ request }) {
       const textContent = geminiData.candidates[0]?.content?.parts[0]?.text || "";
       rawTextOutput = textContent;
       
-      console.log("Gemini SmartAutoFill Raw Output textContent:", textContent);
-
       let cleanJson = textContent.trim();
       const firstBrace = cleanJson.indexOf('{');
       const lastBrace = cleanJson.lastIndexOf('}');
@@ -564,8 +562,6 @@ export async function action({ request }) {
       const geminiData = await geminiRes.json();
       const textContent = geminiData.candidates[0]?.content?.parts[0]?.text || "";
       rawTextOutput = textContent;
-
-      console.log("Gemini AutoFill Raw Output textContent:", textContent);
 
       let cleanJson = textContent.trim();
       const firstBrace = cleanJson.indexOf('{');
