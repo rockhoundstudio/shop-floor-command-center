@@ -343,6 +343,12 @@ export async function action({ request }) {
     }
   }
 
+  const resolveColorValue = (val) => {
+    if (!val) return "";
+    if (val.startsWith("gid://")) return "";
+    return val;
+  };
+
   if (intent === "smartAutoFill") {
     let geminiStatus = 0;
     let rawTextOutput = "";
@@ -515,12 +521,12 @@ export async function action({ request }) {
         fields: parsedValues,
         autoFillData: parsedValues,
         fullMetaFields: {
-          color: customMeta.primary_color || "",
+          color: resolveColorValue(customMeta.primary_color),
           cut_and_shape: customMeta.cut_type || "",
           origin_story: customMeta.stone_story || "",
           honest_flaws_and_character: customMeta.character_marks || "",
           handcrafted_by: "Bob & Janyce, Rockhound Studio",
-          is_one_of_a_kind: "Yes — one of a kind",
+          "is_one_of_a-kind": "Yes — one of a kind",
           treated: customMeta.treatment_status && customMeta.treatment_status.toLowerCase().includes("untreated") ? "false" : "true",
           found_object: "true"
         },
@@ -695,12 +701,12 @@ export async function action({ request }) {
         autoFillData: parsedValues,
         geoFields,
         fullMetaFields: {
-          color: customMeta.primary_color || "",
+          color: resolveColorValue(customMeta.primary_color),
           cut_and_shape: customMeta.cut_type || "",
           origin_story: customMeta.stone_story || "",
           honest_flaws_and_character: customMeta.character_marks || "",
           handcrafted_by: "Bob & Janyce, Rockhound Studio",
-          is_one_of_a_kind: "Yes — one of a kind",
+          "is_one_of_a-kind": "Yes — one of a kind",
           treated: customMeta.treatment_status && customMeta.treatment_status.toLowerCase().includes("untreated") ? "false" : "true",
           found_object: "true"
         },
