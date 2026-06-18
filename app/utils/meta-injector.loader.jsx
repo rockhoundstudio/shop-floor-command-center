@@ -431,6 +431,7 @@ export async function action({ request }) {
       }
 
       const parsedValues = JSON.parse(cleanJson);
+      console.log("SmartAutoFill extracted:", JSON.stringify({ color: parsedValues.color, cut_and_shape: parsedValues.cut_and_shape, surface_finish: parsedValues.surface_finish, stone_family: parsedValues.stone_family, handcrafted_by: parsedValues.handcrafted_by }));
 
       // >>> DATABASE LOOKUP & GEO NAMESPACE INJECTION <<<
       const materialName = parsedValues.material || "";
@@ -572,6 +573,7 @@ export async function action({ request }) {
       }
 
       const parsedValues = JSON.parse(cleanJson);
+      console.log("AutoFill extracted:", JSON.stringify({ color: parsedValues.color, cut_and_shape: parsedValues.cut_and_shape, surface_finish: parsedValues.surface_finish, stone_family: parsedValues.stone_family, handcrafted_by: parsedValues.handcrafted_by }));
 
       let geoFields = {};
       const materialName = parsedValues.material || "";
