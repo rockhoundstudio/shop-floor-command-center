@@ -289,22 +289,35 @@ export const action = async ({ request }) => {
     // PASS 3: GEMINI VISION
     // ==========================================
     try {
-      const imageUrl = body.get("imageUrl") || "";
+      const rawImageUrl = body.get("imageUrl");
+      // Prevent "null" or "undefined" strings from passing truthy checks
+      const imageUrl = rawImageUrl && rawImageUrl !== "undefined" && rawImageUrl !== "null" ? String(rawImageUrl).trim() : "";
+      
+      console.log("Tab2 AutoFill imageUrl sent:", imageUrl);
+      
       if (imageUrl) {
         const imageRes = await fetch(imageUrl);
         const imageBuffer = await imageRes.arrayBuffer();
         const imageBase64 = Buffer.from(imageBuffer).toString("base64");
         const imageMimeType = imageRes.headers.get("content-type") || "image/jpeg";
 
-        const promptText = `You are a gemologist and lapidary expert analyzing a handcrafted stone cabochon or specimen for an online store called Rockhound Studio. Look at this stone image carefully and return a JSON object with these fields — only include fields you can visually confirm, leave others out:
+        // Determine if frontend provided a prompt (e.g. from tab2AutoFill) or default to our robust internal one
+        const clientPrompt = body.get("prompt");
+        const promptText = clientPrompt && clientPrompt.trim() !== "" ? clientPrompt + "\n\nFor stone_family, use the common rockhound trade name for the stone, not the mineral family classification. For example: use Labradorite not Feldspar, use Jasper not Chalcedony, use Obsidian not Volcanic Glass." : `You are a gemologist and lapidary expert analyzing a handcrafted stone cabochon or specimen for an online store called Rockhound Studio. Look at this stone image carefully and return a JSON object with these fields — only include fields you can visually confirm, leave others out:
 {
   color: (primary color and pattern description, e.g. 'Deep red with grey banding'),
   surface_finish: (one of: High Polish, Satin Polish, Matte, Natural/Rough, Tumbled),
   cut_and_shape: (e.g. Freeform, Oval Cabochon, Round Cabochon, Teardrop, Pear, Trillion),
   stone_family: (e.g. Jasper, Agate, Chalcedony, Labradorite, Obsidian, Quartz),
   character_marks: (visible inclusions, patterns, streaks, or unique features),
-  alt_text: (a single descriptive sentence for screen readers and SEO, written in plain English describing what is seen in the image)
+  alt_text: (a single descriptive sentence for screen readers and SEO, written in plain English describing what is seen in the image),
+  is_one_of_a_kind: (boolean),
+  found_object: (boolean),
+  treated: (boolean),
+  setting_ready: (boolean),
+  bail_included: (boolean)
 }
+For stone_family, use the common rockhound trade name for the stone, not the mineral family classification. For example: use Labradorite not Feldspar, use Jasper not Chalcedony, use Obsidian not Volcanic Glass.
 Return only valid JSON. No explanation. No markdown.`;
 
         const geminiRes = await fetch(
@@ -343,12 +356,35 @@ Return only valid JSON. No explanation. No markdown.`;
             }
 
             const visionData = JSON.parse(cleanJson);
+            
+            // Boolean to String conversions
+            if (visionData.is_one_of_a_kind === true) visionData.is_one_of_a_kind = "Yes — one of a kind";
+            else if (visionData.is_one_of_a_kind === false) visionData.is_one_of_a_kind = "No";
+
+            if (visionData.found_object === true) visionData.found_object = "true";
+            else if (visionData.found_object === false) visionData.found_object = "false";
+
+            if (visionData.treated === true) visionData.treated = "true";
+            else if (visionData.treated === false) visionData.treated = "false";
+
+            if (visionData.setting_ready === true) visionData.setting_ready = "true";
+            else if (visionData.setting_ready === false) visionData.setting_ready = "false";
+
+            if (visionData.bail_included === true) visionData.bail_included = "true";
+            else if (visionData.bail_included === false) visionData.bail_included = "false";
+
             safeSet("color", visionData.color);
             safeSet("surface_finish", visionData.surface_finish);
             safeSet("cut_and_shape", visionData.cut_and_shape);
             safeSet("stone_family", visionData.stone_family);
             safeSet("honest_flaws_and_character", visionData.character_marks);
             safeSet("alt_text", visionData.alt_text);
+            
+            safeSet("is_one_of_a_kind", visionData.is_one_of_a_kind);
+            safeSet("found_object", visionData.found_object);
+            safeSet("treated", visionData.treated);
+            safeSet("setting_ready", visionData.setting_ready);
+            safeSet("bail_included", visionData.bail_included);
           }
         } else {
           const errText = await geminiRes.text();
