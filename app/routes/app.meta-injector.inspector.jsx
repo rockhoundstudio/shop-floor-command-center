@@ -239,11 +239,13 @@ export function IntakeBenchTab({ products, fetcher }) {
         productId: selectedProductId,
         productTitle: title,
         productDescription: description,
-        promptStyle: promptStyle
+        promptStyle: promptStyle,
+        existingColor: formState.color || "",
+        existingCutAndShape: formState.cut_and_shape || ""
       },
       { method: "post" }
     );
-  }, [selectedProductId, fetcher, products, promptStyle]);
+  }, [selectedProductId, fetcher, products, promptStyle, formState]);
 
   const handleTab2AutoFill = useCallback(() => {
     if (!selectedProductId) return;
@@ -418,10 +420,12 @@ Image URL: ${imageUrl}`;
                 Object.entries(fetcher.data.fields).forEach(([key, val]) => {
                     const hasNewValue = val !== undefined && val !== null && val.toString().trim() !== "";
                     // Only fill if currently empty
+                    const ALWAYS_OVERWRITE_TAB2 = ["color", "cut_and_shape", "stone_family", "surface_finish", "handcrafted_by", "treated", "found_object", "is_one_of_a_kind"];
                     const currentlyEmpty = !updatedState[key] || updatedState[key].trim() === "";
-                    
-                    if (hasNewValue && currentlyEmpty && val !== "See Shopify metaobject") {
-                        updatedState[key] = val;
+                    const shouldOverwrite = ALWAYS_OVERWRITE_TAB2.includes(key);
+
+                    if (hasNewValue && (currentlyEmpty || shouldOverwrite) && val !== "See Shopify metaobject") {
+                      updatedState[key] = val;
                     }
                 });
                 return updatedState;
