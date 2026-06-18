@@ -16,18 +16,48 @@ export async function action({ request }) {
   const { admin } = await authenticate.admin(request);
   const results = [];
 
-  for (const field of TARGETS) {
-    const delRes = await admin.graphql(`#graphql
-      mutation {
-        metafieldDefinitionDelete(id: "${field.id}", deleteAllAssociatedMetafields: false) {
-          deletedDefinitionId
-          userErrors { field message }
+  // Query for the cut_and_shape and color metafield definitions in the rockhound namespace
+  const defsRes = await admin.graphql(`#graphql
+    query {
+      metafieldDefinitions(first: 50, ownerType: PRODUCT, namespace: "rockhound") {
+        edges {
+          node {
+            id
+            key
+          }
         }
       }
-    `);
-    const delData = await delRes.json();
-    const delErrors = delData.data.metafieldDefinitionDelete.userErrors;
-    results.push({ key: field.key, action: "delete", ok: delErrors.length === 0, error: delErrors[0]?.message });
+    }
+  `);
+  const defsData = await defsRes.json();
+  const edges = defsData.data.metafieldDefinitions.edges;
+  
+  const cutShapeNode = edges.find(e => e.node.key === "cut_and_shape")?.node;
+  const colorNode = edges.find(e => e.node.key === "color")?.node;
+
+  const ALL_TARGETS = [
+    ...TARGETS,
+    { id: cutShapeNode?.id, key: "cut_and_shape", name: "Cut and Shape" },
+    { id: colorNode?.id, key: "color", name: "Color" }
+  ];
+
+  for (const field of ALL_TARGETS) {
+    // Only attempt to delete if an existing ID was found
+    if (field.id) {
+      const delRes = await admin.graphql(`#graphql
+        mutation {
+          metafieldDefinitionDelete(id: "${field.id}", deleteAllAssociatedMetafields: false) {
+            deletedDefinitionId
+            userErrors { field message }
+          }
+        }
+      `);
+      const delData = await delRes.json();
+      const delErrors = delData.data.metafieldDefinitionDelete.userErrors;
+      results.push({ key: field.key, action: "delete", ok: delErrors.length === 0, error: delErrors[0]?.message });
+    } else {
+      results.push({ key: field.key, action: "delete", ok: true, error: "Skipped (Did not exist)" });
+    }
 
     const createRes = await admin.graphql(`#graphql
       mutation {
@@ -65,14 +95,14 @@ export default function FixMetafields() {
       >
         ← Back
       </button>
-      <h1 style={{ fontSize: "28px", marginBottom: "8px" }}>Fix 3 Broken Metafields</h1>
-      <p style={{ marginBottom: "24px", color: "#555" }}>Targets origin_story, honest_flaws_and_character, and artist_notes by exact ID — deletes and recreates as single_line_text_field.</p>
+      <h1 style={{ fontSize: "28px", marginBottom: "8px" }}>Fix 5 Broken Metafields</h1>
+      <p style={{ marginBottom: "24px", color: "#555" }}>Targets origin_story, honest_flaws_and_character, artist_notes, cut_and_shape, and color — deletes and recreates as single_line_text_field.</p>
       <button
         onClick={() => submit({}, { method: "post" })}
-        aria-label="Fix the 3 broken metafields"
+        aria-label="Fix the 5 broken metafields"
         style={{ padding: "16px 32px", fontSize: "20px", background: "#2E7D32", color: "#fff", border: "none", borderRadius: "8px", cursor: "pointer", marginBottom: "32px" }}
       >
-        Fix 3 Fields Now
+        Fix 5 Fields Now
       </button>
       {actionData?.results && actionData.results.map((r, i) => (
         <div key={i} style={{ padding: "8px 0", borderBottom: "1px solid #eee", fontSize: "16px" }}>
