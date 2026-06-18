@@ -487,7 +487,17 @@ export async function action({ request }) {
         success: true, 
         intent: "smartAutoFill", 
         fields: parsedValues,
-        autoFillData: parsedValues 
+        autoFillData: parsedValues,
+        overwriteFields: {
+          color: parsedValues.color || "",
+          cut_and_shape: parsedValues.cut_and_shape || "",
+          surface_finish: parsedValues.surface_finish || "",
+          stone_family: parsedValues.stone_family || "",
+          handcrafted_by: parsedValues.handcrafted_by || "",
+          treated: parsedValues.treated || "",
+          found_object: parsedValues.found_object || "",
+          is_one_of_a_kind: parsedValues.is_one_of_a_kind || ""
+        }
       });
     } catch (error) {
       console.error("Gemini SmartAutoFill Exception Caught:", error);
@@ -614,7 +624,17 @@ export async function action({ request }) {
         intent: "autoFill", 
         fields: parsedValues,
         autoFillData: parsedValues,
-        geoFields
+        geoFields,
+        overwriteFields: {
+          color: parsedValues.color || "",
+          cut_and_shape: parsedValues.cut_and_shape || "",
+          surface_finish: parsedValues.surface_finish || "",
+          stone_family: parsedValues.stone_family || "",
+          handcrafted_by: parsedValues.handcrafted_by || "",
+          treated: parsedValues.treated || "",
+          found_object: parsedValues.found_object || "",
+          is_one_of_a_kind: parsedValues.is_one_of_a_kind || ""
+        }
       });
     } catch (error) {
       console.error("Gemini AutoFill Exception Caught:", error);
