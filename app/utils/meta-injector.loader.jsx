@@ -514,6 +514,16 @@ export async function action({ request }) {
         intent: "smartAutoFill", 
         fields: parsedValues,
         autoFillData: parsedValues,
+        fullMetaFields: {
+          color: customMeta.primary_color || "",
+          cut_and_shape: customMeta.cut_type || "",
+          origin_story: customMeta.stone_story || "",
+          honest_flaws_and_character: customMeta.character_marks || "",
+          handcrafted_by: "Bob & Janyce, Rockhound Studio",
+          is_one_of_a_kind: "Yes — one of a kind",
+          treated: customMeta.treatment_status && customMeta.treatment_status.toLowerCase().includes("untreated") ? "false" : "true",
+          found_object: "true"
+        },
         overwriteFields: {
           color: parsedValues.color || "",
           cut_and_shape: parsedValues.cut_and_shape || "",
@@ -684,6 +694,16 @@ export async function action({ request }) {
         fields: parsedValues,
         autoFillData: parsedValues,
         geoFields,
+        fullMetaFields: {
+          color: customMeta.primary_color || "",
+          cut_and_shape: customMeta.cut_type || "",
+          origin_story: customMeta.stone_story || "",
+          honest_flaws_and_character: customMeta.character_marks || "",
+          handcrafted_by: "Bob & Janyce, Rockhound Studio",
+          is_one_of_a_kind: "Yes — one of a kind",
+          treated: customMeta.treatment_status && customMeta.treatment_status.toLowerCase().includes("untreated") ? "false" : "true",
+          found_object: "true"
+        },
         overwriteFields: {
           color: parsedValues.color || "",
           cut_and_shape: parsedValues.cut_and_shape || "",
