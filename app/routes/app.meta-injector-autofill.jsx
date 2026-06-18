@@ -193,6 +193,7 @@ export const action = async ({ request }) => {
             if (lowerLine.startsWith("shape:")) safeSet("cut_and_shape", cleanedLine.substring(6).trim());
             if (lowerLine.startsWith("dimensions:")) safeSet("dimensions_mm", cleanedLine.substring(11).trim());
             if (lowerLine.startsWith("finish:")) safeSet("surface_finish", cleanedLine.substring(7).trim());
+            if (lowerLine.startsWith("flash:")) safeSet("color", cleanedLine.substring(6).trim());
             if (lowerLine.includes("one of a kind") && lowerLine.includes("yes")) safeSet("is_one_of_a_kind", "true");
             if (lowerLine.includes("not dyed") || lowerLine.includes("not enhanced") || lowerLine.includes("untreated")) safeSet("treated", "false");
           });
@@ -283,6 +284,76 @@ export const action = async ({ request }) => {
       Object.entries(MINDAT_KEY_MAP).forEach(([ourKey, mindatKey]) => {
         safeSet(ourKey, mindatData[mindatKey]);
       });
+    }
+
+    // ==========================================
+    // PASS 2B: GEMINI TEXT — DESCRIPTION EXTRACTION
+    // ==========================================
+    if (description) {
+      try {
+        const plainDescription = description.replace(/<\/?[^>]+(>|$)/g, " ").replace(/\s+/g, " ").trim();
+
+        const textPrompt = `You are a gemologist assistant for Rockhound Studio. Extract the following fields from this product description. Return only valid JSON with exactly these keys. If a field is not mentioned, return an empty string for it.
+
+{
+  "color": "(value after 'Flash:' label, e.g. 'Blue')",
+  "cut_and_shape": "(value after 'Shape:' label, e.g. 'Cabochon')",
+  "surface_finish": "(value after 'Finish:' label, e.g. 'High Polish')",
+  "stone_family": "(the rockhound trade name of the stone — use Labradorite not Feldspar, use Jasper not Chalcedony)",
+  "handcrafted_by": "(name from signature line, e.g. 'Bob & Janyce, Rockhound Studio')",
+  "treated": "(if description says untreated or not enhanced, return 'false', else return 'true')",
+  "found_object": "(if description says found or collected in the field, return 'true', else return 'false')",
+  "is_one_of_a_kind": "(if description says one of a kind, return 'Yes — one of a kind', else return 'No')"
+}
+
+Product description:
+${plainDescription}
+
+Return only valid JSON. No explanation. No markdown.`;
+
+        const textGeminiRes = await fetch(
+          "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=" + process.env.GEMINI_API_KEY,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: textPrompt }] }]
+            })
+          }
+        );
+
+        if (textGeminiRes.ok) {
+          const textGeminiData = await textGeminiRes.json();
+          const textContent = textGeminiData.candidates?.[0]?.content?.parts?.[0]?.text || "";
+
+          if (textContent) {
+            let cleanJson = textContent.trim();
+            const firstBrace = cleanJson.indexOf("{");
+            const lastBrace = cleanJson.lastIndexOf("}");
+            if (firstBrace !== -1 && lastBrace !== -1) {
+              cleanJson = cleanJson.slice(firstBrace, lastBrace + 1);
+            }
+
+            const textData = JSON.parse(cleanJson);
+
+            safeSet("color", textData.color);
+            safeSet("cut_and_shape", textData.cut_and_shape);
+            safeSet("surface_finish", textData.surface_finish);
+            safeSet("stone_family", textData.stone_family);
+            safeSet("handcrafted_by", textData.handcrafted_by);
+            safeSet("treated", textData.treated);
+            safeSet("found_object", textData.found_object);
+            safeSet("is_one_of_a_kind", textData.is_one_of_a_kind);
+
+            console.log("Pass 2B Gemini Text extracted:", Object.keys(textData).filter(k => textData[k]));
+          }
+        } else {
+          const errText = await textGeminiRes.text();
+          console.error("Pass 2B Gemini Text API Error:", textGeminiRes.status, errText);
+        }
+      } catch (textError) {
+        console.error("Pass 2B Gemini Text Fault:", textError.message);
+      }
     }
 
     // ==========================================
