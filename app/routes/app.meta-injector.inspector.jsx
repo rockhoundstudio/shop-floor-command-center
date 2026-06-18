@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { BlockStack, Card, Text, Banner, TextField, Select, Button, InlineStack, Collapsible } from "@shopify/polaris";
 import { MagicIcon, SaveIcon } from "@shopify/polaris-icons";
-import { normalizeDropdownValue, DROPDOWN_OPTIONS } from "../utils/meta-injector.constants.jsx";
+import { normalizeDropdownValue, DROPDOWN_OPTIONS, unwrapArrayValue } from "../utils/meta-injector.constants.jsx";
 
 const ROCKHOUND_FIELDS = [
   // ==========================================
@@ -403,6 +403,19 @@ Image URL: ${imageUrl}`;
           });
           return updatedState;
         });
+
+        if (isSmartAutoFill || isAutoFill) {
+          setFullMetaState(prev => {
+            const parsedValues = fetcher.data.fields || {};
+            const fullMetaFields = fetcher.data.fullMetaFields || {};
+            const nextState = {
+              ...prev,
+              ...parsedValues,
+              ...fullMetaFields
+            };
+            return nextState;
+          });
+        }
 
         if (isSmartAutoFill) {
           setStatusMessage("Smart Auto-Fill complete — fields populated from all available data sources.");
