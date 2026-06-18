@@ -278,12 +278,6 @@ export async function action({ request }) {
         });
         const resData = await res.json();
         
-        console.log("=== SAVE CHUNK DEBUG ===");
-        console.log("Chunk being sent:", JSON.stringify(chunk, null, 2));
-        console.log("GraphQL response:", JSON.stringify(resData, null, 2));
-        console.log("userErrors:", JSON.stringify(resData?.data?.metafieldsSet?.userErrors, null, 2));
-        console.log("=== END CHUNK DEBUG ===");
-        
         const errors = resData.data?.metafieldsSet?.userErrors || [];
         if (errors.length > 0) {
           userErrors = userErrors.concat(errors);
@@ -341,6 +335,12 @@ export async function action({ request }) {
       console.error("Gemini GenerateSEO Exception Caught:", error);
       return json({ success: false, error: "Gemini generation failed", status: geminiStatus, raw: rawTextOutput || error.message });
     }
+  }
+
+  function unwrapArrayValue(val) {
+    if (!val) return "";
+    try { const parsed = JSON.parse(val); if (Array.isArray(parsed)) return parsed[0] || ""; } catch(e) {}
+    return val;
   }
 
   const resolveColorValue = (val) => {
@@ -439,9 +439,7 @@ export async function action({ request }) {
       }
 
       const parsedValues = JSON.parse(cleanJson);
-      console.log("SmartAutoFill extracted:", JSON.stringify({ color: parsedValues.color, cut_and_shape: parsedValues.cut_and_shape, surface_finish: parsedValues.surface_finish, stone_family: parsedValues.stone_family, handcrafted_by: parsedValues.handcrafted_by }));
-
-      // >>> DATABASE LOOKUP & GEO NAMESPACE INJECTION <<<
+      
       const materialName = parsedValues.material || "";
       
       if (materialName) {
@@ -486,16 +484,17 @@ export async function action({ request }) {
               });
               await new Promise(r => setTimeout(r, 300));
             }
-            console.log(`Successfully injected ${geoMetafieldsToSet.length} geo metafields for material: ${materialName}`);
           }
         }
       }
 
-      // Custom namespace fallback mapping
       const customMeta = {};
+      const rockhoundMeta = {};
       fetchedMetafields.forEach(m => {
         if (m.namespace === "custom") {
           customMeta[m.key] = m.value;
+        } else if (m.namespace === "rockhound") {
+          rockhoundMeta[m.key] = m.value;
         }
       });
 
@@ -523,12 +522,18 @@ export async function action({ request }) {
         fullMetaFields: {
           color: resolveColorValue(customMeta.primary_color),
           cut_and_shape: customMeta.cut_type || "",
-          origin_story: customMeta.stone_story || "",
-          honest_flaws_and_character: customMeta.character_marks || "",
+          origin_story: unwrapArrayValue(customMeta.stone_story) || unwrapArrayValue(customMeta.origin_story) || "",
+          honest_flaws_and_character: unwrapArrayValue(customMeta.character_marks) || unwrapArrayValue(customMeta.honest_flaws_and_character) || "",
           handcrafted_by: "Bob & Janyce, Rockhound Studio",
           "is_one_of_a-kind": "Yes — one of a kind",
-          treated: customMeta.treatment_status && customMeta.treatment_status.toLowerCase().includes("untreated") ? "false" : "true",
-          found_object: "true"
+          treated: rockhoundMeta.treated || customMeta.treated || "",
+          found_object: rockhoundMeta.found_object || customMeta.found_object || "",
+          primary_medium: customMeta.primary_medium || rockhoundMeta.primary_medium || "Stone",
+          material: rockhoundMeta.material || customMeta.official_name || "",
+          surface_finish: rockhoundMeta.surface_finish || customMeta.surface_finish || parsedValues.surface_finish || "",
+          dimensions_mm: rockhoundMeta.dimensions_mm || customMeta.dimensions_mm || parsedValues.dimensions_mm || "",
+          artist_notes: rockhoundMeta.artist_notes || customMeta.artist_notes || "",
+          collection_name: rockhoundMeta.collection_name || customMeta.collection_name || ""
         },
         overwriteFields: {
           color: parsedValues.color || "",
@@ -627,7 +632,6 @@ export async function action({ request }) {
       }
 
       const parsedValues = JSON.parse(cleanJson);
-      console.log("AutoFill extracted:", JSON.stringify({ color: parsedValues.color, cut_and_shape: parsedValues.cut_and_shape, surface_finish: parsedValues.surface_finish, stone_family: parsedValues.stone_family, handcrafted_by: parsedValues.handcrafted_by }));
 
       let geoFields = {};
       const materialName = parsedValues.material || "";
@@ -670,11 +674,13 @@ export async function action({ request }) {
       const resData = await res.json();
       const fetchedMetafields = resData.data?.product?.metafields?.edges?.map(e => e.node) || [];
 
-      // Custom namespace fallback mapping
       const customMeta = {};
+      const rockhoundMeta = {};
       fetchedMetafields.forEach(m => {
         if (m.namespace === "custom") {
           customMeta[m.key] = m.value;
+        } else if (m.namespace === "rockhound") {
+          rockhoundMeta[m.key] = m.value;
         }
       });
 
@@ -703,12 +709,18 @@ export async function action({ request }) {
         fullMetaFields: {
           color: resolveColorValue(customMeta.primary_color),
           cut_and_shape: customMeta.cut_type || "",
-          origin_story: customMeta.stone_story || "",
-          honest_flaws_and_character: customMeta.character_marks || "",
+          origin_story: unwrapArrayValue(customMeta.stone_story) || unwrapArrayValue(customMeta.origin_story) || "",
+          honest_flaws_and_character: unwrapArrayValue(customMeta.character_marks) || unwrapArrayValue(customMeta.honest_flaws_and_character) || "",
           handcrafted_by: "Bob & Janyce, Rockhound Studio",
           "is_one_of_a-kind": "Yes — one of a kind",
-          treated: customMeta.treatment_status && customMeta.treatment_status.toLowerCase().includes("untreated") ? "false" : "true",
-          found_object: "true"
+          treated: rockhoundMeta.treated || customMeta.treated || "",
+          found_object: rockhoundMeta.found_object || customMeta.found_object || "",
+          primary_medium: customMeta.primary_medium || rockhoundMeta.primary_medium || "Stone",
+          material: rockhoundMeta.material || customMeta.official_name || "",
+          surface_finish: rockhoundMeta.surface_finish || customMeta.surface_finish || "",
+          dimensions_mm: rockhoundMeta.dimensions_mm || customMeta.dimensions_mm || "",
+          artist_notes: rockhoundMeta.artist_notes || customMeta.artist_notes || "",
+          collection_name: rockhoundMeta.collection_name || customMeta.collection_name || ""
         },
         overwriteFields: {
           color: parsedValues.color || "",
