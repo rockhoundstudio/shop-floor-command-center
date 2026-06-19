@@ -713,7 +713,7 @@ export async function action({ request }) {
         autoFillData: parsedValues,
         geoFields,
         fullMetaFields: {
-          color: resolveColorValue(customMeta.primary_color),
+          color: resolveColorValue(rockhoundMeta.primary_color) || resolveColorValue(customMeta.primary_color) || rockhoundMeta.primary_color || customMeta.primary_color || "",
           cut_and_shape: customMeta.cut_type || "",
           origin_story: unwrapArrayValue(customMeta.stone_story) || unwrapArrayValue(customMeta.origin_story) || "",
           honest_flaws_and_character: unwrapArrayValue(customMeta.character_marks) || unwrapArrayValue(customMeta.honest_flaws_and_character) || "",
