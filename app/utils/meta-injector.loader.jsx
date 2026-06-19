@@ -278,6 +278,12 @@ export async function action({ request }) {
         });
         const resData = await res.json();
         
+        console.log("=== SAVE CHUNK DEBUG ===");
+        console.log("Chunk being sent:", JSON.stringify(chunk, null, 2));
+        console.log("GraphQL response:", JSON.stringify(resData, null, 2));
+        console.log("userErrors:", JSON.stringify(resData?.data?.metafieldsSet?.userErrors, null, 2));
+        console.log("=== END CHUNK DEBUG ===");
+        
         const errors = resData.data?.metafieldsSet?.userErrors || [];
         if (errors.length > 0) {
           userErrors = userErrors.concat(errors);
