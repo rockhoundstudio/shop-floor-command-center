@@ -363,7 +363,7 @@ export async function action({ request }) {
       if (!productId) return json({ success: false, error: "No product ID" });
       
       const res = await admin.graphql(
-        "query GetProduct($id: ID!) { product(id: $id) { title descriptionHtml metafields(first: 50) { edges { node { namespace key value } } } } }",
+        "query GetProduct($id: ID!) { product(id: $id) { title descriptionHtml customMeta: metafields(first: 50, namespace: \"custom\") { edges { node { namespace key value } } } rockhoundMeta: metafields(first: 50, namespace: \"rockhound\") { edges { node { namespace key value } } } geoMeta: metafields(first: 50, namespace: \"geo\") { edges { node { namespace key value } } } } }",
         { variables: { id: productId } }
       );
       
@@ -372,7 +372,11 @@ export async function action({ request }) {
       const productTitle = product.title || "";
       const productDescription = product.descriptionHtml || "";
       const promptStyle = formData.get("promptStyle") || "";
-      const fetchedMetafields = product.metafields?.edges?.map(e => e.node) || [];
+      const fetchedMetafields = [
+        ...(product.customMeta?.edges || []),
+        ...(product.rockhoundMeta?.edges || []),
+        ...(product.geoMeta?.edges || []),
+      ].map(e => e.node);
 
       const promptText = [
         "You are a data extraction assistant. Parse the following product title and description and return a JSON object mapping these exact keys to their best-guess values extracted from the text.",
@@ -526,7 +530,7 @@ export async function action({ request }) {
         fields: parsedValues,
         autoFillData: parsedValues,
         fullMetaFields: {
-          color: resolveColorValue(customMeta.primary_color),
+          color: resolveColorValue(rockhoundMeta.primary_color) || resolveColorValue(customMeta.primary_color) || rockhoundMeta.primary_color || customMeta.primary_color || "",
           cut_and_shape: customMeta.cut_type || "",
           origin_story: unwrapArrayValue(customMeta.stone_story) || unwrapArrayValue(customMeta.origin_story) || "",
           honest_flaws_and_character: unwrapArrayValue(customMeta.character_marks) || unwrapArrayValue(customMeta.honest_flaws_and_character) || "",
@@ -674,11 +678,15 @@ export async function action({ request }) {
       }
       
       const res = await admin.graphql(
-        "query GetProduct($id: ID!) { product(id: $id) { metafields(first: 50) { edges { node { namespace key value } } } } }",
+        "query GetProduct($id: ID!) { product(id: $id) { title descriptionHtml customMeta: metafields(first: 50, namespace: \"custom\") { edges { node { namespace key value } } } rockhoundMeta: metafields(first: 50, namespace: \"rockhound\") { edges { node { namespace key value } } } geoMeta: metafields(first: 50, namespace: \"geo\") { edges { node { namespace key value } } } } }",
         { variables: { id: productId } }
       );
       const resData = await res.json();
-      const fetchedMetafields = resData.data?.product?.metafields?.edges?.map(e => e.node) || [];
+      const fetchedMetafields = [
+        ...(resData.data?.product?.customMeta?.edges || []),
+        ...(resData.data?.product?.rockhoundMeta?.edges || []),
+        ...(resData.data?.product?.geoMeta?.edges || []),
+      ].map(e => e.node);
 
       const customMeta = {};
       const rockhoundMeta = {};
