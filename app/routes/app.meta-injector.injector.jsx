@@ -18,6 +18,7 @@ export function NewProductIntakeTab({ fetcher }) {
     { id: Date.now().toString(), piece_name: "", dimensions_mm: "", cut_and_shape: "", price: "" }
   ]);
 
+  const [searchQuery, setSearchQuery] = useState("");
   const [statusMessage, setStatusMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
 
@@ -115,6 +116,10 @@ export function NewProductIntakeTab({ fetcher }) {
     );
   };
 
+  const filteredPieces = pieces.filter(piece => 
+    piece.piece_name.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
   return (
     <BlockStack gap="600">
       <Card padding="400">
@@ -192,8 +197,51 @@ export function NewProductIntakeTab({ fetcher }) {
       <Card padding="400">
         <BlockStack gap="400">
           <Text variant="headingMd" as="h2">Section B: Per-Piece Rows</Text>
+          
+          <div style={{ position: "relative", marginBottom: "8px" }}>
+            <input
+              type="text"
+              placeholder="Search products..."
+              aria-label="Search products"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              style={{
+                width: "100%",
+                minHeight: "48px",
+                fontSize: "18px",
+                border: "2px solid #000",
+                borderRadius: "4px",
+                padding: "8px 40px 8px 16px",
+                boxSizing: "border-box"
+              }}
+            />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery("")}
+                aria-label="Clear search"
+                style={{
+                  position: "absolute",
+                  right: "12px",
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  background: "transparent",
+                  border: "none",
+                  fontSize: "20px",
+                  cursor: "pointer",
+                  padding: "4px",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  color: "#5c5f62"
+                }}
+              >
+                ✕
+              </button>
+            )}
+          </div>
+
           <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
-            {pieces.map((piece, index) => (
+            {filteredPieces.map((piece, index) => (
               <div key={piece.id} style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr auto", gap: "16px", alignItems: "end" }}>
                 <div style={{ minHeight: "54px" }}>
                   <TextField
