@@ -227,6 +227,24 @@ export function IntakeBenchTab({ products, fetcher }) {
     }
     newFullForm.honest_flaws_and_character = newForm.honest_flaws_and_character;
 
+    // Fix duplicated Handcrafted By strings
+    if (newForm.handcrafted_by && typeof newForm.handcrafted_by === 'string') {
+      if (newForm.handcrafted_by.startsWith("[")) {
+         try { const arr = JSON.parse(newForm.handcrafted_by); newForm.handcrafted_by = Array.isArray(arr) ? arr[0] : newForm.handcrafted_by; } catch {}
+      }
+      if (newForm.handcrafted_by.includes("Bob & Janyce")) {
+         newForm.handcrafted_by = "Bob & Janyce, Rockhound Studio";
+      }
+    }
+    if (newFullForm.handcrafted_by && typeof newFullForm.handcrafted_by === 'string') {
+      if (newFullForm.handcrafted_by.startsWith("[")) {
+         try { const arr = JSON.parse(newFullForm.handcrafted_by); newFullForm.handcrafted_by = Array.isArray(arr) ? arr[0] : newFullForm.handcrafted_by; } catch {}
+      }
+      if (newFullForm.handcrafted_by.includes("Bob & Janyce")) {
+         newFullForm.handcrafted_by = "Bob & Janyce, Rockhound Studio";
+      }
+    }
+
     const customPM = product?.metafields?.edges?.find(e => e.node.namespace === "custom" && e.node.key === "primary_medium")?.node?.value;
     const rockhoundPM = product?.metafields?.edges?.find(e => e.node.namespace === "rockhound" && e.node.key === "primary_medium")?.node?.value;
     
@@ -238,9 +256,16 @@ export function IntakeBenchTab({ products, fetcher }) {
         bestPM = Array.isArray(arr) ? arr[0] : bestPM;
       } catch { }
     }
+
+    if (bestPM === "Stone") bestPM = ""; // Explicitly strip hardcoded fallback
     
     newFullForm.primary_medium = bestPM;
     newForm.primary_medium = bestPM;
+
+    // Prioritize Form State Color over Raw Primary Color
+    if (newForm.color) {
+      newFullForm.color = newForm.color;
+    }
 
     if (!newFullForm.handcrafted_by || newFullForm.handcrafted_by.trim() === "") {
         newFullForm.handcrafted_by = "Bob & Janyce, Rockhound Studio";
@@ -290,6 +315,10 @@ export function IntakeBenchTab({ products, fetcher }) {
 
   const updateFormState = useCallback((key, value) => {
     setFormState(prev => ({ ...prev, [key]: value }));
+    // Keep Color actively synced between Form State and Full Meta Report
+    if (key === "color") {
+      setFullMetaState(prev => ({ ...prev, [key]: value }));
+    }
   }, []);
 
   const updateFullMetaState = useCallback((key, value) => {
@@ -485,6 +514,24 @@ Image URL: ${imageUrl}`;
               ...parsedValues,
               ...fullMetaFields
             };
+            
+            // Ensure Color is driven by parsed/form state, not raw primary_color meta
+            if (parsedValues.color) {
+                nextState.color = parsedValues.color;
+            } else if (formState.color) {
+                nextState.color = formState.color;
+            }
+
+            // Clean handcrafted_by deduplication on AutoFill return
+            if (typeof nextState.handcrafted_by === 'string' && nextState.handcrafted_by.includes("Bob & Janyce")) {
+                nextState.handcrafted_by = "Bob & Janyce, Rockhound Studio";
+            }
+
+            // Clean primary_medium hardcode
+            if (nextState.primary_medium === "Stone") {
+                nextState.primary_medium = "";
+            }
+
             return nextState;
           });
         }
@@ -769,7 +816,32 @@ Image URL: ${imageUrl}`;
                   
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
                     {group.fields.map(field => {
-                      const val = fullMetaState[field.key] || "";
+                      let val = fullMetaState[field.key] || "";
+
+                      // UI render strip for arrays
+                      if (typeof val === 'string' && val.startsWith('[')) {
+                          try { const arr = JSON.parse(val); val = Array.isArray(arr) ? arr[0] : val; } catch {}
+                      } else if (Array.isArray(val)) {
+                          val = val[0];
+                      }
+
+                      // Bug 2 fallback: Hard strip duplicated strings in UI render
+                      if ((field.key === "handcrafted_by" || field.key === "rescued_by") && typeof val === 'string') {
+                          if (val.includes("Bob & Janyce")) {
+                              val = "Bob & Janyce, Rockhound Studio";
+                          }
+                      }
+
+                      // Bug 1 fallback: Hard strip "Stone" from rendering
+                      if (field.key === "primary_medium" && val === "Stone") {
+                          val = "";
+                      }
+
+                      // Bug 3 fallback: Force Color to render form-state value over raw meta value
+                      if (field.key === "color" && formState.color) {
+                          val = formState.color;
+                      }
+
                       const isNa = val === "n/a" || val === "N/A" || val === "N/a";
                       const isFilled = !isNa && val && val.trim() !== "";
                       const isEmpty = !isNa && (!val || val.trim() === "");
@@ -793,7 +865,7 @@ Image URL: ${imageUrl}`;
                                 <Select
                                   label={labelNode}
                                   options={[{ label: "Select...", value: "" }, ...(DROPDOWN_OPTIONS[field.key] || [])]}
-                                  value={fullMetaState[field.key] || ""}
+                                  value={val}
                                   onChange={(v) => updateFullMetaState(field.key, v)}
                                   accessibilityLabel={field.label}
                                 />
@@ -815,7 +887,7 @@ Image URL: ${imageUrl}`;
                                 <Select
                                   label={labelNode}
                                   options={[{ label: "Select...", value: "" }, ...(DROPDOWN_OPTIONS[field.key] || [])]}
-                                  value={fullMetaState[field.key] || ""}
+                                  value={val}
                                   onChange={(v) => updateFullMetaState(field.key, v)}
                                   accessibilityLabel={field.label}
                                 />
