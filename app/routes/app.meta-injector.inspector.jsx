@@ -191,19 +191,51 @@ export function IntakeBenchTab({ products, fetcher }) {
       });
     }
 
+    // Un-wrap story arrays strictly
+    if (newForm.origin_story && newForm.origin_story.startsWith("[")) {
+      try {
+        const arr = JSON.parse(newForm.origin_story);
+        newForm.origin_story = Array.isArray(arr) ? arr[0] : newForm.origin_story;
+      } catch { }
+    }
+    if (newForm.stone_story && newForm.stone_story.startsWith("[")) {
+      try {
+        const arr = JSON.parse(newForm.stone_story);
+        newForm.origin_story = Array.isArray(arr) ? arr[0] : newForm.stone_story;
+      } catch { }
+    }
+    newFullForm.origin_story = newForm.origin_story;
+
+    if (newForm.honest_flaws_and_character && newForm.honest_flaws_and_character.startsWith("[")) {
+      try {
+        const arr = JSON.parse(newForm.honest_flaws_and_character);
+        newForm.honest_flaws_and_character = Array.isArray(arr) ? arr[0] : newForm.honest_flaws_and_character;
+      } catch { }
+    }
+    if (newForm.character_marks && newForm.character_marks.startsWith("[")) {
+      try {
+        const arr = JSON.parse(newForm.character_marks);
+        newForm.honest_flaws_and_character = Array.isArray(arr) ? arr[0] : newForm.character_marks;
+      } catch { }
+    }
+    newFullForm.honest_flaws_and_character = newForm.honest_flaws_and_character;
+
+    // Prioritize Custom Primary Medium, then Rockhound, then fallback
     if (newFullForm.primary_medium && newFullForm.primary_medium === "Stone") {
-      const customPrimaryMedium = product?.metafields?.edges?.find(e => e.node.namespace === "custom" && e.node.key === "primary_medium");
-      if (customPrimaryMedium && customPrimaryMedium.node.value) {
-        let customVal = customPrimaryMedium.node.value;
-        if (customVal.startsWith("[")) {
-          try {
-            const arr = JSON.parse(customVal);
-            customVal = Array.isArray(arr) ? arr[0] : customVal;
-          } catch { }
-        }
-        newFullForm.primary_medium = customVal;
-        newForm.primary_medium = customVal;
+      const customPM = product?.metafields?.edges?.find(e => e.node.namespace === "custom" && e.node.key === "primary_medium")?.node?.value;
+      const rockhoundPM = product?.metafields?.edges?.find(e => e.node.namespace === "rockhound" && e.node.key === "primary_medium")?.node?.value;
+      
+      let bestPM = customPM || rockhoundPM || newForm.base_stone_type || "";
+      
+      if (bestPM && bestPM.startsWith("[")) {
+        try {
+          const arr = JSON.parse(bestPM);
+          bestPM = Array.isArray(arr) ? arr[0] : bestPM;
+        } catch { }
       }
+      
+      newFullForm.primary_medium = bestPM;
+      newForm.primary_medium = bestPM;
     }
 
     if (!newFullForm.handcrafted_by || newFullForm.handcrafted_by.trim() === "") {
