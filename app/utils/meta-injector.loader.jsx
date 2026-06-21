@@ -528,27 +528,30 @@ export async function action({ request }) {
         parsedValues.handcrafted_by = "Bob & Janyce, Rockhound Studio";
       }
 
+      let hf = customMeta.honest_flaws_and_character || customMeta.character_marks || "";
+      if (hf.startsWith("[")) { try { const arr = JSON.parse(hf); hf = Array.isArray(arr) ? arr[0] : hf; } catch {} }
+      if (typeof hf === "string" && hf.startsWith("[")) { hf = hf.replace(/^\["|"\]$/g, ""); }
+
       return json({ 
         success: true, 
         intent: "smartAutoFill", 
         fields: parsedValues,
         autoFillData: parsedValues,
         fullMetaFields: {
-          color: customMeta.color || customMeta.primary_color || "",
-          cut_and_shape: customMeta.cut_and_shape || customMeta.cut_type || "",
-          origin_story: customMeta.origin_story || customMeta.stone_story || "",
-          honest_flaws_and_character: customMeta.honest_flaws_and_character || customMeta.character_marks || "",
-          handcrafted_by: customMeta.handcrafted_by || "Bob & Janyce, Rockhound Studio",
-          is_one_of_a_kind: customMeta.is_ooak === "true" ? "Yes — one of a kind" : customMeta.is_ooak === "false" ? "No" : "",
+          color: resolveColorValue(rockhoundMeta.primary_color) || resolveColorValue(customMeta.primary_color) || rockhoundMeta.primary_color || customMeta.primary_color || "",
+          cut_and_shape: customMeta.cut_type || "",
+          origin_story: unwrapArrayValue(customMeta.stone_story) || unwrapArrayValue(customMeta.origin_story) || "",
+          honest_flaws_and_character: hf,
+          handcrafted_by: "Bob & Janyce, Rockhound Studio",
+          is_one_of_a_kind: rockhoundMeta.is_one_of_a_kind === "true" || rockhoundMeta.is_ooak === "true" ? "Yes — one of a kind" : "No",
           treated: customMeta.treated === "true" ? "Yes" : customMeta.treated === "false" ? "No" : customMeta.treatment_status ? (customMeta.treatment_status.toLowerCase().includes("untreated") ? "No" : "Yes") : "",
           found_object: customMeta.found_object === "true" ? "Yes" : customMeta.found_object === "false" ? "No" : "",
-          primary_medium: customMeta.primary_medium || "",
-          stone_family: customMeta.stone_family || "",
+          primary_medium: "Stone",
           material: rockhoundMeta.material || customMeta.official_name || "",
           surface_finish: rockhoundMeta.surface_finish || customMeta.surface_finish || parsedValues.surface_finish || "",
           dimensions_mm: rockhoundMeta.dimensions_mm || customMeta.dimensions_mm || parsedValues.dimensions_mm || "",
           artist_notes: rockhoundMeta.artist_notes || customMeta.artist_notes || "",
-          collection_name: customMeta.collection_name || ""
+          collection_name: rockhoundMeta.collection_name || customMeta.collection_name || ""
         },
         overwriteFields: {
           color: parsedValues.color || "",
@@ -719,6 +722,10 @@ export async function action({ request }) {
         parsedValues.handcrafted_by = "Bob & Janyce, Rockhound Studio";
       }
 
+      let hf = customMeta.honest_flaws_and_character || customMeta.character_marks || "";
+      if (hf.startsWith("[")) { try { const arr = JSON.parse(hf); hf = Array.isArray(arr) ? arr[0] : hf; } catch {} }
+      if (typeof hf === "string" && hf.startsWith("[")) { hf = hf.replace(/^\["|"\]$/g, ""); }
+
       return json({ 
         success: true, 
         intent: "autoFill", 
@@ -726,21 +733,21 @@ export async function action({ request }) {
         autoFillData: parsedValues,
         geoFields,
         fullMetaFields: {
-          color: customMeta.color || customMeta.primary_color || "",
-          cut_and_shape: customMeta.cut_and_shape || customMeta.cut_type || "",
-          origin_story: customMeta.origin_story || customMeta.stone_story || "",
-          honest_flaws_and_character: customMeta.honest_flaws_and_character || customMeta.character_marks || "",
-          handcrafted_by: customMeta.handcrafted_by || "Bob & Janyce, Rockhound Studio",
-          is_one_of_a_kind: customMeta.is_ooak === "true" ? "Yes — one of a kind" : customMeta.is_ooak === "false" ? "No" : "",
+          color: resolveColorValue(rockhoundMeta.primary_color) || resolveColorValue(customMeta.primary_color) || rockhoundMeta.primary_color || customMeta.primary_color || "",
+          cut_and_shape: customMeta.cut_type || "",
+          origin_story: unwrapArrayValue(customMeta.stone_story) || unwrapArrayValue(customMeta.origin_story) || "",
+          honest_flaws_and_character: hf,
+          handcrafted_by: "Bob & Janyce, Rockhound Studio",
+          is_one_of_a_kind: rockhoundMeta.is_one_of_a_kind === "true" || rockhoundMeta.is_ooak === "true" ? "Yes — one of a kind" : "No",
           treated: customMeta.treated === "true" ? "Yes" : customMeta.treated === "false" ? "No" : customMeta.treatment_status ? (customMeta.treatment_status.toLowerCase().includes("untreated") ? "No" : "Yes") : "",
           found_object: customMeta.found_object === "true" ? "Yes" : customMeta.found_object === "false" ? "No" : "",
-          primary_medium: customMeta.primary_medium || "",
+          primary_medium: "Stone",
           stone_family: customMeta.stone_family || "",
           material: rockhoundMeta.material || customMeta.official_name || "",
           surface_finish: rockhoundMeta.surface_finish || customMeta.surface_finish || "",
           dimensions_mm: rockhoundMeta.dimensions_mm || customMeta.dimensions_mm || "",
           artist_notes: rockhoundMeta.artist_notes || customMeta.artist_notes || "",
-          collection_name: customMeta.collection_name || ""
+          collection_name: rockhoundMeta.collection_name || customMeta.collection_name || ""
         },
         overwriteFields: {
           color: parsedValues.color || "",
@@ -770,19 +777,12 @@ export default function MigrateDataRoute() {
   const navigate = useNavigate();
   const migrateFetcher = useFetcher();
   const standardizeFetcher = useFetcher();
-  const copyFetcher = useFetcher();
-  const deleteFetcher = useFetcher();
   const shopify = typeof window !== "undefined" ? window.shopify : undefined;
 
   const isMigrating = migrateFetcher.state !== "idle";
   const isStandardizing = standardizeFetcher.state !== "idle";
-  const isCopying = copyFetcher.state !== "idle";
-  const isDeleting = deleteFetcher.state !== "idle";
-
   const migrateData = migrateFetcher.data;
   const standardizeData = standardizeFetcher.data;
-  const copyData = copyFetcher.data;
-  const deleteData = deleteFetcher.data;
 
   const handleRunMigration = () => {
     migrateFetcher.submit({ intent: "migrate" }, { method: "post" });
@@ -817,32 +817,6 @@ export default function MigrateDataRoute() {
       }
     }
   }, [standardizeFetcher.state, standardizeData, shopify]);
-
-  useEffect(() => {
-    if (copyFetcher.state === "idle" && copyData && copyData.results) {
-      if (shopify) {
-        const hasErrors = copyData.results.some(r => r.status === "error");
-        if (hasErrors) {
-          shopify.toast.show("Copy finished with some errors.", { isError: true });
-        } else {
-          shopify.toast.show(copyData.results[0].message);
-        }
-      }
-    }
-  }, [copyFetcher.state, copyData, shopify]);
-
-  useEffect(() => {
-    if (deleteFetcher.state === "idle" && deleteData && deleteData.results) {
-      if (shopify) {
-        const hasErrors = deleteData.results.some(r => r.status === "error");
-        if (hasErrors) {
-          shopify.toast.show("Delete finished with some errors.", { isError: true });
-        } else {
-          shopify.toast.show(deleteData.results[0].message);
-        }
-      }
-    }
-  }, [deleteFetcher.state, deleteData, shopify]);
 
   const StatusIcon = ({ status }) => {
     if (status === "success") return <span style={{ color: "#2E7D32" }}>✅</span>;
@@ -938,102 +912,6 @@ export default function MigrateDataRoute() {
                   <Divider />
                   <BlockStack gap="300">
                     {standardizeData.results.map((result, idx) => (
-                      <div key={idx} style={{ display: "flex", alignItems: "center", gap: "8px", padding: "8px 0", borderBottom: "1px solid #E1E3E5" }}>
-                        <StatusIcon status={result.status} />
-                        <Text as="span" tone={result.status === "error" ? "critical" : "base"}>
-                          {result.message}
-                        </Text>
-                      </div>
-                    ))}
-                  </BlockStack>
-                </BlockStack>
-              </Card>
-            )}
-
-            <Card padding="600">
-              <BlockStack gap="400">
-                <Text variant="headingLg" as="h2">Copy Rockhound → Custom</Text>
-                <Text as="p">
-                  Scans all products and copies 8 specific rockhound fields to the custom namespace if they are not already populated.
-                </Text>
-                <Box paddingBlockStart="400">
-                  <div style={{ minHeight: "60px", minWidth: "100%" }}>
-                    <Button
-                      size="large"
-                      fullWidth
-                      onClick={() => copyFetcher.submit({ intent: "copyRockhoundToCustom" }, { method: "post" })}
-                      accessibilityLabel="Copy Rockhound to Custom (8 fields)"
-                      loading={isCopying}
-                    >
-                      {isCopying ? "Copying..." : "Copy Rockhound → Custom (8 fields)"}
-                    </Button>
-                  </div>
-                </Box>
-              </BlockStack>
-            </Card>
-
-            {copyData && copyData.results && (
-              <Card padding="600">
-                <BlockStack gap="500">
-                  <Text variant="headingLg" as="h3">Copy Report</Text>
-                  <Divider />
-                  <BlockStack gap="300">
-                    {copyData.results.map((result, idx) => (
-                      <div key={idx} style={{ display: "flex", alignItems: "center", gap: "8px", padding: "8px 0", borderBottom: "1px solid #E1E3E5" }}>
-                        <StatusIcon status={result.status} />
-                        <Text as="span" tone={result.status === "error" ? "critical" : "base"}>
-                          {result.message}
-                        </Text>
-                      </div>
-                    ))}
-                  </BlockStack>
-                </BlockStack>
-              </Card>
-            )}
-
-            <Card padding="600">
-              <BlockStack gap="400">
-                <Text variant="headingLg" as="h2">Delete Rockhound Namespace</Text>
-                <Text as="p">
-                  Permanently deletes all metafields in the rockhound namespace. This cannot be undone.
-                </Text>
-                <Box paddingBlockStart="400">
-                  <div style={{ minHeight: "60px", minWidth: "100%" }}>
-                    <button
-                      onClick={() => {
-                        if (window.confirm("Are you sure? This permanently deletes all rockhound metafields. This cannot be undone.")) {
-                          deleteFetcher.submit({ intent: "deleteRockhoundNamespace" }, { method: "post" });
-                        }
-                      }}
-                      disabled={isDeleting}
-                      style={{
-                        backgroundColor: "#d72c0d",
-                        color: "white",
-                        minHeight: "56px",
-                        width: "100%",
-                        fontSize: "18px",
-                        fontWeight: "bold",
-                        border: "none",
-                        borderRadius: "4px",
-                        cursor: isDeleting ? "not-allowed" : "pointer",
-                        opacity: isDeleting ? 0.7 : 1
-                      }}
-                      aria-label="Delete Rockhound Namespace"
-                    >
-                      {isDeleting ? "Deleting..." : "Delete Rockhound Namespace"}
-                    </button>
-                  </div>
-                </Box>
-              </BlockStack>
-            </Card>
-
-            {deleteData && deleteData.results && (
-              <Card padding="600">
-                <BlockStack gap="500">
-                  <Text variant="headingLg" as="h3">Deletion Report</Text>
-                  <Divider />
-                  <BlockStack gap="300">
-                    {deleteData.results.map((result, idx) => (
                       <div key={idx} style={{ display: "flex", alignItems: "center", gap: "8px", padding: "8px 0", borderBottom: "1px solid #E1E3E5" }}>
                         <StatusIcon status={result.status} />
                         <Text as="span" tone={result.status === "error" ? "critical" : "base"}>
