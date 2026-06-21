@@ -335,8 +335,8 @@ export function IntakeBenchTab({ products, fetcher }) {
     const description = product.descriptionHtml || product.description || "";
 
     fetcher.submit(
-      { 
-        intent: "autoFill", 
+      {
+        intent: "autoFill",
         productId: selectedProductId,
         productTitle: title,
         productDescription: description,
