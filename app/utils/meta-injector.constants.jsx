@@ -205,9 +205,9 @@ export const FULL_META_GROUPS = [
     fields: [
       { key: "piece_name", label: "Piece Name", type: "text" },
       { key: "primary_medium", label: "Primary Medium", type: "text" },
-      { key: "handcrafted_by", label: "Handcrafted By", type: "select" },
-      { key: "is_one_of_a_kind", label: "Is One of a Kind", type: "select" },
-      { key: "treated", label: "Treated", type: "select" }
+      { key: "handcrafted_by", label: "Handcrafted By", type: "text" },
+      { key: "is_one_of_a_kind", label: "Is One of a Kind", type: "text" },
+      { key: "treated", label: "Treated", type: "text" }
     ]
   },
   {
@@ -239,16 +239,16 @@ export const FULL_META_GROUPS = [
     color: "#6A1B9A",
     fields: [
       { key: "secondary_medium", label: "Secondary Medium", type: "text" },
-      { key: "found_object", label: "Found Object", type: "select" }
+      { key: "found_object", label: "Found Object", type: "text" }
     ]
   },
   {
     heading: "Google / SEO",
     color: "#F9A825",
     fields: [
-      { key: "primary_use", label: "Primary Use", type: "select" },
-      { key: "setting_ready", label: "Setting Ready", type: "select" },
-      { key: "bail_included", label: "Bail Included", type: "select" }
+      { key: "primary_use", label: "Primary Use", type: "text" },
+      { key: "setting_ready", label: "Setting Ready", type: "text" },
+      { key: "bail_included", label: "Bail Included", type: "text" }
     ]
   }
 ];

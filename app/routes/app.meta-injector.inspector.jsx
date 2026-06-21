@@ -75,9 +75,9 @@ const FULL_META_GROUPS = [
     heading: "Google / SEO",
     color: "#F9A825",
     fields: [
-      { key: "primary_use", label: "Primary Use", type: "select" },
-      { key: "setting_ready", label: "Setting Ready", type: "select" },
-      { key: "bail_included", label: "Bail Included", type: "select" }
+      { key: "primary_use", label: "Primary Use", type: "text" },
+      { key: "setting_ready", label: "Setting Ready", type: "text" },
+      { key: "bail_included", label: "Bail Included", type: "text" }
     ]
   }
 ];
