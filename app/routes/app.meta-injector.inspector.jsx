@@ -991,3 +991,73 @@ Image URL: ${imageUrl}`;
                   loading={fetcher.state !== "idle" && fetcher.formData?.get("intent") === "standardizeOneOfAKind"}
                 >
                   Standardize One of a Kind Values
+                </Button>
+              </div>
+
+              <div style={{ minHeight: "48px" }}>
+                <Button
+                  size="large"
+                  fullWidth
+                  onClick={() => fetcher.submit({ intent: "copyRockhoundToCustom" }, { method: "post" })}
+                  accessibilityLabel="Copy Rockhound to Custom (8 fields)"
+                  loading={fetcher.state !== "idle" && fetcher.formData?.get("intent") === "copyRockhoundToCustom"}
+                >
+                  Copy Rockhound → Custom (8 fields)
+                </Button>
+              </div>
+
+              <div style={{ minHeight: "56px" }}>
+                <button
+                  onClick={() => {
+                    if (window.confirm("Are you sure? This permanently deletes all rockhound metafields. This cannot be undone.")) {
+                      fetcher.submit({ intent: "deleteRockhoundNamespace" }, { method: "post" });
+                    }
+                  }}
+                  disabled={fetcher.state !== "idle" && fetcher.formData?.get("intent") === "deleteRockhoundNamespace"}
+                  style={{
+                    backgroundColor: "#d72c0d",
+                    color: "white",
+                    minHeight: "56px",
+                    width: "100%",
+                    fontSize: "18px",
+                    fontWeight: "bold",
+                    border: "none",
+                    borderRadius: "4px",
+                    cursor: (fetcher.state !== "idle" && fetcher.formData?.get("intent") === "deleteRockhoundNamespace") ? "not-allowed" : "pointer",
+                    opacity: (fetcher.state !== "idle" && fetcher.formData?.get("intent") === "deleteRockhoundNamespace") ? 0.7 : 1
+                  }}
+                  aria-label="Delete Rockhound Namespace"
+                >
+                  {(fetcher.state !== "idle" && fetcher.formData?.get("intent") === "deleteRockhoundNamespace") ? "Deleting..." : "Delete Rockhound Namespace"}
+                </button>
+              </div>
+            </div>
+
+            {fetcher.data?.intent && ["migrate", "standardizeOneOfAKind", "copyRockhoundToCustom", "deleteRockhoundNamespace"].includes(fetcher.data.intent) && fetcher.data.results && (
+              <div style={{ marginTop: "16px" }}>
+                <Card padding="400">
+                  <BlockStack gap="300">
+                    <Text variant="headingSm" as="h3">Migration Report</Text>
+                    <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                      {fetcher.data.results.map((result, idx) => (
+                        <div key={idx} style={{ padding: "8px 0", borderBottom: "1px solid #E1E3E5" }}>
+                          <Text as="span" tone={result.status === "error" ? "critical" : "success"}>
+                            {result.status === "success" ? "✅ " : "❌ "} {result.message}
+                          </Text>
+                        </div>
+                      ))}
+                    </div>
+                  </BlockStack>
+                </Card>
+              </div>
+            )}
+            
+          </BlockStack>
+        </Card>
+      </div>
+
+    </BlockStack>
+  );
+}
+
+export default IntakeBenchTab;
