@@ -481,8 +481,9 @@ Return only valid JSON. No explanation. No markdown.`;
     // ==========================================
     safeSet("official_name", title);
 
-    if (!merged.color || merged.color.trim() === "") { if (merged.primary_color) merged.color = merged.primary_color; }
-    return Response.json({ success: true, fields: merged, intent: "autoFill" });
+    const colorWarning = !merged.color || merged.color.trim() === "";
+    if (!colorWarning && merged.primary_color && (!merged.color || merged.color.trim() === "")) { merged.color = merged.primary_color; }
+    return Response.json({ success: true, fields: merged, intent: "autoFill", colorWarning });
   } catch (error) {
     console.error("Stone Lookup Engine Fault:", error.message);
     return Response.json(
