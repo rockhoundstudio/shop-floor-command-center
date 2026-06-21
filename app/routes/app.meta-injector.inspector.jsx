@@ -12,7 +12,6 @@ const ROCKHOUND_FIELDS = [
   { key: "surface_finish", label: "Surface Finish", type: "single_line_text_field", isShared: true }, 
   { key: "source_location", label: "Source / Discovery Location", type: "single_line_text_field", isShared: true },
   { key: "primary_use", label: "Primary Use", type: "single_line_text_field", isShared: true }, 
-  { key: "inspiration", label: "Whisper Theme / Inspiration", type: "single_line_text_field", isShared: true }, 
   { key: "handcrafted_by", label: "Handcrafted By", type: "single_line_text_field", isShared: true },
   { key: "origin_story", label: "The Origin Story", type: "single_line_text_field", multiline: true, isShared: true },
 
@@ -57,9 +56,7 @@ const FULL_META_GROUPS = [
     color: "#E65100",
     fields: [
       { key: "origin_story", label: "Origin Story", type: "text", multiline: true },
-      { key: "trip_or_series", label: "Trip or Series", type: "text" },
       { key: "honest_flaws_and_character", label: "Honest Flaws and Character", type: "text", multiline: true },
-      { key: "artist_notes", label: "Artist Notes", type: "text", multiline: true },
       { key: "collection_name", label: "Collection Name", type: "text" }
     ]
   },
@@ -67,7 +64,6 @@ const FULL_META_GROUPS = [
     heading: "Mixed Media",
     color: "#6A1B9A",
     fields: [
-      { key: "secondary_medium", label: "Secondary Medium", type: "text" },
       { key: "found_object", label: "Found Object", type: "text" }
     ]
   },
@@ -76,7 +72,6 @@ const FULL_META_GROUPS = [
     color: "#F9A825",
     fields: [
       { key: "primary_use", label: "Primary Use", type: "text" },
-      { key: "setting_ready", label: "Setting Ready", type: "text" },
       { key: "bail_included", label: "Bail Included", type: "text" }
     ]
   }
@@ -84,12 +79,12 @@ const FULL_META_GROUPS = [
 
 const NAMESPACE_MAP = {
   rockhound: [
-    "piece_name", "primary_medium", "secondary_medium", "handcrafted_by", 
+    "piece_name", "primary_medium", "handcrafted_by", 
     "material", "stone_family", "color", "cut_and_shape", "surface_finish", 
     "dimensions_mm", "weight_grams", "collection_name", "collection_location", 
-    "collection_date", "primary_use", "setting_ready", "bail_included", 
+    "collection_date", "primary_use", "bail_included", 
     "is_one_of_a_kind", "treated", "found_object", "wire_material", 
-    "artist_notes", "origin_story", "honest_flaws_and_character", "trip_or_series"
+    "origin_story", "honest_flaws_and_character"
   ],
   geo: [
     "hardness", "luster", "fracture", "cleavage", "specificGravity", 
@@ -113,10 +108,16 @@ export function IntakeBenchTab({ products, fetcher }) {
   const [errorMessage, setErrorMessage] = useState("");
   const [promptStyle, setPromptStyle] = useState("");
 
+  // Tab 2 Auto-Fill State
+  const [tab2StatusMessage, setTab2StatusMessage] = useState("");
+  const [tab2ErrorMessage, setTab2ErrorMessage] = useState("");
+
   const handleSelectProduct = useCallback((id) => {
     setSelectedProductId(id);
     setStatusMessage("");
     setErrorMessage("");
+    setTab2StatusMessage("");
+    setTab2ErrorMessage("");
 
     const product = products.find(p => p.id === id);
     const newForm = {};
@@ -272,14 +273,13 @@ export function IntakeBenchTab({ products, fetcher }) {
           const updatedState = { ...prev };
           const dropdownFields = [
             "handcrafted_by", "is_one_of_a_kind", "treated", "found_object", 
-            "primary_use", "setting_ready", "bail_included", "stone_family", 
+            "primary_use", "bail_included", "stone_family", 
             "color", "cut_and_shape", "surface_finish"
           ];
           const textFields = [
             "piece_name", "primary_medium", "material", "dimensions_mm", 
-            "weight_grams", "origin_story", "trip_or_series", 
-            "honest_flaws_and_character", "artist_notes", "collection_name", 
-            "secondary_medium"
+            "weight_grams", "origin_story",
+            "honest_flaws_and_character", "collection_name"
           ];
 
           product.metafields.edges.forEach(({ node }) => {
@@ -337,6 +337,59 @@ export function IntakeBenchTab({ products, fetcher }) {
       { method: "post", action: "/app/meta-injector-autofill" }
     );
   }, [selectedProductId, fetcher, products, promptStyle, formState]);
+
+  const handleTab2AutoFill = useCallback(() => {
+    if (!selectedProductId) return;
+    setTab2StatusMessage("");
+    setTab2ErrorMessage("");
+
+    const product = products.find(p => p.id === selectedProductId) || {};
+    const title = product.title || "";
+    const description = product.descriptionHtml || product.description || "";
+    
+    // Attempt to extract image URL. If your product query doesn't pull images, this will be blank.
+    let imageUrl = "";
+    if (product.images && product.images.edges && product.images.edges.length > 0) {
+        imageUrl = product.images.edges[0].node.url || "";
+    }
+
+    const promptText = `You are extracting structured product data for a gemstone jewelry store. Parse the following product title, description, and image and return a JSON object with these exact keys:
+
+piece_name — the stone name after the last dash in the title
+primary_medium — the stone type from the title (first segment before first dash)
+collection_location — the location from the title (second segment between dashes)
+color — primary color observed in the image, plain text
+secondary_colors — any secondary colors observed in the image, plain text
+cut_and_shape — the cabochon shape, from image and description
+surface_finish — polish level from description or image
+character_marks — any inclusions, matrix, anomalies, natural flaws observed in image or description, plain text
+dimensions_mm — dimensions from description, plain text
+weight_grams — weight if mentioned, plain text or empty string
+origin_story — the full narrative story paragraphs from the description, preserve line breaks
+collection_name — the named collection if mentioned
+is_one_of_a_kind — Yes or No based on description
+treated — No if description says natural or untreated, Yes if treated
+found_object — Yes if purchased or found, No if raw material
+bail_included — Yes if bail or wrap mentioned, No if not
+handcrafted_by — always Bob & Janyce, Rockhound Studio
+
+Return only valid JSON. No markdown. No explanation.
+
+Title: ${title}
+Description: ${description}
+Image URL: ${imageUrl}`;
+
+    fetcher.submit(
+      { 
+        intent: "tab2AutoFill", 
+        productId: selectedProductId,
+        prompt: promptText,
+        imageUrl: imageUrl
+      },
+      { method: "post", action: "/app/meta-injector-autofill" }
+    );
+    console.log("Tab2 AutoFill imageUrl sent:", imageUrl);
+  }, [selectedProductId, fetcher, products]);
 
   const handleInject = useCallback(() => {
     if (!selectedProductId) return;
@@ -415,6 +468,7 @@ export function IntakeBenchTab({ products, fetcher }) {
     if (isIdle && hasData) {
       const isAutoFill = fetcher.data.intent === "autoFill";
       const isSmartAutoFill = fetcher.data.intent === "smartAutoFill";
+      const isTab2AutoFill = fetcher.data.intent === "tab2AutoFill";
       const isSaveProduct = fetcher.data.intent === "saveProduct";
       const isSaveMetafields = fetcher.data.intent === "saveMetafields";
       
@@ -485,6 +539,40 @@ export function IntakeBenchTab({ products, fetcher }) {
         }
       }
 
+      if (isTab2AutoFill) {
+        if (isSuccess && fetcher.data.fields) {
+            setFullMetaState(prev => {
+                const updatedState = { ...prev };
+                Object.entries(fetcher.data.fields).forEach(([key, val]) => {
+                    const hasNewValue = val !== undefined && val !== null && val.toString().trim() !== "";
+                    // Only fill if currently empty
+                    const ALWAYS_OVERWRITE_TAB2 = ["color", "cut_and_shape", "stone_family", "surface_finish", "handcrafted_by", "treated", "found_object", "is_one_of_a_kind"];
+                    const currentlyEmpty = !updatedState[key] || updatedState[key].trim() === "";
+                    const shouldOverwrite = ALWAYS_OVERWRITE_TAB2.includes(key);
+
+                    if (hasNewValue && (currentlyEmpty || shouldOverwrite) && val !== "See Shopify metaobject") {
+                      updatedState[key] = val;
+                    }
+                });
+                return updatedState;
+            });
+            setTab2StatusMessage("Auto-Fill complete — review fields before saving");
+            
+            // Show Polaris Toast for Tab 2 Success
+            if (window.shopify && window.shopify.toast) {
+              window.shopify.toast.show("Auto-Fill complete!");
+            }
+
+        } else if (isError) {
+            setTab2ErrorMessage(fetcher.data.error || "Gemini extraction failed.");
+            
+            // Show Polaris Toast for Tab 2 Failure
+            if (window.shopify && window.shopify.toast) {
+              window.shopify.toast.show("Auto-Fill failed", { isError: true });
+            }
+        }
+      }
+
       if (isSaveProduct && isSuccess) {
         setStatusMessage("Metafields injected cleanly into Shopify database.");
       }
@@ -496,7 +584,7 @@ export function IntakeBenchTab({ products, fetcher }) {
         }
       }
 
-      if (isError) {
+      if (isError && !isTab2AutoFill) {
         setErrorMessage(fetcher.data.error || "An unknown error occurred during the operation.");
         // Fallback catch-all error Toast
         if (window.shopify && window.shopify.toast) {
@@ -508,6 +596,7 @@ export function IntakeBenchTab({ products, fetcher }) {
 
   const safeProducts = products || [];
   const isAutoFilling = fetcher.state !== "idle" && (fetcher.formData?.get("intent") === "autoFill" || fetcher.formData?.get("intent") === "smartAutoFill");
+  const isTab2AutoFilling = fetcher.state !== "idle" && fetcher.formData?.get("intent") === "tab2AutoFill";
   const isSaving = fetcher.state !== "idle" && fetcher.formData?.get("intent") === "saveProduct";
   
   return (
@@ -727,6 +816,7 @@ export function IntakeBenchTab({ products, fetcher }) {
                                   accessibilityLabel={field.label}
                                   multiline={field.multiline ? true : false}
                                   autoComplete="off"
+                                  disabled={val === "See Shopify metaobject"}
                                 />
                               )}
                             </div>
