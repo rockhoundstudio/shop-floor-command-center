@@ -179,8 +179,15 @@ export async function action({ request }) {
       }
 
       for (const chunk of chunks) {
-        await admin.graphql(SET_METAFIELDS, { variables: { metafields: chunk } });
-        fieldsWritten += chunk.length;
+        const res = await admin.graphql(SET_METAFIELDS, { variables: { metafields: chunk } });
+        const json = await res.json();
+        
+        const errors = json.data?.metafieldsSet?.userErrors || [];
+        if (errors.length > 0) {
+          results.push({ status: "error", message: `Copy chunk failed: ${errors[0].message}` });
+        } else {
+          fieldsWritten += chunk.length;
+        }
         await new Promise(resolve => setTimeout(resolve, 300));
       }
       
@@ -203,8 +210,9 @@ export async function action({ request }) {
           products(first: 250) {
             edges {
               node {
+                id
                 rockhoundMeta: metafields(first: 50, namespace: "rockhound") {
-                  edges { node { id } }
+                  edges { node { key } }
                 }
               }
             }
@@ -215,31 +223,42 @@ export async function action({ request }) {
       const json = await res.json();
       const products = json.data?.products?.edges || [];
       
-      const deleteIds = [];
+      const deletePayloads = [];
       for (const p of products) {
         const rockhound = p.node.rockhoundMeta?.edges || [];
         for (const e of rockhound) {
-          deleteIds.push(e.node.id);
+          deletePayloads.push({
+            ownerId: p.node.id,
+            namespace: "rockhound",
+            key: e.node.key
+          });
         }
       }
 
-      const DELETE_METAFIELD = `
-        mutation MetafieldDelete($input: MetafieldDeleteInput!) {
-          metafieldDelete(input: $input) {
-            deletedId
+      const DELETE_METAFIELDS = `
+        mutation MetafieldsDelete($metafields: [MetafieldIdentifierInput!]!) {
+          metafieldsDelete(metafields: $metafields) {
+            deletedMetafields { key namespace ownerId }
             userErrors { field message }
           }
         }
       `;
 
       const chunks = [];
-      for (let i = 0; i < deleteIds.length; i += 25) {
-        chunks.push(deleteIds.slice(i, i + 25));
+      for (let i = 0; i < deletePayloads.length; i += 25) {
+        chunks.push(deletePayloads.slice(i, i + 25));
       }
 
       for (const chunk of chunks) {
-        await Promise.all(chunk.map(id => admin.graphql(DELETE_METAFIELD, { variables: { input: { id } } })));
-        deletedCount += chunk.length;
+        const delRes = await admin.graphql(DELETE_METAFIELDS, { variables: { metafields: chunk } });
+        const delJson = await delRes.json();
+        
+        const errors = delJson.data?.metafieldsDelete?.userErrors || [];
+        if (errors.length > 0) {
+          results.push({ status: "error", message: `Delete chunk failed: ${errors[0].message}` });
+        } else {
+          deletedCount += chunk.length;
+        }
         await new Promise(resolve => setTimeout(resolve, 300));
       }
       
