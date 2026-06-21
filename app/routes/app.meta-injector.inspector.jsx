@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { BlockStack, Card, Text, Banner, TextField, Select, Button, InlineStack, Collapsible } from "@shopify/polaris";
+import { BlockStack, Card, Text, Banner, TextField, Select, Button, InlineStack } from "@shopify/polaris";
 import { MagicIcon, SaveIcon } from "@shopify/polaris-icons";
 import { normalizeDropdownValue, DROPDOWN_OPTIONS, unwrapArrayValue } from "../utils/meta-injector.constants.jsx";
 
@@ -112,18 +112,10 @@ export function IntakeBenchTab({ products, fetcher }) {
   const [statusMessage, setStatusMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [promptStyle, setPromptStyle] = useState("");
-  
-  // Debug State
-  const [rawMetafields, setRawMetafields] = useState([]);
-  const [isDebugOpen, setIsDebugOpen] = useState(true);
 
   // Tab 2 Auto-Fill State
   const [tab2StatusMessage, setTab2StatusMessage] = useState("");
   const [tab2ErrorMessage, setTab2ErrorMessage] = useState("");
-
-  // Vision Debug Panel State
-  const [showVisionDebug, setShowVisionDebug] = useState(false);
-  const [visionDebugContent, setVisionDebugContent] = useState("");
 
   const handleSelectProduct = useCallback((id) => {
     setSelectedProductId(id);
@@ -131,13 +123,10 @@ export function IntakeBenchTab({ products, fetcher }) {
     setErrorMessage("");
     setTab2StatusMessage("");
     setTab2ErrorMessage("");
-    setShowVisionDebug(false);
-    setVisionDebugContent("");
 
     const product = products.find(p => p.id === id);
     const newForm = {};
     const newFullForm = {};
-    const debugArray = [];
     
     const hasMetafields = product && product.metafields && product.metafields.edges;
     
@@ -155,7 +144,6 @@ export function IntakeBenchTab({ products, fetcher }) {
           }
           newForm[node.key] = parsedValue;
           newFullForm[node.key] = parsedValue;
-          debugArray.push({ namespace: node.namespace, key: node.key, value: node.value });
         }
       });
 
@@ -172,7 +160,6 @@ export function IntakeBenchTab({ products, fetcher }) {
           }
           newForm[node.key] = parsedValue;
           newFullForm[node.key] = parsedValue;
-          debugArray.push({ namespace: node.namespace, key: node.key, value: node.value });
         }
       });
 
@@ -193,7 +180,6 @@ export function IntakeBenchTab({ products, fetcher }) {
           }
           newForm[node.key] = parsedValue;
           newFullForm[node.key] = parsedValue;
-          debugArray.push({ namespace: node.namespace, key: node.key, value: node.value });
         }
       });
     }
@@ -278,7 +264,6 @@ export function IntakeBenchTab({ products, fetcher }) {
         newFullForm.handcrafted_by = "Bob & Janyce, Rockhound Studio";
     }
     
-    setRawMetafields(debugArray);
     setFormState(newForm);
     setFullMetaState(newFullForm);
     originalMetaRef.current = { ...newFullForm };
@@ -495,20 +480,9 @@ Image URL: ${imageUrl}`;
       const isTab2AutoFill = fetcher.data.intent === "tab2AutoFill";
       const isSaveProduct = fetcher.data.intent === "saveProduct";
       const isSaveMetafields = fetcher.data.intent === "saveMetafields";
-      const isCopyRockhound = fetcher.data.intent === "copyRockhoundToCustom";
-      const isDeleteRockhound = fetcher.data.intent === "deleteRockhoundNamespace";
-      const isMigrate = fetcher.data.intent === "migrate";
-      const isStandardize = fetcher.data.intent === "standardizeOneOfAKind";
       
       const isSuccess = fetcher.data.success === true;
       const isError = fetcher.data.success === false;
-
-      if ((isAutoFill || isSmartAutoFill || isTab2AutoFill)) {
-        if ("rawVisionResponse" in fetcher.data) {
-          setVisionDebugContent(fetcher.data.rawVisionResponse || "");
-          setShowVisionDebug(true);
-        }
-      }
 
       if ((isAutoFill || isSmartAutoFill) && isSuccess && fetcher.data.fields) {
         setFormState(prev => {
@@ -617,22 +591,6 @@ Image URL: ${imageUrl}`;
         if (window.shopify && window.shopify.toast) {
           window.shopify.toast.show("Changes saved!");
         }
-      }
-
-      if (isCopyRockhound && isSuccess) {
-        setStatusMessage(`Migration Complete: Scanned ${fetcher.data.scanned} products, wrote ${fetcher.data.written} fields.`);
-      }
-
-      if (isDeleteRockhound && isSuccess) {
-        setStatusMessage(`Deletion Complete: Scanned ${fetcher.data.scanned} products, deleted ${fetcher.data.deleted} fields.`);
-      }
-
-      if (isMigrate && isSuccess) {
-        setStatusMessage(`Legacy migration complete.`);
-      }
-
-      if (isStandardize && isSuccess) {
-        setStatusMessage(`Standardization complete.`);
       }
 
       if (isError && !isTab2AutoFill) {
@@ -794,46 +752,6 @@ Image URL: ${imageUrl}`;
         <div style={{ marginTop: "32px" }}>
           <Card padding="400">
             <BlockStack gap="400">
-              
-              <div style={{ marginBottom: "16px" }}>
-                <Button 
-                    onClick={() => setIsDebugOpen(!isDebugOpen)} 
-                    ariaExpanded={isDebugOpen} 
-                    ariaControls="debug-panel"
-                    variant="plain"
-                >
-                    RAW METAFIELD DEBUG — ALL NAMESPACES {isDebugOpen ? '(Hide)' : '(Show)'}
-                </Button>
-                
-                <Collapsible 
-                    open={isDebugOpen} 
-                    id="debug-panel" 
-                    transition={{ duration: '200ms', timingFunction: 'ease-in-out' }}
-                >
-                    <div style={{ 
-                        backgroundColor: "#1C2226", 
-                        color: "#E3E5E7", 
-                        padding: "16px", 
-                        borderRadius: "8px", 
-                        fontFamily: "monospace", 
-                        fontSize: "14px",
-                        marginTop: "8px",
-                        maxHeight: "300px",
-                        overflowY: "auto",
-                        border: "1px solid #4A5157"
-                    }}>
-                        {rawMetafields.length > 0 ? (
-                            rawMetafields.map((meta, index) => (
-                                <div key={index} style={{ marginBottom: "4px", borderBottom: "1px solid #31383D", paddingBottom: "4px" }}>
-                                    <span style={{ color: "#4BB543" }}>{meta.namespace}</span> | <span style={{ color: "#2E96FF" }}>{meta.key}</span> | <span>{meta.value}</span>
-                                </div>
-                            ))
-                        ) : (
-                            <div style={{ color: "#A6B0B7" }}>No metafields found for this product.</div>
-                        )}
-                    </div>
-                </Collapsible>
-              </div>
 
               {tab2StatusMessage !== "" && (
                 <div style={{ minHeight: "54px", marginBottom: "16px" }}>
@@ -864,44 +782,6 @@ Image URL: ${imageUrl}`;
                     Extract from Description & Image
                 </Button>
               </div>
-
-              {showVisionDebug && (
-                <div style={{ marginBottom: "24px", padding: "16px", backgroundColor: "#fff", border: "1px solid #c9cccf", borderRadius: "8px", position: "relative" }}>
-                  <button
-                    onClick={() => setShowVisionDebug(false)}
-                    aria-label="Dismiss panel"
-                    style={{
-                      position: "absolute",
-                      top: "16px",
-                      right: "16px",
-                      fontSize: "18px",
-                      background: "transparent",
-                      border: "none",
-                      cursor: "pointer",
-                      padding: "4px"
-                    }}
-                  >
-                    ✖
-                  </button>
-                  <Text variant="headingMd" as="h3">Gemini Vision Raw Response</Text>
-                  <div style={{ marginBottom: "12px", color: "#202223" }}>
-                    {visionDebugContent ? "Vision returned data" : "Vision returned empty"}
-                  </div>
-                  <div style={{
-                    backgroundColor: "#FFFACD",
-                    color: "#000000",
-                    fontSize: "16px",
-                    padding: "16px",
-                    borderRadius: "4px",
-                    fontFamily: "monospace",
-                    whiteSpace: "pre-wrap",
-                    overflowX: "auto",
-                    border: "1px solid #e1e3e5"
-                  }}>
-                    {visionDebugContent || "No raw response text."}
-                  </div>
-                </div>
-              )}
 
               <Text variant="headingLg" as="h3">Full Meta Report</Text>
               
@@ -1013,105 +893,6 @@ Image URL: ${imageUrl}`;
           </Card>
         </div>
       )}
-
-      {/* GLOBAL MIGRATIONS */}
-      <div style={{ marginTop: "32px" }}>
-        <Card padding="400">
-          <BlockStack gap="400">
-            <Text variant="headingMd" as="h2">3. Database Migrations</Text>
-            
-            <Banner tone="info" title="The Data Bundling Strategy">
-              <p>
-                This script safely grabs your old science fields (Mohs, cleavage, diaphaneity, etc.) and bundles them into a clean <b>Shop Specs</b> text string inside the new <b>Artist Notes</b> field. This keeps Google happy with keywords without forcing you to manage useless fields manually.
-              </p>
-            </Banner>
-
-            <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-              <div style={{ minHeight: "48px" }}>
-                <Button
-                  size="large"
-                  fullWidth
-                  onClick={() => fetcher.submit({ intent: "migrate" }, { method: "post" })}
-                  accessibilityLabel="Run Data Migration"
-                  loading={fetcher.state !== "idle" && fetcher.formData?.get("intent") === "migrate"}
-                >
-                  Run Auto-Migration
-                </Button>
-              </div>
-
-              <div style={{ minHeight: "48px" }}>
-                <Button
-                  size="large"
-                  fullWidth
-                  onClick={() => fetcher.submit({ intent: "standardizeOneOfAKind" }, { method: "post" })}
-                  accessibilityLabel="Standardize One of a Kind Values"
-                  loading={fetcher.state !== "idle" && fetcher.formData?.get("intent") === "standardizeOneOfAKind"}
-                >
-                  Standardize One of a Kind Values
-                </Button>
-              </div>
-
-              <div style={{ minHeight: "48px" }}>
-                <Button
-                  size="large"
-                  fullWidth
-                  onClick={() => fetcher.submit({ intent: "copyRockhoundToCustom" }, { method: "post" })}
-                  accessibilityLabel="Copy Rockhound to Custom (8 fields)"
-                  loading={fetcher.state !== "idle" && fetcher.formData?.get("intent") === "copyRockhoundToCustom"}
-                >
-                  Copy Rockhound → Custom (8 fields)
-                </Button>
-              </div>
-
-              <div style={{ minHeight: "56px" }}>
-                <button
-                  onClick={() => {
-                    if (window.confirm("Are you sure? This permanently deletes all rockhound metafields. This cannot be undone.")) {
-                      fetcher.submit({ intent: "deleteRockhoundNamespace" }, { method: "post" });
-                    }
-                  }}
-                  disabled={fetcher.state !== "idle" && fetcher.formData?.get("intent") === "deleteRockhoundNamespace"}
-                  style={{
-                    backgroundColor: "#d72c0d",
-                    color: "white",
-                    minHeight: "56px",
-                    width: "100%",
-                    fontSize: "18px",
-                    fontWeight: "bold",
-                    border: "none",
-                    borderRadius: "4px",
-                    cursor: (fetcher.state !== "idle" && fetcher.formData?.get("intent") === "deleteRockhoundNamespace") ? "not-allowed" : "pointer",
-                    opacity: (fetcher.state !== "idle" && fetcher.formData?.get("intent") === "deleteRockhoundNamespace") ? 0.7 : 1
-                  }}
-                  aria-label="Delete Rockhound Namespace"
-                >
-                  {(fetcher.state !== "idle" && fetcher.formData?.get("intent") === "deleteRockhoundNamespace") ? "Deleting..." : "Delete Rockhound Namespace"}
-                </button>
-              </div>
-            </div>
-
-            {fetcher.data?.intent && ["migrate", "standardizeOneOfAKind", "copyRockhoundToCustom", "deleteRockhoundNamespace"].includes(fetcher.data.intent) && fetcher.data.results && (
-              <div style={{ marginTop: "16px" }}>
-                <Card padding="400">
-                  <BlockStack gap="300">
-                    <Text variant="headingSm" as="h3">Migration Report</Text>
-                    <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                      {fetcher.data.results.map((result, idx) => (
-                        <div key={idx} style={{ padding: "8px 0", borderBottom: "1px solid #E1E3E5" }}>
-                          <Text as="span" tone={result.status === "error" ? "critical" : "success"}>
-                            {result.status === "success" ? "✅ " : "❌ "} {result.message}
-                          </Text>
-                        </div>
-                      ))}
-                    </div>
-                  </BlockStack>
-                </Card>
-              </div>
-            )}
-            
-          </BlockStack>
-        </Card>
-      </div>
 
     </BlockStack>
   );
