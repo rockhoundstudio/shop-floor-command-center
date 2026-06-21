@@ -215,10 +215,10 @@ export const FULL_META_GROUPS = [
     color: "#1565C0",
     fields: [
       { key: "material", label: "Material", type: "text" },
-      { key: "stone_family", label: "Stone Family", type: "select" },
-      { key: "color", label: "Color", type: "select" },
-      { key: "cut_and_shape", label: "Cut and Shape", type: "select" },
-      { key: "surface_finish", label: "Surface Finish", type: "select" },
+      { key: "stone_family", label: "Stone Family", type: "text" },
+      { key: "color", label: "Color", type: "text" },
+      { key: "cut_and_shape", label: "Cut and Shape", type: "text" },
+      { key: "surface_finish", label: "Surface Finish", type: "text" },
       { key: "dimensions_mm", label: "Dimensions (mm)", type: "text" },
       { key: "weight_grams", label: "Weight (grams)", type: "text" }
     ]
@@ -263,8 +263,8 @@ export const METAFIELD_CONFIG = [
 
   // 🔵 STONE Fields
   { namespace: "custom", key: "material", type: "single_line_text_field", label: "Material", colorGroup: "blue", options: [] },
-  { namespace: "custom", key: "stone_family", type: "select", label: "Stone Family", colorGroup: "blue", options: DROPDOWN_OPTIONS.stone_family },
-  { namespace: "custom", key: "color", type: "select", label: "Color", colorGroup: "blue", options: DROPDOWN_OPTIONS.color },
+  { namespace: "custom", key: "stone_family", type: "text", label: "Stone Family", colorGroup: "blue", options: DROPDOWN_OPTIONS.stone_family },
+  { namespace: "custom", key: "color", type: "text", label: "Color", colorGroup: "blue", options: DROPDOWN_OPTIONS.color },
   { namespace: "custom", key: "cut_and_shape", type: "single_line_text_field", label: "Cut and Shape", colorGroup: "blue", options: DROPDOWN_OPTIONS.cut_and_shape },
   { namespace: "custom", key: "surface_finish", type: "single_line_text_field", label: "Surface Finish", colorGroup: "blue", options: DROPDOWN_OPTIONS.surface_finish },
   { namespace: "custom", key: "dimensions_mm", type: "single_line_text_field", label: "Dimensions (mm)", colorGroup: "blue", options: [] },
