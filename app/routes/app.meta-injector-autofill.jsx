@@ -480,7 +480,7 @@ Return only valid JSON. No explanation. No markdown.`;
     // ==========================================
     safeSet("official_name", title);
 
-    return Response.json({ success: true, fields: merged });
+    return Response.json({ success: true, fields: merged, intent: "autoFill" });
   } catch (error) {
     console.error("Stone Lookup Engine Fault:", error.message);
     return Response.json(
