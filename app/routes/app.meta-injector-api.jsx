@@ -93,6 +93,7 @@ export const action = async ({ request }) => {
           ownerId: resolvedId,
           namespace: item.namespace || "custom",
           key: item.key,
+          type: item.type || "single_line_text_field",
           value: String(item.value)
         };
       });
@@ -126,5 +127,89 @@ export const action = async ({ request }) => {
     }
 
     return data({ success: true, message: "All metafields locked in." });
+  }
+
+  // ==========================================
+  // 🔴 INTENT 3: CLEAN MALFORMED KEYS
+  // ==========================================
+  if (intent === "cleanMalformedKeys") {
+    const productId = formData.get("productId");
+
+    if (!productId) {
+      return data({ success: false, message: "No productId provided." });
+    }
+
+    const resolvedId = productId.startsWith("gid://")
+      ? productId
+      : `gid://shopify/Product/${productId}`;
+
+    // Step 1 — Find the malformed metafield IDs
+    const lookupResponse = await admin.graphql(
+      `#graphql
+      query getMetafields($ownerId: ID!) {
+        product(id: $ownerId) {
+          metafields(first: 250) {
+            edges {
+              node {
+                id
+                namespace
+                key
+              }
+            }
+          }
+        }
+      }`,
+      { variables: { ownerId: resolvedId } }
+    );
+
+    const lookupResult = await lookupResponse.json();
+    const allMeta = lookupResult?.data?.product?.metafields?.edges || [];
+
+    const malformedKeys = ["cut_type", "cut_and_shape"];
+    const toDelete = allMeta
+      .map(e => e.node)
+      .filter(m => {
+        const rawKey = `${m.namespace}.${m.key}`;
+        const combined = `${m.namespace}${m.key}`;
+        return (
+          malformedKeys.some(k => combined.includes(`=${k}`)) ||
+          malformedKeys.some(k => m.key === k && m.namespace !== "custom")
+        );
+      })
+      .map(m => m.id);
+
+    if (toDelete.length === 0) {
+      return data({ success: true, message: "No malformed keys found. Already clean." });
+    }
+
+    // Step 2 — Delete them
+    const deleteResponse = await admin.graphql(
+      `#graphql
+      mutation metafieldsDelete($metafields: [MetafieldIdentifierInput!]!) {
+        metafieldsDelete(metafields: $metafields) {
+          deletedMetafields { key namespace ownerId }
+          userErrors { field message }
+        }
+      }`,
+      {
+        variables: {
+          metafields: toDelete.map(id => ({ ownerId: resolvedId, id }))
+        }
+      }
+    );
+
+    const deleteResult = await deleteResponse.json();
+    const deleteErrors = deleteResult?.data?.metafieldsDelete?.userErrors || [];
+    const deleted = deleteResult?.data?.metafieldsDelete?.deletedMetafields || [];
+
+    if (deleteErrors.length > 0) {
+      return data({ success: false, message: "Delete had errors.", errors: deleteErrors });
+    }
+
+    return data({
+      success: true,
+      message: `Cleaned ${deleted.length} malformed metafield(s). Re-save the product to write them correctly.`,
+      deleted
+    });
   }
 };
