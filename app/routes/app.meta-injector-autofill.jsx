@@ -361,12 +361,11 @@ Return only valid JSON. No explanation. No markdown.`;
         const imageMimeType = (imageRes.headers.get("content-type") || "image/jpeg").split(";")[0].trim();
 
         const clientPrompt = body.get("prompt");
-        const promptText = clientPrompt && clientPrompt.trim() !== "" ? clientPrompt + "\n\nFor stone_family, use the common rockhound trade name for the stone, not the mineral family classification. For example: use Labradorite not Feldspar, use Jasper not Chalcedony, use Obsidian not Volcanic Glass." : `You are a gemologist and lapidary expert analyzing a handcrafted stone cabochon or specimen for an online store called Rockhound Studio. Look at this stone image carefully and return a JSON object with these fields — only include fields you can visually confirm, leave others out:
+        const promptText = clientPrompt && clientPrompt.trim() !== "" ? clientPrompt : `You are a gemologist and lapidary expert analyzing a handcrafted stone cabochon or specimen for an online store called Rockhound Studio. Look at this stone image carefully and return a JSON object with these fields — only include fields you can visually confirm, leave others out:
 {
   "color": "(return ONLY the primary color as a single word, e.g. 'Blue' or 'Red')",
   "surface_finish": "(one of: High Polish, Satin Polish, Matte, Natural/Rough, Tumbled)",
   "cut_and_shape": "(e.g. Freeform, Oval Cabochon, Round Cabochon, Teardrop, Pear, Trillion)",
-  "stone_family": "(e.g. Jasper, Agate, Chalcedony, Labradorite, Obsidian, Quartz)",
   "character_marks": "(visible inclusions, patterns, streaks, or unique features)",
   "alt_text": "(a single descriptive sentence for screen readers and SEO, written in plain English describing what is seen in the image)",
   "is_one_of_a_kind": "(boolean)",
@@ -375,7 +374,6 @@ Return only valid JSON. No explanation. No markdown.`;
   "setting_ready": "(boolean)",
   "bail_included": "(boolean)"
 }
-For stone_family, use the common rockhound trade name for the stone, not the mineral family classification. For example: use Labradorite not Feldspar, use Jasper not Chalcedony, use Obsidian not Volcanic Glass.
 Return only valid JSON. No explanation. No markdown.`;
 
         const geminiRes = await fetch(
@@ -434,7 +432,6 @@ Return only valid JSON. No explanation. No markdown.`;
             safeSet("color", visionData.color || visionData.Color || visionData.primary_color);
             safeSet("surface_finish", visionData.surface_finish || visionData.Surface_finish);
             safeSet("cut_and_shape", visionData.cut_and_shape || visionData.Cut_and_shape);
-            safeSet("stone_family", visionData.stone_family || visionData.Stone_family);
             safeSet("honest_flaws_and_character", visionData.character_marks || visionData.Character_marks);
             safeSet("alt_text", visionData.alt_text || visionData.Alt_text);
             safeSet("is_one_of_a_kind", visionData.is_one_of_a_kind);
