@@ -378,6 +378,7 @@ Return only valid JSON. No explanation. No markdown.`;
 {
   color: (primary color and pattern description, e.g. 'Deep red with grey banding'),
   surface_finish: (one of: High Polish, Satin Polish, Matte, Natural/Rough, Tumbled),
+
   cut_and_shape: (e.g. Freeform, Oval Cabochon, Round Cabochon, Teardrop, Pear, Trillion),
   stone_family: (e.g. Jasper, Agate, Chalcedony, Labradorite, Obsidian, Quartz),
   character_marks: (visible inclusions, patterns, streaks, or unique features),
