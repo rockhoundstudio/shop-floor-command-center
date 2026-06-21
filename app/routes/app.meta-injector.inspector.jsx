@@ -232,7 +232,7 @@ export function IntakeBenchTab({ products, fetcher }) {
       if (newForm.handcrafted_by.startsWith("[")) {
          try { const arr = JSON.parse(newForm.handcrafted_by); newForm.handcrafted_by = Array.isArray(arr) ? arr[0] : newForm.handcrafted_by; } catch (e) {}
       }
-      if (newForm.handcrafted_by.includes("Bob & Janyce")) {
+      if (newForm.handcrafted_by.includes("Bob & Janyce") || newForm.handcrafted_by.includes("Rockhound Studio")) {
          newForm.handcrafted_by = "Bob & Janyce, Rockhound Studio";
       }
     }
@@ -240,7 +240,7 @@ export function IntakeBenchTab({ products, fetcher }) {
       if (newFullForm.handcrafted_by.startsWith("[")) {
          try { const arr = JSON.parse(newFullForm.handcrafted_by); newFullForm.handcrafted_by = Array.isArray(arr) ? arr[0] : newFullForm.handcrafted_by; } catch (e) {}
       }
-      if (newFullForm.handcrafted_by.includes("Bob & Janyce")) {
+      if (newFullForm.handcrafted_by.includes("Bob & Janyce") || newFullForm.handcrafted_by.includes("Rockhound Studio")) {
          newFullForm.handcrafted_by = "Bob & Janyce, Rockhound Studio";
       }
     }
@@ -344,7 +344,7 @@ export function IntakeBenchTab({ products, fetcher }) {
         existingColor: formState.color || "",
         existingCutAndShape: formState.cut_and_shape || ""
       },
-      { method: "post" }
+      { method: "post", action: "/app/meta-injector-autofill" }
     );
   }, [selectedProductId, fetcher, products, promptStyle, formState]);
 
@@ -399,7 +399,7 @@ Image URL: ${imageUrl}`;
         prompt: promptText,
         imageUrl: imageUrl
       },
-      { method: "post" }
+      { method: "post", action: "/app/meta-injector-autofill" }
     );
     console.log("Tab2 AutoFill imageUrl sent:", imageUrl);
   }, [selectedProductId, fetcher, products]);
@@ -528,7 +528,7 @@ Image URL: ${imageUrl}`;
             }
 
             // Clean handcrafted_by deduplication on AutoFill return
-            if (typeof nextState.handcrafted_by === 'string' && nextState.handcrafted_by.includes("Bob & Janyce")) {
+            if (typeof nextState.handcrafted_by === 'string' && (nextState.handcrafted_by.includes("Bob & Janyce") || nextState.handcrafted_by.includes("Rockhound Studio"))) {
                 nextState.handcrafted_by = "Bob & Janyce, Rockhound Studio";
             }
 
@@ -547,6 +547,11 @@ Image URL: ${imageUrl}`;
         
         if (isAutoFill) {
           setStatusMessage("Title and tags successfully parsed and loaded into fields.");
+        }
+
+        // Show Polaris Toast for Success
+        if (window.shopify && window.shopify.toast) {
+          window.shopify.toast.show("Auto-Fill complete!");
         }
       }
 
@@ -568,8 +573,19 @@ Image URL: ${imageUrl}`;
                 return updatedState;
             });
             setTab2StatusMessage("Auto-Fill complete — review fields before saving");
+            
+            // Show Polaris Toast for Tab 2 Success
+            if (window.shopify && window.shopify.toast) {
+              window.shopify.toast.show("Auto-Fill complete!");
+            }
+
         } else if (isError) {
             setTab2ErrorMessage(fetcher.data.error || "Gemini extraction failed.");
+            
+            // Show Polaris Toast for Tab 2 Failure
+            if (window.shopify && window.shopify.toast) {
+              window.shopify.toast.show("Auto-Fill failed", { isError: true });
+            }
         }
       }
 
@@ -602,6 +618,10 @@ Image URL: ${imageUrl}`;
 
       if (isError && !isTab2AutoFill) {
         setErrorMessage(fetcher.data.error || "An unknown error occurred during the operation.");
+        // Fallback catch-all error Toast
+        if (window.shopify && window.shopify.toast) {
+          window.shopify.toast.show("Action failed", { isError: true });
+        }
       }
     }
   }, [fetcher.state, fetcher.data]);
@@ -845,9 +865,10 @@ Image URL: ${imageUrl}`;
                           val = val[0];
                       }
 
-                      // Bug 2 fallback: Hard strip duplicated strings in UI render
+                      // Bug 2 fallback: Hard strip duplicated strings in UI render.
+                      // Ensure it renders exactly once, eliminating trailing concatenation or repetitive elements.
                       if ((field.key === "handcrafted_by" || field.key === "rescued_by") && typeof val === 'string') {
-                          if (val.includes("Bob & Janyce")) {
+                          if (val.includes("Bob & Janyce") || val.includes("Rockhound Studio")) {
                               val = "Bob & Janyce, Rockhound Studio";
                           }
                       }
@@ -970,71 +991,3 @@ Image URL: ${imageUrl}`;
                   loading={fetcher.state !== "idle" && fetcher.formData?.get("intent") === "standardizeOneOfAKind"}
                 >
                   Standardize One of a Kind Values
-                </Button>
-              </div>
-
-              <div style={{ minHeight: "48px" }}>
-                <Button
-                  size="large"
-                  fullWidth
-                  onClick={() => fetcher.submit({ intent: "copyRockhoundToCustom" }, { method: "post" })}
-                  accessibilityLabel="Copy Rockhound to Custom (8 fields)"
-                  loading={fetcher.state !== "idle" && fetcher.formData?.get("intent") === "copyRockhoundToCustom"}
-                >
-                  Copy Rockhound → Custom (8 fields)
-                </Button>
-              </div>
-
-              <div style={{ minHeight: "56px" }}>
-                <button
-                  onClick={() => {
-                    if (window.confirm("Are you sure? This permanently deletes all rockhound metafields. This cannot be undone.")) {
-                      fetcher.submit({ intent: "deleteRockhoundNamespace" }, { method: "post" });
-                    }
-                  }}
-                  disabled={fetcher.state !== "idle" && fetcher.formData?.get("intent") === "deleteRockhoundNamespace"}
-                  style={{
-                    backgroundColor: "#d72c0d",
-                    color: "white",
-                    minHeight: "56px",
-                    width: "100%",
-                    fontSize: "18px",
-                    fontWeight: "bold",
-                    border: "none",
-                    borderRadius: "4px",
-                    cursor: (fetcher.state !== "idle" && fetcher.formData?.get("intent") === "deleteRockhoundNamespace") ? "not-allowed" : "pointer",
-                    opacity: (fetcher.state !== "idle" && fetcher.formData?.get("intent") === "deleteRockhoundNamespace") ? 0.7 : 1
-                  }}
-                  aria-label="Delete Rockhound Namespace"
-                >
-                  {(fetcher.state !== "idle" && fetcher.formData?.get("intent") === "deleteRockhoundNamespace") ? "Deleting..." : "Delete Rockhound Namespace"}
-                </button>
-              </div>
-            </div>
-
-            {fetcher.data?.intent && ["migrate", "standardizeOneOfAKind", "copyRockhoundToCustom", "deleteRockhoundNamespace"].includes(fetcher.data.intent) && fetcher.data.results && (
-              <div style={{ marginTop: "16px" }}>
-                <Card padding="400">
-                  <BlockStack gap="300">
-                    <Text variant="headingSm" as="h3">Migration Report</Text>
-                    <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                      {fetcher.data.results.map((result, idx) => (
-                        <div key={idx} style={{ padding: "8px 0", borderBottom: "1px solid #E1E3E5" }}>
-                          <Text as="span" tone={result.status === "error" ? "critical" : "success"}>
-                            {result.status === "success" ? "✅ " : "❌ "} {result.message}
-                          </Text>
-                        </div>
-                      ))}
-                    </div>
-                  </BlockStack>
-                </Card>
-              </div>
-            )}
-            
-          </BlockStack>
-        </Card>
-      </div>
-
-    </BlockStack>
-  );
-}
