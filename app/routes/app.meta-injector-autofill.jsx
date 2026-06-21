@@ -11,7 +11,7 @@ const MINDAT_KEY_MAP = {
   official_name: "name",
   mineral_class: "mindat_formula",
   crystal_structure: "crystal_system",
-  luster: "luster",
+   luster: "luster",
   specific_gravity: "density",
   moh_hardness: "hardness",
   cleavage: "cleavage",
@@ -336,7 +336,7 @@ Return only valid JSON. No explanation. No markdown.`;
 
             const textData = JSON.parse(cleanJson);
 
-            safeSet("color", textData.color);
+            safeSet("color", textData.color || textData.Color);
             safeSet("cut_and_shape", textData.cut_and_shape);
             safeSet("surface_finish", textData.surface_finish);
             safeSet("stone_family", textData.stone_family);
@@ -370,24 +370,24 @@ Return only valid JSON. No explanation. No markdown.`;
         const imageRes = await fetch(imageUrl);
         const imageBuffer = await imageRes.arrayBuffer();
         const imageBase64 = Buffer.from(imageBuffer).toString("base64");
-        const imageMimeType = imageRes.headers.get("content-type") || "image/jpeg";
+        // Ensure no charset parameters break the Gemini parser
+        const imageMimeType = (imageRes.headers.get("content-type") || "image/jpeg").split(";")[0];
 
         // Determine if frontend provided a prompt (e.g. from tab2AutoFill) or default to our robust internal one
         const clientPrompt = body.get("prompt");
         const promptText = clientPrompt && clientPrompt.trim() !== "" ? clientPrompt + "\n\nFor stone_family, use the common rockhound trade name for the stone, not the mineral family classification. For example: use Labradorite not Feldspar, use Jasper not Chalcedony, use Obsidian not Volcanic Glass." : `You are a gemologist and lapidary expert analyzing a handcrafted stone cabochon or specimen for an online store called Rockhound Studio. Look at this stone image carefully and return a JSON object with these fields — only include fields you can visually confirm, leave others out:
 {
-  color: (primary color and pattern description, e.g. 'Deep red with grey banding'),
-  surface_finish: (one of: High Polish, Satin Polish, Matte, Natural/Rough, Tumbled),
-
-  cut_and_shape: (e.g. Freeform, Oval Cabochon, Round Cabochon, Teardrop, Pear, Trillion),
-  stone_family: (e.g. Jasper, Agate, Chalcedony, Labradorite, Obsidian, Quartz),
-  character_marks: (visible inclusions, patterns, streaks, or unique features),
-  alt_text: (a single descriptive sentence for screen readers and SEO, written in plain English describing what is seen in the image),
-  is_one_of_a_kind: (boolean),
-  found_object: (boolean),
-  treated: (boolean),
-  setting_ready: (boolean),
-  bail_included: (boolean)
+  "color": "(primary color and pattern description, e.g. 'Deep red with grey banding')",
+  "surface_finish": "(one of: High Polish, Satin Polish, Matte, Natural/Rough, Tumbled)",
+  "cut_and_shape": "(e.g. Freeform, Oval Cabochon, Round Cabochon, Teardrop, Pear, Trillion)",
+  "stone_family": "(e.g. Jasper, Agate, Chalcedony, Labradorite, Obsidian, Quartz)",
+  "character_marks": "(visible inclusions, patterns, streaks, or unique features)",
+  "alt_text": "(a single descriptive sentence for screen readers and SEO, written in plain English describing what is seen in the image)",
+  "is_one_of_a_kind": "(boolean)",
+  "found_object": "(boolean)",
+  "treated": "(boolean)",
+  "setting_ready": "(boolean)",
+  "bail_included": "(boolean)"
 }
 For stone_family, use the common rockhound trade name for the stone, not the mineral family classification. For example: use Labradorite not Feldspar, use Jasper not Chalcedony, use Obsidian not Volcanic Glass.
 Return only valid JSON. No explanation. No markdown.`;
@@ -445,12 +445,13 @@ Return only valid JSON. No explanation. No markdown.`;
             if (visionData.bail_included === true) visionData.bail_included = "true";
             else if (visionData.bail_included === false) visionData.bail_included = "false";
 
-            safeSet("color", visionData.color);
-            safeSet("surface_finish", visionData.surface_finish);
-            safeSet("cut_and_shape", visionData.cut_and_shape);
-            safeSet("stone_family", visionData.stone_family);
-            safeSet("honest_flaws_and_character", visionData.character_marks);
-            safeSet("alt_text", visionData.alt_text);
+            // Fallbacks for capitalization inconsistencies
+            safeSet("color", visionData.color || visionData.Color || visionData.primary_color);
+            safeSet("surface_finish", visionData.surface_finish || visionData.Surface_finish);
+            safeSet("cut_and_shape", visionData.cut_and_shape || visionData.Cut_and_shape);
+            safeSet("stone_family", visionData.stone_family || visionData.Stone_family);
+            safeSet("honest_flaws_and_character", visionData.character_marks || visionData.Character_marks);
+            safeSet("alt_text", visionData.alt_text || visionData.Alt_text);
             
             safeSet("is_one_of_a_kind", visionData.is_one_of_a_kind);
             safeSet("found_object", visionData.found_object);
