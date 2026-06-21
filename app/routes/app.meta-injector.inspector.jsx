@@ -471,7 +471,7 @@ Image URL: ${imageUrl}`;
         setErrorMessage(fetcher.data.error || "An unknown error occurred during the operation.");
       }
     }
-  }, [fetcher.state, fetcher.data, fullMetaState]);
+  }, [fetcher.state, fetcher.data]);
 
   const safeProducts = products || [];
   const isAutoFilling = fetcher.state !== "idle" && (fetcher.formData?.get("intent") === "autoFill" || fetcher.formData?.get("intent") === "smartAutoFill");
