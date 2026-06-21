@@ -139,8 +139,15 @@ export function IntakeBenchTab({ products, fetcher }) {
       product.metafields.edges.forEach(({ node }) => {
         const hasValue = node.value !== null && node.value !== undefined;
         if (hasValue && node.namespace === "custom") {
-          newForm[node.key] = node.value;
-          newFullForm[node.key] = node.value;
+          let parsedValue = node.value;
+          if (parsedValue.startsWith("[")) {
+            try {
+              const arr = JSON.parse(parsedValue);
+              parsedValue = Array.isArray(arr) ? arr[0] : parsedValue;
+            } catch { }
+          }
+          newForm[node.key] = parsedValue;
+          newFullForm[node.key] = parsedValue;
           debugArray.push({ namespace: node.namespace, key: node.key, value: node.value });
         }
       });
@@ -149,8 +156,15 @@ export function IntakeBenchTab({ products, fetcher }) {
       product.metafields.edges.forEach(({ node }) => {
         const hasValue = node.value !== null && node.value !== undefined;
         if (hasValue && node.namespace === "geo") {
-          newForm[node.key] = node.value;
-          newFullForm[node.key] = node.value;
+          let parsedValue = node.value;
+          if (parsedValue.startsWith("[")) {
+            try {
+              const arr = JSON.parse(parsedValue);
+              parsedValue = Array.isArray(arr) ? arr[0] : parsedValue;
+            } catch { }
+          }
+          newForm[node.key] = parsedValue;
+          newFullForm[node.key] = parsedValue;
           debugArray.push({ namespace: node.namespace, key: node.key, value: node.value });
         }
       });
@@ -175,6 +189,21 @@ export function IntakeBenchTab({ products, fetcher }) {
           debugArray.push({ namespace: node.namespace, key: node.key, value: node.value });
         }
       });
+    }
+
+    if (newFullForm.primary_medium && newFullForm.primary_medium === "Stone") {
+      const customPrimaryMedium = product?.metafields?.edges?.find(e => e.node.namespace === "custom" && e.node.key === "primary_medium");
+      if (customPrimaryMedium && customPrimaryMedium.node.value) {
+        let customVal = customPrimaryMedium.node.value;
+        if (customVal.startsWith("[")) {
+          try {
+            const arr = JSON.parse(customVal);
+            customVal = Array.isArray(arr) ? arr[0] : customVal;
+          } catch { }
+        }
+        newFullForm.primary_medium = customVal;
+        newForm.primary_medium = customVal;
+      }
     }
 
     if (!newFullForm.handcrafted_by || newFullForm.handcrafted_by.trim() === "") {
