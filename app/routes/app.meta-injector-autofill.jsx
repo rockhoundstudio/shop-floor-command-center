@@ -359,6 +359,7 @@ Return only valid JSON. No explanation. No markdown.`;
     // ==========================================
     // PASS 3: GEMINI VISION
     // ==========================================
+    let rawVisionResponse = "";
     try {
       const rawImageUrl = body.get("imageUrl");
       // Prevent "null" or "undefined" strings from passing truthy checks
@@ -420,6 +421,7 @@ Return only valid JSON. No explanation. No markdown.`;
         if (geminiRes.ok) {
           const geminiData = await geminiRes.json();
           const textContent = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || "";
+          rawVisionResponse = textContent;
           
           if (textContent) {
             let cleanJson = textContent.trim();
@@ -463,10 +465,14 @@ Return only valid JSON. No explanation. No markdown.`;
           }
         } else {
           const errText = await geminiRes.text();
+          rawVisionResponse = errText;
           console.error("Gemini Vision API Error:", geminiRes.status, errText);
         }
+      } else {
+        rawVisionResponse = "No image URL provided to Vision pass.";
       }
     } catch (error) {
+      rawVisionResponse = `Vision Exception: ${error.message}`;
       console.error("Pass 3 Vision Fault:", error.message);
     }
 
@@ -486,7 +492,14 @@ Return only valid JSON. No explanation. No markdown.`;
 
     const colorWarning = !merged.color || merged.color.trim() === "";
     if (!colorWarning && merged.primary_color && (!merged.color || merged.color.trim() === "")) { merged.color = merged.primary_color; }
-    return Response.json({ success: true, fields: merged, intent: "autoFill", colorWarning });
+    
+    return Response.json({ 
+        success: true, 
+        fields: merged, 
+        intent: actionType || "autoFill", 
+        colorWarning,
+        rawVisionResponse // Added for frontend debugging
+    });
   } catch (error) {
     console.error("Stone Lookup Engine Fault:", error.message);
     return Response.json(
