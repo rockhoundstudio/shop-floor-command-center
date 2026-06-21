@@ -1,10 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { useFetcher, useNavigate, data as json } from "react-router";
-import { BlockStack, Card, Text, Banner, TextField, Select, Button, InlineStack, Collapsible, Page, Layout, Box, Divider } from "@shopify/polaris";
+import { BlockStack, Card, Text, Banner, TextField, Select, Button, InlineStack, Collapsible } from "@shopify/polaris";
 import { MagicIcon, SaveIcon } from "@shopify/polaris-icons";
 import { normalizeDropdownValue, DROPDOWN_OPTIONS, unwrapArrayValue } from "../utils/meta-injector.constants.jsx";
-import { authenticate } from "../shopify.server";
-import prisma from "../db.server";
 
 const ROCKHOUND_FIELDS = [
   // ==========================================
@@ -147,7 +144,7 @@ export function IntakeBenchTab({ products, fetcher }) {
             try {
               const arr = JSON.parse(parsedValue);
               parsedValue = Array.isArray(arr) ? arr[0] : parsedValue;
-            } catch { }
+            } catch (e) { }
           }
           newForm[node.key] = parsedValue;
           newFullForm[node.key] = parsedValue;
@@ -164,7 +161,7 @@ export function IntakeBenchTab({ products, fetcher }) {
             try {
               const arr = JSON.parse(parsedValue);
               parsedValue = Array.isArray(arr) ? arr[0] : parsedValue;
-            } catch { }
+            } catch (e) { }
           }
           newForm[node.key] = parsedValue;
           newFullForm[node.key] = parsedValue;
@@ -183,7 +180,9 @@ export function IntakeBenchTab({ products, fetcher }) {
             try {
               const arr = JSON.parse(parsedValue);
               parsedValue = Array.isArray(arr) ? arr[0] : parsedValue;
-            } catch { }
+            } catch (e) {
+              // keep original
+            }
           }
           newForm[node.key] = parsedValue;
           newFullForm[node.key] = parsedValue;
@@ -195,19 +194,22 @@ export function IntakeBenchTab({ products, fetcher }) {
     if (!newForm.origin_story && newForm.stone_story) {
       newForm.origin_story = newForm.stone_story;
     }
+    if (newForm.origin_story && newForm.origin_story.startsWith("[")) {
+      try { const arr = JSON.parse(newForm.origin_story); newForm.origin_story = Array.isArray(arr) ? arr[0] : newForm.origin_story; } catch (e) {}
+    }
 
     // Un-wrap story arrays strictly
     if (newForm.origin_story && newForm.origin_story.startsWith("[")) {
       try {
         const arr = JSON.parse(newForm.origin_story);
         newForm.origin_story = Array.isArray(arr) ? arr[0] : newForm.origin_story;
-      } catch { }
+      } catch (e) { }
     }
     if (newForm.stone_story && newForm.stone_story.startsWith("[")) {
       try {
         const arr = JSON.parse(newForm.stone_story);
         newForm.origin_story = Array.isArray(arr) ? arr[0] : newForm.stone_story;
-      } catch { }
+      } catch (e) { }
     }
     newFullForm.origin_story = newForm.origin_story;
 
@@ -215,20 +217,20 @@ export function IntakeBenchTab({ products, fetcher }) {
       try {
         const arr = JSON.parse(newForm.honest_flaws_and_character);
         newForm.honest_flaws_and_character = Array.isArray(arr) ? arr[0] : newForm.honest_flaws_and_character;
-      } catch { }
+      } catch (e) { }
     }
     if (newForm.character_marks && newForm.character_marks.startsWith("[")) {
       try {
         const arr = JSON.parse(newForm.character_marks);
         newForm.honest_flaws_and_character = Array.isArray(arr) ? arr[0] : newForm.character_marks;
-      } catch { }
+      } catch (e) { }
     }
     newFullForm.honest_flaws_and_character = newForm.honest_flaws_and_character;
 
     // Fix duplicated Handcrafted By strings
     if (newForm.handcrafted_by && typeof newForm.handcrafted_by === 'string') {
       if (newForm.handcrafted_by.startsWith("[")) {
-         try { const arr = JSON.parse(newForm.handcrafted_by); newForm.handcrafted_by = Array.isArray(arr) ? arr[0] : newForm.handcrafted_by; } catch {}
+         try { const arr = JSON.parse(newForm.handcrafted_by); newForm.handcrafted_by = Array.isArray(arr) ? arr[0] : newForm.handcrafted_by; } catch (e) {}
       }
       if (newForm.handcrafted_by.includes("Bob & Janyce")) {
          newForm.handcrafted_by = "Bob & Janyce, Rockhound Studio";
@@ -236,7 +238,7 @@ export function IntakeBenchTab({ products, fetcher }) {
     }
     if (newFullForm.handcrafted_by && typeof newFullForm.handcrafted_by === 'string') {
       if (newFullForm.handcrafted_by.startsWith("[")) {
-         try { const arr = JSON.parse(newFullForm.handcrafted_by); newFullForm.handcrafted_by = Array.isArray(arr) ? arr[0] : newFullForm.handcrafted_by; } catch {}
+         try { const arr = JSON.parse(newFullForm.handcrafted_by); newFullForm.handcrafted_by = Array.isArray(arr) ? arr[0] : newFullForm.handcrafted_by; } catch (e) {}
       }
       if (newFullForm.handcrafted_by.includes("Bob & Janyce")) {
          newFullForm.handcrafted_by = "Bob & Janyce, Rockhound Studio";
@@ -252,7 +254,7 @@ export function IntakeBenchTab({ products, fetcher }) {
       try {
         const arr = JSON.parse(bestPM);
         bestPM = Array.isArray(arr) ? arr[0] : bestPM;
-      } catch { }
+      } catch (e) { }
     }
 
     if (bestPM === "Stone") bestPM = ""; // Explicitly strip hardcoded fallback
@@ -446,6 +448,32 @@ Image URL: ${imageUrl}`;
     );
   }, [selectedProductId, formState, fetcher]);
 
+  const handleSaveFullMeta = useCallback(() => {
+    if (!selectedProductId) return;
+    const changes = [];
+    
+    Object.entries(fullMetaState).forEach(([key, value]) => {
+      const originalValue = originalMetaRef.current[key] || "";
+      const newValue = value || "";
+      
+      if (originalValue !== newValue && newValue !== "See Shopify metaobject") {
+        changes.push({
+          namespace: getNamespaceForKey(key),
+          key: key,
+          value: newValue,
+          type: "single_line_text_field"
+        });
+      }
+    });
+
+    if (changes.length > 0) {
+      fetcher.submit(
+        { intent: "saveMetafields", productId: selectedProductId, metafields: JSON.stringify(changes) },
+        { method: "post" }
+      );
+    }
+  }, [selectedProductId, fullMetaState, fetcher]);
+
   useEffect(() => {
     const isIdle = fetcher.state === "idle";
     const hasData = fetcher.data !== undefined && fetcher.data !== null;
@@ -455,8 +483,12 @@ Image URL: ${imageUrl}`;
       const isSmartAutoFill = fetcher.data.intent === "smartAutoFill";
       const isTab2AutoFill = fetcher.data.intent === "tab2AutoFill";
       const isSaveProduct = fetcher.data.intent === "saveProduct";
+      const isSaveMetafields = fetcher.data.intent === "saveMetafields";
       const isCopyRockhound = fetcher.data.intent === "copyRockhoundToCustom";
       const isDeleteRockhound = fetcher.data.intent === "deleteRockhoundNamespace";
+      const isMigrate = fetcher.data.intent === "migrate";
+      const isStandardize = fetcher.data.intent === "standardizeOneOfAKind";
+      
       const isSuccess = fetcher.data.success === true;
       const isError = fetcher.data.success === false;
 
@@ -545,12 +577,27 @@ Image URL: ${imageUrl}`;
         setStatusMessage("Metafields injected cleanly into Shopify database.");
       }
 
+      if (isSaveMetafields && isSuccess) {
+        originalMetaRef.current = { ...fullMetaState };
+        if (window.shopify && window.shopify.toast) {
+          window.shopify.toast.show("Changes saved!");
+        }
+      }
+
       if (isCopyRockhound && isSuccess) {
         setStatusMessage(`Migration Complete: Scanned ${fetcher.data.scanned} products, wrote ${fetcher.data.written} fields.`);
       }
 
       if (isDeleteRockhound && isSuccess) {
         setStatusMessage(`Deletion Complete: Scanned ${fetcher.data.scanned} products, deleted ${fetcher.data.deleted} fields.`);
+      }
+
+      if (isMigrate && isSuccess) {
+        setStatusMessage(`Legacy migration complete.`);
+      }
+
+      if (isStandardize && isSuccess) {
+        setStatusMessage(`Standardization complete.`);
       }
 
       if (isError && !isTab2AutoFill) {
@@ -563,9 +610,7 @@ Image URL: ${imageUrl}`;
   const isAutoFilling = fetcher.state !== "idle" && (fetcher.formData?.get("intent") === "autoFill" || fetcher.formData?.get("intent") === "smartAutoFill");
   const isTab2AutoFilling = fetcher.state !== "idle" && fetcher.formData?.get("intent") === "tab2AutoFill";
   const isSaving = fetcher.state !== "idle" && fetcher.formData?.get("intent") === "saveProduct";
-  const isCopying = fetcher.state !== "idle" && fetcher.formData?.get("intent") === "copyRockhoundToCustom";
-  const isDeleting = fetcher.state !== "idle" && fetcher.formData?.get("intent") === "deleteRockhoundNamespace";
-
+  
   return (
     <BlockStack gap="400">
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "24px", alignItems: "start" }}>
@@ -795,7 +840,7 @@ Image URL: ${imageUrl}`;
 
                       // UI render strip for arrays
                       if (typeof val === 'string' && val.startsWith('[')) {
-                          try { const arr = JSON.parse(val); val = Array.isArray(arr) ? arr[0] : val; } catch {}
+                          try { const arr = JSON.parse(val); val = Array.isArray(arr) ? arr[0] : val; } catch(e) {}
                       } else if (Array.isArray(val)) {
                           val = val[0];
                       }
@@ -896,479 +941,100 @@ Image URL: ${imageUrl}`;
         <Card padding="400">
           <BlockStack gap="400">
             <Text variant="headingMd" as="h2">3. Database Migrations</Text>
-            <div style={{ minHeight: "48px" }}>
-              <Button
-                size="large"
-                fullWidth
-                onClick={() => fetcher.submit({ intent: "copyRockhoundToCustom" }, { method: "post" })}
-                accessibilityLabel="Copy Rockhound to Custom (8 fields)"
-                loading={isCopying}
-              >
-                Copy Rockhound → Custom (8 fields)
-              </Button>
-            </div>
-            <div style={{ minHeight: "56px" }}>
-              <button
-                onClick={() => {
-                  if (window.confirm("Are you sure? This permanently deletes all rockhound metafields. This cannot be undone.")) {
-                    fetcher.submit({ intent: "deleteRockhoundNamespace" }, { method: "post" });
-                  }
-                }}
-                disabled={isDeleting}
-                style={{
-                  backgroundColor: "#d72c0d",
-                  color: "white",
-                  minHeight: "56px",
-                  width: "100%",
-                  fontSize: "18px",
-                  fontWeight: "bold",
-                  border: "none",
-                  borderRadius: "4px",
-                  cursor: isDeleting ? "not-allowed" : "pointer",
-                  opacity: isDeleting ? 0.7 : 1
-                }}
-                aria-label="Delete Rockhound Namespace"
-              >
-                {isDeleting ? "Deleting..." : "Delete Rockhound Namespace"}
-              </button>
-            </div>
-          </BlockStack>
-        </Card>
-      </div>
-    </BlockStack>
-  );
-}
-
-// ==========================================
-// MIGRATION ACTION EXPORTS (Server-Side)
-// ==========================================
-
-export async function copyRockhoundToCustom(admin) {
-  const GET_PRODUCTS = `
-    query {
-      products(first: 250) {
-        edges {
-          node {
-            id
-            rockhoundMeta: metafields(first: 50, namespace: "rockhound") {
-              edges { node { key value } }
-            }
-            customMeta: metafields(first: 50, namespace: "custom") {
-              edges { node { key value } }
-            }
-          }
-        }
-      }
-    }
-  `;
-  
-  const res = await admin.graphql(GET_PRODUCTS);
-  const json = await res.json();
-  const products = json.data?.products?.edges || [];
-  
-  const KEYS_TO_COPY = [
-    "primary_medium", "stone_family", "collection_name", "treated",
-    "found_object", "cut_and_shape", "origin_story", "honest_flaws_and_character"
-  ];
-
-  const mutations = [];
-  
-  for (const p of products) {
-    const rockhound = p.node.rockhoundMeta?.edges || [];
-    const custom = p.node.customMeta?.edges || [];
-    
-    for (const key of KEYS_TO_COPY) {
-      const rNode = rockhound.find(e => e.node.key === key);
-      const cNode = custom.find(e => e.node.key === key);
-      
-      const rValue = rNode?.node?.value;
-      const cValue = cNode?.node?.value;
-      
-      if (rValue && rValue.trim() !== "" && (!cValue || cValue.trim() === "")) {
-        mutations.push({
-          ownerId: p.node.id,
-          namespace: "custom",
-          key: key,
-          value: rValue,
-          type: "single_line_text_field"
-        });
-      }
-    }
-  }
-
-  const SET_METAFIELDS = `
-    mutation MetafieldsSet($metafields: [MetafieldsSetInput!]!) {
-      metafieldsSet(metafields: $metafields) {
-        userErrors { field message }
-      }
-    }
-  `;
-
-  const chunks = [];
-  for (let i = 0; i < mutations.length; i += 25) {
-    chunks.push(mutations.slice(i, i + 25));
-  }
-
-  for (const chunk of chunks) {
-    const res = await admin.graphql(SET_METAFIELDS, { variables: { metafields: chunk } });
-    const json = await res.json();
-    
-    const errors = json.data?.metafieldsSet?.userErrors || [];
-    if (errors.length > 0) {
-      results.push({ status: "error", message: `Copy chunk failed: ${errors[0].message}` });
-    } else {
-      fieldsWritten += chunk.length;
-    }
-    await new Promise(resolve => setTimeout(resolve, 300));
-  }
-  
-  return { success: true, intent: "copyRockhoundToCustom", scanned: products.length, written: mutations.length };
-}
-
-export async function deleteRockhoundNamespace(admin) {
-  const GET_PRODUCTS = `
-    query {
-      products(first: 250) {
-        edges {
-          node {
-            id
-            rockhoundMeta: metafields(first: 50, namespace: "rockhound") {
-              edges { node { key } }
-            }
-          }
-        }
-      }
-    }
-  `;
-  const res = await admin.graphql(GET_PRODUCTS);
-  const json = await res.json();
-  const products = json.data?.products?.edges || [];
-  
-  const deletePayloads = [];
-  for (const p of products) {
-    const rockhound = p.node.rockhoundMeta?.edges || [];
-    for (const e of rockhound) {
-      deletePayloads.push({
-        ownerId: p.node.id,
-        namespace: "rockhound",
-        key: e.node.key
-      });
-    }
-  }
-
-  const DELETE_METAFIELDS = `
-    mutation MetafieldsDelete($metafields: [MetafieldIdentifierInput!]!) {
-      metafieldsDelete(metafields: $metafields) {
-        deletedMetafields { key namespace ownerId }
-        userErrors { field message }
-      }
-    }
-  `;
-
-  const chunks = [];
-  for (let i = 0; i < deletePayloads.length; i += 25) {
-    chunks.push(deletePayloads.slice(i, i + 25));
-  }
-
-  for (const chunk of chunks) {
-    const delRes = await admin.graphql(DELETE_METAFIELDS, { variables: { metafields: chunk } });
-    const delJson = await delRes.json();
-    
-    const errors = delJson.data?.metafieldsDelete?.userErrors || [];
-    if (errors.length > 0) {
-      results.push({ status: "error", message: `Delete chunk failed: ${errors[0].message}` });
-    } else {
-      deletedCount += chunk.length;
-    }
-    await new Promise(resolve => setTimeout(resolve, 300));
-  }
-  
-  return { success: true, intent: "deleteRockhoundNamespace", scanned: products.length, deleted: deletePayloads.length };
-}
-
-export default function MigrateDataRoute() {
-  const navigate = useNavigate();
-  const migrateFetcher = useFetcher();
-  const standardizeFetcher = useFetcher();
-  const copyFetcher = useFetcher();
-  const deleteFetcher = useFetcher();
-  const shopify = typeof window !== "undefined" ? window.shopify : undefined;
-
-  const isMigrating = migrateFetcher.state !== "idle";
-  const isStandardizing = standardizeFetcher.state !== "idle";
-  const isCopying = copyFetcher.state !== "idle";
-  const isDeleting = deleteFetcher.state !== "idle";
-
-  const migrateData = migrateFetcher.data;
-  const standardizeData = standardizeFetcher.data;
-  const copyData = copyFetcher.data;
-  const deleteData = deleteFetcher.data;
-
-  const handleRunMigration = () => {
-    migrateFetcher.submit({ intent: "migrate" }, { method: "post" });
-  };
-
-  const handleStandardize = () => {
-    standardizeFetcher.submit({ intent: "standardizeOneOfAKind" }, { method: "post" });
-  };
-
-  useEffect(() => {
-    if (migrateFetcher.state === "idle" && migrateData && migrateData.results) {
-      if (shopify) {
-        const hasErrors = migrateData.results.some(r => r.status === "error");
-        if (hasErrors) {
-          shopify.toast.show("Migration finished with some errors.", { isError: true });
-        } else {
-          shopify.toast.show(`Successfully migrated ${migrateData.fieldsMigrated} fields!`);
-        }
-      }
-    }
-  }, [migrateFetcher.state, migrateData, shopify]);
-
-  useEffect(() => {
-    if (standardizeFetcher.state === "idle" && standardizeData && standardizeData.results) {
-      if (shopify) {
-        const hasErrors = standardizeData.results.some(r => r.status === "error");
-        if (hasErrors) {
-          shopify.toast.show("Standardize finished with some errors.", { isError: true });
-        } else {
-          shopify.toast.show(`Done. ${standardizeData.fixed} products updated.`);
-        }
-      }
-    }
-  }, [standardizeFetcher.state, standardizeData, shopify]);
-
-  useEffect(() => {
-    if (copyFetcher.state === "idle" && copyData && copyData.results) {
-      if (shopify) {
-        const hasErrors = copyData.results.some(r => r.status === "error");
-        if (hasErrors) {
-          shopify.toast.show("Copy finished with some errors.", { isError: true });
-        } else {
-          shopify.toast.show(copyData.results[0].message);
-        }
-      }
-    }
-  }, [copyFetcher.state, copyData, shopify]);
-
-  useEffect(() => {
-    if (deleteFetcher.state === "idle" && deleteData && deleteData.results) {
-      if (shopify) {
-        const hasErrors = deleteData.results.some(r => r.status === "error");
-        if (hasErrors) {
-          shopify.toast.show("Delete finished with some errors.", { isError: true });
-        } else {
-          shopify.toast.show(deleteData.results[0].message);
-        }
-      }
-    }
-  }, [deleteFetcher.state, deleteData, shopify]);
-
-  const StatusIcon = ({ status }) => {
-    if (status === "success") return <span style={{ color: "#2E7D32" }}>✅</span>;
-    return <span style={{ color: "#C62828" }}>❌</span>;
-  };
-
-  return (
-    <Page
-      title="Data Migration Engine"
-      subtitle="Rockhound Studio Legacy Data Importer"
-      backAction={{ content: "Dashboard", onAction: () => navigate("/app"), accessibilityLabel: "Back to Dashboard" }}
-    >
-      <Layout>
-        <Layout.Section>
-          <BlockStack gap="500">
-
+            
             <Banner tone="info" title="The Data Bundling Strategy">
               <p>
                 This script safely grabs your old science fields (Mohs, cleavage, diaphaneity, etc.) and bundles them into a clean <b>Shop Specs</b> text string inside the new <b>Artist Notes</b> field. This keeps Google happy with keywords without forcing you to manage useless fields manually.
               </p>
             </Banner>
 
-            <Card padding="600">
-              <BlockStack gap="400">
-                <Text variant="headingLg" as="h2">Run Legacy Migration</Text>
-                <Text as="p">
-                  Clicking this button will scan your products, map the old data over to the new Freeform Revolution schema, and build the Shop Specs bundles.
-                  (It is safe to run multiple times — it will just overwrite the new fields with the exact same legacy data).
-                </Text>
-                <Box paddingBlockStart="400">
-                  <div style={{ minHeight: "60px", minWidth: "100%" }}>
-                    <Button
-                      size="large"
-                      variant="primary"
-                      fullWidth
-                      onClick={handleRunMigration}
-                      loading={isMigrating}
-                      accessibilityLabel="Run Data Migration"
-                    >
-                      {isMigrating ? "Scanning and Migrating Data..." : "Run Auto-Migration"}
-                    </Button>
-                  </div>
-                </Box>
-              </BlockStack>
-            </Card>
+            <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+              <div style={{ minHeight: "48px" }}>
+                <Button
+                  size="large"
+                  fullWidth
+                  onClick={() => fetcher.submit({ intent: "migrate" }, { method: "post" })}
+                  accessibilityLabel="Run Data Migration"
+                  loading={fetcher.state !== "idle" && fetcher.formData?.get("intent") === "migrate"}
+                >
+                  Run Auto-Migration
+                </Button>
+              </div>
 
-            {migrateData && migrateData.results && (
-              <Card padding="600">
-                <BlockStack gap="500">
-                  <Text variant="headingLg" as="h3">Migration Report</Text>
-                  <Divider />
+              <div style={{ minHeight: "48px" }}>
+                <Button
+                  size="large"
+                  fullWidth
+                  onClick={() => fetcher.submit({ intent: "standardizeOneOfAKind" }, { method: "post" })}
+                  accessibilityLabel="Standardize One of a Kind Values"
+                  loading={fetcher.state !== "idle" && fetcher.formData?.get("intent") === "standardizeOneOfAKind"}
+                >
+                  Standardize One of a Kind Values
+                </Button>
+              </div>
+
+              <div style={{ minHeight: "48px" }}>
+                <Button
+                  size="large"
+                  fullWidth
+                  onClick={() => fetcher.submit({ intent: "copyRockhoundToCustom" }, { method: "post" })}
+                  accessibilityLabel="Copy Rockhound to Custom (8 fields)"
+                  loading={fetcher.state !== "idle" && fetcher.formData?.get("intent") === "copyRockhoundToCustom"}
+                >
+                  Copy Rockhound → Custom (8 fields)
+                </Button>
+              </div>
+
+              <div style={{ minHeight: "56px" }}>
+                <button
+                  onClick={() => {
+                    if (window.confirm("Are you sure? This permanently deletes all rockhound metafields. This cannot be undone.")) {
+                      fetcher.submit({ intent: "deleteRockhoundNamespace" }, { method: "post" });
+                    }
+                  }}
+                  disabled={fetcher.state !== "idle" && fetcher.formData?.get("intent") === "deleteRockhoundNamespace"}
+                  style={{
+                    backgroundColor: "#d72c0d",
+                    color: "white",
+                    minHeight: "56px",
+                    width: "100%",
+                    fontSize: "18px",
+                    fontWeight: "bold",
+                    border: "none",
+                    borderRadius: "4px",
+                    cursor: (fetcher.state !== "idle" && fetcher.formData?.get("intent") === "deleteRockhoundNamespace") ? "not-allowed" : "pointer",
+                    opacity: (fetcher.state !== "idle" && fetcher.formData?.get("intent") === "deleteRockhoundNamespace") ? 0.7 : 1
+                  }}
+                  aria-label="Delete Rockhound Namespace"
+                >
+                  {(fetcher.state !== "idle" && fetcher.formData?.get("intent") === "deleteRockhoundNamespace") ? "Deleting..." : "Delete Rockhound Namespace"}
+                </button>
+              </div>
+            </div>
+
+            {fetcher.data?.intent && ["migrate", "standardizeOneOfAKind", "copyRockhoundToCustom", "deleteRockhoundNamespace"].includes(fetcher.data.intent) && fetcher.data.results && (
+              <div style={{ marginTop: "16px" }}>
+                <Card padding="400">
                   <BlockStack gap="300">
-                    {migrateData.results.map((result, idx) => (
-                      <div key={idx} style={{ display: "flex", alignItems: "center", gap: "8px", padding: "8px 0", borderBottom: "1px solid #E1E3E5" }}>
-                        <StatusIcon status={result.status} />
-                        <Text as="span" tone={result.status === "error" ? "critical" : "base"}>
-                          {result.message}
-                        </Text>
-                      </div>
-                    ))}
+                    <Text variant="headingSm" as="h3">Migration Report</Text>
+                    <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                      {fetcher.data.results.map((result, idx) => (
+                        <div key={idx} style={{ padding: "8px 0", borderBottom: "1px solid #E1E3E5" }}>
+                          <Text as="span" tone={result.status === "error" ? "critical" : "success"}>
+                            {result.status === "success" ? "✅ " : "❌ "} {result.message}
+                          </Text>
+                        </div>
+                      ))}
+                    </div>
                   </BlockStack>
-                </BlockStack>
-              </Card>
+                </Card>
+              </div>
             )}
-
-            <Card padding="600">
-              <BlockStack gap="400">
-                <Text variant="headingLg" as="h2">Standardize One of a Kind Values</Text>
-                <Text as="p">
-                  Finds every product where is_one_of_a_kind is set to "true" and updates it to "Yes — one of a kind" for consistent SEO and storefront display.
-                </Text>
-                <Box paddingBlockStart="400">
-                  <div style={{ minHeight: "60px", minWidth: "100%" }}>
-                    <Button
-                      size="large"
-                      variant="primary"
-                      fullWidth
-                      onClick={handleStandardize}
-                      loading={isStandardizing}
-                      accessibilityLabel="Standardize One of a Kind Values"
-                    >
-                      {isStandardizing ? "Standardizing..." : "Standardize One of a Kind Values"}
-                    </Button>
-                  </div>
-                </Box>
-              </BlockStack>
-            </Card>
-
-            {standardizeData && standardizeData.results && (
-              <Card padding="600">
-                <BlockStack gap="500">
-                  <Text variant="headingLg" as="h3">Standardize Report</Text>
-                  <Divider />
-                  <BlockStack gap="300">
-                    {standardizeData.results.map((result, idx) => (
-                      <div key={idx} style={{ display: "flex", alignItems: "center", gap: "8px", padding: "8px 0", borderBottom: "1px solid #E1E3E5" }}>
-                        <StatusIcon status={result.status} />
-                        <Text as="span" tone={result.status === "error" ? "critical" : "base"}>
-                          {result.message}
-                        </Text>
-                      </div>
-                    ))}
-                  </BlockStack>
-                </BlockStack>
-              </Card>
-            )}
-
-            <Card padding="600">
-              <BlockStack gap="400">
-                <Text variant="headingLg" as="h2">Copy Rockhound → Custom</Text>
-                <Text as="p">
-                  Scans all products and copies 8 specific rockhound fields to the custom namespace if they are not already populated.
-                </Text>
-                <Box paddingBlockStart="400">
-                  <div style={{ minHeight: "60px", minWidth: "100%" }}>
-                    <Button
-                      size="large"
-                      fullWidth
-                      onClick={() => copyFetcher.submit({ intent: "copyRockhoundToCustom" }, { method: "post" })}
-                      accessibilityLabel="Copy Rockhound to Custom (8 fields)"
-                      loading={isCopying}
-                    >
-                      {isCopying ? "Copying..." : "Copy Rockhound → Custom (8 fields)"}
-                    </Button>
-                  </div>
-                </Box>
-              </BlockStack>
-            </Card>
-
-            {copyData && copyData.results && (
-              <Card padding="600">
-                <BlockStack gap="500">
-                  <Text variant="headingLg" as="h3">Copy Report</Text>
-                  <Divider />
-                  <BlockStack gap="300">
-                    {copyData.results.map((result, idx) => (
-                      <div key={idx} style={{ display: "flex", alignItems: "center", gap: "8px", padding: "8px 0", borderBottom: "1px solid #E1E3E5" }}>
-                        <StatusIcon status={result.status} />
-                        <Text as="span" tone={result.status === "error" ? "critical" : "base"}>
-                          {result.message}
-                        </Text>
-                      </div>
-                    ))}
-                  </BlockStack>
-                </BlockStack>
-              </Card>
-            )}
-
-            <Card padding="600">
-              <BlockStack gap="400">
-                <Text variant="headingLg" as="h2">Delete Rockhound Namespace</Text>
-                <Text as="p">
-                  Permanently deletes all metafields in the rockhound namespace. This cannot be undone.
-                </Text>
-                <Box paddingBlockStart="400">
-                  <div style={{ minHeight: "60px", minWidth: "100%" }}>
-                    <button
-                      onClick={() => {
-                        if (window.confirm("Are you sure? This permanently deletes all rockhound metafields. This cannot be undone.")) {
-                          deleteFetcher.submit({ intent: "deleteRockhoundNamespace" }, { method: "post" });
-                        }
-                      }}
-                      disabled={isDeleting}
-                      style={{
-                        backgroundColor: "#d72c0d",
-                        color: "white",
-                        minHeight: "56px",
-                        width: "100%",
-                        fontSize: "18px",
-                        fontWeight: "bold",
-                        border: "none",
-                        borderRadius: "4px",
-                        cursor: isDeleting ? "not-allowed" : "pointer",
-                        opacity: isDeleting ? 0.7 : 1
-                      }}
-                      aria-label="Delete Rockhound Namespace"
-                    >
-                      {isDeleting ? "Deleting..." : "Delete Rockhound Namespace"}
-                    </button>
-                  </div>
-                </Box>
-              </BlockStack>
-            </Card>
-
-            {deleteData && deleteData.results && (
-              <Card padding="600">
-                <BlockStack gap="500">
-                  <Text variant="headingLg" as="h3">Deletion Report</Text>
-                  <Divider />
-                  <BlockStack gap="300">
-                    {deleteData.results.map((result, idx) => (
-                      <div key={idx} style={{ display: "flex", alignItems: "center", gap: "8px", padding: "8px 0", borderBottom: "1px solid #E1E3E5" }}>
-                        <StatusIcon status={result.status} />
-                        <Text as="span" tone={result.status === "error" ? "critical" : "base"}>
-                          {result.message}
-                        </Text>
-                      </div>
-                    ))}
-                  </BlockStack>
-                </BlockStack>
-              </Card>
-            )}
-
+            
           </BlockStack>
-        </Layout.Section>
-      </Layout>
-    </Page>
+        </Card>
+      </div>
+
+    </BlockStack>
   );
 }
