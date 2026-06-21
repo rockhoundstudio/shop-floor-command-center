@@ -34,7 +34,7 @@ const FULL_META_GROUPS = [
     fields: [
       { key: "piece_name", label: "Piece Name", type: "text" },
       { key: "primary_medium", label: "Primary Medium", type: "text" },
-      { key: "handcrafted_by", label: "Handcrafted By", type: "select" },
+      { key: "handcrafted_by", label: "Handcrafted By", type: "text" },
       { key: "is_one_of_a_kind", label: "Is One of a Kind", type: "text" },
       { key: "treated", label: "Treated", type: "text" }
     ]
