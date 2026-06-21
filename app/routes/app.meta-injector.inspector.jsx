@@ -191,6 +191,13 @@ export function IntakeBenchTab({ products, fetcher }) {
       });
     }
 
+    if (!newForm.origin_story && newForm.stone_story) {
+      newForm.origin_story = newForm.stone_story;
+    }
+    if (newForm.origin_story && newForm.origin_story.startsWith("[")) {
+      try { const arr = JSON.parse(newForm.origin_story); newForm.origin_story = Array.isArray(arr) ? arr[0] : newForm.origin_story; } catch {}
+    }
+
     // Un-wrap story arrays strictly
     if (newForm.origin_story && newForm.origin_story.startsWith("[")) {
       try {
@@ -220,23 +227,20 @@ export function IntakeBenchTab({ products, fetcher }) {
     }
     newFullForm.honest_flaws_and_character = newForm.honest_flaws_and_character;
 
-    // Prioritize Custom Primary Medium, then Rockhound, then fallback
-    if (newFullForm.primary_medium && newFullForm.primary_medium === "Stone") {
-      const customPM = product?.metafields?.edges?.find(e => e.node.namespace === "custom" && e.node.key === "primary_medium")?.node?.value;
-      const rockhoundPM = product?.metafields?.edges?.find(e => e.node.namespace === "rockhound" && e.node.key === "primary_medium")?.node?.value;
-      
-      let bestPM = customPM || rockhoundPM || newForm.base_stone_type || "";
-      
-      if (bestPM && bestPM.startsWith("[")) {
-        try {
-          const arr = JSON.parse(bestPM);
-          bestPM = Array.isArray(arr) ? arr[0] : bestPM;
-        } catch { }
-      }
-      
-      newFullForm.primary_medium = bestPM;
-      newForm.primary_medium = bestPM;
+    const customPM = product?.metafields?.edges?.find(e => e.node.namespace === "custom" && e.node.key === "primary_medium")?.node?.value;
+    const rockhoundPM = product?.metafields?.edges?.find(e => e.node.namespace === "rockhound" && e.node.key === "primary_medium")?.node?.value;
+    
+    let bestPM = customPM || rockhoundPM || newForm.base_stone_type || "";
+    
+    if (bestPM && bestPM.startsWith("[")) {
+      try {
+        const arr = JSON.parse(bestPM);
+        bestPM = Array.isArray(arr) ? arr[0] : bestPM;
+      } catch { }
     }
+    
+    newFullForm.primary_medium = bestPM;
+    newForm.primary_medium = bestPM;
 
     if (!newFullForm.handcrafted_by || newFullForm.handcrafted_by.trim() === "") {
         newFullForm.handcrafted_by = "Bob & Janyce, Rockhound Studio";
