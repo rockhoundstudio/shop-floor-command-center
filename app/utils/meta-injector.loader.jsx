@@ -137,640 +137,257 @@ export async function action({ request }) {
   const formData = await request.formData();
   const intent = formData.get("intent");
 
-  if (intent === "createProduct") {
-    const raw = formData.get("pieces");
-    if (!raw) return json({ success: false, error: "No data received" });
-    const payload = JSON.parse(raw);
-    const { sharedFields, rows } = payload;
+  // ── STANDARDIZE ONE OF A KIND ──────────────────────────────────────────────
+  if (intent === "standardizeOneOfAKind") {
     const results = [];
+    let fixed = 0;
 
-    for (const row of rows) {
-      const title = [sharedFields.material, sharedFields.collection_location, row.piece_name]
-        .filter(Boolean).join(" — ");
-
-      const createRes = await admin.graphql(PRODUCT_CREATE_MUTATION, {
-        variables: { input: { title, status: "DRAFT", variants: [{ price: row.price || "0.00" }] } }
-      });
-      const createData = await createRes.json();
-      const productId = createData.data?.productCreate?.product?.id;
-      if (!productId) { results.push({ error: "Product create failed" }); continue; }
-
-      const keysList = [
-        ...ROCKHOUND_FIELDS.map(f => f.key),
-        "origin_story", "honest_flaws_and_character"
-      ];
-
-      const allValues = { ...sharedFields, ...row };
-      const metafields = keysList
-        .filter(key => allValues[key] && allValues[key].toString().trim() !== "")
-        .map(key => ({ namespace: "custom", key, type: "single_line_text_field", value: allValues[key].toString().trim(), ownerId: productId }));
-
-      const chunks = chunkArray(metafields, 10);
-      for (const chunk of chunks) {
-        await admin.graphql(SET_METAFIELDS_MUTATION, { variables: { metafields: chunk } });
-        await new Promise(r => setTimeout(r, 300));
-      }
-
-      const collectionId = COLLECTION_MAP[sharedFields.collection_location];
-      if (collectionId) {
-        await admin.graphql(COLLECTION_ADD_PRODUCTS_MUTATION, {
-          variables: { id: collectionId, productIds: [productId] }
-        });
-      }
-
-      results.push({ productId });
-    }
-
-    return json({ success: true, intent: "createProduct", createdCount: results.filter(r => r.productId).length });
-  }
-
-  if (intent === "saveProduct" || intent === "saveMetafields") {
     try {
-      const FIELD_TYPE_MAP = {
-        is_one_of_a_kind: "single_line_text_field",
-        treated: "single_line_text_field",
-        setting_ready: "single_line_text_field",
-        bail_included: "single_line_text_field",
-        found_object: "single_line_text_field",
-        secondary_colors: "single_line_text_field",
-        character_marks: "single_line_text_field",
-      };
-
-      let metafieldsToSet = [];
-      const rawPayload = formData.get("payload") || formData.get("metafields");
-
-      if (rawPayload) {
-        metafieldsToSet = JSON.parse(rawPayload);
-      } else {
-        const productId = formData.get("productId");
-        if (!productId) {
-          return json({ success: false, error: "Save failed", details: [{ message: "No product ID provided" }] });
-        }
-        
-        const formatId = productId.includes("gid://") ? productId : `gid://shopify/Product/${productId}`;
-        
-        const keysList = [
-          ...ROCKHOUND_FIELDS.map(f => f.key),
-          "origin_story"
-        ];
-
-        keysList.forEach(key => {
-          const val = formData.get(key);
-          if (val && val.toString().trim() !== "") {
-            metafieldsToSet.push({
-              ownerId: formatId,
-              namespace: "rockhound",
-              key: key,
-              value: val.toString().trim()
-            });
-          }
-        });
-      }
-
-      // >>> TYPE RECONCILIATION & FORMATTING PASS <<<
-      const CUSTOM_KEYS = [
-        "primary_medium", "stone_family", "collection_name", "treated",
-        "found_object", "cut_and_shape", "origin_story", "honest_flaws_and_character"
-      ];
-
-      metafieldsToSet = metafieldsToSet.map(mf => {
-        const fieldType = FIELD_TYPE_MAP[mf.key] || mf.type || "single_line_text_field";
-        let fieldValue = String(mf.value).trim();
-
-        if (fieldType === "boolean") {
-          const lowerVal = fieldValue.toLowerCase();
-          fieldValue = (lowerVal === "true" || lowerVal === "1" || lowerVal === "yes") ? "true" : "false";
-        } else if (fieldType === "list.single_line_text_field") {
-          let listVal = fieldValue;
-          try {
-            const parsed = JSON.parse(listVal);
-            if (Array.isArray(parsed)) {
-              const unwrapped = parsed.map(item => {
-                try {
-                  const inner = JSON.parse(item);
-                  return Array.isArray(inner) ? inner[0] : inner;
-                } catch {
-                  return item;
+      const queryResponse = await admin.graphql(`
+        #graphql
+        query GetProductsForStandardize {
+          products(first: 250) {
+            edges {
+              node {
+                id
+                title
+                metafields(first: 50, namespace: "rockhound") {
+                  edges {
+                    node {
+                      id
+                      key
+                      value
+                    }
+                  }
                 }
-              });
-              listVal = JSON.stringify(unwrapped);
-            }
-          } catch {
-            listVal = JSON.stringify([listVal]);
-          }
-          fieldValue = listVal;
-        }
-
-        return {
-          ...mf,
-          namespace: CUSTOM_KEYS.includes(mf.key) ? "custom" : (mf.namespace || "rockhound"),
-          type: fieldType,
-          value: fieldValue
-        };
-      });
-
-      if (metafieldsToSet.length === 0) {
-        return json({ success: false, error: "Save failed", details: [{ message: "No populated fields to save" }] });
-      }
-
-      const chunks = chunkArray(metafieldsToSet, 10);
-      let userErrors = [];
-
-      for (const chunk of chunks) {
-        const res = await admin.graphql(SET_METAFIELDS_MUTATION, {
-          variables: { metafields: chunk }
-        });
-        const resData = await res.json();
-        
-        console.log("=== SAVE CHUNK DEBUG ===");
-        console.log("Chunk being sent:", JSON.stringify(chunk, null, 2));
-        console.log("GraphQL response:", JSON.stringify(resData, null, 2));
-        console.log("userErrors:", JSON.stringify(resData?.data?.metafieldsSet?.userErrors, null, 2));
-        console.log("=== END CHUNK DEBUG ===");
-        
-        const errors = resData.data?.metafieldsSet?.userErrors || [];
-        if (errors.length > 0) {
-          userErrors = userErrors.concat(errors);
-        }
-        
-        await new Promise(r => setTimeout(r, 300));
-      }
-
-      if (userErrors.length > 0) {
-        return json({ success: false, error: "Save failed", details: userErrors });
-      }
-
-      return json({ success: true, intent: intent });
-    } catch (error) {
-      console.error("Save Product Exception Caught:", error);
-      return json({ success: false, error: "Save failed", details: [{ message: error.message }] });
-    }
-  }
-
-  if (intent === "generateSEO") {
-    let geminiStatus = 0;
-    let rawTextOutput = "";
-    try {
-      const rawPayload = formData.get("formData");
-      if (!rawPayload) return json({ success: false, error: "No data received" });
-      
-      const { title, instructions } = JSON.parse(rawPayload);
-      const promptText = `${instructions}\n\nProduct Title: ${title}`;
-
-      const geminiRes = await fetch(
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key=" + process.env.GEMINI_API_KEY,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: promptText }] }]
-          })
-        }
-      );
-
-      geminiStatus = geminiRes.status;
-
-      if (!geminiRes.ok) {
-        const errorBody = await geminiRes.text();
-        console.error("Gemini API Error Status:", geminiStatus, "Body:", errorBody);
-        return json({ success: false, error: "Gemini parse failed", status: geminiStatus, raw: errorBody });
-      }
-
-      const geminiData = await geminiRes.json();
-      const textContent = geminiData.candidates[0]?.content?.parts[0]?.text || "";
-      rawTextOutput = textContent;
-      
-      return json({ success: true, intent: "generateSEO", seoDescription: textContent.trim(), text: textContent.trim() });
-    } catch (error) {
-      console.error("Gemini GenerateSEO Exception Caught:", error);
-      return json({ success: false, error: "Gemini generation failed", status: geminiStatus, raw: rawTextOutput || error.message });
-    }
-  }
-
-  function unwrapArrayValue(val) {
-    if (!val) return "";
-    try { const parsed = JSON.parse(val); if (Array.isArray(parsed)) return parsed[0] || ""; } catch(e) {}
-    return val;
-  }
-
-  const resolveColorValue = (val) => {
-    if (!val) return "";
-    if (val.startsWith("gid://")) return "";
-    return val;
-  };
-
-  if (intent === "smartAutoFill") {
-    let geminiStatus = 0;
-    let rawTextOutput = "";
-    try {
-      const productId = formData.get("productId");
-      if (!productId) return json({ success: false, error: "No product ID" });
-      
-      const res = await admin.graphql(
-        "query GetProduct($id: ID!) { product(id: $id) { title descriptionHtml customMeta: metafields(first: 50, namespace: \"custom\") { edges { node { namespace key value } } } rockhoundMeta: metafields(first: 50, namespace: \"rockhound\") { edges { node { namespace key value } } } geoMeta: metafields(first: 50, namespace: \"geo\") { edges { node { namespace key value } } } } }",
-        { variables: { id: productId } }
-      );
-      
-      const resData = await res.json();
-      const product = resData.data?.product || {};
-      const productTitle = product.title || "";
-      const productDescription = product.descriptionHtml || "";
-      const promptStyle = formData.get("promptStyle") || "";
-      const fetchedMetafields = [
-        ...(product.customMeta?.edges || []),
-        ...(product.rockhoundMeta?.edges || []),
-        ...(product.geoMeta?.edges || []),
-      ].map(e => e.node);
-
-      const promptText = [
-        "You are a data extraction assistant. Parse the following product title and description and return a JSON object mapping these exact keys to their best-guess values extracted from the text.",
-        "",
-        "Keys to map: piece_name, primary_medium, secondary_medium, handcrafted_by, material, stone_family, color, cut_and_shape, surface_finish, dimensions_mm, weight_grams, collection_name, collection_location, collection_date, primary_use, setting_ready, bail_included, is_one_of_a_kind, treated, found_object, wire_material, artist_notes, origin_story, honest_flaws, honest_flaws_and_character.",
-        "Required keys: ensure 'color' and 'cut_and_shape' are always included in the JSON output schema.",
-        "",
-        "Specific Key Instructions:",
-        "- piece_name: the individual name of this stone piece, e.g. The Pine Tree",
-        "- stone_family: the rockhound trade name of the stone — use Labradorite not Feldspar, use Jasper not Chalcedony, use Obsidian not Volcanic Glass. Extract from the title or description.",
-        "- color: look for a line in the description that starts with \"Flash:\" and extract the color word after it. Example: \"Flash: Blue\" → return \"Blue\".",
-        "- cut_and_shape: look for a line in the description that starts with \"Shape:\" and extract the shape word or phrase after it. Example: \"Shape: Freeform Cabochon\" → return \"Freeform Cabochon\".",
-        "- surface_finish: extract the value after the label 'Finish:' in the description. Example: 'Finish: High Polish' → return 'High Polish'. Do not force into a fixed list.",
-        "- handcrafted_by: extract the maker signature from the description. Look for 'Bob & Janyce' or 'Rockhound Studio'. Return 'Bob & Janyce, Rockhound Studio' if found.",
-        "- origin_story: the narrative story of how the stone was found and crafted — this is the primary story field",
-        "- honest_flaws: Any character marks, inclusions, matrix, or natural flaws observed — plain text description.",
-        "- artist_notes: the lapidary process notes — how it was cut, shaped, and finished",
-        "- honest_flaws_and_character: copy of honest_flaws for the Full Meta Report",
-        "- treated: if the description says untreated, not enhanced, or not dyed, return 'false'. Otherwise return 'true'.",
-        "- found_object: if the description says found, collected, or field collected, return 'true'. Otherwise return 'false'.",
-        "- is_one_of_a_kind: if the description says one of a kind, return 'Yes — one of a kind'. Otherwise return 'No'.",
-        "",
-        "If a value cannot be confidently determined from the text, leave the string empty (\"\").",
-        "Return ONLY valid JSON with no markdown formatting.",
-        "",
-        "Style Guidelines to follow while extracting or formatting fields: " + promptStyle,
-        "",
-        "Title: " + productTitle,
-        "Description: " + productDescription
-      ].join("\n");
-
-      const geminiRes = await fetch(
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key=" + process.env.GEMINI_API_KEY,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            contents: [
-              {
-                parts: [{ text: promptText }]
               }
-            ],
-            generationConfig: {
-              response_mime_type: "application/json",
-            }
-          })
-        }
-      );
-
-      geminiStatus = geminiRes.status;
-
-      if (!geminiRes.ok) {
-        const errorBody = await geminiRes.text();
-        console.error("Gemini API Error Status:", geminiStatus, "Body:", errorBody);
-        return json({ success: false, error: "Gemini parse failed", status: geminiStatus, raw: errorBody });
-      }
-
-      const geminiData = await geminiRes.json();
-      const textContent = geminiData.candidates[0]?.content?.parts[0]?.text || "";
-      rawTextOutput = textContent;
-      
-      let cleanJson = textContent.trim();
-      const firstBrace = cleanJson.indexOf('{');
-      const lastBrace = cleanJson.lastIndexOf('}');
-      
-      if (firstBrace !== -1 && lastBrace !== -1) {
-        cleanJson = cleanJson.slice(firstBrace, lastBrace + 1);
-      }
-
-      const parsedValues = JSON.parse(cleanJson);
-      
-      const materialName = parsedValues.material || "";
-      
-      if (materialName) {
-        const stoneProfile = await prisma.stoneProfile.findFirst({
-          where: {
-            stoneName: {
-              equals: materialName,
-              mode: 'insensitive'
             }
           }
-        });
+        }
+      `);
 
-        if (stoneProfile) {
-          const geoFieldsToInject = [
-            "baseMineralName", "colorPattern", "authenticity", "rarity",
-            "crystalSystem", "geologicalEra", "mineralClass", "rockComposition",
-            "rockFormation", "hardness", "luster", "fracture", "cleavage",
-            "specificGravity", "diaphaneity"
-          ];
+      const json = await queryResponse.json();
+      const products = json.data && json.data.products && json.data.products.edges
+        ? json.data.products.edges.map(e => e.node)
+        : [];
 
-          const formatId = productId.includes("gid://") ? productId : `gid://shopify/Product/${productId}`;
-          const geoMetafieldsToSet = [];
+      const toFix = [];
 
-          geoFieldsToInject.forEach(key => {
-            const val = stoneProfile[key];
-            if (val !== null && val !== undefined && val.toString().trim() !== "") {
-              geoMetafieldsToSet.push({
-                ownerId: formatId,
-                namespace: "geo",
-                key: key,
-                value: val.toString().trim(),
+      products.forEach(product => {
+        if (product.metafields && product.metafields.edges) {
+          product.metafields.edges.forEach(edge => {
+            if (edge.node.key === "is_one_of_a_kind" && edge.node.value === "true") {
+              toFix.push({
+                ownerId: product.id,
+                namespace: "rockhound",
+                key: "is_one_of_a_kind",
+                value: "Yes — one of a kind",
                 type: "single_line_text_field"
               });
             }
           });
-
-          if (geoMetafieldsToSet.length > 0) {
-            const chunks = chunkArray(geoMetafieldsToSet, 10);
-            for (const chunk of chunks) {
-              await admin.graphql(SET_METAFIELDS_MUTATION, {
-                variables: { metafields: chunk }
-              });
-              await new Promise(r => setTimeout(r, 300));
-            }
-          }
-        }
-      }
-
-      const customMeta = {};
-      const rockhoundMeta = {};
-      fetchedMetafields.forEach(m => {
-        if (m.namespace === "custom") {
-          customMeta[m.key] = m.value;
-        } else if (m.namespace === "rockhound") {
-          rockhoundMeta[m.key] = m.value;
         }
       });
 
-      if (!parsedValues.color || parsedValues.color.trim() === "") {
-        if (customMeta.primary_color) parsedValues.color = customMeta.primary_color;
-      }
-      if (!parsedValues.cut_and_shape || parsedValues.cut_and_shape.trim() === "") {
-        if (customMeta.cut_type) parsedValues.cut_and_shape = customMeta.cut_type;
-      }
-      if (!parsedValues.origin_story || parsedValues.origin_story.trim() === "") {
-        if (customMeta.stone_story) parsedValues.origin_story = customMeta.stone_story;
-      }
-      if (!parsedValues.honest_flaws_and_character || parsedValues.honest_flaws_and_character.trim() === "") {
-        if (customMeta.character_marks) parsedValues.honest_flaws_and_character = customMeta.character_marks;
-      }
-      if (!parsedValues.handcrafted_by || parsedValues.handcrafted_by.trim() === "" || parsedValues.handcrafted_by === "Robert") {
-        parsedValues.handcrafted_by = "Bob & Janyce, Rockhound Studio";
-      }
-
-      let hf = customMeta.honest_flaws_and_character || customMeta.character_marks || "";
-      if (hf.startsWith("[")) { try { const arr = JSON.parse(hf); hf = Array.isArray(arr) ? arr[0] : hf; } catch {} }
-      if (typeof hf === "string" && hf.startsWith("[")) { hf = hf.replace(/^\["|"\]$/g, ""); }
-
-      return json({ 
-        success: true, 
-        intent: "smartAutoFill", 
-        fields: parsedValues,
-        autoFillData: parsedValues,
-        fullMetaFields: {
-          color: resolveColorValue(rockhoundMeta.primary_color) || resolveColorValue(customMeta.primary_color) || rockhoundMeta.primary_color || customMeta.primary_color || "",
-          cut_and_shape: customMeta.cut_type || "",
-          origin_story: unwrapArrayValue(customMeta.stone_story) || unwrapArrayValue(customMeta.origin_story) || "",
-          honest_flaws_and_character: hf,
-          handcrafted_by: "Bob & Janyce, Rockhound Studio",
-          is_one_of_a_kind: rockhoundMeta.is_one_of_a_kind === "true" || rockhoundMeta.is_ooak === "true" ? "Yes — one of a kind" : "No",
-          treated: customMeta.treated === "true" ? "Yes" : customMeta.treated === "false" ? "No" : customMeta.treatment_status ? (customMeta.treatment_status.toLowerCase().includes("untreated") ? "No" : "Yes") : "",
-          found_object: customMeta.found_object === "true" ? "Yes" : customMeta.found_object === "false" ? "No" : "",
-          primary_medium: "Stone",
-          material: rockhoundMeta.material || customMeta.official_name || "",
-          surface_finish: rockhoundMeta.surface_finish || customMeta.surface_finish || parsedValues.surface_finish || "",
-          dimensions_mm: rockhoundMeta.dimensions_mm || customMeta.dimensions_mm || parsedValues.dimensions_mm || "",
-          artist_notes: rockhoundMeta.artist_notes || customMeta.artist_notes || "",
-          collection_name: rockhoundMeta.collection_name || customMeta.collection_name || ""
-        },
-        overwriteFields: {
-          color: parsedValues.color || "",
-          cut_and_shape: parsedValues.cut_and_shape || "",
-          surface_finish: parsedValues.surface_finish || "",
-          stone_family: parsedValues.stone_family || "",
-          handcrafted_by: parsedValues.handcrafted_by || "",
-          treated: parsedValues.treated || "",
-          found_object: parsedValues.found_object || "",
-          is_one_of_a_kind: parsedValues.is_one_of_a_kind || ""
+      if (toFix.length === 0) {
+        results.push({ status: "success", message: "All products already standardized. Nothing to update." });
+      } else {
+        const chunks = [];
+        for (let i = 0; i < toFix.length; i += 25) {
+          chunks.push(toFix.slice(i, i + 25));
         }
-      });
-    } catch (error) {
-      console.error("Gemini SmartAutoFill Exception Caught:", error);
-      return json({ success: false, error: "Gemini parse failed", status: geminiStatus, raw: rawTextOutput || error.message });
-    }
-  }
 
-  if (intent === "autoFill") {
-    let geminiStatus = 0;
-    let rawTextOutput = "";
-    try {
-      const productId = formData.get("productId");
-      const productTitle = formData.get("productTitle") || "";
-      const productDescription = formData.get("productDescription") || "";
-      const promptStyle = formData.get("promptStyle") || "";
-
-      const promptText = [
-        "You are a data extraction assistant. Parse the following product title and description and return a JSON object mapping these exact keys to their best-guess values extracted from the text.",
-        "",
-        "Keys to map: piece_name, primary_medium, secondary_medium, handcrafted_by, material, stone_family, color, cut_and_shape, surface_finish, dimensions_mm, weight_grams, collection_name, collection_location, collection_date, primary_use, setting_ready, bail_included, is_one_of_a_kind, treated, found_object, wire_material, artist_notes, origin_story, honest_flaws, honest_flaws_and_character.",
-        "Required keys: ensure 'color' and 'cut_and_shape' are always included in the JSON output schema.",
-        "",
-        "Specific Key Instructions:",
-        "- piece_name: the individual name of this stone piece, e.g. The Pine Tree",
-        "- stone_family: the rockhound trade name of the stone — use Labradorite not Feldspar, use Jasper not Chalcedony, use Obsidian not Volcanic Glass. Extract from the title or description.",
-        "- color: look for a line in the description that starts with \"Flash:\" and extract the color word after it. Example: \"Flash: Blue\" → return \"Blue\".",
-        "- cut_and_shape: look for a line in the description that starts with \"Shape:\" and extract the shape word or phrase after it. Example: \"Shape: Freeform Cabochon\" → return \"Freeform Cabochon\".",
-        "- surface_finish: extract the value after the label 'Finish:' in the description. Example: 'Finish: High Polish' → return 'High Polish'. Do not force into a fixed list.",
-        "- handcrafted_by: extract the maker signature from the description. Look for 'Bob & Janyce' or 'Rockhound Studio'. Return 'Bob & Janyce, Rockhound Studio' if found.",
-        "- origin_story: the narrative story of how the stone was found and crafted — this is the primary story field",
-        "- honest_flaws: Any character marks, inclusions, matrix, or natural flaws observed — plain text description.",
-        "- artist_notes: the lapidary process notes — how it was cut, shaped, and finished",
-        "- honest_flaws_and_character: copy of honest_flaws for the Full Meta Report",
-        "- treated: if the description says untreated, not enhanced, or not dyed, return 'false'. Otherwise return 'true'.",
-        "- found_object: if the description says found, collected, or field collected, return 'true'. Otherwise return 'false'.",
-        "- is_one_of_a_kind: if the description says one of a kind, return 'Yes — one of a kind'. Otherwise return 'No'.",
-        "",
-        "If a value cannot be confidently determined from the text, leave the string empty (\"\").",
-        "Return ONLY valid JSON with no markdown formatting.",
-        "",
-        "Style Guidelines to follow while extracting or formatting fields: " + promptStyle,
-        "",
-        "Title: " + productTitle,
-        "Description: " + productDescription
-      ].join("\n");
-
-      const geminiRes = await fetch(
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key=" + process.env.GEMINI_API_KEY,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            contents: [
-              {
-                parts: [{ text: promptText }]
+        for (const chunk of chunks) {
+          const setResponse = await admin.graphql(`
+            #graphql
+            mutation MetafieldsSet($metafields: [MetafieldsSetInput!]!) {
+              metafieldsSet(metafields: $metafields) {
+                userErrors { field message }
               }
-            ],
-            generationConfig: {
-              response_mime_type: "application/json",
             }
-          })
+          `, { variables: { metafields: chunk } });
+
+          const setJson = await setResponse.json();
+          const errors = setJson.data && setJson.data.metafieldsSet && setJson.data.metafieldsSet.userErrors
+            ? setJson.data.metafieldsSet.userErrors
+            : [];
+
+          if (errors.length > 0) {
+            results.push({ status: "error", message: `Chunk failed: ${errors[0].message}` });
+          } else {
+            fixed += chunk.length;
+          }
         }
-      );
 
-      geminiStatus = geminiRes.status;
-
-      if (!geminiRes.ok) {
-        const errorBody = await geminiRes.text();
-        console.error("Gemini API Error Status:", geminiStatus, "Body:", errorBody);
-        return json({ success: false, error: "Gemini parse failed", status: geminiStatus, raw: errorBody });
+        results.push({ status: "success", message: `Done. Updated ${fixed} products to "Yes — one of a kind".` });
       }
+    } catch (error) {
+      results.push({ status: "error", message: `Standardize failed: ${error.message}` });
+    }
 
-      const geminiData = await geminiRes.json();
-      const textContent = geminiData.candidates[0]?.content?.parts[0]?.text || "";
-      rawTextOutput = textContent;
+    return { intent, results, fixed };
+  }
 
-      let cleanJson = textContent.trim();
-      const firstBrace = cleanJson.indexOf('{');
-      const lastBrace = cleanJson.lastIndexOf('}');
-      
-      if (firstBrace !== -1 && lastBrace !== -1) {
-        cleanJson = cleanJson.slice(firstBrace, lastBrace + 1);
-      }
+  // ── LEGACY MIGRATION ───────────────────────────────────────────────────────
+  const results = [];
+  let productsProcessed = 0;
+  let fieldsMigrated = 0;
 
-      const parsedValues = JSON.parse(cleanJson);
-
-      let geoFields = {};
-      const materialName = parsedValues.material || "";
-
-      if (materialName) {
-        const stoneProfile = await prisma.stoneProfile.findFirst({
-          where: {
-            stoneName: {
-              contains: materialName,
-              mode: 'insensitive'
+  try {
+    const queryResponse = await admin.graphql(`
+      #graphql
+      query GetAllProductsForMigration {
+        products(first: 250) {
+          edges {
+            node {
+              id
+              title
+              customMetafields: metafields(first: 50, namespace: "custom") {
+                edges {
+                  node {
+                    key
+                    value
+                  }
+                }
+              }
+              rockhoundMetafields: metafields(first: 50, namespace: "rockhound") {
+                edges {
+                  node {
+                    key
+                    value
+                  }
+                }
+              }
             }
           }
+        }
+      }
+    `);
+
+    const json = await queryResponse.json();
+    const products = json.data && json.data.products && json.data.products.edges
+      ? json.data.products.edges.map(e => e.node)
+      : [];
+
+    const pendingUpdates = [];
+
+    products.forEach(product => {
+      const getCustom = (key) => {
+        if (!product.customMetafields || !product.customMetafields.edges) return null;
+        const field = product.customMetafields.edges.find(e => e.node.key === key);
+        return field ? field.value : null;
+      };
+
+      const getRockhound = (key) => {
+        if (!product.rockhoundMetafields || !product.rockhoundMetafields.edges) return null;
+        const field = product.rockhoundMetafields.edges.find(e => e.node.key === key);
+        return field ? field.value : null;
+      };
+
+      const custDim = getCustom("dimensions_mm");
+      const custTreat = getCustom("treatment_status");
+      const custStory = getCustom("stone_story");
+      const custChar = getCustom("character_marks");
+      const custBench = getCustom("bench_notes");
+
+      const rhDim = getRockhound("dimensions_mm");
+      const rhTreat = getRockhound("treated");
+      const rhStory = getRockhound("origin_story");
+      const rhFlaws = getRockhound("honest_flaws_and_character");
+
+      let addedToThisProduct = false;
+
+      const pushUpdate = (key, value, type) => {
+        pendingUpdates.push({
+          update: { ownerId: product.id, namespace: "rockhound", key, value, type },
+          title: product.title
         });
+        addedToThisProduct = true;
+      };
 
-        if (stoneProfile) {
-          const geoKeysToExtract = [
-            "baseMineralName", "colorPattern", "authenticity", "rarity",
-            "crystalSystem", "geologicalEra", "mineralClass", "rockComposition",
-            "rockFormation", "hardness", "luster", "fracture", "cleavage",
-            "specificGravity", "diaphaneity"
-          ];
+      // custom.dimensions_mm → rockhound.dimensions_mm
+      if (custDim && !rhDim) {
+        pushUpdate("dimensions_mm", custDim, "single_line_text_field");
+      }
 
-          geoKeysToExtract.forEach(key => {
-            const val = stoneProfile[key];
-            if (val !== null && val !== undefined && val.toString().trim() !== "") {
-              geoFields[key] = val.toString().trim();
-            }
-          });
+      // custom.treatment_status → rockhound.treated
+      if (custTreat && !rhTreat) {
+        pushUpdate("treated", custTreat, "single_line_text_field");
+      }
+
+      // custom.stone_story → rockhound.origin_story
+      if (custStory && !rhStory) {
+        pushUpdate("origin_story", custStory, "multi_line_text_field");
+      }
+
+      // custom.character_marks & custom.bench_notes → rockhound.honest_flaws_and_character
+      if (!rhFlaws) {
+        let combinedFlaws = null;
+        
+        if (custChar && custBench) {
+          combinedFlaws = `${custChar}\n${custBench}`;
+        } else if (custChar) {
+          combinedFlaws = custChar;
+        } else if (custBench) {
+          combinedFlaws = custBench;
+        }
+
+        if (combinedFlaws) {
+          pushUpdate("honest_flaws_and_character", combinedFlaws, "multi_line_text_field");
         }
       }
 
-      if (parsedValues.honest_flaws) {
-        parsedValues.honest_flaws_and_character = parsedValues.honest_flaws;
+      if (addedToThisProduct) {
+        productsProcessed++;
       }
-      
-      const res = await admin.graphql(
-        "query GetProduct($id: ID!) { product(id: $id) { title descriptionHtml customMeta: metafields(first: 50, namespace: \"custom\") { edges { node { namespace key value } } } rockhoundMeta: metafields(first: 50, namespace: \"rockhound\") { edges { node { namespace key value } } } geoMeta: metafields(first: 50, namespace: \"geo\") { edges { node { namespace key value } } } } }",
-        { variables: { id: productId } }
-      );
-      const resData = await res.json();
-      const fetchedMetafields = [
-        ...(resData.data?.product?.customMeta?.edges || []),
-        ...(resData.data?.product?.rockhoundMeta?.edges || []),
-        ...(resData.data?.product?.geoMeta?.edges || []),
-      ].map(e => e.node);
+    });
 
-      const customMeta = {};
-      const rockhoundMeta = {};
-      fetchedMetafields.forEach(m => {
-        if (m.namespace === "custom") {
-          customMeta[m.key] = m.value;
-        } else if (m.namespace === "rockhound") {
-          rockhoundMeta[m.key] = m.value;
-        }
-      });
-
-      if (!parsedValues.color || parsedValues.color.trim() === "") {
-        if (customMeta.primary_color) parsedValues.color = customMeta.primary_color;
-      }
-      if (!parsedValues.cut_and_shape || parsedValues.cut_and_shape.trim() === "") {
-        if (customMeta.cut_type) parsedValues.cut_and_shape = customMeta.cut_type;
-      }
-      if (!parsedValues.origin_story || parsedValues.origin_story.trim() === "") {
-        if (customMeta.stone_story) parsedValues.origin_story = customMeta.stone_story;
-      }
-      if (!parsedValues.honest_flaws_and_character || parsedValues.honest_flaws_and_character.trim() === "") {
-        if (customMeta.character_marks) parsedValues.honest_flaws_and_character = customMeta.character_marks;
-      }
-      if (!parsedValues.handcrafted_by || parsedValues.handcrafted_by.trim() === "" || parsedValues.handcrafted_by === "Robert") {
-        parsedValues.handcrafted_by = "Bob & Janyce, Rockhound Studio";
-      }
-
-      let hf = customMeta.honest_flaws_and_character || customMeta.character_marks || "";
-      if (hf.startsWith("[")) { try { const arr = JSON.parse(hf); hf = Array.isArray(arr) ? arr[0] : hf; } catch {} }
-      if (typeof hf === "string" && hf.startsWith("[")) { hf = hf.replace(/^\["|"\]$/g, ""); }
-
-      return json({ 
-        success: true, 
-        intent: "autoFill", 
-        fields: parsedValues,
-        autoFillData: parsedValues,
-        geoFields,
-        fullMetaFields: {
-          color: resolveColorValue(rockhoundMeta.primary_color) || resolveColorValue(customMeta.primary_color) || rockhoundMeta.primary_color || customMeta.primary_color || "",
-          cut_and_shape: customMeta.cut_type || "",
-          origin_story: unwrapArrayValue(customMeta.stone_story) || unwrapArrayValue(customMeta.origin_story) || "",
-          honest_flaws_and_character: hf,
-          handcrafted_by: "Bob & Janyce, Rockhound Studio",
-          is_one_of_a_kind: rockhoundMeta.is_one_of_a_kind === "true" || rockhoundMeta.is_ooak === "true" ? "Yes — one of a kind" : "No",
-          treated: customMeta.treated === "true" ? "Yes" : customMeta.treated === "false" ? "No" : customMeta.treatment_status ? (customMeta.treatment_status.toLowerCase().includes("untreated") ? "No" : "Yes") : "",
-          found_object: customMeta.found_object === "true" ? "Yes" : customMeta.found_object === "false" ? "No" : "",
-          primary_medium: "Stone",
-          stone_family: customMeta.stone_family || "",
-          material: rockhoundMeta.material || customMeta.official_name || "",
-          surface_finish: rockhoundMeta.surface_finish || customMeta.surface_finish || "",
-          dimensions_mm: rockhoundMeta.dimensions_mm || customMeta.dimensions_mm || "",
-          artist_notes: rockhoundMeta.artist_notes || customMeta.artist_notes || "",
-          collection_name: rockhoundMeta.collection_name || customMeta.collection_name || ""
-        },
-        overwriteFields: {
-          color: parsedValues.color || "",
-          cut_and_shape: parsedValues.cut_and_shape || "",
-          surface_finish: parsedValues.surface_finish || "",
-          stone_family: parsedValues.stone_family || "",
-          handcrafted_by: parsedValues.handcrafted_by || "",
-          treated: parsedValues.treated || "",
-          found_object: parsedValues.found_object || "",
-          is_one_of_a_kind: parsedValues.is_one_of_a_kind || ""
-        }
-      });
-    } catch (error) {
-      console.error("Gemini AutoFill Exception Caught:", error);
-      return json({ success: false, error: "Gemini parse failed", status: geminiStatus, raw: rawTextOutput || error.message });
+    const chunks = [];
+    for (let i = 0; i < pendingUpdates.length; i += 25) {
+      chunks.push(pendingUpdates.slice(i, i + 25));
     }
+
+    for (const chunk of chunks) {
+      // Extract just the Shopify input objects for the mutation
+      const metafields = chunk.map(c => c.update);
+
+      const setResponse = await admin.graphql(`
+        #graphql
+        mutation MetafieldsSet($metafields: [MetafieldsSetInput!]!) {
+          metafieldsSet(metafields: $metafields) {
+            userErrors { field message }
+          }
+        }
+      `, { variables: { metafields } });
+
+      const setJson = await setResponse.json();
+      const errors = setJson.data && setJson.data.metafieldsSet && setJson.data.metafieldsSet.userErrors
+        ? setJson.data.metafieldsSet.userErrors
+        : [];
+
+      if (errors.length > 0) {
+        results.push({ status: "error", message: `Chunk failed: ${errors[0].message}` });
+      } else {
+        fieldsMigrated += chunk.length;
+        // Log individual successful migrations to the results array
+        chunk.forEach(c => {
+          results.push({ status: "success", message: `Migrated '${c.update.key}' for product: ${c.title}` });
+        });
+      }
+    }
+
+    if (fieldsMigrated === 0 && results.length === 0) {
+      results.push({ status: "success", message: `Scanned ${products.length} products. All fields are already migrated or blank.` });
+    } else {
+      // Unshift a grand summary to the top of the report
+      results.unshift({ status: "success", message: `SUMMARY: Scanned ${products.length} products. Migrated ${fieldsMigrated} total fields across ${productsProcessed} items.` });
+    }
+
+  } catch (error) {
+    results.push({ status: "error", message: `Migration completely failed: ${error.message}` });
   }
 
-  if (intent === "tab2AutoFill") {
-    return json({ success: true, intent: "tab2AutoFill" });
-  }
-
-  return json({ success: false, error: "Unknown intent" });
+  return { intent: "migrate", results, productsProcessed, fieldsMigrated };
 }
 
 export default function MigrateDataRoute() {
