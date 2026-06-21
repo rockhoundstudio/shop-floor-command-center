@@ -1064,3 +1064,5 @@ Image URL: ${imageUrl}`;
     </BlockStack>
   );
 }
+
+export default IntakeBenchTab;

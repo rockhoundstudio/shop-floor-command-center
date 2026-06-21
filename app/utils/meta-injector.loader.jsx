@@ -11,6 +11,13 @@ const GET_PRODUCTS_QUERY = `
         node {
           id
           title
+          images(first: 1) {
+            edges {
+              node {
+                url
+              }
+            }
+          }
           customMeta: metafields(first: 50, namespace: "custom") {
             edges { node { namespace key value type } }
           }
