@@ -1,0 +1,20 @@
+[33m7ea8ed7[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m Fix: deleteRockhound mutation — correct metafieldsDelete input type with ID array
+[33m4d8251b[m Feature: add delete rockhound namespace button to migration engine
+[33mf4ac16a[m Feature: copy rockhound to custom migration, delete rockhound action, loader rewired to custom namespace for 8 fields
+[33m427dde6[m Feature: migration action to copy 8 rockhound-only fields into custom namespace
+[33mff139d5[m Feature: add real-time search bar to Intake Bench product list
+[33md319a76[m Fix: primary_medium hardcoded to Stone, treated from treatment_status, found_object from is_ooak fallback
+[33m40f403c[m Fix: primary_medium rockhound first, treated/found_object/is_one_of_a_kind boolean to text conversion
+[33mbc68287[m Fix: autoFill GetProduct queries — fetch rockhound, custom, geo namespaces separately to avoid 50-field cutoff
+[33m98a1abb[m Fix: color cascade in both fullMetaFields blocks — rockhound first then custom fallback
+[33mec47910[m Fix: autoFill fullMetaFields — correct material, stone_family, dimensions, artist_notes, collection_name, treated, found_object, color sources
+[33m7c1ec48[m Fix: autoFill fullMetaFields matches smartAutoFill — unwrap arrays, rockhoundMeta reads, correct field mappings
+[33m6d833f8[m Fix: fullMetaState merges fullMetaFields so color renders, unwrap origin_story and honest_flaws_and_character array values in inspector
+[33mfe0e5cf[m Fix: resolve color GID reference, fix is_one_of_a-kind hyphen key
+[33mdfdda5d[m Fix: add cut_and_shape and color to fix-metafields, add is_one_of_a_kind boolean conversion
+[33mfc6d35e[m Fix: return fullMetaFields from autoFill to update fullMetaState with color, cut_and_shape, handcrafted_by, is_one_of_a_kind
+[33m4554d26[m Fix: map custom namespace fields to rockhound on autoFill — color, cut_and_shape, origin_story, honest_flaws, handcrafted_by
+[33m99cf491[m Fix: add Flash and Shape line extraction rules to autoFill and smartAutoFill Gemini prompts
+[33m41c8a0d[m Fix: remove currentlyEmpty block from tab2AutoFill, pass existing color and cut_and_shape to autoFill
+[33m6e728a3[m Fix: convert dropdowns to text fields, force overwrite AutoFill, fix Full Meta Report render logic
+[33ma8070be[m Fix: add overwriteFields to autoFill and smartAutoFill responses for force-overwrite on frontend
