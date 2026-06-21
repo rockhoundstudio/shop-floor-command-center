@@ -43,7 +43,7 @@ async function fetchMindat(title) {
     return results[0];
   } catch (error) {
     console.error("Mindat API Fetch Fault:", error.message);
-    return null; // Fail gracefully so the local library data can still pass through
+    return null;
   }
 }
 
@@ -148,7 +148,7 @@ export const action = async ({ request }) => {
     }
 
     const title = body.get("title") || "";
-    const description = body.get("description") || ""; // HTML payload
+    const description = body.get("description") || "";
     const existingMeta = JSON.parse(body.get("existingMeta") || "{}");
 
     const merged = { ...existingMeta };
@@ -162,30 +162,26 @@ export const action = async ({ request }) => {
     };
 
     // ==========================================
-    // PASS 0: NATIVE HTML DESCRIPTION PARSER
+    // PASS 0: TEXT PARSING
     // ==========================================
     if (description) {
       try {
-        // --- 1. The Stone Section Extraction ---
-        // Find a heading containing "The Stone" or "The Stone:"
         const stoneHeadingRegex = /<(h[1-6]|strong|b)[^>]*>[\s\S]*?the stone:?[\s\S]*?<\/\1>/i;
         const headingMatch = description.match(stoneHeadingRegex);
         
-        let beforeStone = description; // Everything before the heading
+        let beforeStone = description;
         
         if (headingMatch) {
           beforeStone = description.substring(0, headingMatch.index);
           const afterHeading = description.substring(headingMatch.index + headingMatch[0].length);
           
-          // Find the next heading to know where the Stone section ends
           const nextHeadingIndex = afterHeading.search(/<h[1-6][^>]*>/i);
           const stoneHtml = nextHeadingIndex !== -1 ? afterHeading.substring(0, nextHeadingIndex) : afterHeading;
           
-          // Split content into lines using breaks, closing tags, or literal newlines
           const lines = stoneHtml.split(/<br\s*\/?>|<\/p>|<\/div>|\n/i);
           
           lines.forEach(line => {
-            const cleanedLine = line.replace(/<\/?[^>]+(>|$)/g, "").trim(); // Strip HTML
+            const cleanedLine = line.replace(/<\/?[^>]+(>|$)/g, "").trim();
             const lowerLine = cleanedLine.toLowerCase();
 
             if (lowerLine.startsWith("type:")) safeSet("primary_medium", cleanedLine.substring(5).trim());
@@ -199,7 +195,6 @@ export const action = async ({ request }) => {
           });
         }
 
-        // --- 2. Origin Story Link Extraction ---
         const ignoreList = [
           "/pages/tails-and-trails", 
           "/pages/rockhound-logbook-hub", 
@@ -207,7 +202,6 @@ export const action = async ({ request }) => {
           "/pages/the-3-000-mile-run"
         ];
         
-        // Try to isolate the rockhound-dwell-links div if it exists
         let linkSearchArea = description;
         const dwellLinksDiv = description.match(/<(?:div|section)[^>]*(?:id|class)=["'][^"']*rockhound-dwell-links[^"']*["'][^>]*>([\s\S]*?)<\/(?:div|section)>/i);
         if (dwellLinksDiv) {
@@ -221,33 +215,27 @@ export const action = async ({ request }) => {
           if (href.includes("/pages/")) {
             let path = href;
             try {
-              // Parse URL to cleanly isolate pathname from protocol/domain/query params
               const urlObj = new URL(href, "https://dummy.com"); 
               path = urlObj.pathname;
             } catch (e) {
-              path = href.split('?')[0]; // fallback strip query string
+              path = href.split('?')[0];
             }
             
             if (!ignoreList.includes(path)) {
               const slug = path.split("/").filter(Boolean).pop();
               safeSet("origin_story_page_slug", slug);
-              break; // Stop after finding the first valid link
+              break;
             }
           }
         }
 
-        // --- 3. Story Paragraphs Extraction ---
-        // Extract from text physically located before the "The Stone" heading
         const pRegex = /<p[^>]*>([\s\S]*?)<\/p>/gi;
         let pMatch;
         const storyParagraphs = [];
         
         while ((pMatch = pRegex.exec(beforeStone)) !== null) {
           let pContent = pMatch[1];
-          
-          // Remove anchor tags entirely (including their text content)
           pContent = pContent.replace(/<a\b[^>]*>[\s\S]*?<\/a>/gi, "");
-          // Strip remaining HTML tags
           pContent = pContent.replace(/<\/?[^>]+(>|$)/g, "").trim();
           
           if (pContent.length > 0) {
@@ -262,7 +250,6 @@ export const action = async ({ request }) => {
 
       } catch (parseError) {
         console.error("Pass 0 Text Parsing Fault:", parseError.message);
-        // Do not crash the endpoint, proceed to Pass 1
       }
     }
 
@@ -287,7 +274,7 @@ export const action = async ({ request }) => {
     }
 
     // ==========================================
-    // PASS 2B: GEMINI TEXT — DESCRIPTION EXTRACTION
+    // PASS 2B: GEMINI TEXT
     // ==========================================
     if (description) {
       try {
@@ -362,21 +349,17 @@ Return only valid JSON. No explanation. No markdown.`;
     let rawVisionResponse = "";
     try {
       const rawImageUrl = body.get("imageUrl");
-      // Prevent "null" or "undefined" strings from passing truthy checks
       const imageUrl = rawImageUrl && rawImageUrl !== "undefined" && rawImageUrl !== "null" ? String(rawImageUrl).trim() : "";
       
       console.log("Tab2 AutoFill imageUrl sent:", imageUrl);
       
       if (imageUrl) {
-        // Strip query parameters from the URL before fetching to ensure clean MIME type and download
         const cleanImageUrl = imageUrl.split('?')[0];
         const imageRes = await fetch(cleanImageUrl);
         const imageBuffer = await imageRes.arrayBuffer();
         const imageBase64 = Buffer.from(imageBuffer).toString("base64");
-        // Ensure no charset parameters break the Gemini parser
-        const imageMimeType = (imageRes.headers.get("content-type") || "image/jpeg").split(";")[0];
+        const imageMimeType = (imageRes.headers.get("content-type") || "image/jpeg").split(";")[0].trim();
 
-        // Determine if frontend provided a prompt (e.g. from tab2AutoFill) or default to our robust internal one
         const clientPrompt = body.get("prompt");
         const promptText = clientPrompt && clientPrompt.trim() !== "" ? clientPrompt + "\n\nFor stone_family, use the common rockhound trade name for the stone, not the mineral family classification. For example: use Labradorite not Feldspar, use Jasper not Chalcedony, use Obsidian not Volcanic Glass." : `You are a gemologist and lapidary expert analyzing a handcrafted stone cabochon or specimen for an online store called Rockhound Studio. Look at this stone image carefully and return a JSON object with these fields — only include fields you can visually confirm, leave others out:
 {
@@ -433,7 +416,6 @@ Return only valid JSON. No explanation. No markdown.`;
 
             const visionData = JSON.parse(cleanJson);
             
-            // Boolean to String conversions
             if (visionData.is_one_of_a_kind === true) visionData.is_one_of_a_kind = "Yes — one of a kind";
             else if (visionData.is_one_of_a_kind === false) visionData.is_one_of_a_kind = "No";
 
@@ -449,14 +431,12 @@ Return only valid JSON. No explanation. No markdown.`;
             if (visionData.bail_included === true) visionData.bail_included = "true";
             else if (visionData.bail_included === false) visionData.bail_included = "false";
 
-            // Fallbacks for capitalization inconsistencies
             safeSet("color", visionData.color || visionData.Color || visionData.primary_color);
             safeSet("surface_finish", visionData.surface_finish || visionData.Surface_finish);
             safeSet("cut_and_shape", visionData.cut_and_shape || visionData.Cut_and_shape);
             safeSet("stone_family", visionData.stone_family || visionData.Stone_family);
             safeSet("honest_flaws_and_character", visionData.character_marks || visionData.Character_marks);
             safeSet("alt_text", visionData.alt_text || visionData.Alt_text);
-            
             safeSet("is_one_of_a_kind", visionData.is_one_of_a_kind);
             safeSet("found_object", visionData.found_object);
             safeSet("treated", visionData.treated);
@@ -490,15 +470,20 @@ Return only valid JSON. No explanation. No markdown.`;
     // ==========================================
     safeSet("official_name", title);
 
+    // FIXED: color fallback now runs BEFORE colorWarning is calculated
+    if (!merged.color || merged.color.trim() === "") {
+      if (merged.primary_color && merged.primary_color.trim() !== "") {
+        merged.color = merged.primary_color;
+      }
+    }
     const colorWarning = !merged.color || merged.color.trim() === "";
-    if (!colorWarning && merged.primary_color && (!merged.color || merged.color.trim() === "")) { merged.color = merged.primary_color; }
-    
+
     return Response.json({ 
         success: true, 
         fields: merged, 
         intent: actionType || "autoFill", 
         colorWarning,
-        rawVisionResponse // Added for frontend debugging
+        rawVisionResponse
     });
   } catch (error) {
     console.error("Stone Lookup Engine Fault:", error.message);
