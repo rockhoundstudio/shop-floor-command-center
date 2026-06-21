@@ -481,6 +481,7 @@ Return only valid JSON. No explanation. No markdown.`;
     // ==========================================
     safeSet("official_name", title);
 
+    if (!merged.color || merged.color.trim() === "") { if (merged.primary_color) merged.color = merged.primary_color; }
     return Response.json({ success: true, fields: merged, intent: "autoFill" });
   } catch (error) {
     console.error("Stone Lookup Engine Fault:", error.message);
