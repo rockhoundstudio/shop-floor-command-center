@@ -42,7 +42,6 @@ const FULL_META_GROUPS = [
     heading: "Stone Fields",
     color: "#1565C0",
     fields: [
-      { key: "material", label: "Material", type: "text" },
       { key: "stone_family", label: "Stone Family", type: "text" },
       { key: "color", label: "Color", type: "text" },
       { key: "cut_and_shape", label: "Cut and Shape", type: "text" },
@@ -80,7 +79,7 @@ const FULL_META_GROUPS = [
 const NAMESPACE_MAP = {
   rockhound: [
     "piece_name", "primary_medium", "handcrafted_by", 
-    "material", "stone_family", "color", "cut_and_shape", "surface_finish", 
+    "stone_family", "color", "cut_and_shape", "surface_finish", 
     "dimensions_mm", "weight_grams", "collection_name", "collection_location", 
     "collection_date", "primary_use", "bail_included", 
     "is_one_of_a_kind", "treated", "found_object", "wire_material", 
@@ -277,7 +276,7 @@ export function IntakeBenchTab({ products, fetcher }) {
             "color", "cut_and_shape", "surface_finish"
           ];
           const textFields = [
-            "piece_name", "primary_medium", "material", "dimensions_mm", 
+            "piece_name", "primary_medium", "dimensions_mm", 
             "weight_grams", "origin_story",
             "honest_flaws_and_character", "collection_name"
           ];
@@ -596,7 +595,6 @@ Image URL: ${imageUrl}`;
 
   const safeProducts = products || [];
   const isAutoFilling = fetcher.state !== "idle" && (fetcher.formData?.get("intent") === "autoFill" || fetcher.formData?.get("intent") === "smartAutoFill");
-  const isTab2AutoFilling = fetcher.state !== "idle" && fetcher.formData?.get("intent") === "tab2AutoFill";
   const isSaving = fetcher.state !== "idle" && fetcher.formData?.get("intent") === "saveProduct";
   
   return (
@@ -816,7 +814,6 @@ Image URL: ${imageUrl}`;
                                   accessibilityLabel={field.label}
                                   multiline={field.multiline ? true : false}
                                   autoComplete="off"
-                                  disabled={val === "See Shopify metaobject"}
                                 />
                               )}
                             </div>
