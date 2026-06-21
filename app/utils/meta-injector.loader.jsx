@@ -186,7 +186,6 @@ export async function action({ request }) {
 
   if (intent === "saveProduct" || intent === "saveMetafields") {
     try {
-      // Reverted to single_line_text_field based on the log output showing type mismatch
       const FIELD_TYPE_MAP = {
         is_one_of_a_kind: "single_line_text_field",
         treated: "single_line_text_field",
@@ -229,6 +228,11 @@ export async function action({ request }) {
       }
 
       // >>> TYPE RECONCILIATION & FORMATTING PASS <<<
+      const CUSTOM_KEYS = [
+        "primary_medium", "stone_family", "collection_name", "treated",
+        "found_object", "cut_and_shape", "origin_story", "honest_flaws_and_character"
+      ];
+
       metafieldsToSet = metafieldsToSet.map(mf => {
         const fieldType = FIELD_TYPE_MAP[mf.key] || mf.type || "single_line_text_field";
         let fieldValue = String(mf.value).trim();
@@ -241,7 +245,6 @@ export async function action({ request }) {
           try {
             const parsed = JSON.parse(listVal);
             if (Array.isArray(parsed)) {
-              // Unwrap any inner JSON strings in the array
               const unwrapped = parsed.map(item => {
                 try {
                   const inner = JSON.parse(item);
@@ -260,6 +263,7 @@ export async function action({ request }) {
 
         return {
           ...mf,
+          namespace: CUSTOM_KEYS.includes(mf.key) ? "custom" : (mf.namespace || "rockhound"),
           type: fieldType,
           value: fieldValue
         };
@@ -531,19 +535,20 @@ export async function action({ request }) {
         autoFillData: parsedValues,
         fullMetaFields: {
           color: resolveColorValue(rockhoundMeta.primary_color) || resolveColorValue(customMeta.primary_color) || rockhoundMeta.primary_color || customMeta.primary_color || "",
-          cut_and_shape: customMeta.cut_type || "",
-          origin_story: unwrapArrayValue(customMeta.stone_story) || unwrapArrayValue(customMeta.origin_story) || "",
-          honest_flaws_and_character: unwrapArrayValue(customMeta.character_marks) || unwrapArrayValue(customMeta.honest_flaws_and_character) || "",
+          cut_and_shape: customMeta.cut_and_shape || customMeta.cut_type || "",
+          origin_story: customMeta.origin_story || customMeta.stone_story || "",
+          honest_flaws_and_character: customMeta.honest_flaws_and_character || customMeta.character_marks || "",
           handcrafted_by: "Bob & Janyce, Rockhound Studio",
           is_one_of_a_kind: rockhoundMeta.is_one_of_a_kind === "true" || rockhoundMeta.is_ooak === "true" ? "Yes — one of a kind" : "No",
-          treated: rockhoundMeta.treated === "true" ? "Yes" : rockhoundMeta.treated === "false" ? "No" : customMeta.treatment_status ? (customMeta.treatment_status.toLowerCase().includes("untreated") ? "No" : "Yes") : "",
-          found_object: rockhoundMeta.found_object === "true" ? "Yes" : rockhoundMeta.found_object === "false" ? "No" : customMeta.is_ooak === "true" ? "No" : "",
-          primary_medium: "Stone",
+          treated: customMeta.treated === "true" ? "Yes" : customMeta.treated === "false" ? "No" : customMeta.treatment_status ? (customMeta.treatment_status.toLowerCase().includes("untreated") ? "No" : "Yes") : "",
+          found_object: customMeta.found_object === "true" ? "Yes" : customMeta.found_object === "false" ? "No" : "",
+          primary_medium: customMeta.primary_medium || "",
+          stone_family: customMeta.stone_family || "",
           material: rockhoundMeta.material || customMeta.official_name || "",
           surface_finish: rockhoundMeta.surface_finish || customMeta.surface_finish || parsedValues.surface_finish || "",
           dimensions_mm: rockhoundMeta.dimensions_mm || customMeta.dimensions_mm || parsedValues.dimensions_mm || "",
           artist_notes: rockhoundMeta.artist_notes || customMeta.artist_notes || "",
-          collection_name: rockhoundMeta.collection_name || customMeta.collection_name || ""
+          collection_name: customMeta.collection_name || ""
         },
         overwriteFields: {
           color: parsedValues.color || "",
@@ -722,19 +727,20 @@ export async function action({ request }) {
         geoFields,
         fullMetaFields: {
           color: resolveColorValue(rockhoundMeta.primary_color) || resolveColorValue(customMeta.primary_color) || rockhoundMeta.primary_color || customMeta.primary_color || "",
-          cut_and_shape: customMeta.cut_type || "",
-          origin_story: unwrapArrayValue(customMeta.stone_story) || unwrapArrayValue(customMeta.origin_story) || "",
-          honest_flaws_and_character: unwrapArrayValue(customMeta.character_marks) || unwrapArrayValue(customMeta.honest_flaws_and_character) || "",
+          cut_and_shape: customMeta.cut_and_shape || customMeta.cut_type || "",
+          origin_story: customMeta.origin_story || customMeta.stone_story || "",
+          honest_flaws_and_character: customMeta.honest_flaws_and_character || customMeta.character_marks || "",
           handcrafted_by: "Bob & Janyce, Rockhound Studio",
           is_one_of_a_kind: rockhoundMeta.is_one_of_a_kind === "true" || rockhoundMeta.is_ooak === "true" ? "Yes — one of a kind" : "No",
-          treated: rockhoundMeta.treated === "true" ? "Yes" : rockhoundMeta.treated === "false" ? "No" : customMeta.treatment_status ? (customMeta.treatment_status.toLowerCase().includes("untreated") ? "No" : "Yes") : "",
-          found_object: rockhoundMeta.found_object === "true" ? "Yes" : rockhoundMeta.found_object === "false" ? "No" : customMeta.is_ooak === "true" ? "No" : "",
-          primary_medium: "Stone",
+          treated: customMeta.treated === "true" ? "Yes" : customMeta.treated === "false" ? "No" : customMeta.treatment_status ? (customMeta.treatment_status.toLowerCase().includes("untreated") ? "No" : "Yes") : "",
+          found_object: customMeta.found_object === "true" ? "Yes" : customMeta.found_object === "false" ? "No" : "",
+          primary_medium: customMeta.primary_medium || "",
+          stone_family: customMeta.stone_family || "",
           material: rockhoundMeta.material || customMeta.official_name || "",
           surface_finish: rockhoundMeta.surface_finish || customMeta.surface_finish || "",
           dimensions_mm: rockhoundMeta.dimensions_mm || customMeta.dimensions_mm || "",
           artist_notes: rockhoundMeta.artist_notes || customMeta.artist_notes || "",
-          collection_name: rockhoundMeta.collection_name || customMeta.collection_name || ""
+          collection_name: customMeta.collection_name || ""
         },
         overwriteFields: {
           color: parsedValues.color || "",
@@ -758,4 +764,162 @@ export async function action({ request }) {
   }
 
   return json({ success: false, error: "Unknown intent" });
+}
+
+export default function MigrateDataRoute() {
+  const navigate = useNavigate();
+  const migrateFetcher = useFetcher();
+  const standardizeFetcher = useFetcher();
+  const shopify = typeof window !== "undefined" ? window.shopify : undefined;
+
+  const isMigrating = migrateFetcher.state !== "idle";
+  const isStandardizing = standardizeFetcher.state !== "idle";
+  const migrateData = migrateFetcher.data;
+  const standardizeData = standardizeFetcher.data;
+
+  const handleRunMigration = () => {
+    migrateFetcher.submit({ intent: "migrate" }, { method: "post" });
+  };
+
+  const handleStandardize = () => {
+    standardizeFetcher.submit({ intent: "standardizeOneOfAKind" }, { method: "post" });
+  };
+
+  useEffect(() => {
+    if (migrateFetcher.state === "idle" && migrateData && migrateData.results) {
+      if (shopify) {
+        const hasErrors = migrateData.results.some(r => r.status === "error");
+        if (hasErrors) {
+          shopify.toast.show("Migration finished with some errors.", { isError: true });
+        } else {
+          shopify.toast.show(`Successfully migrated ${migrateData.fieldsMigrated} fields!`);
+        }
+      }
+    }
+  }, [migrateFetcher.state, migrateData, shopify]);
+
+  useEffect(() => {
+    if (standardizeFetcher.state === "idle" && standardizeData && standardizeData.results) {
+      if (shopify) {
+        const hasErrors = standardizeData.results.some(r => r.status === "error");
+        if (hasErrors) {
+          shopify.toast.show("Standardize finished with some errors.", { isError: true });
+        } else {
+          shopify.toast.show(`Done. ${standardizeData.fixed} products updated.`);
+        }
+      }
+    }
+  }, [standardizeFetcher.state, standardizeData, shopify]);
+
+  const StatusIcon = ({ status }) => {
+    if (status === "success") return <span style={{ color: "#2E7D32" }}>✅</span>;
+    return <span style={{ color: "#C62828" }}>❌</span>;
+  };
+
+  return (
+    <Page
+      title="Data Migration Engine"
+      subtitle="Rockhound Studio Legacy Data Importer"
+      backAction={{ content: "Dashboard", onAction: () => navigate("/app"), accessibilityLabel: "Back to Dashboard" }}
+    >
+      <Layout>
+        <Layout.Section>
+          <BlockStack gap="500">
+
+            <Banner tone="info" title="The Data Bundling Strategy">
+              <p>
+                This script safely grabs your old science fields (Mohs, cleavage, diaphaneity, etc.) and bundles them into a clean <b>Shop Specs</b> text string inside the new <b>Artist Notes</b> field. This keeps Google happy with keywords without forcing you to manage useless fields manually.
+              </p>
+            </Banner>
+
+            <Card padding="600">
+              <BlockStack gap="400">
+                <Text variant="headingLg" as="h2">Run Legacy Migration</Text>
+                <Text as="p">
+                  Clicking this button will scan your products, map the old data over to the new Freeform Revolution schema, and build the Shop Specs bundles.
+                  (It is safe to run multiple times — it will just overwrite the new fields with the exact same legacy data).
+                </Text>
+                <Box paddingBlockStart="400">
+                  <div style={{ minHeight: "60px", minWidth: "100%" }}>
+                    <Button
+                      size="large"
+                      variant="primary"
+                      fullWidth
+                      onClick={handleRunMigration}
+                      loading={isMigrating}
+                      accessibilityLabel="Run Data Migration"
+                    >
+                      {isMigrating ? "Scanning and Migrating Data..." : "Run Auto-Migration"}
+                    </Button>
+                  </div>
+                </Box>
+              </BlockStack>
+            </Card>
+
+            {migrateData && migrateData.results && (
+              <Card padding="600">
+                <BlockStack gap="500">
+                  <Text variant="headingLg" as="h3">Migration Report</Text>
+                  <Divider />
+                  <BlockStack gap="300">
+                    {migrateData.results.map((result, idx) => (
+                      <div key={idx} style={{ display: "flex", alignItems: "center", gap: "8px", padding: "8px 0", borderBottom: "1px solid #E1E3E5" }}>
+                        <StatusIcon status={result.status} />
+                        <Text as="span" tone={result.status === "error" ? "critical" : "base"}>
+                          {result.message}
+                        </Text>
+                      </div>
+                    ))}
+                  </BlockStack>
+                </BlockStack>
+              </Card>
+            )}
+
+            <Card padding="600">
+              <BlockStack gap="400">
+                <Text variant="headingLg" as="h2">Standardize One of a Kind Values</Text>
+                <Text as="p">
+                  Finds every product where is_one_of_a_kind is set to "true" and updates it to "Yes — one of a kind" for consistent SEO and storefront display.
+                </Text>
+                <Box paddingBlockStart="400">
+                  <div style={{ minHeight: "60px", minWidth: "100%" }}>
+                    <Button
+                      size="large"
+                      variant="primary"
+                      fullWidth
+                      onClick={handleStandardize}
+                      loading={isStandardizing}
+                      accessibilityLabel="Standardize One of a Kind Values"
+                    >
+                      {isStandardizing ? "Standardizing..." : "Standardize One of a Kind Values"}
+                    </Button>
+                  </div>
+                </Box>
+              </BlockStack>
+            </Card>
+
+            {standardizeData && standardizeData.results && (
+              <Card padding="600">
+                <BlockStack gap="500">
+                  <Text variant="headingLg" as="h3">Standardize Report</Text>
+                  <Divider />
+                  <BlockStack gap="300">
+                    {standardizeData.results.map((result, idx) => (
+                      <div key={idx} style={{ display: "flex", alignItems: "center", gap: "8px", padding: "8px 0", borderBottom: "1px solid #E1E3E5" }}>
+                        <StatusIcon status={result.status} />
+                        <Text as="span" tone={result.status === "error" ? "critical" : "base"}>
+                          {result.message}
+                        </Text>
+                      </div>
+                    ))}
+                  </BlockStack>
+                </BlockStack>
+              </Card>
+            )}
+
+          </BlockStack>
+        </Layout.Section>
+      </Layout>
+    </Page>
+  );
 }
