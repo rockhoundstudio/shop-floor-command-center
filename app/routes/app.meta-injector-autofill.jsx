@@ -299,7 +299,7 @@ ${plainDescription}
 Return only valid JSON. No explanation. No markdown.`;
 
         const textGeminiRes = await fetch(
-          "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=" + process.env.GEMINI_API_KEY,
+          "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -379,7 +379,7 @@ For stone_family, use the common rockhound trade name for the stone, not the min
 Return only valid JSON. No explanation. No markdown.`;
 
         const geminiRes = await fetch(
-          "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=" + process.env.GEMINI_API_KEY,
+          "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
