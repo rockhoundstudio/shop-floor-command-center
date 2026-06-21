@@ -520,12 +520,12 @@ Image URL: ${imageUrl}`;
               ...fullMetaFields
             };
             
-            // Ensure Color is driven by parsed/form state, not raw primary_color meta
-            if (parsedValues.color) {
-                nextState.color = parsedValues.color;
-            } else if (formState.color) {
-                nextState.color = formState.color;
-            }
+
+
+
+
+
+
 
             // Clean handcrafted_by deduplication on AutoFill return
             if (typeof nextState.handcrafted_by === 'string' && (nextState.handcrafted_by.includes("Bob & Janyce") || nextState.handcrafted_by.includes("Rockhound Studio"))) {
