@@ -11,7 +11,7 @@ const MINDAT_KEY_MAP = {
   official_name: "name",
   mineral_class: "mindat_formula",
   crystal_structure: "crystal_system",
-   luster: "luster",
+  luster: "luster",
   specific_gravity: "density",
   moh_hardness: "hardness",
   cleavage: "cleavage",
@@ -367,7 +367,9 @@ Return only valid JSON. No explanation. No markdown.`;
       console.log("Tab2 AutoFill imageUrl sent:", imageUrl);
       
       if (imageUrl) {
-        const imageRes = await fetch(imageUrl);
+        // Strip query parameters from the URL before fetching to ensure clean MIME type and download
+        const cleanImageUrl = imageUrl.split('?')[0];
+        const imageRes = await fetch(cleanImageUrl);
         const imageBuffer = await imageRes.arrayBuffer();
         const imageBase64 = Buffer.from(imageBuffer).toString("base64");
         // Ensure no charset parameters break the Gemini parser
@@ -377,7 +379,7 @@ Return only valid JSON. No explanation. No markdown.`;
         const clientPrompt = body.get("prompt");
         const promptText = clientPrompt && clientPrompt.trim() !== "" ? clientPrompt + "\n\nFor stone_family, use the common rockhound trade name for the stone, not the mineral family classification. For example: use Labradorite not Feldspar, use Jasper not Chalcedony, use Obsidian not Volcanic Glass." : `You are a gemologist and lapidary expert analyzing a handcrafted stone cabochon or specimen for an online store called Rockhound Studio. Look at this stone image carefully and return a JSON object with these fields — only include fields you can visually confirm, leave others out:
 {
-  "color": "(primary color and pattern description, e.g. 'Deep red with grey banding')",
+  "color": "(return ONLY the primary color as a single word, e.g. 'Blue' or 'Red')",
   "surface_finish": "(one of: High Polish, Satin Polish, Matte, Natural/Rough, Tumbled)",
   "cut_and_shape": "(e.g. Freeform, Oval Cabochon, Round Cabochon, Teardrop, Pear, Trillion)",
   "stone_family": "(e.g. Jasper, Agate, Chalcedony, Labradorite, Obsidian, Quartz)",
