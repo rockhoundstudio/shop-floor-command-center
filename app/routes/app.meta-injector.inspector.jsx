@@ -121,12 +121,19 @@ export function IntakeBenchTab({ products, fetcher }) {
   const [tab2StatusMessage, setTab2StatusMessage] = useState("");
   const [tab2ErrorMessage, setTab2ErrorMessage] = useState("");
 
+  // Vision Debug Panel State
+  const [showVisionDebug, setShowVisionDebug] = useState(false);
+  const [visionDebugContent, setVisionDebugContent] = useState("");
+
   const handleSelectProduct = useCallback((id) => {
     setSelectedProductId(id);
     setStatusMessage("");
     setErrorMessage("");
     setTab2StatusMessage("");
     setTab2ErrorMessage("");
+    setShowVisionDebug(false);
+    setVisionDebugContent("");
+
     const product = products.find(p => p.id === id);
     const newForm = {};
     const newFullForm = {};
@@ -496,6 +503,13 @@ Image URL: ${imageUrl}`;
       const isSuccess = fetcher.data.success === true;
       const isError = fetcher.data.success === false;
 
+      if ((isAutoFill || isSmartAutoFill || isTab2AutoFill)) {
+        if ("rawVisionResponse" in fetcher.data) {
+          setVisionDebugContent(fetcher.data.rawVisionResponse || "");
+          setShowVisionDebug(true);
+        }
+      }
+
       if ((isAutoFill || isSmartAutoFill) && isSuccess && fetcher.data.fields) {
         setFormState(prev => {
           const updatedState = { ...prev };
@@ -850,6 +864,44 @@ Image URL: ${imageUrl}`;
                     Extract from Description & Image
                 </Button>
               </div>
+
+              {showVisionDebug && (
+                <div style={{ marginBottom: "24px", padding: "16px", backgroundColor: "#fff", border: "1px solid #c9cccf", borderRadius: "8px", position: "relative" }}>
+                  <button
+                    onClick={() => setShowVisionDebug(false)}
+                    aria-label="Dismiss panel"
+                    style={{
+                      position: "absolute",
+                      top: "16px",
+                      right: "16px",
+                      fontSize: "18px",
+                      background: "transparent",
+                      border: "none",
+                      cursor: "pointer",
+                      padding: "4px"
+                    }}
+                  >
+                    ✖
+                  </button>
+                  <Text variant="headingMd" as="h3">Gemini Vision Raw Response</Text>
+                  <div style={{ marginBottom: "12px", color: "#202223" }}>
+                    {visionDebugContent ? "Vision returned data" : "Vision returned empty"}
+                  </div>
+                  <div style={{
+                    backgroundColor: "#FFFACD",
+                    color: "#000000",
+                    fontSize: "16px",
+                    padding: "16px",
+                    borderRadius: "4px",
+                    fontFamily: "monospace",
+                    whiteSpace: "pre-wrap",
+                    overflowX: "auto",
+                    border: "1px solid #e1e3e5"
+                  }}>
+                    {visionDebugContent || "No raw response text."}
+                  </div>
+                </div>
+              )}
 
               <Text variant="headingLg" as="h3">Full Meta Report</Text>
               
