@@ -548,7 +548,7 @@ Image URL: ${imageUrl}`;
         if (isAutoFill) {
           setStatusMessage("Title and tags successfully parsed and loaded into fields.");
           if (fetcher.data.colorWarning) { setErrorMessage("WARNING: Vision could not detect Color from the hero image — please enter Color manually."); }
-
+        }
 
         // Show Polaris Toast for Success
         if (window.shopify && window.shopify.toast) {
