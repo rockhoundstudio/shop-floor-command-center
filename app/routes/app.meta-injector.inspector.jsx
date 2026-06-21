@@ -160,8 +160,15 @@ export function IntakeBenchTab({ products, fetcher }) {
         const hasValue = node.value !== null && node.value !== undefined;
         if (hasValue && node.namespace === "rockhound") {
           let parsedValue = node.value;
-          if (parsedValue.includes("gid://") || parsedValue.startsWith("[")) {
+          if (parsedValue.includes("gid://")) {
             parsedValue = "See Shopify metaobject";
+          } else if (parsedValue.startsWith("[")) {
+            try {
+              const arr = JSON.parse(parsedValue);
+              parsedValue = Array.isArray(arr) ? arr[0] : parsedValue;
+            } catch {
+              // keep original
+            }
           }
           newForm[node.key] = parsedValue;
           newFullForm[node.key] = parsedValue;
