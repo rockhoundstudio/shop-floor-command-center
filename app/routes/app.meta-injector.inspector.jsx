@@ -333,6 +333,9 @@ export function IntakeBenchTab({ products, fetcher }) {
     const product = products.find(p => p.id === selectedProductId) || {};
     const title = product.title || "";
     const description = product.descriptionHtml || product.description || "";
+    const imageUrl = product?.images?.edges?.[0]?.node?.url || "";
+
+    console.log("AutoFill imageUrl sent:", imageUrl);
 
     fetcher.submit(
       {
@@ -340,6 +343,7 @@ export function IntakeBenchTab({ products, fetcher }) {
         productId: selectedProductId,
         productTitle: title,
         productDescription: description,
+        imageUrl: imageUrl,
         promptStyle: promptStyle,
         existingColor: formState.color || "",
         existingCutAndShape: formState.cut_and_shape || ""
@@ -520,12 +524,12 @@ Image URL: ${imageUrl}`;
               ...fullMetaFields
             };
             
-
-
-
-
-
-
+            // Ensure Color is driven by parsed/form state, not raw primary_color meta
+            if (parsedValues.color) {
+                nextState.color = parsedValues.color;
+            } else if (formState.color) {
+                nextState.color = formState.color;
+            }
 
             // Clean handcrafted_by deduplication on AutoFill return
             if (typeof nextState.handcrafted_by === 'string' && (nextState.handcrafted_by.includes("Bob & Janyce") || nextState.handcrafted_by.includes("Rockhound Studio"))) {
@@ -547,7 +551,7 @@ Image URL: ${imageUrl}`;
         
         if (isAutoFill) {
           setStatusMessage("Title and tags successfully parsed and loaded into fields.");
-          if (fetcher.data.colorWarning) { setErrorMessage("WARNING: Vision could not detect Color from the hero image — please enter Color manually."); }
+          if (fetcher.data.colorWarning) { setErrorMessage("WARNING: Vision could not detect Color from the hero image   please enter Color manually."); }
         }
 
         // Show Polaris Toast for Success
