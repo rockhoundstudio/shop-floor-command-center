@@ -934,23 +934,3 @@ Image URL: ${imageUrl}`;
 }
 
 export default IntakeBenchTab;
-One last test. Test inserting `piece_name` directly into `formState` but only if it's currently missing in `formState`.
-
-In handleInject:
-
-```javascript
-  const handleInject = useCallback(() => {
-    if (!selectedProductId) return;
-    setStatusMessage("");
-    setErrorMessage("");
-
-    const selectedProduct = products.find(p => p.id === selectedProductId);
-    
-    // Explicitly add piece_name to the payload object
-    const finalFormState = { ...formState };
-    if (!finalFormState.piece_name && selectedProduct?.title) {
-        finalFormState.piece_name = selectedProduct.title;
-    }
-    
-    const payload = [];
-    const entries = Object.entries(finalFormState);
