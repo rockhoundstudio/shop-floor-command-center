@@ -92,6 +92,12 @@ const NAMESPACE_MAP = {
   ]
 };
 
+const getNamespaceForKey = (key) => {
+  if (NAMESPACE_MAP.rockhound.includes(key)) return "rockhound";
+  if (NAMESPACE_MAP.geo.includes(key)) return "geo";
+  return "custom";
+};
+
 export function IntakeBenchTab({ products, fetcher }) {
   const [selectedProductId, setSelectedProductId] = useState("");
   const [formState, setFormState] = useState({});
@@ -409,7 +415,7 @@ Image URL: ${imageUrl}`;
         }
 
         payload.push({
-          namespace: "rockhound",
+          namespace: "custom",
           key: key,
           type: fieldType,
           value: value,
@@ -429,6 +435,33 @@ Image URL: ${imageUrl}`;
       { method: "post", action: "/app/meta-injector" }
     );
   }, [selectedProductId, formState, fetcher]);
+
+  const handleSaveFullMeta = useCallback(() => {
+    if (!selectedProductId) return;
+    const changes = [];
+    
+    Object.entries(fullMetaState).forEach(([key, value]) => {
+      const originalValue = originalMetaRef.current[key] || "";
+      const newValue = value || "";
+      
+      if (originalValue !== newValue && newValue !== "See Shopify metaobject") {
+        changes.push({
+          namespace: getNamespaceForKey(key),
+          key: key,
+          value: newValue,
+          type: "single_line_text_field"
+        });
+      }
+    });
+
+    if (changes.length > 0) {
+      // Explicit form action wiring restored to prevent silent drop
+      fetcher.submit(
+        { intent: "saveMetafields", productId: selectedProductId, metafields: JSON.stringify(changes) },
+        { method: "post", action: "/app/meta-injector" }
+      );
+    }
+  }, [selectedProductId, fullMetaState, fetcher]);
 
   useEffect(() => {
     const isIdle = fetcher.state === "idle";
@@ -561,7 +594,7 @@ Image URL: ${imageUrl}`;
   const safeProducts = products || [];
   const isAutoFilling = fetcher.state !== "idle" && (fetcher.formData?.get("intent") === "autoFill" || fetcher.formData?.get("intent") === "smartAutoFill");
   const isTab2AutoFilling = fetcher.state !== "idle" && fetcher.formData?.get("intent") === "tab2AutoFill";
-  const isSaving = fetcher.state !== "idle" && fetcher.formData?.get("intent") === "saveProduct";
+  const isSaving = fetcher.state !== "idle" && (fetcher.formData?.get("intent") === "saveProduct" || fetcher.formData?.get("intent") === "saveMetafields");
   
   return (
     <BlockStack gap="400">
