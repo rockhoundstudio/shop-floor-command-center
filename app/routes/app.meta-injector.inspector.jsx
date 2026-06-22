@@ -106,6 +106,7 @@ export function IntakeBenchTab({ products, fetcher }) {
   const [statusMessage, setStatusMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [promptStyle, setPromptStyle] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
 
   // Tab 2 Auto-Fill State
   const [tab2StatusMessage, setTab2StatusMessage] = useState("");
@@ -620,6 +621,8 @@ Image URL: ${imageUrl}`;
   }, [fetcher.state, fetcher.data]);
 
   const safeProducts = products || [];
+  const filteredProducts = safeProducts.filter(p => p.title.toLowerCase().includes(searchQuery.toLowerCase()));
+
   const isAutoFilling = fetcher.state !== "idle" && (fetcher.formData?.get("intent") === "autoFill" || fetcher.formData?.get("intent") === "smartAutoFill");
   const isTab2AutoFilling = fetcher.state !== "idle" && fetcher.formData?.get("intent") === "tab2AutoFill";
   const isSaving = fetcher.state !== "idle" && (fetcher.formData?.get("intent") === "saveProduct" || fetcher.formData?.get("intent") === "saveMetafields");
@@ -631,8 +634,16 @@ Image URL: ${imageUrl}`;
           <Card padding="400">
             <BlockStack gap="400">
               <Text variant="headingMd" as="h2">1. Select Raw Inventory</Text>
+              <TextField
+                value={searchQuery}
+                onChange={setSearchQuery}
+                placeholder="Search products by title..."
+                autoComplete="off"
+                clearButton
+                onClearButtonClick={() => setSearchQuery("")}
+              />
               <div style={{ maxHeight: "70vh", overflowY: "auto", paddingRight: "8px", display: "flex", flexDirection: "column", gap: "8px" }}>
-                {safeProducts.map(p => {
+                {filteredProducts.map(p => {
                   const isSelected = selectedProductId === p.id;
                   return (
                     <div key={p.id} style={{ minHeight: "54px" }}>
