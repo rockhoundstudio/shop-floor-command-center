@@ -107,16 +107,10 @@ export function IntakeBenchTab({ products, fetcher }) {
   const [errorMessage, setErrorMessage] = useState("");
   const [promptStyle, setPromptStyle] = useState("");
 
-  // Tab 2 Auto-Fill State
-  const [tab2StatusMessage, setTab2StatusMessage] = useState("");
-  const [tab2ErrorMessage, setTab2ErrorMessage] = useState("");
-
   const handleSelectProduct = useCallback((id) => {
     setSelectedProductId(id);
     setStatusMessage("");
     setErrorMessage("");
-    setTab2StatusMessage("");
-    setTab2ErrorMessage("");
 
     const product = products.find(p => p.id === id);
     const newForm = {};
@@ -277,8 +271,8 @@ export function IntakeBenchTab({ products, fetcher }) {
           ];
           const textFields = [
             "piece_name", "primary_medium", "dimensions_mm", 
-            "weight_grams", "origin_story",
-            "honest_flaws_and_character", "collection_name"
+            "weight_grams", "origin_story", "honest_flaws_and_character", 
+            "collection_name", "source_location", "price"
           ];
 
           product.metafields.edges.forEach(({ node }) => {
@@ -337,59 +331,6 @@ export function IntakeBenchTab({ products, fetcher }) {
     );
   }, [selectedProductId, fetcher, products, promptStyle, formState]);
 
-  const handleTab2AutoFill = useCallback(() => {
-    if (!selectedProductId) return;
-    setTab2StatusMessage("");
-    setTab2ErrorMessage("");
-
-    const product = products.find(p => p.id === selectedProductId) || {};
-    const title = product.title || "";
-    const description = product.descriptionHtml || product.description || "";
-    
-    // Attempt to extract image URL. If your product query doesn't pull images, this will be blank.
-    let imageUrl = "";
-    if (product.images && product.images.edges && product.images.edges.length > 0) {
-        imageUrl = product.images.edges[0].node.url || "";
-    }
-
-    const promptText = `You are extracting structured product data for a gemstone jewelry store. Parse the following product title, description, and image and return a JSON object with these exact keys:
-
-piece_name — the stone name after the last dash in the title
-primary_medium — the stone type from the title (first segment before first dash)
-collection_location — the location from the title (second segment between dashes)
-color — primary color observed in the image, plain text
-secondary_colors — any secondary colors observed in the image, plain text
-cut_and_shape — the cabochon shape, from image and description
-surface_finish — polish level from description or image
-character_marks — any inclusions, matrix, anomalies, natural flaws observed in image or description, plain text
-dimensions_mm — dimensions from description, plain text
-weight_grams — weight if mentioned, plain text or empty string
-origin_story — the full narrative story paragraphs from the description, preserve line breaks
-collection_name — the named collection if mentioned
-is_one_of_a_kind — Yes or No based on description
-treated — No if description says natural or untreated, Yes if treated
-found_object — Yes if purchased or found, No if raw material
-bail_included — Yes if bail or wrap mentioned, No if not
-handcrafted_by — always Bob & Janyce, Rockhound Studio
-
-Return only valid JSON. No markdown. No explanation.
-
-Title: ${title}
-Description: ${description}
-Image URL: ${imageUrl}`;
-
-    fetcher.submit(
-      { 
-        intent: "tab2AutoFill", 
-        productId: selectedProductId,
-        prompt: promptText,
-        imageUrl: imageUrl
-      },
-      { method: "post", action: "/app/meta-injector-autofill" }
-    );
-    console.log("Tab2 AutoFill imageUrl sent:", imageUrl);
-  }, [selectedProductId, fetcher, products]);
-
   const handleInject = useCallback(() => {
     if (!selectedProductId) return;
     setStatusMessage("");
@@ -400,13 +341,11 @@ Image URL: ${imageUrl}`;
     
     entries.forEach(([key, value]) => {
       const isPopulated = value !== undefined && value !== null && value.toString().trim() !== "";
+      const config = ROCKHOUND_FIELDS.find(f => f.key === key);
       
-      if (isPopulated && value !== "See Shopify metaobject") {
-        const config = ROCKHOUND_FIELDS.find(f => f.key === key);
-        let fieldType = "single_line_text_field";
-        if (config && config.type) {
-          fieldType = config.type;
-        }
+      // Only push if it is a populated, active field mapping in our current rockhound configuration
+      if (isPopulated && value !== "See Shopify metaobject" && config) {
+        let fieldType = config.type || "single_line_text_field";
         
         let formatId = `gid://shopify/Product/${selectedProductId}`;
         if (selectedProductId.includes("gid://")) {
@@ -428,9 +367,10 @@ Image URL: ${imageUrl}`;
       return;
     }
 
+    // Explicit form action wiring restored to prevent silent drop
     fetcher.submit(
       { intent: "saveProduct", payload: JSON.stringify(payload) },
-      { method: "post" }
+      { method: "post", action: "/app/meta-injector" }
     );
   }, [selectedProductId, formState, fetcher]);
 
@@ -453,9 +393,10 @@ Image URL: ${imageUrl}`;
     });
 
     if (changes.length > 0) {
+      // Explicit form action wiring restored to prevent silent drop
       fetcher.submit(
         { intent: "saveMetafields", productId: selectedProductId, metafields: JSON.stringify(changes) },
-        { method: "post" }
+        { method: "post", action: "/app/meta-injector" }
       );
     }
   }, [selectedProductId, fullMetaState, fetcher]);
@@ -467,7 +408,6 @@ Image URL: ${imageUrl}`;
     if (isIdle && hasData) {
       const isAutoFill = fetcher.data.intent === "autoFill";
       const isSmartAutoFill = fetcher.data.intent === "smartAutoFill";
-      const isTab2AutoFill = fetcher.data.intent === "tab2AutoFill";
       const isSaveProduct = fetcher.data.intent === "saveProduct";
       const isSaveMetafields = fetcher.data.intent === "saveMetafields";
       
@@ -538,42 +478,11 @@ Image URL: ${imageUrl}`;
         }
       }
 
-      if (isTab2AutoFill) {
-        if (isSuccess && fetcher.data.fields) {
-            setFullMetaState(prev => {
-                const updatedState = { ...prev };
-                Object.entries(fetcher.data.fields).forEach(([key, val]) => {
-                    const hasNewValue = val !== undefined && val !== null && val.toString().trim() !== "";
-                    // Only fill if currently empty
-                    const ALWAYS_OVERWRITE_TAB2 = ["color", "cut_and_shape", "stone_family", "surface_finish", "handcrafted_by", "treated", "found_object", "is_one_of_a_kind"];
-                    const currentlyEmpty = !updatedState[key] || updatedState[key].trim() === "";
-                    const shouldOverwrite = ALWAYS_OVERWRITE_TAB2.includes(key);
-
-                    if (hasNewValue && (currentlyEmpty || shouldOverwrite) && val !== "See Shopify metaobject") {
-                      updatedState[key] = val;
-                    }
-                });
-                return updatedState;
-            });
-            setTab2StatusMessage("Auto-Fill complete — review fields before saving");
-            
-            // Show Polaris Toast for Tab 2 Success
-            if (window.shopify && window.shopify.toast) {
-              window.shopify.toast.show("Auto-Fill complete!");
-            }
-
-        } else if (isError) {
-            setTab2ErrorMessage(fetcher.data.error || "Gemini extraction failed.");
-            
-            // Show Polaris Toast for Tab 2 Failure
-            if (window.shopify && window.shopify.toast) {
-              window.shopify.toast.show("Auto-Fill failed", { isError: true });
-            }
-        }
-      }
-
       if (isSaveProduct && isSuccess) {
         setStatusMessage("Metafields injected cleanly into Shopify database.");
+        if (window.shopify && window.shopify.toast) {
+          window.shopify.toast.show("Metafields injected!");
+        }
       }
 
       if (isSaveMetafields && isSuccess) {
@@ -583,7 +492,7 @@ Image URL: ${imageUrl}`;
         }
       }
 
-      if (isError && !isTab2AutoFill) {
+      if (isError) {
         setErrorMessage(fetcher.data.error || "An unknown error occurred during the operation.");
         // Fallback catch-all error Toast
         if (window.shopify && window.shopify.toast) {
@@ -595,7 +504,7 @@ Image URL: ${imageUrl}`;
 
   const safeProducts = products || [];
   const isAutoFilling = fetcher.state !== "idle" && (fetcher.formData?.get("intent") === "autoFill" || fetcher.formData?.get("intent") === "smartAutoFill");
-  const isSaving = fetcher.state !== "idle" && fetcher.formData?.get("intent") === "saveProduct";
+  const isSaving = fetcher.state !== "idle" && (fetcher.formData?.get("intent") === "saveProduct" || fetcher.formData?.get("intent") === "saveMetafields");
   
   return (
     <BlockStack gap="400">
@@ -847,6 +756,20 @@ Image URL: ${imageUrl}`;
                   </div>
                 </BlockStack>
               ))}
+
+              <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "16px" }}>
+                <Button 
+                  icon={SaveIcon} 
+                  tone="success" 
+                  variant="primary" 
+                  onClick={handleSaveFullMeta}
+                  accessibilityLabel="Save Full Meta Report"
+                  disabled={!selectedProductId}
+                  loading={fetcher.state !== "idle" && fetcher.formData?.get("intent") === "saveMetafields"}
+                >
+                  Save Full Meta Report
+                </Button>
+              </div>
 
             </BlockStack>
           </Card>
