@@ -21,7 +21,7 @@ const GET_PRODUCTS_QUERY = `
           customMeta: metafields(first: 50, namespace: "custom") {
             edges { node { namespace key value type } }
           }
-          rockhoundMeta: metafields(first: 50, namespace: "rockhound") {
+          rockhoundMeta: metafields(first: 50, namespace: "custom") {
             edges { node { namespace key value type } }
           }
           geoMeta: metafields(first: 50, namespace: "geo") {
@@ -144,6 +144,31 @@ export async function action({ request }) {
   const formData = await request.formData();
   const intent = formData.get("intent");
 
+  // ── SAVE PRODUCT ───────────────────────────────────────────────────────────
+  if (intent === "saveProduct") {
+    try {
+      const payloadStr = formData.get("payload") || formData.get("metafields");
+      let metafields = [];
+      if (payloadStr) {
+        metafields = JSON.parse(payloadStr);
+      }
+      
+      metafields = metafields.map(mf => ({
+        ...mf,
+        namespace: "custom"
+      }));
+
+      const response = await admin.graphql(SET_METAFIELDS_MUTATION, {
+        variables: { metafields }
+      });
+      
+      const result = await response.json();
+      return { intent, success: true, result };
+    } catch (error) {
+      return { intent, success: false, error: error.message };
+    }
+  }
+
   // ── STANDARDIZE ONE OF A KIND ──────────────────────────────────────────────
   if (intent === "standardizeOneOfAKind") {
     const results = [];
@@ -158,7 +183,7 @@ export async function action({ request }) {
               node {
                 id
                 title
-                metafields(first: 50, namespace: "rockhound") {
+                metafields(first: 50, namespace: "custom") {
                   edges {
                     node {
                       id
@@ -186,7 +211,7 @@ export async function action({ request }) {
             if (edge.node.key === "is_one_of_a_kind" && edge.node.value === "true") {
               toFix.push({
                 ownerId: product.id,
-                namespace: "rockhound",
+                namespace: "custom",
                 key: "is_one_of_a_kind",
                 value: "Yes — one of a kind",
                 type: "single_line_text_field"
@@ -257,7 +282,7 @@ export async function action({ request }) {
                   }
                 }
               }
-              rockhoundMetafields: metafields(first: 50, namespace: "rockhound") {
+              rockhoundMetafields: metafields(first: 50, namespace: "custom") {
                 edges {
                   node {
                     key
@@ -306,7 +331,7 @@ export async function action({ request }) {
 
       const pushUpdate = (key, value, type) => {
         pendingUpdates.push({
-          update: { ownerId: product.id, namespace: "rockhound", key, value, type },
+          update: { ownerId: product.id, namespace: "custom", key, value, type },
           title: product.title
         });
         addedToThisProduct = true;
