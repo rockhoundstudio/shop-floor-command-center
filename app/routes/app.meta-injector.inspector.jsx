@@ -257,6 +257,12 @@ export function IntakeBenchTab({ products, fetcher }) {
     if (!newFullForm.handcrafted_by || newFullForm.handcrafted_by.trim() === "") {
         newFullForm.handcrafted_by = "Bob & Janyce, Rockhound Studio";
     }
+
+    // Auto-populate Piece Name from product title unconditionally at select time
+    if (product && product.title) {
+      newForm.piece_name = product.title;
+      newFullForm.piece_name = product.title;
+    }
     
     setFormState(newForm);
     setFullMetaState(newFullForm);
@@ -292,6 +298,11 @@ export function IntakeBenchTab({ products, fetcher }) {
               }
             }
           });
+          
+          if (product.title) {
+            updatedState.piece_name = product.title;
+          }
+          
           return updatedState;
         });
       }
@@ -468,6 +479,9 @@ Image URL: ${imageUrl}`;
     const hasData = fetcher.data !== undefined && fetcher.data !== null;
     
     if (isIdle && hasData) {
+      const product = products.find(p => p.id === selectedProductId);
+      const productTitle = product ? product.title : "";
+
       const isAutoFill = fetcher.data.intent === "autoFill";
       const isSmartAutoFill = fetcher.data.intent === "smartAutoFill";
       const isTab2AutoFill = fetcher.data.intent === "tab2AutoFill";
@@ -491,6 +505,11 @@ Image URL: ${imageUrl}`;
               updatedState[key] = val;
             }
           });
+          
+          if (productTitle) {
+            updatedState.piece_name = productTitle;
+          }
+          
           return updatedState;
         });
 
@@ -519,6 +538,10 @@ Image URL: ${imageUrl}`;
             // Clean primary_medium hardcode
             if (nextState.primary_medium === "Stone") {
                 nextState.primary_medium = "";
+            }
+
+            if (productTitle) {
+              nextState.piece_name = productTitle;
             }
 
             return nextState;
@@ -555,6 +578,11 @@ Image URL: ${imageUrl}`;
                       updatedState[key] = val;
                     }
                 });
+                
+                if (productTitle) {
+                  updatedState.piece_name = productTitle;
+                }
+                
                 return updatedState;
             });
             setTab2StatusMessage("Auto-Fill complete — review fields before saving");
