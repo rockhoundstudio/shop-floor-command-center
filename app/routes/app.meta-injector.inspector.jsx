@@ -107,10 +107,16 @@ export function IntakeBenchTab({ products, fetcher }) {
   const [errorMessage, setErrorMessage] = useState("");
   const [promptStyle, setPromptStyle] = useState("");
 
+  // Tab 2 Auto-Fill State
+  const [tab2StatusMessage, setTab2StatusMessage] = useState("");
+  const [tab2ErrorMessage, setTab2ErrorMessage] = useState("");
+
   const handleSelectProduct = useCallback((id) => {
     setSelectedProductId(id);
     setStatusMessage("");
     setErrorMessage("");
+    setTab2StatusMessage("");
+    setTab2ErrorMessage("");
 
     const product = products.find(p => p.id === id);
     const newForm = {};
@@ -271,8 +277,8 @@ export function IntakeBenchTab({ products, fetcher }) {
           ];
           const textFields = [
             "piece_name", "primary_medium", "dimensions_mm", 
-            "weight_grams", "origin_story", "honest_flaws_and_character", 
-            "collection_name", "source_location", "price"
+            "weight_grams", "origin_story",
+            "honest_flaws_and_character", "collection_name"
           ];
 
           product.metafields.edges.forEach(({ node }) => {
@@ -367,10 +373,10 @@ export function IntakeBenchTab({ products, fetcher }) {
       return;
     }
 
-    // Explicit form action wiring restored to prevent silent drop
+    // Submit back to the current route's action without a hardcoded action path
     fetcher.submit(
       { intent: "saveProduct", payload: JSON.stringify(payload) },
-      { method: "post", action: "/app/meta-injector" }
+      { method: "post" }
     );
   }, [selectedProductId, formState, fetcher]);
 
@@ -393,10 +399,10 @@ export function IntakeBenchTab({ products, fetcher }) {
     });
 
     if (changes.length > 0) {
-      // Explicit form action wiring restored to prevent silent drop
+      // Submit back to the current route's action
       fetcher.submit(
         { intent: "saveMetafields", productId: selectedProductId, metafields: JSON.stringify(changes) },
-        { method: "post", action: "/app/meta-injector" }
+        { method: "post" }
       );
     }
   }, [selectedProductId, fullMetaState, fetcher]);
@@ -408,6 +414,7 @@ export function IntakeBenchTab({ products, fetcher }) {
     if (isIdle && hasData) {
       const isAutoFill = fetcher.data.intent === "autoFill";
       const isSmartAutoFill = fetcher.data.intent === "smartAutoFill";
+      const isTab2AutoFill = fetcher.data.intent === "tab2AutoFill";
       const isSaveProduct = fetcher.data.intent === "saveProduct";
       const isSaveMetafields = fetcher.data.intent === "saveMetafields";
       
@@ -492,7 +499,7 @@ export function IntakeBenchTab({ products, fetcher }) {
         }
       }
 
-      if (isError) {
+      if (isError && !isTab2AutoFill) {
         setErrorMessage(fetcher.data.error || "An unknown error occurred during the operation.");
         // Fallback catch-all error Toast
         if (window.shopify && window.shopify.toast) {
@@ -756,20 +763,6 @@ export function IntakeBenchTab({ products, fetcher }) {
                   </div>
                 </BlockStack>
               ))}
-
-              <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "16px" }}>
-                <Button 
-                  icon={SaveIcon} 
-                  tone="success" 
-                  variant="primary" 
-                  onClick={handleSaveFullMeta}
-                  accessibilityLabel="Save Full Meta Report"
-                  disabled={!selectedProductId}
-                  loading={fetcher.state !== "idle" && fetcher.formData?.get("intent") === "saveMetafields"}
-                >
-                  Save Full Meta Report
-                </Button>
-              </div>
 
             </BlockStack>
           </Card>
