@@ -158,6 +158,33 @@ export async function action({ request }) {
         namespace: "custom"
       }));
 
+      const hasPieceName = metafields.some(mf => mf.key === "piece_name" && mf.value && String(mf.value).trim() !== "");
+      if (!hasPieceName && metafields.length > 0) {
+        const productId = metafields[0].ownerId;
+        if (productId) {
+          const productResponse = await admin.graphql(`
+            #graphql
+            query GetProductTitle($id: ID!) {
+              product(id: $id) {
+                title
+              }
+            }
+          `, { variables: { id: productId } });
+          const productJson = await productResponse.json();
+          const productTitle = productJson.data?.product?.title;
+          
+          if (productTitle) {
+            metafields.push({
+              namespace: "custom",
+              key: "piece_name",
+              type: "single_line_text_field",
+              value: productTitle,
+              ownerId: productId
+            });
+          }
+        }
+      }
+
       const response = await admin.graphql(SET_METAFIELDS_MUTATION, {
         variables: { metafields }
       });
