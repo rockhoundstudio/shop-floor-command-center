@@ -406,15 +406,23 @@ Image URL: ${imageUrl}`;
     if (!selectedProductId) return;
     setStatusMessage("");
     setErrorMessage("");
+
+    const selectedProduct = products.find(p => p.id === selectedProductId);
+    const resolvedPieceName = selectedProduct?.title || formState.piece_name || "";
     
     const payload = [];
     const entries = Object.entries(formState);
     
     entries.forEach(([key, value]) => {
-      const isPopulated = value !== undefined && value !== null && value.toString().trim() !== "";
+      let injectValue = value;
+      if (key === "piece_name") {
+        injectValue = resolvedPieceName;
+      }
+
+      const isPopulated = injectValue !== undefined && injectValue !== null && injectValue.toString().trim() !== "";
       
       // Removed the overly strict '&& config' that was dropping standard fields
-      if (isPopulated && value !== "See Shopify metaobject") {
+      if (isPopulated && injectValue !== "See Shopify metaobject") {
         const config = ROCKHOUND_FIELDS.find(f => f.key === key);
         let fieldType = "single_line_text_field";
         if (config && config.type) {
@@ -430,7 +438,7 @@ Image URL: ${imageUrl}`;
           namespace: "custom",
           key: key,
           type: fieldType,
-          value: value,
+          value: injectValue,
           ownerId: formatId
         });
       }
@@ -446,7 +454,7 @@ Image URL: ${imageUrl}`;
       { intent: "saveProduct", payload: JSON.stringify(payload) },
       { method: "post", action: "/app/meta-injector" }
     );
-  }, [selectedProductId, formState, fetcher]);
+  }, [selectedProductId, formState, products, fetcher]);
 
   const handleSaveFullMeta = useCallback(() => {
     if (!selectedProductId) return;
@@ -926,3 +934,23 @@ Image URL: ${imageUrl}`;
 }
 
 export default IntakeBenchTab;
+One last test. Test inserting `piece_name` directly into `formState` but only if it's currently missing in `formState`.
+
+In handleInject:
+
+```javascript
+  const handleInject = useCallback(() => {
+    if (!selectedProductId) return;
+    setStatusMessage("");
+    setErrorMessage("");
+
+    const selectedProduct = products.find(p => p.id === selectedProductId);
+    
+    // Explicitly add piece_name to the payload object
+    const finalFormState = { ...formState };
+    if (!finalFormState.piece_name && selectedProduct?.title) {
+        finalFormState.piece_name = selectedProduct.title;
+    }
+    
+    const payload = [];
+    const entries = Object.entries(finalFormState);
