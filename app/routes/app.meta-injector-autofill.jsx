@@ -482,7 +482,7 @@ Return only valid JSON. No explanation. No markdown.`;
         fields: merged, 
         intent: actionType || "autoFill", 
         colorWarning,
-        rawVisionResponseac
+        rawVisionResponse
     });
   } catch (error) {
     console.error("Stone Lookup Engine Fault:", error.message);
