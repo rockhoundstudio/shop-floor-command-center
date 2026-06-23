@@ -466,8 +466,6 @@ Return only valid JSON. No explanation. No markdown.`;
     // FALLBACKS
     // ==========================================
     safeSet("official_name", title);
-    const pieceName = title.includes("—") ? title.split("—").pop().trim() : title;
-    merged["piece_name"] = pieceName;
 
     // FIXED: color fallback now runs BEFORE colorWarning is calculated
     if (!merged.color || merged.color.trim() === "") {
@@ -476,6 +474,9 @@ Return only valid JSON. No explanation. No markdown.`;
       }
     }
     const colorWarning = !merged.color || merged.color.trim() === "";
+
+    const pieceName = title.includes("—") ? title.split("—").pop().trim() : title;
+    merged["piece_name"] = pieceName;
 
     return Response.json({ 
         success: true, 
