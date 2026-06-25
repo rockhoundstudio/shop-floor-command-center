@@ -64,3 +64,4 @@ export default function DictationButton({ onResult, placeholder = "🎤 Click to
     </Tooltip>
   );
 }
+

@@ -30,7 +30,7 @@ export async function action({ request }) {
               node {
                 id
                 title
-                metafields(first: 50, namespace: "rockhound") {
+                metafields(first: 50, namespace: "custom") {
                   edges {
                     node {
                       id
@@ -58,7 +58,7 @@ export async function action({ request }) {
             if (edge.node.key === "is_one_of_a_kind" && edge.node.value === "true") {
               toFix.push({
                 ownerId: product.id,
-                namespace: "rockhound",
+                namespace: "custom",
                 key: "is_one_of_a_kind",
                 value: "Yes — one of a kind",
                 type: "single_line_text_field"
@@ -119,7 +119,7 @@ export async function action({ request }) {
             edges {
               node {
                 id
-                rockhoundMeta: metafields(first: 50, namespace: "rockhound") {
+                rockhoundMeta: metafields(first: 50, namespace: "custom") {
                   edges { node { key value } }
                 }
                 customMeta: metafields(first: 50, namespace: "custom") {
@@ -211,7 +211,7 @@ export async function action({ request }) {
             edges {
               node {
                 id
-                rockhoundMeta: metafields(first: 50, namespace: "rockhound") {
+                rockhoundMeta: metafields(first: 50, namespace: "custom") {
                   edges { node { key } }
                 }
               }
@@ -229,7 +229,7 @@ export async function action({ request }) {
         for (const e of rockhound) {
           deletePayloads.push({
             ownerId: p.node.id,
-            namespace: "rockhound",
+            namespace: "custom",
             key: e.node.key
           });
         }
@@ -293,7 +293,7 @@ export async function action({ request }) {
                     }
                   }
                 }
-                rockhoundMetafields: metafields(first: 50, namespace: "rockhound") {
+                rockhoundMetafields: metafields(first: 50, namespace: "custom") {
                   edges {
                     node {
                       key
@@ -342,7 +342,7 @@ export async function action({ request }) {
 
         const pushUpdate = (key, value, type) => {
           pendingUpdates.push({
-            update: { ownerId: product.id, namespace: "rockhound", key, value, type },
+            update: { ownerId: product.id, namespace: "custom", key, value, type },
             title: product.title
           });
           addedToThisProduct = true;

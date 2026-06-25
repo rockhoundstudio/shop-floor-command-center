@@ -352,3 +352,4 @@ export default function CollectionsTab({ products = [], collections = [], onBack
     </BlockStack>
   );
 }
+

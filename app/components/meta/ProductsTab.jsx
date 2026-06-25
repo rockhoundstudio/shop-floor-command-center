@@ -590,3 +590,4 @@ export default function ProductsTab({ products = [] }) {
     </BlockStack>
   );
 }
+

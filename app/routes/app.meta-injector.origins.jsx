@@ -170,3 +170,4 @@ export function OriginsTab({ fetcher }) {
     </Box>
   );
 }
+

@@ -112,7 +112,7 @@ export function OperationsMatrixTab({ products, fetcher }) {
             const formatId = p.id.includes("gid://") ? p.id : `gid://shopify/Product/${p.id}`;
             payload.push({
               ownerId: formatId,
-              namespace: "rockhound",
+              namespace: "custom",
               key: "is_one_of_a_kind",
               value: "Yes — one of a kind",
               type: "single_line_text_field"
@@ -129,7 +129,7 @@ export function OperationsMatrixTab({ products, fetcher }) {
               const formatId = p.id.includes("gid://") ? p.id : `gid://shopify/Product/${p.id}`;
               payload.push({
                 ownerId: formatId,
-                namespace: "rockhound",
+                namespace: "custom",
                 key: "collection_location",
                 value: origin,
                 type: "single_line_text_field"
@@ -492,3 +492,4 @@ export function OperationsMatrixTab({ products, fetcher }) {
     </BlockStack>
   );
 }
+

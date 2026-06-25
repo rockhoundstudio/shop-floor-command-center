@@ -934,3 +934,4 @@ Image URL: ${imageUrl}`;
 }
 
 export default IntakeBenchTab;
+

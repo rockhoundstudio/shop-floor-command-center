@@ -305,3 +305,4 @@ export function getLabelForValue(value, metaobjectHandles = {}) {
 
   return value;
 }
+

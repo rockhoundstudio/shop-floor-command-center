@@ -15,3 +15,4 @@ export default function AdditionalPage() {
     </s-page>
   );
 }
+

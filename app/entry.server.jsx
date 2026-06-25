@@ -49,3 +49,4 @@ export default async function handleRequest(
     setTimeout(abort, streamTimeout + 1000);
   });
 }
+

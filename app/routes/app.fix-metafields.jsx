@@ -19,7 +19,7 @@ export async function action({ request }) {
   // Query for the cut_and_shape and color metafield definitions in the rockhound namespace
   const defsRes = await admin.graphql(`#graphql
     query {
-      metafieldDefinitions(first: 50, ownerType: PRODUCT, namespace: "rockhound") {
+      metafieldDefinitions(first: 50, ownerType: PRODUCT, namespace: "custom") {
         edges {
           node {
             id
@@ -62,7 +62,7 @@ export async function action({ request }) {
     const createRes = await admin.graphql(`#graphql
       mutation {
         metafieldDefinitionCreate(definition: {
-          namespace: "rockhound"
+          namespace: "custom"
           key: "${field.key}"
           name: "${field.name}"
           ownerType: PRODUCT

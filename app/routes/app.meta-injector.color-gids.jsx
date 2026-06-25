@@ -24,3 +24,4 @@ export const COLOR_PATTERN_GIDS = {
   dots:        "gid://shopify/Metaobject/152952144123",
   purple:      "gid://shopify/Metaobject/155539931387"
 };
+

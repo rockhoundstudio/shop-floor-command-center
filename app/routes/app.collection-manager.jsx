@@ -452,3 +452,4 @@ export default function CollectionManager() {
     </Frame>
   );
 }
+

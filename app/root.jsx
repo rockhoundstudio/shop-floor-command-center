@@ -58,3 +58,4 @@ export function ErrorBoundary() {
     </html>
   );
 }
+
