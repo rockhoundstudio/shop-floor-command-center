@@ -478,6 +478,8 @@ Return only valid JSON. No explanation. No markdown.`;
     const pieceName = title.includes("—") ? title.split("—").pop().trim() : title;
     merged["piece_name"] = pieceName;
 
+    console.log("=== AUTOFILL PAYLOAD BEFORE RETURN ===", merged);
+
     return Response.json({ 
         success: true, 
         fields: merged, 
