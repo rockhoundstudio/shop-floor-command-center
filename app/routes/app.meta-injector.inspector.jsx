@@ -517,7 +517,7 @@ Image URL: ${imageUrl}`;
           });
           
           if (productTitle) {
-            updatedState.piece_name = productTitle;
+            updatedState.piece_name = productTitle.includes(" — ") ? productTitle.split(" — ").pop().trim() : productTitle;
           }
           
           return updatedState;
@@ -551,7 +551,7 @@ Image URL: ${imageUrl}`;
             }
 
             if (productTitle) {
-              nextState.piece_name = productTitle;
+              nextState.piece_name = productTitle.includes(" — ") ? productTitle.split(" — ").pop().trim() : productTitle;
             }
 
             return nextState;
@@ -590,7 +590,7 @@ Image URL: ${imageUrl}`;
                 });
                 
                 if (productTitle) {
-                  updatedState.piece_name = productTitle;
+                  updatedState.piece_name = productTitle.includes(" — ") ? productTitle.split(" — ").pop().trim() : productTitle;
                 }
                 
                 return updatedState;
