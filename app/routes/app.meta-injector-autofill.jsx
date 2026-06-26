@@ -476,7 +476,7 @@ Return only valid JSON. No explanation. No markdown.`;
     const colorWarning = !merged.color || merged.color.trim() === "";
 
     const productTitle = body.get("productTitle") || "";
-    const pieceName = productTitle.includes("—") ? productTitle.split("—").pop().trim() : productTitle;
+    const pieceName = productTitle.includes(" — ") ? productTitle.split(" — ").pop().trim() : productTitle;
     merged["piece_name"] = pieceName;
 
     console.log("=== AUTOFILL PAYLOAD BEFORE RETURN ===", merged);
