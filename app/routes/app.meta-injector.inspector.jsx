@@ -479,7 +479,7 @@ Image URL: ${imageUrl}`;
       // Explicit form action wiring restored to prevent silent drop
       fetcher.submit(
         { intent: "saveMetafields", productId: selectedProductId, metafields: JSON.stringify(changes) },
-        { method: "post", action: "/app/meta-injector" }
+        { method: "post", action: "/app/meta-injector-api" }
       );
     }
   }, [selectedProductId, fullMetaState, fetcher]);
