@@ -452,8 +452,8 @@ Image URL: ${imageUrl}`;
 
     // Explicit form action wiring restored to guarantee hitting the server action block
     fetcher.submit(
-      { intent: "saveProduct", payload: JSON.stringify(payload) },
-      { method: "post", action: "/app/meta-injector" }
+      { intent: "saveMetafields", payload: JSON.stringify(payload) },
+      { method: "post", action: "/app/meta-injector-api" }
     );
   }, [selectedProductId, formState, products, fetcher]);
 
