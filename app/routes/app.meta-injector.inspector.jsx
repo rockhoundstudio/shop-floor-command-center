@@ -394,6 +394,7 @@ Image URL: ${imageUrl}`;
       { 
         intent: "tab2AutoFill", 
         productId: selectedProductId,
+        productTitle: title,
         prompt: promptText,
         imageUrl: imageUrl
       },
@@ -934,4 +935,3 @@ Image URL: ${imageUrl}`;
 }
 
 export default IntakeBenchTab;
-
