@@ -95,12 +95,15 @@ export const action = async ({ request }) => {
           ? item.ownerId
           : `gid://shopify/Product/${item.ownerId.split("/").pop()}`;
 
+        const resolvedType = TYPE_MAP[item.key] || item.type || "single_line_text_field";
+        const resolvedValue = resolvedType.startsWith("list.") ? JSON.stringify([String(item.value)]) : String(item.value);
+
         return {
           ownerId: resolvedId,
           namespace: item.namespace || "custom",
           key: item.key,
-          type: TYPE_MAP[item.key] || item.type || "single_line_text_field",
-          value: String(item.value)
+          type: resolvedType,
+          value: resolvedValue
         };
       });
 
@@ -166,7 +169,7 @@ export const action = async ({ request }) => {
             }
           }
         }
-      }`,
+      } `,
       { variables: { ownerId: resolvedId } }
     );
 
