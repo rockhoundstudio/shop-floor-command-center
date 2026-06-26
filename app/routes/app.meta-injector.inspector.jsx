@@ -495,7 +495,7 @@ Image URL: ${imageUrl}`;
       const isAutoFill = fetcher.data.intent === "autoFill";
       const isSmartAutoFill = fetcher.data.intent === "smartAutoFill";
       const isTab2AutoFill = fetcher.data.intent === "tab2AutoFill";
-      const isSaveProduct = fetcher.data.intent === "saveProduct";
+      const isSaveProduct = fetcher.data.intent === "saveMetafields";
       
       const isSuccess = fetcher.data.success === true;
       const isError = fetcher.data.success === false;
