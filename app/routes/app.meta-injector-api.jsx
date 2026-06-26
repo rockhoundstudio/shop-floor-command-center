@@ -102,6 +102,8 @@ export const action = async ({ request }) => {
       return data({ success: true, message: "No fields to save." });
     }
 
+    console.log("METAFIELDS BEING SENT TO SHOPIFY:", JSON.stringify(setMetafields, null, 2));
+
     const chunks = chunkArray(setMetafields, 3);
     const allErrors = [];
 
@@ -213,4 +215,3 @@ export const action = async ({ request }) => {
     });
   }
 };
-
