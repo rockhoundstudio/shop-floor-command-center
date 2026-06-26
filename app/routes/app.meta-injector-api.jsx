@@ -82,6 +82,12 @@ export const action = async ({ request }) => {
     const rawPayload = formData.get("payload");
     const payloadArray = JSON.parse(rawPayload);
 
+    const TYPE_MAP = {
+      stone_story: "list.single_line_text_field",
+      character_marks: "list.single_line_text_field",
+      is_ooak: "boolean"
+    };
+
     const setMetafields = payloadArray
       .filter(item => item.value !== null && String(item.value).trim() !== "")
       .map(item => {
@@ -93,7 +99,7 @@ export const action = async ({ request }) => {
           ownerId: resolvedId,
           namespace: item.namespace || "custom",
           key: item.key,
-          type: item.type || "single_line_text_field",
+          type: TYPE_MAP[item.key] || item.type || "single_line_text_field",
           value: String(item.value)
         };
       });
