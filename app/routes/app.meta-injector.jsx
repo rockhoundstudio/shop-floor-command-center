@@ -22,6 +22,8 @@ export default function MetaInjectorV2() {
   const { products } = useLoaderData() || {};
   const navigate = useNavigate();
   const fetcher = useFetcher();
+  const autoFillFetcher = useFetcher();
+  const injectFetcher = useFetcher();
 
   const [selectedTab, setSelectedTab] = useState(0);
 
@@ -62,7 +64,7 @@ export default function MetaInjectorV2() {
               <Tabs tabs={tabs} selected={selectedTab} onSelect={setSelectedTab} fitted>
                 <Box padding="600" background="bg-surface-secondary">
                   {isTabOne && <NewProductIntakeTab fetcher={fetcher} />}
-                  {isTabTwo && <IntakeBenchTab products={products} fetcher={fetcher} />}
+                  {isTabTwo && <IntakeBenchTab products={products} autoFillFetcher={autoFillFetcher} injectFetcher={injectFetcher} />}
                   {isTabThree && <OperationsMatrixTab products={products} fetcher={fetcher} />}
                 </Box>
               </Tabs>
