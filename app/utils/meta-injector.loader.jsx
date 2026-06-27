@@ -21,7 +21,7 @@ const GET_PRODUCTS_QUERY = `
           customMeta: metafields(first: 50, namespace: "custom") {
             edges { node { namespace key value type } }
           }
-          rockhoundMeta: metafields(first: 50, namespace: "rockhound") {
+          rockhoundMeta: metafields(first: 50, namespace: "custom") {
             edges { node { namespace key value type } }
           }
           geoMeta: metafields(first: 50, namespace: "geo") {
@@ -153,10 +153,9 @@ export async function action({ request }) {
         metafields = JSON.parse(payloadStr);
       }
       
-      const ROCKHOUND_KEYS = ["origin_location", "collection_name", "honest_flaws_and_character"];
       metafields = metafields.map(mf => ({
         ...mf,
-        namespace: ROCKHOUND_KEYS.includes(mf.key) ? "rockhound" : "custom"
+        namespace: "custom"
       }));
 
       const hasPieceName = metafields.some(mf => mf.key === "piece_name" && mf.value && String(mf.value).trim() !== "");
@@ -357,10 +356,9 @@ export async function action({ request }) {
 
       let addedToThisProduct = false;
 
-      const ROCKHOUND_MIGRATE_KEYS = ["origin_location", "collection_name", "honest_flaws_and_character", "origin_story", "treated", "dimensions_mm"];
       const pushUpdate = (key, value, type) => {
         pendingUpdates.push({
-          update: { ownerId: product.id, namespace: ROCKHOUND_MIGRATE_KEYS.includes(key) ? "rockhound" : "custom", key, value, type },
+          update: { ownerId: product.id, namespace: "custom", key, value, type },
           title: product.title
         });
         addedToThisProduct = true;
