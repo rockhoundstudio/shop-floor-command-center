@@ -245,7 +245,7 @@ export const action = async ({ request }) => {
 
         if (storyParagraphs.length > 0) {
           const combinedStory = storyParagraphs.join("\n\n");
-          safeSet("honest_flaws_and_character", combinedStory); 
+          safeSet("origin_story", combinedStory); 
         }
 
       } catch (parseError) {
@@ -258,7 +258,7 @@ export const action = async ({ request }) => {
     // ==========================================
     const parseTitle = body.get("productTitle") || title || "";
     if (parseTitle) {
-      const titleParts = parseTitle.split(" — ");
+      const titleParts = parseTitle.split(/\s+[-–—]\s+/);
       
       let rawStoneFamily = titleParts[0] || "";
       const wordsToStrip = ["Freeform", "Cabochon", "Oval", "Round", "Teardrop", "Pear", "Square", "Rectangle", "Cushion", "Heart", "Marquise", "Tumbled", "Slab", "Rough", "Raw", "Specimen", "Free Form"];
@@ -282,9 +282,9 @@ export const action = async ({ request }) => {
       }
     }
 
-    const collMatches = [...(description || "").matchAll(/>([^<]*Collection\s*→?)<\/a>/gi)];
+    const collMatches = [...(description || "").matchAll(/<a[^>]*href=["'][^"']*\/collections\/([^"'\/?]+)[^"']*["'][^>]*>([\s\S]*?)<\/a>/gi)];
     if (collMatches.length > 0) {
-      const uniqueCollections = [...new Set(collMatches.map(m => m[1].replace(/\s*→$/, "").trim()))];
+      const uniqueCollections = [...new Set(collMatches.map(m => m[2].replace(/\s*→$/, "").replace(/<\/?[^>]+(>|$)/g, "").trim()))];
       safeSet("collection_name", uniqueCollections.join(", "));
     }
 
