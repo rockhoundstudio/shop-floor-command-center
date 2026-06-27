@@ -626,12 +626,10 @@ Image URL: ${imageUrl}`;
     const hasData = injectFetcher.data !== undefined && injectFetcher.data !== null;
     
     if (isIdle && hasData) {
-      const isSaveProduct = injectFetcher.data.intent === "saveMetafields";
-      
       const isSuccess = injectFetcher.data.success === true;
       const isError = injectFetcher.data.success === false;
 
-      if (isSaveProduct && isSuccess) {
+      if (isSuccess) {
         setStatusMessage("Metafields injected cleanly into Shopify database.");
         if (window.shopify && window.shopify.toast) {
           window.shopify.toast.show("Metafields injected!");
