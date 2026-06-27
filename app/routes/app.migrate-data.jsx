@@ -16,125 +16,6 @@ export async function action({ request }) {
   const formData = await request.formData();
   const intent = formData.get("intent");
 
-  // ── MIGRATE LEGACY TO ACTIVE ───────────────────────────────────────────────
-  if (intent === "migrateLegacyToActive") {
-    const results = [];
-    let productsScanned = 0;
-    let fieldsMigrated = 0;
-
-    try {
-      const GET_PRODUCTS = `
-        query {
-          products(first: 250) {
-            edges {
-              node {
-                id
-                title
-                metafields(first: 50, namespace: "custom") {
-                  edges { 
-                    node { 
-                      key 
-                      value 
-                      type
-                    } 
-                  }
-                }
-              }
-            }
-          }
-        }
-      `;
-      const res = await admin.graphql(GET_PRODUCTS);
-      const json = await res.json();
-      const products = json.data?.products?.edges || [];
-      productsScanned = products.length;
-
-      const MIGRATION_MAP = [
-        { legacy: "stone_story", active: "origin_story" },
-        { legacy: "character_marks", active: "honest_flaws_and_character" },
-        { legacy: "is_ooak", active: "is_one_of_a_kind" },
-        { legacy: "stone_shape", active: "cut_and_shape" },
-        { legacy: "treatment_status", active: "treated" }
-      ];
-
-      const pendingMigrations = [];
-
-      for (const p of products) {
-        const customMetafields = p.node.metafields?.edges || [];
-
-        for (const map of MIGRATION_MAP) {
-          const legacyNode = customMetafields.find(e => e.node.key === map.legacy);
-          const activeNode = customMetafields.find(e => e.node.key === map.active);
-
-          const legacyValue = legacyNode?.node?.value;
-          const activeValue = activeNode?.node?.value;
-
-          const legacyValStr = String(legacyValue || "");
-          const activeValStr = String(activeValue || "");
-
-          // Only copy if legacy has data and active is completely empty
-          if (legacyValStr.trim() !== "" && activeValStr.trim() === "") {
-            pendingMigrations.push({
-              mutation: {
-                ownerId: p.node.id,
-                namespace: "custom",
-                key: map.active,
-                value: legacyValue,
-                type: legacyNode.node.type || "single_line_text_field"
-              },
-              log: { 
-                status: "success", 
-                message: `Migrated '${map.legacy}' to '${map.active}' for product: ${p.node.title} (${p.node.id})` 
-              }
-            });
-          }
-        }
-      }
-
-      const SET_METAFIELDS = `
-        mutation MetafieldsSet($metafields: [MetafieldsSetInput!]!) {
-          metafieldsSet(metafields: $metafields) {
-            userErrors { field message }
-          }
-        }
-      `;
-
-      // Chunk in groups of 25
-      const chunks = [];
-      for (let i = 0; i < pendingMigrations.length; i += 25) {
-        chunks.push(pendingMigrations.slice(i, i + 25));
-      }
-
-      for (const chunk of chunks) {
-        const metafields = chunk.map(c => c.mutation);
-        const res = await admin.graphql(SET_METAFIELDS, { variables: { metafields } });
-        const json = await res.json();
-        
-        const errors = json.data?.metafieldsSet?.userErrors || [];
-        if (errors.length > 0) {
-          results.push({ status: "error", message: `Chunk failed: ${errors[0].message}` });
-        } else {
-          fieldsMigrated += chunk.length;
-          // Only push the specific logs if the chunk actually succeeded
-          results.push(...chunk.map(c => c.log));
-        }
-        // Small delay to keep API limits happy
-        await new Promise(resolve => setTimeout(resolve, 300));
-      }
-
-      // Add summary to the very top
-      results.unshift({ 
-        status: "success", 
-        message: `SUMMARY: Scanned ${productsScanned} products. Migrated ${fieldsMigrated} total fields.` 
-      });
-
-    } catch (e) {
-      results.push({ status: "error", message: `Migration failed: ${e.message}` });
-    }
-    
-    return { intent, results };
-  }
-
   // ── STANDARDIZE ONE OF A KIND ──────────────────────────────────────────────
   if (intent === "standardizeOneOfAKind") {
     const results = [];
@@ -389,7 +270,7 @@ export async function action({ request }) {
     return { intent, results };
   }
 
-  // ── LEGACY MIGRATION (ORIGINAL BUNDLE) ────────────────────────────────────
+  // ── LEGACY MIGRATION ───────────────────────────────────────────────────────
   if (intent === "migrate") {
     const results = [];
     let productsProcessed = 0;
@@ -467,18 +348,22 @@ export async function action({ request }) {
           addedToThisProduct = true;
         };
 
+        // custom.dimensions_mm → rockhound.dimensions_mm
         if (custDim && !rhDim) {
           pushUpdate("dimensions_mm", custDim, "single_line_text_field");
         }
 
+        // custom.treatment_status → rockhound.treated
         if (custTreat && !rhTreat) {
           pushUpdate("treated", custTreat, "single_line_text_field");
         }
 
+        // custom.stone_story → rockhound.origin_story
         if (custStory && !rhStory) {
           pushUpdate("origin_story", custStory, "multi_line_text_field");
         }
 
+        // custom.character_marks & custom.bench_notes → rockhound.honest_flaws_and_character
         if (!rhFlaws) {
           let combinedFlaws = null;
           
@@ -506,6 +391,7 @@ export async function action({ request }) {
       }
 
       for (const chunk of chunks) {
+        // Extract just the Shopify input objects for the mutation
         const metafields = chunk.map(c => c.update);
 
         const setResponse = await admin.graphql(`
@@ -526,6 +412,7 @@ export async function action({ request }) {
           results.push({ status: "error", message: `Chunk failed: ${errors[0].message}` });
         } else {
           fieldsMigrated += chunk.length;
+          // Log individual successful migrations to the results array
           chunk.forEach(c => {
             results.push({ status: "success", message: `Migrated '${c.update.key}' for product: ${c.title}` });
           });
@@ -535,6 +422,7 @@ export async function action({ request }) {
       if (fieldsMigrated === 0 && results.length === 0) {
         results.push({ status: "success", message: `Scanned ${products.length} products. All fields are already migrated or blank.` });
       } else {
+        // Unshift a grand summary to the top of the report
         results.unshift({ status: "success", message: `SUMMARY: Scanned ${products.length} products. Migrated ${fieldsMigrated} total fields across ${productsProcessed} items.` });
       }
 
@@ -554,20 +442,17 @@ export default function MigrateDataRoute() {
   const standardizeFetcher = useFetcher();
   const copyFetcher = useFetcher();
   const deleteFetcher = useFetcher();
-  const migrateLegacyFetcher = useFetcher();
   const shopify = typeof window !== "undefined" ? window.shopify : undefined;
 
   const isMigrating = migrateFetcher.state !== "idle";
   const isStandardizing = standardizeFetcher.state !== "idle";
   const isCopying = copyFetcher.state !== "idle";
   const isDeleting = deleteFetcher.state !== "idle";
-  const isMigratingLegacy = migrateLegacyFetcher.state !== "idle";
 
   const migrateData = migrateFetcher.data;
   const standardizeData = standardizeFetcher.data;
   const copyData = copyFetcher.data;
   const deleteData = deleteFetcher.data;
-  const migrateLegacyData = migrateLegacyFetcher.data;
 
   const handleRunMigration = () => {
     migrateFetcher.submit({ intent: "migrate" }, { method: "post" });
@@ -576,19 +461,6 @@ export default function MigrateDataRoute() {
   const handleStandardize = () => {
     standardizeFetcher.submit({ intent: "standardizeOneOfAKind" }, { method: "post" });
   };
-
-  useEffect(() => {
-    if (migrateLegacyFetcher.state === "idle" && migrateLegacyData && migrateLegacyData.results) {
-      if (shopify) {
-        const hasErrors = migrateLegacyData.results.some(r => r.status === "error");
-        if (hasErrors) {
-          shopify.toast.show("Legacy migration finished with some errors.", { isError: true });
-        } else {
-          shopify.toast.show(migrateLegacyData.results[0].message);
-        }
-      }
-    }
-  }, [migrateLegacyFetcher.state, migrateLegacyData, shopify]);
 
   useEffect(() => {
     if (migrateFetcher.state === "idle" && migrateData && migrateData.results) {
@@ -663,53 +535,9 @@ export default function MigrateDataRoute() {
               </p>
             </Banner>
 
-            {/* MIGRATION: LEGACY TO ACTIVE */}
             <Card padding="600">
               <BlockStack gap="400">
-                <Text variant="headingLg" as="h2">Migrate Legacy → Active</Text>
-                <Text as="p">
-                  Copies data from legacy fields (stone_story, character_marks, is_ooak, stone_shape, treatment_status) into your new active fields. Only copies if the target active field is currently empty.
-                </Text>
-                <Box paddingBlockStart="400">
-                  <div style={{ minHeight: "60px", minWidth: "100%" }}>
-                    <Button
-                      size="large"
-                      variant="primary"
-                      fullWidth
-                      onClick={() => migrateLegacyFetcher.submit({ intent: "migrateLegacyToActive" }, { method: "post" })}
-                      loading={isMigratingLegacy}
-                      accessibilityLabel="Migrate Legacy Data to Active Fields"
-                    >
-                      {isMigratingLegacy ? "Migrating Legacy Data..." : "Migrate Legacy → Active"}
-                    </Button>
-                  </div>
-                </Box>
-              </BlockStack>
-            </Card>
-
-            {migrateLegacyData && migrateLegacyData.results && (
-              <Card padding="600">
-                <BlockStack gap="500">
-                  <Text variant="headingLg" as="h3">Legacy Migration Report</Text>
-                  <Divider />
-                  <BlockStack gap="300">
-                    {migrateLegacyData.results.map((result, idx) => (
-                      <div key={idx} style={{ display: "flex", alignItems: "center", gap: "8px", padding: "8px 0", borderBottom: "1px solid #E1E3E5" }}>
-                        <StatusIcon status={result.status} />
-                        <Text as="span" tone={result.status === "error" ? "critical" : "base"}>
-                          {result.message}
-                        </Text>
-                      </div>
-                    ))}
-                  </BlockStack>
-                </BlockStack>
-              </Card>
-            )}
-
-            {/* RUN LEGACY BUNDLE MIGRATION */}
-            <Card padding="600">
-              <BlockStack gap="400">
-                <Text variant="headingLg" as="h2">Run Legacy Bundle Migration</Text>
+                <Text variant="headingLg" as="h2">Run Legacy Migration</Text>
                 <Text as="p">
                   Clicking this button will scan your products, map the old data over to the new Freeform Revolution schema, and build the Shop Specs bundles.
                   (It is safe to run multiple times — it will just overwrite the new fields with the exact same legacy data).
@@ -750,7 +578,6 @@ export default function MigrateDataRoute() {
               </Card>
             )}
 
-            {/* STANDARDIZE ONE OF A KIND */}
             <Card padding="600">
               <BlockStack gap="400">
                 <Text variant="headingLg" as="h2">Standardize One of a Kind Values</Text>
@@ -793,7 +620,6 @@ export default function MigrateDataRoute() {
               </Card>
             )}
 
-            {/* COPY ROCKHOUND TO CUSTOM */}
             <Card padding="600">
               <BlockStack gap="400">
                 <Text variant="headingLg" as="h2">Copy Rockhound → Custom</Text>
@@ -835,7 +661,6 @@ export default function MigrateDataRoute() {
               </Card>
             )}
 
-            {/* DELETE ROCKHOUND NAMESPACE */}
             <Card padding="600">
               <BlockStack gap="400">
                 <Text variant="headingLg" as="h2">Delete Rockhound Namespace</Text>

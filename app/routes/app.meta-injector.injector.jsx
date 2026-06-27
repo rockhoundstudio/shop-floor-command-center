@@ -1,72 +1,26 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { BlockStack, Card, Text, TextField, Select, Button, Banner, Checkbox, Collapsible } from "@shopify/polaris";
+import { BlockStack, Card, Text, TextField, Select, Button, Banner } from "@shopify/polaris";
 import { PlusIcon } from "@shopify/polaris-icons";
 import { ROCKHOUND_FIELDS, DEFAULT_DROPDOWNS, REQUIRED_FIELDS } from "../utils/meta-injector.constants.jsx";
 
 export function NewProductIntakeTab({ fetcher }) {
   const [sharedFields, setSharedFields] = useState({
-    // Preserved for save logic integrity
+    material: "",
     collection_location: "",
     collection_date: "",
-    stone_family: "",
-    primary_use: "",
-    
-    // SECTION 1: Core Ignition
-    handcrafted_by: "Bob and Janyce",
-    is_one_of_a_kind: true,
-    treated: "",
-    
-    // SECTION 2: Human Engine
     origin_story: "",
-    honest_flaws_and_character: "",
-    artist_notes: "",
-    rescued_by: "",
-    story_theme: "",
-    origin_page_handle: "",
-    stone_shape: "",
-    surface_finish: "",
-    collection_name: "",
-
-    // SECTION 3: Google Machine
-    "color-pattern": "",
-    material: "",
-    "jewelry-type": "",
-    "necklace-design": "",
-    "chain-link-type": "",
-    "jewelry-finding-type": "",
-    "target-gender": "",
-    "age-group": "",
-    authenticity: "",
-    rarity: "",
-    condition: "",
-    found_object: false,
-    custom_product: false,
-
-    // SECTION 4: Geo-Vault
-    mohs_hardness: "",
-    luster: "",
-    fracture_pattern: "",
-    cleavage: "",
-    specific_gravity: "",
-    diaphaneity: "",
-    "mineral-class": "",
-    "crystal-system": "",
-    "rock-composition": "",
-    "rock-formation": "",
-    "geological-era": "",
-    geological_age: ""
+    treated: "",
+    stone_family: "",
+    primary_use: ""
   });
 
   const [pieces, setPieces] = useState([
-    { id: Date.now().toString(), piece_name: "", dimensions_mm: "", weight_grams: "", price: "" }
+    { id: Date.now().toString(), piece_name: "", dimensions_mm: "", cut_and_shape: "", price: "" }
   ]);
 
   const [searchQuery, setSearchQuery] = useState("");
   const [statusMessage, setStatusMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
-
-  const [isGoogleOpen, setIsGoogleOpen] = useState(false);
-  const [isGeoOpen, setIsGeoOpen] = useState(false);
 
   const handleSharedFieldChange = useCallback((key, value) => {
     setSharedFields(prev => ({ ...prev, [key]: value }));
@@ -79,7 +33,7 @@ export function NewProductIntakeTab({ fetcher }) {
   const handleAddRow = useCallback(() => {
     setPieces(prev => [
       ...prev,
-      { id: Date.now().toString() + Math.random().toString(), piece_name: "", dimensions_mm: "", weight_grams: "", price: "" }
+      { id: Date.now().toString() + Math.random().toString(), piece_name: "", dimensions_mm: "", cut_and_shape: "", price: "" }
     ]);
   }, []);
 
@@ -113,7 +67,7 @@ export function NewProductIntakeTab({ fetcher }) {
 
       if (isCreate && isSuccess) {
         setStatusMessage(`Successfully created ${fetcher.data.createdCount || 0} pieces.`);
-        setPieces([{ id: Date.now().toString(), piece_name: "", dimensions_mm: "", weight_grams: "", price: "" }]);
+        setPieces([{ id: Date.now().toString(), piece_name: "", dimensions_mm: "", cut_and_shape: "", price: "" }]);
       }
 
       if (isCreate && isError) {
@@ -124,6 +78,22 @@ export function NewProductIntakeTab({ fetcher }) {
 
   const isSubmitting = fetcher.state !== "idle" && fetcher.formData?.get("intent") === "createProduct";
   
+  const productTypeOptions = [
+    "Cabochon", "Pendant", "Necklace", "Earrings", "Ring", "Bracelet", "Wire Wrap", "Driftwood Art", "Display Specimen", "Collector Piece", "Other"
+  ];
+
+  const collectionLocationOptions = [
+    "Spokane River",
+    "Yakima Canyon",
+    "Yellowstone River",
+    "Richardson's Rock Ranch",
+    "The 3,000-Mile Run",
+    "Nickel Back",
+    "Rufus Serpentine",
+    "The Shopped Rock",
+    "The Gallery"
+  ];
+
   const combinedData = { ...sharedFields, ...(pieces[0] || {}) };
   const scanKeys = [...ROCKHOUND_FIELDS.map(f => f.key), "origin_story", "price"];
 
@@ -146,56 +116,89 @@ export function NewProductIntakeTab({ fetcher }) {
     );
   };
 
-  const renderSharedText = (label, key, multiline = false) => (
-    <div style={{ minHeight: "54px" }}>
-      <TextField
-        label={renderLabel(label, key, sharedFields[key])}
-        value={sharedFields[key] || ""}
-        onChange={(v) => handleSharedFieldChange(key, v)}
-        autoComplete="off"
-        multiline={multiline ? 2 : false}
-        accessibilityLabel={`Enter ${label}`}
-      />
-    </div>
-  );
-
-  const renderSharedCheckbox = (label, key) => (
-    <div style={{ minHeight: "54px", display: "flex", alignItems: "center", paddingTop: "24px" }}>
-      <Checkbox
-        label={label}
-        checked={!!sharedFields[key]}
-        onChange={(v) => handleSharedFieldChange(key, v)}
-      />
-    </div>
-  );
-
   const filteredPieces = pieces.filter(piece => 
     piece.piece_name.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   return (
     <BlockStack gap="600">
-      
-      {/* SECTION 1: CORE IGNITION */}
       <Card padding="400">
         <BlockStack gap="400">
-          <Text variant="headingMd" as="h2">Section 1 — Core Ignition</Text>
-          
+          <Text variant="headingMd" as="h2">Section A: Shared Batch Fields</Text>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "24px" }}>
-            {renderSharedText("Handcrafted By", "handcrafted_by")}
+            <div style={{ minHeight: "54px" }}>
+              <TextField
+                label={renderLabel("Material", "material", sharedFields.material)}
+                value={sharedFields.material}
+                onChange={(v) => handleSharedFieldChange("material", v)}
+                autoComplete="off"
+                accessibilityLabel="Enter shared material"
+              />
+            </div>
+            <div style={{ minHeight: "54px" }}>
+              <TextField
+                label={renderLabel("Stone Family", "stone_family", sharedFields.stone_family)}
+                value={sharedFields.stone_family}
+                onChange={(v) => handleSharedFieldChange("stone_family", v)}
+                autoComplete="off"
+                accessibilityLabel="Enter shared stone family"
+              />
+            </div>
+            <div style={{ minHeight: "54px" }}>
+              <Select
+                label={renderLabel("Collection Location", "collection_location", sharedFields.collection_location)}
+                options={[{ label: "Select location...", value: "" }, ...collectionLocationOptions.map(o => ({ label: o, value: o }))]}
+                value={sharedFields.collection_location}
+                onChange={(v) => handleSharedFieldChange("collection_location", v)}
+                accessibilityLabel="Select collection location"
+              />
+            </div>
+            <div style={{ minHeight: "54px" }}>
+              <TextField
+                label={renderLabel("Collection Date", "collection_date", sharedFields.collection_date)}
+                value={sharedFields.collection_date}
+                onChange={(v) => handleSharedFieldChange("collection_date", v)}
+                autoComplete="off"
+                accessibilityLabel="Enter shared collection date"
+              />
+            </div>
+            <div style={{ minHeight: "54px" }}>
+              <TextField
+                label={renderLabel("Origin Story", "origin_story", sharedFields.origin_story)}
+                value={sharedFields.origin_story}
+                onChange={(v) => handleSharedFieldChange("origin_story", v)}
+                autoComplete="off"
+                multiline={2}
+                accessibilityLabel="Enter shared origin story"
+              />
+            </div>
             <div style={{ minHeight: "54px" }}>
               <Select
                 label={renderLabel("Treated", "treated", sharedFields.treated)}
-                options={[{ label: "Select...", value: "" }, ...(DEFAULT_DROPDOWNS?.treated?.map(o => ({ label: o.replace(/ΓÇö/g, '—'), value: o.replace(/ΓÇö/g, '—') })) || [])]}
+                options={[{ label: "Select...", value: "" }, ...DEFAULT_DROPDOWNS.treated.map(o => ({ label: o.replace(/ΓÇö/g, '—'), value: o.replace(/ΓÇö/g, '—') }))]}
                 value={sharedFields.treated}
                 onChange={(v) => handleSharedFieldChange("treated", v)}
-                accessibilityLabel="Select treated status"
+                accessibilityLabel="Select shared treated status"
               />
             </div>
-            {renderSharedCheckbox("Is One of a Kind", "is_one_of_a_kind")}
+            <div style={{ minHeight: "54px" }}>
+              <Select
+                label={renderLabel("Product Type", "primary_use", sharedFields.primary_use)}
+                options={[{ label: "Select...", value: "" }, ...productTypeOptions.map(o => ({ label: o, value: o }))]}
+                value={sharedFields.primary_use}
+                onChange={(v) => handleSharedFieldChange("primary_use", v)}
+                accessibilityLabel="Select product type"
+              />
+            </div>
           </div>
+        </BlockStack>
+      </Card>
 
-          <div style={{ position: "relative", marginBottom: "8px", marginTop: "16px" }}>
+      <Card padding="400">
+        <BlockStack gap="400">
+          <Text variant="headingMd" as="h2">Section B: Per-Piece Rows</Text>
+          
+          <div style={{ position: "relative", marginBottom: "8px" }}>
             <input
               type="text"
               placeholder="Search products..."
@@ -212,16 +215,28 @@ export function NewProductIntakeTab({ fetcher }) {
                 boxSizing: "border-box"
               }}
             />
-            {searchQuery !== "" && (
+            {searchQuery && (
               <button
                 onClick={() => setSearchQuery("")}
                 aria-label="Clear search"
                 style={{
-                  position: "absolute", right: "12px", top: "50%", transform: "translateY(-50%)",
-                  background: "transparent", border: "none", fontSize: "20px", cursor: "pointer",
-                  padding: "4px", display: "flex", alignItems: "center", justifyContent: "center", color: "#5c5f62"
+                  position: "absolute",
+                  right: "12px",
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  background: "transparent",
+                  border: "none",
+                  fontSize: "20px",
+                  cursor: "pointer",
+                  padding: "4px",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  color: "#5c5f62"
                 }}
-              >✕</button>
+              >
+                ✕
+              </button>
             )}
           </div>
 
@@ -234,6 +249,7 @@ export function NewProductIntakeTab({ fetcher }) {
                     value={piece.piece_name}
                     onChange={(v) => handlePieceChange(piece.id, "piece_name", v)}
                     autoComplete="off"
+                    accessibilityLabel={`Enter Piece Name for row ${index + 1}`}
                   />
                 </div>
                 <div style={{ minHeight: "54px" }}>
@@ -242,14 +258,16 @@ export function NewProductIntakeTab({ fetcher }) {
                     value={piece.dimensions_mm}
                     onChange={(v) => handlePieceChange(piece.id, "dimensions_mm", v)}
                     autoComplete="off"
+                    accessibilityLabel={`Enter Dimensions for row ${index + 1}`}
                   />
                 </div>
                 <div style={{ minHeight: "54px" }}>
                   <TextField
-                    label={renderLabel("Weight (grams)", "weight_grams", piece.weight_grams)}
-                    value={piece.weight_grams}
-                    onChange={(v) => handlePieceChange(piece.id, "weight_grams", v)}
+                    label={renderLabel("Cut & Shape", "cut_and_shape", piece.cut_and_shape)}
+                    value={piece.cut_and_shape}
+                    onChange={(v) => handlePieceChange(piece.id, "cut_and_shape", v)}
                     autoComplete="off"
+                    accessibilityLabel={`Enter Cut and Shape for row ${index + 1}`}
                   />
                 </div>
                 <div style={{ minHeight: "54px" }}>
@@ -258,6 +276,7 @@ export function NewProductIntakeTab({ fetcher }) {
                     value={piece.price}
                     onChange={(v) => handlePieceChange(piece.id, "price", v)}
                     autoComplete="off"
+                    accessibilityLabel={`Enter Price for row ${index + 1}`}
                   />
                 </div>
                 <div style={{ minHeight: "54px", width: "120px" }}>
@@ -267,6 +286,7 @@ export function NewProductIntakeTab({ fetcher }) {
                     fullWidth
                     onClick={() => handleRemoveRow(piece.id)}
                     disabled={pieces.length <= 1}
+                    accessibilityLabel={`Remove row ${index + 1}`}
                   >
                     Remove
                   </Button>
@@ -276,87 +296,18 @@ export function NewProductIntakeTab({ fetcher }) {
           </div>
           
           <div style={{ minHeight: "54px", marginTop: "16px" }}>
-            <Button icon={PlusIcon} size="large" onClick={handleAddRow}>Add Row</Button>
-          </div>
-        </BlockStack>
-      </Card>
-
-      {/* SECTION 2: HUMAN ENGINE */}
-      <Card padding="400">
-        <BlockStack gap="400">
-          <Text variant="headingMd" as="h2">Section 2 — Human Engine</Text>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "24px" }}>
-            {renderSharedText("Origin Story", "origin_story", true)}
-            {renderSharedText("Honest Flaws & Character", "honest_flaws_and_character", true)}
-            {renderSharedText("Artist Notes", "artist_notes", true)}
-            {renderSharedText("Rescued By", "rescued_by")}
-            {renderSharedText("Story Theme", "story_theme")}
-            {renderSharedText("Collection Name", "collection_name")}
-            {renderSharedText("Origin Page Handle", "origin_page_handle")}
-            {renderSharedText("Stone Shape", "stone_shape")}
-            {renderSharedText("Surface Finish", "surface_finish")}
-          </div>
-        </BlockStack>
-      </Card>
-
-      {/* SECTION 3: GOOGLE MACHINE */}
-      <Card padding="400">
-        <BlockStack gap="400">
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <Text variant="headingMd" as="h2">Section 3 — Google Machine</Text>
-            <Button onClick={() => setIsGoogleOpen(!isGoogleOpen)}>
-              {isGoogleOpen ? "Close Section" : "Open Section"}
+            <Button
+              icon={PlusIcon}
+              size="large"
+              onClick={handleAddRow}
+              accessibilityLabel="Add new piece row"
+            >
+              Add Row
             </Button>
           </div>
-          <Collapsible open={isGoogleOpen} id="google-machine-collapsible" transition={{ duration: '300ms', timingFunction: 'ease-in-out' }}>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "24px", paddingTop: "16px" }}>
-              {renderSharedText("Color Pattern", "color-pattern")}
-              {renderSharedText("Material", "material")}
-              {renderSharedText("Jewelry Type", "jewelry-type")}
-              {renderSharedText("Necklace Design", "necklace-design")}
-              {renderSharedText("Chain Link Type", "chain-link-type")}
-              {renderSharedText("Jewelry Finding Type", "jewelry-finding-type")}
-              {renderSharedText("Target Gender", "target-gender")}
-              {renderSharedText("Age Group", "age-group")}
-              {renderSharedText("Authenticity", "authenticity")}
-              {renderSharedText("Rarity", "rarity")}
-              {renderSharedText("Condition", "condition")}
-              {renderSharedCheckbox("Found Object", "found_object")}
-              {renderSharedCheckbox("Custom Product", "custom_product")}
-            </div>
-          </Collapsible>
         </BlockStack>
       </Card>
 
-      {/* SECTION 4: GEO-VAULT */}
-      <Card padding="400">
-        <BlockStack gap="400">
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <Text variant="headingMd" as="h2">Section 4 — Geo-Vault</Text>
-            <Button onClick={() => setIsGeoOpen(!isGeoOpen)}>
-              {isGeoOpen ? "Close Section" : "Open Section"}
-            </Button>
-          </div>
-          <Collapsible open={isGeoOpen} id="geo-vault-collapsible" transition={{ duration: '300ms', timingFunction: 'ease-in-out' }}>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "24px", paddingTop: "16px" }}>
-              {renderSharedText("Mohs Hardness", "mohs_hardness")}
-              {renderSharedText("Luster", "luster")}
-              {renderSharedText("Fracture Pattern", "fracture_pattern")}
-              {renderSharedText("Cleavage", "cleavage")}
-              {renderSharedText("Specific Gravity", "specific_gravity")}
-              {renderSharedText("Diaphaneity", "diaphaneity")}
-              {renderSharedText("Mineral Class", "mineral-class")}
-              {renderSharedText("Crystal System", "crystal-system")}
-              {renderSharedText("Rock Composition", "rock-composition")}
-              {renderSharedText("Rock Formation", "rock-formation")}
-              {renderSharedText("Geological Era", "geological-era")}
-              {renderSharedText("Geological Age", "geological_age")}
-            </div>
-          </Collapsible>
-        </BlockStack>
-      </Card>
-
-      {/* SYSTEM MESSAGES & SUBMIT */}
       {statusMessage !== "" && (
         <div style={{ minHeight: "54px" }}>
           <Banner tone="success" title="Operation Successful">
@@ -387,7 +338,6 @@ export function NewProductIntakeTab({ fetcher }) {
         </Button>
       </div>
 
-      {/* META SCAN */}
       <Card padding="400">
         <BlockStack gap="400">
           <Text variant="headingMd" as="h2">Meta Scan</Text>
