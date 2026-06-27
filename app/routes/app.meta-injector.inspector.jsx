@@ -409,7 +409,8 @@ Image URL: ${imageUrl}`;
     setErrorMessage("");
 
     const selectedProduct = products.find(p => p.id === selectedProductId);
-    const resolvedPieceName = selectedProduct?.title || formState.piece_name || "";
+    const rawTitle = selectedProduct?.title || formState.piece_name || "";
+    const resolvedPieceName = rawTitle.includes(" — ") ? rawTitle.split(" — ").pop().trim() : rawTitle;
     
     const payload = [];
     const entries = Object.entries(formState);
