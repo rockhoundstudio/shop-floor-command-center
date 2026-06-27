@@ -3,7 +3,7 @@ import { BlockStack, Card, Text, TextField, Select, Button, Banner, Checkbox, Co
 import { PlusIcon } from "@shopify/polaris-icons";
 import { ROCKHOUND_FIELDS, DEFAULT_DROPDOWNS, REQUIRED_FIELDS } from "../utils/meta-injector.constants.jsx";
 
-export function IntakeBenchTab({ fetcher }) {
+export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher }) {
   const [sharedFields, setSharedFields] = useState({
     // Maintained state for save logic integrity
     collection_location: "",
@@ -96,38 +96,38 @@ export function IntakeBenchTab({ fetcher }) {
       rows: pieces
     };
 
-    fetcher.submit(
+    injectFetcher.submit(
       { intent: "createProduct", pieces: JSON.stringify(payload) },
       { method: "post" }
     );
-  }, [sharedFields, pieces, fetcher]);
+  }, [sharedFields, pieces, injectFetcher]);
 
   useEffect(() => {
-    const isIdle = fetcher.state === "idle";
-    const hasData = fetcher.data !== undefined && fetcher.data !== null;
+    const isIdle = injectFetcher.state === "idle";
+    const hasData = injectFetcher.data !== undefined && injectFetcher.data !== null;
 
     if (isIdle && hasData) {
-      const isCreate = fetcher.data.intent === "createProduct";
-      const isSuccess = fetcher.data.success === true;
-      const isError = fetcher.data.success === false;
+      const isCreate = injectFetcher.data.intent === "createProduct";
+      const isSuccess = injectFetcher.data.success === true;
+      const isError = injectFetcher.data.success === false;
 
       if (isCreate && isSuccess) {
-        setStatusMessage(`Successfully created ${fetcher.data.createdCount || 0} pieces.`);
+        setStatusMessage(`Successfully created ${injectFetcher.data.createdCount || 0} pieces.`);
         setPieces([{ id: Date.now().toString(), piece_name: "", dimensions_mm: "", weight_grams: "", price: "" }]);
       }
 
       if (isCreate && isError) {
-        setErrorMessage(fetcher.data.error || "An error occurred during product creation.");
+        setErrorMessage(injectFetcher.data.error || "An error occurred during product creation.");
       }
     }
-  }, [fetcher.state, fetcher.data]);
+  }, [injectFetcher.state, injectFetcher.data]);
 
-  const isSubmitting = fetcher.state !== "idle" && fetcher.formData?.get("intent") === "createProduct";
+  const isSubmitting = injectFetcher.state !== "idle" && injectFetcher.formData?.get("intent") === "createProduct";
   
   const combinedData = { ...sharedFields, ...(pieces[0] || {}) };
   const scanKeys = [...ROCKHOUND_FIELDS.map(f => f.key), "origin_story", "price"];
 
-  const actionData = fetcher.data;
+  const actionData = injectFetcher.data;
   const useSaved = actionData?.success === true;
   const savedMap = {};
   if (actionData && actionData.savedMetafields) {
