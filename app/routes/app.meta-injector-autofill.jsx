@@ -323,6 +323,12 @@ Return only valid JSON. No explanation. No markdown.`;
 
             const textData = JSON.parse(cleanJson);
 
+            // Sanitization to catch the hyphenated Gemini error key
+            if (textData["is_one_of_a-kind"] !== undefined) {
+              textData["is_one_of_a_kind"] = textData["is_one_of_a-kind"];
+              delete textData["is_one_of_a-kind"];
+            }
+
             safeSet("color", textData.color || textData.Color);
             safeSet("cut_and_shape", textData.cut_and_shape);
             safeSet("surface_finish", textData.surface_finish);
@@ -414,6 +420,12 @@ Return only valid JSON. No explanation. No markdown.`;
 
             const visionData = JSON.parse(cleanJson);
             
+            // Sanitization to catch the hyphenated Gemini error key
+            if (visionData["is_one_of_a-kind"] !== undefined) {
+              visionData["is_one_of_a_kind"] = visionData["is_one_of_a-kind"];
+              delete visionData["is_one_of_a-kind"];
+            }
+
             if (visionData.is_one_of_a_kind === true) visionData.is_one_of_a_kind = "Yes — one of a kind";
             else if (visionData.is_one_of_a_kind === false) visionData.is_one_of_a_kind = "No";
 
