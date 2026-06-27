@@ -3,7 +3,7 @@ import { BlockStack, Card, Text, TextField, Select, Button, Banner, Checkbox, Co
 import { PlusIcon } from "@shopify/polaris-icons";
 import { ROCKHOUND_FIELDS, DEFAULT_DROPDOWNS, REQUIRED_FIELDS } from "../utils/meta-injector.constants.jsx";
 
-export function NewProductIntakeTab({ fetcher }) {
+export function IntakeBenchTab({ fetcher }) {
   const [sharedFields, setSharedFields] = useState({
     // Maintained state for save logic integrity
     collection_location: "",
