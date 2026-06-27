@@ -5,7 +5,6 @@ import { ROCKHOUND_FIELDS } from "./meta-injector.constants.jsx";
 const GET_PRODUCTS_QUERY = `
   query GetProducts($cursor: String) {
     products(first: 50, after: $cursor) {
-     import { data as json } from "react-router";
  pageInfo { hasNextPage endCursor }
       edges {
         node {
