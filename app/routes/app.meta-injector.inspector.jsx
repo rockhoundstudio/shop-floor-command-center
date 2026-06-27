@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { BlockStack, Card, Text, Banner, TextField, Select, Button, InlineStack, Collapsible } from "@shopify/polaris";
+import { BlockStack, Card, Text, Banner, TextField, Select, Button, InlineStack } from "@shopify/polaris";
 import { MagicIcon, SaveIcon } from "@shopify/polaris-icons";
 import { normalizeDropdownValue, DROPDOWN_OPTIONS, unwrapArrayValue } from "../utils/meta-injector.constants.jsx";
 
@@ -111,10 +111,6 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher }) {
   // Tab 2 Auto-Fill State
   const [tab2StatusMessage, setTab2StatusMessage] = useState("");
   const [tab2ErrorMessage, setTab2ErrorMessage] = useState("");
-
-  // Collapsible Sections State
-  const [isSection3Open, setIsSection3Open] = useState(false);
-  const [isSection4Open, setIsSection4Open] = useState(false);
 
   const handleSelectProduct = useCallback((id) => {
     setSelectedProductId(id);
@@ -651,113 +647,6 @@ Image URL: ${imageUrl}`;
     }
   }, [injectFetcher.state, injectFetcher.data]);
 
-  const renderFullMetaField = (key) => {
-    let field = null;
-    for (const group of FULL_META_GROUPS) {
-      const found = group.fields.find(f => f.key === key);
-      if (found) { field = found; break; }
-    }
-    if (!field) {
-      const rf = ROCKHOUND_FIELDS.find(f => f.key === key);
-      if (rf) { field = rf; }
-    }
-    if (!field) {
-      field = {
-        key: key,
-        label: key.split(/[-_]/).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' '),
-        type: 'text',
-        multiline: key.includes("story") || key.includes("notes") || key.includes("flaws")
-      };
-    }
-
-    let val = fullMetaState[field.key] || "";
-
-    if (typeof val === 'string' && val.startsWith('[')) {
-        try { const arr = JSON.parse(val); val = Array.isArray(arr) ? arr[0] : val; } catch(e) {}
-    } else if (Array.isArray(val)) {
-        val = val[0];
-    }
-
-    if ((field.key === "handcrafted_by" || field.key === "rescued_by") && typeof val === 'string') {
-        if (val.includes("Bob & Janyce") || val.includes("Rockhound Studio")) {
-            val = "Bob & Janyce, Rockhound Studio";
-        }
-    }
-
-    if (field.key === "primary_medium" && val === "Stone") {
-        val = "";
-    }
-
-    if (field.key === "color" && formState.color) {
-        val = formState.color;
-    }
-
-    const isNa = val === "n/a" || val === "N/A" || val === "N/a";
-    const isFilled = !isNa && val && val.trim() !== "";
-    const isEmpty = !isNa && (!val || val.trim() === "");
-    
-    const labelNode = (
-      <div style={{ display: 'flex', alignItems: 'center' }}>
-        <svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg" style={{ minWidth: '18px', marginRight: '8px' }}>
-          {isEmpty && <circle cx="9" cy="9" r="9" fill="#C62828" />}
-          {isFilled && <circle cx="9" cy="9" r="9" fill="#2E7D32" />}
-          {isNa && <circle cx="9" cy="9" r="9" fill="#F9A825" />}
-        </svg>
-        <span style={{ fontSize: '14px', fontWeight: '500' }}>{field.label}</span>
-      </div>
-    );
-
-    return (
-      <div key={field.key}>
-        {isEmpty && (
-          <div style={{ backgroundColor: "#FFF5F5", minHeight: "48px", padding: "8px", borderRadius: "4px" }}>
-            {field.type !== "text" && DROPDOWN_OPTIONS && DROPDOWN_OPTIONS[field.key] && DROPDOWN_OPTIONS[field.key].length > 0 ? (
-              <Select
-                label={labelNode}
-                options={[{ label: "Select...", value: "" }, ...(DROPDOWN_OPTIONS[field.key] || [])]}
-                value={val}
-                onChange={(v) => updateFullMetaState(field.key, v)}
-                accessibilityLabel={field.label}
-              />
-            ) : (
-              <TextField
-                label={labelNode}
-                value={val}
-                onChange={(v) => updateFullMetaState(field.key, v)}
-                accessibilityLabel={field.label}
-                multiline={field.multiline ? true : false}
-                autoComplete="off"
-              />
-            )}
-          </div>
-        )}
-        {!isEmpty && (
-          <div style={{ backgroundColor: "transparent", minHeight: "48px", padding: "8px", borderRadius: "4px" }}>
-            {field.type !== "text" && DROPDOWN_OPTIONS && DROPDOWN_OPTIONS[field.key] && DROPDOWN_OPTIONS[field.key].length > 0 ? (
-              <Select
-                label={labelNode}
-                options={[{ label: "Select...", value: "" }, ...(DROPDOWN_OPTIONS[field.key] || [])]}
-                value={val}
-                onChange={(v) => updateFullMetaState(field.key, v)}
-                accessibilityLabel={field.label}
-              />
-            ) : (
-              <TextField
-                label={labelNode}
-                value={val}
-                onChange={(v) => updateFullMetaState(field.key, v)}
-                accessibilityLabel={field.label}
-                multiline={field.multiline ? true : false}
-                autoComplete="off"
-                disabled={val === "See Shopify metaobject"}
-              />
-            )}
-          </div>
-        )}
-      </div>
-    );
-  };
-
   const safeProducts = products || [];
   const filteredProducts = safeProducts.filter(p => p.title.toLowerCase().includes(searchQuery.toLowerCase()));
 
@@ -949,42 +838,110 @@ Image URL: ${imageUrl}`;
               </div>
 
               <Text variant="headingLg" as="h3">Full Meta Report</Text>
+              
+              {FULL_META_GROUPS.map(group => (
+                <BlockStack key={group.heading} gap="300">
+                  <Text variant="headingMd" as="h4">
+                    <span style={{ color: group.color, fontWeight: 'bold' }}>{group.heading}</span>
+                  </Text>
+                  
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
+                    {group.fields.map(field => {
+                      let val = fullMetaState[field.key] || "";
 
-              <BlockStack gap="300">
-                <Text variant="headingMd" as="h2">Section 1 — Core Ignition</Text>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
-                  {["piece_name", "handcrafted_by", "is_one_of_a_kind", "treated", "dimensions_mm", "weight_grams", "price"].map(renderFullMetaField)}
-                </div>
-              </BlockStack>
+                      // UI render strip for arrays
+                      if (typeof val === 'string' && val.startsWith('[')) {
+                          try { const arr = JSON.parse(val); val = Array.isArray(arr) ? arr[0] : val; } catch(e) {}
+                      } else if (Array.isArray(val)) {
+                          val = val[0];
+                      }
 
-              <BlockStack gap="300">
-                <Text variant="headingMd" as="h2">Section 2 — Human Engine</Text>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
-                  {["origin_story", "honest_flaws_and_character", "artist_notes", "rescued_by", "story_theme", "origin_page_handle", "stone_shape", "surface_finish", "collection_name"].map(renderFullMetaField)}
-                </div>
-              </BlockStack>
+                      // Bug 2 fallback: Hard strip duplicated strings in UI render.
+                      // Ensure it renders exactly once, eliminating trailing concatenation or repetitive elements.
+                      if ((field.key === "handcrafted_by" || field.key === "rescued_by") && typeof val === 'string') {
+                          if (val.includes("Bob & Janyce") || val.includes("Rockhound Studio")) {
+                              val = "Bob & Janyce, Rockhound Studio";
+                          }
+                      }
 
-              <BlockStack gap="300">
-                <div onClick={() => setIsSection3Open(!isSection3Open)} style={{ cursor: 'pointer', display: 'inline-block' }}>
-                  <Text variant="headingMd" as="h2">Section 3 — Google Machine</Text>
-                </div>
-                <Collapsible open={isSection3Open} id="section-3-collapsible" transition={{duration: '200ms', timingFunction: 'ease-in-out'}}>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px', marginTop: '16px' }}>
-                    {["color-pattern", "material", "jewelry-type", "necklace-design", "chain-link-type", "jewelry-finding-type", "target-gender", "age-group", "authenticity", "rarity", "condition", "found_object", "custom_product"].map(renderFullMetaField)}
+                      // Bug 1 fallback: Hard strip "Stone" from rendering
+                      if (field.key === "primary_medium" && val === "Stone") {
+                          val = "";
+                      }
+
+                      // Bug 3 fallback: Force Color to render form-state value over raw meta value
+                      if (field.key === "color" && formState.color) {
+                          val = formState.color;
+                      }
+
+                      const isNa = val === "n/a" || val === "N/A" || val === "N/a";
+                      const isFilled = !isNa && val && val.trim() !== "";
+                      const isEmpty = !isNa && (!val || val.trim() === "");
+                      
+                      const labelNode = (
+                        <div style={{ display: 'flex', alignItems: 'center' }}>
+                          <svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg" style={{ minWidth: '18px', marginRight: '8px' }}>
+                            {isEmpty && <circle cx="9" cy="9" r="9" fill="#C62828" />}
+                            {isFilled && <circle cx="9" cy="9" r="9" fill="#2E7D32" />}
+                            {isNa && <circle cx="9" cy="9" r="9" fill="#F9A825" />}
+                          </svg>
+                          <span style={{ fontSize: '14px', fontWeight: '500' }}>{field.label}</span>
+                        </div>
+                      );
+
+                      return (
+                        <div key={field.key}>
+                          {isEmpty && (
+                            <div style={{ backgroundColor: "#FFF5F5", minHeight: "48px", padding: "8px", borderRadius: "4px" }}>
+                              {field.type !== "text" && DROPDOWN_OPTIONS[field.key] && DROPDOWN_OPTIONS[field.key].length > 0 ? (
+                                <Select
+                                  label={labelNode}
+                                  options={[{ label: "Select...", value: "" }, ...(DROPDOWN_OPTIONS[field.key] || [])]}
+                                  value={val}
+                                  onChange={(v) => updateFullMetaState(field.key, v)}
+                                  accessibilityLabel={field.label}
+                                />
+                              ) : (
+                                <TextField
+                                  label={labelNode}
+                                  value={val}
+                                  onChange={(v) => updateFullMetaState(field.key, v)}
+                                  accessibilityLabel={field.label}
+                                  multiline={field.multiline ? true : false}
+                                  autoComplete="off"
+                                />
+                              )}
+                            </div>
+                          )}
+                          {!isEmpty && (
+                            <div style={{ backgroundColor: "transparent", minHeight: "48px", padding: "8px", borderRadius: "4px" }}>
+                              {field.type !== "text" && DROPDOWN_OPTIONS[field.key] && DROPDOWN_OPTIONS[field.key].length > 0 ? (
+                                <Select
+                                  label={labelNode}
+                                  options={[{ label: "Select...", value: "" }, ...(DROPDOWN_OPTIONS[field.key] || [])]}
+                                  value={val}
+                                  onChange={(v) => updateFullMetaState(field.key, v)}
+                                  accessibilityLabel={field.label}
+                                />
+                              ) : (
+                                <TextField
+                                  label={labelNode}
+                                  value={val}
+                                  onChange={(v) => updateFullMetaState(field.key, v)}
+                                  accessibilityLabel={field.label}
+                                  multiline={field.multiline ? true : false}
+                                  autoComplete="off"
+                                  disabled={val === "See Shopify metaobject"}
+                                />
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
-                </Collapsible>
-              </BlockStack>
-
-              <BlockStack gap="300">
-                <div onClick={() => setIsSection4Open(!isSection4Open)} style={{ cursor: 'pointer', display: 'inline-block' }}>
-                  <Text variant="headingMd" as="h2">Section 4 — Geo-Vault</Text>
-                </div>
-                <Collapsible open={isSection4Open} id="section-4-collapsible" transition={{duration: '200ms', timingFunction: 'ease-in-out'}}>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px', marginTop: '16px' }}>
-                    {["mohs_hardness", "luster", "fracture_pattern", "cleavage", "specific_gravity", "diaphaneity", "mineral-class", "crystal-system", "rock-composition", "rock-formation", "geological-era", "geological_age"].map(renderFullMetaField)}
-                  </div>
-                </Collapsible>
-              </BlockStack>
+                </BlockStack>
+              ))}
 
             </BlockStack>
           </Card>
