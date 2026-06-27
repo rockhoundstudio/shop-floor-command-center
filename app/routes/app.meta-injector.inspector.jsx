@@ -98,7 +98,7 @@ const getNamespaceForKey = (key) => {
   return "custom";
 };
 
-export function IntakeBenchTab({ products, fetcher }) {
+export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher }) {
   const [selectedProductId, setSelectedProductId] = useState("");
   const [formState, setFormState] = useState({});
   const [fullMetaState, setFullMetaState] = useState({});
@@ -334,7 +334,7 @@ export function IntakeBenchTab({ products, fetcher }) {
 
     console.log("AutoFill imageUrl sent:", imageUrl);
 
-    fetcher.submit(
+    autoFillFetcher.submit(
       {
         intent: "autoFill",
         productId: selectedProductId,
@@ -347,7 +347,7 @@ export function IntakeBenchTab({ products, fetcher }) {
       },
       { method: "post", action: "/app/meta-injector-autofill" }
     );
-  }, [selectedProductId, fetcher, products, promptStyle, formState]);
+  }, [selectedProductId, autoFillFetcher, products, promptStyle, formState]);
 
   const handleTab2AutoFill = useCallback(() => {
     if (!selectedProductId) return;
@@ -390,7 +390,7 @@ Title: ${title}
 Description: ${description}
 Image URL: ${imageUrl}`;
 
-    fetcher.submit(
+    autoFillFetcher.submit(
       { 
         intent: "tab2AutoFill", 
         productId: selectedProductId,
@@ -401,7 +401,7 @@ Image URL: ${imageUrl}`;
       { method: "post", action: "/app/meta-injector-autofill" }
     );
     console.log("Tab2 AutoFill imageUrl sent:", imageUrl);
-  }, [selectedProductId, fetcher, products]);
+  }, [selectedProductId, autoFillFetcher, products]);
 
   const handleInject = useCallback(() => {
     if (!selectedProductId) return;
@@ -451,11 +451,11 @@ Image URL: ${imageUrl}`;
     }
 
     // Explicit form action wiring restored to guarantee hitting the server action block
-    fetcher.submit(
+    injectFetcher.submit(
       { intent: "saveMetafields", payload: JSON.stringify(payload) },
       { method: "post", action: "/app/meta-injector-api" }
     );
-  }, [selectedProductId, formState, products, fetcher]);
+  }, [selectedProductId, formState, products, injectFetcher]);
 
   const handleSaveFullMeta = useCallback(() => {
     if (!selectedProductId) return;
@@ -477,33 +477,32 @@ Image URL: ${imageUrl}`;
 
     if (changes.length > 0) {
       // Explicit form action wiring restored to prevent silent drop
-      fetcher.submit(
+      injectFetcher.submit(
         { intent: "saveMetafields", productId: selectedProductId, metafields: JSON.stringify(changes) },
         { method: "post", action: "/app/meta-injector-api" }
       );
     }
-  }, [selectedProductId, fullMetaState, fetcher]);
+  }, [selectedProductId, fullMetaState, injectFetcher]);
 
   useEffect(() => {
-    const isIdle = fetcher.state === "idle";
-    const hasData = fetcher.data !== undefined && fetcher.data !== null;
+    const isIdle = autoFillFetcher.state === "idle";
+    const hasData = autoFillFetcher.data !== undefined && autoFillFetcher.data !== null;
     
     if (isIdle && hasData) {
       const product = products.find(p => p.id === selectedProductId);
       const productTitle = product ? product.title : "";
 
-      const isAutoFill = fetcher.data.intent === "autoFill";
-      const isSmartAutoFill = fetcher.data.intent === "smartAutoFill";
-      const isTab2AutoFill = fetcher.data.intent === "tab2AutoFill";
-      const isSaveProduct = fetcher.data.intent === "saveMetafields";
+      const isAutoFill = autoFillFetcher.data.intent === "autoFill";
+      const isSmartAutoFill = autoFillFetcher.data.intent === "smartAutoFill";
+      const isTab2AutoFill = autoFillFetcher.data.intent === "tab2AutoFill";
       
-      const isSuccess = fetcher.data.success === true;
-      const isError = fetcher.data.success === false;
+      const isSuccess = autoFillFetcher.data.success === true;
+      const isError = autoFillFetcher.data.success === false;
 
-      if ((isAutoFill || isSmartAutoFill) && isSuccess && fetcher.data.fields) {
+      if ((isAutoFill || isSmartAutoFill) && isSuccess && autoFillFetcher.data.fields) {
         setFormState(prev => {
           const updatedState = { ...prev };
-          Object.entries(fetcher.data.fields).forEach(([key, val]) => {
+          Object.entries(autoFillFetcher.data.fields).forEach(([key, val]) => {
             const hasNewValue = val !== undefined && val !== null && val.toString().trim() !== "";
             
             // Only fill if currently empty in fullMetaState
@@ -525,8 +524,8 @@ Image URL: ${imageUrl}`;
 
         if (isSmartAutoFill || isAutoFill) {
           setFullMetaState(prev => {
-            const parsedValues = fetcher.data.fields || {};
-            const fullMetaFields = fetcher.data.fullMetaFields || {};
+            const parsedValues = autoFillFetcher.data.fields || {};
+            const fullMetaFields = autoFillFetcher.data.fullMetaFields || {};
             const nextState = {
               ...prev,
               ...parsedValues,
@@ -564,7 +563,7 @@ Image URL: ${imageUrl}`;
         
         if (isAutoFill) {
           setStatusMessage("Title and tags successfully parsed and loaded into fields.");
-          if (fetcher.data.colorWarning) { setErrorMessage("WARNING: Vision could not detect Color from the hero image   please enter Color manually."); }
+          if (autoFillFetcher.data.colorWarning) { setErrorMessage("WARNING: Vision could not detect Color from the hero image   please enter Color manually."); }
         }
 
         // Show Polaris Toast for Success
@@ -574,10 +573,10 @@ Image URL: ${imageUrl}`;
       }
 
       if (isTab2AutoFill) {
-        if (isSuccess && fetcher.data.fields) {
+        if (isSuccess && autoFillFetcher.data.fields) {
             setFullMetaState(prev => {
                 const updatedState = { ...prev };
-                Object.entries(fetcher.data.fields).forEach(([key, val]) => {
+                Object.entries(autoFillFetcher.data.fields).forEach(([key, val]) => {
                     const hasNewValue = val !== undefined && val !== null && val.toString().trim() !== "";
                     // Only fill if currently empty
                     const ALWAYS_OVERWRITE_TAB2 = ["color", "cut_and_shape", "stone_family", "surface_finish", "handcrafted_by", "treated", "found_object", "is_one_of_a_kind"];
@@ -603,7 +602,7 @@ Image URL: ${imageUrl}`;
             }
 
         } else if (isError) {
-            setTab2ErrorMessage(fetcher.data.error || "Gemini extraction failed.");
+            setTab2ErrorMessage(autoFillFetcher.data.error || "Gemini extraction failed.");
             
             // Show Polaris Toast for Tab 2 Failure
             if (window.shopify && window.shopify.toast) {
@@ -612,6 +611,26 @@ Image URL: ${imageUrl}`;
         }
       }
 
+      if (isError && !isTab2AutoFill) {
+        setErrorMessage(autoFillFetcher.data.error || "An unknown error occurred during the operation.");
+        // Fallback catch-all error Toast
+        if (window.shopify && window.shopify.toast) {
+          window.shopify.toast.show("Action failed", { isError: true });
+        }
+      }
+    }
+  }, [autoFillFetcher.state, autoFillFetcher.data]);
+
+  useEffect(() => {
+    const isIdle = injectFetcher.state === "idle";
+    const hasData = injectFetcher.data !== undefined && injectFetcher.data !== null;
+    
+    if (isIdle && hasData) {
+      const isSaveProduct = injectFetcher.data.intent === "saveMetafields";
+      
+      const isSuccess = injectFetcher.data.success === true;
+      const isError = injectFetcher.data.success === false;
+
       if (isSaveProduct && isSuccess) {
         setStatusMessage("Metafields injected cleanly into Shopify database.");
         if (window.shopify && window.shopify.toast) {
@@ -619,22 +638,22 @@ Image URL: ${imageUrl}`;
         }
       }
 
-      if (isError && !isTab2AutoFill) {
-        setErrorMessage(fetcher.data.error || "An unknown error occurred during the operation.");
+      if (isError) {
+        setErrorMessage(injectFetcher.data.error || "An unknown error occurred during the operation.");
         // Fallback catch-all error Toast
         if (window.shopify && window.shopify.toast) {
           window.shopify.toast.show("Action failed", { isError: true });
         }
       }
     }
-  }, [fetcher.state, fetcher.data]);
+  }, [injectFetcher.state, injectFetcher.data]);
 
   const safeProducts = products || [];
   const filteredProducts = safeProducts.filter(p => p.title.toLowerCase().includes(searchQuery.toLowerCase()));
 
-  const isAutoFilling = fetcher.state !== "idle" && (fetcher.formData?.get("intent") === "autoFill" || fetcher.formData?.get("intent") === "smartAutoFill");
-  const isTab2AutoFilling = fetcher.state !== "idle" && fetcher.formData?.get("intent") === "tab2AutoFill";
-  const isSaving = fetcher.state !== "idle" && (fetcher.formData?.get("intent") === "saveProduct" || fetcher.formData?.get("intent") === "saveMetafields");
+  const isAutoFilling = autoFillFetcher.state !== "idle" && (autoFillFetcher.formData?.get("intent") === "autoFill" || autoFillFetcher.formData?.get("intent") === "smartAutoFill");
+  const isTab2AutoFilling = autoFillFetcher.state !== "idle" && autoFillFetcher.formData?.get("intent") === "tab2AutoFill";
+  const isSaving = injectFetcher.state !== "idle" && (injectFetcher.formData?.get("intent") === "saveProduct" || injectFetcher.formData?.get("intent") === "saveMetafields");
   
   return (
     <BlockStack gap="400">
