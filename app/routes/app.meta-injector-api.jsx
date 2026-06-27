@@ -108,7 +108,7 @@ export const action = async ({ request }) => {
       });
 
     if (setMetafields.length === 0) {
-      return data({ success: true, message: "No fields to save." });
+      return data({ intent: "saveMetafields", success: true, message: "No fields to save." });
     }
 
     console.log("METAFIELDS BEING SENT TO SHOPIFY:", JSON.stringify(setMetafields, null, 2));
@@ -137,7 +137,7 @@ export const action = async ({ request }) => {
       return data({ success: false, message: "Saved with errors.", errors: allErrors });
     }
 
-    return data({ success: true, message: "All metafields locked in." });
+    return data({ intent: "saveMetafields", success: true, message: "All metafields locked in." });
   }
 
   // ==========================================
