@@ -279,14 +279,19 @@ export const action = async ({ request }) => {
     if (description) {
       try {
         const plainDescription = description.replace(/<\/?[^>]+(>|$)/g, " ").replace(/\s+/g, " ").trim();
+        const promptProductTitle = body.get("productTitle") || "";
 
-        const textPrompt = `You are a gemologist assistant for Rockhound Studio. Extract the following fields from this product description. Return only valid JSON with exactly these keys. If a field is not mentioned, return an empty string for it.
+        const textPrompt = `You are a gemologist assistant for Rockhound Studio. The product title is: ${promptProductTitle}. Parse the title segments split by ' — ' to extract piece_name and origin_location. Extract the following fields from this product description. Return only valid JSON with exactly these keys. If a field is not mentioned, return an empty string for it.
 
 {
+  "piece_name": "(the last segment after the final em dash ' — ' in the product title)",
+  "origin_location": "(the middle segment between the first and last em dash ' — ' in the product title)",
   "color": "(value after 'Flash:' label, e.g. 'Blue')",
   "cut_and_shape": "(value after 'Shape:' label, e.g. 'Cabochon')",
   "surface_finish": "(value after 'Finish:' label, e.g. 'High Polish')",
   "stone_family": "(the rockhound trade name of the stone — use Labradorite not Feldspar, use Jasper not Chalcedony)",
+  "collection_name": "(if mentioned in the description, return the collection name, else empty string)",
+  "dimensions_mm": "(if dimensions are mentioned in the description in mm format, return them, else empty string)",
   "handcrafted_by": "(name from signature line, e.g. 'Bob & Janyce, Rockhound Studio')",
   "treated": "(if description says untreated or not enhanced, return 'false', else return 'true')",
   "found_object": "(if description says found or collected in the field, return 'true', else return 'false')",
@@ -333,6 +338,10 @@ Return only valid JSON. No explanation. No markdown.`;
             safeSet("cut_and_shape", textData.cut_and_shape);
             safeSet("surface_finish", textData.surface_finish);
             safeSet("stone_family", textData.stone_family);
+            safeSet("piece_name", textData.piece_name);
+            safeSet("origin_location", textData.origin_location);
+            safeSet("collection_name", textData.collection_name);
+            safeSet("dimensions_mm", textData.dimensions_mm);
             safeSet("handcrafted_by", textData.handcrafted_by);
             safeSet("treated", textData.treated);
             safeSet("found_object", textData.found_object);
