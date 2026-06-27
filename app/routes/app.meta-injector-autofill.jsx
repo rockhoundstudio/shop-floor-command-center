@@ -284,7 +284,7 @@ export const action = async ({ request }) => {
         const textPrompt = `You are a gemologist assistant for Rockhound Studio. The product title is: ${promptProductTitle}. Parse the title segments split by ' — ' to extract piece_name and origin_location. Extract the following fields from this product description. Return only valid JSON with exactly these keys. If a field is not mentioned, return an empty string for it.
 
 {
-  "piece_name": "(the last segment after the final em dash ' — ' in the product title)",
+  "piece_name": "(the text after the second em dash — in the product title — this is the piece name only, not the full title)",
   "origin_location": "(the middle segment between the first and last em dash ' — ' in the product title)",
   "color": "(value after 'Flash:' label, e.g. 'Blue')",
   "cut_and_shape": "(value after 'Shape:' label, e.g. 'Cabochon')",
@@ -346,6 +346,7 @@ Return only valid JSON. No explanation. No markdown.`;
             safeSet("treated", textData.treated);
             safeSet("found_object", textData.found_object);
             safeSet("is_one_of_a_kind", textData.is_one_of_a_kind);
+            safeSet("piece_name", textData.piece_name);
 
             console.log("Pass 2B Gemini Text extracted:", Object.keys(textData).filter(k => textData[k]));
           }
@@ -387,7 +388,8 @@ Return only valid JSON. No explanation. No markdown.`;
   "found_object": "(boolean)",
   "treated": "(boolean)",
   "setting_ready": "(boolean)",
-  "bail_included": "(boolean)"
+  "bail_included": "(boolean)",
+  "piece_name": "(the text after the second em dash — in the product title — this is the piece name only, not the full title)"
 }
 Return only valid JSON. No explanation. No markdown.`;
 
@@ -460,6 +462,7 @@ Return only valid JSON. No explanation. No markdown.`;
             safeSet("treated", visionData.treated);
             safeSet("setting_ready", visionData.setting_ready);
             safeSet("bail_included", visionData.bail_included);
+            safeSet("piece_name", visionData.piece_name);
           }
         } else {
           const errText = await geminiRes.text();
