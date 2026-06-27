@@ -1,6 +1,7 @@
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { ROCKHOUND_FIELDS } from "./meta-injector.constants.jsx";
+import { data as json } from "react-router";
 
 const GET_PRODUCTS_QUERY = `
   query GetProducts($cursor: String) {
