@@ -57,8 +57,7 @@ export async function action({ request }) {
         { legacy: "treatment_status", active: "treated" }
       ];
 
-      const mutations = [];
-      const logs = [];
+      const pendingMigrations = [];
 
       for (const p of products) {
         const customMetafields = p.node.metafields?.edges || [];
@@ -70,17 +69,23 @@ export async function action({ request }) {
           const legacyValue = legacyNode?.node?.value;
           const activeValue = activeNode?.node?.value;
 
-          if (legacyValue && legacyValue.trim() !== "" && (!activeValue || activeValue.trim() === "")) {
-            mutations.push({
-              ownerId: p.node.id,
-              namespace: "custom",
-              key: map.active,
-              value: legacyValue,
-              type: legacyNode.node.type || "single_line_text_field"
-            });
-            logs.push({ 
-              status: "success", 
-              message: `Migrated '${map.legacy}' to '${map.active}' for product: ${p.node.title} (${p.node.id})` 
+          const legacyValStr = String(legacyValue || "");
+          const activeValStr = String(activeValue || "");
+
+          // Only copy if legacy has data and active is completely empty
+          if (legacyValStr.trim() !== "" && activeValStr.trim() === "") {
+            pendingMigrations.push({
+              mutation: {
+                ownerId: p.node.id,
+                namespace: "custom",
+                key: map.active,
+                value: legacyValue,
+                type: legacyNode.node.type || "single_line_text_field"
+              },
+              log: { 
+                status: "success", 
+                message: `Migrated '${map.legacy}' to '${map.active}' for product: ${p.node.title} (${p.node.id})` 
+              }
             });
           }
         }
@@ -94,13 +99,15 @@ export async function action({ request }) {
         }
       `;
 
+      // Chunk in groups of 25
       const chunks = [];
-      for (let i = 0; i < mutations.length; i += 25) {
-        chunks.push(mutations.slice(i, i + 25));
+      for (let i = 0; i < pendingMigrations.length; i += 25) {
+        chunks.push(pendingMigrations.slice(i, i + 25));
       }
 
       for (const chunk of chunks) {
-        const res = await admin.graphql(SET_METAFIELDS, { variables: { metafields: chunk } });
+        const metafields = chunk.map(c => c.mutation);
+        const res = await admin.graphql(SET_METAFIELDS, { variables: { metafields } });
         const json = await res.json();
         
         const errors = json.data?.metafieldsSet?.userErrors || [];
@@ -108,12 +115,14 @@ export async function action({ request }) {
           results.push({ status: "error", message: `Chunk failed: ${errors[0].message}` });
         } else {
           fieldsMigrated += chunk.length;
+          // Only push the specific logs if the chunk actually succeeded
+          results.push(...chunk.map(c => c.log));
         }
+        // Small delay to keep API limits happy
         await new Promise(resolve => setTimeout(resolve, 300));
       }
 
-      results.push(...logs);
-      
+      // Add summary to the very top
       results.unshift({ 
         status: "success", 
         message: `SUMMARY: Scanned ${productsScanned} products. Migrated ${fieldsMigrated} total fields.` 
@@ -380,7 +389,7 @@ export async function action({ request }) {
     return { intent, results };
   }
 
-  // ── LEGACY MIGRATION ───────────────────────────────────────────────────────
+  // ── LEGACY MIGRATION (ORIGINAL BUNDLE) ────────────────────────────────────
   if (intent === "migrate") {
     const results = [];
     let productsProcessed = 0;
@@ -458,22 +467,18 @@ export async function action({ request }) {
           addedToThisProduct = true;
         };
 
-        // custom.dimensions_mm → rockhound.dimensions_mm
         if (custDim && !rhDim) {
           pushUpdate("dimensions_mm", custDim, "single_line_text_field");
         }
 
-        // custom.treatment_status → rockhound.treated
         if (custTreat && !rhTreat) {
           pushUpdate("treated", custTreat, "single_line_text_field");
         }
 
-        // custom.stone_story → rockhound.origin_story
         if (custStory && !rhStory) {
           pushUpdate("origin_story", custStory, "multi_line_text_field");
         }
 
-        // custom.character_marks & custom.bench_notes → rockhound.honest_flaws_and_character
         if (!rhFlaws) {
           let combinedFlaws = null;
           
@@ -501,7 +506,6 @@ export async function action({ request }) {
       }
 
       for (const chunk of chunks) {
-        // Extract just the Shopify input objects for the mutation
         const metafields = chunk.map(c => c.update);
 
         const setResponse = await admin.graphql(`
@@ -522,7 +526,6 @@ export async function action({ request }) {
           results.push({ status: "error", message: `Chunk failed: ${errors[0].message}` });
         } else {
           fieldsMigrated += chunk.length;
-          // Log individual successful migrations to the results array
           chunk.forEach(c => {
             results.push({ status: "success", message: `Migrated '${c.update.key}' for product: ${c.title}` });
           });
@@ -532,7 +535,6 @@ export async function action({ request }) {
       if (fieldsMigrated === 0 && results.length === 0) {
         results.push({ status: "success", message: `Scanned ${products.length} products. All fields are already migrated or blank.` });
       } else {
-        // Unshift a grand summary to the top of the report
         results.unshift({ status: "success", message: `SUMMARY: Scanned ${products.length} products. Migrated ${fieldsMigrated} total fields across ${productsProcessed} items.` });
       }
 
@@ -661,6 +663,7 @@ export default function MigrateDataRoute() {
               </p>
             </Banner>
 
+            {/* MIGRATION: LEGACY TO ACTIVE */}
             <Card padding="600">
               <BlockStack gap="400">
                 <Text variant="headingLg" as="h2">Migrate Legacy → Active</Text>
@@ -703,6 +706,7 @@ export default function MigrateDataRoute() {
               </Card>
             )}
 
+            {/* RUN LEGACY BUNDLE MIGRATION */}
             <Card padding="600">
               <BlockStack gap="400">
                 <Text variant="headingLg" as="h2">Run Legacy Bundle Migration</Text>
@@ -746,6 +750,7 @@ export default function MigrateDataRoute() {
               </Card>
             )}
 
+            {/* STANDARDIZE ONE OF A KIND */}
             <Card padding="600">
               <BlockStack gap="400">
                 <Text variant="headingLg" as="h2">Standardize One of a Kind Values</Text>
@@ -788,6 +793,7 @@ export default function MigrateDataRoute() {
               </Card>
             )}
 
+            {/* COPY ROCKHOUND TO CUSTOM */}
             <Card padding="600">
               <BlockStack gap="400">
                 <Text variant="headingLg" as="h2">Copy Rockhound → Custom</Text>
@@ -829,6 +835,7 @@ export default function MigrateDataRoute() {
               </Card>
             )}
 
+            {/* DELETE ROCKHOUND NAMESPACE */}
             <Card padding="600">
               <BlockStack gap="400">
                 <Text variant="headingLg" as="h2">Delete Rockhound Namespace</Text>
