@@ -413,8 +413,8 @@ Return only valid JSON. No explanation. No markdown.`;
             if (textData.necklace_design) { safeSet("necklace_design", textData.necklace_design); }
             if (textData.chain_link_type) { safeSet("chain_link_type", textData.chain_link_type); }
             if (textData.jewelry_finding_type) { safeSet("jewelry_finding_type", textData.jewelry_finding_type); }
-            if (textData.target_gender) { safeSet("target_gender", textData.target_gender); }
-            if (textData.age_group) { safeSet("age_group", textData.age_group); }
+            if (textData.target_gender) { safeSet("target-gender", textData.target_gender); }
+            if (textData.age_group) { safeSet("age-group", textData.age_group); }
             if (textData.custom_product !== undefined) { safeSet("custom_product", textData.custom_product); }
 
             console.log("Pass 2B Gemini Text extracted:", Object.keys(textData).filter(k => textData[k]));
@@ -553,8 +553,8 @@ Return only valid JSON. No explanation. No markdown.`;
     safeSet("authenticity", "Genuine");
     safeSet("rarity", "Rare");
     safeSet("condition", "new");
-    safeSet("age_group", "Adult");
-    safeSet("target_gender", "Unisex");
+    safeSet("age-group", "Adult");
+    safeSet("target-gender", "Unisex");
     safeSet("is_one_of_a_kind", "true");
     safeSet("treated", "false");
     safeSet("found_object", "true");
