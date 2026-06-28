@@ -364,6 +364,7 @@ Return only valid JSON. No explanation. No markdown.`;
             }
 
             const textData = JSON.parse(cleanJson);
+            console.log("GEMINI TEXT RESPONSE:", JSON.stringify(textData));
 
             // Sanitization to catch the hyphenated Gemini error key
             if (textData["is_one_of_a-kind"] !== undefined) {
