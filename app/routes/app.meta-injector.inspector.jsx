@@ -422,6 +422,7 @@ Image URL: ${imageUrl}`;
     formData.append("prompt", promptText);
     formData.append("imageUrl", imageUrl);
     formData.append("description", product?.descriptionHtml?.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim() || "");
+    formData.append("descriptionHtml", product.descriptionHtml || "");
 
     autoFillFetcher.submit(
       formData,

@@ -149,6 +149,8 @@ export const action = async ({ request }) => {
 
     const title = body.get("title") || "";
     const description = body.get("description") || "";
+    const descriptionHtml = body.get("descriptionHtml") || "";
+    const targetDescription = descriptionHtml || description;
     const existingMeta = JSON.parse(body.get("existingMeta") || "{}");
 
     const merged = { ...existingMeta };
@@ -170,16 +172,16 @@ export const action = async ({ request }) => {
     // ==========================================
     // PASS 0: TEXT PARSING
     // ==========================================
-    if (description) {
+    if (targetDescription) {
       try {
         const stoneHeadingRegex = /<(h[1-6]|strong|b)[^>]*>[\s\S]*?the stone:?[\s\S]*?<\/\1>/i;
-        const headingMatch = description.match(stoneHeadingRegex);
+        const headingMatch = targetDescription.match(stoneHeadingRegex);
         
-        let beforeStone = description;
+        let beforeStone = targetDescription;
         
         if (headingMatch) {
-          beforeStone = description.substring(0, headingMatch.index);
-          const afterHeading = description.substring(headingMatch.index + headingMatch[0].length);
+          beforeStone = targetDescription.substring(0, headingMatch.index);
+          const afterHeading = targetDescription.substring(headingMatch.index + headingMatch[0].length);
           
           const nextHeadingIndex = afterHeading.search(/<h[1-6][^>]*>/i);
           const stoneHtml = nextHeadingIndex !== -1 ? afterHeading.substring(0, nextHeadingIndex) : afterHeading;
@@ -208,8 +210,8 @@ export const action = async ({ request }) => {
           "/pages/the-3-000-mile-run"
         ];
         
-        let linkSearchArea = description;
-        const dwellLinksDiv = description.match(/<(?:div|section)[^>]*(?:id|class)=["'][^"']*rockhound-dwell-links[^"']*["'][^>]*>([\s\S]*?)<\/(?:div|section)>/i);
+        let linkSearchArea = targetDescription;
+        const dwellLinksDiv = targetDescription.match(/<(?:div|section)[^>]*(?:id|class)=["'][^"']*rockhound-dwell-links[^"']*["'][^>]*>([\s\S]*?)<\/(?:div|section)>/i);
         if (dwellLinksDiv) {
           linkSearchArea = dwellLinksDiv[1];
         }
@@ -288,7 +290,7 @@ export const action = async ({ request }) => {
       }
     }
 
-    const collMatches = [...(description || "").matchAll(/<a[^>]*href=["'][^"']*\/collections\/([^"'\/?]+)[^"']*["'][^>]*>([\s\S]*?)<\/a>/gi)];
+    const collMatches = [...(targetDescription || "").matchAll(/<a[^>]*href=["'][^"']*\/collections\/([^"'\/?]+)[^"']*["'][^>]*>([\s\S]*?)<\/a>/gi)];
     if (collMatches.length > 0) {
       const uniqueCollections = [...new Set(collMatches.map(m => m[2].replace(/\s*→$/, "").replace(/<\/?[^>]+(>|$)/g, "").trim()))];
       safeSet("collection_name", uniqueCollections.join(", "));
@@ -317,9 +319,9 @@ export const action = async ({ request }) => {
     // ==========================================
     // PASS 2B: GEMINI TEXT
     // ==========================================
-    if (description) {
+    if (targetDescription) {
       try {
-        const plainDescription = description.replace(/<\/?[^>]+(>|$)/g, " ").replace(/\s+/g, " ").trim();
+        const plainDescription = targetDescription.replace(/<\/?[^>]+(>|$)/g, " ").replace(/\s+/g, " ").trim();
         const promptProductTitle = body.get("productTitle") || "";
 
         const textPrompt = `You are a gemologist assistant for Rockhound Studio. The product title is: ${promptProductTitle}. Parse the title segments split by ' — ' to extract piece_name and origin_location. Extract the following fields from this product description. Return only valid JSON with exactly these keys. If a field is not mentioned, return an empty string for it.
