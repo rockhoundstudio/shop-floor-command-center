@@ -282,9 +282,12 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher }) {
       newForm.piece_name = product.title;
       newFullForm.piece_name = product.title;
     }
-    if (product && product.variants && product.variants[0]?.price) {
-      newForm.price = product.variants[0].price;
-      newFullForm.price = product.variants[0].price;
+    if (product && product.variants && product.variants.edges && product.variants.edges[0]) {
+      const price = product.variants.edges[0].node.price;
+      if (price) {
+        newForm.price = price;
+        newFullForm.price = price;
+      }
     }
     
     setFormState(newForm);
@@ -529,7 +532,7 @@ Image URL: ${imageUrl}`;
             const hasNewValue = val !== undefined && val !== null && val.toString().trim() !== "";
             
             // Only fill if currently empty in fullMetaState
-            const ALWAYS_OVERWRITE = ["color", "cut_and_shape", "stone_family", "surface_finish", "handcrafted_by", "treated", "found_object", "is_one_of_a_kind"];
+            const ALWAYS_OVERWRITE = ["color", "cut_and_shape", "stone_family", "surface_finish", "handcrafted_by", "treated", "is_one_of_a_kind"];
             const currentlyEmpty = !fullMetaState[key] || (typeof fullMetaState[key] === 'string' && fullMetaState[key].trim() === "");
             const shouldOverwrite = ALWAYS_OVERWRITE.includes(key);
 
@@ -537,6 +540,10 @@ Image URL: ${imageUrl}`;
               updatedState[key] = val;
             }
           });
+          
+          if (updatedState.stone_family && !updatedState.material) {
+            updatedState.material = updatedState.stone_family;
+          }
           
           if (productTitle) {
             updatedState.piece_name = productTitle.includes(" — ") ? productTitle.split(" — ").pop().trim() : productTitle;
@@ -602,7 +609,7 @@ Image URL: ${imageUrl}`;
                 Object.entries(autoFillFetcher.data.fields).forEach(([key, val]) => {
                     const hasNewValue = val !== undefined && val !== null && val.toString().trim() !== "";
                     // Only fill if currently empty
-                    const ALWAYS_OVERWRITE_TAB2 = ["color", "cut_and_shape", "stone_family", "surface_finish", "handcrafted_by", "treated", "found_object", "is_one_of_a_kind"];
+                    const ALWAYS_OVERWRITE_TAB2 = ["color", "cut_and_shape", "stone_family", "surface_finish", "handcrafted_by", "treated", "is_one_of_a_kind"];
                     const currentlyEmpty = !updatedState[key] || updatedState[key].trim() === "";
                     const shouldOverwrite = ALWAYS_OVERWRITE_TAB2.includes(key);
 
