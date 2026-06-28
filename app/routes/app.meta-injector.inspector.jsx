@@ -423,13 +423,14 @@ Image URL: ${imageUrl}`;
     formData.append("imageUrl", imageUrl);
     formData.append("description", product?.descriptionHtml?.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim() || "");
     formData.append("descriptionHtml", product.descriptionHtml || "");
+    formData.append("promptStyle", promptStyle);
 
     autoFillFetcher.submit(
       formData,
       { method: "post", action: "/app/meta-injector-autofill" }
     );
     console.log("Tab2 AutoFill imageUrl sent:", imageUrl);
-  }, [selectedProductId, autoFillFetcher, products]);
+  }, [selectedProductId, autoFillFetcher, products, promptStyle]);
 
   const handleInject = useCallback(() => {
     if (!selectedProductId) return;
@@ -934,7 +935,7 @@ Image URL: ${imageUrl}`;
               <BlockStack gap="300">
                 <Text variant="headingMd" as="h4">Section 2 — Human Engine</Text>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
-                  {["origin_story", "honest_flaws_and_character", "artist_notes", "rescued_by", "story_theme", "origin_page_handle", "stone_shape", "surface_finish", "collection_name"].map(renderFullMetaField)}
+                  {["origin_story", "honest_flaws_and_character", "artist_notes", "rescued_by", "origin_page_handle", "stone_shape", "surface_finish", "collection_name"].map(renderFullMetaField)}
                 </div>
               </BlockStack>
 
