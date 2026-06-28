@@ -73,6 +73,17 @@ const FULL_META_GROUPS = [
       { key: "primary_use", label: "Primary Use", type: "text" },
       { key: "bail_included", label: "Bail Included", type: "text" }
     ]
+  },
+  {
+    heading: "Geo-Vault",
+    color: "#4E342E",
+    fields: [
+      { key: "mineralClass", label: "Mineral Class", type: "text" },
+      { key: "crystalSystem", label: "Crystal System", type: "text" },
+      { key: "rockComposition", label: "Rock Composition", type: "text" },
+      { key: "rockFormation", label: "Rock Formation", type: "text" },
+      { key: "geologicalEra", label: "Geological Era", type: "text" }
+    ]
   }
 ];
 
@@ -135,7 +146,10 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher }) {
         const hasValue = node.value !== null && node.value !== undefined;
         if (hasValue && node.namespace === "custom") {
           let parsedValue = node.value;
-          if (parsedValue.startsWith("[")) {
+          if (parsedValue && parsedValue.includes("gid://")) {
+            parsedValue = "See Shopify metaobject";
+          }
+          if (parsedValue && typeof parsedValue === 'string' && parsedValue.startsWith("[")) {
             try {
               const arr = JSON.parse(parsedValue);
               parsedValue = Array.isArray(arr) ? arr[0] : parsedValue;
