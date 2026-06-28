@@ -407,12 +407,12 @@ Return only valid JSON. No explanation. No markdown.`;
             safeSet("artist_notes", textData.artist_notes);
             safeSet("origin_page_handle", textData.origin_page_handle);
             if (textData.stone_family) { safeSet("material", textData.stone_family); }
-            if (textData.color_pattern) { safeSet("color_pattern", textData.color_pattern); }
+            if (textData.color_pattern) { safeSet("color-pattern", textData.color_pattern); }
             if (textData.material) { safeSet("material", textData.material); }
-            if (textData.jewelry_type) { safeSet("jewelry_type", textData.jewelry_type); }
-            if (textData.necklace_design) { safeSet("necklace_design", textData.necklace_design); }
-            if (textData.chain_link_type) { safeSet("chain_link_type", textData.chain_link_type); }
-            if (textData.jewelry_finding_type) { safeSet("jewelry_finding_type", textData.jewelry_finding_type); }
+            if (textData.jewelry_type) { safeSet("jewelry-type", textData.jewelry_type); }
+            if (textData.necklace_design) { safeSet("necklace-design", textData.necklace_design); }
+            if (textData.chain_link_type) { safeSet("chain-link-type", textData.chain_link_type); }
+            if (textData.jewelry_finding_type) { safeSet("jewelry-finding-type", textData.jewelry_finding_type); }
             if (textData.target_gender) { safeSet("target-gender", textData.target_gender); }
             if (textData.age_group) { safeSet("age-group", textData.age_group); }
             if (textData.custom_product !== undefined) { safeSet("custom_product", textData.custom_product); }
