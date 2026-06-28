@@ -161,6 +161,12 @@ export const action = async ({ request }) => {
       }
     };
 
+    const alwaysSet = (key, value) => {
+      if (value && String(value).trim() !== "") {
+        merged[key] = String(value).trim();
+      }
+    };
+
     // ==========================================
     // PASS 0: TEXT PARSING
     // ==========================================
@@ -223,7 +229,7 @@ export const action = async ({ request }) => {
             
             if (!ignoreList.includes(path)) {
               const slug = path.split("/").filter(Boolean).pop();
-              safeSet("origin_story_page_slug", slug);
+              safeSet("origin_page_handle", slug);
               break;
             }
           }
@@ -245,7 +251,7 @@ export const action = async ({ request }) => {
 
         if (storyParagraphs.length > 0) {
           const combinedStory = storyParagraphs.join("\n\n");
-          safeSet("origin_story", combinedStory); 
+          alwaysSet("origin_story", combinedStory); 
         }
 
       } catch (parseError) {
