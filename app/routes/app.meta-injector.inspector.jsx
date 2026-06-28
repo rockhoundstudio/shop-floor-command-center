@@ -467,7 +467,7 @@ Image URL: ${imageUrl}`;
 
         payload.push({
           namespace: "custom",
-          key: key,
+          key: key.replace(/-/g, "_"),
           type: fieldType,
           value: injectValue,
           ownerId: formatId
@@ -498,7 +498,7 @@ Image URL: ${imageUrl}`;
       if (originalValue !== newValue && newValue !== "See Shopify metaobject") {
         changes.push({
           namespace: getNamespaceForKey(key),
-          key: key,
+          key: key.replace(/-/g, "_"),
           value: newValue,
           type: "single_line_text_field"
         });
