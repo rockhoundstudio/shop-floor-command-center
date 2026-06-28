@@ -86,7 +86,11 @@ export const action = async ({ request }) => {
       const TYPE_MAP = {
         stone_story: "list.single_line_text_field",
         character_marks: "list.single_line_text_field",
-        is_ooak: "boolean"
+        is_ooak: "boolean",
+        treated: "boolean",
+        found_object: "boolean",
+        custom_product: "boolean",
+        is_one_of_a_kind: "boolean"
       };
 
       const setMetafields = payloadArray
@@ -97,7 +101,12 @@ export const action = async ({ request }) => {
             : `gid://shopify/Product/${item.ownerId.split("/").pop()}`;
 
           const resolvedType = TYPE_MAP[item.key] || item.type || "single_line_text_field";
-          const resolvedValue = resolvedType.startsWith("list.") ? JSON.stringify([String(item.value)]) : String(item.value);
+          const resolvedValue =
+            resolvedType.startsWith("list.")
+              ? JSON.stringify([String(item.value)])
+              : resolvedType === "boolean"
+              ? String(item.value === true || item.value === "true")
+              : String(item.value);
 
           return {
             ownerId: resolvedId,
