@@ -171,6 +171,7 @@ DROPDOWN_OPTIONS.bail_included = [
 ];
 
 export function normalizeDropdownValue(key, rawValue) {
+  if (!rawValue || rawValue.includes("gid://")) return "";
   if (rawValue === undefined || rawValue === null) return "";
   
   const options = DROPDOWN_OPTIONS[key];
@@ -305,4 +306,3 @@ export function getLabelForValue(value, metaobjectHandles = {}) {
 
   return value;
 }
-
