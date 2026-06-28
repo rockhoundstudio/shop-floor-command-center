@@ -789,6 +789,8 @@ Image URL: ${imageUrl}`;
               <div style={{ maxHeight: "70vh", overflowY: "auto", paddingRight: "8px", display: "flex", flexDirection: "column", gap: "8px" }}>
                 {filteredProducts.map(p => {
                   const isSelected = selectedProductId === p.id;
+                  const imageUrl = p.images?.edges?.[0]?.node?.url;
+
                   return (
                     <div key={p.id} style={{ minHeight: "54px" }}>
                       <Button
@@ -799,7 +801,22 @@ Image URL: ${imageUrl}`;
                         onClick={() => handleSelectProduct(p.id)}
                         accessibilityLabel={`Select product ${p.title}`}
                       >
-                        {p.title}
+                        <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                          {imageUrl ? (
+                            <img
+                              src={imageUrl}
+                              alt={`Hero image for ${p.title}`}
+                              aria-label={`Hero image for ${p.title}`}
+                              style={{ width: "48px", height: "48px", objectFit: "cover", borderRadius: "6px", flexShrink: 0 }}
+                            />
+                          ) : (
+                            <div
+                              aria-label={`Hero image for ${p.title}`}
+                              style={{ width: "48px", height: "48px", backgroundColor: "#2a2a2a", border: "1px solid #444", borderRadius: "6px", flexShrink: 0 }}
+                            />
+                          )}
+                          <span>{p.title}</span>
+                        </div>
                       </Button>
                     </div>
                   );
