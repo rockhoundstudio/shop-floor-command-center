@@ -135,9 +135,11 @@ export const action = async ({ request }) => {
       }
 
       if (allErrors.length > 0) {
-        return data({ success: false, message: "Saved with errors.", errors: allErrors });
+        console.log("SAVE ERRORS:", JSON.stringify(allErrors, null, 2));
+        return data({ success: false, message: "Saved with errors: " + allErrors.map(e => e.field + " — " + e.message).join(" | "), errors: allErrors });
       }
 
+      console.log("SAVE SUCCESS: All metafields locked in.");
       return data({ intent: "saveMetafields", success: true, message: "All metafields locked in." });
     } catch (error) {
       console.error("SAVE METAFIELDS CRASH:", error.message, error.stack);
