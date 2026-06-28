@@ -56,10 +56,6 @@ export const action = async ({ request }) => {
     
     const body = await request.formData();
     
-    console.log("DEBUG description:", body.get("description"));
-    console.log("DEBUG descriptionHtml:", body.get("descriptionHtml"));
-    console.log("DEBUG targetDescription will be:", body.get("descriptionHtml") || body.get("description") || "EMPTY");
-    
     const actionType = body.get("actionType");
 
     if (actionType === "applyStoreDefaults") {
@@ -153,8 +149,8 @@ export const action = async ({ request }) => {
     }
 
     const title = body.get("title") || "";
-    const description = body.get("description") || "";
-    const descriptionHtml = body.get("descriptionHtml") || "";
+    const description = body.get("productDescription") || "";
+    const descriptionHtml = body.get("descriptionHtml") || body.get("productDescription") || "";
     const targetDescription = descriptionHtml || description;
     const existingMeta = JSON.parse(body.get("existingMeta") || "{}");
 
