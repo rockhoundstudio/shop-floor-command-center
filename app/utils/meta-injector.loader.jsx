@@ -202,7 +202,6 @@ export async function action({ request }) {
       console.log("SHOPIFY USER ERRORS:", JSON.stringify(result?.data?.metafieldsSet?.userErrors, null, 2));
       return { intent, success: true, result };
     } catch (error) {
-      console.error("SAVE PRODUCT CATCH BLOCK FIRED:", error.message, error.stack);
       return { intent, success: false, error: error.message };
     }
   }
