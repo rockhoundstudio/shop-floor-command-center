@@ -150,6 +150,7 @@ export const action = async ({ request }) => {
 
     const title = body.get("title") || "";
     const description = body.get("productDescription") || "";
+    const promptStyle = body.get("promptStyle") || "";
     const descriptionHtml = body.get("descriptionHtml") || body.get("productDescription") || "";
     const targetDescription = descriptionHtml || description;
     const existingMeta = JSON.parse(body.get("existingMeta") || "{}");
@@ -325,7 +326,7 @@ export const action = async ({ request }) => {
         const plainDescription = targetDescription.replace(/<\/?[^>]+(>|$)/g, " ").replace(/\s+/g, " ").trim();
         const promptProductTitle = body.get("productTitle") || "";
 
-        const textPrompt = `You are a gemologist assistant for Rockhound Studio. The product title is: ${promptProductTitle}. Parse the title segments split by ' — ' to extract piece_name and origin_location. Extract the following fields from this product description. Return only valid JSON with exactly these keys. If a field is not mentioned, return an empty string for it.
+        const textPrompt = `${promptStyle ? `Writing style instruction: ${promptStyle}\n\n` : ""}You are a gemologist assistant for Rockhound Studio. The product title is: ${promptProductTitle}. Parse the title segments split by ' — ' to extract piece_name and origin_location. Extract the following fields from this product description. Return only valid JSON with exactly these keys. If a field is not mentioned, return an empty string for it.
 
 {
   "piece_name": "(the text after the second em dash — in the product title — this is the piece name only, not the full title)",
@@ -445,7 +446,7 @@ Return only valid JSON. No explanation. No markdown.`;
         const imageMimeType = (imageRes.headers.get("content-type") || "image/jpeg").split(";")[0].trim();
 
         const clientPrompt = body.get("prompt");
-        const promptText = clientPrompt && clientPrompt.trim() !== "" ? clientPrompt : `You are a gemologist and lapidary expert analyzing a handcrafted stone cabochon or specimen for an online store called Rockhound Studio. Look at this stone image carefully and return a JSON object with these fields — only include fields you can visually confirm, leave others out:
+        const promptText = clientPrompt && clientPrompt.trim() !== "" ? clientPrompt : `${promptStyle ? `Writing style instruction: ${promptStyle}\n\n` : ""}You are a gemologist and lapidary expert analyzing a handcrafted stone cabochon or specimen for an online store called Rockhound Studio. Look at this stone image carefully and return a JSON object with these fields — only include fields you can visually confirm, leave others out:
 {
   "color": "(return ONLY the primary color as a single word, e.g. 'Blue' or 'Red')",
   "surface_finish": "(one of: High Polish, Satin Polish, Matte, Natural/Rough, Tumbled)",
@@ -549,6 +550,11 @@ Return only valid JSON. No explanation. No markdown.`;
     // STORE-WIDE DEFAULTS
     // ==========================================
     safeSet("handcrafted_by", "Bob & Janyce, Rockhound Studio");
+    safeSet("authenticity", "Genuine");
+    safeSet("rarity", "Rare");
+    safeSet("condition", "new");
+    safeSet("age_group", "Adult");
+    safeSet("target_gender", "Unisex");
     safeSet("is_one_of_a_kind", "true");
     safeSet("treated", "false");
     safeSet("found_object", "true");
