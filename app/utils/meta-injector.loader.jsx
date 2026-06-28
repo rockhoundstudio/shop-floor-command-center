@@ -6,11 +6,12 @@ import { data as json } from "react-router";
 const GET_PRODUCTS_QUERY = `
   query GetProducts($cursor: String) {
     products(first: 50, after: $cursor) {
- pageInfo { hasNextPage endCursor }
+      pageInfo { hasNextPage endCursor }
       edges {
         node {
           id
           title
+          descriptionHtml
           images(first: 1) {
             edges {
               node {
