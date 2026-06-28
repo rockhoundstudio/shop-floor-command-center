@@ -856,13 +856,13 @@ Image URL: ${imageUrl}`;
                   <Button 
                     icon={MagicIcon} 
                     onClick={handleAutoFill}
-                    accessibilityLabel="Re-Run Auto-Fill Fields"
+                    accessibilityLabel="Run Auto-Fill"
                     size="large"
                     fullWidth
                     disabled={!selectedProductId}
                     loading={isAutoFilling}
                   >
-                    Re-Run Auto-Fill
+                    RUN
                   </Button>
                 </div>
                 <div style={{ minHeight: "54px", flexGrow: 1 }}>
@@ -907,20 +907,6 @@ Image URL: ${imageUrl}`;
                   </Banner>
                 </div>
               )}
-
-              <div style={{ marginBottom: "24px" }}>
-                <Button 
-                    icon={MagicIcon}
-                    size="large"
-                    fullWidth
-                    onClick={handleTab2AutoFill}
-                    accessibilityLabel="Extract fields from product description and image"
-                    loading={isTab2AutoFilling}
-                    disabled={!selectedProductId}
-                >
-                    Extract from Description & Image
-                </Button>
-              </div>
 
               <Text variant="headingLg" as="h3">Full Meta Report</Text>
 
