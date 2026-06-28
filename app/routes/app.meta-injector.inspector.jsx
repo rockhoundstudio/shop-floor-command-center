@@ -282,6 +282,10 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher }) {
       newForm.piece_name = product.title;
       newFullForm.piece_name = product.title;
     }
+    if (product && product.variants && product.variants[0]?.price) {
+      newForm.price = product.variants[0].price;
+      newFullForm.price = product.variants[0].price;
+    }
     
     setFormState(newForm);
     setFullMetaState(newFullForm);
