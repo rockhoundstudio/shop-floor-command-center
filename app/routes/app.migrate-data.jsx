@@ -137,7 +137,7 @@ export async function action({ request }) {
       
       const KEYS_TO_COPY = [
         "primary_medium", "stone_family", "collection_name", "treated",
-        "found_object", "cut_and_shape", "origin_story", "honest_flaws_and_character"
+        "found_object", "custom_product", "cut_and_shape", "origin_story", "honest_flaws_and_character"
       ];
 
       const mutations = [];
