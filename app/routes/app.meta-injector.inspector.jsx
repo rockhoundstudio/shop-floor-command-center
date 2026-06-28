@@ -415,14 +415,16 @@ Title: ${title}
 Description: ${description}
 Image URL: ${imageUrl}`;
 
+    const formData = new FormData();
+    formData.append("intent", "tab2AutoFill");
+    formData.append("productId", selectedProductId);
+    formData.append("productTitle", title);
+    formData.append("prompt", promptText);
+    formData.append("imageUrl", imageUrl);
+    formData.append("description", product?.descriptionHtml?.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim() || "");
+
     autoFillFetcher.submit(
-      { 
-        intent: "tab2AutoFill", 
-        productId: selectedProductId,
-        productTitle: title,
-        prompt: promptText,
-        imageUrl: imageUrl
-      },
+      formData,
       { method: "post", action: "/app/meta-injector-autofill" }
     );
     console.log("Tab2 AutoFill imageUrl sent:", imageUrl);
