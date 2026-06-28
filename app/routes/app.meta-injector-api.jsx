@@ -79,65 +79,70 @@ export const action = async ({ request }) => {
   // 🔵 INTENT 2: LOCK DATA TO SHOPIFY
   // ==========================================
   if (intent === "saveMetafields") {
-    const rawPayload = formData.get("payload");
-    const payloadArray = JSON.parse(rawPayload);
+    try {
+      const rawPayload = formData.get("payload");
+      const payloadArray = JSON.parse(rawPayload);
 
-    const TYPE_MAP = {
-      stone_story: "list.single_line_text_field",
-      character_marks: "list.single_line_text_field",
-      is_ooak: "boolean"
-    };
+      const TYPE_MAP = {
+        stone_story: "list.single_line_text_field",
+        character_marks: "list.single_line_text_field",
+        is_ooak: "boolean"
+      };
 
-    const setMetafields = payloadArray
-      .filter(item => item.value !== null && String(item.value).trim() !== "")
-      .map(item => {
-        const resolvedId = item.ownerId.startsWith("gid://")
-          ? item.ownerId
-          : `gid://shopify/Product/${item.ownerId.split("/").pop()}`;
+      const setMetafields = payloadArray
+        .filter(item => item.value !== null && String(item.value).trim() !== "")
+        .map(item => {
+          const resolvedId = item.ownerId.startsWith("gid://")
+            ? item.ownerId
+            : `gid://shopify/Product/${item.ownerId.split("/").pop()}`;
 
-        const resolvedType = TYPE_MAP[item.key] || item.type || "single_line_text_field";
-        const resolvedValue = resolvedType.startsWith("list.") ? JSON.stringify([String(item.value)]) : String(item.value);
+          const resolvedType = TYPE_MAP[item.key] || item.type || "single_line_text_field";
+          const resolvedValue = resolvedType.startsWith("list.") ? JSON.stringify([String(item.value)]) : String(item.value);
 
-        return {
-          ownerId: resolvedId,
-          namespace: item.namespace || "custom",
-          key: item.key,
-          type: resolvedType,
-          value: resolvedValue
-        };
-      });
+          return {
+            ownerId: resolvedId,
+            namespace: item.namespace || "custom",
+            key: item.key,
+            type: resolvedType,
+            value: resolvedValue
+          };
+        });
 
-    if (setMetafields.length === 0) {
-      return data({ intent: "saveMetafields", success: true, message: "No fields to save." });
+      if (setMetafields.length === 0) {
+        return data({ intent: "saveMetafields", success: true, message: "No fields to save." });
+      }
+
+      console.log("METAFIELDS BEING SENT TO SHOPIFY:", JSON.stringify(setMetafields, null, 2));
+
+      const chunks = chunkArray(setMetafields, 1);
+      const allErrors = [];
+
+      for (const chunk of chunks) {
+        const response = await admin.graphql(
+          `#graphql
+          mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
+            metafieldsSet(metafields: $metafields) {
+              metafields { id key namespace value }
+              userErrors { field message }
+            }
+          }`,
+          { variables: { metafields: chunk } }
+        );
+
+        const result = await response.json();
+        const errors = result?.data?.metafieldsSet?.userErrors || [];
+        allErrors.push(...errors);
+      }
+
+      if (allErrors.length > 0) {
+        return data({ success: false, message: "Saved with errors.", errors: allErrors });
+      }
+
+      return data({ intent: "saveMetafields", success: true, message: "All metafields locked in." });
+    } catch (error) {
+      console.error("SAVE METAFIELDS CRASH:", error.message, error.stack);
+      return data({ intent: "saveMetafields", success: false, error: error.message });
     }
-
-    console.log("METAFIELDS BEING SENT TO SHOPIFY:", JSON.stringify(setMetafields, null, 2));
-
-    const chunks = chunkArray(setMetafields, 1);
-    const allErrors = [];
-
-    for (const chunk of chunks) {
-      const response = await admin.graphql(
-        `#graphql
-        mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
-          metafieldsSet(metafields: $metafields) {
-            metafields { id key namespace value }
-            userErrors { field message }
-          }
-        }`,
-        { variables: { metafields: chunk } }
-      );
-
-      const result = await response.json();
-      const errors = result?.data?.metafieldsSet?.userErrors || [];
-      allErrors.push(...errors);
-    }
-
-    if (allErrors.length > 0) {
-      return data({ success: false, message: "Saved with errors.", errors: allErrors });
-    }
-
-    return data({ intent: "saveMetafields", success: true, message: "All metafields locked in." });
   }
 
   // ==========================================
