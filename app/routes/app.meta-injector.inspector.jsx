@@ -287,7 +287,7 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher }) {
       if (price) {
         newForm.price = price;
         newFullForm.price = price;
-      }
+    }
     }
     
     setFormState(newForm);
@@ -671,7 +671,7 @@ Image URL: ${imageUrl}`;
       }
 
       if (isError) {
-        setErrorMessage(injectFetcher.data.error || "An unknown error occurred during the operation.");
+        setErrorMessage(injectFetcher.data.message || injectFetcher.data.error || "An unknown error occurred");
         // Fallback catch-all error Toast
         if (window.shopify && window.shopify.toast) {
           window.shopify.toast.show("Action failed", { isError: true });
