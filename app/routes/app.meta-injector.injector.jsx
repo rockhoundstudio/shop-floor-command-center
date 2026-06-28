@@ -3,6 +3,12 @@ import { BlockStack, Card, Text, TextField, Select, Button, Banner } from "@shop
 import { PlusIcon } from "@shopify/polaris-icons";
 import { ROCKHOUND_FIELDS, DEFAULT_DROPDOWNS, REQUIRED_FIELDS } from "../utils/meta-injector.constants.jsx";
 
+// NOTE ON GRAPHQL FETCH:
+// If the product list is loaded via a loader in a separate file (like meta-injector.loader.jsx),
+// you MUST add `images(first: 1) { edges { node { url } } }` to the products query in that file.
+// There is no existing GraphQL query in THIS specific code snippet to modify, as this component 
+// handles state for creating new products and uses fetcher.submit() to send data.
+
 export function NewProductIntakeTab({ fetcher }) {
   const [sharedFields, setSharedFields] = useState({
     material: "",
@@ -21,6 +27,13 @@ export function NewProductIntakeTab({ fetcher }) {
   const [searchQuery, setSearchQuery] = useState("");
   const [statusMessage, setStatusMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
+
+  useEffect(() => {
+    // Log the first product's images array to the browser console so we can confirm data is arriving
+    if (pieces.length > 0) {
+      console.log("First product images array:", pieces[0]?.images?.edges || "No images array currently present on piece");
+    }
+  }, [pieces]);
 
   const handleSharedFieldChange = useCallback((key, value) => {
     setSharedFields(prev => ({ ...prev, [key]: value }));
@@ -241,58 +254,80 @@ export function NewProductIntakeTab({ fetcher }) {
           </div>
 
           <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
-            {filteredPieces.map((piece, index) => (
-              <div key={piece.id} style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr auto", gap: "16px", alignItems: "end" }}>
-                <div style={{ minHeight: "54px" }}>
-                  <TextField
-                    label={renderLabel("Piece Name", "piece_name", piece.piece_name)}
-                    value={piece.piece_name}
-                    onChange={(v) => handlePieceChange(piece.id, "piece_name", v)}
-                    autoComplete="off"
-                    accessibilityLabel={`Enter Piece Name for row ${index + 1}`}
-                  />
+            {filteredPieces.map((piece, index) => {
+              const imageUrl = piece.images?.edges?.[0]?.node?.url;
+              
+              return (
+                <div key={piece.id} style={{ display: "grid", gridTemplateColumns: "auto 1fr 1fr 1fr auto", gap: "16px", alignItems: "end" }}>
+                  
+                  <div style={{ display: "flex", alignItems: "center", gap: "12px", minHeight: "56px" }}>
+                    {imageUrl ? (
+                      <img 
+                        src={imageUrl} 
+                        alt={`Hero image for ${piece.piece_name || 'New Piece'}`}
+                        style={{ width: "48px", height: "48px", objectFit: "cover", borderRadius: "6px", flexShrink: 0 }} 
+                        aria-label={`Hero image thumbnail for ${piece.piece_name || 'New Piece'}`}
+                      />
+                    ) : (
+                      <div 
+                        style={{ width: "48px", height: "48px", background: "#2a2a2a", border: "1px solid #444", borderRadius: "6px", flexShrink: 0 }}
+                        aria-label={`Hero image thumbnail for ${piece.piece_name || 'New Piece'}`}
+                      />
+                    )}
+                    
+                    <div style={{ flexGrow: 1, minHeight: "54px" }}>
+                      <TextField
+                        label={renderLabel("Piece Name", "piece_name", piece.piece_name)}
+                        value={piece.piece_name}
+                        onChange={(v) => handlePieceChange(piece.id, "piece_name", v)}
+                        autoComplete="off"
+                        accessibilityLabel={`Enter Piece Name for row ${index + 1}`}
+                      />
+                    </div>
+                  </div>
+
+                  <div style={{ minHeight: "54px" }}>
+                    <TextField
+                      label={renderLabel("Dimensions (mm)", "dimensions_mm", piece.dimensions_mm)}
+                      value={piece.dimensions_mm}
+                      onChange={(v) => handlePieceChange(piece.id, "dimensions_mm", v)}
+                      autoComplete="off"
+                      accessibilityLabel={`Enter Dimensions for row ${index + 1}`}
+                    />
+                  </div>
+                  <div style={{ minHeight: "54px" }}>
+                    <TextField
+                      label={renderLabel("Cut & Shape", "cut_and_shape", piece.cut_and_shape)}
+                      value={piece.cut_and_shape}
+                      onChange={(v) => handlePieceChange(piece.id, "cut_and_shape", v)}
+                      autoComplete="off"
+                      accessibilityLabel={`Enter Cut and Shape for row ${index + 1}`}
+                    />
+                  </div>
+                  <div style={{ minHeight: "54px" }}>
+                    <TextField
+                      label={renderLabel("Price", "price", piece.price)}
+                      value={piece.price}
+                      onChange={(v) => handlePieceChange(piece.id, "price", v)}
+                      autoComplete="off"
+                      accessibilityLabel={`Enter Price for row ${index + 1}`}
+                    />
+                  </div>
+                  <div style={{ minHeight: "54px", width: "120px" }}>
+                    <Button
+                      size="large"
+                      tone="critical"
+                      fullWidth
+                      onClick={() => handleRemoveRow(piece.id)}
+                      disabled={pieces.length <= 1}
+                      accessibilityLabel={`Remove row ${index + 1}`}
+                    >
+                      Remove
+                    </Button>
+                  </div>
                 </div>
-                <div style={{ minHeight: "54px" }}>
-                  <TextField
-                    label={renderLabel("Dimensions (mm)", "dimensions_mm", piece.dimensions_mm)}
-                    value={piece.dimensions_mm}
-                    onChange={(v) => handlePieceChange(piece.id, "dimensions_mm", v)}
-                    autoComplete="off"
-                    accessibilityLabel={`Enter Dimensions for row ${index + 1}`}
-                  />
-                </div>
-                <div style={{ minHeight: "54px" }}>
-                  <TextField
-                    label={renderLabel("Cut & Shape", "cut_and_shape", piece.cut_and_shape)}
-                    value={piece.cut_and_shape}
-                    onChange={(v) => handlePieceChange(piece.id, "cut_and_shape", v)}
-                    autoComplete="off"
-                    accessibilityLabel={`Enter Cut and Shape for row ${index + 1}`}
-                  />
-                </div>
-                <div style={{ minHeight: "54px" }}>
-                  <TextField
-                    label={renderLabel("Price", "price", piece.price)}
-                    value={piece.price}
-                    onChange={(v) => handlePieceChange(piece.id, "price", v)}
-                    autoComplete="off"
-                    accessibilityLabel={`Enter Price for row ${index + 1}`}
-                  />
-                </div>
-                <div style={{ minHeight: "54px", width: "120px" }}>
-                  <Button
-                    size="large"
-                    tone="critical"
-                    fullWidth
-                    onClick={() => handleRemoveRow(piece.id)}
-                    disabled={pieces.length <= 1}
-                    accessibilityLabel={`Remove row ${index + 1}`}
-                  >
-                    Remove
-                  </Button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
           
           <div style={{ minHeight: "54px", marginTop: "16px" }}>
