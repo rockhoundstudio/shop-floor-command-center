@@ -255,27 +255,21 @@ export function NewProductIntakeTab({ fetcher }) {
 
           <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
             {filteredPieces.map((piece, index) => {
-              const imageUrl = piece.images?.edges?.[0]?.node?.url;
+              // PHASE 1: Hardcoded test URL
+              const imageUrl = "https://cdn.shopify.com/s/files/1/0796/8391/1931/files/rn-image_picker_lib_temp_e06b6b97-3403-4067-9d27-cd734664e738.jpg?v=1771196362";
               
               return (
-                <div key={piece.id} style={{ display: "grid", gridTemplateColumns: "auto 1fr 1fr 1fr auto", gap: "16px", alignItems: "end" }}>
+                <div key={piece.id} style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr auto", gap: "16px", alignItems: "end" }}>
                   
                   <div style={{ display: "flex", alignItems: "center", gap: "12px", minHeight: "56px" }}>
-                    {imageUrl ? (
-                      <img 
-                        src={imageUrl} 
-                        alt={`Hero image for ${piece.piece_name || 'New Piece'}`}
-                        style={{ width: "48px", height: "48px", objectFit: "cover", borderRadius: "6px", flexShrink: 0 }} 
-                        aria-label={`Hero image thumbnail for ${piece.piece_name || 'New Piece'}`}
-                      />
-                    ) : (
-                      <div 
-                        style={{ width: "48px", height: "48px", background: "#2a2a2a", border: "1px solid #444", borderRadius: "6px", flexShrink: 0 }}
-                        aria-label={`Hero image thumbnail for ${piece.piece_name || 'New Piece'}`}
-                      />
-                    )}
+                    <img 
+                      src={imageUrl} 
+                      alt={`Hero image for ${piece.piece_name || 'New Piece'}`}
+                      style={{ width: "48px", height: "48px", objectFit: "cover", borderRadius: "6px", flexShrink: 0 }} 
+                      aria-label={`Hero image for ${piece.piece_name || 'New Piece'}`}
+                    />
                     
-                    <div style={{ flexGrow: 1, minHeight: "54px" }}>
+                    <div style={{ flexGrow: 1 }}>
                       <TextField
                         label={renderLabel("Piece Name", "piece_name", piece.piece_name)}
                         value={piece.piece_name}
