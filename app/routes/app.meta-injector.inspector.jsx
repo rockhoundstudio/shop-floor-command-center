@@ -3,7 +3,7 @@ import { BlockStack, Card, Text, Banner, TextField, Select, Button, InlineStack,
 import { MagicIcon, SaveIcon } from "@shopify/polaris-icons";
 import { normalizeDropdownValue, DROPDOWN_OPTIONS, unwrapArrayValue } from "../utils/meta-injector.constants.jsx";
 
-const ROCKHOUND_FIELDS = [
+const CUSTOM_FIELDS = [
   // ==========================================
   // SECTION A: SHARED BATCH FIELDS (The Story & Material)
   // ==========================================
@@ -88,7 +88,7 @@ const FULL_META_GROUPS = [
 ];
 
 const NAMESPACE_MAP = {
-  rockhound: [
+  custom: [
     "piece_name", "primary_medium", "handcrafted_by", 
     "stone_family", "color", "cut_and_shape", "surface_finish", 
     "dimensions_mm", "weight_grams", "collection_name", "collection_location", 
@@ -104,7 +104,7 @@ const NAMESPACE_MAP = {
 };
 
 const getNamespaceForKey = (key) => {
-  if (NAMESPACE_MAP.rockhound.includes(key)) return "rockhound";
+  if (NAMESPACE_MAP.custom.includes(key)) return "custom";
   if (NAMESPACE_MAP.geo.includes(key)) return "geo";
   return "custom";
 };
@@ -175,26 +175,6 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher }) {
           newFullForm[node.key] = parsedValue;
         }
       });
-
-      // Pass 3 — rockhound namespace (wins all conflicts):
-      product.metafields.edges.forEach(({ node }) => {
-        const hasValue = node.value !== null && node.value !== undefined;
-        if (hasValue && node.namespace === "rockhound") {
-          let parsedValue = node.value;
-          if (parsedValue.includes("gid://")) {
-            parsedValue = "See Shopify metaobject";
-          } else if (parsedValue.startsWith("[")) {
-            try {
-              const arr = JSON.parse(parsedValue);
-              parsedValue = Array.isArray(arr) ? arr[0] : parsedValue;
-            } catch (e) {
-              // keep original
-            }
-          }
-          newForm[node.key] = parsedValue;
-          newFullForm[node.key] = parsedValue;
-        }
-      });
     }
 
     if (!newForm.origin_story && newForm.stone_story) {
@@ -252,9 +232,8 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher }) {
     }
 
     const customPM = product?.metafields?.edges?.find(e => e.node.namespace === "custom" && e.node.key === "primary_medium")?.node?.value;
-    const rockhoundPM = product?.metafields?.edges?.find(e => e.node.namespace === "rockhound" && e.node.key === "primary_medium")?.node?.value;
     
-    let bestPM = customPM || rockhoundPM || newForm.base_stone_type || "";
+    let bestPM = customPM || newForm.base_stone_type || "";
     
     if (bestPM && bestPM.startsWith("[")) {
       try {
@@ -287,7 +266,7 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher }) {
       if (price) {
         newForm.price = price;
         newFullForm.price = price;
-    }
+      }
     }
     
     setFormState(newForm);
@@ -295,7 +274,7 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher }) {
     originalMetaRef.current = { ...newFullForm };
   }, [products]);
 
-  // Seed formState from existing rockhound metafields when a product is selected
+  // Seed formState from existing custom metafields when a product is selected
   useEffect(() => {
     if (selectedProductId && products && products.length > 0) {
       const product = products.find(p => p.id === selectedProductId);
@@ -314,13 +293,11 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher }) {
           ];
 
           product.metafields.edges.forEach(({ node }) => {
-            if (node.namespace === "rockhound" && node.value && node.value.trim() !== "") {
-              if (true) {
-                if (dropdownFields.includes(node.key)) {
-                  updatedState[node.key] = normalizeDropdownValue(node.key, node.value);
-                } else if (textFields.includes(node.key)) {
-                  updatedState[node.key] = node.value;
-                }
+            if (node.namespace === "custom" && node.value && node.value.trim() !== "") {
+              if (dropdownFields.includes(node.key)) {
+                updatedState[node.key] = normalizeDropdownValue(node.key, node.value);
+              } else if (textFields.includes(node.key)) {
+                updatedState[node.key] = node.value;
               }
             }
           });
@@ -454,7 +431,7 @@ Image URL: ${imageUrl}`;
       
       // Removed the overly strict '&& config' that was dropping standard fields
       if (isPopulated && injectValue !== "See Shopify metaobject") {
-        const config = ROCKHOUND_FIELDS.find(f => f.key === key);
+        const config = CUSTOM_FIELDS.find(f => f.key === key);
         let fieldType = "single_line_text_field";
         if (config && config.type) {
           fieldType = config.type;
@@ -687,7 +664,7 @@ Image URL: ${imageUrl}`;
       if (found) { field = found; break; }
     }
     if (!field) {
-      const rf = ROCKHOUND_FIELDS.find(f => f.key === key);
+      const rf = CUSTOM_FIELDS.find(f => f.key === key);
       if (rf) { field = rf; }
     }
     if (!field) {
