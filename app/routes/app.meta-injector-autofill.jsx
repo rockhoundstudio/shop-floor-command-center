@@ -325,12 +325,14 @@ export const action = async ({ request }) => {
   "cut_and_shape": "(value after 'Shape:' label, e.g. 'Cabochon')",
   "surface_finish": "(value after 'Finish:' label, e.g. 'High Polish')",
   "stone_family": "(the rockhound trade name of the stone — use Labradorite not Feldspar, use Jasper not Chalcedony)",
-  "collection_name": "(if mentioned in the description, return the collection name, else empty string)",
+  "collection_name": "(find the URL in the description that contains /collections/ and extract the collection name from the link text or format the slug after /collections/ as title case. For example if the URL slug is mixed-media return Mixed Media. If no /collections/ URL is found return empty string)",
   "dimensions_mm": "(if dimensions are mentioned in the description in mm format, return them, else empty string)",
   "handcrafted_by": "(name from signature line, e.g. 'Bob & Janyce, Rockhound Studio')",
   "treated": "(if description says untreated or not enhanced, return 'false', else return 'true')",
   "found_object": "(if description says found or collected in the field, return 'true', else return 'false')",
-  "is_one_of_a_kind": "(if description says one of a kind, return 'Yes — one of a kind', else return 'No')"
+  "is_one_of_a_kind": "(if description says one of a kind, return 'Yes — one of a kind', else return 'No')",
+  "artist_notes": "(write 1-2 sentences of internal shop notes about this stone's character, quirks, or what makes it special, based on the description and image. Plain language, no marketing)",
+  "origin_page_handle": "(find the URL in the description that contains /pages/ and extract only the handle slug after /pages/. For example if the URL is rockhoundstudio.com/pages/yakima-river-canyon return yakima-river-canyon. If no /pages/ URL is found return empty string)"
 }
 
 Product description:
@@ -382,6 +384,9 @@ Return only valid JSON. No explanation. No markdown.`;
             safeSet("found_object", textData.found_object);
             safeSet("is_one_of_a_kind", textData.is_one_of_a_kind);
             safeSet("piece_name", textData.piece_name);
+            safeSet("artist_notes", textData.artist_notes);
+            safeSet("origin_page_handle", textData.origin_page_handle);
+            if (textData.stone_family) { safeSet("material", textData.stone_family); }
 
             console.log("Pass 2B Gemini Text extracted:", Object.keys(textData).filter(k => textData[k]));
           }
