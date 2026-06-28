@@ -18,6 +18,13 @@ const GET_PRODUCTS_QUERY = `
               }
             }
           }
+          variants(first: 1) {
+            edges {
+              node {
+                price
+              }
+            }
+          }
           customMeta: metafields(first: 50, namespace: "custom") {
             edges { node { namespace key value type } }
           }
