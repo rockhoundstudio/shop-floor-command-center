@@ -198,6 +198,8 @@ export async function action({ request }) {
       });
       
       const result = await response.json();
+      console.log("SHOPIFY RAW RESPONSE:", JSON.stringify(result, null, 2));
+      console.log("SHOPIFY USER ERRORS:", JSON.stringify(result?.data?.metafieldsSet?.userErrors, null, 2));
       return { intent, success: true, result };
     } catch (error) {
       return { intent, success: false, error: error.message };
