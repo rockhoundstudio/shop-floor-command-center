@@ -882,46 +882,6 @@ Image URL: ${imageUrl}`;
                 </div>
               </InlineStack>
 
-              <div style={{ maxHeight: "60vh", overflowY: "auto", paddingRight: "8px", display: "flex", flexDirection: "column", gap: "16px" }}>
-                {ROCKHOUND_FIELDS.map(field => {
-                  const val = formState[field.key] || "";
-                  const isDropdown = field.isDropdown === true;
-                  const isText = !field.isDropdown;
-                  
-                  let safeVal = val;
-
-                  if (isDropdown) {
-                    safeVal = DROPDOWN_OPTIONS[field.key]?.some(opt => opt.value === val) ? val : "";
-                  }
-                  
-                  return (
-                    <div key={field.key} style={{ minHeight: "54px" }}>
-                      {isDropdown && (
-                        <Select
-                          label={field.label}
-                          options={[{ label: safeVal !== "" ? safeVal : "Select...", value: safeVal }, ...(DROPDOWN_OPTIONS[field.key] || []).filter(opt => opt.value !== safeVal)]}
-                          value={DROPDOWN_OPTIONS[field.key]?.some(opt => opt.value === val) ? val : ""}
-                          onChange={(v) => updateFormState(field.key, v)}
-                          accessibilityLabel={`Select value for ${field.label}`}
-                          disabled={!selectedProductId}
-                        />
-                      )}
-
-                      {isText && (
-                        <TextField
-                          label={field.label}
-                          value={val}
-                          onChange={(v) => updateFormState(field.key, v)}
-                          autoComplete="off"
-                          accessibilityLabel={`Enter text for ${field.label}`}
-                          multiline={field.multiline && 3}
-                          disabled={!selectedProductId || val === "See Shopify metaobject"}
-                        />
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
             </BlockStack>
           </Card>
         </div>
