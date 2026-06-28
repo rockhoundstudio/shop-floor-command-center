@@ -403,6 +403,8 @@ collection_name — the named collection if mentioned
 is_one_of_a_kind — Yes or No based on description
 treated — No if description says natural or untreated, Yes if treated
 found_object — Yes if purchased or found, No if raw material
+artist_notes — write 1-2 sentences of internal shop notes about this stone's character, quirks, or what makes it special, based on the description and image. Plain language, no marketing.
+origin_page_handle — find the URL in the description that contains '/pages/' and extract only the handle slug after '/pages/'. For example if the URL is rockhoundstudio.com/pages/yakima-river-canyon return yakima-river-canyon. If no /pages/ URL is found return empty string.
 bail_included — Yes if bail or wrap mentioned, No if not
 handcrafted_by — always Bob & Janyce, Rockhound Studio
 
@@ -529,7 +531,7 @@ Image URL: ${imageUrl}`;
             const hasNewValue = val !== undefined && val !== null && val.toString().trim() !== "";
             
             // Only fill if currently empty in fullMetaState
-            const ALWAYS_OVERWRITE = ["color", "cut_and_shape", "stone_family", "surface_finish", "handcrafted_by", "treated", "found_object", "is_one_of_a_kind"];
+            const ALWAYS_OVERWRITE = ["color", "cut_and_shape", "stone_family", "surface_finish", "handcrafted_by", "treated", "is_one_of_a_kind"];
             const currentlyEmpty = !fullMetaState[key] || (typeof fullMetaState[key] === 'string' && fullMetaState[key].trim() === "");
             const shouldOverwrite = ALWAYS_OVERWRITE.includes(key);
 
@@ -602,7 +604,7 @@ Image URL: ${imageUrl}`;
                 Object.entries(autoFillFetcher.data.fields).forEach(([key, val]) => {
                     const hasNewValue = val !== undefined && val !== null && val.toString().trim() !== "";
                     // Only fill if currently empty
-                    const ALWAYS_OVERWRITE_TAB2 = ["color", "cut_and_shape", "stone_family", "surface_finish", "handcrafted_by", "treated", "found_object", "is_one_of_a_kind"];
+                    const ALWAYS_OVERWRITE_TAB2 = ["color", "cut_and_shape", "stone_family", "surface_finish", "handcrafted_by", "treated", "is_one_of_a_kind"];
                     const currentlyEmpty = !updatedState[key] || updatedState[key].trim() === "";
                     const shouldOverwrite = ALWAYS_OVERWRITE_TAB2.includes(key);
 
