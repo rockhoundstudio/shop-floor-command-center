@@ -981,7 +981,7 @@ Image URL: ${imageUrl}`;
                 </div>
                 <Collapsible open={isSection4Open} id="section-4-collapsible" transition={{duration: '200ms', timingFunction: 'ease-in-out'}}>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px', marginTop: '16px' }}>
-                    {["mohs_hardness", "luster", "fracture_pattern", "cleavage", "specific_gravity", "diaphaneity", "mineral-class", "crystal-system", "rock-composition", "rock-formation", "geological-era", "geological_age"].map(renderFullMetaField)}
+                    {["mohs_hardness", "luster", "fracture_pattern", "cleavage", "specific_gravity", "diaphaneity", "mineralClass", "crystalSystem", "rockComposition", "rockFormation", "geologicalEra", "geological_age"].map(renderFullMetaField)}
                   </div>
                 </Collapsible>
               </BlockStack>
