@@ -341,7 +341,16 @@ export const action = async ({ request }) => {
   "found_object": "(if description says found or collected in the field, return 'true', else return 'false')",
   "is_one_of_a_kind": "(if description says one of a kind, return 'Yes — one of a kind', else return 'No')",
   "artist_notes": "(write 1-2 sentences of internal shop notes about this stone's character, quirks, or what makes it special, based on the description and image. Plain language, no marketing)",
-  "origin_page_handle": "(find the URL in the description that contains /pages/ and extract only the handle slug after /pages/. For example if the URL is rockhoundstudio.com/pages/yakima-river-canyon return yakima-river-canyon. If no /pages/ URL is found return empty string)"
+  "origin_page_handle": "(find the URL in the description that contains /pages/ and extract only the handle slug after /pages/. For example if the URL is rockhoundstudio.com/pages/yakima-river-canyon return yakima-river-canyon. If no /pages/ URL is found return empty string)",
+  "color_pattern": "(describe the color pattern of the stone in 2-4 words, e.g. 'Banded caramel and white', 'Solid grey with swirls' — based on description or title. Leave blank if unknown.)",
+  "material": "(the primary stone or mineral material, e.g. 'Botswana Agate', 'Jasper', 'Obsidian' — use the rockhound trade name. Leave blank if unknown.)",
+  "jewelry_type": "(only populate if the product is jewelry — e.g. 'Necklace', 'Pendant', 'Earrings'. Leave blank if it is a freeform stone or art piece.)",
+  "necklace_design": "(only populate if jewelry_type is Necklace or Pendant — describe the necklace style in 2-4 words. Leave blank otherwise.)",
+  "chain_link_type": "(only populate if jewelry_type is Necklace — e.g. 'Cable', 'Box', 'Rolo'. Leave blank otherwise.)",
+  "jewelry_finding_type": "(only populate if jewelry — e.g. 'Bail', 'Bezel', 'Prong'. Leave blank otherwise.)",
+  "target_gender": "(infer from description or title — e.g. 'Unisex', 'Women', 'Men'. Default to Unisex if unclear.)",
+  "age_group": "(infer from description or title — e.g. 'Adult', 'All Ages'. Default to Adult if unclear.)",
+  "custom_product": "(return true if the product is handcrafted or one of a kind, otherwise false.)"
 }
 
 Product description:
@@ -397,6 +406,15 @@ Return only valid JSON. No explanation. No markdown.`;
             safeSet("artist_notes", textData.artist_notes);
             safeSet("origin_page_handle", textData.origin_page_handle);
             if (textData.stone_family) { safeSet("material", textData.stone_family); }
+            if (textData.color_pattern) { safeSet("color_pattern", textData.color_pattern); }
+            if (textData.material) { safeSet("material", textData.material); }
+            if (textData.jewelry_type) { safeSet("jewelry_type", textData.jewelry_type); }
+            if (textData.necklace_design) { safeSet("necklace_design", textData.necklace_design); }
+            if (textData.chain_link_type) { safeSet("chain_link_type", textData.chain_link_type); }
+            if (textData.jewelry_finding_type) { safeSet("jewelry_finding_type", textData.jewelry_finding_type); }
+            if (textData.target_gender) { safeSet("target_gender", textData.target_gender); }
+            if (textData.age_group) { safeSet("age_group", textData.age_group); }
+            if (textData.custom_product !== undefined) { safeSet("custom_product", textData.custom_product); }
 
             console.log("Pass 2B Gemini Text extracted:", Object.keys(textData).filter(k => textData[k]));
           }
