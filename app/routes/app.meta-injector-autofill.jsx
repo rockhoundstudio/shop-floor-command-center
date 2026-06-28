@@ -55,6 +55,11 @@ export const action = async ({ request }) => {
     const { admin } = await authenticate.admin(request);
     
     const body = await request.formData();
+    
+    console.log("DEBUG description:", body.get("description"));
+    console.log("DEBUG descriptionHtml:", body.get("descriptionHtml"));
+    console.log("DEBUG targetDescription will be:", body.get("descriptionHtml") || body.get("description") || "EMPTY");
+    
     const actionType = body.get("actionType");
 
     if (actionType === "applyStoreDefaults") {
