@@ -1,964 +1,559 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
-import { BlockStack, Card, Text, Banner, TextField, Select, Button, InlineStack, Collapsible } from "@shopify/polaris";
-import { MagicIcon, SaveIcon } from "@shopify/polaris-icons";
-import { normalizeDropdownValue, DROPDOWN_OPTIONS, unwrapArrayValue } from "../utils/meta-injector.constants.jsx";
+import { authenticate } from "../shopify.server";
+import { lookupStone } from "../utils/geoLibrary";
+import { TARGET_KEYS } from "../utils/metaScan";
 
-const ROCKHOUND_FIELDS = [
-  // ==========================================
-  // SECTION A: SHARED BATCH FIELDS (The Story & Material)
-  // ==========================================
-  { key: "stone_family", label: "Stone Family", type: "single_line_text_field", isShared: true },
-  { key: "color", label: "Color", type: "single_line_text_field", isShared: true }, 
-  { key: "surface_finish", label: "Surface Finish", type: "single_line_text_field", isShared: true }, 
-  { key: "source_location", label: "Source / Discovery Location", type: "single_line_text_field", isShared: true },
-  { key: "primary_use", label: "Primary Use", type: "single_line_text_field", isShared: true }, 
-  { key: "handcrafted_by", label: "Handcrafted By", type: "single_line_text_field", isShared: true },
-  { key: "origin_story", label: "The Origin Story", type: "single_line_text_field", multiline: true, isShared: true },
+// ==========================================
+// ENVIRONMENT VARIABLES & MAPS
+// ==========================================
+const MINDAT_API_KEY = process.env.MINDAT_API_KEY;
 
-  // ==========================================
-  // SECTION B: PER-PIECE ROWS (The Hard Specs)
-  // ==========================================
-  { key: "piece_name", label: "Piece Name", type: "single_line_text_field", isPerPiece: true },
-  { key: "cut_and_shape", label: "Cut / Shape", type: "single_line_text_field", isPerPiece: true }, 
-  { key: "dimensions_mm", label: "Dimensions (mm)", type: "single_line_text_field", isPerPiece: true },
-  { key: "weight_grams", label: "Weight (grams)", type: "single_line_text_field", isPerPiece: true },
-  { key: "honest_flaws", label: "Character Marks (Honest Flaws)", type: "single_line_text_field", multiline: true, isPerPiece: true },
-  { key: "price", label: "Price", type: "single_line_text_field", isPerPiece: true }
-];
+const MINDAT_KEY_MAP = {
+  official_name: "name",
+  mineral_class: "mindat_formula",
+  crystal_structure: "crystal_system",
+  luster: "luster",
+  specific_gravity: "density",
+  moh_hardness: "hardness",
+  cleavage: "cleavage",
+  fracture_pattern: "fracture",
+  diaphaneity: "transparency",
+  tenacity: "tenacity",
+  origin_location: "localities_count",
+};
 
-const FULL_META_GROUPS = [
-  {
-    heading: "Always Fill",
-    color: "#2E7D32",
-    fields: [
-      { key: "piece_name", label: "Piece Name", type: "text" },
-      { key: "primary_medium", label: "Primary Medium", type: "text" },
-      { key: "handcrafted_by", label: "Handcrafted By", type: "text" },
-      { key: "is_one_of_a_kind", label: "Is One of a Kind", type: "text" },
-      { key: "treated", label: "Treated", type: "text" }
-    ]
-  },
-  {
-    heading: "Stone Fields",
-    color: "#1565C0",
-    fields: [
-      { key: "stone_family", label: "Stone Family", type: "text" },
-      { key: "color", label: "Color", type: "text" },
-      { key: "cut_and_shape", label: "Cut and Shape", type: "text" },
-      { key: "surface_finish", label: "Surface Finish", type: "text" },
-      { key: "dimensions_mm", label: "Dimensions (mm)", type: "text" },
-      { key: "weight_grams", label: "Weight (grams)", type: "text" }
-    ]
-  },
-  {
-    heading: "Story & Lore",
-    color: "#E65100",
-    fields: [
-      { key: "origin_story", label: "Origin Story", type: "text", multiline: true },
-      { key: "honest_flaws_and_character", label: "Honest Flaws and Character", type: "text", multiline: true },
-      { key: "collection_name", label: "Collection Name", type: "text" }
-    ]
-  },
-  {
-    heading: "Mixed Media",
-    color: "#6A1B9A",
-    fields: [
-      { key: "found_object", label: "Found Object", type: "text" }
-    ]
-  },
-  {
-    heading: "Google / SEO",
-    color: "#F9A825",
-    fields: [
-      { key: "primary_use", label: "Primary Use", type: "text" },
-      { key: "bail_included", label: "Bail Included", type: "text" }
-    ]
-  },
-  {
-    heading: "Geo-Vault",
-    color: "#4E342E",
-    fields: [
-      { key: "mineralClass", label: "Mineral Class", type: "text" },
-      { key: "crystalSystem", label: "Crystal System", type: "text" },
-      { key: "rockComposition", label: "Rock Composition", type: "text" },
-      { key: "rockFormation", label: "Rock Formation", type: "text" },
-      { key: "geologicalEra", label: "Geological Era", type: "text" }
-    ]
+// ==========================================
+// ENGINE: MINDAT API FETCHER
+// ==========================================
+async function fetchMindat(title) {
+  if (!MINDAT_API_KEY) return null;
+  
+  try {
+    const search = await fetch(
+      `https://api.mindat.org/minerals/?name=${encodeURIComponent(title)}&format=json`,
+      { headers: { Authorization: `Token ${MINDAT_API_KEY}` } }
+    );
+    
+    if (!search.ok) return null;
+    
+    const json = await search.json();
+    const results = json?.results;
+    
+    if (!results || results.length === 0) return null;
+    
+    return results[0];
+  } catch (error) {
+    console.error("Mindat API Fetch Fault:", error.message);
+    return null;
   }
-];
+}
 
-const NAMESPACE_MAP = {
-  rockhound: [
-    "piece_name", "primary_medium", "handcrafted_by", 
-    "stone_family", "color", "cut_and_shape", "surface_finish", 
-    "dimensions_mm", "weight_grams", "collection_name", "collection_location", 
-    "collection_date", "primary_use", "bail_included", 
-    "is_one_of_a_kind", "treated", "found_object", "wire_material", 
-    "origin_story", "honest_flaws_and_character"
-  ],
-  geo: [
-    "hardness", "luster", "fracture", "cleavage", "specificGravity", 
-    "diaphaneity", "crystalSystem", "geologicalEra", "mineralClass", 
-    "rockComposition", "rockFormation", "authenticity", "rarity"
-  ]
-};
-
-const getNamespaceForKey = (key) => {
-  if (NAMESPACE_MAP.rockhound.includes(key)) return "rockhound";
-  if (NAMESPACE_MAP.geo.includes(key)) return "geo";
-  return "custom";
-};
-
-export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher }) {
-  const [selectedProductId, setSelectedProductId] = useState("");
-  const [formState, setFormState] = useState({});
-  const [fullMetaState, setFullMetaState] = useState({});
-  const originalMetaRef = useRef({});
-  const [statusMessage, setStatusMessage] = useState("");
-  const [errorMessage, setErrorMessage] = useState("");
-  const [promptStyle, setPromptStyle] = useState("");
-  const [searchQuery, setSearchQuery] = useState("");
-
-  // Tab 2 Auto-Fill State
-  const [tab2StatusMessage, setTab2StatusMessage] = useState("");
-  const [tab2ErrorMessage, setTab2ErrorMessage] = useState("");
-
-  // Collapsible Sections State
-  const [isSection3Open, setIsSection3Open] = useState(false);
-  const [isSection4Open, setIsSection4Open] = useState(false);
-
-  const handleSelectProduct = useCallback((id) => {
-    setSelectedProductId(id);
-    setStatusMessage("");
-    setErrorMessage("");
-    setTab2StatusMessage("");
-    setTab2ErrorMessage("");
-
-    const product = products.find(p => p.id === id);
-    const newForm = {};
-    const newFullForm = {};
+// ==========================================
+// ACTION: DATA MERGER & LOOKUP
+// ==========================================
+export const action = async ({ request }) => {
+  try {
+    const { admin } = await authenticate.admin(request);
     
-    const hasMetafields = product && product.metafields && product.metafields.edges;
-    
-    if (hasMetafields) {
-      // Pass 1 — custom namespace only:
-      product.metafields.edges.forEach(({ node }) => {
-        const hasValue = node.value !== null && node.value !== undefined;
-        if (hasValue && node.namespace === "custom") {
-          let parsedValue = node.value;
-          if (parsedValue && parsedValue.includes("gid://")) {
-            parsedValue = "See Shopify metaobject";
-          }
-          if (parsedValue && typeof parsedValue === 'string' && parsedValue.startsWith("[")) {
-            try {
-              const arr = JSON.parse(parsedValue);
-              parsedValue = Array.isArray(arr) ? arr[0] : parsedValue;
-            } catch (e) { }
-          }
-          newForm[node.key] = parsedValue;
-          newFullForm[node.key] = parsedValue;
-        }
-      });
+    const body = await request.formData();
+    const actionType = body.get("actionType");
 
-      // Pass 2 — geo namespace only:
-      product.metafields.edges.forEach(({ node }) => {
-        const hasValue = node.value !== null && node.value !== undefined;
-        if (hasValue && node.namespace === "geo") {
-          let parsedValue = node.value;
-          if (parsedValue.startsWith("[")) {
-            try {
-              const arr = JSON.parse(parsedValue);
-              parsedValue = Array.isArray(arr) ? arr[0] : parsedValue;
-            } catch (e) { }
-          }
-          newForm[node.key] = parsedValue;
-          newFullForm[node.key] = parsedValue;
-        }
-      });
-
-      // Pass 3 — rockhound namespace (wins all conflicts):
-      product.metafields.edges.forEach(({ node }) => {
-        const hasValue = node.value !== null && node.value !== undefined;
-        if (hasValue && node.namespace === "rockhound") {
-          let parsedValue = node.value;
-          if (parsedValue.includes("gid://")) {
-            parsedValue = "See Shopify metaobject";
-          } else if (parsedValue.startsWith("[")) {
-            try {
-              const arr = JSON.parse(parsedValue);
-              parsedValue = Array.isArray(arr) ? arr[0] : parsedValue;
-            } catch (e) {
-              // keep original
-            }
-          }
-          newForm[node.key] = parsedValue;
-          newFullForm[node.key] = parsedValue;
-        }
-      });
-    }
-
-    if (!newForm.origin_story && newForm.stone_story) {
-      newForm.origin_story = newForm.stone_story;
-    }
-    if (newForm.origin_story && newForm.origin_story.startsWith("[")) {
-      try { const arr = JSON.parse(newForm.origin_story); newForm.origin_story = Array.isArray(arr) ? arr[0] : newForm.origin_story; } catch (e) {}
-    }
-
-    // Un-wrap story arrays strictly
-    if (newForm.origin_story && newForm.origin_story.startsWith("[")) {
-      try {
-        const arr = JSON.parse(newForm.origin_story);
-        newForm.origin_story = Array.isArray(arr) ? arr[0] : newForm.origin_story;
-      } catch (e) { }
-    }
-    if (newForm.stone_story && newForm.stone_story.startsWith("[")) {
-      try {
-        const arr = JSON.parse(newForm.stone_story);
-        newForm.origin_story = Array.isArray(arr) ? arr[0] : newForm.stone_story;
-      } catch (e) { }
-    }
-    newFullForm.origin_story = newForm.origin_story;
-
-    if (newForm.honest_flaws_and_character && newForm.honest_flaws_and_character.startsWith("[")) {
-      try {
-        const arr = JSON.parse(newForm.honest_flaws_and_character);
-        newForm.honest_flaws_and_character = Array.isArray(arr) ? arr[0] : newForm.honest_flaws_and_character;
-      } catch (e) { }
-    }
-    if (newForm.character_marks && newForm.character_marks.startsWith("[")) {
-      try {
-        const arr = JSON.parse(newForm.character_marks);
-        newForm.honest_flaws_and_character = Array.isArray(arr) ? arr[0] : newForm.character_marks;
-      } catch (e) { }
-    }
-    newFullForm.honest_flaws_and_character = newForm.honest_flaws_and_character;
-
-    // Fix duplicated Handcrafted By strings
-    if (newForm.handcrafted_by && typeof newForm.handcrafted_by === 'string') {
-      if (newForm.handcrafted_by.startsWith("[")) {
-         try { const arr = JSON.parse(newForm.handcrafted_by); newForm.handcrafted_by = Array.isArray(arr) ? arr[0] : newForm.handcrafted_by; } catch (e) {}
-      }
-      if (newForm.handcrafted_by.includes("Bob & Janyce") || newForm.handcrafted_by.includes("Rockhound Studio")) {
-         newForm.handcrafted_by = "Bob & Janyce, Rockhound Studio";
-      }
-    }
-    if (newFullForm.handcrafted_by && typeof newFullForm.handcrafted_by === 'string') {
-      if (newFullForm.handcrafted_by.startsWith("[")) {
-         try { const arr = JSON.parse(newFullForm.handcrafted_by); newFullForm.handcrafted_by = Array.isArray(arr) ? arr[0] : newFullForm.handcrafted_by; } catch (e) {}
-      }
-      if (newFullForm.handcrafted_by.includes("Bob & Janyce") || newFullForm.handcrafted_by.includes("Rockhound Studio")) {
-         newFullForm.handcrafted_by = "Bob & Janyce, Rockhound Studio";
-      }
-    }
-
-    const customPM = product?.metafields?.edges?.find(e => e.node.namespace === "custom" && e.node.key === "primary_medium")?.node?.value;
-    const rockhoundPM = product?.metafields?.edges?.find(e => e.node.namespace === "rockhound" && e.node.key === "primary_medium")?.node?.value;
-    
-    let bestPM = customPM || rockhoundPM || newForm.base_stone_type || "";
-    
-    if (bestPM && bestPM.startsWith("[")) {
-      try {
-        const arr = JSON.parse(bestPM);
-        bestPM = Array.isArray(arr) ? arr[0] : bestPM;
-      } catch (e) { }
-    }
-
-    if (bestPM === "Stone") bestPM = ""; // Explicitly strip hardcoded fallback
-    
-    newFullForm.primary_medium = bestPM;
-    newForm.primary_medium = bestPM;
-
-    // Prioritize Form State Color over Raw Primary Color
-    if (newForm.color) {
-      newFullForm.color = newForm.color;
-    }
-
-    if (!newFullForm.handcrafted_by || newFullForm.handcrafted_by.trim() === "") {
-        newFullForm.handcrafted_by = "Bob & Janyce, Rockhound Studio";
-    }
-
-    // Auto-populate Piece Name from product title unconditionally at select time
-    if (product && product.title) {
-      newForm.piece_name = product.title;
-      newFullForm.piece_name = product.title;
-    }
-    if (product && product.variants && product.variants[0]?.price) {
-      newForm.price = product.variants[0].price;
-      newFullForm.price = product.variants[0].price;
-    }
-    
-    setFormState(newForm);
-    setFullMetaState(newFullForm);
-    originalMetaRef.current = { ...newFullForm };
-  }, [products]);
-
-  // Seed formState from existing rockhound metafields when a product is selected
-  useEffect(() => {
-    if (selectedProductId && products && products.length > 0) {
-      const product = products.find(p => p.id === selectedProductId);
-      if (product && product.metafields && product.metafields.edges) {
-        setFormState(prev => {
-          const updatedState = { ...prev };
-          const dropdownFields = [
-            "handcrafted_by", "is_one_of_a_kind", "treated", "found_object", 
-            "primary_use", "bail_included", "stone_family", 
-            "color", "cut_and_shape", "surface_finish"
-          ];
-          const textFields = [
-            "piece_name", "primary_medium", "dimensions_mm", 
-            "weight_grams", "origin_story",
-            "honest_flaws_and_character", "collection_name"
-          ];
-
-          product.metafields.edges.forEach(({ node }) => {
-            if (node.namespace === "rockhound" && node.value && node.value.trim() !== "") {
-              if (true) {
-                if (dropdownFields.includes(node.key)) {
-                  updatedState[node.key] = normalizeDropdownValue(node.key, node.value);
-                } else if (textFields.includes(node.key)) {
-                  updatedState[node.key] = node.value;
+    if (actionType === "applyStoreDefaults") {
+        const rawIds = body.get("productIds");
+        if (!rawIds) return Response.json({ success: false, error: "No product IDs provided." });
+        
+        const productIds = JSON.parse(rawIds);
+        const results = [];
+        
+        for (const productId of productIds) {
+            const getMetafieldsQuery = `
+                query GetProductMetafields($id: ID!) {
+                    product(id: $id) {
+                        id
+                        metafields(first: 50, namespace: "custom") {
+                            edges {
+                                node {
+                                    key
+                                    value
+                                }
+                            }
+                        }
+                    }
                 }
-              }
-            }
-          });
-          
-          if (product.title) {
-            updatedState.piece_name = product.title;
-          }
-          
-          return updatedState;
-        });
-      }
-    }
-  }, [selectedProductId, products]);
-
-  const updateFormState = useCallback((key, value) => {
-    setFormState(prev => ({ ...prev, [key]: value }));
-    // Keep Color actively synced between Form State and Full Meta Report
-    if (key === "color") {
-      setFullMetaState(prev => ({ ...prev, [key]: value }));
-    }
-  }, []);
-
-  const updateFullMetaState = useCallback((key, value) => {
-    setFullMetaState(prev => ({ ...prev, [key]: value }));
-  }, []);
-
-  const handleAutoFill = useCallback(() => {
-    if (!selectedProductId) return;
-    setStatusMessage("");
-    setErrorMessage("");
-
-    const product = products.find(p => p.id === selectedProductId) || {};
-    const title = product.title || "";
-    const description = product.descriptionHtml || product.description || "";
-    const imageUrl = product?.images?.edges?.[0]?.node?.url || "";
-
-    console.log("AutoFill imageUrl sent:", imageUrl);
-
-    autoFillFetcher.submit(
-      {
-        intent: "autoFill",
-        productId: selectedProductId,
-        productTitle: title,
-        productDescription: description,
-        promptStyle: promptStyle,
-        existingColor: formState.color || "",
-        existingCutAndShape: formState.cut_and_shape || "",
-        imageUrl: imageUrl
-      },
-      { method: "post", action: "/app/meta-injector-autofill" }
-    );
-  }, [selectedProductId, autoFillFetcher, products, promptStyle, formState]);
-
-  const handleTab2AutoFill = useCallback(() => {
-    if (!selectedProductId) return;
-    setTab2StatusMessage("");
-    setTab2ErrorMessage("");
-
-    const product = products.find(p => p.id === selectedProductId) || {};
-    const title = product.title || "";
-    const description = product.descriptionHtml || product.description || "";
-    
-    // Attempt to extract image URL. If your product query doesn't pull images, this will be blank.
-    let imageUrl = "";
-    if (product.images && product.images.edges && product.images.edges.length > 0) {
-        imageUrl = product.images.edges[0].node.url || "";
-    }
-
-    const promptText = `You are extracting structured product data for a gemstone jewelry store. Parse the following product title, description, and image and return a JSON object with these exact keys:
-
-piece_name — the stone name after the last dash in the title
-primary_medium — the stone type from the title (first segment before first dash)
-collection_location — the location from the title (second segment between dashes)
-color — primary color observed in the image, plain text
-secondary_colors — any secondary colors observed in the image, plain text
-cut_and_shape — the cabochon shape, from image and description
-surface_finish — polish level from description or image
-character_marks — any inclusions, matrix, anomalies, natural flaws observed in image or description, plain text
-dimensions_mm — dimensions from description, plain text
-weight_grams — weight if mentioned, plain text or empty string
-origin_story — the full narrative story paragraphs from the description, preserve line breaks
-collection_name — the named collection if mentioned
-is_one_of_a_kind — Yes or No based on description
-treated — No if description says natural or untreated, Yes if treated
-found_object — Yes if purchased or found, No if raw material
-artist_notes — write 1-2 sentences of internal shop notes about this stone's character, quirks, or what makes it special, based on the description and image. Plain language, no marketing.
-origin_page_handle — find the URL in the description that contains '/pages/' and extract only the handle slug after '/pages/'. For example if the URL is rockhoundstudio.com/pages/yakima-river-canyon return yakima-river-canyon. If no /pages/ URL is found return empty string.
-bail_included — Yes if bail or wrap mentioned, No if not
-handcrafted_by — always Bob & Janyce, Rockhound Studio
-
-Return only valid JSON. No markdown. No explanation.
-
-Title: ${title}
-Description: ${description}
-Image URL: ${imageUrl}`;
-
-    autoFillFetcher.submit(
-      { 
-        intent: "tab2AutoFill", 
-        productId: selectedProductId,
-        productTitle: title,
-        prompt: promptText,
-        imageUrl: imageUrl
-      },
-      { method: "post", action: "/app/meta-injector-autofill" }
-    );
-    console.log("Tab2 AutoFill imageUrl sent:", imageUrl);
-  }, [selectedProductId, autoFillFetcher, products]);
-
-  const handleInject = useCallback(() => {
-    if (!selectedProductId) return;
-    setStatusMessage("");
-    setErrorMessage("");
-
-    const selectedProduct = products.find(p => p.id === selectedProductId);
-    const rawTitle = selectedProduct?.title || formState.piece_name || "";
-    const resolvedPieceName = rawTitle.includes(" — ") ? rawTitle.split(" — ").pop().trim() : rawTitle;
-    
-    const payload = [];
-    const entries = Object.entries(formState);
-    
-    entries.forEach(([key, value]) => {
-      let injectValue = value;
-      if (key === "piece_name") {
-        injectValue = resolvedPieceName;
-      }
-
-      const isPopulated = injectValue !== undefined && injectValue !== null && injectValue.toString().trim() !== "";
-      
-      // Removed the overly strict '&& config' that was dropping standard fields
-      if (isPopulated && injectValue !== "See Shopify metaobject") {
-        const config = ROCKHOUND_FIELDS.find(f => f.key === key);
-        let fieldType = "single_line_text_field";
-        if (config && config.type) {
-          fieldType = config.type;
-        }
-        
-        let formatId = `gid://shopify/Product/${selectedProductId}`;
-        if (selectedProductId.includes("gid://")) {
-          formatId = selectedProductId;
-        }
-
-        payload.push({
-          namespace: "custom",
-          key: key,
-          type: fieldType,
-          value: injectValue,
-          ownerId: formatId
-        });
-      }
-    });
-
-    if (payload.length === 0) {
-      setErrorMessage("No fields are populated. Fill at least one field to inject.");
-      return;
-    }
-
-    // Explicit form action wiring restored to guarantee hitting the server action block
-    injectFetcher.submit(
-      { intent: "saveMetafields", payload: JSON.stringify(payload) },
-      { method: "post", action: "/app/meta-injector-api" }
-    );
-  }, [selectedProductId, formState, products, injectFetcher]);
-
-  const handleSaveFullMeta = useCallback(() => {
-    if (!selectedProductId) return;
-    const changes = [];
-    
-    Object.entries(fullMetaState).forEach(([key, value]) => {
-      const originalValue = originalMetaRef.current[key] || "";
-      const newValue = value || "";
-      
-      if (originalValue !== newValue && newValue !== "See Shopify metaobject") {
-        changes.push({
-          namespace: getNamespaceForKey(key),
-          key: key,
-          value: newValue,
-          type: "single_line_text_field"
-        });
-      }
-    });
-
-    if (changes.length > 0) {
-      // Explicit form action wiring restored to prevent silent drop
-      injectFetcher.submit(
-        { intent: "saveMetafields", productId: selectedProductId, metafields: JSON.stringify(changes) },
-        { method: "post", action: "/app/meta-injector-api" }
-      );
-    }
-  }, [selectedProductId, fullMetaState, injectFetcher]);
-
-  useEffect(() => {
-    const isIdle = autoFillFetcher.state === "idle";
-    const hasData = autoFillFetcher.data !== undefined && autoFillFetcher.data !== null;
-    
-    if (isIdle && hasData) {
-      const product = products.find(p => p.id === selectedProductId);
-      const productTitle = product ? product.title : "";
-
-      const isAutoFill = autoFillFetcher.data.intent === "autoFill";
-      const isSmartAutoFill = autoFillFetcher.data.intent === "smartAutoFill";
-      const isTab2AutoFill = autoFillFetcher.data.intent === "tab2AutoFill";
-      
-      const isSuccess = autoFillFetcher.data.success === true;
-      const isError = autoFillFetcher.data.success === false;
-
-      if ((isAutoFill || isSmartAutoFill) && isSuccess && autoFillFetcher.data.fields) {
-        setFormState(prev => {
-          const updatedState = { ...prev };
-          Object.entries(autoFillFetcher.data.fields).forEach(([key, val]) => {
-            const hasNewValue = val !== undefined && val !== null && val.toString().trim() !== "";
+            `;
             
-            // Only fill if currently empty in fullMetaState
-            const ALWAYS_OVERWRITE = ["color", "cut_and_shape", "stone_family", "surface_finish", "handcrafted_by", "treated", "is_one_of_a_kind"];
-            const currentlyEmpty = !fullMetaState[key] || (typeof fullMetaState[key] === 'string' && fullMetaState[key].trim() === "");
-            const shouldOverwrite = ALWAYS_OVERWRITE.includes(key);
-
-            if (hasNewValue && (currentlyEmpty || shouldOverwrite) && val !== "See Shopify metaobject") {
-              updatedState[key] = val;
-            }
-          });
-          
-          if (productTitle) {
-            updatedState.piece_name = productTitle.includes(" — ") ? productTitle.split(" — ").pop().trim() : productTitle;
-          }
-          
-          return updatedState;
-        });
-
-        if (isSmartAutoFill || isAutoFill) {
-          setFullMetaState(prev => {
-            const parsedValues = autoFillFetcher.data.fields || {};
-            const fullMetaFields = autoFillFetcher.data.fullMetaFields || {};
-            const nextState = {
-              ...prev,
-              ...parsedValues,
-              ...fullMetaFields
-            };
+            const metaRes = await admin.graphql(getMetafieldsQuery, { variables: { id: productId } });
+            const metaData = await metaRes.json();
             
-            // Ensure Color is driven by parsed/form state, not raw primary_color meta
-            if (parsedValues.color) {
-                nextState.color = parsedValues.color;
-            } else if (formState.color) {
-                nextState.color = formState.color;
+            if (!metaData.data || !metaData.data.product) {
+                console.error(`Failed to load product ${productId} for defaults check`);
+                continue;
             }
-
-            // Clean handcrafted_by deduplication on AutoFill return
-            if (typeof nextState.handcrafted_by === 'string' && (nextState.handcrafted_by.includes("Bob & Janyce") || nextState.handcrafted_by.includes("Rockhound Studio"))) {
-                nextState.handcrafted_by = "Bob & Janyce, Rockhound Studio";
+            
+            const existingMetafields = metaData.data.product.metafields.edges.reduce((acc, edge) => {
+                acc[edge.node.key] = edge.node.value;
+                return acc;
+            }, {});
+            
+            const defaultsToApply = [];
+            
+            if (!existingMetafields.handcrafted_by || existingMetafields.handcrafted_by.trim() === "") {
+                defaultsToApply.push({ namespace: "custom", key: "handcrafted_by", type: "single_line_text_field", value: "Bob & Janyce, Rockhound Studio" });
             }
-
-            // Clean primary_medium hardcode
-            if (nextState.primary_medium === "Stone") {
-                nextState.primary_medium = "";
+            if (!existingMetafields.is_one_of_a_kind || existingMetafields.is_one_of_a_kind.trim() === "") {
+                defaultsToApply.push({ namespace: "custom", key: "is_one_of_a_kind", type: "single_line_text_field", value: "true" });
             }
-
-            if (productTitle) {
-              nextState.piece_name = productTitle.includes(" — ") ? productTitle.split(" — ").pop().trim() : productTitle;
+            if (!existingMetafields.treated || existingMetafields.treated.trim() === "") {
+                defaultsToApply.push({ namespace: "custom", key: "treated", type: "single_line_text_field", value: "false" });
             }
-
-            return nextState;
-          });
-        }
-
-        if (isSmartAutoFill) {
-          setStatusMessage("Smart Auto-Fill complete — fields populated from all available data sources.");
-        }
-        
-        if (isAutoFill) {
-          setStatusMessage("Title and tags successfully parsed and loaded into fields.");
-          if (autoFillFetcher.data.colorWarning) { setErrorMessage("WARNING: Vision could not detect Color from the hero image   please enter Color manually."); }
-        }
-
-        // Show Polaris Toast for Success
-        if (window.shopify && window.shopify.toast) {
-          window.shopify.toast.show("Auto-Fill complete!");
-        }
-      }
-
-      if (isTab2AutoFill) {
-        if (isSuccess && autoFillFetcher.data.fields) {
-            setFullMetaState(prev => {
-                const updatedState = { ...prev };
-                Object.entries(autoFillFetcher.data.fields).forEach(([key, val]) => {
-                    const hasNewValue = val !== undefined && val !== null && val.toString().trim() !== "";
-                    // Only fill if currently empty
-                    const ALWAYS_OVERWRITE_TAB2 = ["color", "cut_and_shape", "stone_family", "surface_finish", "handcrafted_by", "treated", "is_one_of_a_kind"];
-                    const currentlyEmpty = !updatedState[key] || updatedState[key].trim() === "";
-                    const shouldOverwrite = ALWAYS_OVERWRITE_TAB2.includes(key);
-
-                    if (hasNewValue && (currentlyEmpty || shouldOverwrite) && val !== "See Shopify metaobject") {
-                      updatedState[key] = val;
+            if (!existingMetafields.found_object || existingMetafields.found_object.trim() === "") {
+                defaultsToApply.push({ namespace: "custom", key: "found_object", type: "single_line_text_field", value: "true" });
+            }
+            if (!existingMetafields.primary_use || existingMetafields.primary_use.trim() === "") {
+                defaultsToApply.push({ namespace: "custom", key: "primary_use", type: "single_line_text_field", value: "Wearable Art" });
+            }
+            
+            console.log(`Product ${productId} defaults to apply:`, defaultsToApply.map(m => m.key));
+            
+            if (defaultsToApply.length > 0) {
+                const updateMutation = `
+                    mutation productUpdate($input: ProductInput!) {
+                        productUpdate(input: $input) {
+                            product { id }
+                            userErrors { field message }
+                        }
+                    }
+                `;
+                
+                const updateRes = await admin.graphql(updateMutation, {
+                    variables: {
+                        input: {
+                            id: productId,
+                            metafields: defaultsToApply
+                        }
                     }
                 });
                 
-                if (productTitle) {
-                  updatedState.piece_name = productTitle.includes(" — ") ? productTitle.split(" — ").pop().trim() : productTitle;
+                const updateData = await updateRes.json();
+                if (updateData.data?.productUpdate?.userErrors?.length > 0) {
+                    console.error(`Error updating product ${productId}:`, updateData.data.productUpdate.userErrors);
+                } else {
+                    results.push({ id: productId, appliedFields: defaultsToApply.map(m => m.key) });
                 }
-                
-                return updatedState;
-            });
-            setTab2StatusMessage("Auto-Fill complete — review fields before saving");
-            
-            // Show Polaris Toast for Tab 2 Success
-            if (window.shopify && window.shopify.toast) {
-              window.shopify.toast.show("Auto-Fill complete!");
-            }
-
-        } else if (isError) {
-            setTab2ErrorMessage(autoFillFetcher.data.error || "Gemini extraction failed.");
-            
-            // Show Polaris Toast for Tab 2 Failure
-            if (window.shopify && window.shopify.toast) {
-              window.shopify.toast.show("Auto-Fill failed", { isError: true });
+            } else {
+                results.push({ id: productId, appliedFields: [] });
             }
         }
-      }
-
-      if (isError && !isTab2AutoFill) {
-        setErrorMessage(autoFillFetcher.data.error || "An unknown error occurred during the operation.");
-        // Fallback catch-all error Toast
-        if (window.shopify && window.shopify.toast) {
-          window.shopify.toast.show("Action failed", { isError: true });
-        }
-      }
+        
+        return Response.json({ success: true, updated: results });
     }
-  }, [autoFillFetcher.state, autoFillFetcher.data]);
 
-  useEffect(() => {
-    const isIdle = injectFetcher.state === "idle";
-    const hasData = injectFetcher.data !== undefined && injectFetcher.data !== null;
+    const title = body.get("title") || "";
+    const description = body.get("description") || "";
+    const existingMeta = JSON.parse(body.get("existingMeta") || "{}");
+
+    const merged = { ...existingMeta };
     
-    if (isIdle && hasData) {
-      const isSuccess = injectFetcher.data.success === true;
-      const isError = injectFetcher.data.success === false;
-
-      if (isSuccess) {
-        setStatusMessage("Metafields injected cleanly into Shopify database.");
-        if (window.shopify && window.shopify.toast) {
-          window.shopify.toast.show("Metafields injected!");
+    const safeSet = (key, value) => {
+      if (!merged[key] || merged[key].trim() === "") {
+        if (value && String(value).trim() !== "") {
+          merged[key] = String(value).trim();
         }
       }
+    };
 
-      if (isError) {
-        setErrorMessage(injectFetcher.data.error || "An unknown error occurred during the operation.");
-        // Fallback catch-all error Toast
-        if (window.shopify && window.shopify.toast) {
-          window.shopify.toast.show("Action failed", { isError: true });
+    // ==========================================
+    // PASS 0: TEXT PARSING
+    // ==========================================
+    if (description) {
+      try {
+        const stoneHeadingRegex = /<(h[1-6]|strong|b)[^>]*>[\s\S]*?the stone:?[\s\S]*?<\/\1>/i;
+        const headingMatch = description.match(stoneHeadingRegex);
+        
+        let beforeStone = description;
+        
+        if (headingMatch) {
+          beforeStone = description.substring(0, headingMatch.index);
+          const afterHeading = description.substring(headingMatch.index + headingMatch[0].length);
+          
+          const nextHeadingIndex = afterHeading.search(/<h[1-6][^>]*>/i);
+          const stoneHtml = nextHeadingIndex !== -1 ? afterHeading.substring(0, nextHeadingIndex) : afterHeading;
+          
+          const lines = stoneHtml.split(/<br\s*\/?>|<\/p>|<\/div>|\n/i);
+          
+          lines.forEach(line => {
+            const cleanedLine = line.replace(/<\/?[^>]+(>|$)/g, "").trim();
+            const lowerLine = cleanedLine.toLowerCase();
+
+            if (lowerLine.startsWith("type:")) safeSet("primary_medium", cleanedLine.substring(5).trim());
+            if (lowerLine.startsWith("origin:")) safeSet("collection_location", cleanedLine.substring(7).trim());
+            if (lowerLine.startsWith("shape:")) safeSet("cut_and_shape", cleanedLine.substring(6).trim());
+            if (lowerLine.startsWith("dimensions:")) safeSet("dimensions_mm", cleanedLine.substring(11).trim());
+            if (lowerLine.startsWith("finish:")) safeSet("surface_finish", cleanedLine.substring(7).trim());
+            if (lowerLine.startsWith("flash:")) safeSet("color", cleanedLine.substring(6).trim());
+            if (lowerLine.includes("one of a kind") && lowerLine.includes("yes")) safeSet("is_one_of_a_kind", "true");
+            if (lowerLine.includes("not dyed") || lowerLine.includes("not enhanced") || lowerLine.includes("untreated")) safeSet("treated", "false");
+          });
         }
+
+        const ignoreList = [
+          "/pages/tails-and-trails", 
+          "/pages/rockhound-logbook-hub", 
+          "/pages/build-your-setting", 
+          "/pages/the-3-000-mile-run"
+        ];
+        
+        let linkSearchArea = description;
+        const dwellLinksDiv = description.match(/<(?:div|section)[^>]*(?:id|class)=["'][^"']*rockhound-dwell-links[^"']*["'][^>]*>([\s\S]*?)<\/(?:div|section)>/i);
+        if (dwellLinksDiv) {
+          linkSearchArea = dwellLinksDiv[1];
+        }
+
+        const linkRegex = /<a[^>]*href=["']([^"']+)["']/gi;
+        let linkMatch;
+        while ((linkMatch = linkRegex.exec(linkSearchArea)) !== null) {
+          let href = linkMatch[1];
+          if (href.includes("/pages/")) {
+            let path = href;
+            try {
+              const urlObj = new URL(href, "https://dummy.com"); 
+              path = urlObj.pathname;
+            } catch (e) {
+              path = href.split('?')[0];
+            }
+            
+            if (!ignoreList.includes(path)) {
+              const slug = path.split("/").filter(Boolean).pop();
+              safeSet("origin_story_page_slug", slug);
+              break;
+            }
+          }
+        }
+
+        const pRegex = /<p[^>]*>([\s\S]*?)<\/p>/gi;
+        let pMatch;
+        const storyParagraphs = [];
+        
+        while ((pMatch = pRegex.exec(beforeStone)) !== null) {
+          let pContent = pMatch[1];
+          pContent = pContent.replace(/<a\b[^>]*>[\s\S]*?<\/a>/gi, "");
+          pContent = pContent.replace(/<\/?[^>]+(>|$)/g, "").trim();
+          
+          if (pContent.length > 0) {
+            storyParagraphs.push(pContent);
+          }
+        }
+
+        if (storyParagraphs.length > 0) {
+          const combinedStory = storyParagraphs.join("\n\n");
+          safeSet("origin_story", combinedStory); 
+        }
+
+      } catch (parseError) {
+        console.error("Pass 0 Text Parsing Fault:", parseError.message);
       }
     }
-  }, [injectFetcher.state, injectFetcher.data]);
 
-  const renderFullMetaField = (key) => {
-    let field = null;
-    for (const group of FULL_META_GROUPS) {
-      const found = group.fields.find(f => f.key === key);
-      if (found) { field = found; break; }
-    }
-    if (!field) {
-      const rf = ROCKHOUND_FIELDS.find(f => f.key === key);
-      if (rf) { field = rf; }
-    }
-    if (!field) {
-      field = {
-        key: key,
-        label: key.split(/[-_]/).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' '),
-        type: 'text',
-        multiline: key.includes("story") || key.includes("notes") || key.includes("flaws") || key.includes("character")
-      };
-    }
-
-    let val = fullMetaState[field.key] || "";
-
-    if (typeof val === 'string' && val.startsWith('[')) {
-        try { const arr = JSON.parse(val); val = Array.isArray(arr) ? arr[0] : val; } catch(e) {}
-    } else if (Array.isArray(val)) {
-        val = val[0];
-    }
-
-    if ((field.key === "handcrafted_by" || field.key === "rescued_by") && typeof val === 'string') {
-        if (val.includes("Bob & Janyce") || val.includes("Rockhound Studio")) {
-            val = "Bob & Janyce, Rockhound Studio";
+    // ==========================================
+    // PASS 1: TITLE PARSING
+    // ==========================================
+    const parseTitle = body.get("productTitle") || title || "";
+    if (parseTitle) {
+      const titleParts = parseTitle.split(/\s+[-–—]\s+/);
+      
+      let rawStoneFamily = titleParts[0] || "";
+      const wordsToStrip = ["Freeform", "Cabochon", "Oval", "Round", "Teardrop", "Pear", "Square", "Rectangle", "Cushion", "Heart", "Marquise", "Tumbled", "Slab", "Rough", "Raw", "Specimen", "Free Form"];
+      
+      let cleanedStoneFamily = rawStoneFamily.trim();
+      let stripped = true;
+      while (stripped) {
+        stripped = false;
+        for (const word of wordsToStrip) {
+          const regex = new RegExp(`(?:\\s+|^)${word}$`, "i");
+          if (regex.test(cleanedStoneFamily)) {
+            cleanedStoneFamily = cleanedStoneFamily.replace(regex, "").trim();
+            stripped = true;
+          }
         }
+      }
+      safeSet("stone_family", cleanedStoneFamily);
+      
+      if (titleParts.length > 1) {
+        safeSet("origin_location", titleParts[1]?.trim() || "");
+      }
     }
 
-    if (field.key === "primary_medium" && val === "Stone") {
-        val = "";
+    const collMatches = [...(description || "").matchAll(/<a[^>]*href=["'][^"']*\/collections\/([^"'\/?]+)[^"']*["'][^>]*>([\s\S]*?)<\/a>/gi)];
+    if (collMatches.length > 0) {
+      const uniqueCollections = [...new Set(collMatches.map(m => m[2].replace(/\s*→$/, "").replace(/<\/?[^>]+(>|$)/g, "").trim()))];
+      safeSet("collection_name", uniqueCollections.join(", "));
     }
 
-    if (field.key === "color" && formState.color) {
-        val = formState.color;
+    // ==========================================
+    // PASS 1: LOCAL LIBRARY
+    // ==========================================
+    const libData = lookupStone(title);
+    if (libData) {
+      TARGET_KEYS.forEach(key => {
+        safeSet(key, libData[key]);
+      });
     }
 
-    const isNa = val === "n/a" || val === "N/A" || val === "N/a";
-    const isFilled = !isNa && val && val.trim() !== "";
-    const isEmpty = !isNa && (!val || val.trim() === "");
-    
-    const labelNode = (
-      <div style={{ display: 'flex', alignItems: 'center' }}>
-        <svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg" style={{ minWidth: '18px', marginRight: '8px' }}>
-          {isEmpty && <circle cx="9" cy="9" r="9" fill="#C62828" />}
-          {isFilled && <circle cx="9" cy="9" r="9" fill="#2E7D32" />}
-          {isNa && <circle cx="9" cy="9" r="9" fill="#F9A825" />}
-        </svg>
-        <span style={{ fontSize: '14px', fontWeight: '500' }}>{field.label}</span>
-      </div>
-    );
+    // ==========================================
+    // PASS 2: MINDAT API EXTERNAL FETCH
+    // ==========================================
+    const mindatData = await fetchMindat(title);
+    if (mindatData) {
+      Object.entries(MINDAT_KEY_MAP).forEach(([ourKey, mindatKey]) => {
+        safeSet(ourKey, mindatData[mindatKey]);
+      });
+    }
 
-    return (
-      <div key={field.key}>
-        {isEmpty && (
-          <div style={{ backgroundColor: "#FFF5F5", minHeight: "48px", padding: "8px", borderRadius: "4px" }}>
-            {field.type !== "text" && DROPDOWN_OPTIONS && DROPDOWN_OPTIONS[field.key] && DROPDOWN_OPTIONS[field.key].length > 0 ? (
-              <Select
-                label={labelNode}
-                options={[{ label: "Select...", value: "" }, ...(DROPDOWN_OPTIONS[field.key] || [])]}
-                value={val}
-                onChange={(v) => updateFullMetaState(field.key, v)}
-                accessibilityLabel={field.label}
-              />
-            ) : (
-              <TextField
-                label={labelNode}
-                value={val}
-                onChange={(v) => updateFullMetaState(field.key, v)}
-                accessibilityLabel={field.label}
-                multiline={field.multiline ? true : false}
-                autoComplete="off"
-              />
-            )}
-          </div>
-        )}
-        {!isEmpty && (
-          <div style={{ backgroundColor: "transparent", minHeight: "48px", padding: "8px", borderRadius: "4px" }}>
-            {field.type !== "text" && DROPDOWN_OPTIONS && DROPDOWN_OPTIONS[field.key] && DROPDOWN_OPTIONS[field.key].length > 0 ? (
-              <Select
-                label={labelNode}
-                options={[{ label: "Select...", value: "" }, ...(DROPDOWN_OPTIONS[field.key] || [])]}
-                value={val}
-                onChange={(v) => updateFullMetaState(field.key, v)}
-                accessibilityLabel={field.label}
-              />
-            ) : (
-              <TextField
-                label={labelNode}
-                value={val}
-                onChange={(v) => updateFullMetaState(field.key, v)}
-                accessibilityLabel={field.label}
-                multiline={field.multiline ? true : false}
-                autoComplete="off"
-                disabled={val === "See Shopify metaobject"}
-              />
-            )}
-          </div>
-        )}
-      </div>
-    );
-  };
+    // ==========================================
+    // PASS 2B: GEMINI TEXT
+    // ==========================================
+    if (description) {
+      try {
+        const plainDescription = description.replace(/<\/?[^>]+(>|$)/g, " ").replace(/\s+/g, " ").trim();
+        const promptProductTitle = body.get("productTitle") || "";
 
-  const safeProducts = products || [];
-  const filteredProducts = safeProducts.filter(p => p.title.toLowerCase().includes(searchQuery.toLowerCase()));
+        const textPrompt = `You are a gemologist assistant for Rockhound Studio. The product title is: ${promptProductTitle}. Parse the title segments split by ' — ' to extract piece_name and origin_location. Extract the following fields from this product description. Return only valid JSON with exactly these keys. If a field is not mentioned, return an empty string for it.
 
-  const isAutoFilling = autoFillFetcher.state !== "idle" && (autoFillFetcher.formData?.get("intent") === "autoFill" || autoFillFetcher.formData?.get("intent") === "smartAutoFill");
-  const isTab2AutoFilling = autoFillFetcher.state !== "idle" && autoFillFetcher.formData?.get("intent") === "tab2AutoFill";
-  const isSaving = injectFetcher.state !== "idle" && (injectFetcher.formData?.get("intent") === "saveProduct" || injectFetcher.formData?.get("intent") === "saveMetafields");
-  
-  return (
-    <BlockStack gap="400">
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "24px", alignItems: "start" }}>
-        <div>
-          <Card padding="400">
-            <BlockStack gap="400">
-              <Text variant="headingMd" as="h2">1. Select Raw Inventory</Text>
-              <TextField
-                value={searchQuery}
-                onChange={setSearchQuery}
-                placeholder="Search products by title..."
-                autoComplete="off"
-                clearButton
-                onClearButtonClick={() => setSearchQuery("")}
-              />
-              <div style={{ maxHeight: "70vh", overflowY: "auto", paddingRight: "8px", display: "flex", flexDirection: "column", gap: "8px" }}>
-                {filteredProducts.map(p => {
-                  const isSelected = selectedProductId === p.id;
-                  return (
-                    <div key={p.id} style={{ minHeight: "54px" }}>
-                      <Button
-                        fullWidth
-                        size="large"
-                        textAlign="left"
-                        variant={isSelected ? "primary" : "secondary"}
-                        onClick={() => handleSelectProduct(p.id)}
-                        accessibilityLabel={`Select product ${p.title}`}
-                      >
-                        {p.title}
-                      </Button>
-                    </div>
-                  );
-                })}
-              </div>
-            </BlockStack>
-          </Card>
-        </div>
-
-        <div>
-          <Card padding="400">
-            <BlockStack gap="400">
-              <Text variant="headingMd" as="h2">2. Data Sieve & Injection</Text>
-              
-              {statusMessage !== "" && (
-                <div style={{ minHeight: "54px" }}>
-                  <Banner tone="success" title="Operation Successful">
-                    <Text as="p">{statusMessage}</Text>
-                  </Banner>
-                </div>
-              )}
-
-              {errorMessage !== "" && (
-                <div style={{ minHeight: "54px" }}>
-                  <Banner tone="critical" title="Operation Failed">
-                    <Text as="p">{errorMessage}</Text>
-                  </Banner>
-                </div>
-              )}
-
-              <div style={{ minHeight: "54px" }}>
-                <TextField
-                  label="Gemini Presentation Style"
-                  placeholder="e.g. Write with OOAK grit — raw, earthy, one-of-a-kind stone energy. No corporate language."
-                  value={promptStyle}
-                  onChange={setPromptStyle}
-                  multiline={3}
-                  autoComplete="off"
-                  disabled={!selectedProductId}
-                  accessibilityLabel="Enter Gemini Presentation Style instructions"
-                />
-                </div>
-
-              <InlineStack gap="300" align="space-between">
-                <div style={{ minHeight: "54px", flexGrow: 1 }}>
-                  <Button 
-                    icon={MagicIcon} 
-                    onClick={handleAutoFill}
-                    accessibilityLabel="Run Auto-Fill"
-                    size="large"
-                    fullWidth
-                    disabled={!selectedProductId}
-                    loading={isAutoFilling}
-                  >
-                    RUN
-                  </Button>
-                </div>
-                <div style={{ minHeight: "54px", flexGrow: 1 }}>
-                  <Button 
-                    icon={SaveIcon} 
-                    tone="success" 
-                    variant="primary" 
-                    onClick={handleInject}
-                    accessibilityLabel="Inject Metafields"
-                    size="large"
-                    fullWidth
-                    disabled={!selectedProductId}
-                    loading={isSaving}
-                  >
-                    Inject Metafields
-                  </Button>
-                </div>
-              </InlineStack>
-
-            </BlockStack>
-          </Card>
-        </div>
-      </div>
-
-      {selectedProductId !== "" && (
-        <div style={{ marginTop: "32px" }}>
-          <Card padding="400">
-            <BlockStack gap="400">
-
-              {tab2StatusMessage !== "" && (
-                <div style={{ minHeight: "54px", marginBottom: "16px" }}>
-                  <Banner tone="success" title="Operation Successful">
-                    <Text as="p">{tab2StatusMessage}</Text>
-                  </Banner>
-                </div>
-              )}
-
-              {tab2ErrorMessage !== "" && (
-                <div style={{ minHeight: "54px", marginBottom: "16px" }}>
-                  <Banner tone="critical" title="Operation Failed">
-                    <Text as="p">{tab2ErrorMessage}</Text>
-                  </Banner>
-                </div>
-              )}
-
-              <Text variant="headingLg" as="h3">Full Meta Report</Text>
-
-              <BlockStack gap="300">
-                <Text variant="headingMd" as="h4">Section 1 — Core Ignition</Text>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
-                  {["piece_name", "handcrafted_by", "is_one_of_a_kind", "treated", "dimensions_mm", "weight_grams", "price"].map(renderFullMetaField)}
-                </div>
-              </BlockStack>
-
-              <BlockStack gap="300">
-                <Text variant="headingMd" as="h4">Section 2 — Human Engine</Text>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
-                  {["origin_story", "honest_flaws_and_character", "artist_notes", "rescued_by", "story_theme", "origin_page_handle", "stone_shape", "surface_finish", "collection_name"].map(renderFullMetaField)}
-                </div>
-              </BlockStack>
-
-              <BlockStack gap="300">
-                <div onClick={() => setIsSection3Open(!isSection3Open)} style={{ cursor: 'pointer', display: 'inline-block' }}>
-                  <Text variant="headingMd" as="h4">Section 3 — Google Machine</Text>
-                </div>
-                <Collapsible open={isSection3Open} id="section-3-collapsible" transition={{duration: '200ms', timingFunction: 'ease-in-out'}}>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px', marginTop: '16px' }}>
-                    {["color-pattern", "material", "jewelry-type", "necklace-design", "chain-link-type", "jewelry-finding-type", "target-gender", "age-group", "authenticity", "rarity", "condition", "found_object", "custom_product"].map(renderFullMetaField)}
-                  </div>
-                </Collapsible>
-              </BlockStack>
-
-              <BlockStack gap="300">
-                <div onClick={() => setIsSection4Open(!isSection4Open)} style={{ cursor: 'pointer', display: 'inline-block' }}>
-                  <Text variant="headingMd" as="h4">Section 4 — Geo-Vault</Text>
-                </div>
-                <Collapsible open={isSection4Open} id="section-4-collapsible" transition={{duration: '200ms', timingFunction: 'ease-in-out'}}>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px', marginTop: '16px' }}>
-                    {["mohs_hardness", "luster", "fracture_pattern", "cleavage", "specific_gravity", "diaphaneity", "mineralClass", "crystalSystem", "rockComposition", "rockFormation", "geologicalEra", "geological_age"].map(renderFullMetaField)}
-                  </div>
-                </Collapsible>
-              </BlockStack>
-
-            </BlockStack>
-          </Card>
-        </div>
-      )}
-
-    </BlockStack>
-  );
+{
+  "piece_name": "(the text after the second em dash — in the product title — this is the piece name only, not the full title)",
+  "origin_location": "(the middle segment between the first and last em dash ' — ' in the product title)",
+  "color": "(value after 'Flash:' label, e.g. 'Blue')",
+  "cut_and_shape": "(value after 'Shape:' label, e.g. 'Cabochon')",
+  "surface_finish": "(value after 'Finish:' label, e.g. 'High Polish')",
+  "stone_family": "(the rockhound trade name of the stone — use Labradorite not Feldspar, use Jasper not Chalcedony)",
+  "collection_name": "(if mentioned in the description, return the collection name, else empty string)",
+  "dimensions_mm": "(if dimensions are mentioned in the description in mm format, return them, else empty string)",
+  "handcrafted_by": "(name from signature line, e.g. 'Bob & Janyce, Rockhound Studio')",
+  "treated": "(if description says untreated or not enhanced, return 'false', else return 'true')",
+  "found_object": "(if description says found or collected in the field, return 'true', else return 'false')",
+  "is_one_of_a_kind": "(if description says one of a kind, return 'Yes — one of a kind', else return 'No')"
 }
 
-export default IntakeBenchTab;
+Product description:
+${plainDescription}
+
+Return only valid JSON. No explanation. No markdown.`;
+
+        const textGeminiRes = await fetch(
+          "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: textPrompt }] }]
+            })
+          }
+        );
+
+        if (textGeminiRes.ok) {
+          const textGeminiData = await textGeminiRes.json();
+          const textContent = textGeminiData.candidates?.[0]?.content?.parts?.[0]?.text || "";
+
+          if (textContent) {
+            let cleanJson = textContent.trim();
+            const firstBrace = cleanJson.indexOf("{");
+            const lastBrace = cleanJson.lastIndexOf("}");
+            if (firstBrace !== -1 && lastBrace !== -1) {
+              cleanJson = cleanJson.slice(firstBrace, lastBrace + 1);
+            }
+
+            const textData = JSON.parse(cleanJson);
+
+            // Sanitization to catch the hyphenated Gemini error key
+            if (textData["is_one_of_a-kind"] !== undefined) {
+              textData["is_one_of_a_kind"] = textData["is_one_of_a-kind"];
+              delete textData["is_one_of_a-kind"];
+            }
+
+            safeSet("color", textData.color || textData.Color);
+            safeSet("cut_and_shape", textData.cut_and_shape);
+            safeSet("surface_finish", textData.surface_finish);
+            safeSet("stone_family", textData.stone_family);
+            safeSet("piece_name", textData.piece_name);
+            safeSet("origin_location", textData.origin_location);
+            safeSet("collection_name", textData.collection_name);
+            safeSet("dimensions_mm", textData.dimensions_mm);
+            safeSet("handcrafted_by", textData.handcrafted_by);
+            safeSet("treated", textData.treated);
+            safeSet("found_object", textData.found_object);
+            safeSet("is_one_of_a_kind", textData.is_one_of_a_kind);
+            safeSet("piece_name", textData.piece_name);
+
+            console.log("Pass 2B Gemini Text extracted:", Object.keys(textData).filter(k => textData[k]));
+          }
+        } else {
+          const errText = await textGeminiRes.text();
+          console.error("Pass 2B Gemini Text API Error:", textGeminiRes.status, errText);
+        }
+      } catch (textError) {
+        console.error("Pass 2B Gemini Text Fault:", textError.message);
+      }
+    }
+
+    // ==========================================
+    // PASS 3: GEMINI VISION
+    // ==========================================
+    let rawVisionResponse = "";
+    try {
+      const rawImageUrl = body.get("imageUrl");
+      const imageUrl = rawImageUrl && rawImageUrl !== "undefined" && rawImageUrl !== "null" ? String(rawImageUrl).trim() : "";
+      
+      console.log("Tab2 AutoFill imageUrl sent:", imageUrl);
+      
+      if (imageUrl) {
+        const cleanImageUrl = imageUrl.split('?')[0];
+        const imageRes = await fetch(cleanImageUrl);
+        const imageBuffer = await imageRes.arrayBuffer();
+        const imageBase64 = Buffer.from(imageBuffer).toString("base64");
+        const imageMimeType = (imageRes.headers.get("content-type") || "image/jpeg").split(";")[0].trim();
+
+        const clientPrompt = body.get("prompt");
+        const promptText = clientPrompt && clientPrompt.trim() !== "" ? clientPrompt : `You are a gemologist and lapidary expert analyzing a handcrafted stone cabochon or specimen for an online store called Rockhound Studio. Look at this stone image carefully and return a JSON object with these fields — only include fields you can visually confirm, leave others out:
+{
+  "color": "(return ONLY the primary color as a single word, e.g. 'Blue' or 'Red')",
+  "surface_finish": "(one of: High Polish, Satin Polish, Matte, Natural/Rough, Tumbled)",
+  "cut_and_shape": "(e.g. Freeform, Oval Cabochon, Round Cabochon, Teardrop, Pear, Trillion)",
+  "character_marks": "Describe any visible banding, inclusions, color transitions, surface marks, or distinctive visual features of the stone. Be specific and factual.",
+  "alt_text": "(a single descriptive sentence for screen readers and SEO, written in plain English describing what is seen in the image)",
+  "is_one_of_a_kind": "(boolean)",
+  "found_object": "(boolean)",
+  "treated": "(boolean)",
+  "setting_ready": "(boolean)",
+  "bail_included": "(boolean)",
+  "piece_name": "(the text after the second em dash — in the product title — this is the piece name only, not the full title)"
+}
+Return only valid JSON. No explanation. No markdown.`;
+
+        const geminiRes = await fetch(
+          "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              contents: [
+                {
+                  parts: [
+                    { text: promptText },
+                    {
+                      inlineData: {
+                        mimeType: imageMimeType,
+                        data: imageBase64
+                      }
+                    }
+                  ]
+                }
+              ]
+            })
+          }
+        );
+
+        if (geminiRes.ok) {
+          const geminiData = await geminiRes.json();
+          const textContent = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || "";
+          rawVisionResponse = textContent;
+          
+          if (textContent) {
+            let cleanJson = textContent.trim();
+            const firstBrace = cleanJson.indexOf("{");
+            const lastBrace = cleanJson.lastIndexOf("}");
+            if (firstBrace !== -1 && lastBrace !== -1) {
+              cleanJson = cleanJson.slice(firstBrace, lastBrace + 1);
+            }
+
+            const visionData = JSON.parse(cleanJson);
+            
+            // Sanitization to catch the hyphenated Gemini error key
+            if (visionData["is_one_of_a-kind"] !== undefined) {
+              visionData["is_one_of_a_kind"] = visionData["is_one_of_a-kind"];
+              delete visionData["is_one_of_a-kind"];
+            }
+
+            if (visionData.is_one_of_a_kind === true) visionData.is_one_of_a_kind = "Yes — one of a kind";
+            else if (visionData.is_one_of_a_kind === false) visionData.is_one_of_a_kind = "No";
+
+            if (visionData.found_object === true) visionData.found_object = "true";
+            else if (visionData.found_object === false) visionData.found_object = "false";
+
+            if (visionData.treated === true) visionData.treated = "true";
+            else if (visionData.treated === false) visionData.treated = "false";
+
+            if (visionData.setting_ready === true) visionData.setting_ready = "true";
+            else if (visionData.setting_ready === false) visionData.setting_ready = "false";
+
+            if (visionData.bail_included === true) visionData.bail_included = "true";
+            else if (visionData.bail_included === false) visionData.bail_included = "false";
+
+            safeSet("color", visionData.color || visionData.Color || visionData.primary_color);
+            safeSet("surface_finish", visionData.surface_finish || visionData.Surface_finish);
+            safeSet("cut_and_shape", visionData.cut_and_shape || visionData.Cut_and_shape);
+            safeSet("honest_flaws_and_character", visionData.character_marks);
+            safeSet("alt_text", visionData.alt_text || visionData.Alt_text);
+            safeSet("is_one_of_a_kind", visionData.is_one_of_a_kind);
+            safeSet("found_object", visionData.found_object);
+            safeSet("treated", visionData.treated);
+            safeSet("setting_ready", visionData.setting_ready);
+            safeSet("bail_included", visionData.bail_included);
+            safeSet("piece_name", visionData.piece_name);
+          }
+        } else {
+          const errText = await geminiRes.text();
+          rawVisionResponse = errText;
+          console.error("Gemini Vision API Error:", geminiRes.status, errText);
+        }
+      } else {
+        rawVisionResponse = "No image URL provided to Vision pass.";
+      }
+    } catch (error) {
+      rawVisionResponse = `Vision Exception: ${error.message}`;
+      console.error("Pass 3 Vision Fault:", error.message);
+    }
+
+    // ==========================================
+    // STORE-WIDE DEFAULTS
+    // ==========================================
+    safeSet("handcrafted_by", "Bob & Janyce, Rockhound Studio");
+    safeSet("is_one_of_a_kind", "true");
+    safeSet("treated", "false");
+    safeSet("found_object", "true");
+    safeSet("primary_use", "Wearable Art");
+
+    // ==========================================
+    // FALLBACKS
+    // ==========================================
+    safeSet("official_name", title);
+
+    // FIXED: color fallback now runs BEFORE colorWarning is calculated
+    if (!merged.color || merged.color.trim() === "") {
+      if (merged.primary_color && merged.primary_color.trim() !== "") {
+        merged.color = merged.primary_color;
+      }
+    }
+    const colorWarning = !merged.color || merged.color.trim() === "";
+
+    const productTitle = body.get("productTitle") || "";
+    const pieceName = productTitle.includes(" — ") ? productTitle.split(" — ").pop().trim() : productTitle;
+    if (pieceName && pieceName.trim() !== "") {
+      merged["piece_name"] = pieceName;
+    }
+
+    console.log("=== AUTOFILL PAYLOAD BEFORE RETURN ===", merged);
+
+    return Response.json({ 
+        success: true, 
+        fields: merged, 
+        intent: actionType || "autoFill", 
+        colorWarning,
+        rawVisionResponse
+    });
+  } catch (error) {
+    console.error("Stone Lookup Engine Fault:", error.message);
+    return Response.json(
+      { success: false, error: error.message, fields: {} }, 
+      { status: 500 }
+    );
+  }
+};

@@ -306,16 +306,3 @@ export function getLabelForValue(value, metaobjectHandles = {}) {
 
   return value;
 }
-
-export function unwrapArrayValue(value) {
-  if (!value) return "";
-  try {
-    const parsed = JSON.parse(value);
-    if (Array.isArray(parsed)) {
-      return parsed[0] ?? "";
-    }
-    return value;
-  } catch {
-    return value;
-  }
-}
