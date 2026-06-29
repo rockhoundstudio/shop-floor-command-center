@@ -27,6 +27,14 @@ export const action = async ({ request }) => {
   const intent = formData.get("intent");
 
   // ==========================================
+  // DIAGNOSTIC LOGGING
+  // ==========================================
+  const allFormData = Object.fromEntries(formData);
+  console.log("=== INCOMING ACTION FORM DATA ===");
+  console.log(JSON.stringify(allFormData, null, 2));
+  console.log("=================================");
+
+  // ==========================================
   // 🟢 INTENT 1: AUTO-FILL (Mindat & Cache)
   // ==========================================
   if (intent === "auto_fill_single") {
@@ -80,7 +88,14 @@ export const action = async ({ request }) => {
   // ==========================================
   if (intent === "saveMetafields") {
     try {
-      const rawPayload = formData.get("payload");
+      // FIX: Check for both 'payload' and 'metafields' since different components send different keys
+      const rawPayload = formData.get("payload") || formData.get("metafields");
+      
+      if (!rawPayload) {
+        console.log("SAVE ERROR: No payload or metafields found in request.");
+        return data({ intent: "saveMetafields", success: false, message: "No data provided to save." });
+      }
+
       const payloadArray = JSON.parse(rawPayload);
 
       const TYPE_MAP = {
@@ -96,9 +111,18 @@ export const action = async ({ request }) => {
       const setMetafields = payloadArray
         .filter(item => item.value !== null && String(item.value).trim() !== "")
         .map(item => {
-          const resolvedId = item.ownerId.startsWith("gid://")
-            ? item.ownerId
-            : `gid://shopify/Product/${item.ownerId.split("/").pop()}`;
+          // If the payload comes from handleSaveFullMeta, it might not have ownerId attached to every field.
+          // We grab it from the form data if it's missing on the individual item.
+          const fallbackProductId = formData.get("productId");
+          const itemOwnerId = item.ownerId || fallbackProductId;
+          
+          if (!itemOwnerId) {
+            throw new Error(`Missing ownerId for field: ${item.key}`);
+          }
+
+          const resolvedId = itemOwnerId.startsWith("gid://")
+            ? itemOwnerId
+            : `gid://shopify/Product/${itemOwnerId.split("/").pop()}`;
 
           const resolvedType = TYPE_MAP[item.key] || item.type || "single_line_text_field";
           const resolvedValue = resolvedType.startsWith("list.") ? JSON.stringify([String(item.value)]) : String(item.value);
@@ -113,6 +137,7 @@ export const action = async ({ request }) => {
         });
 
       if (setMetafields.length === 0) {
+        console.log("SAVE CANCELLED: Metafields array filtered down to 0 valid fields.");
         return data({ intent: "saveMetafields", success: true, message: "No fields to save." });
       }
 
