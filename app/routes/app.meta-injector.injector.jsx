@@ -361,7 +361,7 @@ export function NewProductIntakeTab({ fetcher }) {
             <svg width="18" height="18" viewBox="0 0 18 18" style={{ display: "inline-block" }}>
               <circle cx="9" cy="9" r="9" fill={topDotColor} />
             </svg>
-            <Text variant="headingMd" as="h2">Stone Photos</Text>
+            <Text variant="headingMd" as="h2" fontWeight="bold">Stone Photos</Text>
           </div>
           
           <DropZone 
@@ -586,21 +586,6 @@ export function NewProductIntakeTab({ fetcher }) {
               return (
                 <div key={piece.id} style={{ display: "flex", flexDirection: "column", gap: "16px", paddingBottom: "24px", borderBottom: "1px solid #e1e3e5" }}>
                   
-                  <div style={{ width: "100%" }}>
-                    <Text variant="bodyMd" as="p" style={{ fontSize: "14px", marginBottom: "4px" }}>Upload Photos (max 5)</Text>
-                    <DropZone accept="image/*" type="image" allowMultiple onDrop={(_dropFiles, acceptedFiles) => handleDropZoneDrop(piece.id, acceptedFiles)}>
-                      <DropZone.FileUpload actionHint="Accepts .gif, .jpg, and .png" />
-                    </DropZone>
-                    {hasPhotos && (
-                      <div style={{ display: "flex", gap: "8px", marginTop: "8px", overflowX: "auto" }}>
-                        {piece.photoPreviewUrls.map((url, i) => (
-                          <img key={i} src={url} alt={`Preview ${i}`} style={{ width: "64px", height: "64px", objectFit: "cover", borderRadius: "6px" }} />
-                        ))}
-                      </div>
-                    )}
-                    <Text as="p" style={{ fontSize: "14px", marginTop: "4px", color: "#6d7175" }}>{piece.photoFiles.length} of 5 photos</Text>
-                  </div>
-
                   <div style={{ display: "flex", alignItems: "end", gap: "16px" }}>
                     <div style={{ flexGrow: 1, minHeight: "54px" }}>
                       <TextField
