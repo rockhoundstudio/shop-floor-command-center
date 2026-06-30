@@ -9,10 +9,10 @@ export function NewProductIntakeTab({ fetcher }) {
   const stageFetcher = useFetcher();
   const autoFillFetcher = useFetcher();
   const descriptionFetcher = useFetcher();
-  const scanFetcher = useFetcher();
 
   const [photoFiles, setPhotoFiles] = useState([]);
   const [photoPreviewUrls, setPhotoPreviewUrls] = useState([]);
+  const [isScanning, setIsScanning] = useState(false);
 
   const [sharedFields, setSharedFields] = useState({
     material: "",
@@ -68,14 +68,34 @@ export function NewProductIntakeTab({ fetcher }) {
     });
   }, []);
 
-  const handleScanGeminiPhotos = useCallback(() => {
+  const handleScanGeminiPhotos = useCallback(async () => {
+    setIsScanning(true);
     const formData = new FormData();
     formData.append("intent", "visionScan");
     photoFiles.forEach(file => {
       formData.append("photos[]", file);
     });
-    scanFetcher.submit(formData, { method: "post", action: "/app/meta-injector-autofill", encType: "multipart/form-data" });
-  }, [photoFiles, scanFetcher]);
+    
+    try {
+      const response = await fetch("/app/meta-injector-autofill", {
+        method: "POST",
+        body: formData
+      });
+      const data = await response.json();
+      
+      (data.description !== undefined && data.description !== null && data.description !== "") && (() => {
+        setGeneratedDescription(data.description);
+      })();
+      
+      (data.error) && (() => {
+        console.error("Gemini Vision Scan Error:", data.error);
+      })();
+    } catch (err) {
+      console.error("Gemini Vision Scan Fault:", err.message);
+    } finally {
+      setIsScanning(false);
+    }
+  }, [photoFiles]);
 
   const handleSharedFieldChange = useCallback((key, value) => {
     setSharedFields(prev => ({ ...prev, [key]: value }));
@@ -197,20 +217,6 @@ export function NewProductIntakeTab({ fetcher }) {
       })();
     })();
   }, [fetcher.state, fetcher.data]);
-
-  useEffect(() => {
-    const isIdle = scanFetcher.state === "idle";
-    const hasData = scanFetcher.data !== undefined && scanFetcher.data !== null;
-
-    (isIdle && hasData) && (() => {
-      const data = scanFetcher.data;
-      const hasDescription = data.description !== undefined && data.description !== null && data.description !== "";
-
-      (hasDescription) && (() => {
-        setGeneratedDescription(data.description);
-      })();
-    })();
-  }, [scanFetcher.state, scanFetcher.data]);
 
   useEffect(() => {
     const isIdle = stageFetcher.state === "idle";
@@ -380,9 +386,6 @@ export function NewProductIntakeTab({ fetcher }) {
   let showScanButton = false;
   (photoFiles.length >= 1) && (showScanButton = true);
 
-  let isScanningVision = false;
-  (scanFetcher.state === "submitting") && (isScanningVision = true);
-
   let genDescDotColor = "#C62828";
   (generatedDescription !== "") && (genDescDotColor = "#2E7D32");
 
@@ -458,7 +461,7 @@ export function NewProductIntakeTab({ fetcher }) {
                 onClick={handleScanGeminiPhotos}
               >
                 <span style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "8px" }}>
-                  {isScanningVision && <Spinner size="small" />}
+                  {isScanning && <Spinner size="small" />}
                   Scan Photos with Gemini
                 </span>
               </Button>
