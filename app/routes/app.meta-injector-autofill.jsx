@@ -57,6 +57,74 @@ export const action = async ({ request }) => {
     const body = await request.formData();
     
     const actionType = body.get("actionType");
+    const intent = body.get("intent");
+
+    // ==========================================
+    // INTENT: VISION SCAN FOR DESCRIPTION
+    // ==========================================
+    if (intent === "visionScan") {
+      try {
+        const photos = body.getAll("photos[]");
+        
+        if (!photos || photos.length === 0) {
+          return Response.json({ description: "", error: "Gemini vision scan failed" });
+        }
+
+        const imageParts = [];
+        for (const file of photos) {
+          if (file && file.size > 0) {
+            const buffer = await file.arrayBuffer();
+            const base64 = Buffer.from(buffer).toString("base64");
+            const mimeType = file.type || "image/jpeg";
+            
+            imageParts.push({
+              inlineData: {
+                mimeType: mimeType,
+                data: base64
+              }
+            });
+          }
+        }
+
+        const promptText = "You are a lapidary artist and gemstone expert. Look at this stone photo and write a rich, earthy, one-of-a-kind product description in 2-3 paragraphs. Focus on the colors, patterns, texture, and character of the stone. Write in first person as Bob or Janyce from Rockhound Studio. No corporate language. Raw, authentic, collector energy.";
+
+        const geminiRes = await fetch(
+          "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              contents: [
+                {
+                  parts: [
+                    { text: promptText },
+                    ...imageParts
+                  ]
+                }
+              ]
+            })
+          }
+        );
+
+        if (geminiRes.ok) {
+          const geminiData = await geminiRes.json();
+          const textContent = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || "";
+          
+          if (!textContent) {
+            return Response.json({ description: "", error: "Gemini vision scan failed" });
+          }
+          
+          return Response.json({ description: textContent });
+        } else {
+          const errText = await geminiRes.text();
+          console.error("Gemini Vision API Error:", geminiRes.status, errText);
+          return Response.json({ description: "", error: "Gemini vision scan failed" });
+        }
+      } catch (error) {
+        console.error("Vision Scan Fault:", error.message);
+        return Response.json({ description: "", error: "Gemini vision scan failed" });
+      }
+    }
 
     if (actionType === "applyStoreDefaults") {
         const rawIds = body.get("productIds");
