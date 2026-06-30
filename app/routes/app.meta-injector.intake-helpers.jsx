@@ -3,7 +3,6 @@ import { BlockStack, Card, Text, TextField, Select, Button, Banner, DropZone } f
 import { PlusIcon, MagicIcon } from "@shopify/polaris-icons";
 import { useFetcher } from "react-router";
 import { ROCKHOUND_FIELDS, DEFAULT_DROPDOWNS, REQUIRED_FIELDS } from "../utils/meta-injector.constants.jsx";
-import { handleScanPhoto, handleGenerateDescription, buildMetafieldsJson, buildTitle } from "./app.meta-injector.intake-helpers.jsx";
 
 export function NewProductIntakeTab({ fetcher }) {
   const stageFetcher = useFetcher();
