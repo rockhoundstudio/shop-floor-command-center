@@ -259,4 +259,222 @@ export const action = async ({ request }) => {
       deleted
     });
   }
+
+  // ==========================================
+  // INTENT 4: STAGED UPLOAD
+  // ==========================================
+  if (intent === "stagedUpload") {
+    try {
+      let fileCountStr = formData.get("fileCount");
+      let fileCount = 1;
+      (fileCountStr && !isNaN(parseInt(fileCountStr, 10))) && (fileCount = parseInt(fileCountStr, 10));
+      (fileCount > 5) && (fileCount = 5);
+
+      const input = [];
+      for (let i = 0; i < fileCount; i++) {
+        let filename = formData.get(`filename_${i}`);
+        (!filename) && (filename = `upload_${Date.now()}_${i}.jpg`);
+        
+        let fileSizeStr = formData.get(`fileSize_${i}`);
+        let fileSize = "1000";
+        (fileSizeStr) && (fileSize = fileSizeStr);
+
+        input.push({
+          resource: "IMAGE",
+          filename: filename,
+          mimeType: "image/jpeg",
+          fileSize: fileSize,
+          httpMethod: "POST"
+        });
+      }
+
+      const uploadResponse = await admin.graphql(
+        `#graphql
+        mutation stagedUploadsCreate($input: [StagedUploadInput!]!) {
+          stagedUploadsCreate(input: $input) {
+            stagedTargets {
+              url
+              resourceUrl
+              parameters {
+                name
+                value
+              }
+            }
+            userErrors {
+              field
+              message
+            }
+          }
+        }`,
+        { variables: { input } }
+      );
+
+      const uploadResult = await uploadResponse.json();
+      const userErrors = uploadResult?.data?.stagedUploadsCreate?.userErrors || [];
+      
+      if (userErrors.length > 0) {
+        return data({ success: false, intent: "stagedUpload", error: userErrors.map(e => e.message).join(", ") });
+      }
+
+      const targets = uploadResult?.data?.stagedUploadsCreate?.stagedTargets || [];
+      return data({ success: true, intent: "stagedUpload", targets });
+    } catch (error) {
+      console.error("STAGED UPLOAD CRASH:", error);
+      return data({ success: false, intent: "stagedUpload", error: error.message });
+    }
+  }
+
+  // ==========================================
+  // INTENT 5: CREATE PRODUCT
+  // ==========================================
+  if (intent === "createProduct") {
+    try {
+      const stoneFamily = formData.get("stone_family") || "Unknown Stone";
+      const originLocation = formData.get("origin_location") || "Unknown Origin";
+      const pieceName = formData.get("piece_name") || "New Piece";
+      
+      const title = `${stoneFamily} — ${originLocation} — ${pieceName}`;
+      const descriptionHtml = formData.get("descriptionHtml") || "";
+      const price = formData.get("price") || "0.00";
+      const productType = formData.get("productType") || "Wearable Art";
+      const status = formData.get("status") || "DRAFT";
+
+      const allUserErrors = [];
+
+      // Step 1: Create Product
+      const productInput = {
+        title: title,
+        descriptionHtml: descriptionHtml,
+        productType: productType,
+        status: status,
+        variants: [
+          {
+            price: price
+          }
+        ]
+      };
+
+      const createResponse = await admin.graphql(
+        `#graphql
+        mutation productCreate($input: ProductInput!) {
+          productCreate(input: $input) {
+            product {
+              id
+              handle
+            }
+            userErrors {
+              field
+              message
+            }
+          }
+        }`,
+        { variables: { input: productInput } }
+      );
+
+      const createResult = await createResponse.json();
+      const createErrors = createResult?.data?.productCreate?.userErrors || [];
+      (createErrors.length > 0) && allUserErrors.push(...createErrors);
+
+      const createdProduct = createResult?.data?.productCreate?.product;
+      
+      if (!createdProduct) {
+         return data({ success: false, intent: "createProduct", error: "Product creation failed", userErrors: allUserErrors });
+      }
+
+      const productId = createdProduct.id;
+      const productHandle = createdProduct.handle;
+
+      // Step 2: Attach Media
+      const mediaUrlsJson = formData.get("mediaUrlsJson");
+      if (mediaUrlsJson) {
+        try {
+          const mediaUrls = JSON.parse(mediaUrlsJson);
+          if (Array.isArray(mediaUrls) && mediaUrls.length > 0) {
+            const mediaInput = mediaUrls.map(url => ({
+              originalSource: url,
+              mediaContentType: "IMAGE"
+            }));
+
+            const mediaResponse = await admin.graphql(
+              `#graphql
+              mutation productCreateMedia($productId: ID!, $media: [CreateMediaInput!]!) {
+                productCreateMedia(productId: $productId, media: $media) {
+                  media {
+                    id
+                  }
+                  mediaUserErrors {
+                    field
+                    message
+                  }
+                }
+              }`,
+              { variables: { productId, media: mediaInput } }
+            );
+
+            const mediaResult = await mediaResponse.json();
+            const mediaErrors = mediaResult?.data?.productCreateMedia?.mediaUserErrors || [];
+            (mediaErrors.length > 0) && allUserErrors.push(...mediaErrors);
+          }
+        } catch (e) {
+          console.error("Error parsing mediaUrlsJson:", e);
+        }
+      }
+
+      // Step 3: Write Metafields
+      const metafieldsJson = formData.get("metafieldsJson");
+      if (metafieldsJson) {
+        try {
+          const rawMetafields = JSON.parse(metafieldsJson);
+          if (Array.isArray(rawMetafields) && rawMetafields.length > 0) {
+            
+            const metafieldsInput = rawMetafields.map(item => ({
+               ownerId: productId,
+               namespace: "custom",
+               key: item.key,
+               type: item.type || "single_line_text_field",
+               value: String(item.value)
+            }));
+
+            // Shopify limits metafieldsSet to 25 items per request
+            const chunks = chunkArray(metafieldsInput, 25);
+            for (const chunk of chunks) {
+              const metaResponse = await admin.graphql(
+                `#graphql
+                mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
+                  metafieldsSet(metafields: $metafields) {
+                    metafields { id key }
+                    userErrors { field message }
+                  }
+                }`,
+                { variables: { metafields: chunk } }
+              );
+              
+              const metaResult = await metaResponse.json();
+              const metaErrors = metaResult?.data?.metafieldsSet?.userErrors || [];
+              (metaErrors.length > 0) && allUserErrors.push(...metaErrors);
+            }
+          }
+        } catch (e) {
+          console.error("Error parsing metafieldsJson:", e);
+        }
+      }
+
+      if (allUserErrors.length > 0) {
+        console.log("CREATE PRODUCT ERRORS:", JSON.stringify(allUserErrors, null, 2));
+      }
+
+      return data({ 
+        success: true, 
+        intent: "createProduct", 
+        productId: productId, 
+        productHandle: productHandle,
+        userErrors: allUserErrors
+      });
+
+    } catch (error) {
+      console.error("CREATE PRODUCT CRASH:", error);
+      return data({ success: false, intent: "createProduct", error: error.message });
+    }
+  }
+
 };
