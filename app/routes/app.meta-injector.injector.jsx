@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { BlockStack, Card, Text, TextField, Select, Button, Banner } from "@shopify/polaris";
 import { PlusIcon } from "@shopify/polaris-icons";
-import { useFetcher } from "@remix-run/react";
+import { useFetcher } from "react-router";
 import { ROCKHOUND_FIELDS, DEFAULT_DROPDOWNS, REQUIRED_FIELDS } from "../utils/meta-injector.constants.jsx";
 
 export function NewProductIntakeTab({ fetcher }) {
