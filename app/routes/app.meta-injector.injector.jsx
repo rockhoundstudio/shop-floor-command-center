@@ -10,6 +10,9 @@ export function NewProductIntakeTab({ fetcher }) {
   const autoFillFetcher = useFetcher();
   const descriptionFetcher = useFetcher();
 
+  const [photoFiles, setPhotoFiles] = useState([]);
+  const [photoPreviewUrls, setPhotoPreviewUrls] = useState([]);
+
   const [sharedFields, setSharedFields] = useState({
     material: "",
     stone_family: "",
@@ -46,6 +49,23 @@ export function NewProductIntakeTab({ fetcher }) {
   const [statusMessage, setStatusMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [generatedDescription, setGeneratedDescription] = useState("");
+
+  const handleTopDropZoneDrop = useCallback((dropFiles) => {
+    setPhotoFiles(prev => {
+      const combined = [...prev, ...dropFiles];
+      const capped = combined.slice(0, 5);
+      setPhotoPreviewUrls(capped.map(f => URL.createObjectURL(f)));
+      return capped;
+    });
+  }, []);
+
+  const handleRemoveTopPhoto = useCallback((index) => {
+    setPhotoFiles(prev => {
+      const updated = prev.filter((_, i) => i !== index);
+      setPhotoPreviewUrls(updated.map(f => URL.createObjectURL(f)));
+      return updated;
+    });
+  }, []);
 
   const handleSharedFieldChange = useCallback((key, value) => {
     setSharedFields(prev => ({ ...prev, [key]: value }));
@@ -156,6 +176,8 @@ export function NewProductIntakeTab({ fetcher }) {
           isUploading: false
         }]);
         setGeneratedDescription("");
+        setPhotoFiles([]);
+        setPhotoPreviewUrls([]);
       })();
 
       (isCreate && isError) && (() => {
@@ -325,8 +347,77 @@ export function NewProductIntakeTab({ fetcher }) {
     piece.piece_name.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
+  let topDotColor = "#C62828";
+  (photoFiles.length > 0) && (topDotColor = "#2E7D32");
+
+  let hasTopPhotos = false;
+  (photoFiles.length > 0) && (hasTopPhotos = true);
+
   return (
     <BlockStack gap="600">
+      <Card padding="400">
+        <BlockStack gap="400">
+          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            <svg width="18" height="18" viewBox="0 0 18 18" style={{ display: "inline-block" }}>
+              <circle cx="9" cy="9" r="9" fill={topDotColor} />
+            </svg>
+            <Text variant="headingMd" as="h2">Stone Photos</Text>
+          </div>
+          
+          <DropZone 
+            accept="image/jpeg, image/png, image/gif" 
+            type="image" 
+            allowMultiple 
+            onDrop={(_dropFiles, acceptedFiles) => handleTopDropZoneDrop(acceptedFiles)}
+            accessibilityLabel="Upload stone photos"
+          >
+            <DropZone.FileUpload actionTitle="Drop photos here or click to upload" />
+          </DropZone>
+          
+          {hasTopPhotos && (
+            <div style={{ display: "flex", gap: "16px", marginTop: "12px", flexWrap: "wrap", paddingTop: "8px", paddingRight: "8px" }}>
+              {photoPreviewUrls.map((url, i) => (
+                <div key={i} style={{ position: "relative", width: "80px", height: "80px" }}>
+                  <img src={url} alt={`Preview ${i}`} style={{ width: "80px", height: "80px", objectFit: "cover", borderRadius: "6px" }} />
+                  <button
+                    onClick={(e) => {
+                      e.preventDefault();
+                      handleRemoveTopPhoto(i);
+                    }}
+                    aria-label={`Remove photo ${i + 1}`}
+                    style={{
+                      position: "absolute",
+                      top: "-12px",
+                      right: "-12px",
+                      width: "48px",
+                      height: "48px",
+                      background: "#ffffff",
+                      border: "1px solid #c9cccf",
+                      borderRadius: "24px",
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      fontSize: "16px",
+                      fontWeight: "bold",
+                      color: "#202223",
+                      boxShadow: "0 1px 3px rgba(0,0,0,0.1)",
+                      zIndex: 10
+                    }}
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          
+          <Text as="p" style={{ fontSize: "14px", marginTop: "4px", color: "#6d7175" }}>
+            {photoFiles.length} of 5 photos
+          </Text>
+        </BlockStack>
+      </Card>
+
       <Card padding="400">
         <BlockStack gap="400">
           <Text variant="headingMd" as="h2" style={{ fontSize: "14px" }}>Section A: Shared Batch Fields</Text>
