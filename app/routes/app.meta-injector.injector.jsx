@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { BlockStack, Card, Text, TextField, Select, Button, Banner, DropZone } from "@shopify/polaris";
+import { BlockStack, Card, Text, TextField, Select, Button, Banner, DropZone, Spinner } from "@shopify/polaris";
 import { PlusIcon, MagicIcon } from "@shopify/polaris-icons";
 import { useFetcher } from "react-router";
 import { ROCKHOUND_FIELDS, DEFAULT_DROPDOWNS, REQUIRED_FIELDS } from "../utils/meta-injector.constants.jsx";
@@ -9,6 +9,7 @@ export function NewProductIntakeTab({ fetcher }) {
   const stageFetcher = useFetcher();
   const autoFillFetcher = useFetcher();
   const descriptionFetcher = useFetcher();
+  const scanFetcher = useFetcher();
 
   const [photoFiles, setPhotoFiles] = useState([]);
   const [photoPreviewUrls, setPhotoPreviewUrls] = useState([]);
@@ -66,6 +67,15 @@ export function NewProductIntakeTab({ fetcher }) {
       return updated;
     });
   }, []);
+
+  const handleScanGeminiPhotos = useCallback(() => {
+    const formData = new FormData();
+    formData.append("intent", "visionScan");
+    photoFiles.forEach(file => {
+      formData.append("photos[]", file);
+    });
+    scanFetcher.submit(formData, { method: "post", action: "/app/meta-injector-autofill", encType: "multipart/form-data" });
+  }, [photoFiles, scanFetcher]);
 
   const handleSharedFieldChange = useCallback((key, value) => {
     setSharedFields(prev => ({ ...prev, [key]: value }));
@@ -187,6 +197,20 @@ export function NewProductIntakeTab({ fetcher }) {
       })();
     })();
   }, [fetcher.state, fetcher.data]);
+
+  useEffect(() => {
+    const isIdle = scanFetcher.state === "idle";
+    const hasData = scanFetcher.data !== undefined && scanFetcher.data !== null;
+
+    (isIdle && hasData) && (() => {
+      const data = scanFetcher.data;
+      const hasDescription = data.description !== undefined && data.description !== null && data.description !== "";
+
+      (hasDescription) && (() => {
+        setGeneratedDescription(data.description);
+      })();
+    })();
+  }, [scanFetcher.state, scanFetcher.data]);
 
   useEffect(() => {
     const isIdle = stageFetcher.state === "idle";
@@ -353,6 +377,15 @@ export function NewProductIntakeTab({ fetcher }) {
   let hasTopPhotos = false;
   (photoFiles.length > 0) && (hasTopPhotos = true);
 
+  let showScanButton = false;
+  (photoFiles.length >= 1) && (showScanButton = true);
+
+  let isScanningVision = false;
+  (scanFetcher.state === "submitting") && (isScanningVision = true);
+
+  let genDescDotColor = "#C62828";
+  (generatedDescription !== "") && (genDescDotColor = "#2E7D32");
+
   return (
     <BlockStack gap="600">
       <Card padding="400">
@@ -415,6 +448,41 @@ export function NewProductIntakeTab({ fetcher }) {
           <Text as="p" style={{ fontSize: "14px", marginTop: "4px", color: "#6d7175" }}>
             {photoFiles.length} of 5 photos
           </Text>
+
+          {showScanButton && (
+            <div style={{ minHeight: "48px", marginTop: "16px" }}>
+              <Button
+                size="large"
+                variant="primary"
+                fullWidth
+                onClick={handleScanGeminiPhotos}
+              >
+                <span style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "8px" }}>
+                  {isScanningVision && <Spinner size="small" />}
+                  Scan Photos with Gemini
+                </span>
+              </Button>
+            </div>
+          )}
+
+          <div style={{ minHeight: "48px", marginTop: "16px" }}>
+            <TextField
+              label={
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  <svg width="18" height="18" viewBox="0 0 18 18" style={{ display: "inline-block" }}>
+                    <circle cx="9" cy="9" r="9" fill={genDescDotColor} />
+                  </svg>
+                  <Text variant="headingMd" as="h3">Description</Text>
+                </div>
+              }
+              value={generatedDescription}
+              onChange={setGeneratedDescription}
+              multiline={6}
+              autoComplete="off"
+              placeholder="Gemini will generate a description from your photos..."
+              accessibilityLabel="Generated product description"
+            />
+          </div>
         </BlockStack>
       </Card>
 
