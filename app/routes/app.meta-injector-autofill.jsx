@@ -89,7 +89,7 @@ export const action = async ({ request }) => {
         const promptText = "You are a lapidary artist and gemstone expert. Look at this stone photo and write a rich, earthy, one-of-a-kind product description in 2-3 paragraphs. Focus on the colors, patterns, texture, and character of the stone. Write in first person as Bob or Janyce from Rockhound Studio. No corporate language. Raw, authentic, collector energy.";
 
         const geminiRes = await fetch(
-          "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY,
+          "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
