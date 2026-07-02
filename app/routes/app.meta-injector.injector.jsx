@@ -68,11 +68,10 @@ export function NewProductIntakeTab({ fetcher }) {
   }, []);
 
   const handleScanGeminiPhotos = useCallback(() => {
-    const file = photoFiles[0];
-    (file) && (() => {
-      const objectUrl = URL.createObjectURL(file);
+    (photoFiles[0]) && (() => {
+      const imageUrl = URL.createObjectURL(photoFiles[0]);
       autoFillFetcher.submit(
-        { intent: "visionScan", imageUrl: objectUrl },
+        { intent: "visionScan", imageUrl: imageUrl },
         { method: "post", action: "/app/meta-injector-autofill" }
       );
     })();
