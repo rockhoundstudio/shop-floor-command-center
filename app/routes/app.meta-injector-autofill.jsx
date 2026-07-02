@@ -64,27 +64,18 @@ export const action = async ({ request }) => {
     // ==========================================
     if (intent === "visionScan") {
       try {
-        const photos = body.getAll("photos[]");
+        const rawImageUrl = body.get("imageUrl");
+        const imageUrl = rawImageUrl && rawImageUrl !== "undefined" && rawImageUrl !== "null" ? String(rawImageUrl).trim() : "";
         
-        if (!photos || photos.length === 0) {
+        if (!imageUrl) {
           return Response.json({ description: "", error: "Gemini vision scan failed" });
         }
 
-        const imageParts = [];
-        for (const file of photos) {
-          if (file && file.size > 0) {
-            const buffer = await file.arrayBuffer();
-            const base64 = Buffer.from(buffer).toString("base64");
-            const mimeType = file.type || "image/jpeg";
-            
-            imageParts.push({
-              inlineData: {
-                mimeType: mimeType,
-                data: base64
-              }
-            });
-          }
-        }
+        const cleanImageUrl = imageUrl.split('?')[0];
+        const imageRes = await fetch(cleanImageUrl);
+        const imageBuffer = await imageRes.arrayBuffer();
+        const imageBase64 = Buffer.from(imageBuffer).toString("base64");
+        const imageMimeType = (imageRes.headers.get("content-type") || "image/jpeg").split(";")[0].trim();
 
         const promptText = "You are a lapidary artist and gemstone expert. Look at this stone photo and write a rich, earthy, one-of-a-kind product description in 2-3 paragraphs. Focus on the colors, patterns, texture, and character of the stone. Write in first person as Bob or Janyce from Rockhound Studio. No corporate language. Raw, authentic, collector energy.";
 
@@ -98,7 +89,12 @@ export const action = async ({ request }) => {
                 {
                   parts: [
                     { text: promptText },
-                    ...imageParts
+                    {
+                      inlineData: {
+                        mimeType: imageMimeType,
+                        data: imageBase64
+                      }
+                    }
                   ]
                 }
               ]
