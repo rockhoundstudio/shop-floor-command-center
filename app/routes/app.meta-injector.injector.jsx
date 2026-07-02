@@ -68,14 +68,8 @@ export function NewProductIntakeTab({ fetcher }) {
   }, []);
 
   const handleScanGeminiPhotos = useCallback(() => {
-    (photoFiles[0]) && (() => {
-      const imageUrl = pieces[0]?.stagedResourceUrls?.[0] || "";
-      autoFillFetcher.submit(
-        { intent: "visionScan", imageUrl: imageUrl },
-        { method: "post", action: "/app/meta-injector-autofill" }
-      );
-    })();
-  }, [photoFiles, autoFillFetcher, pieces]);
+    (pieces[0]?.photoFiles?.[0]) && handleScanPhoto({ piece: pieces[0], updatePiece: handlePieceChange, stageFetcher, setErrorMessage });
+  }, [pieces, stageFetcher, setErrorMessage]);
 
   const handleSharedFieldChange = useCallback((key, value) => {
     setSharedFields(prev => ({ ...prev, [key]: value }));
