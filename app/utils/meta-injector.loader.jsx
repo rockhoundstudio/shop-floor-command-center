@@ -124,17 +124,49 @@ export async function loader({ request }) {
   const { admin } = await authenticate.admin(request);
   const products = await fetchAllProducts(admin.graphql);
   
-  const [definitionsRes, snapshotsRes] = await Promise.all([
+  const originPagesQuery = `
+    query GetOriginPages {
+      metaobjects(type: "origin_page", first: 50) {
+        edges {
+          node {
+            id
+            handle
+            fields {
+              key
+              value
+            }
+          }
+        }
+      }
+    }
+  `;
+
+  const [definitionsRes, snapshotsRes, originPagesRes] = await Promise.all([
     admin.graphql(GET_METAFIELD_DEFINITIONS_QUERY),
-    admin.graphql(GET_SNAPSHOTS_QUERY)
+    admin.graphql(GET_SNAPSHOTS_QUERY),
+    admin.graphql(originPagesQuery)
   ]);
   
   const definitionsData = await definitionsRes.json();
   const snapshotsData = await snapshotsRes.json();
+  const originPagesData = await originPagesRes.json();
   
   const metafieldDefinitions = definitionsData.data?.metafieldDefinitions?.edges.map(e => e.node) || [];
   const rawSnapshots = snapshotsData.data?.metaobjects?.edges.map(e => e.node) || [];
   
+  const originPages = (originPagesData.data?.metaobjects?.edges || []).map(edge => {
+    const fields = {};
+    edge.node.fields.forEach(f => { fields[f.key] = f.value; });
+    return {
+      id: edge.node.id,
+      handle: edge.node.handle,
+      display_name: fields.display_name || "",
+      page_handle: fields.page_handle || "",
+      location: fields.location || "",
+      stone_types: fields.stone_types || ""
+    };
+  });
+
   const snapshots = rawSnapshots.map(snap => {
     const dataField = snap.fields.find(f => f.key === "snapshot_data");
     let count = 0;
@@ -144,7 +176,7 @@ export async function loader({ request }) {
     return { id: snap.id, createdAt: new Date(snap.updatedAt).toLocaleString(), count };
   });
   
-  return json({ products, pageInfo: { hasNextPage: false, endCursor: null }, metafieldDefinitions, snapshots });
+  return json({ products, pageInfo: { hasNextPage: false, endCursor: null }, metafieldDefinitions, snapshots, originPages });
 }
 
 export async function action({ request }) {
