@@ -398,7 +398,7 @@ export function NewProductIntakeTab({ fetcher }) {
   (generatedDescription !== "") && (genDescDotColor = "#2E7D32");
 
   let scanReady = false;
-  (pieces[0]?.stagedResourceUrls?.[0]) && (scanReady = true);
+  (pieces[0]?.photoFiles?.[0]) && (scanReady = true);
 
   return (
     <BlockStack gap="600">
