@@ -322,6 +322,13 @@ export function NewProductIntakeTab({ fetcher }) {
     })();
   }, [descriptionFetcher.state, descriptionFetcher.data]);
 
+  useEffect(() => {
+    const stagedUrl = pieces[0]?.stagedResourceUrls?.[0];
+    (stagedUrl && stagedUrl !== "") && (() => {
+      window.shopify?.toast?.show("Photo ready — tap Scan to generate description");
+    })();
+  }, [pieces[0]?.stagedResourceUrls?.[0]]);
+
   let isSubmitting = false;
   (fetcher.state !== "idle" && fetcher.formData?.get("intent") === "createProduct") && (isSubmitting = true);
 
@@ -385,6 +392,9 @@ export function NewProductIntakeTab({ fetcher }) {
 
   let genDescDotColor = "#C62828";
   (generatedDescription !== "") && (genDescDotColor = "#2E7D32");
+
+  let scanReady = false;
+  (pieces[0]?.stagedResourceUrls?.[0]) && (scanReady = true);
 
   return (
     <BlockStack gap="600">
@@ -456,6 +466,7 @@ export function NewProductIntakeTab({ fetcher }) {
                 variant="primary"
                 fullWidth
                 onClick={handleScanGeminiPhotos}
+                disabled={!scanReady}
               >
                 <span style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "8px" }}>
                   {isScanningVision && <Spinner size="small" />}
