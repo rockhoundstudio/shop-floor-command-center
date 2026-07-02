@@ -392,7 +392,9 @@ export function NewProductIntakeTab({ fetcher }) {
   (photoFiles.length >= 1) && (showScanButton = true);
 
   let isScanningVision = false;
+  (stageFetcher.state !== "idle") && (isScanningVision = true);
   (autoFillFetcher.state !== "idle" && autoFillFetcher.formData?.get("intent") === "visionScan") && (isScanningVision = true);
+  (autoFillFetcher.state !== "idle" && autoFillFetcher.formData?.get("intent") === "tab2AutoFill") && (isScanningVision = true);
 
   let genDescDotColor = "#C62828";
   (generatedDescription !== "") && (genDescDotColor = "#2E7D32");
