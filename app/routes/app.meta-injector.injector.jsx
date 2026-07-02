@@ -69,13 +69,13 @@ export function NewProductIntakeTab({ fetcher }) {
 
   const handleScanGeminiPhotos = useCallback(() => {
     (photoFiles[0]) && (() => {
-      const imageUrl = URL.createObjectURL(photoFiles[0]);
+      const imageUrl = pieces[0]?.stagedResourceUrls?.[0] || "";
       autoFillFetcher.submit(
         { intent: "visionScan", imageUrl: imageUrl },
         { method: "post", action: "/app/meta-injector-autofill" }
       );
     })();
-  }, [photoFiles, autoFillFetcher]);
+  }, [photoFiles, autoFillFetcher, pieces]);
 
   const handleSharedFieldChange = useCallback((key, value) => {
     setSharedFields(prev => ({ ...prev, [key]: value }));
