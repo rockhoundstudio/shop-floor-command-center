@@ -57,6 +57,16 @@ export function NewProductIntakeTab({ fetcher }) {
       setPhotoPreviewUrls(capped.map(f => URL.createObjectURL(f)));
       return capped;
     });
+    setPieces(prev => prev.map((p, i) => {
+      let updated = { ...p };
+      (i === 0) && (() => {
+        const combined = [...p.photoFiles, ...dropFiles];
+        const capped = combined.slice(0, 5);
+        updated.photoFiles = capped;
+        updated.photoPreviewUrls = capped.map(f => URL.createObjectURL(f));
+      })();
+      return updated;
+    }));
   }, []);
 
   const handleRemoveTopPhoto = useCallback((index) => {
