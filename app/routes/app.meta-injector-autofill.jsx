@@ -11,7 +11,7 @@ const MINDAT_KEY_MAP = {
   official_name: "name",
   mineral_class: "mindat_formula",
   crystal_structure: "crystal_system",
-  luster: "luster",
+   luster: "luster",
   specific_gravity: "density",
   moh_hardness: "hardness",
   cleavage: "cleavage",
