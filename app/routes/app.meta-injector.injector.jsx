@@ -283,6 +283,7 @@ export function NewProductIntakeTab({ fetcher }) {
       const isError = data.success === false;
 
       (isScan && isSuccess) && (() => {
+        setErrorMessage("SCAN RESULT: " + JSON.stringify(data).slice(0, 300));
         setPieces(prev => prev.map(p => {
           let updated = { ...p };
           (p.id === data.pieceId) && (() => {
