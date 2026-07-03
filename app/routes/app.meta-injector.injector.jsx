@@ -235,7 +235,7 @@ export function NewProductIntakeTab({ fetcher }) {
 
       const piece = pieces.find(p => p.id === pid);
       let shouldUpload = false;
-      (isStaged && isSuccess && piece && piece.scanToken === token && !piece.isUploading && target) && (shouldUpload = true);
+      (isStaged && isSuccess && piece && !piece.isUploading && target) && (shouldUpload = true);
 
       (shouldUpload) && (() => {
         handlePieceChange(pid, "isUploading", true);
