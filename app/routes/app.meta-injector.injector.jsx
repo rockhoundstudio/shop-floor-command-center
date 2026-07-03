@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { BlockStack, Card, Text, TextField, Select, Button, Banner, DropZone, Spinner } from "@shopify/polaris";
+import { BlockStack, Card, Text, TextField, Select, Button, Banner, DropZone, Spinner, Frame, Toast } from "@shopify/polaris";
 import { PlusIcon, MagicIcon } from "@shopify/polaris-icons";
 import { useFetcher } from "react-router";
 import { ROCKHOUND_FIELDS, DEFAULT_DROPDOWNS, REQUIRED_FIELDS } from "../utils/meta-injector.constants.jsx";
@@ -56,6 +56,7 @@ export function NewProductIntakeTab({ fetcher }) {
   const [statusMessage, setStatusMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [generatedDescription, setGeneratedDescription] = useState("");
+  const [geoToast, setGeoToast] = useState(false);
 
   const handleTopDropZoneDrop = useCallback((dropFiles) => {
     setPhotoFiles(prev => {
@@ -353,6 +354,7 @@ export function NewProductIntakeTab({ fetcher }) {
           (geo.geological_age !== undefined) && (updated.geological_age = geo.geological_age);
           return updated;
         });
+        setGeoToast(true);
       })();
     })();
   }, [autoFillFetcher.state, autoFillFetcher.data]);
@@ -451,488 +453,500 @@ export function NewProductIntakeTab({ fetcher }) {
   (pieces[0]?.photoFiles?.[0]) && (scanReady = true);
 
   return (
-    <BlockStack gap="600">
-      <Card padding="400">
-        <BlockStack gap="400">
-          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-            <svg width="18" height="18" viewBox="0 0 18 18" style={{ display: "inline-block" }}>
-              <circle cx="9" cy="9" r="9" fill={topDotColor} />
-            </svg>
-            <Text variant="headingMd" as="h2" fontWeight="bold">Stone Photos</Text>
-          </div>
-          
-          <DropZone 
-            accept="image/jpeg, image/png, image/gif" 
-            type="image" 
-            allowMultiple 
-            onDrop={(_dropFiles, acceptedFiles) => handleTopDropZoneDrop(acceptedFiles)}
-            accessibilityLabel="Upload stone photos"
-          >
-            <DropZone.FileUpload actionTitle="Drop photos here or click to upload" />
-          </DropZone>
-          
-          {hasTopPhotos && (
-            <div style={{ display: "flex", gap: "16px", marginTop: "12px", flexWrap: "wrap", paddingTop: "8px", paddingRight: "8px" }}>
-              {photoPreviewUrls.map((url, i) => (
-                <div key={i} style={{ position: "relative", width: "80px", height: "80px" }}>
-                  <img src={url} alt={`Preview ${i}`} style={{ width: "80px", height: "80px", objectFit: "cover", borderRadius: "6px" }} />
-                  <button
-                    onClick={(e) => {
-                      e.preventDefault();
-                      handleRemoveTopPhoto(i);
-                    }}
-                    aria-label={`Remove photo ${i + 1}`}
-                    style={{
-                      position: "absolute",
-                      top: "-12px",
-                      right: "-12px",
-                      width: "48px",
-                      height: "48px",
-                      background: "#ffffff",
-                      border: "1px solid #c9cccf",
-                      borderRadius: "24px",
-                      cursor: "pointer",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      fontSize: "16px",
-                      fontWeight: "bold",
-                      color: "#202223",
-                      boxShadow: "0 1px 3px rgba(0,0,0,0.1)",
-                      zIndex: 10
-                    }}
-                  >
-                    ✕
-                  </button>
-                </div>
-              ))}
+    <Frame>
+      <BlockStack gap="600">
+        <Card padding="400">
+          <BlockStack gap="400">
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <svg width="18" height="18" viewBox="0 0 18 18" style={{ display: "inline-block" }}>
+                <circle cx="9" cy="9" r="9" fill={topDotColor} />
+              </svg>
+              <Text variant="headingMd" as="h2" fontWeight="bold">Stone Photos</Text>
             </div>
-          )}
-          
-          <Text as="p" style={{ fontSize: "14px", marginTop: "4px", color: "#6d7175" }}>
-            {photoFiles.length} of 5 photos
-          </Text>
+            
+            <DropZone 
+              accept="image/jpeg, image/png, image/gif" 
+              type="image" 
+              allowMultiple 
+              onDrop={(_dropFiles, acceptedFiles) => handleTopDropZoneDrop(acceptedFiles)}
+              accessibilityLabel="Upload stone photos"
+            >
+              <DropZone.FileUpload actionTitle="Drop photos here or click to upload" />
+            </DropZone>
+            
+            {hasTopPhotos && (
+              <div style={{ display: "flex", gap: "16px", marginTop: "12px", flexWrap: "wrap", paddingTop: "8px", paddingRight: "8px" }}>
+                {photoPreviewUrls.map((url, i) => (
+                  <div key={i} style={{ position: "relative", width: "80px", height: "80px" }}>
+                    <img src={url} alt={`Preview ${i}`} style={{ width: "80px", height: "80px", objectFit: "cover", borderRadius: "6px" }} />
+                    <button
+                      onClick={(e) => {
+                        e.preventDefault();
+                        handleRemoveTopPhoto(i);
+                      }}
+                      aria-label={`Remove photo ${i + 1}`}
+                      style={{
+                        position: "absolute",
+                        top: "-12px",
+                        right: "-12px",
+                        width: "48px",
+                        height: "48px",
+                        background: "#ffffff",
+                        border: "1px solid #c9cccf",
+                        borderRadius: "24px",
+                        cursor: "pointer",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        fontSize: "16px",
+                        fontWeight: "bold",
+                        color: "#202223",
+                        boxShadow: "0 1px 3px rgba(0,0,0,0.1)",
+                        zIndex: 10
+                      }}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            
+            <Text as="p" style={{ fontSize: "14px", marginTop: "4px", color: "#6d7175" }}>
+              {photoFiles.length} of 5 photos
+            </Text>
 
-          {showScanButton && (
+            {showScanButton && (
+              <div style={{ minHeight: "48px", marginTop: "16px" }}>
+                <Button
+                  size="large"
+                  variant="primary"
+                  fullWidth
+                  onClick={handleScanGeminiPhotos}
+                  disabled={!scanReady}
+                >
+                  <span style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "8px" }}>
+                    {isScanningVision && <Spinner size="small" />}
+                    Scan Photos with Gemini
+                  </span>
+                </Button>
+              </div>
+            )}
+
             <div style={{ minHeight: "48px", marginTop: "16px" }}>
+              <TextField
+                label={
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                    <svg width="18" height="18" viewBox="0 0 18 18" style={{ display: "inline-block" }}>
+                      <circle cx="9" cy="9" r="9" fill={genDescDotColor} />
+                    </svg>
+                    <Text variant="headingMd" as="h3">Description</Text>
+                  </div>
+                }
+                value={generatedDescription}
+                onChange={setGeneratedDescription}
+                multiline={6}
+                autoComplete="off"
+                placeholder="Gemini will generate a description from your photos..."
+                accessibilityLabel="Generated product description"
+              />
+            </div>
+          </BlockStack>
+        </Card>
+
+        <Card padding="400">
+          <BlockStack gap="400">
+            <Text variant="headingMd" as="h2" style={{ fontSize: "14px" }}>Section A: Shared Batch Fields</Text>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "24px" }}>
+              <div style={{ minHeight: "54px" }}>
+                <TextField
+                  label={renderLabel("Material", "material", sharedFields.material)}
+                  value={sharedFields.material}
+                  onChange={(v) => handleSharedFieldChange("material", v)}
+                  autoComplete="off"
+                  accessibilityLabel="Enter shared material"
+                />
+              </div>
+              <div style={{ minHeight: "54px" }}>
+                <TextField
+                  label={renderLabel("Stone Family", "stone_family", sharedFields.stone_family)}
+                  value={sharedFields.stone_family}
+                  onChange={(v) => handleSharedFieldChange("stone_family", v)}
+                  autoComplete="off"
+                  accessibilityLabel="Enter shared stone family"
+                />
+                <div style={{ marginTop: "8px" }}>
+                  <Button
+                    tone="success"
+                    onClick={() => autoFillFetcher.submit({ intent: "geoLookup", stoneFamily: sharedFields.stone_family }, { method: "post", action: "/app/meta-injector-autofill" })}
+                    accessibilityLabel="Run geo database lookup for stone family"
+                  >
+                    DB Lookup
+                  </Button>
+                </div>
+              </div>
+              <div style={{ minHeight: "54px" }}>
+                <Select
+                  label={renderLabel("Collection Location", "collection_location", sharedFields.collection_location)}
+                  options={[{ label: "Select location...", value: "" }, ...collectionLocationOptions.map(o => ({ label: o, value: o }))]}
+                  value={sharedFields.collection_location}
+                  onChange={(v) => handleSharedFieldChange("collection_location", v)}
+                  accessibilityLabel="Select collection location"
+                />
+              </div>
+              <div style={{ minHeight: "54px" }}>
+                <TextField
+                  label={renderLabel("Collection Date", "collection_date", sharedFields.collection_date)}
+                  value={sharedFields.collection_date}
+                  onChange={(v) => handleSharedFieldChange("collection_date", v)}
+                  autoComplete="off"
+                  accessibilityLabel="Enter shared collection date"
+                />
+              </div>
+              <div style={{ minHeight: "54px" }}>
+                <TextField
+                  label={renderLabel("Origin Location", "origin_location", sharedFields.origin_location)}
+                  value={sharedFields.origin_location}
+                  onChange={(v) => handleSharedFieldChange("origin_location", v)}
+                  autoComplete="off"
+                  placeholder="Where was this stone found?"
+                  accessibilityLabel="Enter origin location"
+                />
+              </div>
+              <div style={{ minHeight: "54px" }}>
+                <Select
+                  label={renderLabel("Rescued By", "rescued_by", sharedFields.rescued_by)}
+                  options={[...rescuedByOptions.map(o => ({ label: o, value: o }))]}
+                  value={sharedFields.rescued_by}
+                  onChange={(v) => handleSharedFieldChange("rescued_by", v)}
+                  accessibilityLabel="Select rescued by"
+                />
+              </div>
+              <div style={{ minHeight: "54px" }}>
+                <Select
+                  label={renderLabel("Treatment Status", "treatment_status", sharedFields.treatment_status)}
+                  options={[...treatmentStatusOptions.map(o => ({ label: o, value: o }))]}
+                  value={sharedFields.treatment_status}
+                  onChange={(v) => handleSharedFieldChange("treatment_status", v)}
+                  accessibilityLabel="Select treatment status"
+                />
+              </div>
+              <div style={{ minHeight: "54px" }}>
+                <TextField
+                  label={renderLabel("Bench Notes", "bench_notes", sharedFields.bench_notes)}
+                  value={sharedFields.bench_notes}
+                  onChange={(v) => handleSharedFieldChange("bench_notes", v)}
+                  autoComplete="off"
+                  multiline={3}
+                  placeholder="Setting, drill, bail, wire — anything special"
+                  accessibilityLabel="Enter bench notes"
+                />
+              </div>
+              <div style={{ minHeight: "54px" }}>
+                <TextField
+                  label={renderLabel("Origin Story", "origin_story", sharedFields.origin_story)}
+                  value={sharedFields.origin_story}
+                  onChange={(v) => handleSharedFieldChange("origin_story", v)}
+                  autoComplete="off"
+                  multiline={2}
+                  accessibilityLabel="Enter shared origin story"
+                />
+              </div>
+              <div style={{ minHeight: "54px" }}>
+                <Select
+                  label={renderLabel("Product Type", "primary_use", sharedFields.primary_use)}
+                  options={[{ label: "Select...", value: "" }, ...productTypeOptions.map(o => ({ label: o, value: o }))]}
+                  value={sharedFields.primary_use}
+                  onChange={(v) => handleSharedFieldChange("primary_use", v)}
+                  accessibilityLabel="Select product type"
+                />
+              </div>
+            </div>
+          </BlockStack>
+        </Card>
+
+        <Card padding="400">
+          <BlockStack gap="400">
+            <Text variant="headingMd" as="h2" style={{ fontSize: "14px" }}>Section B: Per-Piece Rows</Text>
+
+            <div style={{ position: "relative", marginBottom: "8px" }}>
+              <input
+                type="text"
+                placeholder="Search products..."
+                aria-label="Search products"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                style={{
+                  width: "100%",
+                  minHeight: "48px",
+                  fontSize: "18px",
+                  border: "2px solid #000",
+                  borderRadius: "4px",
+                  padding: "8px 40px 8px 16px",
+                  boxSizing: "border-box"
+                }}
+              />
+              {searchQuery !== "" && (
+                <button
+                  onClick={() => setSearchQuery("")}
+                  aria-label="Clear search"
+                  style={{
+                    position: "absolute",
+                    right: "12px",
+                    top: "50%",
+                    transform: "translateY(-50%)",
+                    background: "transparent",
+                    border: "none",
+                    fontSize: "20px",
+                    cursor: "pointer",
+                    padding: "4px",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    color: "#5c5f62"
+                  }}
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
+              {filteredPieces.map((piece, index) => {
+                
+                let isScanning = false;
+                (stageFetcher.state !== "idle" && stageFetcher.formData?.get("pieceId") === piece.id) && (isScanning = true);
+                (autoFillFetcher.state !== "idle" && autoFillFetcher.formData?.get("pieceId") === piece.id) && (isScanning = true);
+                (piece.isUploading) && (isScanning = true);
+
+                let hasScanError = false;
+                (piece.scanError && piece.scanError !== "") && (hasScanError = true);
+
+                let hasPhotos = false;
+                (piece.photoFiles && piece.photoFiles.length > 0) && (hasPhotos = true);
+
+                let disableScan = true;
+                (hasPhotos) && (disableScan = false);
+
+                return (
+                  <div key={piece.id} style={{ display: "flex", flexDirection: "column", gap: "16px", paddingBottom: "24px", borderBottom: "1px solid #e1e3e5" }}>
+                    
+                    <div style={{ display: "flex", alignItems: "end", gap: "16px" }}>
+                      <div style={{ flexGrow: 1, minHeight: "54px" }}>
+                        <TextField
+                          label={renderLabel("Piece Name", "piece_name", piece.piece_name)}
+                          value={piece.piece_name}
+                          onChange={(v) => handlePieceChange(piece.id, "piece_name", v)}
+                          autoComplete="off"
+                          accessibilityLabel={`Enter Piece Name for row ${index + 1}`}
+                        />
+                      </div>
+
+                      <div style={{ minHeight: "54px", width: "240px" }}>
+                        <Button
+                          size="large"
+                          fullWidth
+                          icon={MagicIcon}
+                          disabled={disableScan}
+                          onClick={() => handleScanPhoto({ piece, updatePiece: handlePieceChange, autoFillFetcher, setErrorMessage })}
+                          loading={isScanning}
+                          accessibilityLabel={`Scan First Photo with Gemini for row ${index + 1}`}
+                        >
+                          Scan First Photo with Gemini
+                        </Button>
+                      </div>
+
+                      <div style={{ minHeight: "54px", width: "120px" }}>
+                        <Button
+                          size="large"
+                          tone="critical"
+                          fullWidth
+                          onClick={() => handleRemoveRow(piece.id)}
+                          disabled={pieces.length <= 1}
+                          accessibilityLabel={`Remove row ${index + 1}`}
+                        >
+                          Remove
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "16px" }}>
+                      <div style={{ minHeight: "54px" }}>
+                        <TextField
+                          label={renderLabel("Dimensions (mm)", "dimensions_mm", piece.dimensions_mm)}
+                          value={piece.dimensions_mm}
+                          onChange={(v) => handlePieceChange(piece.id, "dimensions_mm", v)}
+                          autoComplete="off"
+                          accessibilityLabel={`Enter Dimensions for row ${index + 1}`}
+                        />
+                      </div>
+                      <div style={{ minHeight: "54px" }}>
+                        <TextField
+                          label={renderLabel("Cut & Shape", "cut_and_shape", piece.cut_and_shape)}
+                          value={piece.cut_and_shape}
+                          onChange={(v) => handlePieceChange(piece.id, "cut_and_shape", v)}
+                          autoComplete="off"
+                          accessibilityLabel={`Enter Cut and Shape for row ${index + 1}`}
+                        />
+                      </div>
+                      <div style={{ minHeight: "54px" }}>
+                        <Select
+                          label={renderLabel("Surface Finish", "surface_finish", piece.surface_finish)}
+                          options={[...surfaceFinishOptions.map(o => ({ label: o, value: o }))]}
+                          value={piece.surface_finish}
+                          onChange={(v) => handlePieceChange(piece.id, "surface_finish", v)}
+                          accessibilityLabel={`Select surface finish for row ${index + 1}`}
+                        />
+                      </div>
+                      <div style={{ minHeight: "54px" }}>
+                        <TextField
+                          label={renderLabel("Primary Color", "primary_color", piece.primary_color)}
+                          value={piece.primary_color}
+                          onChange={(v) => handlePieceChange(piece.id, "primary_color", v)}
+                          autoComplete="off"
+                          placeholder="Primary color"
+                          accessibilityLabel={`Enter primary color for row ${index + 1}`}
+                        />
+                      </div>
+                      <div style={{ minHeight: "54px" }}>
+                        <TextField
+                          label={renderLabel("Stone Shape", "stone_shape", piece.stone_shape)}
+                          value={piece.stone_shape}
+                          onChange={(v) => handlePieceChange(piece.id, "stone_shape", v)}
+                          autoComplete="off"
+                          placeholder="Shape of the stone"
+                          accessibilityLabel={`Enter stone shape for row ${index + 1}`}
+                        />
+                      </div>
+                      <div style={{ minHeight: "54px" }}>
+                        <TextField
+                          label={renderLabel("Price", "price", piece.price)}
+                          value={piece.price}
+                          onChange={(v) => handlePieceChange(piece.id, "price", v)}
+                          autoComplete="off"
+                          accessibilityLabel={`Enter Price for row ${index + 1}`}
+                        />
+                      </div>
+                    </div>
+
+                    {hasScanError && (
+                      <Banner tone="critical" title="Scan Failed">
+                        <Text as="p" style={{ fontSize: "14px" }}>{piece.scanError}</Text>
+                      </Banner>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            <div style={{ minHeight: "54px", marginTop: "16px" }}>
+              <Button
+                icon={PlusIcon}
+                size="large"
+                onClick={handleAddRow}
+                accessibilityLabel="Add new piece row"
+              >
+                Add Row
+              </Button>
+            </div>
+          </BlockStack>
+        </Card>
+
+        <Card padding="400">
+          <BlockStack gap="400">
+            <Text variant="headingMd" as="h2" style={{ fontSize: "14px" }}>Section C: Generate Description</Text>
+            <div style={{ minHeight: "54px" }}>
               <Button
                 size="large"
                 variant="primary"
-                fullWidth
-                onClick={handleScanGeminiPhotos}
-                disabled={!scanReady}
+                icon={MagicIcon}
+                onClick={() => handleGenerateDescription({ sharedFields, pieces, descFetcher: descriptionFetcher })}
+                loading={isDescLoading}
+                accessibilityLabel="Write Description with Gemini"
               >
-                <span style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "8px" }}>
-                  {isScanningVision && <Spinner size="small" />}
-                  Scan Photos with Gemini
-                </span>
+                Write Description with Gemini
               </Button>
             </div>
-          )}
-
-          <div style={{ minHeight: "48px", marginTop: "16px" }}>
-            <TextField
-              label={
-                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                  <svg width="18" height="18" viewBox="0 0 18 18" style={{ display: "inline-block" }}>
-                    <circle cx="9" cy="9" r="9" fill={genDescDotColor} />
-                  </svg>
-                  <Text variant="headingMd" as="h3">Description</Text>
-                </div>
-              }
-              value={generatedDescription}
-              onChange={setGeneratedDescription}
-              multiline={6}
-              autoComplete="off"
-              placeholder="Gemini will generate a description from your photos..."
-              accessibilityLabel="Generated product description"
-            />
-          </div>
-        </BlockStack>
-      </Card>
-
-      <Card padding="400">
-        <BlockStack gap="400">
-          <Text variant="headingMd" as="h2" style={{ fontSize: "14px" }}>Section A: Shared Batch Fields</Text>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "24px" }}>
-            <div style={{ minHeight: "54px" }}>
+            {generatedDescription !== "" && (
               <TextField
-                label={renderLabel("Material", "material", sharedFields.material)}
-                value={sharedFields.material}
-                onChange={(v) => handleSharedFieldChange("material", v)}
+                label="Generated Description — edit before saving"
+                value={generatedDescription}
+                onChange={setGeneratedDescription}
+                multiline={10}
                 autoComplete="off"
-                accessibilityLabel="Enter shared material"
+                accessibilityLabel="Generated Description"
               />
-            </div>
-            <div style={{ minHeight: "54px" }}>
-              <TextField
-                label={renderLabel("Stone Family", "stone_family", sharedFields.stone_family)}
-                value={sharedFields.stone_family}
-                onChange={handleStoneFamilyChange}
-                autoComplete="off"
-                accessibilityLabel="Enter shared stone family"
-              />
-            </div>
-            <div style={{ minHeight: "54px" }}>
-              <Select
-                label={renderLabel("Collection Location", "collection_location", sharedFields.collection_location)}
-                options={[{ label: "Select location...", value: "" }, ...collectionLocationOptions.map(o => ({ label: o, value: o }))]}
-                value={sharedFields.collection_location}
-                onChange={(v) => handleSharedFieldChange("collection_location", v)}
-                accessibilityLabel="Select collection location"
-              />
-            </div>
-            <div style={{ minHeight: "54px" }}>
-              <TextField
-                label={renderLabel("Collection Date", "collection_date", sharedFields.collection_date)}
-                value={sharedFields.collection_date}
-                onChange={(v) => handleSharedFieldChange("collection_date", v)}
-                autoComplete="off"
-                accessibilityLabel="Enter shared collection date"
-              />
-            </div>
-            <div style={{ minHeight: "54px" }}>
-              <TextField
-                label={renderLabel("Origin Location", "origin_location", sharedFields.origin_location)}
-                value={sharedFields.origin_location}
-                onChange={(v) => handleSharedFieldChange("origin_location", v)}
-                autoComplete="off"
-                placeholder="Where was this stone found?"
-                accessibilityLabel="Enter origin location"
-              />
-            </div>
-            <div style={{ minHeight: "54px" }}>
-              <Select
-                label={renderLabel("Rescued By", "rescued_by", sharedFields.rescued_by)}
-                options={[...rescuedByOptions.map(o => ({ label: o, value: o }))]}
-                value={sharedFields.rescued_by}
-                onChange={(v) => handleSharedFieldChange("rescued_by", v)}
-                accessibilityLabel="Select rescued by"
-              />
-            </div>
-            <div style={{ minHeight: "54px" }}>
-              <Select
-                label={renderLabel("Treatment Status", "treatment_status", sharedFields.treatment_status)}
-                options={[...treatmentStatusOptions.map(o => ({ label: o, value: o }))]}
-                value={sharedFields.treatment_status}
-                onChange={(v) => handleSharedFieldChange("treatment_status", v)}
-                accessibilityLabel="Select treatment status"
-              />
-            </div>
-            <div style={{ minHeight: "54px" }}>
-              <TextField
-                label={renderLabel("Bench Notes", "bench_notes", sharedFields.bench_notes)}
-                value={sharedFields.bench_notes}
-                onChange={(v) => handleSharedFieldChange("bench_notes", v)}
-                autoComplete="off"
-                multiline={3}
-                placeholder="Setting, drill, bail, wire — anything special"
-                accessibilityLabel="Enter bench notes"
-              />
-            </div>
-            <div style={{ minHeight: "54px" }}>
-              <TextField
-                label={renderLabel("Origin Story", "origin_story", sharedFields.origin_story)}
-                value={sharedFields.origin_story}
-                onChange={(v) => handleSharedFieldChange("origin_story", v)}
-                autoComplete="off"
-                multiline={2}
-                accessibilityLabel="Enter shared origin story"
-              />
-            </div>
-            <div style={{ minHeight: "54px" }}>
-              <Select
-                label={renderLabel("Product Type", "primary_use", sharedFields.primary_use)}
-                options={[{ label: "Select...", value: "" }, ...productTypeOptions.map(o => ({ label: o, value: o }))]}
-                value={sharedFields.primary_use}
-                onChange={(v) => handleSharedFieldChange("primary_use", v)}
-                accessibilityLabel="Select product type"
-              />
-            </div>
-          </div>
-        </BlockStack>
-      </Card>
-
-      <Card padding="400">
-        <BlockStack gap="400">
-          <Text variant="headingMd" as="h2" style={{ fontSize: "14px" }}>Section B: Per-Piece Rows</Text>
-
-          <div style={{ position: "relative", marginBottom: "8px" }}>
-            <input
-              type="text"
-              placeholder="Search products..."
-              aria-label="Search products"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              style={{
-                width: "100%",
-                minHeight: "48px",
-                fontSize: "18px",
-                border: "2px solid #000",
-                borderRadius: "4px",
-                padding: "8px 40px 8px 16px",
-                boxSizing: "border-box"
-              }}
-            />
-            {searchQuery !== "" && (
-              <button
-                onClick={() => setSearchQuery("")}
-                aria-label="Clear search"
-                style={{
-                  position: "absolute",
-                  right: "12px",
-                  top: "50%",
-                  transform: "translateY(-50%)",
-                  background: "transparent",
-                  border: "none",
-                  fontSize: "20px",
-                  cursor: "pointer",
-                  padding: "4px",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  color: "#5c5f62"
-                }}
-              >
-                ✕
-              </button>
             )}
-          </div>
+          </BlockStack>
+        </Card>
 
-          <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
-            {filteredPieces.map((piece, index) => {
-              
-              let isScanning = false;
-              (stageFetcher.state !== "idle" && stageFetcher.formData?.get("pieceId") === piece.id) && (isScanning = true);
-              (autoFillFetcher.state !== "idle" && autoFillFetcher.formData?.get("pieceId") === piece.id) && (isScanning = true);
-              (piece.isUploading) && (isScanning = true);
-
-              let hasScanError = false;
-              (piece.scanError && piece.scanError !== "") && (hasScanError = true);
-
-              let hasPhotos = false;
-              (piece.photoFiles && piece.photoFiles.length > 0) && (hasPhotos = true);
-
-              let disableScan = true;
-              (hasPhotos) && (disableScan = false);
-
-              return (
-                <div key={piece.id} style={{ display: "flex", flexDirection: "column", gap: "16px", paddingBottom: "24px", borderBottom: "1px solid #e1e3e5" }}>
-                  
-                  <div style={{ display: "flex", alignItems: "end", gap: "16px" }}>
-                    <div style={{ flexGrow: 1, minHeight: "54px" }}>
-                      <TextField
-                        label={renderLabel("Piece Name", "piece_name", piece.piece_name)}
-                        value={piece.piece_name}
-                        onChange={(v) => handlePieceChange(piece.id, "piece_name", v)}
-                        autoComplete="off"
-                        accessibilityLabel={`Enter Piece Name for row ${index + 1}`}
-                      />
-                    </div>
-
-                    <div style={{ minHeight: "54px", width: "240px" }}>
-                      <Button
-                        size="large"
-                        fullWidth
-                        icon={MagicIcon}
-                        disabled={disableScan}
-                        onClick={() => handleScanPhoto({ piece, updatePiece: handlePieceChange, autoFillFetcher, setErrorMessage })}
-                        loading={isScanning}
-                        accessibilityLabel={`Scan First Photo with Gemini for row ${index + 1}`}
-                      >
-                        Scan First Photo with Gemini
-                      </Button>
-                    </div>
-
-                    <div style={{ minHeight: "54px", width: "120px" }}>
-                      <Button
-                        size="large"
-                        tone="critical"
-                        fullWidth
-                        onClick={() => handleRemoveRow(piece.id)}
-                        disabled={pieces.length <= 1}
-                        accessibilityLabel={`Remove row ${index + 1}`}
-                      >
-                        Remove
-                      </Button>
-                    </div>
-                  </div>
-
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "16px" }}>
-                    <div style={{ minHeight: "54px" }}>
-                      <TextField
-                        label={renderLabel("Dimensions (mm)", "dimensions_mm", piece.dimensions_mm)}
-                        value={piece.dimensions_mm}
-                        onChange={(v) => handlePieceChange(piece.id, "dimensions_mm", v)}
-                        autoComplete="off"
-                        accessibilityLabel={`Enter Dimensions for row ${index + 1}`}
-                      />
-                    </div>
-                    <div style={{ minHeight: "54px" }}>
-                      <TextField
-                        label={renderLabel("Cut & Shape", "cut_and_shape", piece.cut_and_shape)}
-                        value={piece.cut_and_shape}
-                        onChange={(v) => handlePieceChange(piece.id, "cut_and_shape", v)}
-                        autoComplete="off"
-                        accessibilityLabel={`Enter Cut and Shape for row ${index + 1}`}
-                      />
-                    </div>
-                    <div style={{ minHeight: "54px" }}>
-                      <Select
-                        label={renderLabel("Surface Finish", "surface_finish", piece.surface_finish)}
-                        options={[...surfaceFinishOptions.map(o => ({ label: o, value: o }))]}
-                        value={piece.surface_finish}
-                        onChange={(v) => handlePieceChange(piece.id, "surface_finish", v)}
-                        accessibilityLabel={`Select surface finish for row ${index + 1}`}
-                      />
-                    </div>
-                    <div style={{ minHeight: "54px" }}>
-                      <TextField
-                        label={renderLabel("Primary Color", "primary_color", piece.primary_color)}
-                        value={piece.primary_color}
-                        onChange={(v) => handlePieceChange(piece.id, "primary_color", v)}
-                        autoComplete="off"
-                        placeholder="Primary color"
-                        accessibilityLabel={`Enter primary color for row ${index + 1}`}
-                      />
-                    </div>
-                    <div style={{ minHeight: "54px" }}>
-                      <TextField
-                        label={renderLabel("Stone Shape", "stone_shape", piece.stone_shape)}
-                        value={piece.stone_shape}
-                        onChange={(v) => handlePieceChange(piece.id, "stone_shape", v)}
-                        autoComplete="off"
-                        placeholder="Shape of the stone"
-                        accessibilityLabel={`Enter stone shape for row ${index + 1}`}
-                      />
-                    </div>
-                    <div style={{ minHeight: "54px" }}>
-                      <TextField
-                        label={renderLabel("Price", "price", piece.price)}
-                        value={piece.price}
-                        onChange={(v) => handlePieceChange(piece.id, "price", v)}
-                        autoComplete="off"
-                        accessibilityLabel={`Enter Price for row ${index + 1}`}
-                      />
-                    </div>
-                  </div>
-
-                  {hasScanError && (
-                    <Banner tone="critical" title="Scan Failed">
-                      <Text as="p" style={{ fontSize: "14px" }}>{piece.scanError}</Text>
-                    </Banner>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-
-          <div style={{ minHeight: "54px", marginTop: "16px" }}>
-            <Button
-              icon={PlusIcon}
-              size="large"
-              onClick={handleAddRow}
-              accessibilityLabel="Add new piece row"
-            >
-              Add Row
-            </Button>
-          </div>
-        </BlockStack>
-      </Card>
-
-      <Card padding="400">
-        <BlockStack gap="400">
-          <Text variant="headingMd" as="h2" style={{ fontSize: "14px" }}>Section C: Generate Description</Text>
+        {statusMessage !== "" && (
           <div style={{ minHeight: "54px" }}>
-            <Button
-              size="large"
-              variant="primary"
-              icon={MagicIcon}
-              onClick={() => handleGenerateDescription({ sharedFields, pieces, descFetcher: descriptionFetcher })}
-              loading={isDescLoading}
-              accessibilityLabel="Write Description with Gemini"
-            >
-              Write Description with Gemini
-            </Button>
+            <Banner tone="success" title="Operation Successful">
+              <Text as="p" style={{ fontSize: "14px" }}>{statusMessage}</Text>
+            </Banner>
           </div>
-          {generatedDescription !== "" && (
-            <TextField
-              label="Generated Description — edit before saving"
-              value={generatedDescription}
-              onChange={setGeneratedDescription}
-              multiline={10}
-              autoComplete="off"
-              accessibilityLabel="Generated Description"
-            />
-          )}
-        </BlockStack>
-      </Card>
+        )}
 
-      {statusMessage !== "" && (
-        <div style={{ minHeight: "54px" }}>
-          <Banner tone="success" title="Operation Successful">
-            <Text as="p" style={{ fontSize: "14px" }}>{statusMessage}</Text>
-          </Banner>
-        </div>
-      )}
-
-      {errorMessage !== "" && (
-        <div style={{ minHeight: "54px" }}>
-          <Banner tone="critical" title="Operation Failed">
-            <Text as="p" style={{ fontSize: "14px" }}>{errorMessage}</Text>
-          </Banner>
-        </div>
-      )}
-
-      <div style={{ minHeight: "54px" }}>
-        <Button
-          size="large"
-          variant="primary"
-          tone="success"
-          fullWidth
-          onClick={handleCreateAll}
-          loading={isSubmitting}
-          accessibilityLabel="Submit and Create All Pieces"
-        >
-          Create All Pieces
-        </Button>
-      </div>
-
-      <Card padding="400">
-        <BlockStack gap="400">
-          <Text variant="headingMd" as="h2" style={{ fontSize: "14px" }}>Meta Scan</Text>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
-            {scanKeys.map(key => {
-              const isRequired = REQUIRED_FIELDS.includes(key);
-              let val = combinedData[key];
-              useSaved && (val = savedMap[key]);
-
-              let isFilled = false;
-              (val !== undefined && val !== null && val.toString().trim() !== "") && (isFilled = true);
-              
-              let isOptionalEmpty = false;
-              (!isRequired && !isFilled) && (isOptionalEmpty = true);
-              
-              let isRequiredEmpty = false;
-              (isRequired && !isFilled) && (isRequiredEmpty = true);
-              
-              const labelText = key.charAt(0).toUpperCase() + key.slice(1).replace(/_/g, ' ');
-
-              return (
-                <div key={key} style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                  {isFilled && <span style={{ color: "#008060", fontSize: "18px", lineHeight: "18px", width: "18px", height: "18px", display: "inline-block", textAlign: "center" }}>●</span>}
-                  {isOptionalEmpty && <span style={{ color: "#FFC453", fontSize: "18px", lineHeight: "18px", width: "18px", height: "18px", display: "inline-block", textAlign: "center" }}>●</span>}
-                  {isRequiredEmpty && <span style={{ color: "#D72C0D", fontSize: "18px", lineHeight: "18px", width: "18px", height: "18px", display: "inline-block", textAlign: "center" }}>●</span>}
-                  <span style={{ fontSize: "15px", fontWeight: "500" }}>
-                    {labelText}
-                    {(useSaved && isFilled) && ` — ${val}`}
-                  </span>
-                </div>
-              );
-            })}
+        {errorMessage !== "" && (
+          <div style={{ minHeight: "54px" }}>
+            <Banner tone="critical" title="Operation Failed">
+              <Text as="p" style={{ fontSize: "14px" }}>{errorMessage}</Text>
+            </Banner>
           </div>
-        </BlockStack>
-      </Card>
-    </BlockStack>
+        )}
+
+        <div style={{ minHeight: "54px" }}>
+          <Button
+            size="large"
+            variant="primary"
+            tone="success"
+            fullWidth
+            onClick={handleCreateAll}
+            loading={isSubmitting}
+            accessibilityLabel="Submit and Create All Pieces"
+          >
+            Create All Pieces
+          </Button>
+        </div>
+
+        <Card padding="400">
+          <BlockStack gap="400">
+            <Text variant="headingMd" as="h2" style={{ fontSize: "14px" }}>Meta Scan</Text>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+              {scanKeys.map(key => {
+                const isRequired = REQUIRED_FIELDS.includes(key);
+                let val = combinedData[key];
+                useSaved && (val = savedMap[key]);
+
+                let isFilled = false;
+                (val !== undefined && val !== null && val.toString().trim() !== "") && (isFilled = true);
+                
+                let isOptionalEmpty = false;
+                (!isRequired && !isFilled) && (isOptionalEmpty = true);
+                
+                let isRequiredEmpty = false;
+                (isRequired && !isFilled) && (isRequiredEmpty = true);
+                
+                const labelText = key.charAt(0).toUpperCase() + key.slice(1).replace(/_/g, ' ');
+
+                return (
+                  <div key={key} style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                    {isFilled && <span style={{ color: "#008060", fontSize: "18px", lineHeight: "18px", width: "18px", height: "18px", display: "inline-block", textAlign: "center" }}>●</span>}
+                    {isOptionalEmpty && <span style={{ color: "#FFC453", fontSize: "18px", lineHeight: "18px", width: "18px", height: "18px", display: "inline-block", textAlign: "center" }}>●</span>}
+                    {isRequiredEmpty && <span style={{ color: "#D72C0D", fontSize: "18px", lineHeight: "18px", width: "18px", height: "18px", display: "inline-block", textAlign: "center" }}>●</span>}
+                    <span style={{ fontSize: "15px", fontWeight: "500" }}>
+                      {labelText}
+                      {(useSaved && isFilled) && ` — ${val}`}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </BlockStack>
+        </Card>
+      </BlockStack>
+      {geoToast && <Toast content="Geo data loaded" onDismiss={() => setGeoToast(false)} />}
+    </Frame>
   );
 }
