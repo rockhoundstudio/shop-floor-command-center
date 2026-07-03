@@ -400,7 +400,7 @@ export function NewProductIntakeTab({ fetcher }) {
   const surfaceFinishOptions = ["", "High Polish", "Matte", "Satin", "Hand Polish", "Natural"];
 
   const combinedData = { ...sharedFields, ...(pieces[0] || {}) };
-  const scanKeys = [...ROCKHOUND_FIELDS.map(f => f.key), "origin_story", "price"];
+  const scanKeys = [...ROCKHOUND_FIELDS.map(f => f.key), "origin_story", "price", "mohs_hardness", "luster", "fracture", "cleavage", "specific_gravity", "diaphaneity", "crystalSystem", "geologicalEra", "mineralClass", "rockComposition", "rockFormation", "geological_age", "fracture_pattern"];
 
   const actionData = fetcher.data;
   let useSaved = false;
