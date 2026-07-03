@@ -497,17 +497,30 @@ Return only valid JSON. No explanation. No markdown.`;
     // ==========================================
     let rawVisionResponse = "";
     try {
-      const rawImageUrl = body.get("imageUrl");
-      const imageUrl = rawImageUrl && rawImageUrl !== "undefined" && rawImageUrl !== "null" ? String(rawImageUrl).trim() : "";
+      const rawBase64 = body.get("imageBase64");
+      const rawMime = body.get("imageMimeType");
+
+      let imageBase64 = "";
+      let imageMimeType = "image/jpeg";
+
+      if (rawBase64 && rawBase64.length > 100) {
+        imageBase64 = rawBase64;
+        imageMimeType = rawMime || "image/jpeg";
+      } else {
+        const rawImageUrl = body.get("imageUrl");
+        const imageUrl = rawImageUrl && rawImageUrl !== "undefined" && rawImageUrl !== "null" ? String(rawImageUrl).trim() : "";
+        if (imageUrl) {
+          const cleanImageUrl = imageUrl.split("?")[0];
+          const imageRes = await fetch(cleanImageUrl);
+          const imageBuffer = await imageRes.arrayBuffer();
+          imageBase64 = Buffer.from(imageBuffer).toString("base64");
+          imageMimeType = (imageRes.headers.get("content-type") || "image/jpeg").split(";")[0].trim();
+        }
+      }
       
-      console.log("Tab2 AutoFill imageUrl sent:", imageUrl);
+      console.log("Tab2 AutoFill imageUrl sent:", body.get("imageUrl"));
       
-      if (imageUrl) {
-        const cleanImageUrl = imageUrl.split('?')[0];
-        const imageRes = await fetch(cleanImageUrl);
-        const imageBuffer = await imageRes.arrayBuffer();
-        const imageBase64 = Buffer.from(imageBuffer).toString("base64");
-        const imageMimeType = (imageRes.headers.get("content-type") || "image/jpeg").split(";")[0].trim();
+      if (imageBase64) {
 
         const clientPrompt = body.get("prompt");
         const promptText = clientPrompt && clientPrompt.trim() !== "" ? clientPrompt : `${promptStyle ? `Writing style instruction: ${promptStyle}\n\n` : ""}You are a gemologist and lapidary expert analyzing a handcrafted stone cabochon or specimen for an online store called Rockhound Studio. Look at this stone image carefully and return a JSON object with these fields — only include fields you can visually confirm, leave others out:
@@ -603,7 +616,7 @@ Return only valid JSON. No explanation. No markdown.`;
           console.error("Gemini Vision API Error:", geminiRes.status, errText);
         }
       } else {
-        rawVisionResponse = "No image URL provided to Vision pass.";
+        rawVisionResponse = "No image URL or base64 provided to Vision pass.";
       }
     } catch (error) {
       rawVisionResponse = `Vision Exception: ${error.message}`;

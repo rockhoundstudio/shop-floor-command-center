@@ -78,8 +78,8 @@ export function NewProductIntakeTab({ fetcher }) {
   }, []);
 
   const handleScanGeminiPhotos = useCallback(() => {
-    (pieces[0]?.photoFiles?.[0]) && handleScanPhoto({ piece: pieces[0], updatePiece: handlePieceChange, stageFetcher, setErrorMessage });
-  }, [pieces, stageFetcher, setErrorMessage]);
+    (pieces[0]?.photoFiles?.[0]) && handleScanPhoto({ piece: pieces[0], updatePiece: handlePieceChange, autoFillFetcher, setErrorMessage });
+  }, [pieces, autoFillFetcher, setErrorMessage]);
 
   const handleSharedFieldChange = useCallback((key, value) => {
     setSharedFields(prev => ({ ...prev, [key]: value }));
@@ -691,7 +691,7 @@ export function NewProductIntakeTab({ fetcher }) {
                         fullWidth
                         icon={MagicIcon}
                         disabled={disableScan}
-                        onClick={() => handleScanPhoto({ piece, updatePiece: handlePieceChange, stageFetcher, setErrorMessage })}
+                        onClick={() => handleScanPhoto({ piece, updatePiece: handlePieceChange, autoFillFetcher, setErrorMessage })}
                         loading={isScanning}
                         accessibilityLabel={`Scan First Photo with Gemini for row ${index + 1}`}
                       >

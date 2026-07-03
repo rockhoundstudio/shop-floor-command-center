@@ -1,22 +1,27 @@
-export async function handleScanPhoto({ piece, updatePiece, stageFetcher, setErrorMessage }) {
+export async function handleScanPhoto({ piece, updatePiece, autoFillFetcher, setErrorMessage }) {
   const file = piece.photoFiles[0];
   if (!file) return;
 
-  const token = Date.now().toString();
-  updatePiece(piece.id, "scanToken", token);
   updatePiece(piece.id, "scanError", "");
 
-  stageFetcher.submit(
-    {
-      intent: "stagedUpload",
-      pieceId: piece.id,
-      scanToken: token,
-      fileCount: "1",
-      filename_0: file.name,
-      fileSize_0: file.size.toString()
-    },
-    { method: "post", action: "/app/meta-injector-api" }
-  );
+  const reader = new FileReader();
+  reader.onload = () => {
+    const base64 = reader.result.split(",")[1];
+    autoFillFetcher.submit(
+      {
+        intent: "tab2AutoFill",
+        pieceId: piece.id,
+        imageBase64: base64,
+        imageMimeType: file.type || "image/jpeg"
+      },
+      { method: "post", action: "/app/meta-injector-autofill" }
+    );
+  };
+  reader.onerror = () => {
+    updatePiece(piece.id, "scanError", "Failed to read file");
+    setErrorMessage("Failed to read photo file");
+  };
+  reader.readAsDataURL(file);
 }
 
 export async function handleGenerateDescription({ sharedFields, pieces, descFetcher }) {
