@@ -64,18 +64,29 @@ export const action = async ({ request }) => {
     // ==========================================
     if (intent === "visionScan") {
       try {
-        const rawImageUrl = body.get("imageUrl");
-        const imageUrl = rawImageUrl && rawImageUrl !== "undefined" && rawImageUrl !== "null" ? String(rawImageUrl).trim() : "";
-        
-        if (!imageUrl) {
-          return Response.json({ description: "", error: "Gemini vision scan failed" });
-        }
+        const clientBase64 = body.get("imageBase64");
+        const clientMime = body.get("imageMimeType") || "image/jpeg";
 
-        const cleanImageUrl = imageUrl.split('?')[0];
-        const imageRes = await fetch(cleanImageUrl);
-        const imageBuffer = await imageRes.arrayBuffer();
-        const imageBase64 = Buffer.from(imageBuffer).toString("base64");
-        const imageMimeType = (imageRes.headers.get("content-type") || "image/jpeg").split(";")[0].trim();
+        let imageBase64 = "";
+        let imageMimeType = "image/jpeg";
+
+        if (clientBase64 && clientBase64 !== "undefined" && clientBase64 !== "null" && String(clientBase64).trim() !== "") {
+          imageBase64 = String(clientBase64).trim();
+          imageMimeType = clientMime;
+        } else {
+          const rawImageUrl = body.get("imageUrl");
+          const imageUrl = rawImageUrl && rawImageUrl !== "undefined" && rawImageUrl !== "null" ? String(rawImageUrl).trim() : "";
+          
+          if (!imageUrl) {
+            return Response.json({ description: "", error: "Gemini vision scan failed" });
+          }
+
+          const cleanImageUrl = imageUrl.split('?')[0];
+          const imageRes = await fetch(cleanImageUrl);
+          const imageBuffer = await imageRes.arrayBuffer();
+          imageBase64 = Buffer.from(imageBuffer).toString("base64");
+          imageMimeType = (imageRes.headers.get("content-type") || "image/jpeg").split(";")[0].trim();
+        }
 
         const promptText = "You are a lapidary artist and gemstone expert. Look at this stone photo and write a rich, earthy, one-of-a-kind product description in 2-3 paragraphs. Focus on the colors, patterns, texture, and character of the stone. Write in first person as Bob or Janyce from Rockhound Studio. No corporate language. Raw, authentic, collector energy.";
 

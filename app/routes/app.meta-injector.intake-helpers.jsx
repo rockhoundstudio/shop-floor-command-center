@@ -9,7 +9,7 @@ export async function handleScanPhoto({ piece, updatePiece, autoFillFetcher, set
     const base64 = reader.result.split(",")[1];
     autoFillFetcher.submit(
       {
-        intent: "tab2AutoFill",
+        intent: "visionScan",
         pieceId: piece.id,
         imageBase64: base64,
         imageMimeType: file.type || "image/jpeg"
