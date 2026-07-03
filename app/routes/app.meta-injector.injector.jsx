@@ -241,7 +241,7 @@ export function NewProductIntakeTab({ fetcher }) {
         handlePieceChange(pid, "isUploading", true);
 
         const doUpload = async () => {
-          const file = piece.photoFiles[0];
+          const file = photoFiles[0];
           const formData = new FormData();
           target.parameters.forEach(p => formData.append(p.name, p.value));
           formData.append("file", file);
