@@ -260,10 +260,12 @@ export function NewProductIntakeTab({ fetcher }) {
             );
           } catch (err) {
             handlePieceChange(pid, "scanError", err.message);
+            setGeneratedDescription("UPLOAD ERROR: " + err.message);
           } finally {
             handlePieceChange(pid, "isUploading", false);
           }
         };
+        setGeneratedDescription("Uploading to Shopify... file=" + (photoFiles[0] ? photoFiles[0].name : "MISSING") + " target=" + (target ? target.url.slice(0, 40) : "MISSING"));
         doUpload();
       })();
     })();
