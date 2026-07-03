@@ -295,7 +295,14 @@ export function NewProductIntakeTab({ fetcher }) {
           })();
           return updated;
         }));
-        data.description && setGeneratedDescription(data.description);
+        const descParts = [];
+        data.color && descParts.push("Color: " + data.color);
+        data.cut_and_shape && descParts.push("Cut & Shape: " + data.cut_and_shape);
+        data.surface_finish && descParts.push("Surface Finish: " + data.surface_finish);
+        data.honest_flaws_and_character && descParts.push(data.honest_flaws_and_character);
+        data.alt_text && descParts.push(data.alt_text);
+        const builtDesc = data.description || descParts.join("\n\n");
+        builtDesc && setGeneratedDescription(builtDesc);
       })();
 
       (isScan && isError) && (() => {
