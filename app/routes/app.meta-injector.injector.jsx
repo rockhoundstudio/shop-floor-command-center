@@ -255,7 +255,7 @@ export function NewProductIntakeTab({ fetcher }) {
             handlePieceChange(pid, "stagedResourceUrls", newUrls);
 
             autoFillFetcher.submit(
-              { intent: "tab2AutoFill", pieceId: pid, imageUrl: target.resourceUrl },
+              { intent: "visionScan", pieceId: pid, imageUrl: target.resourceUrl },
               { method: "post", action: "/app/meta-injector-autofill" }
             );
           } catch (err) {
@@ -265,7 +265,6 @@ export function NewProductIntakeTab({ fetcher }) {
             handlePieceChange(pid, "isUploading", false);
           }
         };
-        setGeneratedDescription("Uploading to Shopify... file=" + (photoFiles[0] ? photoFiles[0].name : "MISSING") + " target=" + (target ? target.url.slice(0, 40) : "MISSING"));
         doUpload();
       })();
     })();
@@ -278,7 +277,7 @@ export function NewProductIntakeTab({ fetcher }) {
 
     (isIdle && hasData) && (() => {
       const data = autoFillFetcher.data;
-      const isScan = data.intent === "tab2AutoFill";
+      const isScan = data.intent === "visionScan";
       const isSuccess = data.success === true;
       const isError = data.success === false;
 
