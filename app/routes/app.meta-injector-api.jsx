@@ -317,7 +317,9 @@ export const action = async ({ request }) => {
       }
 
       const targets = uploadResult?.data?.stagedUploadsCreate?.stagedTargets || [];
-      return data({ success: true, intent: "stagedUpload", targets });
+      const pieceId = formData.get("pieceId");
+      const scanToken = formData.get("scanToken");
+      return data({ success: true, intent: "stagedUpload", targets, pieceId, scanToken });
     } catch (error) {
       console.error("STAGED UPLOAD CRASH:", error);
       return data({ success: false, intent: "stagedUpload", error: error.message });
