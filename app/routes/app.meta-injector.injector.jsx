@@ -293,6 +293,7 @@ export function NewProductIntakeTab({ fetcher }) {
           })();
           return updated;
         }));
+        data.description && setGeneratedDescription(data.description);
       })();
 
       (isScan && isError) && (() => {
