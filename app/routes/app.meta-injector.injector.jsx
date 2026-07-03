@@ -19,11 +19,18 @@ export function NewProductIntakeTab({ fetcher }) {
     collection_location: "",
     collection_date: "",
     origin_location: "",
-    rescued_by: "",
+    rescued_by: "Bob and Janyce",
     treatment_status: "100% Natural/Untreated",
     bench_notes: "",
     origin_story: "",
-    primary_use: ""
+    primary_use: "",
+    handcrafted_by: "Bob & Janyce, Rockhound Studio",
+    is_one_of_a_kind: "Yes — one of a kind",
+    treated: "Untreated — Natural",
+    found_object: "true",
+    condition: "new",
+    target_gender: "Unisex",
+    age_group: "adult"
   });
 
   const [pieces, setPieces] = useState([
@@ -84,6 +91,14 @@ export function NewProductIntakeTab({ fetcher }) {
   const handleSharedFieldChange = useCallback((key, value) => {
     setSharedFields(prev => ({ ...prev, [key]: value }));
   }, []);
+
+  const handleStoneFamilyChange = useCallback((value) => {
+    setSharedFields(prev => ({ ...prev, stone_family: value }));
+    (value && value.trim() !== "") && autoFillFetcher.submit(
+      { intent: "geoLookup", stoneFamily: value },
+      { method: "post", action: "/app/meta-injector-autofill" }
+    );
+  }, [autoFillFetcher]);
 
   const handlePieceChange = useCallback((id, key, value) => {
     setPieces(prev => prev.map(p => {
@@ -312,6 +327,37 @@ export function NewProductIntakeTab({ fetcher }) {
   }, [autoFillFetcher.state, autoFillFetcher.data]);
 
   useEffect(() => {
+    const isIdle = autoFillFetcher.state === "idle";
+    const hasData = autoFillFetcher.data !== undefined && autoFillFetcher.data !== null;
+
+    (isIdle && hasData) && (() => {
+      const data = autoFillFetcher.data;
+      (data.geoFields) && (() => {
+        const geo = data.geoFields;
+        setSharedFields(prev => {
+          const updated = { ...prev };
+          (geo.hardness !== undefined) && (updated.hardness = geo.hardness);
+          (geo.luster !== undefined) && (updated.luster = geo.luster);
+          (geo.fracture !== undefined) && (updated.fracture = geo.fracture);
+          (geo.cleavage !== undefined) && (updated.cleavage = geo.cleavage);
+          (geo.specificGravity !== undefined) && (updated.specificGravity = geo.specificGravity);
+          (geo.diaphaneity !== undefined) && (updated.diaphaneity = geo.diaphaneity);
+          (geo.crystalSystem !== undefined) && (updated.crystalSystem = geo.crystalSystem);
+          (geo.geologicalEra !== undefined) && (updated.geologicalEra = geo.geologicalEra);
+          (geo.mineralClass !== undefined) && (updated.mineralClass = geo.mineralClass);
+          (geo.rockComposition !== undefined) && (updated.rockComposition = geo.rockComposition);
+          (geo.rockFormation !== undefined) && (updated.rockFormation = geo.rockFormation);
+          (geo.mohs_hardness !== undefined) && (updated.mohs_hardness = geo.mohs_hardness);
+          (geo.fracture_pattern !== undefined) && (updated.fracture_pattern = geo.fracture_pattern);
+          (geo.specific_gravity !== undefined) && (updated.specific_gravity = geo.specific_gravity);
+          (geo.geological_age !== undefined) && (updated.geological_age = geo.geological_age);
+          return updated;
+        });
+      })();
+    })();
+  }, [autoFillFetcher.state, autoFillFetcher.data]);
+
+  useEffect(() => {
     const isIdle = descriptionFetcher.state === "idle";
     const hasData = descriptionFetcher.data !== undefined && descriptionFetcher.data !== null;
 
@@ -522,7 +568,7 @@ export function NewProductIntakeTab({ fetcher }) {
               <TextField
                 label={renderLabel("Stone Family", "stone_family", sharedFields.stone_family)}
                 value={sharedFields.stone_family}
-                onChange={(v) => handleSharedFieldChange("stone_family", v)}
+                onChange={handleStoneFamilyChange}
                 autoComplete="off"
                 accessibilityLabel="Enter shared stone family"
               />

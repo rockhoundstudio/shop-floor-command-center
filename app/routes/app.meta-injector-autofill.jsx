@@ -48,6 +48,89 @@ async function fetchMindat(title) {
 }
 
 // ==========================================
+// STATIC DATA: GEO LIBRARY
+// ==========================================
+function getGeoData(stoneFamily) {
+  const family = stoneFamily.toLowerCase().trim();
+  
+  const geoLibrary = {
+    "agate": {
+      hardness: "6.5 - 7", luster: "Vitreous to waxy", fracture: "Conchoidal", cleavage: "None", specificGravity: "2.58 - 2.64", diaphaneity: "Translucent to opaque", crystalSystem: "Trigonal", geologicalEra: "Various", mineralClass: "Silicates", rockComposition: "Silicon dioxide", rockFormation: "Volcanic cavities", mohs_hardness: "6.5 - 7", fracture_pattern: "Conchoidal", specific_gravity: "2.58 - 2.64", geological_age: "Various"
+    },
+    "jasper": {
+      hardness: "6.5 - 7", luster: "Vitreous to dull", fracture: "Conchoidal", cleavage: "None", specificGravity: "2.5 - 2.9", diaphaneity: "Opaque", crystalSystem: "Trigonal (microcrystalline)", geologicalEra: "Various", mineralClass: "Silicates", rockComposition: "Silicon dioxide with impurities", rockFormation: "Sedimentary or volcanic", mohs_hardness: "6.5 - 7", fracture_pattern: "Conchoidal", specific_gravity: "2.5 - 2.9", geological_age: "Various"
+    },
+    "chalcedony": {
+      hardness: "6.5 - 7", luster: "Waxy, vitreous, dull", fracture: "Conchoidal", cleavage: "None", specificGravity: "2.59 - 2.61", diaphaneity: "Translucent to opaque", crystalSystem: "Trigonal", geologicalEra: "Various", mineralClass: "Silicates", rockComposition: "Silicon dioxide", rockFormation: "Sedimentary or volcanic cavities", mohs_hardness: "6.5 - 7", fracture_pattern: "Conchoidal", specific_gravity: "2.59 - 2.61", geological_age: "Various"
+    },
+    "obsidian": {
+      hardness: "5 - 5.5", luster: "Vitreous", fracture: "Conchoidal", cleavage: "None", specificGravity: "2.35 - 2.60", diaphaneity: "Translucent to opaque", crystalSystem: "Amorphous", geologicalEra: "Various (primarily Cenozoic)", mineralClass: "Mineraloid", rockComposition: "Silica-rich volcanic glass", rockFormation: "Extrusive igneous", mohs_hardness: "5 - 5.5", fracture_pattern: "Conchoidal", specific_gravity: "2.35 - 2.60", geological_age: "Various"
+    },
+    "quartz": {
+      hardness: "7", luster: "Vitreous", fracture: "Conchoidal", cleavage: "None", specificGravity: "2.65", diaphaneity: "Transparent to opaque", crystalSystem: "Trigonal", geologicalEra: "Various", mineralClass: "Silicates", rockComposition: "Silicon dioxide", rockFormation: "Igneous, metamorphic, and sedimentary", mohs_hardness: "7", fracture_pattern: "Conchoidal", specific_gravity: "2.65", geological_age: "Various"
+    },
+    "amethyst": {
+      hardness: "7", luster: "Vitreous", fracture: "Conchoidal", cleavage: "None", specificGravity: "2.65", diaphaneity: "Transparent to translucent", crystalSystem: "Trigonal", geologicalEra: "Various", mineralClass: "Silicates", rockComposition: "Silicon dioxide with iron impurities", rockFormation: "Geodes and volcanic rocks", mohs_hardness: "7", fracture_pattern: "Conchoidal", specific_gravity: "2.65", geological_age: "Various"
+    },
+    "tiger's eye": {
+      hardness: "6.5 - 7", luster: "Silky", fracture: "Fibrous", cleavage: "None", specificGravity: "2.58 - 2.64", diaphaneity: "Opaque", crystalSystem: "Trigonal", geologicalEra: "Various", mineralClass: "Silicates", rockComposition: "Silicon dioxide, Crocidolite", rockFormation: "Metamorphic", mohs_hardness: "6.5 - 7", fracture_pattern: "Fibrous", specific_gravity: "2.58 - 2.64", geological_age: "Various"
+    },
+    "turquoise": {
+      hardness: "5 - 6", luster: "Waxy to dull", fracture: "Conchoidal to uneven", cleavage: "Perfect on {001}, good on {010}", specificGravity: "2.6 - 2.9", diaphaneity: "Opaque", crystalSystem: "Triclinic", geologicalEra: "Various", mineralClass: "Phosphates", rockComposition: "Hydrated copper aluminum phosphate", rockFormation: "Secondary mineral in alteration zones", mohs_hardness: "5 - 6", fracture_pattern: "Conchoidal to uneven", specific_gravity: "2.6 - 2.9", geological_age: "Various"
+    },
+    "malachite": {
+      hardness: "3.5 - 4", luster: "Adamantine to vitreous; silky or dull", fracture: "Conchoidal to uneven", cleavage: "Perfect on {201}", specificGravity: "3.6 - 4.0", diaphaneity: "Translucent to opaque", crystalSystem: "Monoclinic", geologicalEra: "Various", mineralClass: "Carbonates", rockComposition: "Copper carbonate hydroxide", rockFormation: "Secondary mineral in copper deposits", mohs_hardness: "3.5 - 4", fracture_pattern: "Conchoidal to uneven", specific_gravity: "3.6 - 4.0", geological_age: "Various"
+    },
+    "labradorite": {
+      hardness: "6 - 6.5", luster: "Vitreous", fracture: "Uneven to conchoidal", cleavage: "Perfect on {001}, good on {010}", specificGravity: "2.68 - 2.72", diaphaneity: "Transparent to opaque", crystalSystem: "Triclinic", geologicalEra: "Various", mineralClass: "Silicates (Feldspar)", rockComposition: "Calcium sodium aluminum silicate", rockFormation: "Igneous", mohs_hardness: "6 - 6.5", fracture_pattern: "Uneven to conchoidal", specific_gravity: "2.68 - 2.72", geological_age: "Various"
+    },
+    "moonstone": {
+      hardness: "6 - 6.5", luster: "Vitreous", fracture: "Uneven to conchoidal", cleavage: "Perfect on {001}, good on {010}", specificGravity: "2.55 - 2.61", diaphaneity: "Transparent to opaque", crystalSystem: "Monoclinic or Triclinic", geologicalEra: "Various", mineralClass: "Silicates (Feldspar)", rockComposition: "Potassium aluminum silicate", rockFormation: "Igneous or metamorphic", mohs_hardness: "6 - 6.5", fracture_pattern: "Uneven to conchoidal", specific_gravity: "2.55 - 2.61", geological_age: "Various"
+    },
+    "onyx": {
+      hardness: "6.5 - 7", luster: "Vitreous", fracture: "Conchoidal", cleavage: "None", specificGravity: "2.55 - 2.70", diaphaneity: "Translucent to opaque", crystalSystem: "Trigonal", geologicalEra: "Various", mineralClass: "Silicates", rockComposition: "Silicon dioxide", rockFormation: "Sedimentary or volcanic cavities", mohs_hardness: "6.5 - 7", fracture_pattern: "Conchoidal", specific_gravity: "2.55 - 2.70", geological_age: "Various"
+    },
+    "opal": {
+      hardness: "5.5 - 6", luster: "Vitreous to resinous", fracture: "Conchoidal", cleavage: "None", specificGravity: "2.09 - 2.11", diaphaneity: "Transparent to opaque", crystalSystem: "Amorphous", geologicalEra: "Various", mineralClass: "Mineraloid", rockComposition: "Hydrated silicon dioxide", rockFormation: "Sedimentary or volcanic", mohs_hardness: "5.5 - 6", fracture_pattern: "Conchoidal", specific_gravity: "2.09 - 2.11", geological_age: "Various"
+    },
+    "petrified wood": {
+      hardness: "6.5 - 7", luster: "Vitreous to dull", fracture: "Conchoidal", cleavage: "None", specificGravity: "2.5 - 2.7", diaphaneity: "Opaque", crystalSystem: "Trigonal (microcrystalline)", geologicalEra: "Various", mineralClass: "Silicates", rockComposition: "Silicon dioxide replacing organic matter", rockFormation: "Sedimentary", mohs_hardness: "6.5 - 7", fracture_pattern: "Conchoidal", specific_gravity: "2.5 - 2.7", geological_age: "Various"
+    },
+    "serpentine": {
+      hardness: "2.5 - 5.5", luster: "Greasy, waxy, or silky", fracture: "Conchoidal to splintery", cleavage: "Perfect on {001} (but often microscopic)", specificGravity: "2.5 - 2.6", diaphaneity: "Translucent to opaque", crystalSystem: "Monoclinic", geologicalEra: "Various", mineralClass: "Silicates", rockComposition: "Magnesium iron silicate hydroxide", rockFormation: "Metamorphic", mohs_hardness: "2.5 - 5.5", fracture_pattern: "Conchoidal to splintery", specific_gravity: "2.5 - 2.6", geological_age: "Various"
+    },
+    "rhodonite": {
+      hardness: "5.5 - 6.5", luster: "Vitreous", fracture: "Uneven to conchoidal", cleavage: "Perfect on {110} and {1-10}", specificGravity: "3.5 - 3.7", diaphaneity: "Transparent to opaque", crystalSystem: "Triclinic", geologicalEra: "Various", mineralClass: "Silicates", rockComposition: "Manganese iron magnesium calcium silicate", rockFormation: "Metamorphic or hydrothermal", mohs_hardness: "5.5 - 6.5", fracture_pattern: "Uneven to conchoidal", specific_gravity: "3.5 - 3.7", geological_age: "Various"
+    },
+    "sodalite": {
+      hardness: "5.5 - 6", luster: "Vitreous to greasy", fracture: "Conchoidal to uneven", cleavage: "Poor on {011}", specificGravity: "2.14 - 2.30", diaphaneity: "Transparent to opaque", crystalSystem: "Isometric", geologicalEra: "Various", mineralClass: "Silicates", rockComposition: "Sodium aluminum silicate chloride", rockFormation: "Igneous", mohs_hardness: "5.5 - 6", fracture_pattern: "Conchoidal to uneven", specific_gravity: "2.14 - 2.30", geological_age: "Various"
+    },
+    "unakite": {
+      hardness: "6 - 7", luster: "Vitreous to dull", fracture: "Uneven", cleavage: "Varies (mixture)", specificGravity: "3.0 - 3.2", diaphaneity: "Opaque", crystalSystem: "Mixture (Monoclinic/Triclinic)", geologicalEra: "Various", mineralClass: "Rock (Granite altered)", rockComposition: "Epidote, pink orthoclase, quartz", rockFormation: "Metamorphic", mohs_hardness: "6 - 7", fracture_pattern: "Uneven", specific_gravity: "3.0 - 3.2", geological_age: "Various"
+    },
+    "andesite": {
+      hardness: "6 - 7", luster: "Dull", fracture: "Uneven", cleavage: "None", specificGravity: "2.6 - 2.8", diaphaneity: "Opaque", crystalSystem: "Mixture", geologicalEra: "Various", mineralClass: "Rock", rockComposition: "Plagioclase feldspar, amphibole", rockFormation: "Extrusive igneous", mohs_hardness: "6 - 7", fracture_pattern: "Uneven", specific_gravity: "2.6 - 2.8", geological_age: "Various"
+    },
+    "basalt": {
+      hardness: "6", luster: "Dull", fracture: "Uneven to conchoidal", cleavage: "None", specificGravity: "2.8 - 3.0", diaphaneity: "Opaque", crystalSystem: "Mixture", geologicalEra: "Various", mineralClass: "Rock", rockComposition: "Plagioclase, pyroxene, olivine", rockFormation: "Extrusive igneous", mohs_hardness: "6", fracture_pattern: "Uneven to conchoidal", specific_gravity: "2.8 - 3.0", geological_age: "Various"
+    },
+    "granite": {
+      hardness: "6 - 7", luster: "Dull to vitreous", fracture: "Uneven", cleavage: "None", specificGravity: "2.6 - 2.7", diaphaneity: "Opaque", crystalSystem: "Mixture", geologicalEra: "Various", mineralClass: "Rock", rockComposition: "Quartz, feldspar, mica", rockFormation: "Intrusive igneous", mohs_hardness: "6 - 7", fracture_pattern: "Uneven", specific_gravity: "2.6 - 2.7", geological_age: "Various"
+    },
+    "sandstone": {
+      hardness: "6 - 7", luster: "Dull", fracture: "Uneven", cleavage: "None", specificGravity: "2.2 - 2.8", diaphaneity: "Opaque", crystalSystem: "Mixture", geologicalEra: "Various", mineralClass: "Rock", rockComposition: "Sand-sized minerals or rock grains", rockFormation: "Sedimentary", mohs_hardness: "6 - 7", fracture_pattern: "Uneven", specific_gravity: "2.2 - 2.8", geological_age: "Various"
+    }
+  };
+
+  const emptyFields = {
+    hardness: "", luster: "", fracture: "", cleavage: "", specificGravity: "", diaphaneity: "", crystalSystem: "", geologicalEra: "", mineralClass: "", rockComposition: "", rockFormation: "", mohs_hardness: "", fracture_pattern: "", specific_gravity: "", geological_age: ""
+  };
+
+  return geoLibrary[family] || emptyFields;
+}
+
+
+// ==========================================
 // ACTION: DATA MERGER & LOOKUP
 // ==========================================
 export const action = async ({ request }) => {
@@ -58,6 +141,12 @@ export const action = async ({ request }) => {
     
     const actionType = body.get("actionType");
     const intent = body.get("intent");
+
+    if (intent === "geoLookup") {
+      const stoneFamily = body.get("stoneFamily") || "";
+      const geoFields = getGeoData(stoneFamily);
+      return Response.json({ geoFields });
+    }
 
     // ==========================================
     // INTENT: VISION SCAN FOR DESCRIPTION
