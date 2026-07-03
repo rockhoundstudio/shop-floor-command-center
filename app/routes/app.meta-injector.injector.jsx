@@ -283,7 +283,6 @@ export function NewProductIntakeTab({ fetcher }) {
       const isError = data.success === false;
 
       (isScan && isSuccess) && (() => {
-        setErrorMessage("SCAN RESULT: " + JSON.stringify(data).slice(0, 300));
         setPieces(prev => prev.map(p => {
           let updated = { ...p };
           (p.id === data.pieceId) && (() => {
@@ -296,14 +295,7 @@ export function NewProductIntakeTab({ fetcher }) {
           })();
           return updated;
         }));
-        const descParts = [];
-        data.color && descParts.push("Color: " + data.color);
-        data.cut_and_shape && descParts.push("Cut & Shape: " + data.cut_and_shape);
-        data.surface_finish && descParts.push("Surface Finish: " + data.surface_finish);
-        data.honest_flaws_and_character && descParts.push(data.honest_flaws_and_character);
-        data.alt_text && descParts.push(data.alt_text);
-        const builtDesc = data.description || descParts.join("\n\n");
-        builtDesc && setGeneratedDescription(builtDesc);
+        data.description && setGeneratedDescription(data.description);
       })();
 
       (isScan && isError) && (() => {
