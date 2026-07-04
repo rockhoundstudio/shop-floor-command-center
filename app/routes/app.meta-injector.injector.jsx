@@ -548,12 +548,36 @@ export function NewProductIntakeTab({ fetcher }) {
                 />
               </div>
               <div style={{ minHeight: "54px" }}>
-                <TextField
+                <Select
                   label={renderLabel("Stone Family", "stone_family", sharedFields.stone_family)}
+                  options={[
+                    { label: "Select stone family...", value: "" },
+                    { label: "agate", value: "agate" },
+                    { label: "jasper", value: "jasper" },
+                    { label: "chalcedony", value: "chalcedony" },
+                    { label: "obsidian", value: "obsidian" },
+                    { label: "quartz", value: "quartz" },
+                    { label: "amethyst", value: "amethyst" },
+                    { label: "tiger's eye", value: "tiger's eye" },
+                    { label: "turquoise", value: "turquoise" },
+                    { label: "malachite", value: "malachite" },
+                    { label: "labradorite", value: "labradorite" },
+                    { label: "moonstone", value: "moonstone" },
+                    { label: "onyx", value: "onyx" },
+                    { label: "opal", value: "opal" },
+                    { label: "petrified wood", value: "petrified wood" },
+                    { label: "serpentine", value: "serpentine" },
+                    { label: "rhodonite", value: "rhodonite" },
+                    { label: "sodalite", value: "sodalite" },
+                    { label: "unakite", value: "unakite" },
+                    { label: "andesite", value: "andesite" },
+                    { label: "basalt", value: "basalt" },
+                    { label: "granite", value: "granite" },
+                    { label: "sandstone", value: "sandstone" }
+                  ]}
                   value={sharedFields.stone_family}
                   onChange={(v) => handleSharedFieldChange("stone_family", v)}
-                  autoComplete="off"
-                  accessibilityLabel="Enter shared stone family"
+                  accessibilityLabel="Select shared stone family"
                 />
                 <div style={{ marginTop: "8px" }}>
                   <Button
