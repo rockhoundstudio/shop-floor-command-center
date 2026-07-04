@@ -270,24 +270,6 @@ export function NewProductIntakeTab({ fetcher }) {
   }, [fetcher.state, fetcher.data]);
 
   useEffect(() => {
-    const isIdle = autoFillFetcher.state === "idle";
-    const hasData = autoFillFetcher.data !== undefined && autoFillFetcher.data !== null;
-
-    (isIdle && hasData) && (() => {
-      const data = autoFillFetcher.data;
-      const hasDescription = data.description !== undefined && data.description !== null && data.description !== "";
-
-      (hasDescription) && (() => {
-        setPieces(prev => prev.map((p, i) =>
-          p.id === data.pieceId || (!data.pieceId && i === 0)
-            ? { ...p, generated_description: data.description }
-            : p
-        ));
-      })();
-    })();
-  }, [autoFillFetcher.state, autoFillFetcher.data]);
-
-  useEffect(() => {
     const isIdle = stageFetcher.state === "idle";
     const hasData = stageFetcher.data !== undefined && stageFetcher.data !== null;
 
@@ -356,12 +338,12 @@ export function NewProductIntakeTab({ fetcher }) {
         setPieces(prev => prev.map(p => {
           let updated = { ...p };
           (p.id === data.pieceId) && (() => {
-            data.surface_finish && (updated.surface_finish = data.surface_finish);
-            data.primary_color && (updated.primary_color = data.primary_color);
-            data.stone_shape && (updated.stone_shape = data.stone_shape);
-            data.dimensions_mm && (updated.dimensions_mm = data.dimensions_mm);
-            data.cut_and_shape && (updated.cut_and_shape = data.cut_and_shape);
-            data.description && (updated.generated_description = data.description);
+            (data.description !== undefined && data.description !== "") && (updated.generated_description = data.description);
+            (data.primary_color !== undefined && data.primary_color !== "") && (updated.primary_color = data.primary_color);
+            (data.cut_and_shape !== undefined && data.cut_and_shape !== "") && (updated.cut_and_shape = data.cut_and_shape);
+            (data.surface_finish !== undefined && data.surface_finish !== "") && (updated.surface_finish = data.surface_finish);
+            (data.stone_shape !== undefined && data.stone_shape !== "") && (updated.stone_shape = data.stone_shape);
+            (data.dimensions_mm !== undefined && data.dimensions_mm !== "") && (updated.dimensions_mm = data.dimensions_mm);
             updated.scanError = "";
           })();
           return updated;
