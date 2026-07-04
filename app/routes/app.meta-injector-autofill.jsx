@@ -149,6 +149,63 @@ export const action = async ({ request }) => {
     }
 
     // ==========================================
+    // INTENT: STAGED UPLOAD
+    // ==========================================
+    if (intent === "stagedUpload") {
+      try {
+        const filename = body.get("filename") || "image.jpg";
+        const mimeType = body.get("mimeType") || "image/jpeg";
+        const fileSize = body.get("fileSize") || "1024";
+
+        const response = await admin.graphql(
+          `#graphql
+          mutation stagedUploadsCreate($input: [StagedUploadInput!]!) {
+            stagedUploadsCreate(input: $input) {
+              stagedTargets {
+                url
+                resourceUrl
+                parameters {
+                  name
+                  value
+                }
+              }
+              userErrors {
+                field
+                message
+              }
+            }
+          }`,
+          {
+            variables: {
+              input: [
+                {
+                  resource: "IMAGE",
+                  filename: filename,
+                  mimeType: mimeType,
+                  fileSize: String(fileSize),
+                  httpMethod: "POST"
+                }
+              ]
+            }
+          }
+        );
+
+        const result = await response.json();
+        const targets = result?.data?.stagedUploadsCreate?.stagedTargets || [];
+
+        if (targets.length > 0) {
+          const { url, parameters, resourceUrl } = targets[0];
+          return Response.json({ url, parameters, resourceUrl });
+        } else {
+          return Response.json({ error: "Staged upload failed" });
+        }
+      } catch (error) {
+        console.error("Staged Upload Fault:", error.message);
+        return Response.json({ error: "Staged upload failed" });
+      }
+    }
+
+    // ==========================================
     // INTENT: VISION SCAN FOR DESCRIPTION
     // ==========================================
     if (intent === "visionScan") {
