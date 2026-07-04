@@ -59,7 +59,12 @@ export function NewProductIntakeTab({ fetcher }) {
   const [errorMessage, setErrorMessage] = useState("");
   const [generatedDescription, setGeneratedDescription] = useState("");
   const [geoToast, setGeoToast] = useState(false);
-  const [titleToast, setTitleToast] = useState(false);
+  
+  // Title Parse Toast State
+  const [titleToastActive, setTitleToastActive] = useState(false);
+  const [titleToastMsg, setTitleToastMsg] = useState("");
+  const [titleToastError, setTitleToastError] = useState(false);
+  
   const [lastScannedPieceId, setLastScannedPieceId] = useState(null);
 
   const handleTopDropZoneDrop = useCallback((dropFiles) => {
@@ -390,54 +395,56 @@ export function NewProductIntakeTab({ fetcher }) {
   }, [autoFillFetcher.state, autoFillFetcher.data]);
 
   useEffect(() => {
-    const isIdle = autoFillFetcher.state === "idle";
-    const hasData = autoFillFetcher.data !== undefined && autoFillFetcher.data !== null;
+    if (!autoFillFetcher.data?.titleParse) return;
+    const parsed = autoFillFetcher.data.titleParse;
 
-    (isIdle && hasData) && (() => {
-      const data = autoFillFetcher.data;
-      (data.titleParse) && (() => {
-        const parsed = data.titleParse;
-        setSharedFields(prev => {
-          const updated = { ...prev };
-          (parsed.stone_family !== undefined) && (updated.stone_family = parsed.stone_family);
-          (parsed.material !== undefined) && (updated.material = parsed.material);
-          (parsed.collection_name !== undefined) && (updated.collection_location = parsed.collection_name);
-          (parsed.origin_name !== undefined) && (updated.origin_location = parsed.origin_name);
-          (parsed.origin_story !== undefined) && (updated.origin_story = parsed.origin_story);
-          (parsed.mohs_hardness !== undefined) && (updated.mohs_hardness = parsed.mohs_hardness);
-          (parsed.luster !== undefined) && (updated.luster = parsed.luster);
-          (parsed.fracture !== undefined) && (updated.fracture = parsed.fracture);
-          (parsed.cleavage !== undefined) && (updated.cleavage = parsed.cleavage);
-          (parsed.specific_gravity !== undefined) && (updated.specific_gravity = parsed.specific_gravity);
-          (parsed.diaphaneity !== undefined) && (updated.diaphaneity = parsed.diaphaneity);
-          (parsed.crystal_system !== undefined) && (updated.crystal_system = parsed.crystal_system);
-          (parsed.geological_era !== undefined) && (updated.geological_era = parsed.geological_era);
-          (parsed.mineral_class !== undefined) && (updated.mineral_class = parsed.mineral_class);
-          (parsed.rock_composition !== undefined) && (updated.rock_composition = parsed.rock_composition);
-          (parsed.rock_formation !== undefined) && (updated.rock_formation = parsed.rock_formation);
-          (parsed.geological_age !== undefined) && (updated.geological_age = parsed.geological_age);
-          (parsed.fracture_pattern !== undefined) && (updated.fracture_pattern = parsed.fracture_pattern);
-          return updated;
-        });
+    // SHARED FIELDS
+    setSharedFields(prev => ({
+      ...prev,
+      material: parsed.material || "Stone",
+      stone_family: parsed.stone_family || prev.stone_family,
+      collection_location: parsed.collection_name || prev.collection_location,
+      origin_location: parsed.origin_name || prev.origin_location,
+      origin_story: parsed.origin_story || prev.origin_story,
+      mohs_hardness: parsed.mohs_hardness || prev.mohs_hardness,
+      luster: parsed.luster || prev.luster,
+      fracture: parsed.fracture || prev.fracture,
+      cleavage: parsed.cleavage || prev.cleavage,
+      specificGravity: parsed.specific_gravity || prev.specificGravity,
+      diaphaneity: parsed.diaphaneity || prev.diaphaneity,
+      crystalSystem: parsed.crystal_system || prev.crystalSystem,
+      geologicalEra: parsed.geological_era || prev.geologicalEra,
+      mineralClass: parsed.mineral_class || prev.mineralClass,
+      rockComposition: parsed.rock_composition || prev.rockComposition,
+      rockFormation: parsed.rock_formation || prev.rockFormation,
+      geological_age: parsed.geological_age || prev.geological_age,
+      fracture_pattern: parsed.fracture_pattern || prev.fracture_pattern,
+      collection_story: parsed.collection_story || prev.collection_story,
+      origin_handle: parsed.origin_handle || prev.origin_handle,
+    }));
 
-        const targetId = lastScannedPieceId || pieces[0]?.id;
-        (targetId) && (() => {
-          setPieces(prev => prev.map(p => {
-            let updated = { ...p };
-            (p.id === targetId) && (() => {
-              const pieceTitleVal = parsed.canonical_title || parsed.product_title;
-              (pieceTitleVal !== undefined) && (updated.piece_name = pieceTitleVal);
-              (parsed.seo_title !== undefined) && (updated.seo_title = parsed.seo_title);
-              (parsed.handle !== undefined) && (updated.handle = parsed.handle);
-            })();
-            return updated;
-          }));
-        })();
+    // PER-PIECE ROW — write canonical title back to piece name field
+    if (parsed.canonical_title || parsed.product_title) {
+      const pieceTitleVal = parsed.canonical_title || parsed.product_title;
+      setPieces(prev => prev.map((p, i) =>
+        p.id === lastScannedPieceId || (!lastScannedPieceId && i === 0)
+          ? { ...p, piece_name: pieceTitleVal, seo_title: parsed.seo_title, handle: parsed.handle }
+          : p
+      ));
+    }
 
-        setTitleToast(true);
-      })();
-    })();
-  }, [autoFillFetcher.state, autoFillFetcher.data, lastScannedPieceId, pieces]);
+    // FLAG — needs new origin page
+    if (parsed.needs_new_origin_page) {
+      setTitleToastMsg("⚠️ No origin page found — create one for: " + parsed.origin_name);
+      setTitleToastError(true);
+      setTitleToastActive(true);
+    } else {
+      setTitleToastMsg("Title parsed — fields pre-filled");
+      setTitleToastError(false);
+      setTitleToastActive(true);
+    }
+
+  }, [autoFillFetcher.data, lastScannedPieceId]);
 
   useEffect(() => {
     const isIdle = descriptionFetcher.state === "idle";
@@ -1032,7 +1039,13 @@ export function NewProductIntakeTab({ fetcher }) {
         </Card>
       </BlockStack>
       {geoToast && <Toast content="Geo data loaded" onDismiss={() => setGeoToast(false)} />}
-      {titleToast && <Toast content="Title parsed — fields pre-filled" onDismiss={() => setTitleToast(false)} />}
+      {titleToastActive && (
+        <Toast 
+          content={titleToastMsg} 
+          error={titleToastError} 
+          onDismiss={() => setTitleToastActive(false)} 
+        />
+      )}
     </Frame>
   );
 }
