@@ -348,12 +348,7 @@ export const action = async ({ request }) => {
         title: title,
         descriptionHtml: descriptionHtml,
         productType: productType,
-        status: status,
-        variants: [
-          {
-            price: price
-          }
-        ]
+        status: status
       };
 
       const createResponse = await admin.graphql(
@@ -385,6 +380,33 @@ export const action = async ({ request }) => {
 
       const productId = createdProduct.id;
       const productHandle = createdProduct.handle;
+
+      // Step 1.5: Set Price on Default Variant
+      const numericPrice = parseFloat(price);
+      (!isNaN(numericPrice) && numericPrice > 0) && await (async () => {
+        const variantResponse = await admin.graphql(
+          `#graphql
+          query getDefaultVariant($id: ID!) {
+            product(id: $id) {
+              variants(first: 1) {
+                edges { node { id } }
+              }
+            }
+          }`,
+          { variables: { id: productId } }
+        );
+        const variantResult = await variantResponse.json();
+        const variantId = variantResult?.data?.product?.variants?.edges?.[0]?.node?.id;
+        (variantId) && await admin.graphql(
+          `#graphql
+          mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+            productVariantsBulkUpdate(productId: $productId, variants: $variants) {
+              userErrors { field message }
+            }
+          }`,
+          { variables: { productId, variants: [{ id: variantId, price: price.toString() }] } }
+        );
+      })();
 
       // Step 2: Attach Media
       const mediaUrlsJson = formData.get("mediaUrlsJson");
