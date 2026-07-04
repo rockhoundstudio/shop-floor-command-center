@@ -59,6 +59,8 @@ export function NewProductIntakeTab({ fetcher }) {
   const [errorMessage, setErrorMessage] = useState("");
   const [generatedDescription, setGeneratedDescription] = useState("");
   const [geoToast, setGeoToast] = useState(false);
+  const [titleToast, setTitleToast] = useState(false);
+  const [lastScannedPieceId, setLastScannedPieceId] = useState(null);
 
   const handleTopDropZoneDrop = useCallback((dropFiles) => {
     setPhotoFiles(prev => {
@@ -111,7 +113,7 @@ export function NewProductIntakeTab({ fetcher }) {
     }));
   }, []);
 
-  const handlePieceNameBlur = useCallback((value) => {
+  const handlePieceNameBlur = useCallback((id, value) => {
     if (!value) return;
     const segments = value.split(" - ");
     if (segments.length === 3) {
@@ -126,6 +128,12 @@ export function NewProductIntakeTab({ fetcher }) {
 
       autoFillFetcher.submit(
         { intent: "geoLookup", stoneFamily: stoneFamilyVal },
+        { method: "post", action: "/app/meta-injector-autofill" }
+      );
+
+      setLastScannedPieceId(id);
+      autoFillFetcher.submit(
+        { intent: "titleParse", pieceName: value },
         { method: "post", action: "/app/meta-injector-autofill" }
       );
     }
@@ -380,6 +388,56 @@ export function NewProductIntakeTab({ fetcher }) {
       })();
     })();
   }, [autoFillFetcher.state, autoFillFetcher.data]);
+
+  useEffect(() => {
+    const isIdle = autoFillFetcher.state === "idle";
+    const hasData = autoFillFetcher.data !== undefined && autoFillFetcher.data !== null;
+
+    (isIdle && hasData) && (() => {
+      const data = autoFillFetcher.data;
+      (data.titleParse) && (() => {
+        const parsed = data.titleParse;
+        setSharedFields(prev => {
+          const updated = { ...prev };
+          (parsed.stone_family !== undefined) && (updated.stone_family = parsed.stone_family);
+          (parsed.material !== undefined) && (updated.material = parsed.material);
+          (parsed.collection_name !== undefined) && (updated.collection_location = parsed.collection_name);
+          (parsed.origin_name !== undefined) && (updated.origin_location = parsed.origin_name);
+          (parsed.origin_story !== undefined) && (updated.origin_story = parsed.origin_story);
+          (parsed.mohs_hardness !== undefined) && (updated.mohs_hardness = parsed.mohs_hardness);
+          (parsed.luster !== undefined) && (updated.luster = parsed.luster);
+          (parsed.fracture !== undefined) && (updated.fracture = parsed.fracture);
+          (parsed.cleavage !== undefined) && (updated.cleavage = parsed.cleavage);
+          (parsed.specific_gravity !== undefined) && (updated.specific_gravity = parsed.specific_gravity);
+          (parsed.diaphaneity !== undefined) && (updated.diaphaneity = parsed.diaphaneity);
+          (parsed.crystal_system !== undefined) && (updated.crystal_system = parsed.crystal_system);
+          (parsed.geological_era !== undefined) && (updated.geological_era = parsed.geological_era);
+          (parsed.mineral_class !== undefined) && (updated.mineral_class = parsed.mineral_class);
+          (parsed.rock_composition !== undefined) && (updated.rock_composition = parsed.rock_composition);
+          (parsed.rock_formation !== undefined) && (updated.rock_formation = parsed.rock_formation);
+          (parsed.geological_age !== undefined) && (updated.geological_age = parsed.geological_age);
+          (parsed.fracture_pattern !== undefined) && (updated.fracture_pattern = parsed.fracture_pattern);
+          return updated;
+        });
+
+        const targetId = lastScannedPieceId || pieces[0]?.id;
+        (targetId) && (() => {
+          setPieces(prev => prev.map(p => {
+            let updated = { ...p };
+            (p.id === targetId) && (() => {
+              const pieceTitleVal = parsed.canonical_title || parsed.product_title;
+              (pieceTitleVal !== undefined) && (updated.piece_name = pieceTitleVal);
+              (parsed.seo_title !== undefined) && (updated.seo_title = parsed.seo_title);
+              (parsed.handle !== undefined) && (updated.handle = parsed.handle);
+            })();
+            return updated;
+          }));
+        })();
+
+        setTitleToast(true);
+      })();
+    })();
+  }, [autoFillFetcher.state, autoFillFetcher.data, lastScannedPieceId, pieces]);
 
   useEffect(() => {
     const isIdle = descriptionFetcher.state === "idle";
@@ -763,10 +821,15 @@ export function NewProductIntakeTab({ fetcher }) {
                           label={renderLabel("Piece Name", "piece_name", piece.piece_name)}
                           value={piece.piece_name}
                           onChange={(v) => handlePieceChange(piece.id, "piece_name", v)}
-                          onBlur={() => handlePieceNameBlur(piece.piece_name)}
+                          onBlur={() => handlePieceNameBlur(piece.id, piece.piece_name)}
                           autoComplete="off"
                           accessibilityLabel={`Enter Piece Name for row ${index + 1}`}
                         />
+                        <div style={{ marginTop: "4px" }}>
+                          <Text variant="bodySm" tone="subdued" as="p">
+                            Format: Stone Family - Origin - Piece Name (e.g. Tiger's Eye - Irv's - Tiger Fly)
+                          </Text>
+                        </div>
                       </div>
 
                       <div style={{ minHeight: "54px", width: "120px" }}>
@@ -969,6 +1032,7 @@ export function NewProductIntakeTab({ fetcher }) {
         </Card>
       </BlockStack>
       {geoToast && <Toast content="Geo data loaded" onDismiss={() => setGeoToast(false)} />}
+      {titleToast && <Toast content="Title parsed — fields pre-filled" onDismiss={() => setTitleToast(false)} />}
     </Frame>
   );
 }
