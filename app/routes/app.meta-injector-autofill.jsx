@@ -11,7 +11,7 @@ const MINDAT_KEY_MAP = {
   official_name: "name",
   mineral_class: "mindat_formula",
   crystal_structure: "crystal_system",
-   luster: "luster",
+  luster: "luster",
   specific_gravity: "density",
   moh_hardness: "hardness",
   cleavage: "cleavage",
@@ -389,7 +389,7 @@ Return ONLY valid JSON with exactly this structure, no explanation, no markdown:
               stone_shape: "", 
               dimensions_mm: "", 
               pattern: "", 
-              error: "Gemini vision scan failed" 
+              error: "No image provided for vision scan" 
             });
           }
 
@@ -459,7 +459,7 @@ No markdown, no code fences, no extra text.`;
               stone_shape: "", 
               dimensions_mm: "", 
               pattern: "", 
-              error: "Gemini vision scan failed" 
+              error: "Gemini vision scan returned empty response" 
             });
           }
           
@@ -484,13 +484,14 @@ No markdown, no code fences, no extra text.`;
           } catch (jsonErr) {
             console.error("Vision Scan JSON Parse Error:", jsonErr.message, "Raw Response:", cleanJson);
             return Response.json({ 
-              description: textContent, 
+              description: "", 
               primary_color: "", 
               cut_and_shape: "", 
               surface_finish: "", 
               stone_shape: "", 
               dimensions_mm: "", 
-              pattern: "" 
+              pattern: "", 
+              error: "Vision scan failed to parse JSON: " + jsonErr.message 
             });
           }
         } else {
@@ -504,7 +505,7 @@ No markdown, no code fences, no extra text.`;
             stone_shape: "", 
             dimensions_mm: "", 
             pattern: "", 
-            error: "Gemini vision scan failed" 
+            error: `Gemini vision scan failed: API error ${geminiRes.status}` 
           });
         }
       } catch (error) {
@@ -517,7 +518,7 @@ No markdown, no code fences, no extra text.`;
           stone_shape: "", 
           dimensions_mm: "", 
           pattern: "", 
-          error: "Gemini vision scan failed" 
+          error: `Gemini vision scan failed: ${error.message}` 
         });
       }
     }
