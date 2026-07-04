@@ -21,6 +21,8 @@ const MINDAT_KEY_MAP = {
   origin_location: "localities_count",
 };
 
+const SHOPPED_ROCK_VENDORS = ["Richardson's Rock Ranch", "Irv's Rock and Jewelry"];
+
 // ==========================================
 // ENGINE: MINDAT API FETCHER
 // ==========================================
@@ -146,6 +148,106 @@ export const action = async ({ request }) => {
       const stoneFamily = body.get("stoneFamily") || "";
       const geoFields = getGeoData(stoneFamily);
       return Response.json({ geoFields });
+    }
+
+    // ==========================================
+    // INTENT: TITLE PARSE
+    // ==========================================
+    if (intent === "titleParse") {
+      try {
+        const pieceNameInput = body.get("pieceName") || "";
+        const segments = pieceNameInput.split(" - ");
+        
+        const segment1 = segments[0]?.trim() || "";
+        const segment2 = segments[1]?.trim() || "";
+        const segment3 = segments[2]?.trim() || "";
+
+        const promptText = `You are an expert lapidary assistant for Rockhound Studio.
+Analyze these 3 parsed segments from a piece name:
+- Segment 1 (Stone Family): "${segment1}"
+- Segment 2 (Origin/Vendor): "${segment2}"
+- Segment 3 (Piece Title): "${segment3}"
+
+Rules:
+1. For Segment 1 ("${segment1}"), return all known geological data: mohs_hardness, luster, fracture, cleavage, specific_gravity, diaphaneity, crystal_system, geological_era, mineral_class, rock_composition, rock_formation, geological_age, fracture_pattern, and set material strictly to "Stone".
+2. For Segment 2 ("${segment2}"), check against this vendor list: ${JSON.stringify(SHOPPED_ROCK_VENDORS)}.
+   - If segment 2 is in that list:
+     - collection_name = "Shopped Rock"
+     - origin_name = "${segment2}"
+     - origin_type = "vendor"
+     - origin_story = write a short vendor origin story about this shop
+     - collection_story = write a short description of the Shopped Rock collection
+   - Else:
+     - collection_name = "${segment2}"
+     - origin_name = "${segment2}"
+     - origin_type = "field"
+     - origin_story = write a short field origin story about this location
+     - collection_story = write a short description of this collection
+3. For Segment 3 ("${segment3}"), return:
+   - product_title = "${segment3}"
+   - seo_title = "${segment3} | Rockhound Studio"
+   - handle = slugified lowercase hyphenated version of "${segment3}"
+
+Return ONLY valid JSON with exactly this structure, no explanation, no markdown:
+{
+  "stone_family": "${segment1}",
+  "mohs_hardness": "",
+  "luster": "",
+  "fracture": "",
+  "cleavage": "",
+  "specific_gravity": "",
+  "diaphaneity": "",
+  "crystal_system": "",
+  "geological_era": "",
+  "mineral_class": "",
+  "rock_composition": "",
+  "rock_formation": "",
+  "geological_age": "",
+  "fracture_pattern": "",
+  "material": "Stone",
+  "collection_name": "",
+  "origin_name": "",
+  "origin_type": "",
+  "origin_story": "",
+  "collection_story": "",
+  "product_title": "${segment3}",
+  "seo_title": "${segment3} | Rockhound Studio",
+  "handle": ""
+}`;
+
+        const geminiRes = await fetch(
+          "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: promptText }] }]
+            })
+          }
+        );
+
+        if (geminiRes.ok) {
+          const geminiData = await geminiRes.json();
+          const textContent = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || "";
+          
+          let cleanJson = textContent.trim();
+          const firstBrace = cleanJson.indexOf("{");
+          const lastBrace = cleanJson.lastIndexOf("}");
+          if (firstBrace !== -1 && lastBrace !== -1) {
+            cleanJson = cleanJson.slice(firstBrace, lastBrace + 1);
+          }
+
+          const parsedData = JSON.parse(cleanJson);
+          return Response.json({ titleParse: parsedData });
+        } else {
+          const errText = await geminiRes.text();
+          console.error("Gemini Title Parse API Error:", geminiRes.status, errText);
+          return Response.json({ titleParse: null, error: "Title parse failed" }, { status: 500 });
+        }
+      } catch (error) {
+        console.error("Title Parse Fault:", error.message);
+        return Response.json({ titleParse: null, error: error.message }, { status: 500 });
+      }
     }
 
     // ==========================================
