@@ -12,9 +12,6 @@ export function NewProductIntakeTab({ fetcher }) {
   const autoFillFetcher = useFetcher();
   const descriptionFetcher = useFetcher();
 
-  const [photoFiles, setPhotoFiles] = useState([]);
-  const [photoPreviewUrls, setPhotoPreviewUrls] = useState([]);
-
   const [sharedFields, setSharedFields] = useState({
     material: "",
     stone_family: "",
@@ -47,7 +44,11 @@ export function NewProductIntakeTab({ fetcher }) {
       price: "",
       photoFiles: [],
       photoPreviewUrls: [],
+      photos: [],
+      imageBase64: "",
+      imageMimeType: "",
       stagedResourceUrls: [],
+      generated_description: "",
       scanError: "",
       scanToken: "",
       isUploading: false
@@ -57,7 +58,6 @@ export function NewProductIntakeTab({ fetcher }) {
   const [searchQuery, setSearchQuery] = useState("");
   const [statusMessage, setStatusMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
-  const [generatedDescription, setGeneratedDescription] = useState("");
   const [geoToast, setGeoToast] = useState(false);
   
   // Title Parse Toast State
@@ -67,36 +67,9 @@ export function NewProductIntakeTab({ fetcher }) {
   
   const [lastScannedPieceId, setLastScannedPieceId] = useState(null);
 
-  const handleTopDropZoneDrop = useCallback((dropFiles) => {
-    setPhotoFiles(prev => {
-      const combined = [...prev, ...dropFiles];
-      const capped = combined.slice(0, 5);
-      setPhotoPreviewUrls(capped.map(f => URL.createObjectURL(f)));
-      return capped;
-    });
-    setPieces(prev => prev.map((p, i) => {
-      let updated = { ...p };
-      (i === 0) && (() => {
-        const combined = [...p.photoFiles, ...dropFiles];
-        const capped = combined.slice(0, 5);
-        updated.photoFiles = capped;
-        updated.photoPreviewUrls = capped.map(f => URL.createObjectURL(f));
-      })();
-      return updated;
-    }));
-  }, []);
-
-  const handleRemoveTopPhoto = useCallback((index) => {
-    setPhotoFiles(prev => {
-      const updated = prev.filter((_, i) => i !== index);
-      setPhotoPreviewUrls(updated.map(f => URL.createObjectURL(f)));
-      return updated;
-    });
-  }, []);
-
-  const handleScanGeminiPhotos = useCallback(() => {
-    (pieces[0]?.photoFiles?.[0]) && handleScanPhoto({ piece: pieces[0], updatePiece: handlePieceChange, autoFillFetcher, setErrorMessage });
-  }, [pieces, autoFillFetcher, setErrorMessage]);
+  const handleScanGeminiPhotos = useCallback((piece) => {
+    (piece?.photoFiles?.[0]) && handleScanPhoto({ piece, updatePiece: handlePieceChange, autoFillFetcher, setErrorMessage });
+  }, [autoFillFetcher, setErrorMessage]);
 
   const handleSharedFieldChange = useCallback((key, value) => {
     setSharedFields(prev => ({ ...prev, [key]: value }));
@@ -151,11 +124,49 @@ export function NewProductIntakeTab({ fetcher }) {
         const combined = [...p.photoFiles, ...dropFiles];
         const capped = combined.slice(0, 5);
         updated.photoFiles = capped;
+        updated.photos = capped;
         updated.photoPreviewUrls = capped.map(f => URL.createObjectURL(f));
+        if (capped.length > 0) {
+          updated.imageMimeType = capped[0].type;
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            const base64String = reader.result.replace("data:", "").replace(/^.+,/, "");
+            handlePieceChange(id, "imageBase64", base64String);
+          };
+          reader.readAsDataURL(capped[0]);
+        } else {
+          updated.imageBase64 = "";
+          updated.imageMimeType = "";
+        }
       })();
       return updated;
     }));
-  }, []);
+  }, [handlePieceChange]);
+
+  const handleRemoveRowPhoto = useCallback((id, index) => {
+    setPieces(prev => prev.map(p => {
+      let updated = { ...p };
+      (p.id === id) && (() => {
+        const filtered = p.photoFiles.filter((_, i) => i !== index);
+        updated.photoFiles = filtered;
+        updated.photos = filtered;
+        updated.photoPreviewUrls = filtered.map(f => URL.createObjectURL(f));
+        if (filtered.length > 0) {
+          updated.imageMimeType = filtered[0].type;
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            const base64String = reader.result.replace("data:", "").replace(/^.+,/, "");
+            handlePieceChange(id, "imageBase64", base64String);
+          };
+          reader.readAsDataURL(filtered[0]);
+        } else {
+          updated.imageBase64 = "";
+          updated.imageMimeType = "";
+        }
+      })();
+      return updated;
+    }));
+  }, [handlePieceChange]);
 
   const handleAddRow = useCallback(() => {
     setPieces(prev => [
@@ -171,7 +182,11 @@ export function NewProductIntakeTab({ fetcher }) {
         price: "",
         photoFiles: [],
         photoPreviewUrls: [],
+        photos: [],
+        imageBase64: "",
+        imageMimeType: "",
         stagedResourceUrls: [],
+        generated_description: "",
         scanError: "",
         scanToken: "",
         isUploading: false
@@ -201,7 +216,7 @@ export function NewProductIntakeTab({ fetcher }) {
       stone_shape: pieces[0].stone_shape,
       price: pieces[0].price,
       title: buildTitle(sharedFields, pieces[0]),
-      descriptionHtml: generatedDescription,
+      descriptionHtml: pieces[0].generated_description,
       productType: productType,
       status: "DRAFT",
       metafieldsJson: buildMetafieldsJson(sharedFields, pieces[0]),
@@ -209,7 +224,7 @@ export function NewProductIntakeTab({ fetcher }) {
     };
 
     fetcher.submit(payload, { method: "post", action: "/app/meta-injector-api" });
-  }, [sharedFields, pieces, generatedDescription, fetcher]);
+  }, [sharedFields, pieces, fetcher]);
 
   useEffect(() => {
     const isIdle = fetcher.state === "idle";
@@ -235,14 +250,15 @@ export function NewProductIntakeTab({ fetcher }) {
           price: "",
           photoFiles: [],
           photoPreviewUrls: [],
+          photos: [],
+          imageBase64: "",
+          imageMimeType: "",
           stagedResourceUrls: [],
+          generated_description: "",
           scanError: "",
           scanToken: "",
           isUploading: false
         }]);
-        setGeneratedDescription("");
-        setPhotoFiles([]);
-        setPhotoPreviewUrls([]);
       })();
 
       (isCreate && isError) && (() => {
@@ -262,7 +278,11 @@ export function NewProductIntakeTab({ fetcher }) {
       const hasDescription = data.description !== undefined && data.description !== null && data.description !== "";
 
       (hasDescription) && (() => {
-        setGeneratedDescription(data.description);
+        setPieces(prev => prev.map((p, i) =>
+          p.id === data.pieceId || (!data.pieceId && i === 0)
+            ? { ...p, generated_description: data.description }
+            : p
+        ));
       })();
     })();
   }, [autoFillFetcher.state, autoFillFetcher.data]);
@@ -292,7 +312,7 @@ export function NewProductIntakeTab({ fetcher }) {
         handlePieceChange(pid, "isUploading", true);
 
         const doUpload = async () => {
-          const file = photoFiles[0];
+          const file = piece.photoFiles[0];
           const formData = new FormData();
           target.parameters.forEach(p => formData.append(p.name, p.value));
           formData.append("file", file);
@@ -311,7 +331,7 @@ export function NewProductIntakeTab({ fetcher }) {
             );
           } catch (err) {
             handlePieceChange(pid, "scanError", err.message);
-            setGeneratedDescription("UPLOAD ERROR: " + err.message);
+            handlePieceChange(pid, "generated_description", "UPLOAD ERROR: " + err.message);
           } finally {
             handlePieceChange(pid, "isUploading", false);
           }
@@ -341,11 +361,11 @@ export function NewProductIntakeTab({ fetcher }) {
             data.stone_shape && (updated.stone_shape = data.stone_shape);
             data.dimensions_mm && (updated.dimensions_mm = data.dimensions_mm);
             data.cut_and_shape && (updated.cut_and_shape = data.cut_and_shape);
+            data.description && (updated.generated_description = data.description);
             updated.scanError = "";
           })();
           return updated;
         }));
-        data.description && setGeneratedDescription(data.description);
       })();
 
       (isScan && isError) && (() => {
@@ -459,7 +479,11 @@ export function NewProductIntakeTab({ fetcher }) {
       (isDesc && isSuccess) && (() => {
         let descStr = "";
         data.description && (descStr = data.description);
-        setGeneratedDescription(descStr);
+        setPieces(prev => prev.map((p, i) =>
+          p.id === data.pieceId || (!data.pieceId && i === 0)
+            ? { ...p, generated_description: descStr }
+            : p
+        ));
       })();
     })();
   }, [descriptionFetcher.state, descriptionFetcher.data]);
@@ -520,29 +544,16 @@ export function NewProductIntakeTab({ fetcher }) {
     piece.piece_name.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  let topDotColor = "#C62828";
-  (photoFiles.length > 0) && (topDotColor = "#2E7D32");
-
-  let hasTopPhotos = false;
-  (photoFiles.length > 0) && (hasTopPhotos = true);
-
   let isScanningVision = false;
   (stageFetcher.state !== "idle") && (isScanningVision = true);
   (autoFillFetcher.state !== "idle" && autoFillFetcher.formData?.get("intent") === "visionScan") && (isScanningVision = true);
-  (autoFillFetcher.state !== "idle" && autoFillFetcher.formData?.get("intent") === "visionScan") && (isScanningVision = true);
-
-  let genDescDotColor = "#C62828";
-  (generatedDescription !== "") && (genDescDotColor = "#2E7D32");
-
-  let scanReady = false;
-  (pieces[0]?.photoFiles?.[0]) && (scanReady = true);
 
   return (
     <Frame>
       <BlockStack gap="600">
         <Card padding="400">
           <BlockStack gap="400">
-            <Text variant="headingMd" as="h2" style={{ fontSize: "14px" }}>Section B: Per-Piece Rows</Text>
+            <Text variant="headingMd" as="h2" style={{ fontSize: "14px" }}>Section A: Per-Piece Details</Text>
 
             <div style={{ position: "relative", marginBottom: "8px" }}>
               <input
@@ -603,6 +614,12 @@ export function NewProductIntakeTab({ fetcher }) {
                 let disableScan = true;
                 (hasPhotos) && (disableScan = false);
 
+                let rowTopDotColor = "#C62828";
+                (hasPhotos) && (rowTopDotColor = "#2E7D32");
+
+                let rowDescDotColor = "#C62828";
+                (piece.generated_description && piece.generated_description !== "") && (rowDescDotColor = "#2E7D32");
+
                 return (
                   <div key={piece.id} style={{ display: "flex", flexDirection: "column", gap: "16px", paddingBottom: "24px", borderBottom: "1px solid #e1e3e5" }}>
                     
@@ -635,6 +652,96 @@ export function NewProductIntakeTab({ fetcher }) {
                           Remove
                         </Button>
                       </div>
+                    </div>
+
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "8px" }}>
+                      <svg width="18" height="18" viewBox="0 0 18 18" style={{ display: "inline-block" }}>
+                        <circle cx="9" cy="9" r="9" fill={rowTopDotColor} />
+                      </svg>
+                      <Text variant="headingMd" as="h3" fontWeight="bold">Stone Photos</Text>
+                    </div>
+
+                    <DropZone 
+                      accept="image/jpeg, image/png, image/gif" 
+                      type="image" 
+                      allowMultiple 
+                      onDrop={(_dropFiles, acceptedFiles) => handleDropZoneDrop(piece.id, acceptedFiles)}
+                      accessibilityLabel={`Upload stone photos for row ${index + 1}`}
+                    >
+                      <DropZone.FileUpload actionTitle="Drop photos here or click to upload" />
+                    </DropZone>
+                    
+                    {hasPhotos && (
+                      <div style={{ display: "flex", gap: "16px", marginTop: "12px", flexWrap: "wrap", paddingTop: "8px", paddingRight: "8px" }}>
+                        {piece.photoPreviewUrls.map((url, i) => (
+                          <div key={i} style={{ position: "relative", width: "80px", height: "80px" }}>
+                            <img src={url} alt={`Preview ${i}`} style={{ width: "80px", height: "80px", objectFit: "cover", borderRadius: "6px" }} />
+                            <button
+                              onClick={(e) => {
+                                e.preventDefault();
+                                handleRemoveRowPhoto(piece.id, i);
+                              }}
+                              aria-label={`Remove photo ${i + 1}`}
+                              style={{
+                                position: "absolute",
+                                top: "-12px",
+                                right: "-12px",
+                                width: "48px",
+                                height: "48px",
+                                background: "#ffffff",
+                                border: "1px solid #c9cccf",
+                                borderRadius: "24px",
+                                cursor: "pointer",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                fontSize: "16px",
+                                fontWeight: "bold",
+                                color: "#202223",
+                                boxShadow: "0 1px 3px rgba(0,0,0,0.1)",
+                                zIndex: 10
+                              }}
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    
+                    <Text as="p" style={{ fontSize: "14px", marginTop: "4px", color: "#6d7175" }}>
+                      {piece.photoFiles.length} of 5 photos
+                    </Text>
+
+                    <div style={{ minHeight: "48px", marginTop: "8px" }}>
+                      <Button
+                        onClick={() => handleScanGeminiPhotos(piece)}
+                        loading={isScanning}
+                        disabled={disableScan}
+                        accessibilityLabel={`Scan photo with Gemini for row ${index + 1}`}
+                      >
+                        {isScanning && <Spinner size="small" />}
+                        Scan with Gemini
+                      </Button>
+                    </div>
+
+                    <div style={{ minHeight: "48px", marginTop: "8px" }}>
+                      <TextField
+                        label={
+                          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                            <svg width="18" height="18" viewBox="0 0 18 18" style={{ display: "inline-block" }}>
+                              <circle cx="9" cy="9" r="9" fill={rowDescDotColor} />
+                            </svg>
+                            <Text variant="headingMd" as="h3">Description</Text>
+                          </div>
+                        }
+                        value={piece.generated_description}
+                        onChange={(v) => handlePieceChange(piece.id, "generated_description", v)}
+                        multiline={6}
+                        autoComplete="off"
+                        placeholder="Gemini will generate a description from your photos..."
+                        accessibilityLabel={`Generated product description for row ${index + 1}`}
+                      />
                     </div>
 
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "16px" }}>
@@ -721,89 +828,7 @@ export function NewProductIntakeTab({ fetcher }) {
 
         <Card padding="400">
           <BlockStack gap="400">
-            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-              <svg width="18" height="18" viewBox="0 0 18 18" style={{ display: "inline-block" }}>
-                <circle cx="9" cy="9" r="9" fill={topDotColor} />
-              </svg>
-              <Text variant="headingMd" as="h2" fontWeight="bold">Stone Photos</Text>
-            </div>
-            
-            <DropZone 
-              accept="image/jpeg, image/png, image/gif" 
-              type="image" 
-              allowMultiple 
-              onDrop={(_dropFiles, acceptedFiles) => handleTopDropZoneDrop(acceptedFiles)}
-              accessibilityLabel="Upload stone photos"
-            >
-              <DropZone.FileUpload actionTitle="Drop photos here or click to upload" />
-            </DropZone>
-            
-            {hasTopPhotos && (
-              <div style={{ display: "flex", gap: "16px", marginTop: "12px", flexWrap: "wrap", paddingTop: "8px", paddingRight: "8px" }}>
-                {photoPreviewUrls.map((url, i) => (
-                  <div key={i} style={{ position: "relative", width: "80px", height: "80px" }}>
-                    <img src={url} alt={`Preview ${i}`} style={{ width: "80px", height: "80px", objectFit: "cover", borderRadius: "6px" }} />
-                    <button
-                      onClick={(e) => {
-                        e.preventDefault();
-                        handleRemoveTopPhoto(i);
-                      }}
-                      aria-label={`Remove photo ${i + 1}`}
-                      style={{
-                        position: "absolute",
-                        top: "-12px",
-                        right: "-12px",
-                        width: "48px",
-                        height: "48px",
-                        background: "#ffffff",
-                        border: "1px solid #c9cccf",
-                        borderRadius: "24px",
-                        cursor: "pointer",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        fontSize: "16px",
-                        fontWeight: "bold",
-                        color: "#202223",
-                        boxShadow: "0 1px 3px rgba(0,0,0,0.1)",
-                        zIndex: 10
-                      }}
-                    >
-                      ✕
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-            
-            <Text as="p" style={{ fontSize: "14px", marginTop: "4px", color: "#6d7175" }}>
-              {photoFiles.length} of 5 photos
-            </Text>
-
-            <div style={{ minHeight: "48px", marginTop: "16px" }}>
-              <TextField
-                label={
-                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                    <svg width="18" height="18" viewBox="0 0 18 18" style={{ display: "inline-block" }}>
-                      <circle cx="9" cy="9" r="9" fill={genDescDotColor} />
-                    </svg>
-                    <Text variant="headingMd" as="h3">Description</Text>
-                  </div>
-                }
-                value={generatedDescription}
-                onChange={setGeneratedDescription}
-                multiline={6}
-                autoComplete="off"
-                placeholder="Gemini will generate a description from your photos..."
-                accessibilityLabel="Generated product description"
-              />
-            </div>
-          </BlockStack>
-        </Card>
-
-        <Card padding="400">
-          <BlockStack gap="400">
-            <Text variant="headingMd" as="h2" style={{ fontSize: "14px" }}>Section A: Shared Batch Fields</Text>
+            <Text variant="headingMd" as="h2" style={{ fontSize: "14px" }}>Section B: Shared Batch Fields</Text>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "24px" }}>
               <div style={{ minHeight: "54px" }}>
                 <TextField
@@ -951,11 +976,11 @@ export function NewProductIntakeTab({ fetcher }) {
                 Write Description with Gemini
               </Button>
             </div>
-            {generatedDescription !== "" && (
+            {pieces[0]?.generated_description !== "" && (
               <TextField
                 label="Generated Description — edit before saving"
-                value={generatedDescription}
-                onChange={setGeneratedDescription}
+                value={pieces[0]?.generated_description || ""}
+                onChange={(v) => handlePieceChange(pieces[0]?.id, "generated_description", v)}
                 multiline={10}
                 autoComplete="off"
                 accessibilityLabel="Generated Description"
@@ -996,15 +1021,6 @@ export function NewProductIntakeTab({ fetcher }) {
 
         <Card padding="400">
           <BlockStack gap="400">
-            <Button
-              onClick={handleScanGeminiPhotos}
-              loading={isScanningVision}
-              disabled={!scanReady}
-              accessibilityLabel="Scan photo with Gemini"
-            >
-              {isScanningVision && <Spinner size="small" />}
-              Scan with Gemini
-            </Button>
             <Text variant="headingMd" as="h2" style={{ fontSize: "14px" }}>Meta Scan</Text>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
               {scanKeys.map(key => {
