@@ -5,6 +5,8 @@ import { useFetcher } from "react-router";
 import { ROCKHOUND_FIELDS, DEFAULT_DROPDOWNS, REQUIRED_FIELDS } from "../utils/meta-injector.constants.jsx";
 import { handleScanPhoto, handleGenerateDescription, buildMetafieldsJson, buildTitle } from "./app.meta-injector.intake-helpers.jsx";
 
+const SHOPPED_ROCK_VENDORS = ["Richardson's Rock Ranch", "Irv's Rock and Jewelry"];
+
 export function NewProductIntakeTab({ fetcher }) {
   const stageFetcher = useFetcher();
   const autoFillFetcher = useFetcher();
@@ -108,6 +110,26 @@ export function NewProductIntakeTab({ fetcher }) {
       return updated;
     }));
   }, []);
+
+  const handlePieceNameBlur = useCallback((value) => {
+    if (!value) return;
+    const segments = value.split(" - ");
+    if (segments.length === 3) {
+      const stoneFamilyVal = segments[0].trim().toLowerCase();
+      const collectionLocationVal = segments[1].trim();
+
+      setSharedFields(prev => ({
+        ...prev,
+        stone_family: stoneFamilyVal,
+        collection_location: collectionLocationVal
+      }));
+
+      autoFillFetcher.submit(
+        { intent: "geoLookup", stoneFamily: stoneFamilyVal },
+        { method: "post", action: "/app/meta-injector-autofill" }
+      );
+    }
+  }, [autoFillFetcher]);
 
   const handleDropZoneDrop = useCallback((id, dropFiles) => {
     setPieces(prev => prev.map(p => {
@@ -741,6 +763,7 @@ export function NewProductIntakeTab({ fetcher }) {
                           label={renderLabel("Piece Name", "piece_name", piece.piece_name)}
                           value={piece.piece_name}
                           onChange={(v) => handlePieceChange(piece.id, "piece_name", v)}
+                          onBlur={() => handlePieceNameBlur(piece.piece_name)}
                           autoComplete="off"
                           accessibilityLabel={`Enter Piece Name for row ${index + 1}`}
                         />
