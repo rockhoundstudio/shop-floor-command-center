@@ -363,7 +363,7 @@ Return ONLY valid JSON with exactly this structure, no explanation, no markdown:
     }
 
     // ==========================================
-    // INTENT: VISION SCAN FOR DESCRIPTION
+    // INTENT: VISION SCAN FOR DESCRIPTION & DATA
     // ==========================================
     if (intent === "visionScan") {
       try {
@@ -381,7 +381,16 @@ Return ONLY valid JSON with exactly this structure, no explanation, no markdown:
           const imageUrl = rawImageUrl && rawImageUrl !== "undefined" && rawImageUrl !== "null" ? String(rawImageUrl).trim() : "";
           
           if (!imageUrl) {
-            return Response.json({ description: "", error: "Gemini vision scan failed" });
+            return Response.json({ 
+              description: "", 
+              primary_color: "", 
+              cut_and_shape: "", 
+              surface_finish: "", 
+              stone_shape: "", 
+              dimensions_mm: "", 
+              pattern: "", 
+              error: "Gemini vision scan failed" 
+            });
           }
 
           const cleanImageUrl = imageUrl.split('?')[0];
@@ -391,7 +400,28 @@ Return ONLY valid JSON with exactly this structure, no explanation, no markdown:
           imageMimeType = (imageRes.headers.get("content-type") || "image/jpeg").split(";")[0].trim();
         }
 
-        const promptText = "You are a lapidary artist and gemstone expert. Look at this stone photo and write a rich, earthy, one-of-a-kind product description in 2-3 paragraphs. Focus on the colors, patterns, texture, and character of the stone. Write in first person as Bob or Janyce from Rockhound Studio. No corporate language. Raw, authentic, collector energy.";
+        const promptText = `You are a lapidary artist and gemstone expert. Analyze this stone cabochon or specimen photo for Rockhound Studio and return a JSON object containing these exact fields:
+
+- description: rich narrative description of the stone and piece in 2-3 paragraphs. Rockhound Studio voice — raw, authentic, collector energy. Write in first person as Bob or Janyce from Rockhound Studio. No corporate language.
+- primary_color: dominant color of the stone (e.g. "golden brown", "chartreuse green")
+- cut_and_shape: cabochon style (e.g. "Freeform Cabochon", "Oval Cabochon")
+- surface_finish: (e.g. "High Polish", "Matte", "Natural Rough")
+- stone_shape: overall silhouette (e.g. "Oval", "Freeform", "Teardrop")
+- dimensions_mm: if a tape measure is visible in the photo, read length x width x height in mm (e.g. "42 x 28 x 6"). If no tape measure is visible, return empty string ""
+- pattern: visible surface pattern (e.g. "Chatoyant bands", "Dendritic inclusions", "Solid")
+
+Return ONLY valid JSON with exactly this structure:
+{
+  "description": "",
+  "primary_color": "",
+  "cut_and_shape": "",
+  "surface_finish": "",
+  "stone_shape": "",
+  "dimensions_mm": "",
+  "pattern": ""
+}
+
+No markdown, no code fences, no extra text.`;
 
         const geminiRes = await fetch(
           "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY,
@@ -421,18 +451,74 @@ Return ONLY valid JSON with exactly this structure, no explanation, no markdown:
           const textContent = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || "";
           
           if (!textContent) {
-            return Response.json({ description: "", error: "Gemini vision scan failed" });
+            return Response.json({ 
+              description: "", 
+              primary_color: "", 
+              cut_and_shape: "", 
+              surface_finish: "", 
+              stone_shape: "", 
+              dimensions_mm: "", 
+              pattern: "", 
+              error: "Gemini vision scan failed" 
+            });
           }
           
-          return Response.json({ description: textContent });
+          let cleanJson = textContent.trim();
+          const firstBrace = cleanJson.indexOf("{");
+          const lastBrace = cleanJson.lastIndexOf("}");
+          if (firstBrace !== -1 && lastBrace !== -1) {
+            cleanJson = cleanJson.slice(firstBrace, lastBrace + 1);
+          }
+
+          try {
+            const parsedVision = JSON.parse(cleanJson);
+            return Response.json({
+              description: parsedVision.description || "",
+              primary_color: parsedVision.primary_color || "",
+              cut_and_shape: parsedVision.cut_and_shape || "",
+              surface_finish: parsedVision.surface_finish || "",
+              stone_shape: parsedVision.stone_shape || "",
+              dimensions_mm: parsedVision.dimensions_mm || "",
+              pattern: parsedVision.pattern || ""
+            });
+          } catch (jsonErr) {
+            console.error("Vision Scan JSON Parse Error:", jsonErr.message, "Raw Response:", cleanJson);
+            return Response.json({ 
+              description: textContent, 
+              primary_color: "", 
+              cut_and_shape: "", 
+              surface_finish: "", 
+              stone_shape: "", 
+              dimensions_mm: "", 
+              pattern: "" 
+            });
+          }
         } else {
           const errText = await geminiRes.text();
           console.error("Gemini Vision API Error:", geminiRes.status, errText);
-          return Response.json({ description: "", error: "Gemini vision scan failed" });
+          return Response.json({ 
+            description: "", 
+            primary_color: "", 
+            cut_and_shape: "", 
+            surface_finish: "", 
+            stone_shape: "", 
+            dimensions_mm: "", 
+            pattern: "", 
+            error: "Gemini vision scan failed" 
+          });
         }
       } catch (error) {
         console.error("Vision Scan Fault:", error.message);
-        return Response.json({ description: "", error: "Gemini vision scan failed" });
+        return Response.json({ 
+          description: "", 
+          primary_color: "", 
+          cut_and_shape: "", 
+          surface_finish: "", 
+          stone_shape: "", 
+          dimensions_mm: "", 
+          pattern: "", 
+          error: "Gemini vision scan failed" 
+        });
       }
     }
 
