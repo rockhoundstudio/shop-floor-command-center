@@ -404,6 +404,7 @@ export function NewProductIntakeTab({ fetcher }) {
       material: parsed.material || "Stone",
       stone_family: parsed.stone_family || prev.stone_family,
       collection_location: parsed.collection_name || prev.collection_location,
+      collectionLocation: parsed.collection_name || prev.collectionLocation,
       origin_location: parsed.origin_name || prev.origin_location,
       origin_story: parsed.origin_story || prev.origin_story,
       mohs_hardness: parsed.mohs_hardness || prev.mohs_hardness,
@@ -481,7 +482,7 @@ export function NewProductIntakeTab({ fetcher }) {
   ];
 
   const collectionLocationOptions = [
-    "Spokane River", "Yakima Canyon", "Yellowstone River", "Richardson's Rock Ranch", "The 3,000-Mile Run", "Nickel Back", "Rufus Serpentine", "The Shopped Rock", "The Gallery"
+    "Spokane River", "Yakima Canyon", "Yellowstone River", "Richardson's Rock Ranch", "The 3,000-Mile Run", "Nickel Back", "Rufus Serpentine", "The Shopped Rock", "Shopped Rock", "The Gallery"
   ];
 
   const rescuedByOptions = ["", "Bob", "Janyce", "Bob and Janyce"];
@@ -539,6 +540,185 @@ export function NewProductIntakeTab({ fetcher }) {
   return (
     <Frame>
       <BlockStack gap="600">
+        <Card padding="400">
+          <BlockStack gap="400">
+            <Text variant="headingMd" as="h2" style={{ fontSize: "14px" }}>Section B: Per-Piece Rows</Text>
+
+            <div style={{ position: "relative", marginBottom: "8px" }}>
+              <input
+                type="text"
+                placeholder="Search products..."
+                aria-label="Search products"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                style={{
+                  width: "100%",
+                  minHeight: "48px",
+                  fontSize: "18px",
+                  border: "2px solid #000",
+                  borderRadius: "4px",
+                  padding: "8px 40px 8px 16px",
+                  boxSizing: "border-box"
+                }}
+              />
+              {searchQuery !== "" && (
+                <button
+                  onClick={() => setSearchQuery("")}
+                  aria-label="Clear search"
+                  style={{
+                    position: "absolute",
+                    right: "12px",
+                    top: "50%",
+                    transform: "translateY(-50%)",
+                    background: "transparent",
+                    border: "none",
+                    fontSize: "20px",
+                    cursor: "pointer",
+                    padding: "4px",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    color: "#5c5f62"
+                  }}
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
+              {filteredPieces.map((piece, index) => {
+                
+                let isScanning = false;
+                (stageFetcher.state !== "idle" && stageFetcher.formData?.get("pieceId") === piece.id) && (isScanning = true);
+                (autoFillFetcher.state !== "idle" && autoFillFetcher.formData?.get("pieceId") === piece.id) && (isScanning = true);
+                (piece.isUploading) && (isScanning = true);
+
+                let hasScanError = false;
+                (piece.scanError && piece.scanError !== "") && (hasScanError = true);
+
+                let hasPhotos = false;
+                (piece.photoFiles && piece.photoFiles.length > 0) && (hasPhotos = true);
+
+                let disableScan = true;
+                (hasPhotos) && (disableScan = false);
+
+                return (
+                  <div key={piece.id} style={{ display: "flex", flexDirection: "column", gap: "16px", paddingBottom: "24px", borderBottom: "1px solid #e1e3e5" }}>
+                    
+                    <div style={{ display: "flex", alignItems: "end", gap: "16px" }}>
+                      <div style={{ flexGrow: 1, minHeight: "54px" }}>
+                        <TextField
+                          label={renderLabel("Piece Name", "piece_name", piece.piece_name)}
+                          value={piece.piece_name}
+                          onChange={(v) => handlePieceChange(piece.id, "piece_name", v)}
+                          onBlur={() => handlePieceNameBlur(piece.id, piece.piece_name)}
+                          autoComplete="off"
+                          accessibilityLabel={`Enter Piece Name for row ${index + 1}`}
+                        />
+                        <div style={{ marginTop: "4px" }}>
+                          <Text variant="bodySm" tone="subdued" as="p">
+                            Format: Stone Family - Origin - Piece Name (e.g. Tiger's Eye - Irv's - Tiger Fly)
+                          </Text>
+                        </div>
+                      </div>
+
+                      <div style={{ minHeight: "54px", width: "120px" }}>
+                        <Button
+                          size="large"
+                          tone="critical"
+                          fullWidth
+                          onClick={() => handleRemoveRow(piece.id)}
+                          disabled={pieces.length <= 1}
+                          accessibilityLabel={`Remove row ${index + 1}`}
+                        >
+                          Remove
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "16px" }}>
+                      <div style={{ minHeight: "54px" }}>
+                        <TextField
+                          label={renderLabel("Dimensions (mm)", "dimensions_mm", piece.dimensions_mm)}
+                          value={piece.dimensions_mm}
+                          onChange={(v) => handlePieceChange(piece.id, "dimensions_mm", v)}
+                          autoComplete="off"
+                          accessibilityLabel={`Enter Dimensions for row ${index + 1}`}
+                        />
+                      </div>
+                      <div style={{ minHeight: "54px" }}>
+                        <TextField
+                          label={renderLabel("Cut & Shape", "cut_and_shape", piece.cut_and_shape)}
+                          value={piece.cut_and_shape}
+                          onChange={(v) => handlePieceChange(piece.id, "cut_and_shape", v)}
+                          autoComplete="off"
+                          accessibilityLabel={`Enter Cut and Shape for row ${index + 1}`}
+                        />
+                      </div>
+                      <div style={{ minHeight: "54px" }}>
+                        <Select
+                          label={renderLabel("Surface Finish", "surface_finish", piece.surface_finish)}
+                          options={[...surfaceFinishOptions.map(o => ({ label: o, value: o }))]}
+                          value={piece.surface_finish}
+                          onChange={(v) => handlePieceChange(piece.id, "surface_finish", v)}
+                          accessibilityLabel={`Select surface finish for row ${index + 1}`}
+                        />
+                      </div>
+                      <div style={{ minHeight: "54px" }}>
+                        <TextField
+                          label={renderLabel("Primary Color", "primary_color", piece.primary_color)}
+                          value={piece.primary_color}
+                          onChange={(v) => handlePieceChange(piece.id, "primary_color", v)}
+                          autoComplete="off"
+                          placeholder="Primary color"
+                          accessibilityLabel={`Enter primary color for row ${index + 1}`}
+                        />
+                      </div>
+                      <div style={{ minHeight: "54px" }}>
+                        <TextField
+                          label={renderLabel("Stone Shape", "stone_shape", piece.stone_shape)}
+                          value={piece.stone_shape}
+                          onChange={(v) => handlePieceChange(piece.id, "stone_shape", v)}
+                          autoComplete="off"
+                          placeholder="Shape of the stone"
+                          accessibilityLabel={`Enter stone shape for row ${index + 1}`}
+                        />
+                      </div>
+                      <div style={{ minHeight: "54px" }}>
+                        <TextField
+                          label={renderLabel("Price", "price", piece.price)}
+                          value={piece.price}
+                          onChange={(v) => handlePieceChange(piece.id, "price", v)}
+                          autoComplete="off"
+                          accessibilityLabel={`Enter Price for row ${index + 1}`}
+                        />
+                      </div>
+                    </div>
+
+                    {hasScanError && (
+                      <Banner tone="critical" title="Scan Failed">
+                        <Text as="p" style={{ fontSize: "14px" }}>{piece.scanError}</Text>
+                      </Banner>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            <div style={{ minHeight: "54px", marginTop: "16px" }}>
+              <Button
+                icon={PlusIcon}
+                size="large"
+                onClick={handleAddRow}
+                accessibilityLabel="Add new piece row"
+              >
+                Add Row
+              </Button>
+            </div>
+          </BlockStack>
+        </Card>
+
         <Card padding="400">
           <BlockStack gap="400">
             <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
@@ -752,185 +932,6 @@ export function NewProductIntakeTab({ fetcher }) {
                   accessibilityLabel="Select product type"
                 />
               </div>
-            </div>
-          </BlockStack>
-        </Card>
-
-        <Card padding="400">
-          <BlockStack gap="400">
-            <Text variant="headingMd" as="h2" style={{ fontSize: "14px" }}>Section B: Per-Piece Rows</Text>
-
-            <div style={{ position: "relative", marginBottom: "8px" }}>
-              <input
-                type="text"
-                placeholder="Search products..."
-                aria-label="Search products"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                style={{
-                  width: "100%",
-                  minHeight: "48px",
-                  fontSize: "18px",
-                  border: "2px solid #000",
-                  borderRadius: "4px",
-                  padding: "8px 40px 8px 16px",
-                  boxSizing: "border-box"
-                }}
-              />
-              {searchQuery !== "" && (
-                <button
-                  onClick={() => setSearchQuery("")}
-                  aria-label="Clear search"
-                  style={{
-                    position: "absolute",
-                    right: "12px",
-                    top: "50%",
-                    transform: "translateY(-50%)",
-                    background: "transparent",
-                    border: "none",
-                    fontSize: "20px",
-                    cursor: "pointer",
-                    padding: "4px",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    color: "#5c5f62"
-                  }}
-                >
-                  ✕
-                </button>
-              )}
-            </div>
-
-            <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
-              {filteredPieces.map((piece, index) => {
-                
-                let isScanning = false;
-                (stageFetcher.state !== "idle" && stageFetcher.formData?.get("pieceId") === piece.id) && (isScanning = true);
-                (autoFillFetcher.state !== "idle" && autoFillFetcher.formData?.get("pieceId") === piece.id) && (isScanning = true);
-                (piece.isUploading) && (isScanning = true);
-
-                let hasScanError = false;
-                (piece.scanError && piece.scanError !== "") && (hasScanError = true);
-
-                let hasPhotos = false;
-                (piece.photoFiles && piece.photoFiles.length > 0) && (hasPhotos = true);
-
-                let disableScan = true;
-                (hasPhotos) && (disableScan = false);
-
-                return (
-                  <div key={piece.id} style={{ display: "flex", flexDirection: "column", gap: "16px", paddingBottom: "24px", borderBottom: "1px solid #e1e3e5" }}>
-                    
-                    <div style={{ display: "flex", alignItems: "end", gap: "16px" }}>
-                      <div style={{ flexGrow: 1, minHeight: "54px" }}>
-                        <TextField
-                          label={renderLabel("Piece Name", "piece_name", piece.piece_name)}
-                          value={piece.piece_name}
-                          onChange={(v) => handlePieceChange(piece.id, "piece_name", v)}
-                          onBlur={() => handlePieceNameBlur(piece.id, piece.piece_name)}
-                          autoComplete="off"
-                          accessibilityLabel={`Enter Piece Name for row ${index + 1}`}
-                        />
-                        <div style={{ marginTop: "4px" }}>
-                          <Text variant="bodySm" tone="subdued" as="p">
-                            Format: Stone Family - Origin - Piece Name (e.g. Tiger's Eye - Irv's - Tiger Fly)
-                          </Text>
-                        </div>
-                      </div>
-
-                      <div style={{ minHeight: "54px", width: "120px" }}>
-                        <Button
-                          size="large"
-                          tone="critical"
-                          fullWidth
-                          onClick={() => handleRemoveRow(piece.id)}
-                          disabled={pieces.length <= 1}
-                          accessibilityLabel={`Remove row ${index + 1}`}
-                        >
-                          Remove
-                        </Button>
-                      </div>
-                    </div>
-
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "16px" }}>
-                      <div style={{ minHeight: "54px" }}>
-                        <TextField
-                          label={renderLabel("Dimensions (mm)", "dimensions_mm", piece.dimensions_mm)}
-                          value={piece.dimensions_mm}
-                          onChange={(v) => handlePieceChange(piece.id, "dimensions_mm", v)}
-                          autoComplete="off"
-                          accessibilityLabel={`Enter Dimensions for row ${index + 1}`}
-                        />
-                      </div>
-                      <div style={{ minHeight: "54px" }}>
-                        <TextField
-                          label={renderLabel("Cut & Shape", "cut_and_shape", piece.cut_and_shape)}
-                          value={piece.cut_and_shape}
-                          onChange={(v) => handlePieceChange(piece.id, "cut_and_shape", v)}
-                          autoComplete="off"
-                          accessibilityLabel={`Enter Cut and Shape for row ${index + 1}`}
-                        />
-                      </div>
-                      <div style={{ minHeight: "54px" }}>
-                        <Select
-                          label={renderLabel("Surface Finish", "surface_finish", piece.surface_finish)}
-                          options={[...surfaceFinishOptions.map(o => ({ label: o, value: o }))]}
-                          value={piece.surface_finish}
-                          onChange={(v) => handlePieceChange(piece.id, "surface_finish", v)}
-                          accessibilityLabel={`Select surface finish for row ${index + 1}`}
-                        />
-                      </div>
-                      <div style={{ minHeight: "54px" }}>
-                        <TextField
-                          label={renderLabel("Primary Color", "primary_color", piece.primary_color)}
-                          value={piece.primary_color}
-                          onChange={(v) => handlePieceChange(piece.id, "primary_color", v)}
-                          autoComplete="off"
-                          placeholder="Primary color"
-                          accessibilityLabel={`Enter primary color for row ${index + 1}`}
-                        />
-                      </div>
-                      <div style={{ minHeight: "54px" }}>
-                        <TextField
-                          label={renderLabel("Stone Shape", "stone_shape", piece.stone_shape)}
-                          value={piece.stone_shape}
-                          onChange={(v) => handlePieceChange(piece.id, "stone_shape", v)}
-                          autoComplete="off"
-                          placeholder="Shape of the stone"
-                          accessibilityLabel={`Enter stone shape for row ${index + 1}`}
-                        />
-                      </div>
-                      <div style={{ minHeight: "54px" }}>
-                        <TextField
-                          label={renderLabel("Price", "price", piece.price)}
-                          value={piece.price}
-                          onChange={(v) => handlePieceChange(piece.id, "price", v)}
-                          autoComplete="off"
-                          accessibilityLabel={`Enter Price for row ${index + 1}`}
-                        />
-                      </div>
-                    </div>
-
-                    {hasScanError && (
-                      <Banner tone="critical" title="Scan Failed">
-                        <Text as="p" style={{ fontSize: "14px" }}>{piece.scanError}</Text>
-                      </Banner>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-
-            <div style={{ minHeight: "54px", marginTop: "16px" }}>
-              <Button
-                icon={PlusIcon}
-                size="large"
-                onClick={handleAddRow}
-                accessibilityLabel="Add new piece row"
-              >
-                Add Row
-              </Button>
             </div>
           </BlockStack>
         </Card>
