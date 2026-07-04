@@ -401,30 +401,37 @@ export function NewProductIntakeTab({ fetcher }) {
     const parsed = autoFillFetcher.data.titleParse;
 
     // SHARED FIELDS
-    setSharedFields(prev => ({
-      ...prev,
-      material: parsed.material || "Stone",
-      stone_family: parsed.stone_family || prev.stone_family,
-      collection_location: parsed.collection_name || prev.collection_location,
-      collectionLocation: parsed.collection_name || prev.collectionLocation,
-      origin_location: parsed.origin_name || prev.origin_location,
-      origin_story: parsed.origin_story || prev.origin_story,
-      mohs_hardness: parsed.mohs_hardness || prev.mohs_hardness,
-      luster: parsed.luster || prev.luster,
-      fracture: parsed.fracture || prev.fracture,
-      cleavage: parsed.cleavage || prev.cleavage,
-      specificGravity: parsed.specific_gravity || prev.specificGravity,
-      diaphaneity: parsed.diaphaneity || prev.diaphaneity,
-      crystalSystem: parsed.crystal_system || prev.crystalSystem,
-      geologicalEra: parsed.geological_era || prev.geologicalEra,
-      mineralClass: parsed.mineral_class || prev.mineralClass,
-      rockComposition: parsed.rock_composition || prev.rockComposition,
-      rockFormation: parsed.rock_formation || prev.rockFormation,
-      geological_age: parsed.geological_age || prev.geological_age,
-      fracture_pattern: parsed.fracture_pattern || prev.fracture_pattern,
-      collection_story: parsed.collection_story || prev.collection_story,
-      origin_handle: parsed.origin_handle || prev.origin_handle,
-    }));
+    setSharedFields(prev => {
+      let resolvedCollectionLoc = parsed.collection || parsed.collection_name || parsed.collection_location || prev.collection_location;
+      if (SHOPPED_ROCK_VENDORS.includes(parsed.origin_name)) {
+        resolvedCollectionLoc = "Shopped Rock";
+      }
+
+      return {
+        ...prev,
+        material: parsed.material || "Stone",
+        stone_family: parsed.stone_family || prev.stone_family,
+        collection_location: resolvedCollectionLoc,
+        collectionLocation: resolvedCollectionLoc,
+        origin_location: parsed.origin_name || prev.origin_location,
+        origin_story: parsed.origin_story || prev.origin_story,
+        mohs_hardness: parsed.mohs_hardness || prev.mohs_hardness,
+        luster: parsed.luster || prev.luster,
+        fracture: parsed.fracture || prev.fracture,
+        cleavage: parsed.cleavage || prev.cleavage,
+        specificGravity: parsed.specific_gravity || prev.specificGravity,
+        diaphaneity: parsed.diaphaneity || prev.diaphaneity,
+        crystalSystem: parsed.crystal_system || prev.crystalSystem,
+        geologicalEra: parsed.geological_era || prev.geologicalEra,
+        mineralClass: parsed.mineral_class || prev.mineralClass,
+        rockComposition: parsed.rock_composition || prev.rockComposition,
+        rockFormation: parsed.rock_formation || prev.rockFormation,
+        geological_age: parsed.geological_age || prev.geological_age,
+        fracture_pattern: parsed.fracture_pattern || prev.fracture_pattern,
+        collection_story: parsed.collection_story || prev.collection_story,
+        origin_handle: parsed.origin_handle || prev.origin_handle,
+      };
+    });
 
     // PER-PIECE ROW — write canonical title back to piece name field
     if (parsed.canonical_title || parsed.product_title) {
@@ -853,15 +860,6 @@ export function NewProductIntakeTab({ fetcher }) {
                   onChange={(v) => handleSharedFieldChange("stone_family", v)}
                   accessibilityLabel="Select shared stone family"
                 />
-                <div style={{ marginTop: "8px" }}>
-                  <Button
-                    tone="success"
-                    onClick={() => autoFillFetcher.submit({ intent: "geoLookup", stoneFamily: sharedFields.stone_family }, { method: "post", action: "/app/meta-injector-autofill" })}
-                    accessibilityLabel="Run geo database lookup for stone family"
-                  >
-                    DB Lookup
-                  </Button>
-                </div>
               </div>
               <div style={{ minHeight: "54px" }}>
                 <Select
