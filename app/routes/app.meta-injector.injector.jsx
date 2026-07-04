@@ -516,23 +516,6 @@ export function NewProductIntakeTab({ fetcher }) {
               {photoFiles.length} of 5 photos
             </Text>
 
-            {showScanButton && (
-              <div style={{ minHeight: "48px", marginTop: "16px" }}>
-                <Button
-                  size="large"
-                  variant="primary"
-                  fullWidth
-                  onClick={handleScanGeminiPhotos}
-                  disabled={!scanReady}
-                >
-                  <span style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "8px" }}>
-                    {isScanningVision && <Spinner size="small" />}
-                    Scan Photos with Gemini
-                  </span>
-                </Button>
-              </div>
-            )}
-
             <div style={{ minHeight: "48px", marginTop: "16px" }}>
               <TextField
                 label={
@@ -742,20 +725,6 @@ export function NewProductIntakeTab({ fetcher }) {
                         />
                       </div>
 
-                      <div style={{ minHeight: "54px", width: "240px" }}>
-                        <Button
-                          size="large"
-                          fullWidth
-                          icon={MagicIcon}
-                          disabled={disableScan}
-                          onClick={() => handleScanPhoto({ piece, updatePiece: handlePieceChange, autoFillFetcher, setErrorMessage })}
-                          loading={isScanning}
-                          accessibilityLabel={`Scan First Photo with Gemini for row ${index + 1}`}
-                        >
-                          Scan First Photo with Gemini
-                        </Button>
-                      </div>
-
                       <div style={{ minHeight: "54px", width: "120px" }}>
                         <Button
                           size="large"
@@ -912,6 +881,17 @@ export function NewProductIntakeTab({ fetcher }) {
 
         <Card padding="400">
           <BlockStack gap="400">
+            {scanReady && (
+              <Button
+                onClick={handleScanGeminiPhotos}
+                loading={isScanningVision}
+                disabled={!scanReady}
+                accessibilityLabel="Scan photo with Gemini"
+              >
+                {isScanningVision && <Spinner size="small" />}
+                Scan with Gemini
+              </Button>
+            )}
             <Text variant="headingMd" as="h2" style={{ fontSize: "14px" }}>Meta Scan</Text>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
               {scanKeys.map(key => {
