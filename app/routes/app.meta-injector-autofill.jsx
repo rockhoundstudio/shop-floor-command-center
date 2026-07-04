@@ -162,35 +162,87 @@ export const action = async ({ request }) => {
         const segment2 = segments[1]?.trim() || "";
         const segment3 = segments[2]?.trim() || "";
 
+        let originPages = [];
+        try {
+          const metaRes = await admin.graphql(`
+            query {
+              metaobjects(type: "origin_page", first: 250) {
+                edges {
+                  node {
+                    handle
+                    fields {
+                      key
+                      value
+                    }
+                  }
+                }
+              }
+            }
+          `);
+          const metaData = await metaRes.json();
+          if (metaData.data?.metaobjects?.edges) {
+            originPages = metaData.data.metaobjects.edges.map(edge => {
+              const fields = {};
+              edge.node.fields.forEach(f => { fields[f.key] = f.value; });
+              return {
+                handle: edge.node.handle,
+                canonical_name: fields.name || fields.display_name || fields.title || edge.node.handle,
+                location: fields.location || "",
+                stone_types: fields.stone_types || ""
+              };
+            });
+          }
+        } catch (fetchErr) {
+          console.error("Failed to fetch origin pages metaobjects:", fetchErr.message);
+        }
+
         const promptText = `You are an expert lapidary assistant for Rockhound Studio.
 Analyze these 3 parsed segments from a piece name:
 - Segment 1 (Stone Family): "${segment1}"
 - Segment 2 (Origin/Vendor): "${segment2}"
 - Segment 3 (Piece Title): "${segment3}"
 
+Context Data:
+- SHOPPED_ROCK_VENDORS: ${JSON.stringify(SHOPPED_ROCK_VENDORS)}
+- STONE_FAMILIES_EXACT: ["agate", "amazonite", "amethyst", "aventurine", "bloodstone", "carnelian", "chrysocolla", "citrine", "fluorite", "garnet", "howlite", "jade", "jasper", "labradorite", "lapis lazuli", "malachite", "moonstone", "obsidian", "opal", "quartz", "tiger's eye", "turquoise"]
+- LIVE_ORIGIN_PAGES: ${JSON.stringify(originPages)}
+
 Rules:
-1. For Segment 1 ("${segment1}"), return all known geological data: mohs_hardness, luster, fracture, cleavage, specific_gravity, diaphaneity, crystal_system, geological_era, mineral_class, rock_composition, rock_formation, geological_age, fracture_pattern, and set material strictly to "Stone".
-2. For Segment 2 ("${segment2}"), check against this vendor list: ${JSON.stringify(SHOPPED_ROCK_VENDORS)}.
-   - If segment 2 is in that list:
+1. For Segment 1 ("${segment1}"), return all known geological data: mohs_hardness, luster, fracture, cleavage, specific_gravity, diaphaneity, crystal_system, geological_era, mineral_class, rock_composition, rock_formation, geological_age, fracture_pattern. Set material strictly to "Stone". Set stone_family strictly to the best match from STONE_FAMILIES_EXACT (must be exact lowercase string, if no exact match pick closest).
+2. For Segment 2 ("${segment2}"), check against LIVE_ORIGIN_PAGES and SHOPPED_ROCK_VENDORS.
+   - Fuzzy match against LIVE_ORIGIN_PAGES. If a match is found:
+     - collection_name = "${segment2}"
+     - origin_name = canonical_name from LIVE_ORIGIN_PAGES
+     - origin_type = "field" (unless it's in SHOPPED_ROCK_VENDORS)
+     - origin_handle = handle from LIVE_ORIGIN_PAGES
+     - needs_new_origin_page = false
+     - origin_story = write a short field origin story about this location
+     - collection_story = write a short description of this collection
+   - If Segment 2 is in SHOPPED_ROCK_VENDORS:
      - collection_name = "Shopped Rock"
      - origin_name = "${segment2}"
      - origin_type = "vendor"
+     - origin_handle = ""
+     - needs_new_origin_page = false
      - origin_story = write a short vendor origin story about this shop
      - collection_story = write a short description of the Shopped Rock collection
-   - Else:
+   - If NO MATCH in either list:
      - collection_name = "${segment2}"
      - origin_name = "${segment2}"
      - origin_type = "field"
+     - origin_handle = ""
+     - needs_new_origin_page = true
      - origin_story = write a short field origin story about this location
      - collection_story = write a short description of this collection
 3. For Segment 3 ("${segment3}"), return:
    - product_title = "${segment3}"
    - seo_title = "${segment3} | Rockhound Studio"
    - handle = slugified lowercase hyphenated version of "${segment3}"
+4. Set canonical_title to the corrected full piece name combining the validated Stone Family, Origin Name, and Piece Title (e.g. "Validated Stone - Validated Origin - Validated Title").
 
 Return ONLY valid JSON with exactly this structure, no explanation, no markdown:
 {
-  "stone_family": "${segment1}",
+  "stone_family": "",
   "mohs_hardness": "",
   "luster": "",
   "fracture": "",
@@ -212,7 +264,10 @@ Return ONLY valid JSON with exactly this structure, no explanation, no markdown:
   "collection_story": "",
   "product_title": "${segment3}",
   "seo_title": "${segment3} | Rockhound Studio",
-  "handle": ""
+  "handle": "",
+  "canonical_title": "",
+  "origin_handle": "",
+  "needs_new_origin_page": false
 }`;
 
         const geminiRes = await fetch(
