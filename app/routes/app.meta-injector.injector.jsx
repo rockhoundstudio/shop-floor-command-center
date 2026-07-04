@@ -438,9 +438,6 @@ export function NewProductIntakeTab({ fetcher }) {
   let hasTopPhotos = false;
   (photoFiles.length > 0) && (hasTopPhotos = true);
 
-  let showScanButton = false;
-  (photoFiles.length >= 1) && (showScanButton = true);
-
   let isScanningVision = false;
   (stageFetcher.state !== "idle") && (isScanningVision = true);
   (autoFillFetcher.state !== "idle" && autoFillFetcher.formData?.get("intent") === "visionScan") && (isScanningVision = true);
@@ -881,17 +878,15 @@ export function NewProductIntakeTab({ fetcher }) {
 
         <Card padding="400">
           <BlockStack gap="400">
-            {scanReady && (
-              <Button
-                onClick={handleScanGeminiPhotos}
-                loading={isScanningVision}
-                disabled={!scanReady}
-                accessibilityLabel="Scan photo with Gemini"
-              >
-                {isScanningVision && <Spinner size="small" />}
-                Scan with Gemini
-              </Button>
-            )}
+            <Button
+              onClick={handleScanGeminiPhotos}
+              loading={isScanningVision}
+              disabled={!scanReady}
+              accessibilityLabel="Scan photo with Gemini"
+            >
+              {isScanningVision && <Spinner size="small" />}
+              Scan with Gemini
+            </Button>
             <Text variant="headingMd" as="h2" style={{ fontSize: "14px" }}>Meta Scan</Text>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
               {scanKeys.map(key => {
