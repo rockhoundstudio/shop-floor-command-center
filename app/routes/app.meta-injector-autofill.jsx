@@ -414,7 +414,7 @@ Return ONLY valid JSON with exactly this structure, no explanation, no markdown:
 - cut_and_shape: cabochon style (e.g. "Freeform Cabochon", "Oval Cabochon")
 - surface_finish: (e.g. "High Polish", "Matte", "Natural Rough")
 - stone_shape: overall silhouette (e.g. "Oval", "Freeform", "Teardrop")
-- dimensions_mm: if a tape measure is visible in the photo, read length x width x height in mm (e.g. "42 x 28 x 6"). If no tape measure is visible, return empty string ""
+- dimensions_mm: Look for any ruler, tape measure, or measuring tool visible in the image. Read the scale markings and estimate the stone's dimensions in millimeters. Return dimensions_mm as a string in format "40 x 30" (length x width). If no ruler is visible, return dimensions_mm as empty string.
 - pattern: visible surface pattern (e.g. "Chatoyant bands", "Dendritic inclusions", "Solid")
 
 Return ONLY valid JSON with exactly this structure:
