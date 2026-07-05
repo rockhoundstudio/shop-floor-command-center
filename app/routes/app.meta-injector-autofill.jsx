@@ -367,6 +367,7 @@ Return ONLY valid JSON with exactly this structure, no explanation, no markdown:
     // ==========================================
     if (intent === "visionScan") {
       try {
+        const pieceId = body.get("pieceId");
         const clientBase64 = body.get("imageBase64");
         console.log("[visionScan] clientBase64 present:", !!clientBase64, "length:", clientBase64?.length);
         const clientMime = body.get("imageMimeType") || "image/jpeg";
@@ -386,6 +387,7 @@ Return ONLY valid JSON with exactly this structure, no explanation, no markdown:
             return Response.json({ 
               success: false,
               intent: "visionScan",
+              pieceId,
               description: "", 
               primary_color: "", 
               cut_and_shape: "", 
@@ -461,6 +463,7 @@ No markdown, no code fences, no extra text.`;
             return Response.json({ 
               success: false,
               intent: "visionScan",
+              pieceId,
               description: "", 
               primary_color: "", 
               cut_and_shape: "", 
@@ -485,6 +488,7 @@ No markdown, no code fences, no extra text.`;
             return Response.json({
               success: true,
               intent: "visionScan",
+              pieceId,
               description: parsedVision.description || "",
               primary_color: parsedVision.primary_color || "",
               cut_and_shape: parsedVision.cut_and_shape || "",
@@ -499,6 +503,7 @@ No markdown, no code fences, no extra text.`;
             return Response.json({ 
               success: false,
               intent: "visionScan",
+              pieceId,
               description: "", 
               primary_color: "", 
               cut_and_shape: "", 
@@ -516,6 +521,7 @@ No markdown, no code fences, no extra text.`;
           return Response.json({ 
             success: false,
             intent: "visionScan",
+            pieceId,
             description: "", 
             primary_color: "", 
             cut_and_shape: "", 
@@ -532,6 +538,7 @@ No markdown, no code fences, no extra text.`;
         return Response.json({ 
           success: false,
           intent: "visionScan",
+          pieceId: body.get("pieceId") || "",
           description: "", 
           primary_color: "", 
           cut_and_shape: "", 
