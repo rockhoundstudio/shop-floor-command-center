@@ -10,6 +10,7 @@ const SHOPPED_ROCK_VENDORS = ["Richardson's Rock Ranch", "Irv's Rock and Jewelry
 export function NewProductIntakeTab({ fetcher }) {
   const stageFetcher = useFetcher();
   const autoFillFetcher = useFetcher();
+  const visionFetcher = useFetcher();
   const descriptionFetcher = useFetcher();
 
   const [sharedFields, setSharedFields] = useState({
@@ -68,8 +69,8 @@ export function NewProductIntakeTab({ fetcher }) {
   const [lastScannedPieceId, setLastScannedPieceId] = useState(null);
 
   const handleScanGeminiPhotos = useCallback((piece) => {
-    (piece?.photoFiles?.[0]) && handleScanPhoto({ piece, updatePiece: handlePieceChange, autoFillFetcher, setErrorMessage });
-  }, [autoFillFetcher, setErrorMessage]);
+    (piece?.photoFiles?.[0]) && handleScanPhoto({ piece, updatePiece: handlePieceChange, autoFillFetcher: visionFetcher, visionFetcher, setErrorMessage });
+  }, [visionFetcher, setErrorMessage]);
 
   const handleSharedFieldChange = useCallback((key, value) => {
     setSharedFields(prev => ({ ...prev, [key]: value }));
@@ -307,7 +308,7 @@ export function NewProductIntakeTab({ fetcher }) {
             newUrls[0] = target.resourceUrl;
             handlePieceChange(pid, "stagedResourceUrls", newUrls);
 
-            autoFillFetcher.submit(
+            visionFetcher.submit(
               { intent: "visionScan", pieceId: pid, imageUrl: target.resourceUrl },
               { method: "post", action: "/app/meta-injector-autofill" }
             );
@@ -325,11 +326,11 @@ export function NewProductIntakeTab({ fetcher }) {
   }, [stageFetcher.state, stageFetcher.data]);
 
   useEffect(() => {
-    const isIdle = autoFillFetcher.state === "idle";
-    const hasData = autoFillFetcher.data !== undefined && autoFillFetcher.data !== null;
+    const isIdle = visionFetcher.state === "idle";
+    const hasData = visionFetcher.data !== undefined && visionFetcher.data !== null;
 
     (isIdle && hasData) && (() => {
-      const data = autoFillFetcher.data;
+      const data = visionFetcher.data;
       const isScan = data.intent === "visionScan";
       const isSuccess = data.success === true;
       const isError = data.success === false;
@@ -362,7 +363,7 @@ export function NewProductIntakeTab({ fetcher }) {
         }));
       })();
     })();
-  }, [autoFillFetcher.state, autoFillFetcher.data]);
+  }, [visionFetcher.state, visionFetcher.data]);
 
   useEffect(() => {
     const isIdle = autoFillFetcher.state === "idle";
@@ -535,7 +536,7 @@ export function NewProductIntakeTab({ fetcher }) {
 
   let isScanningVision = false;
   (stageFetcher.state !== "idle") && (isScanningVision = true);
-  (autoFillFetcher.state !== "idle" && autoFillFetcher.formData?.get("intent") === "visionScan") && (isScanningVision = true);
+  (visionFetcher.state !== "idle") && (isScanningVision = true);
 
   return (
     <Frame>
@@ -591,6 +592,7 @@ export function NewProductIntakeTab({ fetcher }) {
                 
                 let isScanning = false;
                 (stageFetcher.state !== "idle" && stageFetcher.formData?.get("pieceId") === piece.id) && (isScanning = true);
+                (visionFetcher.state !== "idle" && visionFetcher.formData?.get("pieceId") === piece.id) && (isScanning = true);
                 (autoFillFetcher.state !== "idle" && autoFillFetcher.formData?.get("pieceId") === piece.id) && (isScanning = true);
                 (piece.isUploading) && (isScanning = true);
 
