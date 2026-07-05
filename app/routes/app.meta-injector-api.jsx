@@ -261,33 +261,20 @@ export const action = async ({ request }) => {
   }
 
   // ==========================================
-  // INTENT 4: STAGED UPLOAD
+  // INTENT 4: STAGED UPLOAD (ONE ROUND-TRIP)
   // ==========================================
   if (intent === "stagedUpload") {
     try {
-      let fileCountStr = formData.get("fileCount");
-      let fileCount = 1;
-      (fileCountStr && !isNaN(parseInt(fileCountStr, 10))) && (fileCount = parseInt(fileCountStr, 10));
-      (fileCount > 5) && (fileCount = 5);
+      // STEP 1: Receive the file from formData on the server
+      const file = formData.get("file_0");
+      const pieceId = formData.get("pieceId");
+      const scanToken = formData.get("scanToken");
 
-      const input = [];
-      for (let i = 0; i < fileCount; i++) {
-        let filename = formData.get(`filename_${i}`);
-        (!filename) && (filename = `upload_${Date.now()}_${i}.jpg`);
-        
-        let fileSizeStr = formData.get(`fileSize_${i}`);
-        let fileSize = "1000";
-        (fileSizeStr) && (fileSize = fileSizeStr);
-
-        input.push({
-          resource: "IMAGE",
-          filename: filename,
-          mimeType: "image/jpeg",
-          fileSize: fileSize,
-          httpMethod: "POST"
-        });
+      if (!file || !(file instanceof File)) {
+        return data({ success: false, intent: "stagedUpload", error: "Missing file_0 binary payload." });
       }
 
+      // STEP 2: Call stagedUploadsCreate GraphQL mutation to get the staged target
       const uploadResponse = await admin.graphql(
         `#graphql
         mutation stagedUploadsCreate($input: [StagedUploadInput!]!) {
@@ -306,7 +293,19 @@ export const action = async ({ request }) => {
             }
           }
         }`,
-        { variables: { input } }
+        {
+          variables: {
+            input: [
+              {
+                resource: "IMAGE",
+                filename: file.name || `upload_${Date.now()}.jpg`,
+                mimeType: file.type || "image/jpeg",
+                fileSize: String(file.size),
+                httpMethod: "POST"
+              }
+            ]
+          }
+        }
       );
 
       const uploadResult = await uploadResponse.json();
@@ -316,10 +315,45 @@ export const action = async ({ request }) => {
         return data({ success: false, intent: "stagedUpload", error: userErrors.map(e => e.message).join(", ") });
       }
 
-      const targets = uploadResult?.data?.stagedUploadsCreate?.stagedTargets || [];
-      const pieceId = formData.get("pieceId");
-      const scanToken = formData.get("scanToken");
-      return data({ success: true, intent: "stagedUpload", targets, pieceId, scanToken });
+      const stagedTargets = uploadResult?.data?.stagedUploadsCreate?.stagedTargets;
+      if (!stagedTargets || stagedTargets.length === 0) {
+        return data({ success: false, intent: "stagedUpload", error: "No upload target returned from Shopify." });
+      }
+
+      const target = stagedTargets[0];
+
+      // STEP 3: Do the S3 POST upload server-side
+      const s3FormData = new FormData();
+
+      // Build a FormData with all target.parameters appended first
+      target.parameters.forEach((param) => {
+        s3FormData.append(param.name, param.value);
+      });
+
+      // Convert Node/Remix File to Blob for reliable fetch transmission and append last under name "file"
+      const arrayBuffer = await file.arrayBuffer();
+      const fileBlob = new Blob([arrayBuffer], { type: file.type || "image/jpeg" });
+      s3FormData.append("file", fileBlob, file.name || `upload_${Date.now()}.jpg`);
+
+      // POST to target.url without manually setting Content-Type
+      const s3Response = await fetch(target.url, {
+        method: "POST",
+        body: s3FormData
+      });
+
+      if (!s3Response.ok) {
+        const errorText = await s3Response.text();
+        return data({ success: false, intent: "stagedUpload", error: `S3 upload failed: ${errorText}` });
+      }
+
+      // STEP 4: Return to the client
+      return data({
+        success: true,
+        intent: "stagedUpload",
+        resourceUrl: target.resourceUrl,
+        pieceId: pieceId,
+        scanToken: scanToken
+      });
     } catch (error) {
       console.error("STAGED UPLOAD CRASH:", error);
       return data({ success: false, intent: "stagedUpload", error: error.message });
