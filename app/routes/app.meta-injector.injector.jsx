@@ -76,8 +76,18 @@ export function NewProductIntakeTab({ fetcher }) {
   const [lastScannedPieceId, setLastScannedPieceId] = useState(null);
 
   const handleScanGeminiPhotos = useCallback((piece) => {
-    (piece?.photoFiles?.[0]) && handleScanPhoto({ piece, updatePiece: handlePieceChange, autoFillFetcher: visionFetcher, visionFetcher, setErrorMessage });
-  }, [visionFetcher, setErrorMessage]);
+    (piece?.photoFiles?.[0]) && (() => {
+      const formData = new FormData();
+      formData.append("intent", "stagedUpload");
+      formData.append("file_0", piece.photoFiles[0]);
+      formData.append("pieceId", piece.id);
+      stageFetcher.submit(formData, {
+        method: "post",
+        action: "/app/meta-injector-api",
+        encType: "multipart/form-data"
+      });
+    })();
+  }, [stageFetcher]);
 
   const handleSharedFieldChange = useCallback((key, value) => {
     setSharedFields(prev => ({ ...prev, [key]: value }));
@@ -319,44 +329,21 @@ export function NewProductIntakeTab({ fetcher }) {
       const isSuccess = data.success === true;
       const isError = data.success === false;
       const pid = data.pieceId;
-      const token = data.scanToken;
-      const target = data.targets?.[0];
+      const resourceUrl = data.resourceUrl;
 
       (isStaged && isError) && (() => {
         handlePieceChange(pid, "scanError", data.error || "Stage failed");
       })();
 
-      const piece = pieces.find(p => p.id === pid);
-      let shouldUpload = false;
-      (isStaged && isSuccess && piece && !piece.isUploading && target) && (shouldUpload = true);
+      (isStaged && isSuccess && resourceUrl) && (() => {
+        setPieces(prev => prev.map(p =>
+          p.id === pid ? { ...p, stagedResourceUrls: [resourceUrl] } : p
+        ));
 
-      (shouldUpload) && (() => {
-        handlePieceChange(pid, "isUploading", true);
-
-        const doUpload = async () => {
-          const file = piece.photoFiles[0];
-          const formData = new FormData();
-          target.parameters.forEach(p => formData.append(p.name, p.value));
-          formData.append("file", file);
-
-          try {
-            const res = await fetch(target.url, { method: "POST", body: formData });
-            (!res.ok) && (() => { throw new Error("Upload to Shopify failed"); })();
-
-            handlePieceChange(pid, "stagedResourceUrls", [target.resourceUrl]);
-
-            visionFetcher.submit(
-              { intent: "visionScan", pieceId: pid, imageUrl: target.resourceUrl },
-              { method: "post", action: "/app/meta-injector-autofill" }
-            );
-          } catch (err) {
-            handlePieceChange(pid, "scanError", err.message);
-            handlePieceChange(pid, "generated_description", "UPLOAD ERROR: " + err.message);
-          } finally {
-            handlePieceChange(pid, "isUploading", false);
-          }
-        };
-        doUpload();
+        visionFetcher.submit(
+          { intent: "visionScan", pieceId: pid, imageUrl: resourceUrl },
+          { method: "post", action: "/app/meta-injector-autofill" }
+        );
       })();
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
