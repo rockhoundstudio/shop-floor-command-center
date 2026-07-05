@@ -1121,6 +1121,16 @@ export function NewProductIntakeTab({ fetcher }) {
         </div>
 
         <Card padding="400">
+          <BlockStack gap="200">
+            <Text variant="headingMd" as="h3">Debug — Piece State</Text>
+            <Text as="p">Photos uploaded: {pieces[0]?.photoFiles?.length || 0}</Text>
+            <Text as="p">Is uploading: {String(pieces[0]?.isUploading)}</Text>
+            <Text as="p">Staged URLs: {JSON.stringify(pieces[0]?.stagedResourceUrls)}</Text>
+            <Text as="p">mediaUrlsJson will send: {JSON.stringify((pieces[0]?.stagedResourceUrls || []).filter(u => u !== undefined && u !== ""))}</Text>
+          </BlockStack>
+        </Card>
+
+        <Card padding="400">
           <BlockStack gap="400">
             <Text variant="headingMd" as="h2" style={{ fontSize: "14px" }}>Meta Scan</Text>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
