@@ -384,6 +384,8 @@ Return ONLY valid JSON with exactly this structure, no explanation, no markdown:
           
           if (!imageUrl) {
             return Response.json({ 
+              success: false,
+              intent: "visionScan",
               description: "", 
               primary_color: "", 
               cut_and_shape: "", 
@@ -457,6 +459,8 @@ No markdown, no code fences, no extra text.`;
           
           if (!textContent) {
             return Response.json({ 
+              success: false,
+              intent: "visionScan",
               description: "", 
               primary_color: "", 
               cut_and_shape: "", 
@@ -479,6 +483,8 @@ No markdown, no code fences, no extra text.`;
             const parsedVision = JSON.parse(cleanJson);
             console.log("[visionScan] Parsed result:", JSON.stringify(parsedVision));
             return Response.json({
+              success: true,
+              intent: "visionScan",
               description: parsedVision.description || "",
               primary_color: parsedVision.primary_color || "",
               cut_and_shape: parsedVision.cut_and_shape || "",
@@ -491,6 +497,8 @@ No markdown, no code fences, no extra text.`;
             console.error("Vision Scan JSON Parse Error:", jsonErr.message, "Raw Response:", cleanJson);
             console.log("[visionScan] ERROR:", jsonErr.message);
             return Response.json({ 
+              success: false,
+              intent: "visionScan",
               description: "", 
               primary_color: "", 
               cut_and_shape: "", 
@@ -506,6 +514,8 @@ No markdown, no code fences, no extra text.`;
           console.error("Gemini Vision API Error:", geminiRes.status, errText);
           console.log("[visionScan] ERROR:", `API error ${geminiRes.status}`);
           return Response.json({ 
+            success: false,
+            intent: "visionScan",
             description: "", 
             primary_color: "", 
             cut_and_shape: "", 
@@ -520,6 +530,8 @@ No markdown, no code fences, no extra text.`;
         console.error("Vision Scan Fault:", error.message);
         console.log("[visionScan] ERROR:", error.message);
         return Response.json({ 
+          success: false,
+          intent: "visionScan",
           description: "", 
           primary_color: "", 
           cut_and_shape: "", 
