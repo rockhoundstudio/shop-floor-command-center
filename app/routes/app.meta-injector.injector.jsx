@@ -22,7 +22,6 @@ export function NewProductIntakeTab({ fetcher }) {
     origin_location: "",
     rescued_by: "Bob and Janyce",
     treatment_status: "100% Natural/Untreated",
-    bench_notes: "",
     origin_story: "",
     primary_use: "",
     handcrafted_by: "Bob & Janyce, Rockhound Studio",
@@ -939,17 +938,6 @@ export function NewProductIntakeTab({ fetcher }) {
                   value={sharedFields.treatment_status}
                   onChange={(v) => handleSharedFieldChange("treatment_status", v)}
                   accessibilityLabel="Select treatment status"
-                />
-              </div>
-              <div style={{ minHeight: "54px" }}>
-                <TextField
-                  label={renderLabel("Bench Notes", "bench_notes", sharedFields.bench_notes)}
-                  value={sharedFields.bench_notes}
-                  onChange={(v) => handleSharedFieldChange("bench_notes", v)}
-                  autoComplete="off"
-                  multiline={3}
-                  placeholder="Setting, drill, bail, wire — anything special"
-                  accessibilityLabel="Enter bench notes"
                 />
               </div>
               <div style={{ minHeight: "54px" }}>
