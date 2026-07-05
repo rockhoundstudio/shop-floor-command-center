@@ -531,9 +531,6 @@ export function NewProductIntakeTab({ fetcher }) {
   let isDescLoading = false;
   (descriptionFetcher.state !== "idle") && (isDescLoading = true);
 
-  const hasPhotosNotYetStaged = pieces[0]?.photoFiles?.length > 0 && 
-    (!pieces[0]?.stagedResourceUrls || pieces[0]?.stagedResourceUrls.filter(u => u && u !== "").length === 0);
-
   const productTypeOptions = [
     "Cabochon", "Pendant", "Necklace", "Earrings", "Ring", "Bracelet", "Wire Wrap", "Driftwood Art", "Display Specimen", "Collector Piece", "Freeform", "Other"
   ];
@@ -1115,7 +1112,7 @@ export function NewProductIntakeTab({ fetcher }) {
               fullWidth
               onClick={handleCreateAll}
               loading={isSubmitting}
-              disabled={isSubmitting || hasPhotosNotYetStaged}
+              disabled={isSubmitting}
               accessibilityLabel="Submit and Create All Pieces"
             >
               Create All Pieces
