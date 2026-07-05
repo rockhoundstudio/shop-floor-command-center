@@ -140,6 +140,15 @@ export function NewProductIntakeTab({ fetcher }) {
           reader.onloadend = () => {
             const base64String = reader.result.replace("data:", "").replace(/^.+,/, "");
             handlePieceChange(id, "imageBase64", base64String);
+            
+            // CHANGE 1: Automatically trigger staging and scanning sequence on photo drop
+            handleScanPhoto({ 
+              piece: updated, 
+              updatePiece: handlePieceChange, 
+              autoFillFetcher: visionFetcher, 
+              visionFetcher, 
+              setErrorMessage 
+            });
           };
           reader.readAsDataURL(capped[0]);
         } else {
@@ -149,7 +158,7 @@ export function NewProductIntakeTab({ fetcher }) {
       })();
       return updated;
     }));
-  }, [handlePieceChange]);
+  }, [handlePieceChange, visionFetcher, setErrorMessage]);
 
   const handleRemoveRowPhoto = useCallback((id, index) => {
     setPieces(prev => prev.map(p => {
@@ -530,6 +539,15 @@ export function NewProductIntakeTab({ fetcher }) {
 
   let isDescLoading = false;
   (descriptionFetcher.state !== "idle") && (isDescLoading = true);
+
+  // CHANGE 2: Determine if staging is actively in flight across any piece
+  let isStagingInFlight = false;
+  pieces.forEach(p => {
+    const stagedCount = (p.stagedResourceUrls || []).filter(u => u !== undefined && u !== "").length;
+    if ((p.photoFiles && p.photoFiles.length > 0) && stagedCount < p.photoFiles.length) {
+      isStagingInFlight = true;
+    }
+  });
 
   const productTypeOptions = [
     "Cabochon", "Pendant", "Necklace", "Earrings", "Ring", "Bracelet", "Wire Wrap", "Driftwood Art", "Display Specimen", "Collector Piece", "Freeform", "Other"
@@ -1111,7 +1129,8 @@ export function NewProductIntakeTab({ fetcher }) {
               tone="success"
               fullWidth
               onClick={handleCreateAll}
-              loading={isSubmitting}
+              loading={isSubmitting || isStagingInFlight}
+              disabled={isSubmitting || isStagingInFlight}
               accessibilityLabel="Submit and Create All Pieces"
             >
               Create All Pieces
