@@ -16,6 +16,7 @@ export function NewProductIntakeTab({ fetcher }) {
   const [sharedFields, setSharedFields] = useState({
     material: "",
     stone_family: "",
+    collection_name: "",
     collection_location: "",
     collection_date: "",
     origin_location: "",
@@ -421,6 +422,7 @@ export function NewProductIntakeTab({ fetcher }) {
         ...prev,
         material: parsed.material || "Stone",
         stone_family: parsed.stone_family || prev.stone_family,
+        collection_name: parsed.collection_name || prev.collection_name,
         collection_location: resolvedCollectionLoc,
         collectionLocation: resolvedCollectionLoc,
         origin_location: parsed.origin_name || prev.origin_location,
@@ -882,6 +884,15 @@ export function NewProductIntakeTab({ fetcher }) {
                   value={sharedFields.stone_family}
                   onChange={(v) => handleSharedFieldChange("stone_family", v)}
                   accessibilityLabel="Select shared stone family"
+                />
+              </div>
+              <div style={{ minHeight: "54px" }}>
+                <TextField
+                  label={renderLabel("Collection Name", "collection_name", sharedFields.collection_name)}
+                  value={sharedFields.collection_name}
+                  onChange={(v) => handleSharedFieldChange("collection_name", v)}
+                  autoComplete="off"
+                  accessibilityLabel="Enter collection name"
                 />
               </div>
               <div style={{ minHeight: "54px" }}>
