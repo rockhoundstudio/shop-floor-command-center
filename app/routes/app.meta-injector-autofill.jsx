@@ -213,7 +213,7 @@ Rules:
 2. For Segment 2 ("${segment2}"), check against LIVE_ORIGIN_PAGES and SHOPPED_ROCK_VENDORS.
    - Fuzzy match against LIVE_ORIGIN_PAGES. If a match is found:
      - collection_name = "${segment2}"
-     - collection_location = the exact display_name string from the matched LIVE_ORIGIN_PAGES entry. Must be copied character-for-character from the list. Do not paraphrase, rename, or invent a collection name.
+     - collection_location = pick the single best match from this exact list (must be one of these strings, character-for-character, no other values allowed): ["Spokane River", "Yakima Canyon", "Yellowstone River", "Richardson's Rock Ranch", "The 3,000-Mile Run", "Nickel Back", "Rufus Serpentine", "The Shopped Rock", "The Gallery"]. Match based on the origin/location context. If Shopped Rock vendor, use "The Shopped Rock". If no match, return empty string.
      - origin_name = canonical_name from LIVE_ORIGIN_PAGES
      - origin_type = "field" (unless it's in SHOPPED_ROCK_VENDORS)
      - origin_handle = handle from LIVE_ORIGIN_PAGES
@@ -222,7 +222,7 @@ Rules:
      - collection_story = write a short description of this collection
    - If Segment 2 is in SHOPPED_ROCK_VENDORS:
      - collection_name = "Shopped Rock"
-     - collection_location = "Shopped Rock"
+     - collection_location = "The Shopped Rock"
      - origin_name = "${segment2}"
      - origin_type = "vendor"
      - origin_handle = ""
@@ -231,7 +231,7 @@ Rules:
      - collection_story = write a short description of the Shopped Rock collection
    - If NO MATCH in either list:
      - collection_name = "${segment2}"
-     - collection_location = "${segment2}"
+     - collection_location = ""
      - origin_name = "${segment2}"
      - origin_type = "field"
      - origin_handle = ""
