@@ -113,20 +113,6 @@ export function NewProductIntakeTab({ fetcher }) {
     if (!value) return;
     const segments = value.split(" - ");
     if (segments.length === 3) {
-      const stoneFamilyVal = segments[0].trim().toLowerCase();
-      const collectionLocationVal = segments[1].trim();
-
-      setSharedFields(prev => ({
-        ...prev,
-        stone_family: stoneFamilyVal,
-        collection_location: collectionLocationVal
-      }));
-
-      autoFillFetcher.submit(
-        { intent: "geoLookup", stoneFamily: stoneFamilyVal },
-        { method: "post", action: "/app/meta-injector-autofill" }
-      );
-
       setLastScannedPieceId(id);
       autoFillFetcher.submit(
         { intent: "titleParse", pieceName: value },
