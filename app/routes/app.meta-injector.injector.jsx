@@ -235,6 +235,57 @@ export function NewProductIntakeTab({ fetcher }) {
     fetcher.submit(payload, { method: "post", action: "/app/meta-injector-api" });
   }, [sharedFields, pieces, fetcher]);
 
+  const handleStartNewBatch = useCallback(() => {
+    setStatusMessage("");
+    setErrorMessage("");
+    setSharedFields({
+      material: "",
+      stone_family: "",
+      collection_name: "",
+      collection_location: "",
+      collection_date: "",
+      origin_location: "",
+      rescued_by: "Bob and Janyce",
+      treatment_status: "100% Natural/Untreated",
+      origin_story: "",
+      primary_use: "",
+      handcrafted_by: "Bob & Janyce, Rockhound Studio",
+      is_one_of_a_kind: "Yes — one of a kind",
+      treated: "Untreated — Natural",
+      found_object: "true",
+      condition: "new",
+      target_gender: "Unisex",
+      age_group: "adult",
+      primary_medium: "",
+      secondary_medium: "",
+      wire_material: "",
+      setting_ready: "",
+      bail_included: "",
+      weight_grams: ""
+    });
+    setPieces([{
+      id: Date.now().toString(),
+      piece_name: "",
+      dimensions_mm: "",
+      cut_and_shape: "",
+      surface_finish: "",
+      primary_color: "",
+      stone_shape: "",
+      price: "",
+      photoFiles: [],
+      photoPreviewUrls: [],
+      photos: [],
+      imageBase64: "",
+      imageMimeType: "",
+      stagedResourceUrls: [],
+      generated_description: "",
+      artist_notes: "",
+      scanError: "",
+      scanToken: "",
+      isUploading: false
+    }]);
+  }, []);
+
   useEffect(() => {
     const isIdle = fetcher.state === "idle";
     const hasData = fetcher.data !== undefined && fetcher.data !== null;
@@ -248,27 +299,6 @@ export function NewProductIntakeTab({ fetcher }) {
         let count = 0;
         fetcher.data.createdCount && (count = fetcher.data.createdCount);
         setStatusMessage(`Successfully created pieces.`);
-        setPieces([{
-          id: Date.now().toString(),
-          piece_name: "",
-          dimensions_mm: "",
-          cut_and_shape: "",
-          surface_finish: "",
-          primary_color: "",
-          stone_shape: "",
-          price: "",
-          photoFiles: [],
-          photoPreviewUrls: [],
-          photos: [],
-          imageBase64: "",
-          imageMimeType: "",
-          stagedResourceUrls: [],
-          generated_description: "",
-          artist_notes: "",
-          scanError: "",
-          scanToken: "",
-          isUploading: false
-        }]);
       })();
 
       (isCreate && isError) && (() => {
@@ -1064,17 +1094,29 @@ export function NewProductIntakeTab({ fetcher }) {
         )}
 
         <div style={{ minHeight: "54px" }}>
-          <Button
-            size="large"
-            variant="primary"
-            tone="success"
-            fullWidth
-            onClick={handleCreateAll}
-            loading={isSubmitting}
-            accessibilityLabel="Submit and Create All Pieces"
-          >
-            Create All Pieces
-          </Button>
+          {statusMessage !== "" ? (
+            <Button
+              size="large"
+              variant="primary"
+              fullWidth
+              onClick={handleStartNewBatch}
+              accessibilityLabel="Start New Batch"
+            >
+              Start New Batch
+            </Button>
+          ) : (
+            <Button
+              size="large"
+              variant="primary"
+              tone="success"
+              fullWidth
+              onClick={handleCreateAll}
+              loading={isSubmitting}
+              accessibilityLabel="Submit and Create All Pieces"
+            >
+              Create All Pieces
+            </Button>
+          )}
         </div>
 
         <Card padding="400">
