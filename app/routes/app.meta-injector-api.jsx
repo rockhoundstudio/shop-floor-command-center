@@ -411,13 +411,73 @@ export const action = async ({ request }) => {
         }
       }
 
-      // Step 2: Attach Media
-      const mediaUrlsJson = formData.get("mediaUrlsJson");
-      if (mediaUrlsJson) {
+      // Step 2: Attach Media via Staged Uploads
+      const photoFiles = formData.getAll("photos[]").filter(file => file && file.size > 0 && file.name);
+      
+      if (photoFiles.length > 0) {
         try {
-          const mediaUrls = JSON.parse(mediaUrlsJson);
-          if (Array.isArray(mediaUrls) && mediaUrls.length > 0) {
-            const mediaInput = mediaUrls.map(url => ({
+          const stagedInput = photoFiles.map(file => ({
+            resource: "IMAGE",
+            filename: file.name,
+            mimeType: file.type || "image/jpeg",
+            fileSize: file.size.toString(),
+            httpMethod: "POST"
+          }));
+
+          const stagedResponse = await admin.graphql(
+            `#graphql
+            mutation stagedUploadsCreate($input: [StagedUploadInput!]!) {
+              stagedUploadsCreate(input: $input) {
+                stagedTargets {
+                  url
+                  resourceUrl
+                  parameters {
+                    name
+                    value
+                  }
+                }
+                userErrors {
+                  field
+                  message
+                }
+              }
+            }`,
+            { variables: { input: stagedInput } }
+          );
+
+          const stagedResult = await stagedResponse.json();
+          const stagedErrors = stagedResult?.data?.stagedUploadsCreate?.userErrors || [];
+          (stagedErrors.length > 0) && allUserErrors.push(...stagedErrors);
+
+          const stagedTargets = stagedResult?.data?.stagedUploadsCreate?.stagedTargets || [];
+          const uploadedResourceUrls = [];
+
+          for (let i = 0; i < photoFiles.length; i++) {
+            const file = photoFiles[i];
+            const target = stagedTargets[i];
+
+            if (target) {
+              const uploadFormData = new FormData();
+              target.parameters.forEach(param => {
+                uploadFormData.append(param.name, param.value);
+              });
+              uploadFormData.append("file", file);
+
+              const putResponse = await fetch(target.url, {
+                method: "POST",
+                body: uploadFormData
+              });
+
+              if (putResponse.ok) {
+                uploadedResourceUrls.push(target.resourceUrl);
+              } else {
+                console.error(`Failed to stage upload media file: ${file.name}`);
+              }
+            }
+          }
+
+          if (uploadedResourceUrls.length > 0) {
+            const mediaInput = uploadedResourceUrls.map(url => ({
               originalSource: url,
               mediaContentType: "IMAGE"
             }));
@@ -443,7 +503,7 @@ export const action = async ({ request }) => {
             (mediaErrors.length > 0) && allUserErrors.push(...mediaErrors);
           }
         } catch (e) {
-          console.error("Error parsing mediaUrlsJson:", e);
+          console.error("Error processing staged uploads for productCreateMedia:", e);
         }
       }
 
