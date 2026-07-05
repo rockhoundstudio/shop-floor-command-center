@@ -516,22 +516,20 @@ export function NewProductIntakeTab({ fetcher }) {
         ));
       })();
     })();
-  }, [descriptionFetcher.data, descriptionFetcher.state]);
+  }, [descriptionFetcher.state, descriptionFetcher.data]);
+
+  useEffect(() => {
+    const stagedUrl = pieces[0]?.stagedResourceUrls?.[0];
+    (stagedUrl && stagedUrl !== "") && (() => {
+      window.shopify?.toast?.show("Photo ready — tap Scan to generate description");
+    })();
+  }, [pieces[0]?.stagedResourceUrls?.[0]]);
 
   let isSubmitting = false;
   (fetcher.state !== "idle" && fetcher.formData?.get("intent") === "createProduct") && (isSubmitting = true);
 
   let isDescLoading = false;
   (descriptionFetcher.state !== "idle") && (isDescLoading = true);
-
-  // CHANGE 2: Determine if staging is actively in flight across any piece
-  let isStagingInFlight = false;
-  pieces.forEach(p => {
-    const stagedCount = (p.stagedResourceUrls || []).filter(u => u !== undefined && u !== "").length;
-    if ((p.photoFiles && p.photoFiles.length > 0) && stagedCount < p.photoFiles.length) {
-      isStagingInFlight = true;
-    }
-  });
 
   const productTypeOptions = [
     "Cabochon", "Pendant", "Necklace", "Earrings", "Ring", "Bracelet", "Wire Wrap", "Driftwood Art", "Display Specimen", "Collector Piece", "Freeform", "Other"
@@ -1113,8 +1111,7 @@ export function NewProductIntakeTab({ fetcher }) {
               tone="success"
               fullWidth
               onClick={handleCreateAll}
-              loading={isSubmitting || isStagingInFlight}
-              disabled={isSubmitting || isStagingInFlight}
+              loading={isSubmitting}
               accessibilityLabel="Submit and Create All Pieces"
             >
               Create All Pieces
