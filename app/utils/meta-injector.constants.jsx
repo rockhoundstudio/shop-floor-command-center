@@ -36,7 +36,7 @@ export const DEFAULT_DROPDOWNS = {
 
 export const REQUIRED_FIELDS = [
   "piece_name", "primary_medium", "handcrafted_by", "is_one_of_a_kind", 
-  "treated", "material", "origin_story", "collection_name", "primary_use"
+  "treated", "material", "origin_story", "collection_name", "primary_use", "primary_color"
 ];
 
 export const productTypeOptions = [
