@@ -413,7 +413,7 @@ export function NewProductIntakeTab({ fetcher }) {
 
     // SHARED FIELDS
     setSharedFields(prev => {
-      let resolvedCollectionLoc = parsed.collection || parsed.collection_name || parsed.collection_location || prev.collection_location;
+      let resolvedCollectionLoc = parsed.collection_location || prev.collection_location;
       if (SHOPPED_ROCK_VENDORS.includes(parsed.origin_name)) {
         resolvedCollectionLoc = "Shopped Rock";
       }
