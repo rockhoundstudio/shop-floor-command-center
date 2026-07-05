@@ -140,15 +140,6 @@ export function NewProductIntakeTab({ fetcher }) {
           reader.onloadend = () => {
             const base64String = reader.result.replace("data:", "").replace(/^.+,/, "");
             handlePieceChange(id, "imageBase64", base64String);
-            
-            // CHANGE 1: Automatically trigger staging and scanning sequence on photo drop
-            handleScanPhoto({ 
-              piece: updated, 
-              updatePiece: handlePieceChange, 
-              autoFillFetcher: visionFetcher, 
-              visionFetcher, 
-              setErrorMessage 
-            });
           };
           reader.readAsDataURL(capped[0]);
         } else {
@@ -158,7 +149,7 @@ export function NewProductIntakeTab({ fetcher }) {
       })();
       return updated;
     }));
-  }, [handlePieceChange, visionFetcher, setErrorMessage]);
+  }, [handlePieceChange]);
 
   const handleRemoveRowPhoto = useCallback((id, index) => {
     setPieces(prev => prev.map(p => {
