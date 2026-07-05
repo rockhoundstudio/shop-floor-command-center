@@ -411,100 +411,40 @@ export const action = async ({ request }) => {
         }
       }
 
-      // Step 2: Attach Media via Staged Uploads
-      const photoFiles = formData.getAll("photos[]").filter(file => file && file.size > 0 && file.name);
-      
-      if (photoFiles.length > 0) {
-        try {
-          const stagedInput = photoFiles.map(file => ({
-            resource: "IMAGE",
-            filename: file.name,
-            mimeType: file.type || "image/jpeg",
-            fileSize: file.size.toString(),
-            httpMethod: "POST"
+      // Step 2: Attach Media using pre-staged URLs from Frontend
+      try {
+        const mediaUrlsJson = formData.get("mediaUrlsJson");
+        const mediaUrls = JSON.parse(mediaUrlsJson || "[]");
+        const validMediaUrls = mediaUrls.filter(u => typeof u === "string" && u.startsWith("http"));
+
+        if (validMediaUrls.length > 0) {
+          const mediaInput = validMediaUrls.map(url => ({
+            originalSource: url,
+            mediaContentType: "IMAGE"
           }));
 
-          const stagedResponse = await admin.graphql(
+          const mediaResponse = await admin.graphql(
             `#graphql
-            mutation stagedUploadsCreate($input: [StagedUploadInput!]!) {
-              stagedUploadsCreate(input: $input) {
-                stagedTargets {
-                  url
-                  resourceUrl
-                  parameters {
-                    name
-                    value
-                  }
+            mutation productCreateMedia($productId: ID!, $media: [CreateMediaInput!]!) {
+              productCreateMedia(productId: $productId, media: $media) {
+                media {
+                  id
                 }
-                userErrors {
+                mediaUserErrors {
                   field
                   message
                 }
               }
             }`,
-            { variables: { input: stagedInput } }
+            { variables: { productId, media: mediaInput } }
           );
 
-          const stagedResult = await stagedResponse.json();
-          const stagedErrors = stagedResult?.data?.stagedUploadsCreate?.userErrors || [];
-          (stagedErrors.length > 0) && allUserErrors.push(...stagedErrors);
-
-          const stagedTargets = stagedResult?.data?.stagedUploadsCreate?.stagedTargets || [];
-          const uploadedResourceUrls = [];
-
-          for (let i = 0; i < photoFiles.length; i++) {
-            const file = photoFiles[i];
-            const target = stagedTargets[i];
-
-            if (target) {
-              const uploadFormData = new FormData();
-              target.parameters.forEach(param => {
-                uploadFormData.append(param.name, param.value);
-              });
-              uploadFormData.append("file", file);
-
-              const putResponse = await fetch(target.url, {
-                method: "POST",
-                body: uploadFormData
-              });
-
-              if (putResponse.ok) {
-                uploadedResourceUrls.push(target.resourceUrl);
-              } else {
-                console.error(`Failed to stage upload media file: ${file.name}`);
-              }
-            }
-          }
-
-          if (uploadedResourceUrls.length > 0) {
-            const mediaInput = uploadedResourceUrls.map(url => ({
-              originalSource: url,
-              mediaContentType: "IMAGE"
-            }));
-
-            const mediaResponse = await admin.graphql(
-              `#graphql
-              mutation productCreateMedia($productId: ID!, $media: [CreateMediaInput!]!) {
-                productCreateMedia(productId: $productId, media: $media) {
-                  media {
-                    id
-                  }
-                  mediaUserErrors {
-                    field
-                    message
-                  }
-                }
-              }`,
-              { variables: { productId, media: mediaInput } }
-            );
-
-            const mediaResult = await mediaResponse.json();
-            const mediaErrors = mediaResult?.data?.productCreateMedia?.mediaUserErrors || [];
-            (mediaErrors.length > 0) && allUserErrors.push(...mediaErrors);
-          }
-        } catch (e) {
-          console.error("Error processing staged uploads for productCreateMedia:", e);
+          const mediaResult = await mediaResponse.json();
+          const mediaErrors = mediaResult?.data?.productCreateMedia?.mediaUserErrors || [];
+          (mediaErrors.length > 0) && allUserErrors.push(...mediaErrors);
         }
+      } catch (e) {
+        console.error("Error attaching media URLs in productCreateMedia:", e);
       }
 
       // Step 3: Write Metafields
