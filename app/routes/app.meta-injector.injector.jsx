@@ -30,7 +30,13 @@ export function NewProductIntakeTab({ fetcher }) {
     found_object: "true",
     condition: "new",
     target_gender: "Unisex",
-    age_group: "adult"
+    age_group: "adult",
+    primary_medium: "",
+    secondary_medium: "",
+    wire_material: "",
+    setting_ready: "",
+    bail_included: "",
+    weight_grams: ""
   });
 
   const [pieces, setPieces] = useState([
@@ -50,6 +56,7 @@ export function NewProductIntakeTab({ fetcher }) {
       imageMimeType: "",
       stagedResourceUrls: [],
       generated_description: "",
+      artist_notes: "",
       scanError: "",
       scanToken: "",
       isUploading: false
@@ -188,6 +195,7 @@ export function NewProductIntakeTab({ fetcher }) {
         imageMimeType: "",
         stagedResourceUrls: [],
         generated_description: "",
+        artist_notes: "",
         scanError: "",
         scanToken: "",
         isUploading: false
@@ -256,6 +264,7 @@ export function NewProductIntakeTab({ fetcher }) {
           imageMimeType: "",
           stagedResourceUrls: [],
           generated_description: "",
+          artist_notes: "",
           scanError: "",
           scanToken: "",
           isUploading: false
@@ -307,6 +316,11 @@ export function NewProductIntakeTab({ fetcher }) {
             let newUrls = [...piece.stagedResourceUrls];
             newUrls[0] = target.resourceUrl;
             handlePieceChange(pid, "stagedResourceUrls", newUrls);
+
+            visionFetcher.submit(
+              { intent: "visionScan", pieceId: pid, imageUrl: target.resourceUrl },
+              { method: "post", action: "/app/meta-injector-autofill" }
+            );
           } catch (err) {
             handlePieceChange(pid, "scanError", err.message);
             handlePieceChange(pid, "generated_description", "UPLOAD ERROR: " + err.message);
@@ -487,7 +501,7 @@ export function NewProductIntakeTab({ fetcher }) {
   (descriptionFetcher.state !== "idle") && (isDescLoading = true);
 
   const productTypeOptions = [
-    "Cabochon", "Pendant", "Necklace", "Earrings", "Ring", "Bracelet", "Wire Wrap", "Driftwood Art", "Display Specimen", "Collector Piece", "Other"
+    "Cabochon", "Pendant", "Necklace", "Earrings", "Ring", "Bracelet", "Wire Wrap", "Driftwood Art", "Display Specimen", "Collector Piece", "Freeform", "Other"
   ];
 
   const collectionLocationOptions = [
@@ -730,6 +744,18 @@ export function NewProductIntakeTab({ fetcher }) {
                       />
                     </div>
 
+                    <div style={{ minHeight: "48px", marginTop: "8px" }}>
+                      <TextField
+                        label={renderLabel("Artist Notes", "artist_notes", piece.artist_notes)}
+                        value={piece.artist_notes}
+                        onChange={(v) => handlePieceChange(piece.id, "artist_notes", v)}
+                        multiline={3}
+                        autoComplete="off"
+                        placeholder="Internal shop notes about this stone's character..."
+                        accessibilityLabel={`Enter Artist Notes for row ${index + 1}`}
+                      />
+                    </div>
+
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "16px" }}>
                       <div style={{ minHeight: "54px" }}>
                         <TextField
@@ -927,11 +953,67 @@ export function NewProductIntakeTab({ fetcher }) {
               </div>
               <div style={{ minHeight: "54px" }}>
                 <Select
-                  label={renderLabel("Product Type", "primary_use", sharedFields.primary_use)}
+                  label={renderLabel("Primary Use", "primary_use", sharedFields.primary_use)}
                   options={[{ label: "Select...", value: "" }, ...productTypeOptions.map(o => ({ label: o, value: o }))]}
                   value={sharedFields.primary_use}
                   onChange={(v) => handleSharedFieldChange("primary_use", v)}
-                  accessibilityLabel="Select product type"
+                  accessibilityLabel="Select primary use"
+                />
+              </div>
+              <div style={{ minHeight: "54px" }}>
+                <TextField
+                  label={renderLabel("Primary Medium", "primary_medium", sharedFields.primary_medium)}
+                  value={sharedFields.primary_medium}
+                  onChange={(v) => handleSharedFieldChange("primary_medium", v)}
+                  autoComplete="off"
+                  accessibilityLabel="Enter Primary Medium"
+                />
+              </div>
+              <div style={{ minHeight: "54px" }}>
+                <TextField
+                  label={renderLabel("Secondary Medium", "secondary_medium", sharedFields.secondary_medium)}
+                  value={sharedFields.secondary_medium}
+                  onChange={(v) => handleSharedFieldChange("secondary_medium", v)}
+                  autoComplete="off"
+                  accessibilityLabel="Enter Secondary Medium"
+                />
+              </div>
+              <div style={{ minHeight: "54px" }}>
+                <TextField
+                  label={renderLabel("Wire Material", "wire_material", sharedFields.wire_material)}
+                  value={sharedFields.wire_material}
+                  onChange={(v) => handleSharedFieldChange("wire_material", v)}
+                  autoComplete="off"
+                  accessibilityLabel="Enter Wire Material"
+                />
+              </div>
+              <div style={{ minHeight: "54px" }}>
+                <TextField
+                  label={renderLabel("Setting Ready", "setting_ready", sharedFields.setting_ready)}
+                  value={sharedFields.setting_ready}
+                  onChange={(v) => handleSharedFieldChange("setting_ready", v)}
+                  autoComplete="off"
+                  placeholder="e.g. true or false"
+                  accessibilityLabel="Enter Setting Ready"
+                />
+              </div>
+              <div style={{ minHeight: "54px" }}>
+                <TextField
+                  label={renderLabel("Bail Included", "bail_included", sharedFields.bail_included)}
+                  value={sharedFields.bail_included}
+                  onChange={(v) => handleSharedFieldChange("bail_included", v)}
+                  autoComplete="off"
+                  placeholder="e.g. true or false"
+                  accessibilityLabel="Enter Bail Included"
+                />
+              </div>
+              <div style={{ minHeight: "54px" }}>
+                <TextField
+                  label={renderLabel("Weight (grams)", "weight_grams", sharedFields.weight_grams)}
+                  value={sharedFields.weight_grams}
+                  onChange={(v) => handleSharedFieldChange("weight_grams", v)}
+                  autoComplete="off"
+                  accessibilityLabel="Enter Weight in grams"
                 />
               </div>
             </div>
