@@ -368,6 +368,7 @@ Return ONLY valid JSON with exactly this structure, no explanation, no markdown:
     if (intent === "visionScan") {
       try {
         const clientBase64 = body.get("imageBase64");
+        console.log("[visionScan] clientBase64 present:", !!clientBase64, "length:", clientBase64?.length);
         const clientMime = body.get("imageMimeType") || "image/jpeg";
 
         let imageBase64 = "";
@@ -376,6 +377,7 @@ Return ONLY valid JSON with exactly this structure, no explanation, no markdown:
         if (clientBase64 && clientBase64 !== "undefined" && clientBase64 !== "null" && String(clientBase64).trim() !== "") {
           imageBase64 = String(clientBase64).trim();
           imageMimeType = clientMime;
+          console.log("[visionScan] mimeType:", imageMimeType);
         } else {
           const rawImageUrl = body.get("imageUrl");
           const imageUrl = rawImageUrl && rawImageUrl !== "undefined" && rawImageUrl !== "null" ? String(rawImageUrl).trim() : "";
@@ -398,6 +400,7 @@ Return ONLY valid JSON with exactly this structure, no explanation, no markdown:
           const imageBuffer = await imageRes.arrayBuffer();
           imageBase64 = Buffer.from(imageBuffer).toString("base64");
           imageMimeType = (imageRes.headers.get("content-type") || "image/jpeg").split(";")[0].trim();
+          console.log("[visionScan] mimeType:", imageMimeType);
         }
 
         const promptText = `You are a lapidary artist and gemstone expert. Analyze this stone cabochon or specimen photo for Rockhound Studio and return a JSON object containing these exact fields:
@@ -423,6 +426,7 @@ Return ONLY valid JSON with exactly this structure:
 
 No markdown, no code fences, no extra text.`;
 
+        console.log("[visionScan] Sending to Gemini...");
         const geminiRes = await fetch(
           "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY,
           {
@@ -449,6 +453,7 @@ No markdown, no code fences, no extra text.`;
         if (geminiRes.ok) {
           const geminiData = await geminiRes.json();
           const textContent = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || "";
+          console.log("[visionScan] Raw Gemini response:", textContent);
           
           if (!textContent) {
             return Response.json({ 
@@ -472,6 +477,7 @@ No markdown, no code fences, no extra text.`;
 
           try {
             const parsedVision = JSON.parse(cleanJson);
+            console.log("[visionScan] Parsed result:", JSON.stringify(parsedVision));
             return Response.json({
               description: parsedVision.description || "",
               primary_color: parsedVision.primary_color || "",
@@ -483,6 +489,7 @@ No markdown, no code fences, no extra text.`;
             });
           } catch (jsonErr) {
             console.error("Vision Scan JSON Parse Error:", jsonErr.message, "Raw Response:", cleanJson);
+            console.log("[visionScan] ERROR:", jsonErr.message);
             return Response.json({ 
               description: "", 
               primary_color: "", 
@@ -497,6 +504,7 @@ No markdown, no code fences, no extra text.`;
         } else {
           const errText = await geminiRes.text();
           console.error("Gemini Vision API Error:", geminiRes.status, errText);
+          console.log("[visionScan] ERROR:", `API error ${geminiRes.status}`);
           return Response.json({ 
             description: "", 
             primary_color: "", 
@@ -510,6 +518,7 @@ No markdown, no code fences, no extra text.`;
         }
       } catch (error) {
         console.error("Vision Scan Fault:", error.message);
+        console.log("[visionScan] ERROR:", error.message);
         return Response.json({ 
           description: "", 
           primary_color: "", 
