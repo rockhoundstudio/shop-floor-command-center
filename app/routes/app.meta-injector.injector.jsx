@@ -307,11 +307,6 @@ export function NewProductIntakeTab({ fetcher }) {
             let newUrls = [...piece.stagedResourceUrls];
             newUrls[0] = target.resourceUrl;
             handlePieceChange(pid, "stagedResourceUrls", newUrls);
-
-            visionFetcher.submit(
-              { intent: "visionScan", pieceId: pid, imageUrl: target.resourceUrl },
-              { method: "post", action: "/app/meta-injector-autofill" }
-            );
           } catch (err) {
             handlePieceChange(pid, "scanError", err.message);
             handlePieceChange(pid, "generated_description", "UPLOAD ERROR: " + err.message);
