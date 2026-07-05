@@ -516,6 +516,7 @@ export function NewProductIntakeTab({ fetcher }) {
         ));
       })();
     })();
+  }, [descriptionFetcher.data, descriptionFetcher.state]);
 
   let isSubmitting = false;
   (fetcher.state !== "idle" && fetcher.formData?.get("intent") === "createProduct") && (isSubmitting = true);
