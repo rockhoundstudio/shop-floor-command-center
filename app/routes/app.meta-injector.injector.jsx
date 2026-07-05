@@ -343,9 +343,7 @@ export function NewProductIntakeTab({ fetcher }) {
             const res = await fetch(target.url, { method: "POST", body: formData });
             (!res.ok) && (() => { throw new Error("Upload to Shopify failed"); })();
 
-            let newUrls = [...piece.stagedResourceUrls];
-            newUrls[0] = target.resourceUrl;
-            handlePieceChange(pid, "stagedResourceUrls", newUrls);
+            handlePieceChange(pid, "stagedResourceUrls", [target.resourceUrl]);
 
             visionFetcher.submit(
               { intent: "visionScan", pieceId: pid, imageUrl: target.resourceUrl },
