@@ -343,7 +343,7 @@ export const action = async ({ request }) => {
 
       const allUserErrors = [];
 
-      // Step 1: Create Product
+      // Step 1: Create Product (returning default variant ID)
       const productInput = {
         title: title,
         descriptionHtml: descriptionHtml,
@@ -358,6 +358,13 @@ export const action = async ({ request }) => {
             product {
               id
               handle
+              variants(first: 1) {
+                edges {
+                  node {
+                    id
+                  }
+                }
+              }
             }
             userErrors {
               field
@@ -380,33 +387,29 @@ export const action = async ({ request }) => {
 
       const productId = createdProduct.id;
       const productHandle = createdProduct.handle;
+      const defaultVariantId = createdProduct.variants?.edges?.[0]?.node?.id;
 
-      // Step 1.5: Set Price on Default Variant
-      const numericPrice = parseFloat(price);
-      (!isNaN(numericPrice) && numericPrice > 0) && await (async () => {
-        const variantResponse = await admin.graphql(
-          `#graphql
-          query getDefaultVariant($id: ID!) {
-            product(id: $id) {
-              variants(first: 1) {
-                edges { node { id } }
+      // Step 1.5: Set Price on Default Variant (BUG 4 FIX)
+      if (price && defaultVariantId) {
+        const numericPrice = parseFloat(price);
+        if (!isNaN(numericPrice)) {
+          const variantResponse = await admin.graphql(
+            `#graphql
+            mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+              productVariantsBulkUpdate(productId: $productId, variants: $variants) {
+                userErrors { field message }
               }
-            }
-          }`,
-          { variables: { id: productId } }
-        );
-        const variantResult = await variantResponse.json();
-        const variantId = variantResult?.data?.product?.variants?.edges?.[0]?.node?.id;
-        (variantId) && await admin.graphql(
-          `#graphql
-          mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
-            productVariantsBulkUpdate(productId: $productId, variants: $variants) {
-              userErrors { field message }
-            }
-          }`,
-          { variables: { productId, variants: [{ id: variantId, price: price.toString() }] } }
-        );
-      })();
+            }`,
+            { variables: { productId, variants: [{ id: defaultVariantId, price: numericPrice.toString() }] } }
+          );
+          
+          const variantResult = await variantResponse.json();
+          const varErrors = variantResult?.data?.productVariantsBulkUpdate?.userErrors || [];
+          if (varErrors.length > 0) {
+            allUserErrors.push(...varErrors);
+          }
+        }
+      }
 
       // Step 2: Attach Media
       const mediaUrlsJson = formData.get("mediaUrlsJson");
@@ -451,13 +454,44 @@ export const action = async ({ request }) => {
           const rawMetafields = JSON.parse(metafieldsJson);
           if (Array.isArray(rawMetafields) && rawMetafields.length > 0) {
             
-            const metafieldsInput = rawMetafields.map(item => ({
-               ownerId: productId,
-               namespace: "custom",
-               key: item.key,
-               type: item.type || "single_line_text_field",
-               value: String(item.value)
-            }));
+            // BUG 2 FIX: Filter out imageBase64
+            const filteredMetafields = rawMetafields.filter(
+              item => item.key !== "imageBase64" && item.key !== "image_base64"
+            );
+
+            const metafieldsInput = filteredMetafields.map(item => {
+               let resolvedType = item.type || "single_line_text_field";
+               let resolvedValue = String(item.value);
+
+               // BUG 1 FIX: weight_grams type and value
+               if (item.key === "weight_grams") {
+                 resolvedType = "number_decimal";
+                 let parsedNum = parseFloat(String(item.value).replace(/["']/g, ""));
+                 resolvedValue = isNaN(parsedNum) ? "0.0" : String(parsedNum);
+               } 
+               // BUG 3 FIX: photos saved as array of valid URL strings
+               else if (item.key === "photos") {
+                 let photosArray = [];
+                 if (Array.isArray(item.value)) {
+                   photosArray = item.value;
+                 } else if (typeof item.value === 'string') {
+                   try {
+                     const parsed = JSON.parse(item.value);
+                     if (Array.isArray(parsed)) photosArray = parsed;
+                   } catch (e) {}
+                 }
+                 const validUrls = photosArray.filter(v => typeof v === 'string' && v.startsWith('http'));
+                 resolvedValue = JSON.stringify(validUrls);
+               }
+
+               return {
+                 ownerId: productId,
+                 namespace: "custom",
+                 key: item.key,
+                 type: resolvedType,
+                 value: resolvedValue
+               };
+            });
 
             // Shopify limits metafieldsSet to 25 items per request
             const chunks = chunkArray(metafieldsInput, 25);
