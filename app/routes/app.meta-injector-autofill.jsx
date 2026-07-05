@@ -195,6 +195,7 @@ export const action = async ({ request }) => {
         } catch (fetchErr) {
           console.error("Failed to fetch origin pages metaobjects:", fetchErr.message);
         }
+        console.log("=== ORIGIN PAGES FETCHED ===", JSON.stringify(originPages));
 
         const promptText = `You are an expert lapidary assistant for Rockhound Studio.
 Analyze these 3 parsed segments from a piece name:
@@ -212,6 +213,7 @@ Rules:
 2. For Segment 2 ("${segment2}"), check against LIVE_ORIGIN_PAGES and SHOPPED_ROCK_VENDORS.
    - Fuzzy match against LIVE_ORIGIN_PAGES. If a match is found:
      - collection_name = "${segment2}"
+     - collection_location = the exact display_name string from the matched LIVE_ORIGIN_PAGES entry. Must be copied character-for-character from the list. Do not paraphrase, rename, or invent a collection name.
      - origin_name = canonical_name from LIVE_ORIGIN_PAGES
      - origin_type = "field" (unless it's in SHOPPED_ROCK_VENDORS)
      - origin_handle = handle from LIVE_ORIGIN_PAGES
@@ -220,6 +222,7 @@ Rules:
      - collection_story = write a short description of this collection
    - If Segment 2 is in SHOPPED_ROCK_VENDORS:
      - collection_name = "Shopped Rock"
+     - collection_location = "Shopped Rock"
      - origin_name = "${segment2}"
      - origin_type = "vendor"
      - origin_handle = ""
@@ -228,6 +231,7 @@ Rules:
      - collection_story = write a short description of the Shopped Rock collection
    - If NO MATCH in either list:
      - collection_name = "${segment2}"
+     - collection_location = "${segment2}"
      - origin_name = "${segment2}"
      - origin_type = "field"
      - origin_handle = ""
@@ -258,6 +262,7 @@ Return ONLY valid JSON with exactly this structure, no explanation, no markdown:
   "fracture_pattern": "",
   "material": "Stone",
   "collection_name": "",
+  "collection_location": "",
   "origin_name": "",
   "origin_type": "",
   "origin_story": "",
