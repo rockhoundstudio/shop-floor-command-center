@@ -516,14 +516,6 @@ export function NewProductIntakeTab({ fetcher }) {
         ));
       })();
     })();
-  }, [descriptionFetcher.state, descriptionFetcher.data]);
-
-  useEffect(() => {
-    const stagedUrl = pieces[0]?.stagedResourceUrls?.[0];
-    (stagedUrl && stagedUrl !== "") && (() => {
-      window.shopify?.toast?.show("Photo ready — tap Scan to generate description");
-    })();
-  }, [pieces[0]?.stagedResourceUrls?.[0]]);
 
   let isSubmitting = false;
   (fetcher.state !== "idle" && fetcher.formData?.get("intent") === "createProduct") && (isSubmitting = true);
