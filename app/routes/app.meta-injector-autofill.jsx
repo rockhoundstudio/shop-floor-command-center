@@ -242,7 +242,7 @@ Rules:
    - product_title = "${segment3}"
    - seo_title = "${segment3} | Rockhound Studio"
    - handle = slugified lowercase hyphenated version of "${segment3}"
-4. Set canonical_title to the corrected full piece name combining the validated Stone Family, Origin Name, and Piece Title (e.g. "Validated Stone - Validated Origin - Validated Title").
+4. Set canonical_title to the corrected full piece name combining the validated Stone Family, Origin Name, Piece Title (e.g. "Validated Stone - Validated Origin - Validated Title").
 
 Return ONLY valid JSON with exactly this structure, no explanation, no markdown:
 {
@@ -296,6 +296,10 @@ Return ONLY valid JSON with exactly this structure, no explanation, no markdown:
           if (firstBrace !== -1 && lastBrace !== -1) {
             cleanJson = cleanJson.slice(firstBrace, lastBrace + 1);
           }
+          cleanJson = cleanJson.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
+          cleanJson = cleanJson.replace(/"(?:[^"\\]|\\.)*"/g, (match) => {
+            return match.replace(/\n/g, "\\n").replace(/\r/g, "\\r").replace(/\t/g, "\\t");
+          });
 
           const parsedData = JSON.parse(cleanJson);
           return Response.json({ titleParse: parsedData });
@@ -486,6 +490,10 @@ No markdown, no code fences, no extra text.`;
           if (firstBrace !== -1 && lastBrace !== -1) {
             cleanJson = cleanJson.slice(firstBrace, lastBrace + 1);
           }
+          cleanJson = cleanJson.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
+          cleanJson = cleanJson.replace(/"(?:[^"\\]|\\.)*"/g, (match) => {
+            return match.replace(/\n/g, "\\n").replace(/\r/g, "\\r").replace(/\t/g, "\\t");
+          });
 
           try {
             const parsedVision = JSON.parse(cleanJson);
@@ -879,6 +887,10 @@ Return only valid JSON. No explanation. No markdown.`;
             if (firstBrace !== -1 && lastBrace !== -1) {
               cleanJson = cleanJson.slice(firstBrace, lastBrace + 1);
             }
+            cleanJson = cleanJson.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
+            cleanJson = cleanJson.replace(/"(?:[^"\\]|\\.)*"/g, (match) => {
+              return match.replace(/\n/g, "\\n").replace(/\r/g, "\\r").replace(/\t/g, "\\t");
+            });
 
             const textData = JSON.parse(cleanJson);
             console.log("GEMINI TEXT RESPONSE:", JSON.stringify(textData));
@@ -1008,6 +1020,10 @@ Return only valid JSON. No explanation. No markdown.`;
             if (firstBrace !== -1 && lastBrace !== -1) {
               cleanJson = cleanJson.slice(firstBrace, lastBrace + 1);
             }
+            cleanJson = cleanJson.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
+            cleanJson = cleanJson.replace(/"(?:[^"\\]|\\.)*"/g, (match) => {
+              return match.replace(/\n/g, "\\n").replace(/\r/g, "\\r").replace(/\t/g, "\\t");
+            });
 
             const visionData = JSON.parse(cleanJson);
             
