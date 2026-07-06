@@ -188,7 +188,8 @@ export const action = async ({ request }) => {
                 handle: edge.node.handle,
                 canonical_name: fields.name || fields.display_name || fields.title || edge.node.handle,
                 location: fields.location || "",
-                stone_types: fields.stone_types || ""
+                stone_types: fields.stone_types || "",
+                origin_story: fields.origin_story || ""
               };
             });
           }
@@ -220,6 +221,7 @@ Rules:
      - needs_new_origin_page = false
      - origin_story = write a short field origin story about this location
      - collection_story = write a short description of this collection
+     - stone_story = read 'origin_story' from the matched LIVE_ORIGIN_PAGES entry and write a 1-2 sentence hook from it—evocative, specific to this location, written in Janyce's voice (warm, enthusiastic rockhound)
    - If Segment 2 is in SHOPPED_ROCK_VENDORS:
      - collection_name = "Shopped Rock"
      - collection_location = "The Shopped Rock"
@@ -229,6 +231,7 @@ Rules:
      - needs_new_origin_page = false
      - origin_story = write a short vendor origin story about this shop
      - collection_story = write a short description of the Shopped Rock collection
+     - stone_story = write a 1-2 sentence hook about this vendor's material—evocative, written in Janyce's voice (warm, enthusiastic rockhound)
    - If NO MATCH in either list:
      - collection_name = "${segment2}"
      - collection_location = ""
@@ -238,6 +241,7 @@ Rules:
      - needs_new_origin_page = true
      - origin_story = write a short field origin story about this location
      - collection_story = write a short description of this collection
+     - stone_story = write a 1-2 sentence hook about this location—evocative, written in Janyce's voice (warm, enthusiastic rockhound)
 3. For Segment 3 ("${segment3}"), return:
    - product_title = "${segment3}"
    - seo_title = "${segment3} | Rockhound Studio"
@@ -267,6 +271,7 @@ Return ONLY valid JSON with exactly this structure, no explanation, no markdown:
   "origin_type": "",
   "origin_story": "",
   "collection_story": "",
+  "stone_story": "",
   "product_title": "${segment3}",
   "seo_title": "${segment3} | Rockhound Studio",
   "handle": "",
