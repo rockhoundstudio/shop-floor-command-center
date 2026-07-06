@@ -46,7 +46,7 @@ export function NewProductIntakeTab({ fetcher }) {
       dimensions_mm: "",
       cut_and_shape: "",
       surface_finish: "",
-      primary_color: "",
+      color: "",
       stone_shape: "",
       price: "",
       photoFiles: [],
@@ -181,7 +181,7 @@ export function NewProductIntakeTab({ fetcher }) {
         dimensions_mm: "",
         cut_and_shape: "",
         surface_finish: "",
-        primary_color: "",
+        color: "",
         stone_shape: "",
         price: "",
         photoFiles: [],
@@ -217,7 +217,7 @@ export function NewProductIntakeTab({ fetcher }) {
       dimensions_mm: pieces[0].dimensions_mm,
       cut_and_shape: pieces[0].cut_and_shape,
       surface_finish: pieces[0].surface_finish,
-      primary_color: pieces[0].primary_color,
+      color: pieces[0].color,
       stone_shape: pieces[0].stone_shape,
       price: pieces[0].price,
       title: buildTitle(sharedFields, pieces[0]),
@@ -265,7 +265,7 @@ export function NewProductIntakeTab({ fetcher }) {
       dimensions_mm: "",
       cut_and_shape: "",
       surface_finish: "",
-      primary_color: "",
+      color: "",
       stone_shape: "",
       price: "",
       photoFiles: [],
@@ -350,7 +350,7 @@ export function NewProductIntakeTab({ fetcher }) {
           let updated = { ...p };
           (p.id === data.pieceId) && (() => {
             (data.description !== undefined && data.description !== "") && (updated.generated_description = data.description);
-            (data.primary_color !== undefined && data.primary_color !== "") && (updated.primary_color = data.primary_color);
+            (data.color !== undefined && data.color !== "") && (updated.color = data.color);
             (data.cut_and_shape !== undefined && data.cut_and_shape !== "") && (updated.cut_and_shape = data.cut_and_shape);
             (data.surface_finish !== undefined && data.surface_finish !== "") && (updated.surface_finish = data.surface_finish);
             (data.stone_shape !== undefined && data.stone_shape !== "") && (updated.stone_shape = data.stone_shape);
@@ -788,12 +788,12 @@ export function NewProductIntakeTab({ fetcher }) {
                       </div>
                       <div style={{ minHeight: "54px" }}>
                         <TextField
-                          label={renderLabel("Primary Color", "primary_color", piece.primary_color)}
-                          value={piece.primary_color}
-                          onChange={(v) => handlePieceChange(piece.id, "primary_color", v)}
+                          label={renderLabel("Color", "color", piece.color)}
+                          value={piece.color}
+                          onChange={(v) => handlePieceChange(piece.id, "color", v)}
                           autoComplete="off"
                           placeholder="Primary color"
-                          accessibilityLabel={`Enter primary color for row ${index + 1}`}
+                          accessibilityLabel={`Enter color for row ${index + 1}`}
                         />
                       </div>
                       <div style={{ minHeight: "54px" }}>
