@@ -96,7 +96,15 @@ export const action = async ({ request }) => {
         return data({ intent: "saveMetafields", success: false, message: "No data provided to save." });
       }
 
-      const payloadArray = JSON.parse(rawPayload);
+      let payloadArray = JSON.parse(rawPayload);
+      
+      // FIX: Rename is_one_of_a-kind to is_one_of_a_kind
+      payloadArray = payloadArray.map(item => {
+        if (item.key === "is_one_of_a-kind") {
+          return { ...item, key: "is_one_of_a_kind" };
+        }
+        return item;
+      });
 
       const TYPE_MAP = {
         stone_story: "list.single_line_text_field",
@@ -105,7 +113,13 @@ export const action = async ({ request }) => {
         treated: "single_line_text_field",
         found_object: "single_line_text_field",
         custom_product: "single_line_text_field",
-        is_one_of_a_kind: "single_line_text_field"
+        is_one_of_a_kind: "single_line_text_field",
+        piece_name: "single_line_text_field",
+        cut_and_shape: "single_line_text_field",
+        surface_finish: "single_line_text_field",
+        dimensions_mm: "single_line_text_field",
+        stone_shape: "single_line_text_field",
+        seo_title: "single_line_text_field"
       };
 
       const setMetafields = payloadArray
