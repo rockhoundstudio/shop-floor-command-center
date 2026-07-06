@@ -49,6 +49,8 @@ export function NewProductIntakeTab({ fetcher }) {
       color: "",
       stone_shape: "",
       price: "",
+      character_marks: "",
+      stone_story: "",
       photoFiles: [],
       photoPreviewUrls: [],
       photos: [],
@@ -184,6 +186,8 @@ export function NewProductIntakeTab({ fetcher }) {
         color: "",
         stone_shape: "",
         price: "",
+        character_marks: "",
+        stone_story: "",
         photoFiles: [],
         photoPreviewUrls: [],
         photos: [],
@@ -220,6 +224,9 @@ export function NewProductIntakeTab({ fetcher }) {
       color: pieces[0].color,
       stone_shape: pieces[0].stone_shape,
       price: pieces[0].price,
+      seo_title: pieces[0].seo_title,
+      character_marks: pieces[0].character_marks,
+      stone_story: pieces[0].stone_story,
       title: buildTitle(sharedFields, pieces[0]),
       descriptionHtml: pieces[0].generated_description,
       productType: productType,
@@ -268,6 +275,8 @@ export function NewProductIntakeTab({ fetcher }) {
       color: "",
       stone_shape: "",
       price: "",
+      character_marks: "",
+      stone_story: "",
       photoFiles: [],
       photoPreviewUrls: [],
       photos: [],
@@ -755,6 +764,30 @@ export function NewProductIntakeTab({ fetcher }) {
                         autoComplete="off"
                         placeholder="Internal shop notes about this stone's character..."
                         accessibilityLabel={`Enter Artist Notes for row ${index + 1}`}
+                      />
+                    </div>
+
+                    <div style={{ minHeight: "48px", marginTop: "8px" }}>
+                      <TextField
+                        label={renderLabel("Character Marks", "character_marks", piece.character_marks)}
+                        value={piece.character_marks}
+                        onChange={(v) => handlePieceChange(piece.id, "character_marks", v)}
+                        multiline={2}
+                        autoComplete="off"
+                        placeholder="Describe any natural character marks, inclusions, or patterns..."
+                        accessibilityLabel={`Enter Character Marks for row ${index + 1}`}
+                      />
+                    </div>
+
+                    <div style={{ minHeight: "48px", marginTop: "8px" }}>
+                      <TextField
+                        label={renderLabel("Stone Story", "stone_story", piece.stone_story)}
+                        value={piece.stone_story}
+                        onChange={(v) => handlePieceChange(piece.id, "stone_story", v)}
+                        multiline={3}
+                        autoComplete="off"
+                        placeholder="The unique story or geological journey of this specific stone..."
+                        accessibilityLabel={`Enter Stone Story for row ${index + 1}`}
                       />
                     </div>
 
