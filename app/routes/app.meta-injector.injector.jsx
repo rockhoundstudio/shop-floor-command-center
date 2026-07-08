@@ -919,7 +919,7 @@ export function NewProductIntakeTab({ fetcher }) {
                     { label: "sandstone", value: "sandstone" }
                   ]}
                   value={sharedFields.stone_family}
-                  onChange={(v) => handleSharedFieldChange("stone_family", v)}
+                  onChange={(v) => handleStoneFamilyChange(v)}
                   accessibilityLabel="Select shared stone family"
                 />
               </div>
@@ -990,11 +990,11 @@ export function NewProductIntakeTab({ fetcher }) {
               </div>
               <div style={{ minHeight: "54px" }}>
                 <Select
-                  label={renderLabel("Primary Use", "primary_use", sharedFields.primary_use)}
+                  label={renderLabel("Product Type", "primary_use", sharedFields.primary_use)}
                   options={[{ label: "Select...", value: "" }, ...productTypeOptions.map(o => ({ label: o, value: o }))]}
                   value={sharedFields.primary_use}
                   onChange={(v) => handleSharedFieldChange("primary_use", v)}
-                  accessibilityLabel="Select primary use"
+                  accessibilityLabel="Select product type"
                 />
               </div>
               <div style={{ minHeight: "54px" }}>
