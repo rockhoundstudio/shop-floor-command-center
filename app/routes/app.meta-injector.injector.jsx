@@ -65,9 +65,13 @@ export function NewProductIntakeTab({ fetcher }) {
     }
   ]);
 
+  const [photoFiles, setPhotoFiles] = useState([]);
+  const [photoPreviewUrls, setPhotoPreviewUrls] = useState([]);
+
   const [searchQuery, setSearchQuery] = useState("");
   const [statusMessage, setStatusMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
+  const [generatedDescription, setGeneratedDescription] = useState("");
   const [geoToast, setGeoToast] = useState(false);
   
   // Title Parse Toast State
@@ -122,6 +126,33 @@ export function NewProductIntakeTab({ fetcher }) {
       );
     }
   }, [autoFillFetcher]);
+
+  const handleTopDropZoneDrop = useCallback((dropFiles) => {
+    setPhotoFiles(prev => {
+      const combined = [...prev, ...dropFiles];
+      const capped = combined.slice(0, 5);
+      setPhotoPreviewUrls(capped.map(f => URL.createObjectURL(f)));
+      return capped;
+    });
+    setPieces(prev => prev.map((p, i) => {
+      let updated = { ...p };
+      (i === 0) && (() => {
+        const combined = [...p.photoFiles, ...dropFiles];
+        const capped = combined.slice(0, 5);
+        updated.photoFiles = capped;
+        updated.photoPreviewUrls = capped.map(f => URL.createObjectURL(f));
+      })();
+      return updated;
+    }));
+  }, []);
+
+  const handleRemoveTopPhoto = useCallback((index) => {
+    setPhotoFiles(prev => {
+      const updated = prev.filter((_, i) => i !== index);
+      setPhotoPreviewUrls(updated.map(f => URL.createObjectURL(f)));
+      return updated;
+    });
+  }, []);
 
   const handleDropZoneDrop = useCallback((id, dropFiles) => {
     setPieces(prev => prev.map(p => {
@@ -293,6 +324,10 @@ export function NewProductIntakeTab({ fetcher }) {
       scanToken: "",
       isUploading: false
     }]);
+    setPhotoFiles([]);
+    setPhotoPreviewUrls([]);
+    setGeneratedDescription("");
+    setLastScannedPieceId(null);
   }, []);
 
   useEffect(() => {
