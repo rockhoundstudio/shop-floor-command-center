@@ -235,7 +235,11 @@ export function NewProductIntakeTab({ fetcher }) {
       mediaUrlsJson: JSON.stringify(pieces[0].stagedResourceUrls.filter(u => u !== undefined && u !== ""))
     };
 
-    fetcher.submit(payload, { method: "post", action: "/app/meta-injector-api" });
+    const fd = new FormData();
+    fd.append("intent", "createProduct");
+    fd.append("payload", JSON.stringify(payload));
+
+    fetcher.submit(fd, { method: "post", action: "/app/meta-injector-api" });
   }, [sharedFields, pieces, fetcher]);
 
   const handleStartNewBatch = useCallback(() => {
@@ -459,7 +463,7 @@ export function NewProductIntakeTab({ fetcher }) {
       const pieceTitleVal = parsed.canonical_title || parsed.product_title;
       setPieces(prev => prev.map((p, i) =>
         p.id === lastScannedPieceId || (!lastScannedPieceId && i === 0)
-          ? { ...p, piece_name: pieceTitleVal, seo_title: parsed.seo_title, handle: parsed.handle }
+          ? { ...p, piece_name: pieceTitleVal, seo_title: parsed.seo_title, handle: parsed.handle, stone_story: parsed.stone_story }
           : p
       ));
     }
