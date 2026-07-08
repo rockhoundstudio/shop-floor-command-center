@@ -379,15 +379,22 @@ export const action = async ({ request }) => {
   // ==========================================
   if (intent === "createProduct") {
     try {
-      const stoneFamily = formData.get("stone_family") || "Unknown Stone";
-      const originLocation = formData.get("origin_location") || "Unknown Origin";
-      const pieceName = formData.get("piece_name") || "New Piece";
+      const rawPayload = formData.get("payload");
+      if (!rawPayload) {
+        return data({ success: false, intent: "createProduct", error: "Missing JSON payload." });
+      }
+
+      const payload = JSON.parse(rawPayload);
+
+      const stoneFamily = payload.stone_family || "Unknown Stone";
+      const originLocation = payload.origin_location || "Unknown Origin";
+      const pieceName = payload.piece_name || "New Piece";
       
       const title = `${stoneFamily} — ${originLocation} — ${pieceName}`;
-      const descriptionHtml = formData.get("descriptionHtml") || "";
-      const price = formData.get("price") || "0.00";
-      const productType = formData.get("productType") || "Wearable Art";
-      const status = formData.get("status") || "DRAFT";
+      const descriptionHtml = payload.descriptionHtml || "";
+      const price = payload.price || "0.00";
+      const productType = payload.productType || "Wearable Art";
+      const status = payload.status || "DRAFT";
 
       const allUserErrors = [];
 
@@ -461,7 +468,7 @@ export const action = async ({ request }) => {
 
       // Step 2: Attach Media using pre-staged URLs from Frontend
       try {
-        const mediaUrlsJson = formData.get("mediaUrlsJson");
+        const mediaUrlsJson = payload.mediaUrlsJson;
         const mediaUrls = JSON.parse(mediaUrlsJson || "[]");
         const validMediaUrls = mediaUrls.filter(u => typeof u === "string" && u.startsWith("http"));
 
@@ -496,7 +503,7 @@ export const action = async ({ request }) => {
       }
 
       // Step 3: Write Metafields
-      const metafieldsJson = formData.get("metafieldsJson");
+      const metafieldsJson = payload.metafieldsJson;
       if (metafieldsJson) {
         try {
           const rawMetafields = JSON.parse(metafieldsJson);
