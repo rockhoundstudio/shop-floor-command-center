@@ -386,13 +386,15 @@ export const action = async ({ request }) => {
 
       const payload = JSON.parse(rawPayload);
 
+      const piece = payload.pieces && payload.pieces.length > 0 ? payload.pieces[0] : {};
+
       const stoneFamily = payload.stone_family || "Unknown Stone";
       const originLocation = payload.origin_location || "Unknown Origin";
-      const pieceName = payload.piece_name || "New Piece";
+      const pieceName = piece.piece_name || "New Piece";
       
       const title = `${stoneFamily} — ${originLocation} — ${pieceName}`;
       const descriptionHtml = payload.descriptionHtml || "";
-      const price = payload.price || "0.00";
+      const price = piece.price || "0.00";
       const productType = payload.productType || "Wearable Art";
       const status = payload.status || "DRAFT";
 
@@ -503,19 +505,44 @@ export const action = async ({ request }) => {
       }
 
       // Step 3: Write Metafields
-      const metafieldsJson = payload.metafieldsJson;
-      if (metafieldsJson) {
-        try {
-          const rawMetafields = JSON.parse(metafieldsJson);
-          if (Array.isArray(rawMetafields) && rawMetafields.length > 0) {
-            
-            // BUG 2 FIX: Filter out imageBase64
-            const filteredMetafields = rawMetafields.filter(
-              item => item.key !== "imageBase64" && item.key !== "image_base64"
-            );
+      const rawMetafields = [];
 
-            const metafieldsInput = filteredMetafields.map(item => {
-               let resolvedType = item.type || "single_line_text_field";
+      // Combine shared fields and piece fields
+      const combinedFields = { ...payload, ...piece };
+      
+      // We don't want to save these system/structural keys as metafields
+      const ignoreKeys = ["intent", "mediaUrlsJson", "descriptionHtml", "productType", "status", "pieces", "photoFiles", "photoPreviewUrls", "photos", "imageBase64", "imageMimeType", "stagedResourceUrls", "scanError", "scanToken", "isUploading", "id", "generated_description", "price", "seo_title"];
+
+      Object.entries(combinedFields).forEach(([key, value]) => {
+        if (!ignoreKeys.includes(key) && value !== undefined && value !== null && String(value).trim() !== "") {
+           rawMetafields.push({
+             key: key === "is_one_of_a-kind" ? "is_one_of_a_kind" : key,
+             value: value,
+             type: "single_line_text_field" // The map below will fix the types
+           });
+        }
+      });
+
+      if (rawMetafields.length > 0) {
+        try {
+            const TYPE_MAP = {
+              stone_story: "list.single_line_text_field",
+              character_marks: "list.single_line_text_field",
+              is_ooak: "single_line_text_field",
+              treated: "single_line_text_field",
+              found_object: "single_line_text_field",
+              custom_product: "single_line_text_field",
+              is_one_of_a_kind: "single_line_text_field",
+              piece_name: "single_line_text_field",
+              cut_and_shape: "single_line_text_field",
+              surface_finish: "single_line_text_field",
+              dimensions_mm: "single_line_text_field",
+              stone_shape: "single_line_text_field",
+              seo_title: "single_line_text_field"
+            };
+
+            const metafieldsInput = rawMetafields.map(item => {
+               let resolvedType = TYPE_MAP[item.key] || item.type || "single_line_text_field";
                let resolvedValue = String(item.value);
 
                // BUG 1 FIX: weight_grams type and value
@@ -524,19 +551,9 @@ export const action = async ({ request }) => {
                  let parsedNum = parseFloat(String(item.value).replace(/["']/g, ""));
                  resolvedValue = isNaN(parsedNum) ? "0.0" : String(parsedNum);
                } 
-               // BUG 3 FIX: photos saved as array of valid URL strings
-               else if (item.key === "photos") {
-                 let photosArray = [];
-                 if (Array.isArray(item.value)) {
-                   photosArray = item.value;
-                 } else if (typeof item.value === 'string') {
-                   try {
-                     const parsed = JSON.parse(item.value);
-                     if (Array.isArray(parsed)) photosArray = parsed;
-                   } catch (e) {}
-                 }
-                 const validUrls = photosArray.filter(v => typeof v === 'string' && v.startsWith('http'));
-                 resolvedValue = JSON.stringify(validUrls);
+               
+               if (resolvedType.startsWith("list.")) {
+                 resolvedValue = JSON.stringify([String(item.value)]);
                }
 
                return {
@@ -566,9 +583,8 @@ export const action = async ({ request }) => {
               const metaErrors = metaResult?.data?.metafieldsSet?.userErrors || [];
               (metaErrors.length > 0) && allUserErrors.push(...metaErrors);
             }
-          }
         } catch (e) {
-          console.error("Error parsing metafieldsJson:", e);
+          console.error("Error formatting metafields:", e);
         }
       }
 
