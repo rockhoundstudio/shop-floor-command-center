@@ -525,6 +525,11 @@ export const action = async ({ request }) => {
 
       Object.entries(combinedFields).forEach(([key, value]) => {
         if (!ignoreKeys.includes(key) && value !== undefined && value !== null && String(value).trim() !== "") {
+           const strValue = String(value);
+           if (strValue.length > 50000) {
+             console.warn(`⚠️ SKIPPING OVERSIZED METAFIELD [${key}]: Length is ${strValue.length} characters!`);
+             return;
+           }
            rawMetafields.push({
              key: key === "is_one_of_a-kind" ? "is_one_of_a_kind" : key,
              value: value,
@@ -602,14 +607,20 @@ export const action = async ({ request }) => {
 
       if (allUserErrors.length > 0) {
         console.log("CREATE PRODUCT ERRORS:", JSON.stringify(allUserErrors, null, 2));
+        return data({
+          success: false,
+          intent: "createProduct",
+          error: "Shopify rejected metafields: " + allUserErrors.map(e => e.message).join(" | "),
+          userErrors: allUserErrors
+        }, { status: 400 });
       }
 
-      return data({ 
-        success: true, 
-        intent: "createProduct", 
-        productId: productId, 
+      return data({
+        success: true,
+        intent: "createProduct",
+        productId: productId,
         productHandle: productHandle,
-        userErrors: allUserErrors
+        userErrors: []
       });
 
     } catch (error) {
