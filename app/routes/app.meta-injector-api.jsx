@@ -99,9 +99,9 @@ export const action = async ({ request }) => {
 
       let payloadArray = JSON.parse(rawPayload);
       
-      // FIX: Rename is_one_of_a-kind to is_one_of_a_kind
+      // FIX: Rename is_one_of_a_kind to is_one_of_a_kind
       payloadArray = payloadArray.map(item => {
-        if (item.key === "is_one_of_a-kind") {
+        if (item.key === "is_one_of_a_kind") {
           return { ...item, key: "is_one_of_a_kind" };
         }
         return item;
@@ -531,7 +531,7 @@ export const action = async ({ request }) => {
              return;
            }
            rawMetafields.push({
-             key: key === "is_one_of_a-kind" ? "is_one_of_a_kind" : key,
+             key: key,
              value: value,
              type: "single_line_text_field" // The map below will fix the types
            });
