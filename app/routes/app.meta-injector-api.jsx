@@ -386,7 +386,7 @@ export const action = async ({ request }) => {
 
       const payload = JSON.parse(rawPayload);
 
-      const piece = payload.pieces && payload.pieces.length > 0 ? payload.pieces[0] : {};
+      const piece = payload.pieces && payload.pieces[0] ? payload.pieces[0] : {};
 
       const stoneFamily = payload.stone_family || "Unknown Stone";
       const originLocation = payload.origin_location || "Unknown Origin";
