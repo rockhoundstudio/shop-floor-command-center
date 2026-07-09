@@ -472,7 +472,6 @@ export function NewProductIntakeTab({ fetcher }) {
         stone_family: parsed.stone_family || prev.stone_family,
         collection_name: parsed.collection_name || prev.collection_name,
         collection_location: resolvedCollectionLoc,
-        collectionLocation: resolvedCollectionLoc,
         origin_location: parsed.origin_name || prev.origin_location,
         origin_story: parsed.origin_story || prev.origin_story,
         mohs_hardness: parsed.mohs_hardness || prev.mohs_hardness,
