@@ -248,22 +248,20 @@ export function NewProductIntakeTab({ fetcher }) {
     const payload = {
       intent: "createProduct",
       ...sharedFields,
-      piece_name: pieces[0].piece_name,
-      dimensions_mm: pieces[0].dimensions_mm,
-      cut_and_shape: pieces[0].cut_and_shape,
-      surface_finish: pieces[0].surface_finish,
-      color: pieces[0].color,
-      stone_shape: pieces[0].stone_shape,
-      price: pieces[0].price,
-      seo_title: pieces[0].seo_title,
-      character_marks: pieces[0].character_marks,
-      stone_story: pieces[0].stone_story,
-      title: buildTitle(sharedFields, pieces[0]),
-      descriptionHtml: pieces[0].generated_description,
-      productType: productType,
-      status: "DRAFT",
-      metafieldsJson: buildMetafieldsJson(sharedFields, pieces[0]),
-      mediaUrlsJson: JSON.stringify(pieces[0].stagedResourceUrls.filter(u => u !== undefined && u !== ""))
+      pieces: pieces.map(piece => ({
+        piece_name: piece.piece_name,
+        dimensions_mm: piece.dimensions_mm,
+        cut_and_shape: piece.cut_and_shape,
+        surface_finish: piece.surface_finish,
+        color: piece.color,
+        stone_shape: piece.stone_shape,
+        price: piece.price,
+        artist_notes: piece.artist_notes,
+        character_marks: piece.character_marks,
+        stone_story: piece.stone_story,
+        description: piece.generated_description,
+        mediaUrlsJson: JSON.stringify(piece.stagedResourceUrls || []),
+      }))
     };
 
     const fd = new FormData();
