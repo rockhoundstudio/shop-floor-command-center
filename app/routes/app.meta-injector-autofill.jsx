@@ -156,7 +156,7 @@ export const action = async ({ request }) => {
     if (intent === "titleParse") {
       try {
         const pieceNameInput = body.get("pieceName") || "";
-        const segments = pieceNameInput.split(" - ");
+        const segments = pieceNameInput.split(" — ");
         
         const segment1 = segments[0]?.trim() || "";
         const segment2 = segments[1]?.trim() || "";
