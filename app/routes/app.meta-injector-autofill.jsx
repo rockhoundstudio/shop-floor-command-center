@@ -403,6 +403,7 @@ Return ONLY valid JSON with exactly this structure, no explanation, no markdown:
               intent: "visionScan",
               pieceId,
               description: "", 
+              color: "",
               primary_color: "", 
               cut_and_shape: "", 
               surface_finish: "", 
@@ -424,6 +425,7 @@ Return ONLY valid JSON with exactly this structure, no explanation, no markdown:
         const promptText = `You are a lapidary artist and gemstone expert. Analyze this stone cabochon or specimen photo for Rockhound Studio and return a JSON object containing these exact fields:
 
 - description: rich narrative description of the stone and piece in 2-3 paragraphs. Rockhound Studio voice — raw, authentic, collector energy. Write in first person as Bob or Janyce from Rockhound Studio. No corporate language.
+- color: Single dominant color only. Plain text, one word or short compound ("Forest Green", "Golden Yellow"). No conjunctions, no commas, no lists. "Multicolor" only as last resort. Google Shopping safe.
 - primary_color: dominant color of the stone (e.g. "golden brown", "chartreuse green")
 - cut_and_shape: cabochon style (e.g. "Freeform Cabochon", "Oval Cabochon")
 - surface_finish: (e.g. "High Polish", "Matte", "Natural Rough")
@@ -434,6 +436,7 @@ Return ONLY valid JSON with exactly this structure, no explanation, no markdown:
 Return ONLY valid JSON with exactly this structure:
 {
   "description": "",
+  "color": "",
   "primary_color": "",
   "cut_and_shape": "",
   "surface_finish": "",
@@ -479,6 +482,7 @@ No markdown, no code fences, no extra text.`;
               intent: "visionScan",
               pieceId,
               description: "", 
+              color: "",
               primary_color: "", 
               cut_and_shape: "", 
               surface_finish: "", 
@@ -508,6 +512,7 @@ No markdown, no code fences, no extra text.`;
               intent: "visionScan",
               pieceId,
               description: parsedVision.description || "",
+              color: parsedVision.color || "",
               primary_color: parsedVision.primary_color || "",
               cut_and_shape: parsedVision.cut_and_shape || "",
               surface_finish: parsedVision.surface_finish || "",
@@ -523,6 +528,7 @@ No markdown, no code fences, no extra text.`;
               intent: "visionScan",
               pieceId,
               description: "", 
+              color: "",
               primary_color: "", 
               cut_and_shape: "", 
               surface_finish: "", 
@@ -541,6 +547,7 @@ No markdown, no code fences, no extra text.`;
             intent: "visionScan",
             pieceId,
             description: "", 
+            color: "",
             primary_color: "", 
             cut_and_shape: "", 
             surface_finish: "", 
@@ -558,6 +565,7 @@ No markdown, no code fences, no extra text.`;
           intent: "visionScan",
           pieceId: body.get("pieceId") || "",
           description: "", 
+          color: "",
           primary_color: "", 
           cut_and_shape: "", 
           surface_finish: "", 
