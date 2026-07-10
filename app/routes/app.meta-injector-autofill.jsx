@@ -176,7 +176,6 @@ export const action = async ({ request }) => {
                     }
                   }
                 }
-              }
             }
           `);
           const metaData = await metaRes.json();
@@ -425,12 +424,12 @@ Return ONLY valid JSON with exactly this structure, no explanation, no markdown:
         const promptText = `You are a lapidary artist and gemstone expert. Analyze this stone cabochon or specimen photo for Rockhound Studio and return a JSON object containing these exact fields:
 
 - description: rich narrative description of the stone and piece in 2-3 paragraphs. Rockhound Studio voice — raw, authentic, collector energy. Write in first person as Bob or Janyce from Rockhound Studio. No corporate language.
-- color: Single dominant color only. Plain text, one word or short compound ("Forest Green", "Golden Yellow"). No conjunctions, no commas, no lists. "Multicolor" only as last resort. Google Shopping safe.
+- color: Identify the single dominant color of the STONE ONLY. Ignore the tape measure, background, table surface, hands, packaging, and any other objects in the image. Focus exclusively on the mineral or gemstone itself. Return one plain-text color name (e.g. Forest Green, Golden Yellow, Deep Red). Use Multicolor only if the stone itself contains multiple distinct colors with no single dominant one.
 - primary_color: dominant color of the stone (e.g. "golden brown", "chartreuse green")
 - cut_and_shape: cabochon style (e.g. "Freeform Cabochon", "Oval Cabochon")
 - surface_finish: (e.g. "High Polish", "Matte", "Natural Rough")
 - stone_shape: overall silhouette (e.g. "Oval", "Freeform", "Teardrop")
-- dimensions_mm: Look for any ruler, tape measure, or measuring tool visible in the image. Read the scale markings and estimate the stone's dimensions in millimeters. Return dimensions_mm as a string in format "40 x 30" (length x width). If no ruler is visible, return dimensions_mm as empty string.
+- dimensions_mm: Read the tape measure visible in the image to determine the stone dimensions. Use the tape measure scale only — do not estimate or guess. Return in format LENGTHmm x WIDTHmm x HEIGHTmm if all three are visible, or LENGTHmm x WIDTHmm if only two. If no tape measure is visible in the image, return null.
 - pattern: visible surface pattern (e.g. "Chatoyant bands", "Dendritic inclusions", "Solid")
 
 Return ONLY valid JSON with exactly this structure:
@@ -984,9 +983,10 @@ Return only valid JSON. No explanation. No markdown.`;
         const clientPrompt = body.get("prompt");
         const promptText = clientPrompt && clientPrompt.trim() !== "" ? clientPrompt : `${promptStyle ? `Writing style instruction: ${promptStyle}\n\n` : ""}You are a gemologist and lapidary expert analyzing a handcrafted stone cabochon or specimen for an online store called Rockhound Studio. Look at this stone image carefully and return a JSON object with these fields — only include fields you can visually confirm, leave others out:
 {
-  "color": "(return ONLY the primary color as a single word, e.g. 'Blue' or 'Red')",
+  "color": "Identify the single dominant color of the STONE ONLY. Ignore the tape measure, background, table surface, hands, packaging, and any other objects in the image. Focus exclusively on the mineral or gemstone itself. Return one plain-text color name (e.g. Forest Green, Golden Yellow, Deep Red). Use Multicolor only if the stone itself contains multiple distinct colors with no single dominant one.",
   "surface_finish": "(one of: High Polish, Satin Polish, Matte, Natural/Rough, Tumbled)",
   "cut_and_shape": "(e.g. Freeform, Oval Cabochon, Round Cabochon, Teardrop, Pear, Trillion)",
+  "dimensions_mm": "Read the tape measure visible in the image to determine the stone dimensions. Use the tape measure scale only — do not estimate or guess. Return in format LENGTHmm x WIDTHmm x HEIGHTmm if all three are visible, or LENGTHmm x WIDTHmm if only two. If no tape measure is visible in the image, return null.",
   "character_marks": "Describe any visible banding, inclusions, color transitions, surface marks, or distinctive visual features of the stone. Be specific and factual.",
   "alt_text": "(a single descriptive sentence for screen readers and SEO, written in plain English describing what is seen in the image)",
   "is_one_of_a_kind": "(boolean)",
@@ -1064,6 +1064,7 @@ Return only valid JSON. No explanation. No markdown.`;
             safeSet("color", visionData.color || visionData.Color || visionData.primary_color);
             safeSet("surface_finish", visionData.surface_finish || visionData.Surface_finish);
             safeSet("cut_and_shape", visionData.cut_and_shape || visionData.Cut_and_shape);
+            safeSet("dimensions_mm", visionData.dimensions_mm || visionData.Dimensions_mm);
             safeSet("honest_flaws_and_character", visionData.character_marks);
             safeSet("alt_text", visionData.alt_text || visionData.Alt_text);
             safeSet("is_one_of_a_kind", visionData.is_one_of_a_kind);
