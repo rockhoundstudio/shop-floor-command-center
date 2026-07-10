@@ -10,6 +10,7 @@ const SHOPPED_ROCK_VENDORS = ["Richardson's Rock Ranch", "Irv's Rock and Jewelry
 export function NewProductIntakeTab({ fetcher }) {
   const stageFetcher = useFetcher();
   const autoFillFetcher = useFetcher();
+  const geoFetcher = useFetcher();
   const visionFetcher = useFetcher();
   const descriptionFetcher = useFetcher();
 
@@ -101,11 +102,11 @@ export function NewProductIntakeTab({ fetcher }) {
 
   const handleStoneFamilyChange = useCallback((value) => {
     setSharedFields(prev => ({ ...prev, stone_family: value }));
-    (value && value.trim() !== "") && autoFillFetcher.submit(
+    (value && value.trim() !== "") && geoFetcher.submit(
       { intent: "geoLookup", stoneFamily: value },
       { method: "post", action: "/app/meta-injector-autofill" }
     );
-  }, [autoFillFetcher]);
+  }, [geoFetcher]);
 
   const handlePieceChange = useCallback((id, key, value) => {
     setPieces(prev => prev.map(p => {
@@ -422,11 +423,11 @@ export function NewProductIntakeTab({ fetcher }) {
   }, [visionFetcher.state, visionFetcher.data]);
 
   useEffect(() => {
-    const isIdle = autoFillFetcher.state === "idle";
-    const hasData = autoFillFetcher.data !== undefined && autoFillFetcher.data !== null;
+    const isIdle = geoFetcher.state === "idle";
+    const hasData = geoFetcher.data !== undefined && geoFetcher.data !== null;
 
     (isIdle && hasData) && (() => {
-      const data = autoFillFetcher.data;
+      const data = geoFetcher.data;
       (data.geoFields) && (() => {
         const geo = data.geoFields;
         setSharedFields(prev => {
@@ -451,7 +452,7 @@ export function NewProductIntakeTab({ fetcher }) {
         setGeoToast(true);
       })();
     })();
-  }, [autoFillFetcher.state, autoFillFetcher.data]);
+  }, [geoFetcher.state, geoFetcher.data]);
 
   useEffect(() => {
     if (!autoFillFetcher.data?.titleParse) return;
