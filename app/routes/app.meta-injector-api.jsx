@@ -79,7 +79,6 @@ export const action = async ({ request }) => {
 
     } catch (error) {
       console.error("Cache Error:", error);
-      console.log("=== ERROR ===", error.message, error.stack);
       return data({ success: false, message: "Database connection failed." }, { status: 500 });
     }
   }
@@ -99,9 +98,9 @@ export const action = async ({ request }) => {
 
       let payloadArray = JSON.parse(rawPayload);
       
-      // FIX: Rename is_one_of_a_kind to is_one_of_a_kind
+      // FIX: Rename is_one_of_a-kind to is_one_of_a_kind
       payloadArray = payloadArray.map(item => {
-        if (item.key === "is_one_of_a_kind") {
+        if (item.key === "is_one_of_a-kind") {
           return { ...item, key: "is_one_of_a_kind" };
         }
         return item;
@@ -187,7 +186,6 @@ export const action = async ({ request }) => {
       return data({ intent: "saveMetafields", success: true, message: "All metafields locked in." });
     } catch (error) {
       console.error("SAVE METAFIELDS CRASH:", error.message, error.stack);
-      console.log("=== ERROR ===", error.message, error.stack);
       return data({ intent: "saveMetafields", success: false, error: error.message });
     }
   }
@@ -308,7 +306,6 @@ export const action = async ({ request }) => {
               message
             }
           }
-        }
         }`,
         {
           variables: {
@@ -373,7 +370,6 @@ export const action = async ({ request }) => {
       });
     } catch (error) {
       console.error("STAGED UPLOAD CRASH:", error);
-      console.log("=== ERROR ===", error.message, error.stack);
       return data({ success: false, intent: "stagedUpload", error: error.message });
     }
   }
@@ -389,13 +385,8 @@ export const action = async ({ request }) => {
       }
 
       const payload = JSON.parse(rawPayload);
-      console.log("=== CREATE PRODUCT PAYLOAD ===", JSON.stringify(payload, null, 2));
 
-      const piece = payload.pieces && payload.pieces[0] ? payload.pieces[0] : {};
-      console.log("=== PIECE ===", JSON.stringify(piece, null, 2));
-
-      const sharedFields = payload.sharedFields || {};
-      console.log("=== SHARED FIELDS ===", JSON.stringify(payload.sharedFields, null, 2));
+      const piece = payload.pieces && payload.pieces.length > 0 ? payload.pieces[0] : {};
 
       const stoneFamily = payload.stone_family || "Unknown Stone";
       const originLocation = payload.origin_location || "Unknown Origin";
@@ -441,12 +432,11 @@ export const action = async ({ request }) => {
         { variables: { input: productInput } }
       );
 
-      const productCreateResult = await createResponse.json();
-      console.log("=== PRODUCT CREATE RESULT ===", JSON.stringify(productCreateResult, null, 2));
-      const createErrors = productCreateResult?.data?.productCreate?.userErrors || [];
+      const createResult = await createResponse.json();
+      const createErrors = createResult?.data?.productCreate?.userErrors || [];
       (createErrors.length > 0) && allUserErrors.push(...createErrors);
 
-      const createdProduct = productCreateResult?.data?.productCreate?.product;
+      const createdProduct = createResult?.data?.productCreate?.product;
       
       if (!createdProduct) {
          return data({ success: false, intent: "createProduct", error: "Product creation failed", userErrors: allUserErrors });
@@ -510,29 +500,23 @@ export const action = async ({ request }) => {
           const mediaErrors = mediaResult?.data?.productCreateMedia?.mediaUserErrors || [];
           (mediaErrors.length > 0) && allUserErrors.push(...mediaErrors);
         }
-      } catch (error) {
-        console.error("Error attaching media URLs in productCreateMedia:", error);
-        console.log("=== ERROR ===", error.message, error.stack);
+      } catch (e) {
+        console.error("Error attaching media URLs in productCreateMedia:", e);
       }
 
       // Step 3: Write Metafields
       const rawMetafields = [];
 
       // Combine shared fields and piece fields
-      const combinedFields = { ...sharedFields, ...piece };
+      const combinedFields = { ...payload, ...piece };
       
       // We don't want to save these system/structural keys as metafields
-      const ignoreKeys = ["intent", "mediaUrlsJson", "descriptionHtml", "productType", "status", "pieces", "photoFiles", "photoPreviewUrls", "photos", "imageBase64", "imageMimeType", "stagedResourceUrls", "scanError", "scanToken", "isUploading", "id", "generated_description", "price", "seo_title", "sharedFields", "collectionLocation"];
+      const ignoreKeys = ["intent", "mediaUrlsJson", "descriptionHtml", "productType", "status", "pieces", "photoFiles", "photoPreviewUrls", "photos", "imageBase64", "imageMimeType", "stagedResourceUrls", "scanError", "scanToken", "isUploading", "id", "generated_description", "price", "seo_title"];
 
       Object.entries(combinedFields).forEach(([key, value]) => {
         if (!ignoreKeys.includes(key) && value !== undefined && value !== null && String(value).trim() !== "") {
-           const strValue = String(value);
-           if (strValue.length > 50000) {
-             console.warn(`⚠️ SKIPPING OVERSIZED METAFIELD [${key}]: Length is ${strValue.length} characters!`);
-             return;
-           }
            rawMetafields.push({
-             key: key,
+             key: key === "is_one_of_a-kind" ? "is_one_of_a_kind" : key,
              value: value,
              type: "single_line_text_field" // The map below will fix the types
            });
@@ -595,38 +579,29 @@ export const action = async ({ request }) => {
                 { variables: { metafields: chunk } }
               );
               
-              const metafieldsResult = await metaResponse.json();
-              console.log("=== METAFIELDS SET RESULT ===", JSON.stringify(metafieldsResult, null, 2));
-              const metaErrors = metafieldsResult?.data?.metafieldsSet?.userErrors || [];
+              const metaResult = await metaResponse.json();
+              const metaErrors = metaResult?.data?.metafieldsSet?.userErrors || [];
               (metaErrors.length > 0) && allUserErrors.push(...metaErrors);
             }
-        } catch (error) {
-          console.error("Error formatting metafields:", error);
-          console.log("=== ERROR ===", error.message, error.stack);
+        } catch (e) {
+          console.error("Error formatting metafields:", e);
         }
       }
 
       if (allUserErrors.length > 0) {
         console.log("CREATE PRODUCT ERRORS:", JSON.stringify(allUserErrors, null, 2));
-        return data({
-          success: false,
-          intent: "createProduct",
-          error: "Shopify rejected metafields: " + allUserErrors.map(e => e.message).join(" | "),
-          userErrors: allUserErrors
-        }, { status: 400 });
       }
 
-      return data({
-        success: true,
-        intent: "createProduct",
-        productId: productId,
+      return data({ 
+        success: true, 
+        intent: "createProduct", 
+        productId: productId, 
         productHandle: productHandle,
-        userErrors: []
+        userErrors: allUserErrors
       });
 
     } catch (error) {
       console.error("CREATE PRODUCT CRASH:", error);
-      console.log("=== ERROR ===", error.message, error.stack);
       return data({ success: false, intent: "createProduct", error: error.message });
     }
   }

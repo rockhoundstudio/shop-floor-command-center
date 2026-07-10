@@ -10,7 +10,6 @@ const SHOPPED_ROCK_VENDORS = ["Richardson's Rock Ranch", "Irv's Rock and Jewelry
 export function NewProductIntakeTab({ fetcher }) {
   const stageFetcher = useFetcher();
   const autoFillFetcher = useFetcher();
-  const geoFetcher = useFetcher();
   const visionFetcher = useFetcher();
   const descriptionFetcher = useFetcher();
 
@@ -102,11 +101,11 @@ export function NewProductIntakeTab({ fetcher }) {
 
   const handleStoneFamilyChange = useCallback((value) => {
     setSharedFields(prev => ({ ...prev, stone_family: value }));
-    (value && value.trim() !== "") && geoFetcher.submit(
+    (value && value.trim() !== "") && autoFillFetcher.submit(
       { intent: "geoLookup", stoneFamily: value },
       { method: "post", action: "/app/meta-injector-autofill" }
     );
-  }, [geoFetcher]);
+  }, [autoFillFetcher]);
 
   const handlePieceChange = useCallback((id, key, value) => {
     setPieces(prev => prev.map(p => {
@@ -249,20 +248,22 @@ export function NewProductIntakeTab({ fetcher }) {
     const payload = {
       intent: "createProduct",
       ...sharedFields,
-      pieces: pieces.map(piece => ({
-        piece_name: piece.piece_name,
-        dimensions_mm: piece.dimensions_mm,
-        cut_and_shape: piece.cut_and_shape,
-        surface_finish: piece.surface_finish,
-        color: piece.color,
-        stone_shape: piece.stone_shape,
-        price: piece.price,
-        artist_notes: piece.artist_notes,
-        character_marks: piece.character_marks,
-        stone_story: piece.stone_story,
-        description: piece.generated_description,
-        mediaUrlsJson: JSON.stringify(piece.stagedResourceUrls || []),
-      }))
+      piece_name: pieces[0].piece_name,
+      dimensions_mm: pieces[0].dimensions_mm,
+      cut_and_shape: pieces[0].cut_and_shape,
+      surface_finish: pieces[0].surface_finish,
+      color: pieces[0].color,
+      stone_shape: pieces[0].stone_shape,
+      price: pieces[0].price,
+      seo_title: pieces[0].seo_title,
+      character_marks: pieces[0].character_marks,
+      stone_story: pieces[0].stone_story,
+      title: buildTitle(sharedFields, pieces[0]),
+      descriptionHtml: pieces[0].generated_description,
+      productType: productType,
+      status: "DRAFT",
+      metafieldsJson: buildMetafieldsJson(sharedFields, pieces[0]),
+      mediaUrlsJson: JSON.stringify(pieces[0].stagedResourceUrls.filter(u => u !== undefined && u !== ""))
     };
 
     const fd = new FormData();
@@ -423,11 +424,11 @@ export function NewProductIntakeTab({ fetcher }) {
   }, [visionFetcher.state, visionFetcher.data]);
 
   useEffect(() => {
-    const isIdle = geoFetcher.state === "idle";
-    const hasData = geoFetcher.data !== undefined && geoFetcher.data !== null;
+    const isIdle = autoFillFetcher.state === "idle";
+    const hasData = autoFillFetcher.data !== undefined && autoFillFetcher.data !== null;
 
     (isIdle && hasData) && (() => {
-      const data = geoFetcher.data;
+      const data = autoFillFetcher.data;
       (data.geoFields) && (() => {
         const geo = data.geoFields;
         setSharedFields(prev => {
@@ -452,7 +453,7 @@ export function NewProductIntakeTab({ fetcher }) {
         setGeoToast(true);
       })();
     })();
-  }, [geoFetcher.state, geoFetcher.data]);
+  }, [autoFillFetcher.state, autoFillFetcher.data]);
 
   useEffect(() => {
     if (!autoFillFetcher.data?.titleParse) return;
@@ -471,6 +472,7 @@ export function NewProductIntakeTab({ fetcher }) {
         stone_family: parsed.stone_family || prev.stone_family,
         collection_name: parsed.collection_name || prev.collection_name,
         collection_location: resolvedCollectionLoc,
+        collectionLocation: resolvedCollectionLoc,
         origin_location: parsed.origin_name || prev.origin_location,
         origin_story: parsed.origin_story || prev.origin_story,
         mohs_hardness: parsed.mohs_hardness || prev.mohs_hardness,
