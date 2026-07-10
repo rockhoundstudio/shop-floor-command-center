@@ -243,9 +243,9 @@ Rules:
      - collection_story = write a short description of this collection
      - stone_story = write a 1-2 sentence hook about this location—evocative, written in Janyce's voice (warm, enthusiastic rockhound)
 3. For Segment 3 ("${segment3}"), return:
-   - product_title = "${segment3}"
-   - seo_title = "${segment3} | Rockhound Studio"
-   - handle = slugified lowercase hyphenated version of "${segment3}"
+   - product_title = The third segment properly capitalized in Title Case (e.g., "Ship" not "ship", "Tiger Fly" not "tiger fly"). Use this third segment exactly as the piece title — do not generate a new name like "New Piece".
+   - seo_title = The Title Cased piece title + " | Rockhound Studio"
+   - handle = slugified lowercase hyphenated version of the piece title
 4. Set canonical_title to the corrected full piece name combining the validated Stone Family, Origin Name, Piece Title (e.g. "Validated Stone - Validated Origin - Validated Title").
 
 Return ONLY valid JSON with exactly this structure, no explanation, no markdown:
@@ -272,8 +272,8 @@ Return ONLY valid JSON with exactly this structure, no explanation, no markdown:
   "origin_story": "",
   "collection_story": "",
   "stone_story": "",
-  "product_title": "${segment3}",
-  "seo_title": "${segment3} | Rockhound Studio",
+  "product_title": "",
+  "seo_title": "",
   "handle": "",
   "canonical_title": "",
   "origin_handle": "",
