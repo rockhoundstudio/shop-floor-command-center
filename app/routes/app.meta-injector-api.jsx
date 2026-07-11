@@ -98,13 +98,15 @@ export const action = async ({ request }) => {
 
       let payloadArray = JSON.parse(rawPayload);
       
-      // FIX: Rename is_one_of_a-kind to is_one_of_a_kind
-      payloadArray = payloadArray.map(item => {
-        if (item.key === "is_one_of_a-kind") {
-          return { ...item, key: "is_one_of_a_kind" };
-        }
-        return item;
-      });
+      // FIX: Rename is_one_of_a_kind to is_one_of_a_kind and remove rogue collectionLocation
+      payloadArray = payloadArray
+        .filter(item => item.key !== "collectionLocation")
+        .map(item => {
+          if (item.key === "is_one_of_a_kind") {
+            return { ...item, key: "is_one_of_a_kind" };
+          }
+          return item;
+        });
 
       const TYPE_MAP = {
         stone_story: "list.single_line_text_field",
@@ -512,12 +514,12 @@ export const action = async ({ request }) => {
       const combinedFields = { ...sharedOnly, ...piece };
       
       // We don't want to save these system/structural keys as metafields
-      const ignoreKeys = ["intent", "mediaUrlsJson", "descriptionHtml", "productType", "status", "pieces", "photoFiles", "photoPreviewUrls", "photos", "imageBase64", "imageMimeType", "stagedResourceUrls", "scanError", "scanToken", "isUploading", "id", "generated_description", "price", "seo_title"];
+      const ignoreKeys = ["intent", "mediaUrlsJson", "descriptionHtml", "productType", "status", "pieces", "photoFiles", "photoPreviewUrls", "photos", "imageBase64", "imageMimeType", "stagedResourceUrls", "scanError", "scanToken", "isUploading", "id", "generated_description", "price", "seo_title", "collectionLocation"];
 
       Object.entries(combinedFields).forEach(([key, value]) => {
         if (!ignoreKeys.includes(key) && value !== undefined && value !== null && String(value).trim() !== "") {
            rawMetafields.push({
-             key: key === "is_one_of_a-kind" ? "is_one_of_a_kind" : key,
+             key: key === "is_one_of_a_kind" ? "is_one_of_a_kind" : key,
              value: value,
              type: "single_line_text_field" // The map below will fix the types
            });
