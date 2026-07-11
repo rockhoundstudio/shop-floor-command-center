@@ -413,7 +413,8 @@ export const action = async ({ request }) => {
       const pieceName = piece.piece_name || "New Piece";
       
       const title = `${stoneFamily} — ${originLocation} — ${pieceName}`;
-      const descriptionHtml = payload.descriptionHtml || "";
+      // FIX: Ensure descriptionHtml is checked at root, then piece.generated_description, then piece.descriptionHtml
+      const descriptionHtml = payload.descriptionHtml || piece.generated_description || piece.descriptionHtml || "";
       const price = piece.price || "0.00";
       const productType = payload.productType || "Wearable Art";
       const status = payload.status || "DRAFT";
@@ -532,6 +533,7 @@ export const action = async ({ request }) => {
       const combinedFields = { ...sharedOnly, ...piece };
       
       // We don't want to save these system/structural keys as metafields
+      // FIX: Added "generated_description" to ignoreKeys so it doesn't also save as a metafield
       const ignoreKeys = ["intent", "mediaUrlsJson", "descriptionHtml", "productType", "status", "pieces", "photoFiles", "photoPreviewUrls", "photos", "imageBase64", "imageMimeType", "stagedResourceUrls", "scanError", "scanToken", "isUploading", "id", "generated_description", "price", "seo_title", "collectionLocation"];
 
       Object.entries(combinedFields).forEach(([key, value]) => {
