@@ -1,7 +1,7 @@
 // ==========================================================================
 // ROCKHOUND STUDIO — TAB 1: NEW PRODUCT INTAKE BENCH
 // File: app/routes/app.meta-injector.injector.jsx
-// (100% Original Logic Preserved + Stripped Redundancy + Consolidated Manual Inputs)
+// (100% Original Logic Preserved + Stripped Redundancy + Restored Staging Route)
 // ==========================================================================
 
 import React, { useState, useEffect, useCallback } from "react";
@@ -91,7 +91,7 @@ export function NewProductIntakeTab({ fetcher }) {
       formData.append("pieceId", piece.id);
       stageFetcher.submit(formData, {
         method: "post",
-        action: "/app/meta-injector-autofill",
+        action: "/app/meta-injector-api",
         encType: "multipart/form-data"
       });
     })();
@@ -567,12 +567,9 @@ export function NewProductIntakeTab({ fetcher }) {
   const treatmentStatusOptions = ["100% Natural/Untreated", "Heat Treated", "Dyed", "Stabilized", "Irradiated", "Coated"];
   const surfaceFinishOptions = ["", "High Polish", "Matte", "Satin", "Hand Polish", "Natural"];
 
-  // SMART SWITCH LOGIC: Check if selected Product Type requires jewelry fields
   const isJewelry = ["Pendant (Finished Jewelry)", "Wire Wrap (Finished Jewelry)", "Ring / Bezel Setting", "Pendant", "Wire Wrap", "Ring", "Necklace", "Earrings", "Bracelet", "Jewelry", "Wearable Art"].some(type => (sharedFields.primary_use || "").includes(type));
 
   const combinedData = { ...sharedFields, ...(pieces[0] || {}) };
-  
-  // Clean deleted keys out of the bottom Meta Scan matrix
   const deletedKeys = ["honest_flaws_and_character", "collection_date", "stone_shape", "stone_story"];
   const scanKeys = [...ROCKHOUND_FIELDS.map(f => f.key), "origin_story", "price", "mohs_hardness", "luster", "fracture", "cleavage", "specificGravity", "diaphaneity", "crystalSystem", "geologicalEra", "mineralClass", "rockComposition", "rockFormation", "geological_age", "fracture_pattern"].filter(key => !deletedKeys.includes(key));
 
@@ -608,7 +605,6 @@ export function NewProductIntakeTab({ fetcher }) {
   (stageFetcher.state !== "idle") && (isScanningVision = true);
   (visionFetcher.state !== "idle") && (isScanningVision = true);
 
-  // 100-Word Law Helper
   const currentWordCount = (pieces[0]?.generated_description || "").trim().split(/\s+/).filter(Boolean).length;
   const wordCountTone = currentWordCount > 100 ? "critical" : "subdued";
 
@@ -1040,7 +1036,6 @@ export function NewProductIntakeTab({ fetcher }) {
           </BlockStack>
         </Card>
 
-        {/* NEW SMART SWITCH PANEL: ONLY RENDERED IF JEWELRY OR SETTING IS SELECTED */}
         {isJewelry && (
           <Card padding="400" background="bg-surface-warning">
             <BlockStack gap="400">
