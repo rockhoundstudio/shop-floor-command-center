@@ -93,7 +93,7 @@ const NAMESPACE_MAP = {
     "stone_family", "color", "cut_and_shape", "surface_finish", 
     "dimensions_mm", "weight_grams", "collection_name", "collection_location", 
     "collection_date", "primary_use", "bail_included", 
-    "is_one_of_a_kind", "treated", "found_object", "wire_material", 
+    "is_one_of_a_kind", "treated", "found_object", "wire_material", "setting_ready", 
     "origin_story", "honest_flaws_and_character"
   ],
   geo: [
@@ -283,7 +283,7 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher }) {
           const updatedState = { ...prev };
           const dropdownFields = [
             "handcrafted_by", "is_one_of_a_kind", "treated", "found_object", 
-            "primary_use", "bail_included", "stone_family", 
+            "primary_use", "bail_included", "setting_ready", "wire_material", "stone_family", 
             "color", "cut_and_shape", "surface_finish"
           ];
           const textFields = [
