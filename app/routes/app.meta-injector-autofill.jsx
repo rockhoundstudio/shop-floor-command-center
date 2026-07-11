@@ -24,6 +24,30 @@ const MINDAT_KEY_MAP = {
 const SHOPPED_ROCK_VENDORS = ["Richardson's Rock Ranch", "Irv's Rock and Jewelry"];
 
 // ==========================================
+// ENGINE: EXPONENTIAL BACKOFF RETRY & CHUNKING
+// ==========================================
+async function fetchWithRetry(url, options, retries = 3, delay = 1500) {
+  for (let i = 0; i < retries; i++) {
+    const res = await fetch(url, options);
+    if (res.status !== 503 && res.status !== 429) {
+      return res;
+    }
+    console.warn(`[Gemini Engine] API returned status ${res.status}. Retry ${i + 1} of ${retries} in ${delay}ms...`);
+    await new Promise((resolve) => setTimeout(resolve, delay));
+    delay *= 2;
+  }
+  throw new Error("Gemini API connection timed out after multiple attempts (503/429 Server Overload).");
+}
+
+function chunkArray(array, size) {
+  const chunks = [];
+  for (let i = 0; i < array.length; i += size) {
+    chunks.push(array.slice(i, i + size));
+  }
+  return chunks;
+}
+
+// ==========================================
 // ENGINE: MINDAT API FETCHER
 // ==========================================
 async function fetchMindat(title) {
@@ -219,7 +243,7 @@ Rules:
      - origin_type = "field" (unless it's in SHOPPED_ROCK_VENDORS)
      - origin_handle = handle from LIVE_ORIGIN_PAGES
      - needs_new_origin_page = false
-     - origin_story = write a short field origin story about this location
+     - origin_story = write a short field origin story about this location (under 50 words)
      - collection_story = write a short description of this collection
      - stone_story = read 'origin_story' from the matched LIVE_ORIGIN_PAGES entry and write a 1-2 sentence hook from it—evocative, specific to this location, written in Janyce's voice (warm, enthusiastic rockhound)
    - If Segment 2 is in SHOPPED_ROCK_VENDORS:
@@ -229,7 +253,7 @@ Rules:
      - origin_type = "vendor"
      - origin_handle = ""
      - needs_new_origin_page = false
-     - origin_story = write a short vendor origin story about this shop
+     - origin_story = write a short vendor origin story about this shop (under 50 words)
      - collection_story = write a short description of the Shopped Rock collection
      - stone_story = write a 1-2 sentence hook about this vendor's material—evocative, written in Janyce's voice (warm, enthusiastic rockhound)
    - If NO MATCH in either list:
@@ -239,7 +263,7 @@ Rules:
      - origin_type = "field"
      - origin_handle = ""
      - needs_new_origin_page = true
-     - origin_story = write a short field origin story about this location
+     - origin_story = write a short field origin story about this location (under 50 words)
      - collection_story = write a short description of this collection
      - stone_story = write a 1-2 sentence hook about this location—evocative, written in Janyce's voice (warm, enthusiastic rockhound)
 3. For Segment 3 ("${segment3}"), return:
@@ -247,6 +271,7 @@ Rules:
    - seo_title = "${segment3} | Rockhound Studio"
    - handle = slugified lowercase hyphenated version of "${segment3}"
 4. Set canonical_title to the corrected full piece name combining the validated Stone Family, Origin Name, Piece Title (e.g. "Validated Stone - Validated Origin - Validated Title").
+5. HARD LAW: Never mention saw blades, RPMs, or technical workshop grit in narrative fields. All craftsmanship must be attributed to Bob and Janyce.
 
 Return ONLY valid JSON with exactly this structure, no explanation, no markdown:
 {
@@ -280,7 +305,7 @@ Return ONLY valid JSON with exactly this structure, no explanation, no markdown:
   "needs_new_origin_page": false
 }`;
 
-        const geminiRes = await fetch(
+        const geminiRes = await fetchWithRetry(
           "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY,
           {
             method: "POST",
@@ -423,7 +448,7 @@ Return ONLY valid JSON with exactly this structure, no explanation, no markdown:
 
         const promptText = `You are a lapidary artist and gemstone expert. Analyze this stone cabochon or specimen photo for Rockhound Studio and return a JSON object containing these exact fields:
 
-- description: rich narrative description of the stone and piece in 2-3 paragraphs. Rockhound Studio voice — raw, authentic, collector energy. Write in first person as Bob or Janyce from Rockhound Studio. No corporate language.
+- description: Poetic, spare, story-driven product description UNDER 100 WORDS TOTAL. Rockhound Studio voice — raw, authentic, collector energy. Write in first person as Bob or Janyce from Rockhound Studio. No corporate language. ZERO workshop references (no saw blades, RPMs, or polishing grit stages).
 - primary_color: dominant color of the stone (e.g. "golden brown", "chartreuse green")
 - cut_and_shape: cabochon style (e.g. "Freeform Cabochon", "Oval Cabochon")
 - surface_finish: (e.g. "High Polish", "Matte", "Natural Rough")
@@ -445,7 +470,7 @@ Return ONLY valid JSON with exactly this structure:
 No markdown, no code fences, no extra text.`;
 
         console.log("[visionScan] Sending to Gemini...");
-        const geminiRes = await fetch(
+        const geminiRes = await fetchWithRetry(
           "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY,
           {
             method: "POST",
@@ -837,7 +862,14 @@ No markdown, no code fences, no extra text.`;
         const plainDescription = targetDescription.replace(/<\/?[^>]+(>|$)/g, " ").replace(/\s+/g, " ").trim();
         const promptProductTitle = body.get("productTitle") || "";
 
-        const textPrompt = `${promptStyle ? `Writing style instruction: ${promptStyle}\n\n` : ""}You are a gemologist assistant for Rockhound Studio. The product title is: ${promptProductTitle}. Parse the title segments split by ' — ' to extract piece_name and origin_location. Extract the following fields from this product description. Return only valid JSON with exactly these keys. If a field is not mentioned, return an empty string for it.
+        const textPrompt = `${promptStyle ? `Writing style instruction: ${promptStyle}\n\n` : ""}You are a gemologist assistant for Rockhound Studio. The product title is: ${promptProductTitle}. Parse the title segments split by ' — ' to extract piece_name and origin_location. Extract the following fields from this product description. 
+
+HARD NARRATIVE LAWS:
+1. Keep any generated narrative or artist notes UNDER 100 WORDS TOTAL.
+2. ZERO workshop jargon (never mention saw blades, RPMs, or polishing grit stages).
+3. Attribution must strictly be to Bob and Janyce.
+
+Return only valid JSON with exactly these keys. If a field is not mentioned, return an empty string for it.
 
 {
   "piece_name": "(the text after the second em dash — in the product title — this is the piece name only, not the full title)",
@@ -852,7 +884,7 @@ No markdown, no code fences, no extra text.`;
   "treated": "(if description says untreated or not enhanced, return 'false', else return 'true')",
   "found_object": "(if description says found or collected in the field, return 'true', else return 'false')",
   "is_one_of_a_kind": "(if description says one of a kind, return 'Yes — one of a kind', else return 'No')",
-  "artist_notes": "(write 1-2 sentences of internal shop notes about this stone's character, quirks, or what makes it special, based on the description and image. Plain language, no marketing)",
+  "artist_notes": "(write 1-2 sentences of internal shop notes under 50 words about this stone's character, quirks, or what makes it special. Plain language, no marketing, attribute to Bob and Janyce)",
   "origin_page_handle": "(find the URL in the description that contains /pages/ and extract only the handle slug after /pages/. For example if the URL is rockhoundstudio.com/pages/yakima-river-canyon return yakima-river-canyon. If no /pages/ URL is found return empty string)",
   "color_pattern": "(describe the color pattern of the stone in 2-4 words, e.g. 'Banded caramel and white', 'Solid grey with swirls' — based on description or title. Leave blank if unknown.)",
   "material": "(the primary stone or mineral material, e.g. 'Botswana Agate', 'Jasper', 'Obsidian' — use the rockhound trade name. Leave blank if unknown.)",
@@ -870,7 +902,7 @@ ${plainDescription}
 
 Return only valid JSON. No explanation. No markdown.`;
 
-        const textGeminiRes = await fetch(
+        const textGeminiRes = await fetchWithRetry(
           "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY,
           {
             method: "POST",
@@ -900,7 +932,6 @@ Return only valid JSON. No explanation. No markdown.`;
             const textData = JSON.parse(cleanJson);
             console.log("GEMINI TEXT RESPONSE:", JSON.stringify(textData));
 
-            // Sanitization to catch the hyphenated Gemini error key
             if (textData["is_one_of_a-kind"] !== undefined) {
               textData["is_one_of_a_kind"] = textData["is_one_of_a-kind"];
               delete textData["is_one_of_a-kind"];
@@ -972,28 +1003,32 @@ Return only valid JSON. No explanation. No markdown.`;
       console.log("Tab2 AutoFill imageUrl sent:", body.get("imageUrl"));
       
       if (imageBase64) {
-
         const clientPrompt = body.get("prompt");
         const promptText = clientPrompt && clientPrompt.trim() !== "" ? clientPrompt : `${promptStyle ? `Writing style instruction: ${promptStyle}\n\n` : ""}You are a gemologist and lapidary expert analyzing a handcrafted stone cabochon or specimen for an online store called Rockhound Studio. Look at this stone image carefully and return a JSON object with these fields — only include fields you can visually confirm, leave others out:
+
+HARD LAWS:
+1. Keep honest_flaws_and_character UNDER 50 WORDS. Zero marketing fluff.
+2. ZERO workshop jargon (never mention saw blades, RPMs, or polishing grit stages).
+3. All craftsmanship must strictly be attributed to Bob and Janyce.
+
 {
   "color": "(return ONLY the primary color as a single word, e.g. 'Blue' or 'Red')",
   "surface_finish": "(one of: High Polish, Satin Polish, Matte, Natural/Rough, Tumbled)",
   "cut_and_shape": "(e.g. Freeform, Oval Cabochon, Round Cabochon, Teardrop, Pear, Trillion)",
-  "honest_flaws_and_character": "Honest over perfection: Describe any visible natural fractures, pits, inclusions, asymmetry, or raw character marks. Factual shop language only, zero marketing fluff.",
+  "honest_flaws_and_character": "Honest over perfection: Describe any visible natural fractures, pits, inclusions, asymmetry, or raw character marks under 50 words. Factual shop language only, zero marketing fluff.",
   "secondary_medium": "(string, e.g. Sterling Silver, Copper, Driftwood, or empty if none)",
   "wire_material": "(string, e.g. 925 Sterling Silver, Bare Copper, Gold Filled, or empty if none)",
   "bail_included": "(boolean, true if a bail or hanging loop is present)",
-  "alt_text": "(a single descriptive sentence for screen readers and SEO, written in plain English describing what is seen in the image)",
+  "alt_text": "(a single descriptive sentence for screen readers and SEO under 20 words, written in plain English describing what is seen in the image)",
   "is_one_of_a_kind": "(boolean)",
   "found_object": "(boolean)",
   "treated": "(boolean)",
   "setting_ready": "(boolean)",
-  "bail_included": "(boolean)",
   "piece_name": "(the text after the second em dash — in the product title — this is the piece name only, not the full title)"
 }
 Return only valid JSON. No explanation. No markdown.`;
 
-        const geminiRes = await fetch(
+        const geminiRes = await fetchWithRetry(
           "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY,
           {
             method: "POST",
@@ -1035,7 +1070,6 @@ Return only valid JSON. No explanation. No markdown.`;
 
             const visionData = JSON.parse(cleanJson);
             
-            // Sanitization to catch the hyphenated Gemini error key
             if (visionData["is_one_of_a-kind"] !== undefined) {
               visionData["is_one_of_a_kind"] = visionData["is_one_of_a-kind"];
               delete visionData["is_one_of_a-kind"];
@@ -1068,7 +1102,6 @@ Return only valid JSON. No explanation. No markdown.`;
             safeSet("found_object", visionData.found_object);
             safeSet("treated", visionData.treated);
             safeSet("setting_ready", visionData.setting_ready);
-            safeSet("bail_included", visionData.bail_included);
             safeSet("piece_name", visionData.piece_name);
           }
         } else {
@@ -1103,7 +1136,6 @@ Return only valid JSON. No explanation. No markdown.`;
     // ==========================================
     safeSet("official_name", title);
 
-    // FIXED: color fallback now runs BEFORE colorWarning is calculated
     if (!merged.color || merged.color.trim() === "") {
       if (merged.primary_color && merged.primary_color.trim() !== "") {
         merged.color = merged.primary_color;

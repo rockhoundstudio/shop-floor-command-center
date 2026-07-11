@@ -1,7 +1,7 @@
 // ==========================================================================
 // ROCKHOUND STUDIO — TAB 1: NEW PRODUCT INTAKE BENCH
 // File: app/routes/app.meta-injector.injector.jsx
-// (100% Original Logic & Fetchers Preserved + Smart Switch UI Upgrades)
+// (100% Original Logic & Fetchers Preserved + 100-Word Law & Smart Switch UI)
 // ==========================================================================
 
 import React, { useState, useEffect, useCallback } from "react";
@@ -282,31 +282,7 @@ export function NewProductIntakeTab({ fetcher }) {
   const handleStartNewBatch = useCallback(() => {
     setStatusMessage("");
     setErrorMessage("");
-    setSharedFields({
-      material: "",
-      stone_family: "",
-      collection_name: "",
-      collection_location: "",
-      collection_date: "",
-      origin_location: "",
-      rescued_by: "Bob and Janyce",
-      treatment_status: "100% Natural/Untreated",
-      origin_story: "",
-      primary_use: "",
-      handcrafted_by: "Bob & Janyce, Rockhound Studio",
-      is_one_of_a_kind: "Yes — one of a kind",
-      treated: "Untreated — Natural",
-      found_object: "true",
-      condition: "new",
-      target_gender: "Unisex",
-      age_group: "adult",
-      primary_medium: "",
-      secondary_medium: "",
-      wire_material: "",
-      setting_ready: "",
-      bail_included: "",
-      weight_grams: ""
-    });
+    // AUTO-RESET BENCH: Wipe Section A per-piece data, preserve Section B constants for next stone
     setPieces([{
       id: Date.now().toString(),
       piece_name: "",
@@ -412,6 +388,16 @@ export function NewProductIntakeTab({ fetcher }) {
             updated.scanError = "";
           })();
           return updated;
+        }));
+
+        // OPTICAL SCAN JEWELRY FINDINGS MAPPER
+        setSharedFields(prev => ({
+          ...prev,
+          wire_material: data.wire_material || prev.wire_material,
+          secondary_medium: data.secondary_medium || prev.secondary_medium,
+          bail_included: data.bail_included !== undefined ? String(data.bail_included) : prev.bail_included,
+          setting_ready: data.setting_ready !== undefined ? String(data.setting_ready) : prev.setting_ready,
+          primary_medium: data.primary_medium || prev.primary_medium
         }));
       })();
 
@@ -617,6 +603,10 @@ export function NewProductIntakeTab({ fetcher }) {
   (stageFetcher.state !== "idle") && (isScanningVision = true);
   (visionFetcher.state !== "idle") && (isScanningVision = true);
 
+  // 100-Word Law Helper
+  const currentWordCount = (pieces[0]?.generated_description || "").trim().split(/\s+/).filter(Boolean).length;
+  const wordCountTone = currentWordCount > 100 ? "critical" : "subdued";
+
   return (
     <Frame>
       <BlockStack gap="600">
@@ -811,18 +801,23 @@ export function NewProductIntakeTab({ fetcher }) {
                     <div style={{ minHeight: "48px", marginTop: "8px" }}>
                       <TextField
                         label={
-                          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                            <svg width="18" height="18" viewBox="0 0 18 18" style={{ display: "inline-block" }}>
-                              <circle cx="9" cy="9" r="9" fill={rowDescDotColor} />
-                            </svg>
-                            <Text variant="headingMd" as="h3">Description</Text>
+                          <div style={{ display: "flex", alignItems: "center", justify: "space-between", width: "100%" }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                              <svg width="18" height="18" viewBox="0 0 18 18" style={{ display: "inline-block" }}>
+                                <circle cx="9" cy="9" r="9" fill={rowDescDotColor} />
+                              </svg>
+                              <Text variant="headingMd" as="h3">Description</Text>
+                            </div>
+                            <Text variant="bodySm" tone={wordCountTone} as="span">
+                              {currentWordCount}/100 words {currentWordCount > 100 && "(Exceeds 100-Word Law)"}
+                            </Text>
                           </div>
                         }
                         value={piece.generated_description}
                         onChange={(v) => handlePieceChange(piece.id, "generated_description", v)}
                         multiline={6}
                         autoComplete="off"
-                        placeholder="Gemini will generate a description from your photos..."
+                        placeholder="Gemini will generate a poetic, spare description under 100 words..."
                         accessibilityLabel={`Generated product description for row ${index + 1}`}
                       />
                     </div>
@@ -1159,7 +1154,14 @@ export function NewProductIntakeTab({ fetcher }) {
             </div>
             {pieces[0]?.generated_description !== "" && (
               <TextField
-                label="Generated Description — edit before saving"
+                label={
+                  <div style={{ display: "flex", alignItems: "center", justify: "space-between", width: "100%" }}>
+                    <span>Generated Description — edit before saving</span>
+                    <Text variant="bodySm" tone={wordCountTone} as="span">
+                      {currentWordCount}/100 words
+                    </Text>
+                  </div>
+                }
                 value={pieces[0]?.generated_description || ""}
                 onChange={(v) => handlePieceChange(pieces[0]?.id, "generated_description", v)}
                 multiline={10}
@@ -1195,7 +1197,7 @@ export function NewProductIntakeTab({ fetcher }) {
               onClick={handleStartNewBatch}
               accessibilityLabel="Start New Batch"
             >
-              Start New Batch
+              Start New Batch (Wipe Section A, Keep Section B)
             </Button>
           ) : (
             <Button
