@@ -538,12 +538,12 @@ export const action = async ({ request }) => {
       
       // We don't want to save these system/structural keys as metafields
       // Added collection_date, primary_medium, secondary_medium, wire_material, setting_ready, bail_included, artist_notes, character_marks
+      // BENCH UPGRADE: Stripped out lapidary & jewelry specs so they save unblocked to Shopify DB
       const ignoreKeys = [
-        "intent", "mediaUrlsJson", "descriptionHtml", "productType", "status", "pieces", "photoFiles", 
-        "photoPreviewUrls", "photos", "imageBase64", "imageMimeType", "stagedResourceUrls", "scanError", 
-        "scanToken", "isUploading", "id", "generated_description", "price", "seo_title", "collectionLocation", 
-        "age_group", "target_gender", "condition", "collection_date", "primary_medium", "secondary_medium", 
-        "wire_material", "setting_ready", "bail_included", "artist_notes", "character_marks"
+        "intent", "mediaUrlsJson", "descriptionHtml", "productType", "status", "pieces", "photoFiles",
+        "photoPreviewUrls", "photos", "imageBase64", "imageMimeType", "stagedResourceUrls", "scanError",
+        "scanToken", "isUploading", "id", "generated_description", "price", "seo_title", "collectionLocation",
+        "age_group", "target_gender", "condition"
       ];
 
       Object.entries(combinedFields).forEach(([key, value]) => {
