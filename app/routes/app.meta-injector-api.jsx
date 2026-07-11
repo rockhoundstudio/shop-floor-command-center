@@ -413,8 +413,7 @@ export const action = async ({ request }) => {
       const pieceName = piece.piece_name || "New Piece";
       
       const title = `${stoneFamily} — ${originLocation} — ${pieceName}`;
-      // FIX: Ensure descriptionHtml is checked at root, then piece.generated_description, then piece.descriptionHtml
-      const descriptionHtml = payload.descriptionHtml || piece.generated_description || piece.descriptionHtml || "";
+      const descriptionHtml = payload.descriptionHtml || "";
       const price = piece.price || "0.00";
       const productType = payload.productType || "Wearable Art";
       const status = payload.status || "DRAFT";
@@ -527,14 +526,15 @@ export const action = async ({ request }) => {
 
       // Step 3: Write Metafields
       const rawMetafields = [];
+      const googleMetafields = [];
 
       // Combine shared fields and piece fields
       const { pieces, intent, mediaUrlsJson, title: payloadTitle, metafieldsJson, ...sharedOnly } = payload;
       const combinedFields = { ...sharedOnly, ...piece };
       
       // We don't want to save these system/structural keys as metafields
-      // FIX: Added "generated_description" to ignoreKeys so it doesn't also save as a metafield
-      const ignoreKeys = ["intent", "mediaUrlsJson", "descriptionHtml", "productType", "status", "pieces", "photoFiles", "photoPreviewUrls", "photos", "imageBase64", "imageMimeType", "stagedResourceUrls", "scanError", "scanToken", "isUploading", "id", "generated_description", "price", "seo_title", "collectionLocation"];
+      // Also ignore age_group, target_gender, and condition so they don't enter the custom namespace
+      const ignoreKeys = ["intent", "mediaUrlsJson", "descriptionHtml", "productType", "status", "pieces", "photoFiles", "photoPreviewUrls", "photos", "imageBase64", "imageMimeType", "stagedResourceUrls", "scanError", "scanToken", "isUploading", "id", "generated_description", "price", "seo_title", "collectionLocation", "age_group", "target_gender", "condition"];
 
       Object.entries(combinedFields).forEach(([key, value]) => {
         if (!ignoreKeys.includes(key) && value !== undefined && value !== null && String(value).trim() !== "") {
@@ -546,7 +546,32 @@ export const action = async ({ request }) => {
         }
       });
 
-      if (rawMetafields.length > 0) {
+      // Populate separate google namespace array if present
+      (combinedFields.age_group && combinedFields.age_group !== "") && googleMetafields.push({
+        ownerId: productId,
+        namespace: "google",
+        key: "age_group",
+        type: "single_line_text_field",
+        value: String(combinedFields.age_group)
+      });
+
+      (combinedFields.target_gender && combinedFields.target_gender !== "") && googleMetafields.push({
+        ownerId: productId,
+        namespace: "google",
+        key: "target_gender",
+        type: "single_line_text_field",
+        value: String(combinedFields.target_gender)
+      });
+
+      (combinedFields.condition && combinedFields.condition !== "") && googleMetafields.push({
+        ownerId: productId,
+        namespace: "google",
+        key: "condition",
+        type: "single_line_text_field",
+        value: String(combinedFields.condition)
+      });
+
+      if (rawMetafields.length > 0 || googleMetafields.length > 0) {
         try {
             const TYPE_MAP = {
               stone_story: "list.single_line_text_field",
@@ -588,14 +613,17 @@ export const action = async ({ request }) => {
                };
             });
 
+            // Merge the google array alongside custom metafields
+            const allMetafieldsToSet = [...metafieldsInput, ...googleMetafields];
+
             // Shopify limits metafieldsSet to 25 items per request
-            const chunks = chunkArray(metafieldsInput, 25);
+            const chunks = chunkArray(allMetafieldsToSet, 25);
             for (const chunk of chunks) {
               const metaResponse = await admin.graphql(
                 `#graphql
                 mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
                   metafieldsSet(metafields: $metafields) {
-                    metafields { id key }
+                    metafields { id key namespace }
                     userErrors { field message }
                   }
                 }`,
