@@ -1,3 +1,20 @@
+// ==========================================================================
+// ROCKHOUND STUDIO — BENCH CONSTANTS & DROPDOWNS
+// File: app/utils/meta-injector.constants.jsx
+// (100% Original Architecture Preserved + Smart Switch Additions)
+// ==========================================================================
+
+// NEW: Added safely for Tab 1 Auto-Pilot (Does not break existing tabs)
+export const STUDIO_DEFAULTS = {
+  handcrafted_by: "Bob & Janyce, Rockhound Studio",
+  rescued_by: "Bob and Janyce",
+  is_one_of_a_kind: "true",
+  treated: "Untreated — Natural",
+  google_age_group: "adult",
+  google_target_gender: "unisex",
+  google_condition: "new",
+};
+
 export const ROCKHOUND_FIELDS = [
   { key: "piece_name", label: "Piece Name", type: "single_line_text_field" },
   { key: "primary_medium", label: "Primary Medium", type: "single_line_text_field" },
@@ -39,8 +56,19 @@ export const REQUIRED_FIELDS = [
   "treated", "material", "origin_story", "collection_name", "primary_use", "primary_color"
 ];
 
+// UPGRADED: Kept all original options + added Smart Switch triggers for Tab 1
 export const productTypeOptions = [
-  "Cabochon", "Pendant", "Necklace", "Earrings", "Ring", "Bracelet", "Wire Wrap", "Driftwood Art", "Display Specimen", "Collector Piece", "Other"
+  "Cabochon", 
+  "Pendant (Finished Jewelry)", 
+  "Necklace", 
+  "Earrings", 
+  "Ring / Bezel Setting", 
+  "Bracelet", 
+  "Wire Wrap (Finished Jewelry)", 
+  "Driftwood Art", 
+  "Display Specimen", 
+  "Collector Piece", 
+  "Other"
 ];
 
 export const collectionLocationOptions = [

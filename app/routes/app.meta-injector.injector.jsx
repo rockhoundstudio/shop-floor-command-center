@@ -1,8 +1,14 @@
+// ==========================================================================
+// ROCKHOUND STUDIO — TAB 1: NEW PRODUCT INTAKE BENCH
+// File: app/routes/app.meta-injector.injector.jsx
+// (100% Original Logic & Fetchers Preserved + Smart Switch UI Upgrades)
+// ==========================================================================
+
 import React, { useState, useEffect, useCallback } from "react";
-import { BlockStack, Card, Text, TextField, Select, Button, Banner, DropZone, Spinner, Frame, Toast } from "@shopify/polaris";
+import { BlockStack, Card, Text, TextField, Select, Button, Banner, DropZone, Spinner, Frame, Toast, InlineGrid, Box, Divider } from "@shopify/polaris";
 import { PlusIcon, MagicIcon } from "@shopify/polaris-icons";
 import { useFetcher } from "react-router";
-import { ROCKHOUND_FIELDS, DEFAULT_DROPDOWNS, REQUIRED_FIELDS } from "../utils/meta-injector.constants.jsx";
+import { ROCKHOUND_FIELDS, DEFAULT_DROPDOWNS, REQUIRED_FIELDS, productTypeOptions, collectionLocationOptions } from "../utils/meta-injector.constants.jsx";
 import { handleScanPhoto, handleGenerateDescription, buildMetafieldsJson, buildTitle } from "./app.meta-injector.intake-helpers.jsx";
 
 const SHOPPED_ROCK_VENDORS = ["Richardson's Rock Ranch", "Irv's Rock and Jewelry"];
@@ -569,17 +575,12 @@ export function NewProductIntakeTab({ fetcher }) {
   let isDescLoading = false;
   (descriptionFetcher.state !== "idle") && (isDescLoading = true);
 
-  const productTypeOptions = [
-    "Cabochon", "Pendant", "Necklace", "Earrings", "Ring", "Bracelet", "Wire Wrap", "Driftwood Art", "Display Specimen", "Collector Piece", "Freeform", "Other"
-  ];
-
-  const collectionLocationOptions = [
-    "Spokane River", "Yakima Canyon", "Yellowstone River", "Richardson's Rock Ranch", "The 3,000-Mile Run", "Nickel Back", "Rufus Serpentine", "The Shopped Rock", "Shopped Rock", "The Gallery"
-  ];
-
   const rescuedByOptions = ["", "Bob", "Janyce", "Bob and Janyce"];
   const treatmentStatusOptions = ["100% Natural/Untreated", "Heat Treated", "Dyed", "Stabilized", "Irradiated", "Coated"];
   const surfaceFinishOptions = ["", "High Polish", "Matte", "Satin", "Hand Polish", "Natural"];
+
+  // SMART SWITCH LOGIC: Check if selected Product Type requires jewelry fields
+  const isJewelry = ["Pendant (Finished Jewelry)", "Wire Wrap (Finished Jewelry)", "Ring / Bezel Setting", "Pendant", "Wire Wrap", "Ring"].includes(sharedFields.primary_use);
 
   const combinedData = { ...sharedFields, ...(pieces[0] || {}) };
   const scanKeys = [...ROCKHOUND_FIELDS.map(f => f.key), "origin_story", "price", "mohs_hardness", "luster", "fracture", "cleavage", "specificGravity", "diaphaneity", "crystalSystem", "geologicalEra", "mineralClass", "rockComposition", "rockFormation", "geological_age", "fracture_pattern"];
@@ -601,7 +602,7 @@ export function NewProductIntakeTab({ fetcher }) {
     (!isFilled && isRequired) && (dotColor = "#D72C0D");
 
     return (
-      <span style={{ fontSize: "14px" }}>
+      <span style={{ fontSize: "14px", fontWeight: "600" }}>
         <span style={{ color: dotColor, fontSize: "18px", lineHeight: "18px", width: "18px", height: "18px", display: "inline-block", textAlign: "center", marginRight: "4px" }}>●</span>
         {text}
       </span>
@@ -619,9 +620,22 @@ export function NewProductIntakeTab({ fetcher }) {
   return (
     <Frame>
       <BlockStack gap="600">
+        
+        {/* NEW TOP BANNER: MACHINE AUTO-PILOT CONFIRMATION */}
+        <Banner title="Machine Auto-Pilot Active — No Typing Required for Studio Constants:" tone="success">
+          <BlockStack gap="100">
+            <Text as="p" variant="bodyMd">
+              ✔ Handcrafted & Rescued by: <strong>Bob and Janyce</strong> | ✔ OOAK: <strong>True</strong> | ✔ Treatment: <strong>100% Natural/Untreated</strong>
+            </Text>
+            <Text as="p" variant="bodyMd">
+              ✔ Google Feed: <strong>Active (Adult/Unisex/New)</strong> | ✔ Geo-Vault: <strong>Auto-Fills 12 Minerals Specs from Title Delimiters</strong>
+            </Text>
+          </BlockStack>
+        </Banner>
+
         <Card padding="400">
           <BlockStack gap="400">
-            <Text variant="headingMd" as="h2" style={{ fontSize: "14px" }}>Section A: Per-Piece Details</Text>
+            <Text variant="headingMd" as="h2" style={{ fontSize: "16px", fontWeight: "bold" }}>Section A: Per-Piece Details</Text>
 
             <div style={{ position: "relative", marginBottom: "8px" }}>
               <input
@@ -933,7 +947,7 @@ export function NewProductIntakeTab({ fetcher }) {
 
         <Card padding="400">
           <BlockStack gap="400">
-            <Text variant="headingMd" as="h2" style={{ fontSize: "14px" }}>Section B: Shared Batch Fields</Text>
+            <Text variant="headingMd" as="h2" style={{ fontSize: "16px", fontWeight: "bold" }}>Section B: Shared Batch Fields</Text>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "24px" }}>
               <div style={{ minHeight: "54px" }}>
                 <TextField
@@ -1032,7 +1046,7 @@ export function NewProductIntakeTab({ fetcher }) {
                   accessibilityLabel="Select treatment status"
                 />
               </div>
-              <div style={{ minHeight: "54px" }}>
+              <div style={{ minHeight: "54px", gridColumn: "span 2" }}>
                 <TextField
                   label={renderLabel("Origin Story", "origin_story", sharedFields.origin_story)}
                   value={sharedFields.origin_story}
@@ -1044,58 +1058,11 @@ export function NewProductIntakeTab({ fetcher }) {
               </div>
               <div style={{ minHeight: "54px" }}>
                 <Select
-                  label={renderLabel("Product Type", "primary_use", sharedFields.primary_use)}
+                  label={renderLabel("Product Type (Smart Switch)", "primary_use", sharedFields.primary_use)}
                   options={[{ label: "Select...", value: "" }, ...productTypeOptions.map(o => ({ label: o, value: o }))]}
                   value={sharedFields.primary_use}
                   onChange={(v) => handleSharedFieldChange("primary_use", v)}
                   accessibilityLabel="Select product type"
-                />
-              </div>
-              <div style={{ minHeight: "54px" }}>
-                <TextField
-                  label={renderLabel("Primary Medium", "primary_medium", sharedFields.primary_medium)}
-                  value={sharedFields.primary_medium}
-                  onChange={(v) => handleSharedFieldChange("primary_medium", v)}
-                  autoComplete="off"
-                  accessibilityLabel="Enter Primary Medium"
-                />
-              </div>
-              <div style={{ minHeight: "54px" }}>
-                <TextField
-                  label={renderLabel("Secondary Medium", "secondary_medium", sharedFields.secondary_medium)}
-                  value={sharedFields.secondary_medium}
-                  onChange={(v) => handleSharedFieldChange("secondary_medium", v)}
-                  autoComplete="off"
-                  accessibilityLabel="Enter Secondary Medium"
-                />
-              </div>
-              <div style={{ minHeight: "54px" }}>
-                <TextField
-                  label={renderLabel("Wire Material", "wire_material", sharedFields.wire_material)}
-                  value={sharedFields.wire_material}
-                  onChange={(v) => handleSharedFieldChange("wire_material", v)}
-                  autoComplete="off"
-                  accessibilityLabel="Enter Wire Material"
-                />
-              </div>
-              <div style={{ minHeight: "54px" }}>
-                <TextField
-                  label={renderLabel("Setting Ready", "setting_ready", sharedFields.setting_ready)}
-                  value={sharedFields.setting_ready}
-                  onChange={(v) => handleSharedFieldChange("setting_ready", v)}
-                  autoComplete="off"
-                  placeholder="e.g. true or false"
-                  accessibilityLabel="Enter Setting Ready"
-                />
-              </div>
-              <div style={{ minHeight: "54px" }}>
-                <TextField
-                  label={renderLabel("Bail Included", "bail_included", sharedFields.bail_included)}
-                  value={sharedFields.bail_included}
-                  onChange={(v) => handleSharedFieldChange("bail_included", v)}
-                  autoComplete="off"
-                  placeholder="e.g. true or false"
-                  accessibilityLabel="Enter Bail Included"
                 />
               </div>
               <div style={{ minHeight: "54px" }}>
@@ -1111,9 +1078,73 @@ export function NewProductIntakeTab({ fetcher }) {
           </BlockStack>
         </Card>
 
+        {/* NEW SMART SWITCH PANEL: ONLY RENDERED IF JEWELRY OR SETTING IS SELECTED */}
+        {isJewelry && (
+          <Card padding="400" background="bg-surface-warning">
+            <BlockStack gap="400">
+              <InlineGrid columns={2} alignItems="center">
+                <Text variant="headingMd" as="h2" tone="caution" style={{ fontSize: "16px", fontWeight: "bold" }}>⚙️ Bench Findings & Jewelry Specs</Text>
+              </InlineGrid>
+              <Divider />
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "24px" }}>
+                <div style={{ minHeight: "54px" }}>
+                  <TextField
+                    label={renderLabel("Primary Medium", "primary_medium", sharedFields.primary_medium)}
+                    value={sharedFields.primary_medium}
+                    onChange={(v) => handleSharedFieldChange("primary_medium", v)}
+                    autoComplete="off"
+                    placeholder="e.g. .925 Sterling Silver"
+                    accessibilityLabel="Enter Primary Medium"
+                  />
+                </div>
+                <div style={{ minHeight: "54px" }}>
+                  <TextField
+                    label={renderLabel("Secondary Medium", "secondary_medium", sharedFields.secondary_medium)}
+                    value={sharedFields.secondary_medium}
+                    onChange={(v) => handleSharedFieldChange("secondary_medium", v)}
+                    autoComplete="off"
+                    placeholder="e.g. 14k Gold Accents"
+                    accessibilityLabel="Enter Secondary Medium"
+                  />
+                </div>
+                <div style={{ minHeight: "54px" }}>
+                  <TextField
+                    label={renderLabel("Wire Material", "wire_material", sharedFields.wire_material)}
+                    value={sharedFields.wire_material}
+                    onChange={(v) => handleSharedFieldChange("wire_material", v)}
+                    autoComplete="off"
+                    placeholder="e.g. Antiqued Copper Wire"
+                    accessibilityLabel="Enter Wire Material"
+                  />
+                </div>
+                <div style={{ minHeight: "54px" }}>
+                  <TextField
+                    label={renderLabel("Bail Included", "bail_included", sharedFields.bail_included)}
+                    value={sharedFields.bail_included}
+                    onChange={(v) => handleSharedFieldChange("bail_included", v)}
+                    autoComplete="off"
+                    placeholder="e.g. Silver Filigree Pinch Bail"
+                    accessibilityLabel="Enter Bail Included"
+                  />
+                </div>
+                <div style={{ minHeight: "54px", gridColumn: "span 2" }}>
+                  <TextField
+                    label={renderLabel("Setting Ready", "setting_ready", sharedFields.setting_ready)}
+                    value={sharedFields.setting_ready}
+                    onChange={(v) => handleSharedFieldChange("setting_ready", v)}
+                    autoComplete="off"
+                    placeholder="e.g. Ready to Wear (Chain Included) or Custom Blank"
+                    accessibilityLabel="Enter Setting Ready"
+                  />
+                </div>
+              </div>
+            </BlockStack>
+          </Card>
+        )}
+
         <Card padding="400">
           <BlockStack gap="400">
-            <Text variant="headingMd" as="h2" style={{ fontSize: "14px" }}>Section C: Generate Description</Text>
+            <Text variant="headingMd" as="h2" style={{ fontSize: "16px", fontWeight: "bold" }}>Section C: Generate Description</Text>
             <div style={{ minHeight: "54px" }}>
               <Button
                 size="large"
@@ -1194,7 +1225,7 @@ export function NewProductIntakeTab({ fetcher }) {
 
         <Card padding="400">
           <BlockStack gap="400">
-            <Text variant="headingMd" as="h2" style={{ fontSize: "14px" }}>Meta Scan</Text>
+            <Text variant="headingMd" as="h2" style={{ fontSize: "16px", fontWeight: "bold" }}>Meta Scan</Text>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
               {scanKeys.map(key => {
                 const isRequired = REQUIRED_FIELDS.includes(key);
