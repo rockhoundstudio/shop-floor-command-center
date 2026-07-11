@@ -18,7 +18,6 @@ export function NewProductIntakeTab({ fetcher }) {
     stone_family: "",
     collection_name: "",
     collection_location: "",
-    collection_date: "",
     origin_location: "",
     rescued_by: "Bob and Janyce",
     treatment_status: "100% Natural/Untreated",
@@ -31,11 +30,6 @@ export function NewProductIntakeTab({ fetcher }) {
     condition: "new",
     target_gender: "Unisex",
     age_group: "adult",
-    primary_medium: "",
-    secondary_medium: "",
-    wire_material: "",
-    setting_ready: "",
-    bail_included: "",
     weight_grams: ""
   });
 
@@ -49,7 +43,6 @@ export function NewProductIntakeTab({ fetcher }) {
       color: "",
       stone_shape: "",
       price: "",
-      character_marks: "",
       stone_story: "",
       photoFiles: [],
       photoPreviewUrls: [],
@@ -58,7 +51,6 @@ export function NewProductIntakeTab({ fetcher }) {
       imageMimeType: "",
       stagedResourceUrls: [],
       generated_description: "",
-      artist_notes: "",
       scanError: "",
       scanToken: "",
       isUploading: false
@@ -217,7 +209,6 @@ export function NewProductIntakeTab({ fetcher }) {
         color: "",
         stone_shape: "",
         price: "",
-        character_marks: "",
         stone_story: "",
         photoFiles: [],
         photoPreviewUrls: [],
@@ -226,7 +217,6 @@ export function NewProductIntakeTab({ fetcher }) {
         imageMimeType: "",
         stagedResourceUrls: [],
         generated_description: "",
-        artist_notes: "",
         scanError: "",
         scanToken: "",
         isUploading: false
@@ -256,7 +246,6 @@ export function NewProductIntakeTab({ fetcher }) {
       stone_shape: pieces[0].stone_shape,
       price: pieces[0].price,
       seo_title: pieces[0].seo_title,
-      character_marks: pieces[0].character_marks,
       stone_story: pieces[0].stone_story,
       title: buildTitle(sharedFields, pieces[0]),
       descriptionHtml: pieces[0].generated_description,
@@ -281,7 +270,6 @@ export function NewProductIntakeTab({ fetcher }) {
       stone_family: "",
       collection_name: "",
       collection_location: "",
-      collection_date: "",
       origin_location: "",
       rescued_by: "Bob and Janyce",
       treatment_status: "100% Natural/Untreated",
@@ -294,11 +282,6 @@ export function NewProductIntakeTab({ fetcher }) {
       condition: "new",
       target_gender: "Unisex",
       age_group: "adult",
-      primary_medium: "",
-      secondary_medium: "",
-      wire_material: "",
-      setting_ready: "",
-      bail_included: "",
       weight_grams: ""
     });
     setPieces([{
@@ -310,7 +293,6 @@ export function NewProductIntakeTab({ fetcher }) {
       color: "",
       stone_shape: "",
       price: "",
-      character_marks: "",
       stone_story: "",
       photoFiles: [],
       photoPreviewUrls: [],
@@ -319,7 +301,6 @@ export function NewProductIntakeTab({ fetcher }) {
       imageMimeType: "",
       stagedResourceUrls: [],
       generated_description: "",
-      artist_notes: "",
       scanError: "",
       scanToken: "",
       isUploading: false
@@ -370,9 +351,11 @@ export function NewProductIntakeTab({ fetcher }) {
       })();
 
       (isStaged && isSuccess && resourceUrl) && (() => {
-        setPieces(prev => prev.map(p =>
-          p.id === pid ? { ...p, stagedResourceUrls: [resourceUrl] } : p
-        ));
+        setPieces(prev => prev.map(p => {
+          let updated = { ...p };
+          (p.id === pid) && (updated.stagedResourceUrls = [resourceUrl]);
+          return updated;
+        }));
 
         visionFetcher.submit(
           { intent: "visionScan", pieceId: pid, imageUrl: resourceUrl },
@@ -398,7 +381,7 @@ export function NewProductIntakeTab({ fetcher }) {
           let updated = { ...p };
           (p.id === data.pieceId) && (() => {
             (data.description !== undefined && data.description !== "") && (updated.generated_description = data.description);
-            (data.color !== undefined && data.color !== "") && (updated.color = data.color);
+            (data.primary_color !== undefined && data.primary_color !== "") && (updated.color = data.primary_color);
             (data.cut_and_shape !== undefined && data.cut_and_shape !== "") && (updated.cut_and_shape = data.cut_and_shape);
             (data.surface_finish !== undefined && data.surface_finish !== "") && (updated.surface_finish = data.surface_finish);
             (data.stone_shape !== undefined && data.stone_shape !== "") && (updated.stone_shape = data.stone_shape);
@@ -515,23 +498,30 @@ export function NewProductIntakeTab({ fetcher }) {
     // PER-PIECE ROW — write canonical title back to piece name field
     if (parsed.canonical_title || parsed.product_title) {
       const pieceTitleVal = parsed.canonical_title || parsed.product_title;
-      setPieces(prev => prev.map((p, i) =>
-        p.id === lastScannedPieceId || (!lastScannedPieceId && i === 0)
-          ? { ...p, piece_name: pieceTitleVal, seo_title: parsed.seo_title, handle: parsed.handle, stone_story: parsed.stone_story }
-          : p
-      ));
+      setPieces(prev => prev.map((p, i) => {
+        let updated = { ...p };
+        (p.id === lastScannedPieceId || (!lastScannedPieceId && i === 0)) && (() => {
+          updated.piece_name = pieceTitleVal;
+          updated.seo_title = parsed.seo_title;
+          updated.handle = parsed.handle;
+          updated.stone_story = parsed.stone_story;
+        })();
+        return updated;
+      }));
     }
 
     // FLAG — needs new origin page
-    if (parsed.needs_new_origin_page) {
+    (parsed.needs_new_origin_page) && (() => {
       setTitleToastMsg("⚠️ No origin page found — create one for: " + parsed.origin_name);
       setTitleToastError(true);
       setTitleToastActive(true);
-    } else {
+    })();
+    
+    (!parsed.needs_new_origin_page) && (() => {
       setTitleToastMsg("Title parsed — fields pre-filled");
       setTitleToastError(false);
       setTitleToastActive(true);
-    }
+    })();
 
   }, [autoFillFetcher.data, lastScannedPieceId]);
 
@@ -547,11 +537,11 @@ export function NewProductIntakeTab({ fetcher }) {
       (isDesc && isSuccess) && (() => {
         let descStr = "";
         data.description && (descStr = data.description);
-        setPieces(prev => prev.map((p, i) =>
-          p.id === data.pieceId || (!data.pieceId && i === 0)
-            ? { ...p, generated_description: descStr }
-            : p
-        ));
+        setPieces(prev => prev.map((p, i) => {
+          let updated = { ...p };
+          (p.id === data.pieceId || (!data.pieceId && i === 0)) && (updated.generated_description = descStr);
+          return updated;
+        }));
       })();
     })();
   }, [descriptionFetcher.state, descriptionFetcher.data]);
@@ -815,30 +805,6 @@ export function NewProductIntakeTab({ fetcher }) {
 
                     <div style={{ minHeight: "48px", marginTop: "8px" }}>
                       <TextField
-                        label={renderLabel("Artist Notes", "artist_notes", piece.artist_notes)}
-                        value={piece.artist_notes}
-                        onChange={(v) => handlePieceChange(piece.id, "artist_notes", v)}
-                        multiline={3}
-                        autoComplete="off"
-                        placeholder="Internal shop notes about this stone's character..."
-                        accessibilityLabel={`Enter Artist Notes for row ${index + 1}`}
-                      />
-                    </div>
-
-                    <div style={{ minHeight: "48px", marginTop: "8px" }}>
-                      <TextField
-                        label={renderLabel("Character Marks", "character_marks", piece.character_marks)}
-                        value={piece.character_marks}
-                        onChange={(v) => handlePieceChange(piece.id, "character_marks", v)}
-                        multiline={2}
-                        autoComplete="off"
-                        placeholder="Describe any natural character marks, inclusions, or patterns..."
-                        accessibilityLabel={`Enter Character Marks for row ${index + 1}`}
-                      />
-                    </div>
-
-                    <div style={{ minHeight: "48px", marginTop: "8px" }}>
-                      <TextField
                         label={renderLabel("Stone Story", "stone_story", piece.stone_story)}
                         value={piece.stone_story}
                         onChange={(v) => handlePieceChange(piece.id, "stone_story", v)}
@@ -997,15 +963,6 @@ export function NewProductIntakeTab({ fetcher }) {
               </div>
               <div style={{ minHeight: "54px" }}>
                 <TextField
-                  label={renderLabel("Collection Date", "collection_date", sharedFields.collection_date)}
-                  value={sharedFields.collection_date}
-                  onChange={(v) => handleSharedFieldChange("collection_date", v)}
-                  autoComplete="off"
-                  accessibilityLabel="Enter shared collection date"
-                />
-              </div>
-              <div style={{ minHeight: "54px" }}>
-                <TextField
                   label={renderLabel("Origin Location", "origin_location", sharedFields.origin_location)}
                   value={sharedFields.origin_location}
                   onChange={(v) => handleSharedFieldChange("origin_location", v)}
@@ -1049,53 +1006,6 @@ export function NewProductIntakeTab({ fetcher }) {
                   value={sharedFields.primary_use}
                   onChange={(v) => handleSharedFieldChange("primary_use", v)}
                   accessibilityLabel="Select product type"
-                />
-              </div>
-              <div style={{ minHeight: "54px" }}>
-                <TextField
-                  label={renderLabel("Primary Medium", "primary_medium", sharedFields.primary_medium)}
-                  value={sharedFields.primary_medium}
-                  onChange={(v) => handleSharedFieldChange("primary_medium", v)}
-                  autoComplete="off"
-                  accessibilityLabel="Enter Primary Medium"
-                />
-              </div>
-              <div style={{ minHeight: "54px" }}>
-                <TextField
-                  label={renderLabel("Secondary Medium", "secondary_medium", sharedFields.secondary_medium)}
-                  value={sharedFields.secondary_medium}
-                  onChange={(v) => handleSharedFieldChange("secondary_medium", v)}
-                  autoComplete="off"
-                  accessibilityLabel="Enter Secondary Medium"
-                />
-              </div>
-              <div style={{ minHeight: "54px" }}>
-                <TextField
-                  label={renderLabel("Wire Material", "wire_material", sharedFields.wire_material)}
-                  value={sharedFields.wire_material}
-                  onChange={(v) => handleSharedFieldChange("wire_material", v)}
-                  autoComplete="off"
-                  accessibilityLabel="Enter Wire Material"
-                />
-              </div>
-              <div style={{ minHeight: "54px" }}>
-                <TextField
-                  label={renderLabel("Setting Ready", "setting_ready", sharedFields.setting_ready)}
-                  value={sharedFields.setting_ready}
-                  onChange={(v) => handleSharedFieldChange("setting_ready", v)}
-                  autoComplete="off"
-                  placeholder="e.g. true or false"
-                  accessibilityLabel="Enter Setting Ready"
-                />
-              </div>
-              <div style={{ minHeight: "54px" }}>
-                <TextField
-                  label={renderLabel("Bail Included", "bail_included", sharedFields.bail_included)}
-                  value={sharedFields.bail_included}
-                  onChange={(v) => handleSharedFieldChange("bail_included", v)}
-                  autoComplete="off"
-                  placeholder="e.g. true or false"
-                  accessibilityLabel="Enter Bail Included"
                 />
               </div>
               <div style={{ minHeight: "54px" }}>
@@ -1156,7 +1066,7 @@ export function NewProductIntakeTab({ fetcher }) {
         )}
 
         <div style={{ minHeight: "54px" }}>
-          {statusMessage !== "" ? (
+          {statusMessage !== "" && (
             <Button
               size="large"
               variant="primary"
@@ -1166,7 +1076,8 @@ export function NewProductIntakeTab({ fetcher }) {
             >
               Start New Batch
             </Button>
-          ) : (
+          )}
+          {statusMessage === "" && (
             <Button
               size="large"
               variant="primary"
