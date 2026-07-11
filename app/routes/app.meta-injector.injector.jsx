@@ -1,7 +1,7 @@
 // ==========================================================================
 // ROCKHOUND STUDIO — TAB 1: NEW PRODUCT INTAKE BENCH
 // File: app/routes/app.meta-injector.injector.jsx
-// (100% Original Logic & Fetchers Preserved + 100-Word Law & Smart Switch UI)
+// (100% Original Logic Preserved + Stripped Redundancy + Consolidated Manual Inputs)
 // ==========================================================================
 
 import React, { useState, useEffect, useCallback } from "react";
@@ -24,7 +24,6 @@ export function NewProductIntakeTab({ fetcher }) {
     stone_family: "",
     collection_name: "",
     collection_location: "",
-    collection_date: "",
     origin_location: "",
     rescued_by: "Bob and Janyce",
     treatment_status: "100% Natural/Untreated",
@@ -41,8 +40,7 @@ export function NewProductIntakeTab({ fetcher }) {
     secondary_medium: "",
     wire_material: "",
     setting_ready: "",
-    bail_included: "",
-    weight_grams: ""
+    bail_included: ""
   });
 
   const [pieces, setPieces] = useState([
@@ -53,10 +51,8 @@ export function NewProductIntakeTab({ fetcher }) {
       cut_and_shape: "",
       surface_finish: "",
       color: "",
-      stone_shape: "",
       price: "",
-      honest_flaws_and_character: "",
-      stone_story: "",
+      weight_grams: "",
       photoFiles: [],
       photoPreviewUrls: [],
       photos: [],
@@ -221,10 +217,8 @@ export function NewProductIntakeTab({ fetcher }) {
         cut_and_shape: "",
         surface_finish: "",
         color: "",
-        stone_shape: "",
         price: "",
-        honest_flaws_and_character: "",
-        stone_story: "",
+        weight_grams: "",
         photoFiles: [],
         photoPreviewUrls: [],
         photos: [],
@@ -259,11 +253,9 @@ export function NewProductIntakeTab({ fetcher }) {
       cut_and_shape: pieces[0].cut_and_shape,
       surface_finish: pieces[0].surface_finish,
       color: pieces[0].color,
-      stone_shape: pieces[0].stone_shape,
       price: pieces[0].price,
+      weight_grams: pieces[0].weight_grams,
       seo_title: pieces[0].seo_title,
-      honest_flaws_and_character: pieces[0].honest_flaws_and_character,
-      stone_story: pieces[0].stone_story,
       title: buildTitle(sharedFields, pieces[0]),
       descriptionHtml: pieces[0].generated_description,
       productType: productType,
@@ -282,7 +274,29 @@ export function NewProductIntakeTab({ fetcher }) {
   const handleStartNewBatch = useCallback(() => {
     setStatusMessage("");
     setErrorMessage("");
-    // AUTO-RESET BENCH: Wipe Section A per-piece data, preserve Section B constants for next stone
+    setSharedFields({
+      material: "",
+      stone_family: "",
+      collection_name: "",
+      collection_location: "",
+      origin_location: "",
+      rescued_by: "Bob and Janyce",
+      treatment_status: "100% Natural/Untreated",
+      origin_story: "",
+      primary_use: "",
+      handcrafted_by: "Bob & Janyce, Rockhound Studio",
+      is_one_of_a_kind: "Yes — one of a kind",
+      treated: "Untreated — Natural",
+      found_object: "true",
+      condition: "new",
+      target_gender: "Unisex",
+      age_group: "adult",
+      primary_medium: "",
+      secondary_medium: "",
+      wire_material: "",
+      setting_ready: "",
+      bail_included: ""
+    });
     setPieces([{
       id: Date.now().toString(),
       piece_name: "",
@@ -290,10 +304,8 @@ export function NewProductIntakeTab({ fetcher }) {
       cut_and_shape: "",
       surface_finish: "",
       color: "",
-      stone_shape: "",
       price: "",
-      honest_flaws_and_character: "",
-      stone_story: "",
+      weight_grams: "",
       photoFiles: [],
       photoPreviewUrls: [],
       photos: [],
@@ -383,21 +395,10 @@ export function NewProductIntakeTab({ fetcher }) {
             (data.color !== undefined && data.color !== "") && (updated.color = data.color);
             (data.cut_and_shape !== undefined && data.cut_and_shape !== "") && (updated.cut_and_shape = data.cut_and_shape);
             (data.surface_finish !== undefined && data.surface_finish !== "") && (updated.surface_finish = data.surface_finish);
-            (data.stone_shape !== undefined && data.stone_shape !== "") && (updated.stone_shape = data.stone_shape);
             (data.dimensions_mm !== undefined && data.dimensions_mm !== "") && (updated.dimensions_mm = data.dimensions_mm);
             updated.scanError = "";
           })();
           return updated;
-        }));
-
-        // OPTICAL SCAN JEWELRY FINDINGS MAPPER
-        setSharedFields(prev => ({
-          ...prev,
-          wire_material: data.wire_material || prev.wire_material,
-          secondary_medium: data.secondary_medium || prev.secondary_medium,
-          bail_included: data.bail_included !== undefined ? String(data.bail_included) : prev.bail_included,
-          setting_ready: data.setting_ready !== undefined ? String(data.setting_ready) : prev.setting_ready,
-          primary_medium: data.primary_medium || prev.primary_medium
         }));
       })();
 
@@ -509,7 +510,7 @@ export function NewProductIntakeTab({ fetcher }) {
       const pieceTitleVal = parsed.canonical_title || parsed.product_title;
       setPieces(prev => prev.map((p, i) =>
         p.id === lastScannedPieceId || (!lastScannedPieceId && i === 0)
-          ? { ...p, piece_name: pieceTitleVal, seo_title: parsed.seo_title, handle: parsed.handle, stone_story: parsed.stone_story }
+          ? { ...p, piece_name: pieceTitleVal, seo_title: parsed.seo_title, handle: parsed.handle }
           : p
       ));
     }
@@ -569,7 +570,10 @@ export function NewProductIntakeTab({ fetcher }) {
   const isJewelry = ["Pendant (Finished Jewelry)", "Wire Wrap (Finished Jewelry)", "Ring / Bezel Setting", "Pendant", "Wire Wrap", "Ring", "Necklace", "Earrings", "Bracelet", "Jewelry", "Wearable Art"].some(type => (sharedFields.primary_use || "").includes(type));
 
   const combinedData = { ...sharedFields, ...(pieces[0] || {}) };
-  const scanKeys = [...ROCKHOUND_FIELDS.map(f => f.key), "origin_story", "price", "mohs_hardness", "luster", "fracture", "cleavage", "specificGravity", "diaphaneity", "crystalSystem", "geologicalEra", "mineralClass", "rockComposition", "rockFormation", "geological_age", "fracture_pattern"];
+  
+  // Clean deleted keys out of the bottom Meta Scan matrix
+  const deletedKeys = ["honest_flaws_and_character", "collection_date", "stone_shape", "stone_story"];
+  const scanKeys = [...ROCKHOUND_FIELDS.map(f => f.key), "origin_story", "price", "mohs_hardness", "luster", "fracture", "cleavage", "specificGravity", "diaphaneity", "crystalSystem", "geologicalEra", "mineralClass", "rockComposition", "rockFormation", "geological_age", "fracture_pattern"].filter(key => !deletedKeys.includes(key));
 
   const actionData = fetcher.data;
   let useSaved = false;
@@ -611,7 +615,7 @@ export function NewProductIntakeTab({ fetcher }) {
     <Frame>
       <BlockStack gap="600">
         
-        {/* NEW TOP BANNER: MACHINE AUTO-PILOT CONFIRMATION */}
+        {/* TOP BANNER */}
         <Banner title="Machine Auto-Pilot Active — No Typing Required for Studio Constants:" tone="success">
           <BlockStack gap="100">
             <Text as="p" variant="bodyMd">
@@ -834,31 +838,30 @@ export function NewProductIntakeTab({ fetcher }) {
                       />
                     </div>
 
-                    <div style={{ minHeight: "48px", marginTop: "8px" }}>
-                      <TextField
-                        label={renderLabel("Honest Flaws & Character", "honest_flaws_and_character", piece.honest_flaws_and_character)}
-                        value={piece.honest_flaws_and_character}
-                        onChange={(v) => handlePieceChange(piece.id, "honest_flaws_and_character", v)}
-                        multiline={2}
-                        autoComplete="off"
-                        placeholder="Describe any natural character marks, inclusions, or patterns..."
-                        accessibilityLabel={`Enter Honest Flaws & Character for row ${index + 1}`}
-                      />
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px", marginTop: "16px" }}>
+                      <div style={{ minHeight: "54px" }}>
+                        <TextField
+                          label={renderLabel("Price", "price", piece.price)}
+                          value={piece.price}
+                          onChange={(v) => handlePieceChange(piece.id, "price", v)}
+                          autoComplete="off"
+                          placeholder="e.g. 45.00"
+                          accessibilityLabel={`Enter Price for row ${index + 1}`}
+                        />
+                      </div>
+                      <div style={{ minHeight: "54px" }}>
+                        <TextField
+                          label={renderLabel("Weight (grams)", "weight_grams", piece.weight_grams)}
+                          value={piece.weight_grams}
+                          onChange={(v) => handlePieceChange(piece.id, "weight_grams", v)}
+                          autoComplete="off"
+                          placeholder="e.g. 14.5"
+                          accessibilityLabel={`Enter Weight in grams for row ${index + 1}`}
+                        />
+                      </div>
                     </div>
 
-                    <div style={{ minHeight: "48px", marginTop: "8px" }}>
-                      <TextField
-                        label={renderLabel("Stone Story", "stone_story", piece.stone_story)}
-                        value={piece.stone_story}
-                        onChange={(v) => handlePieceChange(piece.id, "stone_story", v)}
-                        multiline={3}
-                        autoComplete="off"
-                        placeholder="The unique story or geological journey of this specific stone..."
-                        accessibilityLabel={`Enter Stone Story for row ${index + 1}`}
-                      />
-                    </div>
-
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "16px" }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "16px", marginTop: "16px" }}>
                       <div style={{ minHeight: "54px" }}>
                         <TextField
                           label={renderLabel("Dimensions (mm)", "dimensions_mm", piece.dimensions_mm)}
@@ -894,25 +897,6 @@ export function NewProductIntakeTab({ fetcher }) {
                           autoComplete="off"
                           placeholder="Primary color"
                           accessibilityLabel={`Enter color for row ${index + 1}`}
-                        />
-                      </div>
-                      <div style={{ minHeight: "54px" }}>
-                        <TextField
-                          label={renderLabel("Stone Shape", "stone_shape", piece.stone_shape)}
-                          value={piece.stone_shape}
-                          onChange={(v) => handlePieceChange(piece.id, "stone_shape", v)}
-                          autoComplete="off"
-                          placeholder="Shape of the stone"
-                          accessibilityLabel={`Enter stone shape for row ${index + 1}`}
-                        />
-                      </div>
-                      <div style={{ minHeight: "54px" }}>
-                        <TextField
-                          label={renderLabel("Price", "price", piece.price)}
-                          value={piece.price}
-                          onChange={(v) => handlePieceChange(piece.id, "price", v)}
-                          autoComplete="off"
-                          accessibilityLabel={`Enter Price for row ${index + 1}`}
                         />
                       </div>
                     </div>
@@ -1006,15 +990,6 @@ export function NewProductIntakeTab({ fetcher }) {
               </div>
               <div style={{ minHeight: "54px" }}>
                 <TextField
-                  label={renderLabel("Collection Date", "collection_date", sharedFields.collection_date)}
-                  value={sharedFields.collection_date}
-                  onChange={(v) => handleSharedFieldChange("collection_date", v)}
-                  autoComplete="off"
-                  accessibilityLabel="Enter shared collection date"
-                />
-              </div>
-              <div style={{ minHeight: "54px" }}>
-                <TextField
                   label={renderLabel("Origin Location", "origin_location", sharedFields.origin_location)}
                   value={sharedFields.origin_location}
                   onChange={(v) => handleSharedFieldChange("origin_location", v)}
@@ -1058,15 +1033,6 @@ export function NewProductIntakeTab({ fetcher }) {
                   value={sharedFields.primary_use}
                   onChange={(v) => handleSharedFieldChange("primary_use", v)}
                   accessibilityLabel="Select product type"
-                />
-              </div>
-              <div style={{ minHeight: "54px" }}>
-                <TextField
-                  label={renderLabel("Weight (grams)", "weight_grams", sharedFields.weight_grams)}
-                  value={sharedFields.weight_grams}
-                  onChange={(v) => handleSharedFieldChange("weight_grams", v)}
-                  autoComplete="off"
-                  accessibilityLabel="Enter Weight in grams"
                 />
               </div>
             </div>
@@ -1214,16 +1180,6 @@ export function NewProductIntakeTab({ fetcher }) {
             </Button>
           )}
         </div>
-
-        <Card padding="400">
-          <BlockStack gap="200">
-            <Text variant="headingMd" as="h3">Debug — Piece State</Text>
-            <Text as="p">Photos uploaded: {pieces[0]?.photoFiles?.length || 0}</Text>
-            <Text as="p">Is uploading: {String(pieces[0]?.isUploading)}</Text>
-            <Text as="p">Staged URLs: {JSON.stringify(pieces[0]?.stagedResourceUrls)}</Text>
-            <Text as="p">mediaUrlsJson will send: {JSON.stringify((pieces[0]?.stagedResourceUrls || []).filter(u => u !== undefined && u !== ""))}</Text>
-          </BlockStack>
-        </Card>
 
         <Card padding="400">
           <BlockStack gap="400">

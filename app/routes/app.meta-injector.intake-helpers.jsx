@@ -1,7 +1,7 @@
 // ==========================================================================
 // ROCKHOUND STUDIO — INTAKE HELPER FUNCTIONS
 // File: app/routes/app.meta-injector.intake-helpers.jsx
-// (100% Original Logic & Dash Delimiters Preserved + Payload Safety Fixes)
+// (100% Original Logic & Dash Delimiters Preserved + Strict Schema Map Added)
 // ==========================================================================
 
 export async function handleScanPhoto({ piece, updatePiece, autoFillFetcher, setErrorMessage }) {
@@ -45,10 +45,39 @@ export async function handleGenerateDescription({ sharedFields, pieces, descFetc
   );
 }
 
+// ==========================================
+// STRICT METAFIELD SCHEMA MAP (From Sidekick)
+// ==========================================
+const METAFIELD_SCHEMA = {
+  // SHOPIFY TAXONOMY (Requires metaobject_reference)
+  "color-pattern": { namespace: "shopify", type: "list.metaobject_reference" },
+  "material": { namespace: "shopify", type: "metaobject_reference" },
+  "age-group": { namespace: "shopify", type: "metaobject_reference" },
+  "jewelry-type": { namespace: "shopify", type: "metaobject_reference" },
+  "target-gender": { namespace: "shopify", type: "metaobject_reference" },
+  "jewelry-material": { namespace: "shopify", type: "metaobject_reference" },
+  "necklace-design": { namespace: "shopify", type: "metaobject_reference" },
+  "authenticity": { namespace: "shopify", type: "metaobject_reference" },
+  "rarity": { namespace: "shopify", type: "metaobject_reference" },
+  "condition": { namespace: "shopify", type: "metaobject_reference" },
+  "crystal-system": { namespace: "shopify", type: "metaobject_reference" },
+  "mineral-class": { namespace: "shopify", type: "metaobject_reference" },
+  "geological-era": { namespace: "shopify", type: "metaobject_reference" },
+  "rock-composition": { namespace: "shopify", type: "metaobject_reference" },
+  "rock-formation": { namespace: "shopify", type: "metaobject_reference" },
+  "chain-link-type": { namespace: "shopify", type: "metaobject_reference" },
+  "jewelry-finding-type": { namespace: "shopify", type: "metaobject_reference" },
+
+  // CUSTOM NAMESPACE (Strict Types)
+  "weight_grams": { namespace: "custom", type: "number_decimal" },
+  "stone_story": { namespace: "custom", type: "list.single_line_text_field" },
+  "character_marks": { namespace: "custom", type: "list.single_line_text_field" }
+};
+
 export function buildMetafieldsJson(sharedFields, piece) {
   const allFields = { ...sharedFields, ...piece };
   
-  // Omit internal UI state keys and heavy base64 strings from being sent to Shopify Metafields
+  // Omit internal UI state keys from being sent to Shopify Metafields
   const omitKeys = [
     "id", 
     "photoFiles", 
@@ -59,23 +88,55 @@ export function buildMetafieldsJson(sharedFields, piece) {
     "scanToken",
     "photos",
     "imageBase64",
-    "imageMimeType"
+    "imageMimeType",
+    "generated_description" // This belongs in body_html, not a metafield
   ];
   
   const metaArr = [];
   
-  Object.keys(allFields).forEach(k => {
-    if (!omitKeys.includes(k) && allFields[k] !== undefined && allFields[k] !== null && allFields[k] !== "") {
-      
-      let fieldType = "single_line_text_field";
-      
-      // Multi-line fields require multi_line_text_field in Shopify to prevent API save rejections
-      if (["origin_story", "stone_story", "artist_notes", "character_marks", "generated_description", "collection_story"].includes(k)) {
-        fieldType = "multi_line_text_field";
-      }
-      
-      metaArr.push({ key: k, value: String(allFields[k]).trim(), type: fieldType });
+  Object.keys(allFields).forEach(rawKey => {
+    if (omitKeys.includes(rawKey) || allFields[rawKey] === undefined || allFields[rawKey] === null || allFields[rawKey] === "") {
+      return;
     }
+
+    let key = rawKey;
+    let val = allFields[rawKey];
+
+    // 1. FIX THE KEY MISMATCH
+    if (key === "origin_handle") {
+      key = "origin_page_handle";
+    }
+
+    // 2. LOOKUP SCHEMA (Default to custom string if not mapped above)
+    const schema = METAFIELD_SCHEMA[key] || { namespace: "custom", type: "single_line_text_field" };
+    let finalValue = String(val).trim();
+
+    // 3. FORMAT VALUE BASED ON SHOPIFY DATA TYPE
+    if (schema.type.startsWith("list.")) {
+      // Shopify requires list fields to be stringified JSON arrays
+      try {
+        if (finalValue.startsWith("[") && finalValue.endsWith("]")) {
+          JSON.parse(finalValue); // Verify it is a valid array
+        } else {
+          finalValue = JSON.stringify([finalValue]); // Wrap plain string into JSON array
+        }
+      } catch (e) {
+        finalValue = JSON.stringify([finalValue]);
+      }
+    } 
+    else if (schema.type === "number_decimal") {
+      // Strip out words like "grams", leaving only numbers and decimals
+      const num = finalValue.replace(/[^\d.-]/g, "");
+      if (!num || isNaN(parseFloat(num))) return; 
+      finalValue = num;
+    }
+
+    metaArr.push({
+      namespace: schema.namespace,
+      key: key,
+      type: schema.type,
+      value: finalValue
+    });
   });
   
   return JSON.stringify(metaArr);
