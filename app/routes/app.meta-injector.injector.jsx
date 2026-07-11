@@ -91,7 +91,7 @@ export function NewProductIntakeTab({ fetcher }) {
       formData.append("pieceId", piece.id);
       stageFetcher.submit(formData, {
         method: "post",
-        action: "/app/meta-injector-autofill", // <--- ROUTE FIXED
+        action: "/app/meta-injector-autofill",
         encType: "multipart/form-data"
       });
     })();
@@ -393,7 +393,7 @@ export function NewProductIntakeTab({ fetcher }) {
           (p.id === data.pieceId) && (() => {
             (data.description !== undefined && data.description !== "") && (updated.generated_description = data.description);
             (data.color !== undefined && data.color !== "") && (updated.color = data.color);
-            (data.primary_color !== undefined && data.primary_color !== "") && (updated.color = data.primary_color); // <--- COLOR MAPPED
+            (data.primary_color !== undefined && data.primary_color !== "") && (updated.color = data.primary_color);
             (data.cut_and_shape !== undefined && data.cut_and_shape !== "") && (updated.cut_and_shape = data.cut_and_shape);
             (data.surface_finish !== undefined && data.surface_finish !== "") && (updated.surface_finish = data.surface_finish);
             (data.dimensions_mm !== undefined && data.dimensions_mm !== "") && (updated.dimensions_mm = data.dimensions_mm);
