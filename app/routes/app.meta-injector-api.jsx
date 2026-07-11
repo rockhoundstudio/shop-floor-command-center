@@ -504,6 +504,8 @@ export const action = async ({ request }) => {
             mediaContentType: "IMAGE"
           }));
 
+          await new Promise(resolve => setTimeout(resolve, 3000));
+
           const mediaResponse = await admin.graphql(
             `#graphql
             mutation productCreateMedia($productId: ID!, $media: [CreateMediaInput!]!) {
@@ -521,6 +523,8 @@ export const action = async ({ request }) => {
           );
 
           const mediaResult = await mediaResponse.json();
+          console.log("productCreateMedia result:", JSON.stringify(mediaResult?.data?.productCreateMedia, null, 2));
+
           const mediaErrors = mediaResult?.data?.productCreateMedia?.mediaUserErrors || [];
           (mediaErrors.length > 0) && allUserErrors.push(...mediaErrors);
         }
