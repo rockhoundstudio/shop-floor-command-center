@@ -922,7 +922,7 @@ Image URL: ${imageUrl}`;
               <BlockStack gap="300">
                 <Text variant="headingMd" as="h4">Section 1 — Core Ignition</Text>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
-                  {["piece_name", "handcrafted_by", "is_one_of_a_kind", "treated", "dimensions_mm", "weight_grams", "price"].map(renderFullMetaField)}
+                  {["piece_name", "primary_medium", "secondary_medium", "handcrafted_by", "is_one_of_a_kind", "treated", "dimensions_mm", "weight_grams", "price"].map(renderFullMetaField)}
                 </div>
               </BlockStack>
 
@@ -939,7 +939,7 @@ Image URL: ${imageUrl}`;
                 </div>
                 <Collapsible open={isSection3Open} id="section-3-collapsible" transition={{duration: '200ms', timingFunction: 'ease-in-out'}}>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px', marginTop: '16px' }}>
-                    {["color-pattern", "material", "jewelry-type", "necklace-design", "chain-link-type", "jewelry-finding-type", "target-gender", "age-group", "authenticity", "rarity", "condition", "found_object", "custom_product"].map(renderFullMetaField)}
+                    {["primary_use", "setting_ready", "wire_material", "bail_included", "color-pattern", "material", "jewelry-type", "necklace-design", "chain-link-type", "jewelry-finding-type", "target-gender", "age-group", "authenticity", "rarity", "condition", "found_object", "custom_product"].map(renderFullMetaField)}
                   </div>
                 </Collapsible>
               </BlockStack>
