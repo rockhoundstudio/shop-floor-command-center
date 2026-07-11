@@ -508,7 +508,8 @@ export const action = async ({ request }) => {
       const rawMetafields = [];
 
       // Combine shared fields and piece fields
-      const combinedFields = { ...payload.sharedFields, ...piece };
+      const { pieces, intent, mediaUrlsJson, title: payloadTitle, metafieldsJson, ...sharedOnly } = payload;
+      const combinedFields = { ...sharedOnly, ...piece };
       
       // We don't want to save these system/structural keys as metafields
       const ignoreKeys = ["intent", "mediaUrlsJson", "descriptionHtml", "productType", "status", "pieces", "photoFiles", "photoPreviewUrls", "photos", "imageBase64", "imageMimeType", "stagedResourceUrls", "scanError", "scanToken", "isUploading", "id", "generated_description", "price", "seo_title"];
