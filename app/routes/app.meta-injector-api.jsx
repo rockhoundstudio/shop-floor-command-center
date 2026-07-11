@@ -60,7 +60,25 @@ export const action = async ({ request }) => {
           "mohs_hardness": stoneName === "Jasper" || stoneName === "Agate" ? "6.5 - 7" : "Varies",
           "crystal_system": "Trigonal",
           "primary_color": "Varies by specimen",
-          "stone_story": `A beautiful piece of natural ${stoneName}.`
+          "stone_story": `A beautiful piece of natural ${stoneName}.`,
+          "title_tag": `${stoneName} Wearable Art — Handcrafted by Bob and Janyce`,
+          "description_tag": `Natural, one-of-a-kind ${stoneName} handcrafted by Bob and Janyce. Honest flaws, authentic character, and zero workshop fluff.`,
+          "google_product_category": "Apparel & Accessories > Jewelry",
+          "target_gender": "Unisex",
+          "age_group": "adult",
+          "condition": "new",
+          "geological_age": "Varies by specimen",
+          "fracture_pattern": "Varies by specimen",
+          "luster": "Varies by specimen",
+          "fracture": "Varies by specimen",
+          "cleavage": "None",
+          "specificGravity": "Varies by specimen",
+          "diaphaneity": "Opaque to Translucent",
+          "crystalSystem": "Trigonal",
+          "geologicalEra": "Varies by specimen",
+          "mineralClass": "Silicate",
+          "rockComposition": "Silicified",
+          "rockFormation": "Natural"
         };
 
         cachedStone = await prisma.stoneCache.create({
