@@ -979,7 +979,10 @@ Return only valid JSON. No explanation. No markdown.`;
   "color": "(return ONLY the primary color as a single word, e.g. 'Blue' or 'Red')",
   "surface_finish": "(one of: High Polish, Satin Polish, Matte, Natural/Rough, Tumbled)",
   "cut_and_shape": "(e.g. Freeform, Oval Cabochon, Round Cabochon, Teardrop, Pear, Trillion)",
-  "character_marks": "Describe any visible banding, inclusions, color transitions, surface marks, or distinctive visual features of the stone. Be specific and factual.",
+  "honest_flaws_and_character": "Honest over perfection: Describe any visible natural fractures, pits, inclusions, asymmetry, or raw character marks. Factual shop language only, zero marketing fluff.",
+  "secondary_medium": "(string, e.g. Sterling Silver, Copper, Driftwood, or empty if none)",
+  "wire_material": "(string, e.g. 925 Sterling Silver, Bare Copper, Gold Filled, or empty if none)",
+  "bail_included": "(boolean, true if a bail or hanging loop is present)",
   "alt_text": "(a single descriptive sentence for screen readers and SEO, written in plain English describing what is seen in the image)",
   "is_one_of_a_kind": "(boolean)",
   "found_object": "(boolean)",
@@ -1056,7 +1059,10 @@ Return only valid JSON. No explanation. No markdown.`;
             safeSet("color", visionData.color || visionData.Color || visionData.primary_color);
             safeSet("surface_finish", visionData.surface_finish || visionData.Surface_finish);
             safeSet("cut_and_shape", visionData.cut_and_shape || visionData.Cut_and_shape);
-            safeSet("honest_flaws_and_character", visionData.character_marks);
+            safeSet("honest_flaws_and_character", visionData.honest_flaws_and_character || visionData.character_marks);
+            safeSet("secondary_medium", visionData.secondary_medium);
+            safeSet("wire_material", visionData.wire_material);
+            safeSet("bail_included", visionData.bail_included ? "true" : "false");
             safeSet("alt_text", visionData.alt_text || visionData.Alt_text);
             safeSet("is_one_of_a_kind", visionData.is_one_of_a_kind);
             safeSet("found_object", visionData.found_object);

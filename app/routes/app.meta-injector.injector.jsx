@@ -55,7 +55,7 @@ export function NewProductIntakeTab({ fetcher }) {
       color: "",
       stone_shape: "",
       price: "",
-      character_marks: "",
+      honest_flaws_and_character: "",
       stone_story: "",
       photoFiles: [],
       photoPreviewUrls: [],
@@ -223,7 +223,7 @@ export function NewProductIntakeTab({ fetcher }) {
         color: "",
         stone_shape: "",
         price: "",
-        character_marks: "",
+        honest_flaws_and_character: "",
         stone_story: "",
         photoFiles: [],
         photoPreviewUrls: [],
@@ -262,7 +262,7 @@ export function NewProductIntakeTab({ fetcher }) {
       stone_shape: pieces[0].stone_shape,
       price: pieces[0].price,
       seo_title: pieces[0].seo_title,
-      character_marks: pieces[0].character_marks,
+      honest_flaws_and_character: pieces[0].honest_flaws_and_character,
       stone_story: pieces[0].stone_story,
       title: buildTitle(sharedFields, pieces[0]),
       descriptionHtml: pieces[0].generated_description,
@@ -316,7 +316,7 @@ export function NewProductIntakeTab({ fetcher }) {
       color: "",
       stone_shape: "",
       price: "",
-      character_marks: "",
+      honest_flaws_and_character: "",
       stone_story: "",
       photoFiles: [],
       photoPreviewUrls: [],
@@ -580,7 +580,7 @@ export function NewProductIntakeTab({ fetcher }) {
   const surfaceFinishOptions = ["", "High Polish", "Matte", "Satin", "Hand Polish", "Natural"];
 
   // SMART SWITCH LOGIC: Check if selected Product Type requires jewelry fields
-  const isJewelry = ["Pendant (Finished Jewelry)", "Wire Wrap (Finished Jewelry)", "Ring / Bezel Setting", "Pendant", "Wire Wrap", "Ring"].includes(sharedFields.primary_use);
+  const isJewelry = ["Pendant (Finished Jewelry)", "Wire Wrap (Finished Jewelry)", "Ring / Bezel Setting", "Pendant", "Wire Wrap", "Ring", "Necklace", "Earrings", "Bracelet", "Jewelry", "Wearable Art"].some(type => (sharedFields.primary_use || "").includes(type));
 
   const combinedData = { ...sharedFields, ...(pieces[0] || {}) };
   const scanKeys = [...ROCKHOUND_FIELDS.map(f => f.key), "origin_story", "price", "mohs_hardness", "luster", "fracture", "cleavage", "specificGravity", "diaphaneity", "crystalSystem", "geologicalEra", "mineralClass", "rockComposition", "rockFormation", "geological_age", "fracture_pattern"];
@@ -841,13 +841,13 @@ export function NewProductIntakeTab({ fetcher }) {
 
                     <div style={{ minHeight: "48px", marginTop: "8px" }}>
                       <TextField
-                        label={renderLabel("Character Marks", "character_marks", piece.character_marks)}
-                        value={piece.character_marks}
-                        onChange={(v) => handlePieceChange(piece.id, "character_marks", v)}
+                        label={renderLabel("Honest Flaws & Character", "honest_flaws_and_character", piece.honest_flaws_and_character)}
+                        value={piece.honest_flaws_and_character}
+                        onChange={(v) => handlePieceChange(piece.id, "honest_flaws_and_character", v)}
                         multiline={2}
                         autoComplete="off"
                         placeholder="Describe any natural character marks, inclusions, or patterns..."
-                        accessibilityLabel={`Enter Character Marks for row ${index + 1}`}
+                        accessibilityLabel={`Enter Honest Flaws & Character for row ${index + 1}`}
                       />
                     </div>
 
