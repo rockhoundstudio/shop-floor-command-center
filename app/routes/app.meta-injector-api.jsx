@@ -55,9 +55,12 @@ export const action = async ({ request }) => {
       });
 
       if (!cachedStone) {
+        let mohsVal = "Varies";
+        (stoneName === "Jasper" || stoneName === "Agate") && (mohsVal = "6.5 - 7");
+
         const lapidaryData = {
           "mineral_class": "Silicate",
-          "mohs_hardness": stoneName === "Jasper" || stoneName === "Agate" ? "6.5 - 7" : "Varies",
+          "mohs_hardness": mohsVal,
           "crystal_system": "Trigonal",
           "primary_color": "Varies by specimen",
           "stone_story": `A beautiful piece of natural ${stoneName}.`,
@@ -72,7 +75,7 @@ export const action = async ({ request }) => {
           "luster": "Varies by specimen",
           "fracture": "Varies by specimen",
           "cleavage": "None",
-          "specificGravity": "Varies by specimen",
+          "specific_gravity": "Varies by specimen",
           "diaphaneity": "Opaque to Translucent",
           "crystalSystem": "Trigonal",
           "geologicalEra": "Varies by specimen",
@@ -154,12 +157,13 @@ export const action = async ({ request }) => {
             throw new Error(`Missing ownerId for field: ${item.key}`);
           }
 
-          const resolvedId = itemOwnerId.startsWith("gid://")
-            ? itemOwnerId
-            : `gid://shopify/Product/${itemOwnerId.split("/").pop()}`;
+          let resolvedId = `gid://shopify/Product/${itemOwnerId.split("/").pop()}`;
+          (itemOwnerId.startsWith("gid://")) && (resolvedId = itemOwnerId);
 
           const resolvedType = TYPE_MAP[item.key] || item.type || "single_line_text_field";
-          const resolvedValue = resolvedType.startsWith("list.") ? JSON.stringify([String(item.value)]) : String(item.value);
+          
+          let resolvedValue = String(item.value);
+          (resolvedType.startsWith("list.")) && (resolvedValue = JSON.stringify([String(item.value)]));
 
           return {
             ownerId: resolvedId,
@@ -220,9 +224,8 @@ export const action = async ({ request }) => {
       return data({ success: false, message: "No productId provided." });
     }
 
-    const resolvedId = productId.startsWith("gid://")
-      ? productId
-      : `gid://shopify/Product/${productId}`;
+    let resolvedId = `gid://shopify/Product/${productId}`;
+    (productId.startsWith("gid://")) && (resolvedId = productId);
 
     // Step 1 — Find the malformed metafield IDs
     const lookupResponse = await admin.graphql(
@@ -406,14 +409,15 @@ export const action = async ({ request }) => {
 
       const payload = JSON.parse(rawPayload);
 
-      const piece = payload.pieces && payload.pieces.length > 0 ? payload.pieces[0] : {};
+      let piece = {};
+      (payload.pieces && payload.pieces.length > 0) && (piece = payload.pieces[0]);
 
       const stoneFamily = payload.stone_family || "Unknown Stone";
       const originLocation = payload.origin_location || "Unknown Origin";
       const pieceName = piece.piece_name || "New Piece";
       
       const title = `${stoneFamily} — ${originLocation} — ${pieceName}`;
-      const descriptionHtml = payload.descriptionHtml || "";
+      const descriptionHtml = payload.descriptionHtml || piece.generated_description || piece.descriptionHtml || "";
       const price = piece.price || "0.00";
       const productType = payload.productType || "Wearable Art";
       const status = payload.status || "DRAFT";
@@ -538,33 +542,36 @@ export const action = async ({ request }) => {
 
       Object.entries(combinedFields).forEach(([key, value]) => {
         if (!ignoreKeys.includes(key) && value !== undefined && value !== null && String(value).trim() !== "") {
+           let finalKey = key;
+           (key === "specificGravity") && (finalKey = "specific_gravity");
+
            rawMetafields.push({
-             key: key === "is_one_of_a_kind" ? "is_one_of_a_kind" : key,
+             key: finalKey,
              value: value,
              type: "single_line_text_field" // The map below will fix the types
            });
         }
       });
 
-      // Populate separate google namespace array if present
-      (combinedFields.age_group && combinedFields.age_group !== "") && googleMetafields.push({
-        ownerId: productId,
+      // Populate separate google namespace array if present — write to the VARIANT level
+      (combinedFields.age_group && combinedFields.age_group !== "" && defaultVariantId) && googleMetafields.push({
+        ownerId: defaultVariantId,
         namespace: "google",
         key: "age_group",
         type: "single_line_text_field",
         value: String(combinedFields.age_group)
       });
 
-      (combinedFields.target_gender && combinedFields.target_gender !== "") && googleMetafields.push({
-        ownerId: productId,
+      (combinedFields.target_gender && combinedFields.target_gender !== "" && defaultVariantId) && googleMetafields.push({
+        ownerId: defaultVariantId,
         namespace: "google",
         key: "target_gender",
         type: "single_line_text_field",
         value: String(combinedFields.target_gender)
       });
 
-      (combinedFields.condition && combinedFields.condition !== "") && googleMetafields.push({
-        ownerId: productId,
+      (combinedFields.condition && combinedFields.condition !== "" && defaultVariantId) && googleMetafields.push({
+        ownerId: defaultVariantId,
         namespace: "google",
         key: "condition",
         type: "single_line_text_field",
@@ -597,12 +604,11 @@ export const action = async ({ request }) => {
                if (item.key === "weight_grams") {
                  resolvedType = "number_decimal";
                  let parsedNum = parseFloat(String(item.value).replace(/["']/g, ""));
-                 resolvedValue = isNaN(parsedNum) ? "0.0" : String(parsedNum);
+                 resolvedValue = String(parsedNum);
+                 (isNaN(parsedNum)) && (resolvedValue = "0.0");
                } 
                
-               if (resolvedType.startsWith("list.")) {
-                 resolvedValue = JSON.stringify([String(item.value)]);
-               }
+               (resolvedType.startsWith("list.")) && (resolvedValue = JSON.stringify([String(item.value)]));
 
                return {
                  ownerId: productId,
