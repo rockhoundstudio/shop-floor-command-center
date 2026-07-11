@@ -142,7 +142,8 @@ export const action = async ({ request }) => {
         surface_finish: "single_line_text_field",
         dimensions_mm: "single_line_text_field",
         stone_shape: "single_line_text_field",
-        seo_title: "single_line_text_field"
+        seo_title: "single_line_text_field",
+        color: "single_line_text_field"
       };
 
       const setMetafields = payloadArray
@@ -418,7 +419,7 @@ export const action = async ({ request }) => {
       
       const title = `${stoneFamily} — ${originLocation} — ${pieceName}`;
       const descriptionHtml = payload.descriptionHtml || piece.generated_description || piece.descriptionHtml || "";
-      const price = piece.price || "0.00";
+      const price = String(payload.price || piece.price || "0.00");
       const productType = payload.productType || "Wearable Art";
       const status = payload.status || "DRAFT";
 
@@ -470,26 +471,21 @@ export const action = async ({ request }) => {
       const productHandle = createdProduct.handle;
       const defaultVariantId = createdProduct.variants?.edges?.[0]?.node?.id;
 
-      // Step 1.5: Set Price on Default Variant (BUG 4 FIX)
+      // Step 1.5: Set Price on Default Variant
       if (price && defaultVariantId) {
-        const numericPrice = parseFloat(price);
-        if (!isNaN(numericPrice)) {
-          const variantResponse = await admin.graphql(
-            `#graphql
-            mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
-              productVariantsBulkUpdate(productId: $productId, variants: $variants) {
-                userErrors { field message }
-              }
-            }`,
-            { variables: { productId, variants: [{ id: defaultVariantId, price: numericPrice.toString() }] } }
-          );
-          
-          const variantResult = await variantResponse.json();
-          const varErrors = variantResult?.data?.productVariantsBulkUpdate?.userErrors || [];
-          if (varErrors.length > 0) {
-            allUserErrors.push(...varErrors);
-          }
-        }
+        const variantResponse = await admin.graphql(
+          `#graphql
+          mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+            productVariantsBulkUpdate(productId: $productId, variants: $variants) {
+              userErrors { field message }
+            }
+          }`,
+          { variables: { productId, variants: [{ id: defaultVariantId, price: price }] } }
+        );
+        
+        const variantResult = await variantResponse.json();
+        const varErrors = variantResult?.data?.productVariantsBulkUpdate?.userErrors || [];
+        (varErrors.length > 0) && allUserErrors.push(...varErrors);
       }
 
       // Step 2: Attach Media using pre-staged URLs from Frontend
@@ -541,8 +537,14 @@ export const action = async ({ request }) => {
       const combinedFields = { ...sharedOnly, ...piece };
       
       // We don't want to save these system/structural keys as metafields
-      // Also ignore age_group, target_gender, and condition so they don't enter the custom namespace
-      const ignoreKeys = ["intent", "mediaUrlsJson", "descriptionHtml", "productType", "status", "pieces", "photoFiles", "photoPreviewUrls", "photos", "imageBase64", "imageMimeType", "stagedResourceUrls", "scanError", "scanToken", "isUploading", "id", "generated_description", "price", "seo_title", "collectionLocation", "age_group", "target_gender", "condition"];
+      // Added collection_date, primary_medium, secondary_medium, wire_material, setting_ready, bail_included, artist_notes, character_marks
+      const ignoreKeys = [
+        "intent", "mediaUrlsJson", "descriptionHtml", "productType", "status", "pieces", "photoFiles", 
+        "photoPreviewUrls", "photos", "imageBase64", "imageMimeType", "stagedResourceUrls", "scanError", 
+        "scanToken", "isUploading", "id", "generated_description", "price", "seo_title", "collectionLocation", 
+        "age_group", "target_gender", "condition", "collection_date", "primary_medium", "secondary_medium", 
+        "wire_material", "setting_ready", "bail_included", "artist_notes", "character_marks"
+      ];
 
       Object.entries(combinedFields).forEach(([key, value]) => {
         if (!ignoreKeys.includes(key) && value !== undefined && value !== null && String(value).trim() !== "") {
@@ -597,7 +599,8 @@ export const action = async ({ request }) => {
               surface_finish: "single_line_text_field",
               dimensions_mm: "single_line_text_field",
               stone_shape: "single_line_text_field",
-              seo_title: "single_line_text_field"
+              seo_title: "single_line_text_field",
+              color: "single_line_text_field"
             };
 
             const metafieldsInput = rawMetafields.map(item => {
