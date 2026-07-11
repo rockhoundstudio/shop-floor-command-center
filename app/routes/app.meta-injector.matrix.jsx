@@ -207,7 +207,7 @@ export function OperationsMatrixTab({ products, fetcher }) {
         const hasMetafields = p.metafields && p.metafields.edges;
         if (hasMetafields) {
           p.metafields.edges.forEach(({ node }) => {
-            const isRockhound = node.namespace === "rockhound";
+            const isRockhound = node.namespace === "rockhound" || node.namespace === "custom";
             if (isRockhound) {
               fieldMap[node.key] = node.value;
             }
@@ -246,7 +246,7 @@ export function OperationsMatrixTab({ products, fetcher }) {
         
         if (hasMetafields) {
           p.metafields.edges.forEach(({ node }) => {
-            const isRockhound = node.namespace === "rockhound";
+            const isRockhound = node.namespace === "rockhound" || node.namespace === "custom";
             if (isRockhound) {
               fields[node.key] = node.value;
             }
