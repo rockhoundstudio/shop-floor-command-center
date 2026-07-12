@@ -151,8 +151,7 @@ Return valid JSON matching the structure perfectly with no markup text.`;
       const geminiRes = await fetchWithRetry("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ 
-          contents: [{ parts: [{ text: promptText }] }],
-          generationConfig: { responseMimeType: "application/json", temperature: 0.2 }
+          contents: [{ parts: [{ text: promptText }] }]
         })
       });
 
@@ -210,30 +209,34 @@ CRITICAL DWELL WEB EMBED LAW: You MUST naturally weave a clickable HTML hyperlin
   * wire_material: If wire wrapped, output the wire metal (e.g., "Antiqued Copper Wire"). If in a bezel or prong setting with zero wire, MUST return strictly: "None — Bezel Mounted" (or "None — Prong Mounted").
   * primary_medium: State the primary metal or mounting material (e.g., ".925 Sterling Silver Bezel", "Copper Bezel", "Alloy"). Do not leave blank!
   * secondary_medium: State accent metal or "None".
-  * bail_included: State the bail style (e.g., "Integrated Bezel Bail", "Sterling Silver Pinch Bail") or "None".
-
-Return ONLY valid JSON matching this structure:
-{
-  "description": "",
-  "primary_color": "",
-  "cut_and_shape": "",
-  "surface_finish": "",
-  "stone_shape": "",
-  "dimensions_mm": "",
-  "pattern": "",
-  "primary_use": "",
-  "primary_medium": "",
-  "secondary_medium": "",
-  "wire_material": "",
-  "setting_ready": "",
-  "bail_included": ""
-}`;
+  * bail_included: State the bail style (e.g., "Integrated Bezel Bail", "Sterling Silver Pinch Bail") or "None".`;
 
       const geminiRes = await fetchWithRetry("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ 
           contents: [{ parts: [{ text: promptText }, { inlineData: { mimeType: imageMimeType, data: imageBase64 } }] }],
-          generationConfig: { responseMimeType: "application/json", temperature: 0.2 }
+          generationConfig: { 
+            responseMimeType: "application/json", 
+            temperature: 0.2,
+            responseSchema: {
+              type: "OBJECT",
+              properties: {
+                description: { type: "STRING" },
+                primary_color: { type: "STRING" },
+                cut_and_shape: { type: "STRING" },
+                surface_finish: { type: "STRING" },
+                stone_shape: { type: "STRING" },
+                dimensions_mm: { type: "STRING" },
+                pattern: { type: "STRING" },
+                primary_use: { type: "STRING" },
+                primary_medium: { type: "STRING" },
+                secondary_medium: { type: "STRING" },
+                wire_material: { type: "STRING" },
+                setting_ready: { type: "STRING" },
+                bail_included: { type: "STRING" }
+              }
+            }
+          }
         })
       });
 
@@ -244,6 +247,22 @@ Return ONLY valid JSON matching this structure:
         if (first !== -1 && last !== -1) cleanJson = cleanJson.slice(first, last + 1);
         const parsedVision = JSON.parse(cleanJson);
         
+        const resolved_primary_use = parsedVision.primary_use || parsedVision.use || parsedVision.product_type || "";
+        const resolved_primary_medium = parsedVision.primary_medium || parsedVision.medium || parsedVision.metal || parsedVision.primary_metal || "";
+        const resolved_secondary_medium = parsedVision.secondary_medium || parsedVision.accent || parsedVision.secondary_metal || "";
+        const resolved_wire_material = parsedVision.wire_material || parsedVision.wire || parsedVision.wire_wrap || "";
+        const resolved_setting_ready = parsedVision.setting_ready || parsedVision.setting || parsedVision.mounting || parsedVision.bezel || "";
+        const resolved_bail_included = parsedVision.bail_included || parsedVision.bail || "";
+
+        // 🟢 TELEMETRY GAUGE: Print exact payload to Render log before shipping to browser
+        console.log("VISION SCAN PAYLOAD:", JSON.stringify({
+          setting_ready: resolved_setting_ready,
+          primary_medium: resolved_primary_medium,
+          wire_material: resolved_wire_material,
+          bail_included: resolved_bail_included,
+          primary_use: resolved_primary_use
+        }));
+
         return Response.json({
           success: true, intent: "visionScan", pieceId,
           description: parsedVision.description || "",
@@ -253,13 +272,12 @@ Return ONLY valid JSON matching this structure:
           stone_shape: parsedVision.stone_shape || "",
           dimensions_mm: parsedVision.dimensions_mm || parsedVision.dimensions || "",
           pattern: parsedVision.pattern || "",
-          // HARDWARE RECEIVER WELD (With Key Alias Fallbacks to catch AI drift)
-          primary_use: parsedVision.primary_use || parsedVision.use || parsedVision.product_type || "",
-          primary_medium: parsedVision.primary_medium || parsedVision.medium || parsedVision.metal || parsedVision.primary_metal || "",
-          secondary_medium: parsedVision.secondary_medium || parsedVision.accent || parsedVision.secondary_metal || "",
-          wire_material: parsedVision.wire_material || parsedVision.wire || parsedVision.wire_wrap || "",
-          setting_ready: parsedVision.setting_ready || parsedVision.setting || parsedVision.mounting || parsedVision.bezel || "",
-          bail_included: parsedVision.bail_included || parsedVision.bail || ""
+          primary_use: resolved_primary_use,
+          primary_medium: resolved_primary_medium,
+          secondary_medium: resolved_secondary_medium,
+          wire_material: resolved_wire_material,
+          setting_ready: resolved_setting_ready,
+          bail_included: resolved_bail_included
         });
       }
       return Response.json({ success: false, error: "Vision API Failure" });
