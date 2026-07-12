@@ -1,7 +1,7 @@
 // ==========================================================================
 // ROCKHOUND STUDIO — TAB 1: NEW PRODUCT INTAKE BENCH
 // File: app/routes/app.meta-injector.injector.jsx
-// (100% Original Logic + Origin Handle & Hardware Receiver Welded)
+// (100% Original Logic + Missing setting_ready Wire Soldered)
 // ==========================================================================
 
 import React, { useState, useEffect, useCallback } from "react";
@@ -397,6 +397,7 @@ export function NewProductIntakeTab({ fetcher }) {
           primary_medium: data.primary_medium || prev.primary_medium,
           secondary_medium: data.secondary_medium || prev.secondary_medium,
           wire_material: data.wire_material || prev.wire_material,
+          setting_ready: data.setting_ready || prev.setting_ready, // 🟢 FIXED WELD
           bail_included: data.bail_included || prev.bail_included
         }));
 
