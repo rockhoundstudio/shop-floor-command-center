@@ -150,7 +150,10 @@ Return valid JSON matching the structure perfectly with no markup text.`;
 
       const geminiRes = await fetchWithRetry("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ contents: [{ parts: [{ text: promptText }] }] })
+        body: JSON.stringify({ 
+          contents: [{ parts: [{ text: promptText }] }],
+          generationConfig: { responseMimeType: "application/json", temperature: 0.2 }
+        })
       });
 
       if (geminiRes.ok) {
@@ -202,12 +205,12 @@ Return valid JSON matching the structure perfectly with no markup text.`;
 - description: Poetic, spare, story-driven product description strictly UNDER 100 WORDS. First person voice ("Bob and Janyce" or "Janyce here..."). Credit craftsmanship strictly as "handcrafted by Bob and Janyce". ZERO workshop references (no blades, RPM, grits).
 CRITICAL DWELL WEB EMBED LAW: You MUST naturally weave a clickable HTML hyperlink into the description text to anchor the origin location. You must use exactly this link string inside the sentence structure: <a href="${targetUrlPath}">${originSegment}</a>. Never use any other path format or slug.
 - primary_use: Smart Switch! Force strictly to best match (e.g., "Pendant (Finished Jewelry)", "Necklace", "Ring / Bezel Setting", "Cabochon", "Wire Wrap (Finished Jewelry)").
-- setting_ready: CRITICAL FIELD. How is the stone mounted? Output exact mounting (e.g., "Bezel Setting - Ready to Wear", "Prong Setting - Ready to Wear", "Wire Wrapped - Ready to Wear", or "Custom Cabochon Blank"). NEVER leave blank if mounted!
-- wire_material: If wire wrapped, output wire metal (e.g., "Antiqued Copper Wire"). If mounted in a bezel or prong setting with zero wire, force strictly to "None".
-- primary_medium: Primary metal, chain, or leather cord (e.g., ".925 Sterling Silver Chain", "Black Leather Cord").
-- secondary_medium: Accent metals or secondary elements (e.g., "14k Gold Bezel Accents", "None").
-- bail_included: Type of bail holding the piece (e.g., "Sterling Silver Filigree Pinch Bail", "Integrated Bezel Bail", "None").
-- If no visual data or photo is unclear, state "I am flying blind" in description and leave hardware fields blank.
+- MANDATORY BENCH FINDINGS & JEWELRY LAWS (YOU ARE FORBIDDEN FROM LEAVING THESE BLANK IF MOUNTED OR JEWELRY):
+  * setting_ready: Look closely at the mounting. If cabochon is in a bezel setting, MUST return "Bezel Setting - Ready to Wear". If prong setting, return "Prong Setting - Ready to Wear". If wire wrapped, return "Wire Wrapped - Ready to Wear". NEVER LEAVE BLANK FOR MOUNTED STONES!
+  * wire_material: If wire wrapped, output the wire metal (e.g., "Antiqued Copper Wire"). If in a bezel or prong setting with zero wire, MUST return strictly: "None — Bezel Mounted" (or "None — Prong Mounted").
+  * primary_medium: State the primary metal or mounting material (e.g., ".925 Sterling Silver Bezel", "Copper Bezel", "Alloy"). Do not leave blank!
+  * secondary_medium: State accent metal or "None".
+  * bail_included: State the bail style (e.g., "Integrated Bezel Bail", "Sterling Silver Pinch Bail") or "None".
 
 Return ONLY valid JSON matching this structure:
 {
@@ -228,7 +231,10 @@ Return ONLY valid JSON matching this structure:
 
       const geminiRes = await fetchWithRetry("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ contents: [{ parts: [{ text: promptText }, { inlineData: { mimeType: imageMimeType, data: imageBase64 } }] }] })
+        body: JSON.stringify({ 
+          contents: [{ parts: [{ text: promptText }, { inlineData: { mimeType: imageMimeType, data: imageBase64 } }] }],
+          generationConfig: { responseMimeType: "application/json", temperature: 0.2 }
+        })
       });
 
       if (geminiRes.ok) {
@@ -241,19 +247,19 @@ Return ONLY valid JSON matching this structure:
         return Response.json({
           success: true, intent: "visionScan", pieceId,
           description: parsedVision.description || "",
-          primary_color: parsedVision.primary_color || "",
-          cut_and_shape: parsedVision.cut_and_shape || "",
-          surface_finish: parsedVision.surface_finish || "",
+          primary_color: parsedVision.primary_color || parsedVision.color || "",
+          cut_and_shape: parsedVision.cut_and_shape || parsedVision.cut || "",
+          surface_finish: parsedVision.surface_finish || parsedVision.finish || "",
           stone_shape: parsedVision.stone_shape || "",
-          dimensions_mm: parsedVision.dimensions_mm || "",
+          dimensions_mm: parsedVision.dimensions_mm || parsedVision.dimensions || "",
           pattern: parsedVision.pattern || "",
-          // HARDWARE RECEIVER WELD
-          primary_use: parsedVision.primary_use || "",
-          primary_medium: parsedVision.primary_medium || "",
-          secondary_medium: parsedVision.secondary_medium || "",
-          wire_material: parsedVision.wire_material || "",
-          setting_ready: parsedVision.setting_ready || "",
-          bail_included: parsedVision.bail_included || ""
+          // HARDWARE RECEIVER WELD (With Key Alias Fallbacks to catch AI drift)
+          primary_use: parsedVision.primary_use || parsedVision.use || parsedVision.product_type || "",
+          primary_medium: parsedVision.primary_medium || parsedVision.medium || parsedVision.metal || parsedVision.primary_metal || "",
+          secondary_medium: parsedVision.secondary_medium || parsedVision.accent || parsedVision.secondary_metal || "",
+          wire_material: parsedVision.wire_material || parsedVision.wire || parsedVision.wire_wrap || "",
+          setting_ready: parsedVision.setting_ready || parsedVision.setting || parsedVision.mounting || parsedVision.bezel || "",
+          bail_included: parsedVision.bail_included || parsedVision.bail || ""
         });
       }
       return Response.json({ success: false, error: "Vision API Failure" });
