@@ -21,10 +21,10 @@ const MINDAT_KEY_MAP = {
   origin_location: "localities_count",
 };
 
-const SHOPPED_ROCK_VENDORS = ["Richardson's Rock Ranch", "Irv's Rock and Jewelry"];
+const SHOPPED_ROCK_VENDORS = ["Richardson's Rock Ranch", "Irv's Rock and Jewelry", "Irv's Rock & Jewelry"];
 
 // ==========================================
-// ENGINE: EXPONENTIAL BACKOFF RETRY & CHUNKING
+// ENGINE: EXPONENTIAL BACKOFF RETRY
 // ==========================================
 async function fetchWithRetry(url, options, retries = 3, delay = 1500) {
   for (let i = 0; i < retries; i++) {
@@ -36,430 +36,173 @@ async function fetchWithRetry(url, options, retries = 3, delay = 1500) {
     await new Promise((resolve) => setTimeout(resolve, delay));
     delay *= 2;
   }
-  throw new Error("Gemini API connection timed out after multiple attempts (503/429 Server Overload).");
+  throw new Error("Gemini API connection timed out after multiple attempts.");
 }
 
-function chunkArray(array, size) {
-  const chunks = [];
-  for (let i = 0; i < array.length; i += size) {
-    chunks.push(array.slice(i, i + size));
-  }
-  return chunks;
-}
-
-// ==========================================
-// ENGINE: MINDAT API FETCHER
-// ==========================================
-async function fetchMindat(title) {
-  if (!MINDAT_API_KEY) return null;
-  
+// Helper to pull live origin pages from Shopify metaobjects
+async function getLiveOriginPages(admin) {
+  let originPages = [];
   try {
-    const search = await fetch(
-      `https://api.mindat.org/minerals/?name=${encodeURIComponent(title)}&format=json`,
-      { headers: { Authorization: `Token ${MINDAT_API_KEY}` } }
-    );
-    
-    if (!search.ok) return null;
-    
-    const json = await search.json();
-    const results = json?.results;
-    
-    if (!results || results.length === 0) return null;
-    
-    return results[0];
-  } catch (error) {
-    console.error("Mindat API Fetch Fault:", error.message);
-    return null;
+    const metaRes = await admin.graphql(`
+      query {
+        metaobjects(type: "origin_page", first: 250) {
+          edges {
+            node {
+              handle
+              fields {
+                key
+                value
+              }
+            }
+          }
+        }
+      }
+    `);
+    const metaData = await metaRes.json();
+    if (metaData.data?.metaobjects?.edges) {
+      originPages = metaData.data.metaobjects.edges.map(edge => {
+        const fields = {};
+        edge.node.fields.forEach(f => { fields[f.key] = f.value; });
+        return {
+          handle: edge.node.handle,
+          canonical_name: fields.name || fields.display_name || fields.title || edge.node.handle,
+          location: fields.location || ""
+        };
+      });
+    }
+  } catch (err) {
+    console.error("Failed to fetch dynamic origin pages:", err.message);
   }
+  return originPages;
 }
 
-// ==========================================
-// STATIC DATA: GEO LIBRARY
-// ==========================================
+// Helper to resolve the correct handle based on your Dwell Web business rules
+function resolveOriginHandle(locationSegment, livePages) {
+  const cleanLoc = (locationSegment || "").toLowerCase().trim();
+  if (!cleanLoc) return "";
+
+  // Rule 1: Vendor Exception
+  if (cleanLoc.includes("irv") || cleanLoc.includes("richardson")) {
+    return "shopped-rock-collection";
+  }
+
+  // Rule 2: Yakima Exception
+  if (cleanLoc.includes("yakima")) {
+    return "chert-road-detour";
+  }
+
+  // Rule 3: Dynamic lookup from Shopify Metaobjects list
+  const match = livePages.find(p => 
+    p.canonical_name.toLowerCase().includes(cleanLoc) || 
+    p.handle.toLowerCase().replace(/-/g, " ").includes(cleanLoc)
+  );
+
+  if (match) return match.handle;
+
+  // Fallback: standard hyphenated slug format
+  return cleanLoc.replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, "-");
+}
+
 function getGeoData(stoneFamily) {
   const family = stoneFamily.toLowerCase().trim();
-  
   const geoLibrary = {
-    "agate": {
-      hardness: "6.5 - 7", luster: "Vitreous to waxy", fracture: "Conchoidal", cleavage: "None", specificGravity: "2.58 - 2.64", diaphaneity: "Translucent to opaque", crystalSystem: "Trigonal", geologicalEra: "Various", mineralClass: "Silicates", rockComposition: "Silicon dioxide", rockFormation: "Volcanic cavities", mohs_hardness: "6.5 - 7", fracture_pattern: "Conchoidal", specific_gravity: "2.58 - 2.64", geological_age: "Various"
-    },
-    "jasper": {
-      hardness: "6.5 - 7", luster: "Vitreous to dull", fracture: "Conchoidal", cleavage: "None", specificGravity: "2.5 - 2.9", diaphaneity: "Opaque", crystalSystem: "Trigonal (microcrystalline)", geologicalEra: "Various", mineralClass: "Silicates", rockComposition: "Silicon dioxide with impurities", rockFormation: "Sedimentary or volcanic", mohs_hardness: "6.5 - 7", fracture_pattern: "Conchoidal", specific_gravity: "2.5 - 2.9", geological_age: "Various"
-    },
-    "chalcedony": {
-      hardness: "6.5 - 7", luster: "Waxy, vitreous, dull", fracture: "Conchoidal", cleavage: "None", specificGravity: "2.59 - 2.61", diaphaneity: "Translucent to opaque", crystalSystem: "Trigonal", geologicalEra: "Various", mineralClass: "Silicates", rockComposition: "Silicon dioxide", rockFormation: "Sedimentary or volcanic cavities", mohs_hardness: "6.5 - 7", fracture_pattern: "Conchoidal", specific_gravity: "2.59 - 2.61", geological_age: "Various"
-    },
-    "obsidian": {
-      hardness: "5 - 5.5", luster: "Vitreous", fracture: "Conchoidal", cleavage: "None", specificGravity: "2.35 - 2.60", diaphaneity: "Translucent to opaque", crystalSystem: "Amorphous", geologicalEra: "Various (primarily Cenozoic)", mineralClass: "Mineraloid", rockComposition: "Silica-rich volcanic glass", rockFormation: "Extrusive igneous", mohs_hardness: "5 - 5.5", fracture_pattern: "Conchoidal", specific_gravity: "2.35 - 2.60", geological_age: "Various"
-    },
-    "quartz": {
-      hardness: "7", luster: "Vitreous", fracture: "Conchoidal", cleavage: "None", specificGravity: "2.65", diaphaneity: "Transparent to opaque", crystalSystem: "Trigonal", geologicalEra: "Various", mineralClass: "Silicates", rockComposition: "Silicon dioxide", rockFormation: "Igneous, metamorphic, and sedimentary", mohs_hardness: "7", fracture_pattern: "Conchoidal", specific_gravity: "2.65", geological_age: "Various"
-    },
-    "amethyst": {
-      hardness: "7", luster: "Vitreous", fracture: "Conchoidal", cleavage: "None", specificGravity: "2.65", diaphaneity: "Transparent to translucent", crystalSystem: "Trigonal", geologicalEra: "Various", mineralClass: "Silicates", rockComposition: "Silicon dioxide with iron impurities", rockFormation: "Geodes and volcanic rocks", mohs_hardness: "7", fracture_pattern: "Conchoidal", specific_gravity: "2.65", geological_age: "Various"
-    },
-    "tiger's eye": {
-      hardness: "6.5 - 7", luster: "Silky", fracture: "Fibrous", cleavage: "None", specificGravity: "2.58 - 2.64", diaphaneity: "Opaque", crystalSystem: "Trigonal", geologicalEra: "Various", mineralClass: "Silicates", rockComposition: "Silicon dioxide, Crocidolite", rockFormation: "Metamorphic", mohs_hardness: "6.5 - 7", fracture_pattern: "Fibrous", specific_gravity: "2.58 - 2.64", geological_age: "Various"
-    },
-    "turquoise": {
-      hardness: "5 - 6", luster: "Waxy to dull", fracture: "Conchoidal to uneven", cleavage: "Perfect on {001}, good on {010}", specificGravity: "2.6 - 2.9", diaphaneity: "Opaque", crystalSystem: "Triclinic", geologicalEra: "Various", mineralClass: "Phosphates", rockComposition: "Hydrated copper aluminum phosphate", rockFormation: "Secondary mineral in alteration zones", mohs_hardness: "5 - 6", fracture_pattern: "Conchoidal to uneven", specific_gravity: "2.6 - 2.9", geological_age: "Various"
-    },
-    "malachite": {
-      hardness: "3.5 - 4", luster: "Adamantine to vitreous; silky or dull", fracture: "Conchoidal to uneven", cleavage: "Perfect on {201}", specificGravity: "3.6 - 4.0", diaphaneity: "Translucent to opaque", crystalSystem: "Monoclinic", geologicalEra: "Various", mineralClass: "Carbonates", rockComposition: "Copper carbonate hydroxide", rockFormation: "Secondary mineral in copper deposits", mohs_hardness: "3.5 - 4", fracture_pattern: "Conchoidal to uneven", specific_gravity: "3.6 - 4.0", geological_age: "Various"
-    },
-    "labradorite": {
-      hardness: "6 - 6.5", luster: "Vitreous", fracture: "Uneven to conchoidal", cleavage: "Perfect on {001}, good on {010}", specificGravity: "2.68 - 2.72", diaphaneity: "Transparent to opaque", crystalSystem: "Triclinic", geologicalEra: "Various", mineralClass: "Silicates (Feldspar)", rockComposition: "Calcium sodium aluminum silicate", rockFormation: "Igneous", mohs_hardness: "6 - 6.5", fracture_pattern: "Uneven to conchoidal", specific_gravity: "2.68 - 2.72", geological_age: "Various"
-    },
-    "moonstone": {
-      hardness: "6 - 6.5", luster: "Vitreous", fracture: "Uneven to conchoidal", cleavage: "Perfect on {001}, good on {010}", specificGravity: "2.55 - 2.61", diaphaneity: "Transparent to opaque", crystalSystem: "Monoclinic or Triclinic", geologicalEra: "Various", mineralClass: "Silicates (Feldspar)", rockComposition: "Potassium aluminum silicate", rockFormation: "Igneous or metamorphic", mohs_hardness: "6 - 6.5", fracture_pattern: "Uneven to conchoidal", specific_gravity: "2.55 - 2.61", geological_age: "Various"
-    },
-    "onyx": {
-      hardness: "6.5 - 7", luster: "Vitreous", fracture: "Conchoidal", cleavage: "None", specificGravity: "2.55 - 2.70", diaphaneity: "Translucent to opaque", crystalSystem: "Trigonal", geologicalEra: "Various", mineralClass: "Silicates", rockComposition: "Silicon dioxide", rockFormation: "Sedimentary or volcanic cavities", mohs_hardness: "6.5 - 7", fracture_pattern: "Conchoidal", specific_gravity: "2.55 - 2.70", geological_age: "Various"
-    },
-    "opal": {
-      hardness: "5.5 - 6", luster: "Vitreous to resinous", fracture: "Conchoidal", cleavage: "None", specificGravity: "2.09 - 2.11", diaphaneity: "Transparent to opaque", crystalSystem: "Amorphous", geologicalEra: "Various", mineralClass: "Mineraloid", rockComposition: "Hydrated silicon dioxide", rockFormation: "Sedimentary or volcanic", mohs_hardness: "5.5 - 6", fracture_pattern: "Conchoidal", specific_gravity: "2.09 - 2.11", geological_age: "Various"
-    },
-    "petrified wood": {
-      hardness: "6.5 - 7", luster: "Vitreous to dull", fracture: "Conchoidal", cleavage: "None", specificGravity: "2.5 - 2.7", diaphaneity: "Opaque", crystalSystem: "Trigonal (microcrystalline)", geologicalEra: "Various", mineralClass: "Silicates", rockComposition: "Silicon dioxide replacing organic matter", rockFormation: "Sedimentary", mohs_hardness: "6.5 - 7", fracture_pattern: "Conchoidal", specific_gravity: "2.5 - 2.7", geological_age: "Various"
-    },
-    "serpentine": {
-      hardness: "2.5 - 5.5", luster: "Greasy, waxy, or silky", fracture: "Conchoidal to splintery", cleavage: "Perfect on {001} (but often microscopic)", specificGravity: "2.5 - 2.6", diaphaneity: "Translucent to opaque", crystalSystem: "Monoclinic", geologicalEra: "Various", mineralClass: "Silicates", rockComposition: "Magnesium iron silicate hydroxide", rockFormation: "Metamorphic", mohs_hardness: "2.5 - 5.5", fracture_pattern: "Conchoidal to splintery", specific_gravity: "2.5 - 2.6", geological_age: "Various"
-    },
-    "rhodonite": {
-      hardness: "5.5 - 6.5", luster: "Vitreous", fracture: "Uneven to conchoidal", cleavage: "Perfect on {110} and {1-10}", specificGravity: "3.5 - 3.7", diaphaneity: "Transparent to opaque", crystalSystem: "Triclinic", geologicalEra: "Various", mineralClass: "Silicates", rockComposition: "Manganese iron magnesium calcium silicate", rockFormation: "Metamorphic or hydrothermal", mohs_hardness: "5.5 - 6.5", fracture_pattern: "Uneven to conchoidal", specific_gravity: "3.5 - 3.7", geological_age: "Various"
-    },
-    "sodalite": {
-      hardness: "5.5 - 6", luster: "Vitreous to greasy", fracture: "Conchoidal to uneven", cleavage: "Poor on {011}", specificGravity: "2.14 - 2.30", diaphaneity: "Transparent to opaque", crystalSystem: "Isometric", geologicalEra: "Various", mineralClass: "Silicates", rockComposition: "Sodium aluminum silicate chloride", rockFormation: "Igneous", mohs_hardness: "5.5 - 6", fracture_pattern: "Conchoidal to uneven", specific_gravity: "2.14 - 2.30", geological_age: "Various"
-    },
-    "unakite": {
-      hardness: "6 - 7", luster: "Vitreous to dull", fracture: "Uneven", cleavage: "Varies (mixture)", specificGravity: "3.0 - 3.2", diaphaneity: "Opaque", crystalSystem: "Mixture (Monoclinic/Triclinic)", geologicalEra: "Various", mineralClass: "Rock (Granite altered)", rockComposition: "Epidote, pink orthoclase, quartz", rockFormation: "Metamorphic", mohs_hardness: "6 - 7", fracture_pattern: "Uneven", specific_gravity: "3.0 - 3.2", geological_age: "Various"
-    },
-    "andesite": {
-      hardness: "6 - 7", luster: "Dull", fracture: "Uneven", cleavage: "None", specificGravity: "2.6 - 2.8", diaphaneity: "Opaque", crystalSystem: "Mixture", geologicalEra: "Various", mineralClass: "Rock", rockComposition: "Plagioclase feldspar, amphibole", rockFormation: "Extrusive igneous", mohs_hardness: "6 - 7", fracture_pattern: "Uneven", specific_gravity: "2.6 - 2.8", geological_age: "Various"
-    },
-    "basalt": {
-      hardness: "6", luster: "Dull", fracture: "Uneven to conchoidal", cleavage: "None", specificGravity: "2.8 - 3.0", diaphaneity: "Opaque", crystalSystem: "Mixture", geologicalEra: "Various", mineralClass: "Rock", rockComposition: "Plagioclase, pyroxene, olivine", rockFormation: "Extrusive igneous", mohs_hardness: "6", fracture_pattern: "Uneven to conchoidal", specific_gravity: "2.8 - 3.0", geological_age: "Various"
-    },
-    "granite": {
-      hardness: "6 - 7", luster: "Dull to vitreous", fracture: "Uneven", cleavage: "None", specificGravity: "2.6 - 2.7", diaphaneity: "Opaque", crystalSystem: "Mixture", geologicalEra: "Various", mineralClass: "Rock", rockComposition: "Quartz, feldspar, mica", rockFormation: "Intrusive igneous", mohs_hardness: "6 - 7", fracture_pattern: "Uneven", specific_gravity: "2.6 - 2.7", geological_age: "Various"
-    },
-    "sandstone": {
-      hardness: "6 - 7", luster: "Dull", fracture: "Uneven", cleavage: "None", specificGravity: "2.2 - 2.8", diaphaneity: "Opaque", crystalSystem: "Mixture", geologicalEra: "Various", mineralClass: "Rock", rockComposition: "Sand-sized minerals or rock grains", rockFormation: "Sedimentary", mohs_hardness: "6 - 7", fracture_pattern: "Uneven", specific_gravity: "2.2 - 2.8", geological_age: "Various"
-    }
+    "agate": { hardness: "6.5 - 7", luster: "Vitreous to waxy", fracture: "Conchoidal", cleavage: "None", specificGravity: "2.58 - 2.64", diaphaneity: "Translucent to opaque", crystalSystem: "Trigonal", geologicalEra: "Various", mineralClass: "Silicates", rockComposition: "Silicon dioxide", rockFormation: "Volcanic cavities", mohs_hardness: "6.5 - 7", fracture_pattern: "Conchoidal", specific_gravity: "2.58 - 2.64", geological_age: "Various" },
+    "jasper": { hardness: "6.5 - 7", luster: "Vitreous to dull", fracture: "Conchoidal", cleavage: "None", specificGravity: "2.5 - 2.9", diaphaneity: "Opaque", crystalSystem: "Trigonal (microcrystalline)", geologicalEra: "Various", mineralClass: "Silicates", rockComposition: "Silicon dioxide with impurities", rockFormation: "Sedimentary or volcanic", mohs_hardness: "6.5 - 7", fracture_pattern: "Conchoidal", specific_gravity: "2.5 - 2.9", geological_age: "Various" },
+    "chalcedony": { hardness: "6.5 - 7", luster: "Waxy, vitreous, dull", fracture: "Conchoidal", cleavage: "None", specificGravity: "2.59 - 2.61", diaphaneity: "Translucent to opaque", crystalSystem: "Trigonal", geologicalEra: "Various", mineralClass: "Silicates", rockComposition: "Silicon dioxide", rockFormation: "Sedimentary or volcanic cavities", mohs_hardness: "6.5 - 7", fracture_pattern: "Conchoidal", specific_gravity: "2.59 - 2.61", geological_age: "Various" },
+    "obsidian": { hardness: "5 - 5.5", luster: "Vitreous", fracture: "Conchoidal", cleavage: "None", specificGravity: "2.35 - 2.60", diaphaneity: "Translucent to opaque", crystalSystem: "Amorphous", geologicalEra: "Various (primarily Cenozoic)", mineralClass: "Mineraloid", rockComposition: "Silica-rich volcanic glass", rockFormation: "Extrusive igneous", mohs_hardness: "5 - 5.5", fracture_pattern: "Conchoidal", specific_gravity: "2.35 - 2.60", geological_age: "Various" },
+    "quartz": { hardness: "7", luster: "Vitreous", fracture: "Conchoidal", cleavage: "None", specificGravity: "2.65", diaphaneity: "Transparent to opaque", crystalSystem: "Trigonal", geologicalEra: "Various", mineralClass: "Silicates", rockComposition: "Silicon dioxide", rockFormation: "Igneous, metamorphic, and sedimentary", mohs_hardness: "7", fracture_pattern: "Conchoidal", specific_gravity: "2.65", geological_age: "Various" }
   };
-
-  const emptyFields = {
-    hardness: "", luster: "", fracture: "", cleavage: "", specificGravity: "", diaphaneity: "", crystalSystem: "", geologicalEra: "", mineralClass: "", rockComposition: "", rockFormation: "", mohs_hardness: "", fracture_pattern: "", specific_gravity: "", geological_age: ""
-  };
-
-  return geoLibrary[family] || emptyFields;
+  return geoLibrary[family] || { hardness: "", luster: "", fracture: "", cleavage: "", specificGravity: "", diaphaneity: "", crystalSystem: "", geologicalEra: "", mineralClass: "", rockComposition: "", rockFormation: "", mohs_hardness: "", fracture_pattern: "", specific_gravity: "", geological_age: "" };
 }
 
-
 // ==========================================
-// ACTION: DATA MERGER & LOOKUP
+// CORE EXECUTION GRAPH
 // ==========================================
 export const action = async ({ request }) => {
   try {
     const { admin } = await authenticate.admin(request);
-    
     const body = await request.formData();
-    
     const actionType = body.get("actionType");
     const intent = body.get("intent");
 
     if (intent === "geoLookup") {
       const stoneFamily = body.get("stoneFamily") || "";
-      const geoFields = getGeoData(stoneFamily);
-      return Response.json({ geoFields });
+      return Response.json({ geoFields: getGeoData(stoneFamily) });
     }
 
     // ==========================================
-    // INTENT: TITLE PARSE & DWELL WEB ROUTING
+    // INTENT: TITLE PARSE
     // ==========================================
     if (intent === "titleParse") {
-      try {
-        const pieceNameInput = body.get("pieceName") || "";
-        const segments = pieceNameInput.split(" - ");
-        
-        const segment1 = segments[0]?.trim() || "";
-        const segment2 = segments[1]?.trim() || "";
-        const segment3 = segments[2]?.trim() || "";
+      const pieceNameInput = body.get("pieceName") || "";
+      const segments = pieceNameInput.split(" - ");
+      const segment1 = segments[0]?.trim() || "";
+      const segment2 = segments[1]?.trim() || "";
+      const segment3 = segments[2]?.trim() || "";
 
-        let originPages = [];
-        try {
-          const metaRes = await admin.graphql(`
-            query {
-              metaobjects(type: "origin_page", first: 250) {
-                edges {
-                  node {
-                    handle
-                    fields {
-                      key
-                      value
-                    }
-                  }
-                }
-              }
-            }
-          `);
-          const metaData = await metaRes.json();
-          if (metaData.data?.metaobjects?.edges) {
-            originPages = metaData.data.metaobjects.edges.map(edge => {
-              const fields = {};
-              edge.node.fields.forEach(f => { fields[f.key] = f.value; });
-              return {
-                handle: edge.node.handle,
-                canonical_name: fields.name || fields.display_name || fields.title || edge.node.handle,
-                location: fields.location || "",
-                stone_types: fields.stone_types || "",
-                origin_story: fields.origin_story || ""
-              };
-            });
-          }
-        } catch (fetchErr) {
-          console.error("Failed to fetch origin pages metaobjects:", fetchErr.message);
-        }
-        console.log("=== ORIGIN PAGES FETCHED ===", JSON.stringify(originPages));
+      const livePages = await getLiveOriginPages(admin);
+      const resolvedHandle = resolveOriginHandle(segment2, livePages);
 
-        const promptText = `You are an expert lapidary assistant for Rockhound Studio.
-Analyze these 3 parsed segments from a piece name:
-- Segment 1 (Stone Family): "${segment1}"
-- Segment 2 (Origin/Vendor): "${segment2}"
-- Segment 3 (Piece Title): "${segment3}"
+      const promptText = `You are an expert lapidary assistant for Rockhound Studio. Analyze these segments:
+- Family: "${segment1}", Origin: "${segment2}", Title: "${segment3}"
+Set origin_handle strictly to: "${resolvedHandle}". Use "The Shopped Rock" for location if it is a vendor. Match stone family to exact library matches.
+Return valid JSON matching the structure perfectly with no markup text.`;
 
-Context Data:
-- SHOPPED_ROCK_VENDORS: ${JSON.stringify(SHOPPED_ROCK_VENDORS)}
-- STONE_FAMILIES_EXACT: ["agate", "amazonite", "amethyst", "aventurine", "bloodstone", "carnelian", "chrysocolla", "citrine", "fluorite", "garnet", "howlite", "jade", "jasper", "labradorite", "lapis lazuli", "malachite", "moonstone", "obsidian", "opal", "quartz", "tiger's eye", "turquoise"]
-- LIVE_ORIGIN_PAGES: ${JSON.stringify(originPages)}
+      const geminiRes = await fetchWithRetry("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contents: [{ parts: [{ text: promptText }] }] })
+      });
 
-Rules:
-1. For Segment 1 ("${segment1}"), return all known geological data: mohs_hardness, luster, fracture, cleavage, specific_gravity, diaphaneity, crystal_system, geological_era, mineral_class, rock_composition, rock_formation, geological_age, fracture_pattern. Set material strictly to "Stone". Set stone_family strictly to the best match from STONE_FAMILIES_EXACT (must be exact lowercase string, if no exact match pick closest).
-2. DWELL WEB ROUTING for Segment 2 ("${segment2}"):
-   - Check if Segment 2 is "Irv's Rock and Jewelry" or "Irv's Rock & Jewelry" or matches SHOPPED_ROCK_VENDORS.
-   - If it is Irv's or a Shopped Rock vendor: Route origin_handle strictly to "shopped-rock-collection".
-   - For all other field locations (e.g., Yakima Canyon, Yakima River, Spokane River): Generate a clean, lowercase, hyphenated URL slug from the exact location string (e.g. "yakima-river", "yakima-canyon").
-   - Fuzzy match against LIVE_ORIGIN_PAGES. If a match is found:
-     - collection_name = "${segment2}"
-     - collection_location = pick the single best match from this exact list: ["Spokane River", "Yakima Canyon", "Yellowstone River", "Richardson's Rock Ranch", "The 3,000-Mile Run", "Nickel Back", "Rufus Serpentine", "The Shopped Rock", "The Gallery"]. If Shopped Rock vendor, use "The Shopped Rock". If no match, return empty string.
-     - origin_name = canonical_name from LIVE_ORIGIN_PAGES
-     - origin_type = "field" (unless it's in SHOPPED_ROCK_VENDORS)
-     - origin_handle = handle from LIVE_ORIGIN_PAGES (override with "shopped-rock-collection" if Irv's)
-     - needs_new_origin_page = false
-     - origin_story = write a short field origin story about this location (under 50 words)
-     - collection_story = write a short description of this collection
-     - stone_story = read 'origin_story' from the matched LIVE_ORIGIN_PAGES entry and write a 1-2 sentence hook from it—evocative, specific to this location, written in Janyce's voice.
-   - If Segment 2 is in SHOPPED_ROCK_VENDORS:
-     - collection_name = "Shopped Rock"
-     - collection_location = "The Shopped Rock"
-     - origin_name = "${segment2}"
-     - origin_type = "vendor"
-     - origin_handle = "shopped-rock-collection"
-     - needs_new_origin_page = false
-     - origin_story = write a short vendor origin story about this shop (under 50 words)
-     - collection_story = write a short description of the Shopped Rock collection
-     - stone_story = write a 1-2 sentence hook about this vendor's material—evocative, written in Janyce's voice.
-   - If NO MATCH in either list:
-     - collection_name = "${segment2}"
-     - collection_location = ""
-     - origin_name = "${segment2}"
-     - origin_type = "field"
-     - origin_handle = slugified version of "${segment2}" (e.g. "yakima-river")
-     - needs_new_origin_page = true
-     - origin_story = write a short field origin story about this location (under 50 words)
-     - collection_story = write a short description of this collection
-     - stone_story = write a 1-2 sentence hook about this location—evocative, written in Janyce's voice.
-3. For Segment 3 ("${segment3}"), return:
-   - product_title = "${segment3}"
-   - seo_title = "${segment3} | Rockhound Studio"
-   - handle = slugified lowercase hyphenated version of "${segment3}"
-4. Set canonical_title to the corrected full piece name combining the validated Stone Family, Origin Name, Piece Title.
-5. HARD LAW: Never mention saw blades, RPMs, or technical workshop grit in narrative fields. All craftsmanship must be attributed to Bob and Janyce.
-
-Return ONLY valid JSON with exactly this structure, no explanation, no markdown:
-{
-  "stone_family": "",
-  "mohs_hardness": "",
-  "luster": "",
-  "fracture": "",
-  "cleavage": "",
-  "specific_gravity": "",
-  "diaphaneity": "",
-  "crystal_system": "",
-  "geological_era": "",
-  "mineral_class": "",
-  "rock_composition": "",
-  "rock_formation": "",
-  "geological_age": "",
-  "fracture_pattern": "",
-  "material": "Stone",
-  "collection_name": "",
-  "collection_location": "",
-  "origin_name": "",
-  "origin_type": "",
-  "origin_story": "",
-  "collection_story": "",
-  "stone_story": "",
-  "product_title": "${segment3}",
-  "seo_title": "${segment3} | Rockhound Studio",
-  "handle": "",
-  "canonical_title": "",
-  "origin_handle": "",
-  "needs_new_origin_page": false
-}`;
-
-        const geminiRes = await fetchWithRetry(
-          "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              contents: [{ parts: [{ text: promptText }] }]
-            })
-          }
-        );
-
-        if (geminiRes.ok) {
-          const geminiData = await geminiRes.json();
-          const textContent = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || "";
-          
-          let cleanJson = textContent.trim();
-          const firstBrace = cleanJson.indexOf("{");
-          const lastBrace = cleanJson.lastIndexOf("}");
-          if (firstBrace !== -1 && lastBrace !== -1) {
-            cleanJson = cleanJson.slice(firstBrace, lastBrace + 1);
-          }
-          cleanJson = cleanJson.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
-          cleanJson = cleanJson.replace(/"(?:[^"\\]|\\.)*"/g, (match) => {
-            return match.replace(/\n/g, "\\n").replace(/\r/g, "\\r").replace(/\t/g, "\\t");
-          });
-
-          const parsedData = JSON.parse(cleanJson);
-          return Response.json({ titleParse: parsedData });
-        } else {
-          const errText = await geminiRes.text();
-          console.error("Gemini Title Parse API Error:", geminiRes.status, errText);
-          return Response.json({ titleParse: null, error: "Title parse failed" }, { status: 500 });
-        }
-      } catch (error) {
-        console.error("Title Parse Fault:", error.message);
-        return Response.json({ titleParse: null, error: error.message }, { status: 500 });
+      if (geminiRes.ok) {
+        const data = await geminiRes.json();
+        let cleanJson = (data.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
+        const first = cleanJson.indexOf("{"), last = cleanJson.lastIndexOf("}");
+        if (first !== -1 && last !== -1) cleanJson = cleanJson.slice(first, last + 1);
+        const parsed = JSON.parse(cleanJson);
+        // Guarantee hard structural overrides pass through safely
+        parsed.origin_handle = resolvedHandle;
+        return Response.json({ titleParse: parsed });
       }
+      return Response.json({ titleParse: null, error: "Title parse error" }, { status: 500 });
     }
 
     // ==========================================
-    // INTENT: STAGED UPLOAD
-    // ==========================================
-    if (intent === "stagedUpload") {
-      try {
-        const filename = body.get("filename") || "image.jpg";
-        const mimeType = body.get("mimeType") || "image/jpeg";
-        const fileSize = body.get("fileSize") || "1024";
-
-        const response = await admin.graphql(
-          `#graphql
-          mutation stagedUploadsCreate($input: [StagedUploadInput!]!) {
-            stagedUploadsCreate(input: $input) {
-              stagedTargets {
-                url
-                resourceUrl
-                parameters {
-                  name
-                  value
-                }
-              }
-              userErrors {
-                field
-                message
-              }
-            }
-          }`,
-          {
-            variables: {
-              input: [
-                {
-                  resource: "IMAGE",
-                  filename: filename,
-                  mimeType: mimeType,
-                  fileSize: String(fileSize),
-                  httpMethod: "POST"
-                }
-              ]
-            }
-          }
-        );
-
-        const result = await response.json();
-        const targets = result?.data?.stagedUploadsCreate?.stagedTargets || [];
-
-        if (targets.length > 0) {
-          const { url, parameters, resourceUrl } = targets[0];
-          return Response.json({ url, parameters, resourceUrl });
-        } else {
-          return Response.json({ error: "Staged upload failed" });
-        }
-      } catch (error) {
-        console.error("Staged Upload Fault:", error.message);
-        return Response.json({ error: "Staged upload failed" });
-      }
-    }
-
-    // ==========================================
-    // INTENT: VISION SCAN FOR DESCRIPTION & DATA
+    // INTENT: VISION SCAN (Splicing Exact Links)
     // ==========================================
     if (intent === "visionScan") {
-      try {
-        const pieceId = body.get("pieceId");
-        const clientBase64 = body.get("imageBase64");
-        console.log("[visionScan] clientBase64 present:", !!clientBase64, "length:", clientBase64?.length);
-        const clientMime = body.get("imageMimeType") || "image/jpeg";
+      const pieceId = body.get("pieceId");
+      const clientBase64 = body.get("imageBase64");
+      const clientMime = body.get("imageMimeType") || "image/jpeg";
+      const productTitle = body.get("imageUrl") || ""; 
 
-        let imageBase64 = "";
-        let imageMimeType = "image/jpeg";
+      // Resolve the title layout to find the link target BEFORE asking Gemini
+      const titleInput = body.get("pieceName") || "";
+      const segments = titleInput.split(/\s+[-–—]\s+/);
+      const originSegment = segments[1]?.trim() || "Unknown Origin";
+      
+      const livePages = await getLiveOriginPages(admin);
+      const finalTargetSlug = resolveOriginHandle(originSegment, livePages);
+      const targetUrlPath = `/pages/${finalTargetSlug}`;
 
-        if (clientBase64 && clientBase64 !== "undefined" && clientBase64 !== "null" && String(clientBase64).trim() !== "") {
-          imageBase64 = String(clientBase64).trim();
-          imageMimeType = clientMime;
-          console.log("[visionScan] mimeType:", imageMimeType);
-        } else {
-          const rawImageUrl = body.get("imageUrl");
-          const imageUrl = rawImageUrl && rawImageUrl !== "undefined" && rawImageUrl !== "null" ? String(rawImageUrl).trim() : "";
-          
-          if (!imageUrl) {
-            return Response.json({ 
-              success: false,
-              intent: "visionScan",
-              pieceId,
-              description: "", 
-              primary_color: "", 
-              cut_and_shape: "", 
-              surface_finish: "", 
-              stone_shape: "", 
-              dimensions_mm: "", 
-              pattern: "", 
-              error: "No image provided for vision scan" 
-            });
-          }
+      let imageBase64 = clientBase64 && clientBase64 !== "undefined" ? String(clientBase64).trim() : "";
+      let imageMimeType = clientMime;
 
-          const cleanImageUrl = imageUrl.split('?')[0];
+      if (!imageBase64) {
+        const rawImageUrl = body.get("imageUrl");
+        if (rawImageUrl) {
+          const cleanImageUrl = rawImageUrl.split('?')[0];
           const imageRes = await fetch(cleanImageUrl);
           const imageBuffer = await imageRes.arrayBuffer();
           imageBase64 = Buffer.from(imageBuffer).toString("base64");
           imageMimeType = (imageRes.headers.get("content-type") || "image/jpeg").split(";")[0].trim();
-          console.log("[visionScan] mimeType:", imageMimeType);
         }
+      }
 
-        const promptText = `You are a lapidary artist and gemstone expert. Analyze this stone cabochon or specimen photo for Rockhound Studio and return a JSON object containing these exact fields:
+      const promptText = `You are a lapidary artist. Analyze this stone photo for Rockhound Studio and return a JSON object.
+- description: Poetic, spare, story-driven product description UNDER 100 WORDS. First person voice ("Bob and Janyce" or "Janyce here..."). No workshop references (no blades, RPM, grits).
+CRITICAL DWELL WEB EMBED LAW: You MUST naturally weave a clickable HTML hyperlink into the description text to anchor the origin location. You must use exactly this link string inside the sentence structure: <a href="${targetUrlPath}">${originSegment}</a>. Never use any other path format or slug.
 
-- description: Poetic, spare, story-driven product description UNDER 100 WORDS TOTAL. Rockhound Studio voice — raw, authentic, collector energy. Write in first person as Bob or Janyce from Rockhound Studio. No corporate language. ZERO workshop references (no saw blades, RPMs, or polishing grit stages). MUST include a natural HTML link weaving the origin location into the text. Use the format: <a href="/pages/ORIGIN-SLUG">Location Name</a> (e.g. If Irv's Rock & Jewelry, link to <a href="/pages/shopped-rock-collection">Irv's Rock & Jewelry</a>. If a field location, link to <a href="/pages/location-slug">Location Name</a>).
-- primary_color: dominant color of the stone (e.g. "golden brown", "chartreuse green")
-- cut_and_shape: cabochon style (e.g. "Freeform Cabochon", "Oval Cabochon")
-- surface_finish: (e.g. "High Polish", "Matte", "Natural Rough")
-- stone_shape: overall silhouette (e.g. "Oval", "Freeform", "Teardrop")
-- dimensions_mm: Look for any ruler, tape measure, or measuring tool visible in the image. Read the scale markings and estimate the stone's dimensions in millimeters. Return dimensions_mm as a string in format "40 x 30" (length x width). If no ruler is visible, return dimensions_mm as empty string.
-- pattern: visible surface pattern (e.g. "Chatoyant bands", "Dendritic inclusions", "Solid")
-
-Return ONLY valid JSON with exactly this structure:
+Return ONLY valid JSON matching this structure:
 {
   "description": "",
   "primary_color": "",
@@ -468,705 +211,37 @@ Return ONLY valid JSON with exactly this structure:
   "stone_shape": "",
   "dimensions_mm": "",
   "pattern": ""
-}
+}`;
 
-No markdown, no code fences, no extra text.`;
+      const geminiRes = await fetchWithRetry("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contents: [{ parts: [{ text: promptText }, { inlineData: { mimeType: imageMimeType, data: imageBase64 } }] }] })
+      });
 
-        console.log("[visionScan] Sending to Gemini...");
-        const geminiRes = await fetchWithRetry(
-          "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              contents: [
-                {
-                  parts: [
-                    { text: promptText },
-                    {
-                      inlineData: {
-                        mimeType: imageMimeType,
-                        data: imageBase64
-                      }
-                    }
-                  ]
-                }
-              ]
-            })
-          }
-        );
-
-        if (geminiRes.ok) {
-          const geminiData = await geminiRes.json();
-          const textContent = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || "";
-          console.log("[visionScan] Raw Gemini response:", textContent);
-          
-          if (!textContent) {
-            return Response.json({ 
-              success: false,
-              intent: "visionScan",
-              pieceId,
-              description: "", 
-              primary_color: "", 
-              cut_and_shape: "", 
-              surface_finish: "", 
-              stone_shape: "", 
-              dimensions_mm: "", 
-              pattern: "", 
-              error: "Gemini vision scan returned empty response" 
-            });
-          }
-          
-          let cleanJson = textContent.trim();
-          const firstBrace = cleanJson.indexOf("{");
-          const lastBrace = cleanJson.lastIndexOf("}");
-          if (firstBrace !== -1 && lastBrace !== -1) {
-            cleanJson = cleanJson.slice(firstBrace, lastBrace + 1);
-          }
-          cleanJson = cleanJson.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
-          cleanJson = cleanJson.replace(/"(?:[^"\\]|\\.)*"/g, (match) => {
-            return match.replace(/\n/g, "\\n").replace(/\r/g, "\\r").replace(/\t/g, "\\t");
-          });
-
-          try {
-            const parsedVision = JSON.parse(cleanJson);
-            console.log("[visionScan] Parsed result:", JSON.stringify(parsedVision));
-            return Response.json({
-              success: true,
-              intent: "visionScan",
-              pieceId,
-              description: parsedVision.description || "",
-              primary_color: parsedVision.primary_color || "",
-              cut_and_shape: parsedVision.cut_and_shape || "",
-              surface_finish: parsedVision.surface_finish || "",
-              stone_shape: parsedVision.stone_shape || "",
-              dimensions_mm: parsedVision.dimensions_mm || "",
-              pattern: parsedVision.pattern || ""
-            });
-          } catch (jsonErr) {
-            console.error("Vision Scan JSON Parse Error:", jsonErr.message, "Raw Response:", cleanJson);
-            console.log("[visionScan] ERROR:", jsonErr.message);
-            return Response.json({ 
-              success: false,
-              intent: "visionScan",
-              pieceId,
-              description: "", 
-              primary_color: "", 
-              cut_and_shape: "", 
-              surface_finish: "", 
-              stone_shape: "", 
-              dimensions_mm: "", 
-              pattern: "", 
-              error: "Vision scan failed to parse JSON: " + jsonErr.message 
-            });
-          }
-        } else {
-          const errText = await geminiRes.text();
-          console.error("Gemini Vision API Error:", geminiRes.status, errText);
-          console.log("[visionScan] ERROR:", `API error ${geminiRes.status}`);
-          return Response.json({ 
-            success: false,
-            intent: "visionScan",
-            pieceId,
-            description: "", 
-            primary_color: "", 
-            cut_and_shape: "", 
-            surface_finish: "", 
-            stone_shape: "", 
-            dimensions_mm: "", 
-            pattern: "", 
-            error: `Gemini vision scan failed: API error ${geminiRes.status}` 
-          });
-        }
-      } catch (error) {
-        console.error("Vision Scan Fault:", error.message);
-        console.log("[visionScan] ERROR:", error.message);
-        return Response.json({ 
-          success: false,
-          intent: "visionScan",
-          pieceId: body.get("pieceId") || "",
-          description: "", 
-          primary_color: "", 
-          cut_and_shape: "", 
-          surface_finish: "", 
-          stone_shape: "", 
-          dimensions_mm: "", 
-          pattern: "", 
-          error: `Gemini vision scan failed: ${error.message}` 
+      if (geminiRes.ok) {
+        const geminiData = await geminiRes.json();
+        let cleanJson = (geminiData.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
+        const first = cleanJson.indexOf("{"), last = cleanJson.lastIndexOf("}");
+        if (first !== -1 && last !== -1) cleanJson = cleanJson.slice(first, last + 1);
+        const parsedVision = JSON.parse(cleanJson);
+        
+        return Response.json({
+          success: true, intent: "visionScan", pieceId,
+          description: parsedVision.description || "",
+          primary_color: parsedVision.primary_color || "",
+          cut_and_shape: parsedVision.cut_and_shape || "",
+          surface_finish: parsedVision.surface_finish || "",
+          stone_shape: parsedVision.stone_shape || "",
+          dimensions_mm: parsedVision.dimensions_mm || "",
+          pattern: parsedVision.pattern || ""
         });
       }
+      return Response.json({ success: false, error: "Vision API Failure" });
     }
 
-    if (actionType === "applyStoreDefaults") {
-        const rawIds = body.get("productIds");
-        if (!rawIds) return Response.json({ success: false, error: "No product IDs provided." });
-        
-        const productIds = JSON.parse(rawIds);
-        const results = [];
-        
-        for (const productId of productIds) {
-            const getMetafieldsQuery = `
-                query GetProductMetafields($id: ID!) {
-                    product(id: $id) {
-                        id
-                        metafields(first: 50, namespace: "custom") {
-                            edges {
-                                node {
-                                    key
-                                    value
-                                }
-                            }
-                        }
-                    }
-                }
-            `;
-            
-            const metaRes = await admin.graphql(getMetafieldsQuery, { variables: { id: productId } });
-            const metaData = await metaRes.json();
-            
-            if (!metaData.data || !metaData.data.product) {
-                console.error(`Failed to load product ${productId} for defaults check`);
-                continue;
-            }
-            
-            const existingMetafields = metaData.data.product.metafields.edges.reduce((acc, edge) => {
-                acc[edge.node.key] = edge.node.value;
-                return acc;
-            }, {});
-            
-            const defaultsToApply = [];
-            
-            if (!existingMetafields.handcrafted_by || existingMetafields.handcrafted_by.trim() === "") {
-                defaultsToApply.push({ namespace: "custom", key: "handcrafted_by", type: "single_line_text_field", value: "Bob & Janyce, Rockhound Studio" });
-            }
-            if (!existingMetafields.is_one_of_a_kind || existingMetafields.is_one_of_a_kind.trim() === "") {
-                defaultsToApply.push({ namespace: "custom", key: "is_one_of_a_kind", type: "single_line_text_field", value: "true" });
-            }
-            if (!existingMetafields.treated || existingMetafields.treated.trim() === "") {
-                defaultsToApply.push({ namespace: "custom", key: "treated", type: "single_line_text_field", value: "false" });
-            }
-            if (!existingMetafields.found_object || existingMetafields.found_object.trim() === "") {
-                defaultsToApply.push({ namespace: "custom", key: "found_object", type: "single_line_text_field", value: "true" });
-            }
-            if (!existingMetafields.primary_use || existingMetafields.primary_use.trim() === "") {
-                defaultsToApply.push({ namespace: "custom", key: "primary_use", type: "single_line_text_field", value: "Wearable Art" });
-            }
-            
-            console.log(`Product ${productId} defaults to apply:`, defaultsToApply.map(m => m.key));
-            
-            if (defaultsToApply.length > 0) {
-                const updateMutation = `
-                    mutation productUpdate($input: ProductInput!) {
-                        productUpdate(input: $input) {
-                            product { id }
-                            userErrors { field message }
-                        }
-                    }
-                `;
-                
-                const updateRes = await admin.graphql(updateMutation, {
-                    variables: {
-                        input: {
-                            id: productId,
-                            metafields: defaultsToApply
-                        }
-                    }
-                });
-                
-                const updateData = await updateRes.json();
-                if (updateData.data?.productUpdate?.userErrors?.length > 0) {
-                    console.error(`Error updating product ${productId}:`, updateData.data.productUpdate.userErrors);
-                } else {
-                    results.push({ id: productId, appliedFields: defaultsToApply.map(m => m.key) });
-                }
-            } else {
-                results.push({ id: productId, appliedFields: [] });
-            }
-        }
-        
-        return Response.json({ success: true, updated: results });
-    }
-
-    const title = body.get("title") || "";
-    const description = body.get("productDescription") || "";
-    const promptStyle = body.get("promptStyle") || "";
-    const descriptionHtml = body.get("descriptionHtml") || body.get("productDescription") || "";
-    const targetDescription = descriptionHtml || description;
-    const existingMeta = JSON.parse(body.get("existingMeta") || "{}");
-
-    const merged = { ...existingMeta };
-    
-    const safeSet = (key, value) => {
-      if (!merged[key] || merged[key].trim() === "") {
-        if (value && String(value).trim() !== "") {
-          merged[key] = String(value).trim();
-        }
-      }
-    };
-
-    const alwaysSet = (key, value) => {
-      if (value && String(value).trim() !== "") {
-        merged[key] = String(value).trim();
-      }
-    };
-
-    // ==========================================
-    // PASS 0: TEXT PARSING
-    // ==========================================
-    if (targetDescription) {
-      try {
-        const stoneHeadingRegex = /<(h[1-6]|strong|b)[^>]*>[\s\S]*?the stone:?[\s\S]*?<\/\1>/i;
-        const headingMatch = targetDescription.match(stoneHeadingRegex);
-        
-        let beforeStone = targetDescription;
-        
-        if (headingMatch) {
-          beforeStone = targetDescription.substring(0, headingMatch.index);
-          const afterHeading = targetDescription.substring(headingMatch.index + headingMatch[0].length);
-          
-          const nextHeadingIndex = afterHeading.search(/<h[1-6][^>]*>/i);
-          const stoneHtml = nextHeadingIndex !== -1 ? afterHeading.substring(0, nextHeadingIndex) : afterHeading;
-          
-          const lines = stoneHtml.split(/<br\s*\/?>|<\/p>|<\/div>|\n/i);
-          
-          lines.forEach(line => {
-            const cleanedLine = line.replace(/<\/?[^>]+(>|$)/g, "").trim();
-            const lowerLine = cleanedLine.toLowerCase();
-
-            if (lowerLine.startsWith("type:")) safeSet("primary_medium", cleanedLine.substring(5).trim());
-            if (lowerLine.startsWith("origin:")) safeSet("collection_location", cleanedLine.substring(7).trim());
-            if (lowerLine.startsWith("shape:")) safeSet("cut_and_shape", cleanedLine.substring(6).trim());
-            if (lowerLine.startsWith("dimensions:")) safeSet("dimensions_mm", cleanedLine.substring(11).trim());
-            if (lowerLine.startsWith("finish:")) safeSet("surface_finish", cleanedLine.substring(7).trim());
-            if (lowerLine.startsWith("flash:")) safeSet("color", cleanedLine.substring(6).trim());
-            if (lowerLine.includes("one of a kind") && lowerLine.includes("yes")) safeSet("is_one_of_a_kind", "true");
-            if (lowerLine.includes("not dyed") || lowerLine.includes("not enhanced") || lowerLine.includes("untreated")) safeSet("treated", "false");
-          });
-        }
-
-        const ignoreList = [
-          "/pages/tails-and-trails", 
-          "/pages/rockhound-logbook-hub", 
-          "/pages/build-your-setting", 
-          "/pages/the-3-000-mile-run"
-        ];
-        
-        let linkSearchArea = targetDescription;
-        const dwellLinksDiv = targetDescription.match(/<(?:div|section)[^>]*(?:id|class)=["'][^"']*rockhound-dwell-links[^"']*["'][^>]*>([\s\S]*?)<\/(?:div|section)>/i);
-        if (dwellLinksDiv) {
-          linkSearchArea = dwellLinksDiv[1];
-        }
-
-        const linkRegex = /<a[^>]*href=["']([^"']+)["']/gi;
-        let linkMatch;
-        while ((linkMatch = linkRegex.exec(linkSearchArea)) !== null) {
-          let href = linkMatch[1];
-          if (href.includes("/pages/")) {
-            let path = href;
-            try {
-              const urlObj = new URL(href, "https://dummy.com"); 
-              path = urlObj.pathname;
-            } catch (e) {
-              path = href.split('?')[0];
-            }
-            
-            if (!ignoreList.includes(path)) {
-              const slug = path.split("/").filter(Boolean).pop();
-              safeSet("origin_page_handle", slug);
-              break;
-            }
-          }
-        }
-
-        const pRegex = /<p[^>]*>([\s\S]*?)<\/p>/gi;
-        let pMatch;
-        const storyParagraphs = [];
-        
-        while ((pMatch = pRegex.exec(beforeStone)) !== null) {
-          let pContent = pMatch[1];
-          pContent = pContent.replace(/<a\b[^>]*>[\s\S]*?<\/a>/gi, "");
-          pContent = pContent.replace(/<\/?[^>]+(>|$)/g, "").trim();
-          
-          if (pContent.length > 0) {
-            storyParagraphs.push(pContent);
-          }
-        }
-
-        if (storyParagraphs.length > 0) {
-          const combinedStory = storyParagraphs.join("\n\n");
-          alwaysSet("origin_story", combinedStory); 
-        }
-
-      } catch (parseError) {
-        console.error("Pass 0 Text Parsing Fault:", parseError.message);
-      }
-    }
-
-    // ==========================================
-    // PASS 1: TITLE PARSING
-    // ==========================================
-    const parseTitle = body.get("productTitle") || title || "";
-    if (parseTitle) {
-      const titleParts = parseTitle.split(/\s+[-–—]\s+/);
-      
-      let rawStoneFamily = titleParts[0] || "";
-      const wordsToStrip = ["Freeform", "Cabochon", "Oval", "Round", "Teardrop", "Pear", "Square", "Rectangle", "Cushion", "Heart", "Marquise", "Tumbled", "Slab", "Rough", "Raw", "Specimen", "Free Form"];
-      
-      let cleanedStoneFamily = rawStoneFamily.trim();
-      let stripped = true;
-      while (stripped) {
-        stripped = false;
-        for (const word of wordsToStrip) {
-          const regex = new RegExp(`(?:\\s+|^)${word}$`, "i");
-          if (regex.test(cleanedStoneFamily)) {
-            cleanedStoneFamily = cleanedStoneFamily.replace(regex, "").trim();
-            stripped = true;
-          }
-        }
-      }
-      safeSet("stone_family", cleanedStoneFamily);
-      
-      if (titleParts.length > 1) {
-        safeSet("origin_location", titleParts[1]?.trim() || "");
-      }
-    }
-
-    const collMatches = [...(targetDescription || "").matchAll(/<a[^>]*href=["'][^"']*\/collections\/([^"'\/?]+)[^"']*["'][^>]*>([\s\S]*?)<\/a>/gi)];
-    if (collMatches.length > 0) {
-      const uniqueCollections = [...new Set(collMatches.map(m => m[2].replace(/\s*→$/, "").replace(/<\/?[^>]+(>|$)/g, "").trim()))];
-      safeSet("collection_name", uniqueCollections.join(", "));
-    }
-
-    // ==========================================
-    // PASS 1: LOCAL LIBRARY
-    // ==========================================
-    const libData = lookupStone(title);
-    if (libData) {
-      TARGET_KEYS.forEach(key => {
-        safeSet(key, libData[key]);
-      });
-    }
-
-    // ==========================================
-    // PASS 2: MINDAT API EXTERNAL FETCH
-    // ==========================================
-    const mindatData = await fetchMindat(title);
-    if (mindatData) {
-      Object.entries(MINDAT_KEY_MAP).forEach(([ourKey, mindatKey]) => {
-        safeSet(ourKey, mindatData[mindatKey]);
-      });
-    }
-
-    // ==========================================
-    // PASS 2B: GEMINI TEXT
-    // ==========================================
-    if (targetDescription) {
-      try {
-        const plainDescription = targetDescription.replace(/<\/?[^>]+(>|$)/g, " ").replace(/\s+/g, " ").trim();
-        const promptProductTitle = body.get("productTitle") || "";
-
-        const textPrompt = `${promptStyle ? `Writing style instruction: ${promptStyle}\n\n` : ""}You are a gemologist assistant for Rockhound Studio. The product title is: ${promptProductTitle}. Parse the title segments split by ' — ' to extract piece_name and origin_location. Extract the following fields from this product description. 
-
-HARD NARRATIVE LAWS:
-1. Keep any generated narrative or artist notes UNDER 100 WORDS TOTAL.
-2. ZERO workshop jargon (never mention saw blades, RPMs, or polishing grit stages).
-3. Attribution must strictly be to Bob and Janyce.
-4. If a location is mentioned, weave an HTML link to the location story directly into the text: <a href="/pages/LOCATION-SLUG">Location Name</a> (Irv's links to /pages/shopped-rock-collection).
-
-Return only valid JSON with exactly these keys. If a field is not mentioned, return an empty string for it.
-
-{
-  "piece_name": "(the text after the second em dash — in the product title — this is the piece name only, not the full title)",
-  "origin_location": "(the middle segment between the first and last em dash ' — ' in the product title)",
-  "color": "(value after 'Flash:' label, e.g. 'Blue')",
-  "cut_and_shape": "(value after 'Shape:' label, e.g. 'Cabochon')",
-  "surface_finish": "(value after 'Finish:' label, e.g. 'High Polish')",
-  "stone_family": "(the rockhound trade name of the stone — use Labradorite not Feldspar, use Jasper not Chalcedony)",
-  "collection_name": "(find the URL in the description that contains /collections/ and extract the collection name from the link text or format the slug after /collections/ as title case. For example if the URL slug is mixed-media return Mixed Media. If no /collections/ URL is found return empty string)",
-  "dimensions_mm": "(if dimensions are mentioned in the description in mm format, return them, else empty string)",
-  "handcrafted_by": "(name from signature line, e.g. 'Bob & Janyce, Rockhound Studio')",
-  "treated": "(if description says untreated or not enhanced, return 'false', else return 'true')",
-  "found_object": "(if description says found or collected in the field, return 'true', else return 'false')",
-  "is_one_of_a_kind": "(if description says one of a kind, return 'Yes — one of a kind', else return 'No')",
-  "artist_notes": "(write 1-2 sentences of internal shop notes under 50 words about this stone's character, quirks, or what makes it special. Plain language, no marketing, attribute to Bob and Janyce)",
-  "origin_page_handle": "(find the URL in the description that contains /pages/ and extract only the handle slug after /pages/. For example if the URL is rockhoundstudio.com/pages/yakima-river-canyon return yakima-river-canyon. If no /pages/ URL is found return empty string)",
-  "color_pattern": "(describe the color pattern of the stone in 2-4 words, e.g. 'Banded caramel and white', 'Solid grey with swirls' — based on description or title. Leave blank if unknown.)",
-  "material": "(the primary stone or mineral material, e.g. 'Botswana Agate', 'Jasper', 'Obsidian' — use the rockhound trade name. Leave blank if unknown.)",
-  "jewelry_type": "(only populate if the product is jewelry — e.g. 'Necklace', 'Pendant', 'Earrings'. Leave blank if it is a freeform stone or art piece.)",
-  "necklace_design": "(only populate if jewelry_type is Necklace or Pendant — describe the necklace style in 2-4 words. Leave blank otherwise.)",
-  "chain_link_type": "(only populate if jewelry_type is Necklace — e.g. 'Cable', 'Box', 'Rolo'. Leave blank otherwise.)",
-  "jewelry_finding_type": "(only populate if jewelry — e.g. 'Bail', 'Bezel', 'Prong'. Leave blank otherwise.)",
-  "target_gender": "(infer from description or title — e.g. 'Unisex', 'Women', 'Men'. Default to Unisex if unclear.)",
-  "age_group": "(infer from description or title — e.g. 'Adult', 'All Ages'. Default to Adult if unclear.)",
-  "custom_product": "(return true if the product is handcrafted or one of a kind, otherwise false.)"
-}
-
-Product description:
-${plainDescription}
-
-Return only valid JSON. No explanation. No markdown.`;
-
-        const textGeminiRes = await fetchWithRetry(
-          "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              contents: [{ parts: [{ text: textPrompt }] }]
-            })
-          }
-        );
-
-        if (textGeminiRes.ok) {
-          const textGeminiData = await textGeminiRes.json();
-          const textContent = textGeminiData.candidates?.[0]?.content?.parts?.[0]?.text || "";
-
-          if (textContent) {
-            let cleanJson = textContent.trim();
-            const firstBrace = cleanJson.indexOf("{");
-            const lastBrace = cleanJson.lastIndexOf("}");
-            if (firstBrace !== -1 && lastBrace !== -1) {
-              cleanJson = cleanJson.slice(firstBrace, lastBrace + 1);
-            }
-            cleanJson = cleanJson.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
-            cleanJson = cleanJson.replace(/"(?:[^"\\]|\\.)*"/g, (match) => {
-              return match.replace(/\n/g, "\\n").replace(/\r/g, "\\r").replace(/\t/g, "\\t");
-            });
-
-            const textData = JSON.parse(cleanJson);
-            console.log("GEMINI TEXT RESPONSE:", JSON.stringify(textData));
-
-            if (textData["is_one_of_a-kind"] !== undefined) {
-              textData["is_one_of_a_kind"] = textData["is_one_of_a-kind"];
-              delete textData["is_one_of_a-kind"];
-            }
-
-            safeSet("color", textData.color || textData.Color);
-            safeSet("cut_and_shape", textData.cut_and_shape);
-            safeSet("surface_finish", textData.surface_finish);
-            safeSet("stone_family", textData.stone_family);
-            safeSet("piece_name", textData.piece_name);
-            safeSet("origin_location", textData.origin_location);
-            safeSet("collection_name", textData.collection_name);
-            safeSet("dimensions_mm", textData.dimensions_mm);
-            safeSet("handcrafted_by", textData.handcrafted_by);
-            safeSet("treated", textData.treated);
-            safeSet("found_object", textData.found_object);
-            safeSet("is_one_of_a_kind", textData.is_one_of_a_kind);
-            safeSet("piece_name", textData.piece_name);
-            safeSet("artist_notes", textData.artist_notes);
-            safeSet("origin_page_handle", textData.origin_page_handle);
-            if (textData.stone_family) { safeSet("material", textData.stone_family); }
-            if (textData.color_pattern) { safeSet("color-pattern", textData.color_pattern); }
-            if (textData.material) { safeSet("material", textData.material); }
-            if (textData.jewelry_type) { safeSet("jewelry-type", textData.jewelry_type); }
-            if (textData.necklace_design) { safeSet("necklace-design", textData.necklace_design); }
-            if (textData.chain_link_type) { safeSet("chain-link-type", textData.chain_link_type); }
-            if (textData.jewelry_finding_type) { safeSet("jewelry-finding-type", textData.jewelry_finding_type); }
-            if (textData.target_gender) { safeSet("target-gender", textData.target_gender); }
-            if (textData.age_group) { safeSet("age-group", textData.age_group); }
-            if (textData.custom_product !== undefined) { safeSet("custom_product", textData.custom_product); }
-
-            console.log("Pass 2B Gemini Text extracted:", Object.keys(textData).filter(k => textData[k]));
-          }
-        } else {
-          const errText = await textGeminiRes.text();
-          console.error("Pass 2B Gemini Text API Error:", textGeminiRes.status, errText);
-        }
-      } catch (textError) {
-        console.error("Pass 2B Gemini Text Fault:", textError.message);
-      }
-    }
-
-    // ==========================================
-    // PASS 3: GEMINI VISION
-    // ==========================================
-    let rawVisionResponse = "";
-    try {
-      const rawBase64 = body.get("imageBase64");
-      const rawMime = body.get("imageMimeType");
-
-      let imageBase64 = "";
-      let imageMimeType = "image/jpeg";
-
-      if (rawBase64 && rawBase64.length > 100) {
-        imageBase64 = rawBase64;
-        imageMimeType = rawMime || "image/jpeg";
-      } else {
-        const rawImageUrl = body.get("imageUrl");
-        const imageUrl = rawImageUrl && rawImageUrl !== "undefined" && rawImageUrl !== "null" ? String(rawImageUrl).trim() : "";
-        if (imageUrl) {
-          const cleanImageUrl = imageUrl.split("?")[0];
-          const imageRes = await fetch(cleanImageUrl);
-          const imageBuffer = await imageRes.arrayBuffer();
-          imageBase64 = Buffer.from(imageBuffer).toString("base64");
-          imageMimeType = (imageRes.headers.get("content-type") || "image/jpeg").split(";")[0].trim();
-        }
-      }
-      
-      console.log("Tab2 AutoFill imageUrl sent:", body.get("imageUrl"));
-      
-      if (imageBase64) {
-        const clientPrompt = body.get("prompt");
-        const promptText = clientPrompt && clientPrompt.trim() !== "" ? clientPrompt : `${promptStyle ? `Writing style instruction: ${promptStyle}\n\n` : ""}You are a gemologist and lapidary expert analyzing a handcrafted stone cabochon or specimen for an online store called Rockhound Studio. Look at this stone image carefully and return a JSON object with these fields — only include fields you can visually confirm, leave others out:
-
-HARD LAWS:
-1. Keep honest_flaws_and_character UNDER 50 WORDS. Zero marketing fluff.
-2. ZERO workshop jargon (never mention saw blades, RPMs, or polishing grit stages).
-3. All craftsmanship must strictly be attributed to Bob and Janyce.
-
-{
-  "color": "(return ONLY the primary color as a single word, e.g. 'Blue' or 'Red')",
-  "surface_finish": "(one of: High Polish, Satin Polish, Matte, Natural/Rough, Tumbled)",
-  "cut_and_shape": "(e.g. Freeform, Oval Cabochon, Round Cabochon, Teardrop, Pear, Trillion)",
-  "honest_flaws_and_character": "Honest over perfection: Describe any visible natural fractures, pits, inclusions, asymmetry, or raw character marks under 50 words. Factual shop language only, zero marketing fluff.",
-  "secondary_medium": "(string, e.g. Sterling Silver, Copper, Driftwood, or empty if none)",
-  "wire_material": "(string, e.g. 925 Sterling Silver, Bare Copper, Gold Filled, or empty if none)",
-  "bail_included": "(boolean, true if a bail or hanging loop is present)",
-  "alt_text": "(a single descriptive sentence for screen readers and SEO under 20 words, written in plain English describing what is seen in the image)",
-  "is_one_of_a_kind": "(boolean)",
-  "found_object": "(boolean)",
-  "treated": "(boolean)",
-  "setting_ready": "(boolean)",
-  "piece_name": "(the text after the second em dash — in the product title — this is the piece name only, not the full title)"
-}
-Return only valid JSON. No explanation. No markdown.`;
-
-        const geminiRes = await fetchWithRetry(
-          "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              contents: [
-                {
-                  parts: [
-                    { text: promptText },
-                    {
-                      inlineData: {
-                        mimeType: imageMimeType,
-                        data: imageBase64
-                      }
-                    }
-                  ]
-                }
-              ]
-            })
-          }
-        );
-
-        if (geminiRes.ok) {
-          const geminiData = await geminiRes.json();
-          const textContent = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || "";
-          rawVisionResponse = textContent;
-          
-          if (textContent) {
-            let cleanJson = textContent.trim();
-            const firstBrace = cleanJson.indexOf("{");
-            const lastBrace = cleanJson.lastIndexOf("}");
-            if (firstBrace !== -1 && lastBrace !== -1) {
-              cleanJson = cleanJson.slice(firstBrace, lastBrace + 1);
-            }
-            cleanJson = cleanJson.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
-            cleanJson = cleanJson.replace(/"(?:[^"\\]|\\.)*"/g, (match) => {
-              return match.replace(/\n/g, "\\n").replace(/\r/g, "\\r").replace(/\t/g, "\\t");
-            });
-
-            const visionData = JSON.parse(cleanJson);
-            
-            if (visionData["is_one_of_a-kind"] !== undefined) {
-              visionData["is_one_of_a_kind"] = visionData["is_one_of_a-kind"];
-              delete visionData["is_one_of_a-kind"];
-            }
-
-            if (visionData.is_one_of_a_kind === true) visionData.is_one_of_a_kind = "Yes — one of a kind";
-            else if (visionData.is_one_of_a_kind === false) visionData.is_one_of_a_kind = "No";
-
-            if (visionData.found_object === true) visionData.found_object = "true";
-            else if (visionData.found_object === false) visionData.found_object = "false";
-
-            if (visionData.treated === true) visionData.treated = "true";
-            else if (visionData.treated === false) visionData.treated = "false";
-
-            if (visionData.setting_ready === true) visionData.setting_ready = "true";
-            else if (visionData.setting_ready === false) visionData.setting_ready = "false";
-
-            if (visionData.bail_included === true) visionData.bail_included = "true";
-            else if (visionData.bail_included === false) visionData.bail_included = "false";
-
-            safeSet("color", visionData.color || visionData.Color || visionData.primary_color);
-            safeSet("surface_finish", visionData.surface_finish || visionData.Surface_finish);
-            safeSet("cut_and_shape", visionData.cut_and_shape || visionData.Cut_and_shape);
-            safeSet("honest_flaws_and_character", visionData.honest_flaws_and_character || visionData.character_marks);
-            safeSet("secondary_medium", visionData.secondary_medium);
-            safeSet("wire_material", visionData.wire_material);
-            safeSet("bail_included", visionData.bail_included ? "true" : "false");
-            safeSet("alt_text", visionData.alt_text || visionData.Alt_text);
-            safeSet("is_one_of_a_kind", visionData.is_one_of_a_kind);
-            safeSet("found_object", visionData.found_object);
-            safeSet("treated", visionData.treated);
-            safeSet("setting_ready", visionData.setting_ready);
-            safeSet("piece_name", visionData.piece_name);
-          }
-        } else {
-          const errText = await geminiRes.text();
-          rawVisionResponse = errText;
-          console.error("Gemini Vision API Error:", geminiRes.status, errText);
-        }
-      } else {
-        rawVisionResponse = "No image URL or base64 provided to Vision pass.";
-      }
-    } catch (error) {
-      rawVisionResponse = `Vision Exception: ${error.message}`;
-      console.error("Pass 3 Vision Fault:", error.message);
-    }
-
-    // ==========================================
-    // STORE-WIDE DEFAULTS
-    // ==========================================
-    safeSet("handcrafted_by", "Bob & Janyce, Rockhound Studio");
-    safeSet("authenticity", "Genuine");
-    safeSet("rarity", "Rare");
-    safeSet("condition", "new");
-    safeSet("age-group", "Adult");
-    safeSet("target-gender", "Unisex");
-    safeSet("is_one_of_a_kind", "true");
-    safeSet("treated", "false");
-    safeSet("found_object", "true");
-    safeSet("primary_use", "Wearable Art");
-
-    // ==========================================
-    // FALLBACKS
-    // ==========================================
-    safeSet("official_name", title);
-
-    if (!merged.color || merged.color.trim() === "") {
-      if (merged.primary_color && merged.primary_color.trim() !== "") {
-        merged.color = merged.primary_color;
-      }
-    }
-    const colorWarning = !merged.color || merged.color.trim() === "";
-
-    const productTitle = body.get("productTitle") || "";
-    const pieceName = productTitle.includes(" — ") ? productTitle.split(" — ").pop().trim() : productTitle;
-    if (pieceName && pieceName.trim() !== "") {
-      merged["piece_name"] = pieceName;
-    }
-
-    console.log("=== AUTOFILL PAYLOAD BEFORE RETURN ===", merged);
-
-    return Response.json({ 
-        success: true, 
-        fields: merged, 
-        intent: actionType || "autoFill", 
-        colorWarning,
-        rawVisionResponse
-    });
+    return Response.json({ success: true, fields: {} });
   } catch (error) {
-    console.error("Stone Lookup Engine Fault:", error.message);
-    return Response.json(
-      { success: false, error: error.message, fields: {} }, 
-      { status: 500 }
-    );
+    console.error("Critical Failure:", error.message);
+    return Response.json({ success: false, error: error.message }, { status: 500 });
   }
 };
