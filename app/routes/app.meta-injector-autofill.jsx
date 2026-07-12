@@ -186,8 +186,10 @@ Return valid JSON matching the structure perfectly with no markup text.`;
       const finalTargetSlug = resolveOriginHandle(originSegment, livePages);
       const targetUrlPath = `/pages/${finalTargetSlug}`;
       
-      const collectionSlug = collectionInput.toLowerCase().replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, "-");
-      const collectionUrlPath = collectionSlug ? `/collections/${collectionSlug}` : "#";
+      // 🟢 DYNAMIC COLLECTION CHECK
+      const collectionSlug = collectionInput ? collectionInput.toLowerCase().replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, "-") : "";
+      const collectionUrlPath = collectionSlug ? `/collections/${collectionSlug}` : "";
+      const collectionHookInstructions = collectionUrlPath ? `\n  2. A Collection Hook: You MUST embed this exact string: <a href="${collectionUrlPath}">${collectionInput}</a>` : "";
 
       let imageBase64 = clientBase64 && clientBase64 !== "undefined" ? String(clientBase64).trim() : "";
       let imageMimeType = clientMime;
@@ -205,9 +207,8 @@ Return valid JSON matching the structure perfectly with no markup text.`;
 
       const promptText = `You are a lapidary artist and master jeweler for Rockhound Studio. Analyze this photo.
 - description: Poetic, spare, story-driven product description strictly UNDER 100 WORDS. First person voice ("Bob and Janyce" or "Janyce here..."). Credit craftsmanship strictly as "handcrafted by Bob and Janyce". ZERO workshop references.
-CRITICAL DWELL WEB EMBED LAW: You MUST naturally weave TWO clickable HTML hyperlinks into the description text:
-  1. An Origin Hook linking to the stone's origin story: <a href="${targetUrlPath}">${originSegment}</a>
-  2. A Collection Hook linking to the specific collection: <a href="${collectionUrlPath}">${collectionInput}</a>
+CRITICAL DWELL WEB EMBED LAW: You MUST naturally weave HTML hyperlinks into the description text. You are strictly forbidden from altering the anchor tags below. Copy and paste them EXACTLY:
+  1. An Origin Hook: You MUST embed this exact string: <a href="${targetUrlPath}">${originSegment}</a>${collectionHookInstructions}
 - primary_use: Smart Switch! Force strictly to best match (e.g., "Pendant (Finished Jewelry)", "Necklace", "Ring / Bezel Setting", "Cabochon", "Wire Wrap (Finished Jewelry)").
 - MANDATORY BENCH FINDINGS & JEWELRY LAWS:
   * setting_ready: Look closely at the mounting. If cabochon is in a bezel setting, MUST return "Bezel Setting - Ready to Wear". If prong setting, return "Prong Setting - Ready to Wear". If wire wrapped, return "Wire Wrapped - Ready to Wear". NEVER LEAVE BLANK FOR MOUNTED STONES!
@@ -216,7 +217,6 @@ CRITICAL DWELL WEB EMBED LAW: You MUST naturally weave TWO clickable HTML hyperl
   * secondary_medium: State accent metal or "None".
   * bail_included: State the bail style (e.g., "Integrated Bezel Bail", "Sterling Silver Pinch Bail") or "None".`;
 
-      // 🟢 THE WELD: Required schema lock forces Gemini to fill every key
       const geminiRes = await fetchWithRetry("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ 
@@ -254,6 +254,13 @@ CRITICAL DWELL WEB EMBED LAW: You MUST naturally weave TWO clickable HTML hyperl
         if (first !== -1 && last !== -1) cleanJson = cleanJson.slice(first, last + 1);
         const parsedVision = JSON.parse(cleanJson);
         
+        const resolved_primary_use = parsedVision.primary_use || parsedVision.use || parsedVision.product_type || "";
+        const resolved_primary_medium = parsedVision.primary_medium || parsedVision.medium || parsedVision.metal || parsedVision.primary_metal || "";
+        const resolved_secondary_medium = parsedVision.secondary_medium || parsedVision.accent || parsedVision.secondary_metal || "";
+        const resolved_wire_material = parsedVision.wire_material || parsedVision.wire || parsedVision.wire_wrap || "";
+        const resolved_setting_ready = parsedVision.setting_ready || parsedVision.setting || parsedVision.mounting || parsedVision.bezel || "";
+        const resolved_bail_included = parsedVision.bail_included || parsedVision.bail || "";
+
         return Response.json({
           success: true, intent: "visionScan", pieceId,
           description: parsedVision.description || "",
@@ -263,12 +270,12 @@ CRITICAL DWELL WEB EMBED LAW: You MUST naturally weave TWO clickable HTML hyperl
           stone_shape: parsedVision.stone_shape || "",
           dimensions_mm: parsedVision.dimensions_mm || "",
           pattern: parsedVision.pattern || "",
-          primary_use: parsedVision.primary_use || "",
-          primary_medium: parsedVision.primary_medium || "",
-          secondary_medium: parsedVision.secondary_medium || "",
-          wire_material: parsedVision.wire_material || "",
-          setting_ready: parsedVision.setting_ready || "",
-          bail_included: parsedVision.bail_included || ""
+          primary_use: resolved_primary_use,
+          primary_medium: resolved_primary_medium,
+          secondary_medium: resolved_secondary_medium,
+          wire_material: resolved_wire_material,
+          setting_ready: resolved_setting_ready,
+          bail_included: resolved_bail_included
         });
       }
       return Response.json({ success: false, error: "Vision API Failure" });
