@@ -991,15 +991,6 @@ export function NewProductIntakeTab({ fetcher }) {
               
               <div style={{ minHeight: "54px" }}>
                 <TextField
-                  label={renderLabel("Origin Location", "origin_location", sharedFields.origin_location)}
-                  value={sharedFields.origin_location}
-                  onChange={(v) => handleSharedFieldChange("origin_location", v)}
-                  autoComplete="off"
-                  placeholder="Where was this stone found?"
-                />
-              </div>
-              <div style={{ minHeight: "54px" }}>
-                <TextField
                   label={renderLabel("Origin Handle (Slug)", "origin_handle", sharedFields.origin_handle)}
                   value={sharedFields.origin_handle}
                   onChange={(v) => handleSharedFieldChange("origin_handle", v)}
