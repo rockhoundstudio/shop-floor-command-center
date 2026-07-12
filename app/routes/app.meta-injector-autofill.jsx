@@ -114,7 +114,6 @@ function resolveCollectionData(locationSegment, defaultOriginSlug) {
   if (cleanLoc.includes("richardson")) {
     return { slug: "the-3000-mile-run", name: "The 3,000-Mile Run Collection" };
   }
-  
   if (cleanLoc.includes("irv")) {
     return { slug: "the-shopped-rock", name: "The Shopped Rock Collection" };
   }
@@ -170,7 +169,8 @@ Return valid JSON matching the structure perfectly with no markup text.`;
       const geminiRes = await fetchWithRetry("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ 
-          contents: [{ parts: [{ text: promptText }] }]
+          contents: [{ parts: [{ text: promptText }] }],
+          generationConfig: { responseMimeType: "application/json", temperature: 0.2 }
         })
       });
 
@@ -180,9 +180,18 @@ Return valid JSON matching the structure perfectly with no markup text.`;
         const first = cleanJson.indexOf("{"), last = cleanJson.lastIndexOf("}");
         if (first !== -1 && last !== -1) cleanJson = cleanJson.slice(first, last + 1);
         const parsed = JSON.parse(cleanJson);
-        // Guarantee hard structural overrides pass through safely
-        parsed.origin_handle = resolvedHandle;
-        return Response.json({ titleParse: parsed });
+        
+        // 🟢 THE HARD DB WELD: Pull immutable geo specs straight from DB / Geo Library
+        const dbGeoData = getGeoData(parsed.stone_family || segment1);
+        
+        // DB hard data takes absolute priority over any AI output
+        const finalParse = {
+          ...parsed,
+          ...dbGeoData,
+          origin_handle: resolvedHandle
+        };
+        
+        return Response.json({ titleParse: finalParse });
       }
       return Response.json({ titleParse: null, error: "Title parse error" }, { status: 500 });
     }
@@ -196,8 +205,6 @@ Return valid JSON matching the structure perfectly with no markup text.`;
       const clientMime = body.get("imageMimeType") || "image/jpeg";
       
       const titleInput = body.get("pieceName") || "";
-      const collectionInput = body.get("collectionName") || "";
-      
       const segments = titleInput.split(/\s+[-–—]\s+/);
       const originSegment = segments[1]?.trim() || "Unknown Origin";
       
@@ -223,9 +230,9 @@ Return valid JSON matching the structure perfectly with no markup text.`;
         }
       }
 
-      const promptText = `You are a lapidary artist and master jeweler for Rockhound Studio. Analyze this photo.
+      const promptText = `You are a lapidary artist and master jeweler for Rockhound Studio. Analyze this photo and return a JSON object.
 - description: Poetic, spare, story-driven product description strictly UNDER 100 WORDS. First person voice ("Bob and Janyce" or "Janyce here..."). Credit craftsmanship strictly as "handcrafted by Bob and Janyce". ZERO workshop references.
-CRITICAL DWELL WEB EMBED LAW: You MUST naturally weave HTML hyperlinks into the description text. You are strictly forbidden from altering the anchor tags below. Copy and paste them EXACTLY:
+CRITICAL DWELL WEB EMBED LAW: You MUST naturally weave TWO clickable HTML hyperlinks into the description text. Use EXACTLY these anchor tags:
   1. Origin Hook: <a href="${targetUrlPath}">${originSegment} Story</a>
   2. Collection Hook: <a href="${collectionUrlPath}">${collectionData.name}</a>
 - primary_use: Smart Switch! Force strictly to best match (e.g., "Pendant (Finished Jewelry)", "Necklace", "Ring / Bezel Setting", "Cabochon", "Wire Wrap (Finished Jewelry)").
