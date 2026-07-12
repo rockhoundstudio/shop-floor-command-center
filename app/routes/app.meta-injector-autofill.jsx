@@ -181,10 +181,8 @@ Return valid JSON matching the structure perfectly with no markup text.`;
         if (first !== -1 && last !== -1) cleanJson = cleanJson.slice(first, last + 1);
         const parsed = JSON.parse(cleanJson);
         
-        // 🟢 THE HARD DB WELD: Pull immutable geo specs straight from DB / Geo Library
-        const dbGeoData = getGeoData(parsed.stone_family || segment1);
-        
         // DB hard data takes absolute priority over any AI output
+        const dbGeoData = getGeoData(parsed.stone_family || segment1);
         const finalParse = {
           ...parsed,
           ...dbGeoData,
@@ -216,6 +214,33 @@ Return valid JSON matching the structure perfectly with no markup text.`;
       const targetUrlPath = `/pages/${finalTargetSlug}`;
       const collectionUrlPath = `/collections/${collectionData.slug}`;
 
+      // 🟢 LIVE DWELL WEB READER: Physically read Shopify DB pages before hitting AI
+      let originPageSummary = "";
+      let collectionSummary = "";
+      try {
+        const contextRes = await admin.graphql(`
+          query {
+            pageByHandle(handle: "${finalTargetSlug}") {
+              title
+              body
+            }
+            collectionByHandle(handle: "${collectionData.slug}") {
+              title
+              description
+            }
+          }
+        `);
+        const contextData = await contextRes.json();
+        if (contextData.data?.pageByHandle?.body) {
+          originPageSummary = contextData.data.pageByHandle.body.replace(/<[^>]*>?/gm, "").replace(/\s+/g, " ").trim().slice(0, 450);
+        }
+        if (contextData.data?.collectionByHandle?.description) {
+          collectionSummary = contextData.data.collectionByHandle.description.replace(/<[^>]*>?/gm, "").replace(/\s+/g, " ").trim().slice(0, 450);
+        }
+      } catch (err) {
+        console.warn("[Dwell Web Reader] Could not pull live page excerpts:", err.message);
+      }
+
       let imageBase64 = clientBase64 && clientBase64 !== "undefined" ? String(clientBase64).trim() : "";
       let imageMimeType = clientMime;
 
@@ -231,10 +256,14 @@ Return valid JSON matching the structure perfectly with no markup text.`;
       }
 
       const promptText = `You are a lapidary artist and master jeweler for Rockhound Studio. Analyze this photo and return a JSON object.
-- description: Poetic, spare, story-driven product description strictly UNDER 100 WORDS. First person voice ("Bob and Janyce" or "Janyce here..."). Credit craftsmanship strictly as "handcrafted by Bob and Janyce". ZERO workshop references.
-CRITICAL DWELL WEB EMBED LAW: You MUST naturally weave TWO clickable HTML hyperlinks into the description text. Use EXACTLY these anchor tags:
-  1. Origin Hook: <a href="${targetUrlPath}">${originSegment} Story</a>
-  2. Collection Hook: <a href="${collectionUrlPath}">${collectionData.name}</a>
+- LIVE DWELL WEB CONTEXT (Read before writing!):
+  * Origin Page ("${finalTargetSlug}") excerpt: "${originPageSummary || "Origin story context not available — base hook on location name."}"
+  * Collection Page ("${collectionData.slug}") excerpt: "${collectionSummary || "Collection context not available — base hook on collection name."}"
+- description: Poetic, spare, story-driven product description strictly UNDER 100 WORDS total. First person voice ("Bob and Janyce" or "Janyce here..."). Credit craftsmanship strictly as "handcrafted by Bob and Janyce". ZERO workshop references.
+CRITICAL DWELL WEB EMBED LAW: You MUST use the live context excerpts above to write short, punchy story hooks leading directly into TWO clickable HTML hyperlinks. Copy and paste the anchor tags EXACTLY:
+  1. Origin Hook (Write a short story hook based on the Origin excerpt, followed immediately by this exact link): <a href="${targetUrlPath}">${originSegment} Story</a>
+  2. Collection Hook (Write a short hook based on the Collection excerpt, followed immediately by this exact link): <a href="${collectionUrlPath}">${collectionData.name}</a>
+  Example flow: "[Poetic stone description]. [Short story hook based on page read] <a href='...'>Origin Story</a>. [Short collection hook based on read] <a href='...'>Collection Name</a>."
 - primary_use: Smart Switch! Force strictly to best match (e.g., "Pendant (Finished Jewelry)", "Necklace", "Ring / Bezel Setting", "Cabochon", "Wire Wrap (Finished Jewelry)").
 - MANDATORY BENCH FINDINGS & JEWELRY LAWS:
   * setting_ready: Look closely at the mounting. If cabochon is in a bezel setting, MUST return "Bezel Setting - Ready to Wear". If prong setting, return "Prong Setting - Ready to Wear". If wire wrapped, return "Wire Wrapped - Ready to Wear". NEVER LEAVE BLANK FOR MOUNTED STONES!
