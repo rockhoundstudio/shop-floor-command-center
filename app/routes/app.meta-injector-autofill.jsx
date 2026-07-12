@@ -93,16 +93,23 @@ function resolveOriginHandle(locationSegment, pagesList) {
   if (!cleanLoc) return "";
   if (cleanLoc.includes("richardson")) return "the-richardson-strike";
   if (cleanLoc.includes("irv")) return "the-shopped-rock";
-  if (cleanLoc.includes("yakima")) return "chert-road-detour";
+  if (cleanLoc.includes("yakima") || cleanLoc.includes("yak") || cleanLoc.includes("chert")) return "chert-road-detour";
 
   const match = pagesList.find(p => p.title.toLowerCase().includes(cleanLoc) || p.url.includes(cleanLoc));
   return match ? match.url.replace("/pages/", "") : cleanLoc.replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, "-");
 }
 
-function resolveCollectionData(locationSegment, defaultOriginSlug) {
+function resolveCollectionData(locationSegment, defaultOriginSlug, collectionsList = []) {
   const cleanLoc = (locationSegment || "").toLowerCase().trim();
   if (cleanLoc.includes("richardson")) return { slug: "the-3000-mile-run", name: "The 3,000-Mile Run Collection" };
   if (cleanLoc.includes("irv")) return { slug: "the-shopped-rock", name: "The Shopped Rock Collection" };
+  if (cleanLoc.includes("yakima") || cleanLoc.includes("yak") || cleanLoc.includes("chert")) return { slug: "chert-road-detour", name: "Chert Road Detour — Yakima River Jasper Collection" };
+
+  const matchedCol = collectionsList.find(c => c.url.includes(defaultOriginSlug) || c.title.toLowerCase().includes(cleanLoc));
+  if (matchedCol) {
+    return { slug: matchedCol.url.replace("/collections/", ""), name: matchedCol.title.endsWith("Collection") ? matchedCol.title : `${matchedCol.title} Collection` };
+  }
+
   return { slug: defaultOriginSlug, name: `${locationSegment.trim()} Collection` };
 }
 
@@ -143,9 +150,9 @@ export const action = async ({ request }) => {
       const segment2 = segments[1]?.trim() || "";
       const segment3 = segments[2]?.trim() || "";
 
-      const { pagesList } = await getLiveStoreDirectory(admin);
+      const { pagesList, collectionsList } = await getLiveStoreDirectory(admin);
       const resolvedHandle = resolveOriginHandle(segment2, pagesList);
-      const collectionData = resolveCollectionData(segment2, resolvedHandle);
+      const collectionData = resolveCollectionData(segment2, resolvedHandle, collectionsList);
 
       const matchedPage = pagesList.find(p => p.url.includes(resolvedHandle));
       const extractedStory = matchedPage ? matchedPage.excerpt : "";
@@ -208,9 +215,12 @@ Return valid JSON matching the structure perfectly with no markup text.`;
 
       // Resolve defaults just in case, but give Gemini the full menu
       const defaultOriginSlug = resolveOriginHandle(originSegment, pagesList);
-      const defaultCollection = resolveCollectionData(originSegment, defaultOriginSlug);
+      const defaultCollection = resolveCollectionData(originSegment, defaultOriginSlug, collectionsList);
       const targetUrlPath = `/pages/${defaultOriginSlug}`;
       const collectionUrlPath = `/collections/${defaultCollection.slug}`;
+
+      // Extract exact human-readable collection name without trailing "Collection" word
+      const fullCollectionTitle = defaultCollection.name.replace(/\s+Collection$/i, "").trim();
 
       const matchedPage = pagesList.find(p => p.url.includes(defaultOriginSlug));
       const extractedStory = matchedPage ? matchedPage.excerpt : "";
@@ -239,8 +249,8 @@ Return valid JSON matching the structure perfectly with no markup text.`;
 
 - description: Poetic, spare, story-driven product description strictly UNDER 100 WORDS total. First person voice ("Bob and Janyce" or "Janyce here..."). Credit craftsmanship strictly as "handcrafted by Bob and Janyce". ZERO workshop references.
 CRITICAL DWELL WEB EMBED LAW: Look at the Origin Segment Janyce entered ("${originSegment}"). Check the LIVE STORE DIRECTORY above and match it to the exact corresponding Page and Collection. You MUST use those live excerpts to write short story hooks leading directly into TWO clickable HTML hyperlinks. 
-  1. Origin Hook: Write a short story hook based on the matching Page excerpt, followed immediately by this exact anchor tag format: <a href="${targetUrlPath}">${originSegment} Story</a>
-  2. Collection Hook: Write a short hook based on the matching Collection excerpt, followed immediately by this exact anchor tag format: <a href="${collectionUrlPath}">${defaultCollection.name}</a>
+  1. Origin Hook: Write a short story hook based on the matching Page excerpt, followed immediately by this exact anchor tag format: <a href="${targetUrlPath}">${fullCollectionTitle} Story</a>
+  2. Collection Hook: Write a short hook based on the matching Collection excerpt, followed immediately by this exact anchor tag format: <a href="${collectionUrlPath}">${fullCollectionTitle} Collection</a>
 - primary_use: Smart Switch! Force strictly to best match (e.g., "Pendant (Finished Jewelry)", "Necklace", "Ring / Bezel Setting", "Cabochon", "Wire Wrap (Finished Jewelry)").
 - MANDATORY BENCH FINDINGS & JEWELRY LAWS:
   * setting_ready: Look closely at the mounting. If cabochon is in a bezel setting, MUST return "Bezel Setting - Ready to Wear". If prong setting, return "Prong Setting - Ready to Wear". If wire wrapped, return "Wire Wrapped - Ready to Wear". NEVER LEAVE BLANK FOR MOUNTED STONES!
