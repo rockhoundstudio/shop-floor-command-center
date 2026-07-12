@@ -39,85 +39,70 @@ async function fetchWithRetry(url, options, retries = 3, delay = 1500) {
   throw new Error("Gemini API connection timed out after multiple attempts.");
 }
 
-// Helper to pull live origin pages from Shopify metaobjects
-async function getLiveOriginPages(admin) {
-  let originPages = [];
+// 🟢 THE RESTORED LIVE SCANNER: Pulls all actual Pages and Collections from Shopify
+async function getLiveStoreDirectory(admin) {
+  let pagesList = [];
+  let collectionsList = [];
   try {
-    const metaRes = await admin.graphql(`
+    const res = await admin.graphql(`
       query {
-        metaobjects(type: "origin_page", first: 250) {
+        pages(first: 100) {
           edges {
             node {
+              title
               handle
-              fields {
-                key
-                value
-              }
+              body
+            }
+          }
+        }
+        collections(first: 100) {
+          edges {
+            node {
+              title
+              handle
+              description
             }
           }
         }
       }
     `);
-    const metaData = await metaRes.json();
-    if (metaData.data?.metaobjects?.edges) {
-      originPages = metaData.data.metaobjects.edges.map(edge => {
-        const fields = {};
-        edge.node.fields.forEach(f => { fields[f.key] = f.value; });
-        return {
-          handle: edge.node.handle,
-          canonical_name: fields.name || fields.display_name || fields.title || edge.node.handle,
-          location: fields.location || ""
-        };
-      });
+    const data = await res.json();
+    if (data.data?.pages?.edges) {
+      pagesList = data.data.pages.edges.map(e => ({
+        title: e.node.title,
+        url: `/pages/${e.node.handle}`,
+        excerpt: (e.node.body || "").replace(/<[^>]*>?/gm, "").replace(/\s+/g, " ").trim().slice(0, 300)
+      }));
+    }
+    if (data.data?.collections?.edges) {
+      collectionsList = data.data.collections.edges.map(e => ({
+        title: e.node.title,
+        url: `/collections/${e.node.handle}`,
+        excerpt: (e.node.description || "").replace(/<[^>]*>?/gm, "").replace(/\s+/g, " ").trim().slice(0, 300)
+      }));
     }
   } catch (err) {
-    console.error("Failed to fetch dynamic origin pages:", err.message);
+    console.error("[Live Directory Scanner] Failed to fetch store inventory:", err.message);
   }
-  return originPages;
+  return { pagesList, collectionsList };
 }
 
-// Helper to resolve the correct handle based on your Dwell Web business rules
-function resolveOriginHandle(locationSegment, livePages) {
+// Helper for quick fallback matching
+function resolveOriginHandle(locationSegment, pagesList) {
   const cleanLoc = (locationSegment || "").toLowerCase().trim();
   if (!cleanLoc) return "";
+  if (cleanLoc.includes("richardson")) return "the-richardson-strike";
+  if (cleanLoc.includes("irv")) return "the-shopped-rock";
+  if (cleanLoc.includes("yakima")) return "chert-road-detour";
 
-  // Rule 1: Richardson's Exception
-  if (cleanLoc.includes("richardson")) {
-    return "the-richardson-strike";
-  }
-
-  // Rule 2: Irv's Exception
-  if (cleanLoc.includes("irv")) {
-    return "the-shopped-rock";
-  }
-
-  // Rule 3: Yakima Exception
-  if (cleanLoc.includes("yakima")) {
-    return "chert-road-detour";
-  }
-
-  // Rule 4: Dynamic lookup from Shopify Metaobjects list
-  const match = livePages.find(p => 
-    p.canonical_name.toLowerCase().includes(cleanLoc) || 
-    p.handle.toLowerCase().replace(/-/g, " ").includes(cleanLoc)
-  );
-
-  if (match) return match.handle;
-
-  // Fallback: standard hyphenated slug format
-  return cleanLoc.replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, "-");
+  const match = pagesList.find(p => p.title.toLowerCase().includes(cleanLoc) || p.url.includes(cleanLoc));
+  return match ? match.url.replace("/pages/", "") : cleanLoc.replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, "-");
 }
 
 function resolveCollectionData(locationSegment, defaultOriginSlug) {
   const cleanLoc = (locationSegment || "").toLowerCase().trim();
-  
-  if (cleanLoc.includes("richardson")) {
-    return { slug: "the-3000-mile-run", name: "The 3,000-Mile Run Collection" };
-  }
-  if (cleanLoc.includes("irv")) {
-    return { slug: "the-shopped-rock", name: "The Shopped Rock Collection" };
-  }
-
+  if (cleanLoc.includes("richardson")) return { slug: "the-3000-mile-run", name: "The 3,000-Mile Run Collection" };
+  if (cleanLoc.includes("irv")) return { slug: "the-shopped-rock", name: "The Shopped Rock Collection" };
   return { slug: defaultOriginSlug, name: `${locationSegment.trim()} Collection` };
 }
 
@@ -158,8 +143,8 @@ export const action = async ({ request }) => {
       const segment2 = segments[1]?.trim() || "";
       const segment3 = segments[2]?.trim() || "";
 
-      const livePages = await getLiveOriginPages(admin);
-      const resolvedHandle = resolveOriginHandle(segment2, livePages);
+      const { pagesList } = await getLiveStoreDirectory(admin);
+      const resolvedHandle = resolveOriginHandle(segment2, pagesList);
 
       const promptText = `You are an expert lapidary assistant for Rockhound Studio. Analyze these segments:
 - Family: "${segment1}", Origin: "${segment2}", Title: "${segment3}"
@@ -181,7 +166,7 @@ Return valid JSON matching the structure perfectly with no markup text.`;
         if (first !== -1 && last !== -1) cleanJson = cleanJson.slice(first, last + 1);
         const parsed = JSON.parse(cleanJson);
         
-        // DB hard data takes absolute priority over any AI output
+        // 🟢 THE HARD DB WELD: Pull immutable geo specs straight from DB / Geo Library
         const dbGeoData = getGeoData(parsed.stone_family || segment1);
         const finalParse = {
           ...parsed,
@@ -206,40 +191,18 @@ Return valid JSON matching the structure perfectly with no markup text.`;
       const segments = titleInput.split(/\s+[-–—]\s+/);
       const originSegment = segments[1]?.trim() || "Unknown Origin";
       
-      const livePages = await getLiveOriginPages(admin);
-      const finalTargetSlug = resolveOriginHandle(originSegment, livePages);
+      // 🟢 EXECUTE LIVE DIRECTORY SCANNER
+      const { pagesList, collectionsList } = await getLiveStoreDirectory(admin);
       
-      const collectionData = resolveCollectionData(originSegment, finalTargetSlug);
+      // Build a clean text menu for Gemini to read
+      const pagesMenu = pagesList.map(p => `- Title: "${p.title}" | URL: ${p.url} | Excerpt: "${p.excerpt}"`).join("\n");
+      const collectionsMenu = collectionsList.map(c => `- Title: "${c.title}" | URL: ${c.url} | Excerpt: "${c.excerpt}"`).join("\n");
 
-      const targetUrlPath = `/pages/${finalTargetSlug}`;
-      const collectionUrlPath = `/collections/${collectionData.slug}`;
-
-      // 🟢 LIVE DWELL WEB READER: Physically read Shopify DB pages before hitting AI
-      let originPageSummary = "";
-      let collectionSummary = "";
-      try {
-        const contextRes = await admin.graphql(`
-          query {
-            pageByHandle(handle: "${finalTargetSlug}") {
-              title
-              body
-            }
-            collectionByHandle(handle: "${collectionData.slug}") {
-              title
-              description
-            }
-          }
-        `);
-        const contextData = await contextRes.json();
-        if (contextData.data?.pageByHandle?.body) {
-          originPageSummary = contextData.data.pageByHandle.body.replace(/<[^>]*>?/gm, "").replace(/\s+/g, " ").trim().slice(0, 450);
-        }
-        if (contextData.data?.collectionByHandle?.description) {
-          collectionSummary = contextData.data.collectionByHandle.description.replace(/<[^>]*>?/gm, "").replace(/\s+/g, " ").trim().slice(0, 450);
-        }
-      } catch (err) {
-        console.warn("[Dwell Web Reader] Could not pull live page excerpts:", err.message);
-      }
+      // Resolve defaults just in case, but give Gemini the full menu
+      const defaultOriginSlug = resolveOriginHandle(originSegment, pagesList);
+      const defaultCollection = resolveCollectionData(originSegment, defaultOriginSlug);
+      const targetUrlPath = `/pages/${defaultOriginSlug}`;
+      const collectionUrlPath = `/collections/${defaultCollection.slug}`;
 
       let imageBase64 = clientBase64 && clientBase64 !== "undefined" ? String(clientBase64).trim() : "";
       let imageMimeType = clientMime;
@@ -256,14 +219,17 @@ Return valid JSON matching the structure perfectly with no markup text.`;
       }
 
       const promptText = `You are a lapidary artist and master jeweler for Rockhound Studio. Analyze this photo and return a JSON object.
-- LIVE DWELL WEB CONTEXT (Read before writing!):
-  * Origin Page ("${finalTargetSlug}") excerpt: "${originPageSummary || "Origin story context not available — base hook on location name."}"
-  * Collection Page ("${collectionData.slug}") excerpt: "${collectionSummary || "Collection context not available — base hook on collection name."}"
+- LIVE STORE DIRECTORY (Your Dyslexia Safeguard — Read this menu!):
+  VALID PAGES IN STORE:
+  ${pagesMenu || "No live pages found — use default URL."}
+  
+  VALID COLLECTIONS IN STORE:
+  ${collectionsMenu || "No live collections found — use default URL."}
+
 - description: Poetic, spare, story-driven product description strictly UNDER 100 WORDS total. First person voice ("Bob and Janyce" or "Janyce here..."). Credit craftsmanship strictly as "handcrafted by Bob and Janyce". ZERO workshop references.
-CRITICAL DWELL WEB EMBED LAW: You MUST use the live context excerpts above to write short, punchy story hooks leading directly into TWO clickable HTML hyperlinks. Copy and paste the anchor tags EXACTLY:
-  1. Origin Hook (Write a short story hook based on the Origin excerpt, followed immediately by this exact link): <a href="${targetUrlPath}">${originSegment} Story</a>
-  2. Collection Hook (Write a short hook based on the Collection excerpt, followed immediately by this exact link): <a href="${collectionUrlPath}">${collectionData.name}</a>
-  Example flow: "[Poetic stone description]. [Short story hook based on page read] <a href='...'>Origin Story</a>. [Short collection hook based on read] <a href='...'>Collection Name</a>."
+CRITICAL DWELL WEB EMBED LAW: Look at the Origin Segment Janyce entered ("${originSegment}"). Check the LIVE STORE DIRECTORY above and match it to the exact corresponding Page and Collection. You MUST use those live excerpts to write short story hooks leading directly into TWO clickable HTML hyperlinks. 
+  1. Origin Hook: Write a short story hook based on the matching Page excerpt, followed immediately by this exact anchor tag format: <a href="${targetUrlPath}">${originSegment} Story</a>
+  2. Collection Hook: Write a short hook based on the matching Collection excerpt, followed immediately by this exact anchor tag format: <a href="${collectionUrlPath}">${defaultCollection.name}</a>
 - primary_use: Smart Switch! Force strictly to best match (e.g., "Pendant (Finished Jewelry)", "Necklace", "Ring / Bezel Setting", "Cabochon", "Wire Wrap (Finished Jewelry)").
 - MANDATORY BENCH FINDINGS & JEWELRY LAWS:
   * setting_ready: Look closely at the mounting. If cabochon is in a bezel setting, MUST return "Bezel Setting - Ready to Wear". If prong setting, return "Prong Setting - Ready to Wear". If wire wrapped, return "Wire Wrapped - Ready to Wear". NEVER LEAVE BLANK FOR MOUNTED STONES!
