@@ -201,7 +201,12 @@ Return valid JSON matching the structure perfectly with no markup text.`;
       const promptText = `You are a lapidary artist and jeweler for Rockhound Studio. Analyze this photo and return a JSON object.
 - description: Poetic, spare, story-driven product description strictly UNDER 100 WORDS. First person voice ("Bob and Janyce" or "Janyce here..."). Credit craftsmanship strictly as "handcrafted by Bob and Janyce". ZERO workshop references (no blades, RPM, grits).
 CRITICAL DWELL WEB EMBED LAW: You MUST naturally weave a clickable HTML hyperlink into the description text to anchor the origin location. You must use exactly this link string inside the sentence structure: <a href="${targetUrlPath}">${originSegment}</a>. Never use any other path format or slug.
-- HARDWARE & SMART SWITCH: Inspect the image for jewelry findings (chains, cords, bails, wire wraps). If hanging hardware is detected, force "primary_use" strictly to "Necklace" or "Pendant". Identify the metals or cords used. If no visual data or photo is unclear, state "I am flying blind" in description and leave fields blank.
+- HARDWARE & SMART SWITCH: Inspect the image for jewelry mountings, settings, chains, cords, bails, or wire wraps.
+  * If hanging hardware or settings are detected, force "primary_use" strictly to the best match (e.g., "Pendant", "Necklace", "Ring / Bezel Setting").
+  * SETTING VS WIRE WRAP: Inspect how the stone is held. If the cabochon is mounted in a bezel, prong, or manufactured metal setting with ZERO wire wrap, force "wire_material" strictly to "None" and detail the mounting in "setting_ready" (e.g., "Bezel Setting - Ready to Wear" or "Prong Setting").
+  * If the cabochon is wire wrapped, specify the wire metal in "wire_material" and set "setting_ready" to "Wire Wrapped".
+  * Identify primary metals or chains in "primary_medium" and accent metals in "secondary_medium".
+  * If no visual data or photo is unclear, state "I am flying blind" in description and leave fields blank.
 
 Return ONLY valid JSON matching this structure:
 {
@@ -216,6 +221,7 @@ Return ONLY valid JSON matching this structure:
   "primary_medium": "",
   "secondary_medium": "",
   "wire_material": "",
+  "setting_ready": "",
   "bail_included": ""
 }`;
 
@@ -245,6 +251,7 @@ Return ONLY valid JSON matching this structure:
           primary_medium: parsedVision.primary_medium || "",
           secondary_medium: parsedVision.secondary_medium || "",
           wire_material: parsedVision.wire_material || "",
+          setting_ready: parsedVision.setting_ready || "",
           bail_included: parsedVision.bail_included || ""
         });
       }
