@@ -81,17 +81,22 @@ function resolveOriginHandle(locationSegment, livePages) {
   const cleanLoc = (locationSegment || "").toLowerCase().trim();
   if (!cleanLoc) return "";
 
-  // Rule 1: Vendor Exception
-  if (cleanLoc.includes("irv") || cleanLoc.includes("richardson")) {
-    return "shopped-rock-collection";
+  // Rule 1: Richardson's Exception
+  if (cleanLoc.includes("richardson")) {
+    return "the-richardson-strike";
   }
 
-  // Rule 2: Yakima Exception
+  // Rule 2: Irv's Exception
+  if (cleanLoc.includes("irv")) {
+    return "the-shopped-rock";
+  }
+
+  // Rule 3: Yakima Exception
   if (cleanLoc.includes("yakima")) {
     return "chert-road-detour";
   }
 
-  // Rule 3: Dynamic lookup from Shopify Metaobjects list
+  // Rule 4: Dynamic lookup from Shopify Metaobjects list
   const match = livePages.find(p => 
     p.canonical_name.toLowerCase().includes(cleanLoc) || 
     p.handle.toLowerCase().replace(/-/g, " ").includes(cleanLoc)
@@ -101,6 +106,20 @@ function resolveOriginHandle(locationSegment, livePages) {
 
   // Fallback: standard hyphenated slug format
   return cleanLoc.replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, "-");
+}
+
+function resolveCollectionData(locationSegment, defaultOriginSlug) {
+  const cleanLoc = (locationSegment || "").toLowerCase().trim();
+  
+  if (cleanLoc.includes("richardson")) {
+    return { slug: "the-3000-mile-run", name: "The 3,000-Mile Run Collection" };
+  }
+  
+  if (cleanLoc.includes("irv")) {
+    return { slug: "the-shopped-rock", name: "The Shopped Rock Collection" };
+  }
+
+  return { slug: defaultOriginSlug, name: `${locationSegment.trim()} Collection` };
 }
 
 function getGeoData(stoneFamily) {
@@ -184,12 +203,11 @@ Return valid JSON matching the structure perfectly with no markup text.`;
       
       const livePages = await getLiveOriginPages(admin);
       const finalTargetSlug = resolveOriginHandle(originSegment, livePages);
-      const targetUrlPath = `/pages/${finalTargetSlug}`;
       
-      // 🟢 DYNAMIC COLLECTION CHECK
-      const collectionSlug = collectionInput ? collectionInput.toLowerCase().replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, "-") : "";
-      const collectionUrlPath = collectionSlug ? `/collections/${collectionSlug}` : "";
-      const collectionHookInstructions = collectionUrlPath ? `\n  2. A Collection Hook: You MUST embed this exact string: <a href="${collectionUrlPath}">${collectionInput}</a>` : "";
+      const collectionData = resolveCollectionData(originSegment, finalTargetSlug);
+
+      const targetUrlPath = `/pages/${finalTargetSlug}`;
+      const collectionUrlPath = `/collections/${collectionData.slug}`;
 
       let imageBase64 = clientBase64 && clientBase64 !== "undefined" ? String(clientBase64).trim() : "";
       let imageMimeType = clientMime;
@@ -208,7 +226,8 @@ Return valid JSON matching the structure perfectly with no markup text.`;
       const promptText = `You are a lapidary artist and master jeweler for Rockhound Studio. Analyze this photo.
 - description: Poetic, spare, story-driven product description strictly UNDER 100 WORDS. First person voice ("Bob and Janyce" or "Janyce here..."). Credit craftsmanship strictly as "handcrafted by Bob and Janyce". ZERO workshop references.
 CRITICAL DWELL WEB EMBED LAW: You MUST naturally weave HTML hyperlinks into the description text. You are strictly forbidden from altering the anchor tags below. Copy and paste them EXACTLY:
-  1. An Origin Hook: You MUST embed this exact string: <a href="${targetUrlPath}">${originSegment}</a>${collectionHookInstructions}
+  1. Origin Hook: <a href="${targetUrlPath}">${originSegment} Story</a>
+  2. Collection Hook: <a href="${collectionUrlPath}">${collectionData.name}</a>
 - primary_use: Smart Switch! Force strictly to best match (e.g., "Pendant (Finished Jewelry)", "Necklace", "Ring / Bezel Setting", "Cabochon", "Wire Wrap (Finished Jewelry)").
 - MANDATORY BENCH FINDINGS & JEWELRY LAWS:
   * setting_ready: Look closely at the mounting. If cabochon is in a bezel setting, MUST return "Bezel Setting - Ready to Wear". If prong setting, return "Prong Setting - Ready to Wear". If wire wrapped, return "Wire Wrapped - Ready to Wear". NEVER LEAVE BLANK FOR MOUNTED STONES!
