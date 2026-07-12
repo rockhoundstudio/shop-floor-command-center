@@ -175,7 +175,7 @@ export const action = async ({ request }) => {
     }
 
     // ==========================================
-    // INTENT: TITLE PARSE
+    // INTENT: TITLE PARSE & DWELL WEB ROUTING
     // ==========================================
     if (intent === "titleParse") {
       try {
@@ -235,42 +235,45 @@ Context Data:
 
 Rules:
 1. For Segment 1 ("${segment1}"), return all known geological data: mohs_hardness, luster, fracture, cleavage, specific_gravity, diaphaneity, crystal_system, geological_era, mineral_class, rock_composition, rock_formation, geological_age, fracture_pattern. Set material strictly to "Stone". Set stone_family strictly to the best match from STONE_FAMILIES_EXACT (must be exact lowercase string, if no exact match pick closest).
-2. For Segment 2 ("${segment2}"), check against LIVE_ORIGIN_PAGES and SHOPPED_ROCK_VENDORS.
+2. DWELL WEB ROUTING for Segment 2 ("${segment2}"):
+   - Check if Segment 2 is "Irv's Rock and Jewelry" or "Irv's Rock & Jewelry" or matches SHOPPED_ROCK_VENDORS.
+   - If it is Irv's or a Shopped Rock vendor: Route origin_handle strictly to "shopped-rock-collection".
+   - For all other field locations (e.g., Yakima Canyon, Yakima River, Spokane River): Generate a clean, lowercase, hyphenated URL slug from the exact location string (e.g. "yakima-river", "yakima-canyon").
    - Fuzzy match against LIVE_ORIGIN_PAGES. If a match is found:
      - collection_name = "${segment2}"
-     - collection_location = pick the single best match from this exact list (must be one of these strings, character-for-character, no other values allowed): ["Spokane River", "Yakima Canyon", "Yellowstone River", "Richardson's Rock Ranch", "The 3,000-Mile Run", "Nickel Back", "Rufus Serpentine", "The Shopped Rock", "The Gallery"]. Match based on the origin/location context. If Shopped Rock vendor, use "The Shopped Rock". If no match, return empty string.
+     - collection_location = pick the single best match from this exact list: ["Spokane River", "Yakima Canyon", "Yellowstone River", "Richardson's Rock Ranch", "The 3,000-Mile Run", "Nickel Back", "Rufus Serpentine", "The Shopped Rock", "The Gallery"]. If Shopped Rock vendor, use "The Shopped Rock". If no match, return empty string.
      - origin_name = canonical_name from LIVE_ORIGIN_PAGES
      - origin_type = "field" (unless it's in SHOPPED_ROCK_VENDORS)
-     - origin_handle = handle from LIVE_ORIGIN_PAGES
+     - origin_handle = handle from LIVE_ORIGIN_PAGES (override with "shopped-rock-collection" if Irv's)
      - needs_new_origin_page = false
      - origin_story = write a short field origin story about this location (under 50 words)
      - collection_story = write a short description of this collection
-     - stone_story = read 'origin_story' from the matched LIVE_ORIGIN_PAGES entry and write a 1-2 sentence hook from it—evocative, specific to this location, written in Janyce's voice (warm, enthusiastic rockhound)
+     - stone_story = read 'origin_story' from the matched LIVE_ORIGIN_PAGES entry and write a 1-2 sentence hook from it—evocative, specific to this location, written in Janyce's voice.
    - If Segment 2 is in SHOPPED_ROCK_VENDORS:
      - collection_name = "Shopped Rock"
      - collection_location = "The Shopped Rock"
      - origin_name = "${segment2}"
      - origin_type = "vendor"
-     - origin_handle = ""
+     - origin_handle = "shopped-rock-collection"
      - needs_new_origin_page = false
      - origin_story = write a short vendor origin story about this shop (under 50 words)
      - collection_story = write a short description of the Shopped Rock collection
-     - stone_story = write a 1-2 sentence hook about this vendor's material—evocative, written in Janyce's voice (warm, enthusiastic rockhound)
+     - stone_story = write a 1-2 sentence hook about this vendor's material—evocative, written in Janyce's voice.
    - If NO MATCH in either list:
      - collection_name = "${segment2}"
      - collection_location = ""
      - origin_name = "${segment2}"
      - origin_type = "field"
-     - origin_handle = ""
+     - origin_handle = slugified version of "${segment2}" (e.g. "yakima-river")
      - needs_new_origin_page = true
      - origin_story = write a short field origin story about this location (under 50 words)
      - collection_story = write a short description of this collection
-     - stone_story = write a 1-2 sentence hook about this location—evocative, written in Janyce's voice (warm, enthusiastic rockhound)
+     - stone_story = write a 1-2 sentence hook about this location—evocative, written in Janyce's voice.
 3. For Segment 3 ("${segment3}"), return:
    - product_title = "${segment3}"
    - seo_title = "${segment3} | Rockhound Studio"
    - handle = slugified lowercase hyphenated version of "${segment3}"
-4. Set canonical_title to the corrected full piece name combining the validated Stone Family, Origin Name, Piece Title (e.g. "Validated Stone - Validated Origin - Validated Title").
+4. Set canonical_title to the corrected full piece name combining the validated Stone Family, Origin Name, Piece Title.
 5. HARD LAW: Never mention saw blades, RPMs, or technical workshop grit in narrative fields. All craftsmanship must be attributed to Bob and Janyce.
 
 Return ONLY valid JSON with exactly this structure, no explanation, no markdown:
@@ -448,7 +451,7 @@ Return ONLY valid JSON with exactly this structure, no explanation, no markdown:
 
         const promptText = `You are a lapidary artist and gemstone expert. Analyze this stone cabochon or specimen photo for Rockhound Studio and return a JSON object containing these exact fields:
 
-- description: Poetic, spare, story-driven product description UNDER 100 WORDS TOTAL. Rockhound Studio voice — raw, authentic, collector energy. Write in first person as Bob or Janyce from Rockhound Studio. No corporate language. ZERO workshop references (no saw blades, RPMs, or polishing grit stages).
+- description: Poetic, spare, story-driven product description UNDER 100 WORDS TOTAL. Rockhound Studio voice — raw, authentic, collector energy. Write in first person as Bob or Janyce from Rockhound Studio. No corporate language. ZERO workshop references (no saw blades, RPMs, or polishing grit stages). MUST include a natural HTML link weaving the origin location into the text. Use the format: <a href="/pages/ORIGIN-SLUG">Location Name</a> (e.g. If Irv's Rock & Jewelry, link to <a href="/pages/shopped-rock-collection">Irv's Rock & Jewelry</a>. If a field location, link to <a href="/pages/location-slug">Location Name</a>).
 - primary_color: dominant color of the stone (e.g. "golden brown", "chartreuse green")
 - cut_and_shape: cabochon style (e.g. "Freeform Cabochon", "Oval Cabochon")
 - surface_finish: (e.g. "High Polish", "Matte", "Natural Rough")
@@ -868,6 +871,7 @@ HARD NARRATIVE LAWS:
 1. Keep any generated narrative or artist notes UNDER 100 WORDS TOTAL.
 2. ZERO workshop jargon (never mention saw blades, RPMs, or polishing grit stages).
 3. Attribution must strictly be to Bob and Janyce.
+4. If a location is mentioned, weave an HTML link to the location story directly into the text: <a href="/pages/LOCATION-SLUG">Location Name</a> (Irv's links to /pages/shopped-rock-collection).
 
 Return only valid JSON with exactly these keys. If a field is not mentioned, return an empty string for it.
 
