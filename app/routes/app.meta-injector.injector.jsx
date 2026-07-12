@@ -1,7 +1,7 @@
 // ==========================================================================
 // ROCKHOUND STUDIO — TAB 1: NEW PRODUCT INTAKE BENCH
 // File: app/routes/app.meta-injector.injector.jsx
-// (100% Original Logic + Missing setting_ready Wire Soldered)
+// (100% Original Logic + Dwell Web Names Added to Payload)
 // ==========================================================================
 
 import React, { useState, useEffect, useCallback } from "react";
@@ -25,7 +25,7 @@ export function NewProductIntakeTab({ fetcher }) {
     collection_name: "",
     collection_location: "",
     origin_location: "",
-    origin_handle: "", // 🟢 INITIALIZED HERE
+    origin_handle: "", 
     rescued_by: "Bob and Janyce",
     treatment_status: "100% Natural/Untreated",
     origin_story: "",
@@ -77,7 +77,6 @@ export function NewProductIntakeTab({ fetcher }) {
   const [generatedDescription, setGeneratedDescription] = useState("");
   const [geoToast, setGeoToast] = useState(false);
   
-  // Title Parse Toast State
   const [titleToastActive, setTitleToastActive] = useState(false);
   const [titleToastMsg, setTitleToastMsg] = useState("");
   const [titleToastError, setTitleToastError] = useState(false);
@@ -281,7 +280,7 @@ export function NewProductIntakeTab({ fetcher }) {
       collection_name: "",
       collection_location: "",
       origin_location: "",
-      origin_handle: "", // 🟢 RESET HERE
+      origin_handle: "",
       rescued_by: "Bob and Janyce",
       treatment_status: "100% Natural/Untreated",
       origin_story: "",
@@ -370,8 +369,19 @@ export function NewProductIntakeTab({ fetcher }) {
           p.id === pid ? { ...p, stagedResourceUrls: [resourceUrl] } : p
         ));
 
+        // 🟢 THE WELD: Grab Piece Name and Collection Name from state
+        const scannedPiece = pieces.find(p => p.id === pid);
+        const pName = scannedPiece ? scannedPiece.piece_name : "";
+        const cName = sharedFields.collection_name || "";
+
         visionFetcher.submit(
-          { intent: "visionScan", pieceId: pid, imageUrl: resourceUrl },
+          { 
+            intent: "visionScan", 
+            pieceId: pid, 
+            imageUrl: resourceUrl,
+            pieceName: pName,
+            collectionName: cName
+          },
           { method: "post", action: "/app/meta-injector-autofill" }
         );
       })();
@@ -390,14 +400,13 @@ export function NewProductIntakeTab({ fetcher }) {
       const isError = data.success === false;
 
       (isScan && isSuccess) && (() => {
-        // HARDWARE RECEIVER WELD: Pipe hanging specs straight into Section B
         setSharedFields(prev => ({
           ...prev,
           primary_use: data.primary_use || prev.primary_use,
           primary_medium: data.primary_medium || prev.primary_medium,
           secondary_medium: data.secondary_medium || prev.secondary_medium,
           wire_material: data.wire_material || prev.wire_material,
-          setting_ready: data.setting_ready || prev.setting_ready, // 🟢 FIXED WELD
+          setting_ready: data.setting_ready || prev.setting_ready,
           bail_included: data.bail_included || prev.bail_included
         }));
 
@@ -466,7 +475,6 @@ export function NewProductIntakeTab({ fetcher }) {
     if (!autoFillFetcher.data?.titleParse) return;
     const parsed = autoFillFetcher.data.titleParse;
 
-    // SHARED FIELDS
     setSharedFields(prev => {
       let resolvedCollectionLoc = parsed.collection_location || prev.collection_location;
       if (SHOPPED_ROCK_VENDORS.includes(parsed.origin_name)) {
@@ -481,7 +489,7 @@ export function NewProductIntakeTab({ fetcher }) {
         collection_location: resolvedCollectionLoc,
         collectionLocation: resolvedCollectionLoc,
         origin_location: parsed.origin_name || prev.origin_location,
-        origin_handle: parsed.origin_handle || prev.origin_handle, // 🟢 WRITES PARSED SLUG HERE
+        origin_handle: parsed.origin_handle || prev.origin_handle, 
         origin_story: parsed.origin_story || prev.origin_story,
         mohs_hardness: parsed.mohs_hardness || prev.mohs_hardness,
         luster: parsed.luster || prev.luster,
@@ -519,7 +527,6 @@ export function NewProductIntakeTab({ fetcher }) {
       };
     });
 
-    // PER-PIECE ROW — write canonical title back to piece name field
     if (parsed.canonical_title || parsed.product_title) {
       const pieceTitleVal = parsed.canonical_title || parsed.product_title;
       setPieces(prev => prev.map((p, i) =>
@@ -529,7 +536,6 @@ export function NewProductIntakeTab({ fetcher }) {
       ));
     }
 
-    // FLAG — needs new origin page
     if (parsed.needs_new_origin_page) {
       setTitleToastMsg("⚠️ No origin page found — create one for: " + parsed.origin_name);
       setTitleToastError(true);
@@ -624,8 +630,6 @@ export function NewProductIntakeTab({ fetcher }) {
   return (
     <Frame>
       <BlockStack gap="600">
-        
-        {/* TOP BANNER */}
         <Banner title="Machine Auto-Pilot Active — No Typing Required for Studio Constants:" tone="success">
           <BlockStack gap="100">
             <Text as="p" variant="bodyMd">
@@ -645,7 +649,6 @@ export function NewProductIntakeTab({ fetcher }) {
               <input
                 type="text"
                 placeholder="Search products..."
-                aria-label="Search products"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 style={{
@@ -661,7 +664,6 @@ export function NewProductIntakeTab({ fetcher }) {
               {searchQuery !== "" && (
                 <button
                   onClick={() => setSearchQuery("")}
-                  aria-label="Clear search"
                   style={{
                     position: "absolute",
                     right: "12px",
@@ -677,9 +679,7 @@ export function NewProductIntakeTab({ fetcher }) {
                     justifyContent: "center",
                     color: "#5c5f62"
                   }}
-                >
-                  ✕
-                </button>
+                >✕</button>
               )}
             </div>
 
@@ -718,7 +718,6 @@ export function NewProductIntakeTab({ fetcher }) {
                           onChange={(v) => handlePieceChange(piece.id, "piece_name", v)}
                           onBlur={() => handlePieceNameBlur(piece.id, piece.piece_name)}
                           autoComplete="off"
-                          accessibilityLabel={`Enter Piece Name for row ${index + 1}`}
                         />
                         <div style={{ marginTop: "4px" }}>
                           <Text variant="bodySm" tone="subdued" as="p">
@@ -734,7 +733,6 @@ export function NewProductIntakeTab({ fetcher }) {
                           fullWidth
                           onClick={() => handleRemoveRow(piece.id)}
                           disabled={pieces.length <= 1}
-                          accessibilityLabel={`Remove row ${index + 1}`}
                         >
                           Remove
                         </Button>
@@ -753,7 +751,6 @@ export function NewProductIntakeTab({ fetcher }) {
                       type="image" 
                       allowMultiple 
                       onDrop={(_dropFiles, acceptedFiles) => handleDropZoneDrop(piece.id, acceptedFiles)}
-                      accessibilityLabel={`Upload stone photos for row ${index + 1}`}
                     >
                       <DropZone.FileUpload actionTitle="Drop photos here or click to upload" />
                     </DropZone>
@@ -768,7 +765,6 @@ export function NewProductIntakeTab({ fetcher }) {
                                 e.preventDefault();
                                 handleRemoveRowPhoto(piece.id, i);
                               }}
-                              aria-label={`Remove photo ${i + 1}`}
                               style={{
                                 position: "absolute",
                                 top: "-12px",
@@ -788,9 +784,7 @@ export function NewProductIntakeTab({ fetcher }) {
                                 boxShadow: "0 1px 3px rgba(0,0,0,0.1)",
                                 zIndex: 10
                               }}
-                            >
-                              ✕
-                            </button>
+                            >✕</button>
                           </div>
                         ))}
                       </div>
@@ -805,7 +799,6 @@ export function NewProductIntakeTab({ fetcher }) {
                         onClick={() => handleScanGeminiPhotos(piece)}
                         loading={isScanning}
                         disabled={disableScan}
-                        accessibilityLabel={`Scan photo with Gemini for row ${index + 1}`}
                       >
                         {isScanning && <Spinner size="small" />}
                         Scan with Gemini
@@ -832,7 +825,6 @@ export function NewProductIntakeTab({ fetcher }) {
                         multiline={6}
                         autoComplete="off"
                         placeholder="Gemini will generate a poetic, spare description under 100 words..."
-                        accessibilityLabel={`Generated product description for row ${index + 1}`}
                       />
                     </div>
 
@@ -844,7 +836,6 @@ export function NewProductIntakeTab({ fetcher }) {
                         multiline={3}
                         autoComplete="off"
                         placeholder="Internal shop notes about this stone's character..."
-                        accessibilityLabel={`Enter Artist Notes for row ${index + 1}`}
                       />
                     </div>
 
@@ -856,7 +847,6 @@ export function NewProductIntakeTab({ fetcher }) {
                           onChange={(v) => handlePieceChange(piece.id, "price", v)}
                           autoComplete="off"
                           placeholder="e.g. 45.00"
-                          accessibilityLabel={`Enter Price for row ${index + 1}`}
                         />
                       </div>
                       <div style={{ minHeight: "54px" }}>
@@ -866,7 +856,6 @@ export function NewProductIntakeTab({ fetcher }) {
                           onChange={(v) => handlePieceChange(piece.id, "weight_grams", v)}
                           autoComplete="off"
                           placeholder="e.g. 14.5"
-                          accessibilityLabel={`Enter Weight in grams for row ${index + 1}`}
                         />
                       </div>
                     </div>
@@ -878,7 +867,6 @@ export function NewProductIntakeTab({ fetcher }) {
                           value={piece.dimensions_mm}
                           onChange={(v) => handlePieceChange(piece.id, "dimensions_mm", v)}
                           autoComplete="off"
-                          accessibilityLabel={`Enter Dimensions for row ${index + 1}`}
                         />
                       </div>
                       <div style={{ minHeight: "54px" }}>
@@ -887,7 +875,6 @@ export function NewProductIntakeTab({ fetcher }) {
                           value={piece.cut_and_shape}
                           onChange={(v) => handlePieceChange(piece.id, "cut_and_shape", v)}
                           autoComplete="off"
-                          accessibilityLabel={`Enter Cut and Shape for row ${index + 1}`}
                         />
                       </div>
                       <div style={{ minHeight: "54px" }}>
@@ -896,7 +883,6 @@ export function NewProductIntakeTab({ fetcher }) {
                           options={[...surfaceFinishOptions.map(o => ({ label: o, value: o }))]}
                           value={piece.surface_finish}
                           onChange={(v) => handlePieceChange(piece.id, "surface_finish", v)}
-                          accessibilityLabel={`Select surface finish for row ${index + 1}`}
                         />
                       </div>
                       <div style={{ minHeight: "54px" }}>
@@ -906,7 +892,6 @@ export function NewProductIntakeTab({ fetcher }) {
                           onChange={(v) => handlePieceChange(piece.id, "color", v)}
                           autoComplete="off"
                           placeholder="Primary color"
-                          accessibilityLabel={`Enter color for row ${index + 1}`}
                         />
                       </div>
                     </div>
@@ -926,7 +911,6 @@ export function NewProductIntakeTab({ fetcher }) {
                 icon={PlusIcon}
                 size="large"
                 onClick={handleAddRow}
-                accessibilityLabel="Add new piece row"
               >
                 Add Row
               </Button>
@@ -944,7 +928,6 @@ export function NewProductIntakeTab({ fetcher }) {
                   value={sharedFields.material}
                   onChange={(v) => handleSharedFieldChange("material", v)}
                   autoComplete="off"
-                  accessibilityLabel="Enter shared material"
                 />
               </div>
               <div style={{ minHeight: "54px" }}>
@@ -977,7 +960,6 @@ export function NewProductIntakeTab({ fetcher }) {
                   ]}
                   value={sharedFields.stone_family}
                   onChange={(v) => handleStoneFamilyChange(v)}
-                  accessibilityLabel="Select shared stone family"
                 />
               </div>
               <div style={{ minHeight: "54px" }}>
@@ -986,7 +968,6 @@ export function NewProductIntakeTab({ fetcher }) {
                   value={sharedFields.collection_name}
                   onChange={(v) => handleSharedFieldChange("collection_name", v)}
                   autoComplete="off"
-                  accessibilityLabel="Enter collection name"
                 />
               </div>
               <div style={{ minHeight: "54px" }}>
@@ -995,11 +976,9 @@ export function NewProductIntakeTab({ fetcher }) {
                   options={[{ label: "Select location...", value: "" }, ...collectionLocationOptions.map(o => ({ label: o, value: o }))]}
                   value={sharedFields.collection_location}
                   onChange={(v) => handleSharedFieldChange("collection_location", v)}
-                  accessibilityLabel="Select collection location"
                 />
               </div>
               
-              {/* 🟢 THE ORIGIN GAUGES - LOCATION AND SLUG SIDE-BY-SIDE */}
               <div style={{ minHeight: "54px" }}>
                 <TextField
                   label={renderLabel("Origin Location", "origin_location", sharedFields.origin_location)}
@@ -1007,7 +986,6 @@ export function NewProductIntakeTab({ fetcher }) {
                   onChange={(v) => handleSharedFieldChange("origin_location", v)}
                   autoComplete="off"
                   placeholder="Where was this stone found?"
-                  accessibilityLabel="Enter origin location"
                 />
               </div>
               <div style={{ minHeight: "54px" }}>
@@ -1017,7 +995,6 @@ export function NewProductIntakeTab({ fetcher }) {
                   onChange={(v) => handleSharedFieldChange("origin_handle", v)}
                   autoComplete="off"
                   placeholder="e.g. yakima-river-chert-road"
-                  accessibilityLabel="Enter origin handle URL slug"
                 />
               </div>
 
@@ -1027,7 +1004,6 @@ export function NewProductIntakeTab({ fetcher }) {
                   options={[...rescuedByOptions.map(o => ({ label: o, value: o }))]}
                   value={sharedFields.rescued_by}
                   onChange={(v) => handleSharedFieldChange("rescued_by", v)}
-                  accessibilityLabel="Select rescued by"
                 />
               </div>
               <div style={{ minHeight: "54px" }}>
@@ -1036,7 +1012,6 @@ export function NewProductIntakeTab({ fetcher }) {
                   options={[...treatmentStatusOptions.map(o => ({ label: o, value: o }))]}
                   value={sharedFields.treatment_status}
                   onChange={(v) => handleSharedFieldChange("treatment_status", v)}
-                  accessibilityLabel="Select treatment status"
                 />
               </div>
               <div style={{ minHeight: "54px", gridColumn: "span 2" }}>
@@ -1046,7 +1021,6 @@ export function NewProductIntakeTab({ fetcher }) {
                   onChange={(v) => handleSharedFieldChange("origin_story", v)}
                   autoComplete="off"
                   multiline={2}
-                  accessibilityLabel="Enter shared origin story"
                 />
               </div>
               <div style={{ minHeight: "54px" }}>
@@ -1055,7 +1029,6 @@ export function NewProductIntakeTab({ fetcher }) {
                   options={[{ label: "Select...", value: "" }, ...productTypeOptions.map(o => ({ label: o, value: o }))]}
                   value={sharedFields.primary_use}
                   onChange={(v) => handleSharedFieldChange("primary_use", v)}
-                  accessibilityLabel="Select product type"
                 />
               </div>
             </div>
@@ -1077,7 +1050,6 @@ export function NewProductIntakeTab({ fetcher }) {
                     onChange={(v) => handleSharedFieldChange("primary_medium", v)}
                     autoComplete="off"
                     placeholder="e.g. .925 Sterling Silver"
-                    accessibilityLabel="Enter Primary Medium"
                   />
                 </div>
                 <div style={{ minHeight: "54px" }}>
@@ -1087,7 +1059,6 @@ export function NewProductIntakeTab({ fetcher }) {
                     onChange={(v) => handleSharedFieldChange("secondary_medium", v)}
                     autoComplete="off"
                     placeholder="e.g. 14k Gold Accents"
-                    accessibilityLabel="Enter Secondary Medium"
                   />
                 </div>
                 <div style={{ minHeight: "54px" }}>
@@ -1097,7 +1068,6 @@ export function NewProductIntakeTab({ fetcher }) {
                     onChange={(v) => handleSharedFieldChange("wire_material", v)}
                     autoComplete="off"
                     placeholder="e.g. Antiqued Copper Wire"
-                    accessibilityLabel="Enter Wire Material"
                   />
                 </div>
                 <div style={{ minHeight: "54px" }}>
@@ -1107,7 +1077,6 @@ export function NewProductIntakeTab({ fetcher }) {
                     onChange={(v) => handleSharedFieldChange("bail_included", v)}
                     autoComplete="off"
                     placeholder="e.g. Silver Filigree Pinch Bail"
-                    accessibilityLabel="Enter Bail Included"
                   />
                 </div>
                 <div style={{ minHeight: "54px", gridColumn: "span 2" }}>
@@ -1117,7 +1086,6 @@ export function NewProductIntakeTab({ fetcher }) {
                     onChange={(v) => handleSharedFieldChange("setting_ready", v)}
                     autoComplete="off"
                     placeholder="e.g. Ready to Wear (Chain Included) or Custom Blank"
-                    accessibilityLabel="Enter Setting Ready"
                   />
                 </div>
               </div>
@@ -1135,7 +1103,6 @@ export function NewProductIntakeTab({ fetcher }) {
                 icon={MagicIcon}
                 onClick={() => handleGenerateDescription({ sharedFields, pieces, descFetcher: descriptionFetcher })}
                 loading={isDescLoading}
-                accessibilityLabel="Write Description with Gemini"
               >
                 Write Description with Gemini
               </Button>
@@ -1154,7 +1121,6 @@ export function NewProductIntakeTab({ fetcher }) {
                 onChange={(v) => handlePieceChange(pieces[0]?.id, "generated_description", v)}
                 multiline={10}
                 autoComplete="off"
-                accessibilityLabel="Generated Description"
               />
             )}
           </BlockStack>
@@ -1183,7 +1149,6 @@ export function NewProductIntakeTab({ fetcher }) {
               variant="primary"
               fullWidth
               onClick={handleStartNewBatch}
-              accessibilityLabel="Start New Batch"
             >
               Start New Batch (Wipe Section A, Keep Section B)
             </Button>
@@ -1196,7 +1161,6 @@ export function NewProductIntakeTab({ fetcher }) {
               onClick={handleCreateAll}
               loading={isSubmitting}
               disabled={isSubmitting}
-              accessibilityLabel="Submit and Create All Pieces"
             >
               Create All Pieces
             </Button>
