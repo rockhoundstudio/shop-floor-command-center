@@ -198,15 +198,16 @@ Return valid JSON matching the structure perfectly with no markup text.`;
         }
       }
 
-      const promptText = `You are a lapidary artist and jeweler for Rockhound Studio. Analyze this photo and return a JSON object.
+      const promptText = `You are a lapidary artist and master jeweler for Rockhound Studio. Analyze this photo and return a JSON object.
 - description: Poetic, spare, story-driven product description strictly UNDER 100 WORDS. First person voice ("Bob and Janyce" or "Janyce here..."). Credit craftsmanship strictly as "handcrafted by Bob and Janyce". ZERO workshop references (no blades, RPM, grits).
 CRITICAL DWELL WEB EMBED LAW: You MUST naturally weave a clickable HTML hyperlink into the description text to anchor the origin location. You must use exactly this link string inside the sentence structure: <a href="${targetUrlPath}">${originSegment}</a>. Never use any other path format or slug.
-- HARDWARE & SMART SWITCH: Inspect the image for jewelry mountings, settings, chains, cords, bails, or wire wraps.
-  * If hanging hardware or settings are detected, force "primary_use" strictly to the best match (e.g., "Pendant", "Necklace", "Ring / Bezel Setting").
-  * SETTING VS WIRE WRAP: Inspect how the stone is held. If the cabochon is mounted in a bezel, prong, or manufactured metal setting with ZERO wire wrap, force "wire_material" strictly to "None" and detail the mounting in "setting_ready" (e.g., "Bezel Setting - Ready to Wear" or "Prong Setting").
-  * If the cabochon is wire wrapped, specify the wire metal in "wire_material" and set "setting_ready" to "Wire Wrapped".
-  * Identify primary metals or chains in "primary_medium" and accent metals in "secondary_medium".
-  * If no visual data or photo is unclear, state "I am flying blind" in description and leave fields blank.
+- primary_use: Smart Switch! Force strictly to best match (e.g., "Pendant (Finished Jewelry)", "Necklace", "Ring / Bezel Setting", "Cabochon", "Wire Wrap (Finished Jewelry)").
+- setting_ready: CRITICAL FIELD. How is the stone mounted? Output exact mounting (e.g., "Bezel Setting - Ready to Wear", "Prong Setting - Ready to Wear", "Wire Wrapped - Ready to Wear", or "Custom Cabochon Blank"). NEVER leave blank if mounted!
+- wire_material: If wire wrapped, output wire metal (e.g., "Antiqued Copper Wire"). If mounted in a bezel or prong setting with zero wire, force strictly to "None".
+- primary_medium: Primary metal, chain, or leather cord (e.g., ".925 Sterling Silver Chain", "Black Leather Cord").
+- secondary_medium: Accent metals or secondary elements (e.g., "14k Gold Bezel Accents", "None").
+- bail_included: Type of bail holding the piece (e.g., "Sterling Silver Filigree Pinch Bail", "Integrated Bezel Bail", "None").
+- If no visual data or photo is unclear, state "I am flying blind" in description and leave hardware fields blank.
 
 Return ONLY valid JSON matching this structure:
 {
