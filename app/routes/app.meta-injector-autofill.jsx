@@ -145,6 +145,10 @@ export const action = async ({ request }) => {
 
       const { pagesList } = await getLiveStoreDirectory(admin);
       const resolvedHandle = resolveOriginHandle(segment2, pagesList);
+      const collectionData = resolveCollectionData(segment2, resolvedHandle);
+
+      const matchedPage = pagesList.find(p => p.url.includes(resolvedHandle));
+      const extractedStory = matchedPage ? matchedPage.excerpt : "";
 
       const promptText = `You are an expert lapidary assistant for Rockhound Studio. Analyze these segments:
 - Family: "${segment1}", Origin: "${segment2}", Title: "${segment3}"
@@ -171,7 +175,11 @@ Return valid JSON matching the structure perfectly with no markup text.`;
         const finalParse = {
           ...parsed,
           ...dbGeoData,
-          origin_handle: resolvedHandle
+          origin_handle: resolvedHandle,
+          origin_story: extractedStory,
+          origin_location: segment2,
+          collection_name: collectionData.name,
+          collection_location: collectionData.name.replace(" Collection", "")
         };
         
         return Response.json({ titleParse: finalParse });
@@ -203,6 +211,9 @@ Return valid JSON matching the structure perfectly with no markup text.`;
       const defaultCollection = resolveCollectionData(originSegment, defaultOriginSlug);
       const targetUrlPath = `/pages/${defaultOriginSlug}`;
       const collectionUrlPath = `/collections/${defaultCollection.slug}`;
+
+      const matchedPage = pagesList.find(p => p.url.includes(defaultOriginSlug));
+      const extractedStory = matchedPage ? matchedPage.excerpt : "";
 
       let imageBase64 = clientBase64 && clientBase64 !== "undefined" ? String(clientBase64).trim() : "";
       let imageMimeType = clientMime;
@@ -296,7 +307,12 @@ CRITICAL DWELL WEB EMBED LAW: Look at the Origin Segment Janyce entered ("${orig
           secondary_medium: resolved_secondary_medium,
           wire_material: resolved_wire_material,
           setting_ready: resolved_setting_ready,
-          bail_included: resolved_bail_included
+          bail_included: resolved_bail_included,
+          origin_story: extractedStory,
+          origin_handle: defaultOriginSlug,
+          origin_location: originSegment,
+          collection_name: defaultCollection.name,
+          collection_location: defaultCollection.name.replace(" Collection", "")
         });
       }
       return Response.json({ success: false, error: "Vision API Failure" });
