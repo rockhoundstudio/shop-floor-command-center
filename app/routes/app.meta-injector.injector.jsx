@@ -1,10 +1,10 @@
 // ==========================================================================
 // ROCKHOUND STUDIO — TAB 1: NEW PRODUCT INTAKE BENCH
 // File: app/routes/app.meta-injector.injector.jsx
-// (100% Original Logic + Dwell Web Names Added to Payload)
+// (100% Original Logic + useRef Stale Closure Bypass for Dwell Web)
 // ==========================================================================
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { BlockStack, Card, Text, TextField, Select, Button, Banner, DropZone, Spinner, Frame, Toast, InlineGrid, Box, Divider } from "@shopify/polaris";
 import { PlusIcon, MagicIcon } from "@shopify/polaris-icons";
 import { useFetcher } from "react-router";
@@ -67,6 +67,12 @@ export function NewProductIntakeTab({ fetcher }) {
       isUploading: false
     }
   ]);
+
+  // 🟢 THE WELD: Live State References to bypass the Stale Closure ghost
+  const latestPieces = useRef(pieces);
+  const latestShared = useRef(sharedFields);
+  useEffect(() => { latestPieces.current = pieces; }, [pieces]);
+  useEffect(() => { latestShared.current = sharedFields; }, [sharedFields]);
 
   const [photoFiles, setPhotoFiles] = useState([]);
   const [photoPreviewUrls, setPhotoPreviewUrls] = useState([]);
@@ -369,10 +375,12 @@ export function NewProductIntakeTab({ fetcher }) {
           p.id === pid ? { ...p, stagedResourceUrls: [resourceUrl] } : p
         ));
 
-        // 🟢 THE WELD: Grab Piece Name and Collection Name from state
-        const scannedPiece = pieces.find(p => p.id === pid);
+        // 🟢 THE WELD: Extract from live useRef state to destroy the Stale Closure
+        const scannedPiece = latestPieces.current.find(p => p.id === pid);
         const pName = scannedPiece ? scannedPiece.piece_name : "";
-        const cName = sharedFields.collection_name || "";
+        const cName = latestShared.current.collection_name || "";
+        const base64 = scannedPiece ? scannedPiece.imageBase64 : "";
+        const mime = scannedPiece ? scannedPiece.imageMimeType : "image/jpeg";
 
         visionFetcher.submit(
           { 
@@ -380,7 +388,9 @@ export function NewProductIntakeTab({ fetcher }) {
             pieceId: pid, 
             imageUrl: resourceUrl,
             pieceName: pName,
-            collectionName: cName
+            collectionName: cName,
+            imageBase64: base64,  // Forces image through pipeline instantly
+            imageMimeType: mime
           },
           { method: "post", action: "/app/meta-injector-autofill" }
         );

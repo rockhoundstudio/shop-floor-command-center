@@ -175,16 +175,19 @@ Return valid JSON matching the structure perfectly with no markup text.`;
       const pieceId = body.get("pieceId");
       const clientBase64 = body.get("imageBase64");
       const clientMime = body.get("imageMimeType") || "image/jpeg";
-      const productTitle = body.get("imageUrl") || ""; 
-
-      // Resolve the title layout to find the link target BEFORE asking Gemini
+      
       const titleInput = body.get("pieceName") || "";
+      const collectionInput = body.get("collectionName") || "";
+      
       const segments = titleInput.split(/\s+[-–—]\s+/);
       const originSegment = segments[1]?.trim() || "Unknown Origin";
       
       const livePages = await getLiveOriginPages(admin);
       const finalTargetSlug = resolveOriginHandle(originSegment, livePages);
       const targetUrlPath = `/pages/${finalTargetSlug}`;
+      
+      const collectionSlug = collectionInput.toLowerCase().replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, "-");
+      const collectionUrlPath = collectionSlug ? `/collections/${collectionSlug}` : "#";
 
       let imageBase64 = clientBase64 && clientBase64 !== "undefined" ? String(clientBase64).trim() : "";
       let imageMimeType = clientMime;
@@ -200,17 +203,20 @@ Return valid JSON matching the structure perfectly with no markup text.`;
         }
       }
 
-      const promptText = `You are a lapidary artist and master jeweler for Rockhound Studio. Analyze this photo and return a JSON object.
-- description: Poetic, spare, story-driven product description strictly UNDER 100 WORDS. First person voice ("Bob and Janyce" or "Janyce here..."). Credit craftsmanship strictly as "handcrafted by Bob and Janyce". ZERO workshop references (no blades, RPM, grits).
-CRITICAL DWELL WEB EMBED LAW: You MUST naturally weave a clickable HTML hyperlink into the description text to anchor the origin location. You must use exactly this link string inside the sentence structure: <a href="${targetUrlPath}">${originSegment}</a>. Never use any other path format or slug.
+      const promptText = `You are a lapidary artist and master jeweler for Rockhound Studio. Analyze this photo.
+- description: Poetic, spare, story-driven product description strictly UNDER 100 WORDS. First person voice ("Bob and Janyce" or "Janyce here..."). Credit craftsmanship strictly as "handcrafted by Bob and Janyce". ZERO workshop references.
+CRITICAL DWELL WEB EMBED LAW: You MUST naturally weave TWO clickable HTML hyperlinks into the description text:
+  1. An Origin Hook linking to the stone's origin story: <a href="${targetUrlPath}">${originSegment}</a>
+  2. A Collection Hook linking to the specific collection: <a href="${collectionUrlPath}">${collectionInput}</a>
 - primary_use: Smart Switch! Force strictly to best match (e.g., "Pendant (Finished Jewelry)", "Necklace", "Ring / Bezel Setting", "Cabochon", "Wire Wrap (Finished Jewelry)").
-- MANDATORY BENCH FINDINGS & JEWELRY LAWS (YOU ARE FORBIDDEN FROM LEAVING THESE BLANK IF MOUNTED OR JEWELRY):
+- MANDATORY BENCH FINDINGS & JEWELRY LAWS:
   * setting_ready: Look closely at the mounting. If cabochon is in a bezel setting, MUST return "Bezel Setting - Ready to Wear". If prong setting, return "Prong Setting - Ready to Wear". If wire wrapped, return "Wire Wrapped - Ready to Wear". NEVER LEAVE BLANK FOR MOUNTED STONES!
-  * wire_material: If wire wrapped, output the wire metal (e.g., "Antiqued Copper Wire"). If in a bezel or prong setting with zero wire, MUST return strictly: "None — Bezel Mounted" (or "None — Prong Mounted").
+  * wire_material: If wire wrapped, output the wire metal (e.g., "Antiqued Copper Wire"). If in a bezel or prong setting with zero wire, MUST return strictly: "None — Bezel Mounted".
   * primary_medium: State the primary metal or mounting material (e.g., ".925 Sterling Silver Bezel", "Copper Bezel", "Alloy"). Do not leave blank!
   * secondary_medium: State accent metal or "None".
   * bail_included: State the bail style (e.g., "Integrated Bezel Bail", "Sterling Silver Pinch Bail") or "None".`;
 
+      // 🟢 THE WELD: Required schema lock forces Gemini to fill every key
       const geminiRes = await fetchWithRetry("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ 
@@ -234,7 +240,8 @@ CRITICAL DWELL WEB EMBED LAW: You MUST naturally weave a clickable HTML hyperlin
                 wire_material: { type: "STRING" },
                 setting_ready: { type: "STRING" },
                 bail_included: { type: "STRING" }
-              }
+              },
+              required: ["description", "primary_use", "setting_ready", "wire_material", "primary_medium", "secondary_medium", "bail_included"]
             }
           }
         })
@@ -247,37 +254,21 @@ CRITICAL DWELL WEB EMBED LAW: You MUST naturally weave a clickable HTML hyperlin
         if (first !== -1 && last !== -1) cleanJson = cleanJson.slice(first, last + 1);
         const parsedVision = JSON.parse(cleanJson);
         
-        const resolved_primary_use = parsedVision.primary_use || parsedVision.use || parsedVision.product_type || "";
-        const resolved_primary_medium = parsedVision.primary_medium || parsedVision.medium || parsedVision.metal || parsedVision.primary_metal || "";
-        const resolved_secondary_medium = parsedVision.secondary_medium || parsedVision.accent || parsedVision.secondary_metal || "";
-        const resolved_wire_material = parsedVision.wire_material || parsedVision.wire || parsedVision.wire_wrap || "";
-        const resolved_setting_ready = parsedVision.setting_ready || parsedVision.setting || parsedVision.mounting || parsedVision.bezel || "";
-        const resolved_bail_included = parsedVision.bail_included || parsedVision.bail || "";
-
-        // 🟢 TELEMETRY GAUGE: Print exact payload to Render log before shipping to browser
-        console.log("VISION SCAN PAYLOAD:", JSON.stringify({
-          setting_ready: resolved_setting_ready,
-          primary_medium: resolved_primary_medium,
-          wire_material: resolved_wire_material,
-          bail_included: resolved_bail_included,
-          primary_use: resolved_primary_use
-        }));
-
         return Response.json({
           success: true, intent: "visionScan", pieceId,
           description: parsedVision.description || "",
-          primary_color: parsedVision.primary_color || parsedVision.color || "",
-          cut_and_shape: parsedVision.cut_and_shape || parsedVision.cut || "",
-          surface_finish: parsedVision.surface_finish || parsedVision.finish || "",
+          primary_color: parsedVision.primary_color || "",
+          cut_and_shape: parsedVision.cut_and_shape || "",
+          surface_finish: parsedVision.surface_finish || "",
           stone_shape: parsedVision.stone_shape || "",
-          dimensions_mm: parsedVision.dimensions_mm || parsedVision.dimensions || "",
+          dimensions_mm: parsedVision.dimensions_mm || "",
           pattern: parsedVision.pattern || "",
-          primary_use: resolved_primary_use,
-          primary_medium: resolved_primary_medium,
-          secondary_medium: resolved_secondary_medium,
-          wire_material: resolved_wire_material,
-          setting_ready: resolved_setting_ready,
-          bail_included: resolved_bail_included
+          primary_use: parsedVision.primary_use || "",
+          primary_medium: parsedVision.primary_medium || "",
+          secondary_medium: parsedVision.secondary_medium || "",
+          wire_material: parsedVision.wire_material || "",
+          setting_ready: parsedVision.setting_ready || "",
+          bail_included: parsedVision.bail_included || ""
         });
       }
       return Response.json({ success: false, error: "Vision API Failure" });
