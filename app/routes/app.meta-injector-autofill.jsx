@@ -167,7 +167,7 @@ Return valid JSON matching the structure perfectly with no markup text.`;
     }
 
     // ==========================================
-    // INTENT: VISION SCAN (Splicing Exact Links)
+    // INTENT: VISION SCAN (Splicing Exact Links & Hardware)
     // ==========================================
     if (intent === "visionScan") {
       const pieceId = body.get("pieceId");
@@ -198,9 +198,10 @@ Return valid JSON matching the structure perfectly with no markup text.`;
         }
       }
 
-      const promptText = `You are a lapidary artist. Analyze this stone photo for Rockhound Studio and return a JSON object.
-- description: Poetic, spare, story-driven product description UNDER 100 WORDS. First person voice ("Bob and Janyce" or "Janyce here..."). No workshop references (no blades, RPM, grits).
+      const promptText = `You are a lapidary artist and jeweler for Rockhound Studio. Analyze this photo and return a JSON object.
+- description: Poetic, spare, story-driven product description strictly UNDER 100 WORDS. First person voice ("Bob and Janyce" or "Janyce here..."). Credit craftsmanship strictly as "handcrafted by Bob and Janyce". ZERO workshop references (no blades, RPM, grits).
 CRITICAL DWELL WEB EMBED LAW: You MUST naturally weave a clickable HTML hyperlink into the description text to anchor the origin location. You must use exactly this link string inside the sentence structure: <a href="${targetUrlPath}">${originSegment}</a>. Never use any other path format or slug.
+- HARDWARE & SMART SWITCH: Inspect the image for jewelry findings (chains, cords, bails, wire wraps). If hanging hardware is detected, force "primary_use" strictly to "Necklace" or "Pendant". Identify the metals or cords used. If no visual data or photo is unclear, state "I am flying blind" in description and leave fields blank.
 
 Return ONLY valid JSON matching this structure:
 {
@@ -210,7 +211,12 @@ Return ONLY valid JSON matching this structure:
   "surface_finish": "",
   "stone_shape": "",
   "dimensions_mm": "",
-  "pattern": ""
+  "pattern": "",
+  "primary_use": "",
+  "primary_medium": "",
+  "secondary_medium": "",
+  "wire_material": "",
+  "bail_included": ""
 }`;
 
       const geminiRes = await fetchWithRetry("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY, {
@@ -233,7 +239,13 @@ Return ONLY valid JSON matching this structure:
           surface_finish: parsedVision.surface_finish || "",
           stone_shape: parsedVision.stone_shape || "",
           dimensions_mm: parsedVision.dimensions_mm || "",
-          pattern: parsedVision.pattern || ""
+          pattern: parsedVision.pattern || "",
+          // HARDWARE RECEIVER WELD
+          primary_use: parsedVision.primary_use || "",
+          primary_medium: parsedVision.primary_medium || "",
+          secondary_medium: parsedVision.secondary_medium || "",
+          wire_material: parsedVision.wire_material || "",
+          bail_included: parsedVision.bail_included || ""
         });
       }
       return Response.json({ success: false, error: "Vision API Failure" });

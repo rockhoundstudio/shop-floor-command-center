@@ -1,7 +1,7 @@
 // ==========================================================================
 // ROCKHOUND STUDIO — TAB 1: NEW PRODUCT INTAKE BENCH
 // File: app/routes/app.meta-injector.injector.jsx
-// (100% Original Logic + Origin Handle Dashboard Gauge Added)
+// (100% Original Logic + Origin Handle & Hardware Receiver Welded)
 // ==========================================================================
 
 import React, { useState, useEffect, useCallback } from "react";
@@ -390,6 +390,16 @@ export function NewProductIntakeTab({ fetcher }) {
       const isError = data.success === false;
 
       (isScan && isSuccess) && (() => {
+        // HARDWARE RECEIVER WELD: Pipe hanging specs straight into Section B
+        setSharedFields(prev => ({
+          ...prev,
+          primary_use: data.primary_use || prev.primary_use,
+          primary_medium: data.primary_medium || prev.primary_medium,
+          secondary_medium: data.secondary_medium || prev.secondary_medium,
+          wire_material: data.wire_material || prev.wire_material,
+          bail_included: data.bail_included || prev.bail_included
+        }));
+
         setPieces(prev => prev.map(p => {
           let updated = { ...p };
           (p.id === data.pieceId) && (() => {
