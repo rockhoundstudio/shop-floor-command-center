@@ -1,7 +1,7 @@
 // ==========================================================================
 // ROCKHOUND STUDIO — TAB 1: NEW PRODUCT INTAKE BENCH
 // File: app/routes/app.meta-injector.injector.jsx
-// (100% Original Logic Preserved + Stripped Redundancy + Restored Staging Route)
+// (100% Original Logic + Origin Handle Dashboard Gauge Added)
 // ==========================================================================
 
 import React, { useState, useEffect, useCallback } from "react";
@@ -25,6 +25,7 @@ export function NewProductIntakeTab({ fetcher }) {
     collection_name: "",
     collection_location: "",
     origin_location: "",
+    origin_handle: "", // 🟢 INITIALIZED HERE
     rescued_by: "Bob and Janyce",
     treatment_status: "100% Natural/Untreated",
     origin_story: "",
@@ -280,6 +281,7 @@ export function NewProductIntakeTab({ fetcher }) {
       collection_name: "",
       collection_location: "",
       origin_location: "",
+      origin_handle: "", // 🟢 RESET HERE
       rescued_by: "Bob and Janyce",
       treatment_status: "100% Natural/Untreated",
       origin_story: "",
@@ -468,6 +470,7 @@ export function NewProductIntakeTab({ fetcher }) {
         collection_location: resolvedCollectionLoc,
         collectionLocation: resolvedCollectionLoc,
         origin_location: parsed.origin_name || prev.origin_location,
+        origin_handle: parsed.origin_handle || prev.origin_handle, // 🟢 WRITES PARSED SLUG HERE
         origin_story: parsed.origin_story || prev.origin_story,
         mohs_hardness: parsed.mohs_hardness || prev.mohs_hardness,
         luster: parsed.luster || prev.luster,
@@ -483,7 +486,6 @@ export function NewProductIntakeTab({ fetcher }) {
         geological_age: parsed.geological_age || prev.geological_age,
         fracture_pattern: parsed.fracture_pattern || prev.fracture_pattern,
         collection_story: parsed.collection_story || prev.collection_story,
-        origin_handle: parsed.origin_handle || prev.origin_handle,
         ...(parsed.title_tag && { title_tag: parsed.title_tag }),
         ...(parsed.description_tag && { description_tag: parsed.description_tag }),
         ...(parsed.google_product_category && { google_product_category: parsed.google_product_category }),
@@ -985,6 +987,8 @@ export function NewProductIntakeTab({ fetcher }) {
                   accessibilityLabel="Select collection location"
                 />
               </div>
+              
+              {/* 🟢 THE ORIGIN GAUGES - LOCATION AND SLUG SIDE-BY-SIDE */}
               <div style={{ minHeight: "54px" }}>
                 <TextField
                   label={renderLabel("Origin Location", "origin_location", sharedFields.origin_location)}
@@ -995,6 +999,17 @@ export function NewProductIntakeTab({ fetcher }) {
                   accessibilityLabel="Enter origin location"
                 />
               </div>
+              <div style={{ minHeight: "54px" }}>
+                <TextField
+                  label={renderLabel("Origin Handle (Slug)", "origin_handle", sharedFields.origin_handle)}
+                  value={sharedFields.origin_handle}
+                  onChange={(v) => handleSharedFieldChange("origin_handle", v)}
+                  autoComplete="off"
+                  placeholder="e.g. yakima-river-chert-road"
+                  accessibilityLabel="Enter origin handle URL slug"
+                />
+              </div>
+
               <div style={{ minHeight: "54px" }}>
                 <Select
                   label={renderLabel("Rescued By", "rescued_by", sharedFields.rescued_by)}
