@@ -1,7 +1,7 @@
 // ==========================================================================
 // ROCKHOUND STUDIO — BENCH CONSTANTS & DROPDOWNS
 // File: app/utils/meta-injector.constants.jsx
-// (100% Original Architecture Preserved + Smart Switch Additions)
+// (100% Original Architecture Preserved + Smart Switch Additions + Origin Handle)
 // ==========================================================================
 
 // NEW: Added safely for Tab 1 Auto-Pilot (Does not break existing tabs)
@@ -37,7 +37,8 @@ export const ROCKHOUND_FIELDS = [
   { key: "treated", label: "Treated", isDropdown: true },
   { key: "found_object", label: "Found Object", isDropdown: true },
   { key: "wire_material", label: "Wire Material", isDropdown: true },
-  { key: "artist_notes", label: "Artist Notes", type: "single_line_text_field", multiline: true }
+  { key: "artist_notes", label: "Artist Notes", type: "single_line_text_field", multiline: true },
+  { key: "origin_handle", label: "Origin Handle", type: "single_line_text_field" } // 🟢 ADDED ORIGIN HANDLE
 ];
 
 export const DEFAULT_DROPDOWNS = {
@@ -257,6 +258,7 @@ export const FULL_META_GROUPS = [
     color: "#E65100",
     fields: [
       { key: "origin_story", label: "Origin Story", type: "text", multiline: true },
+      { key: "origin_handle", label: "Origin Handle", type: "text" }, // 🟢 ADDED ORIGIN HANDLE
       { key: "trip_or_series", label: "Trip or Series", type: "text" },
       { key: "honest_flaws_and_character", label: "Honest Flaws and Character", type: "text", multiline: true },
       { key: "artist_notes", label: "Artist Notes", type: "text", multiline: true },
@@ -301,6 +303,7 @@ export const METAFIELD_CONFIG = [
 
   // 🟠 STORY & LORE
   { namespace: "custom", key: "origin_story", type: "single_line_text_field", label: "Origin Story", colorGroup: "orange", options: [] },
+  { namespace: "custom", key: "origin_handle", type: "single_line_text_field", label: "Origin Handle", colorGroup: "orange", options: [] }, // 🟢 ADDED ORIGIN HANDLE
   { namespace: "custom", key: "trip_or_series", type: "single_line_text_field", label: "Trip or Series", colorGroup: "orange", options: [] },
   { namespace: "custom", key: "honest_flaws_and_character", type: "single_line_text_field", label: "Honest Flaws and Character", colorGroup: "orange", options: [] },
   { namespace: "custom", key: "artist_notes", type: "single_line_text_field", label: "Artist Notes", colorGroup: "orange", options: [] },

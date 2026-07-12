@@ -71,7 +71,10 @@ const METAFIELD_SCHEMA = {
   // CUSTOM NAMESPACE (Strict Types)
   "weight_grams": { namespace: "custom", type: "number_decimal" },
   "stone_story": { namespace: "custom", type: "list.single_line_text_field" },
-  "character_marks": { namespace: "custom", type: "list.single_line_text_field" }
+  "character_marks": { namespace: "custom", type: "list.single_line_text_field" },
+  
+  // 🟢 ORIGIN HANDLE MAPPED CORRECTLY 
+  "origin_page_handle": { namespace: "custom", type: "single_line_text_field" } 
 };
 
 export function buildMetafieldsJson(sharedFields, piece) {
