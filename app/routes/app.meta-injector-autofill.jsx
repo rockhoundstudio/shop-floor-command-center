@@ -1,1204 +1,336 @@
-// ==========================================================================
-// ROCKHOUND STUDIO — TAB 1: NEW PRODUCT INTAKE BENCH
-// File: app/routes/app.meta-injector.injector.jsx
-// (100% Original Logic + useRef Stale Closure Bypass for Dwell Web)
-// ==========================================================================
+import { authenticate } from "../shopify.server";
+import { lookupStone } from "../utils/geoLibrary";
+import { TARGET_KEYS } from "../utils/metaScan";
 
-import React, { useState, useEffect, useCallback, useRef } from "react";
-import { BlockStack, Card, Text, TextField, Select, Button, Banner, DropZone, Spinner, Frame, Toast, InlineGrid, Box, Divider } from "@shopify/polaris";
-import { PlusIcon, MagicIcon } from "@shopify/polaris-icons";
-import { useFetcher } from "react-router";
-import { ROCKHOUND_FIELDS, DEFAULT_DROPDOWNS, REQUIRED_FIELDS, productTypeOptions, collectionLocationOptions, normalizeDropdownValue } from "../utils/meta-injector.constants.jsx";
-import { handleScanPhoto, handleGenerateDescription, buildMetafieldsJson, buildTitle } from "./app.meta-injector.intake-helpers.jsx";
+// ==========================================
+// ENVIRONMENT VARIABLES & MAPS
+// ==========================================
+const MINDAT_API_KEY = process.env.MINDAT_API_KEY;
 
-const SHOPPED_ROCK_VENDORS = ["Richardson's Rock Ranch", "Irv's Rock and Jewelry"];
+const MINDAT_KEY_MAP = {
+  official_name: "name",
+  mineral_class: "mindat_formula",
+  crystal_structure: "crystal_system",
+  luster: "luster",
+  specific_gravity: "density",
+  moh_hardness: "hardness",
+  cleavage: "cleavage",
+  fracture_pattern: "fracture",
+  diaphaneity: "transparency",
+  tenacity: "tenacity",
+  origin_location: "localities_count",
+};
 
-export function NewProductIntakeTab({ fetcher }) {
-  const stageFetcher = useFetcher();
-  const autoFillFetcher = useFetcher();
-  const visionFetcher = useFetcher();
-  const descriptionFetcher = useFetcher();
+const SHOPPED_ROCK_VENDORS = ["Richardson's Rock Ranch", "Irv's Rock and Jewelry", "Irv's Rock & Jewelry"];
 
-  const [sharedFields, setSharedFields] = useState({
-    material: "",
-    stone_family: "",
-    collection_name: "",
-    collection_location: "",
-    origin_location: "",
-    origin_handle: "", 
-    rescued_by: "Bob and Janyce",
-    treatment_status: "100% Natural/Untreated",
-    origin_story: "",
-    primary_use: "",
-    handcrafted_by: "Bob & Janyce, Rockhound Studio",
-    is_one_of_a_kind: "Yes — one of a kind",
-    treated: "Untreated — Natural",
-    found_object: "true",
-    condition: "new",
-    target_gender: "Unisex",
-    age_group: "adult",
-    primary_medium: "",
-    secondary_medium: "",
-    wire_material: "",
-    setting_ready: "",
-    bail_included: ""
-  });
-
-  const [pieces, setPieces] = useState([
-    {
-      id: Date.now().toString(),
-      piece_name: "",
-      dimensions_mm: "",
-      cut_and_shape: "",
-      surface_finish: "",
-      color: "",
-      price: "",
-      weight_grams: "",
-      photoFiles: [],
-      photoPreviewUrls: [],
-      photos: [],
-      imageBase64: "",
-      imageMimeType: "",
-      stagedResourceUrls: [],
-      generated_description: "",
-      artist_notes: "",
-      scanError: "",
-      scanToken: "",
-      isUploading: false
+// ==========================================
+// ENGINE: EXPONENTIAL BACKOFF RETRY
+// ==========================================
+async function fetchWithRetry(url, options, retries = 3, delay = 1500) {
+  for (let i = 0; i < retries; i++) {
+    const res = await fetch(url, options);
+    if (res.status !== 503 && res.status !== 429) {
+      return res;
     }
-  ]);
-
-  // 🟢 THE WELD: Live State References to bypass the Stale Closure ghost
-  const latestPieces = useRef(pieces);
-  const latestShared = useRef(sharedFields);
-  useEffect(() => { latestPieces.current = pieces; }, [pieces]);
-  useEffect(() => { latestShared.current = sharedFields; }, [sharedFields]);
-
-  const [photoFiles, setPhotoFiles] = useState([]);
-  const [photoPreviewUrls, setPhotoPreviewUrls] = useState([]);
-
-  const [searchQuery, setSearchQuery] = useState("");
-  const [statusMessage, setStatusMessage] = useState("");
-  const [errorMessage, setErrorMessage] = useState("");
-  const [generatedDescription, setGeneratedDescription] = useState("");
-  const [geoToast, setGeoToast] = useState(false);
-  
-  const [titleToastActive, setTitleToastActive] = useState(false);
-  const [titleToastMsg, setTitleToastMsg] = useState("");
-  const [titleToastError, setTitleToastError] = useState(false);
-  
-  const [lastScannedPieceId, setLastScannedPieceId] = useState(null);
-
-  const handleScanGeminiPhotos = useCallback((piece) => {
-    (piece?.photoFiles?.[0]) && (() => {
-      const formData = new FormData();
-      formData.append("intent", "stagedUpload");
-      formData.append("file_0", piece.photoFiles[0]);
-      formData.append("pieceId", piece.id);
-      stageFetcher.submit(formData, {
-        method: "post",
-        action: "/app/meta-injector-api",
-        encType: "multipart/form-data"
-      });
-    })();
-  }, [stageFetcher]);
-
-  const handleSharedFieldChange = useCallback((key, value) => {
-    setSharedFields(prev => ({ ...prev, [key]: value }));
-  }, []);
-
-  const handleStoneFamilyChange = useCallback((value) => {
-    setSharedFields(prev => ({ ...prev, stone_family: value }));
-    (value && value.trim() !== "") && autoFillFetcher.submit(
-      { intent: "geoLookup", stoneFamily: value },
-      { method: "post", action: "/app/meta-injector-autofill" }
-    );
-  }, [autoFillFetcher]);
-
-  const handlePieceChange = useCallback((id, key, value) => {
-    setPieces(prev => prev.map(p => {
-      let updated = { ...p };
-      (p.id === id) && (updated[key] = value);
-      return updated;
-    }));
-  }, []);
-
-  const handlePieceNameBlur = useCallback((id, value) => {
-    if (!value) return;
-    const segments = value.split(" - ");
-    if (segments.length === 3) {
-      setLastScannedPieceId(id);
-      autoFillFetcher.submit(
-        { intent: "titleParse", pieceName: value },
-        { method: "post", action: "/app/meta-injector-autofill" }
-      );
-    }
-  }, [autoFillFetcher]);
-
-  const handleTopDropZoneDrop = useCallback((dropFiles) => {
-    setPhotoFiles(prev => {
-      const combined = [...prev, ...dropFiles];
-      const capped = combined.slice(0, 5);
-      setPhotoPreviewUrls(capped.map(f => URL.createObjectURL(f)));
-      return capped;
-    });
-    setPieces(prev => prev.map((p, i) => {
-      let updated = { ...p };
-      (i === 0) && (() => {
-        const combined = [...p.photoFiles, ...dropFiles];
-        const capped = combined.slice(0, 5);
-        updated.photoFiles = capped;
-        updated.photoPreviewUrls = capped.map(f => URL.createObjectURL(f));
-      })();
-      return updated;
-    }));
-  }, []);
-
-  const handleRemoveTopPhoto = useCallback((index) => {
-    setPhotoFiles(prev => {
-      const updated = prev.filter((_, i) => i !== index);
-      setPhotoPreviewUrls(updated.map(f => URL.createObjectURL(f)));
-      return updated;
-    });
-  }, []);
-
-  const handleDropZoneDrop = useCallback((id, dropFiles) => {
-    setPieces(prev => prev.map(p => {
-      let updated = { ...p };
-      (p.id === id) && (() => {
-        const combined = [...p.photoFiles, ...dropFiles];
-        const capped = combined.slice(0, 5);
-        updated.photoFiles = capped;
-        updated.photos = capped;
-        updated.photoPreviewUrls = capped.map(f => URL.createObjectURL(f));
-        if (capped.length > 0) {
-          updated.imageMimeType = capped[0].type;
-          const reader = new FileReader();
-          reader.onloadend = () => {
-            const base64String = reader.result.replace("data:", "").replace(/^.+,/, "");
-            handlePieceChange(id, "imageBase64", base64String);
-          };
-          reader.readAsDataURL(capped[0]);
-        } else {
-          updated.imageBase64 = "";
-          updated.imageMimeType = "";
-        }
-      })();
-      return updated;
-    }));
-  }, [handlePieceChange]);
-
-  const handleRemoveRowPhoto = useCallback((id, index) => {
-    setPieces(prev => prev.map(p => {
-      let updated = { ...p };
-      (p.id === id) && (() => {
-        const filtered = p.photoFiles.filter((_, i) => i !== index);
-        updated.photoFiles = filtered;
-        updated.photos = filtered;
-        updated.photoPreviewUrls = filtered.map(f => URL.createObjectURL(f));
-        if (filtered.length > 0) {
-          updated.imageMimeType = filtered[0].type;
-          const reader = new FileReader();
-          reader.onloadend = () => {
-            const base64String = reader.result.replace("data:", "").replace(/^.+,/, "");
-            handlePieceChange(id, "imageBase64", base64String);
-          };
-          reader.readAsDataURL(filtered[0]);
-        } else {
-          updated.imageBase64 = "";
-          updated.imageMimeType = "";
-        }
-      })();
-      return updated;
-    }));
-  }, [handlePieceChange]);
-
-  const handleAddRow = useCallback(() => {
-    setPieces(prev => [
-      ...prev,
-      {
-        id: Date.now().toString() + Math.random().toString(),
-        piece_name: "",
-        dimensions_mm: "",
-        cut_and_shape: "",
-        surface_finish: "",
-        color: "",
-        price: "",
-        weight_grams: "",
-        photoFiles: [],
-        photoPreviewUrls: [],
-        photos: [],
-        imageBase64: "",
-        imageMimeType: "",
-        stagedResourceUrls: [],
-        generated_description: "",
-        artist_notes: "",
-        scanError: "",
-        scanToken: "",
-        isUploading: false
-      }
-    ]);
-  }, []);
-
-  const handleRemoveRow = useCallback((id) => {
-    setPieces(prev => prev.filter(p => p.id !== id));
-  }, []);
-
-  const handleCreateAll = useCallback(() => {
-    setStatusMessage("");
-    setErrorMessage("");
-
-    let productType = "Wearable Art";
-    (sharedFields.primary_use && sharedFields.primary_use !== "") && (productType = sharedFields.primary_use);
-
-    const payload = {
-      intent: "createProduct",
-      ...sharedFields,
-      piece_name: pieces[0].piece_name,
-      dimensions_mm: pieces[0].dimensions_mm,
-      cut_and_shape: pieces[0].cut_and_shape,
-      surface_finish: pieces[0].surface_finish,
-      color: pieces[0].color,
-      price: pieces[0].price,
-      weight_grams: pieces[0].weight_grams,
-      seo_title: pieces[0].seo_title,
-      title: buildTitle(sharedFields, pieces[0]),
-      descriptionHtml: pieces[0].generated_description,
-      productType: productType,
-      status: "DRAFT",
-      metafieldsJson: buildMetafieldsJson(sharedFields, pieces[0]),
-      mediaUrlsJson: JSON.stringify(pieces[0].stagedResourceUrls.filter(u => u !== undefined && u !== ""))
-    };
-
-    const fd = new FormData();
-    fd.append("intent", "createProduct");
-    fd.append("payload", JSON.stringify(payload));
-
-    fetcher.submit(fd, { method: "post", action: "/app/meta-injector-api" });
-  }, [sharedFields, pieces, fetcher]);
-
-  const handleStartNewBatch = useCallback(() => {
-    setStatusMessage("");
-    setErrorMessage("");
-    setSharedFields({
-      material: "",
-      stone_family: "",
-      collection_name: "",
-      collection_location: "",
-      origin_location: "",
-      origin_handle: "",
-      rescued_by: "Bob and Janyce",
-      treatment_status: "100% Natural/Untreated",
-      origin_story: "",
-      primary_use: "",
-      handcrafted_by: "Bob & Janyce, Rockhound Studio",
-      is_one_of_a_kind: "Yes — one of a kind",
-      treated: "Untreated — Natural",
-      found_object: "true",
-      condition: "new",
-      target_gender: "Unisex",
-      age_group: "adult",
-      primary_medium: "",
-      secondary_medium: "",
-      wire_material: "",
-      setting_ready: "",
-      bail_included: ""
-    });
-    setPieces([{
-      id: Date.now().toString(),
-      piece_name: "",
-      dimensions_mm: "",
-      cut_and_shape: "",
-      surface_finish: "",
-      color: "",
-      price: "",
-      weight_grams: "",
-      photoFiles: [],
-      photoPreviewUrls: [],
-      photos: [],
-      imageBase64: "",
-      imageMimeType: "",
-      stagedResourceUrls: [],
-      generated_description: "",
-      artist_notes: "",
-      scanError: "",
-      scanToken: "",
-      isUploading: false
-    }]);
-    setPhotoFiles([]);
-    setPhotoPreviewUrls([]);
-    setGeneratedDescription("");
-    setLastScannedPieceId(null);
-  }, []);
-
-  useEffect(() => {
-    const isIdle = fetcher.state === "idle";
-    const hasData = fetcher.data !== undefined && fetcher.data !== null;
-
-    (isIdle && hasData) && (() => {
-      const isCreate = fetcher.data.intent === "createProduct";
-      const isSuccess = fetcher.data.success === true;
-      const isError = fetcher.data.success === false;
-
-      (isCreate && isSuccess) && (() => {
-        let count = 0;
-        fetcher.data.createdCount && (count = fetcher.data.createdCount);
-        setStatusMessage(`Successfully created pieces.`);
-      })();
-
-      (isCreate && isError) && (() => {
-        let errStr = "An error occurred during product creation.";
-        fetcher.data.error && (errStr = fetcher.data.error);
-        setErrorMessage(errStr);
-      })();
-    })();
-  }, [fetcher.state, fetcher.data]);
-
-  useEffect(() => {
-    const isIdle = stageFetcher.state === "idle";
-    const hasData = stageFetcher.data !== undefined && stageFetcher.data !== null;
-
-    (isIdle && hasData) && (() => {
-      const data = stageFetcher.data;
-      const isStaged = data.intent === "stagedUpload";
-      const isSuccess = data.success === true;
-      const isError = data.success === false;
-      const pid = data.pieceId;
-      const resourceUrl = data.resourceUrl;
-
-      (isStaged && isError) && (() => {
-        handlePieceChange(pid, "scanError", data.error || "Stage failed");
-      })();
-
-      (isStaged && isSuccess && resourceUrl) && (() => {
-        setPieces(prev => prev.map(p =>
-          p.id === pid ? { ...p, stagedResourceUrls: [resourceUrl] } : p
-        ));
-
-        // 🟢 THE WELD: Extract from live useRef state to destroy the Stale Closure
-        const scannedPiece = latestPieces.current.find(p => p.id === pid);
-        const pName = scannedPiece ? scannedPiece.piece_name : "";
-        const cName = latestShared.current.collection_name || "";
-        const base64 = scannedPiece ? scannedPiece.imageBase64 : "";
-        const mime = scannedPiece ? scannedPiece.imageMimeType : "image/jpeg";
-
-        visionFetcher.submit(
-          { 
-            intent: "visionScan", 
-            pieceId: pid, 
-            imageUrl: resourceUrl,
-            pieceName: pName,
-            collectionName: cName,
-            imageBase64: base64,  // Forces image through pipeline instantly
-            imageMimeType: mime
-          },
-          { method: "post", action: "/app/meta-injector-autofill" }
-        );
-      })();
-    })();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stageFetcher.state, stageFetcher.data]);
-
-  useEffect(() => {
-    const isIdle = visionFetcher.state === "idle";
-    const hasData = visionFetcher.data !== undefined && visionFetcher.data !== null;
-
-    (isIdle && hasData) && (() => {
-      const data = visionFetcher.data;
-      const isScan = data.intent === "visionScan";
-      const isSuccess = data.success === true;
-      const isError = data.success === false;
-
-      (isScan && isSuccess) && (() => {
-        setSharedFields(prev => ({
-          ...prev,
-          primary_use: data.primary_use || prev.primary_use,
-          primary_medium: data.primary_medium || prev.primary_medium,
-          secondary_medium: data.secondary_medium || prev.secondary_medium,
-          wire_material: data.wire_material || prev.wire_material,
-          setting_ready: data.setting_ready || prev.setting_ready,
-          bail_included: data.bail_included || prev.bail_included
-        }));
-
-        setPieces(prev => prev.map(p => {
-          let updated = { ...p };
-          (p.id === data.pieceId) && (() => {
-            (data.description !== undefined && data.description !== "") && (updated.generated_description = data.description);
-            (data.color !== undefined && data.color !== "") && (updated.color = data.color);
-            (data.primary_color !== undefined && data.primary_color !== "") && (updated.color = data.primary_color);
-            (data.cut_and_shape !== undefined && data.cut_and_shape !== "") && (updated.cut_and_shape = data.cut_and_shape);
-            (data.surface_finish !== undefined && data.surface_finish !== "") && (updated.surface_finish = data.surface_finish);
-            (data.dimensions_mm !== undefined && data.dimensions_mm !== "") && (updated.dimensions_mm = data.dimensions_mm);
-            updated.scanError = "";
-          })();
-          return updated;
-        }));
-      })();
-
-      (isScan && isError) && (() => {
-        setPieces(prev => prev.map(p => {
-          let updated = { ...p };
-          (p.id === data.pieceId) && (() => {
-            let errStr = "Scan failed";
-            data.error && (errStr = data.error);
-            updated.scanError = errStr;
-          })();
-          return updated;
-        }));
-      })();
-    })();
-  }, [visionFetcher.state, visionFetcher.data]);
-
-  useEffect(() => {
-    const isIdle = autoFillFetcher.state === "idle";
-    const hasData = autoFillFetcher.data !== undefined && autoFillFetcher.data !== null;
-
-    (isIdle && hasData) && (() => {
-      const data = autoFillFetcher.data;
-      (data.geoFields) && (() => {
-        const geo = data.geoFields;
-        setSharedFields(prev => {
-          const updated = { ...prev };
-          (geo.hardness !== undefined) && (updated.hardness = geo.hardness);
-          (geo.luster !== undefined) && (updated.luster = geo.luster);
-          (geo.fracture !== undefined) && (updated.fracture = geo.fracture);
-          (geo.cleavage !== undefined) && (updated.cleavage = geo.cleavage);
-          (geo.specificGravity !== undefined) && (updated.specificGravity = geo.specificGravity);
-          (geo.diaphaneity !== undefined) && (updated.diaphaneity = geo.diaphaneity);
-          (geo.crystalSystem !== undefined) && (updated.crystalSystem = geo.crystalSystem);
-          (geo.geologicalEra !== undefined) && (updated.geologicalEra = geo.geologicalEra);
-          (geo.mineralClass !== undefined) && (updated.mineralClass = geo.mineralClass);
-          (geo.rockComposition !== undefined) && (updated.rockComposition = geo.rockComposition);
-          (geo.rockFormation !== undefined) && (updated.rockFormation = geo.rockFormation);
-          (geo.mohs_hardness !== undefined) && (updated.mohs_hardness = geo.mohs_hardness);
-          (geo.fracture_pattern !== undefined) && (updated.fracture_pattern = geo.fracture_pattern);
-          (geo.specific_gravity !== undefined) && (updated.specific_gravity = geo.specific_gravity);
-          (geo.geological_age !== undefined) && (updated.geological_age = geo.geological_age);
-          return updated;
-        });
-        setGeoToast(true);
-      })();
-    })();
-  }, [autoFillFetcher.state, autoFillFetcher.data]);
-
-  useEffect(() => {
-    if (!autoFillFetcher.data?.titleParse) return;
-    const parsed = autoFillFetcher.data.titleParse;
-
-    setSharedFields(prev => {
-      let resolvedCollectionLoc = parsed.collection_location || prev.collection_location;
-      if (SHOPPED_ROCK_VENDORS.includes(parsed.origin_name)) {
-        resolvedCollectionLoc = "Shopped Rock";
-      }
-
-      return {
-        ...prev,
-        material: "Stone",
-        stone_family: normalizeDropdownValue("stone_family", parsed.stone_family?.trim()) || prev.stone_family,
-        collection_name: (parsed.collection_name && parsed.collection_name !== parsed.collection_location && parsed.collection_name !== resolvedCollectionLoc) ? parsed.collection_name : prev.collection_name,
-        collection_location: resolvedCollectionLoc,
-        collectionLocation: resolvedCollectionLoc,
-        origin_handle: parsed.origin_handle || prev.origin_handle, 
-        origin_story: parsed.origin_story || prev.origin_story,
-        mohs_hardness: parsed.mohs_hardness || prev.mohs_hardness,
-        luster: parsed.luster || prev.luster,
-        fracture: parsed.fracture || prev.fracture,
-        cleavage: parsed.cleavage || prev.cleavage,
-        specificGravity: parsed.specific_gravity || prev.specificGravity,
-        diaphaneity: parsed.diaphaneity || prev.diaphaneity,
-        crystalSystem: parsed.crystalSystem || prev.crystalSystem,
-        geologicalEra: parsed.geologicalEra || prev.geologicalEra,
-        mineralClass: parsed.mineralClass || prev.mineralClass,
-        rockComposition: parsed.rock_composition || prev.rockComposition,
-        rockFormation: parsed.rock_formation || prev.rockFormation,
-        geological_age: parsed.geological_age || prev.geological_age,
-        fracture_pattern: parsed.fracture_pattern || prev.fracture_pattern,
-        collection_story: parsed.collection_story || prev.collection_story,
-        ...(parsed.title_tag && { title_tag: parsed.title_tag }),
-        ...(parsed.description_tag && { description_tag: parsed.description_tag }),
-        ...(parsed.google_product_category && { google_product_category: parsed.google_product_category }),
-        ...(parsed.target_gender && { target_gender: parsed.target_gender }),
-        ...(parsed.age_group && { age_group: parsed.age_group }),
-        ...(parsed.condition && { condition: parsed.condition }),
-        ...(parsed.geological_age && { geological_age: parsed.geological_age }),
-        ...(parsed.fracture_pattern && { fracture_pattern: parsed.fracture_pattern }),
-        ...(parsed.mohs_hardness && { mohs_hardness: parsed.mohs_hardness }),
-        ...(parsed.luster && { luster: parsed.luster }),
-        ...(parsed.fracture && { fracture: parsed.fracture }),
-        ...(parsed.cleavage && { cleavage: parsed.cleavage }),
-        ...(parsed.specificGravity && { specificGravity: parsed.specificGravity }),
-        ...(parsed.diaphaneity && { diaphaneity: parsed.diaphaneity }),
-        ...(parsed.crystalSystem && { crystalSystem: parsed.crystalSystem }),
-        ...(parsed.geologicalEra && { geologicalEra: parsed.geologicalEra }),
-        ...(parsed.mineralClass && { mineralClass: parsed.mineralClass }),
-        ...(parsed.rockComposition && { rockComposition: parsed.rockComposition }),
-        ...(parsed.rockFormation && { rockFormation: parsed.rockFormation }),
-      };
-    });
-
-    (parsed.stone_family && parsed.stone_family.trim() !== "") && autoFillFetcher.submit(
-      { intent: "geoLookup", stoneFamily: parsed.stone_family.toLowerCase() },
-      { method: "post", action: "/app/meta-injector-autofill" }
-    );
-
-    if (parsed.canonical_title || parsed.product_title) {
-      const pieceTitleVal = parsed.canonical_title || parsed.product_title;
-      setPieces(prev => prev.map((p, i) =>
-        p.id === lastScannedPieceId || (!lastScannedPieceId && i === 0)
-          ? { ...p, piece_name: pieceTitleVal, seo_title: parsed.seo_title, handle: parsed.handle }
-          : p
-      ));
-    }
-
-    if (parsed.needs_new_origin_page) {
-      setTitleToastMsg("⚠️ No origin page found — create one for: " + parsed.origin_name);
-      setTitleToastError(true);
-      setTitleToastActive(true);
-    } else {
-      setTitleToastMsg("Title parsed — fields pre-filled");
-      setTitleToastError(false);
-      setTitleToastActive(true);
-    }
-
-  }, [autoFillFetcher, autoFillFetcher.data, lastScannedPieceId]);
-
-  useEffect(() => {
-    const isIdle = descriptionFetcher.state === "idle";
-    const hasData = descriptionFetcher.data !== undefined && descriptionFetcher.data !== null;
-
-    (isIdle && hasData) && (() => {
-      const data = descriptionFetcher.data;
-      const isDesc = data.intent === "generateDescription";
-      const isSuccess = data.success === true;
-
-      (isDesc && isSuccess) && (() => {
-        let descStr = "";
-        data.description && (descStr = data.description);
-        setPieces(prev => prev.map((p, i) =>
-          p.id === data.pieceId || (!data.pieceId && i === 0)
-            ? { ...p, generated_description: descStr }
-            : p
-        ));
-      })();
-    })();
-  }, [descriptionFetcher.state, descriptionFetcher.data]);
-
-  useEffect(() => {
-    const stagedUrl = pieces[0]?.stagedResourceUrls?.[0];
-    (stagedUrl && stagedUrl !== "") && (() => {
-      window.shopify?.toast?.show("Photo ready — tap Scan to generate description");
-    })();
-  }, [pieces[0]?.stagedResourceUrls?.[0]]);
-
-  let isSubmitting = false;
-  (fetcher.state !== "idle" && fetcher.formData?.get("intent") === "createProduct") && (isSubmitting = true);
-
-  let isDescLoading = false;
-  (descriptionFetcher.state !== "idle") && (isDescLoading = true);
-
-  const rescuedByOptions = ["", "Bob", "Janyce", "Bob and Janyce"];
-  const treatmentStatusOptions = ["100% Natural/Untreated", "Heat Treated", "Dyed", "Stabilized", "Irradiated", "Coated"];
-  const surfaceFinishOptions = ["", "High Polish", "Matte", "Satin", "Hand Polish", "Natural"];
-
-  const isJewelry = ["Pendant (Finished Jewelry)", "Wire Wrap (Finished Jewelry)", "Ring / Bezel Setting", "Pendant", "Wire Wrap", "Ring", "Necklace", "Earrings", "Bracelet", "Jewelry", "Wearable Art"].some(type => (sharedFields.primary_use || "").includes(type));
-
-  const combinedData = { ...sharedFields, ...(pieces[0] || {}) };
-  const deletedKeys = ["honest_flaws_and_character", "collection_date", "stone_shape", "stone_story"];
-  const scanKeys = [...ROCKHOUND_FIELDS.map(f => f.key), "origin_story", "price", "mohs_hardness", "luster", "fracture", "cleavage", "specificGravity", "diaphaneity", "crystalSystem", "geologicalEra", "mineralClass", "rockComposition", "rockFormation", "geological_age", "fracture_pattern"].filter(key => !deletedKeys.includes(key));
-
-  const actionData = fetcher.data;
-  let useSaved = false;
-  (actionData?.success === true) && (useSaved = true);
-
-  const savedMap = {};
-  (actionData && actionData.savedMetafields) && actionData.savedMetafields.forEach(mf => { savedMap[mf.key] = mf.value; });
-
-  const renderLabel = (text, key, value) => {
-    const isRequired = REQUIRED_FIELDS.includes(key);
-    let isFilled = false;
-    (value !== undefined && value !== null && value.toString().trim() !== "") && (isFilled = true);
-
-    let dotColor = "#FFC453";
-    isFilled && (dotColor = "#008060");
-    (!isFilled && isRequired) && (dotColor = "#D72C0D");
-
-    return (
-      <span style={{ fontSize: "14px", fontWeight: "600" }}>
-        <span style={{ color: dotColor, fontSize: "18px", lineHeight: "18px", width: "18px", height: "18px", display: "inline-block", textAlign: "center", marginRight: "4px" }}>●</span>
-        {text}
-      </span>
-    );
-  };
-
-  const filteredPieces = pieces.filter(piece =>
-    piece.piece_name.toLowerCase().includes(searchQuery.toLowerCase())
-  );
-
-  let isScanningVision = false;
-  (stageFetcher.state !== "idle") && (isScanningVision = true);
-  (visionFetcher.state !== "idle") && (isScanningVision = true);
-
-  const currentWordCount = (pieces[0]?.generated_description || "").trim().split(/\s+/).filter(Boolean).length;
-  const wordCountTone = currentWordCount > 100 ? "critical" : "subdued";
-
-  return (
-    <Frame>
-      <BlockStack gap="600">
-        <Banner title="Machine Auto-Pilot Active — No Typing Required for Studio Constants:" tone="success">
-          <BlockStack gap="100">
-            <Text as="p" variant="bodyMd">
-              ✔ Handcrafted & Rescued by: <strong>Bob and Janyce</strong> | ✔ OOAK: <strong>True</strong> | ✔ Treatment: <strong>100% Natural/Untreated</strong>
-            </Text>
-            <Text as="p" variant="bodyMd">
-              ✔ Google Feed: <strong>Active (Adult/Unisex/New)</strong> | ✔ Geo-Vault: <strong>Auto-Fills 12 Minerals Specs from Title Delimiters</strong>
-            </Text>
-          </BlockStack>
-        </Banner>
-
-        <Card padding="400">
-          <BlockStack gap="400">
-            <Text variant="headingMd" as="h2" style={{ fontSize: "16px", fontWeight: "bold" }}>Section A: Per-Piece Details</Text>
-
-            <div style={{ position: "relative", marginBottom: "8px" }}>
-              <input
-                type="text"
-                placeholder="Search products..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                style={{
-                  width: "100%",
-                  minHeight: "48px",
-                  fontSize: "18px",
-                  border: "2px solid #000",
-                  borderRadius: "4px",
-                  padding: "8px 40px 8px 16px",
-                  boxSizing: "border-box"
-                }}
-              />
-              {searchQuery !== "" && (
-                <button
-                  onClick={() => setSearchQuery("")}
-                  style={{
-                    position: "absolute",
-                    right: "12px",
-                    top: "50%",
-                    transform: "translateY(-50%)",
-                    background: "transparent",
-                    border: "none",
-                    fontSize: "20px",
-                    cursor: "pointer",
-                    padding: "4px",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    color: "#5c5f62"
-                  }}
-                >✕</button>
-              )}
-            </div>
-
-            <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
-              {filteredPieces.map((piece, index) => {
-                
-                let isScanning = false;
-                (stageFetcher.state !== "idle" && stageFetcher.formData?.get("pieceId") === piece.id) && (isScanning = true);
-                (visionFetcher.state !== "idle" && visionFetcher.formData?.get("pieceId") === piece.id) && (isScanning = true);
-                (autoFillFetcher.state !== "idle" && autoFillFetcher.formData?.get("pieceId") === piece.id) && (isScanning = true);
-                (piece.isUploading) && (isScanning = true);
-
-                let hasScanError = false;
-                (piece.scanError && piece.scanError !== "") && (hasScanError = true);
-
-                let hasPhotos = false;
-                (piece.photoFiles && piece.photoFiles.length > 0) && (hasPhotos = true);
-
-                let disableScan = true;
-                (hasPhotos) && (disableScan = false);
-
-                let rowTopDotColor = "#C62828";
-                (hasPhotos) && (rowTopDotColor = "#2E7D32");
-
-                let rowDescDotColor = "#C62828";
-                (piece.generated_description && piece.generated_description !== "") && (rowDescDotColor = "#2E7D32");
-
-                return (
-                  <div key={piece.id} style={{ display: "flex", flexDirection: "column", gap: "16px", paddingBottom: "24px", borderBottom: "1px solid #e1e3e5" }}>
-                    
-                    <div style={{ display: "flex", alignItems: "end", gap: "16px" }}>
-                      <div style={{ flexGrow: 1, minHeight: "54px" }}>
-                        <TextField
-                          label={renderLabel("Piece Name", "piece_name", piece.piece_name)}
-                          value={piece.piece_name}
-                          onChange={(v) => handlePieceChange(piece.id, "piece_name", v)}
-                          onBlur={() => handlePieceNameBlur(piece.id, piece.piece_name)}
-                          autoComplete="off"
-                        />
-                        <div style={{ marginTop: "4px" }}>
-                          <Text variant="bodySm" tone="subdued" as="p">
-                            Format: Stone Family - Origin - Piece Name (e.g. Tiger's Eye - Irv's - Tiger Fly)
-                          </Text>
-                        </div>
-                      </div>
-
-                      <div style={{ minHeight: "54px", width: "120px" }}>
-                        <Button
-                          size="large"
-                          tone="critical"
-                          fullWidth
-                          onClick={() => handleRemoveRow(piece.id)}
-                          disabled={pieces.length <= 1}
-                        >
-                          Remove
-                        </Button>
-                      </div>
-                    </div>
-
-                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "8px" }}>
-                      <svg width="18" height="18" viewBox="0 0 18 18" style={{ display: "inline-block" }}>
-                        <circle cx="9" cy="9" r="9" fill={rowTopDotColor} />
-                      </svg>
-                      <Text variant="headingMd" as="h3" fontWeight="bold">Stone Photos</Text>
-                    </div>
-
-                    <DropZone 
-                      accept="image/jpeg, image/png, image/gif" 
-                      type="image" 
-                      allowMultiple 
-                      onDrop={(_dropFiles, acceptedFiles) => handleDropZoneDrop(piece.id, acceptedFiles)}
-                    >
-                      <DropZone.FileUpload actionTitle="Drop photos here or click to upload" />
-                    </DropZone>
-                    
-                    {hasPhotos && (
-                      <div style={{ display: "flex", gap: "16px", marginTop: "12px", flexWrap: "wrap", paddingTop: "8px", paddingRight: "8px" }}>
-                        {piece.photoPreviewUrls.map((url, i) => (
-                          <div key={i} style={{ position: "relative", width: "80px", height: "80px" }}>
-                            <img src={url} alt={`Preview ${i}`} style={{ width: "80px", height: "80px", objectFit: "cover", borderRadius: "6px" }} />
-                            <button
-                              onClick={(e) => {
-                                e.preventDefault();
-                                handleRemoveRowPhoto(piece.id, i);
-                              }}
-                              style={{
-                                position: "absolute",
-                                top: "-12px",
-                                right: "-12px",
-                                width: "48px",
-                                height: "48px",
-                                background: "#ffffff",
-                                border: "1px solid #c9cccf",
-                                borderRadius: "24px",
-                                cursor: "pointer",
-                                display: "flex",
-                                alignItems: "center",
-                                justifyContent: "center",
-                                fontSize: "16px",
-                                fontWeight: "bold",
-                                color: "#202223",
-                                boxShadow: "0 1px 3px rgba(0,0,0,0.1)",
-                                zIndex: 10
-                              }}
-                            >✕</button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                    
-                    <Text as="p" style={{ fontSize: "14px", marginTop: "4px", color: "#6d7175" }}>
-                      {piece.photoFiles.length} of 5 photos
-                    </Text>
-
-                    <div style={{ minHeight: "48px", marginTop: "8px" }}>
-                      <Button
-                        onClick={() => handleScanGeminiPhotos(piece)}
-                        loading={isScanning}
-                        disabled={disableScan}
-                      >
-                        {isScanning && <Spinner size="small" />}
-                        Scan with Gemini
-                      </Button>
-                    </div>
-
-                    <div style={{ minHeight: "48px", marginTop: "8px" }}>
-                      <TextField
-                        label={
-                          <div style={{ display: "flex", alignItems: "center", justify: "space-between", width: "100%" }}>
-                            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                              <svg width="18" height="18" viewBox="0 0 18 18" style={{ display: "inline-block" }}>
-                                <circle cx="9" cy="9" r="9" fill={rowDescDotColor} />
-                              </svg>
-                              <Text variant="headingMd" as="h3">Description</Text>
-                            </div>
-                            <Text variant="bodySm" tone={wordCountTone} as="span">
-                              {currentWordCount}/100 words {currentWordCount > 100 && "(Exceeds 100-Word Law)"}
-                            </Text>
-                          </div>
-                        }
-                        value={piece.generated_description}
-                        onChange={(v) => handlePieceChange(piece.id, "generated_description", v)}
-                        multiline={6}
-                        autoComplete="off"
-                        placeholder="Gemini will generate a poetic, spare description under 100 words..."
-                      />
-                    </div>
-
-                    <div style={{ minHeight: "48px", marginTop: "8px" }}>
-                      <TextField
-                        label={renderLabel("Artist Notes", "artist_notes", piece.artist_notes)}
-                        value={piece.artist_notes}
-                        onChange={(v) => handlePieceChange(piece.id, "artist_notes", v)}
-                        multiline={3}
-                        autoComplete="off"
-                        placeholder="Internal shop notes about this stone's character..."
-                      />
-                    </div>
-
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px", marginTop: "16px" }}>
-                      <div style={{ minHeight: "54px" }}>
-                        <TextField
-                          label={renderLabel("Price", "price", piece.price)}
-                          value={piece.price}
-                          onChange={(v) => handlePieceChange(piece.id, "price", v)}
-                          autoComplete="off"
-                          placeholder="e.g. 45.00"
-                        />
-                      </div>
-                      <div style={{ minHeight: "54px" }}>
-                        <TextField
-                          label={renderLabel("Weight (grams)", "weight_grams", piece.weight_grams)}
-                          value={piece.weight_grams}
-                          onChange={(v) => handlePieceChange(piece.id, "weight_grams", v)}
-                          autoComplete="off"
-                          placeholder="e.g. 14.5"
-                        />
-                      </div>
-                    </div>
-
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "16px", marginTop: "16px" }}>
-                      <div style={{ minHeight: "54px" }}>
-                        <TextField
-                          label={renderLabel("Dimensions (mm)", "dimensions_mm", piece.dimensions_mm)}
-                          value={piece.dimensions_mm}
-                          onChange={(v) => handlePieceChange(piece.id, "dimensions_mm", v)}
-                          autoComplete="off"
-                        />
-                      </div>
-                      <div style={{ minHeight: "54px" }}>
-                        <TextField
-                          label={renderLabel("Cut & Shape", "cut_and_shape", piece.cut_and_shape)}
-                          value={piece.cut_and_shape}
-                          onChange={(v) => handlePieceChange(piece.id, "cut_and_shape", v)}
-                          autoComplete="off"
-                        />
-                      </div>
-                      <div style={{ minHeight: "54px" }}>
-                        <Select
-                          label={renderLabel("Surface Finish", "surface_finish", piece.surface_finish)}
-                          options={[...surfaceFinishOptions.map(o => ({ label: o, value: o }))]}
-                          value={piece.surface_finish}
-                          onChange={(v) => handlePieceChange(piece.id, "surface_finish", v)}
-                        />
-                      </div>
-                      <div style={{ minHeight: "54px" }}>
-                        <TextField
-                          label={renderLabel("Color", "color", piece.color)}
-                          value={piece.color}
-                          onChange={(v) => handlePieceChange(piece.id, "color", v)}
-                          autoComplete="off"
-                          placeholder="Primary color"
-                        />
-                      </div>
-                    </div>
-
-                    {hasScanError && (
-                      <Banner tone="critical" title="Scan Failed">
-                        <Text as="p" style={{ fontSize: "14px" }}>{piece.scanError}</Text>
-                      </Banner>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-
-            <div style={{ minHeight: "54px", marginTop: "16px" }}>
-              <Button
-                icon={PlusIcon}
-                size="large"
-                onClick={handleAddRow}
-              >
-                Add Row
-              </Button>
-            </div>
-          </BlockStack>
-        </Card>
-
-        <Card padding="400">
-          <BlockStack gap="400">
-            <Text variant="headingMd" as="h2" style={{ fontSize: "16px", fontWeight: "bold" }}>Section B: Shared Batch Fields</Text>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "24px" }}>
-              <div style={{ minHeight: "54px" }}>
-                <TextField
-                  label={renderLabel("Material", "material", sharedFields.material)}
-                  value={sharedFields.material}
-                  onChange={(v) => handleSharedFieldChange("material", v)}
-                  autoComplete="off"
-                />
-              </div>
-              <div style={{ minHeight: "54px" }}>
-                <Select
-                  label={renderLabel("Stone Family", "stone_family", sharedFields.stone_family)}
-                  options={[
-                    { label: "Select stone family...", value: "" },
-                    { label: "Agate", value: "Agate" },
-                    { label: "Andesite", value: "Andesite" },
-                    { label: "Aventurine", value: "Aventurine" },
-                    { label: "Chalcedony", value: "Chalcedony" },
-                    { label: "Jasper", value: "Jasper" },
-                    { label: "Jaspagate", value: "Jaspagate" },
-                    { label: "Labradorite", value: "Labradorite" },
-                    { label: "Obsidian", value: "Obsidian" },
-                    { label: "Quartzite", value: "Quartzite" },
-                    { label: "Quartz", value: "Quartz" },
-                    { label: "Rhyolite", value: "Rhyolite" },
-                    { label: "Serpentine", value: "Serpentine" },
-                    { label: "Variscite", value: "Variscite" }
-                  ]}
-                  value={sharedFields.stone_family}
-                  onChange={(v) => handleStoneFamilyChange(v)}
-                />
-              </div>
-              <div style={{ minHeight: "54px" }}>
-                <TextField
-                  label={renderLabel("Collection Name", "collection_name", sharedFields.collection_name)}
-                  value={sharedFields.collection_name}
-                  onChange={(v) => handleSharedFieldChange("collection_name", v)}
-                  autoComplete="off"
-                />
-              </div>
-              
-              <div style={{ minHeight: "54px" }}>
-                <TextField
-                  label={renderLabel("Origin Handle (Slug)", "origin_handle", sharedFields.origin_handle)}
-                  value={sharedFields.origin_handle}
-                  onChange={(v) => handleSharedFieldChange("origin_handle", v)}
-                  autoComplete="off"
-                  placeholder="e.g. yakima-river-chert-road"
-                />
-              </div>
-
-              <div style={{ minHeight: "54px" }}>
-                <Select
-                  label={renderLabel("Rescued By", "rescued_by", sharedFields.rescued_by)}
-                  options={[...rescuedByOptions.map(o => ({ label: o, value: o }))]}
-                  value={sharedFields.rescued_by}
-                  onChange={(v) => handleSharedFieldChange("rescued_by", v)}
-                />
-              </div>
-              <div style={{ minHeight: "54px" }}>
-                <Select
-                  label={renderLabel("Treatment Status", "treatment_status", sharedFields.treatment_status)}
-                  options={[...treatmentStatusOptions.map(o => ({ label: o, value: o }))]}
-                  value={sharedFields.treatment_status}
-                  onChange={(v) => handleSharedFieldChange("treatment_status", v)}
-                />
-              </div>
-              <div style={{ minHeight: "54px", gridColumn: "span 2" }}>
-                <TextField
-                  label={renderLabel("Origin Story", "origin_story", sharedFields.origin_story)}
-                  value={sharedFields.origin_story}
-                  onChange={(v) => handleSharedFieldChange("origin_story", v)}
-                  autoComplete="off"
-                  multiline={2}
-                />
-              </div>
-              <div style={{ minHeight: "54px" }}>
-                <Select
-                  label={renderLabel("Product Type (Smart Switch)", "primary_use", sharedFields.primary_use)}
-                  options={[{ label: "Select...", value: "" }, ...productTypeOptions.map(o => ({ label: o, value: o }))]}
-                  value={sharedFields.primary_use}
-                  onChange={(v) => handleSharedFieldChange("primary_use", v)}
-                />
-              </div>
-            </div>
-          </BlockStack>
-        </Card>
-
-        {isJewelry && (
-          <Card padding="400" background="bg-surface-warning">
-            <BlockStack gap="400">
-              <InlineGrid columns={2} alignItems="center">
-                <Text variant="headingMd" as="h2" tone="caution" style={{ fontSize: "16px", fontWeight: "bold" }}>⚙️ Bench Findings & Jewelry Specs</Text>
-              </InlineGrid>
-              <Divider />
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "24px" }}>
-                <div style={{ minHeight: "54px" }}>
-                  <TextField
-                    label={renderLabel("Primary Medium", "primary_medium", sharedFields.primary_medium)}
-                    value={sharedFields.primary_medium}
-                    onChange={(v) => handleSharedFieldChange("primary_medium", v)}
-                    autoComplete="off"
-                    placeholder="e.g. .925 Sterling Silver"
-                  />
-                </div>
-                <div style={{ minHeight: "54px" }}>
-                  <TextField
-                    label={renderLabel("Secondary Medium", "secondary_medium", sharedFields.secondary_medium)}
-                    value={sharedFields.secondary_medium}
-                    onChange={(v) => handleSharedFieldChange("secondary_medium", v)}
-                    autoComplete="off"
-                    placeholder="e.g. 14k Gold Accents"
-                  />
-                </div>
-                <div style={{ minHeight: "54px" }}>
-                  <TextField
-                    label={renderLabel("Wire Material", "wire_material", sharedFields.wire_material)}
-                    value={sharedFields.wire_material}
-                    onChange={(v) => handleSharedFieldChange("wire_material", v)}
-                    autoComplete="off"
-                    placeholder="e.g. Antiqued Copper Wire"
-                  />
-                </div>
-                <div style={{ minHeight: "54px" }}>
-                  <TextField
-                    label={renderLabel("Bail Included", "bail_included", sharedFields.bail_included)}
-                    value={sharedFields.bail_included}
-                    onChange={(v) => handleSharedFieldChange("bail_included", v)}
-                    autoComplete="off"
-                    placeholder="e.g. Silver Filigree Pinch Bail"
-                  />
-                </div>
-                <div style={{ minHeight: "54px", gridColumn: "span 2" }}>
-                  <TextField
-                    label={renderLabel("Setting Ready", "setting_ready", sharedFields.setting_ready)}
-                    value={sharedFields.setting_ready}
-                    onChange={(v) => handleSharedFieldChange("setting_ready", v)}
-                    autoComplete="off"
-                    placeholder="e.g. Ready to Wear (Chain Included) or Custom Blank"
-                  />
-                </div>
-              </div>
-            </BlockStack>
-          </Card>
-        )}
-
-        <Card padding="400">
-          <BlockStack gap="400">
-            <Text variant="headingMd" as="h2" style={{ fontSize: "16px", fontWeight: "bold" }}>Section C: Generate Description</Text>
-            <div style={{ minHeight: "54px" }}>
-              <Button
-                size="large"
-                variant="primary"
-                icon={MagicIcon}
-                onClick={() => handleGenerateDescription({ sharedFields, pieces, descFetcher: descriptionFetcher })}
-                loading={isDescLoading}
-              >
-                Write Description with Gemini
-              </Button>
-            </div>
-            {pieces[0]?.generated_description !== "" && (
-              <TextField
-                label={
-                  <div style={{ display: "flex", alignItems: "center", justify: "space-between", width: "100%" }}>
-                    <span>Generated Description — edit before saving</span>
-                    <Text variant="bodySm" tone={wordCountTone} as="span">
-                      {currentWordCount}/100 words
-                    </Text>
-                  </div>
-                }
-                value={pieces[0]?.generated_description || ""}
-                onChange={(v) => handlePieceChange(pieces[0]?.id, "generated_description", v)}
-                multiline={10}
-                autoComplete="off"
-              />
-            )}
-          </BlockStack>
-        </Card>
-
-        {statusMessage !== "" && (
-          <div style={{ minHeight: "54px" }}>
-            <Banner tone="success" title="Operation Successful">
-              <Text as="p" style={{ fontSize: "14px" }}>{statusMessage}</Text>
-            </Banner>
-          </div>
-        )}
-
-        {errorMessage !== "" && (
-          <div style={{ minHeight: "54px" }}>
-            <Banner tone="critical" title="Operation Failed">
-              <Text as="p" style={{ fontSize: "14px" }}>{errorMessage}</Text>
-            </Banner>
-          </div>
-        )}
-
-        <div style={{ minHeight: "54px" }}>
-          {statusMessage !== "" ? (
-            <Button
-              size="large"
-              variant="primary"
-              fullWidth
-              onClick={handleStartNewBatch}
-            >
-              Start New Batch (Wipe Section A, Keep Section B)
-            </Button>
-          ) : (
-            <Button
-              size="large"
-              variant="primary"
-              tone="success"
-              fullWidth
-              onClick={handleCreateAll}
-              loading={isSubmitting}
-              disabled={isSubmitting}
-            >
-              Create All Pieces
-            </Button>
-          )}
-        </div>
-
-        <Card padding="400">
-          <BlockStack gap="400">
-            <Text variant="headingMd" as="h2" style={{ fontSize: "16px", fontWeight: "bold" }}>Meta Scan</Text>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
-              {scanKeys.map(key => {
-                const isRequired = REQUIRED_FIELDS.includes(key);
-                let val = combinedData[key];
-                useSaved && (val = savedMap[key]);
-
-                let isFilled = false;
-                (val !== undefined && val !== null && val.toString().trim() !== "") && (isFilled = true);
-                
-                let isOptionalEmpty = false;
-                (!isRequired && !isFilled) && (isOptionalEmpty = true);
-                
-                let isRequiredEmpty = false;
-                (isRequired && !isFilled) && (isRequiredEmpty = true);
-                
-                const labelText = key.charAt(0).toUpperCase() + key.slice(1).replace(/_/g, ' ');
-
-                return (
-                  <div key={key} style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                    {isFilled && <span style={{ color: "#008060", fontSize: "18px", lineHeight: "18px", width: "18px", height: "18px", display: "inline-block", textAlign: "center" }}>●</span>}
-                    {isOptionalEmpty && <span style={{ color: "#FFC453", fontSize: "18px", lineHeight: "18px", width: "18px", height: "18px", display: "inline-block", textAlign: "center" }}>●</span>}
-                    {isRequiredEmpty && <span style={{ color: "#D72C0D", fontSize: "18px", lineHeight: "18px", width: "18px", height: "18px", display: "inline-block", textAlign: "center" }}>●</span>}
-                    <span style={{ fontSize: "15px", fontWeight: "500" }}>
-                      {labelText}
-                      {(useSaved && isFilled) && ` — ${val}`}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          </BlockStack>
-        </Card>
-      </BlockStack>
-      {geoToast && <Toast content="Geo data loaded" onDismiss={() => setGeoToast(false)} />}
-      {titleToastActive && (
-        <Toast 
-          content={titleToastMsg} 
-          error={titleToastError} 
-          onDismiss={() => setTitleToastActive(false)} 
-        />
-      )}
-    </Frame>
-  );
+    console.warn(`[Gemini Engine] API returned status ${res.status}. Retry ${i + 1} of ${retries} in ${delay}ms...`);
+    await new Promise((resolve) => setTimeout(resolve, delay));
+    delay *= 2;
+  }
+  throw new Error("Gemini API connection timed out after multiple attempts.");
 }
+
+// 🟢 THE RESTORED LIVE SCANNER: Pulls all actual Pages and Collections from Shopify
+async function getLiveStoreDirectory(admin) {
+  let pagesList = [];
+  let collectionsList = [];
+  try {
+    const res = await admin.graphql(`
+      query {
+        pages(first: 100) {
+          edges {
+            node {
+              title
+              handle
+              body
+            }
+          }
+        }
+        collections(first: 100) {
+          edges {
+            node {
+              title
+              handle
+              description
+            }
+          }
+        }
+      }
+    `);
+    const data = await res.json();
+    if (data.data?.pages?.edges) {
+      pagesList = data.data.pages.edges.map(e => ({
+        title: e.node.title,
+        url: `/pages/${e.node.handle}`,
+        excerpt: (e.node.body || "").replace(/<[^>]*>?/gm, "").replace(/\s+/g, " ").trim().slice(0, 300)
+      }));
+    }
+    if (data.data?.collections?.edges) {
+      collectionsList = data.data.collections.edges.map(e => ({
+        title: e.node.title,
+        url: `/collections/${e.node.handle}`,
+        excerpt: (e.node.description || "").replace(/<[^>]*>?/gm, "").replace(/\s+/g, " ").trim().slice(0, 300)
+      }));
+    }
+  } catch (err) {
+    console.error("[Live Directory Scanner] Failed to fetch store inventory:", err.message);
+  }
+  return { pagesList, collectionsList };
+}
+
+// Helper for quick fallback matching
+function resolveOriginHandle(locationSegment, pagesList) {
+  const cleanLoc = (locationSegment || "").toLowerCase().trim();
+  if (!cleanLoc) return "";
+  if (cleanLoc.includes("richardson")) return "the-richardson-strike";
+  if (cleanLoc.includes("irv")) return "the-shopped-rock";
+  if (cleanLoc.includes("yakima") || cleanLoc.includes("yak") || cleanLoc.includes("chert")) return "chert-road-detour";
+
+  const match = pagesList.find(p => p.title.toLowerCase().includes(cleanLoc) || p.url.includes(cleanLoc));
+  return match ? match.url.replace("/pages/", "") : cleanLoc.replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, "-");
+}
+
+function resolveCollectionData(locationSegment, defaultOriginSlug, collectionsList = []) {
+  const cleanLoc = (locationSegment || "").toLowerCase().trim();
+  if (cleanLoc.includes("richardson")) return { slug: "the-3000-mile-run", name: "The 3,000-Mile Run Collection" };
+  if (cleanLoc.includes("irv")) return { slug: "the-shopped-rock", name: "The Shopped Rock Collection" };
+  if (cleanLoc.includes("yakima") || cleanLoc.includes("yak") || cleanLoc.includes("chert")) return { slug: "chert-road-detour", name: "Chert Road Detour — Yakima River Jasper Collection" };
+
+  const matchedCol = collectionsList.find(c => c.url.includes(defaultOriginSlug) || c.title.toLowerCase().includes(cleanLoc));
+  if (matchedCol) {
+    return { slug: matchedCol.url.replace("/collections/", ""), name: matchedCol.title.endsWith("Collection") ? matchedCol.title : `${matchedCol.title} Collection` };
+  }
+
+  return { slug: defaultOriginSlug, name: `${locationSegment.trim()} Collection` };
+}
+
+function getGeoData(stoneFamily) {
+  const family = stoneFamily.toLowerCase().trim();
+  const geoLibrary = {
+    "agate": { hardness: "6.5 - 7", luster: "Vitreous to waxy", fracture: "Conchoidal", cleavage: "None", specificGravity: "2.58 - 2.64", diaphaneity: "Translucent to opaque", crystalSystem: "Trigonal", geologicalEra: "Various", mineralClass: "Silicates", rockComposition: "Silicon dioxide", rockFormation: "Volcanic cavities", mohs_hardness: "6.5 - 7", fracture_pattern: "Conchoidal", specific_gravity: "2.58 - 2.64", geological_age: "Various" },
+    "jasper": { hardness: "6.5 - 7", luster: "Vitreous to dull", fracture: "Conchoidal", cleavage: "None", specificGravity: "2.5 - 2.9", diaphaneity: "Opaque", crystalSystem: "Trigonal (microcrystalline)", geologicalEra: "Various", mineralClass: "Silicates", rockComposition: "Silicon dioxide with impurities", rockFormation: "Sedimentary or volcanic", mohs_hardness: "6.5 - 7", fracture_pattern: "Conchoidal", specific_gravity: "2.5 - 2.9", geological_age: "Various" },
+    "chalcedony": { hardness: "6.5 - 7", luster: "Waxy, vitreous, dull", fracture: "Conchoidal", cleavage: "None", specificGravity: "2.59 - 2.61", diaphaneity: "Translucent to opaque", crystalSystem: "Trigonal", geologicalEra: "Various", mineralClass: "Silicates", rockComposition: "Silicon dioxide", rockFormation: "Sedimentary or volcanic cavities", mohs_hardness: "6.5 - 7", fracture_pattern: "Conchoidal", specific_gravity: "2.59 - 2.61", geological_age: "Various" },
+    "obsidian": { hardness: "5 - 5.5", luster: "Vitreous", fracture: "Conchoidal", cleavage: "None", specificGravity: "2.35 - 2.60", diaphaneity: "Translucent to opaque", crystalSystem: "Amorphous", geologicalEra: "Various (primarily Cenozoic)", mineralClass: "Mineraloid", rockComposition: "Silica-rich volcanic glass", rockFormation: "Extrusive igneous", mohs_hardness: "5 - 5.5", fracture_pattern: "Conchoidal", specific_gravity: "2.35 - 2.60", geological_age: "Various" },
+    "quartz": { hardness: "7", luster: "Vitreous", fracture: "Conchoidal", cleavage: "None", specificGravity: "2.65", diaphaneity: "Transparent to opaque", crystalSystem: "Trigonal", geologicalEra: "Various", mineralClass: "Silicates", rockComposition: "Silicon dioxide", rockFormation: "Igneous, metamorphic, and sedimentary", mohs_hardness: "7", fracture_pattern: "Conchoidal", specific_gravity: "2.65", geological_age: "Various" }
+  };
+  return geoLibrary[family] || { hardness: "", luster: "", fracture: "", cleavage: "", specificGravity: "", diaphaneity: "", crystalSystem: "", geologicalEra: "", mineralClass: "", rockComposition: "", rockFormation: "", mohs_hardness: "", fracture_pattern: "", specific_gravity: "", geological_age: "" };
+}
+
+// ==========================================
+// CORE EXECUTION GRAPH
+// ==========================================
+export const action = async ({ request }) => {
+  try {
+    const { admin } = await authenticate.admin(request);
+    const body = await request.formData();
+    const actionType = body.get("actionType");
+    const intent = body.get("intent");
+
+    if (intent === "geoLookup") {
+      const stoneFamily = body.get("stoneFamily") || "";
+      return Response.json({ geoFields: getGeoData(stoneFamily) });
+    }
+
+    // ==========================================
+    // INTENT: TITLE PARSE
+    // ==========================================
+    if (intent === "titleParse") {
+      const pieceNameInput = body.get("pieceName") || "";
+      const segments = pieceNameInput.split(" - ");
+      const segment1 = segments[0]?.trim() || "";
+      const segment2 = segments[1]?.trim() || "";
+      const segment3 = segments[2]?.trim() || "";
+
+      const { pagesList, collectionsList } = await getLiveStoreDirectory(admin);
+      const resolvedHandle = resolveOriginHandle(segment2, pagesList);
+      const collectionData = resolveCollectionData(segment2, resolvedHandle, collectionsList);
+
+      const matchedPage = pagesList.find(p => p.url.includes(resolvedHandle));
+      const extractedStory = matchedPage ? matchedPage.excerpt : "";
+
+      const promptText = `You are an expert lapidary assistant for Rockhound Studio. Analyze these segments:
+- Family: "${segment1}", Origin: "${segment2}", Title: "${segment3}"
+Set origin_handle strictly to: "${resolvedHandle}". Use "The Shopped Rock" for location if it is a vendor. Match stone family to exact library matches.
+Return valid JSON matching the structure perfectly with no markup text.`;
+
+      const geminiRes = await fetchWithRetry("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          contents: [{ parts: [{ text: promptText }] }],
+          generationConfig: { responseMimeType: "application/json", temperature: 0.2 }
+        })
+      });
+
+      if (geminiRes.ok) {
+        const data = await geminiRes.json();
+        let cleanJson = (data.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
+        const first = cleanJson.indexOf("{"), last = cleanJson.lastIndexOf("}");
+        if (first !== -1 && last !== -1) cleanJson = cleanJson.slice(first, last + 1);
+        const parsed = JSON.parse(cleanJson);
+        
+        // 🟢 THE HARD DB WELD: Pull immutable geo specs straight from DB / Geo Library
+        const dbGeoData = getGeoData(parsed.stone_family || segment1);
+        const finalParse = {
+          ...parsed,
+          ...dbGeoData,
+          origin_handle: resolvedHandle,
+          origin_story: extractedStory,
+          origin_location: segment2,
+          collection_name: collectionData.name,
+          collection_location: collectionData.name.replace(" Collection", "")
+        };
+        
+        return Response.json({ titleParse: finalParse });
+      }
+      return Response.json({ titleParse: null, error: "Title parse error" }, { status: 500 });
+    }
+
+    // ==========================================
+    // INTENT: VISION SCAN (Splicing Exact Links & Hardware)
+    // ==========================================
+    if (intent === "visionScan") {
+      const pieceId = body.get("pieceId");
+      const clientBase64 = body.get("imageBase64");
+      const clientMime = body.get("imageMimeType") || "image/jpeg";
+      
+      const titleInput = body.get("pieceName") || "";
+      const segments = titleInput.split(/\s+[-–—]\s+/);
+      const originSegment = segments[1]?.trim() || "Unknown Origin";
+      
+      // 🟢 EXECUTE LIVE DIRECTORY SCANNER
+      const { pagesList, collectionsList } = await getLiveStoreDirectory(admin);
+      
+      // Build a clean text menu for Gemini to read
+      const pagesMenu = pagesList.map(p => `- Title: "${p.title}" | URL: ${p.url} | Excerpt: "${p.excerpt}"`).join("\n");
+      const collectionsMenu = collectionsList.map(c => `- Title: "${c.title}" | URL: ${c.url} | Excerpt: "${c.excerpt}"`).join("\n");
+
+      // Resolve defaults just in case, but give Gemini the full menu
+      const defaultOriginSlug = resolveOriginHandle(originSegment, pagesList);
+      const defaultCollection = resolveCollectionData(originSegment, defaultOriginSlug, collectionsList);
+      const targetUrlPath = `/pages/${defaultOriginSlug}`;
+      const collectionUrlPath = `/collections/${defaultCollection.slug}`;
+
+      // Extract exact human-readable collection name without trailing "Collection" word
+      const fullCollectionTitle = defaultCollection.name.replace(/\s+Collection$/i, "").trim();
+
+      const matchedPage = pagesList.find(p => p.url.includes(defaultOriginSlug));
+      const extractedStory = matchedPage ? matchedPage.excerpt : "";
+
+      let imageBase64 = clientBase64 && clientBase64 !== "undefined" ? String(clientBase64).trim() : "";
+      let imageMimeType = clientMime;
+
+      if (!imageBase64) {
+        const rawImageUrl = body.get("imageUrl");
+        if (rawImageUrl) {
+          const cleanImageUrl = rawImageUrl.split('?')[0];
+          const imageRes = await fetch(cleanImageUrl);
+          const imageBuffer = await imageRes.arrayBuffer();
+          imageBase64 = Buffer.from(imageBuffer).toString("base64");
+          imageMimeType = (imageRes.headers.get("content-type") || "image/jpeg").split(";")[0].trim();
+        }
+      }
+
+      const promptText = `You are a lapidary artist and master jeweler for Rockhound Studio. Analyze this photo and return a JSON object.
+- LIVE STORE DIRECTORY (Your Dyslexia Safeguard — Read this menu!):
+  VALID PAGES IN STORE:
+  ${pagesMenu || "No live pages found — use default URL."}
+  
+  VALID COLLECTIONS IN STORE:
+  ${collectionsMenu || "No live collections found — use default URL."}
+
+- description: Poetic, spare, story-driven product description strictly UNDER 100 WORDS total. First person voice ("Bob and Janyce" or "Janyce here..."). Credit craftsmanship strictly as "handcrafted by Bob and Janyce". ZERO workshop references.
+CRITICAL DWELL WEB EMBED LAW: Look at the Origin Segment Janyce entered ("${originSegment}"). Check the LIVE STORE DIRECTORY above and match it to the exact corresponding Page and Collection. You MUST use those live excerpts to write short story hooks leading directly into TWO clickable HTML hyperlinks. 
+  1. Origin Hook: Write a short story hook based on the matching Page excerpt, followed immediately by this exact anchor tag format: <a href="${targetUrlPath}">${fullCollectionTitle} Story</a>
+  2. Collection Hook: Write a short hook based on the matching Collection excerpt, followed immediately by this exact anchor tag format: <a href="${collectionUrlPath}">${fullCollectionTitle} Collection</a>
+- primary_use: Smart Switch! Force strictly to best match (e.g., "Pendant (Finished Jewelry)", "Necklace", "Ring / Bezel Setting", "Cabochon", "Wire Wrap (Finished Jewelry)").
+- MANDATORY BENCH FINDINGS & JEWELRY LAWS:
+  * setting_ready: Look closely at the mounting. If cabochon is in a bezel setting, MUST return "Bezel Setting - Ready to Wear". If prong setting, return "Prong Setting - Ready to Wear". If wire wrapped, return "Wire Wrapped - Ready to Wear". NEVER LEAVE BLANK FOR MOUNTED STONES!
+  * wire_material: If wire wrapped, output the wire metal (e.g., "Antiqued Copper Wire"). If in a bezel or prong setting with zero wire, MUST return strictly: "None — Bezel Mounted".
+  * primary_medium: State the primary metal or mounting material (e.g., ".925 Sterling Silver Bezel", "Copper Bezel", "Alloy"). Do not leave blank!
+  * secondary_medium: State accent metal or "None".
+  * bail_included: State the bail style (e.g., "Integrated Bezel Bail", "Sterling Silver Pinch Bail") or "None".`;
+
+      const geminiRes = await fetchWithRetry("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          contents: [{ parts: [{ text: promptText }, { inlineData: { mimeType: imageMimeType, data: imageBase64 } }] }],
+          generationConfig: { 
+            responseMimeType: "application/json", 
+            temperature: 0.2,
+            responseSchema: {
+              type: "OBJECT",
+              properties: {
+                description: { type: "STRING" },
+                primary_color: { type: "STRING" },
+                cut_and_shape: { type: "STRING" },
+                surface_finish: { type: "STRING" },
+                stone_shape: { type: "STRING" },
+                dimensions_mm: { type: "STRING" },
+                pattern: { type: "STRING" },
+                primary_use: { type: "STRING" },
+                primary_medium: { type: "STRING" },
+                secondary_medium: { type: "STRING" },
+                wire_material: { type: "STRING" },
+                setting_ready: { type: "STRING" },
+                bail_included: { type: "STRING" }
+              },
+              required: ["description", "primary_use", "setting_ready", "wire_material", "primary_medium", "secondary_medium", "bail_included"]
+            }
+          }
+        })
+      });
+
+      if (geminiRes.ok) {
+        const geminiData = await geminiRes.json();
+        let cleanJson = (geminiData.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
+        const first = cleanJson.indexOf("{"), last = cleanJson.lastIndexOf("}");
+        if (first !== -1 && last !== -1) cleanJson = cleanJson.slice(first, last + 1);
+        const parsedVision = JSON.parse(cleanJson);
+        
+        const resolved_primary_use = parsedVision.primary_use || parsedVision.use || parsedVision.product_type || "";
+        const resolved_primary_medium = parsedVision.primary_medium || parsedVision.medium || parsedVision.metal || parsedVision.primary_metal || "";
+        const resolved_secondary_medium = parsedVision.secondary_medium || parsedVision.accent || parsedVision.secondary_metal || "";
+        const resolved_wire_material = parsedVision.wire_material || parsedVision.wire || parsedVision.wire_wrap || "";
+        const resolved_setting_ready = parsedVision.setting_ready || parsedVision.setting || parsedVision.mounting || parsedVision.bezel || "";
+        const resolved_bail_included = parsedVision.bail_included || parsedVision.bail || "";
+
+        return Response.json({
+          success: true, intent: "visionScan", pieceId,
+          description: parsedVision.description || "",
+          primary_color: parsedVision.primary_color || "",
+          cut_and_shape: parsedVision.cut_and_shape || "",
+          surface_finish: parsedVision.surface_finish || "",
+          stone_shape: parsedVision.stone_shape || "",
+          dimensions_mm: parsedVision.dimensions_mm || "",
+          pattern: parsedVision.pattern || "",
+          primary_use: resolved_primary_use,
+          primary_medium: resolved_primary_medium,
+          secondary_medium: resolved_secondary_medium,
+          wire_material: resolved_wire_material,
+          setting_ready: resolved_setting_ready,
+          bail_included: resolved_bail_included,
+          origin_story: extractedStory,
+          origin_handle: defaultOriginSlug,
+          origin_location: originSegment,
+          collection_name: defaultCollection.name,
+          collection_location: defaultCollection.name.replace(" Collection", "")
+        });
+      }
+      return Response.json({ success: false, error: "Vision API Failure" });
+    }
+
+    return Response.json({ success: true, fields: {} });
+  } catch (error) {
+    console.error("Critical Failure:", error.message);
+    return Response.json({ success: false, error: error.message }, { status: 500 });
+  }
+};
