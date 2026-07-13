@@ -21,7 +21,7 @@ export const ROCKHOUND_FIELDS = [
   { key: "secondary_medium", label: "Secondary Medium", type: "single_line_text_field" },
   { key: "handcrafted_by", label: "Handcrafted By", type: "single_line_text_field" },
   { key: "material", label: "Material", type: "single_line_text_field" },
-  { key: "stone_family", label: "Stone Family", type: "single_line_text_field" },
+  { key: "stone_family", label: "Stone Family", type: "select" },
   { key: "color", label: "Color", type: "single_line_text_field" },
   { key: "cut_and_shape", label: "Cut and Shape", type: "single_line_text_field" },
   { key: "surface_finish", label: "Surface Finish", isDropdown: true },
@@ -294,7 +294,7 @@ export const METAFIELD_CONFIG = [
 
   // 🔵 STONE Fields
   { namespace: "custom", key: "material", type: "single_line_text_field", label: "Material", colorGroup: "blue", options: [] },
-  { namespace: "custom", key: "stone_family", type: "text", label: "Stone Family", colorGroup: "blue", options: DROPDOWN_OPTIONS.stone_family },
+  { namespace: "custom", key: "stone_family", type: "select", label: "Stone Family", colorGroup: "blue", options: DROPDOWN_OPTIONS.stone_family },
   { namespace: "custom", key: "color", type: "text", label: "Color", colorGroup: "blue", options: DROPDOWN_OPTIONS.color },
   { namespace: "custom", key: "cut_and_shape", type: "single_line_text_field", label: "Cut and Shape", colorGroup: "blue", options: DROPDOWN_OPTIONS.cut_and_shape },
   { namespace: "custom", key: "surface_finish", type: "single_line_text_field", label: "Surface Finish", colorGroup: "blue", options: DROPDOWN_OPTIONS.surface_finish },
