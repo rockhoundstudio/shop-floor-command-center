@@ -8,7 +8,7 @@ import React, { useState, useEffect, useCallback, useRef } from "react";
 import { BlockStack, Card, Text, TextField, Select, Button, Banner, DropZone, Spinner, Frame, Toast, InlineGrid, Box, Divider } from "@shopify/polaris";
 import { PlusIcon, MagicIcon } from "@shopify/polaris-icons";
 import { useFetcher } from "react-router";
-import { ROCKHOUND_FIELDS, DEFAULT_DROPDOWNS, REQUIRED_FIELDS, productTypeOptions, collectionLocationOptions } from "../utils/meta-injector.constants.jsx";
+import { ROCKHOUND_FIELDS, DEFAULT_DROPDOWNS, REQUIRED_FIELDS, productTypeOptions, collectionLocationOptions, normalizeDropdownValue } from "../utils/meta-injector.constants.jsx";
 import { handleScanPhoto, handleGenerateDescription, buildMetafieldsJson, buildTitle } from "./app.meta-injector.intake-helpers.jsx";
 
 const SHOPPED_ROCK_VENDORS = ["Richardson's Rock Ranch", "Irv's Rock and Jewelry"];
@@ -493,12 +493,11 @@ export function NewProductIntakeTab({ fetcher }) {
 
       return {
         ...prev,
-        material: parsed.material || "Stone",
-        stone_family: parsed.stone_family || prev.stone_family,
-        collection_name: parsed.collection_name || prev.collection_name,
+        material: "Stone",
+        stone_family: normalizeDropdownValue("stone_family", parsed.stone_family?.trim()) || prev.stone_family,
+        collection_name: (parsed.collection_name && parsed.collection_name !== parsed.collection_location && parsed.collection_name !== resolvedCollectionLoc) ? parsed.collection_name : prev.collection_name,
         collection_location: resolvedCollectionLoc,
         collectionLocation: resolvedCollectionLoc,
-        origin_location: parsed.origin_name || prev.origin_location,
         origin_handle: parsed.origin_handle || prev.origin_handle, 
         origin_story: parsed.origin_story || prev.origin_story,
         mohs_hardness: parsed.mohs_hardness || prev.mohs_hardness,
@@ -537,6 +536,11 @@ export function NewProductIntakeTab({ fetcher }) {
       };
     });
 
+    (parsed.stone_family && parsed.stone_family.trim() !== "") && autoFillFetcher.submit(
+      { intent: "geoLookup", stoneFamily: parsed.stone_family.toLowerCase() },
+      { method: "post", action: "/app/meta-injector-autofill" }
+    );
+
     if (parsed.canonical_title || parsed.product_title) {
       const pieceTitleVal = parsed.canonical_title || parsed.product_title;
       setPieces(prev => prev.map((p, i) =>
@@ -556,7 +560,7 @@ export function NewProductIntakeTab({ fetcher }) {
       setTitleToastActive(true);
     }
 
-  }, [autoFillFetcher.data, lastScannedPieceId]);
+  }, [autoFillFetcher, autoFillFetcher.data, lastScannedPieceId]);
 
   useEffect(() => {
     const isIdle = descriptionFetcher.state === "idle";
@@ -945,28 +949,19 @@ export function NewProductIntakeTab({ fetcher }) {
                   label={renderLabel("Stone Family", "stone_family", sharedFields.stone_family)}
                   options={[
                     { label: "Select stone family...", value: "" },
-                    { label: "agate", value: "agate" },
-                    { label: "jasper", value: "jasper" },
-                    { label: "chalcedony", value: "chalcedony" },
-                    { label: "obsidian", value: "obsidian" },
-                    { label: "quartz", value: "quartz" },
-                    { label: "amethyst", value: "amethyst" },
-                    { label: "tiger's eye", value: "tiger's eye" },
-                    { label: "turquoise", value: "turquoise" },
-                    { label: "malachite", value: "malachite" },
-                    { label: "labradorite", value: "labradorite" },
-                    { label: "moonstone", value: "moonstone" },
-                    { label: "onyx", value: "onyx" },
-                    { label: "opal", value: "opal" },
-                    { label: "petrified wood", value: "petrified wood" },
-                    { label: "serpentine", value: "serpentine" },
-                    { label: "rhodonite", value: "rhodonite" },
-                    { label: "sodalite", value: "sodalite" },
-                    { label: "unakite", value: "unakite" },
-                    { label: "andesite", value: "andesite" },
-                    { label: "basalt", value: "basalt" },
-                    { label: "granite", value: "granite" },
-                    { label: "sandstone", value: "sandstone" }
+                    { label: "Agate", value: "Agate" },
+                    { label: "Andesite", value: "Andesite" },
+                    { label: "Aventurine", value: "Aventurine" },
+                    { label: "Chalcedony", value: "Chalcedony" },
+                    { label: "Jasper", value: "Jasper" },
+                    { label: "Jaspagate", value: "Jaspagate" },
+                    { label: "Labradorite", value: "Labradorite" },
+                    { label: "Obsidian", value: "Obsidian" },
+                    { label: "Quartzite", value: "Quartzite" },
+                    { label: "Quartz", value: "Quartz" },
+                    { label: "Rhyolite", value: "Rhyolite" },
+                    { label: "Serpentine", value: "Serpentine" },
+                    { label: "Variscite", value: "Variscite" }
                   ]}
                   value={sharedFields.stone_family}
                   onChange={(v) => handleStoneFamilyChange(v)}
@@ -978,14 +973,6 @@ export function NewProductIntakeTab({ fetcher }) {
                   value={sharedFields.collection_name}
                   onChange={(v) => handleSharedFieldChange("collection_name", v)}
                   autoComplete="off"
-                />
-              </div>
-              <div style={{ minHeight: "54px" }}>
-                <Select
-                  label={renderLabel("Collection Location", "collection_location", sharedFields.collection_location)}
-                  options={[{ label: "Select location...", value: "" }, ...collectionLocationOptions.map(o => ({ label: o, value: o }))]}
-                  value={sharedFields.collection_location}
-                  onChange={(v) => handleSharedFieldChange("collection_location", v)}
                 />
               </div>
               
