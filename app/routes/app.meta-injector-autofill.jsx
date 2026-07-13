@@ -159,8 +159,8 @@ export const action = async ({ request }) => {
 
       const promptText = `You are an expert lapidary assistant for Rockhound Studio. Analyze these segments:
 - Family: "${segment1}", Origin: "${segment2}", Title: "${segment3}"
-Set origin_handle strictly to: "${resolvedHandle}". Use "The Shopped Rock" for location if it is a vendor. Match stone family to exact library matches.
-Return valid JSON matching the structure perfectly with no markup text.`;
+Set origin_handle strictly to: "${resolvedHandle}". Use "The Shopped Rock" for location if it is a vendor. stone_family must be exactly one of: Agate, Andesite, Aventurine, Chalcedony, Jasper, Jaspagate, Labradorite, Obsidian, Quartzite, Quartz, Rhyolite, Serpentine, Variscite - pick the closest match to the Family segment. Return the exact string, no variations, no lowercase.
+Return valid JSON with these exact keys: stone_family, piece_name, origin_handle, origin_location, collection_name, collection_location. No markup. No extra keys.`;
 
       const geminiRes = await fetchWithRetry("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY, {
         method: "POST", headers: { "Content-Type": "application/json" },
