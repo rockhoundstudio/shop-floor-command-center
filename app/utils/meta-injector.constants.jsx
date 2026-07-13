@@ -245,7 +245,7 @@ export const FULL_META_GROUPS = [
     color: "#1565C0",
     fields: [
       { key: "material", label: "Material", type: "text" },
-      { key: "stone_family", label: "Stone Family", type: "text" },
+      { key: "stone_family", label: "Stone Family", type: "select" },
       { key: "color", label: "Color", type: "text" },
       { key: "cut_and_shape", label: "Cut and Shape", type: "text" },
       { key: "surface_finish", label: "Surface Finish", type: "text" },
