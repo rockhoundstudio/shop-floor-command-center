@@ -186,7 +186,8 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
           origin_story: extractedStory,
           origin_location: segment2,
           collection_name: collectionData.name,
-          collection_location: collectionData.name.replace(" Collection", "")
+          collection_location: collectionData.name.replace(" Collection", ""),
+            canonical_title: parsed.stone_family + " - " + collectionData.name.replace(" Collection", "") + " - " + segment3
         };
         
         return Response.json({ titleParse: finalParse });
