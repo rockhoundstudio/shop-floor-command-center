@@ -93,6 +93,7 @@ function resolveOriginHandle(locationSegment, pagesList) {
   if (!cleanLoc) return "";
   if (cleanLoc.includes("richardson")) return "the-richardson-strike";
   if (cleanLoc.includes("irv")) return "the-shopped-rock";
+  if (cleanLoc.includes("north fork") || cleanLoc.includes("cda")) return "the-north-fork-strike";
   if (cleanLoc.includes("yakima") || cleanLoc.includes("yak") || cleanLoc.includes("chert")) return "chert-road-detour";
 
   const match = pagesList.find(p => p.title.toLowerCase().includes(cleanLoc) || p.url.includes(cleanLoc));
@@ -101,8 +102,9 @@ function resolveOriginHandle(locationSegment, pagesList) {
 
 function resolveCollectionData(locationSegment, defaultOriginSlug, collectionsList = []) {
   const cleanLoc = (locationSegment || "").toLowerCase().trim();
-  if (cleanLoc.includes("richardson")) return { slug: "the-3000-mile-run", name: "The 3,000-Mile Run Collection" };
+  if (cleanLoc.includes("richardson")) return { slug: "richardsons-rock-ranch", name: "Richardson's Rock Ranch Collection" };
   if (cleanLoc.includes("irv")) return { slug: "the-shopped-rock", name: "The Shopped Rock Collection" };
+  if (cleanLoc.includes("north fork") || cleanLoc.includes("cda")) return { slug: "north-fork-cda-collection", name: "North Fork CdA Collection" };
   if (cleanLoc.includes("yakima") || cleanLoc.includes("yak") || cleanLoc.includes("chert")) return { slug: "chert-road-detour", name: "Chert Road Detour — Yakima River Jasper Collection" };
 
   const matchedCol = collectionsList.find(c => c.url.includes(defaultOriginSlug) || c.title.toLowerCase().includes(cleanLoc));
@@ -187,7 +189,7 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
           origin_location: segment2,
           collection_name: collectionData.name,
           collection_location: collectionData.name.replace(" Collection", ""),
-            canonical_title: parsed.stone_family + " - " + resolvedHandle + " - " + segment3
+          canonical_title: parsed.stone_family + " - " + resolvedHandle + " - " + segment3
         };
         
         return Response.json({ titleParse: finalParse });
@@ -248,7 +250,7 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
   VALID COLLECTIONS IN STORE:
   ${collectionsMenu || "No live collections found — use default URL."}
 
-- description: Poetic, spare, story-driven product description strictly UNDER 100 WORDS total. First person voice ("Bob and Janyce" or "Janyce here..."). Credit craftsmanship strictly as "handcrafted by Bob and Janyce". ZERO workshop references.
+- description: Write in "we" voice — Bob shapes, Janyce shines. Past tense for the find. Short sentences, one idea at a time. FIRST SENTENCE must include: stone type, origin location, and one specific visual detail — this is the SEO anchor. Then say what you saw in it. Say what it cost to get it right. Honesty over perfection — some flaws are not flaws but accents. No jewelry store language. No upsell. Specific detail over adjectives. CRITICAL DWELL WEB EMBED LAW: after the story, embed the two anchor tags exactly as specified below. End with: — Bob & Janyce, Rockhound Studio, Spokane Valley WA. Under 100 words total before the signature.
 CRITICAL DWELL WEB EMBED LAW: Look at the Origin Segment Janyce entered ("${originSegment}"). Check the LIVE STORE DIRECTORY above and match it to the exact corresponding Page and Collection. You MUST use those live excerpts to write short story hooks leading directly into TWO clickable HTML hyperlinks. 
   1. Origin Hook: Write a short story hook based on the matching Page excerpt, followed immediately by this exact anchor tag format: <a href="${targetUrlPath}">${fullCollectionTitle} Story</a>
   2. Collection Hook: Write a short hook based on the matching Collection excerpt, followed immediately by this exact anchor tag format: <a href="${collectionUrlPath}">${fullCollectionTitle} Collection</a>
@@ -304,6 +306,23 @@ CRITICAL DWELL WEB EMBED LAW: Look at the Origin Segment Janyce entered ("${orig
         const resolved_setting_ready = parsedVision.setting_ready || parsedVision.setting || parsedVision.mounting || parsedVision.bezel || "";
         const resolved_bail_included = parsedVision.bail_included || parsedVision.bail || "";
 
+        let originStoryHook = "";
+        if (extractedStory) {
+          try {
+            const hookPrompt = `Rewrite this story excerpt into a 300-character maximum SEO hook in Bob's voice for Rockhound Studio. Focus on: stone type, origin, and one specific visual detail. End clean. Do not wrap in quotes or formatting.\n\nStory excerpt:\n"${extractedStory}"`;
+            const hookRes = await fetchWithRetry("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY, {
+              method: "POST", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ contents: [{ parts: [{ text: hookPrompt }] }] })
+            });
+            if (hookRes.ok) {
+              const hookData = await hookRes.json();
+              originStoryHook = (hookData.candidates?.[0]?.content?.parts?.[0]?.text || "").trim().slice(0, 300);
+            }
+          } catch (err) {
+            console.error("[Origin Story Hook] Failed to generate hook:", err.message);
+          }
+        }
+
         return Response.json({
           success: true, intent: "visionScan", pieceId,
           description: parsedVision.description || "",
@@ -319,7 +338,7 @@ CRITICAL DWELL WEB EMBED LAW: Look at the Origin Segment Janyce entered ("${orig
           wire_material: resolved_wire_material,
           setting_ready: resolved_setting_ready,
           bail_included: resolved_bail_included,
-          origin_story: extractedStory,
+          origin_story: originStoryHook,
           origin_handle: defaultOriginSlug,
           origin_location: originSegment,
           collection_name: defaultCollection.name,
