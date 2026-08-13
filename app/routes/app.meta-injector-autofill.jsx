@@ -162,8 +162,7 @@ export const action = async ({ request }) => {
       const promptText = `You are an expert lapidary assistant for Rockhound Studio. Analyze these segments:
 - Family: "${segment1}", Origin: "${segment2}", Title: "${segment3}"
 Set origin_handle strictly to: "${resolvedHandle}". Use "The Shopped Rock" for location if it is a vendor. stone_family must be exactly one of: Agate, Andesite, Aventurine, Chalcedony, Jasper, Jaspagate, Labradorite, Obsidian, Quartzite, Quartz, Rhyolite, Serpentine, Variscite - pick the closest match to the Family segment. Return the exact string, no variations, no lowercase.
-origin_story_hook: Using this excerpt from the origin page — ${extractedStory} — rewrite it as a 300-character maximum SEO hook in plain honest voice. First sentence must include stone type and origin location. Past tense. Short sentences. No jewelry store language. No upsell. End clean — no ellipsis.
-Return valid JSON with these exact keys: stone_family, piece_name, origin_handle, origin_location, collection_name, collection_location, origin_story_hook. No markup. No extra keys.`;
+Return valid JSON with these exact keys: stone_family, piece_name, origin_handle, origin_location, collection_name, collection_location. No markup. No extra keys.`;
 
       const geminiRes = await fetchWithRetry("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY, {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -186,7 +185,7 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
           ...parsed,
           ...dbGeoData,
           origin_handle: resolvedHandle,
-          origin_story: parsed.origin_story_hook || extractedStory,
+          origin_story: extractedStory,
           origin_location: segment2,
           collection_name: collectionData.name,
           collection_location: collectionData.name.replace(" Collection", ""),
@@ -307,6 +306,23 @@ CRITICAL DWELL WEB EMBED LAW: Look at the Origin Segment Janyce entered ("${orig
         const resolved_setting_ready = parsedVision.setting_ready || parsedVision.setting || parsedVision.mounting || parsedVision.bezel || "";
         const resolved_bail_included = parsedVision.bail_included || parsedVision.bail || "";
 
+        let originStoryHook = "";
+        if (extractedStory) {
+          try {
+            const hookPrompt = `Rewrite this story excerpt into a 300-character maximum SEO hook in Bob's voice for Rockhound Studio. Focus on: stone type, origin, and one specific visual detail. End clean. Do not wrap in quotes or formatting.\n\nStory excerpt:\n"${extractedStory}"`;
+            const hookRes = await fetchWithRetry("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY, {
+              method: "POST", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ contents: [{ parts: [{ text: hookPrompt }] }] })
+            });
+            if (hookRes.ok) {
+              const hookData = await hookRes.json();
+              originStoryHook = (hookData.candidates?.[0]?.content?.parts?.[0]?.text || "").trim().slice(0, 300);
+            }
+          } catch (err) {
+            console.error("[Origin Story Hook] Failed to generate hook:", err.message);
+          }
+        }
+
         return Response.json({
           success: true, intent: "visionScan", pieceId,
           description: parsedVision.description || "",
@@ -322,7 +338,7 @@ CRITICAL DWELL WEB EMBED LAW: Look at the Origin Segment Janyce entered ("${orig
           wire_material: resolved_wire_material,
           setting_ready: resolved_setting_ready,
           bail_included: resolved_bail_included,
-          origin_story: extractedStory,
+          origin_story: originStoryHook,
           origin_handle: defaultOriginSlug,
           origin_location: originSegment,
           collection_name: defaultCollection.name,
