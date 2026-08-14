@@ -93,6 +93,7 @@ function resolveOriginHandle(locationSegment, pagesList) {
   if (!cleanLoc) return "";
   if (cleanLoc.includes("richardson")) return "the-richardson-strike";
   if (cleanLoc.includes("irv")) return "the-shopped-rock";
+  if (cleanLoc.includes("north fork") || cleanLoc.includes("cda")) return "the-north-fork-strike";
   if (cleanLoc.includes("yakima") || cleanLoc.includes("yak") || cleanLoc.includes("chert")) return "chert-road-detour";
 
   const match = pagesList.find(p => p.title.toLowerCase().includes(cleanLoc) || p.url.includes(cleanLoc));
@@ -101,8 +102,9 @@ function resolveOriginHandle(locationSegment, pagesList) {
 
 function resolveCollectionData(locationSegment, defaultOriginSlug, collectionsList = []) {
   const cleanLoc = (locationSegment || "").toLowerCase().trim();
-  if (cleanLoc.includes("richardson")) return { slug: "the-3000-mile-run", name: "The 3,000-Mile Run Collection" };
+  if (cleanLoc.includes("richardson")) return { slug: "richardsons-rock-ranch", name: "Richardson's Rock Ranch Collection" };
   if (cleanLoc.includes("irv")) return { slug: "the-shopped-rock", name: "The Shopped Rock Collection" };
+  if (cleanLoc.includes("north fork") || cleanLoc.includes("cda")) return { slug: "north-fork-cda-collection", name: "North Fork CdA Collection" };
   if (cleanLoc.includes("yakima") || cleanLoc.includes("yak") || cleanLoc.includes("chert")) return { slug: "chert-road-detour", name: "Chert Road Detour — Yakima River Jasper Collection" };
 
   const matchedCol = collectionsList.find(c => c.url.includes(defaultOriginSlug) || c.title.toLowerCase().includes(cleanLoc));
@@ -113,16 +115,77 @@ function resolveCollectionData(locationSegment, defaultOriginSlug, collectionsLi
   return { slug: defaultOriginSlug, name: `${locationSegment.trim()} Collection` };
 }
 
-function getGeoData(stoneFamily) {
-  const family = stoneFamily.toLowerCase().trim();
-  const geoLibrary = {
-    "agate": { hardness: "6.5 - 7", luster: "Vitreous to waxy", fracture: "Conchoidal", cleavage: "None", specificGravity: "2.58 - 2.64", diaphaneity: "Translucent to opaque", crystalSystem: "Trigonal", geologicalEra: "Various", mineralClass: "Silicates", rockComposition: "Silicon dioxide", rockFormation: "Volcanic cavities", mohs_hardness: "6.5 - 7", fracture_pattern: "Conchoidal", specific_gravity: "2.58 - 2.64", geological_age: "Various" },
-    "jasper": { hardness: "6.5 - 7", luster: "Vitreous to dull", fracture: "Conchoidal", cleavage: "None", specificGravity: "2.5 - 2.9", diaphaneity: "Opaque", crystalSystem: "Trigonal (microcrystalline)", geologicalEra: "Various", mineralClass: "Silicates", rockComposition: "Silicon dioxide with impurities", rockFormation: "Sedimentary or volcanic", mohs_hardness: "6.5 - 7", fracture_pattern: "Conchoidal", specific_gravity: "2.5 - 2.9", geological_age: "Various" },
-    "chalcedony": { hardness: "6.5 - 7", luster: "Waxy, vitreous, dull", fracture: "Conchoidal", cleavage: "None", specificGravity: "2.59 - 2.61", diaphaneity: "Translucent to opaque", crystalSystem: "Trigonal", geologicalEra: "Various", mineralClass: "Silicates", rockComposition: "Silicon dioxide", rockFormation: "Sedimentary or volcanic cavities", mohs_hardness: "6.5 - 7", fracture_pattern: "Conchoidal", specific_gravity: "2.59 - 2.61", geological_age: "Various" },
-    "obsidian": { hardness: "5 - 5.5", luster: "Vitreous", fracture: "Conchoidal", cleavage: "None", specificGravity: "2.35 - 2.60", diaphaneity: "Translucent to opaque", crystalSystem: "Amorphous", geologicalEra: "Various (primarily Cenozoic)", mineralClass: "Mineraloid", rockComposition: "Silica-rich volcanic glass", rockFormation: "Extrusive igneous", mohs_hardness: "5 - 5.5", fracture_pattern: "Conchoidal", specific_gravity: "2.35 - 2.60", geological_age: "Various" },
-    "quartz": { hardness: "7", luster: "Vitreous", fracture: "Conchoidal", cleavage: "None", specificGravity: "2.65", diaphaneity: "Transparent to opaque", crystalSystem: "Trigonal", geologicalEra: "Various", mineralClass: "Silicates", rockComposition: "Silicon dioxide", rockFormation: "Igneous, metamorphic, and sedimentary", mohs_hardness: "7", fracture_pattern: "Conchoidal", specific_gravity: "2.65", geological_age: "Various" }
+async function getGeoData(admin, stoneFamily) {
+  const emptyGeo = {
+    hardness: "", luster: "", fracture: "", cleavage: "",
+    specificGravity: "", diaphaneity: "", crystalSystem: "",
+    geologicalEra: "", mineralClass: "", rockComposition: "",
+    rockFormation: "", mohs_hardness: "", fracture_pattern: "",
+    specific_gravity: "", geological_age: ""
   };
-  return geoLibrary[family] || { hardness: "", luster: "", fracture: "", cleavage: "", specificGravity: "", diaphaneity: "", crystalSystem: "", geologicalEra: "", mineralClass: "", rockComposition: "", rockFormation: "", mohs_hardness: "", fracture_pattern: "", specific_gravity: "", geological_age: "" };
+  if (!stoneFamily || !admin) return emptyGeo;
+
+  try {
+    const res = await admin.graphql(`
+      query {
+        metaobjects(type: "gem_dictionary", first: 100) {
+          edges {
+            node {
+              fields {
+                key
+                value
+              }
+            }
+          }
+        }
+      }
+    `);
+    const data = await res.json();
+    const edges = data.data?.metaobjects?.edges || [];
+    const search = stoneFamily.toLowerCase().trim();
+
+    for (const edge of edges) {
+      const fieldsArr = edge.node.fields || [];
+      const fieldMap = {};
+      fieldsArr.forEach(f => { fieldMap[f.key] = f.value || ""; });
+
+      const stoneName = (fieldMap.stone_name || "").toLowerCase().trim();
+      if (stoneName === search) {
+        const hardness = fieldMap.hardness || fieldMap.mohs_hardness || "";
+        const luster = fieldMap.luster || "";
+        const fracture = fieldMap.fracture || fieldMap.fracture_pattern || "";
+        const cleavage = fieldMap.cleavage || "";
+        const specificGravity = fieldMap.specific_gravity || fieldMap.specificGravity || fieldMap.density || "";
+        const diaphaneity = fieldMap.diaphaneity || fieldMap.transparency || "";
+        const crystalSystem = fieldMap.crystal_system || fieldMap.crystalSystem || "";
+        const geologicalEra = fieldMap.geological_era || fieldMap.geologicalEra || fieldMap.geological_age || "";
+        const mineralClass = fieldMap.mineral_class || fieldMap.mineralClass || "";
+        const rockComposition = fieldMap.rock_composition || fieldMap.rockComposition || "";
+        const rockFormation = fieldMap.rock_formation || fieldMap.rockFormation || "";
+
+        return {
+          hardness,
+          luster,
+          fracture,
+          cleavage,
+          specificGravity,
+          diaphaneity,
+          crystalSystem,
+          geologicalEra,
+          mineralClass,
+          rockComposition,
+          rockFormation,
+          mohs_hardness: hardness,
+          fracture_pattern: fracture,
+          specific_gravity: specificGravity,
+          geological_age: geologicalEra
+        };
+      }
+    }
+  } catch (err) {
+    console.error("[Geo Data Lookup] Failed to fetch gem dictionary:", err.message);
+  }
+  return emptyGeo;
 }
 
 // ==========================================
@@ -137,7 +200,7 @@ export const action = async ({ request }) => {
 
     if (intent === "geoLookup") {
       const stoneFamily = body.get("stoneFamily") || "";
-      return Response.json({ geoFields: getGeoData(stoneFamily) });
+      return Response.json({ geoFields: await getGeoData(admin, stoneFamily) });
     }
 
     // ==========================================
@@ -178,7 +241,7 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
         const parsed = JSON.parse(cleanJson);
         
         // 🟢 THE HARD DB WELD: Pull immutable geo specs straight from DB / Geo Library
-        const dbGeoData = getGeoData(parsed.stone_family || segment1);
+        const dbGeoData = await getGeoData(admin, parsed.stone_family || segment1);
         const finalParse = {
           ...parsed,
           ...dbGeoData,
@@ -187,7 +250,7 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
           origin_location: segment2,
           collection_name: collectionData.name,
           collection_location: collectionData.name.replace(" Collection", ""),
-            canonical_title: parsed.stone_family + " - " + resolvedHandle + " - " + segment3
+          canonical_title: parsed.stone_family + " - " + resolvedHandle + " - " + segment3
         };
         
         return Response.json({ titleParse: finalParse });
