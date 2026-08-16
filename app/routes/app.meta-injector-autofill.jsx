@@ -1,1 +1,500 @@
-import { authenticate } from "../shopify.server";\nimport { lookupStone } from "../utils/geoLibrary.jsx";\nimport { TARGET_KEYS } from "../utils/metaScan";\n\nconst stoneProfileCache = new Map();\n\nasync function queryPostgres(sql, params) {\n  const { default: pg } = await import('pg');\n  const db = new pg.Client({\n    connectionString: process.env.DATABASE_URL,\n    ssl: { rejectUnauthorized: false }\n  });\n  await db.connect();\n  try {\n    const result = await db.query(sql, params);\n    return result.rows;\n  } finally {\n    await db.end();\n  }\n}\n\nasync function saveToStoneCache(stoneName, geoResult) {\n  try {\n    const existing = await queryPostgres(\n      'SELECT id FROM "StoneCache" WHERE "stoneName" = $1 LIMIT 1',\n      [stoneName]\n    );\n    if (existing.length === 0) {\n      await queryPostgres(\n        'INSERT INTO "StoneCache" ("id", "stoneName", "data", "createdAt", "updatedAt") VALUES (gen_random_uuid()::text, $1, $2, NOW(), NOW())',\n        [stoneName, JSON.stringify(geoResult)]\n      );\n      console.log("[StoneCache] Saved new entry for:", stoneName);\n    }\n  } catch (err) {\n    console.error("[StoneCache] Save failed for:", stoneName, err.message);\n  }\n}\n\n// ==========================================\n// ENVIRONMENT VARIABLES & MAPS\n// ==========================================\nconst MINDAT_API_KEY = process.env.MINDAT_API_KEY;\n\nconst MINDAT_KEY_MAP = {\n  official_name: "name",\n  mineral_class: "mindat_formula",\n  crystal_structure: "crystal_system",\n  luster: "luster",\n  specific_gravity: "density",\n  moh_hardness: "hardness",\n  cleavage: "cleavage",\n  fracture_pattern: "fracture",\n  diaphaneity: "transparency",\n  tenacity: "tenacity",\n  origin_location: "localities_count",\n};\n\nconst SHOPPED_ROCK_VENDORS = ["Richardson's Rock Ranch", "Irv's Rock and Jewelry", "Irv's Rock & Jewelry"];\n\n// ==========================================\n// ENGINE: EXPONENTIAL BACKOFF RETRY\n// ==========================================\nasync function fetchWithRetry(url, options, retries = 3, delay = 1500) {\n  for (let i = 0; i < retries; i++) {\n    const res = await fetch(url, options);\n    if (res.status !== 503 && res.status !== 429) {\n      return res;\n    }\n    console.warn(`[Gemini Engine] API returned status ${res.status}. Retry ${i + 1} of ${retries} in ${delay}ms...`);\n    await new Promise((resolve) => setTimeout(resolve, delay));\n    delay *= 2;\n  }\n  throw new Error("Gemini API connection timed out after multiple attempts.");\n}\n\n// 🟢 THE RESTORED LIVE SCANNER: Pulls all actual Pages and Collections from Shopify\nasync function getLiveStoreDirectory(admin) {\n  let pagesList = [];\n  let collectionsList = [];\n  try {\n    const res = await admin.graphql(`\n      query {\n        pages(first: 100) {\n          edges {\n            node {\n              title\n              handle\n              body\n            }\n          }\n        }\n        collections(first: 100) {\n          edges {\n            node {\n              title\n              handle\n              description\n            }\n          }\n        }\n      }\n    `);\n    const data = await res.json();\n    if (data.data?.pages?.edges) {\n      pagesList = data.data.pages.edges.map(e => ({\n        title: e.node.title,\n        url: `/pages/${e.node.handle}`,\n        excerpt: (e.node.body || "").replace(/<[^>]*>?/gm, "").replace(/\s+/g, " ").trim().slice(0, 300)\n      }));\n    }\n    if (data.data?.collections?.edges) {\n      collectionsList = data.data.collections.edges.map(e => ({\n        title: e.node.title,\n        url: `/collections/${e.node.handle}`,\n        excerpt: (e.node.description || "").replace(/<[^>]*>?/gm, "").replace(/\s+/g, " ").trim().slice(0, 300)\n      }));\n    }\n  } catch (err) {\n    console.error("[Live Directory Scanner] Failed to fetch store inventory:", err.message);\n  }\n  return { pagesList, collectionsList };\n}\n\n// Helper for quick fallback matching\nfunction resolveOriginHandle(locationSegment, pagesList) {\n  const cleanLoc = (locationSegment || "").toLowerCase().trim();\n  if (!cleanLoc) return "";\n  if (cleanLoc.includes("richardson")) return "the-richardson-strike";\n  if (cleanLoc.includes("irv")) return "the-shopped-rock";\n  if (cleanLoc.includes("north fork") || cleanLoc.includes("cda")) return "the-north-fork-strike";\n  if (cleanLoc.includes("yakima") || cleanLoc.includes("yak") || cleanLoc.includes("chert")) return "chert-road-detour";\n\n  const match = pagesList.find(p => p.title.toLowerCase().includes(cleanLoc) || p.url.includes(cleanLoc));\n  return match ? match.url.replace("/pages/", "") : cleanLoc.replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, "-");\n}\n\nfunction resolveCollectionData(locationSegment, defaultOriginSlug, collectionsList = []) {\n  const cleanLoc = (locationSegment || "").toLowerCase().trim();\n  if (cleanLoc.includes("richardson")) return { slug: "richardsons-rock-ranch", name: "Richardson's Rock Ranch Collection" };\n  if (cleanLoc.includes("irv")) return { slug: "the-shopped-rock", name: "The Shopped Rock Collection" };\n  if (cleanLoc.includes("north fork") || cleanLoc.includes("cda")) return { slug: "north-fork-cda-collection", name: "North Fork CdA Collection" };\n  if (cleanLoc.includes("yakima") || cleanLoc.includes("yak") || cleanLoc.includes("chert")) return { slug: "chert-road-detour", name: "Chert Road Detour — Yakima River Jasper Collection" };\n\n  const matchedCol = collectionsList.find(c => c.url.includes(defaultOriginSlug) || c.title.toLowerCase().includes(cleanLoc));\n  if (matchedCol) {\n    return { slug: matchedCol.url.replace("/collections/", ""), name: matchedCol.title.endsWith("Collection") ? matchedCol.title : `${matchedCol.title} Collection` };\n  }\n\n  return { slug: defaultOriginSlug, name: `${locationSegment.trim()} Collection` };\n}\n\nasync function getGeoData(admin, stoneFamily) {\n  const emptyGeo = {\n    hardness: "", luster: "", fracture: "", cleavage: "",\n    specificGravity: "", diaphaneity: "", crystalSystem: "",\n    geologicalEra: "", mineralClass: "", rockComposition: "",\n    rockFormation: "", mohs_hardness: "", fracture_pattern: "",\n    specific_gravity: "", geological_age: ""\n  };\n  if (!stoneFamily || !admin) return { ...emptyGeo, geoSource: "none" };\n\n  const search = stoneFamily.toLowerCase().trim();\n\n  // TIER 1 — geoLibrary.jsx (drive, fast)\n  try {\n    const localResult = lookupStone(stoneFamily);\n    if (localResult && Object.keys(localResult).length > 0) {\n      console.log("[Geo Tier 1] Hit in geoLibrary for:", search);\n      return {\n        hardness: localResult.moh_hardness || localResult.hardness || "",\n        luster: localResult.luster || "",\n        fracture: localResult.fracture_pattern || localResult.fracture || "",\n        cleavage: localResult.cleavage || "",\n        specificGravity: localResult.specific_gravity || "",\n        diaphaneity: localResult.diaphaneity || "",\n        crystalSystem: localResult.crystal_system || "",\n        geologicalEra: localResult.geological_era || localResult.geological_age || "",\n        mineralClass: localResult.mineral_class || "",\n        rockComposition: localResult.rock_composition || "",\n        rockFormation: localResult.rock_formation || "",\n        mohs_hardness: localResult.moh_hardness || localResult.hardness || "",\n        fracture_pattern: localResult.fracture_pattern || localResult.fracture || "",\n        specific_gravity: localResult.specific_gravity || "",\n        geological_age: localResult.geological_era || localResult.geological_age || "",\n        geoSource: "library"\n      };\n  } catch (err) {\n    console.warn("[Geo Tier 1] geoLibrary lookup failed:", err.message);\n  }\n\n  // TIER 2 — PostgreSQL StoneProfile (one DB hit per stone per server session)\n  try {\n    if (stoneProfileCache.has(search)) {\n      const cached = stoneProfileCache.get(search);\n      if (cached) {\n        console.log("[Geo Tier 2] Memory cache hit for:", search);\n        return { ...cached, geoSource: "cache" };\n      }\n    } else {\n      const rows = await queryPostgres(\n        'SELECT * FROM "StoneProfile" WHERE LOWER("stoneName") = $1 LIMIT 1',\n        [search]\n      );\n      if (rows.length > 0) {\n        const s = rows[0];\n        console.log("[Geo Tier 2] Hit in PostgreSQL StoneProfile for:", search);\n        const geoResult = {\n          hardness: s.hardness || "",\n          luster: s.luster || "",\n          fracture: s.fracture || "",\n          cleavage: s.cleavage || "",\n          specificGravity: s.specificGravity || "",\n          diaphaneity: s.diaphaneity || "",\n          crystalSystem: s.crystalSystem || "",\n          geologicalEra: s.geologicalEra || "",\n          mineralClass: s.mineralClass || "",\n          rockComposition: s.rockComposition || "",\n          rockFormation: s.rockFormation || "",\n          mohs_hardness: s.hardness || "",\n          fracture_pattern: s.fracture || "",\n          specific_gravity: s.specificGravity || "",\n          geological_age: s.geologicalEra || ""\n        };\n        stoneProfileCache.set(search, geoResult);\n        stoneProfileCache.set(search, geoResult); return { ...geoResult, geoSource: "database" };\n      } else {\n        console.warn("[Geo Tier 2] No match in StoneProfile for:", search);\n        stoneProfileCache.set(search, null);\n      }\n    }\n  } catch (err) {\n    console.error("[Geo Tier 2] PostgreSQL StoneProfile failed:", err.message);\n  }\n\n  // TIER 3 — Mindat API (last resort, saves result to StoneCache and StoneProfile)\n  try {\n    if (MINDAT_API_KEY) {\n      console.log("[Geo Tier 3] Trying Mindat for:", search);\n      const mindatRes = await fetch(\n        `https://api.mindat.org/minerals/?name=${encodeURIComponent(stoneFamily)}&format=json`,\n        { headers: { Authorization: `Token ${MINDAT_API_KEY}` } }\n      );\n      const mindatData = await mindatRes.json();\n      const mineral = mindatData?.results?.[0];\n      if (mineral) {\n        const hardness = mineral.hardness || "";\n        const specificGravity = mineral.density || "";\n        const geoResult = {\n          hardness,\n          luster: mineral.luster || "",\n          fracture: mineral.fracture || "",\n          cleavage: mineral.cleavage || "",\n          specificGravity,\n          diaphaneity: mineral.transparency || "",\n          crystalSystem: mineral.crystal_system || "",\n          geologicalEra: "",\n          mineralClass: mineral.mineral_class || "",\n          rockComposition: "",\n          rockFormation: "",\n          mohs_hardness: hardness,\n          fracture_pattern: mineral.fracture || "",\n          specific_gravity: specificGravity,\n          geological_age: ""\n        };\n        stoneProfileCache.set(search, geoResult); await saveToStoneCache(search, geoResult); console.log("[Geo Tier 3] Mindat hit saved to StoneCache for:", search); return { ...geoResult, geoSource: "mindat" };\n        await saveToStoneCache(search, geoResult);\n        console.log("[Geo Tier 3] Mindat hit saved to StoneCache for:", search);\n        return geoResult;\n      }\n    }\n  } catch (err) {\n    console.error("[Geo Tier 3] Mindat failed:", err.message);\n  }\n\n  return { ...emptyGeo, geoSource: "none" };\n}\n\n// ==========================================\n// CORE EXECUTION GRAPH\n// ==========================================\nexport const action = async ({ request }) => {\n  try {\n    const { admin } = await authenticate.admin(request);\n    const body = await request.formData();\n    const actionType = body.get("actionType");\n    const intent = body.get("intent");\n\n    if (intent === "geoLookup") {\n      const stoneFamily = body.get("stoneFamily") || "";\n      try { const geoFields = await getGeoData(admin, stoneFamily); return Response.json({ geoFields }); } catch (err) { console.error("[geoLookup] getGeoData crashed:", err.message); return Response.json({ geoFields: {} }); }\n    }\n\n    // ==========================================\n    // INTENT: TITLE PARSE\n    // ==========================================\n    if (intent === "titleParse") {\n      const pieceNameInput = body.get("pieceName") || "";\n      const segments = pieceNameInput.split(" - ");\n      const segment1 = segments[0]?.trim() || "";\n      const segment2 = segments[1]?.trim() || "";\n      const segment3 = segments[2]?.trim() || "";\n\n      let stonePicklist = "Agate, Amazonite, Amethyst, Andesite, Aventurine, Azurite, Calcite, Carnelian, Chalcedony, Chrysocolla, Citrine, Dalmatian Stone, Fluorite, Garnet, Hematite, Howlite, Jasper, Kyanite, Labradorite, Lapis Lazuli, Lepidolite, Malachite, Moonstone, Obsidian, Ocean Jasper, Onyx, Opal, Petrified Wood, Picture Jasper, Prehnite, Pyrite, Quartz, Quartzite, Rhodonite, Rhyolite, Rose Quartz, Serpentine, Smoky Quartz, Sodalite, Sunstone, Tiger's Eye, Tourmaline, Turquoise, Unakite, Variscite";\n      try {\n        const stoneRows = await queryPostgres('SELECT "stoneName" FROM "StoneProfile" ORDER BY "stoneName"', []);\n        if (stoneRows && stoneRows.length > 0) {\n          stonePicklist = stoneRows.map(r => r.stoneName).join(", ");\n        }\n      } catch (err) {\n        console.warn("[titleParse] StoneProfile picklist fetch failed, using fallback:", err.message);\n      }\n\n      const { pagesList, collectionsList } = await getLiveStoreDirectory(admin);\n      const resolvedHandle = resolveOriginHandle(segment2, pagesList);\n      const collectionData = resolveCollectionData(segment2, resolvedHandle, collectionsList);\n\n      const matchedPage = pagesList.find(p => p.url.includes(resolvedHandle));\n      const extractedStory = matchedPage ? matchedPage.excerpt : "";\n\n      const promptText = `You are an expert lapidary assistant for Rockhound Studio. Analyze these segments:\n- Family: "${segment1}", Origin: "${segment2}", Title: "${segment3}"\nSet origin_handle strictly to: "${resolvedHandle}". Use "The Shopped Rock" for location if it is a vendor. stone_family must be exactly one of: ${stonePicklist} - pick the closest match to the Family segment. Correct typos and partial names. Return the exact string from this list, no variations, no lowercase.\nReturn valid JSON with these exact keys: stone_family, piece_name, origin_handle, origin_location, collection_name, collection_location. No markup. No extra keys.`;\n\n      const geminiRes = await fetchWithRetry("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY, {\n        method: "POST", headers: { "Content-Type": "application/json" },\n        body: JSON.stringify({ \n          contents: [{ parts: [{ text: promptText }] }],\n          generationConfig: { responseMimeType: "application/json", temperature: 0.2 }\n        })\n      });\n\n      if (geminiRes.ok) {\n        const data = await geminiRes.json();\n        let cleanJson = (data.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();\n        const first = cleanJson.indexOf("{"), last = cleanJson.lastIndexOf("}");\n        if (first !== -1 && last !== -1) cleanJson = cleanJson.slice(first, last + 1);\n        const parsed = JSON.parse(cleanJson);\n        \n        // 🟢 THE HARD DB WELD: Pull immutable geo specs straight from DB / Geo Library\n        const dbGeoData = await getGeoData(admin, parsed.stone_family || segment1);\n        const finalParse = {\n          ...parsed,\n          ...dbGeoData,\n          origin_handle: resolvedHandle,\n          origin_story: extractedStory,\n          origin_location: segment2,\n          collection_name: collectionData.name,\n          collection_location: collectionData.name.replace(" Collection", ""),\n          canonical_title: parsed.stone_family + " - " + resolvedHandle + " - " + segment3\n        };\n        \n        return Response.json({ titleParse: finalParse });\n      }\n      return Response.json({ titleParse: null, error: "Title parse error" }, { status: 500 });\n    }\n\n    // ==========================================\n    // INTENT: VISION SCAN (Splicing Exact Links & Hardware)\n    // ==========================================\n    if (intent === "visionScan") {\n      const pieceId = body.get("pieceId");\n      const clientBase64 = body.get("imageBase64");\n      const clientMime = body.get("imageMimeType") || "image/jpeg";\n      \n      const titleInput = body.get("pieceName") || "";\n      const segments = titleInput.split(/\s+[-–—]\s+/);\n      const originSegment = segments[1]?.trim() || "Unknown Origin";\n      \n      // 🟢 EXECUTE LIVE DIRECTORY SCANNER\n      const { pagesList, collectionsList } = await getLiveStoreDirectory(admin);\n      \n      // Build a clean text menu for Gemini to read\n      const pagesMenu = pagesList.map(p => `- Title: "${p.title}" | URL: ${p.url} | Excerpt: "${p.excerpt}"`).join("\n");\n      const collectionsMenu = collectionsList.map(c => `- Title: "${c.title}" | URL: ${c.url} | Excerpt: "${c.excerpt}"`).join("\n");\n\n      // Resolve defaults just in case, but give Gemini the full menu\n      const defaultOriginSlug = resolveOriginHandle(originSegment, pagesList);\n      const defaultCollection = resolveCollectionData(originSegment, defaultOriginSlug, collectionsList);\n      const targetUrlPath = `/pages/${defaultOriginSlug}`;\n      const collectionUrlPath = `/collections/${defaultCollection.slug}`;\n\n      // Extract exact human-readable collection name without trailing "Collection" word\n      const fullCollectionTitle = defaultCollection.name.replace(/\s+Collection$/i, "").trim();\n\n      const matchedPage = pagesList.find(p => p.url.includes(defaultOriginSlug));\n      const extractedStory = matchedPage ? matchedPage.excerpt : "";\n\n      let imageBase64 = clientBase64 && clientBase64 !== "undefined" ? String(clientBase64).trim() : "";\n      let imageMimeType = clientMime;\n\n      if (!imageBase64) {\n        const rawImageUrl = body.get("imageUrl");\n        if (rawImageUrl) {\n          const cleanImageUrl = rawImageUrl.split('?')[0];\n          const imageRes = await fetch(cleanImageUrl);\n          const imageBuffer = await imageRes.arrayBuffer();\n          imageBase64 = Buffer.from(imageBuffer).toString("base64");\n          imageMimeType = (imageRes.headers.get("content-type") || "image/jpeg").split(";")[0].trim();\n        }\n      }\n\n      const promptText = `You are a lapidary artist and master jeweler for Rockhound Studio. Analyze this photo and return a JSON object.\n- LIVE STORE DIRECTORY (Your Dyslexia Safeguard — Read this menu!):\n  VALID PAGES IN STORE:\n  ${pagesMenu || "No live pages found — use default URL."}\n  \n  VALID COLLECTIONS IN STORE:\n  ${collectionsMenu || "No live collections found — use default URL."}\n\n- description: Poetic, spare, story-driven product description strictly UNDER 100 WORDS total. First person voice ("Bob and Janyce" or "Janyce here..."). Credit craftsmanship strictly as "handcrafted by Bob and Janyce". ZERO workshop references.\nCRITICAL DWELL WEB EMBED LAW: Look at the Origin Segment Janyce entered ("${originSegment}"). Check the LIVE STORE DIRECTORY above and match it to the exact corresponding Page and Collection. You MUST use those live excerpts to write short story hooks leading directly into TWO clickable HTML hyperlinks. \n  1. Origin Hook: Write a short story hook based on the matching Page excerpt, followed immediately by this exact anchor tag format: <a href="${targetUrlPath}">${fullCollectionTitle} Story</a>\n  2. Collection Hook: Write a short hook based on the matching Collection excerpt, followed immediately by this exact anchor tag format: <a href="${collectionUrlPath}">${fullCollectionTitle} Collection</a>\n- primary_use: Smart Switch! Force strictly to best match (e.g., "Pendant (Finished Jewelry)", "Necklace", "Ring / Bezel Setting", "Cabochon", "Wire Wrap (Finished Jewelry)").\n- MANDATORY BENCH FINDINGS & JEWELRY LAWS:\n  * setting_ready: Look closely at the mounting. If cabochon is in a bezel setting, MUST return "Bezel Setting - Ready to Wear". If prong setting, return "Prong Setting - Ready to Wear". If wire wrapped, return "Wire Wrapped - Ready to Wear". NEVER LEAVE BLANK FOR MOUNTED STONES!\n  * wire_material: If wire wrapped, output the wire metal (e.g., "Antiqued Copper Wire"). If in a bezel or prong setting with zero wire, MUST return strictly: "None — Bezel Mounted".\n  * primary_medium: State the primary metal or mounting material (e.g., ".925 Sterling Silver Bezel", "Copper Bezel", "Alloy"). Do not leave blank!\n  * secondary_medium: State accent metal or "None".\n  * bail_included: State the bail style (e.g., "Integrated Bezel Bail", "Sterling Silver Pinch Bail") or "None".`;\n\n      const geminiRes = await fetchWithRetry("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY, {\n        method: "POST", headers: { "Content-Type": "application/json" },\n        body: JSON.stringify({ \n          contents: [{ parts: [{ text: promptText }, { inlineData: { mimeType: imageMimeType, data: imageBase64 } }] }],\n          generationConfig: { \n            responseMimeType: "application/json", \n            temperature: 0.2,\n            responseSchema: {\n              type: "OBJECT",\n              properties: {\n                description: { type: "STRING" },\n                primary_color: { type: "STRING" },\n                cut_and_shape: { type: "STRING" },\n                surface_finish: { type: "STRING" },\n                stone_shape: { type: "STRING" },\n                dimensions_mm: { type: "STRING" },\n                pattern: { type: "STRING" },\n                primary_use: { type: "STRING" },\n                primary_medium: { type: "STRING" },\n                secondary_medium: { type: "STRING" },\n                wire_material: { type: "STRING" },\n                setting_ready: { type: "STRING" },\n                bail_included: { type: "STRING" }\n              },\n              required: ["description", "primary_use", "setting_ready", "wire_material", "primary_medium", "secondary_medium", "bail_included"]\n            }\n          }\n        })\n      });\n\n      if (geminiRes.ok) {\n        const geminiData = await geminiRes.json();\n        let cleanJson = (geminiData.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();\n        const first = cleanJson.indexOf("{"), last = cleanJson.lastIndexOf("}");\n        if (first !== -1 && last !== -1) cleanJson = cleanJson.slice(first, last + 1);\n        const parsedVision = JSON.parse(cleanJson);\n        \n        const resolved_primary_use = parsedVision.primary_use || parsedVision.use || parsedVision.product_type || "";\n        const resolved_primary_medium = parsedVision.primary_medium || parsedVision.medium || parsedVision.metal || parsedVision.primary_metal || "";\n        const resolved_secondary_medium = parsedVision.secondary_medium || parsedVision.accent || parsedVision.secondary_metal || "";\n        const resolved_wire_material = parsedVision.wire_material || parsedVision.wire || parsedVision.wire_wrap || "";\n        const resolved_setting_ready = parsedVision.setting_ready || parsedVision.setting || parsedVision.mounting || parsedVision.bezel || "";\n        const resolved_bail_included = parsedVision.bail_included || parsedVision.bail || "";\n\n        return Response.json({\n          success: true, intent: "visionScan", pieceId,\n          description: parsedVision.description || "",\n          primary_color: parsedVision.primary_color || "",\n          cut_and_shape: parsedVision.cut_and_shape || "",\n          surface_finish: parsedVision.surface_finish || "",\n          stone_shape: parsedVision.stone_shape || "",\n          dimensions_mm: parsedVision.dimensions_mm || "",\n          pattern: parsedVision.pattern || "",\n          primary_use: resolved_primary_use,\n          primary_medium: resolved_primary_medium,\n          secondary_medium: resolved_secondary_medium,\n          wire_material: resolved_wire_material,\n          setting_ready: resolved_setting_ready,\n          bail_included: resolved_bail_included,\n          origin_story: extractedStory,\n          origin_handle: defaultOriginSlug,\n          origin_location: originSegment,\n          collection_name: defaultCollection.name,\n          collection_location: defaultCollection.name.replace(" Collection", "")\n        });\n      }\n      return Response.json({ success: false, error: "Vision API Failure" });\n    }\n\n    return Response.json({ success: true, fields: {} });\n  } catch (error) {\n    console.error("Critical Failure:", error.message);\n    return Response.json({ success: false, error: error.message }, { status: 500 });\n  }\n};\n
+import { authenticate } from "../shopify.server";
+import { lookupStone } from "../utils/geoLibrary.jsx";
+import { TARGET_KEYS } from "../utils/metaScan";
+
+const stoneProfileCache = new Map();
+
+async function queryPostgres(sql, params) {
+  const { default: pg } = await import('pg');
+  const db = new pg.Client({
+    connectionString: process.env.DATABASE_URL,
+    ssl: { rejectUnauthorized: false }
+  });
+  await db.connect();
+  try {
+    const result = await db.query(sql, params);
+    return result.rows;
+  } finally {
+    await db.end();
+  }
+}
+
+async function saveToStoneCache(stoneName, geoResult) {
+  try {
+    const existing = await queryPostgres(
+      'SELECT id FROM "StoneCache" WHERE "stoneName" = $1 LIMIT 1',
+      [stoneName]
+    );
+    if (existing.length === 0) {
+      await queryPostgres(
+        'INSERT INTO "StoneCache" ("id", "stoneName", "data", "createdAt", "updatedAt") VALUES (gen_random_uuid()::text, $1, $2, NOW(), NOW())',
+        [stoneName, JSON.stringify(geoResult)]
+      );
+      console.log("[StoneCache] Saved new entry for:", stoneName);
+    }
+  } catch (err) {
+    console.error("[StoneCache] Save failed for:", stoneName, err.message);
+  }
+}
+
+// ==========================================
+// ENVIRONMENT VARIABLES & MAPS
+// ==========================================
+const MINDAT_API_KEY = process.env.MINDAT_API_KEY;
+
+const MINDAT_KEY_MAP = {
+  official_name: "name",
+  mineral_class: "mindat_formula",
+  crystal_structure: "crystal_system",
+  luster: "luster",
+  specific_gravity: "density",
+  moh_hardness: "hardness",
+  cleavage: "cleavage",
+  fracture_pattern: "fracture",
+  diaphaneity: "transparency",
+  tenacity: "tenacity",
+  origin_location: "localities_count",
+};
+
+const SHOPPED_ROCK_VENDORS = ["Richardson's Rock Ranch", "Irv's Rock and Jewelry", "Irv's Rock & Jewelry"];
+
+// ==========================================
+// ENGINE: EXPONENTIAL BACKOFF RETRY
+// ==========================================
+async function fetchWithRetry(url, options, retries = 3, delay = 1500) {
+  for (let i = 0; i < retries; i++) {
+    const res = await fetch(url, options);
+    if (res.status !== 503 && res.status !== 429) {
+      return res;
+    }
+    console.warn(`[Gemini Engine] API returned status ${res.status}. Retry ${i + 1} of ${retries} in ${delay}ms...`);
+    await new Promise((resolve) => setTimeout(resolve, delay));
+    delay *= 2;
+  }
+  throw new Error("Gemini API connection timed out after multiple attempts.");
+}
+
+// 🟢 THE RESTORED LIVE SCANNER: Pulls all actual Pages and Collections from Shopify
+async function getLiveStoreDirectory(admin) {
+  let pagesList = [];
+  let collectionsList = [];
+  try {
+    const res = await admin.graphql(`
+      query {
+        pages(first: 100) {
+          edges {
+            node {
+              title
+              handle
+              body
+            }
+          }
+        }
+        collections(first: 100) {
+          edges {
+            node {
+              title
+              handle
+              description
+            }
+          }
+        }
+      }
+    `);
+    const data = await res.json();
+    if (data.data?.pages?.edges) {
+      pagesList = data.data.pages.edges.map(e => ({
+        title: e.node.title,
+        url: `/pages/${e.node.handle}`,
+        excerpt: (e.node.body || "").replace(/<[^>]*>?/gm, "").replace(/\s+/g, " ").trim().slice(0, 300)
+      }));
+    }
+    if (data.data?.collections?.edges) {
+      collectionsList = data.data.collections.edges.map(e => ({
+        title: e.node.title,
+        url: `/collections/${e.node.handle}`,
+        excerpt: (e.node.description || "").replace(/<[^>]*>?/gm, "").replace(/\s+/g, " ").trim().slice(0, 300)
+      }));
+    }
+  } catch (err) {
+    console.error("[Live Directory Scanner] Failed to fetch store inventory:", err.message);
+  }
+  return { pagesList, collectionsList };
+}
+
+// Helper for quick fallback matching
+function resolveOriginHandle(locationSegment, pagesList) {
+  const cleanLoc = (locationSegment || "").toLowerCase().trim();
+  if (!cleanLoc) return "";
+  if (cleanLoc.includes("richardson")) return "the-richardson-strike";
+  if (cleanLoc.includes("irv")) return "the-shopped-rock";
+  if (cleanLoc.includes("north fork") || cleanLoc.includes("cda")) return "the-north-fork-strike";
+  if (cleanLoc.includes("yakima") || cleanLoc.includes("yak") || cleanLoc.includes("chert")) return "chert-road-detour";
+
+  const match = pagesList.find(p => p.title.toLowerCase().includes(cleanLoc) || p.url.includes(cleanLoc));
+  return match ? match.url.replace("/pages/", "") : cleanLoc.replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, "-");
+}
+
+function resolveCollectionData(locationSegment, defaultOriginSlug, collectionsList = []) {
+  const cleanLoc = (locationSegment || "").toLowerCase().trim();
+  if (cleanLoc.includes("richardson")) return { slug: "richardsons-rock-ranch", name: "Richardson's Rock Ranch Collection" };
+  if (cleanLoc.includes("irv")) return { slug: "the-shopped-rock", name: "The Shopped Rock Collection" };
+  if (cleanLoc.includes("north fork") || cleanLoc.includes("cda")) return { slug: "north-fork-cda-collection", name: "North Fork CdA Collection" };
+  if (cleanLoc.includes("yakima") || cleanLoc.includes("yak") || cleanLoc.includes("chert")) return { slug: "chert-road-detour", name: "Chert Road Detour — Yakima River Jasper Collection" };
+
+  const matchedCol = collectionsList.find(c => c.url.includes(defaultOriginSlug) || c.title.toLowerCase().includes(cleanLoc));
+  if (matchedCol) {
+    return { slug: matchedCol.url.replace("/collections/", ""), name: matchedCol.title.endsWith("Collection") ? matchedCol.title : `${matchedCol.title} Collection` };
+  }
+
+  return { slug: defaultOriginSlug, name: `${locationSegment.trim()} Collection` };
+}
+
+async function getGeoData(admin, stoneFamily) {
+  const emptyGeo = {
+    hardness: "", luster: "", fracture: "", cleavage: "",
+    specificGravity: "", diaphaneity: "", crystalSystem: "",
+    geologicalEra: "", mineralClass: "", rockComposition: "",
+    rockFormation: "", mohs_hardness: "", fracture_pattern: "",
+    specific_gravity: "", geological_age: ""
+  };
+  
+  if (!stoneFamily || !admin) {
+    return { ...emptyGeo, geoSource: "none" };
+  }
+
+  const search = stoneFamily.toLowerCase().trim();
+
+  // TIER 1 — geoLibrary.jsx (drive, fast)
+  try {
+    const localResult = lookupStone(stoneFamily);
+    if (localResult && Object.keys(localResult).length > 0) {
+      console.log("[Geo Tier 1] Hit in geoLibrary for:", search);
+      return {
+        hardness: localResult.moh_hardness || localResult.hardness || "",
+        luster: localResult.luster || "",
+        fracture: localResult.fracture_pattern || localResult.fracture || "",
+        cleavage: localResult.cleavage || "",
+        specificGravity: localResult.specific_gravity || "",
+        diaphaneity: localResult.diaphaneity || "",
+        crystalSystem: localResult.crystal_system || "",
+        geologicalEra: localResult.geological_era || localResult.geological_age || "",
+        mineralClass: localResult.mineral_class || "",
+        rockComposition: localResult.rock_composition || "",
+        rockFormation: localResult.rock_formation || "",
+        mohs_hardness: localResult.moh_hardness || localResult.hardness || "",
+        fracture_pattern: localResult.fracture_pattern || localResult.fracture || "",
+        specific_gravity: localResult.specific_gravity || "",
+        geological_age: localResult.geological_era || localResult.geological_age || "",
+        geoSource: "library"
+      };
+    }
+  } catch (err) {
+    console.warn("[Geo Tier 1] geoLibrary lookup failed:", err.message);
+  }
+
+  // TIER 2 — PostgreSQL StoneProfile (one DB hit per stone per server session)
+  try {
+    if (stoneProfileCache.has(search)) {
+      const cached = stoneProfileCache.get(search);
+      if (cached) {
+        console.log("[Geo Tier 2] Memory cache hit for:", search);
+        return { ...cached, geoSource: "cache" };
+      }
+    } else {
+      const rows = await queryPostgres(
+        'SELECT * FROM "StoneProfile" WHERE LOWER("stoneName") = $1 LIMIT 1',
+        [search]
+      );
+      if (rows.length > 0) {
+        const s = rows[0];
+        console.log("[Geo Tier 2] Hit in PostgreSQL StoneProfile for:", search);
+        const geoResult = {
+          hardness: s.hardness || "",
+          luster: s.luster || "",
+          fracture: s.fracture || "",
+          cleavage: s.cleavage || "",
+          specificGravity: s.specificGravity || "",
+          diaphaneity: s.diaphaneity || "",
+          crystalSystem: s.crystalSystem || "",
+          geologicalEra: s.geologicalEra || "",
+          mineralClass: s.mineralClass || "",
+          rockComposition: s.rockComposition || "",
+          rockFormation: s.rockFormation || "",
+          mohs_hardness: s.hardness || "",
+          fracture_pattern: s.fracture || "",
+          specific_gravity: s.specificGravity || "",
+          geological_age: s.geologicalEra || ""
+        };
+        stoneProfileCache.set(search, geoResult);
+        return { ...geoResult, geoSource: "database" };
+      } else {
+        console.warn("[Geo Tier 2] No match in StoneProfile for:", search);
+        stoneProfileCache.set(search, null);
+      }
+    }
+  } catch (err) {
+    console.error("[Geo Tier 2] PostgreSQL StoneProfile failed:", err.message);
+  }
+
+  // TIER 3 — Mindat API (last resort, saves result to StoneCache and StoneProfile)
+  try {
+    if (MINDAT_API_KEY) {
+      console.log("[Geo Tier 3] Trying Mindat for:", search);
+      const mindatRes = await fetch(
+        `https://api.mindat.org/minerals/?name=${encodeURIComponent(stoneFamily)}&format=json`,
+        { headers: { Authorization: `Token ${MINDAT_API_KEY}` } }
+      );
+      const mindatData = await mindatRes.json();
+      const mineral = mindatData?.results?.[0];
+      if (mineral) {
+        const hardness = mineral.hardness || "";
+        const specificGravity = mineral.density || "";
+        const geoResult = {
+          hardness,
+          luster: mineral.luster || "",
+          fracture: mineral.fracture || "",
+          cleavage: mineral.cleavage || "",
+          specificGravity,
+          diaphaneity: mineral.transparency || "",
+          crystalSystem: mineral.crystal_system || "",
+          geologicalEra: "",
+          mineralClass: mineral.mineral_class || "",
+          rockComposition: "",
+          rockFormation: "",
+          mohs_hardness: hardness,
+          fracture_pattern: mineral.fracture || "",
+          specific_gravity: specificGravity,
+          geological_age: ""
+        };
+        stoneProfileCache.set(search, geoResult);
+        await saveToStoneCache(search, geoResult);
+        console.log("[Geo Tier 3] Mindat hit saved to StoneCache for:", search);
+        return { ...geoResult, geoSource: "mindat" };
+      }
+    }
+  } catch (err) {
+    console.error("[Geo Tier 3] Mindat failed:", err.message);
+  }
+
+  return { ...emptyGeo, geoSource: "none" };
+}
+
+// ==========================================
+// CORE EXECUTION GRAPH
+// ==========================================
+export const action = async ({ request }) => {
+  try {
+    const { admin } = await authenticate.admin(request);
+    const body = await request.formData();
+    const actionType = body.get("actionType");
+    const intent = body.get("intent");
+
+    if (intent === "geoLookup") {
+      const stoneFamily = body.get("stoneFamily") || "";
+      try { 
+        const geoFields = await getGeoData(admin, stoneFamily); 
+        return Response.json({ geoFields }); 
+      } catch (err) { 
+        console.error("[geoLookup] getGeoData crashed:", err.message); 
+        return Response.json({ geoFields: {} }); 
+      }
+    }
+
+    // ==========================================
+    // INTENT: TITLE PARSE
+    // ==========================================
+    if (intent === "titleParse") {
+      const pieceNameInput = body.get("pieceName") || "";
+      const segments = pieceNameInput.split(" - ");
+      const segment1 = segments[0]?.trim() || "";
+      const segment2 = segments[1]?.trim() || "";
+      const segment3 = segments[2]?.trim() || "";
+
+      let stonePicklist = "Agate, Amazonite, Amethyst, Andesite, Aventurine, Azurite, Calcite, Carnelian, Chalcedony, Chrysocolla, Citrine, Dalmatian Stone, Fluorite, Garnet, Hematite, Howlite, Jasper, Kyanite, Labradorite, Lapis Lazuli, Lepidolite, Malachite, Moonstone, Obsidian, Ocean Jasper, Onyx, Opal, Petrified Wood, Picture Jasper, Prehnite, Pyrite, Quartz, Quartzite, Rhodonite, Rhyolite, Rose Quartz, Serpentine, Smoky Quartz, Sodalite, Sunstone, Tiger's Eye, Tourmaline, Turquoise, Unakite, Variscite";
+      
+      try {
+        const stoneRows = await queryPostgres('SELECT "stoneName" FROM "StoneProfile" ORDER BY "stoneName"', []);
+        if (stoneRows && stoneRows.length > 0) {
+          stonePicklist = stoneRows.map(r => r.stoneName).join(", ");
+        }
+      } catch (err) {
+        console.warn("[titleParse] StoneProfile picklist fetch failed, using fallback:", err.message);
+      }
+
+      const { pagesList, collectionsList } = await getLiveStoreDirectory(admin);
+      const resolvedHandle = resolveOriginHandle(segment2, pagesList);
+      const collectionData = resolveCollectionData(segment2, resolvedHandle, collectionsList);
+
+      const matchedPage = pagesList.find(p => p.url.includes(resolvedHandle));
+      const extractedStory = matchedPage ? matchedPage.excerpt : "";
+
+      const promptText = `You are an expert lapidary assistant for Rockhound Studio. Analyze these segments:\n- Family: "${segment1}", Origin: "${segment2}", Title: "${segment3}"\nSet origin_handle strictly to: "${resolvedHandle}". Use "The Shopped Rock" for location if it is a vendor. stone_family must be exactly one of: ${stonePicklist} - pick the closest match to the Family segment. Correct typos and partial names. Return the exact string from this list, no variations, no lowercase.\nReturn valid JSON with these exact keys: stone_family, piece_name, origin_handle, origin_location, collection_name, collection_location. No markup. No extra keys.`;
+
+      const geminiRes = await fetchWithRetry("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY, {
+        method: "POST", 
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          contents: [{ parts: [{ text: promptText }] }],
+          generationConfig: { responseMimeType: "application/json", temperature: 0.2 }
+        })
+      });
+
+      if (geminiRes.ok) {
+        const data = await geminiRes.json();
+        let cleanJson = (data.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
+        const first = cleanJson.indexOf("{");
+        const last = cleanJson.lastIndexOf("}");
+        
+        if (first !== -1 && last !== -1) {
+          cleanJson = cleanJson.slice(first, last + 1);
+        }
+        const parsed = JSON.parse(cleanJson);
+        
+        // 🟢 THE HARD DB WELD: Pull immutable geo specs straight from DB / Geo Library
+        const dbGeoData = await getGeoData(admin, parsed.stone_family || segment1);
+        const finalParse = {
+          ...parsed,
+          ...dbGeoData,
+          origin_handle: resolvedHandle,
+          origin_story: extractedStory,
+          origin_location: segment2,
+          collection_name: collectionData.name,
+          collection_location: collectionData.name.replace(" Collection", ""),
+          canonical_title: parsed.stone_family + " - " + resolvedHandle + " - " + segment3
+        };
+        
+        return Response.json({ titleParse: finalParse });
+      }
+      return Response.json({ titleParse: null, error: "Title parse error" }, { status: 500 });
+    }
+
+    // ==========================================
+    // INTENT: VISION SCAN (Splicing Exact Links & Hardware)
+    // ==========================================
+    if (intent === "visionScan") {
+      const pieceId = body.get("pieceId");
+      const clientBase64 = body.get("imageBase64");
+      const clientMime = body.get("imageMimeType") || "image/jpeg";
+      
+      const titleInput = body.get("pieceName") || "";
+      const segments = titleInput.split(/\s+[-–—]\s+/);
+      const originSegment = segments[1]?.trim() || "Unknown Origin";
+      
+      // 🟢 EXECUTE LIVE DIRECTORY SCANNER
+      const { pagesList, collectionsList } = await getLiveStoreDirectory(admin);
+      
+      // Build a clean text menu for Gemini to read
+      const pagesMenu = pagesList.map(p => `- Title: "${p.title}" | URL: ${p.url} | Excerpt: "${p.excerpt}"`).join("\n");
+      const collectionsMenu = collectionsList.map(c => `- Title: "${c.title}" | URL: ${c.url} | Excerpt: "${c.excerpt}"`).join("\n");
+
+      // Resolve defaults just in case, but give Gemini the full menu
+      const defaultOriginSlug = resolveOriginHandle(originSegment, pagesList);
+      const defaultCollection = resolveCollectionData(originSegment, defaultOriginSlug, collectionsList);
+      const targetUrlPath = `/pages/${defaultOriginSlug}`;
+      const collectionUrlPath = `/collections/${defaultCollection.slug}`;
+
+      // Extract exact human-readable collection name without trailing "Collection" word
+      const fullCollectionTitle = defaultCollection.name.replace(/\s+Collection$/i, "").trim();
+
+      const matchedPage = pagesList.find(p => p.url.includes(defaultOriginSlug));
+      const extractedStory = matchedPage ? matchedPage.excerpt : "";
+
+      let imageBase64 = clientBase64 && clientBase64 !== "undefined" ? String(clientBase64).trim() : "";
+      let imageMimeType = clientMime;
+
+      if (!imageBase64) {
+        const rawImageUrl = body.get("imageUrl");
+        if (rawImageUrl) {
+          const cleanImageUrl = rawImageUrl.split('?')[0];
+          const imageRes = await fetch(cleanImageUrl);
+          const imageBuffer = await imageRes.arrayBuffer();
+          imageBase64 = Buffer.from(imageBuffer).toString("base64");
+          imageMimeType = (imageRes.headers.get("content-type") || "image/jpeg").split(";")[0].trim();
+        }
+      }
+
+      const promptText = `You are a lapidary artist and master jeweler for Rockhound Studio. Analyze this photo and return a JSON object.\n- LIVE STORE DIRECTORY (Your Dyslexia Safeguard — Read this menu!):\n  VALID PAGES IN STORE:\n  ${pagesMenu || "No live pages found — use default URL."}\n  \n  VALID COLLECTIONS IN STORE:\n  ${collectionsMenu || "No live collections found — use default URL."}\n\n- description: Poetic, spare, story-driven product description strictly UNDER 100 WORDS total. First person voice ("Bob and Janyce" or "Janyce here..."). Credit craftsmanship strictly as "handcrafted by Bob and Janyce". ZERO workshop references.\nCRITICAL DWELL WEB EMBED LAW: Look at the Origin Segment Janyce entered ("${originSegment}"). Check the LIVE STORE DIRECTORY above and match it to the exact corresponding Page and Collection. You MUST use those live excerpts to write short story hooks leading directly into TWO clickable HTML hyperlinks. \n  1. Origin Hook: Write a short story hook based on the matching Page excerpt, followed immediately by this exact anchor tag format: <a href="${targetUrlPath}">${fullCollectionTitle} Story</a>\n  2. Collection Hook: Write a short hook based on the matching Collection excerpt, followed immediately by this exact anchor tag format: <a href="${collectionUrlPath}">${fullCollectionTitle} Collection</a>\n- primary_use: Smart Switch! Force strictly to best match (e.g., "Pendant (Finished Jewelry)", "Necklace", "Ring / Bezel Setting", "Cabochon", "Wire Wrap (Finished Jewelry)").\n- MANDATORY BENCH FINDINGS & JEWELRY LAWS:\n  * setting_ready: Look closely at the mounting. If cabochon is in a bezel setting, MUST return "Bezel Setting - Ready to Wear". If prong setting, return "Prong Setting - Ready to Wear". If wire wrapped, return "Wire Wrapped - Ready to Wear". NEVER LEAVE BLANK FOR MOUNTED STONES!\n  * wire_material: If wire wrapped, output the wire metal (e.g., "Antiqued Copper Wire"). If in a bezel or prong setting with zero wire, MUST return strictly: "None — Bezel Mounted".\n  * primary_medium: State the primary metal or mounting material (e.g., ".925 Sterling Silver Bezel", "Copper Bezel", "Alloy"). Do not leave blank!\n  * secondary_medium: State accent metal or "None".\n  * bail_included: State the bail style (e.g., "Integrated Bezel Bail", "Sterling Silver Pinch Bail") or "None".`;
+
+      const geminiRes = await fetchWithRetry("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY, {
+        method: "POST", 
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          contents: [{ parts: [{ text: promptText }, { inlineData: { mimeType: imageMimeType, data: imageBase64 } }] }],
+          generationConfig: { 
+            responseMimeType: "application/json", 
+            temperature: 0.2,
+            responseSchema: {
+              type: "OBJECT",
+              properties: {
+                description: { type: "STRING" },
+                primary_color: { type: "STRING" },
+                cut_and_shape: { type: "STRING" },
+                surface_finish: { type: "STRING" },
+                stone_shape: { type: "STRING" },
+                dimensions_mm: { type: "STRING" },
+                pattern: { type: "STRING" },
+                primary_use: { type: "STRING" },
+                primary_medium: { type: "STRING" },
+                secondary_medium: { type: "STRING" },
+                wire_material: { type: "STRING" },
+                setting_ready: { type: "STRING" },
+                bail_included: { type: "STRING" }
+              },
+              required: ["description", "primary_use", "setting_ready", "wire_material", "primary_medium", "secondary_medium", "bail_included"]
+            }
+          }
+        })
+      });
+
+      if (geminiRes.ok) {
+        const geminiData = await geminiRes.json();
+        let cleanJson = (geminiData.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
+        const first = cleanJson.indexOf("{");
+        const last = cleanJson.lastIndexOf("}");
+        
+        if (first !== -1 && last !== -1) {
+          cleanJson = cleanJson.slice(first, last + 1);
+        }
+        const parsedVision = JSON.parse(cleanJson);
+        
+        const resolved_primary_use = parsedVision.primary_use || parsedVision.use || parsedVision.product_type || "";
+        const resolved_primary_medium = parsedVision.primary_medium || parsedVision.medium || parsedVision.metal || parsedVision.primary_metal || "";
+        const resolved_secondary_medium = parsedVision.secondary_medium || parsedVision.accent || parsedVision.secondary_metal || "";
+        const resolved_wire_material = parsedVision.wire_material || parsedVision.wire || parsedVision.wire_wrap || "";
+        const resolved_setting_ready = parsedVision.setting_ready || parsedVision.setting || parsedVision.mounting || parsedVision.bezel || "";
+        const resolved_bail_included = parsedVision.bail_included || parsedVision.bail || "";
+
+        return Response.json({
+          success: true, 
+          intent: "visionScan", 
+          pieceId,
+          description: parsedVision.description || "",
+          primary_color: parsedVision.primary_color || "",
+          cut_and_shape: parsedVision.cut_and_shape || "",
+          surface_finish: parsedVision.surface_finish || "",
+          stone_shape: parsedVision.stone_shape || "",
+          dimensions_mm: parsedVision.dimensions_mm || "",
+          pattern: parsedVision.pattern || "",
+          primary_use: resolved_primary_use,
+          primary_medium: resolved_primary_medium,
+          secondary_medium: resolved_secondary_medium,
+          wire_material: resolved_wire_material,
+          setting_ready: resolved_setting_ready,
+          bail_included: resolved_bail_included,
+          origin_story: extractedStory,
+          origin_handle: defaultOriginSlug,
+          origin_location: originSegment,
+          collection_name: defaultCollection.name,
+          collection_location: defaultCollection.name.replace(" Collection", "")
+        });
+      }
+      return Response.json({ success: false, error: "Vision API Failure" });
+    }
+
+    return Response.json({ success: true, fields: {} });
+  } catch (error) {
+    console.error("Critical Failure:", error.message);
+    return Response.json({ success: false, error: error.message }, { status: 500 });
+  }
+};
