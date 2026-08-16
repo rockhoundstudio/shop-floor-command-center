@@ -90,7 +90,7 @@ export function NewProductIntakeTab({ fetcher }) {
   const [lastScannedPieceId, setLastScannedPieceId] = useState(null);
 
   const handleScanGeminiPhotos = useCallback((piece) => {
-    (piece?.photoFiles?.[0]) && (() => {
+    !!(piece?.photoFiles?.[0]) && (() => {
       const formData = new FormData();
       formData.append("intent", "stagedUpload");
       formData.append("file_0", piece.photoFiles[0]);
@@ -453,8 +453,7 @@ export function NewProductIntakeTab({ fetcher }) {
       const data = autoFillFetcher.data;
       (data.geoFields) && (() => {
         const geo = data.geoFields;
-        if (Object.keys(geo).length === 0) { window.shopify?.toast?.show("Not in geo database — enter manually", { duration: 3000 }); return; }
-        const geo = data.geoFields;
+        if (Object.keys(geo).length === 0) { window.shopify?.toast?.show("Not in geo database   enter manually", { duration: 3000 }); return; }
         setSharedFields(prev => {
           const updated = { ...prev };
           (geo.hardness !== undefined) && (updated.hardness = geo.hardness);
@@ -1191,12 +1190,12 @@ export function NewProductIntakeTab({ fetcher }) {
       </BlockStack>
       {geoToast && <Toast content="Geo data loaded" onDismiss={() => setGeoToast(false)} />}
       {titleToastActive && (
-        <Toast 
-          content={titleToastMsg} 
-          error={titleToastError} 
+        <Toast
+          content={titleToastMsg}
           error={titleToastError}
           duration={3000}
-          duration={3000}
+          onDismiss={() => setTitleToastActive(false)}
+        />
       )}
     </Frame>
   );
