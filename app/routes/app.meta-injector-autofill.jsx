@@ -352,6 +352,7 @@ export const action = async ({ request }) => {
         const parsed = JSON.parse(cleanJson);
         
         // 🟢 THE HARD DB WELD: Pull immutable geo specs straight from DB / Geo Library
+        console.log("[titleParse] Gemini returned stone_family:", parsed.stone_family);
         const dbGeoData = await getGeoData(admin, parsed.stone_family || segment1);
         const finalParse = {
           ...parsed,
