@@ -2,18 +2,39 @@ import { authenticate } from "../shopify.server";
 import { lookupStone } from "../utils/geoLibrary.jsx";
 import { TARGET_KEYS } from "../utils/metaScan";
 
-import pg from 'pg';
-const pgClient = new pg.Client({
-  connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false }
-});
-let pgConnected = false;
-async function getPgClient() {
-  if (!pgConnected) {
-    await pgClient.connect();
-    pgConnected = true;
+const stoneProfileCache = new Map();
+
+async function queryPostgres(sql, params) {
+  const { default: pg } = await import('pg');
+  const db = new pg.Client({
+    connectionString: process.env.DATABASE_URL,
+    ssl: { rejectUnauthorized: false }
+  });
+  await db.connect();
+  try {
+    const result = await db.query(sql, params);
+    return result.rows;
+  } finally {
+    await db.end();
   }
-  return pgClient;
+}
+
+async function saveToStoneCache(stoneName, geoResult) {
+  try {
+    const existing = await queryPostgres(
+      'SELECT id FROM "StoneCache" WHERE "stoneName" = $1 LIMIT 1',
+      [stoneName]
+    );
+    if (existing.length === 0) {
+      await queryPostgres(
+        'INSERT INTO "StoneCache" ("id", "stoneName", "data", "createdAt", "updatedAt") VALUES (gen_random_uuid()::text, $1, $2, NOW(), NOW())',
+        [stoneName, JSON.stringify(geoResult)]
+      );
+      console.log("[StoneCache] Saved new entry for:", stoneName);
+    }
+  } catch (err) {
+    console.error("[StoneCache] Save failed for:", stoneName, err.message);
+  }
 }
 
 // ==========================================
@@ -168,39 +189,51 @@ async function getGeoData(admin, stoneFamily) {
     console.warn("[Geo Tier 1] geoLibrary lookup failed:", err.message);
   }
 
-  // TIER 2 — PostgreSQL StoneProfile
+  // TIER 2 — PostgreSQL StoneProfile (one DB hit per stone per server session)
   try {
-    const db = await getPgClient();
-    const result = await db.query(
-      'SELECT * FROM "StoneProfile" WHERE LOWER("stoneName") = $1 LIMIT 1',
-      [search]
-    );
-    if (result.rows.length > 0) {
-      const s = result.rows[0];
-      console.log("[Geo Tier 2] Hit in PostgreSQL StoneProfile for:", search);
-      return {
-        hardness: s.hardness || "",
-        luster: s.luster || "",
-        fracture: s.fracture || "",
-        cleavage: s.cleavage || "",
-        specificGravity: s.specificGravity || "",
-        diaphaneity: s.diaphaneity || "",
-        crystalSystem: s.crystalSystem || "",
-        geologicalEra: s.geologicalEra || "",
-        mineralClass: s.mineralClass || "",
-        rockComposition: s.rockComposition || "",
-        rockFormation: s.rockFormation || "",
-        mohs_hardness: s.hardness || "",
-        fracture_pattern: s.fracture || "",
-        specific_gravity: s.specificGravity || "",
-        geological_age: s.geologicalEra || ""
-      };
+    if (stoneProfileCache.has(search)) {
+      const cached = stoneProfileCache.get(search);
+      if (cached) {
+        console.log("[Geo Tier 2] Memory cache hit for:", search);
+        return cached;
+      }
+    } else {
+      const rows = await queryPostgres(
+        'SELECT * FROM "StoneProfile" WHERE LOWER("stoneName") = $1 LIMIT 1',
+        [search]
+      );
+      if (rows.length > 0) {
+        const s = rows[0];
+        console.log("[Geo Tier 2] Hit in PostgreSQL StoneProfile for:", search);
+        const geoResult = {
+          hardness: s.hardness || "",
+          luster: s.luster || "",
+          fracture: s.fracture || "",
+          cleavage: s.cleavage || "",
+          specificGravity: s.specificGravity || "",
+          diaphaneity: s.diaphaneity || "",
+          crystalSystem: s.crystalSystem || "",
+          geologicalEra: s.geologicalEra || "",
+          mineralClass: s.mineralClass || "",
+          rockComposition: s.rockComposition || "",
+          rockFormation: s.rockFormation || "",
+          mohs_hardness: s.hardness || "",
+          fracture_pattern: s.fracture || "",
+          specific_gravity: s.specificGravity || "",
+          geological_age: s.geologicalEra || ""
+        };
+        stoneProfileCache.set(search, geoResult);
+        return geoResult;
+      } else {
+        console.warn("[Geo Tier 2] No match in StoneProfile for:", search);
+        stoneProfileCache.set(search, null);
+      }
     }
   } catch (err) {
     console.error("[Geo Tier 2] PostgreSQL StoneProfile failed:", err.message);
   }
 
-  // TIER 3 — Mindat API
+  // TIER 3 — Mindat API (last resort, saves result to StoneCache and StoneProfile)
   try {
     if (MINDAT_API_KEY) {
       console.log("[Geo Tier 3] Trying Mindat for:", search);
@@ -213,16 +246,27 @@ async function getGeoData(admin, stoneFamily) {
       if (mineral) {
         const hardness = mineral.hardness || "";
         const specificGravity = mineral.density || "";
-        return {
-          hardness, luster: mineral.luster || "",
-          fracture: mineral.fracture || "", cleavage: mineral.cleavage || "",
-          specificGravity, diaphaneity: mineral.transparency || "",
+        const geoResult = {
+          hardness,
+          luster: mineral.luster || "",
+          fracture: mineral.fracture || "",
+          cleavage: mineral.cleavage || "",
+          specificGravity,
+          diaphaneity: mineral.transparency || "",
           crystalSystem: mineral.crystal_system || "",
-          geologicalEra: "", mineralClass: mineral.mineral_class || "",
-          rockComposition: "", rockFormation: "",
-          mohs_hardness: hardness, fracture_pattern: mineral.fracture || "",
-          specific_gravity: specificGravity, geological_age: ""
+          geologicalEra: "",
+          mineralClass: mineral.mineral_class || "",
+          rockComposition: "",
+          rockFormation: "",
+          mohs_hardness: hardness,
+          fracture_pattern: mineral.fracture || "",
+          specific_gravity: specificGravity,
+          geological_age: ""
         };
+        stoneProfileCache.set(search, geoResult);
+        await saveToStoneCache(search, geoResult);
+        console.log("[Geo Tier 3] Mindat hit saved to StoneCache for:", search);
+        return geoResult;
       }
     }
   } catch (err) {
