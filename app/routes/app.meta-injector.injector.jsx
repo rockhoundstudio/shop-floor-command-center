@@ -453,6 +453,8 @@ export function NewProductIntakeTab({ fetcher }) {
       const data = autoFillFetcher.data;
       (data.geoFields) && (() => {
         const geo = data.geoFields;
+        if (Object.keys(geo).length === 0) { window.shopify?.toast?.show("Not in geo database — enter manually", { duration: 3000 }); return; }
+        const geo = data.geoFields;
         setSharedFields(prev => {
           const updated = { ...prev };
           (geo.hardness !== undefined) && (updated.hardness = geo.hardness);
@@ -1192,8 +1194,9 @@ export function NewProductIntakeTab({ fetcher }) {
         <Toast 
           content={titleToastMsg} 
           error={titleToastError} 
-          onDismiss={() => setTitleToastActive(false)} 
-        />
+          error={titleToastError}
+          duration={3000}
+          duration={3000}
       )}
     </Frame>
   );
