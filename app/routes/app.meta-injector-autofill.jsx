@@ -1,5 +1,5 @@
 import { authenticate } from "../shopify.server";
-import { lookupStone } from "../utils/geoLibrary";
+import { lookupStone } from "../utils/geoLibrary.jsx";
 import { TARGET_KEYS } from "../utils/metaScan";
 
 // ==========================================
@@ -125,66 +125,103 @@ async function getGeoData(admin, stoneFamily) {
   };
   if (!stoneFamily || !admin) return emptyGeo;
 
+  const search = stoneFamily.toLowerCase().trim();
+
+  // TIER 1 — geoLibrary.jsx (drive, fast)
+  try {
+    const localResult = lookupStone(stoneFamily);
+    if (localResult && Object.keys(localResult).length > 0) {
+      console.log("[Geo Tier 1] Hit in geoLibrary for:", search);
+      return {
+        hardness: localResult.moh_hardness || localResult.hardness || "",
+        luster: localResult.luster || "",
+        fracture: localResult.fracture_pattern || localResult.fracture || "",
+        cleavage: localResult.cleavage || "",
+        specificGravity: localResult.specific_gravity || "",
+        diaphaneity: localResult.diaphaneity || "",
+        crystalSystem: localResult.crystal_system || "",
+        geologicalEra: localResult.geological_era || localResult.geological_age || "",
+        mineralClass: localResult.mineral_class || "",
+        rockComposition: localResult.rock_composition || "",
+        rockFormation: localResult.rock_formation || "",
+        mohs_hardness: localResult.moh_hardness || localResult.hardness || "",
+        fracture_pattern: localResult.fracture_pattern || localResult.fracture || "",
+        specific_gravity: localResult.specific_gravity || "",
+        geological_age: localResult.geological_era || localResult.geological_age || ""
+      };
+    }
+  } catch (err) {
+    console.warn("[Geo Tier 1] geoLibrary lookup failed:", err.message);
+  }
+
+  // TIER 2 — Shopify gem dictionary metaobjects
   try {
     const res = await admin.graphql(`
       query {
         metaobjects(type: "gem_dictionary", first: 100) {
-          edges {
-            node {
-              fields {
-                key
-                value
-              }
-            }
-          }
+          edges { node { fields { key value } } }
         }
       }
     `);
     const data = await res.json();
     const edges = data.data?.metaobjects?.edges || [];
-    const search = stoneFamily.toLowerCase().trim();
-
     for (const edge of edges) {
       const fieldsArr = edge.node.fields || [];
       const fieldMap = {};
       fieldsArr.forEach(f => { fieldMap[f.key] = f.value || ""; });
-
       const stoneName = (fieldMap.stone_name || "").toLowerCase().trim();
       if (stoneName === search) {
+        console.log("[Geo Tier 2] Hit in Shopify gem dictionary for:", search);
         const hardness = fieldMap.hardness || fieldMap.mohs_hardness || "";
-        const luster = fieldMap.luster || "";
         const fracture = fieldMap.fracture || fieldMap.fracture_pattern || "";
-        const cleavage = fieldMap.cleavage || "";
-        const specificGravity = fieldMap.specific_gravity || fieldMap.specificGravity || fieldMap.density || "";
-        const diaphaneity = fieldMap.diaphaneity || fieldMap.transparency || "";
-        const crystalSystem = fieldMap.crystal_system || fieldMap.crystalSystem || "";
+        const specificGravity = fieldMap.specific_gravity || fieldMap.specificGravity || "";
         const geologicalEra = fieldMap.geological_era || fieldMap.geologicalEra || fieldMap.geological_age || "";
-        const mineralClass = fieldMap.mineral_class || fieldMap.mineralClass || "";
-        const rockComposition = fieldMap.rock_composition || fieldMap.rockComposition || "";
-        const rockFormation = fieldMap.rock_formation || fieldMap.rockFormation || "";
-
         return {
-          hardness,
-          luster,
-          fracture,
-          cleavage,
-          specificGravity,
-          diaphaneity,
-          crystalSystem,
-          geologicalEra,
-          mineralClass,
-          rockComposition,
-          rockFormation,
-          mohs_hardness: hardness,
-          fracture_pattern: fracture,
-          specific_gravity: specificGravity,
-          geological_age: geologicalEra
+          hardness, luster: fieldMap.luster || "",
+          fracture, cleavage: fieldMap.cleavage || "",
+          specificGravity, diaphaneity: fieldMap.diaphaneity || "",
+          crystalSystem: fieldMap.crystal_system || fieldMap.crystalSystem || "",
+          geologicalEra, mineralClass: fieldMap.mineral_class || fieldMap.mineralClass || "",
+          rockComposition: fieldMap.rock_composition || fieldMap.rockComposition || "",
+          rockFormation: fieldMap.rock_formation || fieldMap.rockFormation || "",
+          mohs_hardness: hardness, fracture_pattern: fracture,
+          specific_gravity: specificGravity, geological_age: geologicalEra
         };
       }
     }
   } catch (err) {
-    console.error("[Geo Data Lookup] Failed to fetch gem dictionary:", err.message);
+    console.error("[Geo Tier 2] Shopify gem dictionary failed:", err.message);
   }
+
+  // TIER 3 — Mindat API
+  try {
+    if (MINDAT_API_KEY) {
+      console.log("[Geo Tier 3] Trying Mindat for:", search);
+      const mindatRes = await fetch(
+        `https://api.mindat.org/minerals/?name=${encodeURIComponent(stoneFamily)}&format=json`,
+        { headers: { Authorization: `Token ${MINDAT_API_KEY}` } }
+      );
+      const mindatData = await mindatRes.json();
+      const mineral = mindatData?.results?.[0];
+      if (mineral) {
+        const hardness = mineral.hardness || "";
+        const specificGravity = mineral.density || "";
+        return {
+          hardness, luster: mineral.luster || "",
+          fracture: mineral.fracture || "", cleavage: mineral.cleavage || "",
+          specificGravity, diaphaneity: mineral.transparency || "",
+          crystalSystem: mineral.crystal_system || "",
+          geologicalEra: "", mineralClass: mineral.mineral_class || "",
+          rockComposition: "", rockFormation: "",
+          mohs_hardness: hardness, fracture_pattern: mineral.fracture || "",
+          specific_gravity: specificGravity, geological_age: ""
+        };
+      }
+    }
+  } catch (err) {
+    console.error("[Geo Tier 3] Mindat failed:", err.message);
+  }
+
   return emptyGeo;
 }
 
