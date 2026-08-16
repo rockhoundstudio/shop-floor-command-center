@@ -562,16 +562,15 @@ function getLusterForStone(stoneName) {
  */
 export function lookupStone(title) {
   if (!title) return null;
-  const t = String(title).toLowerCase();
+  const t = String(title).toLowerCase().trim();
 
-  // Sort keys longest first so specific entries beat generic ones
   const keys = Object.keys(GEO_LIBRARY).sort((a, b) => b.length - a.length);
 
   for (const key of keys) {
-    if (t.includes(key)) {
-      // Ensure we don't return an undefined reference
-      if (!GEO_LIBRARY[key]) continue;
-      
+    if (!GEO_LIBRARY[key]) continue;
+    const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp('(?<![a-z])' + escaped + '(?![a-z])', 'i');
+    if (regex.test(t)) {
       const stoneData = { ...GEO_LIBRARY[key] };
       stoneData.luster = getLusterForStone(stoneData.official_name || key);
       return stoneData;
