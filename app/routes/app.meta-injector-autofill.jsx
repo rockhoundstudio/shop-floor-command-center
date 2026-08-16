@@ -301,6 +301,9 @@ export const action = async ({ request }) => {
       const segment2 = segments[1]?.trim() || "";
       const segment3 = segments[2]?.trim() || "";
 
+      const stoneRows = await queryPostgres('SELECT "stoneName" FROM "StoneProfile" ORDER BY "stoneName"', []);
+      const stonePicklist = stoneRows.map(r => r.stoneName).join(", ");
+
       const { pagesList, collectionsList } = await getLiveStoreDirectory(admin);
       const resolvedHandle = resolveOriginHandle(segment2, pagesList);
       const collectionData = resolveCollectionData(segment2, resolvedHandle, collectionsList);
@@ -310,7 +313,7 @@ export const action = async ({ request }) => {
 
       const promptText = `You are an expert lapidary assistant for Rockhound Studio. Analyze these segments:
 - Family: "${segment1}", Origin: "${segment2}", Title: "${segment3}"
-Set origin_handle strictly to: "${resolvedHandle}". Use "The Shopped Rock" for location if it is a vendor. stone_family must be exactly one of: Agate, Andesite, Aventurine, Chalcedony, Jasper, Jaspagate, Labradorite, Obsidian, Quartzite, Quartz, Rhyolite, Serpentine, Variscite - pick the closest match to the Family segment. Return the exact string, no variations, no lowercase.
+Set origin_handle strictly to: "${resolvedHandle}". Use "The Shopped Rock" for location if it is a vendor. stone_family must be exactly one of: ${stonePicklist} - pick the closest match to the Family segment. Correct typos and partial names. Return the exact string from this list, no variations, no lowercase.
 Return valid JSON with these exact keys: stone_family, piece_name, origin_handle, origin_location, collection_name, collection_location. No markup. No extra keys.`;
 
       const geminiRes = await fetchWithRetry("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY, {
