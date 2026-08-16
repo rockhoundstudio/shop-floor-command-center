@@ -2,6 +2,20 @@ import { authenticate } from "../shopify.server";
 import { lookupStone } from "../utils/geoLibrary.jsx";
 import { TARGET_KEYS } from "../utils/metaScan";
 
+import pg from 'pg';
+const pgClient = new pg.Client({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false }
+});
+let pgConnected = false;
+async function getPgClient() {
+  if (!pgConnected) {
+    await pgClient.connect();
+    pgConnected = true;
+  }
+  return pgClient;
+}
+
 // ==========================================
 // ENVIRONMENT VARIABLES & MAPS
 // ==========================================
@@ -154,43 +168,36 @@ async function getGeoData(admin, stoneFamily) {
     console.warn("[Geo Tier 1] geoLibrary lookup failed:", err.message);
   }
 
-  // TIER 2 — Shopify gem dictionary metaobjects
+  // TIER 2 — PostgreSQL StoneProfile
   try {
-    const res = await admin.graphql(`
-      query {
-        metaobjects(type: "gem_dictionary", first: 100) {
-          edges { node { fields { key value } } }
-        }
-      }
-    `);
-    const data = await res.json();
-    const edges = data.data?.metaobjects?.edges || [];
-    for (const edge of edges) {
-      const fieldsArr = edge.node.fields || [];
-      const fieldMap = {};
-      fieldsArr.forEach(f => { fieldMap[f.key] = f.value || ""; });
-      const stoneName = (fieldMap.stone_name || "").toLowerCase().trim();
-      if (stoneName === search) {
-        console.log("[Geo Tier 2] Hit in Shopify gem dictionary for:", search);
-        const hardness = fieldMap.hardness || fieldMap.mohs_hardness || "";
-        const fracture = fieldMap.fracture || fieldMap.fracture_pattern || "";
-        const specificGravity = fieldMap.specific_gravity || fieldMap.specificGravity || "";
-        const geologicalEra = fieldMap.geological_era || fieldMap.geologicalEra || fieldMap.geological_age || "";
-        return {
-          hardness, luster: fieldMap.luster || "",
-          fracture, cleavage: fieldMap.cleavage || "",
-          specificGravity, diaphaneity: fieldMap.diaphaneity || "",
-          crystalSystem: fieldMap.crystal_system || fieldMap.crystalSystem || "",
-          geologicalEra, mineralClass: fieldMap.mineral_class || fieldMap.mineralClass || "",
-          rockComposition: fieldMap.rock_composition || fieldMap.rockComposition || "",
-          rockFormation: fieldMap.rock_formation || fieldMap.rockFormation || "",
-          mohs_hardness: hardness, fracture_pattern: fracture,
-          specific_gravity: specificGravity, geological_age: geologicalEra
-        };
-      }
+    const db = await getPgClient();
+    const result = await db.query(
+      'SELECT * FROM "StoneProfile" WHERE LOWER("stoneName") = $1 LIMIT 1',
+      [search]
+    );
+    if (result.rows.length > 0) {
+      const s = result.rows[0];
+      console.log("[Geo Tier 2] Hit in PostgreSQL StoneProfile for:", search);
+      return {
+        hardness: s.hardness || "",
+        luster: s.luster || "",
+        fracture: s.fracture || "",
+        cleavage: s.cleavage || "",
+        specificGravity: s.specificGravity || "",
+        diaphaneity: s.diaphaneity || "",
+        crystalSystem: s.crystalSystem || "",
+        geologicalEra: s.geologicalEra || "",
+        mineralClass: s.mineralClass || "",
+        rockComposition: s.rockComposition || "",
+        rockFormation: s.rockFormation || "",
+        mohs_hardness: s.hardness || "",
+        fracture_pattern: s.fracture || "",
+        specific_gravity: s.specificGravity || "",
+        geological_age: s.geologicalEra || ""
+      };
     }
   } catch (err) {
-    console.error("[Geo Tier 2] Shopify gem dictionary failed:", err.message);
+    console.error("[Geo Tier 2] PostgreSQL StoneProfile failed:", err.message);
   }
 
   // TIER 3 — Mindat API
