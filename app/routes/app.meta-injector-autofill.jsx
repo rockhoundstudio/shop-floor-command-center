@@ -301,8 +301,15 @@ export const action = async ({ request }) => {
       const segment2 = segments[1]?.trim() || "";
       const segment3 = segments[2]?.trim() || "";
 
-      const stoneRows = await queryPostgres('SELECT "stoneName" FROM "StoneProfile" ORDER BY "stoneName"', []);
-      const stonePicklist = stoneRows.map(r => r.stoneName).join(", ");
+      let stonePicklist = "Agate, Amazonite, Amethyst, Andesite, Aventurine, Azurite, Calcite, Carnelian, Chalcedony, Chrysocolla, Citrine, Dalmatian Stone, Fluorite, Garnet, Hematite, Howlite, Jasper, Kyanite, Labradorite, Lapis Lazuli, Lepidolite, Malachite, Moonstone, Obsidian, Ocean Jasper, Onyx, Opal, Petrified Wood, Picture Jasper, Prehnite, Pyrite, Quartz, Quartzite, Rhodonite, Rhyolite, Rose Quartz, Serpentine, Smoky Quartz, Sodalite, Sunstone, Tiger's Eye, Tourmaline, Turquoise, Unakite, Variscite";
+      try {
+        const stoneRows = await queryPostgres('SELECT "stoneName" FROM "StoneProfile" ORDER BY "stoneName"', []);
+        if (stoneRows && stoneRows.length > 0) {
+          stonePicklist = stoneRows.map(r => r.stoneName).join(", ");
+        }
+      } catch (err) {
+        console.warn("[titleParse] StoneProfile picklist fetch failed, using fallback:", err.message);
+      }
 
       const { pagesList, collectionsList } = await getLiveStoreDirectory(admin);
       const resolvedHandle = resolveOriginHandle(segment2, pagesList);
