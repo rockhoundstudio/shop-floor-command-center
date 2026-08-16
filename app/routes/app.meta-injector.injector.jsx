@@ -453,7 +453,7 @@ export function NewProductIntakeTab({ fetcher }) {
       const data = autoFillFetcher.data;
       (data.geoFields) && (() => {
         const geo = data.geoFields;
-        if (geo.geoSource === "none") { window.shopify?.toast?.show("Not in geo database — enter manually", { duration: 3000 }); return; }
+        if (geo.geoSource === "none") { window.shopify?.toast?.show("Not in geo database   enter manually", { duration: 3000 }); return; }
         setSharedFields(prev => {
           const updated = { ...prev };
           (geo.hardness !== undefined) && (updated.hardness = geo.hardness);
@@ -533,10 +533,7 @@ export function NewProductIntakeTab({ fetcher }) {
       };
     });
 
-    (parsed.stone_family && parsed.stone_family.trim() !== "") && autoFillFetcher.submit(
-      { intent: "geoLookup", stoneFamily: parsed.stone_family.toLowerCase() },
-      { method: "post", action: "/app/meta-injector-autofill" }
-    );
+    
 
     if (parsed.canonical_title || parsed.product_title) {
       const pieceTitleVal = parsed.canonical_title || parsed.product_title;
