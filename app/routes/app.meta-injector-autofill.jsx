@@ -288,7 +288,7 @@ export const action = async ({ request }) => {
 
     if (intent === "geoLookup") {
       const stoneFamily = body.get("stoneFamily") || "";
-      return Response.json({ geoFields: await getGeoData(admin, stoneFamily) });
+      try { const geoFields = await getGeoData(admin, stoneFamily); return Response.json({ geoFields }); } catch (err) { console.error("[geoLookup] getGeoData crashed:", err.message); return Response.json({ geoFields: {} }); }
     }
 
     // ==========================================
