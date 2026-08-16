@@ -167,7 +167,7 @@ async function getGeoData(admin, stoneFamily) {
     const localResult = lookupStone(stoneFamily);
     if (localResult && Object.keys(localResult).length > 0) {
       console.log("[Geo Tier 1] Hit in geoLibrary for:", search);
-      return { ...((() => { const r = {hardness: localResult.moh_hardness || localResult.hardness || "", luster: localResult.luster || "", fracture: localResult.fracture_pattern || localResult.fracture || "", cleavage: localResult.cleavage || "", specificGravity: localResult.specific_gravity || "", diaphaneity: localResult.diaphaneity || "", crystalSystem: localResult.crystal_system || "", geologicalEra: localResult.geological_era || localResult.geological_age || "", mineralClass: localResult.mineral_class || "", rockComposition: localResult.rock_composition || "", rockFormation: localResult.rock_formation || "", mohs_hardness: localResult.moh_hardness || localResult.hardness || "", fracture_pattern: localResult.fracture_pattern || localResult.fracture || "", specific_gravity: localResult.specific_gravity || "", geological_age: localResult.geological_era || localResult.geological_age || ""}; return r; })()), geoSource: "library" };
+      return {
         hardness: localResult.moh_hardness || localResult.hardness || "",
         luster: localResult.luster || "",
         fracture: localResult.fracture_pattern || localResult.fracture || "",
@@ -182,9 +182,9 @@ async function getGeoData(admin, stoneFamily) {
         mohs_hardness: localResult.moh_hardness || localResult.hardness || "",
         fracture_pattern: localResult.fracture_pattern || localResult.fracture || "",
         specific_gravity: localResult.specific_gravity || "",
-        geological_age: localResult.geological_era || localResult.geological_age || ""
+        geological_age: localResult.geological_era || localResult.geological_age || "",
+        geoSource: "library"
       };
-    }
   } catch (err) {
     console.warn("[Geo Tier 1] geoLibrary lookup failed:", err.message);
   }
