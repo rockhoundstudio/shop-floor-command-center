@@ -158,7 +158,7 @@ async function getGeoData(admin, stoneFamily) {
     rockFormation: "", mohs_hardness: "", fracture_pattern: "",
     specific_gravity: "", geological_age: ""
   };
-  if (!stoneFamily || !admin) return emptyGeo;
+  if (!stoneFamily || !admin) return { ...emptyGeo, geoSource: "none" };
 
   const search = stoneFamily.toLowerCase().trim();
 
@@ -167,7 +167,7 @@ async function getGeoData(admin, stoneFamily) {
     const localResult = lookupStone(stoneFamily);
     if (localResult && Object.keys(localResult).length > 0) {
       console.log("[Geo Tier 1] Hit in geoLibrary for:", search);
-      return {
+      return { ...((() => { const r = {hardness: localResult.moh_hardness || localResult.hardness || "", luster: localResult.luster || "", fracture: localResult.fracture_pattern || localResult.fracture || "", cleavage: localResult.cleavage || "", specificGravity: localResult.specific_gravity || "", diaphaneity: localResult.diaphaneity || "", crystalSystem: localResult.crystal_system || "", geologicalEra: localResult.geological_era || localResult.geological_age || "", mineralClass: localResult.mineral_class || "", rockComposition: localResult.rock_composition || "", rockFormation: localResult.rock_formation || "", mohs_hardness: localResult.moh_hardness || localResult.hardness || "", fracture_pattern: localResult.fracture_pattern || localResult.fracture || "", specific_gravity: localResult.specific_gravity || "", geological_age: localResult.geological_era || localResult.geological_age || ""}; return r; })()), geoSource: "library" };
         hardness: localResult.moh_hardness || localResult.hardness || "",
         luster: localResult.luster || "",
         fracture: localResult.fracture_pattern || localResult.fracture || "",
@@ -195,7 +195,7 @@ async function getGeoData(admin, stoneFamily) {
       const cached = stoneProfileCache.get(search);
       if (cached) {
         console.log("[Geo Tier 2] Memory cache hit for:", search);
-        return cached;
+        return { ...cached, geoSource: "cache" };
       }
     } else {
       const rows = await queryPostgres(
@@ -223,7 +223,7 @@ async function getGeoData(admin, stoneFamily) {
           geological_age: s.geologicalEra || ""
         };
         stoneProfileCache.set(search, geoResult);
-        return geoResult;
+        stoneProfileCache.set(search, geoResult); return { ...geoResult, geoSource: "database" };
       } else {
         console.warn("[Geo Tier 2] No match in StoneProfile for:", search);
         stoneProfileCache.set(search, null);
@@ -263,7 +263,7 @@ async function getGeoData(admin, stoneFamily) {
           specific_gravity: specificGravity,
           geological_age: ""
         };
-        stoneProfileCache.set(search, geoResult);
+        stoneProfileCache.set(search, geoResult); await saveToStoneCache(search, geoResult); console.log("[Geo Tier 3] Mindat hit saved to StoneCache for:", search); return { ...geoResult, geoSource: "mindat" };
         await saveToStoneCache(search, geoResult);
         console.log("[Geo Tier 3] Mindat hit saved to StoneCache for:", search);
         return geoResult;
@@ -273,7 +273,7 @@ async function getGeoData(admin, stoneFamily) {
     console.error("[Geo Tier 3] Mindat failed:", err.message);
   }
 
-  return emptyGeo;
+  return { ...emptyGeo, geoSource: "none" };
 }
 
 // ==========================================

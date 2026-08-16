@@ -453,7 +453,7 @@ export function NewProductIntakeTab({ fetcher }) {
       const data = autoFillFetcher.data;
       (data.geoFields) && (() => {
         const geo = data.geoFields;
-        if (Object.keys(geo).length === 0) { window.shopify?.toast?.show("Not in geo database   enter manually", { duration: 3000 }); return; }
+        if (geo.geoSource === "none") { window.shopify?.toast?.show("Not in geo database � enter manually", { duration: 3000 }); return; }
         setSharedFields(prev => {
           const updated = { ...prev };
           (geo.hardness !== undefined) && (updated.hardness = geo.hardness);
@@ -550,11 +550,11 @@ export function NewProductIntakeTab({ fetcher }) {
     if (parsed.needs_new_origin_page) {
       setTitleToastMsg("⚠️ No origin page found — create one for: " + parsed.origin_name);
       setTitleToastError(true);
-      setTitleToastActive(true);
+      setTitleToastActive(true); setTimeout(() => setTitleToastActive(false), 3000);
     } else {
       setTitleToastMsg("Title parsed — fields pre-filled");
       setTitleToastError(false);
-      setTitleToastActive(true);
+      setTitleToastActive(true); setTimeout(() => setTitleToastActive(false), 3000);
     }
 
   }, [autoFillFetcher, autoFillFetcher.data, lastScannedPieceId]);
