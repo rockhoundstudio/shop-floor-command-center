@@ -109,11 +109,7 @@ export function NewProductIntakeTab({ fetcher }) {
 
   const handleStoneFamilyChange = useCallback((value) => {
     setSharedFields(prev => ({ ...prev, stone_family: value }));
-    (value && value.trim() !== "") && autoFillFetcher.submit(
-      { intent: "geoLookup", stoneFamily: value },
-      { method: "post", action: "/app/meta-injector-autofill" }
-    );
-  }, [autoFillFetcher]);
+  }, []);
 
   const handlePieceChange = useCallback((id, key, value) => {
     setPieces(prev => prev.map(p => {
