@@ -354,6 +354,8 @@ export const action = async ({ request }) => {
         // 🟢 THE HARD DB WELD: Pull immutable geo specs straight from DB / Geo Library
         console.log("[titleParse] Gemini returned stone_family:", parsed.stone_family);
         const dbGeoData = await getGeoData(admin, parsed.stone_family || segment1);
+        const matchedOriginPage = pagesList.find(p => p.url.includes(resolvedHandle));
+        const displayName = matchedOriginPage ? matchedOriginPage.title.replace(/^The\s+/i, "").trim() : collectionData.name.replace(/\s+Collection$/i, "").trim();
         const finalParse = {
           ...parsed,
           ...dbGeoData,
@@ -362,7 +364,7 @@ export const action = async ({ request }) => {
           origin_location: segment2,
           collection_name: collectionData.name,
           collection_location: collectionData.name.replace(" Collection", ""),
-          canonical_title: parsed.stone_family + " - " + resolvedHandle + " - " + segment3
+          canonical_title: parsed.stone_family + " — " + displayName + " — " + segment3
         };
         
         return Response.json({ titleParse: finalParse });
