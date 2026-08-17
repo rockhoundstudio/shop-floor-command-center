@@ -249,7 +249,7 @@ export function NewProductIntakeTab({ fetcher }) {
 
     const payload = {
       intent: "createProduct",
-      ...sharedFields,
+      ...latestShared.current,
       piece_name: pieces[0].piece_name,
       dimensions_mm: pieces[0].dimensions_mm,
       cut_and_shape: pieces[0].cut_and_shape,
