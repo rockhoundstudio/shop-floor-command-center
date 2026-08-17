@@ -492,7 +492,7 @@ export function NewProductIntakeTab({ fetcher }) {
         ...prev,
         material: "Stone",
         stone_family: normalizeDropdownValue("stone_family", parsed.stone_family?.trim()) || prev.stone_family,
-        collection_name: (parsed.collection_name && parsed.collection_name !== parsed.collection_location && parsed.collection_name !== resolvedCollectionLoc) ? parsed.collection_name : prev.collection_name,
+        collection_name: parsed.collection_name || prev.collection_name,
         collection_location: resolvedCollectionLoc,
         collectionLocation: resolvedCollectionLoc,
         origin_handle: parsed.origin_handle || prev.origin_handle, 
