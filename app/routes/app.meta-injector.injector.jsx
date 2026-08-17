@@ -258,7 +258,7 @@ export function NewProductIntakeTab({ fetcher }) {
       price: pieces[0].price,
       weight_grams: pieces[0].weight_grams,
       seo_title: pieces[0].seo_title,
-      title: buildTitle(sharedFields, pieces[0]),
+      title: buildTitle(latestShared.current, pieces[0]),
       descriptionHtml: pieces[0].generated_description,
       productType: productType,
       status: "DRAFT",
