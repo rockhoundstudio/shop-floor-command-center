@@ -147,7 +147,9 @@ export function buildMetafieldsJson(sharedFields, piece) {
 
 export function buildTitle(sharedFields, piece) {
   const family = sharedFields.stone_family || "Unknown Stone";
-  const origin = sharedFields.origin_location || "Unknown Origin";
+  const origin = sharedFields.collection_name
+    ? sharedFields.collection_name.replace(/\s+Collection$/i, "").trim()
+    : (sharedFields.origin_location || "Unknown Origin");
   const name = piece.piece_name || "New Piece";
   
   // EXACT ORIGINAL DASHES PRESERVED — DO NOT TOUCH
