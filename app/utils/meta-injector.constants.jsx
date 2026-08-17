@@ -289,6 +289,24 @@ DROPDOWN_OPTIONS.bail_included = [
   { label: "No", value: "false" }
 ];
 
+DROPDOWN_OPTIONS.chain_material = [
+  { label: "Silver Plated Snake Chain", value: "Silver Plated Snake Chain" },
+  { label: "Gold Plated Snake Chain", value: "Gold Plated Snake Chain" },
+  { label: "Sterling Silver Chain", value: "Sterling Silver Chain" },
+  { label: "Black Cord", value: "Black Cord" },
+  { label: "Brown Cord", value: "Brown Cord" },
+  { label: "Tan Cord", value: "Tan Cord" },
+  { label: "Ivory Cord", value: "Ivory Cord" },
+  { label: "White Cord", value: "White Cord" },
+  { label: "Gold Cord", value: "Gold Cord" },
+  { label: "Red Cord", value: "Red Cord" },
+  { label: "Burgundy Cord", value: "Burgundy Cord" },
+  { label: "Steel Blue Cord", value: "Steel Blue Cord" },
+  { label: "Purple Cord", value: "Purple Cord" },
+  { label: "Olive Green Cord", value: "Olive Green Cord" },
+  { label: "None", value: "None" }
+];
+
 export function normalizeDropdownValue(key, rawValue) {
   if (!rawValue || rawValue.includes("gid://")) return "";
   if (rawValue === undefined || rawValue === null) return "";
