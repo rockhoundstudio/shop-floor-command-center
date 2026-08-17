@@ -941,22 +941,7 @@ export function NewProductIntakeTab({ fetcher }) {
               <div style={{ minHeight: "54px" }}>
                 <Select
                   label={renderLabel("Stone Family", "stone_family", sharedFields.stone_family)}
-                  options={[
-                    { label: "Select stone family...", value: "" },
-                    { label: "Agate", value: "Agate" },
-                    { label: "Andesite", value: "Andesite" },
-                    { label: "Aventurine", value: "Aventurine" },
-                    { label: "Chalcedony", value: "Chalcedony" },
-                    { label: "Jasper", value: "Jasper" },
-                    { label: "Jaspagate", value: "Jaspagate" },
-                    { label: "Labradorite", value: "Labradorite" },
-                    { label: "Obsidian", value: "Obsidian" },
-                    { label: "Quartzite", value: "Quartzite" },
-                    { label: "Quartz", value: "Quartz" },
-                    { label: "Rhyolite", value: "Rhyolite" },
-                    { label: "Serpentine", value: "Serpentine" },
-                    { label: "Variscite", value: "Variscite" }
-                  ]}
+                  options={[{ label: "Select stone family...", value: "" }, ...DROPDOWN_OPTIONS.stone_family]}
                   value={sharedFields.stone_family}
                   onChange={(v) => handleStoneFamilyChange(v)}
                 />
