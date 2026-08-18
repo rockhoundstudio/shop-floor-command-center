@@ -414,10 +414,12 @@ export const action = async ({ request }) => {
       (payload.pieces && payload.pieces.length > 0) && (piece = payload.pieces[0]);
 
       const stoneFamily = payload.stone_family || "Unknown Stone";
-      const originLocation = payload.origin_location || "Unknown Origin";
       const pieceName = piece.piece_name || "New Piece";
-      
-      const title = `${stoneFamily} — ${originLocation} — ${pieceName}`;
+      const originLocation = payload.collection_name
+        ? payload.collection_name.replace(/\s+Collection$/i, "").trim()
+        : (payload.origin_location || "Unknown Origin");
+
+      const title = payload.title || `${stoneFamily} — ${originLocation} — ${pieceName}`;
       const descriptionHtml = payload.descriptionHtml || piece.generated_description || piece.descriptionHtml || "";
       const price = String(payload.price || piece.price || "0.00");
       const productType = payload.productType || "Wearable Art";
