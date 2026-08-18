@@ -275,7 +275,7 @@ export const action = async ({ request }) => {
           deletedMetafields { key namespace ownerId }
           userErrors { field message }
         }
-      }`,
+      } `,
       {
         variables: {
           metafields: toDelete.map(id => ({ ownerId: resolvedId, id }))
@@ -430,11 +430,15 @@ export const action = async ({ request }) => {
       const allUserErrors = [];
 
       // Step 1: Create Product (returning default variant ID)
+      const seoTitle = payload.seo_title || title;
       const productInput = {
         title: title,
         descriptionHtml: descriptionHtml,
         productType: productType,
-        status: status
+        status: status,
+        seo: {
+          title: seoTitle
+        }
       };
 
       const createResponse = await admin.graphql(
@@ -484,7 +488,7 @@ export const action = async ({ request }) => {
               userErrors { field message }
             }
           }`,
-          { variables: { productId, variants: [{ id: defaultVariantId, price: price }] } }
+          { variables: { productId, variants: [{ id: defaultVariantId, price: price, inventoryItem: { measurement: { weight: { value: parseFloat(payload.weight_grams || piece.weight_grams || 0), unit: "GRAMS" } } } }] } }
         );
         
         const variantResult = await variantResponse.json();
