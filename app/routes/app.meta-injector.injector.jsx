@@ -258,7 +258,7 @@ export function NewProductIntakeTab({ fetcher }) {
       price: pieces[0].price,
       weight_grams: pieces[0].weight_grams,
       seo_title: pieces[0].seo_title,
-      title: buildTitle(latestShared.current, pieces[0]),
+      title: pieces[0].canonical_title || buildTitle(latestShared.current, pieces[0]),
       descriptionHtml: pieces[0].generated_description,
       productType: productType,
       status: "DRAFT",
@@ -539,7 +539,7 @@ export function NewProductIntakeTab({ fetcher }) {
       const pieceTitleVal = parsed.canonical_title || parsed.product_title;
       setPieces(prev => prev.map((p, i) =>
         p.id === lastScannedPieceId || (!lastScannedPieceId && i === 0)
-          ? { ...p, piece_name: pieceTitleVal, seo_title: parsed.seo_title, handle: parsed.handle }
+          ? { ...p, piece_name: pieceTitleVal, seo_title: parsed.seo_title, handle: parsed.handle, canonical_title: parsed.canonical_title }
           : p
       ));
     }
