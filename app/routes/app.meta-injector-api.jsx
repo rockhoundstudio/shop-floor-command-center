@@ -419,7 +419,9 @@ export const action = async ({ request }) => {
         ? payload.collection_name.replace(/\s+Collection$/i, "").trim()
         : (payload.origin_location || "Unknown Origin");
 
-      const title = payload.title || `${stoneFamily} — ${originLocation} — ${pieceName}`;
+      const title = payload.title && !payload.title.includes("Unknown")
+        ? payload.title
+        : `${stoneFamily} — ${originLocation} — ${pieceName}`;
       const descriptionHtml = payload.descriptionHtml || piece.generated_description || piece.descriptionHtml || "";
       const price = String(payload.price || piece.price || "0.00");
       const productType = payload.productType || "Wearable Art";
