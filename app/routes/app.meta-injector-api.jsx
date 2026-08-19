@@ -488,7 +488,7 @@ export const action = async ({ request }) => {
               userErrors { field message }
             }
           }`,
-          { variables: { productId, variants: [{ id: defaultVariantId, price: price, inventoryItem: { measurement: { weight: { value: parseFloat(payload.weight_grams || piece.weight_grams || 0), unit: "GRAMS" } } } }] } }
+          { variables: { productId, variants: [{ id: defaultVariantId, price: price, inventoryItem: { measurement: { weight: { value: parseFloat(payload.shipping_weight_oz || 0), unit: "OUNCES" } } } }] } }
         );
         
         const variantResult = await variantResponse.json();
