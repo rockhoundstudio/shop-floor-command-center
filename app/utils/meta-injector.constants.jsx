@@ -116,6 +116,7 @@ DROPDOWN_OPTIONS.stone_family = [
   { label: "Blue Lace Agate", value: "Blue Lace Agate" },
   { label: "Botswana Agate", value: "Botswana Agate" },
   { label: "Brecciated Jasper", value: "Brecciated Jasper" },
+  { label: "Brecciated Quartz", value: "Brecciated Quartz" },
   { label: "Bumblebee Jasper", value: "Bumblebee Jasper" },
   { label: "Calcite", value: "Calcite" },
   { label: "Carnelian", value: "Carnelian" },
@@ -244,7 +245,8 @@ DROPDOWN_OPTIONS.cut_and_shape = [
   { label: "Standard Cabochon", value: "Standard Cabochon" },
   { label: "Surfboard", value: "Surfboard" },
   { label: "Teardrop", value: "Teardrop" },
-  { label: "Trillion", value: "Trillion" }
+  { label: "Trillion", value: "Trillion" },
+  { label: "Slab", value: "Slab" }
 ];
 
 DROPDOWN_OPTIONS.handcrafted_by = [
