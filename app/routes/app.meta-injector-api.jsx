@@ -413,15 +413,19 @@ export const action = async ({ request }) => {
       let piece = {};
       (payload.pieces && payload.pieces.length > 0) && (piece = payload.pieces[0]);
       piece = {
+        ...piece,
         color: payload.color || piece.color || "",
         dimensions_mm: payload.dimensions_mm || piece.dimensions_mm || "",
         cut_and_shape: payload.cut_and_shape || piece.cut_and_shape || "",
         surface_finish: payload.surface_finish || piece.surface_finish || "",
         weight_grams: payload.weight_grams || piece.weight_grams || "",
         artist_notes: payload.artist_notes || piece.artist_notes || "",
-        piece_name: payload.piece_name || piece.piece_name || "",
-        ...piece
+        piece_name: payload.piece_name || piece.piece_name || ""
       };
+
+      // Combine shared fields and piece fields
+      const { pieces, intent: payloadIntent, mediaUrlsJson, title: payloadTitle, metafieldsJson, ...sharedOnly } = payload;
+      const combinedFields = { ...sharedOnly, ...piece };
 
       const stoneFamily = payload.stone_family || "Unknown Stone";
       const pieceName = piece.piece_name || "New Piece";
@@ -582,10 +586,6 @@ export const action = async ({ request }) => {
       const rawMetafields = [];
       const googleMetafields = [];
 
-      // Combine shared fields and piece fields
-      const { pieces, intent, mediaUrlsJson, title: payloadTitle, metafieldsJson, ...sharedOnly } = payload;
-      const combinedFields = { ...sharedOnly, ...piece };
-      
       const normalizedFields = {
         ...combinedFields,
         weight_grams: combinedFields.weight_grams || payload.weight_grams || "",
