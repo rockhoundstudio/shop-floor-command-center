@@ -488,7 +488,7 @@ export const action = async ({ request }) => {
               userErrors { field message }
             }
           }`,
-          { variables: { productId, variants: [{ id: defaultVariantId, price: price, inventoryItem: { measurement: { weight: { value: parseFloat(payload.shipping_weight_oz || 0), unit: "OUNCES" } } } }] } }
+          { variables: { productId, variants: [{ id: defaultVariantId, price: price, inventoryItem: { measurement: { weight: { value: parseFloat(payload.weight_grams || piece.weight_grams || 0) / 28.3495, unit: "OUNCES" } } } }] } }
         );
         
         const variantResult = await variantResponse.json();
@@ -536,6 +536,38 @@ export const action = async ({ request }) => {
         console.error("Error attaching media URLs in productCreateMedia:", e);
       }
 
+      // Assign product to collection
+      if (payload.collection_name) {
+        try {
+          const collectionSearch = await admin.graphql(
+            `#graphql
+            query findCollection($title: String!) {
+              collections(first: 5, query: $title) {
+                edges { node { id title } }
+              }
+            }`,
+            { variables: { title: payload.collection_name } }
+          );
+          const collectionData = await collectionSearch.json();
+          const matchedCollection = collectionData?.data?.collections?.edges?.find(
+            e => e.node.title.toLowerCase() === payload.collection_name.toLowerCase()
+          );
+          if (matchedCollection) {
+            await admin.graphql(
+              `#graphql
+              mutation addToCollection($id: ID!, $productIds: [ID!]!) {
+                collectionAddProducts(id: $id, productIds: $productIds) {
+                  userErrors { field message }
+                }
+              }`,
+              { variables: { id: matchedCollection.node.id, productIds: [productId] } }
+            );
+          }
+        } catch (collErr) {
+          console.warn("[createProduct] Collection assignment failed:", collErr.message);
+        }
+      }
+
       // Step 3: Write Metafields
       const rawMetafields = [];
       const googleMetafields = [];
@@ -551,7 +583,7 @@ export const action = async ({ request }) => {
         "intent", "mediaUrlsJson", "descriptionHtml", "productType", "status", "pieces", "photoFiles",
         "photoPreviewUrls", "photos", "imageBase64", "imageMimeType", "stagedResourceUrls", "scanError",
         "scanToken", "isUploading", "id", "generated_description", "price", "seo_title", "collectionLocation",
-        "age_group", "target_gender", "condition"
+        "age_group", "target_gender", "condition", "shipping_weight_oz", "collection_name", "collection_location"
       ];
 
       Object.entries(combinedFields).forEach(([key, value]) => {
@@ -591,6 +623,15 @@ export const action = async ({ request }) => {
         type: "single_line_text_field",
         value: String(combinedFields.condition)
       });
+
+      if (combinedFields.google_product_category) {
+        googleMetafields.push({
+          namespace: "google",
+          key: "custom_label_0",
+          type: "single_line_text_field",
+          value: String(combinedFields.google_product_category)
+        });
+      }
 
       if (rawMetafields.length > 0 || googleMetafields.length > 0) {
         try {
