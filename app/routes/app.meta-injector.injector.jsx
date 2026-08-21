@@ -257,6 +257,7 @@ export function NewProductIntakeTab({ fetcher }) {
       cut_and_shape: pieces[0].cut_and_shape,
       surface_finish: pieces[0].surface_finish,
       color: pieces[0].color,
+      artist_notes: pieces[0].artist_notes,
       price: pieces[0].price,
       weight_grams: pieces[0].weight_grams,
       seo_title: pieces[0].seo_title,
