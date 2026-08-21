@@ -54,6 +54,7 @@ export function NewProductIntakeTab({ fetcher }) {
       color: "",
       price: "",
       weight_grams: "",
+      shipping_weight_oz: "",
       photoFiles: [],
       photoPreviewUrls: [],
       photos: [],
@@ -221,6 +222,7 @@ export function NewProductIntakeTab({ fetcher }) {
         color: "",
         price: "",
         weight_grams: "",
+        shipping_weight_oz: "",
         photoFiles: [],
         photoPreviewUrls: [],
         photos: [],
@@ -309,6 +311,7 @@ export function NewProductIntakeTab({ fetcher }) {
       color: "",
       price: "",
       weight_grams: "",
+      shipping_weight_oz: "",
       photoFiles: [],
       photoPreviewUrls: [],
       photos: [],
@@ -867,6 +870,13 @@ export function NewProductIntakeTab({ fetcher }) {
                         />
                       </div>
                     </div>
+                    <TextField
+                      label={renderLabel("Shipping Weight (oz)", "shipping_weight_oz", piece.shipping_weight_oz)}
+                      value={piece.shipping_weight_oz}
+                      onChange={(v) => handlePieceChange(piece.id, "shipping_weight_oz", v)}
+                      placeholder="e.g. 1.5"
+                      type="number"
+                    />
 
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "16px", marginTop: "16px" }}>
                       <div style={{ minHeight: "54px" }}>
