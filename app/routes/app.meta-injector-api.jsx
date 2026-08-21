@@ -424,8 +424,6 @@ export const action = async ({ request }) => {
       };
 
       // Combine shared fields and piece fields
-      const { pieces, intent: payloadIntent, mediaUrlsJson, title: payloadTitle, metafieldsJson, ...sharedOnly } = payload;
-      const combinedFields = { ...sharedOnly, ...piece };
 
       const stoneFamily = payload.stone_family || "Unknown Stone";
       const pieceName = piece.piece_name || "New Piece";
@@ -586,6 +584,8 @@ export const action = async ({ request }) => {
       const rawMetafields = [];
       const googleMetafields = [];
 
+      const { pieces, intent, mediaUrlsJson, title: payloadTitle, metafieldsJson, ...sharedOnly } = payload;
+      const combinedFields = { ...sharedOnly, ...piece };
       const normalizedFields = {
         ...combinedFields,
         weight_grams: combinedFields.weight_grams || payload.weight_grams || "",
@@ -601,7 +601,7 @@ export const action = async ({ request }) => {
         rock_composition: combinedFields.rockComposition || combinedFields.rock_composition || "",
         rock_formation: combinedFields.rockFormation || combinedFields.rock_formation || "",
         diaphaneity: combinedFields.diaphaneity || "",
-        is_one_of_a_kind: (combinedFields.is_one_of_a_kind === true || combinedFields.is_one_of_a_kind === "true" || combinedFields.is_one_of_a_kind === "Yes — one of a kind") ? "true" : "false"
+        is_one_of_a_kind: (combinedFields.is_one_of_a_kind === true || combinedFields.is_one_of_a_kind === "true" || combinedFields.is_one_of_a_kind === "Yes — one of a kind") ? "Yes — one of a kind" : "false"
       };
       
       // We don't want to save these system/structural keys as metafields
