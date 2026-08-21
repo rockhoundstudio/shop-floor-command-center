@@ -423,8 +423,6 @@ export const action = async ({ request }) => {
         piece_name: payload.piece_name || piece.piece_name || ""
       };
 
-      // Combine shared fields and piece fields
-
       const stoneFamily = payload.stone_family || "Unknown Stone";
       const pieceName = piece.piece_name || "New Piece";
       const originLocation = payload.collection_name
@@ -500,7 +498,7 @@ export const action = async ({ request }) => {
               userErrors { field message }
             }
           }`,
-          { variables: { productId, variants: [{ id: defaultVariantId, price: price, inventoryItem: { measurement: { weight: { value: parseFloat(combinedFields.weight_grams || payload.weight_grams || 0) / 28.3495, unit: "OUNCES" } } } }] } }
+          { variables: { productId, variants: [{ id: defaultVariantId, price: price, inventoryItem: { measurement: { weight: { value: parseFloat(payload.weight_grams || piece.weight_grams || 0) / 28.3495, unit: "OUNCES" } } } }] } }
         );
         
         const variantResult = await variantResponse.json();
@@ -533,7 +531,6 @@ export const action = async ({ request }) => {
                   field
                   message
                 }
-              }
             }`,
             { variables: { productId, media: mediaInput } }
           );
@@ -584,7 +581,7 @@ export const action = async ({ request }) => {
       const rawMetafields = [];
       const googleMetafields = [];
 
-      const { pieces, intent, mediaUrlsJson, title: payloadTitle, metafieldsJson, ...sharedOnly } = payload;
+      const { pieces, intent: payloadIntent, mediaUrlsJson, title: payloadTitle, metafieldsJson, ...sharedOnly } = payload;
       const combinedFields = { ...sharedOnly, ...piece };
       const normalizedFields = {
         ...combinedFields,
