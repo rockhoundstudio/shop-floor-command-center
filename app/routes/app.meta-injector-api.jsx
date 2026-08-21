@@ -412,6 +412,16 @@ export const action = async ({ request }) => {
 
       let piece = {};
       (payload.pieces && payload.pieces.length > 0) && (piece = payload.pieces[0]);
+      piece = {
+        color: payload.color || piece.color || "",
+        dimensions_mm: payload.dimensions_mm || piece.dimensions_mm || "",
+        cut_and_shape: payload.cut_and_shape || piece.cut_and_shape || "",
+        surface_finish: payload.surface_finish || piece.surface_finish || "",
+        weight_grams: payload.weight_grams || piece.weight_grams || "",
+        artist_notes: payload.artist_notes || piece.artist_notes || "",
+        piece_name: payload.piece_name || piece.piece_name || "",
+        ...piece
+      };
 
       const stoneFamily = payload.stone_family || "Unknown Stone";
       const pieceName = piece.piece_name || "New Piece";
@@ -488,7 +498,7 @@ export const action = async ({ request }) => {
               userErrors { field message }
             }
           }`,
-          { variables: { productId, variants: [{ id: defaultVariantId, price: price, inventoryItem: { measurement: { weight: { value: parseFloat(payload.weight_grams || piece.weight_grams || 0) / 28.3495, unit: "OUNCES" } } } }] } }
+          { variables: { productId, variants: [{ id: defaultVariantId, price: price, inventoryItem: { measurement: { weight: { value: parseFloat(combinedFields.weight_grams || payload.weight_grams || 0) / 28.3495, unit: "OUNCES" } } } }] } }
         );
         
         const variantResult = await variantResponse.json();
@@ -576,6 +586,24 @@ export const action = async ({ request }) => {
       const { pieces, intent, mediaUrlsJson, title: payloadTitle, metafieldsJson, ...sharedOnly } = payload;
       const combinedFields = { ...sharedOnly, ...piece };
       
+      const normalizedFields = {
+        ...combinedFields,
+        weight_grams: combinedFields.weight_grams || payload.weight_grams || "",
+        dimensions_mm: combinedFields.dimensions_mm || payload.dimensions_mm || "",
+        color: combinedFields.color || payload.color || "",
+        surface_finish: combinedFields.surface_finish || payload.surface_finish || "",
+        specific_gravity: combinedFields.specificGravity || combinedFields.specific_gravity || "",
+        crystal_system: combinedFields.crystalSystem || combinedFields.crystal_system || "",
+        mineral_class: combinedFields.mineralClass || combinedFields.mineral_class || "",
+        geological_era: combinedFields.geologicalEra || combinedFields.geological_era || "",
+        geological_age: combinedFields.geological_age || "",
+        fracture_pattern: combinedFields.fracture_pattern || "",
+        rock_composition: combinedFields.rockComposition || combinedFields.rock_composition || "",
+        rock_formation: combinedFields.rockFormation || combinedFields.rock_formation || "",
+        diaphaneity: combinedFields.diaphaneity || "",
+        is_one_of_a_kind: (combinedFields.is_one_of_a_kind === true || combinedFields.is_one_of_a_kind === "true" || combinedFields.is_one_of_a_kind === "Yes — one of a kind") ? "true" : "false"
+      };
+      
       // We don't want to save these system/structural keys as metafields
       // Added collection_date, primary_medium, secondary_medium, wire_material, setting_ready, bail_included, artist_notes, character_marks
       // BENCH UPGRADE: Stripped out lapidary & jewelry specs so they save unblocked to Shopify DB
@@ -583,10 +611,11 @@ export const action = async ({ request }) => {
         "intent", "mediaUrlsJson", "descriptionHtml", "productType", "status", "pieces", "photoFiles",
         "photoPreviewUrls", "photos", "imageBase64", "imageMimeType", "stagedResourceUrls", "scanError",
         "scanToken", "isUploading", "id", "generated_description", "price", "seo_title", "collectionLocation",
-        "age_group", "target_gender", "condition", "shipping_weight_oz", "collection_name", "collection_location"
+        "age_group", "target_gender", "condition", "shipping_weight_oz", "collection_name", "collection_location",
+        "specificGravity", "crystalSystem", "mineralClass", "geologicalEra", "rockComposition", "rockFormation"
       ];
 
-      Object.entries(combinedFields).forEach(([key, value]) => {
+      Object.entries(normalizedFields).forEach(([key, value]) => {
         if (!ignoreKeys.includes(key) && value !== undefined && value !== null && String(value).trim() !== "") {
            let finalKey = key;
            (key === "specificGravity") && (finalKey = "specific_gravity");
@@ -599,37 +628,63 @@ export const action = async ({ request }) => {
         }
       });
 
+      rawMetafields.push({
+        namespace: "global",
+        key: "title_tag",
+        type: "single_line_text_field",
+        value: String(payload.seo_title || payload.title || "")
+      });
+      rawMetafields.push({
+        namespace: "global",
+        key: "description_tag",
+        type: "single_line_text_field",
+        value: String(payload.seo_description || "")
+      });
+
       // Populate separate google namespace array if present — write to the VARIANT level
-      (combinedFields.age_group && combinedFields.age_group !== "" && defaultVariantId) && googleMetafields.push({
+      (normalizedFields.age_group && normalizedFields.age_group !== "" && defaultVariantId) && googleMetafields.push({
         ownerId: defaultVariantId,
-        namespace: "google",
+        namespace: "mm-google-shopping",
         key: "age_group",
         type: "single_line_text_field",
-        value: String(combinedFields.age_group)
+        value: String(normalizedFields.age_group)
       });
 
-      (combinedFields.target_gender && combinedFields.target_gender !== "" && defaultVariantId) && googleMetafields.push({
+      (normalizedFields.target_gender && normalizedFields.target_gender !== "" && defaultVariantId) && googleMetafields.push({
         ownerId: defaultVariantId,
-        namespace: "google",
+        namespace: "mm-google-shopping",
         key: "target_gender",
         type: "single_line_text_field",
-        value: String(combinedFields.target_gender)
+        value: String(normalizedFields.target_gender)
       });
 
-      (combinedFields.condition && combinedFields.condition !== "" && defaultVariantId) && googleMetafields.push({
+      (normalizedFields.condition && normalizedFields.condition !== "" && defaultVariantId) && googleMetafields.push({
         ownerId: defaultVariantId,
-        namespace: "google",
+        namespace: "mm-google-shopping",
         key: "condition",
         type: "single_line_text_field",
-        value: String(combinedFields.condition)
+        value: String(normalizedFields.condition)
       });
 
-      if (combinedFields.google_product_category) {
+      googleMetafields.push({
+        namespace: "mm-google-shopping",
+        key: "google_product_category",
+        type: "single_line_text_field",
+        value: "192"
+      });
+      googleMetafields.push({
+        namespace: "mm-google-shopping",
+        key: "custom_product",
+        type: "boolean",
+        value: "true"
+      });
+
+      if (normalizedFields.google_product_category) {
         googleMetafields.push({
-          namespace: "google",
+          namespace: "mm-google-shopping",
           key: "custom_label_0",
           type: "single_line_text_field",
-          value: String(combinedFields.google_product_category)
+          value: String(normalizedFields.google_product_category)
         });
       }
 
