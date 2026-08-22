@@ -41,21 +41,46 @@ export const ROCKHOUND_FIELDS = [
   { key: "origin_handle", label: "Origin Handle", type: "single_line_text_field" } // 🟢 ADDED ORIGIN HANDLE
 ];
 
-export const DEFAULT_DROPDOWNS = {
-  surface_finish: ["High polish lapidary finish", "Satin lapidary finish", "Raw natural surface", "Partial polish", "Tumble polished", "Hand rubbed finish"],
-  primary_use: ["Wearable pendant", "Lapidary cabochon for setting", "Wire wrapped jewelry", "Display specimen", "Collector piece", "Freeform stone art", "Bezel setting ready", "Rockhound specimen"],
-  setting_ready: ["Yes — bezel ready", "Yes — prong ready", "Needs evaluation", "No — display only"],
-  bail_included: ["No bail", "Pinch bail included", "Custom copper wire bail", "Custom gold plated bail", "Soldered bail"],
-  is_one_of_a_kind: ["Yes — one of a kind", "No — series piece"],
-  treated: ["Untreated — natural", "Stabilized", "Dyed", "Coated", "Heat treated"],
-  found_object: ["Wild collected — Bob and Janyce", "Customer submission", "Purchased rough", "Gifted specimen", "Rescued material"],
-  wire_material: ["Copper wire", "Brass wire", "Sterling silver wire", "Gold plated wire", "Copper and brass mixed"]
+export const CHANNEL_REQUIREMENTS = {
+  online_store: [
+    "piece_name", "primary_medium", "handcrafted_by", "is_one_of_a_kind",
+    "treated", "material", "stone_family", "color", "cut_and_shape",
+    "surface_finish", "dimensions_mm", "weight_grams", "origin_story",
+    "collection_name", "origin_handle", "primary_use"
+  ],
+  point_of_sale: [
+    "piece_name", "primary_medium", "material", "color", "price",
+    "weight_grams", "dimensions_mm"
+  ],
+  shop_app: [
+    "piece_name", "primary_medium", "material", "stone_family", "color",
+    "surface_finish", "origin_story", "primary_use", "handcrafted_by",
+    "is_one_of_a_kind", "treated"
+  ],
+  facebook_instagram: [
+    "piece_name", "primary_medium", "material", "color", "price",
+    "primary_use", "handcrafted_by", "is_one_of_a_kind", "treated",
+    "surface_finish", "dimensions_mm", "weight_grams"
+  ],
+  google_youtube: [
+    "piece_name", "primary_medium", "material", "color", "price",
+    "primary_use", "setting_ready", "bail_included", "wire_material",
+    "handcrafted_by", "is_one_of_a_kind", "treated", "surface_finish",
+    "dimensions_mm", "weight_grams", "found_object", "condition",
+    "age_group", "target_gender", "authenticity", "rarity"
+  ],
+  inbox: [
+    "piece_name", "primary_medium", "material", "color", "price"
+  ]
 };
 
-export const REQUIRED_FIELDS = [
-  "piece_name", "primary_medium", "handcrafted_by", "is_one_of_a_kind", 
-  "treated", "material", "origin_story", "collection_name", "primary_use", "primary_color"
-];
+export function getFieldStatus(key, value) {
+  const isFilled = value !== undefined && value !== null && value.toString().trim() !== "";
+  if (isFilled) return "green";
+  const isRequiredByAnyChannel = Object.values(CHANNEL_REQUIREMENTS).some(fields => fields.includes(key));
+  if (isRequiredByAnyChannel) return "red";
+  return "yellow";
+}
 
 // UPGRADED: Kept all original options + added Smart Switch triggers for Tab 1
 export const productTypeOptions = [
