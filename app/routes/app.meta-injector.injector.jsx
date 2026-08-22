@@ -1,5 +1,5 @@
 // ==========================================================================
-// ROCKHOUND STUDIO — TAB 1: NEW PRODUCT INTAKE BENCH
+// ROCKHOUND STUDIO — TAB 1: NEW PRODUCT INTAKE Bench
 // File: app/routes/app.meta-injector.injector.jsx
 // (100% Original Logic + useRef Stale Closure Bypass for Dwell Web)
 // ==========================================================================
@@ -670,6 +670,44 @@ export function NewProductIntakeTab({ fetcher }) {
   const currentWordCount = (pieces[0]?.generated_description || "").trim().split(/\s+/).filter(Boolean).length;
   const wordCountTone = currentWordCount > 100 ? "critical" : "subdued";
 
+  const requiredPanelFields = [
+    "piece_name", "price", "weight_grams", "material", "stone_family",
+    "collection_name", "origin_handle", "rescued_by", "treatment_status",
+    "origin_story", "primary_use", "seo_title"
+  ];
+
+  const getVal = (key, defaultSource) => {
+    return (useSaved && savedMap[key] !== undefined) ? savedMap[key] : defaultSource;
+  };
+
+  const getPanelFieldStatus = (key, val) => {
+    const isFilled = val !== undefined && val !== null && String(val).trim() !== "" && String(val).trim() !== "false";
+    const isReq = requiredPanelFields.includes(key);
+    if (isFilled) return { dotColor: "#00FF00", text: "Filled", isFilled: true };
+    if (isReq) return { dotColor: "#FF0000", text: "Required — Empty", isFilled: false };
+    return { dotColor: "#FFFF00", text: "Optional — Empty", isFilled: false };
+  };
+
+  const renderPanelRow = (label, key, val) => {
+    const status = getPanelFieldStatus(key, val);
+    let displayVal = "";
+    if (status.isFilled) {
+      displayVal = String(val);
+      if (displayVal.length > 60) displayVal = displayVal.substring(0, 60) + "...";
+    }
+
+    return (
+      <div key={key} style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "12px", color: "#f4f6f8", minWidth: 0 }}>
+        <svg width="10" height="10" viewBox="0 0 10 10" style={{ flexShrink: 0 }}>
+          <circle cx="5" cy="5" r="5" fill={status.dotColor} />
+        </svg>
+        <span style={{ fontWeight: "600", whiteSpace: "nowrap" }}>{label}:</span>
+        <span style={{ color: status.dotColor, whiteSpace: "nowrap" }}>{status.text}</span>
+        {status.isFilled && <span style={{ color: "#a6a6a6", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>— {displayVal}</span>}
+      </div>
+    );
+  };
+
   return (
     <Frame>
       <BlockStack gap="600">
@@ -1176,36 +1214,90 @@ export function NewProductIntakeTab({ fetcher }) {
           )}
         </div>
 
-        <Card padding="400">
+        <div style={{ background: "#1a1a1a", padding: "20px", borderRadius: "8px", marginTop: "16px" }}>
           <BlockStack gap="400">
-            <Text variant="headingMd" as="h2" style={{ fontSize: "16px", fontWeight: "bold" }}>Meta Scan</Text>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
-              {scanKeys.map(key => {
-                let val = combinedData[key];
-                useSaved && (val = savedMap[key]);
+            <Text variant="headingMd" as="h2" style={{ fontSize: "16px", fontWeight: "bold", color: "#ffffff" }}>Metafield Status Panel — All Fields</Text>
 
-                const status = getFieldStatus(key, val);
-                const isFilled = status === "green";
-                const isOptionalEmpty = status === "yellow";
-                const isRequiredEmpty = status === "red";
-                
-                const labelText = key.charAt(0).toUpperCase() + key.slice(1).replace(/_/g, ' ');
+            <div style={{ background: "#333333", padding: "6px 12px", borderRadius: "4px", width: "100%", fontWeight: "bold", color: "#ffffff", fontSize: "12px" }}>SECTION 1 — Per-Piece Fields</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
+              {renderPanelRow("Piece Name", "piece_name", getVal("piece_name", pieces[0]?.piece_name))}
+              {renderPanelRow("Price", "price", getVal("price", pieces[0]?.price))}
+              {renderPanelRow("Weight (grams)", "weight_grams", getVal("weight_grams", pieces[0]?.weight_grams))}
+              {renderPanelRow("Shipping Weight (oz)", "shipping_weight_oz", getVal("shipping_weight_oz", pieces[0]?.shipping_weight_oz))}
+              {renderPanelRow("Dimensions (mm)", "dimensions_mm", getVal("dimensions_mm", pieces[0]?.dimensions_mm))}
+              {renderPanelRow("Cut & Shape", "cut_and_shape", getVal("cut_and_shape", pieces[0]?.cut_and_shape))}
+              {renderPanelRow("Surface Finish", "surface_finish", getVal("surface_finish", pieces[0]?.surface_finish))}
+              {renderPanelRow("Color", "color", getVal("color", pieces[0]?.color))}
+              {renderPanelRow("Generated Description", "generated_description", getVal("generated_description", pieces[0]?.generated_description))}
+              {renderPanelRow("Artist Notes", "artist_notes", getVal("artist_notes", pieces[0]?.artist_notes))}
+              {renderPanelRow("Stone Shape", "stone_shape", getVal("stone_shape", combinedData.stone_shape))}
+              {renderPanelRow("Color Pattern", "color_pattern", getVal("color_pattern", combinedData.color_pattern))}
+              {renderPanelRow("Handcrafted By", "handcrafted_by", getVal("handcrafted_by", combinedData.handcrafted_by))}
+              {renderPanelRow("Is One of a Kind", "is_one_of_a_kind", getVal("is_one_of_a_kind", combinedData.is_one_of_a_kind))}
+              {renderPanelRow("Treated", "treated", getVal("treated", combinedData.treated))}
+            </div>
 
-                return (
-                  <div key={key} style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                    {isFilled && <span style={{ color: "#008060", fontSize: "18px", lineHeight: "18px", width: "18px", height: "18px", display: "inline-block", textAlign: "center" }}>●</span>}
-                    {isOptionalEmpty && <span style={{ color: "#FFC453", fontSize: "18px", lineHeight: "18px", width: "18px", height: "18px", display: "inline-block", textAlign: "center" }}>●</span>}
-                    {isRequiredEmpty && <span style={{ color: "#D72C0D", fontSize: "18px", lineHeight: "18px", width: "18px", height: "18px", display: "inline-block", textAlign: "center" }}>●</span>}
-                    <span style={{ fontSize: "15px", fontWeight: "500" }}>
-                      {labelText}
-                      {(useSaved && isFilled) && ` — ${val}`}
-                    </span>
-                  </div>
-                );
-              })}
+            <div style={{ background: "#333333", padding: "6px 12px", borderRadius: "4px", width: "100%", fontWeight: "bold", color: "#ffffff", fontSize: "12px", marginTop: "8px" }}>SECTION 2 — Shared Batch Fields</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
+              {renderPanelRow("Material", "material", getVal("material", sharedFields.material))}
+              {renderPanelRow("Stone Family", "stone_family", getVal("stone_family", sharedFields.stone_family))}
+              {renderPanelRow("Collection Name", "collection_name", getVal("collection_name", sharedFields.collection_name))}
+              {renderPanelRow("Origin Handle", "origin_handle", getVal("origin_handle", sharedFields.origin_handle))}
+              {renderPanelRow("Rescued By", "rescued_by", getVal("rescued_by", sharedFields.rescued_by))}
+              {renderPanelRow("Treatment Status", "treatment_status", getVal("treatment_status", sharedFields.treatment_status))}
+              {renderPanelRow("Origin Story", "origin_story", getVal("origin_story", sharedFields.origin_story))}
+              {renderPanelRow("Primary Use", "primary_use", getVal("primary_use", sharedFields.primary_use))}
+              {renderPanelRow("Honest Flaws", "honest_flaws_and_character", getVal("honest_flaws_and_character", combinedData.honest_flaws_and_character))}
+              {renderPanelRow("Found Object", "found_object", getVal("found_object", combinedData.found_object))}
+              {renderPanelRow("Collection Location", "collection_location", getVal("collection_location", combinedData.collection_location))}
+              {renderPanelRow("Collection Date", "collection_date", getVal("collection_date", combinedData.collection_date))}
+            </div>
+
+            {isJewelry && (
+              <>
+                <div style={{ background: "#333333", padding: "6px 12px", borderRadius: "4px", width: "100%", fontWeight: "bold", color: "#ffffff", fontSize: "12px", marginTop: "8px" }}>SECTION 3 — Jewelry Specs</div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
+                  {renderPanelRow("Primary Medium", "primary_medium", getVal("primary_medium", sharedFields.primary_medium))}
+                  {renderPanelRow("Secondary Medium", "secondary_medium", getVal("secondary_medium", sharedFields.secondary_medium))}
+                  {renderPanelRow("Wire Material", "wire_material", getVal("wire_material", sharedFields.wire_material))}
+                  {renderPanelRow("Bail Included", "bail_included", getVal("bail_included", sharedFields.bail_included))}
+                  {renderPanelRow("Setting Ready", "setting_ready", getVal("setting_ready", sharedFields.setting_ready))}
+                  {renderPanelRow("Jewelry Type", "jewelry_type", getVal("jewelry_type", combinedData.jewelry_type))}
+                  {renderPanelRow("Necklace Design", "necklace_design", getVal("necklace_design", combinedData.necklace_design))}
+                  {renderPanelRow("Chain Link Type", "chain_link_type", getVal("chain_link_type", combinedData.chain_link_type))}
+                  {renderPanelRow("Finding Type", "jewelry_finding_type", getVal("jewelry_finding_type", combinedData.jewelry_finding_type))}
+                </div>
+              </>
+            )}
+
+            <div style={{ background: "#333333", padding: "6px 12px", borderRadius: "4px", width: "100%", fontWeight: "bold", color: "#ffffff", fontSize: "12px", marginTop: "8px" }}>SECTION 4 — Geo Vault Fields</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
+              {renderPanelRow("Mohs Hardness", "mohs_hardness", getVal("mohs_hardness", sharedFields.mohs_hardness))}
+              {renderPanelRow("Specific Gravity", "specific_gravity", getVal("specific_gravity", sharedFields.specificGravity || sharedFields.specific_gravity))}
+              {renderPanelRow("Mineral Class", "mineral_class", getVal("mineral_class", sharedFields.mineralClass))}
+              {renderPanelRow("Crystal System", "crystal_system", getVal("crystal_system", sharedFields.crystalSystem))}
+              {renderPanelRow("Rock Composition", "rock_composition", getVal("rock_composition", sharedFields.rockComposition))}
+              {renderPanelRow("Rock Formation", "rock_formation", getVal("rock_formation", sharedFields.rockFormation))}
+              {renderPanelRow("Geological Era", "geological_era", getVal("geological_era", sharedFields.geologicalEra))}
+              {renderPanelRow("Geological Age", "geological_age", getVal("geological_age", sharedFields.geological_age))}
+              {renderPanelRow("Fracture Pattern", "fracture_pattern", getVal("fracture_pattern", sharedFields.fracture_pattern))}
+              {renderPanelRow("Diaphaneity", "diaphaneity", getVal("diaphaneity", sharedFields.diaphaneity))}
+              {renderPanelRow("Luster", "luster", getVal("luster", sharedFields.luster))}
+              {renderPanelRow("Cleavage", "cleavage", getVal("cleavage", sharedFields.cleavage))}
+              {renderPanelRow("Fracture", "fracture", getVal("fracture", sharedFields.fracture))}
+            </div>
+
+            <div style={{ background: "#333333", padding: "6px 12px", borderRadius: "4px", width: "100%", fontWeight: "bold", color: "#ffffff", fontSize: "12px", marginTop: "8px" }}>SECTION 5 — Google & SEO Fields</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
+              {renderPanelRow("Age Group", "age_group", getVal("age_group", sharedFields.age_group))}
+              {renderPanelRow("Target Gender", "target_gender", getVal("target_gender", sharedFields.target_gender))}
+              {renderPanelRow("Condition", "condition", getVal("condition", sharedFields.condition))}
+              {renderPanelRow("SEO Title", "seo_title", getVal("seo_title", pieces[0]?.seo_title))}
+              {renderPanelRow("Authenticity", "authenticity", getVal("authenticity", combinedData.authenticity))}
+              {renderPanelRow("Rarity", "rarity", getVal("rarity", combinedData.rarity))}
             </div>
           </BlockStack>
-        </Card>
+        </div>
       </BlockStack>
       {geoToast && <Toast content="Geo data loaded" onDismiss={() => setGeoToast(false)} />}
       {titleToastActive && (
