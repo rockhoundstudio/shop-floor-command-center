@@ -1,3 +1,9 @@
+// ==========================================================================
+// ROCKHOUND STUDIO — TAB 1: NEW PRODUCT INTAKE Bench
+// File: app/routes/app.meta-injector.injector.jsx
+// (100% Original Logic + useRef Stale Closure Bypass for Dwell Web)
+// ==========================================================================
+
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { BlockStack, Card, Text, Banner, TextField, Select, Button, InlineStack, Collapsible } from "@shopify/polaris";
 import { MagicIcon, SaveIcon } from "@shopify/polaris-icons";
@@ -78,11 +84,11 @@ const FULL_META_GROUPS = [
     heading: "Geo-Vault",
     color: "#4E342E",
     fields: [
-      { key: "mineralClass", label: "Mineral Class", type: "text" },
-      { key: "crystalSystem", label: "Crystal System", type: "text" },
-      { key: "rockComposition", label: "Rock Composition", type: "text" },
-      { key: "rockFormation", label: "Rock Formation", type: "text" },
-      { key: "geologicalEra", label: "Geological Era", type: "text" }
+      { key: "mineral_class", label: "Mineral Class", type: "text" },
+      { key: "crystal_system", label: "Crystal System", type: "text" },
+      { key: "rock_composition", label: "Rock Composition", type: "text" },
+      { key: "rock_formation", label: "Rock Formation", type: "text" },
+      { key: "geological_era", label: "Geological Era", type: "text" }
     ]
   }
 ];
@@ -97,9 +103,9 @@ const NAMESPACE_MAP = {
     "origin_story", "honest_flaws_and_character"
   ],
   geo: [
-    "hardness", "luster", "fracture", "cleavage", "specificGravity", 
-    "diaphaneity", "crystalSystem", "geologicalEra", "mineralClass", 
-    "rockComposition", "rockFormation", "authenticity", "rarity"
+    "mohs_hardness", "luster", "fracture", "cleavage", "specific_gravity", 
+    "diaphaneity", "crystal_system", "geological_era", "mineral_class", 
+    "rock_composition", "rock_formation", "authenticity", "rarity"
   ]
 };
 
@@ -698,18 +704,18 @@ Image URL: ${imageUrl}`;
         val = formState.color;
     }
 
-    const status = getFieldStatus(key, val);
-    const isFilled = status === "green";
-    const isOptionalEmpty = status === "yellow";
-    const isRequiredEmpty = status === "red";
-    const isEmpty = isRequiredEmpty || isOptionalEmpty;
+    const reqKeys = ["piece_name", "price", "weight_grams", "material", "stone_family", "collection_name", "origin_handle", "rescued_by", "treatment_status", "origin_story", "primary_use", "seo_title"];
+    const isFilled = val !== undefined && val !== null && String(val).trim() !== "" && String(val).trim() !== "false";
+    const isRequiredEmpty = !isFilled && reqKeys.includes(field.key);
+    const isOptionalEmpty = !isFilled && !reqKeys.includes(field.key);
+    const isEmpty = !isFilled;
     
     const labelNode = (
       <div style={{ display: 'flex', alignItems: 'center' }}>
         <svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg" style={{ minWidth: '18px', marginRight: '8px' }}>
-          {isRequiredEmpty && <circle cx="9" cy="9" r="9" fill="#C62828" />}
-          {isFilled && <circle cx="9" cy="9" r="9" fill="#2E7D32" />}
-          {isOptionalEmpty && <circle cx="9" cy="9" r="9" fill="#F9A825" />}
+          {isRequiredEmpty && <circle cx="9" cy="9" r="9" fill="#ef4444" />}
+          {isFilled && <circle cx="9" cy="9" r="9" fill="#22c55e" />}
+          {isOptionalEmpty && <circle cx="9" cy="9" r="9" fill="#eab308" />}
         </svg>
         <span style={{ fontSize: '14px', fontWeight: '500' }}>{field.label}</span>
       </div>
@@ -924,14 +930,14 @@ Image URL: ${imageUrl}`;
               <BlockStack gap="300">
                 <Text variant="headingMd" as="h4">Section 1 — Core Ignition</Text>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
-                  {["piece_name", "primary_medium", "secondary_medium", "handcrafted_by", "is_one_of_a_kind", "treated", "dimensions_mm", "weight_grams", "price"].map(renderFullMetaField)}
+                  {["piece_name", "primary_medium", "secondary_medium", "handcrafted_by", "is_one_of_a_kind", "treated", "dimensions_mm", "weight_grams", "shipping_weight_oz", "cut_and_shape", "surface_finish", "color", "artist_notes", "generated_description", "price"].map(renderFullMetaField)}
                 </div>
               </BlockStack>
 
               <BlockStack gap="300">
                 <Text variant="headingMd" as="h4">Section 2 — Human Engine</Text>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
-                  {["origin_story", "honest_flaws_and_character", "artist_notes", "rescued_by", "origin_handle", "stone_shape", "surface_finish", "collection_name"].map(renderFullMetaField)}
+                  {["origin_story", "rescued_by", "stone_shape", "collection_name", "origin_handle", "collection_location", "collection_date", "honest_flaws_and_character", "found_object"].map(renderFullMetaField)}
                 </div>
               </BlockStack>
 
@@ -941,7 +947,7 @@ Image URL: ${imageUrl}`;
                 </div>
                 <Collapsible open={isSection3Open} id="section-3-collapsible" transition={{duration: '200ms', timingFunction: 'ease-in-out'}}>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px', marginTop: '16px' }}>
-                    {["primary_use", "setting_ready", "wire_material", "bail_included", "color_pattern", "material", "jewelry_type", "necklace_design", "chain_link_type", "jewelry_finding_type", "target_gender", "age_group", "authenticity", "rarity", "condition", "found_object", "custom_product"].map(renderFullMetaField)}
+                    {["primary_use", "setting_ready", "wire_material", "bail_included", "color_pattern", "material", "jewelry_type", "necklace_design", "chain_link_type", "jewelry_finding_type", "target_gender", "age_group", "condition", "custom_product", "seo_title", "authenticity", "rarity"].map(renderFullMetaField)}
                   </div>
                 </Collapsible>
               </BlockStack>
@@ -952,7 +958,7 @@ Image URL: ${imageUrl}`;
                 </div>
                 <Collapsible open={isSection4Open} id="section-4-collapsible" transition={{duration: '200ms', timingFunction: 'ease-in-out'}}>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px', marginTop: '16px' }}>
-                    {["mohs_hardness", "luster", "fracture_pattern", "cleavage", "specific_gravity", "diaphaneity", "mineralClass", "crystalSystem", "rockComposition", "rockFormation", "geologicalEra", "geological_age"].map(renderFullMetaField)}
+                    {["mohs_hardness", "luster", "fracture_pattern", "cleavage", "specific_gravity", "diaphaneity", "mineral_class", "crystal_system", "rock_composition", "rock_formation", "geological_era", "geological_age"].map(renderFullMetaField)}
                   </div>
                 </Collapsible>
               </BlockStack>
