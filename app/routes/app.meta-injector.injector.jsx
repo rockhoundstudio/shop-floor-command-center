@@ -600,8 +600,39 @@ export function NewProductIntakeTab({ fetcher }) {
   const isJewelry = ["Pendant (Finished Jewelry)", "Wire Wrap (Finished Jewelry)", "Ring / Bezel Setting", "Pendant", "Wire Wrap", "Ring", "Necklace", "Earrings", "Bracelet", "Jewelry", "Wearable Art"].some(type => (sharedFields.primary_use || "").includes(type));
 
   const combinedData = { ...sharedFields, ...(pieces[0] || {}) };
-  const deletedKeys = ["honest_flaws_and_character", "collection_date", "stone_shape", "stone_story"];
-  const scanKeys = [...ROCKHOUND_FIELDS.map(f => f.key), "origin_story", "price", "mohs_hardness", "luster", "fracture", "cleavage", "specificGravity", "diaphaneity", "crystalSystem", "geologicalEra", "mineralClass", "rockComposition", "rockFormation", "geological_age", "fracture_pattern"].filter(key => !deletedKeys.includes(key));
+  const scanKeys = [
+    ...ROCKHOUND_FIELDS.map(f => f.key),
+    "origin_story",
+    "price",
+    "honest_flaws_and_character",
+    "stone_shape",
+    "mohs_hardness",
+    "luster",
+    "fracture_pattern",
+    "cleavage",
+    "specific_gravity",
+    "diaphaneity",
+    "crystalSystem",
+    "geologicalEra",
+    "mineralClass",
+    "rockComposition",
+    "rockFormation",
+    "geological_age",
+    "age_group",
+    "target_gender",
+    "color_pattern",
+    "jewelry_type",
+    "necklace_design",
+    "chain_link_type",
+    "jewelry_finding_type",
+    "authenticity",
+    "rarity",
+    "condition",
+    "found_object",
+    "setting_ready",
+    "bail_included",
+    "wire_material"
+  ];
 
   const actionData = fetcher.data;
   let useSaved = false;
