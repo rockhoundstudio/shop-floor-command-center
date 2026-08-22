@@ -103,21 +103,31 @@ const chunkArray = (array, size) => {
 };
 
 async function fetchAllProducts(graphql) {
-  const response = await graphql(GET_PRODUCTS_QUERY, { variables: { cursor: null } });
-  const { data } = await response.json();
-  if (data && data.products) {
-    return data.products.edges.map(edge => {
+  let allProducts = [];
+  let cursor = null;
+  let hasNextPage = true;
+
+  while (hasNextPage) {
+    const response = await graphql(GET_PRODUCTS_QUERY, { variables: { cursor } });
+    const { data } = await response.json();
+    if (!data || !data.products) break;
+
+    const edges = data.products.edges.map(edge => {
       const product = edge.node;
       const allEdges = [
         ...(product.customMeta?.edges || []),
         ...(product.rockhoundMeta?.edges || []),
         ...(product.geoMeta?.edges || []),
       ];
-      product.metafields = { edges: allEdges };
-      return product;
+      return { ...product, metafields: { edges: allEdges } };
     });
+
+    allProducts = allProducts.concat(edges);
+    hasNextPage = data.products.pageInfo.hasNextPage;
+    cursor = data.products.pageInfo.endCursor;
   }
-  return [];
+
+  return allProducts;
 }
 
 export async function loader({ request }) {
