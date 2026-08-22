@@ -67,16 +67,41 @@ export const CHANNEL_REQUIREMENTS = {
     "primary_use", "setting_ready", "bail_included", "wire_material",
     "handcrafted_by", "is_one_of_a_kind", "treated", "surface_finish",
     "dimensions_mm", "weight_grams", "found_object", "condition",
-    "age_group", "target_gender", "authenticity", "rarity"
+    "age_group", "target_gender", "authenticity", "rarity", "color_pattern"
   ],
   inbox: [
     "piece_name", "primary_medium", "material", "color", "price"
   ]
 };
 
-export function getFieldStatus(key, value) {
-  const isFilled = value !== undefined && value !== null && value.toString().trim() !== "";
+export function getFieldStatus(key, value, context = {}) {
+  const isFilled = value !== undefined && value !== null && value.toString().trim() !== "" && value.toString().trim() !== "false";
   if (isFilled) return "green";
+
+  const primaryUse = context.primary_use || "";
+  const isJewelry = primaryUse === "Wearable Art" || primaryUse === "Pendant";
+
+  const JEWELRY_ONLY_FIELDS = [
+    "jewelry_type", "necklace_design", "chain_link_type",
+    "jewelry_finding_type", "wire_material", "bail_included", "setting_ready"
+  ];
+
+  const ALWAYS_OPTIONAL_FIELDS = [
+    "honest_flaws_and_character", "artist_notes",
+    "stone_shape", "secondary_medium", "collection_date",
+    "stone_story", "custom_product", "trip_or_series"
+  ];
+
+  if (ALWAYS_OPTIONAL_FIELDS.includes(key)) return "yellow";
+
+  if (JEWELRY_ONLY_FIELDS.includes(key)) {
+    if (isJewelry) {
+      const isRequiredByAnyChannel = Object.values(CHANNEL_REQUIREMENTS).some(fields => fields.includes(key));
+      return isRequiredByAnyChannel ? "red" : "yellow";
+    }
+    return "yellow";
+  }
+
   const isRequiredByAnyChannel = Object.values(CHANNEL_REQUIREMENTS).some(fields => fields.includes(key));
   if (isRequiredByAnyChannel) return "red";
   return "yellow";
