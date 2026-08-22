@@ -8,7 +8,7 @@ import React, { useState, useEffect, useCallback, useRef } from "react";
 import { BlockStack, Card, Text, TextField, Select, Button, Banner, DropZone, Spinner, Frame, Toast, InlineGrid, Box, Divider } from "@shopify/polaris";
 import { PlusIcon, MagicIcon } from "@shopify/polaris-icons";
 import { useFetcher } from "react-router";
-import { ROCKHOUND_FIELDS, DEFAULT_DROPDOWNS, REQUIRED_FIELDS, productTypeOptions, collectionLocationOptions, normalizeDropdownValue, DROPDOWN_OPTIONS } from "../utils/meta-injector.constants.jsx";
+import { ROCKHOUND_FIELDS, DEFAULT_DROPDOWNS, CHANNEL_REQUIREMENTS, getFieldStatus, productTypeOptions, collectionLocationOptions, normalizeDropdownValue, DROPDOWN_OPTIONS } from "../utils/meta-injector.constants.jsx";
 import { handleScanPhoto, handleGenerateDescription, buildMetafieldsJson, buildTitle } from "./app.meta-injector.intake-helpers.jsx";
 
 const SHOPPED_ROCK_VENDORS = ["Richardson's Rock Ranch", "Irv's Rock and Jewelry"];
@@ -610,14 +610,15 @@ export function NewProductIntakeTab({ fetcher }) {
   const savedMap = {};
   (actionData && actionData.savedMetafields) && actionData.savedMetafields.forEach(mf => { savedMap[mf.key] = mf.value; });
 
-  const renderLabel = (text, key, value) => {
-    const isRequired = REQUIRED_FIELDS.includes(key);
-    let isFilled = false;
-    (value !== undefined && value !== null && value.toString().trim() !== "") && (isFilled = true);
+  const renderLabel = (text, key, val) => {
+    const status = getFieldStatus(key, val);
+    const isFilled = status === "green";
+    const isOptionalEmpty = status === "yellow";
+    const isRequiredEmpty = status === "red";
 
     let dotColor = "#FFC453";
     isFilled && (dotColor = "#008060");
-    (!isFilled && isRequired) && (dotColor = "#D72C0D");
+    isRequiredEmpty && (dotColor = "#D72C0D");
 
     return (
       <span style={{ fontSize: "14px", fontWeight: "600" }}>
@@ -1149,18 +1150,13 @@ export function NewProductIntakeTab({ fetcher }) {
             <Text variant="headingMd" as="h2" style={{ fontSize: "16px", fontWeight: "bold" }}>Meta Scan</Text>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
               {scanKeys.map(key => {
-                const isRequired = REQUIRED_FIELDS.includes(key);
                 let val = combinedData[key];
                 useSaved && (val = savedMap[key]);
 
-                let isFilled = false;
-                (val !== undefined && val !== null && val.toString().trim() !== "") && (isFilled = true);
-                
-                let isOptionalEmpty = false;
-                (!isRequired && !isFilled) && (isOptionalEmpty = true);
-                
-                let isRequiredEmpty = false;
-                (isRequired && !isFilled) && (isRequiredEmpty = true);
+                const status = getFieldStatus(key, val);
+                const isFilled = status === "green";
+                const isOptionalEmpty = status === "yellow";
+                const isRequiredEmpty = status === "red";
                 
                 const labelText = key.charAt(0).toUpperCase() + key.slice(1).replace(/_/g, ' ');
 
