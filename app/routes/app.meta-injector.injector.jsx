@@ -683,10 +683,14 @@ export function NewProductIntakeTab({ fetcher }) {
   const getPanelFieldStatus = (key, val) => {
     const isFilled = val !== undefined && val !== null && String(val).trim() !== "" && String(val).trim() !== "false";
     const isReq = requiredPanelFields.includes(key);
-    if (isFilled) return { dotColor: "#00FF00", text: "Filled", isFilled: true };
-    if (isReq) return { dotColor: "#FF0000", text: "Required — Empty", isFilled: false };
-    return { dotColor: "#FFFF00", text: "Optional — Empty", isFilled: false };
+    if (isFilled) return { dotColor: "#22c55e", text: "Filled", isFilled: true };
+    if (isReq) return { dotColor: "#ef4444", text: "Required — Empty", isFilled: false };
+    return { dotColor: "#eab308", text: "Optional — Empty", isFilled: false };
   };
+
+  const dot = (color) => (
+    <span style={{ display: "inline-block", width: 10, height: 10, borderRadius: "50%", backgroundColor: color, marginRight: 6, verticalAlign: "middle" }} />
+  );
 
   const renderPanelRow = (label, key, val) => {
     const status = getPanelFieldStatus(key, val);
@@ -698,15 +702,15 @@ export function NewProductIntakeTab({ fetcher }) {
 
     return (
       <div key={key} style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "12px", color: "#f4f6f8", minWidth: 0 }}>
-        <svg width="10" height="10" viewBox="0 0 10 10" style={{ flexShrink: 0 }}>
-          <circle cx="5" cy="5" r="5" fill={status.dotColor} />
-        </svg>
+        {dot(status.dotColor)}
         <span style={{ fontWeight: "600", whiteSpace: "nowrap" }}>{label}:</span>
         <span style={{ color: status.dotColor, whiteSpace: "nowrap" }}>{status.text}</span>
         {status.isFilled && <span style={{ color: "#a6a6a6", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>— {displayVal}</span>}
       </div>
     );
   };
+
+  const showJewelrySpecsPanel = (sharedFields.primary_use || "").toLowerCase().includes("jewelry");
 
   return (
     <Frame>
@@ -1253,7 +1257,7 @@ export function NewProductIntakeTab({ fetcher }) {
               {renderPanelRow("Collection Date", "collection_date", getVal("collection_date", combinedData.collection_date))}
             </div>
 
-            {isJewelry && (
+            {showJewelrySpecsPanel && (
               <>
                 <div style={{ background: "#333333", padding: "6px 12px", borderRadius: "4px", width: "100%", fontWeight: "bold", color: "#ffffff", fontSize: "12px", marginTop: "8px" }}>SECTION 3 — Jewelry Specs</div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
