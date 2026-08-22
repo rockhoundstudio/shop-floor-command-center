@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { BlockStack, Card, Text, Banner, TextField, Select, Button, InlineStack, Collapsible } from "@shopify/polaris";
 import { MagicIcon, SaveIcon } from "@shopify/polaris-icons";
-import { normalizeDropdownValue, DROPDOWN_OPTIONS, unwrapArrayValue } from "../utils/meta-injector.constants.jsx";
+import { normalizeDropdownValue, DROPDOWN_OPTIONS, unwrapArrayValue, CHANNEL_REQUIREMENTS, getFieldStatus } from "../utils/meta-injector.constants.jsx";
 
 const CUSTOM_FIELDS = [
   // ==========================================
@@ -698,16 +698,18 @@ Image URL: ${imageUrl}`;
         val = formState.color;
     }
 
-    const isNa = val === "n/a" || val === "N/A" || val === "N/a";
-    const isFilled = !isNa && val && val.trim() !== "";
-    const isEmpty = !isNa && (!val || val.trim() === "");
+    const status = getFieldStatus(key, val);
+    const isFilled = status === "green";
+    const isOptionalEmpty = status === "yellow";
+    const isRequiredEmpty = status === "red";
+    const isEmpty = isRequiredEmpty || isOptionalEmpty;
     
     const labelNode = (
       <div style={{ display: 'flex', alignItems: 'center' }}>
         <svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg" style={{ minWidth: '18px', marginRight: '8px' }}>
-          {isEmpty && <circle cx="9" cy="9" r="9" fill="#C62828" />}
+          {isRequiredEmpty && <circle cx="9" cy="9" r="9" fill="#C62828" />}
           {isFilled && <circle cx="9" cy="9" r="9" fill="#2E7D32" />}
-          {isNa && <circle cx="9" cy="9" r="9" fill="#F9A825" />}
+          {isOptionalEmpty && <circle cx="9" cy="9" r="9" fill="#F9A825" />}
         </svg>
         <span style={{ fontSize: '14px', fontWeight: '500' }}>{field.label}</span>
       </div>
@@ -929,7 +931,7 @@ Image URL: ${imageUrl}`;
               <BlockStack gap="300">
                 <Text variant="headingMd" as="h4">Section 2 — Human Engine</Text>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
-                  {["origin_story", "honest_flaws_and_character", "artist_notes", "rescued_by", "origin_page_handle", "stone_shape", "surface_finish", "collection_name"].map(renderFullMetaField)}
+                  {["origin_story", "honest_flaws_and_character", "artist_notes", "rescued_by", "origin_handle", "stone_shape", "surface_finish", "collection_name"].map(renderFullMetaField)}
                 </div>
               </BlockStack>
 
@@ -939,7 +941,7 @@ Image URL: ${imageUrl}`;
                 </div>
                 <Collapsible open={isSection3Open} id="section-3-collapsible" transition={{duration: '200ms', timingFunction: 'ease-in-out'}}>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px', marginTop: '16px' }}>
-                    {["primary_use", "setting_ready", "wire_material", "bail_included", "color-pattern", "material", "jewelry-type", "necklace-design", "chain-link-type", "jewelry-finding-type", "target-gender", "age-group", "authenticity", "rarity", "condition", "found_object", "custom_product"].map(renderFullMetaField)}
+                    {["primary_use", "setting_ready", "wire_material", "bail_included", "color_pattern", "material", "jewelry_type", "necklace_design", "chain_link_type", "jewelry_finding_type", "target_gender", "age_group", "authenticity", "rarity", "condition", "found_object", "custom_product"].map(renderFullMetaField)}
                   </div>
                 </Collapsible>
               </BlockStack>
