@@ -20,6 +20,7 @@ export const action = engineAction;
 // --- MAIN SHELL COMPONENT ---
 export default function MetaInjectorV2() {
   const { products } = useLoaderData() || {};
+  const productCount = products ? products.length : 0;
   const navigate = useNavigate();
   const fetcher = useFetcher();
   const autoFillFetcher = useFetcher();
@@ -47,6 +48,9 @@ export default function MetaInjectorV2() {
         backAction={{ content: "Dashboard", onAction: () => navigate("/app"), accessibilityLabel: "Back to Dashboard" }}
       >
         <Layout>
+          <Layout.Section>
+            <Banner tone="info" title={`DEBUG: Loader returned ${productCount} products`} />
+          </Layout.Section>
           <Layout.Section>
             {hasErrors && (
               <Box paddingBlockEnd="400">
