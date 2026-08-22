@@ -133,6 +133,7 @@ async function fetchAllProducts(graphql) {
 export async function loader({ request }) {
   const { admin } = await authenticate.admin(request);
   const products = await fetchAllProducts(admin.graphql);
+  console.log("PRODUCTS LOADED:", products.length, products.slice(0,3).map(p => p.title));
   
   const originPagesQuery = `
     query GetOriginPages {
