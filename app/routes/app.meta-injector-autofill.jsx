@@ -1,4 +1,4 @@
-import { authenticate } from "../shopify.server";
+﻿import { authenticate } from "../shopify.server";
 import { lookupStone } from "../utils/geoLibrary.jsx";
 import { TARGET_KEYS } from "../utils/metaScan";
 
@@ -310,12 +310,26 @@ export const action = async ({ request }) => {
         const { pagesList } = await getLiveStoreDirectory(admin);
         const matchedPage = pagesList.find(p => p.url.includes(origin_handle));
         const origin_story = matchedPage ? matchedPage.excerpt : "";
+        const cut_and_shape = body.get("cut_and_shape") || "";
+        const collection_location = body.get("collection_location") || "";
+        const piece_name = body.get("piece_name") || "";
+
+        // Build SEO title: "[Stone Family] [Cut/Shape] — Found at [Location] — Rockhound Studio"
+        const seoTitleParts = [];
+        if (stone_family) seoTitleParts.push(stone_family);
+        if (cut_and_shape) seoTitleParts.push(cut_and_shape);
+        const locationPart = collection_location || origin_handle.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+        const seo_title = seoTitleParts.length > 0
+          ? `${seoTitleParts.join(" ")} — Found at ${locationPart} — Rockhound Studio`
+          : "";
+
         return Response.json({
           tab2Data: {
             ...geoFields,
             origin_story,
             stone_family,
-            origin_handle
+            origin_handle,
+            seo_title
           }
         });
       } catch (err) {
