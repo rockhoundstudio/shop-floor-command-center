@@ -77,11 +77,11 @@ export const action = async ({ request }) => {
           "cleavage": "None",
           "specific_gravity": "Varies by specimen",
           "diaphaneity": "Opaque to Translucent",
-          "crystalSystem": "Trigonal",
-          "geologicalEra": "Varies by specimen",
-          "mineralClass": "Silicate",
-          "rockComposition": "Silicified",
-          "rockFormation": "Natural"
+          "crystal_system": "Trigonal",
+          "geological_era": "Varies by specimen",
+          "mineral_class": "Silicate",
+          "rock_composition": "Silicified",
+          "rock_formation": "Natural"
         };
 
         cachedStone = await prisma.stoneCache.create({
