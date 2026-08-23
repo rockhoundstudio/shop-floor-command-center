@@ -166,7 +166,7 @@ export const action = async ({ request }) => {
           let resolvedId = `gid://shopify/Product/${itemOwnerId.split("/").pop()}`;
           (itemOwnerId.startsWith("gid://")) && (resolvedId = itemOwnerId);
 
-          const resolvedType = TYPE_MAP[item.key] || item.type || "number_decimal";
+          const resolvedType = TYPE_MAP[item.key] || item.type || "single_line_text_field";
           
           let resolvedValue = String(item.value);
           (resolvedType.startsWith("list.")) && (resolvedValue = JSON.stringify([String(item.value)]));

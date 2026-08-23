@@ -98,15 +98,14 @@ const NAMESPACE_MAP = {
     "piece_name", "primary_medium", "secondary_medium", "handcrafted_by",
     "stone_family", "color", "cut_and_shape", "surface_finish",
     "dimensions_mm", "weight_grams", "shipping_weight_oz", "price",
-    "collection_name", "collection_location", "collection_date",
+    "collection_name", "collection_location",
     "primary_use", "bail_included", "is_one_of_a_kind", "treated",
     "found_object", "wire_material", "setting_ready", "material",
     "origin_story", "origin_handle", "honest_flaws_and_character",
     "artist_notes", "generated_description", "rescued_by", "stone_shape",
     "target_gender", "age_group", "condition", "color_pattern",
     "jewelry_type", "necklace_design", "chain_link_type",
-    "jewelry_finding_type", "custom_product", "seo_title",
-    "authenticity", "rarity"
+    "jewelry_finding_type", "custom_product", "seo_title"
   ],
   geo: [
     "mohs_hardness", "luster", "fracture_pattern", "cleavage", "specific_gravity",
@@ -543,7 +542,12 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
             const shouldOverwrite = ALWAYS_OVERWRITE.includes(key);
 
             if (hasNewValue && (currentlyEmpty || shouldOverwrite) && val !== "See Shopify metaobject") {
-              updatedState[key] = val;
+              let normalizedVal = val;
+              if (key === "treated" || key === "is_one_of_a_kind") {
+                if (val === true || val === "true") normalizedVal = "Yes";
+                else if (val === false || val === "false") normalizedVal = "No";
+              }
+              updatedState[key] = normalizedVal;
             }
           });
           
@@ -639,7 +643,12 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
             const shouldOverwrite = ALWAYS_OVERWRITE_TAB2.includes(key);
 
             if (hasNewValue && (currentlyEmpty || shouldOverwrite)) {
-              updatedState[key] = val;
+              let normalizedVal = val;
+              if (key === "treated" || key === "is_one_of_a_kind") {
+                if (val === true || val === "true") normalizedVal = "Yes";
+                else if (val === false || val === "false") normalizedVal = "No";
+              }
+              updatedState[key] = normalizedVal;
             }
           });
 
@@ -961,7 +970,7 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
               <BlockStack gap="300">
                 <Text variant="headingMd" as="h4">Section 2 — Human Engine</Text>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
-                  {["origin_story", "rescued_by", "stone_shape", "collection_name", "origin_handle", "collection_location", "collection_date", "honest_flaws_and_character", "found_object"].map(renderFullMetaField)}
+                  {["origin_story", "rescued_by", "stone_shape", "collection_name", "origin_handle", "collection_location", "honest_flaws_and_character", "found_object"].map(renderFullMetaField)}
                 </div>
               </BlockStack>
 
@@ -971,7 +980,7 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
                 </div>
                 <Collapsible open={isSection3Open} id="section-3-collapsible" transition={{duration: '200ms', timingFunction: 'ease-in-out'}}>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px', marginTop: '16px' }}>
-                    {["primary_use", "setting_ready", "wire_material", "bail_included", "color_pattern", "material", "jewelry_type", "necklace_design", "chain_link_type", "jewelry_finding_type", "target_gender", "age_group", "condition", "custom_product", "seo_title", "authenticity", "rarity"].map(renderFullMetaField)}
+                    {["primary_use", "setting_ready", "wire_material", "bail_included", "color_pattern", "material", "jewelry_type", "necklace_design", "chain_link_type", "jewelry_finding_type", "target_gender", "age_group", "condition", "custom_product", "seo_title"].map(renderFullMetaField)}
                   </div>
                 </Collapsible>
               </BlockStack>
