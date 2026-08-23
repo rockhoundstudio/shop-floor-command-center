@@ -170,6 +170,20 @@ export const action = async ({ request }) => {
           
           let resolvedValue = String(item.value);
           (resolvedType.startsWith("list.")) && (resolvedValue = JSON.stringify([String(item.value)]));
+          if (item.key === "treated" || item.key === "is_one_of_a_kind") {
+            if (resolvedValue === "true") resolvedValue = "Yes";
+            else if (resolvedValue === "false") resolvedValue = "No";
+          }
+
+          if (item.key === "seo_title") {
+            return {
+              ownerId: resolvedId,
+              namespace: "global",
+              key: "title_tag",
+              type: "single_line_text_field",
+              value: resolvedValue
+            };
+          }
 
           return {
             ownerId: resolvedId,
