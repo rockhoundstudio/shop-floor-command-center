@@ -95,17 +95,23 @@ const FULL_META_GROUPS = [
 
 const NAMESPACE_MAP = {
   custom: [
-    "piece_name", "primary_medium", "handcrafted_by", 
-    "stone_family", "color", "cut_and_shape", "surface_finish", 
-    "dimensions_mm", "weight_grams", "collection_name", "collection_location", 
-    "collection_date", "primary_use", "bail_included", 
-    "is_one_of_a_kind", "treated", "found_object", "wire_material", "setting_ready", 
-    "origin_story", "honest_flaws_and_character"
+    "piece_name", "primary_medium", "secondary_medium", "handcrafted_by",
+    "stone_family", "color", "cut_and_shape", "surface_finish",
+    "dimensions_mm", "weight_grams", "shipping_weight_oz", "price",
+    "collection_name", "collection_location", "collection_date",
+    "primary_use", "bail_included", "is_one_of_a_kind", "treated",
+    "found_object", "wire_material", "setting_ready", "material",
+    "origin_story", "origin_handle", "honest_flaws_and_character",
+    "artist_notes", "generated_description", "rescued_by", "stone_shape",
+    "target_gender", "age_group", "condition", "color_pattern",
+    "jewelry_type", "necklace_design", "chain_link_type",
+    "jewelry_finding_type", "custom_product", "seo_title",
+    "authenticity", "rarity"
   ],
   geo: [
-    "mohs_hardness", "luster", "fracture", "cleavage", "specific_gravity", 
-    "diaphaneity", "crystal_system", "geological_era", "mineral_class", 
-    "rock_composition", "rock_formation", "authenticity", "rarity"
+    "mohs_hardness", "luster", "fracture_pattern", "cleavage", "specific_gravity",
+    "diaphaneity", "crystal_system", "geological_era", "geological_age", "mineral_class",
+    "rock_composition", "rock_formation"
   ]
 };
 
