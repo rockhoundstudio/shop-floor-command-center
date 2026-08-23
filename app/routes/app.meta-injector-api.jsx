@@ -145,8 +145,8 @@ export const action = async ({ request }) => {
         seo_title: "single_line_text_field",
         color: "single_line_text_field",
         weight_grams: "number_decimal",
-        specific_gravity: "number_decimal",
-        mohs_hardness: "number_decimal",
+        specific_gravity: "single_line_text_field",
+        mohs_hardness: "single_line_text_field",
         shipping_weight_oz: "number_decimal",
         price: "number_decimal"
       };
@@ -599,7 +599,7 @@ export const action = async ({ request }) => {
            rawMetafields.push({
              key: finalKey,
              value: value,
-             type: "number_decimal" // The map below will fix the types
+             type: "single_line_text_field" // The map below will fix the types
            });
         }
       });
@@ -609,7 +609,7 @@ export const action = async ({ request }) => {
         ownerId: defaultVariantId,
         namespace: "google",
         key: "age_group",
-        type: "number_decimal",
+        type: "single_line_text_field",
         value: String(combinedFields.age_group)
       });
 
@@ -617,7 +617,7 @@ export const action = async ({ request }) => {
         ownerId: defaultVariantId,
         namespace: "google",
         key: "target_gender",
-        type: "number_decimal",
+        type: "single_line_text_field",
         value: String(combinedFields.target_gender)
       });
 
@@ -625,7 +625,7 @@ export const action = async ({ request }) => {
         ownerId: defaultVariantId,
         namespace: "google",
         key: "condition",
-        type: "number_decimal",
+        type: "single_line_text_field",
         value: String(combinedFields.condition)
       });
 
@@ -633,7 +633,7 @@ export const action = async ({ request }) => {
         googleMetafields.push({
           namespace: "google",
           key: "custom_label_0",
-          type: "number_decimal",
+          type: "single_line_text_field",
           value: String(combinedFields.google_product_category)
         });
       }
@@ -656,14 +656,14 @@ export const action = async ({ request }) => {
               seo_title: "single_line_text_field",
               color: "single_line_text_field",
               weight_grams: "number_decimal",
-              specific_gravity: "number_decimal",
-              mohs_hardness: "number_decimal",
+              specific_gravity: "single_line_text_field",
+              mohs_hardness: "single_line_text_field",
               shipping_weight_oz: "number_decimal",
               price: "number_decimal"
             };
 
             const metafieldsInput = rawMetafields.map(item => {
-               let resolvedType = TYPE_MAP[item.key] || item.type || "number_decimal";
+               let resolvedType = TYPE_MAP[item.key] || item.type || "single_line_text_field";
                let resolvedValue = String(item.value);
 
                if (resolvedType === "number_decimal") {
@@ -727,4 +727,3 @@ export const action = async ({ request }) => {
   }
 
 };
-
