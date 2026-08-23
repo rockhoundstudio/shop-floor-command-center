@@ -226,6 +226,52 @@ export const action = async ({ request }) => {
         return data({ success: false, message: "Saved with errors: " + allErrors.map(e => e.field + " — " + e.message).join(" | "), errors: allErrors });
       }
 
+      // Update variant weight if weight_grams is in the payload
+      const weightItem = payloadArray.find(item => item.key === "weight_grams");
+      if (weightItem && weightItem.value) {
+        const weightGrams = parseFloat(String(weightItem.value).replace(/['"]/g, ""));
+        if (!isNaN(weightGrams) && weightGrams > 0) {
+          try {
+            let targetProductId = formData.get("productId");
+            if (!targetProductId) {
+              const fallbackField = payloadArray.find(item => item.ownerId);
+              if (fallbackField) targetProductId = fallbackField.ownerId;
+            }
+            
+            if (targetProductId) {
+              const productGid = `gid://shopify/Product/${targetProductId.split("/").pop()}`;
+              const variantQuery = await admin.graphql(
+                `#graphql
+                query getDefaultVariant($id: ID!) {
+                  product(id: $id) {
+                    variants(first: 1) {
+                      edges { node { id } }
+                    }
+                  }
+                }`,
+                { variables: { id: productGid } }
+              );
+              const variantData = await variantQuery.json();
+              const variantId = variantData?.data?.product?.variants?.edges?.[0]?.node?.id;
+              if (variantId) {
+                await admin.graphql(
+                  `#graphql
+                  mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+                    productVariantsBulkUpdate(productId: $productId, variants: $variants) {
+                      userErrors { field message }
+                    }
+                  }`,
+                  { variables: { productId: productGid, variants: [{ id: variantId, inventoryItem: { measurement: { weight: { value: weightGrams / 28.3495, unit: "OUNCES" } } } }] } }
+                );
+                console.log("[saveMetafields] Variant weight updated:", weightGrams, "g →", weightGrams / 28.3495, "oz");
+              }
+            }
+          } catch (weightErr) {
+            console.warn("[saveMetafields] Variant weight update failed:", weightErr.message);
+          }
+        }
+      }
+
       console.log("SAVE SUCCESS: All metafields locked in.");
       return data({ intent: "saveMetafields", success: true, message: "All metafields locked in." });
     } catch (error) {
@@ -269,17 +315,19 @@ export const action = async ({ request }) => {
     const lookupResult = await lookupResponse.json();
     const allMeta = lookupResult?.data?.product?.metafields?.edges || [];
 
-    const malformedKeys = ["cut_type", "cut_and_shape"];
+    const malformedKeys = [
+      "cut_type",
+      "crystalSystem",
+      "geologicalEra",
+      "mineralClass",
+      "rockComposition",
+      "rockFormation",
+      "specificGravity",
+      "mohsHardness"
+    ];
     const toDelete = allMeta
       .map(e => e.node)
-      .filter(m => {
-        const rawKey = `${m.namespace}.${m.key}`;
-        const combined = `${m.namespace}${m.key}`;
-        return (
-          malformedKeys.some(k => combined.includes(`=${k}`)) ||
-          malformedKeys.some(k => m.key === k && m.namespace !== "custom")
-        );
-      })
+      .filter(m => malformedKeys.includes(m.key))
       .map(m => m.id);
 
     if (toDelete.length === 0) {
@@ -315,6 +363,92 @@ export const action = async ({ request }) => {
       message: `Cleaned ${deleted.length} malformed metafield(s). Re-save the product to write them correctly.`,
       deleted
     });
+  }
+
+  // ==========================================
+  // 🔴 INTENT 3.5: CLEAN ALL CAMEL KEYS
+  // ==========================================
+  if (intent === "cleanAllCamelKeys") {
+    try {
+      let hasNextPage = true;
+      let cursor = null;
+      let totalScanned = 0;
+      let totalDeleted = 0;
+      const malformedKeys = [
+        "cut_type", "crystalSystem", "geologicalEra", "mineralClass",
+        "rockComposition", "rockFormation", "specificGravity", "mohsHardness"
+      ];
+
+      while (hasNextPage) {
+        const productsResponse = await admin.graphql(
+          `#graphql
+          query getProductsMetafields($cursor: String) {
+            products(first: 50, after: $cursor) {
+              pageInfo { hasNextPage endCursor }
+              edges {
+                node {
+                  id
+                  metafields(first: 250) {
+                    edges {
+                      node {
+                        id
+                        namespace
+                        key
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }`,
+          { variables: { cursor } }
+        );
+
+        const productsResult = await productsResponse.json();
+        const products = productsResult?.data?.products?.edges || [];
+
+        for (const productEdge of products) {
+          totalScanned++;
+          const productNode = productEdge.node;
+          const allMeta = productNode.metafields?.edges || [];
+
+          const toDelete = allMeta
+            .map(e => e.node)
+            .filter(m => m.namespace === "custom" && malformedKeys.includes(m.key))
+            .map(m => m.id);
+
+          if (toDelete.length > 0) {
+            const deleteResponse = await admin.graphql(
+              `#graphql
+              mutation metafieldsDelete($metafields: [MetafieldIdentifierInput!]!) {
+                metafieldsDelete(metafields: $metafields) {
+                  deletedMetafields { id }
+                }
+              }`,
+              {
+                variables: {
+                  metafields: toDelete.map(id => ({ ownerId: productNode.id, id }))
+                }
+              }
+            );
+            const deleteResult = await deleteResponse.json();
+            const deleted = deleteResult?.data?.metafieldsDelete?.deletedMetafields || [];
+            totalDeleted += deleted.length;
+          }
+        }
+
+        hasNextPage = productsResult?.data?.products?.pageInfo?.hasNextPage;
+        cursor = productsResult?.data?.products?.pageInfo?.endCursor;
+      }
+
+      return data({
+        success: true,
+        message: `Bulk clean complete. Scanned ${totalScanned} products, deleted ${totalDeleted} malformed metafields.`
+      });
+    } catch (error) {
+      console.error("BULK CLEAN CRASH:", error);
+      return data({ success: false, message: "Bulk clean failed", error: error.message });
+    }
   }
 
   // ==========================================

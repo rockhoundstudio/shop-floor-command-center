@@ -493,28 +493,18 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
     if (!selectedProductId) return;
     const changes = [];
     
+    const ALWAYS_INCLUDE = ["seo_title", "weight_grams", "piece_name", "is_one_of_a_kind", "treated", "handcrafted_by", "primary_medium"];
+
     Object.entries(fullMetaState).forEach(([key, value]) => {
       const originalValue = originalMetaRef.current[key] || "";
       const newValue = value || "";
-      
-      if (originalValue !== newValue && newValue !== "See Shopify metaobject") {
+
+      const alwaysInclude = ALWAYS_INCLUDE.includes(key) && newValue !== "";
+      if ((alwaysInclude || originalValue !== newValue) && newValue !== "See Shopify metaobject") {
         changes.push({
           namespace: getNamespaceForKey(key),
           key: key.replace(/-/g, "_"),
           value: newValue,
-          type: "single_line_text_field"
-        });
-      }
-    });
-    const ALWAYS_INCLUDE = ["piece_name", "is_one_of_a_kind", "treated", "handcrafted_by", "primary_medium"];
-    ALWAYS_INCLUDE.forEach(key => {
-      const alreadyInChanges = changes.some(c => c.key === key);
-      const val = fullMetaState[key];
-      if (!alreadyInChanges && val && String(val).trim() !== "" && val !== "See Shopify metaobject") {
-        changes.push({
-          namespace: getNamespaceForKey(key),
-          key: key.replace(/-/g, "_"),
-          value: String(val),
           type: "single_line_text_field"
         });
       }
@@ -1015,6 +1005,29 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
         </div>
       )}
 
+      <div style={{ marginTop: "32px" }}>
+        <Card padding="400">
+          <BlockStack gap="400">
+            <Text variant="headingMd" as="h2">Bulk CamelCase Key Cleanup</Text>
+            <Text as="p">Scans all products and deletes any metafields with camelCase keys. Cleans all 35 products in one shot.</Text>
+            
+            {injectFetcher.state === "idle" && injectFetcher.data?.message?.includes("Bulk clean") && (
+              <Banner tone={injectFetcher.data.success ? "success" : "critical"} title={injectFetcher.data.success ? "Operation Successful" : "Operation Failed"}>
+                <Text as="p">{injectFetcher.data.message}</Text>
+              </Banner>
+            )}
+
+            <Button 
+              tone="critical" 
+              variant="primary"
+              onClick={() => injectFetcher.submit({ intent: "cleanAllCamelKeys" }, { method: "post", action: "/app/meta-injector-api" })}
+              loading={injectFetcher.state !== "idle" && injectFetcher.formData?.get("intent") === "cleanAllCamelKeys"}
+            >
+              Clean All CamelCase Keys
+            </Button>
+          </BlockStack>
+        </Card>
+      </div>
     </BlockStack>
   );
 }
