@@ -421,19 +421,19 @@ export const action = async ({ request }) => {
             try {
               const deleteResponse = await admin.graphql(
                 `#graphql
-                mutation metafieldsDelete($metafieldsDeleteInput: [MetafieldIdentifierInput!]!) {
-                  metafieldsDelete(metafields: $metafieldsDeleteInput) {
-                    deletedMetafields { id }
+                mutation metafieldsDelete($ids: [ID!]!) {
+                  metafieldsDelete(metafields: $ids) {
+                    deletedMetafieldsIds
+                    userErrors { field message }
                   }
                 }`,
                 {
-                  variables: {
-                    metafieldsDeleteInput: toDelete.map(id => ({ id }))
-                  }
+                  variables: { ids: toDelete }
                 }
               );
               const deleteResult = await deleteResponse.json();
-              const deleted = deleteResult?.data?.metafieldsDelete?.deletedMetafields || [];
+              console.error("metafieldsDelete graphQLErrors:", JSON.stringify(deleteResult?.errors?.graphQLErrors, null, 2));
+              const deleted = deleteResult?.data?.metafieldsDelete?.deletedMetafieldsIds || [];
               totalDeleted += deleted.length;
             } catch (errors) {
               console.error("metafieldsDelete graphQLErrors:", JSON.stringify(errors.graphQLErrors, null, 2));
@@ -903,43 +903,3 @@ export const action = async ({ request }) => {
   }
 
 };
-Below is the full contents of app.meta-injector.inspector.jsx from a Shopify Remix app called Meta Injector for Rockhound Studio.
-
-Make exactly ONE change. Do not change anything else. Do not restructure the file.
-
-Find this exact sequence inside handleSaveFullMeta:
-
-    Object.entries(fullMetaState).forEach(([key, value]) => {
-      const originalValue = originalMetaRef.current[key] || "";
-      const newValue = value || "";
-
-      if (originalValue !== newValue && newValue !== "See Shopify metaobject") {
-        changes.push({
-          namespace: getNamespaceForKey(key),
-          key: key.replace(/-/g, "_"),
-          value: newValue,
-          type: "single_line_text_field"
-        });
-      }
-    });
-
-Replace it with:
-
-    const ALWAYS_INCLUDE = ["seo_title", "weight_grams"];
-
-    Object.entries(fullMetaState).forEach(([key, value]) => {
-      const originalValue = originalMetaRef.current[key] || "";
-      const newValue = value || "";
-
-      const alwaysInclude = ALWAYS_INCLUDE.includes(key) && newValue !== "";
-      if ((alwaysInclude || originalValue !== newValue) && newValue !== "See Shopify metaobject") {
-        changes.push({
-          namespace: getNamespaceForKey(key),
-          key: key.replace(/-/g, "_"),
-          value: newValue,
-          type: "single_line_text_field"
-        });
-      }
-    });
-
-Do not change anything else. Full file only. Do not truncate. Do not summarize.
