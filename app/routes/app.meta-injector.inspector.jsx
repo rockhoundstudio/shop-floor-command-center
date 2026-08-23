@@ -121,7 +121,7 @@ const getNamespaceForKey = (key) => {
   return "custom";
 };
 
-export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher }) {
+export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2Fetcher }) {
   const [selectedProductId, setSelectedProductId] = useState("");
   const [formState, setFormState] = useState({});
   const [fullMetaState, setFullMetaState] = useState({});
@@ -418,7 +418,7 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher }) {
     const originHandle = fullMetaState.origin_handle || fullMetaState.origin_page_handle || "";
 
     const formData = new FormData();
-    const imageUrl = product?.images?.edges?.[0]?.node?.url || "";
+    const imageUrl = products.find(p => p.id === selectedProductId)?.images?.edges?.[0]?.node?.url || "";
     formData.append("intent", "tab2AutoFill");
     formData.append("productId", selectedProductId);
     formData.append("stone_family", stoneFamily);
@@ -428,12 +428,12 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher }) {
     formData.append("piece_name", fullMetaState.piece_name || "");
     formData.append("imageUrl", imageUrl);
 
-    autoFillFetcher.submit(
+    tab2Fetcher.submit(
       formData,
       { method: "post", action: "/app/meta-injector-autofill" }
     );
     console.log("[Tab2 AutoFill] stone_family:", stoneFamily, "origin_handle:", originHandle);
-  }, [selectedProductId, autoFillFetcher, fullMetaState]);
+  }, [selectedProductId, tab2Fetcher, fullMetaState, products]);
 
   const handleInject = useCallback(() => {
     if (!selectedProductId) return;
@@ -527,7 +527,6 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher }) {
 
       const isAutoFill = autoFillFetcher.data.intent === "autoFill";
       const isSmartAutoFill = autoFillFetcher.data.intent === "smartAutoFill";
-      const isTab2AutoFill = autoFillFetcher.data?.tab2Data !== undefined;
       
       const isSuccess = autoFillFetcher.data.success === true;
       const isError = autoFillFetcher.data.success === false;
@@ -609,47 +608,7 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher }) {
         }
       }
 
-      if (isTab2AutoFill) {
-        const tab2Data = autoFillFetcher.data.tab2Data || {};
-        const hasTab2Data = Object.keys(tab2Data).length > 0;
-
-        if (hasTab2Data) {
-            setFullMetaState(prev => {
-                const updatedState = { ...prev };
-                const ALWAYS_OVERWRITE_TAB2 = ["stone_family", "surface_finish", "handcrafted_by", "treated", "is_one_of_a_kind", "mohs_hardness", "luster", "fracture_pattern", "cleavage", "specific_gravity", "diaphaneity", "mineral_class", "crystal_system", "rock_composition", "rock_formation", "geological_era", "geological_age"];
-
-                Object.entries(tab2Data).forEach(([key, val]) => {
-                    const hasNewValue = val !== undefined && val !== null && val.toString().trim() !== "" && val !== "See Shopify metaobject";
-                    const currentlyEmpty = !updatedState[key] || updatedState[key].toString().trim() === "";
-                    const shouldOverwrite = ALWAYS_OVERWRITE_TAB2.includes(key);
-
-                    if (hasNewValue && (currentlyEmpty || shouldOverwrite)) {
-                      updatedState[key] = val;
-                    }
-                });
-
-                if (productTitle) {
-                  updatedState.piece_name = productTitle.includes(" — ") ? productTitle.split(" — ").pop().trim() : productTitle;
-                }
-
-                return updatedState;
-            });
-            setTab2StatusMessage("Auto-Fill complete — review fields before saving");
-
-            if (window.shopify && window.shopify.toast) {
-              window.shopify.toast.show("Auto-Fill complete!");
-            }
-
-        } else {
-            setTab2ErrorMessage("Auto-Fill returned no data — check stone_family and origin_handle.");
-
-            if (window.shopify && window.shopify.toast) {
-              window.shopify.toast.show("Auto-Fill failed", { isError: true });
-            }
-        }
-      }
-
-      if (isError && !isTab2AutoFill) {
+      if (isError) {
         setErrorMessage(autoFillFetcher.data.error || "An unknown error occurred during the operation.");
         // Fallback catch-all error Toast
         if (window.shopify && window.shopify.toast) {
@@ -658,6 +617,50 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher }) {
       }
     }
   }, [autoFillFetcher.state, autoFillFetcher.data]);
+
+  useEffect(() => {
+    const isIdle = tab2Fetcher.state === "idle";
+    const hasData = tab2Fetcher.data !== undefined && tab2Fetcher.data !== null;
+
+    if (isIdle && hasData) {
+      const product = products.find(p => p.id === selectedProductId);
+      const productTitle = product ? product.title : "";
+      const tab2Data = tab2Fetcher.data.tab2Data || {};
+      const hasTab2Data = Object.keys(tab2Data).length > 0;
+
+      if (hasTab2Data) {
+        setFullMetaState(prev => {
+          const updatedState = { ...prev };
+          const ALWAYS_OVERWRITE_TAB2 = ["stone_family", "surface_finish", "handcrafted_by", "treated", "is_one_of_a_kind", "mohs_hardness", "luster", "fracture_pattern", "cleavage", "specific_gravity", "diaphaneity", "mineral_class", "crystal_system", "rock_composition", "rock_formation", "geological_era", "geological_age", "color", "stone_shape", "color_pattern", "cut_and_shape", "honest_flaws_and_character", "primary_use", "primary_medium", "setting_ready", "wire_material", "bail_included", "generated_description", "seo_title"];
+
+          Object.entries(tab2Data).forEach(([key, val]) => {
+            const hasNewValue = val !== undefined && val !== null && val.toString().trim() !== "" && val !== "See Shopify metaobject";
+            const currentlyEmpty = !updatedState[key] || updatedState[key].toString().trim() === "";
+            const shouldOverwrite = ALWAYS_OVERWRITE_TAB2.includes(key);
+
+            if (hasNewValue && (currentlyEmpty || shouldOverwrite)) {
+              updatedState[key] = val;
+            }
+          });
+
+          if (productTitle) {
+            updatedState.piece_name = productTitle.includes(" \u2014 ") ? productTitle.split(" \u2014 ").pop().trim() : productTitle;
+          }
+
+          return updatedState;
+        });
+        setTab2StatusMessage("Auto-Fill complete \u2014 review fields before saving");
+        if (window.shopify && window.shopify.toast) {
+          window.shopify.toast.show("Auto-Fill complete!");
+        }
+      } else {
+        setTab2ErrorMessage("Auto-Fill returned no data \u2014 check stone_family and origin_handle.");
+        if (window.shopify && window.shopify.toast) {
+          window.shopify.toast.show("Auto-Fill failed", { isError: true });
+        }
+      }
+    }
+  }, [tab2Fetcher.state, tab2Fetcher.data, selectedProductId, products]);
 
   useEffect(() => {
     const isIdle = injectFetcher.state === "idle";
@@ -797,7 +800,7 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher }) {
   const filteredProducts = safeProducts.filter(p => p.title.toLowerCase().includes(searchQuery.toLowerCase()));
 
   const isAutoFilling = autoFillFetcher.state !== "idle" && (autoFillFetcher.formData?.get("intent") === "autoFill" || autoFillFetcher.formData?.get("intent") === "smartAutoFill");
-  const isTab2AutoFilling = autoFillFetcher.state !== "idle" && autoFillFetcher.formData?.get("intent") === "tab2AutoFill";
+  const isTab2AutoFilling = tab2Fetcher.state !== "idle";
   const isSaving = injectFetcher.state !== "idle" && (injectFetcher.formData?.get("intent") === "saveProduct" || injectFetcher.formData?.get("intent") === "saveMetafields");
   
   return (
@@ -898,7 +901,7 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher }) {
                     size="large"
                     fullWidth
                     disabled={!selectedProductId}
-                    loading={isAutoFilling}
+                    loading={isTab2AutoFilling}
                   >
                     RUN
                   </Button>
