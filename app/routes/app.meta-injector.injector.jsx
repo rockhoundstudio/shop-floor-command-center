@@ -13,6 +13,111 @@ import { handleScanPhoto, handleGenerateDescription, buildMetafieldsJson, buildT
 
 const SHOPPED_ROCK_VENDORS = ["Richardson's Rock Ranch", "Irv's Rock and Jewelry"];
 
+const CUSTOM_FIELDS = [
+  // ==========================================
+  // SECTION A: SHARED BATCH FIELDS (The Story & Material)
+  // ==========================================
+  { key: "stone_family", label: "Stone Family", type: "single_line_text_field", isShared: true },
+  { key: "color", label: "Color", type: "single_line_text_field", isShared: true }, 
+  { key: "surface_finish", label: "Surface Finish", type: "single_line_text_field", isShared: true }, 
+  { key: "source_location", label: "Source / Discovery Location", type: "single_line_text_field", isShared: true },
+  { key: "primary_use", label: "Primary Use", type: "single_line_text_field", isShared: true }, 
+  { key: "handcrafted_by", label: "Handcrafted By", type: "single_line_text_field", isShared: true },
+  { key: "origin_story", label: "The Origin Story", type: "single_line_text_field", multiline: true, isShared: true },
+
+  // ==========================================
+  // SECTION B: PER-PIECE ROWS (The Hard Specs)
+  // ==========================================
+  { key: "piece_name", label: "Piece Name", type: "single_line_text_field", isPerPiece: true },
+  { key: "cut_and_shape", label: "Cut / Shape", type: "single_line_text_field", isPerPiece: true }, 
+  { key: "dimensions_mm", label: "Dimensions (mm)", type: "single_line_text_field", isPerPiece: true },
+  { key: "weight_grams", label: "Weight (grams)", type: "single_line_text_field", isPerPiece: true },
+  { key: "honest_flaws", label: "Character Marks (Honest Flaws)", type: "single_line_text_field", multiline: true, isPerPiece: true },
+  { key: "price", label: "Price", type: "single_line_text_field", isPerPiece: true }
+];
+
+const FULL_META_GROUPS = [
+  {
+    heading: "Always Fill",
+    color: "#2E7D32",
+    fields: [
+      { key: "piece_name", label: "Piece Name", type: "text" },
+      { key: "primary_medium", label: "Primary Medium", type: "text" },
+      { key: "handcrafted_by", label: "Handcrafted By", type: "text" },
+      { key: "is_one_of_a_kind", label: "Is One of a Kind", type: "text" },
+      { key: "treated", label: "Treated", type: "text" }
+    ]
+  },
+  {
+    heading: "Stone Fields",
+    color: "#1565C0",
+    fields: [
+      { key: "stone_family", label: "Stone Family", type: "text" },
+      { key: "color", label: "Color", type: "text" },
+      { key: "cut_and_shape", label: "Cut and Shape", type: "text" },
+      { key: "surface_finish", label: "Surface Finish", type: "text" },
+      { key: "dimensions_mm", label: "Dimensions (mm)", type: "text" },
+      { key: "weight_grams", label: "Weight (grams)", type: "text" }
+    ]
+  },
+  {
+    heading: "Story & Lore",
+    color: "#E65100",
+    fields: [
+      { key: "origin_story", label: "Origin Story", type: "text", multiline: true },
+      { key: "honest_flaws_and_character", label: "Honest Flaws and Character", type: "text", multiline: true },
+      { key: "collection_name", label: "Collection Name", type: "text" }
+    ]
+  },
+  {
+    heading: "Mixed Media",
+    color: "#6A1B9A",
+    fields: [
+      { key: "found_object", label: "Found Object", type: "text" }
+    ]
+  },
+  {
+    heading: "Google / SEO",
+    color: "#F9A825",
+    fields: [
+      { key: "primary_use", label: "Primary Use", type: "text" },
+      { key: "bail_included", label: "Bail Included", type: "text" }
+    ]
+  },
+  {
+    heading: "Geo-Vault",
+    color: "#4E342E",
+    fields: [
+      { key: "mineral_class", label: "Mineral Class", type: "text" },
+      { key: "crystal_system", label: "Crystal System", type: "text" },
+      { key: "rock_composition", label: "Rock Composition", type: "text" },
+      { key: "rock_formation", label: "Rock Formation", type: "text" },
+      { key: "geological_era", label: "Geological Era", type: "text" }
+    ]
+  }
+];
+
+const NAMESPACE_MAP = {
+  custom: [
+    "piece_name", "primary_medium", "secondary_medium", "handcrafted_by",
+    "stone_family", "color", "cut_and_shape", "surface_finish",
+    "dimensions_mm", "weight_grams", "shipping_weight_oz", "price",
+    "collection_name", "collection_location",
+    "primary_use", "bail_included", "is_one_of_a_kind", "treated",
+    "found_object", "wire_material", "setting_ready", "material",
+    "origin_story", "origin_handle", "honest_flaws_and_character",
+    "artist_notes", "generated_description", "rescued_by", "stone_shape",
+    "target_gender", "age_group", "condition", "color_pattern",
+    "jewelry_type", "necklace_design", "chain_link_type",
+    "jewelry_finding_type", "custom_product", "seo_title",
+    "mohs_hardness", "luster", "fracture_pattern", "cleavage", "specific_gravity",
+    "diaphaneity", "crystal_system", "geological_era", "geological_age", "mineral_class",
+    "rock_composition", "rock_formation"
+  ]
+};
+
+const getNamespaceForKey = (key) => "custom";
+
 export function NewProductIntakeTab({ fetcher }) {
   const stageFetcher = useFetcher();
   const autoFillFetcher = useFetcher();
