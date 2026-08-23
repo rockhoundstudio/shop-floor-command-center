@@ -1,4 +1,4 @@
-﻿import { authenticate } from "../shopify.server";
+import { authenticate } from "../shopify.server";
 import { lookupStone } from "../utils/geoLibrary.jsx";
 import { TARGET_KEYS } from "../utils/metaScan";
 
@@ -106,14 +106,14 @@ async function getLiveStoreDirectory(admin) {
       pagesList = data.data.pages.edges.map(e => ({
         title: e.node.title,
         url: `/pages/${e.node.handle}`,
-        excerpt: (e.node.body || "").replace(/<[^>]*>?/gm, "").replace(/\s+/g, " ").trim().slice(0, 300)
+        excerpt: (e.node.body || "").replace(/<[^>]*>?/gm, "").replace(/\s+/g, " ").trim().slice(0, 2000)
       }));
     }
     if (data.data?.collections?.edges) {
       collectionsList = data.data.collections.edges.map(e => ({
         title: e.node.title,
         url: `/collections/${e.node.handle}`,
-        excerpt: (e.node.description || "").replace(/<[^>]*>?/gm, "").replace(/\s+/g, " ").trim().slice(0, 300)
+        excerpt: (e.node.description || "").replace(/<[^>]*>?/gm, "").replace(/\s+/g, " ").trim().slice(0, 2000)
       }));
     }
   } catch (err) {
@@ -317,6 +317,30 @@ export const action = async ({ request }) => {
         const matchedPage = pagesList.find(p => p.url.includes(origin_handle));
         const origin_story = matchedPage ? matchedPage.excerpt : "";
 
+        // Extract collection_date from origin story via Gemini
+        let collection_date = "";
+        if (origin_story) {
+          try {
+            const datePrompt = `Read the following rockhound field story and extract the collection date. Return ONLY the date in this format: "Month YYYY" (example: "June 2024"). If no date is found, return an empty string. Do not explain. Do not add punctuation.\n\nStory:\n${origin_story}`;
+            const dateRes = await fetch(
+              "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=" + process.env.GEMINI_API_KEY,
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ contents: [{ parts: [{ text: datePrompt }] }] }),
+              }
+            );
+            const dateJson = await dateRes.json();
+            collection_date = dateJson?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ?? "";
+          } catch (e) {
+            collection_date = "";
+          }
+        }
+
+        // Hardcoded fields
+        const authenticity = "Genuine natural stone, hand-collected by Bob & Janyce, Rockhound Studio.";
+        const rarity = "One-of-a-kind — no two stones are alike.";
+
         // STEP 2 — Build SEO title
         const seoTitleParts = [];
         if (stone_family) seoTitleParts.push(stone_family);
@@ -382,7 +406,10 @@ Return only valid JSON. No markdown. No explanation.`;
             origin_story,
             stone_family,
             origin_handle,
-            seo_title
+            seo_title,
+            collection_date,
+            authenticity,
+            rarity
           }
         });
       } catch (err) {
