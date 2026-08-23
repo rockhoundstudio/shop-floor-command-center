@@ -422,6 +422,9 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher }) {
     formData.append("productId", selectedProductId);
     formData.append("stone_family", stoneFamily);
     formData.append("origin_handle", originHandle);
+    formData.append("cut_and_shape", fullMetaState.cut_and_shape || "");
+    formData.append("collection_location", fullMetaState.collection_location || "");
+    formData.append("piece_name", fullMetaState.piece_name || "");
 
     autoFillFetcher.submit(
       formData,
