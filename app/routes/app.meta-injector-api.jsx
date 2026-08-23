@@ -144,11 +144,11 @@ export const action = async ({ request }) => {
         stone_shape: "single_line_text_field",
         seo_title: "single_line_text_field",
         color: "single_line_text_field",
-        weight_grams: "single_line_text_field",
-        specific_gravity: "single_line_text_field",
-        mohs_hardness: "single_line_text_field",
-        shipping_weight_oz: "single_line_text_field",
-        price: "single_line_text_field"
+        weight_grams: "number_decimal",
+        specific_gravity: "number_decimal",
+        mohs_hardness: "number_decimal",
+        shipping_weight_oz: "number_decimal",
+        price: "number_decimal"
       };
 
       const setMetafields = payloadArray
@@ -166,7 +166,7 @@ export const action = async ({ request }) => {
           let resolvedId = `gid://shopify/Product/${itemOwnerId.split("/").pop()}`;
           (itemOwnerId.startsWith("gid://")) && (resolvedId = itemOwnerId);
 
-          const resolvedType = TYPE_MAP[item.key] || item.type || "single_line_text_field";
+          const resolvedType = TYPE_MAP[item.key] || item.type || "number_decimal";
           
           let resolvedValue = String(item.value);
           (resolvedType.startsWith("list.")) && (resolvedValue = JSON.stringify([String(item.value)]));
@@ -599,7 +599,7 @@ export const action = async ({ request }) => {
            rawMetafields.push({
              key: finalKey,
              value: value,
-             type: "single_line_text_field" // The map below will fix the types
+             type: "number_decimal" // The map below will fix the types
            });
         }
       });
@@ -609,7 +609,7 @@ export const action = async ({ request }) => {
         ownerId: defaultVariantId,
         namespace: "google",
         key: "age_group",
-        type: "single_line_text_field",
+        type: "number_decimal",
         value: String(combinedFields.age_group)
       });
 
@@ -617,7 +617,7 @@ export const action = async ({ request }) => {
         ownerId: defaultVariantId,
         namespace: "google",
         key: "target_gender",
-        type: "single_line_text_field",
+        type: "number_decimal",
         value: String(combinedFields.target_gender)
       });
 
@@ -625,7 +625,7 @@ export const action = async ({ request }) => {
         ownerId: defaultVariantId,
         namespace: "google",
         key: "condition",
-        type: "single_line_text_field",
+        type: "number_decimal",
         value: String(combinedFields.condition)
       });
 
@@ -633,7 +633,7 @@ export const action = async ({ request }) => {
         googleMetafields.push({
           namespace: "google",
           key: "custom_label_0",
-          type: "single_line_text_field",
+          type: "number_decimal",
           value: String(combinedFields.google_product_category)
         });
       }
@@ -655,18 +655,18 @@ export const action = async ({ request }) => {
               stone_shape: "single_line_text_field",
               seo_title: "single_line_text_field",
               color: "single_line_text_field",
-              weight_grams: "single_line_text_field",
-              specific_gravity: "single_line_text_field",
-              mohs_hardness: "single_line_text_field",
-              shipping_weight_oz: "single_line_text_field",
-              price: "single_line_text_field"
+              weight_grams: "number_decimal",
+              specific_gravity: "number_decimal",
+              mohs_hardness: "number_decimal",
+              shipping_weight_oz: "number_decimal",
+              price: "number_decimal"
             };
 
             const metafieldsInput = rawMetafields.map(item => {
-               let resolvedType = TYPE_MAP[item.key] || item.type || "single_line_text_field";
+               let resolvedType = TYPE_MAP[item.key] || item.type || "number_decimal";
                let resolvedValue = String(item.value);
 
-               if (resolvedType === "single_line_text_field") {
+               if (resolvedType === "number_decimal") {
                  let parsedNum = parseFloat(String(item.value).replace(/["']/g, ""));
                  resolvedValue = isNaN(parsedNum) ? "0.0" : String(parsedNum);
                }
@@ -727,3 +727,4 @@ export const action = async ({ request }) => {
   }
 
 };
+
