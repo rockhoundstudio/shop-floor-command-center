@@ -153,9 +153,9 @@ function resolveCollectionData(locationSegment, defaultOriginSlug, collectionsLi
 async function getGeoData(admin, stoneFamily) {
   const emptyGeo = {
     hardness: "", luster: "", fracture: "", cleavage: "",
-    specificGravity: "", diaphaneity: "", crystalSystem: "",
-    geologicalEra: "", mineralClass: "", rockComposition: "",
-    rockFormation: "", mohs_hardness: "", fracture_pattern: "",
+    specific_gravity: "", diaphaneity: "", crystal_system: "",
+    geological_era: "", mineral_class: "", rock_composition: "",
+    rock_formation: "", mohs_hardness: "", fracture_pattern: "",
     specific_gravity: "", geological_age: ""
   };
   
@@ -175,13 +175,13 @@ async function getGeoData(admin, stoneFamily) {
         luster: localResult.luster || "",
         fracture: localResult.fracture_pattern || localResult.fracture || "",
         cleavage: localResult.cleavage || "",
-        specificGravity: localResult.specific_gravity || "",
+        specific_gravity: localResult.specific_gravity || "",
         diaphaneity: localResult.diaphaneity || "",
-        crystalSystem: localResult.crystal_system || "",
-        geologicalEra: localResult.geological_era || localResult.geological_age || "",
-        mineralClass: localResult.mineral_class || "",
-        rockComposition: localResult.rock_composition || "",
-        rockFormation: localResult.rock_formation || "",
+        crystal_system: localResult.crystal_system || "",
+        geological_era: localResult.geological_era || localResult.geological_age || "",
+        mineral_class: localResult.mineral_class || "",
+        rock_composition: localResult.rock_composition || "",
+        rock_formation: localResult.rock_formation || "",
         mohs_hardness: localResult.moh_hardness || localResult.hardness || "",
         fracture_pattern: localResult.fracture_pattern || localResult.fracture || "",
         specific_gravity: localResult.specific_gravity || "",
@@ -214,17 +214,17 @@ async function getGeoData(admin, stoneFamily) {
           luster: s.luster || "",
           fracture: s.fracture || "",
           cleavage: s.cleavage || "",
-          specificGravity: s.specificGravity || "",
+          specific_gravity: s.specific_gravity || "",
           diaphaneity: s.diaphaneity || "",
-          crystalSystem: s.crystalSystem || "",
-          geologicalEra: s.geologicalEra || "",
-          mineralClass: s.mineralClass || "",
-          rockComposition: s.rockComposition || "",
-          rockFormation: s.rockFormation || "",
+          crystal_system: s.crystal_system || "",
+          geological_era: s.geological_era || "",
+          mineral_class: s.mineral_class || "",
+          rock_composition: s.rock_composition || "",
+          rock_formation: s.rock_formation || "",
           mohs_hardness: s.hardness || "",
           fracture_pattern: s.fracture || "",
-          specific_gravity: s.specificGravity || "",
-          geological_age: s.geologicalEra || ""
+          specific_gravity: s.specific_gravity || "",
+          geological_age: s.geological_era || ""
         };
         stoneProfileCache.set(search, geoResult);
         return { ...geoResult, geoSource: "database" };
@@ -249,22 +249,22 @@ async function getGeoData(admin, stoneFamily) {
       const mineral = mindatData?.results?.[0];
       if (mineral) {
         const hardness = mineral.hardness || "";
-        const specificGravity = mineral.density || "";
+        const specific_gravity = mineral.density || "";
         const geoResult = {
           hardness,
           luster: mineral.luster || "",
           fracture: mineral.fracture || "",
           cleavage: mineral.cleavage || "",
-          specificGravity,
+          specific_gravity,
           diaphaneity: mineral.transparency || "",
-          crystalSystem: mineral.crystal_system || "",
-          geologicalEra: "",
-          mineralClass: mineral.mineral_class || "",
-          rockComposition: "",
-          rockFormation: "",
+          crystal_system: mineral.crystal_system || "",
+          geological_era: "",
+          mineral_class: mineral.mineral_class || "",
+          rock_composition: "",
+          rock_formation: "",
           mohs_hardness: hardness,
           fracture_pattern: mineral.fracture || "",
-          specific_gravity: specificGravity,
+          specific_gravity: specific_gravity,
           geological_age: ""
         };
         stoneProfileCache.set(search, geoResult);
