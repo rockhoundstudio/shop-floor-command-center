@@ -1,4 +1,4 @@
-﻿import { authenticate } from "../shopify.server";
+import { authenticate } from "../shopify.server";
 import { lookupStone } from "../utils/geoLibrary.jsx";
 import { TARGET_KEYS } from "../utils/metaScan";
 
@@ -305,27 +305,80 @@ export const action = async ({ request }) => {
       const stone_family = body.get("stone_family") || "";
       const origin_handle = body.get("origin_handle") || "";
       const productId = body.get("productId") || "";
+      const cut_and_shape = body.get("cut_and_shape") || "";
+      const collection_location = body.get("collection_location") || "";
+      const piece_name = body.get("piece_name") || "";
+      const imageUrl = body.get("imageUrl") || "";
+
       try {
+        // STEP 1 — Geo lookup + origin story
         const geoFields = await getGeoData(admin, stone_family);
         const { pagesList } = await getLiveStoreDirectory(admin);
         const matchedPage = pagesList.find(p => p.url.includes(origin_handle));
         const origin_story = matchedPage ? matchedPage.excerpt : "";
-        const cut_and_shape = body.get("cut_and_shape") || "";
-        const collection_location = body.get("collection_location") || "";
-        const piece_name = body.get("piece_name") || "";
 
-        // Build SEO title: "[Stone Family] [Cut/Shape] — Found at [Location] — Rockhound Studio"
+        // STEP 2 — Build SEO title
         const seoTitleParts = [];
         if (stone_family) seoTitleParts.push(stone_family);
         if (cut_and_shape) seoTitleParts.push(cut_and_shape);
         const locationPart = collection_location || origin_handle.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase());
         const seo_title = seoTitleParts.length > 0
-          ? `${seoTitleParts.join(" ")} — Found at ${locationPart} — Rockhound Studio`
+          ? `${seoTitleParts.join(" ")} \u2014 Found at ${locationPart} \u2014 Rockhound Studio`
           : "";
+
+        // STEP 3 — Vision scan if image URL is available
+        let visionFields = {};
+        if (imageUrl) {
+          try {
+            const cleanImageUrl = imageUrl.split("?")[0];
+            const imageRes = await fetch(cleanImageUrl);
+            const imageBuffer = await imageRes.arrayBuffer();
+            const imageBase64 = Buffer.from(imageBuffer).toString("base64");
+            const imageMimeType = (imageRes.headers.get("content-type") || "image/jpeg").split(";")[0].trim();
+
+            const visionPrompt = `You are a lapidary expert for Rockhound Studio. Analyze this stone photo and return a JSON object with these exact keys:
+- color: primary color of the stone, plain text (e.g. "Reddish-brown and Cream")
+- stone_shape: the overall shape of the stone (e.g. "Oval", "Freeform", "Rectangle", "Teardrop")
+- color_pattern: the pattern or texture visible (e.g. "Brecciated", "Banded", "Solid", "Mottled", "Dendritic")
+- cut_and_shape: the cut style (e.g. "Rough Slab", "Cabochon", "Tumbled", "Raw Chunk")
+- surface_finish: the surface finish visible (e.g. "High Polish", "Matte", "Natural/Raw", "Satin")
+- honest_flaws_and_character: any natural inclusions, matrix lines, chips, or character marks visible, plain text. If none visible, return empty string.
+- primary_use: best classification, one of: "Cabochon", "Pendant (Finished Jewelry)", "Necklace", "Wire Wrap (Finished Jewelry)", "Ring / Bezel Setting", "Loose Stone - Collector"
+- primary_medium: mounting material if jewelry, or "None - Raw Stone" if loose
+- setting_ready: one of: "Not Ready - Raw Stone", "Bezel Setting - Ready to Wear", "Wire Wrapped - Ready to Wear", "Prong Setting - Ready to Wear"
+- wire_material: wire type if wire wrapped, or "None - Raw Stone" if loose
+- bail_included: bail type if present, or "None" if loose stone
+- generated_description: poetic, spare, story-driven description strictly UNDER 100 WORDS. Past tense for the find. Plain honest voice. No salesy language. Sign off: — Bob & Janyce, Rockhound Studio, Spokane Valley WA
+
+Return only valid JSON. No markdown. No explanation.`;
+
+            const geminiRes = await fetchWithRetry("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                contents: [{ parts: [{ text: visionPrompt }, { inlineData: { mimeType: imageMimeType, data: imageBase64 } }] }],
+                generationConfig: { responseMimeType: "application/json", temperature: 0.2 }
+              })
+            });
+
+            if (geminiRes.ok) {
+              const geminiData = await geminiRes.json();
+              let cleanJson = (geminiData.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
+              const first = cleanJson.indexOf("{");
+              const last = cleanJson.lastIndexOf("}");
+              if (first !== -1 && last !== -1) cleanJson = cleanJson.slice(first, last + 1);
+              visionFields = JSON.parse(cleanJson);
+              console.log("[tab2AutoFill] Vision scan returned:", Object.keys(visionFields));
+            }
+          } catch (visionErr) {
+            console.warn("[tab2AutoFill] Vision scan failed, continuing without it:", visionErr.message);
+          }
+        }
 
         return Response.json({
           tab2Data: {
             ...geoFields,
+            ...visionFields,
             origin_story,
             stone_family,
             origin_handle,

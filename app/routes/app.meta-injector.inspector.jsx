@@ -418,6 +418,7 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher }) {
     const originHandle = fullMetaState.origin_handle || fullMetaState.origin_page_handle || "";
 
     const formData = new FormData();
+    const imageUrl = product?.images?.edges?.[0]?.node?.url || "";
     formData.append("intent", "tab2AutoFill");
     formData.append("productId", selectedProductId);
     formData.append("stone_family", stoneFamily);
@@ -425,6 +426,7 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher }) {
     formData.append("cut_and_shape", fullMetaState.cut_and_shape || "");
     formData.append("collection_location", fullMetaState.collection_location || "");
     formData.append("piece_name", fullMetaState.piece_name || "");
+    formData.append("imageUrl", imageUrl);
 
     autoFillFetcher.submit(
       formData,
