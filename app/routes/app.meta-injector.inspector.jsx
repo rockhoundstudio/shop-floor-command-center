@@ -493,14 +493,11 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
     if (!selectedProductId) return;
     const changes = [];
     
-    const ALWAYS_INCLUDE = ["seo_title", "weight_grams"];
-
     Object.entries(fullMetaState).forEach(([key, value]) => {
       const originalValue = originalMetaRef.current[key] || "";
       const newValue = value || "";
-
-      const alwaysInclude = ALWAYS_INCLUDE.includes(key) && newValue !== "";
-      if ((alwaysInclude || originalValue !== newValue) && newValue !== "See Shopify metaobject") {
+      
+      if (originalValue !== newValue && newValue !== "See Shopify metaobject") {
         changes.push({
           namespace: getNamespaceForKey(key),
           key: key.replace(/-/g, "_"),
@@ -509,6 +506,20 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
         });
       }
     });
+    const ALWAYS_INCLUDE = ["piece_name", "is_one_of_a_kind", "treated", "handcrafted_by", "primary_medium"];
+    ALWAYS_INCLUDE.forEach(key => {
+      const alreadyInChanges = changes.some(c => c.key === key);
+      const val = fullMetaState[key];
+      if (!alreadyInChanges && val && String(val).trim() !== "" && val !== "See Shopify metaobject") {
+        changes.push({
+          namespace: getNamespaceForKey(key),
+          key: key.replace(/-/g, "_"),
+          value: String(val),
+          type: "single_line_text_field"
+        });
+      }
+    });
+
 
     if (changes.length > 0) {
       // Explicit form action wiring restored to prevent silent drop
@@ -1009,96 +1020,3 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
 }
 
 export default IntakeBenchTab;
-Below is the full contents of app.meta-injector-api.jsx from a Shopify Remix app called Meta Injector for Rockhound Studio.
-
-Make exactly ONE change. Do not change anything else. Do not restructure the file.
-
-Inside the saveMetafields intent block, find this exact sequence:
-
-      // Update variant weight if weight_grams is in the payload
-      const weightItem = payloadArray.find(item => item.key === "weight_grams");
-      if (weightItem && weightItem.value) {
-        const weightGrams = parseFloat(String(weightItem.value).replace(/['"]/g, ""));
-        if (!isNaN(weightGrams) && weightGrams > 0) {
-          try {
-            const productGid = `gid://shopify/Product/${formData.get("productId").split("/").pop()}`;
-            const variantQuery = await admin.graphql(
-              `#graphql
-              query getDefaultVariant($id: ID!) {
-                product(id: $id) {
-                  variants(first: 1) {
-                    edges { node { id } }
-                  }
-                }
-              }`,
-              { variables: { id: productGid } }
-            );
-            const variantData = await variantQuery.json();
-            const variantId = variantData?.data?.product?.variants?.edges?.[0]?.node?.id;
-            if (variantId) {
-              await admin.graphql(
-                `#graphql
-                mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
-                  productVariantsBulkUpdate(productId: $productId, variants: $variants) {
-                    userErrors { field message }
-                  }
-                }`,
-                { variables: { productId: productGid, variants: [{ id: variantId, inventoryItem: { measurement: { weight: { value: weightGrams / 28.3495, unit: "OUNCES" } } } }] } }
-              );
-              console.log("[saveMetafields] Variant weight updated:", weightGrams, "g →", weightGrams / 28.3495, "oz");
-            }
-          } catch (weightErr) {
-            console.warn("[saveMetafields] Variant weight update failed:", weightErr.message);
-          }
-        }
-      }
-
-Replace it with:
-
-      // Update variant weight if weight_grams is in the payload
-      const weightItem = payloadArray.find(item => item.key === "weight_grams");
-      if (weightItem && weightItem.value) {
-        const weightGrams = parseFloat(String(weightItem.value).replace(/['"]/g, ""));
-        if (!isNaN(weightGrams) && weightGrams > 0) {
-          try {
-            let targetProductId = formData.get("productId");
-            if (!targetProductId) {
-              const fallbackField = payloadArray.find(item => item.ownerId);
-              if (fallbackField) targetProductId = fallbackField.ownerId;
-            }
-            
-            if (targetProductId) {
-              const productGid = `gid://shopify/Product/${targetProductId.split("/").pop()}`;
-              const variantQuery = await admin.graphql(
-                `#graphql
-                query getDefaultVariant($id: ID!) {
-                  product(id: $id) {
-                    variants(first: 1) {
-                      edges { node { id } }
-                    }
-                  }
-                }`,
-                { variables: { id: productGid } }
-              );
-              const variantData = await variantQuery.json();
-              const variantId = variantData?.data?.product?.variants?.edges?.[0]?.node?.id;
-              if (variantId) {
-                await admin.graphql(
-                  `#graphql
-                  mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
-                    productVariantsBulkUpdate(productId: $productId, variants: $variants) {
-                      userErrors { field message }
-                    }
-                  }`,
-                  { variables: { productId: productGid, variants: [{ id: variantId, inventoryItem: { measurement: { weight: { value: weightGrams / 28.3495, unit: "OUNCES" } } } }] } }
-                );
-                console.log("[saveMetafields] Variant weight updated:", weightGrams, "g →", weightGrams / 28.3495, "oz");
-              }
-            }
-          } catch (weightErr) {
-            console.warn("[saveMetafields] Variant weight update failed:", weightErr.message);
-          }
-        }
-      }
-
-Do not change anything else. Full file only. Do not truncate. Do not summarize.

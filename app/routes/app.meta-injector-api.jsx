@@ -226,49 +226,6 @@ export const action = async ({ request }) => {
         return data({ success: false, message: "Saved with errors: " + allErrors.map(e => e.field + " — " + e.message).join(" | "), errors: allErrors });
       }
 
-      // Update variant weight if weight_grams is in the payload
-      const weightItem = payloadArray.find(item => item.key === "weight_grams");
-      if (weightItem && weightItem.value) {
-        const weightGrams = parseFloat(String(weightItem.value).replace(/['"]/g, ""));
-        if (!isNaN(weightGrams) && weightGrams > 0) {
-          try {
-            const rawProductId = formData.get("productId");
-            if (!rawProductId) {
-              console.warn("[saveMetafields] Variant weight skipped: productId missing from formData.");
-              return;
-            }
-            const productGid = rawProductId.startsWith("gid://") ? rawProductId : `gid://shopify/Product/${rawProductId.split("/").pop()}`;
-            const variantQuery = await admin.graphql(
-              `#graphql
-              query getDefaultVariant($id: ID!) {
-                product(id: $id) {
-                  variants(first: 1) {
-                    edges { node { id } }
-                  }
-                }
-              }`,
-              { variables: { id: productGid } }
-            );
-            const variantData = await variantQuery.json();
-            const variantId = variantData?.data?.product?.variants?.edges?.[0]?.node?.id;
-            if (variantId) {
-              await admin.graphql(
-                `#graphql
-                mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
-                  productVariantsBulkUpdate(productId: $productId, variants: $variants) {
-                    userErrors { field message }
-                  }
-                }`,
-                { variables: { productId: productGid, variants: [{ id: variantId, inventoryItem: { measurement: { weight: { value: weightGrams / 28.3495, unit: "OUNCES" } } } }] } }
-              );
-              console.log("[saveMetafields] Variant weight updated:", weightGrams, "g →", weightGrams / 28.3495, "oz");
-            }
-          } catch (weightErr) {
-            console.warn("[saveMetafields] Variant weight update failed:", weightErr.message);
-          }
-        }
-      }
-
       console.log("SAVE SUCCESS: All metafields locked in.");
       return data({ intent: "saveMetafields", success: true, message: "All metafields locked in." });
     } catch (error) {
@@ -312,17 +269,17 @@ export const action = async ({ request }) => {
     const lookupResult = await lookupResponse.json();
     const allMeta = lookupResult?.data?.product?.metafields?.edges || [];
 
-    const malformedKeys = [
-      "cut_type",
-      "crystalSystem",
-      "geologicalEra",
-      "mineralClass",
-      "rockComposition",
-      "rockFormation"
-    ];
+    const malformedKeys = ["cut_type", "cut_and_shape"];
     const toDelete = allMeta
       .map(e => e.node)
-      .filter(m => malformedKeys.includes(m.key))
+      .filter(m => {
+        const rawKey = `${m.namespace}.${m.key}`;
+        const combined = `${m.namespace}${m.key}`;
+        return (
+          malformedKeys.some(k => combined.includes(`=${k}`)) ||
+          malformedKeys.some(k => m.key === k && m.namespace !== "custom")
+        );
+      })
       .map(m => m.id);
 
     if (toDelete.length === 0) {
@@ -808,43 +765,3 @@ export const action = async ({ request }) => {
   }
 
 };
-Below is the full contents of app.meta-injector.inspector.jsx from a Shopify Remix app called Meta Injector for Rockhound Studio.
-
-Make exactly ONE change. Do not change anything else. Do not restructure the file.
-
-Find this exact sequence inside handleSaveFullMeta:
-
-    Object.entries(fullMetaState).forEach(([key, value]) => {
-      const originalValue = originalMetaRef.current[key] || "";
-      const newValue = value || "";
-
-      if (originalValue !== newValue && newValue !== "See Shopify metaobject") {
-        changes.push({
-          namespace: getNamespaceForKey(key),
-          key: key.replace(/-/g, "_"),
-          value: newValue,
-          type: "single_line_text_field"
-        });
-      }
-    });
-
-Replace it with:
-
-    const ALWAYS_INCLUDE = ["seo_title", "weight_grams"];
-
-    Object.entries(fullMetaState).forEach(([key, value]) => {
-      const originalValue = originalMetaRef.current[key] || "";
-      const newValue = value || "";
-
-      const alwaysInclude = ALWAYS_INCLUDE.includes(key) && newValue !== "";
-      if ((alwaysInclude || originalValue !== newValue) && newValue !== "See Shopify metaobject") {
-        changes.push({
-          namespace: getNamespaceForKey(key),
-          key: key.replace(/-/g, "_"),
-          value: newValue,
-          type: "single_line_text_field"
-        });
-      }
-    });
-
-Do not change anything else. Full file only. Do not truncate. Do not summarize.
