@@ -584,7 +584,7 @@ export const action = async ({ request }) => {
       const ignoreKeys = [
         "intent", "mediaUrlsJson", "descriptionHtml", "productType", "status", "pieces", "photoFiles",
         "photoPreviewUrls", "photos", "imageBase64", "imageMimeType", "stagedResourceUrls", "scanError",
-        "scanToken", "isUploading", "id", "generated_description", "price", "seo_title", "collectionLocation",
+        "scanToken", "isUploading", "id", "generated_description", "price", "collectionLocation",
         "age_group", "target_gender", "condition", "shipping_weight_oz", "collection_name", "collection_location"
       ];
 
@@ -596,6 +596,18 @@ export const action = async ({ request }) => {
            if (key === "treated" || key === "is_one_of_a_kind") {
              if (value === true || value === "true") value = "Yes";
              else if (value === false || value === "false") value = "No";
+           }
+
+           if (key === "seo_title") {
+             if (value && String(value).trim() !== "") {
+               rawMetafields.push({
+                 key: "title_tag",
+                 namespace: "global",
+                 value: String(value).trim(),
+                 type: "single_line_text_field"
+               });
+             }
+             return;
            }
 
            rawMetafields.push({
