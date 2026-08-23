@@ -232,7 +232,12 @@ export const action = async ({ request }) => {
         const weightGrams = parseFloat(String(weightItem.value).replace(/['"]/g, ""));
         if (!isNaN(weightGrams) && weightGrams > 0) {
           try {
-            const productGid = `gid://shopify/Product/${formData.get("productId").split("/").pop()}`;
+            const rawProductId = formData.get("productId");
+            if (!rawProductId) {
+              console.warn("[saveMetafields] Variant weight skipped: productId missing from formData.");
+              return;
+            }
+            const productGid = rawProductId.startsWith("gid://") ? rawProductId : `gid://shopify/Product/${rawProductId.split("/").pop()}`;
             const variantQuery = await admin.graphql(
               `#graphql
               query getDefaultVariant($id: ID!) {
@@ -803,3 +808,43 @@ export const action = async ({ request }) => {
   }
 
 };
+Below is the full contents of app.meta-injector.inspector.jsx from a Shopify Remix app called Meta Injector for Rockhound Studio.
+
+Make exactly ONE change. Do not change anything else. Do not restructure the file.
+
+Find this exact sequence inside handleSaveFullMeta:
+
+    Object.entries(fullMetaState).forEach(([key, value]) => {
+      const originalValue = originalMetaRef.current[key] || "";
+      const newValue = value || "";
+
+      if (originalValue !== newValue && newValue !== "See Shopify metaobject") {
+        changes.push({
+          namespace: getNamespaceForKey(key),
+          key: key.replace(/-/g, "_"),
+          value: newValue,
+          type: "single_line_text_field"
+        });
+      }
+    });
+
+Replace it with:
+
+    const ALWAYS_INCLUDE = ["seo_title", "weight_grams"];
+
+    Object.entries(fullMetaState).forEach(([key, value]) => {
+      const originalValue = originalMetaRef.current[key] || "";
+      const newValue = value || "";
+
+      const alwaysInclude = ALWAYS_INCLUDE.includes(key) && newValue !== "";
+      if ((alwaysInclude || originalValue !== newValue) && newValue !== "See Shopify metaobject") {
+        changes.push({
+          namespace: getNamespaceForKey(key),
+          key: key.replace(/-/g, "_"),
+          value: newValue,
+          type: "single_line_text_field"
+        });
+      }
+    });
+
+Do not change anything else. Full file only. Do not truncate. Do not summarize.
