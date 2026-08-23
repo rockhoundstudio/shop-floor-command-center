@@ -362,58 +362,21 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher }) {
     setTab2StatusMessage("");
     setTab2ErrorMessage("");
 
-    const product = products.find(p => p.id === selectedProductId) || {};
-    const title = product.title || "";
-    const description = product.descriptionHtml || product.description || "";
-    
-    // Attempt to extract image URL. If your product query doesn't pull images, this will be blank.
-    let imageUrl = "";
-    if (product.images && product.images.edges && product.images.edges.length > 0) {
-        imageUrl = product.images.edges[0].node.url || "";
-    }
-
-    const promptText = `You are extracting structured product data for a gemstone jewelry store. Parse the following product title, description, and image and return a JSON object with these exact keys:
-
-piece_name — the stone name after the last dash in the title
-primary_medium — the stone type from the title (first segment before first dash)
-collection_location — the location from the title (second segment between dashes)
-color — primary color observed in the image, plain text
-secondary_colors — any secondary colors observed in the image, plain text
-cut_and_shape — the cabochon shape, from image and description
-surface_finish — polish level from description or image
-character_marks — any inclusions, matrix, anomalies, natural flaws observed in image or description, plain text
-dimensions_mm — dimensions from description, plain text
-weight_grams — weight if mentioned, plain text or empty string
-origin_story — the full narrative story paragraphs from the description, preserve line breaks
-collection_name — the named collection if mentioned
-is_one_of_a_kind — Yes or No based on description
-treated — No if description says natural or untreated, Yes if treated
-found_object — Yes if purchased or found, No if raw material
-bail_included — Yes if bail or wrap mentioned, No if not
-handcrafted_by — always Bob & Janyce, Rockhound Studio
-
-Return only valid JSON. No markdown. No explanation.
-
-Title: ${title}
-Description: ${description}
-Image URL: ${imageUrl}`;
+    const stoneFamily = fullMetaState.stone_family || "";
+    const originHandle = fullMetaState.origin_handle || fullMetaState.origin_page_handle || "";
 
     const formData = new FormData();
     formData.append("intent", "tab2AutoFill");
     formData.append("productId", selectedProductId);
-    formData.append("productTitle", title);
-    formData.append("prompt", promptText);
-    formData.append("imageUrl", imageUrl);
-    formData.append("description", product?.descriptionHtml?.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim() || "");
-    formData.append("descriptionHtml", product.descriptionHtml || "");
-    formData.append("promptStyle", promptStyle);
+    formData.append("stone_family", stoneFamily);
+    formData.append("origin_handle", originHandle);
 
     autoFillFetcher.submit(
       formData,
       { method: "post", action: "/app/meta-injector-autofill" }
     );
-    console.log("Tab2 AutoFill imageUrl sent:", imageUrl);
-  }, [selectedProductId, autoFillFetcher, products, promptStyle]);
+    console.log("[Tab2 AutoFill] stone_family:", stoneFamily, "origin_handle:", originHandle);
+  }, [selectedProductId, autoFillFetcher, fullMetaState]);
 
   const handleInject = useCallback(() => {
     if (!selectedProductId) return;
@@ -873,7 +836,7 @@ Image URL: ${imageUrl}`;
                 <div style={{ minHeight: "54px", flexGrow: 1 }}>
                   <Button 
                     icon={MagicIcon} 
-                    onClick={handleAutoFill}
+                    onClick={handleTab2AutoFill}
                     accessibilityLabel="Run Auto-Fill"
                     size="large"
                     fullWidth
