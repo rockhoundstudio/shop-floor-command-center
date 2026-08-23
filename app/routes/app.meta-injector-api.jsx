@@ -226,6 +226,44 @@ export const action = async ({ request }) => {
         return data({ success: false, message: "Saved with errors: " + allErrors.map(e => e.field + " — " + e.message).join(" | "), errors: allErrors });
       }
 
+      // Update variant weight if weight_grams is in the payload
+      const weightItem = payloadArray.find(item => item.key === "weight_grams");
+      if (weightItem && weightItem.value) {
+        const weightGrams = parseFloat(String(weightItem.value).replace(/['"]/g, ""));
+        if (!isNaN(weightGrams) && weightGrams > 0) {
+          try {
+            const productGid = `gid://shopify/Product/${formData.get("productId").split("/").pop()}`;
+            const variantQuery = await admin.graphql(
+              `#graphql
+              query getDefaultVariant($id: ID!) {
+                product(id: $id) {
+                  variants(first: 1) {
+                    edges { node { id } }
+                  }
+                }
+              }`,
+              { variables: { id: productGid } }
+            );
+            const variantData = await variantQuery.json();
+            const variantId = variantData?.data?.product?.variants?.edges?.[0]?.node?.id;
+            if (variantId) {
+              await admin.graphql(
+                `#graphql
+                mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+                  productVariantsBulkUpdate(productId: $productId, variants: $variants) {
+                    userErrors { field message }
+                  }
+                }`,
+                { variables: { productId: productGid, variants: [{ id: variantId, inventoryItem: { measurement: { weight: { value: weightGrams / 28.3495, unit: "OUNCES" } } } }] } }
+              );
+              console.log("[saveMetafields] Variant weight updated:", weightGrams, "g →", weightGrams / 28.3495, "oz");
+            }
+          } catch (weightErr) {
+            console.warn("[saveMetafields] Variant weight update failed:", weightErr.message);
+          }
+        }
+      }
+
       console.log("SAVE SUCCESS: All metafields locked in.");
       return data({ intent: "saveMetafields", success: true, message: "All metafields locked in." });
     } catch (error) {
@@ -269,17 +307,17 @@ export const action = async ({ request }) => {
     const lookupResult = await lookupResponse.json();
     const allMeta = lookupResult?.data?.product?.metafields?.edges || [];
 
-    const malformedKeys = ["cut_type", "cut_and_shape"];
+    const malformedKeys = [
+      "cut_type",
+      "crystalSystem",
+      "geologicalEra",
+      "mineralClass",
+      "rockComposition",
+      "rockFormation"
+    ];
     const toDelete = allMeta
       .map(e => e.node)
-      .filter(m => {
-        const rawKey = `${m.namespace}.${m.key}`;
-        const combined = `${m.namespace}${m.key}`;
-        return (
-          malformedKeys.some(k => combined.includes(`=${k}`)) ||
-          malformedKeys.some(k => m.key === k && m.namespace !== "custom")
-        );
-      })
+      .filter(m => malformedKeys.includes(m.key))
       .map(m => m.id);
 
     if (toDelete.length === 0) {
