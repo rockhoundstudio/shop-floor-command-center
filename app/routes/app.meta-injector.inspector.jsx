@@ -507,7 +507,7 @@ Image URL: ${imageUrl}`;
 
       const isAutoFill = autoFillFetcher.data.intent === "autoFill";
       const isSmartAutoFill = autoFillFetcher.data.intent === "smartAutoFill";
-      const isTab2AutoFill = autoFillFetcher.data.intent === "tab2AutoFill";
+      const isTab2AutoFill = autoFillFetcher.data?.tab2Data !== undefined;
       
       const isSuccess = autoFillFetcher.data.success === true;
       const isError = autoFillFetcher.data.success === false;
@@ -590,38 +590,39 @@ Image URL: ${imageUrl}`;
       }
 
       if (isTab2AutoFill) {
-        if (isSuccess && autoFillFetcher.data.fields) {
+        const tab2Data = autoFillFetcher.data.tab2Data || {};
+        const hasTab2Data = Object.keys(tab2Data).length > 0;
+
+        if (hasTab2Data) {
             setFullMetaState(prev => {
                 const updatedState = { ...prev };
-                Object.entries(autoFillFetcher.data.fields).forEach(([key, val]) => {
-                    const hasNewValue = val !== undefined && val !== null && val.toString().trim() !== "";
-                    // Only fill if currently empty
-                    const ALWAYS_OVERWRITE_TAB2 = ["color", "cut_and_shape", "stone_family", "surface_finish", "handcrafted_by", "treated", "is_one_of_a_kind"];
-                    const currentlyEmpty = !updatedState[key] || updatedState[key].trim() === "";
+                const ALWAYS_OVERWRITE_TAB2 = ["stone_family", "surface_finish", "handcrafted_by", "treated", "is_one_of_a_kind", "mohs_hardness", "luster", "fracture_pattern", "cleavage", "specific_gravity", "diaphaneity", "mineral_class", "crystal_system", "rock_composition", "rock_formation", "geological_era", "geological_age"];
+
+                Object.entries(tab2Data).forEach(([key, val]) => {
+                    const hasNewValue = val !== undefined && val !== null && val.toString().trim() !== "" && val !== "See Shopify metaobject";
+                    const currentlyEmpty = !updatedState[key] || updatedState[key].toString().trim() === "";
                     const shouldOverwrite = ALWAYS_OVERWRITE_TAB2.includes(key);
 
-                    if (hasNewValue && (currentlyEmpty || shouldOverwrite) && val !== "See Shopify metaobject") {
+                    if (hasNewValue && (currentlyEmpty || shouldOverwrite)) {
                       updatedState[key] = val;
                     }
                 });
-                
+
                 if (productTitle) {
                   updatedState.piece_name = productTitle.includes(" — ") ? productTitle.split(" — ").pop().trim() : productTitle;
                 }
-                
+
                 return updatedState;
             });
             setTab2StatusMessage("Auto-Fill complete — review fields before saving");
-            
-            // Show Polaris Toast for Tab 2 Success
+
             if (window.shopify && window.shopify.toast) {
               window.shopify.toast.show("Auto-Fill complete!");
             }
 
-        } else if (isError) {
-            setTab2ErrorMessage(autoFillFetcher.data.error || "Gemini extraction failed.");
-            
-            // Show Polaris Toast for Tab 2 Failure
+        } else {
+            setTab2ErrorMessage("Auto-Fill returned no data — check stone_family and origin_handle.");
+
             if (window.shopify && window.shopify.toast) {
               window.shopify.toast.show("Auto-Fill failed", { isError: true });
             }
