@@ -301,6 +301,29 @@ export const action = async ({ request }) => {
       }
     }
 
+    if (intent === "tab2AutoFill") {
+      const stone_family = body.get("stone_family") || "";
+      const origin_handle = body.get("origin_handle") || "";
+      const productId = body.get("productId") || "";
+      try {
+        const geoFields = await getGeoData(admin, stone_family);
+        const { pagesList } = await getLiveStoreDirectory(admin);
+        const matchedPage = pagesList.find(p => p.url.includes(origin_handle));
+        const origin_story = matchedPage ? matchedPage.excerpt : "";
+        return Response.json({
+          tab2Data: {
+            ...geoFields,
+            origin_story,
+            stone_family,
+            origin_handle
+          }
+        });
+      } catch (err) {
+        console.error("[tab2AutoFill] crashed:", err.message);
+        return Response.json({ tab2Data: {} });
+      }
+    }
+
     // ==========================================
     // INTENT: TITLE PARSE
     // ==========================================
