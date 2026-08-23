@@ -144,11 +144,11 @@ export const action = async ({ request }) => {
         stone_shape: "single_line_text_field",
         seo_title: "single_line_text_field",
         color: "single_line_text_field",
-        weight_grams: "number_decimal",
-        specific_gravity: "number_decimal",
-        mohs_hardness: "number_decimal",
-        shipping_weight_oz: "number_decimal",
-        price: "number_decimal"
+        weight_grams: "single_line_text_field",
+        specific_gravity: "single_line_text_field",
+        mohs_hardness: "single_line_text_field",
+        shipping_weight_oz: "single_line_text_field",
+        price: "single_line_text_field"
       };
 
       const setMetafields = payloadArray
@@ -655,18 +655,18 @@ export const action = async ({ request }) => {
               stone_shape: "single_line_text_field",
               seo_title: "single_line_text_field",
               color: "single_line_text_field",
-              weight_grams: "number_decimal",
-              specific_gravity: "number_decimal",
-              mohs_hardness: "number_decimal",
-              shipping_weight_oz: "number_decimal",
-              price: "number_decimal"
+              weight_grams: "single_line_text_field",
+              specific_gravity: "single_line_text_field",
+              mohs_hardness: "single_line_text_field",
+              shipping_weight_oz: "single_line_text_field",
+              price: "single_line_text_field"
             };
 
             const metafieldsInput = rawMetafields.map(item => {
                let resolvedType = TYPE_MAP[item.key] || item.type || "single_line_text_field";
                let resolvedValue = String(item.value);
 
-               if (resolvedType === "number_decimal") {
+               if (resolvedType === "single_line_text_field") {
                  let parsedNum = parseFloat(String(item.value).replace(/["']/g, ""));
                  resolvedValue = isNaN(parsedNum) ? "0.0" : String(parsedNum);
                }
