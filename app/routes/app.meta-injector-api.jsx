@@ -440,10 +440,7 @@ export const action = async ({ request }) => {
         title: title,
         descriptionHtml: descriptionHtml,
         productType: productType,
-        status: status,
-        seo: {
-          title: seoTitle
-        }
+        status: status
       };
 
       const createResponse = await admin.graphql(
@@ -596,6 +593,11 @@ export const action = async ({ request }) => {
            let finalKey = key;
            (key === "specificGravity") && (finalKey = "specific_gravity");
 
+           if (key === "treated" || key === "is_one_of_a_kind") {
+             if (value === true || value === "true") value = "Yes";
+             else if (value === false || value === "false") value = "No";
+           }
+
            rawMetafields.push({
              key: finalKey,
              value: value,
@@ -635,6 +637,16 @@ export const action = async ({ request }) => {
           key: "custom_label_0",
           type: "single_line_text_field",
           value: String(combinedFields.google_product_category)
+        });
+      }
+
+      if (seoTitle) {
+        googleMetafields.push({
+          ownerId: productId,
+          namespace: "global",
+          key: "title_tag",
+          type: "single_line_text_field",
+          value: String(seoTitle)
         });
       }
 
