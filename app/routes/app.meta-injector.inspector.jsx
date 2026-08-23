@@ -189,6 +189,52 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher }) {
       });
     }
 
+  // ==========================================
+  // BLOCK 1 — Normalize camelCase geo keys to snake_case
+  // ==========================================
+  const CAMEL_TO_SNAKE = {
+    crystalSystem: "crystal_system",
+    geologicalEra: "geological_era",
+    mineralClass: "mineral_class",
+    rockComposition: "rock_composition",
+    rockFormation: "rock_formation",
+    geologicalAge: "geological_age",
+    fracture: "fracture_pattern",
+  };
+  Object.entries(CAMEL_TO_SNAKE).forEach(([camel, snake]) => {
+    if (newFullForm[camel] !== undefined) {
+      if (!newFullForm[snake]) newFullForm[snake] = newFullForm[camel];
+      delete newFullForm[camel];
+    }
+    if (newForm[camel] !== undefined) {
+      if (!newForm[snake]) newForm[snake] = newForm[camel];
+      delete newForm[camel];
+    }
+  });
+
+  // ==========================================
+  // BLOCK 2 — Smart defaults for missing Google Machine fields
+  // ==========================================
+  if (!newFullForm.target_gender) newFullForm.target_gender = "Unisex";
+  if (!newFullForm.age_group) newFullForm.age_group = "adult";
+  if (!newFullForm.condition) newFullForm.condition = "new";
+  if (!newFullForm.handcrafted_by) newFullForm.handcrafted_by = "Bob & Janyce, Rockhound Studio";
+  if (!newForm.target_gender) newForm.target_gender = "Unisex";
+  if (!newForm.age_group) newForm.age_group = "adult";
+  if (!newForm.condition) newForm.condition = "new";
+  if (!newForm.handcrafted_by) newForm.handcrafted_by = "Bob & Janyce, Rockhound Studio";
+
+  // ==========================================
+  // BLOCK 3 — Calculate shipping_weight_oz from weight_grams if missing
+  // ==========================================
+  if (!newFullForm.shipping_weight_oz && newFullForm.weight_grams) {
+    const grams = parseFloat(newFullForm.weight_grams);
+    if (!isNaN(grams) && grams > 0) {
+      newFullForm.shipping_weight_oz = (grams / 28.3495).toFixed(2);
+      newForm.shipping_weight_oz = newFullForm.shipping_weight_oz;
+    }
+  }
+
     if (!newForm.origin_story && newForm.stone_story) {
       newForm.origin_story = newForm.stone_story;
     }
