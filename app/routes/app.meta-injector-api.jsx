@@ -411,6 +411,7 @@ export const action = async ({ request }) => {
           totalScanned++;
           const productNode = productEdge.node;
           const allMeta = productNode.metafields?.edges || [];
+          console.log("METAFIELD KEYS for", productNode.id, ":", allMeta.map(m => m.node.namespace + "." + m.node.key));
 
           const toDelete = allMeta
             .map(e => e.node)
