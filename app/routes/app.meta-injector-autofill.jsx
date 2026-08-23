@@ -323,7 +323,7 @@ export const action = async ({ request }) => {
           try {
             const datePrompt = `Read the following rockhound field story and extract the collection date. Return ONLY the date in this format: "Month YYYY" (example: "June 2024"). If no date is found, return an empty string. Do not explain. Do not add punctuation.\n\nStory:\n${origin_story}`;
             const dateRes = await fetch(
-              "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=" + process.env.GEMINI_API_KEY,
+              "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY,
               {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
