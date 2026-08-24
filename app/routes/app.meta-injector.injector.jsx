@@ -564,21 +564,18 @@ export function NewProductIntakeTab({ fetcher }) {
         if (geo.geoSource === "none") { window.shopify?.toast?.show("Not in geo database   enter manually", { duration: 3000 }); return; }
         setSharedFields(prev => {
           const updated = { ...prev };
-          (geo.hardness !== undefined) && (updated.hardness = geo.hardness);
-          (geo.luster !== undefined) && (updated.luster = geo.luster);
-          (geo.fracture !== undefined) && (updated.fracture = geo.fracture);
-          (geo.cleavage !== undefined) && (updated.cleavage = geo.cleavage);
-          (geo.specificGravity !== undefined) && (updated.specificGravity = geo.specificGravity);
-          (geo.diaphaneity !== undefined) && (updated.diaphaneity = geo.diaphaneity);
-          (geo.crystalSystem !== undefined) && (updated.crystalSystem = geo.crystalSystem);
-          (geo.geologicalEra !== undefined) && (updated.geologicalEra = geo.geologicalEra);
-          (geo.mineralClass !== undefined) && (updated.mineralClass = geo.mineralClass);
-          (geo.rockComposition !== undefined) && (updated.rockComposition = geo.rockComposition);
-          (geo.rockFormation !== undefined) && (updated.rockFormation = geo.rockFormation);
-          (geo.mohs_hardness !== undefined) && (updated.mohs_hardness = geo.mohs_hardness);
-          (geo.fracture_pattern !== undefined) && (updated.fracture_pattern = geo.fracture_pattern);
-          (geo.specific_gravity !== undefined) && (updated.specific_gravity = geo.specific_gravity);
-          (geo.geological_age !== undefined) && (updated.geological_age = geo.geological_age);
+          updated.mohs_hardness = geo.mohs_hardness ?? geo.hardness;
+          updated.luster = geo.luster;
+          updated.fracture_pattern = geo.fracture_pattern ?? geo.fracture;
+          updated.cleavage = geo.cleavage;
+          updated.specific_gravity = geo.specific_gravity ?? geo.specificGravity;
+          updated.diaphaneity = geo.diaphaneity;
+          updated.crystal_system = geo.crystal_system ?? geo.crystalSystem;
+          updated.geological_era = geo.geological_era ?? geo.geologicalEra;
+          updated.geological_age = geo.geological_age;
+          updated.mineral_class = geo.mineral_class ?? geo.mineralClass;
+          updated.rock_composition = geo.rock_composition ?? geo.rockComposition;
+          updated.rock_formation = geo.rock_formation ?? geo.rockFormation;
           return updated;
         });
         setGeoToast(true);
@@ -605,17 +602,13 @@ export function NewProductIntakeTab({ fetcher }) {
         collectionLocation: resolvedCollectionLoc,
         origin_handle: parsed.origin_handle || prev.origin_handle, 
         origin_story: parsed.origin_story || prev.origin_story,
-        mohs_hardness: parsed.mohs_hardness || prev.mohs_hardness,
-        luster: parsed.luster || prev.luster,
-        fracture: parsed.fracture || prev.fracture,
-        cleavage: parsed.cleavage || prev.cleavage,
-        specificGravity: parsed.specific_gravity || prev.specificGravity,
+        specific_gravity: parsed.specific_gravity || prev.specific_gravity,
         diaphaneity: parsed.diaphaneity || prev.diaphaneity,
-        crystalSystem: parsed.crystalSystem || prev.crystalSystem,
-        geologicalEra: parsed.geologicalEra || prev.geologicalEra,
-        mineralClass: parsed.mineralClass || prev.mineralClass,
-        rockComposition: parsed.rock_composition || prev.rockComposition,
-        rockFormation: parsed.rock_formation || prev.rockFormation,
+        crystal_system: parsed.crystal_system || prev.crystal_system,
+        geological_era: parsed.geological_era || prev.geological_era,
+        mineral_class: parsed.mineral_class || prev.mineral_class,
+        rock_composition: parsed.rock_composition || prev.rock_composition,
+        rock_formation: parsed.rock_formation || prev.rock_formation,
         geological_age: parsed.geological_age || prev.geological_age,
         fracture_pattern: parsed.fracture_pattern || prev.fracture_pattern,
         collection_story: parsed.collection_story || prev.collection_story,
@@ -631,13 +624,13 @@ export function NewProductIntakeTab({ fetcher }) {
         ...(parsed.luster && { luster: parsed.luster }),
         ...(parsed.fracture && { fracture: parsed.fracture }),
         ...(parsed.cleavage && { cleavage: parsed.cleavage }),
-        ...(parsed.specificGravity && { specificGravity: parsed.specificGravity }),
+        ...(parsed.specific_gravity && { specific_gravity: parsed.specific_gravity }),
         ...(parsed.diaphaneity && { diaphaneity: parsed.diaphaneity }),
-        ...(parsed.crystalSystem && { crystalSystem: parsed.crystalSystem }),
-        ...(parsed.geologicalEra && { geologicalEra: parsed.geologicalEra }),
-        ...(parsed.mineralClass && { mineralClass: parsed.mineralClass }),
-        ...(parsed.rockComposition && { rockComposition: parsed.rockComposition }),
-        ...(parsed.rockFormation && { rockFormation: parsed.rockFormation }),
+        ...(parsed.crystal_system && { crystal_system: parsed.crystal_system }),
+        ...(parsed.geological_era && { geological_era: parsed.geological_era }),
+        ...(parsed.mineral_class && { mineral_class: parsed.mineral_class }),
+        ...(parsed.rock_composition && { rock_composition: parsed.rock_composition }),
+        ...(parsed.rock_formation && { rock_formation: parsed.rock_formation }),
       };
     });
 
@@ -717,11 +710,11 @@ export function NewProductIntakeTab({ fetcher }) {
     "cleavage",
     "specific_gravity",
     "diaphaneity",
-    "crystalSystem",
-    "geologicalEra",
-    "mineralClass",
-    "rockComposition",
-    "rockFormation",
+    "crystal_system",
+    "geological_era",
+    "mineral_class",
+    "rock_composition",
+    "rock_formation",
     "geological_age",
     "age_group",
     "target_gender",
@@ -1382,12 +1375,12 @@ export function NewProductIntakeTab({ fetcher }) {
             <div style={{ background: "#333333", padding: "6px 12px", borderRadius: "4px", width: "100%", fontWeight: "bold", color: "#ffffff", fontSize: "12px", marginTop: "8px" }}>SECTION 4 — Geo Vault Fields</div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
               {renderPanelRow("Mohs Hardness", "mohs_hardness", getVal("mohs_hardness", sharedFields.mohs_hardness))}
-              {renderPanelRow("Specific Gravity", "specific_gravity", getVal("specific_gravity", sharedFields.specificGravity || sharedFields.specific_gravity))}
-              {renderPanelRow("Mineral Class", "mineral_class", getVal("mineral_class", sharedFields.mineralClass))}
-              {renderPanelRow("Crystal System", "crystal_system", getVal("crystal_system", sharedFields.crystalSystem))}
-              {renderPanelRow("Rock Composition", "rock_composition", getVal("rock_composition", sharedFields.rockComposition))}
-              {renderPanelRow("Rock Formation", "rock_formation", getVal("rock_formation", sharedFields.rockFormation))}
-              {renderPanelRow("Geological Era", "geological_era", getVal("geological_era", sharedFields.geologicalEra))}
+              {renderPanelRow("Specific Gravity", "specific_gravity", getVal("specific_gravity", sharedFields.specific_gravity))}
+              {renderPanelRow("Mineral Class", "mineral_class", getVal("mineral_class", sharedFields.mineral_class))}
+              {renderPanelRow("Crystal System", "crystal_system", getVal("crystal_system", sharedFields.crystal_system))}
+              {renderPanelRow("Rock Composition", "rock_composition", getVal("rock_composition", sharedFields.rock_composition))}
+              {renderPanelRow("Rock Formation", "rock_formation", getVal("rock_formation", sharedFields.rock_formation))}
+              {renderPanelRow("Geological Era", "geological_era", getVal("geological_era", sharedFields.geological_era))}
               {renderPanelRow("Geological Age", "geological_age", getVal("geological_age", sharedFields.geological_age))}
               {renderPanelRow("Fracture Pattern", "fracture_pattern", getVal("fracture_pattern", sharedFields.fracture_pattern))}
               {renderPanelRow("Diaphaneity", "diaphaneity", getVal("diaphaneity", sharedFields.diaphaneity))}
