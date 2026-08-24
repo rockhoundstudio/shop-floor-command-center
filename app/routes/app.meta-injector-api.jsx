@@ -175,16 +175,6 @@ export const action = async ({ request }) => {
             else if (resolvedValue === "false") resolvedValue = "No";
           }
 
-          if (item.key === "seo_title") {
-            return {
-              ownerId: resolvedId,
-              namespace: "global",
-              key: "title_tag",
-              type: "single_line_text_field",
-              value: resolvedValue
-            };
-          }
-
           return {
             ownerId: resolvedId,
             namespace: item.namespace || "custom",
