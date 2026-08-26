@@ -1,4 +1,4 @@
-import { data } from "react-router";
+﻿import { data } from "react-router";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 
@@ -35,7 +35,7 @@ export const action = async ({ request }) => {
   console.log("=================================");
 
   // ==========================================
-  // 🟢 INTENT 1: AUTO-FILL (Mindat & Cache)
+  // ðŸŸ¢ INTENT 1: AUTO-FILL (Mindat & Cache)
   // ==========================================
   if (intent === "auto_fill_single") {
     const title = formData.get("title");
@@ -58,7 +58,7 @@ export const action = async ({ request }) => {
         let mohsVal = "Varies";
         (stoneName === "Jasper" || stoneName === "Agate") && (mohsVal = "6.5 - 7");
 
-        const titleSegments = (title || "").split(/\s+[—–-]\s+/);
+        const titleSegments = (title || "").split(/\s+[â€”â€“-]\s+/);
         const pieceName = titleSegments.length >= 3 ? titleSegments[titleSegments.length - 1].trim() : "";
         const lapidaryData = {
           "mineral_class": "Silicate",
@@ -66,7 +66,7 @@ export const action = async ({ request }) => {
           "crystal_system": "Trigonal",
           "primary_color": "Varies by specimen",
           "stone_story": `A beautiful piece of natural ${stoneName}.`,
-          "title_tag": `${stoneName}${pieceName ? ` — ${pieceName}` : ""} — One-of-a-Kind Rockhound Studio`,
+          "title_tag": `${stoneName}${pieceName ? ` â€” ${pieceName}` : ""} â€” One-of-a-Kind Rockhound Studio`,
           "description_tag": `Natural, one-of-a-kind ${stoneName} handcrafted by Bob and Janyce. Honest flaws, authentic character, and zero workshop fluff.`,
           "google_product_category": "Apparel & Accessories > Jewelry",
           "target_gender": "Unisex",
@@ -107,7 +107,7 @@ export const action = async ({ request }) => {
   }
 
   // ==========================================
-  // 🔵 INTENT 2: LOCK DATA TO SHOPIFY
+  // ðŸ”µ INTENT 2: LOCK DATA TO SHOPIFY
   // ==========================================
   if (intent === "saveMetafields") {
     try {
@@ -225,7 +225,7 @@ export const action = async ({ request }) => {
 
       if (allErrors.length > 0) {
         console.log("SAVE ERRORS:", JSON.stringify(allErrors, null, 2));
-        return data({ success: false, message: "Saved with errors: " + allErrors.map(e => e.field + " — " + e.message).join(" | "), errors: allErrors });
+        return data({ success: false, message: "Saved with errors: " + allErrors.map(e => e.field + " â€” " + e.message).join(" | "), errors: allErrors });
       }
 
       // Update variant weight if weight_grams is in the payload
@@ -265,7 +265,7 @@ export const action = async ({ request }) => {
                   }`,
                   { variables: { productId: productGid, variants: [{ id: variantId, inventoryItem: { measurement: { weight: { value: weightGrams / 28.3495, unit: "OUNCES" } } } }] } }
                 );
-                console.log("[saveMetafields] Variant weight updated:", weightGrams, "g →", weightGrams / 28.3495, "oz");
+                console.log("[saveMetafields] Variant weight updated:", weightGrams, "g â†’", weightGrams / 28.3495, "oz");
               }
             }
           } catch (weightErr) {
@@ -283,7 +283,7 @@ export const action = async ({ request }) => {
   }
 
   // ==========================================
-  // 🔴 INTENT 3: CLEAN MALFORMED KEYS
+  // ðŸ”´ INTENT 3: CLEAN MALFORMED KEYS
   // ==========================================
   if (intent === "cleanMalformedKeys") {
     const productId = formData.get("productId");
@@ -295,7 +295,7 @@ export const action = async ({ request }) => {
     let resolvedId = `gid://shopify/Product/${productId}`;
     (productId.startsWith("gid://")) && (resolvedId = productId);
 
-    // Step 1 — Find the malformed metafield IDs
+    // Step 1 â€” Find the malformed metafield IDs
     const lookupResponse = await admin.graphql(
       `#graphql
       query getMetafields($ownerId: ID!) {
@@ -336,7 +336,7 @@ export const action = async ({ request }) => {
       return data({ success: true, message: "No malformed keys found. Already clean." });
     }
 
-    // Step 2 — Delete them
+    // Step 2 â€” Delete them
     const deleteResponse = await admin.graphql(
       `#graphql
       mutation metafieldsDelete($metafields: [MetafieldIdentifierInput!]!) {
@@ -368,7 +368,7 @@ export const action = async ({ request }) => {
   }
 
   // ==========================================
-  // 🔴 INTENT 3.5: CLEAN ALL CAMEL KEYS
+  // ðŸ”´ INTENT 3.5: CLEAN ALL CAMEL KEYS
   // ==========================================
   if (intent === "cleanAllCamelKeys") {
     try {
@@ -581,7 +581,7 @@ export const action = async ({ request }) => {
 
       const title = payload.title && !payload.title.includes("Unknown")
         ? payload.title
-        : `${stoneFamily} — ${originLocation} — ${pieceName}`;
+        : `${stoneFamily} â€” ${originLocation} â€” ${pieceName}`;
       const descriptionHtml = payload.descriptionHtml || piece.generated_description || piece.descriptionHtml || "";
       const price = String(payload.price || piece.price || "0.00");
       const productType = payload.productType || "Wearable Art";
@@ -590,7 +590,7 @@ export const action = async ({ request }) => {
       const allUserErrors = [];
 
       // Step 1: Create Product (returning default variant ID)
-      const seoTitle = payload.seo_title || `${stoneFamily} — ${pieceName} — One-of-a-Kind Rockhound Studio`;
+      const seoTitle = payload.seo_title || `${stoneFamily} â€” ${pieceName} â€” One-of-a-Kind Rockhound Studio`;
       const productInput = {
         title: title,
         descriptionHtml: descriptionHtml,
@@ -636,7 +636,7 @@ export const action = async ({ request }) => {
       const productHandle = createdProduct.handle;
       const defaultVariantId = createdProduct.variants?.edges?.[0]?.node?.id;
 
-      // 🔵 INJECT SEO TITLE HERE
+      // ðŸ”µ INJECT SEO TITLE HERE
       if (seoTitle) {
         try {
           const seoResponse = await admin.graphql(
@@ -794,7 +794,7 @@ export const action = async ({ request }) => {
         }
       });
 
-      // Populate separate google namespace array if present — write to the VARIANT level
+      // Populate separate google namespace array if present â€” write to the VARIANT level
       (combinedFields.age_group && combinedFields.age_group !== "" && defaultVariantId) && googleMetafields.push({
         ownerId: defaultVariantId,
         namespace: "google",
@@ -916,3 +916,4 @@ export const action = async ({ request }) => {
   }
 
 };
+
