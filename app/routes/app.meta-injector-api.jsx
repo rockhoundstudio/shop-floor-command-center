@@ -58,7 +58,7 @@ export const action = async ({ request }) => {
         let mohsVal = "Varies";
         (stoneName === "Jasper" || stoneName === "Agate") && (mohsVal = "6.5 - 7");
 
-        const titleSegments = (title || "").split(" — ");
+        const titleSegments = (title || "").split(/\s+[—–-]\s+/);
         const pieceName = titleSegments.length >= 3 ? titleSegments[titleSegments.length - 1].trim() : "";
         const lapidaryData = {
           "mineral_class": "Silicate",
