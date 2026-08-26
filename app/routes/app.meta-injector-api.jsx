@@ -590,7 +590,7 @@ export const action = async ({ request }) => {
       const allUserErrors = [];
 
       // Step 1: Create Product (returning default variant ID)
-      const seoTitle = payload.seo_title || title;
+      const seoTitle = payload.seo_title || `${stoneFamily} — ${pieceName} — One-of-a-Kind Rockhound Studio`;
       const productInput = {
         title: title,
         descriptionHtml: descriptionHtml,
@@ -635,6 +635,38 @@ export const action = async ({ request }) => {
       const productId = createdProduct.id;
       const productHandle = createdProduct.handle;
       const defaultVariantId = createdProduct.variants?.edges?.[0]?.node?.id;
+
+      // 🔵 INJECT SEO TITLE HERE
+      if (seoTitle) {
+        try {
+          const seoResponse = await admin.graphql(
+            `#graphql
+            mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
+              metafieldsSet(metafields: $metafields) {
+                metafields { id key namespace value }
+                userErrors { field message }
+              }
+            }`,
+            {
+              variables: {
+                metafields: [
+                  {
+                    ownerId: productId,
+                    namespace: "global",
+                    key: "title_tag",
+                    value: seoTitle,
+                    type: "single_line_text_field"
+                  }
+                ]
+              }
+            }
+          );
+          const seoResult = await seoResponse.json();
+          console.log("SEO title save result:", JSON.stringify(seoResult, null, 2));
+        } catch (e) {
+          console.error("Failed to save SEO title:", e);
+        }
+      }
 
       // Step 1.5: Set Price on Default Variant
       if (price && defaultVariantId) {
@@ -740,7 +772,8 @@ export const action = async ({ request }) => {
         "intent", "mediaUrlsJson", "descriptionHtml", "productType", "status", "pieces", "photoFiles",
         "photoPreviewUrls", "photos", "imageBase64", "imageMimeType", "stagedResourceUrls", "scanError",
         "scanToken", "isUploading", "id", "generated_description", "price", "collectionLocation",
-        "age_group", "target_gender", "condition", "shipping_weight_oz", "collection_name", "collection_location"
+        "age_group", "target_gender", "condition", "shipping_weight_oz", "collection_name", "collection_location",
+        "seo_title" // Exclude seo_title from the generic loop since we handle it explicitly above
       ];
 
       Object.entries(combinedFields).forEach(([key, value]) => {
@@ -751,18 +784,6 @@ export const action = async ({ request }) => {
            if (key === "treated" || key === "is_one_of_a_kind") {
              if (value === true || value === "true") value = "Yes";
              else if (value === false || value === "false") value = "No";
-           }
-
-           if (key === "seo_title") {
-             if (value && String(value).trim() !== "") {
-               rawMetafields.push({
-                 key: "title_tag",
-                 namespace: "global",
-                 value: String(value).trim(),
-                 type: "single_line_text_field"
-               });
-             }
-             return;
            }
 
            rawMetafields.push({
@@ -807,16 +828,6 @@ export const action = async ({ request }) => {
         });
       }
 
-      if (seoTitle) {
-        googleMetafields.push({
-          ownerId: productId,
-          namespace: "global",
-          key: "title_tag",
-          type: "single_line_text_field",
-          value: String(seoTitle)
-        });
-      }
-
       if (rawMetafields.length > 0 || googleMetafields.length > 0) {
         try {
             const TYPE_MAP = {
@@ -832,7 +843,6 @@ export const action = async ({ request }) => {
               surface_finish: "single_line_text_field",
               dimensions_mm: "single_line_text_field",
               stone_shape: "single_line_text_field",
-              seo_title: "single_line_text_field",
               color: "single_line_text_field",
               weight_grams: "number_decimal",
               specific_gravity: "single_line_text_field",
