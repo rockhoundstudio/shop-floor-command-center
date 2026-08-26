@@ -58,13 +58,15 @@ export const action = async ({ request }) => {
         let mohsVal = "Varies";
         (stoneName === "Jasper" || stoneName === "Agate") && (mohsVal = "6.5 - 7");
 
+        const titleSegments = (title || "").split(" — ");
+        const pieceName = titleSegments.length >= 3 ? titleSegments[titleSegments.length - 1].trim() : "";
         const lapidaryData = {
           "mineral_class": "Silicate",
           "mohs_hardness": mohsVal,
           "crystal_system": "Trigonal",
           "primary_color": "Varies by specimen",
           "stone_story": `A beautiful piece of natural ${stoneName}.`,
-          "title_tag": `${stoneName} Wearable Art — Handcrafted by Bob and Janyce`,
+          "title_tag": `${stoneName}${pieceName ? ` — ${pieceName}` : ""} — One-of-a-Kind Rockhound Studio`,
           "description_tag": `Natural, one-of-a-kind ${stoneName} handcrafted by Bob and Janyce. Honest flaws, authentic character, and zero workshop fluff.`,
           "google_product_category": "Apparel & Accessories > Jewelry",
           "target_gender": "Unisex",
@@ -173,6 +175,16 @@ export const action = async ({ request }) => {
           if (item.key === "treated" || item.key === "is_one_of_a_kind") {
             if (resolvedValue === "true") resolvedValue = "Yes";
             else if (resolvedValue === "false") resolvedValue = "No";
+          }
+
+          if (item.key === "seo_title") {
+            return {
+              ownerId: resolvedId,
+              namespace: "global",
+              key: "title_tag",
+              type: "single_line_text_field",
+              value: resolvedValue
+            };
           }
 
           return {
