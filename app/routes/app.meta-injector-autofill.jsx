@@ -313,7 +313,7 @@ export const action = async ({ request }) => {
       try {
         // STEP 1 — Geo lookup + origin story
         const geoFields = await getGeoData(admin, stone_family);
-        const { pagesList, collectionsList } = await getLiveStoreDirectory(admin);
+        const { pagesList } = await getLiveStoreDirectory(admin);
         const matchedPage = pagesList.find(p => p.url.includes(origin_handle));
         const origin_story = matchedPage ? matchedPage.excerpt : "";
 
@@ -360,29 +360,7 @@ export const action = async ({ request }) => {
             const imageBase64 = Buffer.from(imageBuffer).toString("base64");
             const imageMimeType = (imageRes.headers.get("content-type") || "image/jpeg").split(";")[0].trim();
 
-            const pagesMenu = pagesList.map(p => `- Title: "${p.title}" | URL: ${p.url} | Excerpt: "${p.excerpt}"`).join("\n");
-            const collectionsMenu = collectionsList.map(c => `- Title: "${c.title}" | URL: ${c.url} | Excerpt: "${c.excerpt}"`).join("\n");
-            const matchedCollection = collectionsList.find(c => c.url.includes(origin_handle));
-            const collectionDisplayName = matchedCollection
-              ? matchedCollection.title.replace(/\s+Collection$/i, "").trim()
-              : collection_location || origin_handle.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase());
-            const targetUrlPath = `/pages/${origin_handle}`;
-            const matchedCollectionSlug = matchedCollection ? matchedCollection.url.replace(/.*\/collections\//, "") : origin_handle;
-            const collectionUrlPath = `/collections/${matchedCollectionSlug}`;
-
-            const visionPrompt = `You are a lapidary artist and master jeweler for Rockhound Studio. Analyze this photo and return a JSON object.
-
-LIVE STORE DIRECTORY (Your Dyslexia Safeguard — Read this menu!):
-VALID PAGES IN STORE:
-${pagesMenu || "No live pages found — use default URL."}
-
-VALID COLLECTIONS IN STORE:
-${collectionsMenu || "No live collections found — use default URL."}
-
-ORIGIN STORY FOR THIS STONE (use this to write the description — this is the real lore):
-${origin_story || "No origin story available — describe from the photo only."}
-
-Return a JSON object with these exact keys:
+            const visionPrompt = `You are a lapidary expert for Rockhound Studio. Analyze this stone photo and return a JSON object with these exact keys:
 - color: primary color of the stone, plain text (e.g. "Reddish-brown and Cream")
 - stone_shape: the overall shape of the stone (e.g. "Oval", "Freeform", "Rectangle", "Teardrop")
 - color_pattern: the pattern or texture visible (e.g. "Brecciated", "Banded", "Solid", "Mottled", "Dendritic")
@@ -394,11 +372,7 @@ Return a JSON object with these exact keys:
 - setting_ready: one of: "Not Ready - Raw Stone", "Bezel Setting - Ready to Wear", "Wire Wrapped - Ready to Wear", "Prong Setting - Ready to Wear"
 - wire_material: wire type if wire wrapped, or "None - Raw Stone" if loose
 - bail_included: bail type if present, or "None" if loose stone
-- chain_material: if a necklace chain is visible, identify it as exactly one of: "Silver Plated Snake Chain", "Gold Plated Snake Chain", "Sterling Silver Chain", "Cord". If no chain visible, return "None".
-- generated_description: Poetic, spare, story-driven description strictly UNDER 100 WORDS total. Past tense for the find. Plain honest voice. No salesy language. No corporate language. Use the ORIGIN STORY above to ground the description in real lore — where it was found, what the day was like, what made Bob or Janyce pick it up. CRITICAL DWELL WEB EMBED LAW: End the description with TWO clickable HTML hyperlinks exactly like this:
-  <a href="${targetUrlPath}">${collectionDisplayName} Story</a>
-  <a href="${collectionUrlPath}">${collectionDisplayName} Collection</a>
-  Sign off after the links: — Bob & Janyce, Rockhound Studio, Spokane Valley WA
+- generated_description: poetic, spare, story-driven description strictly UNDER 100 WORDS. Past tense for the find. Plain honest voice. No salesy language. Sign off: — Bob & Janyce, Rockhound Studio, Spokane Valley WA
 
 Return only valid JSON. No markdown. No explanation.`;
 
