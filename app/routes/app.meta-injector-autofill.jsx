@@ -423,7 +423,7 @@ Return only valid JSON. No markdown. No explanation.`;
     // ==========================================
     if (intent === "titleParse") {
       const pieceNameInput = body.get("pieceName") || "";
-      const segments = pieceNameInput.split(" - ");
+      const segments = pieceNameInput.split(/\s+[-—–]\s+/);
       const segment1 = segments[0]?.trim() || "";
       const segment2 = segments[1]?.trim() || "";
       const segment3 = segments[2]?.trim() || "";

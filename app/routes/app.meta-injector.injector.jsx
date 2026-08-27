@@ -227,7 +227,7 @@ export function NewProductIntakeTab({ fetcher }) {
 
   const handlePieceNameBlur = useCallback((id, value) => {
     if (!value) return;
-    const segments = value.split(" - ");
+    const segments = value.split(/\s+[-—–]\s+/);
     if (segments.length === 3) {
       setLastScannedPieceId(id);
       autoFillFetcher.submit(
@@ -568,14 +568,14 @@ export function NewProductIntakeTab({ fetcher }) {
           updated.luster = geo.luster;
           updated.fracture_pattern = geo.fracture_pattern ?? geo.fracture;
           updated.cleavage = geo.cleavage;
-          updated.specific_gravity = geo.specific_gravity ?? geo.specificGravity;
+          updated.specific_gravity = geo.specific_gravity;
           updated.diaphaneity = geo.diaphaneity;
-          updated.crystal_system = geo.crystal_system ?? geo.crystalSystem;
-          updated.geological_era = geo.geological_era ?? geo.geologicalEra;
+          updated.crystal_system = geo.crystal_system;
+          updated.geological_era = geo.geological_era;
           updated.geological_age = geo.geological_age;
-          updated.mineral_class = geo.mineral_class ?? geo.mineralClass;
-          updated.rock_composition = geo.rock_composition ?? geo.rockComposition;
-          updated.rock_formation = geo.rock_formation ?? geo.rockFormation;
+          updated.mineral_class = geo.mineral_class;
+          updated.rock_composition = geo.rock_composition;
+          updated.rock_formation = geo.rock_formation;
           return updated;
         });
         setGeoToast(true);
@@ -599,7 +599,6 @@ export function NewProductIntakeTab({ fetcher }) {
         stone_family: normalizeDropdownValue("stone_family", parsed.stone_family?.trim()) || prev.stone_family,
         collection_name: parsed.collection_name || prev.collection_name,
         collection_location: resolvedCollectionLoc,
-        collectionLocation: resolvedCollectionLoc,
         origin_handle: parsed.origin_handle || prev.origin_handle, 
         origin_story: parsed.origin_story || prev.origin_story,
         specific_gravity: parsed.specific_gravity || prev.specific_gravity,
@@ -904,7 +903,7 @@ export function NewProductIntakeTab({ fetcher }) {
                         />
                         <div style={{ marginTop: "4px" }}>
                           <Text variant="bodySm" tone="subdued" as="p">
-                            Format: Stone Family - Origin - Piece Name (e.g. Tiger's Eye - Irv's - Tiger Fly)
+                            Format: Stone Family — Origin — Piece Name (e.g. Tiger's Eye — Irv's — Tiger Fly)
                           </Text>
                         </div>
                       </div>
