@@ -79,9 +79,6 @@ export const action = async ({ request }) => {
           "cleavage": "None",
           "specific_gravity": "Varies by specimen",
           "diaphaneity": "Opaque to Translucent",
-          "crystal_system": "Trigonal",
-          "geological_era": "Varies by specimen",
-          "mineral_class": "Silicate",
           "rock_composition": "Silicified",
           "rock_formation": "Natural"
         };
@@ -170,7 +167,7 @@ export const action = async ({ request }) => {
 
           const resolvedType = TYPE_MAP[item.key] || item.type || "single_line_text_field";
           
-          let resolvedValue = String(item.value);
+          let resolvedValue = String(item.value).replace(/[—–]/g, '-');
           (resolvedType.startsWith("list.")) && (resolvedValue = JSON.stringify([String(item.value)]));
           if (item.key === "treated" || item.key === "is_one_of_a_kind") {
             if (resolvedValue === "true") resolvedValue = "Yes";

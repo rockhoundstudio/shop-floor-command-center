@@ -156,7 +156,7 @@ async function getGeoData(admin, stoneFamily) {
     specific_gravity: "", diaphaneity: "", crystal_system: "",
     geological_era: "", mineral_class: "", rock_composition: "",
     rock_formation: "", mohs_hardness: "", fracture_pattern: "",
-    specific_gravity: "", geological_age: ""
+    geological_age: ""
   };
   
   if (!stoneFamily || !admin) {
@@ -184,7 +184,6 @@ async function getGeoData(admin, stoneFamily) {
         rock_formation: localResult.rock_formation || "",
         mohs_hardness: localResult.moh_hardness || localResult.hardness || "",
         fracture_pattern: localResult.fracture_pattern || localResult.fracture || "",
-        specific_gravity: localResult.specific_gravity || "",
         geological_age: localResult.geological_era || localResult.geological_age || "",
         geoSource: "library"
       };
@@ -223,7 +222,6 @@ async function getGeoData(admin, stoneFamily) {
           rock_formation: s.rock_formation || "",
           mohs_hardness: s.hardness || "",
           fracture_pattern: s.fracture || "",
-          specific_gravity: s.specific_gravity || "",
           geological_age: s.geological_era || ""
         };
         stoneProfileCache.set(search, geoResult);
@@ -264,7 +262,6 @@ async function getGeoData(admin, stoneFamily) {
           rock_formation: "",
           mohs_hardness: hardness,
           fracture_pattern: mineral.fracture || "",
-          specific_gravity: specific_gravity,
           geological_age: ""
         };
         stoneProfileCache.set(search, geoResult);
@@ -354,8 +351,7 @@ export const action = async ({ request }) => {
         let visionFields = {};
         if (imageUrl) {
           try {
-            const cleanImageUrl = imageUrl.split("?")[0];
-            const imageRes = await fetch(cleanImageUrl);
+            const imageRes = await fetch(imageUrl);
             const imageBuffer = await imageRes.arrayBuffer();
             const imageBase64 = Buffer.from(imageBuffer).toString("base64");
             const imageMimeType = (imageRes.headers.get("content-type") || "image/jpeg").split(";")[0].trim();
@@ -399,8 +395,7 @@ Return only valid JSON. No markdown.`;
                       wire_material: { type: "STRING" },
                       bail_included: { type: "STRING" },
                       generated_description: { type: "STRING" }
-                    },
-                    required: ["primary_color", "stone_shape", "cut_and_shape", "surface_finish", "primary_use", "setting_ready", "wire_material", "primary_medium", "bail_included", "generated_description"]
+                    }
                   }
                 }
               })
@@ -413,6 +408,11 @@ Return only valid JSON. No markdown.`;
               const last = cleanJson.lastIndexOf("}");
               if (first !== -1 && last !== -1) cleanJson = cleanJson.slice(first, last + 1);
               visionFields = JSON.parse(cleanJson);
+              
+              if (visionFields.primary_color) {
+                  visionFields.color = visionFields.primary_color;
+                  delete visionFields.primary_color;
+              }
               console.log("[tab2AutoFill] Vision scan returned:", Object.keys(visionFields));
             }
           } catch (visionErr) {
@@ -562,8 +562,7 @@ Return only valid JSON. No markdown.`;
       if (!imageBase64) {
         const rawImageUrl = body.get("imageUrl");
         if (rawImageUrl) {
-          const cleanImageUrl = rawImageUrl.split('?')[0];
-          const imageRes = await fetch(cleanImageUrl);
+          const imageRes = await fetch(rawImageUrl);
           const imageBuffer = await imageRes.arrayBuffer();
           imageBase64 = Buffer.from(imageBuffer).toString("base64");
           imageMimeType = (imageRes.headers.get("content-type") || "image/jpeg").split(";")[0].trim();
@@ -598,8 +597,7 @@ Return only valid JSON. No markdown.`;
                 wire_material: { type: "STRING" },
                 setting_ready: { type: "STRING" },
                 bail_included: { type: "STRING" }
-              },
-              required: ["description", "primary_use", "setting_ready", "wire_material", "primary_medium", "secondary_medium", "bail_included"]
+              }
             }
           }
         })
