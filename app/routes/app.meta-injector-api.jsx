@@ -776,6 +776,8 @@ export const action = async ({ request }) => {
         "seo_title" // Exclude seo_title from the generic loop since we handle it explicitly above
       ];
 
+      console.log("[saveMetafields] combinedFields keys:", Object.keys(combinedFields));
+      console.log("[saveMetafields] piece_name:", combinedFields.piece_name, "stone_family:", combinedFields.stone_family);
       // Explicitly build and save SEO title from piece_name + stone_family
       const pieceNameForSeo = combinedFields.piece_name || "";
       const stoneFamilyForSeo = combinedFields.stone_family || "";
