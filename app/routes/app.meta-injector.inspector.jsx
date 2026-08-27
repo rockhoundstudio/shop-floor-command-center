@@ -514,6 +514,14 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
     if (changes.length > 0) {
       // Explicit form action wiring restored to prevent silent drop
       injectFetcher.submit(
+    const _sf = fullMetaState["stone_family"] || "";
+    const _pn = fullMetaState["piece_name"] || "";
+    if (_sf && _pn) {
+      const builtTitle = `${_sf} \u2014 ${_pn} \u2014 One-of-a-Kind Rockhound Studio`;
+      const idx = changes.findIndex(c => c.key === "seo_title");
+      if (idx >= 0) changes[idx].value = builtTitle;
+      else changes.push({ namespace: "global", key: "seo_title", value: builtTitle, type: "single_line_text_field" });
+    }
         { intent: "saveMetafields", productId: selectedProductId, metafields: JSON.stringify(changes) },
         { method: "post", action: "/app/meta-injector-api" }
       );
