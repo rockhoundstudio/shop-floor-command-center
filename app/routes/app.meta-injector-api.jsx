@@ -881,7 +881,7 @@ export const action = async ({ request }) => {
 
                return {
                  ownerId: productId,
-                 namespace: "custom",
+                 namespace: item.namespace || "custom",
                  key: item.key,
                  type: resolvedType,
                  value: resolvedValue
