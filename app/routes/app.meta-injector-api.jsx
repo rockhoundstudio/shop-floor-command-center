@@ -783,7 +783,7 @@ export const action = async ({ request }) => {
       const stoneFamilyForSeo = combinedFields.stone_family || "";
       const builtSeoTitle = (pieceNameForSeo && stoneFamilyForSeo)
         ? `${stoneFamilyForSeo} \u2014 ${pieceNameForSeo} \u2014 One-of-a-Kind Rockhound Studio`
-        : (combinedFields.seo_title || "");
+        : "";
       if (builtSeoTitle) {
         rawMetafields.push({
           key: "title_tag",
