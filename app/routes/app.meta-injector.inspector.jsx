@@ -1,13 +1,13 @@
 // ==========================================================================
 // ROCKHOUND STUDIO — TAB 1: NEW PRODUCT INTAKE Bench
-// File: app/routes/app.meta-injector.injector.jsx
+// File: app/routes/app.meta-injector.inspector.jsx
 // (100% Original Logic + useRef Stale Closure Bypass for Dwell Web)
 // ==========================================================================
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { BlockStack, Card, Text, Banner, TextField, Select, Button, InlineStack, Collapsible } from "@shopify/polaris";
 import { MagicIcon, SaveIcon } from "@shopify/polaris-icons";
-import { normalizeDropdownValue, DROPDOWN_OPTIONS, unwrapArrayValue, CHANNEL_REQUIREMENTS, getFieldStatus } from "../utils/meta-injector.constants.jsx";
+import { normalizeDropdownValue, DROPDOWN_OPTIONS } from "../utils/meta-injector.constants.jsx";
 
 const CUSTOM_FIELDS = [
   // ==========================================
@@ -510,18 +510,18 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
       }
     });
 
-
     if (changes.length > 0) {
+      const _sf = fullMetaState["stone_family"] || "";
+      const _pn = fullMetaState["piece_name"] || "";
+      if (_sf && _pn) {
+        const builtTitle = `${_sf} \u2014 ${_pn} \u2014 One-of-a-Kind Rockhound Studio`;
+        const idx = changes.findIndex(c => c.key === "seo_title");
+        if (idx >= 0) changes[idx].value = builtTitle;
+        else changes.push({ namespace: "global", key: "seo_title", value: builtTitle, type: "single_line_text_field" });
+      }
+
       // Explicit form action wiring restored to prevent silent drop
       injectFetcher.submit(
-    const _sf = fullMetaState["stone_family"] || "";
-    const _pn = fullMetaState["piece_name"] || "";
-    if (_sf && _pn) {
-      const builtTitle = `${_sf} \u2014 ${_pn} \u2014 One-of-a-Kind Rockhound Studio`;
-      const idx = changes.findIndex(c => c.key === "seo_title");
-      if (idx >= 0) changes[idx].value = builtTitle;
-      else changes.push({ namespace: "global", key: "seo_title", value: builtTitle, type: "single_line_text_field" });
-    }
         { intent: "saveMetafields", productId: selectedProductId, metafields: JSON.stringify(changes) },
         { method: "post", action: "/app/meta-injector-api" }
       );
