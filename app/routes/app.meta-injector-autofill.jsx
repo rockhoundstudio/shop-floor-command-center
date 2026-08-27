@@ -361,27 +361,48 @@ export const action = async ({ request }) => {
             const imageMimeType = (imageRes.headers.get("content-type") || "image/jpeg").split(";")[0].trim();
 
             const visionPrompt = `You are a lapidary expert for Rockhound Studio. Analyze this stone photo and return a JSON object with these exact keys:
-- color: primary color of the stone, plain text (e.g. "Reddish-brown and Cream")
+- primary_color: primary color of the stone, plain text (e.g. "Reddish-brown and Cream")
 - stone_shape: the overall shape of the stone (e.g. "Oval", "Freeform", "Rectangle", "Teardrop")
-- color_pattern: the pattern or texture visible (e.g. "Brecciated", "Banded", "Solid", "Mottled", "Dendritic")
-- cut_and_shape: the cut style (e.g. "Rough Slab", "Cabochon", "Tumbled", "Raw Chunk")
-- surface_finish: the surface finish visible (e.g. "High Polish", "Matte", "Natural/Raw", "Satin")
-- honest_flaws_and_character: any natural inclusions, matrix lines, chips, or character marks visible, plain text. If none visible, return empty string.
-- primary_use: best classification, one of: "Cabochon", "Pendant (Finished Jewelry)", "Necklace", "Wire Wrap (Finished Jewelry)", "Ring / Bezel Setting", "Loose Stone - Collector"
-- primary_medium: mounting material if jewelry, or "None - Raw Stone" if loose
-- setting_ready: one of: "Not Ready - Raw Stone", "Bezel Setting - Ready to Wear", "Wire Wrapped - Ready to Wear", "Prong Setting - Ready to Wear"
-- wire_material: wire type if wire wrapped, or "None - Raw Stone" if loose
-- bail_included: bail type if present, or "None" if loose stone
-- generated_description: poetic, spare, story-driven description strictly UNDER 100 WORDS. Past tense for the find. Plain honest voice. No salesy language. Sign off: — Bob & Janyce, Rockhound Studio, Spokane Valley WA
+- color_pattern: the pattern or texture visible
+- cut_and_shape: the cut style
+- surface_finish: the surface finish visible
+- honest_flaws_and_character: any natural inclusions, plain text. If none, return empty string.
+- primary_use: best classification (e.g., "Cabochon", "Pendant", etc.)
+- primary_medium: mounting material if jewelry, or "None - Raw Stone"
+- setting_ready: one of: "Not Ready - Raw Stone", "Bezel Setting - Ready to Wear", etc.
+- wire_material: wire type or "None - Raw Stone"
+- bail_included: bail type or "None"
+- generated_description: poetic, spare, story-driven description STRICTLY UNDER 160 CHARACTERS. The shape, color, and origin should feel inevitable - like the stone decided, not the maker. Never clinical. Never salesy. Plain honest voice. Do NOT use em dashes or special characters. Sign off: - Bob & Janyce, Rockhound Studio, Spokane Valley WA
 
-Return only valid JSON. No markdown. No explanation.`;
+Return only valid JSON. No markdown.`;
 
             const geminiRes = await fetchWithRetry("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
                 contents: [{ parts: [{ text: visionPrompt }, { inlineData: { mimeType: imageMimeType, data: imageBase64 } }] }],
-                generationConfig: { responseMimeType: "application/json", temperature: 0.2 }
+                generationConfig: { 
+                  responseMimeType: "application/json", 
+                  temperature: 0.1,
+                  responseSchema: {
+                    type: "OBJECT",
+                    properties: {
+                      primary_color: { type: "STRING" },
+                      stone_shape: { type: "STRING" },
+                      color_pattern: { type: "STRING" },
+                      cut_and_shape: { type: "STRING" },
+                      surface_finish: { type: "STRING" },
+                      honest_flaws_and_character: { type: "STRING" },
+                      primary_use: { type: "STRING" },
+                      primary_medium: { type: "STRING" },
+                      setting_ready: { type: "STRING" },
+                      wire_material: { type: "STRING" },
+                      bail_included: { type: "STRING" },
+                      generated_description: { type: "STRING" }
+                    },
+                    required: ["primary_color", "stone_shape", "cut_and_shape", "surface_finish", "primary_use", "setting_ready", "wire_material", "primary_medium", "bail_included", "generated_description"]
+                  }
+                }
               })
             });
 
@@ -453,7 +474,22 @@ Return only valid JSON. No markdown. No explanation.`;
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ 
           contents: [{ parts: [{ text: promptText }] }],
-          generationConfig: { responseMimeType: "application/json", temperature: 0.2 }
+          generationConfig: { 
+            responseMimeType: "application/json", 
+            temperature: 0.1,
+            responseSchema: {
+              type: "OBJECT",
+              properties: {
+                stone_family: { type: "STRING" },
+                piece_name: { type: "STRING" },
+                origin_handle: { type: "STRING" },
+                origin_location: { type: "STRING" },
+                collection_name: { type: "STRING" },
+                collection_location: { type: "STRING" }
+              },
+              required: ["stone_family", "piece_name", "origin_handle", "origin_location", "collection_name", "collection_location"]
+            }
+          }
         })
       });
 
@@ -534,7 +570,7 @@ Return only valid JSON. No markdown. No explanation.`;
         }
       }
 
-      const promptText = `You are a lapidary artist and master jeweler for Rockhound Studio. Analyze this photo and return a JSON object.\n- LIVE STORE DIRECTORY (Your Dyslexia Safeguard — Read this menu!):\n  VALID PAGES IN STORE:\n  ${pagesMenu || "No live pages found — use default URL."}\n  \n  VALID COLLECTIONS IN STORE:\n  ${collectionsMenu || "No live collections found — use default URL."}\n\n- description: Poetic, spare, story-driven product description strictly UNDER 100 WORDS total. First person voice ("Bob and Janyce" or "Janyce here..."). Credit craftsmanship strictly as "handcrafted by Bob and Janyce". ZERO workshop references.\nCRITICAL DWELL WEB EMBED LAW: Look at the Origin Segment Janyce entered ("${originSegment}"). Check the LIVE STORE DIRECTORY above and match it to the exact corresponding Page and Collection. You MUST use those live excerpts to write short story hooks leading directly into TWO clickable HTML hyperlinks. \n  1. Origin Hook: Write a short story hook based on the matching Page excerpt, followed immediately by this exact anchor tag format: <a href="${targetUrlPath}">${fullCollectionTitle} Story</a>\n  2. Collection Hook: Write a short hook based on the matching Collection excerpt, followed immediately by this exact anchor tag format: <a href="${collectionUrlPath}">${fullCollectionTitle} Collection</a>\n- primary_use: Smart Switch! Force strictly to best match (e.g., "Pendant (Finished Jewelry)", "Necklace", "Ring / Bezel Setting", "Cabochon", "Wire Wrap (Finished Jewelry)"). If a chain is visible, classify as "Necklace".
+      const promptText = `You are a lapidary artist and master jeweler for Rockhound Studio. Analyze this photo and return a JSON object.\n- LIVE STORE DIRECTORY (Your Dyslexia Safeguard — Read this menu!):\n  VALID PAGES IN STORE:\n  ${pagesMenu || "No live pages found — use default URL."}\n  \n  VALID COLLECTIONS IN STORE:\n  ${collectionsMenu || "No live collections found — use default URL."}\n\n- description: Poetic, spare, story-driven product description STRICTLY UNDER 160 CHARACTERS total. The shape, color, and origin should feel inevitable - like the stone decided, not the maker. Never clinical. Never salesy. Credit craftsmanship strictly as "handcrafted by Bob and Janyce". ZERO workshop references. Do NOT use em dashes.\nCRITICAL DWELL WEB EMBED LAW: Look at the Origin Segment Janyce entered ("${originSegment}"). Check the LIVE STORE DIRECTORY above and match it to the exact corresponding Page and Collection. You MUST use those live excerpts to write short story hooks leading directly into TWO clickable HTML hyperlinks. \n  1. Origin Hook: Write a short story hook based on the matching Page excerpt, followed immediately by this exact anchor tag format: <a href="${targetUrlPath}">${fullCollectionTitle} Story</a>\n  2. Collection Hook: Write a short hook based on the matching Collection excerpt, followed immediately by this exact anchor tag format: <a href="${collectionUrlPath}">${fullCollectionTitle} Collection</a>\n- primary_use: Smart Switch! Force strictly to best match (e.g., "Pendant (Finished Jewelry)", "Necklace", "Ring / Bezel Setting", "Cabochon", "Wire Wrap (Finished Jewelry)"). If a chain is visible, classify as "Necklace".
 - chain_material: If a necklace chain is visible, identify it as exactly one of: "Silver Plated Snake Chain", "Gold Plated Snake Chain", "Sterling Silver Chain", "Cord". If no chain is visible, return "None".\n- MANDATORY BENCH FINDINGS & JEWELRY LAWS:\n  * setting_ready: Look closely at the mounting. If cabochon is in a bezel setting, MUST return "Bezel Setting - Ready to Wear". If prong setting, return "Prong Setting - Ready to Wear". If wire wrapped, return "Wire Wrapped - Ready to Wear". NEVER LEAVE BLANK FOR MOUNTED STONES!\n  * wire_material: If wire wrapped, output the wire metal (e.g., "Antiqued Copper Wire"). If in a bezel or prong setting with zero wire, MUST return strictly: "None — Bezel Mounted".\n  * primary_medium: State the primary metal or mounting material. Use exactly one of these: ".925 Sterling Silver Bezel", "Silver Plated Bezel", "Gold Plated Bezel", "Copper Bezel", "Gold Tone Alloy Bezel", "Silver Tone Alloy Bezel", "Bronze Tone Alloy Bezel", "Glue-On Loop", "Drilled — Pinch Bail" (loose stone with a drilled hole and pinch bail through it, no bezel). Match the tone and finish visible in the photo. Do not leave blank!
   * surface_finish: Describe the stone's surface finish as seen in the photo. Use terms like "High Polish", "Matte", "Satin", "Natural/Raw", "Tumbled". Do not leave blank.\n  * secondary_medium: Look ONLY for a second distinct METAL component (e.g., a gold accent ring). If you see small stones or crystals on a bail, those are part of the bail — return "None" for secondary_medium. Do NOT describe bail decorations here. If no second metal component exists, return strictly "None".\n  * bail_included: Look at the TOP of the piece. If there is a separate small clip or loop pinched onto the bezel (with or without accent stones), return "Silver Plated Pinch Bail". If the bail is welded or formed as part of the bezel frame with no separate clip, return "Integrated Bezel Bail". If there is no bail at all, return "None". Do NOT guess — only report what is physically visible.`;
 
