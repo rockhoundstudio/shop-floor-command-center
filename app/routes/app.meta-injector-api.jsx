@@ -904,4 +904,198 @@ export const action = async ({ request }) => {
     }
   }
 
+  // ==========================================
+  // 🔴 INTENT: CLEAN GHOST NAMESPACES (SINGLE PRODUCT)
+  // ==========================================
+  if (intent === "cleanGhostNamespaces") {
+    try {
+      const productId = formData.get("productId");
+      if (!productId) {
+        return data({ success: false, message: "No productId provided." });
+      }
+
+      let resolvedId = `gid://shopify/Product/${productId}`;
+      if (productId.startsWith("gid://")) resolvedId = productId;
+
+      const lookupResponse = await admin.graphql(
+        `#graphql
+        query getMetafields($ownerId: ID!) {
+          product(id: $ownerId) {
+            metafields(first: 250) {
+              edges {
+                node {
+                  id
+                  namespace
+                  key
+                }
+              }
+            }
+          }
+        } `,
+        { variables: { ownerId: resolvedId } }
+      );
+
+      const lookupResult = await lookupResponse.json();
+      const allMeta = lookupResult?.data?.product?.metafields?.edges || [];
+
+      const toDelete = allMeta
+        .map(e => e.node)
+        .filter(m => {
+          if (["geo", "rockhound", "geology"].includes(m.namespace)) return true;
+          if (m.namespace === "custom") {
+            if ([
+              "crystalSystem", "geologicalEra", "mineralClass", "rockComposition", 
+              "rockFormation", "specificGravity", "hardness", "fracture", "geoSource",
+              "store_hardness", "store_luster", "store_fracture", "store_cleavage",
+              "store_specific_gravity", "store_diaphaneity", "moh_hardness",
+              "primary_color", "secondary_colors", "cut_type", "base_stone_type",
+              "meta_status", "tenacity", "official_name", "polishing_compound",
+              "dimensions", "chemical_formula", "crystal_structure", "refractive_index",
+              "title_tag", "description_tag", "google_product_category",
+              "color-pattern", "jewelry-material", "target-gender", "age-group",
+              "seo_title", "age_group", "condition", "is_one_of_a-kind"
+            ].includes(m.key)) return true;
+            if (/[a-z][A-Z]/.test(m.key)) return true;
+          }
+          return false;
+        });
+
+      if (toDelete.length === 0) {
+        return data({ success: true, message: "No ghost namespaces or keys found.", deletedCount: 0, deletedKeys: [] });
+      }
+
+      const deleteResponse = await admin.graphql(
+        `#graphql
+        mutation metafieldsDelete($metafields: [MetafieldIdentifierInput!]!) {
+          metafieldsDelete(metafields: $metafields) {
+            deletedMetafields { key namespace ownerId }
+            userErrors { field message }
+          }
+        } `,
+        { variables: { metafields: toDelete.map(m => ({ ownerId: resolvedId, id: m.id })) } }
+      );
+
+      const deleteResult = await deleteResponse.json();
+      const deleteErrors = deleteResult?.data?.metafieldsDelete?.userErrors || [];
+      const deleted = deleteResult?.data?.metafieldsDelete?.deletedMetafields || [];
+
+      if (deleteErrors.length > 0) {
+        return data({ success: false, message: "Delete had errors.", errors: deleteErrors });
+      }
+
+      return data({
+        success: true,
+        message: `Cleaned ${deleted.length} ghost metafield(s).`,
+        deletedCount: deleted.length,
+        deletedKeys: deleted.map(d => `${d.namespace}/${d.key}`)
+      });
+    } catch (error) {
+      console.error("CLEAN GHOSTS CRASH:", error);
+      return data({ success: false, error: error.message });
+    }
+  }
+
+  // ==========================================
+  // 🔴 INTENT: CLEAN ALL GHOST NAMESPACES (ALL PRODUCTS)
+  // ==========================================
+  if (intent === "cleanAllGhostNamespaces") {
+    try {
+      let hasNextPage = true;
+      let cursor = null;
+      let totalScanned = 0;
+      let totalDeleted = 0;
+      let allDeletedKeys = [];
+
+      while (hasNextPage) {
+        const productsResponse = await admin.graphql(
+          `#graphql
+          query getProductsMetafields($cursor: String) {
+            products(first: 50, after: $cursor) {
+              pageInfo { hasNextPage endCursor }
+              edges {
+                node {
+                  id
+                  metafields(first: 250) {
+                    edges {
+                      node {
+                        id
+                        namespace
+                        key
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }`,
+          { variables: { cursor } }
+        );
+
+        const productsResult = await productsResponse.json();
+        const products = productsResult?.data?.products?.edges || [];
+
+        for (const productEdge of products) {
+          totalScanned++;
+          const productNode = productEdge.node;
+          const allMeta = productNode.metafields?.edges || [];
+          
+          const toDelete = allMeta
+            .map(e => e.node)
+            .filter(m => {
+              if (["geo", "rockhound", "geology"].includes(m.namespace)) return true;
+              if (m.namespace === "custom") {
+                if ([
+                  "crystalSystem", "geologicalEra", "mineralClass", "rockComposition", 
+                  "rockFormation", "specificGravity", "hardness", "fracture", "geoSource",
+                  "store_hardness", "store_luster", "store_fracture", "store_cleavage",
+                  "store_specific_gravity", "store_diaphaneity", "moh_hardness",
+                  "primary_color", "secondary_colors", "cut_type", "base_stone_type",
+                  "meta_status", "tenacity", "official_name", "polishing_compound",
+                  "dimensions", "chemical_formula", "crystal_structure", "refractive_index",
+                  "title_tag", "description_tag", "google_product_category",
+                  "color-pattern", "jewelry-material", "target-gender", "age-group",
+                  "seo_title", "age_group", "condition", "is_one_of_a-kind"
+                ].includes(m.key)) return true;
+                if (/[a-z][A-Z]/.test(m.key)) return true;
+              }
+              return false;
+            });
+
+          if (toDelete.length > 0) {
+            try {
+              const deleteResponse = await admin.graphql(
+                `#graphql
+                mutation metafieldsDelete($metafields: [MetafieldIdentifierInput!]!) {
+                  metafieldsDelete(metafields: $metafields) {
+                    deletedMetafields { key namespace ownerId }
+                    userErrors { field message }
+                  }
+                }`,
+                { variables: { metafields: toDelete.map(m => ({ ownerId: productNode.id, id: m.id })) } }
+              );
+              const deleteResult = await deleteResponse.json();
+              const deleted = deleteResult?.data?.metafieldsDelete?.deletedMetafields || [];
+              totalDeleted += deleted.length;
+              deleted.forEach(d => allDeletedKeys.push(`${d.namespace}/${d.key}`));
+            } catch (errors) {
+              console.error("metafieldsDelete graphQLErrors:", JSON.stringify(errors.graphQLErrors, null, 2));
+            }
+          }
+        }
+
+        hasNextPage = productsResult?.data?.products?.pageInfo?.hasNextPage;
+        cursor = productsResult?.data?.products?.pageInfo?.endCursor;
+      }
+
+      return data({
+        success: true,
+        message: `Nuclear sweep complete. Scanned ${totalScanned} products, deleted ${totalDeleted} ghost metafields.`,
+        deletedCount: totalDeleted,
+        deletedKeys: allDeletedKeys
+      });
+    } catch (error) {
+      console.error("BULK CLEAN CRASH:", error);
+      return data({ success: false, message: "Bulk clean failed", error: error.message });
+    }
+  }
 };
