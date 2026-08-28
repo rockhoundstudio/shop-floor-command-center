@@ -108,7 +108,6 @@ export const action = async ({ request }) => {
   // ==========================================
   if (intent === "saveMetafields") {
     try {
-      // FIX: Check for both 'payload' and 'metafields' since different components send different keys
       const rawPayload = formData.get("payload") || formData.get("metafields");
       
       if (!rawPayload) {
@@ -118,7 +117,6 @@ export const action = async ({ request }) => {
 
       let payloadArray = JSON.parse(rawPayload);
       
-      // FIX: Rename is_one_of_a_kind to is_one_of_a_kind and remove rogue collectionLocation
       payloadArray = payloadArray
         .filter(item => item.key !== "collectionLocation")
         .map(item => {
@@ -152,9 +150,7 @@ export const action = async ({ request }) => {
 
       const setMetafields = payloadArray
         .filter(item => item.value !== null && String(item.value).trim() !== "")
-        .map(item => {
-          // If the payload comes from handleSaveFullMeta, it might not have ownerId attached to every field.
-          // We grab it from the form data if it's missing on the individual item.
+        .flatMap(item => {
           const fallbackProductId = formData.get("productId");
           const itemOwnerId = item.ownerId || fallbackProductId;
           
@@ -174,28 +170,25 @@ export const action = async ({ request }) => {
             else if (resolvedValue === "false") resolvedValue = "No";
           }
 
-          if (item.key === "seo_title") {
-            return {
-              ownerId: resolvedId,
-              namespace: "global",
-              key: "title_tag",
-              type: "single_line_text_field",
-              value: resolvedValue
-            };
-          }
-
           let resolvedNamespace = item.namespace || "custom";
           if (item.key === "is_ooak" || resolvedNamespace === "none" || resolvedNamespace === "") {
             resolvedNamespace = "custom";
           }
 
-          return {
-            ownerId: resolvedId,
-            namespace: resolvedNamespace,
-            key: item.key,
-            type: resolvedType,
-            value: resolvedValue
-          };
+          const fieldsToReturn = [];
+
+          // THE HARD WELD: Split SEO elements into both the UI Custom field and the Google Global field
+          if (item.key === "seo_title") {
+            fieldsToReturn.push({ ownerId: resolvedId, namespace: "global", key: "title_tag", type: "single_line_text_field", value: resolvedValue });
+            fieldsToReturn.push({ ownerId: resolvedId, namespace: "custom", key: "seo_title", type: "single_line_text_field", value: resolvedValue });
+          } else if (item.key === "generated_description") {
+            fieldsToReturn.push({ ownerId: resolvedId, namespace: "global", key: "description_tag", type: "single_line_text_field", value: resolvedValue.slice(0, 320) });
+            fieldsToReturn.push({ ownerId: resolvedId, namespace: resolvedNamespace, key: item.key, type: resolvedType, value: resolvedValue });
+          } else {
+            fieldsToReturn.push({ ownerId: resolvedId, namespace: resolvedNamespace, key: item.key, type: resolvedType, value: resolvedValue });
+          }
+
+          return fieldsToReturn;
         });
 
       if (setMetafields.length === 0) {
@@ -205,7 +198,7 @@ export const action = async ({ request }) => {
 
       console.log("METAFIELDS BEING SENT TO SHOPIFY:", JSON.stringify(setMetafields, null, 2));
 
-      const chunks = chunkArray(setMetafields, 1);
+      const chunks = chunkArray(setMetafields, 25);
       const allErrors = [];
 
       for (const chunk of chunks) {
@@ -297,7 +290,6 @@ export const action = async ({ request }) => {
     let resolvedId = `gid://shopify/Product/${productId}`;
     (productId.startsWith("gid://")) && (resolvedId = productId);
 
-    // Step 1 — Find the malformed metafield IDs
     const lookupResponse = await admin.graphql(
       `#graphql
       query getMetafields($ownerId: ID!) {
@@ -320,14 +312,8 @@ export const action = async ({ request }) => {
     const allMeta = lookupResult?.data?.product?.metafields?.edges || [];
 
     const malformedKeys = [
-      "cut_type",
-      "crystalSystem",
-      "geologicalEra",
-      "mineralClass",
-      "rockComposition",
-      "rockFormation",
-      "specificGravity",
-      "mohsHardness"
+      "cut_type", "crystalSystem", "geologicalEra", "mineralClass",
+      "rockComposition", "rockFormation", "specificGravity", "mohsHardness"
     ];
     const toDelete = allMeta
       .map(e => e.node)
@@ -338,7 +324,6 @@ export const action = async ({ request }) => {
       return data({ success: true, message: "No malformed keys found. Already clean." });
     }
 
-    // Step 2 — Delete them
     const deleteResponse = await admin.graphql(
       `#graphql
       mutation metafieldsDelete($metafields: [MetafieldIdentifierInput!]!) {
@@ -347,11 +332,7 @@ export const action = async ({ request }) => {
           userErrors { field message }
         }
       } `,
-      {
-        variables: {
-          metafields: toDelete.map(id => ({ ownerId: resolvedId, id }))
-        }
-      }
+      { variables: { metafields: toDelete.map(id => ({ ownerId: resolvedId, id })) } }
     );
 
     const deleteResult = await deleteResponse.json();
@@ -370,7 +351,7 @@ export const action = async ({ request }) => {
   }
 
   // ==========================================
-  // 🔴 INTENT 3.5: CLEAN ALL CAMEL KEYS
+  // 🔴 INTENT 3.5: CLEAN ALL CAMEL KEYS (THE NUCLEAR SWEEP)
   // ==========================================
   if (intent === "cleanAllCamelKeys") {
     try {
@@ -378,9 +359,12 @@ export const action = async ({ request }) => {
       let cursor = null;
       let totalScanned = 0;
       let totalDeleted = 0;
-      const malformedKeys = [
+
+      // The exact ghosts we need to hunt down in the custom namespace
+      const customCamelKeys = [
         "cut_type", "crystalSystem", "geologicalEra", "mineralClass",
-        "rockComposition", "rockFormation", "specificGravity", "mohsHardness"
+        "rockComposition", "rockFormation", "specificGravity", "mohsHardness",
+        "hardness", "fracture"
       ];
 
       while (hasNextPage) {
@@ -415,30 +399,37 @@ export const action = async ({ request }) => {
           totalScanned++;
           const productNode = productEdge.node;
           const allMeta = productNode.metafields?.edges || [];
-          console.log("METAFIELD KEYS for", productNode.id, ":", allMeta.map(m => m.node.namespace + "." + m.node.key));
-
+          
           const toDelete = allMeta
             .map(e => e.node)
-            .filter(m => m.namespace === "custom" && malformedKeys.includes(m.key))
+            .filter(m => {
+              // 1. Nuke the old geo and rockhound namespaces entirely
+              if (m.namespace === "geo" || m.namespace === "rockhound") return true;
+              
+              // 2. Nuke the ghosts in the custom namespace
+              if (m.namespace === "custom") {
+                if (customCamelKeys.includes(m.key)) return true;
+                if (m.key.includes("-")) return true;
+              }
+              
+              return false;
+            })
             .map(m => m.id);
 
           if (toDelete.length > 0) {
             try {
               const deleteResponse = await admin.graphql(
                 `#graphql
-                mutation metafieldsDelete($ids: [ID!]!) {
-                  metafieldsDelete(metafields: $ids) {
-                    deletedMetafieldsIds
+                mutation metafieldsDelete($metafields: [MetafieldIdentifierInput!]!) {
+                  metafieldsDelete(metafields: $metafields) {
+                    deletedMetafields { key namespace ownerId }
                     userErrors { field message }
                   }
                 }`,
-                {
-                  variables: { ids: toDelete }
-                }
+                { variables: { metafields: toDelete.map(id => ({ ownerId: productNode.id, id })) } }
               );
               const deleteResult = await deleteResponse.json();
-              console.error("metafieldsDelete graphQLErrors:", JSON.stringify(deleteResult?.errors?.graphQLErrors, null, 2));
-              const deleted = deleteResult?.data?.metafieldsDelete?.deletedMetafieldsIds || [];
+              const deleted = deleteResult?.data?.metafieldsDelete?.deletedMetafields || [];
               totalDeleted += deleted.length;
             } catch (errors) {
               console.error("metafieldsDelete graphQLErrors:", JSON.stringify(errors.graphQLErrors, null, 2));
@@ -452,7 +443,7 @@ export const action = async ({ request }) => {
 
       return data({
         success: true,
-        message: `Bulk clean complete. Scanned ${totalScanned} products, deleted ${totalDeleted} malformed metafields.`
+        message: `Nuclear sweep complete. Scanned ${totalScanned} products, deleted ${totalDeleted} ghost metafields.`
       });
     } catch (error) {
       console.error("BULK CLEAN CRASH:", error);
@@ -465,7 +456,6 @@ export const action = async ({ request }) => {
   // ==========================================
   if (intent === "stagedUpload") {
     try {
-      // STEP 1: Receive the file from formData on the server
       const file = formData.get("file_0");
       const pieceId = formData.get("pieceId");
       const scanToken = formData.get("scanToken");
@@ -474,7 +464,6 @@ export const action = async ({ request }) => {
         return data({ success: false, intent: "stagedUpload", error: "Missing file_0 binary payload." });
       }
 
-      // STEP 2: Call stagedUploadsCreate GraphQL mutation to get the staged target
       const uploadResponse = await admin.graphql(
         `#graphql
         mutation stagedUploadsCreate($input: [StagedUploadInput!]!) {
@@ -521,21 +510,16 @@ export const action = async ({ request }) => {
       }
 
       const target = stagedTargets[0];
-
-      // STEP 3: Do the S3 POST upload server-side
       const s3FormData = new FormData();
 
-      // Build a FormData with all target.parameters appended first
       target.parameters.forEach((param) => {
         s3FormData.append(param.name, param.value);
       });
 
-      // Convert Node/Remix File to Blob for reliable fetch transmission and append last under name "file"
       const arrayBuffer = await file.arrayBuffer();
       const fileBlob = new Blob([arrayBuffer], { type: file.type || "image/jpeg" });
       s3FormData.append("file", fileBlob, file.name || `upload_${Date.now()}.jpg`);
 
-      // POST to target.url without manually setting Content-Type
       const s3Response = await fetch(target.url, {
         method: "POST",
         body: s3FormData
@@ -546,7 +530,6 @@ export const action = async ({ request }) => {
         return data({ success: false, intent: "stagedUpload", error: `S3 upload failed: ${errorText}` });
       }
 
-      // STEP 4: Return to the client
       return data({
         success: true,
         intent: "stagedUpload",
@@ -571,7 +554,6 @@ export const action = async ({ request }) => {
       }
 
       const payload = JSON.parse(rawPayload);
-
       let piece = {};
       (payload.pieces && payload.pieces.length > 0) && (piece = payload.pieces[0]);
 
@@ -638,8 +620,30 @@ export const action = async ({ request }) => {
       const productHandle = createdProduct.handle;
       const defaultVariantId = createdProduct.variants?.edges?.[0]?.node?.id;
 
-      // 🔵 INJECT SEO TITLE HERE
+      // 🔵 INJECT SEO TITLE & DESCRIPTION HERE
+      const seoDescription = payload.descriptionHtml || piece.generated_description || piece.descriptionHtml || "";
+      const seoMetafieldsToInject = [];
+      
       if (seoTitle) {
+        seoMetafieldsToInject.push({
+          ownerId: productId,
+          namespace: "global",
+          key: "title_tag",
+          value: seoTitle,
+          type: "single_line_text_field"
+        });
+      }
+      if (seoDescription) {
+        seoMetafieldsToInject.push({
+          ownerId: productId,
+          namespace: "global",
+          key: "description_tag",
+          value: seoDescription.slice(0, 320),
+          type: "single_line_text_field"
+        });
+      }
+
+      if (seoMetafieldsToInject.length > 0) {
         try {
           const seoResponse = await admin.graphql(
             `#graphql
@@ -649,24 +653,10 @@ export const action = async ({ request }) => {
                 userErrors { field message }
               }
             }`,
-            {
-              variables: {
-                metafields: [
-                  {
-                    ownerId: productId,
-                    namespace: "global",
-                    key: "title_tag",
-                    value: seoTitle,
-                    type: "single_line_text_field"
-                  }
-                ]
-              }
-            }
+            { variables: { metafields: seoMetafieldsToInject } }
           );
-          const seoResult = await seoResponse.json();
-          console.log("SEO title save result:", JSON.stringify(seoResult, null, 2));
         } catch (e) {
-          console.error("Failed to save SEO title:", e);
+          console.error("Failed to save SEO meta:", e);
         }
       }
 
@@ -718,8 +708,6 @@ export const action = async ({ request }) => {
           );
 
           const mediaResult = await mediaResponse.json();
-          console.log("productCreateMedia result:", JSON.stringify(mediaResult?.data?.productCreateMedia, null, 2));
-
           const mediaErrors = mediaResult?.data?.productCreateMedia?.mediaUserErrors || [];
           (mediaErrors.length > 0) && allUserErrors.push(...mediaErrors);
         }
@@ -767,33 +755,13 @@ export const action = async ({ request }) => {
       const { pieces, intent, mediaUrlsJson, title: payloadTitle, metafieldsJson, ...sharedOnly } = payload;
       const combinedFields = { ...sharedOnly, ...piece };
       
-      // We don't want to save these system/structural keys as metafields
-      // Added collection_date, primary_medium, secondary_medium, wire_material, setting_ready, bail_included, artist_notes, character_marks
-      // BENCH UPGRADE: Stripped out lapidary & jewelry specs so they save unblocked to Shopify DB
       const ignoreKeys = [
         "intent", "mediaUrlsJson", "descriptionHtml", "productType", "status", "pieces", "photoFiles",
         "photoPreviewUrls", "photos", "imageBase64", "imageMimeType", "stagedResourceUrls", "scanError",
-        "scanToken", "isUploading", "id", "generated_description", "price", "collectionLocation",
+        "scanToken", "isUploading", "id", "price", "collectionLocation",
         "age_group", "target_gender", "condition", "shipping_weight_oz", "collection_name", "collection_location",
-        "seo_title" // Exclude seo_title from the generic loop since we handle it explicitly above
+        "seo_title" 
       ];
-
-      console.log("[saveMetafields] combinedFields keys:", Object.keys(combinedFields));
-      console.log("[saveMetafields] piece_name:", combinedFields.piece_name, "stone_family:", combinedFields.stone_family);
-      // Explicitly build and save SEO title from piece_name + stone_family
-      const pieceNameForSeo = combinedFields.piece_name || "";
-      const stoneFamilyForSeo = combinedFields.stone_family || "";
-      const builtSeoTitle = (pieceNameForSeo && stoneFamilyForSeo)
-        ? `${stoneFamilyForSeo} \u2014 ${pieceNameForSeo} \u2014 One-of-a-Kind Rockhound Studio`
-        : "";
-      if (builtSeoTitle) {
-        rawMetafields.push({
-          key: "title_tag",
-          namespace: "global",
-          value: builtSeoTitle,
-          type: "single_line_text_field"
-        });
-      }
 
       Object.entries(combinedFields).forEach(([key, value]) => {
         if (!ignoreKeys.includes(key) && value !== undefined && value !== null && String(value).trim() !== "") {
@@ -808,12 +776,11 @@ export const action = async ({ request }) => {
            rawMetafields.push({
              key: finalKey,
              value: value,
-             type: "single_line_text_field" // The map below will fix the types
+             type: "single_line_text_field" 
            });
         }
       });
 
-      // Populate separate google namespace array if present — write to the VARIANT level
       (combinedFields.age_group && combinedFields.age_group !== "" && defaultVariantId) && googleMetafields.push({
         ownerId: defaultVariantId,
         namespace: "google",
@@ -895,10 +862,8 @@ export const action = async ({ request }) => {
                };
             });
 
-            // Merge the google array alongside custom metafields
             const allMetafieldsToSet = [...metafieldsInput, ...googleMetafields];
 
-            // Shopify limits metafieldsSet to 25 items per request
             const chunks = chunkArray(allMetafieldsToSet, 25);
             for (const chunk of chunks) {
               const metaResponse = await admin.graphql(
