@@ -160,7 +160,6 @@ async function getGeoData(admin, stoneFamily) {
   try {
     const localResult = lookupStone(stoneFamily);
     if (localResult && Object.keys(localResult).length > 0) {
-      console.log("[Geo Tier 1] Hit in geoLibrary for:", search);
       return {
         hardness: localResult.moh_hardness || localResult.hardness || "",
         luster: localResult.luster || "",
@@ -186,18 +185,11 @@ async function getGeoData(admin, stoneFamily) {
   try {
     if (stoneProfileCache.has(search)) {
       const cached = stoneProfileCache.get(search);
-      if (cached) {
-        console.log("[Geo Tier 2] Memory cache hit for:", search);
-        return { ...cached, geoSource: "cache" };
-      }
+      if (cached) return { ...cached, geoSource: "cache" };
     } else {
-      const rows = await queryPostgres(
-        'SELECT * FROM "StoneProfile" WHERE LOWER("stoneName") = $1 LIMIT 1',
-        [search]
-      );
+      const rows = await queryPostgres('SELECT * FROM "StoneProfile" WHERE LOWER("stoneName") = $1 LIMIT 1', [search]);
       if (rows.length > 0) {
         const s = rows[0];
-        console.log("[Geo Tier 2] Hit in PostgreSQL StoneProfile for:", search);
         const geoResult = {
           hardness: s.hardness || "",
           luster: s.luster || "",
@@ -217,7 +209,6 @@ async function getGeoData(admin, stoneFamily) {
         stoneProfileCache.set(search, geoResult);
         return { ...geoResult, geoSource: "database" };
       } else {
-        console.warn("[Geo Tier 2] No match in StoneProfile for:", search);
         stoneProfileCache.set(search, null);
       }
     }
@@ -227,35 +218,20 @@ async function getGeoData(admin, stoneFamily) {
 
   try {
     if (MINDAT_API_KEY) {
-      console.log("[Geo Tier 3] Trying Mindat for:", search);
-      const mindatRes = await fetch(
-        `https://api.mindat.org/minerals/?name=${encodeURIComponent(stoneFamily)}&format=json`,
-        { headers: { Authorization: `Token ${MINDAT_API_KEY}` } }
-      );
+      const mindatRes = await fetch(`https://api.mindat.org/minerals/?name=${encodeURIComponent(stoneFamily)}&format=json`, { headers: { Authorization: `Token ${MINDAT_API_KEY}` } });
       const mindatData = await mindatRes.json();
       const mineral = mindatData?.results?.[0];
       if (mineral) {
         const hardness = mineral.hardness || "";
         const specific_gravity = mineral.density || "";
         const geoResult = {
-          hardness,
-          luster: mineral.luster || "",
-          fracture: mineral.fracture || "",
-          cleavage: mineral.cleavage || "",
-          specific_gravity,
-          diaphaneity: mineral.transparency || "",
-          crystal_system: mineral.crystal_system || "",
-          geological_era: "",
-          mineral_class: mineral.mineral_class || "",
-          rock_composition: "",
-          rock_formation: "",
-          mohs_hardness: hardness,
-          fracture_pattern: mineral.fracture || "",
-          geological_age: ""
+          hardness, luster: mineral.luster || "", fracture: mineral.fracture || "", cleavage: mineral.cleavage || "",
+          specific_gravity, diaphaneity: mineral.transparency || "", crystal_system: mineral.crystal_system || "",
+          geological_era: "", mineral_class: mineral.mineral_class || "", rock_composition: "", rock_formation: "",
+          mohs_hardness: hardness, fracture_pattern: mineral.fracture || "", geological_age: ""
         };
         stoneProfileCache.set(search, geoResult);
         await saveToStoneCache(search, geoResult);
-        console.log("[Geo Tier 3] Mindat hit saved to StoneCache for:", search);
         return { ...geoResult, geoSource: "mindat" };
       }
     }
@@ -278,7 +254,6 @@ export const action = async ({ request }) => {
         const geoFields = await getGeoData(admin, stoneFamily); 
         return Response.json({ geoFields }); 
       } catch (err) { 
-        console.error("[geoLookup] getGeoData crashed:", err.message); 
         return Response.json({ geoFields: {} }); 
       }
     }
@@ -286,16 +261,21 @@ export const action = async ({ request }) => {
     if (intent === "tab2AutoFill") {
       const stone_family = body.get("stone_family") || "";
       const origin_handle = body.get("origin_handle") || "";
-      const productId = body.get("productId") || "";
       const cut_and_shape = body.get("cut_and_shape") || "";
-      const collection_location = body.get("collection_location") || "";
-      const piece_name = body.get("piece_name") || "";
+      const productTitle = body.get("productTitle") || body.get("piece_name") || "";
       const imageUrl = body.get("imageUrl") || "";
 
+      // 🟢 THE HARD WELD: Split the raw product title to guarantee we get the true Origin location
+      const titleSegments = productTitle.split(/\s+[-—–]\s+/);
+      const derivedFamily = titleSegments[0]?.trim() || stone_family;
+      const derivedOrigin = titleSegments[1]?.trim() || "";
+
       try {
-        const geoFields = await getGeoData(admin, stone_family);
+        const geoFields = await getGeoData(admin, derivedFamily);
         const { pagesList } = await getLiveStoreDirectory(admin);
-        const matchedPage = pagesList.find(p => p.url.includes(origin_handle));
+        
+        const activeOriginHandle = origin_handle || resolveOriginHandle(derivedOrigin, pagesList);
+        const matchedPage = pagesList.find(p => p.url.includes(activeOriginHandle));
         const origin_story = matchedPage ? matchedPage.excerpt : "";
 
         let collection_date = "";
@@ -320,15 +300,15 @@ export const action = async ({ request }) => {
         const authenticity = "Genuine natural stone, hand-collected by Bob & Janyce, Rockhound Studio.";
         const rarity = "One-of-a-kind — no two stones are alike.";
 
+        // 🟢 THE HARD WELD: Build SEO Title directly from the title segments so it never gaps
         const seoTitleParts = [];
-        if (stone_family) seoTitleParts.push(stone_family);
+        if (derivedFamily) seoTitleParts.push(derivedFamily);
         if (cut_and_shape) seoTitleParts.push(cut_and_shape);
-        const locationPart = collection_location || origin_handle.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase());
         
         let seo_title = "";
         if (seoTitleParts.length > 0) {
-          seo_title = locationPart
-            ? `${seoTitleParts.join(" ")} — Found at ${locationPart} — Rockhound Studio`
+          seo_title = derivedOrigin
+            ? `${seoTitleParts.join(" ")} — Found at ${derivedOrigin} — Rockhound Studio`
             : `${seoTitleParts.join(" ")} — Rockhound Studio`;
         }
 
@@ -407,8 +387,8 @@ export const action = async ({ request }) => {
             ...geoFields,
             ...visionFields,
             origin_story,
-            stone_family,
-            origin_handle,
+            stone_family: derivedFamily,
+            origin_handle: activeOriginHandle,
             seo_title,
             collection_date,
             authenticity,
@@ -486,6 +466,18 @@ export const action = async ({ request }) => {
         const dbGeoData = await getGeoData(admin, parsed.stone_family || segment1);
         const matchedOriginPage = pagesList.find(p => p.url.includes(resolvedHandle));
         const displayName = matchedOriginPage ? matchedOriginPage.title.replace(/^The\s+/i, "").trim() : collectionData.name.replace(/\s+Collection$/i, "").trim();
+        
+        // 🟢 THE HARD WELD: Build SEO Title directly using segment2 so it never gaps on Intake
+        const seoTitleParts = [];
+        if (parsed.stone_family || segment1) seoTitleParts.push(parsed.stone_family || segment1);
+        // We don't have cut_and_shape yet during titleParse, so we just use family and origin
+        let seo_title = "";
+        if (seoTitleParts.length > 0) {
+          seo_title = segment2
+            ? `${seoTitleParts.join(" ")} — Found at ${segment2} — Rockhound Studio`
+            : `${seoTitleParts.join(" ")} — Rockhound Studio`;
+        }
+
         const finalParse = {
           ...parsed,
           ...dbGeoData,
@@ -494,7 +486,8 @@ export const action = async ({ request }) => {
           origin_location: segment2,
           collection_name: collectionData.name,
           collection_location: collectionData.name.replace(" Collection", ""),
-          canonical_title: parsed.stone_family + " — " + displayName + " — " + segment3
+          canonical_title: parsed.stone_family + " — " + displayName + " — " + segment3,
+          seo_title: seo_title
         };
         
         return Response.json({ titleParse: finalParse });

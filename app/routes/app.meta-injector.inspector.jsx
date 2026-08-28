@@ -1,18 +1,9 @@
-// ==========================================================================
-// ROCKHOUND STUDIO — TAB 1: NEW PRODUCT INTAKE Bench
-// File: app/routes/app.meta-injector.inspector.jsx
-// (100% Original Logic + useRef Stale Closure Bypass for Dwell Web)
-// ==========================================================================
-
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { BlockStack, Card, Text, Banner, TextField, Select, Button, InlineStack, Collapsible } from "@shopify/polaris";
 import { MagicIcon, SaveIcon } from "@shopify/polaris-icons";
 import { normalizeDropdownValue, DROPDOWN_OPTIONS } from "../utils/meta-injector.constants.jsx";
 
 const CUSTOM_FIELDS = [
-  // ==========================================
-  // SECTION A: SHARED BATCH FIELDS (The Story & Material)
-  // ==========================================
   { key: "stone_family", label: "Stone Family", type: "single_line_text_field", isShared: true },
   { key: "color", label: "Color", type: "single_line_text_field", isShared: true }, 
   { key: "surface_finish", label: "Surface Finish", type: "single_line_text_field", isShared: true }, 
@@ -20,10 +11,6 @@ const CUSTOM_FIELDS = [
   { key: "primary_use", label: "Primary Use", type: "single_line_text_field", isShared: true }, 
   { key: "handcrafted_by", label: "Handcrafted By", type: "single_line_text_field", isShared: true },
   { key: "origin_story", label: "The Origin Story", type: "single_line_text_field", multiline: true, isShared: true },
-
-  // ==========================================
-  // SECTION B: PER-PIECE ROWS (The Hard Specs)
-  // ==========================================
   { key: "piece_name", label: "Piece Name", type: "single_line_text_field", isPerPiece: true },
   { key: "cut_and_shape", label: "Cut / Shape", type: "single_line_text_field", isPerPiece: true }, 
   { key: "dimensions_mm", label: "Dimensions (mm)", type: "single_line_text_field", isPerPiece: true },
@@ -133,11 +120,9 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
   const [promptStyle, setPromptStyle] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
 
-  // Tab 2 Auto-Fill State
   const [tab2StatusMessage, setTab2StatusMessage] = useState("");
   const [tab2ErrorMessage, setTab2ErrorMessage] = useState("");
 
-  // Collapsible Sections State
   const [isSection3Open, setIsSection3Open] = useState(false);
   const [isSection4Open, setIsSection4Open] = useState(false);
 
@@ -155,14 +140,11 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
     const hasMetafields = product && product.metafields && product.metafields.edges;
     
     if (hasMetafields) {
-      // Pass 1 — custom namespace only:
       product.metafields.edges.forEach(({ node }) => {
         const hasValue = node.value !== null && node.value !== undefined;
         if (hasValue && node.namespace === "custom") {
           let parsedValue = node.value;
-          if (parsedValue && parsedValue.includes("gid://")) {
-            parsedValue = "See Shopify metaobject";
-          }
+          if (parsedValue && parsedValue.includes("gid://")) parsedValue = "See Shopify metaobject";
           if (parsedValue && typeof parsedValue === 'string' && parsedValue.startsWith("[")) {
             try {
               const arr = JSON.parse(parsedValue);
@@ -174,7 +156,6 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
         }
       });
 
-      // Pass 2 — geo namespace only:
       product.metafields.edges.forEach(({ node }) => {
         const hasValue = node.value !== null && node.value !== undefined;
         if (hasValue && node.namespace === "geo") {
@@ -191,9 +172,6 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
       });
     }
 
-  // ==========================================
-  // BLOCK 1 — Normalize camelCase geo keys to snake_case
-  // ==========================================
   const CAMEL_TO_SNAKE = {
     crystalSystem: "crystal_system",
     geologicalEra: "geological_era",
@@ -214,9 +192,6 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
     }
   });
 
-  // ==========================================
-  // BLOCK 2 — Smart defaults for missing Google Machine fields
-  // ==========================================
   if (!newFullForm.target_gender) newFullForm.target_gender = "Unisex";
   if (!newFullForm.age_group) newFullForm.age_group = "adult";
   if (!newFullForm.condition) newFullForm.condition = "new";
@@ -226,9 +201,6 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
   if (!newForm.condition) newForm.condition = "new";
   if (!newForm.handcrafted_by) newForm.handcrafted_by = "Bob & Janyce, Rockhound Studio";
 
-  // ==========================================
-  // BLOCK 3 — Calculate shipping_weight_oz from weight_grams if missing
-  // ==========================================
   if (!newFullForm.shipping_weight_oz && newFullForm.weight_grams) {
     const grams = parseFloat(newFullForm.weight_grams);
     if (!isNaN(grams) && grams > 0) {
@@ -244,7 +216,6 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
       try { const arr = JSON.parse(newForm.origin_story); newForm.origin_story = Array.isArray(arr) ? arr[0] : newForm.origin_story; } catch (e) {}
     }
 
-    // Un-wrap story arrays strictly
     if (newForm.origin_story && newForm.origin_story.startsWith("[")) {
       try {
         const arr = JSON.parse(newForm.origin_story);
@@ -273,7 +244,6 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
     }
     newFullForm.honest_flaws_and_character = newForm.honest_flaws_and_character;
 
-    // Fix duplicated Handcrafted By strings
     if (newForm.handcrafted_by && typeof newForm.handcrafted_by === 'string') {
       if (newForm.handcrafted_by.startsWith("[")) {
          try { const arr = JSON.parse(newForm.handcrafted_by); newForm.handcrafted_by = Array.isArray(arr) ? arr[0] : newForm.handcrafted_by; } catch (e) {}
@@ -302,12 +272,11 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
       } catch (e) { }
     }
 
-    if (bestPM === "Stone") bestPM = ""; // Explicitly strip hardcoded fallback
+    if (bestPM === "Stone") bestPM = ""; 
     
     newFullForm.primary_medium = bestPM;
     newForm.primary_medium = bestPM;
 
-    // Prioritize Form State Color over Raw Primary Color
     if (newForm.color) {
       newFullForm.color = newForm.color;
     }
@@ -316,7 +285,6 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
         newFullForm.handcrafted_by = "Bob & Janyce, Rockhound Studio";
     }
 
-    // Auto-populate Piece Name from product title unconditionally at select time
     if (product && product.title) {
       newForm.piece_name = product.title;
       newFullForm.piece_name = product.title;
@@ -334,7 +302,6 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
     originalMetaRef.current = { ...newFullForm };
   }, [products]);
 
-  // Seed formState from existing custom metafields when a product is selected
   useEffect(() => {
     if (selectedProductId && products && products.length > 0) {
       const product = products.find(p => p.id === selectedProductId);
@@ -374,7 +341,6 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
 
   const updateFormState = useCallback((key, value) => {
     setFormState(prev => ({ ...prev, [key]: value }));
-    // Keep Color actively synced between Form State and Full Meta Report
     if (key === "color") {
       setFullMetaState(prev => ({ ...prev, [key]: value }));
     }
@@ -393,8 +359,6 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
     const title = product.title || "";
     const description = product.descriptionHtml || product.description || "";
     const imageUrl = product?.images?.edges?.[0]?.node?.url || "";
-
-    console.log("AutoFill imageUrl sent:", imageUrl);
 
     autoFillFetcher.submit(
       {
@@ -418,9 +382,10 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
 
     const stoneFamily = fullMetaState.stone_family || "";
     const originHandle = fullMetaState.origin_handle || fullMetaState.origin_page_handle || "";
+    const product = products.find(p => p.id === selectedProductId);
 
     const formData = new FormData();
-    const imageUrl = products.find(p => p.id === selectedProductId)?.images?.edges?.[0]?.node?.url || "";
+    const imageUrl = product?.images?.edges?.[0]?.node?.url || "";
     formData.append("intent", "tab2AutoFill");
     formData.append("productId", selectedProductId);
     formData.append("stone_family", stoneFamily);
@@ -428,13 +393,13 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
     formData.append("cut_and_shape", fullMetaState.cut_and_shape || "");
     formData.append("collection_location", fullMetaState.collection_location || "");
     formData.append("piece_name", fullMetaState.piece_name || "");
+    formData.append("productTitle", product?.title || "");
     formData.append("imageUrl", imageUrl);
 
     tab2Fetcher.submit(
       formData,
       { method: "post", action: "/app/meta-injector-autofill" }
     );
-    console.log("[Tab2 AutoFill] stone_family:", stoneFamily, "origin_handle:", originHandle);
   }, [selectedProductId, tab2Fetcher, fullMetaState, products]);
 
   const handleInject = useCallback(() => {
@@ -457,7 +422,6 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
 
       const isPopulated = injectValue !== undefined && injectValue !== null && injectValue.toString().trim() !== "";
       
-      // Removed the overly strict '&& config' that was dropping standard fields
       if (isPopulated && injectValue !== "See Shopify metaobject") {
         const config = CUSTOM_FIELDS.find(f => f.key === key);
         let fieldType = "single_line_text_field";
@@ -485,7 +449,6 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
       return;
     }
 
-    // Explicit form action wiring restored to guarantee hitting the server action block
     injectFetcher.submit(
       { intent: "saveMetafields", payload: JSON.stringify(payload) },
       { method: "post", action: "/app/meta-injector-api" }
@@ -523,7 +486,6 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
         else changes.push({ namespace: "global", key: "seo_title", value: builtTitle, type: "single_line_text_field" });
       }
 
-      // Explicit form action wiring restored to prevent silent drop
       injectFetcher.submit(
         { intent: "saveMetafields", productId: selectedProductId, metafields: JSON.stringify(changes) },
         { method: "post", action: "/app/meta-injector-api" }
@@ -551,7 +513,6 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
           Object.entries(autoFillFetcher.data.fields).forEach(([key, val]) => {
             const hasNewValue = val !== undefined && val !== null && val.toString().trim() !== "";
             
-            // Only fill if currently empty in fullMetaState
             const ALWAYS_OVERWRITE = ["color", "cut_and_shape", "stone_family", "surface_finish", "handcrafted_by", "treated", "is_one_of_a_kind", "generated_description"];
             const currentlyEmpty = !fullMetaState[key] || (typeof fullMetaState[key] === 'string' && fullMetaState[key].trim() === "");
             const shouldOverwrite = ALWAYS_OVERWRITE.includes(key);
@@ -587,19 +548,16 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
               ...fullMetaFields
             };
             
-            // Ensure Color is driven by parsed/form state, not raw primary_color meta
             if (parsedValues.color) {
                 nextState.color = parsedValues.color;
             } else if (formState.color) {
                 nextState.color = formState.color;
             }
 
-            // Clean handcrafted_by deduplication on AutoFill return
             if (typeof nextState.handcrafted_by === 'string' && (nextState.handcrafted_by.includes("Bob & Janyce") || nextState.handcrafted_by.includes("Rockhound Studio"))) {
                 nextState.handcrafted_by = "Bob & Janyce, Rockhound Studio";
             }
 
-            // Clean primary_medium hardcode
             if (nextState.primary_medium === "Stone") {
                 nextState.primary_medium = "";
             }
@@ -612,16 +570,9 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
           });
         }
 
-        if (isSmartAutoFill) {
-          setStatusMessage("Smart Auto-Fill complete — fields populated from all available data sources.");
-        }
-        
-        if (isAutoFill) {
-          setStatusMessage("Title and tags successfully parsed and loaded into fields.");
-          if (autoFillFetcher.data.colorWarning) { setErrorMessage("WARNING: Vision could not detect Color from the hero image   please enter Color manually."); }
-        }
+        if (isSmartAutoFill) setStatusMessage("Smart Auto-Fill complete — fields populated from all available data sources.");
+        if (isAutoFill) setStatusMessage("Title and tags successfully parsed and loaded into fields.");
 
-        // Show Polaris Toast for Success
         if (window.shopify && window.shopify.toast) {
           window.shopify.toast.show("Auto-Fill complete!");
         }
@@ -629,7 +580,6 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
 
       if (isError) {
         setErrorMessage(autoFillFetcher.data.error || "An unknown error occurred during the operation.");
-        // Fallback catch-all error Toast
         if (window.shopify && window.shopify.toast) {
           window.shopify.toast.show("Action failed", { isError: true });
         }
@@ -648,6 +598,22 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
       const hasTab2Data = Object.keys(tab2Data).length > 0;
 
       if (hasTab2Data) {
+        setFormState(prev => {
+          const updatedState = { ...prev };
+          Object.entries(tab2Data).forEach(([key, val]) => {
+            const hasNewValue = val !== undefined && val !== null && val.toString().trim() !== "" && val !== "See Shopify metaobject";
+            if (hasNewValue) {
+              let normalizedVal = val;
+              if (key === "treated" || key === "is_one_of_a_kind") {
+                if (val === true || val === "true") normalizedVal = "Yes";
+                else if (val === false || val === "false") normalizedVal = "No";
+              }
+              updatedState[key] = normalizedVal;
+            }
+          });
+          return updatedState;
+        });
+
         setFullMetaState(prev => {
           const updatedState = { ...prev };
           const ALWAYS_OVERWRITE_TAB2 = ["stone_family", "surface_finish", "handcrafted_by", "treated", "is_one_of_a_kind", "mohs_hardness", "luster", "fracture_pattern", "cleavage", "specific_gravity", "diaphaneity", "mineral_class", "crystal_system", "rock_composition", "rock_formation", "geological_era", "geological_age", "color", "stone_shape", "color_pattern", "cut_and_shape", "honest_flaws_and_character", "primary_use", "primary_medium", "setting_ready", "wire_material", "bail_included", "generated_description", "seo_title"];
@@ -703,7 +669,6 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
 
       if (isError) {
         setErrorMessage(injectFetcher.data.message || injectFetcher.data.error || "An unknown error occurred");
-        // Fallback catch-all error Toast
         if (window.shopify && window.shopify.toast) {
           window.shopify.toast.show("Action failed", { isError: true });
         }
@@ -726,7 +691,7 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
         key: key,
         label: key.split(/[-_]/).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' '),
         type: 'text',
-        multiline: key.includes("story") || key.includes("notes") || key.includes("flaws") || key.includes("character")
+        multiline: key.includes("story") || key.includes("notes") || key.includes("flaws") || key.includes("character") || key === "generated_description"
       };
     }
 
