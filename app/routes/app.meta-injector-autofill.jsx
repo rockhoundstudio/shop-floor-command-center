@@ -266,7 +266,6 @@ export const action = async ({ request }) => {
       const productTitle = body.get("productTitle") || body.get("piece_name") || "";
       const imageUrl = body.get("imageUrl") || "";
 
-      // Split the raw product title to guarantee we get the true Origin location
       const titleSegments = productTitle.split(/\s+[-—–]\s+/);
       const derivedFamily = titleSegments[0]?.trim() || stone_family;
       const derivedOrigin = titleSegments[1]?.trim() || "";
@@ -301,7 +300,6 @@ export const action = async ({ request }) => {
         const authenticity = "Genuine natural stone, hand-collected by Bob & Janyce, Rockhound Studio.";
         const rarity = "One-of-a-kind — no two stones are alike.";
 
-        // THE DEDUPLICATION WELD: Prevent "Cabochon" from repeating in the SEO title
         const seoTitleParts = [];
         if (derivedFamily) seoTitleParts.push(derivedFamily);
         if (cut_and_shape) {
@@ -322,7 +320,6 @@ export const action = async ({ request }) => {
         let visionFields = {};
         if (imageUrl) {
           try {
-            // DO NOT STRIP QUERY PARAMS: Shopify CDNs will block the request if ?v= is removed
             const imageRes = await fetch(imageUrl);
             if (!imageRes.ok) throw new Error(`Shopify image fetch failed with status: ${imageRes.status}`);
 
@@ -385,13 +382,21 @@ export const action = async ({ request }) => {
                   visionFields.color = visionFields.primary_color;
                   delete visionFields.primary_color;
               }
+              
+              // BLOCK ERROR LEAKS
+              if (visionFields.generated_description) {
+                  const desc = visionFields.generated_description;
+                  const lowerDesc = desc.toLowerCase();
+                  if (desc.startsWith("[VISION API CRASH]") || desc.startsWith("[") || lowerDesc.includes("timed out") || lowerDesc.includes("api") || lowerDesc.includes("error")) {
+                      visionFields.generated_description = "";
+                  }
+              }
             } else {
                throw new Error(`Gemini API returned status: ${geminiRes.status}`);
             }
           } catch (visionErr) {
             console.warn("[tab2AutoFill] Vision scan failed:", visionErr.message);
-            // TRIPWIRE: If Vision crashes, print it to the screen so Bob isn't flying blind
-            visionFields = { generated_description: `[VISION API CRASH] ${visionErr.message}. Check image URL or API quota.` };
+            visionFields = {};
           }
         }
 
@@ -540,7 +545,6 @@ export const action = async ({ request }) => {
       if (!imageBase64) {
         const rawImageUrl = body.get("imageUrl");
         if (rawImageUrl) {
-          // DO NOT STRIP QUERY PARAMS HERE EITHER
           const imageRes = await fetch(rawImageUrl);
           if (!imageRes.ok) throw new Error(`Shopify image fetch failed with status: ${imageRes.status}`);
 
@@ -552,7 +556,7 @@ export const action = async ({ request }) => {
 
       const promptText = `You are a lapidary artist and master jeweler for Rockhound Studio. Analyze this photo and return a JSON object.\n- LIVE STORE DIRECTORY (Your Dyslexia Safeguard — Read this menu!):\n  VALID PAGES IN STORE:\n  ${pagesMenu || "No live pages found — use default URL."}\n  \n  VALID COLLECTIONS IN STORE:\n  ${collectionsMenu || "No live collections found — use default URL."}\n\n- generated_description: Poetic, spare, story-driven product description STRICTLY UNDER 160 CHARACTERS total. The shape, color, and origin should feel inevitable - like the stone decided, not the maker. Never clinical. Never salesy. Credit craftsmanship strictly as "handcrafted by Bob and Janyce". ZERO workshop references. Do NOT use em dashes.\nCRITICAL DWELL WEB EMBED LAW: Look at the Origin Segment Janyce entered ("${originSegment}"). Check the LIVE STORE DIRECTORY above and match it to the exact corresponding Page and Collection. You MUST use those live excerpts to write short story hooks leading directly into TWO clickable HTML hyperlinks. \n  1. Origin Hook: Write a short story hook based on the matching Page excerpt, followed immediately by this exact anchor tag format: <a href="${targetUrlPath}">${fullCollectionTitle} Story</a>\n  2. Collection Hook: Write a short hook based on the matching Collection excerpt, followed immediately by this exact anchor tag format: <a href="${collectionUrlPath}">${fullCollectionTitle} Collection</a>\n- primary_use: Smart Switch! Force strictly to best match (e.g., "Pendant (Finished Jewelry)", "Necklace", "Ring / Bezel Setting", "Cabochon", "Wire Wrap (Finished Jewelry)"). If a chain is visible, classify as "Necklace".
 - chain_material: If a necklace chain is visible, identify it as exactly one of: "Silver Plated Snake Chain", "Gold Plated Snake Chain", "Sterling Silver Chain", "Cord". If no chain is visible, return "None".\n- MANDATORY BENCH FINDINGS & JEWELRY LAWS:\n  * setting_ready: Look closely at the mounting. If cabochon is in a bezel setting, MUST return "Bezel Setting - Ready to Wear". If prong setting, return "Prong Setting - Ready to Wear". If wire wrapped, return "Wire Wrapped - Ready to Wear". NEVER LEAVE BLANK FOR MOUNTED STONES!\n  * wire_material: If wire wrapped, output the wire metal (e.g., "Antiqued Copper Wire"). If in a bezel or prong setting with zero wire, MUST return strictly: "None — Bezel Mounted".\n  * primary_medium: State the primary metal or mounting material. Use exactly one of these: ".925 Sterling Silver Bezel", "Silver Plated Bezel", "Gold Plated Bezel", "Copper Bezel", "Gold Tone Alloy Bezel", "Silver Tone Alloy Bezel", "Bronze Tone Alloy Bezel", "Glue-On Loop", "Drilled — Pinch Bail" (loose stone with a drilled hole and pinch bail through it, no bezel). Match the tone and finish visible in the photo. Do not leave blank!
-  * surface_finish: Describe the stone's surface finish as seen in the photo. Use terms like "High Polish", "Matte", "Satin", "Natural/Raw", "Tumbled". Do not leave blank.\n  * secondary_medium: Look ONLY for a second distinct METAL component (e.g., a gold accent ring). If you see small stones or crystals on a bail, those are part of the bail — return "None" for secondary_medium. Do NOT describe bail decorations here. If no second metal component exists, return strictly "None".\n  * bail_included: Look at the TOP of the piece. If there is a separate small clip or loop pinched onto the bezel (with or without accent stones), return "Silver Plated Pinch Bail". If the bail is welded or formed as part of the bezel frame with no separate clip, return "Integrated Bezel Bail". If there is no bail at all, return "None". Do NOT guess — only report what is physically visible.`;
+  * surface_finish: Describe the stone's surface finish as seen in the photo. Use terms like "High Polish", "Matte", "Satin", "Natural/Raw", "Tumbled". Do not leave blank.\n  * secondary_medium: Look ONLY for a second distinct METAL component (e.g., a gold accent ring). If you see small stones or crystals on a bail, supply "None" for secondary_medium. Do NOT describe bail decorations here. If no second metal component exists, return strictly "None".\n  * bail_included: Look at the TOP of the piece. If there is a separate small clip or loop pinched onto the bezel (with or without accent stones), return "Silver Plated Pinch Bail". If the bail is welded or formed as part of the bezel frame with no separate clip, return "Integrated Bezel Bail". If there is no bail at all, return "None". Do NOT guess — only report what is physically visible.`;
 
       const geminiRes = await fetchWithRetry("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY, {
         method: "POST", 
@@ -602,11 +606,18 @@ export const action = async ({ request }) => {
         const resolved_setting_ready = parsedVision.setting_ready || parsedVision.setting || parsedVision.mounting || parsedVision.bezel || "";
         const resolved_bail_included = parsedVision.bail_included || parsedVision.bail || "";
 
+        // BLOCK ERROR LEAKS
+        let final_desc = parsedVision.generated_description || parsedVision.description || "";
+        const lowerDesc = final_desc.toLowerCase();
+        if (final_desc.startsWith("[VISION API CRASH]") || final_desc.startsWith("[") || lowerDesc.includes("timed out") || lowerDesc.includes("api") || lowerDesc.includes("error")) {
+            final_desc = "";
+        }
+
         return Response.json({
           success: true, 
           intent: "visionScan", 
           pieceId,
-          generated_description: parsedVision.generated_description || parsedVision.description || "",
+          generated_description: final_desc,
           primary_color: parsedVision.primary_color || "",
           cut_and_shape: parsedVision.cut_and_shape || "",
           surface_finish: parsedVision.surface_finish || "",
