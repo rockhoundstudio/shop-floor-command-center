@@ -1,1414 +1,893 @@
-// ==========================================================================
-// ROCKHOUND STUDIO — TAB 1: NEW PRODUCT INTAKE Bench
-// File: app/routes/app.meta-injector.injector.jsx
-// (100% Original Logic + useRef Stale Closure Bypass for Dwell Web)
-// ==========================================================================
+import { data } from "react-router";
+import { authenticate } from "../shopify.server";
+import prisma from "../db.server";
 
-import React, { useState, useEffect, useCallback, useRef } from "react";
-import { BlockStack, Card, Text, TextField, Select, Button, Banner, DropZone, Spinner, Frame, Toast, InlineGrid, Box, Divider } from "@shopify/polaris";
-import { PlusIcon, MagicIcon } from "@shopify/polaris-icons";
-import { useFetcher } from "react-router";
-import { ROCKHOUND_FIELDS, DEFAULT_DROPDOWNS, CHANNEL_REQUIREMENTS, getFieldStatus, productTypeOptions, collectionLocationOptions, normalizeDropdownValue, DROPDOWN_OPTIONS } from "../utils/meta-injector.constants.jsx";
-import { handleScanPhoto, handleGenerateDescription, buildMetafieldsJson, buildTitle } from "./app.meta-injector.intake-helpers.jsx";
-
-const SHOPPED_ROCK_VENDORS = ["Richardson's Rock Ranch", "Irv's Rock and Jewelry"];
-
-const CUSTOM_FIELDS = [
-  // ==========================================
-  // SECTION A: SHARED BATCH FIELDS (The Story & Material)
-  // ==========================================
-  { key: "stone_family", label: "Stone Family", type: "single_line_text_field", isShared: true },
-  { key: "color", label: "Color", type: "single_line_text_field", isShared: true }, 
-  { key: "surface_finish", label: "Surface Finish", type: "single_line_text_field", isShared: true }, 
-  { key: "source_location", label: "Source / Discovery Location", type: "single_line_text_field", isShared: true },
-  { key: "primary_use", label: "Primary Use", type: "single_line_text_field", isShared: true }, 
-  { key: "handcrafted_by", label: "Handcrafted By", type: "single_line_text_field", isShared: true },
-  { key: "origin_story", label: "The Origin Story", type: "single_line_text_field", multiline: true, isShared: true },
-
-  // ==========================================
-  // SECTION B: PER-PIECE ROWS (The Hard Specs)
-  // ==========================================
-  { key: "piece_name", label: "Piece Name", type: "single_line_text_field", isPerPiece: true },
-  { key: "cut_and_shape", label: "Cut / Shape", type: "single_line_text_field", isPerPiece: true }, 
-  { key: "dimensions_mm", label: "Dimensions (mm)", type: "single_line_text_field", isPerPiece: true },
-  { key: "weight_grams", label: "Weight (grams)", type: "single_line_text_field", isPerPiece: true },
-  { key: "honest_flaws", label: "Character Marks (Honest Flaws)", type: "single_line_text_field", multiline: true, isPerPiece: true },
-  { key: "price", label: "Price", type: "single_line_text_field", isPerPiece: true }
-];
-
-const FULL_META_GROUPS = [
-  {
-    heading: "Always Fill",
-    color: "#2E7D32",
-    fields: [
-      { key: "piece_name", label: "Piece Name", type: "text" },
-      { key: "primary_medium", label: "Primary Medium", type: "text" },
-      { key: "handcrafted_by", label: "Handcrafted By", type: "text" },
-      { key: "is_one_of_a_kind", label: "Is One of a Kind", type: "text" },
-      { key: "treated", label: "Treated", type: "text" }
-    ]
-  },
-  {
-    heading: "Stone Fields",
-    color: "#1565C0",
-    fields: [
-      { key: "stone_family", label: "Stone Family", type: "text" },
-      { key: "color", label: "Color", type: "text" },
-      { key: "cut_and_shape", label: "Cut and Shape", type: "text" },
-      { key: "surface_finish", label: "Surface Finish", type: "text" },
-      { key: "dimensions_mm", label: "Dimensions (mm)", type: "text" },
-      { key: "weight_grams", label: "Weight (grams)", type: "text" }
-    ]
-  },
-  {
-    heading: "Story & Lore",
-    color: "#E65100",
-    fields: [
-      { key: "origin_story", label: "Origin Story", type: "text", multiline: true },
-      { key: "honest_flaws_and_character", label: "Honest Flaws and Character", type: "text", multiline: true },
-      { key: "collection_name", label: "Collection Name", type: "text" }
-    ]
-  },
-  {
-    heading: "Mixed Media",
-    color: "#6A1B9A",
-    fields: [
-      { key: "found_object", label: "Found Object", type: "text" }
-    ]
-  },
-  {
-    heading: "Google / SEO",
-    color: "#F9A825",
-    fields: [
-      { key: "primary_use", label: "Primary Use", type: "text" },
-      { key: "bail_included", label: "Bail Included", type: "text" }
-    ]
-  },
-  {
-    heading: "Geo-Vault",
-    color: "#4E342E",
-    fields: [
-      { key: "mineral_class", label: "Mineral Class", type: "text" },
-      { key: "crystal_system", label: "Crystal System", type: "text" },
-      { key: "rock_composition", label: "Rock Composition", type: "text" },
-      { key: "rock_formation", label: "Rock Formation", type: "text" },
-      { key: "geological_era", label: "Geological Era", type: "text" }
-    ]
+function chunkArray(arr, size) {
+  const chunks = [];
+  for (let i = 0; i < arr.length; i += size) {
+    chunks.push(arr.slice(i, i + size));
   }
-];
-
-const NAMESPACE_MAP = {
-  custom: [
-    "piece_name", "primary_medium", "secondary_medium", "handcrafted_by",
-    "stone_family", "color", "cut_and_shape", "surface_finish",
-    "dimensions_mm", "weight_grams", "shipping_weight_oz", "price",
-    "collection_name", "collection_location",
-    "primary_use", "bail_included", "is_one_of_a_kind", "treated",
-    "found_object", "wire_material", "setting_ready", "material",
-    "origin_story", "origin_handle", "honest_flaws_and_character",
-    "artist_notes", "generated_description", "rescued_by", "stone_shape",
-    "target_gender", "age_group", "condition", "color_pattern",
-    "jewelry_type", "necklace_design", "chain_link_type",
-    "jewelry_finding_type", "custom_product", "seo_title",
-    "mohs_hardness", "luster", "fracture_pattern", "cleavage", "specific_gravity",
-    "diaphaneity", "crystal_system", "geological_era", "geological_age", "mineral_class",
-    "rock_composition", "rock_formation"
-  ]
-};
-
-const getNamespaceForKey = (key) => "custom";
-
-export function NewProductIntakeTab({ fetcher }) {
-  const stageFetcher = useFetcher();
-  const autoFillFetcher = useFetcher();
-  const visionFetcher = useFetcher();
-  const descriptionFetcher = useFetcher();
-
-  const [sharedFields, setSharedFields] = useState({
-    material: "",
-    stone_family: "",
-    collection_name: "",
-    collection_location: "",
-    origin_location: "",
-    origin_handle: "", 
-    rescued_by: "Bob and Janyce",
-    treatment_status: "100% Natural/Untreated",
-    origin_story: "",
-    primary_use: "",
-    handcrafted_by: "Bob & Janyce, Rockhound Studio",
-    is_one_of_a_kind: "Yes — one of a kind",
-    treated: "Untreated — Natural",
-    found_object: "true",
-    condition: "new",
-    target_gender: "Unisex",
-    age_group: "adult",
-    primary_medium: "",
-    secondary_medium: "",
-    wire_material: "",
-    setting_ready: "",
-    bail_included: ""
-  });
-
-  const [pieces, setPieces] = useState([
-    {
-      id: Date.now().toString(),
-      piece_name: "",
-      dimensions_mm: "",
-      cut_and_shape: "",
-      surface_finish: "",
-      color: "",
-      price: "",
-      weight_grams: "",
-      shipping_weight_oz: "",
-      photoFiles: [],
-      photoPreviewUrls: [],
-      photos: [],
-      imageBase64: "",
-      imageMimeType: "",
-      stagedResourceUrls: [],
-      generated_description: "",
-      artist_notes: "",
-      scanError: "",
-      scanToken: "",
-      isUploading: false
-    }
-  ]);
-
-  // 🟢 THE WELD: Live State References to bypass the Stale Closure ghost
-  const latestPieces = useRef(pieces);
-  const latestShared = useRef(sharedFields);
-  useEffect(() => { latestPieces.current = pieces; }, [pieces]);
-  useEffect(() => { latestShared.current = sharedFields; }, [sharedFields]);
-
-  const [photoFiles, setPhotoFiles] = useState([]);
-  const [photoPreviewUrls, setPhotoPreviewUrls] = useState([]);
-
-  const [searchQuery, setSearchQuery] = useState("");
-  const [statusMessage, setStatusMessage] = useState("");
-  const [errorMessage, setErrorMessage] = useState("");
-  const [generatedDescription, setGeneratedDescription] = useState("");
-  const [geoToast, setGeoToast] = useState(false);
-  
-  const [titleToastActive, setTitleToastActive] = useState(false);
-  const [titleToastMsg, setTitleToastMsg] = useState("");
-  const [titleToastError, setTitleToastError] = useState(false);
-  
-  const [lastScannedPieceId, setLastScannedPieceId] = useState(null);
-
-  const handleScanGeminiPhotos = useCallback((piece) => {
-    !!(piece?.photoFiles?.[0]) && (() => {
-      const formData = new FormData();
-      formData.append("intent", "stagedUpload");
-      formData.append("file_0", piece.photoFiles[0]);
-      formData.append("pieceId", piece.id);
-      stageFetcher.submit(formData, {
-        method: "post",
-        action: "/app/meta-injector-api",
-        encType: "multipart/form-data"
-      });
-    })();
-  }, [stageFetcher]);
-
-  const handleSharedFieldChange = useCallback((key, value) => {
-    setSharedFields(prev => ({ ...prev, [key]: value }));
-  }, []);
-
-  const handleStoneFamilyChange = useCallback((value) => {
-    setSharedFields(prev => ({ ...prev, stone_family: value }));
-  }, []);
-
-  const handlePieceChange = useCallback((id, key, value) => {
-    setPieces(prev => prev.map(p => {
-      let updated = { ...p };
-      (p.id === id) && (updated[key] = value);
-      return updated;
-    }));
-  }, []);
-
-  const handlePieceNameBlur = useCallback((id, value) => {
-    if (!value) return;
-    const segments = value.split(/\s+[-—–]\s+/);
-    if (segments.length === 3) {
-      setLastScannedPieceId(id);
-      autoFillFetcher.submit(
-        { intent: "titleParse", pieceName: value },
-        { method: "post", action: "/app/meta-injector-autofill" }
-      );
-    }
-  }, [autoFillFetcher]);
-
-  const handleTopDropZoneDrop = useCallback((dropFiles) => {
-    setPhotoFiles(prev => {
-      const combined = [...prev, ...dropFiles];
-      const capped = combined.slice(0, 5);
-      setPhotoPreviewUrls(capped.map(f => URL.createObjectURL(f)));
-      return capped;
-    });
-    setPieces(prev => prev.map((p, i) => {
-      let updated = { ...p };
-      (i === 0) && (() => {
-        const combined = [...p.photoFiles, ...dropFiles];
-        const capped = combined.slice(0, 5);
-        updated.photoFiles = capped;
-        updated.photoPreviewUrls = capped.map(f => URL.createObjectURL(f));
-      })();
-      return updated;
-    }));
-  }, []);
-
-  const handleRemoveTopPhoto = useCallback((index) => {
-    setPhotoFiles(prev => {
-      const updated = prev.filter((_, i) => i !== index);
-      setPhotoPreviewUrls(updated.map(f => URL.createObjectURL(f)));
-      return updated;
-    });
-  }, []);
-
-  const handleDropZoneDrop = useCallback((id, dropFiles) => {
-    setPieces(prev => prev.map(p => {
-      let updated = { ...p };
-      (p.id === id) && (() => {
-        const combined = [...p.photoFiles, ...dropFiles];
-        const capped = combined.slice(0, 5);
-        updated.photoFiles = capped;
-        updated.photos = capped;
-        updated.photoPreviewUrls = capped.map(f => URL.createObjectURL(f));
-        if (capped.length > 0) {
-          updated.imageMimeType = capped[0].type;
-          const reader = new FileReader();
-          reader.onloadend = () => {
-            const base64String = reader.result.replace("data:", "").replace(/^.+,/, "");
-            handlePieceChange(id, "imageBase64", base64String);
-          };
-          reader.readAsDataURL(capped[0]);
-        } else {
-          updated.imageBase64 = "";
-          updated.imageMimeType = "";
-        }
-      })();
-      return updated;
-    }));
-  }, [handlePieceChange]);
-
-  const handleRemoveRowPhoto = useCallback((id, index) => {
-    setPieces(prev => prev.map(p => {
-      let updated = { ...p };
-      (p.id === id) && (() => {
-        const filtered = p.photoFiles.filter((_, i) => i !== index);
-        updated.photoFiles = filtered;
-        updated.photos = filtered;
-        updated.photoPreviewUrls = filtered.map(f => URL.createObjectURL(f));
-        if (filtered.length > 0) {
-          updated.imageMimeType = filtered[0].type;
-          const reader = new FileReader();
-          reader.onloadend = () => {
-            const base64String = reader.result.replace("data:", "").replace(/^.+,/, "");
-            handlePieceChange(id, "imageBase64", base64String);
-          };
-          reader.readAsDataURL(filtered[0]);
-        } else {
-          updated.imageBase64 = "";
-          updated.imageMimeType = "";
-        }
-      })();
-      return updated;
-    }));
-  }, [handlePieceChange]);
-
-  const handleAddRow = useCallback(() => {
-    setPieces(prev => [
-      ...prev,
-      {
-        id: Date.now().toString() + Math.random().toString(),
-        piece_name: "",
-        dimensions_mm: "",
-        cut_and_shape: "",
-        surface_finish: "",
-        color: "",
-        price: "",
-        weight_grams: "",
-        shipping_weight_oz: "",
-        photoFiles: [],
-        photoPreviewUrls: [],
-        photos: [],
-        imageBase64: "",
-        imageMimeType: "",
-        stagedResourceUrls: [],
-        generated_description: "",
-        artist_notes: "",
-        scanError: "",
-        scanToken: "",
-        isUploading: false
-      }
-    ]);
-  }, []);
-
-  const handleRemoveRow = useCallback((id) => {
-    setPieces(prev => prev.filter(p => p.id !== id));
-  }, []);
-
-  const handleCreateAll = useCallback(() => {
-    setStatusMessage("");
-    setErrorMessage("");
-
-    let productType = "Wearable Art";
-    (sharedFields.primary_use && sharedFields.primary_use !== "") && (productType = sharedFields.primary_use);
-
-    const payload = {
-      intent: "createProduct",
-      ...latestShared.current,
-      piece_name: pieces[0].piece_name,
-      dimensions_mm: pieces[0].dimensions_mm,
-      cut_and_shape: pieces[0].cut_and_shape,
-      surface_finish: pieces[0].surface_finish,
-      color: pieces[0].color,
-      price: pieces[0].price,
-      weight_grams: pieces[0].weight_grams,
-      seo_title: pieces[0].seo_title,
-      title: pieces[0].canonical_title || buildTitle(latestShared.current, pieces[0]),
-      descriptionHtml: pieces[0].generated_description,
-      productType: productType,
-      status: "DRAFT",
-      metafieldsJson: buildMetafieldsJson(sharedFields, pieces[0]),
-      mediaUrlsJson: JSON.stringify(pieces[0].stagedResourceUrls.filter(u => u !== undefined && u !== ""))
-    };
-
-    const fd = new FormData();
-    fd.append("intent", "createProduct");
-    fd.append("payload", JSON.stringify(payload));
-
-    fetcher.submit(fd, { method: "post", action: "/app/meta-injector-api" });
-  }, [sharedFields, pieces, fetcher]);
-
-  const handleStartNewBatch = useCallback(() => {
-    setStatusMessage("");
-    setErrorMessage("");
-    setSharedFields({
-      material: "",
-      stone_family: "",
-      collection_name: "",
-      collection_location: "",
-      origin_location: "",
-      origin_handle: "",
-      rescued_by: "Bob and Janyce",
-      treatment_status: "100% Natural/Untreated",
-      origin_story: "",
-      primary_use: "",
-      handcrafted_by: "Bob & Janyce, Rockhound Studio",
-      is_one_of_a_kind: "Yes — one of a kind",
-      treated: "Untreated — Natural",
-      found_object: "true",
-      condition: "new",
-      target_gender: "Unisex",
-      age_group: "adult",
-      primary_medium: "",
-      secondary_medium: "",
-      wire_material: "",
-      setting_ready: "",
-      bail_included: ""
-    });
-    setPieces([{
-      id: Date.now().toString(),
-      piece_name: "",
-      dimensions_mm: "",
-      cut_and_shape: "",
-      surface_finish: "",
-      color: "",
-      price: "",
-      weight_grams: "",
-      shipping_weight_oz: "",
-      photoFiles: [],
-      photoPreviewUrls: [],
-      photos: [],
-      imageBase64: "",
-      imageMimeType: "",
-      stagedResourceUrls: [],
-      generated_description: "",
-      artist_notes: "",
-      scanError: "",
-      scanToken: "",
-      isUploading: false
-    }]);
-    setPhotoFiles([]);
-    setPhotoPreviewUrls([]);
-    setGeneratedDescription("");
-    setLastScannedPieceId(null);
-  }, []);
-
-  useEffect(() => {
-    const isIdle = fetcher.state === "idle";
-    const hasData = fetcher.data !== undefined && fetcher.data !== null;
-
-    (isIdle && hasData) && (() => {
-      const isCreate = fetcher.data.intent === "createProduct";
-      const isSuccess = fetcher.data.success === true;
-      const isError = fetcher.data.success === false;
-
-      (isCreate && isSuccess) && (() => {
-        let count = 0;
-        fetcher.data.createdCount && (count = fetcher.data.createdCount);
-        setStatusMessage(`Successfully created pieces.`);
-      })();
-
-      (isCreate && isError) && (() => {
-        let errStr = "An error occurred during product creation.";
-        fetcher.data.error && (errStr = fetcher.data.error);
-        setErrorMessage(errStr);
-      })();
-    })();
-  }, [fetcher.state, fetcher.data]);
-
-  useEffect(() => {
-    const isIdle = stageFetcher.state === "idle";
-    const hasData = stageFetcher.data !== undefined && stageFetcher.data !== null;
-
-    (isIdle && hasData) && (() => {
-      const data = stageFetcher.data;
-      const isStaged = data.intent === "stagedUpload";
-      const isSuccess = data.success === true;
-      const isError = data.success === false;
-      const pid = data.pieceId;
-      const resourceUrl = data.resourceUrl;
-
-      (isStaged && isError) && (() => {
-        handlePieceChange(pid, "scanError", data.error || "Stage failed");
-      })();
-
-      (isStaged && isSuccess && resourceUrl) && (() => {
-        setPieces(prev => prev.map(p =>
-          p.id === pid ? { ...p, stagedResourceUrls: [resourceUrl] } : p
-        ));
-
-        // 🟢 THE WELD: Extract from live useRef state to destroy the Stale Closure
-        const scannedPiece = latestPieces.current.find(p => p.id === pid);
-        const pName = scannedPiece ? scannedPiece.piece_name : "";
-        const cName = latestShared.current.collection_name || "";
-        const base64 = scannedPiece ? scannedPiece.imageBase64 : "";
-        const mime = scannedPiece ? scannedPiece.imageMimeType : "image/jpeg";
-
-        visionFetcher.submit(
-          { 
-            intent: "visionScan", 
-            pieceId: pid, 
-            imageUrl: resourceUrl,
-            pieceName: pName,
-            collectionName: cName,
-            imageBase64: base64,  // Forces image through pipeline instantly
-            imageMimeType: mime
-          },
-          { method: "post", action: "/app/meta-injector-autofill" }
-        );
-      })();
-    })();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stageFetcher.state, stageFetcher.data]);
-
-  useEffect(() => {
-    const isIdle = visionFetcher.state === "idle";
-    const hasData = visionFetcher.data !== undefined && visionFetcher.data !== null;
-
-    (isIdle && hasData) && (() => {
-      const data = visionFetcher.data;
-      const isScan = data.intent === "visionScan";
-      const isSuccess = data.success === true;
-      const isError = data.success === false;
-
-      (isScan && isSuccess) && (() => {
-        setSharedFields(prev => ({
-          ...prev,
-          primary_use: data.primary_use || prev.primary_use,
-          primary_medium: data.primary_medium || prev.primary_medium,
-          secondary_medium: data.secondary_medium || prev.secondary_medium,
-          wire_material: data.wire_material || prev.wire_material,
-          setting_ready: data.setting_ready || prev.setting_ready,
-          bail_included: data.bail_included || prev.bail_included
-        }));
-
-        setPieces(prev => prev.map(p => {
-          let updated = { ...p };
-          (p.id === data.pieceId) && (() => {
-            (data.description !== undefined && data.description !== "") && (updated.generated_description = data.description);
-            (data.color !== undefined && data.color !== "") && (updated.color = data.color);
-            (data.primary_color !== undefined && data.primary_color !== "") && (updated.color = data.primary_color);
-            (data.cut_and_shape !== undefined && data.cut_and_shape !== "") && (updated.cut_and_shape = data.cut_and_shape);
-            (data.surface_finish !== undefined && data.surface_finish !== "") && (updated.surface_finish = data.surface_finish);
-            (data.dimensions_mm !== undefined && data.dimensions_mm !== "") && (updated.dimensions_mm = data.dimensions_mm);
-            updated.scanError = "";
-          })();
-          return updated;
-        }));
-      })();
-
-      (isScan && isError) && (() => {
-        setPieces(prev => prev.map(p => {
-          let updated = { ...p };
-          (p.id === data.pieceId) && (() => {
-            let errStr = "Scan failed";
-            data.error && (errStr = data.error);
-            updated.scanError = errStr;
-          })();
-          return updated;
-        }));
-      })();
-    })();
-  }, [visionFetcher.state, visionFetcher.data]);
-
-  useEffect(() => {
-    const isIdle = autoFillFetcher.state === "idle";
-    const hasData = autoFillFetcher.data !== undefined && autoFillFetcher.data !== null;
-
-    (isIdle && hasData) && (() => {
-      const data = autoFillFetcher.data;
-      (data.geoFields) && (() => {
-        const geo = data.geoFields;
-        if (geo.geoSource === "none") { window.shopify?.toast?.show("Not in geo database   enter manually", { duration: 3000 }); return; }
-        setSharedFields(prev => {
-          const updated = { ...prev };
-          updated.mohs_hardness = geo.mohs_hardness ?? geo.hardness;
-          updated.luster = geo.luster;
-          updated.fracture_pattern = geo.fracture_pattern ?? geo.fracture;
-          updated.cleavage = geo.cleavage;
-          updated.specific_gravity = geo.specific_gravity;
-          updated.diaphaneity = geo.diaphaneity;
-          updated.crystal_system = geo.crystal_system;
-          updated.geological_era = geo.geological_era;
-          updated.geological_age = geo.geological_age;
-          updated.mineral_class = geo.mineral_class;
-          updated.rock_composition = geo.rock_composition;
-          updated.rock_formation = geo.rock_formation;
-          return updated;
-        });
-        setGeoToast(true);
-      })();
-    })();
-  }, [autoFillFetcher.state, autoFillFetcher.data]);
-
-  useEffect(() => {
-    if (!autoFillFetcher.data?.titleParse) return;
-    const parsed = autoFillFetcher.data.titleParse;
-
-    setSharedFields(prev => {
-      let resolvedCollectionLoc = parsed.collection_location || prev.collection_location;
-      if (SHOPPED_ROCK_VENDORS.includes(parsed.origin_name)) {
-        resolvedCollectionLoc = "Shopped Rock";
-      }
-
-      return {
-        ...prev,
-        material: "Stone",
-        stone_family: normalizeDropdownValue("stone_family", parsed.stone_family?.trim()) || prev.stone_family,
-        collection_name: parsed.collection_name || prev.collection_name,
-        collection_location: resolvedCollectionLoc,
-        origin_handle: parsed.origin_handle || prev.origin_handle, 
-        origin_story: parsed.origin_story || prev.origin_story,
-        specific_gravity: parsed.specific_gravity || prev.specific_gravity,
-        diaphaneity: parsed.diaphaneity || prev.diaphaneity,
-        crystal_system: parsed.crystal_system || prev.crystal_system,
-        geological_era: parsed.geological_era || prev.geological_era,
-        mineral_class: parsed.mineral_class || prev.mineral_class,
-        rock_composition: parsed.rock_composition || prev.rock_composition,
-        rock_formation: parsed.rock_formation || prev.rock_formation,
-        geological_age: parsed.geological_age || prev.geological_age,
-        fracture_pattern: parsed.fracture_pattern || prev.fracture_pattern,
-        collection_story: parsed.collection_story || prev.collection_story,
-        ...(parsed.title_tag && { title_tag: parsed.title_tag }),
-        ...(parsed.description_tag && { description_tag: parsed.description_tag }),
-        ...(parsed.google_product_category && { google_product_category: parsed.google_product_category }),
-        ...(parsed.target_gender && { target_gender: parsed.target_gender }),
-        ...(parsed.age_group && { age_group: parsed.age_group }),
-        ...(parsed.condition && { condition: parsed.condition }),
-        ...(parsed.geological_age && { geological_age: parsed.geological_age }),
-        ...(parsed.fracture_pattern && { fracture_pattern: parsed.fracture_pattern }),
-        ...(parsed.mohs_hardness && { mohs_hardness: parsed.mohs_hardness }),
-        ...(parsed.luster && { luster: parsed.luster }),
-        ...(parsed.fracture && { fracture: parsed.fracture }),
-        ...(parsed.cleavage && { cleavage: parsed.cleavage }),
-        ...(parsed.specific_gravity && { specific_gravity: parsed.specific_gravity }),
-        ...(parsed.diaphaneity && { diaphaneity: parsed.diaphaneity }),
-        ...(parsed.crystal_system && { crystal_system: parsed.crystal_system }),
-        ...(parsed.geological_era && { geological_era: parsed.geological_era }),
-        ...(parsed.mineral_class && { mineral_class: parsed.mineral_class }),
-        ...(parsed.rock_composition && { rock_composition: parsed.rock_composition }),
-        ...(parsed.rock_formation && { rock_formation: parsed.rock_formation }),
-      };
-    });
-
-    
-
-    if (parsed.canonical_title || parsed.product_title) {
-      const pieceTitleVal = parsed.canonical_title || parsed.product_title;
-      setPieces(prev => prev.map((p, i) =>
-        p.id === lastScannedPieceId || (!lastScannedPieceId && i === 0)
-          ? { ...p, piece_name: pieceTitleVal, seo_title: parsed.seo_title, handle: parsed.handle, canonical_title: parsed.canonical_title }
-          : p
-      ));
-    }
-
-    if (parsed.needs_new_origin_page) {
-      setTitleToastMsg("⚠️ No origin page found — create one for: " + parsed.origin_name);
-      setTitleToastError(true);
-      setTitleToastActive(true); setTimeout(() => setTitleToastActive(false), 3000);
-    } else {
-      setTitleToastMsg("Title parsed — fields pre-filled");
-      setTitleToastError(false);
-      setTitleToastActive(true); setTimeout(() => setTitleToastActive(false), 3000);
-    }
-
-  }, [autoFillFetcher, autoFillFetcher.data, lastScannedPieceId]);
-
-  useEffect(() => {
-    const isIdle = descriptionFetcher.state === "idle";
-    const hasData = descriptionFetcher.data !== undefined && descriptionFetcher.data !== null;
-
-    (isIdle && hasData) && (() => {
-      const data = descriptionFetcher.data;
-      const isDesc = data.intent === "generateDescription";
-      const isSuccess = data.success === true;
-
-      (isDesc && isSuccess) && (() => {
-        let descStr = "";
-        data.description && (descStr = data.description);
-        setPieces(prev => prev.map((p, i) =>
-          p.id === data.pieceId || (!data.pieceId && i === 0)
-            ? { ...p, generated_description: descStr }
-            : p
-        ));
-      })();
-    })();
-  }, [descriptionFetcher.state, descriptionFetcher.data]);
-
-  useEffect(() => {
-    const stagedUrl = pieces[0]?.stagedResourceUrls?.[0];
-    (stagedUrl && stagedUrl !== "") && (() => {
-      window.shopify?.toast?.show("Photo ready — tap Scan to generate description");
-    })();
-  }, [pieces[0]?.stagedResourceUrls?.[0]]);
-
-  let isSubmitting = false;
-  (fetcher.state !== "idle" && fetcher.formData?.get("intent") === "createProduct") && (isSubmitting = true);
-
-  let isDescLoading = false;
-  (descriptionFetcher.state !== "idle") && (isDescLoading = true);
-
-  const rescuedByOptions = ["", "Bob", "Janyce", "Bob and Janyce"];
-  const treatmentStatusOptions = ["100% Natural/Untreated", "Heat Treated", "Dyed", "Stabilized", "Irradiated", "Coated"];
-  const surfaceFinishOptions = ["", "High Polish", "Matte", "Satin", "Hand Polish", "Natural"];
-
-  const isJewelry = ["Pendant (Finished Jewelry)", "Wire Wrap (Finished Jewelry)", "Ring / Bezel Setting", "Pendant", "Wire Wrap", "Ring", "Necklace", "Earrings", "Bracelet", "Jewelry", "Wearable Art"].some(type => (sharedFields.primary_use || "").includes(type));
-
-  const combinedData = { ...sharedFields, ...(pieces[0] || {}) };
-  const scanKeys = [
-    ...ROCKHOUND_FIELDS.map(f => f.key),
-    "origin_story",
-    "price",
-    "honest_flaws_and_character",
-    "stone_shape",
-    "mohs_hardness",
-    "luster",
-    "fracture_pattern",
-    "cleavage",
-    "specific_gravity",
-    "diaphaneity",
-    "crystal_system",
-    "geological_era",
-    "mineral_class",
-    "rock_composition",
-    "rock_formation",
-    "geological_age",
-    "age_group",
-    "target_gender",
-    "color_pattern",
-    "jewelry_type",
-    "necklace_design",
-    "chain_link_type",
-    "jewelry_finding_type",
-    "authenticity",
-    "rarity",
-    "condition",
-    "found_object",
-    "setting_ready",
-    "bail_included",
-    "wire_material"
-  ];
-
-  const actionData = fetcher.data;
-  let useSaved = false;
-  (actionData?.success === true) && (useSaved = true);
-
-  const savedMap = {};
-  (actionData && actionData.savedMetafields) && actionData.savedMetafields.forEach(mf => { savedMap[mf.key] = mf.value; });
-
-  const renderLabel = (text, key, val) => {
-    const status = getFieldStatus(key, val);
-    const isFilled = status === "green";
-    const isOptionalEmpty = status === "yellow";
-    const isRequiredEmpty = status === "red";
-
-    let dotColor = "#FFC453";
-    isFilled && (dotColor = "#008060");
-    isRequiredEmpty && (dotColor = "#D72C0D");
-
-    return (
-      <span style={{ fontSize: "14px", fontWeight: "600" }}>
-        <span style={{ color: dotColor, fontSize: "18px", lineHeight: "18px", width: "18px", height: "18px", display: "inline-block", textAlign: "center", marginRight: "4px" }}>●</span>
-        {text}
-      </span>
-    );
-  };
-
-  const filteredPieces = pieces.filter(piece =>
-    piece.piece_name.toLowerCase().includes(searchQuery.toLowerCase())
-  );
-
-  let isScanningVision = false;
-  (stageFetcher.state !== "idle") && (isScanningVision = true);
-  (visionFetcher.state !== "idle") && (isScanningVision = true);
-
-  const currentWordCount = (pieces[0]?.generated_description || "").trim().split(/\s+/).filter(Boolean).length;
-  const wordCountTone = currentWordCount > 100 ? "critical" : "subdued";
-
-  const requiredPanelFields = [
-    "piece_name", "price", "weight_grams", "material", "stone_family",
-    "collection_name", "origin_handle", "rescued_by", "treatment_status",
-    "origin_story", "primary_use", "seo_title"
-  ];
-
-  const getVal = (key, defaultSource) => {
-    return (useSaved && savedMap[key] !== undefined) ? savedMap[key] : defaultSource;
-  };
-
-  const getPanelFieldStatus = (key, val) => {
-    const isFilled = val !== undefined && val !== null && String(val).trim() !== "" && String(val).trim() !== "false";
-    const isReq = requiredPanelFields.includes(key);
-    if (isFilled) return { dotColor: "#22c55e", text: "Filled", isFilled: true };
-    if (isReq) return { dotColor: "#ef4444", text: "Required — Empty", isFilled: false };
-    return { dotColor: "#eab308", text: "Optional — Empty", isFilled: false };
-  };
-
-  const dot = (color) => (
-    <span style={{ display: "inline-block", width: 10, height: 10, borderRadius: "50%", backgroundColor: color, marginRight: 6, verticalAlign: "middle" }} />
-  );
-
-  const renderPanelRow = (label, key, val) => {
-    const status = getPanelFieldStatus(key, val);
-    let displayVal = "";
-    if (status.isFilled) {
-      displayVal = String(val);
-      if (displayVal.length > 60) displayVal = displayVal.substring(0, 60) + "...";
-    }
-
-    return (
-      <div key={key} style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "12px", color: "#f4f6f8", minWidth: 0 }}>
-        {dot(status.dotColor)}
-        <span style={{ fontWeight: "600", whiteSpace: "nowrap" }}>{label}:</span>
-        <span style={{ color: status.dotColor, whiteSpace: "nowrap" }}>{status.text}</span>
-        {status.isFilled && <span style={{ color: "#a6a6a6", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>— {displayVal}</span>}
-      </div>
-    );
-  };
-
-  const showJewelrySpecsPanel = (sharedFields.primary_use || "").toLowerCase().includes("jewelry");
-
-  return (
-    <Frame>
-      <BlockStack gap="600">
-        <Banner title="Machine Auto-Pilot Active — No Typing Required for Studio Constants:" tone="success">
-          <BlockStack gap="100">
-            <Text as="p" variant="bodyMd">
-              ✔ Handcrafted & Rescued by: <strong>Bob and Janyce</strong> | ✔ OOAK: <strong>True</strong> | ✔ Treatment: <strong>100% Natural/Untreated</strong>
-            </Text>
-            <Text as="p" variant="bodyMd">
-              ✔ Google Feed: <strong>Active (Adult/Unisex/New)</strong> | ✔ Geo-Vault: <strong>Auto-Fills 12 Minerals Specs from Title Delimiters</strong>
-            </Text>
-          </BlockStack>
-        </Banner>
-
-        <Card padding="400">
-          <BlockStack gap="400">
-            <Text variant="headingMd" as="h2" style={{ fontSize: "16px", fontWeight: "bold" }}>Section A: Per-Piece Details</Text>
-
-            <div style={{ position: "relative", marginBottom: "8px" }}>
-              <input
-                type="text"
-                placeholder="Search products..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                style={{
-                  width: "100%",
-                  minHeight: "48px",
-                  fontSize: "18px",
-                  border: "2px solid #000",
-                  borderRadius: "4px",
-                  padding: "8px 40px 8px 16px",
-                  boxSizing: "border-box"
-                }}
-              />
-              {searchQuery !== "" && (
-                <button
-                  onClick={() => setSearchQuery("")}
-                  style={{
-                    position: "absolute",
-                    right: "12px",
-                    top: "50%",
-                    transform: "translateY(-50%)",
-                    background: "transparent",
-                    border: "none",
-                    fontSize: "20px",
-                    cursor: "pointer",
-                    padding: "4px",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    color: "#5c5f62"
-                  }}
-                >✕</button>
-              )}
-            </div>
-
-            <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
-              {filteredPieces.map((piece, index) => {
-                
-                let isScanning = false;
-                (stageFetcher.state !== "idle" && stageFetcher.formData?.get("pieceId") === piece.id) && (isScanning = true);
-                (visionFetcher.state !== "idle" && visionFetcher.formData?.get("pieceId") === piece.id) && (isScanning = true);
-                (autoFillFetcher.state !== "idle" && autoFillFetcher.formData?.get("pieceId") === piece.id) && (isScanning = true);
-                (piece.isUploading) && (isScanning = true);
-
-                let hasScanError = false;
-                (piece.scanError && piece.scanError !== "") && (hasScanError = true);
-
-                let hasPhotos = false;
-                (piece.photoFiles && piece.photoFiles.length > 0) && (hasPhotos = true);
-
-                let disableScan = true;
-                (hasPhotos) && (disableScan = false);
-
-                let rowTopDotColor = "#C62828";
-                (hasPhotos) && (rowTopDotColor = "#2E7D32");
-
-                let rowDescDotColor = "#C62828";
-                (piece.generated_description && piece.generated_description !== "") && (rowDescDotColor = "#2E7D32");
-
-                return (
-                  <div key={piece.id} style={{ display: "flex", flexDirection: "column", gap: "16px", paddingBottom: "24px", borderBottom: "1px solid #e1e3e5" }}>
-                    
-                    <div style={{ display: "flex", alignItems: "end", gap: "16px" }}>
-                      <div style={{ flexGrow: 1, minHeight: "54px" }}>
-                        <TextField
-                          label={renderLabel("Piece Name", "piece_name", piece.piece_name)}
-                          value={piece.piece_name}
-                          onChange={(v) => handlePieceChange(piece.id, "piece_name", v)}
-                          onBlur={() => handlePieceNameBlur(piece.id, piece.piece_name)}
-                          autoComplete="off"
-                        />
-                        <div style={{ marginTop: "4px" }}>
-                          <Text variant="bodySm" tone="subdued" as="p">
-                            Format: Stone Family — Origin — Piece Name (e.g. Tiger's Eye — Irv's — Tiger Fly)
-                          </Text>
-                        </div>
-                      </div>
-
-                      <div style={{ minHeight: "54px", width: "120px" }}>
-                        <Button
-                          size="large"
-                          tone="critical"
-                          fullWidth
-                          onClick={() => handleRemoveRow(piece.id)}
-                          disabled={pieces.length <= 1}
-                        >
-                          Remove
-                        </Button>
-                      </div>
-                    </div>
-
-                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "8px" }}>
-                      <svg width="18" height="18" viewBox="0 0 18 18" style={{ display: "inline-block" }}>
-                        <circle cx="9" cy="9" r="9" fill={rowTopDotColor} />
-                      </svg>
-                      <Text variant="headingMd" as="h3" fontWeight="bold">Stone Photos</Text>
-                    </div>
-
-                    <DropZone 
-                      accept="image/jpeg, image/png, image/gif" 
-                      type="image" 
-                      allowMultiple 
-                      onDrop={(_dropFiles, acceptedFiles) => handleDropZoneDrop(piece.id, acceptedFiles)}
-                    >
-                      <DropZone.FileUpload actionTitle="Drop photos here or click to upload" />
-                    </DropZone>
-                    
-                    {hasPhotos && (
-                      <div style={{ display: "flex", gap: "16px", marginTop: "12px", flexWrap: "wrap", paddingTop: "8px", paddingRight: "8px" }}>
-                        {piece.photoPreviewUrls.map((url, i) => (
-                          <div key={i} style={{ position: "relative", width: "80px", height: "80px" }}>
-                            <img src={url} alt={`Preview ${i}`} style={{ width: "80px", height: "80px", objectFit: "cover", borderRadius: "6px" }} />
-                            <button
-                              onClick={(e) => {
-                                e.preventDefault();
-                                handleRemoveRowPhoto(piece.id, i);
-                              }}
-                              style={{
-                                position: "absolute",
-                                top: "-12px",
-                                right: "-12px",
-                                width: "48px",
-                                height: "48px",
-                                background: "#ffffff",
-                                border: "1px solid #c9cccf",
-                                borderRadius: "24px",
-                                cursor: "pointer",
-                                display: "flex",
-                                alignItems: "center",
-                                justifyContent: "center",
-                                fontSize: "16px",
-                                fontWeight: "bold",
-                                color: "#202223",
-                                boxShadow: "0 1px 3px rgba(0,0,0,0.1)",
-                                zIndex: 10
-                              }}
-                            >✕</button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                    
-                    <Text as="p" style={{ fontSize: "14px", marginTop: "4px", color: "#6d7175" }}>
-                      {piece.photoFiles.length} of 5 photos
-                    </Text>
-
-                    <div style={{ minHeight: "48px", marginTop: "8px" }}>
-                      <Button
-                        onClick={() => handleScanGeminiPhotos(piece)}
-                        loading={isScanning}
-                        disabled={disableScan}
-                      >
-                        {isScanning && <Spinner size="small" />}
-                        Scan with Gemini
-                      </Button>
-                    </div>
-
-                    <div style={{ minHeight: "48px", marginTop: "8px" }}>
-                      <TextField
-                        label={
-                          <div style={{ display: "flex", alignItems: "center", justify: "space-between", width: "100%" }}>
-                            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                              <svg width="18" height="18" viewBox="0 0 18 18" style={{ display: "inline-block" }}>
-                                <circle cx="9" cy="9" r="9" fill={rowDescDotColor} />
-                              </svg>
-                              <Text variant="headingMd" as="h3">Description</Text>
-                            </div>
-                            <Text variant="bodySm" tone={wordCountTone} as="span">
-                              {currentWordCount}/100 words {currentWordCount > 100 && "(Exceeds 100-Word Law)"}
-                            </Text>
-                          </div>
-                        }
-                        value={piece.generated_description}
-                        onChange={(v) => handlePieceChange(piece.id, "generated_description", v)}
-                        multiline={6}
-                        autoComplete="off"
-                        placeholder="Gemini will generate a poetic, spare description under 100 words..."
-                      />
-                    </div>
-
-                    <div style={{ minHeight: "48px", marginTop: "8px" }}>
-                      <TextField
-                        label={renderLabel("Artist Notes", "artist_notes", piece.artist_notes)}
-                        value={piece.artist_notes}
-                        onChange={(v) => handlePieceChange(piece.id, "artist_notes", v)}
-                        multiline={3}
-                        autoComplete="off"
-                        placeholder="Internal shop notes about this stone's character..."
-                      />
-                    </div>
-
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px", marginTop: "16px" }}>
-                      <div style={{ minHeight: "54px" }}>
-                        <TextField
-                          label={renderLabel("Price", "price", piece.price)}
-                          value={piece.price}
-                          onChange={(v) => handlePieceChange(piece.id, "price", v)}
-                          autoComplete="off"
-                          placeholder="e.g. 45.00"
-                        />
-                      </div>
-                      <div style={{ minHeight: "54px" }}>
-                        <TextField
-                          label={renderLabel("Weight (grams)", "weight_grams", piece.weight_grams)}
-                          value={piece.weight_grams}
-                          onChange={(v) => handlePieceChange(piece.id, "weight_grams", v)}
-                          autoComplete="off"
-                          placeholder="e.g. 14.5"
-                        />
-                      </div>
-                    </div>
-                    <TextField
-                      label={renderLabel("Shipping Weight (oz)", "shipping_weight_oz", piece.shipping_weight_oz)}
-                      value={piece.shipping_weight_oz}
-                      onChange={(v) => handlePieceChange(piece.id, "shipping_weight_oz", v)}
-                      placeholder="e.g. 1.5"
-                      type="number"
-                    />
-
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "16px", marginTop: "16px" }}>
-                      <div style={{ minHeight: "54px" }}>
-                        <TextField
-                          label={renderLabel("Dimensions (mm)", "dimensions_mm", piece.dimensions_mm)}
-                          value={piece.dimensions_mm}
-                          onChange={(v) => handlePieceChange(piece.id, "dimensions_mm", v)}
-                          autoComplete="off"
-                        />
-                      </div>
-                      <div style={{ minHeight: "54px" }}>
-                        <TextField
-                          label={renderLabel("Cut & Shape", "cut_and_shape", piece.cut_and_shape)}
-                          value={piece.cut_and_shape}
-                          onChange={(v) => handlePieceChange(piece.id, "cut_and_shape", v)}
-                          autoComplete="off"
-                        />
-                      </div>
-                      <div style={{ minHeight: "54px" }}>
-                        <Select
-                          label={renderLabel("Surface Finish", "surface_finish", piece.surface_finish)}
-                          options={[...surfaceFinishOptions.map(o => ({ label: o, value: o }))]}
-                          value={piece.surface_finish}
-                          onChange={(v) => handlePieceChange(piece.id, "surface_finish", v)}
-                        />
-                      </div>
-                      <div style={{ minHeight: "54px" }}>
-                        <TextField
-                          label={renderLabel("Color", "color", piece.color)}
-                          value={piece.color}
-                          onChange={(v) => handlePieceChange(piece.id, "color", v)}
-                          autoComplete="off"
-                          placeholder="Primary color"
-                        />
-                      </div>
-                    </div>
-
-                    {hasScanError && (
-                      <Banner tone="critical" title="Scan Failed">
-                        <Text as="p" style={{ fontSize: "14px" }}>{piece.scanError}</Text>
-                      </Banner>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-
-            <div style={{ minHeight: "54px", marginTop: "16px" }}>
-              <Button
-                icon={PlusIcon}
-                size="large"
-                onClick={handleAddRow}
-              >
-                Add Row
-              </Button>
-            </div>
-          </BlockStack>
-        </Card>
-
-        <Card padding="400">
-          <BlockStack gap="400">
-            <Text variant="headingMd" as="h2" style={{ fontSize: "16px", fontWeight: "bold" }}>Section B: Shared Batch Fields</Text>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "24px" }}>
-              <div style={{ minHeight: "54px" }}>
-                <TextField
-                  label={renderLabel("Material", "material", sharedFields.material)}
-                  value={sharedFields.material}
-                  onChange={(v) => handleSharedFieldChange("material", v)}
-                  autoComplete="off"
-                />
-              </div>
-              <div style={{ minHeight: "54px" }}>
-                <Select
-                  label={renderLabel("Stone Family", "stone_family", sharedFields.stone_family)}
-                  options={[{ label: "Select stone family...", value: "" }, ...DROPDOWN_OPTIONS.stone_family]}
-                  value={sharedFields.stone_family}
-                  onChange={(v) => handleStoneFamilyChange(v)}
-                />
-              </div>
-              <div style={{ minHeight: "54px" }}>
-                <TextField
-                  label={renderLabel("Collection Name", "collection_name", sharedFields.collection_name)}
-                  value={sharedFields.collection_name}
-                  onChange={(v) => handleSharedFieldChange("collection_name", v)}
-                  autoComplete="off"
-                />
-              </div>
-              
-              <div style={{ minHeight: "54px" }}>
-                <TextField
-                  label={renderLabel("Origin Handle (Slug)", "origin_handle", sharedFields.origin_handle)}
-                  value={sharedFields.origin_handle}
-                  onChange={(v) => handleSharedFieldChange("origin_handle", v)}
-                  autoComplete="off"
-                  placeholder="e.g. yakima-river-chert-road"
-                />
-              </div>
-
-              <div style={{ minHeight: "54px" }}>
-                <Select
-                  label={renderLabel("Rescued By", "rescued_by", sharedFields.rescued_by)}
-                  options={[...rescuedByOptions.map(o => ({ label: o, value: o }))]}
-                  value={sharedFields.rescued_by}
-                  onChange={(v) => handleSharedFieldChange("rescued_by", v)}
-                />
-              </div>
-              <div style={{ minHeight: "54px" }}>
-                <Select
-                  label={renderLabel("Treatment Status", "treatment_status", sharedFields.treatment_status)}
-                  options={[...treatmentStatusOptions.map(o => ({ label: o, value: o }))]}
-                  value={sharedFields.treatment_status}
-                  onChange={(v) => handleSharedFieldChange("treatment_status", v)}
-                />
-              </div>
-              <div style={{ minHeight: "54px", gridColumn: "span 2" }}>
-                <TextField
-                  label={renderLabel("Origin Story", "origin_story", sharedFields.origin_story)}
-                  value={sharedFields.origin_story}
-                  onChange={(v) => handleSharedFieldChange("origin_story", v)}
-                  autoComplete="off"
-                  multiline={2}
-                />
-              </div>
-              <div style={{ minHeight: "54px" }}>
-                <Select
-                  label={renderLabel("Product Type (Smart Switch)", "primary_use", sharedFields.primary_use)}
-                  options={[{ label: "Select...", value: "" }, ...productTypeOptions.map(o => ({ label: o, value: o }))]}
-                  value={sharedFields.primary_use}
-                  onChange={(v) => handleSharedFieldChange("primary_use", v)}
-                />
-              </div>
-            </div>
-          </BlockStack>
-        </Card>
-
-        {isJewelry && (
-          <Card padding="400" background="bg-surface-warning">
-            <BlockStack gap="400">
-              <InlineGrid columns={2} alignItems="center">
-                <Text variant="headingMd" as="h2" tone="caution" style={{ fontSize: "16px", fontWeight: "bold" }}>⚙️ Bench Findings & Jewelry Specs</Text>
-              </InlineGrid>
-              <Divider />
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "24px" }}>
-                <div style={{ minHeight: "54px" }}>
-                  <TextField
-                    label={renderLabel("Primary Medium", "primary_medium", sharedFields.primary_medium)}
-                    value={sharedFields.primary_medium}
-                    onChange={(v) => handleSharedFieldChange("primary_medium", v)}
-                    autoComplete="off"
-                    placeholder="e.g. .925 Sterling Silver"
-                  />
-                </div>
-                <div style={{ minHeight: "54px" }}>
-                  <TextField
-                    label={renderLabel("Secondary Medium", "secondary_medium", sharedFields.secondary_medium)}
-                    value={sharedFields.secondary_medium}
-                    onChange={(v) => handleSharedFieldChange("secondary_medium", v)}
-                    autoComplete="off"
-                    placeholder="e.g. 14k Gold Accents"
-                  />
-                </div>
-                <div style={{ minHeight: "54px" }}>
-                  <TextField
-                    label={renderLabel("Wire Material", "wire_material", sharedFields.wire_material)}
-                    value={sharedFields.wire_material}
-                    onChange={(v) => handleSharedFieldChange("wire_material", v)}
-                    autoComplete="off"
-                    placeholder="e.g. Antiqued Copper Wire"
-                  />
-                </div>
-                <div style={{ minHeight: "54px" }}>
-                  <TextField
-                    label={renderLabel("Bail Included", "bail_included", sharedFields.bail_included)}
-                    value={sharedFields.bail_included}
-                    onChange={(v) => handleSharedFieldChange("bail_included", v)}
-                    autoComplete="off"
-                    placeholder="e.g. Silver Filigree Pinch Bail"
-                  />
-                </div>
-                <div style={{ minHeight: "54px", gridColumn: "span 2" }}>
-                  <TextField
-                    label={renderLabel("Setting Ready", "setting_ready", sharedFields.setting_ready)}
-                    value={sharedFields.setting_ready}
-                    onChange={(v) => handleSharedFieldChange("setting_ready", v)}
-                    autoComplete="off"
-                    placeholder="e.g. Ready to Wear (Chain Included) or Custom Blank"
-                  />
-                </div>
-              </div>
-            </BlockStack>
-          </Card>
-        )}
-
-        <Card padding="400">
-          <BlockStack gap="400">
-            <Text variant="headingMd" as="h2" style={{ fontSize: "16px", fontWeight: "bold" }}>Section C: Generate Description</Text>
-            <div style={{ minHeight: "54px" }}>
-              <Button
-                size="large"
-                variant="primary"
-                icon={MagicIcon}
-                onClick={() => handleGenerateDescription({ sharedFields, pieces, descFetcher: descriptionFetcher })}
-                loading={isDescLoading}
-              >
-                Write Description with Gemini
-              </Button>
-            </div>
-            {pieces[0]?.generated_description !== "" && (
-              <TextField
-                label={
-                  <div style={{ display: "flex", alignItems: "center", justify: "space-between", width: "100%" }}>
-                    <span>Generated Description — edit before saving</span>
-                    <Text variant="bodySm" tone={wordCountTone} as="span">
-                      {currentWordCount}/100 words
-                    </Text>
-                  </div>
-                }
-                value={pieces[0]?.generated_description || ""}
-                onChange={(v) => handlePieceChange(pieces[0]?.id, "generated_description", v)}
-                multiline={10}
-                autoComplete="off"
-              />
-            )}
-          </BlockStack>
-        </Card>
-
-        {statusMessage !== "" && (
-          <div style={{ minHeight: "54px" }}>
-            <Banner tone="success" title="Operation Successful">
-              <Text as="p" style={{ fontSize: "14px" }}>{statusMessage}</Text>
-            </Banner>
-          </div>
-        )}
-
-        {errorMessage !== "" && (
-          <div style={{ minHeight: "54px" }}>
-            <Banner tone="critical" title="Operation Failed">
-              <Text as="p" style={{ fontSize: "14px" }}>{errorMessage}</Text>
-            </Banner>
-          </div>
-        )}
-
-        <div style={{ minHeight: "54px" }}>
-          {statusMessage !== "" ? (
-            <Button
-              size="large"
-              variant="primary"
-              fullWidth
-              onClick={handleStartNewBatch}
-            >
-              Start New Batch (Wipe Section A, Keep Section B)
-            </Button>
-          ) : (
-            <Button
-              size="large"
-              variant="primary"
-              tone="success"
-              fullWidth
-              onClick={handleCreateAll}
-              loading={isSubmitting}
-              disabled={isSubmitting}
-            >
-              Create All Pieces
-            </Button>
-          )}
-        </div>
-
-        <div style={{ background: "#1a1a1a", padding: "20px", borderRadius: "8px", marginTop: "16px" }}>
-          <BlockStack gap="400">
-            <Text variant="headingMd" as="h2" style={{ fontSize: "16px", fontWeight: "bold", color: "#ffffff" }}>Metafield Status Panel — All Fields</Text>
-
-            <div style={{ background: "#333333", padding: "6px 12px", borderRadius: "4px", width: "100%", fontWeight: "bold", color: "#ffffff", fontSize: "12px" }}>SECTION 1 — Per-Piece Fields</div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
-              {renderPanelRow("Piece Name", "piece_name", getVal("piece_name", pieces[0]?.piece_name))}
-              {renderPanelRow("Price", "price", getVal("price", pieces[0]?.price))}
-              {renderPanelRow("Weight (grams)", "weight_grams", getVal("weight_grams", pieces[0]?.weight_grams))}
-              {renderPanelRow("Shipping Weight (oz)", "shipping_weight_oz", getVal("shipping_weight_oz", pieces[0]?.shipping_weight_oz))}
-              {renderPanelRow("Dimensions (mm)", "dimensions_mm", getVal("dimensions_mm", pieces[0]?.dimensions_mm))}
-              {renderPanelRow("Cut & Shape", "cut_and_shape", getVal("cut_and_shape", pieces[0]?.cut_and_shape))}
-              {renderPanelRow("Surface Finish", "surface_finish", getVal("surface_finish", pieces[0]?.surface_finish))}
-              {renderPanelRow("Color", "color", getVal("color", pieces[0]?.color))}
-              {renderPanelRow("Generated Description", "generated_description", getVal("generated_description", pieces[0]?.generated_description))}
-              {renderPanelRow("Artist Notes", "artist_notes", getVal("artist_notes", pieces[0]?.artist_notes))}
-              {renderPanelRow("Stone Shape", "stone_shape", getVal("stone_shape", combinedData.stone_shape))}
-              {renderPanelRow("Color Pattern", "color_pattern", getVal("color_pattern", combinedData.color_pattern))}
-              {renderPanelRow("Handcrafted By", "handcrafted_by", getVal("handcrafted_by", combinedData.handcrafted_by))}
-              {renderPanelRow("Is One of a Kind", "is_one_of_a_kind", getVal("is_one_of_a_kind", combinedData.is_one_of_a_kind))}
-              {renderPanelRow("Treated", "treated", getVal("treated", combinedData.treated))}
-            </div>
-
-            <div style={{ background: "#333333", padding: "6px 12px", borderRadius: "4px", width: "100%", fontWeight: "bold", color: "#ffffff", fontSize: "12px", marginTop: "8px" }}>SECTION 2 — Shared Batch Fields</div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
-              {renderPanelRow("Material", "material", getVal("material", sharedFields.material))}
-              {renderPanelRow("Stone Family", "stone_family", getVal("stone_family", sharedFields.stone_family))}
-              {renderPanelRow("Collection Name", "collection_name", getVal("collection_name", sharedFields.collection_name))}
-              {renderPanelRow("Origin Handle", "origin_handle", getVal("origin_handle", sharedFields.origin_handle))}
-              {renderPanelRow("Rescued By", "rescued_by", getVal("rescued_by", sharedFields.rescued_by))}
-              {renderPanelRow("Treatment Status", "treatment_status", getVal("treatment_status", sharedFields.treatment_status))}
-              {renderPanelRow("Origin Story", "origin_story", getVal("origin_story", sharedFields.origin_story))}
-              {renderPanelRow("Primary Use", "primary_use", getVal("primary_use", sharedFields.primary_use))}
-              {renderPanelRow("Honest Flaws", "honest_flaws_and_character", getVal("honest_flaws_and_character", combinedData.honest_flaws_and_character))}
-              {renderPanelRow("Found Object", "found_object", getVal("found_object", combinedData.found_object))}
-              {renderPanelRow("Collection Location", "collection_location", getVal("collection_location", combinedData.collection_location))}
-              {renderPanelRow("Collection Date", "collection_date", getVal("collection_date", combinedData.collection_date))}
-            </div>
-
-            {showJewelrySpecsPanel && (
-              <>
-                <div style={{ background: "#333333", padding: "6px 12px", borderRadius: "4px", width: "100%", fontWeight: "bold", color: "#ffffff", fontSize: "12px", marginTop: "8px" }}>SECTION 3 — Jewelry Specs</div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
-                  {renderPanelRow("Primary Medium", "primary_medium", getVal("primary_medium", sharedFields.primary_medium))}
-                  {renderPanelRow("Secondary Medium", "secondary_medium", getVal("secondary_medium", sharedFields.secondary_medium))}
-                  {renderPanelRow("Wire Material", "wire_material", getVal("wire_material", sharedFields.wire_material))}
-                  {renderPanelRow("Bail Included", "bail_included", getVal("bail_included", sharedFields.bail_included))}
-                  {renderPanelRow("Setting Ready", "setting_ready", getVal("setting_ready", sharedFields.setting_ready))}
-                  {renderPanelRow("Jewelry Type", "jewelry_type", getVal("jewelry_type", combinedData.jewelry_type))}
-                  {renderPanelRow("Necklace Design", "necklace_design", getVal("necklace_design", combinedData.necklace_design))}
-                  {renderPanelRow("Chain Link Type", "chain_link_type", getVal("chain_link_type", combinedData.chain_link_type))}
-                  {renderPanelRow("Finding Type", "jewelry_finding_type", getVal("jewelry_finding_type", combinedData.jewelry_finding_type))}
-                </div>
-              </>
-            )}
-
-            <div style={{ background: "#333333", padding: "6px 12px", borderRadius: "4px", width: "100%", fontWeight: "bold", color: "#ffffff", fontSize: "12px", marginTop: "8px" }}>SECTION 4 — Geo Vault Fields</div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
-              {renderPanelRow("Mohs Hardness", "mohs_hardness", getVal("mohs_hardness", sharedFields.mohs_hardness))}
-              {renderPanelRow("Specific Gravity", "specific_gravity", getVal("specific_gravity", sharedFields.specific_gravity))}
-              {renderPanelRow("Mineral Class", "mineral_class", getVal("mineral_class", sharedFields.mineral_class))}
-              {renderPanelRow("Crystal System", "crystal_system", getVal("crystal_system", sharedFields.crystal_system))}
-              {renderPanelRow("Rock Composition", "rock_composition", getVal("rock_composition", sharedFields.rock_composition))}
-              {renderPanelRow("Rock Formation", "rock_formation", getVal("rock_formation", sharedFields.rock_formation))}
-              {renderPanelRow("Geological Era", "geological_era", getVal("geological_era", sharedFields.geological_era))}
-              {renderPanelRow("Geological Age", "geological_age", getVal("geological_age", sharedFields.geological_age))}
-              {renderPanelRow("Fracture Pattern", "fracture_pattern", getVal("fracture_pattern", sharedFields.fracture_pattern))}
-              {renderPanelRow("Diaphaneity", "diaphaneity", getVal("diaphaneity", sharedFields.diaphaneity))}
-              {renderPanelRow("Luster", "luster", getVal("luster", sharedFields.luster))}
-              {renderPanelRow("Cleavage", "cleavage", getVal("cleavage", sharedFields.cleavage))}
-              {renderPanelRow("Fracture", "fracture", getVal("fracture", sharedFields.fracture))}
-            </div>
-
-            <div style={{ background: "#333333", padding: "6px 12px", borderRadius: "4px", width: "100%", fontWeight: "bold", color: "#ffffff", fontSize: "12px", marginTop: "8px" }}>SECTION 5 — Google & SEO Fields</div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
-              {renderPanelRow("Age Group", "age_group", getVal("age_group", sharedFields.age_group))}
-              {renderPanelRow("Target Gender", "target_gender", getVal("target_gender", sharedFields.target_gender))}
-              {renderPanelRow("Condition", "condition", getVal("condition", sharedFields.condition))}
-              {renderPanelRow("SEO Title", "seo_title", getVal("seo_title", pieces[0]?.seo_title))}
-              {renderPanelRow("Authenticity", "authenticity", getVal("authenticity", combinedData.authenticity))}
-              {renderPanelRow("Rarity", "rarity", getVal("rarity", combinedData.rarity))}
-            </div>
-          </BlockStack>
-        </div>
-      </BlockStack>
-      {geoToast && <Toast content="Geo data loaded" onDismiss={() => setGeoToast(false)} />}
-      {titleToastActive && (
-        <Toast
-          content={titleToastMsg}
-          error={titleToastError}
-          duration={3000}
-          onDismiss={() => setTitleToastActive(false)}
-        />
-      )}
-    </Frame>
-  );
+  return chunks;
 }
+
+function extractStoneName(title) {
+  const knownStones = ["Jasper", "Agate", "Amethyst", "Quartz", "Turquoise", "Obsidian", "Jade", "Opal"];
+  const upperTitle = title.toUpperCase();
+  for (const stone of knownStones) {
+    if (upperTitle.includes(stone.toUpperCase())) {
+      return stone;
+    }
+  }
+  return "Unknown";
+}
+
+export const action = async ({ request }) => {
+  const { admin } = await authenticate.admin(request);
+  const formData = await request.formData();
+  const intent = formData.get("intent");
+
+  console.log("=== INCOMING ACTION FORM DATA ===");
+  const allFormData = Object.fromEntries(formData);
+  console.log(JSON.stringify(allFormData, null, 2));
+  console.log("=================================");
+
+  if (intent === "auto_fill_single") {
+    const title = formData.get("title");
+    const stoneName = extractStoneName(title);
+
+    if (stoneName === "Unknown") {
+      return data({
+        success: false,
+        message: "Could not auto-detect stone type from title. Manual entry required.",
+        fields: {}
+      });
+    }
+
+    try {
+      let cachedStone = await prisma.stoneCache.findUnique({
+        where: { stoneName: stoneName }
+      });
+
+      if (!cachedStone) {
+        let mohsVal = "Varies";
+        (stoneName === "Jasper" || stoneName === "Agate") && (mohsVal = "6.5 - 7");
+
+        const titleSegments = (title || "").split(/\s+[—–-]\s+/);
+        const pieceName = titleSegments.length >= 3 ? titleSegments[titleSegments.length - 1].trim() : "";
+        const lapidaryData = {
+          "mineral_class": "Silicate",
+          "mohs_hardness": mohsVal,
+          "crystal_system": "Trigonal",
+          "primary_color": "Varies by specimen",
+          "stone_story": `A beautiful piece of natural ${stoneName}.`,
+          "title_tag": `${stoneName}${pieceName ? ` — ${pieceName}` : ""} — One-of-a-Kind Rockhound Studio`,
+          "description_tag": `Natural, one-of-a-kind ${stoneName} handcrafted by Bob and Janyce. Honest flaws, authentic character, and zero workshop fluff.`,
+          "google_product_category": "Apparel & Accessories > Jewelry",
+          "target_gender": "Unisex",
+          "age_group": "adult",
+          "condition": "new",
+          "geological_age": "Varies by specimen",
+          "fracture_pattern": "Varies by specimen",
+          "luster": "Varies by specimen",
+          "fracture": "Varies by specimen",
+          "cleavage": "None",
+          "specific_gravity": "Varies by specimen",
+          "diaphaneity": "Opaque to Translucent",
+          "rock_composition": "Silicified",
+          "rock_formation": "Natural"
+        };
+
+        cachedStone = await prisma.stoneCache.create({
+          data: {
+            stoneName: stoneName,
+            data: JSON.stringify(lapidaryData)
+          }
+        });
+      }
+
+      return data({
+        success: true,
+        message: `Loaded data for ${stoneName} from database.`,
+        fields: JSON.parse(cachedStone.data)
+      });
+
+    } catch (error) {
+      console.error("Cache Error:", error);
+      return data({ success: false, message: "Database connection failed." }, { status: 500 });
+    }
+  }
+
+  if (intent === "saveMetafields") {
+    try {
+      const rawPayload = formData.get("payload") || formData.get("metafields");
+      
+      if (!rawPayload) {
+        console.log("SAVE ERROR: No payload or metafields found in request.");
+        return data({ intent: "saveMetafields", success: false, message: "No data provided to save." });
+      }
+
+      let payloadArray = JSON.parse(rawPayload);
+      
+      // THE FILTER WELD: Prevent random API variables from bleeding into custom/
+      const IGNORE_KEYS = ["geoSource", "crystal_structure", "chemical_formula", "refractive_index", "collectionLocation"];
+      
+      payloadArray = payloadArray
+        .filter(item => !IGNORE_KEYS.includes(item.key))
+        .map(item => {
+          // THE CANONICAL WELDS: Hard convert ghosts before they save
+          if (item.key === "specificGravity") return { ...item, key: "specific_gravity" };
+          if (item.key === "is_one_of_a_kind" || item.key === "is_one_of_a-kind") return { ...item, key: "is_ooak" };
+          return item;
+        });
+
+      const TYPE_MAP = {
+        stone_story: "list.single_line_text_field",
+        character_marks: "list.single_line_text_field",
+        is_ooak: "single_line_text_field",
+        treated: "single_line_text_field",
+        found_object: "single_line_text_field",
+        custom_product: "single_line_text_field",
+        piece_name: "single_line_text_field",
+        cut_and_shape: "single_line_text_field",
+        surface_finish: "single_line_text_field",
+        dimensions_mm: "single_line_text_field",
+        stone_shape: "single_line_text_field",
+        color: "single_line_text_field",
+        weight_grams: "number_decimal",
+        specific_gravity: "single_line_text_field",
+        mohs_hardness: "single_line_text_field",
+        shipping_weight_oz: "number_decimal",
+        price: "number_decimal",
+        generated_description: "multi_line_text_field"
+      };
+
+      const setMetafields = payloadArray
+        .filter(item => item.value !== null && String(item.value).trim() !== "")
+        .flatMap(item => {
+          const fallbackProductId = formData.get("productId");
+          const itemOwnerId = item.ownerId || fallbackProductId;
+          
+          if (!itemOwnerId) {
+            throw new Error(`Missing ownerId for field: ${item.key}`);
+          }
+
+          let resolvedId = `gid://shopify/Product/${itemOwnerId.split("/").pop()}`;
+          (itemOwnerId.startsWith("gid://")) && (resolvedId = itemOwnerId);
+
+          const resolvedType = TYPE_MAP[item.key] || item.type || "single_line_text_field";
+          
+          let resolvedValue = String(item.value).replace(/[—–]/g, '-');
+          (resolvedType.startsWith("list.")) && (resolvedValue = JSON.stringify([String(item.value)]));
+          if (item.key === "treated" || item.key === "is_ooak") {
+            if (resolvedValue === "true") resolvedValue = "Yes";
+            else if (resolvedValue === "false") resolvedValue = "No";
+          }
+
+          let resolvedNamespace = item.namespace || "custom";
+          if (item.key === "is_ooak" || resolvedNamespace === "none" || resolvedNamespace === "") {
+            resolvedNamespace = "custom";
+          }
+
+          const fieldsToReturn = [];
+
+          if (item.key === "seo_title") {
+            // SINGLE PIPE: global/title_tag only
+            fieldsToReturn.push({ ownerId: resolvedId, namespace: "global", key: "title_tag", type: "single_line_text_field", value: resolvedValue });
+          } else if (item.key === "generated_description") {
+            fieldsToReturn.push({ ownerId: resolvedId, namespace: "global", key: "description_tag", type: "single_line_text_field", value: resolvedValue.slice(0, 320) });
+            fieldsToReturn.push({ ownerId: resolvedId, namespace: resolvedNamespace, key: item.key, type: "multi_line_text_field", value: resolvedValue });
+          } else {
+            fieldsToReturn.push({ ownerId: resolvedId, namespace: resolvedNamespace, key: item.key, type: resolvedType, value: resolvedValue });
+          }
+
+          return fieldsToReturn;
+        });
+
+      if (setMetafields.length === 0) {
+        console.log("SAVE CANCELLED: Metafields array filtered down to 0 valid fields.");
+        return data({ intent: "saveMetafields", success: true, message: "No fields to save." });
+      }
+
+      console.log("METAFIELDS BEING SENT TO SHOPIFY:", JSON.stringify(setMetafields, null, 2));
+
+      const chunks = chunkArray(setMetafields, 25);
+      const allErrors = [];
+
+      for (const chunk of chunks) {
+        const response = await admin.graphql(
+          `#graphql
+          mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
+            metafieldsSet(metafields: $metafields) {
+              metafields { id key namespace value }
+              userErrors { field message }
+            }
+          }`,
+          { variables: { metafields: chunk } }
+        );
+
+        const result = await response.json();
+        const errors = result?.data?.metafieldsSet?.userErrors || [];
+        allErrors.push(...errors);
+      }
+
+      if (allErrors.length > 0) {
+        console.log("SAVE ERRORS:", JSON.stringify(allErrors, null, 2));
+        return data({ success: false, message: "Saved with errors: " + allErrors.map(e => e.field + " — " + e.message).join(" | "), errors: allErrors });
+      }
+
+      const weightItem = payloadArray.find(item => item.key === "weight_grams");
+      if (weightItem && weightItem.value) {
+        const weightGrams = parseFloat(String(weightItem.value).replace(/['"]/g, ""));
+        if (!isNaN(weightGrams) && weightGrams > 0) {
+          try {
+            let targetProductId = formData.get("productId");
+            if (!targetProductId) {
+              const fallbackField = payloadArray.find(item => item.ownerId);
+              if (fallbackField) targetProductId = fallbackField.ownerId;
+            }
+            
+            if (targetProductId) {
+              const productGid = `gid://shopify/Product/${targetProductId.split("/").pop()}`;
+              const variantQuery = await admin.graphql(
+                `#graphql
+                query getDefaultVariant($id: ID!) {
+                  product(id: $id) {
+                    variants(first: 1) {
+                      edges { node { id } }
+                    }
+                  }
+                }`,
+                { variables: { id: productGid } }
+              );
+              const variantData = await variantQuery.json();
+              const variantId = variantData?.data?.product?.variants?.edges?.[0]?.node?.id;
+              if (variantId) {
+                await admin.graphql(
+                  `#graphql
+                  mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+                    productVariantsBulkUpdate(productId: $productId, variants: $variants) {
+                      userErrors { field message }
+                    }
+                  }`,
+                  { variables: { productId: productGid, variants: [{ id: variantId, inventoryItem: { measurement: { weight: { value: weightGrams / 28.3495, unit: "OUNCES" } } } }] } }
+                );
+              }
+            }
+          } catch (weightErr) {
+            console.warn("[saveMetafields] Variant weight update failed:", weightErr.message);
+          }
+        }
+      }
+
+      console.log("SAVE SUCCESS: All metafields locked in.");
+      return data({ intent: "saveMetafields", success: true, message: "All metafields locked in." });
+    } catch (error) {
+      console.error("SAVE METAFIELDS CRASH:", error.message, error.stack);
+      return data({ intent: "saveMetafields", success: false, error: error.message });
+    }
+  }
+
+  // ==========================================
+  // 🔴 INTENT 3: CLEAN MALFORMED KEYS
+  // ==========================================
+  if (intent === "cleanMalformedKeys") {
+    const productId = formData.get("productId");
+
+    if (!productId) {
+      return data({ success: false, message: "No productId provided." });
+    }
+
+    let resolvedId = `gid://shopify/Product/${productId}`;
+    (productId.startsWith("gid://")) && (resolvedId = productId);
+
+    const lookupResponse = await admin.graphql(
+      `#graphql
+      query getMetafields($ownerId: ID!) {
+        product(id: $ownerId) {
+          metafields(first: 250) {
+            edges {
+              node {
+                id
+                namespace
+                key
+              }
+            }
+          }
+        }
+      } `,
+      { variables: { ownerId: resolvedId } }
+    );
+
+    const lookupResult = await lookupResponse.json();
+    const allMeta = lookupResult?.data?.product?.metafields?.edges || [];
+
+    const malformedKeys = [
+      "cut_type", "crystalSystem", "geologicalEra", "mineralClass",
+      "rockComposition", "rockFormation", "specificGravity", "mohsHardness"
+    ];
+    const toDelete = allMeta
+      .map(e => e.node)
+      .filter(m => malformedKeys.includes(m.key))
+      .map(m => m.id);
+
+    if (toDelete.length === 0) {
+      return data({ success: true, message: "No malformed keys found. Already clean." });
+    }
+
+    const deleteResponse = await admin.graphql(
+      `#graphql
+      mutation metafieldsDelete($metafields: [MetafieldIdentifierInput!]!) {
+        metafieldsDelete(metafields: $metafields) {
+          deletedMetafields { key namespace ownerId }
+          userErrors { field message }
+        }
+      } `,
+      { variables: { metafields: toDelete.map(id => ({ ownerId: resolvedId, id })) } }
+    );
+
+    const deleteResult = await deleteResponse.json();
+    const deleteErrors = deleteResult?.data?.metafieldsDelete?.userErrors || [];
+    const deleted = deleteResult?.data?.metafieldsDelete?.deletedMetafields || [];
+
+    if (deleteErrors.length > 0) {
+      return data({ success: false, message: "Delete had errors.", errors: deleteErrors });
+    }
+
+    return data({
+      success: true,
+      message: `Cleaned ${deleted.length} malformed metafield(s). Re-save the product to write them correctly.`,
+      deleted
+    });
+  }
+
+  // ==========================================
+  // 🔴 INTENT 3.5: CLEAN ALL GHOST NAMESPACES (THE NUCLEAR SWEEP)
+  // ==========================================
+  if (intent === "cleanAllCamelKeys") {
+    try {
+      let hasNextPage = true;
+      let cursor = null;
+      let totalScanned = 0;
+      let totalDeleted = 0;
+
+      const customGhosts = [
+        "cut_type", "crystalSystem", "geologicalEra", "mineralClass",
+        "rockComposition", "rockFormation", "specificGravity", "mohsHardness",
+        "hardness", "fracture", "moh_hardness", "primary_color", "base_stone_type",
+        "is_one_of_a_kind", "is_one_of_a-kind", "seo_title", "geoSource",
+        "crystal_structure", "chemical_formula", "refractive_index"
+      ];
+
+      while (hasNextPage) {
+        const productsResponse = await admin.graphql(
+          `#graphql
+          query getProductsMetafields($cursor: String) {
+            products(first: 50, after: $cursor) {
+              pageInfo { hasNextPage endCursor }
+              edges {
+                node {
+                  id
+                  metafields(first: 250) {
+                    edges {
+                      node {
+                        id
+                        namespace
+                        key
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }`,
+          { variables: { cursor } }
+        );
+
+        const productsResult = await productsResponse.json();
+        const products = productsResult?.data?.products?.edges || [];
+
+        for (const productEdge of products) {
+          totalScanned++;
+          const productNode = productEdge.node;
+          const allMeta = productNode.metafields?.edges || [];
+          
+          const toDelete = allMeta
+            .map(e => e.node)
+            .filter(m => {
+              // 1. NUKE ROCKHOUND & GEO NAMESPACES ENTIRELY
+              if (m.namespace === "geo" || m.namespace === "rockhound") return true;
+              
+              // 2. NUKE GHOSTS IN CUSTOM NAMESPACE
+              if (m.namespace === "custom") {
+                if (customGhosts.includes(m.key)) return true;
+                if (m.key.startsWith("store_")) return true;
+                if (m.key.includes("-")) return true; // Drops color-pattern, target-gender, etc.
+              }
+              
+              return false;
+            })
+            .map(m => m.id);
+
+          if (toDelete.length > 0) {
+            try {
+              const deleteResponse = await admin.graphql(
+                `#graphql
+                mutation metafieldsDelete($metafields: [MetafieldIdentifierInput!]!) {
+                  metafieldsDelete(metafields: $metafields) {
+                    deletedMetafields { key namespace ownerId }
+                    userErrors { field message }
+                  }
+                }`,
+                { variables: { metafields: toDelete.map(id => ({ ownerId: productNode.id, id })) } }
+              );
+              const deleteResult = await deleteResponse.json();
+              const deleted = deleteResult?.data?.metafieldsDelete?.deletedMetafields || [];
+              totalDeleted += deleted.length;
+            } catch (errors) {
+              console.error("metafieldsDelete graphQLErrors:", JSON.stringify(errors.graphQLErrors, null, 2));
+            }
+          }
+        }
+
+        hasNextPage = productsResult?.data?.products?.pageInfo?.hasNextPage;
+        cursor = productsResult?.data?.products?.pageInfo?.endCursor;
+      }
+
+      return data({
+        success: true,
+        message: `Nuclear sweep complete. Scanned ${totalScanned} products, deleted ${totalDeleted} ghost metafields.`
+      });
+    } catch (error) {
+      console.error("BULK CLEAN CRASH:", error);
+      return data({ success: false, message: "Bulk clean failed", error: error.message });
+    }
+  }
+
+  // ==========================================
+  // INTENT 4: STAGED UPLOAD (ONE ROUND-TRIP)
+  // ==========================================
+  if (intent === "stagedUpload") {
+    try {
+      const file = formData.get("file_0");
+      const pieceId = formData.get("pieceId");
+      const scanToken = formData.get("scanToken");
+
+      if (!file || !(file instanceof File)) {
+        return data({ success: false, intent: "stagedUpload", error: "Missing file_0 binary payload." });
+      }
+
+      const uploadResponse = await admin.graphql(
+        `#graphql
+        mutation stagedUploadsCreate($input: [StagedUploadInput!]!) {
+          stagedUploadsCreate(input: $input) {
+            stagedTargets {
+              url
+              resourceUrl
+              parameters {
+                name
+                value
+              }
+            }
+            userErrors {
+              field
+              message
+            }
+          }
+        }`,
+        {
+          variables: {
+            input: [
+              {
+                resource: "IMAGE",
+                filename: file.name || `upload_${Date.now()}.jpg`,
+                mimeType: file.type || "image/jpeg",
+                fileSize: String(file.size),
+                httpMethod: "POST"
+              }
+            ]
+          }
+        }
+      );
+
+      const uploadResult = await uploadResponse.json();
+      const userErrors = uploadResult?.data?.stagedUploadsCreate?.userErrors || [];
+      
+      if (userErrors.length > 0) {
+        return data({ success: false, intent: "stagedUpload", error: userErrors.map(e => e.message).join(", ") });
+      }
+
+      const stagedTargets = uploadResult?.data?.stagedUploadsCreate?.stagedTargets;
+      if (!stagedTargets || stagedTargets.length === 0) {
+        return data({ success: false, intent: "stagedUpload", error: "No upload target returned from Shopify." });
+      }
+
+      const target = stagedTargets[0];
+      const s3FormData = new FormData();
+
+      target.parameters.forEach((param) => {
+        s3FormData.append(param.name, param.value);
+      });
+
+      const arrayBuffer = await file.arrayBuffer();
+      const fileBlob = new Blob([arrayBuffer], { type: file.type || "image/jpeg" });
+      s3FormData.append("file", fileBlob, file.name || `upload_${Date.now()}.jpg`);
+
+      const s3Response = await fetch(target.url, {
+        method: "POST",
+        body: s3FormData
+      });
+
+      if (!s3Response.ok) {
+        const errorText = await s3Response.text();
+        return data({ success: false, intent: "stagedUpload", error: `S3 upload failed: ${errorText}` });
+      }
+
+      return data({
+        success: true,
+        intent: "stagedUpload",
+        resourceUrl: target.resourceUrl,
+        pieceId: pieceId,
+        scanToken: scanToken
+      });
+    } catch (error) {
+      console.error("STAGED UPLOAD CRASH:", error);
+      return data({ success: false, intent: "stagedUpload", error: error.message });
+    }
+  }
+
+  // ==========================================
+  // INTENT 5: CREATE PRODUCT
+  // ==========================================
+  if (intent === "createProduct") {
+    try {
+      const rawPayload = formData.get("payload");
+      if (!rawPayload) {
+        return data({ success: false, intent: "createProduct", error: "Missing JSON payload." });
+      }
+
+      const payload = JSON.parse(rawPayload);
+      let piece = {};
+      (payload.pieces && payload.pieces.length > 0) && (piece = payload.pieces[0]);
+
+      const stoneFamily = payload.stone_family || "Unknown Stone";
+      const pieceName = piece.piece_name || "New Piece";
+      const originLocation = payload.collection_name
+        ? payload.collection_name.replace(/\s+Collection$/i, "").trim()
+        : (payload.origin_location || "Unknown Origin");
+
+      const title = payload.title && !payload.title.includes("Unknown")
+        ? payload.title
+        : `${stoneFamily} — ${originLocation} — ${pieceName}`;
+      const descriptionHtml = payload.descriptionHtml || piece.generated_description || piece.descriptionHtml || "";
+      const price = String(payload.price || piece.price || "0.00");
+      const productType = payload.productType || "Wearable Art";
+      const status = payload.status || "DRAFT";
+
+      const allUserErrors = [];
+
+      const seoTitle = payload.seo_title || `${stoneFamily} — ${pieceName} — One-of-a-Kind Rockhound Studio`;
+      const productInput = {
+        title: title,
+        descriptionHtml: descriptionHtml,
+        productType: productType,
+        status: status
+      };
+
+      const createResponse = await admin.graphql(
+        `#graphql
+        mutation productCreate($input: ProductInput!) {
+          productCreate(input: $input) {
+            product {
+              id
+              handle
+              variants(first: 1) {
+                edges {
+                  node {
+                    id
+                  }
+                }
+              }
+            }
+            userErrors {
+              field
+              message
+            }
+          }
+        }`,
+        { variables: { input: productInput } }
+      );
+
+      const createResult = await createResponse.json();
+      const createErrors = createResult?.data?.productCreate?.userErrors || [];
+      (createErrors.length > 0) && allUserErrors.push(...createErrors);
+
+      const createdProduct = createResult?.data?.productCreate?.product;
+      
+      if (!createdProduct) {
+         return data({ success: false, intent: "createProduct", error: "Product creation failed", userErrors: allUserErrors });
+      }
+
+      const productId = createdProduct.id;
+      const productHandle = createdProduct.handle;
+      const defaultVariantId = createdProduct.variants?.edges?.[0]?.node?.id;
+
+      const seoDescription = payload.descriptionHtml || piece.generated_description || piece.descriptionHtml || "";
+      const seoMetafieldsToInject = [];
+      
+      if (seoTitle) {
+        seoMetafieldsToInject.push({
+          ownerId: productId,
+          namespace: "global",
+          key: "title_tag",
+          value: seoTitle,
+          type: "single_line_text_field"
+        });
+      }
+      if (seoDescription) {
+        seoMetafieldsToInject.push({
+          ownerId: productId,
+          namespace: "global",
+          key: "description_tag",
+          value: seoDescription.slice(0, 320),
+          type: "single_line_text_field"
+        });
+      }
+
+      if (seoMetafieldsToInject.length > 0) {
+        try {
+          const seoResponse = await admin.graphql(
+            `#graphql
+            mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
+              metafieldsSet(metafields: $metafields) {
+                metafields { id key namespace value }
+                userErrors { field message }
+              }
+            }`,
+            { variables: { metafields: seoMetafieldsToInject } }
+          );
+        } catch (e) {
+          console.error("Failed to save SEO meta:", e);
+        }
+      }
+
+      if (price && defaultVariantId) {
+        const variantResponse = await admin.graphql(
+          `#graphql
+          mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+            productVariantsBulkUpdate(productId: $productId, variants: $variants) {
+              userErrors { field message }
+            }
+          } `,
+          { variables: { productId, variants: [{ id: defaultVariantId, price: price, inventoryItem: { measurement: { weight: { value: parseFloat(payload.weight_grams || piece.weight_grams || 0) / 28.3495, unit: "OUNCES" } } } }] } }
+        );
+        
+        const variantResult = await variantResponse.json();
+        const varErrors = variantResult?.data?.productVariantsBulkUpdate?.userErrors || [];
+        (varErrors.length > 0) && allUserErrors.push(...varErrors);
+      }
+
+      try {
+        const mediaUrlsJson = payload.mediaUrlsJson;
+        const mediaUrls = JSON.parse(mediaUrlsJson || "[]");
+        const validMediaUrls = mediaUrls.filter(u => typeof u === "string" && u.startsWith("http"));
+
+        if (validMediaUrls.length > 0) {
+          const mediaInput = validMediaUrls.map(url => ({
+            originalSource: url,
+            mediaContentType: "IMAGE"
+          }));
+
+          await new Promise(resolve => setTimeout(resolve, 3000));
+
+          const mediaResponse = await admin.graphql(
+            `#graphql
+            mutation productCreateMedia($productId: ID!, $media: [CreateMediaInput!]!) {
+              productCreateMedia(productId: $productId, media: $media) {
+                media {
+                  id
+                }
+                mediaUserErrors {
+                  field
+                  message
+                }
+              }
+            }`,
+            { variables: { productId, media: mediaInput } }
+          );
+
+          const mediaResult = await mediaResponse.json();
+          const mediaErrors = mediaResult?.data?.productCreateMedia?.mediaUserErrors || [];
+          (mediaErrors.length > 0) && allUserErrors.push(...mediaErrors);
+        }
+      } catch (e) {
+        console.error("Error attaching media URLs in productCreateMedia:", e);
+      }
+
+      if (payload.collection_name) {
+        try {
+          const collectionSearch = await admin.graphql(
+            `#graphql
+            query findCollection($title: String!) {
+              collections(first: 5, query: $title) {
+                edges { node { id title } }
+              }
+            }`,
+            { variables: { title: payload.collection_name } }
+          );
+          const collectionData = await collectionSearch.json();
+          const matchedCollection = collectionData?.data?.collections?.edges?.find(
+            e => e.node.title.toLowerCase() === payload.collection_name.toLowerCase()
+          );
+          if (matchedCollection) {
+            await admin.graphql(
+              `#graphql
+              mutation addToCollection($id: ID!, $productIds: [ID!]!) {
+                collectionAddProducts(id: $id, productIds: $productIds) {
+                  userErrors { field message }
+                }
+              }`,
+              { variables: { id: matchedCollection.node.id, productIds: [productId] } }
+            );
+          }
+        } catch (collErr) {
+          console.warn("[createProduct] Collection assignment failed:", collErr.message);
+        }
+      }
+
+      const rawMetafields = [];
+      const googleMetafields = [];
+
+      const { pieces, intent, mediaUrlsJson, title: payloadTitle, metafieldsJson, ...sharedOnly } = payload;
+      const combinedFields = { ...sharedOnly, ...piece };
+      
+      const ignoreKeys = [
+        "intent", "mediaUrlsJson", "descriptionHtml", "productType", "status", "pieces", "photoFiles",
+        "photoPreviewUrls", "photos", "imageBase64", "imageMimeType", "stagedResourceUrls", "scanError",
+        "scanToken", "isUploading", "id", "price", "collectionLocation",
+        "age_group", "target_gender", "condition", "shipping_weight_oz", "collection_name", "collection_location",
+        "seo_title", "geoSource", "crystal_structure", "chemical_formula", "refractive_index"
+      ];
+
+      Object.entries(combinedFields).forEach(([key, value]) => {
+        if (!ignoreKeys.includes(key) && value !== undefined && value !== null && String(value).trim() !== "") {
+           let finalKey = key;
+           (key === "specificGravity") && (finalKey = "specific_gravity");
+           (key === "is_one_of_a_kind" || key === "is_one_of_a-kind") && (finalKey = "is_ooak");
+
+           if (key === "treated" || finalKey === "is_ooak") {
+             if (value === true || value === "true") value = "Yes";
+             else if (value === false || value === "false") value = "No";
+           }
+
+           rawMetafields.push({
+             key: finalKey,
+             value: value,
+             type: finalKey === "generated_description" ? "multi_line_text_field" : "single_line_text_field" 
+           });
+        }
+      });
+
+      (combinedFields.age_group && combinedFields.age_group !== "" && defaultVariantId) && googleMetafields.push({
+        ownerId: defaultVariantId,
+        namespace: "google",
+        key: "age_group",
+        type: "single_line_text_field",
+        value: String(combinedFields.age_group)
+      });
+
+      (combinedFields.target_gender && combinedFields.target_gender !== "" && defaultVariantId) && googleMetafields.push({
+        ownerId: defaultVariantId,
+        namespace: "google",
+        key: "target_gender",
+        type: "single_line_text_field",
+        value: String(combinedFields.target_gender)
+      });
+
+      (combinedFields.condition && combinedFields.condition !== "" && defaultVariantId) && googleMetafields.push({
+        ownerId: defaultVariantId,
+        namespace: "google",
+        key: "condition",
+        type: "single_line_text_field",
+        value: String(combinedFields.condition)
+      });
+
+      if (combinedFields.google_product_category) {
+        googleMetafields.push({
+          namespace: "google",
+          key: "custom_label_0",
+          type: "single_line_text_field",
+          value: String(combinedFields.google_product_category)
+        });
+      }
+
+      if (rawMetafields.length > 0 || googleMetafields.length > 0) {
+        try {
+            const TYPE_MAP = {
+              stone_story: "list.single_line_text_field",
+              character_marks: "list.single_line_text_field",
+              is_ooak: "single_line_text_field",
+              treated: "single_line_text_field",
+              found_object: "single_line_text_field",
+              custom_product: "single_line_text_field",
+              piece_name: "single_line_text_field",
+              cut_and_shape: "single_line_text_field",
+              surface_finish: "single_line_text_field",
+              dimensions_mm: "single_line_text_field",
+              stone_shape: "single_line_text_field",
+              color: "single_line_text_field",
+              weight_grams: "number_decimal",
+              specific_gravity: "single_line_text_field",
+              mohs_hardness: "single_line_text_field",
+              shipping_weight_oz: "number_decimal",
+              price: "number_decimal",
+              generated_description: "multi_line_text_field"
+            };
+
+            const metafieldsInput = rawMetafields.map(item => {
+               let resolvedType = TYPE_MAP[item.key] || item.type || "single_line_text_field";
+               let resolvedValue = String(item.value);
+
+               if (resolvedType === "number_decimal") {
+                 let parsedNum = parseFloat(String(item.value).replace(/["']/g, ""));
+                 resolvedValue = isNaN(parsedNum) ? "0.0" : String(parsedNum);
+               }
+               
+               (resolvedType.startsWith("list.")) && (resolvedValue = JSON.stringify([String(item.value)]));
+
+               let resolvedNamespace = item.namespace || "custom";
+               if (item.key === "is_ooak" || resolvedNamespace === "none" || resolvedNamespace === "") {
+                 resolvedNamespace = "custom";
+               }
+
+               return {
+                 ownerId: productId,
+                 namespace: resolvedNamespace,
+                 key: item.key,
+                 type: resolvedType,
+                 value: resolvedValue
+               };
+            });
+
+            const allMetafieldsToSet = [...metafieldsInput, ...googleMetafields];
+
+            const chunks = chunkArray(allMetafieldsToSet, 25);
+            for (const chunk of chunks) {
+              const metaResponse = await admin.graphql(
+                `#graphql
+                mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
+                  metafieldsSet(metafields: $metafields) {
+                    metafields { id key namespace }
+                    userErrors { field message }
+                  }
+                }`,
+                { variables: { metafields: chunk } }
+              );
+              
+              const metaResult = await metaResponse.json();
+              const metaErrors = metaResult?.data?.metafieldsSet?.userErrors || [];
+              (metaErrors.length > 0) && allUserErrors.push(...metaErrors);
+            }
+        } catch (e) {
+          console.error("Error formatting metafields:", e);
+        }
+      }
+
+      if (allUserErrors.length > 0) {
+        console.log("CREATE PRODUCT ERRORS:", JSON.stringify(allUserErrors, null, 2));
+      }
+
+      return data({ 
+        success: true, 
+        intent: "createProduct", 
+        productId: productId, 
+        productHandle: productHandle,
+        userErrors: allUserErrors
+      });
+
+    } catch (error) {
+      console.error("CREATE PRODUCT CRASH:", error);
+      return data({ success: false, intent: "createProduct", error: error.message });
+    }
+  }
+
+};
