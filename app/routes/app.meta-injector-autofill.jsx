@@ -254,6 +254,7 @@ export const action = async ({ request }) => {
         const geoFields = await getGeoData(admin, stoneFamily); 
         return Response.json({ geoFields }); 
       } catch (err) { 
+        console.error("[geoLookup] getGeoData crashed:", err.message); 
         return Response.json({ geoFields: {} }); 
       }
     }
@@ -265,7 +266,7 @@ export const action = async ({ request }) => {
       const productTitle = body.get("productTitle") || body.get("piece_name") || "";
       const imageUrl = body.get("imageUrl") || "";
 
-      // 🟢 THE HARD WELD: Split the raw product title to guarantee we get the true Origin location
+      // Split the raw product title to guarantee we get the true Origin location
       const titleSegments = productTitle.split(/\s+[-—–]\s+/);
       const derivedFamily = titleSegments[0]?.trim() || stone_family;
       const derivedOrigin = titleSegments[1]?.trim() || "";
@@ -300,10 +301,16 @@ export const action = async ({ request }) => {
         const authenticity = "Genuine natural stone, hand-collected by Bob & Janyce, Rockhound Studio.";
         const rarity = "One-of-a-kind — no two stones are alike.";
 
-        // 🟢 THE HARD WELD: Build SEO Title directly from the title segments so it never gaps
+        // THE DEDUPLICATION WELD: Prevent "Cabochon" from repeating in the SEO title
         const seoTitleParts = [];
         if (derivedFamily) seoTitleParts.push(derivedFamily);
-        if (cut_and_shape) seoTitleParts.push(cut_and_shape);
+        if (cut_and_shape) {
+           const famLower = derivedFamily.toLowerCase();
+           const shapeWords = cut_and_shape.split(" ").filter(word => !famLower.includes(word.toLowerCase()));
+           if (shapeWords.length > 0) {
+               seoTitleParts.push(shapeWords.join(" "));
+           }
+        }
         
         let seo_title = "";
         if (seoTitleParts.length > 0) {
@@ -315,8 +322,10 @@ export const action = async ({ request }) => {
         let visionFields = {};
         if (imageUrl) {
           try {
-            const cleanImageUrl = imageUrl.split("?")[0];
-            const imageRes = await fetch(cleanImageUrl);
+            // DO NOT STRIP QUERY PARAMS: Shopify CDNs will block the request if ?v= is removed
+            const imageRes = await fetch(imageUrl);
+            if (!imageRes.ok) throw new Error(`Shopify image fetch failed with status: ${imageRes.status}`);
+
             const imageBuffer = await imageRes.arrayBuffer();
             const imageBase64 = Buffer.from(imageBuffer).toString("base64");
             const imageMimeType = (imageRes.headers.get("content-type") || "image/jpeg").split(";")[0].trim();
@@ -376,9 +385,13 @@ export const action = async ({ request }) => {
                   visionFields.color = visionFields.primary_color;
                   delete visionFields.primary_color;
               }
+            } else {
+               throw new Error(`Gemini API returned status: ${geminiRes.status}`);
             }
           } catch (visionErr) {
-            console.warn("[tab2AutoFill] Vision scan failed, continuing without it:", visionErr.message);
+            console.warn("[tab2AutoFill] Vision scan failed:", visionErr.message);
+            // TRIPWIRE: If Vision crashes, print it to the screen so Bob isn't flying blind
+            visionFields = { generated_description: `[VISION API CRASH] ${visionErr.message}. Check image URL or API quota.` };
           }
         }
 
@@ -392,7 +405,10 @@ export const action = async ({ request }) => {
             seo_title,
             collection_date,
             authenticity,
-            rarity
+            rarity,
+            treated: "No",
+            is_one_of_a_kind: "Yes",
+            is_ooak: "Yes"
           }
         });
       } catch (err) {
@@ -467,10 +483,9 @@ export const action = async ({ request }) => {
         const matchedOriginPage = pagesList.find(p => p.url.includes(resolvedHandle));
         const displayName = matchedOriginPage ? matchedOriginPage.title.replace(/^The\s+/i, "").trim() : collectionData.name.replace(/\s+Collection$/i, "").trim();
         
-        // 🟢 THE HARD WELD: Build SEO Title directly using segment2 so it never gaps on Intake
         const seoTitleParts = [];
         if (parsed.stone_family || segment1) seoTitleParts.push(parsed.stone_family || segment1);
-        // We don't have cut_and_shape yet during titleParse, so we just use family and origin
+        
         let seo_title = "";
         if (seoTitleParts.length > 0) {
           seo_title = segment2
@@ -525,8 +540,10 @@ export const action = async ({ request }) => {
       if (!imageBase64) {
         const rawImageUrl = body.get("imageUrl");
         if (rawImageUrl) {
-          const cleanImageUrl = rawImageUrl.split('?')[0];
-          const imageRes = await fetch(cleanImageUrl);
+          // DO NOT STRIP QUERY PARAMS HERE EITHER
+          const imageRes = await fetch(rawImageUrl);
+          if (!imageRes.ok) throw new Error(`Shopify image fetch failed with status: ${imageRes.status}`);
+
           const imageBuffer = await imageRes.arrayBuffer();
           imageBase64 = Buffer.from(imageBuffer).toString("base64");
           imageMimeType = (imageRes.headers.get("content-type") || "image/jpeg").split(";")[0].trim();
