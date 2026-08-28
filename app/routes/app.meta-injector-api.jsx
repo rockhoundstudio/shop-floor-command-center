@@ -668,7 +668,7 @@ export const action = async ({ request }) => {
             productVariantsBulkUpdate(productId: $productId, variants: $variants) {
               userErrors { field message }
             }
-          }`,
+          } `,
           { variables: { productId, variants: [{ id: defaultVariantId, price: price, inventoryItem: { measurement: { weight: { value: parseFloat(payload.weight_grams || piece.weight_grams || 0) / 28.3495, unit: "OUNCES" } } } }] } }
         );
         

@@ -29,7 +29,8 @@ const CUSTOM_FIELDS = [
   { key: "dimensions_mm", label: "Dimensions (mm)", type: "single_line_text_field", isPerPiece: true },
   { key: "weight_grams", label: "Weight (grams)", type: "single_line_text_field", isPerPiece: true },
   { key: "honest_flaws", label: "Character Marks (Honest Flaws)", type: "single_line_text_field", multiline: true, isPerPiece: true },
-  { key: "price", label: "Price", type: "single_line_text_field", isPerPiece: true }
+  { key: "price", label: "Price", type: "single_line_text_field", isPerPiece: true },
+  { key: "generated_description", label: "Generated Description", type: "single_line_text_field", multiline: true, isPerPiece: true }
 ];
 
 const FULL_META_GROUPS = [
@@ -62,7 +63,8 @@ const FULL_META_GROUPS = [
     fields: [
       { key: "origin_story", label: "Origin Story", type: "text", multiline: true },
       { key: "honest_flaws_and_character", label: "Honest Flaws and Character", type: "text", multiline: true },
-      { key: "collection_name", label: "Collection Name", type: "text" }
+      { key: "collection_name", label: "Collection Name", type: "text" },
+      { key: "generated_description", label: "Generated Description", type: "text", multiline: true }
     ]
   },
   {
@@ -77,7 +79,8 @@ const FULL_META_GROUPS = [
     color: "#F9A825",
     fields: [
       { key: "primary_use", label: "Primary Use", type: "text" },
-      { key: "bail_included", label: "Bail Included", type: "text" }
+      { key: "bail_included", label: "Bail Included", type: "text" },
+      { key: "seo_title", label: "SEO Title", type: "text" }
     ]
   },
   {
@@ -346,7 +349,7 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
           const textFields = [
             "piece_name", "primary_medium", "dimensions_mm", 
             "weight_grams", "origin_story",
-            "honest_flaws_and_character", "collection_name"
+            "honest_flaws_and_character", "collection_name", "generated_description"
           ];
 
           product.metafields.edges.forEach(({ node }) => {
@@ -493,7 +496,7 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
     if (!selectedProductId) return;
     const changes = [];
     
-    const ALWAYS_INCLUDE = ["seo_title", "weight_grams", "piece_name", "is_one_of_a_kind", "treated", "handcrafted_by", "primary_medium"];
+    const ALWAYS_INCLUDE = ["seo_title", "weight_grams", "piece_name", "is_one_of_a_kind", "treated", "handcrafted_by", "primary_medium", "generated_description"];
 
     Object.entries(fullMetaState).forEach(([key, value]) => {
       const originalValue = originalMetaRef.current[key] || "";
@@ -549,7 +552,7 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
             const hasNewValue = val !== undefined && val !== null && val.toString().trim() !== "";
             
             // Only fill if currently empty in fullMetaState
-            const ALWAYS_OVERWRITE = ["color", "cut_and_shape", "stone_family", "surface_finish", "handcrafted_by", "treated", "is_one_of_a_kind"];
+            const ALWAYS_OVERWRITE = ["color", "cut_and_shape", "stone_family", "surface_finish", "handcrafted_by", "treated", "is_one_of_a_kind", "generated_description"];
             const currentlyEmpty = !fullMetaState[key] || (typeof fullMetaState[key] === 'string' && fullMetaState[key].trim() === "");
             const shouldOverwrite = ALWAYS_OVERWRITE.includes(key);
 
@@ -1019,7 +1022,7 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
             <Text variant="headingMd" as="h2">Bulk CamelCase Key Cleanup</Text>
             <Text as="p">Scans all products and deletes any metafields with camelCase keys. Cleans all 35 products in one shot.</Text>
             
-            {injectFetcher.state === "idle" && injectFetcher.data?.message?.includes("Bulk clean") && (
+            {injectFetcher.state === "idle" && injectFetcher.data?.message?.includes("Nuclear sweep") && (
               <Banner tone={injectFetcher.data.success ? "success" : "critical"} title={injectFetcher.data.success ? "Operation Successful" : "Operation Failed"}>
                 <Text as="p">{injectFetcher.data.message}</Text>
               </Banner>

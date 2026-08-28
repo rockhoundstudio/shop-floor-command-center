@@ -37,9 +37,6 @@ async function saveToStoneCache(stoneName, geoResult) {
   }
 }
 
-// ==========================================
-// ENVIRONMENT VARIABLES & MAPS
-// ==========================================
 const MINDAT_API_KEY = process.env.MINDAT_API_KEY;
 
 const MINDAT_KEY_MAP = {
@@ -58,9 +55,6 @@ const MINDAT_KEY_MAP = {
 
 const SHOPPED_ROCK_VENDORS = ["Richardson's Rock Ranch", "Irv's Rock and Jewelry", "Irv's Rock & Jewelry"];
 
-// ==========================================
-// ENGINE: EXPONENTIAL BACKOFF RETRY
-// ==========================================
 async function fetchWithRetry(url, options, retries = 3, delay = 1500) {
   for (let i = 0; i < retries; i++) {
     const res = await fetch(url, options);
@@ -74,7 +68,6 @@ async function fetchWithRetry(url, options, retries = 3, delay = 1500) {
   throw new Error("Gemini API connection timed out after multiple attempts.");
 }
 
-// 🟢 THE RESTORED LIVE SCANNER: Pulls all actual Pages and Collections from Shopify
 async function getLiveStoreDirectory(admin) {
   let pagesList = [];
   let collectionsList = [];
@@ -122,7 +115,6 @@ async function getLiveStoreDirectory(admin) {
   return { pagesList, collectionsList };
 }
 
-// Helper for quick fallback matching
 function resolveOriginHandle(locationSegment, pagesList) {
   const cleanLoc = (locationSegment || "").toLowerCase().trim();
   if (!cleanLoc) return "";
@@ -165,7 +157,6 @@ async function getGeoData(admin, stoneFamily) {
 
   const search = stoneFamily.toLowerCase().trim();
 
-  // TIER 1 — geoLibrary.jsx (drive, fast)
   try {
     const localResult = lookupStone(stoneFamily);
     if (localResult && Object.keys(localResult).length > 0) {
@@ -192,7 +183,6 @@ async function getGeoData(admin, stoneFamily) {
     console.warn("[Geo Tier 1] geoLibrary lookup failed:", err.message);
   }
 
-  // TIER 2 — PostgreSQL StoneProfile (one DB hit per stone per server session)
   try {
     if (stoneProfileCache.has(search)) {
       const cached = stoneProfileCache.get(search);
@@ -235,7 +225,6 @@ async function getGeoData(admin, stoneFamily) {
     console.error("[Geo Tier 2] PostgreSQL StoneProfile failed:", err.message);
   }
 
-  // TIER 3 — Mindat API (last resort, saves result to StoneCache and StoneProfile)
   try {
     if (MINDAT_API_KEY) {
       console.log("[Geo Tier 3] Trying Mindat for:", search);
@@ -277,14 +266,10 @@ async function getGeoData(admin, stoneFamily) {
   return { ...emptyGeo, geoSource: "none" };
 }
 
-// ==========================================
-// CORE EXECUTION GRAPH
-// ==========================================
 export const action = async ({ request }) => {
   try {
     const { admin } = await authenticate.admin(request);
     const body = await request.formData();
-    const actionType = body.get("actionType");
     const intent = body.get("intent");
 
     if (intent === "geoLookup") {
@@ -308,17 +293,15 @@ export const action = async ({ request }) => {
       const imageUrl = body.get("imageUrl") || "";
 
       try {
-        // STEP 1 — Geo lookup + origin story
         const geoFields = await getGeoData(admin, stone_family);
         const { pagesList } = await getLiveStoreDirectory(admin);
         const matchedPage = pagesList.find(p => p.url.includes(origin_handle));
         const origin_story = matchedPage ? matchedPage.excerpt : "";
 
-        // Extract collection_date from origin story via Gemini
         let collection_date = "";
         if (origin_story) {
           try {
-            const datePrompt = `Read the following rockhound field story and extract the collection date. Return ONLY the date in this format: "Month YYYY" (example: "June 2024"). If no date is found, return an empty string. Do not explain. Do not add punctuation.\n\nStory:\n${origin_story}`;
+            const datePrompt = `Read the following rockhound field story and extract the collection date. Return ONLY the date in this format: "Month YYYY". If no date is found, return an empty string.`;
             const dateRes = await fetch(
               "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY,
               {
@@ -334,43 +317,43 @@ export const action = async ({ request }) => {
           }
         }
 
-        // Hardcoded fields
         const authenticity = "Genuine natural stone, hand-collected by Bob & Janyce, Rockhound Studio.";
         const rarity = "One-of-a-kind — no two stones are alike.";
 
-        // STEP 2 — Build SEO title
         const seoTitleParts = [];
         if (stone_family) seoTitleParts.push(stone_family);
         if (cut_and_shape) seoTitleParts.push(cut_and_shape);
         const locationPart = collection_location || origin_handle.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase());
-        const seo_title = seoTitleParts.length > 0
-          ? `${seoTitleParts.join(" ")} \u2014 Found at ${locationPart} \u2014 Rockhound Studio`
-          : "";
+        
+        let seo_title = "";
+        if (seoTitleParts.length > 0) {
+          seo_title = locationPart
+            ? `${seoTitleParts.join(" ")} — Found at ${locationPart} — Rockhound Studio`
+            : `${seoTitleParts.join(" ")} — Rockhound Studio`;
+        }
 
-        // STEP 3 — Vision scan if image URL is available
         let visionFields = {};
         if (imageUrl) {
           try {
-            const imageRes = await fetch(imageUrl);
+            const cleanImageUrl = imageUrl.split("?")[0];
+            const imageRes = await fetch(cleanImageUrl);
             const imageBuffer = await imageRes.arrayBuffer();
             const imageBase64 = Buffer.from(imageBuffer).toString("base64");
             const imageMimeType = (imageRes.headers.get("content-type") || "image/jpeg").split(";")[0].trim();
 
             const visionPrompt = `You are a lapidary expert for Rockhound Studio. Analyze this stone photo and return a JSON object with these exact keys:
-- primary_color: primary color of the stone, plain text (e.g. "Reddish-brown and Cream")
-- stone_shape: the overall shape of the stone (e.g. "Oval", "Freeform", "Rectangle", "Teardrop")
-- color_pattern: the pattern or texture visible
-- cut_and_shape: the cut style
-- surface_finish: the surface finish visible
-- honest_flaws_and_character: any natural inclusions, plain text. If none, return empty string.
-- primary_use: best classification (e.g., "Cabochon", "Pendant", etc.)
-- primary_medium: mounting material if jewelry, or "None - Raw Stone"
-- setting_ready: one of: "Not Ready - Raw Stone", "Bezel Setting - Ready to Wear", etc.
-- wire_material: wire type or "None - Raw Stone"
-- bail_included: bail type or "None"
-- generated_description: poetic, spare, story-driven description STRICTLY UNDER 160 CHARACTERS. The shape, color, and origin should feel inevitable - like the stone decided, not the maker. Never clinical. Never salesy. Plain honest voice. Do NOT use em dashes or special characters. Sign off: - Bob & Janyce, Rockhound Studio, Spokane Valley WA
-
-Return only valid JSON. No markdown.`;
+- primary_color
+- stone_shape
+- color_pattern
+- cut_and_shape
+- surface_finish
+- honest_flaws_and_character
+- primary_use
+- primary_medium
+- setting_ready
+- wire_material
+- bail_included
+- generated_description (poetic, spare, story-driven description STRICTLY UNDER 160 CHARACTERS. No em dashes.)`;
 
             const geminiRes = await fetchWithRetry("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY, {
               method: "POST",
@@ -413,7 +396,6 @@ Return only valid JSON. No markdown.`;
                   visionFields.color = visionFields.primary_color;
                   delete visionFields.primary_color;
               }
-              console.log("[tab2AutoFill] Vision scan returned:", Object.keys(visionFields));
             }
           } catch (visionErr) {
             console.warn("[tab2AutoFill] Vision scan failed, continuing without it:", visionErr.message);
@@ -439,9 +421,6 @@ Return only valid JSON. No markdown.`;
       }
     }
 
-    // ==========================================
-    // INTENT: TITLE PARSE
-    // ==========================================
     if (intent === "titleParse") {
       const pieceNameInput = body.get("pieceName") || "";
       const segments = pieceNameInput.split(/\s+[-—–]\s+/);
@@ -504,8 +483,6 @@ Return only valid JSON. No markdown.`;
         }
         const parsed = JSON.parse(cleanJson);
         
-        // 🟢 THE HARD DB WELD: Pull immutable geo specs straight from DB / Geo Library
-        console.log("[titleParse] Gemini returned stone_family:", parsed.stone_family);
         const dbGeoData = await getGeoData(admin, parsed.stone_family || segment1);
         const matchedOriginPage = pagesList.find(p => p.url.includes(resolvedHandle));
         const displayName = matchedOriginPage ? matchedOriginPage.title.replace(/^The\s+/i, "").trim() : collectionData.name.replace(/\s+Collection$/i, "").trim();
@@ -525,9 +502,6 @@ Return only valid JSON. No markdown.`;
       return Response.json({ titleParse: null, error: "Title parse error" }, { status: 500 });
     }
 
-    // ==========================================
-    // INTENT: VISION SCAN (Splicing Exact Links & Hardware)
-    // ==========================================
     if (intent === "visionScan") {
       const pieceId = body.get("pieceId");
       const clientBase64 = body.get("imageBase64");
@@ -537,20 +511,16 @@ Return only valid JSON. No markdown.`;
       const segments = titleInput.split(/\s+[-–—]\s+/);
       const originSegment = segments[1]?.trim() || "Unknown Origin";
       
-      // 🟢 EXECUTE LIVE DIRECTORY SCANNER
       const { pagesList, collectionsList } = await getLiveStoreDirectory(admin);
       
-      // Build a clean text menu for Gemini to read
       const pagesMenu = pagesList.map(p => `- Title: "${p.title}" | URL: ${p.url} | Excerpt: "${p.excerpt}"`).join("\n");
       const collectionsMenu = collectionsList.map(c => `- Title: "${c.title}" | URL: ${c.url} | Excerpt: "${c.excerpt}"`).join("\n");
 
-      // Resolve defaults just in case, but give Gemini the full menu
       const defaultOriginSlug = resolveOriginHandle(originSegment, pagesList);
       const defaultCollection = resolveCollectionData(originSegment, defaultOriginSlug, collectionsList);
       const targetUrlPath = `/pages/${defaultOriginSlug}`;
       const collectionUrlPath = `/collections/${defaultCollection.slug}`;
 
-      // Extract exact human-readable collection name without trailing "Collection" word
       const fullCollectionTitle = defaultCollection.name.replace(/\s+Collection$/i, "").trim();
 
       const matchedPage = pagesList.find(p => p.url.includes(defaultOriginSlug));
@@ -562,14 +532,15 @@ Return only valid JSON. No markdown.`;
       if (!imageBase64) {
         const rawImageUrl = body.get("imageUrl");
         if (rawImageUrl) {
-          const imageRes = await fetch(rawImageUrl);
+          const cleanImageUrl = rawImageUrl.split('?')[0];
+          const imageRes = await fetch(cleanImageUrl);
           const imageBuffer = await imageRes.arrayBuffer();
           imageBase64 = Buffer.from(imageBuffer).toString("base64");
           imageMimeType = (imageRes.headers.get("content-type") || "image/jpeg").split(";")[0].trim();
         }
       }
 
-      const promptText = `You are a lapidary artist and master jeweler for Rockhound Studio. Analyze this photo and return a JSON object.\n- LIVE STORE DIRECTORY (Your Dyslexia Safeguard — Read this menu!):\n  VALID PAGES IN STORE:\n  ${pagesMenu || "No live pages found — use default URL."}\n  \n  VALID COLLECTIONS IN STORE:\n  ${collectionsMenu || "No live collections found — use default URL."}\n\n- description: Poetic, spare, story-driven product description STRICTLY UNDER 160 CHARACTERS total. The shape, color, and origin should feel inevitable - like the stone decided, not the maker. Never clinical. Never salesy. Credit craftsmanship strictly as "handcrafted by Bob and Janyce". ZERO workshop references. Do NOT use em dashes.\nCRITICAL DWELL WEB EMBED LAW: Look at the Origin Segment Janyce entered ("${originSegment}"). Check the LIVE STORE DIRECTORY above and match it to the exact corresponding Page and Collection. You MUST use those live excerpts to write short story hooks leading directly into TWO clickable HTML hyperlinks. \n  1. Origin Hook: Write a short story hook based on the matching Page excerpt, followed immediately by this exact anchor tag format: <a href="${targetUrlPath}">${fullCollectionTitle} Story</a>\n  2. Collection Hook: Write a short hook based on the matching Collection excerpt, followed immediately by this exact anchor tag format: <a href="${collectionUrlPath}">${fullCollectionTitle} Collection</a>\n- primary_use: Smart Switch! Force strictly to best match (e.g., "Pendant (Finished Jewelry)", "Necklace", "Ring / Bezel Setting", "Cabochon", "Wire Wrap (Finished Jewelry)"). If a chain is visible, classify as "Necklace".
+      const promptText = `You are a lapidary artist and master jeweler for Rockhound Studio. Analyze this photo and return a JSON object.\n- LIVE STORE DIRECTORY (Your Dyslexia Safeguard — Read this menu!):\n  VALID PAGES IN STORE:\n  ${pagesMenu || "No live pages found — use default URL."}\n  \n  VALID COLLECTIONS IN STORE:\n  ${collectionsMenu || "No live collections found — use default URL."}\n\n- generated_description: Poetic, spare, story-driven product description STRICTLY UNDER 160 CHARACTERS total. The shape, color, and origin should feel inevitable - like the stone decided, not the maker. Never clinical. Never salesy. Credit craftsmanship strictly as "handcrafted by Bob and Janyce". ZERO workshop references. Do NOT use em dashes.\nCRITICAL DWELL WEB EMBED LAW: Look at the Origin Segment Janyce entered ("${originSegment}"). Check the LIVE STORE DIRECTORY above and match it to the exact corresponding Page and Collection. You MUST use those live excerpts to write short story hooks leading directly into TWO clickable HTML hyperlinks. \n  1. Origin Hook: Write a short story hook based on the matching Page excerpt, followed immediately by this exact anchor tag format: <a href="${targetUrlPath}">${fullCollectionTitle} Story</a>\n  2. Collection Hook: Write a short hook based on the matching Collection excerpt, followed immediately by this exact anchor tag format: <a href="${collectionUrlPath}">${fullCollectionTitle} Collection</a>\n- primary_use: Smart Switch! Force strictly to best match (e.g., "Pendant (Finished Jewelry)", "Necklace", "Ring / Bezel Setting", "Cabochon", "Wire Wrap (Finished Jewelry)"). If a chain is visible, classify as "Necklace".
 - chain_material: If a necklace chain is visible, identify it as exactly one of: "Silver Plated Snake Chain", "Gold Plated Snake Chain", "Sterling Silver Chain", "Cord". If no chain is visible, return "None".\n- MANDATORY BENCH FINDINGS & JEWELRY LAWS:\n  * setting_ready: Look closely at the mounting. If cabochon is in a bezel setting, MUST return "Bezel Setting - Ready to Wear". If prong setting, return "Prong Setting - Ready to Wear". If wire wrapped, return "Wire Wrapped - Ready to Wear". NEVER LEAVE BLANK FOR MOUNTED STONES!\n  * wire_material: If wire wrapped, output the wire metal (e.g., "Antiqued Copper Wire"). If in a bezel or prong setting with zero wire, MUST return strictly: "None — Bezel Mounted".\n  * primary_medium: State the primary metal or mounting material. Use exactly one of these: ".925 Sterling Silver Bezel", "Silver Plated Bezel", "Gold Plated Bezel", "Copper Bezel", "Gold Tone Alloy Bezel", "Silver Tone Alloy Bezel", "Bronze Tone Alloy Bezel", "Glue-On Loop", "Drilled — Pinch Bail" (loose stone with a drilled hole and pinch bail through it, no bezel). Match the tone and finish visible in the photo. Do not leave blank!
   * surface_finish: Describe the stone's surface finish as seen in the photo. Use terms like "High Polish", "Matte", "Satin", "Natural/Raw", "Tumbled". Do not leave blank.\n  * secondary_medium: Look ONLY for a second distinct METAL component (e.g., a gold accent ring). If you see small stones or crystals on a bail, those are part of the bail — return "None" for secondary_medium. Do NOT describe bail decorations here. If no second metal component exists, return strictly "None".\n  * bail_included: Look at the TOP of the piece. If there is a separate small clip or loop pinched onto the bezel (with or without accent stones), return "Silver Plated Pinch Bail". If the bail is welded or formed as part of the bezel frame with no separate clip, return "Integrated Bezel Bail". If there is no bail at all, return "None". Do NOT guess — only report what is physically visible.`;
 
@@ -584,7 +555,7 @@ Return only valid JSON. No markdown.`;
             responseSchema: {
               type: "OBJECT",
               properties: {
-                description: { type: "STRING" },
+                generated_description: { type: "STRING" },
                 primary_color: { type: "STRING" },
                 cut_and_shape: { type: "STRING" },
                 surface_finish: { type: "STRING" },
@@ -625,7 +596,7 @@ Return only valid JSON. No markdown.`;
           success: true, 
           intent: "visionScan", 
           pieceId,
-          description: parsedVision.description || "",
+          generated_description: parsedVision.generated_description || parsedVision.description || "",
           primary_color: parsedVision.primary_color || "",
           cut_and_shape: parsedVision.cut_and_shape || "",
           surface_finish: parsedVision.surface_finish || "",
