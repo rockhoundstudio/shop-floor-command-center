@@ -184,9 +184,14 @@ export const action = async ({ request }) => {
             };
           }
 
+          let resolvedNamespace = item.namespace || "custom";
+          if (item.key === "is_ooak" || resolvedNamespace === "none" || resolvedNamespace === "") {
+            resolvedNamespace = "custom";
+          }
+
           return {
             ownerId: resolvedId,
-            namespace: item.namespace || "custom",
+            namespace: resolvedNamespace,
             key: item.key,
             type: resolvedType,
             value: resolvedValue
@@ -876,9 +881,14 @@ export const action = async ({ request }) => {
                
                (resolvedType.startsWith("list.")) && (resolvedValue = JSON.stringify([String(item.value)]));
 
+               let resolvedNamespace = item.namespace || "custom";
+               if (item.key === "is_ooak" || resolvedNamespace === "none" || resolvedNamespace === "") {
+                 resolvedNamespace = "custom";
+               }
+
                return {
                  ownerId: productId,
-                 namespace: item.namespace || "custom",
+                 namespace: resolvedNamespace,
                  key: item.key,
                  type: resolvedType,
                  value: resolvedValue
