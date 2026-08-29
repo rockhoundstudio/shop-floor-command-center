@@ -1232,6 +1232,38 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
                 />
                 </div>
 
+              {selectedProductId && (() => {
+                const product = products.find(p => p.id === selectedProductId);
+                const currentTitle = fullMetaState.shopify_title || formState.shopify_title || product?.title || "";
+                return (
+                  <div style={{ minHeight: "54px" }}>
+                    <BlockStack gap="200">
+                      <Text as="p" variant="bodyMd" tone="subdued">Review before running — edit if legacy data is incorrect:</Text>
+                      <TextField
+                        label="Product Title"
+                        value={formState.shopify_title || fullMetaState.shopify_title || product?.title || ""}
+                        onChange={(val) => {
+                          setFormState(prev => ({ ...prev, shopify_title: val }));
+                          setFullMetaState(prev => ({ ...prev, shopify_title: val }));
+                        }}
+                        autoComplete="off"
+                        helpText="Format: Stone Family — Origin Location — Piece Name"
+                      />
+                      <TextField
+                        label="Origin Handle (override)"
+                        value={formState.origin_handle || fullMetaState.origin_handle || ""}
+                        onChange={(val) => {
+                          setFormState(prev => ({ ...prev, origin_handle: val }));
+                          setFullMetaState(prev => ({ ...prev, origin_handle: val }));
+                        }}
+                        autoComplete="off"
+                        helpText="e.g. the-richardson-strike — leave blank to auto-resolve from title"
+                      />
+                    </BlockStack>
+                  </div>
+                );
+              })()}
+
               <InlineStack align="space-between" gap="300">
                 <div style={{ minHeight: "54px", flexGrow: 1 }}>
                   <Button 
