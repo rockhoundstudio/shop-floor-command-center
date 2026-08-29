@@ -922,26 +922,28 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
             updatedState.piece_name = productTitle.includes(" \u2014 ") ? productTitle.split(" \u2014 ").pop().trim() : productTitle;
           }
 
+          const REQUIRED_TAB2_FIELDS = [
+            { key: "generated_description", label: "Generated Description" },
+            { key: "color_pattern", label: "Color Pattern" },
+            { key: "collection_location", label: "Collection Location" },
+            { key: "origin_handle", label: "Origin Handle" },
+          ];
+          const missingFields = REQUIRED_TAB2_FIELDS.filter(f => {
+            const val = updatedState[f.key] || "";
+            return val.toString().trim() === "" || val === "[No story provided]";
+          });
+          if (missingFields.length > 0) {
+            setTimeout(() => {
+              setPendingFixFields(missingFields);
+              setCurrentFixIndex(0);
+              setFixPopupValue("");
+              setShowFixPopup(true);
+            }, 0);
+          }
+
           return updatedState;
         });
         setTab2StatusMessage("Auto-Fill complete \u2014 review fields before saving");
-
-        const REQUIRED_TAB2_FIELDS = [
-          { key: "generated_description", label: "Generated Description" },
-          { key: "color_pattern", label: "Color Pattern" },
-          { key: "collection_location", label: "Collection Location" },
-          { key: "origin_handle", label: "Origin Handle" },
-        ];
-        const missingFields = REQUIRED_TAB2_FIELDS.filter(f => {
-          const val = updatedState[f.key] || "";
-          return val.toString().trim() === "" || val === "[No story provided]";
-        });
-        if (missingFields.length > 0) {
-          setPendingFixFields(missingFields);
-          setCurrentFixIndex(0);
-          setFixPopupValue("");
-          setShowFixPopup(true);
-        }
 
         if (window.shopify && window.shopify.toast) {
           window.shopify.toast.show("Auto-Fill complete!");
