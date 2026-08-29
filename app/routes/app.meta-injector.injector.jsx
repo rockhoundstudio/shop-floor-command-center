@@ -1,7 +1,6 @@
 // ==========================================================================
 // ROCKHOUND STUDIO — TAB 1: NEW PRODUCT INTAKE Bench
 // File: app/routes/app.meta-injector.injector.jsx
-// (100% Original Logic + useRef Stale Closure Bypass for Dwell Web)
 // ==========================================================================
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
@@ -33,7 +32,8 @@ const CUSTOM_FIELDS = [
   { key: "dimensions_mm", label: "Dimensions (mm)", type: "single_line_text_field", isPerPiece: true },
   { key: "weight_grams", label: "Weight (grams)", type: "single_line_text_field", isPerPiece: true },
   { key: "honest_flaws", label: "Character Marks (Honest Flaws)", type: "single_line_text_field", multiline: true, isPerPiece: true },
-  { key: "price", label: "Price", type: "single_line_text_field", isPerPiece: true }
+  { key: "price", label: "Price", type: "single_line_text_field", isPerPiece: true },
+  { key: "seo_title", label: "SEO Title", type: "single_line_text_field", isPerPiece: true }
 ];
 
 const FULL_META_GROUPS = [
@@ -81,7 +81,8 @@ const FULL_META_GROUPS = [
     color: "#F9A825",
     fields: [
       { key: "primary_use", label: "Primary Use", type: "text" },
-      { key: "bail_included", label: "Bail Included", type: "text" }
+      { key: "bail_included", label: "Bail Included", type: "text" },
+      { key: "seo_title", label: "SEO Title", type: "text" }
     ]
   },
   {
@@ -167,6 +168,7 @@ export function NewProductIntakeTab({ fetcher }) {
       imageMimeType: "",
       stagedResourceUrls: [],
       generated_description: "",
+      seo_title: "",
       artist_notes: "",
       scanError: "",
       scanToken: "",
@@ -335,6 +337,7 @@ export function NewProductIntakeTab({ fetcher }) {
         imageMimeType: "",
         stagedResourceUrls: [],
         generated_description: "",
+        seo_title: "",
         artist_notes: "",
         scanError: "",
         scanToken: "",
@@ -424,6 +427,7 @@ export function NewProductIntakeTab({ fetcher }) {
       imageMimeType: "",
       stagedResourceUrls: [],
       generated_description: "",
+      seo_title: "",
       artist_notes: "",
       scanError: "",
       scanToken: "",
@@ -516,23 +520,31 @@ export function NewProductIntakeTab({ fetcher }) {
       (isScan && isSuccess) && (() => {
         setSharedFields(prev => ({
           ...prev,
-          primary_use: data.primary_use || prev.primary_use,
-          primary_medium: data.primary_medium || prev.primary_medium,
-          secondary_medium: data.secondary_medium || prev.secondary_medium,
-          wire_material: data.wire_material || prev.wire_material,
-          setting_ready: data.setting_ready || prev.setting_ready,
-          bail_included: data.bail_included || prev.bail_included
+          primary_use: data.tab2Data?.primary_use || data.primary_use || prev.primary_use,
+          primary_medium: data.tab2Data?.primary_medium || data.primary_medium || prev.primary_medium,
+          secondary_medium: data.tab2Data?.secondary_medium || data.secondary_medium || prev.secondary_medium,
+          wire_material: data.tab2Data?.wire_material || data.wire_material || prev.wire_material,
+          setting_ready: data.tab2Data?.setting_ready || data.setting_ready || prev.setting_ready,
+          bail_included: data.tab2Data?.bail_included || data.bail_included || prev.bail_included
         }));
 
         setPieces(prev => prev.map(p => {
           let updated = { ...p };
-          (p.id === data.pieceId) && (() => {
-            (data.description !== undefined && data.description !== "") && (updated.generated_description = data.description);
-            (data.color !== undefined && data.color !== "") && (updated.color = data.color);
-            (data.primary_color !== undefined && data.primary_color !== "") && (updated.color = data.primary_color);
-            (data.cut_and_shape !== undefined && data.cut_and_shape !== "") && (updated.cut_and_shape = data.cut_and_shape);
-            (data.surface_finish !== undefined && data.surface_finish !== "") && (updated.surface_finish = data.surface_finish);
-            (data.dimensions_mm !== undefined && data.dimensions_mm !== "") && (updated.dimensions_mm = data.dimensions_mm);
+          const pId = data.tab2Data?.pieceId || data.pieceId;
+          (p.id === pId) && (() => {
+            const desc = data.tab2Data?.generated_description || data.description;
+            const tColor = data.tab2Data?.primary_color || data.color;
+            const tShape = data.tab2Data?.cut_and_shape || data.cut_and_shape;
+            const tFinish = data.tab2Data?.surface_finish || data.surface_finish;
+            const tDims = data.tab2Data?.dimensions_mm || data.dimensions_mm;
+            const tSeo = data.tab2Data?.seo_title || data.seo_title;
+
+            (desc !== undefined && desc !== "") && (updated.generated_description = desc);
+            (tColor !== undefined && tColor !== "") && (updated.color = tColor);
+            (tShape !== undefined && tShape !== "") && (updated.cut_and_shape = tShape);
+            (tFinish !== undefined && tFinish !== "") && (updated.surface_finish = tFinish);
+            (tDims !== undefined && tDims !== "") && (updated.dimensions_mm = tDims);
+            (tSeo !== undefined && tSeo !== "") && (updated.seo_title = tSeo);
             updated.scanError = "";
           })();
           return updated;
@@ -635,7 +647,7 @@ export function NewProductIntakeTab({ fetcher }) {
 
     
 
-    if (parsed.canonical_title || parsed.product_title) {
+    if (parsed.canonical_title || parsed.product_title || parsed.seo_title) {
       const pieceTitleVal = parsed.canonical_title || parsed.product_title;
       setPieces(prev => prev.map((p, i) =>
         p.id === lastScannedPieceId || (!lastScannedPieceId && i === 0)
@@ -670,7 +682,7 @@ export function NewProductIntakeTab({ fetcher }) {
         data.description && (descStr = data.description);
         setPieces(prev => prev.map((p, i) =>
           p.id === data.pieceId || (!data.pieceId && i === 0)
-            ? { ...p, generated_description: descStr }
+            ? { ...p, generated_description: descStr, seo_title: data.seo_title || p.seo_title }
             : p
         ));
       })();
@@ -728,7 +740,8 @@ export function NewProductIntakeTab({ fetcher }) {
     "found_object",
     "setting_ready",
     "bail_included",
-    "wire_material"
+    "wire_material",
+    "seo_title"
   ];
 
   const actionData = fetcher.data;
@@ -1007,6 +1020,16 @@ export function NewProductIntakeTab({ fetcher }) {
                         multiline={6}
                         autoComplete="off"
                         placeholder="Gemini will generate a poetic, spare description under 100 words..."
+                      />
+                    </div>
+
+                    <div style={{ minHeight: "48px", marginTop: "8px" }}>
+                      <TextField
+                        label={renderLabel("SEO Title", "seo_title", piece.seo_title)}
+                        value={piece.seo_title}
+                        onChange={(v) => handlePieceChange(piece.id, "seo_title", v)}
+                        autoComplete="off"
+                        placeholder="Keyword-rich title for Google..."
                       />
                     </div>
 
@@ -1330,6 +1353,7 @@ export function NewProductIntakeTab({ fetcher }) {
               {renderPanelRow("Surface Finish", "surface_finish", getVal("surface_finish", pieces[0]?.surface_finish))}
               {renderPanelRow("Color", "color", getVal("color", pieces[0]?.color))}
               {renderPanelRow("Generated Description", "generated_description", getVal("generated_description", pieces[0]?.generated_description))}
+              {renderPanelRow("SEO Title", "seo_title", getVal("seo_title", pieces[0]?.seo_title))}
               {renderPanelRow("Artist Notes", "artist_notes", getVal("artist_notes", pieces[0]?.artist_notes))}
               {renderPanelRow("Stone Shape", "stone_shape", getVal("stone_shape", combinedData.stone_shape))}
               {renderPanelRow("Color Pattern", "color_pattern", getVal("color_pattern", combinedData.color_pattern))}
@@ -1393,7 +1417,6 @@ export function NewProductIntakeTab({ fetcher }) {
               {renderPanelRow("Age Group", "age_group", getVal("age_group", sharedFields.age_group))}
               {renderPanelRow("Target Gender", "target_gender", getVal("target_gender", sharedFields.target_gender))}
               {renderPanelRow("Condition", "condition", getVal("condition", sharedFields.condition))}
-              {renderPanelRow("SEO Title", "seo_title", getVal("seo_title", pieces[0]?.seo_title))}
               {renderPanelRow("Authenticity", "authenticity", getVal("authenticity", combinedData.authenticity))}
               {renderPanelRow("Rarity", "rarity", getVal("rarity", combinedData.rarity))}
             </div>

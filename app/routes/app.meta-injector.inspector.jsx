@@ -540,6 +540,13 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
         newFullForm.price = price;
       }
     }
+
+    // Try pulling Shopify's native SEO fields if available on product
+    const seoTitleNode = product?.metafields?.edges?.find(e => e.node.namespace === "global" && e.node.key === "title_tag")?.node;
+    if (seoTitleNode && seoTitleNode.value) {
+        newFullForm.seo_title = seoTitleNode.value;
+        newForm.seo_title = seoTitleNode.value;
+    }
     
     setFormState(newForm);
     setFullMetaState(newFullForm);
@@ -575,7 +582,8 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
             "honest_flaws_and_character",
             "collection_name",
             "generated_description",
-            "color_pattern"
+            "color_pattern",
+            "seo_title"
           ];
 
           product.metafields.edges.forEach(({ node }) => {
@@ -600,6 +608,9 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
           product.metafields.edges.forEach(({ node }) => {
             if (node.namespace === "global" && node.key === "description_tag" && node.value) {
               updatedState.generated_description = node.value;
+            }
+            if (node.namespace === "global" && node.key === "title_tag" && node.value) {
+                updatedState.seo_title = node.value;
             }
           });
           
