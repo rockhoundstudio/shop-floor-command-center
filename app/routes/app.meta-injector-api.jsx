@@ -979,7 +979,8 @@ export const action = async ({ request }) => {
               "dimensions", "chemical_formula", "crystal_structure", "refractive_index",
               "title_tag", "description_tag", "google_product_category",
               "color-pattern", "jewelry-material", "target-gender", "age-group",
-              "seo_title", "age_group", "condition", "is_one_of_a-kind"
+              "seo_title", "age_group", "condition", "is_one_of_a-kind",
+              "authenticity", "rarity"
             ].includes(m.key)) return true;
             if (/[a-z][A-Z]/.test(m.key)) return true;
           }
@@ -1068,7 +1069,10 @@ export const action = async ({ request }) => {
           const toDelete = allMeta
             .map(e => e.node)
             .filter(m => {
-              if (["geo", "rockhound", "geology"].includes(m.namespace)) return true;
+              // 1. Nuke the old geo and rockhound namespaces entirely
+              if (m.namespace === "geo" || m.namespace === "rockhound") return true;
+              
+              // 2. Nuke the ghosts in the custom namespace
               if (m.namespace === "custom") {
                 if ([
                   "crystalSystem", "geologicalEra", "mineralClass", "rockComposition", 
@@ -1080,7 +1084,8 @@ export const action = async ({ request }) => {
                   "dimensions", "chemical_formula", "crystal_structure", "refractive_index",
                   "title_tag", "description_tag", "google_product_category",
                   "color-pattern", "jewelry-material", "target-gender", "age-group",
-                  "seo_title", "age_group", "condition", "is_one_of_a-kind"
+                  "seo_title", "age_group", "condition", "is_one_of_a-kind",
+                  "authenticity", "rarity"
                 ].includes(m.key)) return true;
                 if (/[a-z][A-Z]/.test(m.key)) return true;
               }
