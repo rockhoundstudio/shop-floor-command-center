@@ -223,6 +223,27 @@ export const action = async ({ request }) => {
         return data({ success: false, message: "Saved with errors: " + allErrors.map(e => e.field + " — " + e.message).join(" | "), errors: allErrors });
       }
 
+      // Update the main Shopify Product Title if provided
+      const fallbackProductId = formData.get("productId");
+      const newProductTitle = formData.get("productTitle");
+      if (newProductTitle && fallbackProductId) {
+        try {
+          const productGid = `gid://shopify/Product/${fallbackProductId.split("/").pop()}`;
+          await admin.graphql(
+            `#graphql
+            mutation productUpdate($input: ProductInput!) {
+              productUpdate(input: $input) {
+                userErrors { field message }
+              }
+            }`,
+            { variables: { input: { id: productGid, title: newProductTitle } } }
+          );
+          console.log("[saveMetafields] Product base title updated to:", newProductTitle);
+        } catch (titleErr) {
+          console.warn("[saveMetafields] Product base title update failed:", titleErr.message);
+        }
+      }
+
       // Update variant weight if weight_grams is in the payload
       const weightItem = payloadArray.find(item => item.key === "weight_grams");
       if (weightItem && weightItem.value) {
@@ -270,7 +291,7 @@ export const action = async ({ request }) => {
       }
 
       console.log("SAVE SUCCESS: All metafields locked in.");
-      return data({ intent: "saveMetafields", success: true, message: "All metafields locked in." });
+      return data({ intent: "saveMetafields", success: true, message: "All metadata and main title locked into store." });
     } catch (error) {
       console.error("SAVE METAFIELDS CRASH:", error.message, error.stack);
       return data({ intent: "saveMetafields", success: false, error: error.message });
@@ -416,7 +437,7 @@ export const action = async ({ request }) => {
             })
             .map(m => m.id);
 
-          if (toDelete.length > 0) {
+        if (toDelete.length > 0) {
             try {
               const deleteResponse = await admin.graphql(
                 `#graphql
