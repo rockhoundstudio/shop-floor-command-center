@@ -223,12 +223,19 @@ export const action = async ({ request }) => {
         return data({ success: false, message: "Saved with errors: " + allErrors.map(e => e.field + " — " + e.message).join(" | "), errors: allErrors });
       }
 
-      // Update the main Shopify Product Title if provided
+      // WELDED: Update the main Shopify Product Title AND Description Body Html
       const fallbackProductId = formData.get("productId");
       const newProductTitle = formData.get("productTitle");
-      if (newProductTitle && fallbackProductId) {
+      const newDescriptionHtml = formData.get("descriptionHtml");
+
+      if (fallbackProductId && (newProductTitle || newDescriptionHtml)) {
         try {
           const productGid = `gid://shopify/Product/${fallbackProductId.split("/").pop()}`;
+          
+          let inputVars = { id: productGid };
+          if (newProductTitle) inputVars.title = newProductTitle;
+          if (newDescriptionHtml) inputVars.descriptionHtml = newDescriptionHtml;
+
           await admin.graphql(
             `#graphql
             mutation productUpdate($input: ProductInput!) {
@@ -236,11 +243,11 @@ export const action = async ({ request }) => {
                 userErrors { field message }
               }
             }`,
-            { variables: { input: { id: productGid, title: newProductTitle } } }
+            { variables: { input: inputVars } }
           );
-          console.log("[saveMetafields] Product base title updated to:", newProductTitle);
+          console.log("[saveMetafields] Product base title and description updated.");
         } catch (titleErr) {
-          console.warn("[saveMetafields] Product base title update failed:", titleErr.message);
+          console.warn("[saveMetafields] Product base update failed:", titleErr.message);
         }
       }
 
@@ -291,7 +298,7 @@ export const action = async ({ request }) => {
       }
 
       console.log("SAVE SUCCESS: All metafields locked in.");
-      return data({ intent: "saveMetafields", success: true, message: "All metadata and main title locked into store." });
+      return data({ intent: "saveMetafields", success: true, message: "All metafields locked in." });
     } catch (error) {
       console.error("SAVE METAFIELDS CRASH:", error.message, error.stack);
       return data({ intent: "saveMetafields", success: false, error: error.message });
@@ -338,8 +345,7 @@ export const action = async ({ request }) => {
     ];
     const toDelete = allMeta
       .map(e => e.node)
-      .filter(m => malformedKeys.includes(m.key))
-      .map(m => m.id);
+      .filter(m => malformedKeys.includes(m.key));
 
     if (toDelete.length === 0) {
       return data({ success: true, message: "No malformed keys found. Already clean." });
@@ -353,7 +359,7 @@ export const action = async ({ request }) => {
           userErrors { field message }
         }
       } `,
-      { variables: { metafields: toDelete.map(id => ({ ownerId: resolvedId, id })) } }
+      { variables: { metafields: toDelete.map(m => ({ ownerId: resolvedId, namespace: m.namespace, key: m.key })) } }
     );
 
     const deleteResult = await deleteResponse.json();
@@ -434,8 +440,7 @@ export const action = async ({ request }) => {
               }
               
               return false;
-            })
-            .map(m => m.id);
+            });
 
         if (toDelete.length > 0) {
             try {
@@ -447,7 +452,7 @@ export const action = async ({ request }) => {
                     userErrors { field message }
                   }
                 }`,
-                { variables: { metafields: toDelete.map(id => ({ ownerId: productNode.id, id })) } }
+                { variables: { metafields: toDelete.map(m => ({ ownerId: productNode.id, namespace: m.namespace, key: m.key })) } }
               );
               const deleteResult = await deleteResponse.json();
               const deleted = deleteResult?.data?.metafieldsDelete?.deletedMetafields || [];
@@ -968,7 +973,7 @@ export const action = async ({ request }) => {
               "crystalSystem", "geologicalEra", "mineralClass", "rockComposition", 
               "rockFormation", "specificGravity", "hardness", "fracture", "geoSource",
               "store_hardness", "store_luster", "store_fracture", "store_cleavage",
-              "store_specific_gravity", "store_diaphaneity", "moh_hardness",
+              "store_specific_gravity", "store_diaphaneity", "moh_hardness", "mohsHardness",
               "primary_color", "secondary_colors", "cut_type", "base_stone_type",
               "meta_status", "tenacity", "official_name", "polishing_compound",
               "dimensions", "chemical_formula", "crystal_structure", "refractive_index",
@@ -993,7 +998,7 @@ export const action = async ({ request }) => {
             userErrors { field message }
           }
         } `,
-        { variables: { metafields: toDelete.map(m => ({ ownerId: resolvedId, id: m.id })) } }
+        { variables: { metafields: toDelete.map(m => ({ ownerId: resolvedId, namespace: m.namespace, key: m.key })) } }
       );
 
       const deleteResult = await deleteResponse.json();
@@ -1069,7 +1074,7 @@ export const action = async ({ request }) => {
                   "crystalSystem", "geologicalEra", "mineralClass", "rockComposition", 
                   "rockFormation", "specificGravity", "hardness", "fracture", "geoSource",
                   "store_hardness", "store_luster", "store_fracture", "store_cleavage",
-                  "store_specific_gravity", "store_diaphaneity", "moh_hardness",
+                  "store_specific_gravity", "store_diaphaneity", "moh_hardness", "mohsHardness",
                   "primary_color", "secondary_colors", "cut_type", "base_stone_type",
                   "meta_status", "tenacity", "official_name", "polishing_compound",
                   "dimensions", "chemical_formula", "crystal_structure", "refractive_index",
@@ -1092,7 +1097,7 @@ export const action = async ({ request }) => {
                     userErrors { field message }
                   }
                 }`,
-                { variables: { metafields: toDelete.map(m => ({ ownerId: productNode.id, id: m.id })) } }
+                { variables: { metafields: toDelete.map(m => ({ ownerId: productNode.id, namespace: m.namespace, key: m.key })) } }
               );
               const deleteResult = await deleteResponse.json();
               const deleted = deleteResult?.data?.metafieldsDelete?.deletedMetafields || [];
