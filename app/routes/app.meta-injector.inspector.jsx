@@ -4,20 +4,99 @@ import { MagicIcon, SaveIcon } from "@shopify/polaris-icons";
 import { normalizeDropdownValue, DROPDOWN_OPTIONS } from "../utils/meta-injector.constants.jsx";
 
 const CUSTOM_FIELDS = [
-  { key: "stone_family", label: "Stone Family", type: "single_line_text_field", isShared: true },
-  { key: "color", label: "Color", type: "single_line_text_field", isShared: true }, 
-  { key: "surface_finish", label: "Surface Finish", type: "single_line_text_field", isShared: true }, 
-  { key: "source_location", label: "Source / Discovery Location", type: "single_line_text_field", isShared: true },
-  { key: "primary_use", label: "Primary Use", type: "single_line_text_field", isShared: true }, 
-  { key: "handcrafted_by", label: "Handcrafted By", type: "single_line_text_field", isShared: true },
-  { key: "origin_story", label: "The Origin Story", type: "single_line_text_field", multiline: true, isShared: true },
-  { key: "piece_name", label: "Piece Name", type: "single_line_text_field", isPerPiece: true },
-  { key: "cut_and_shape", label: "Cut / Shape", type: "single_line_text_field", isPerPiece: true }, 
-  { key: "dimensions_mm", label: "Dimensions (mm)", type: "single_line_text_field", isPerPiece: true },
-  { key: "weight_grams", label: "Weight (grams)", type: "single_line_text_field", isPerPiece: true },
-  { key: "honest_flaws", label: "Character Marks (Honest Flaws)", type: "single_line_text_field", multiline: true, isPerPiece: true },
-  { key: "price", label: "Price", type: "single_line_text_field", isPerPiece: true },
-  { key: "generated_description", label: "Generated Description", type: "single_line_text_field", multiline: true, isPerPiece: true }
+  {
+    key: "shopify_title",
+    label: "MASTER SHOPIFY TITLE (Edit Here)",
+    type: "single_line_text_field",
+    isShared: false
+  },
+  {
+    key: "stone_family",
+    label: "Stone Family",
+    type: "single_line_text_field",
+    isShared: true
+  },
+  {
+    key: "color",
+    label: "Color",
+    type: "single_line_text_field",
+    isShared: true
+  }, 
+  {
+    key: "surface_finish",
+    label: "Surface Finish",
+    type: "single_line_text_field",
+    isShared: true
+  }, 
+  {
+    key: "source_location",
+    label: "Source / Discovery Location",
+    type: "single_line_text_field",
+    isShared: true
+  },
+  {
+    key: "primary_use",
+    label: "Primary Use",
+    type: "single_line_text_field",
+    isShared: true
+  }, 
+  {
+    key: "handcrafted_by",
+    label: "Handcrafted By",
+    type: "single_line_text_field",
+    isShared: true
+  },
+  {
+    key: "origin_story",
+    label: "The Origin Story",
+    type: "single_line_text_field",
+    multiline: true,
+    isShared: true
+  },
+  {
+    key: "piece_name",
+    label: "Piece Name",
+    type: "single_line_text_field",
+    isPerPiece: true
+  },
+  {
+    key: "cut_and_shape",
+    label: "Cut / Shape",
+    type: "single_line_text_field",
+    isPerPiece: true
+  }, 
+  {
+    key: "dimensions_mm",
+    label: "Dimensions (mm)",
+    type: "single_line_text_field",
+    isPerPiece: true
+  },
+  {
+    key: "weight_grams",
+    label: "Weight (grams)",
+    type: "single_line_text_field",
+    isPerPiece: true
+  },
+  {
+    key: "honest_flaws",
+    label: "Character Marks (Honest Flaws)",
+    type: "single_line_text_field",
+    multiline: true,
+    isPerPiece: true
+  },
+  {
+    key: "price",
+    label: "Price",
+    type: "single_line_text_field",
+    isPerPiece: true
+  },
+  {
+    key: "generated_description",
+    label: "Generated Description",
+    type: "single_line_text_field",
+    multiline: true,
+    isPerPiece: true
+  }
 ];
 
 const FULL_META_GROUPS = [
@@ -25,88 +104,228 @@ const FULL_META_GROUPS = [
     heading: "Always Fill",
     color: "#2E7D32",
     fields: [
-      { key: "piece_name", label: "Piece Name", type: "text" },
-      { key: "primary_medium", label: "Primary Medium", type: "text" },
-      { key: "handcrafted_by", label: "Handcrafted By", type: "text" },
-      { key: "is_one_of_a_kind", label: "Is One of a Kind", type: "text" },
-      { key: "treated", label: "Treated", type: "text" }
+      {
+        key: "piece_name",
+        label: "Piece Name",
+        type: "text"
+      },
+      {
+        key: "primary_medium",
+        label: "Primary Medium",
+        type: "text"
+      },
+      {
+        key: "handcrafted_by",
+        label: "Handcrafted By",
+        type: "text"
+      },
+      {
+        key: "is_one_of_a_kind",
+        label: "Is One of a Kind",
+        type: "text"
+      },
+      {
+        key: "treated",
+        label: "Treated",
+        type: "text"
+      }
     ]
   },
   {
     heading: "Stone Fields",
     color: "#1565C0",
     fields: [
-      { key: "stone_family", label: "Stone Family", type: "text" },
-      { key: "color", label: "Color", type: "text" },
-      { key: "cut_and_shape", label: "Cut and Shape", type: "text" },
-      { key: "surface_finish", label: "Surface Finish", type: "text" },
-      { key: "dimensions_mm", label: "Dimensions (mm)", type: "text" },
-      { key: "weight_grams", label: "Weight (grams)", type: "text" }
+      {
+        key: "stone_family",
+        label: "Stone Family",
+        type: "text"
+      },
+      {
+        key: "color",
+        label: "Color",
+        type: "text"
+      },
+      {
+        key: "cut_and_shape",
+        label: "Cut and Shape",
+        type: "text"
+      },
+      {
+        key: "surface_finish",
+        label: "Surface Finish",
+        type: "text"
+      },
+      {
+        key: "dimensions_mm",
+        label: "Dimensions (mm)",
+        type: "text"
+      },
+      {
+        key: "weight_grams",
+        label: "Weight (grams)",
+        type: "text"
+      }
     ]
   },
   {
     heading: "Story & Lore",
     color: "#E65100",
     fields: [
-      { key: "origin_story", label: "Origin Story", type: "text", multiline: true },
-      { key: "honest_flaws_and_character", label: "Honest Flaws and Character", type: "text", multiline: true },
-      { key: "collection_name", label: "Collection Name", type: "text" },
-      { key: "generated_description", label: "Generated Description", type: "text", multiline: true }
+      {
+        key: "origin_story",
+        label: "Origin Story",
+        type: "text",
+        multiline: true
+      },
+      {
+        key: "honest_flaws_and_character",
+        label: "Honest Flaws and Character",
+        type: "text",
+        multiline: true
+      },
+      {
+        key: "collection_name",
+        label: "Collection Name",
+        type: "text"
+      },
+      {
+        key: "generated_description",
+        label: "Generated Description",
+        type: "text",
+        multiline: true
+      }
     ]
   },
   {
     heading: "Mixed Media",
     color: "#6A1B9A",
     fields: [
-      { key: "found_object", label: "Found Object", type: "text" }
+      {
+        key: "found_object",
+        label: "Found Object",
+        type: "text"
+      }
     ]
   },
   {
     heading: "Google / SEO",
     color: "#F9A825",
     fields: [
-      { key: "primary_use", label: "Primary Use", type: "text" },
-      { key: "bail_included", label: "Bail Included", type: "text" },
-      { key: "seo_title", label: "SEO Title", type: "text" }
+      {
+        key: "primary_use",
+        label: "Primary Use",
+        type: "text"
+      },
+      {
+        key: "bail_included",
+        label: "Bail Included",
+        type: "text"
+      },
+      {
+        key: "seo_title",
+        label: "SEO Title",
+        type: "text"
+      }
     ]
   },
   {
     heading: "Geo-Vault",
     color: "#4E342E",
     fields: [
-      { key: "mineral_class", label: "Mineral Class", type: "text" },
-      { key: "crystal_system", label: "Crystal System", type: "text" },
-      { key: "rock_composition", label: "Rock Composition", type: "text" },
-      { key: "rock_formation", label: "Rock Formation", type: "text" },
-      { key: "geological_era", label: "Geological Era", type: "text" }
+      {
+        key: "mineral_class",
+        label: "Mineral Class",
+        type: "text"
+      },
+      {
+        key: "crystal_system",
+        label: "Crystal System",
+        type: "text"
+      },
+      {
+        key: "rock_composition",
+        label: "Rock Composition",
+        type: "text"
+      },
+      {
+        key: "rock_formation",
+        label: "Rock Formation",
+        type: "text"
+      },
+      {
+        key: "geological_era",
+        label: "Geological Era",
+        type: "text"
+      }
     ]
   }
 ];
 
 const NAMESPACE_MAP = {
   custom: [
-    "piece_name", "primary_medium", "secondary_medium", "handcrafted_by",
-    "stone_family", "color", "cut_and_shape", "surface_finish",
-    "dimensions_mm", "weight_grams", "shipping_weight_oz", "price",
-    "collection_name", "collection_location",
-    "primary_use", "bail_included", "is_one_of_a_kind", "treated",
-    "found_object", "wire_material", "setting_ready", "material",
-    "origin_story", "origin_handle", "honest_flaws_and_character",
-    "artist_notes", "generated_description", "rescued_by", "stone_shape",
-    "target_gender", "age_group", "condition", "color_pattern",
-    "jewelry_type", "necklace_design", "chain_link_type",
-    "jewelry_finding_type", "custom_product", "seo_title"
+    "piece_name",
+    "primary_medium",
+    "secondary_medium",
+    "handcrafted_by",
+    "stone_family",
+    "color",
+    "cut_and_shape",
+    "surface_finish",
+    "dimensions_mm",
+    "weight_grams",
+    "shipping_weight_oz",
+    "price",
+    "collection_name",
+    "collection_location",
+    "primary_use",
+    "bail_included",
+    "is_one_of_a_kind",
+    "treated",
+    "found_object",
+    "wire_material",
+    "setting_ready",
+    "material",
+    "origin_story",
+    "origin_handle",
+    "honest_flaws_and_character",
+    "artist_notes",
+    "generated_description",
+    "rescued_by",
+    "stone_shape",
+    "target_gender",
+    "age_group",
+    "condition",
+    "color_pattern",
+    "jewelry_type",
+    "necklace_design",
+    "chain_link_type",
+    "jewelry_finding_type",
+    "custom_product",
+    "seo_title"
   ],
   geo: [
-    "mohs_hardness", "luster", "fracture_pattern", "cleavage", "specific_gravity",
-    "diaphaneity", "crystal_system", "geological_era", "geological_age", "mineral_class",
-    "rock_composition", "rock_formation"
+    "mohs_hardness",
+    "luster",
+    "fracture_pattern",
+    "cleavage",
+    "specific_gravity",
+    "diaphaneity",
+    "crystal_system",
+    "geological_era",
+    "geological_age",
+    "mineral_class",
+    "rock_composition",
+    "rock_formation"
   ]
 };
 
 const getNamespaceForKey = (key) => {
-  if (NAMESPACE_MAP.custom.includes(key)) return "custom";
-  if (NAMESPACE_MAP.geo.includes(key)) return "geo";
+  if (NAMESPACE_MAP.custom.includes(key)) {
+    return "custom";
+  }
+  if (NAMESPACE_MAP.geo.includes(key)) {
+    return "geo";
+  }
   return "custom";
 };
 
@@ -137,6 +356,11 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
     const newForm = {};
     const newFullForm = {};
     
+    if (product && product.title) {
+      newForm.shopify_title = product.title;
+      newFullForm.shopify_title = product.title;
+    }
+
     const hasMetafields = product && product.metafields && product.metafields.edges;
     
     if (hasMetafields) {
@@ -172,48 +396,53 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
       });
     }
 
-  const CAMEL_TO_SNAKE = {
-    crystalSystem: "crystal_system",
-    geologicalEra: "geological_era",
-    mineralClass: "mineral_class",
-    rockComposition: "rock_composition",
-    rockFormation: "rock_formation",
-    geologicalAge: "geological_age",
-    fracture: "fracture_pattern",
-  };
-  Object.entries(CAMEL_TO_SNAKE).forEach(([camel, snake]) => {
-    if (newFullForm[camel] !== undefined) {
-      if (!newFullForm[snake]) newFullForm[snake] = newFullForm[camel];
-      delete newFullForm[camel];
-    }
-    if (newForm[camel] !== undefined) {
-      if (!newForm[snake]) newForm[snake] = newForm[camel];
-      delete newForm[camel];
-    }
-  });
+    const CAMEL_TO_SNAKE = {
+      crystalSystem: "crystal_system",
+      geologicalEra: "geological_era",
+      mineralClass: "mineral_class",
+      rockComposition: "rock_composition",
+      rockFormation: "rock_formation",
+      geologicalAge: "geological_age",
+      fracture: "fracture_pattern",
+    };
+    
+    Object.entries(CAMEL_TO_SNAKE).forEach(([camel, snake]) => {
+      if (newFullForm[camel] !== undefined) {
+        if (!newFullForm[snake]) newFullForm[snake] = newFullForm[camel];
+        delete newFullForm[camel];
+      }
+      if (newForm[camel] !== undefined) {
+        if (!newForm[snake]) newForm[snake] = newForm[camel];
+        delete newForm[camel];
+      }
+    });
 
-  if (!newFullForm.target_gender) newFullForm.target_gender = "Unisex";
-  if (!newFullForm.age_group) newFullForm.age_group = "adult";
-  if (!newFullForm.condition) newFullForm.condition = "new";
-  if (!newFullForm.handcrafted_by) newFullForm.handcrafted_by = "Bob & Janyce, Rockhound Studio";
-  if (!newForm.target_gender) newForm.target_gender = "Unisex";
-  if (!newForm.age_group) newForm.age_group = "adult";
-  if (!newForm.condition) newForm.condition = "new";
-  if (!newForm.handcrafted_by) newForm.handcrafted_by = "Bob & Janyce, Rockhound Studio";
+    if (!newFullForm.target_gender) newFullForm.target_gender = "Unisex";
+    if (!newFullForm.age_group) newFullForm.age_group = "adult";
+    if (!newFullForm.condition) newFullForm.condition = "new";
+    if (!newFullForm.handcrafted_by) newFullForm.handcrafted_by = "Bob & Janyce, Rockhound Studio";
+    if (!newForm.target_gender) newForm.target_gender = "Unisex";
+    if (!newForm.age_group) newForm.age_group = "adult";
+    if (!newForm.condition) newForm.condition = "new";
+    if (!newForm.handcrafted_by) newForm.handcrafted_by = "Bob & Janyce, Rockhound Studio";
 
-  if (!newFullForm.shipping_weight_oz && newFullForm.weight_grams) {
-    const grams = parseFloat(newFullForm.weight_grams);
-    if (!isNaN(grams) && grams > 0) {
-      newFullForm.shipping_weight_oz = (grams / 28.3495).toFixed(2);
-      newForm.shipping_weight_oz = newFullForm.shipping_weight_oz;
+    if (!newFullForm.shipping_weight_oz && newFullForm.weight_grams) {
+      const grams = parseFloat(newFullForm.weight_grams);
+      if (!isNaN(grams) && grams > 0) {
+        newFullForm.shipping_weight_oz = (grams / 28.3495).toFixed(2);
+        newForm.shipping_weight_oz = newFullForm.shipping_weight_oz;
+      }
     }
-  }
 
     if (!newForm.origin_story && newForm.stone_story) {
       newForm.origin_story = newForm.stone_story;
     }
+    
     if (newForm.origin_story && newForm.origin_story.startsWith("[")) {
-      try { const arr = JSON.parse(newForm.origin_story); newForm.origin_story = Array.isArray(arr) ? arr[0] : newForm.origin_story; } catch (e) {}
+      try { 
+        const arr = JSON.parse(newForm.origin_story); 
+        newForm.origin_story = Array.isArray(arr) ? arr[0] : newForm.origin_story; 
+      } catch (e) {}
     }
 
     if (newForm.origin_story && newForm.origin_story.startsWith("[")) {
@@ -222,6 +451,7 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
         newForm.origin_story = Array.isArray(arr) ? arr[0] : newForm.origin_story;
       } catch (e) { }
     }
+    
     if (newForm.stone_story && newForm.stone_story.startsWith("[")) {
       try {
         const arr = JSON.parse(newForm.stone_story);
@@ -236,6 +466,7 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
         newForm.honest_flaws_and_character = Array.isArray(arr) ? arr[0] : newForm.honest_flaws_and_character;
       } catch (e) { }
     }
+    
     if (newForm.character_marks && newForm.character_marks.startsWith("[")) {
       try {
         const arr = JSON.parse(newForm.character_marks);
@@ -246,15 +477,22 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
 
     if (newForm.handcrafted_by && typeof newForm.handcrafted_by === 'string') {
       if (newForm.handcrafted_by.startsWith("[")) {
-         try { const arr = JSON.parse(newForm.handcrafted_by); newForm.handcrafted_by = Array.isArray(arr) ? arr[0] : newForm.handcrafted_by; } catch (e) {}
+         try { 
+           const arr = JSON.parse(newForm.handcrafted_by); 
+           newForm.handcrafted_by = Array.isArray(arr) ? arr[0] : newForm.handcrafted_by; 
+         } catch (e) {}
       }
       if (newForm.handcrafted_by.includes("Bob & Janyce") || newForm.handcrafted_by.includes("Rockhound Studio")) {
          newForm.handcrafted_by = "Bob & Janyce, Rockhound Studio";
       }
     }
+    
     if (newFullForm.handcrafted_by && typeof newFullForm.handcrafted_by === 'string') {
       if (newFullForm.handcrafted_by.startsWith("[")) {
-         try { const arr = JSON.parse(newFullForm.handcrafted_by); newFullForm.handcrafted_by = Array.isArray(arr) ? arr[0] : newFullForm.handcrafted_by; } catch (e) {}
+         try { 
+           const arr = JSON.parse(newFullForm.handcrafted_by); 
+           newFullForm.handcrafted_by = Array.isArray(arr) ? arr[0] : newFullForm.handcrafted_by; 
+         } catch (e) {}
       }
       if (newFullForm.handcrafted_by.includes("Bob & Janyce") || newFullForm.handcrafted_by.includes("Rockhound Studio")) {
          newFullForm.handcrafted_by = "Bob & Janyce, Rockhound Studio";
@@ -286,9 +524,10 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
     }
 
     if (product && product.title) {
-      newForm.piece_name = product.title;
-      newFullForm.piece_name = product.title;
+      newForm.piece_name = product.title.includes(" — ") ? product.title.split(" — ").pop().trim() : product.title;
+      newFullForm.piece_name = product.title.includes(" — ") ? product.title.split(" — ").pop().trim() : product.title;
     }
+
     if (product && product.variants && product.variants.edges && product.variants.edges[0]) {
       const price = product.variants.edges[0].node.price;
       if (price) {
@@ -309,14 +548,29 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
         setFormState(prev => {
           const updatedState = { ...prev };
           const dropdownFields = [
-            "handcrafted_by", "is_one_of_a_kind", "treated", "found_object", 
-            "primary_use", "bail_included", "setting_ready", "wire_material", "stone_family", 
-            "color", "cut_and_shape", "surface_finish"
+            "handcrafted_by",
+            "is_one_of_a_kind",
+            "treated",
+            "found_object", 
+            "primary_use",
+            "bail_included",
+            "setting_ready",
+            "wire_material",
+            "stone_family", 
+            "color",
+            "cut_and_shape",
+            "surface_finish"
           ];
           const textFields = [
-            "piece_name", "primary_medium", "dimensions_mm", 
-            "weight_grams", "origin_story",
-            "honest_flaws_and_character", "collection_name", "generated_description"
+            "piece_name",
+            "primary_medium",
+            "dimensions_mm", 
+            "weight_grams",
+            "origin_story",
+            "honest_flaws_and_character",
+            "collection_name",
+            "generated_description",
+            "color_pattern"
           ];
 
           product.metafields.edges.forEach(({ node }) => {
@@ -329,8 +583,24 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
             }
           });
           
+          product.metafields.edges.forEach(({ node }) => {
+            if (node.namespace === "custom" && node.key === "primary_color" && node.value) {
+              updatedState.color = node.value;
+            }
+            if (node.namespace === "custom" && node.key === "secondary_colors" && node.value) {
+              updatedState.color_pattern = node.value;
+            }
+          });
+
+          product.metafields.edges.forEach(({ node }) => {
+            if (node.namespace === "global" && node.key === "description_tag" && node.value) {
+              updatedState.generated_description = node.value;
+            }
+          });
+          
           if (product.title) {
-            updatedState.piece_name = product.title;
+            updatedState.shopify_title = product.title;
+            updatedState.piece_name = product.title.includes(" — ") ? product.title.split(" — ").pop().trim() : product.title;
           }
           
           return updatedState;
@@ -356,7 +626,7 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
     setErrorMessage("");
 
     const product = products.find(p => p.id === selectedProductId) || {};
-    const title = product.title || "";
+    const title = fullMetaState.shopify_title || formState.shopify_title || product.title || "";
     const description = product.descriptionHtml || product.description || "";
     const imageUrl = product?.images?.edges?.[0]?.node?.url || "";
 
@@ -373,7 +643,7 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
       },
       { method: "post", action: "/app/meta-injector-autofill" }
     );
-  }, [selectedProductId, autoFillFetcher, products, promptStyle, formState]);
+  }, [selectedProductId, autoFillFetcher, products, promptStyle, formState, fullMetaState]);
 
   const handleTab2AutoFill = useCallback(() => {
     if (!selectedProductId) return;
@@ -383,6 +653,7 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
     const stoneFamily = fullMetaState.stone_family || "";
     const originHandle = fullMetaState.origin_handle || fullMetaState.origin_page_handle || "";
     const product = products.find(p => p.id === selectedProductId);
+    const titleToUse = fullMetaState.shopify_title || formState.shopify_title || product?.title || "";
 
     const formData = new FormData();
     const imageUrl = product?.images?.edges?.[0]?.node?.url || "";
@@ -393,14 +664,14 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
     formData.append("cut_and_shape", fullMetaState.cut_and_shape || "");
     formData.append("collection_location", fullMetaState.collection_location || "");
     formData.append("piece_name", fullMetaState.piece_name || "");
-    formData.append("productTitle", product?.title || "");
+    formData.append("productTitle", titleToUse);
     formData.append("imageUrl", imageUrl);
 
     tab2Fetcher.submit(
       formData,
       { method: "post", action: "/app/meta-injector-autofill" }
     );
-  }, [selectedProductId, tab2Fetcher, fullMetaState, products]);
+  }, [selectedProductId, tab2Fetcher, fullMetaState, products, formState]);
 
   const handleInject = useCallback(() => {
     if (!selectedProductId) return;
@@ -408,13 +679,15 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
     setErrorMessage("");
 
     const selectedProduct = products.find(p => p.id === selectedProductId);
-    const rawTitle = selectedProduct?.title || formState.piece_name || "";
-    const resolvedPieceName = rawTitle.includes(" — ") ? rawTitle.split(" — ").pop().trim() : rawTitle;
+    const masterTitle = fullMetaState.shopify_title || formState.shopify_title || selectedProduct?.title || "";
+    const resolvedPieceName = masterTitle.includes(" — ") ? masterTitle.split(" — ").pop().trim() : masterTitle;
     
     const payload = [];
     const entries = Object.entries(formState);
     
     entries.forEach(([key, value]) => {
+      if (key === "shopify_title") return; 
+
       let injectValue = value;
       if (key === "piece_name") {
         injectValue = resolvedPieceName;
@@ -444,54 +717,21 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
       }
     });
 
-    if (payload.length === 0) {
+    if (payload.length === 0 && !masterTitle) {
       setErrorMessage("No fields are populated. Fill at least one field to inject.");
       return;
     }
 
     injectFetcher.submit(
-      { intent: "saveMetafields", payload: JSON.stringify(payload) },
+      { 
+        intent: "saveMetafields", 
+        payload: JSON.stringify(payload),
+        productId: selectedProductId,
+        productTitle: masterTitle
+      },
       { method: "post", action: "/app/meta-injector-api" }
     );
-  }, [selectedProductId, formState, products, injectFetcher]);
-
-  const handleSaveFullMeta = useCallback(() => {
-    if (!selectedProductId) return;
-    const changes = [];
-    
-    const ALWAYS_INCLUDE = ["seo_title", "weight_grams", "piece_name", "is_one_of_a_kind", "treated", "handcrafted_by", "primary_medium", "generated_description"];
-
-    Object.entries(fullMetaState).forEach(([key, value]) => {
-      const originalValue = originalMetaRef.current[key] || "";
-      const newValue = value || "";
-
-      const alwaysInclude = ALWAYS_INCLUDE.includes(key) && newValue !== "";
-      if ((alwaysInclude || originalValue !== newValue) && newValue !== "See Shopify metaobject") {
-        changes.push({
-          namespace: getNamespaceForKey(key),
-          key: key.replace(/-/g, "_"),
-          value: newValue,
-          type: "single_line_text_field"
-        });
-      }
-    });
-
-    if (changes.length > 0) {
-      const _sf = fullMetaState["stone_family"] || "";
-      const _pn = fullMetaState["piece_name"] || "";
-      if (_sf && _pn) {
-        const builtTitle = `${_sf} \u2014 ${_pn} \u2014 One-of-a-Kind Rockhound Studio`;
-        const idx = changes.findIndex(c => c.key === "seo_title");
-        if (idx >= 0) changes[idx].value = builtTitle;
-        else changes.push({ namespace: "global", key: "seo_title", value: builtTitle, type: "single_line_text_field" });
-      }
-
-      injectFetcher.submit(
-        { intent: "saveMetafields", productId: selectedProductId, metafields: JSON.stringify(changes) },
-        { method: "post", action: "/app/meta-injector-api" }
-      );
-    }
-  }, [selectedProductId, fullMetaState, injectFetcher]);
+  }, [selectedProductId, formState, products, injectFetcher, fullMetaState]);
 
   useEffect(() => {
     const isIdle = autoFillFetcher.state === "idle";
@@ -499,7 +739,7 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
     
     if (isIdle && hasData) {
       const product = products.find(p => p.id === selectedProductId);
-      const productTitle = product ? product.title : "";
+      const productTitle = fullMetaState.shopify_title || product?.title || "";
 
       const isAutoFill = autoFillFetcher.data.intent === "autoFill";
       const isSmartAutoFill = autoFillFetcher.data.intent === "smartAutoFill";
@@ -513,7 +753,17 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
           Object.entries(autoFillFetcher.data.fields).forEach(([key, val]) => {
             const hasNewValue = val !== undefined && val !== null && val.toString().trim() !== "";
             
-            const ALWAYS_OVERWRITE = ["color", "cut_and_shape", "stone_family", "surface_finish", "handcrafted_by", "treated", "is_one_of_a_kind", "generated_description"];
+            const ALWAYS_OVERWRITE = [
+              "color",
+              "cut_and_shape",
+              "stone_family",
+              "surface_finish",
+              "handcrafted_by",
+              "treated",
+              "is_one_of_a_kind",
+              "generated_description"
+            ];
+            
             const currentlyEmpty = !fullMetaState[key] || (typeof fullMetaState[key] === 'string' && fullMetaState[key].trim() === "");
             const shouldOverwrite = ALWAYS_OVERWRITE.includes(key);
 
@@ -593,7 +843,7 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
 
     if (isIdle && hasData) {
       const product = products.find(p => p.id === selectedProductId);
-      const productTitle = product ? product.title : "";
+      const productTitle = fullMetaState.shopify_title || formState.shopify_title || product?.title || "";
       const tab2Data = tab2Fetcher.data.tab2Data || {};
       const hasTab2Data = Object.keys(tab2Data).length > 0;
 
@@ -616,7 +866,37 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
 
         setFullMetaState(prev => {
           const updatedState = { ...prev };
-          const ALWAYS_OVERWRITE_TAB2 = ["stone_family", "surface_finish", "handcrafted_by", "treated", "is_one_of_a_kind", "mohs_hardness", "luster", "fracture_pattern", "cleavage", "specific_gravity", "diaphaneity", "mineral_class", "crystal_system", "rock_composition", "rock_formation", "geological_era", "geological_age", "color", "stone_shape", "color_pattern", "cut_and_shape", "honest_flaws_and_character", "primary_use", "primary_medium", "setting_ready", "wire_material", "bail_included", "generated_description", "seo_title"];
+          const ALWAYS_OVERWRITE_TAB2 = [
+            "stone_family",
+            "surface_finish",
+            "handcrafted_by",
+            "treated",
+            "is_one_of_a_kind",
+            "mohs_hardness",
+            "luster",
+            "fracture_pattern",
+            "cleavage",
+            "specific_gravity",
+            "diaphaneity",
+            "mineral_class",
+            "crystal_system",
+            "rock_composition",
+            "rock_formation",
+            "geological_era",
+            "geological_age",
+            "color",
+            "stone_shape",
+            "color_pattern",
+            "cut_and_shape",
+            "honest_flaws_and_character",
+            "primary_use",
+            "primary_medium",
+            "setting_ready",
+            "wire_material",
+            "bail_included",
+            "generated_description",
+            "seo_title"
+          ];
 
           Object.entries(tab2Data).forEach(([key, val]) => {
             const hasNewValue = val !== undefined && val !== null && val.toString().trim() !== "" && val !== "See Shopify metaobject";
@@ -661,9 +941,9 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
       const isError = injectFetcher.data.success === false;
 
       if (isSuccess) {
-        setStatusMessage("Metafields injected cleanly into Shopify database.");
+        setStatusMessage("Data cleanly locked into Shopify database.");
         if (window.shopify && window.shopify.toast) {
-          window.shopify.toast.show("Metafields injected!");
+          window.shopify.toast.show("Update successful!");
         }
       }
 
@@ -717,7 +997,22 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
         val = formState.color;
     }
 
-    const reqKeys = ["piece_name", "price", "weight_grams", "material", "stone_family", "collection_name", "origin_handle", "rescued_by", "treatment_status", "origin_story", "primary_use", "seo_title"];
+    const reqKeys = [
+      "shopify_title",
+      "piece_name",
+      "price",
+      "weight_grams",
+      "material",
+      "stone_family",
+      "collection_name",
+      "origin_handle",
+      "rescued_by",
+      "treatment_status",
+      "origin_story",
+      "primary_use",
+      "seo_title"
+    ];
+    
     const isFilled = val !== undefined && val !== null && String(val).trim() !== "" && String(val).trim() !== "false";
     const isRequiredEmpty = !isFilled && reqKeys.includes(field.key);
     const isOptionalEmpty = !isFilled && !reqKeys.includes(field.key);
@@ -776,7 +1071,7 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
                 accessibilityLabel={field.label}
                 multiline={field.multiline ? true : false}
                 autoComplete="off"
-                disabled={val === "See Shopify metaobject"}
+                disabled={val === "See Shopify metaobject" && field.key !== "shopify_title"}
               />
             )}
           </div>
@@ -798,7 +1093,7 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
         <div>
           <Card padding="400">
             <BlockStack gap="400">
-              <Text variant="headingMd" as="h2">1. Select Raw Inventory</Text>
+              <Text as="h2" variant="headingMd">1. Select Raw Inventory</Text>
               <TextField
                 value={searchQuery}
                 onChange={setSearchQuery}
@@ -850,11 +1145,11 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
         <div>
           <Card padding="400">
             <BlockStack gap="400">
-              <Text variant="headingMd" as="h2">2. Data Sieve & Injection</Text>
+              <Text as="h2" variant="headingMd">2. Data Sieve & Injection</Text>
               
               {statusMessage !== "" && (
                 <div style={{ minHeight: "54px" }}>
-                  <Banner tone="success" title="Operation Successful">
+                  <Banner title="Operation Successful" tone="success">
                     <Text as="p">{statusMessage}</Text>
                   </Banner>
                 </div>
@@ -862,7 +1157,7 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
 
               {errorMessage !== "" && (
                 <div style={{ minHeight: "54px" }}>
-                  <Banner tone="critical" title="Operation Failed">
+                  <Banner title="Operation Failed" tone="critical">
                     <Text as="p">{errorMessage}</Text>
                   </Banner>
                 </div>
@@ -881,7 +1176,7 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
                 />
                 </div>
 
-              <InlineStack gap="300" align="space-between">
+              <InlineStack align="space-between" gap="300">
                 <div style={{ minHeight: "54px", flexGrow: 1 }}>
                   <Button 
                     icon={MagicIcon} 
@@ -893,6 +1188,19 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
                     loading={isTab2AutoFilling}
                   >
                     RUN
+                  </Button>
+                </div>
+                <div style={{ minHeight: "54px", flexGrow: 1 }}>
+                  <Button 
+                    tone="critical" 
+                    onClick={() => injectFetcher.submit({ intent: "cleanGhostNamespaces", productId: selectedProductId }, { method: "post", action: "/app/meta-injector-api" })}
+                    accessibilityLabel="Clean Ghosts"
+                    size="large"
+                    fullWidth
+                    disabled={!selectedProductId}
+                    loading={injectFetcher.state !== "idle" && injectFetcher.formData?.get("intent") === "cleanGhostNamespaces"}
+                  >
+                    Wipe Ghosts
                   </Button>
                 </div>
                 <div style={{ minHeight: "54px", flexGrow: 1 }}>
@@ -924,7 +1232,7 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
 
               {tab2StatusMessage !== "" && (
                 <div style={{ minHeight: "54px", marginBottom: "16px" }}>
-                  <Banner tone="success" title="Operation Successful">
+                  <Banner title="Operation Successful" tone="success">
                     <Text as="p">{tab2StatusMessage}</Text>
                   </Banner>
                 </div>
@@ -932,33 +1240,48 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
 
               {tab2ErrorMessage !== "" && (
                 <div style={{ minHeight: "54px", marginBottom: "16px" }}>
-                  <Banner tone="critical" title="Operation Failed">
+                  <Banner title="Operation Failed" tone="critical">
                     <Text as="p">{tab2ErrorMessage}</Text>
                   </Banner>
                 </div>
               )}
 
-              <Text variant="headingLg" as="h3">Full Meta Report</Text>
+              {injectFetcher.state === "idle" && injectFetcher.data?.message?.includes("Cleaned") && (
+                <div style={{ minHeight: "54px", marginBottom: "16px" }}>
+                  <Banner title="Ghosts Cleaned" tone="success">
+                    <Text as="p">{injectFetcher.data.message}</Text>
+                  </Banner>
+                </div>
+              )}
+
+              <Text as="h3" variant="headingLg">Full Meta Report</Text>
 
               <BlockStack gap="300">
-                <Text variant="headingMd" as="h4">Section 1 — Core Ignition</Text>
+                <Text as="h4" variant="headingMd">Section 1 — Core Ignition</Text>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
-                  {["piece_name", "primary_medium", "secondary_medium", "handcrafted_by", "is_one_of_a_kind", "treated", "dimensions_mm", "weight_grams", "shipping_weight_oz", "cut_and_shape", "surface_finish", "color", "artist_notes", "generated_description", "price"].map(renderFullMetaField)}
+                  {["shopify_title", "piece_name", "primary_medium", "secondary_medium", "handcrafted_by", "is_one_of_a_kind", "treated", "dimensions_mm", "weight_grams", "shipping_weight_oz", "cut_and_shape", "surface_finish", "color", "artist_notes", "generated_description", "price"].map(renderFullMetaField)}
                 </div>
               </BlockStack>
 
               <BlockStack gap="300">
-                <Text variant="headingMd" as="h4">Section 2 — Human Engine</Text>
+                <Text as="h4" variant="headingMd">Section 2 — Human Engine</Text>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
                   {["origin_story", "rescued_by", "stone_shape", "collection_name", "origin_handle", "collection_location", "honest_flaws_and_character", "found_object"].map(renderFullMetaField)}
                 </div>
               </BlockStack>
 
               <BlockStack gap="300">
-                <div onClick={() => setIsSection3Open(!isSection3Open)} style={{ cursor: 'pointer', display: 'inline-block' }}>
-                  <Text variant="headingMd" as="h4">Section 3 — Google Machine</Text>
+                <div 
+                  onClick={() => setIsSection3Open(!isSection3Open)}
+                  style={{ cursor: 'pointer', display: 'inline-block' }}
+                >
+                  <Text as="h4" variant="headingMd">Section 3 — Google Machine</Text>
                 </div>
-                <Collapsible open={isSection3Open} id="section-3-collapsible" transition={{duration: '200ms', timingFunction: 'ease-in-out'}}>
+                <Collapsible 
+                  id="section-3-collapsible" 
+                  open={isSection3Open} 
+                  transition={{ duration: '200ms', timingFunction: 'ease-in-out' }}
+                >
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px', marginTop: '16px' }}>
                     {["primary_use", "setting_ready", "wire_material", "bail_included", "color_pattern", "material", "jewelry_type", "necklace_design", "chain_link_type", "jewelry_finding_type", "target_gender", "age_group", "condition", "custom_product", "seo_title"].map(renderFullMetaField)}
                   </div>
@@ -966,10 +1289,17 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
               </BlockStack>
 
               <BlockStack gap="300">
-                <div onClick={() => setIsSection4Open(!isSection4Open)} style={{ cursor: 'pointer', display: 'inline-block' }}>
-                  <Text variant="headingMd" as="h4">Section 4 — Geo-Vault</Text>
+                <div 
+                  onClick={() => setIsSection4Open(!isSection4Open)}
+                  style={{ cursor: 'pointer', display: 'inline-block' }}
+                >
+                  <Text as="h4" variant="headingMd">Section 4 — Geo-Vault</Text>
                 </div>
-                <Collapsible open={isSection4Open} id="section-4-collapsible" transition={{duration: '200ms', timingFunction: 'ease-in-out'}}>
+                <Collapsible 
+                  id="section-4-collapsible" 
+                  open={isSection4Open} 
+                  transition={{ duration: '200ms', timingFunction: 'ease-in-out' }}
+                >
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px', marginTop: '16px' }}>
                     {["mohs_hardness", "luster", "fracture_pattern", "cleavage", "specific_gravity", "diaphaneity", "mineral_class", "crystal_system", "rock_composition", "rock_formation", "geological_era", "geological_age"].map(renderFullMetaField)}
                   </div>
@@ -984,11 +1314,14 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
       <div style={{ marginTop: "32px" }}>
         <Card padding="400">
           <BlockStack gap="400">
-            <Text variant="headingMd" as="h2">Bulk CamelCase Key Cleanup</Text>
-            <Text as="p">Scans all products and deletes any metafields with camelCase keys. Cleans all 35 products in one shot.</Text>
+            <Text as="h2" variant="headingMd">Nuclear Ghost Cleanup</Text>
+            <Text as="p">Scans all products and permanently deletes all rockhound, geo, and malformed custom keys across the store.</Text>
             
             {injectFetcher.state === "idle" && injectFetcher.data?.message?.includes("Nuclear sweep") && (
-              <Banner tone={injectFetcher.data.success ? "success" : "critical"} title={injectFetcher.data.success ? "Operation Successful" : "Operation Failed"}>
+              <Banner 
+                title={injectFetcher.data.success ? "Operation Successful" : "Operation Failed"} 
+                tone={injectFetcher.data.success ? "success" : "critical"}
+              >
                 <Text as="p">{injectFetcher.data.message}</Text>
               </Banner>
             )}
@@ -996,10 +1329,10 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
             <Button 
               tone="critical" 
               variant="primary"
-              onClick={() => injectFetcher.submit({ intent: "cleanAllCamelKeys" }, { method: "post", action: "/app/meta-injector-api" })}
-              loading={injectFetcher.state !== "idle" && injectFetcher.formData?.get("intent") === "cleanAllCamelKeys"}
+              onClick={() => injectFetcher.submit({ intent: "cleanAllGhostNamespaces" }, { method: "post", action: "/app/meta-injector-api" })}
+              loading={injectFetcher.state !== "idle" && injectFetcher.formData?.get("intent") === "cleanAllGhostNamespaces"}
             >
-              Clean All CamelCase Keys
+              Clean ALL Ghost Namespaces (Store-Wide)
             </Button>
           </BlockStack>
         </Card>
