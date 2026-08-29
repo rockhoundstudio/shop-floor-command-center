@@ -362,6 +362,7 @@ export const action = async ({ request }) => {
 - setting_ready
 - wire_material
 - bail_included
+- seo_title: Generate a keyword-rich SEO product title (max 60 characters) optimized for Google. Combine the stone family, cut/shape, and keywords like "Handcrafted", "Natural", "OOAK", or "Lapidary Art". Separate with pipes (|) or em-dashes (—). Do NOT use quotes.
 - generated_description: Write in Bob's voice. Past tense for the find. Plain and honest — say what happened, stop. No salesy language. Short sentences. One idea at a time. Use specific details from the FULL ORIGIN STORY below. End with: — Bob & Janyce, Rockhound Studio, Spokane Valley WA. 150–250 words. Stop when it's right.\nFULL ORIGIN STORY:\n${origin_story}`;
 
             const geminiRes = await fetchWithRetry("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY, {
@@ -376,6 +377,7 @@ export const action = async ({ request }) => {
                     type: "OBJECT",
                     properties: {
                       generated_description: { type: "STRING" },
+                      seo_title: { type: "STRING" },
                       primary_color: { type: "STRING" },
                       cut_and_shape: { type: "STRING" },
                       surface_finish: { type: "STRING" },
@@ -431,7 +433,7 @@ export const action = async ({ request }) => {
             origin_story,
             stone_family: derivedFamily,
             origin_handle: activeOriginHandle,
-            seo_title,
+            seo_title: visionFields.seo_title || seo_title,
             collection_date,
             authenticity,
             rarity,
@@ -471,7 +473,7 @@ export const action = async ({ request }) => {
       const matchedPage = pagesList.find(p => p.url.includes(resolvedHandle));
       const extractedStory = matchedPage ? matchedPage.excerpt : "";
 
-      const promptText = `You are an expert lapidary assistant for Rockhound Studio. Analyze these segments:\n- Family: "${segment1}", Origin: "${segment2}", Title: "${segment3}"\nSet origin_handle strictly to: "${resolvedHandle}". Use "The Shopped Rock" for location if it is a vendor. stone_family must be exactly one of: ${stonePicklist} - pick the closest match to the Family segment. Correct typos and partial names. Return the exact string from this list, no variations, no lowercase.\nReturn valid JSON with these exact keys: stone_family, piece_name, origin_handle, origin_location, collection_name, collection_location. No markup. No extra keys.`;
+      const promptText = `You are an expert lapidary assistant for Rockhound Studio. Analyze these segments:\n- Family: "${segment1}", Origin: "${segment2}", Title: "${segment3}"\nSet origin_handle strictly to: "${resolvedHandle}". Use "The Shopped Rock" for location if it is a vendor. stone_family must be exactly one of: ${stonePicklist} - pick the closest match to the Family segment. Correct typos and partial names. Return the exact string from this list, no variations, no lowercase.\nReturn valid JSON with these exact keys: stone_family, piece_name, origin_handle, origin_location, collection_name, collection_location, seo_title. Generate a keyword-rich seo_title for Google using the family and keywords like "Handcrafted" or "OOAK Lapidary Art". No markup. No extra keys.`;
 
       const geminiRes = await fetchWithRetry("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY, {
         method: "POST", 
@@ -489,7 +491,8 @@ export const action = async ({ request }) => {
                 origin_handle: { type: "STRING" },
                 origin_location: { type: "STRING" },
                 collection_name: { type: "STRING" },
-                collection_location: { type: "STRING" }
+                collection_location: { type: "STRING" },
+                seo_title: { type: "STRING" }
               },
               required: ["stone_family", "piece_name", "origin_handle", "origin_location", "collection_name", "collection_location"]
             }
@@ -531,7 +534,7 @@ export const action = async ({ request }) => {
           collection_name: collectionData.name,
           collection_location: collectionData.name.replace(" Collection", ""),
           canonical_title: parsed.stone_family + " — " + displayName + " — " + segment3,
-          seo_title: seo_title
+          seo_title: parsed.seo_title || seo_title
         };
         
         return Response.json({ titleParse: finalParse });
@@ -584,7 +587,7 @@ export const action = async ({ request }) => {
       }
 
       const promptText = `You are a lapidary artist and master jeweler for Rockhound Studio. Analyze this photo and return a JSON object.\n- LIVE STORE DIRECTORY (Your Dyslexia Safeguard — Read this menu!):\n  VALID PAGES IN STORE:\n  ${pagesMenu || "No live pages found — use default URL."}\n  \n  VALID COLLECTIONS IN STORE:\n  ${collectionsMenu || "No live collections found — use default URL."}\n\n- generated_description: Write in Bob's voice. Past tense for the find. Plain and honest — say what happened, stop. No salesy language. Short sentences. One idea at a time. Use specific details from the FULL ORIGIN STORY below. End with: — Bob & Janyce, Rockhound Studio, Spokane Valley WA. 150–250 words. Stop when it's right.\nFULL ORIGIN STORY:\n${extractedStory}\nCRITICAL DWELL WEB EMBED LAW: Look at the Origin Segment Janyce entered ("${originSegment}"). Check the LIVE STORE DIRECTORY above and match it to the exact corresponding Page and Collection. You MUST use those live excerpts to write short story hooks leading directly into TWO clickable HTML hyperlinks. \n  1. Origin Hook: Write a short story hook based on the matching Page excerpt, followed immediately by this exact anchor tag format: <a href="${targetUrlPath}">${fullCollectionTitle} Story</a>\n  2. Collection Hook: Write a short hook based on the matching Collection excerpt, followed immediately by this exact anchor tag format: <a href="${collectionUrlPath}">${fullCollectionTitle} Collection</a>\n- primary_use: Smart Switch! Force strictly to best match (e.g., "Pendant (Finished Jewelry)", "Necklace", "Ring / Bezel Setting", "Cabochon", "Wire Wrap (Finished Jewelry)"). If a chain is visible, classify as "Necklace".
-- chain_material: If a necklace chain is visible, identify it as exactly one of: "Silver Plated Snake Chain", "Gold Plated Snake Chain", "Sterling Silver Chain", "Cord". If no chain is visible, return "None".\n- MANDATORY BENCH FINDINGS & JEWELRY LAWS:\n  * setting_ready: Look closely at the mounting. If cabochon is in a bezel setting, MUST return "Bezel Setting - Ready to Wear". If prong setting, return "Prong Setting - Ready to Wear". If wire wrapped, return "Wire Wrapped - Ready to Wear". NEVER LEAVE BLANK FOR MOUNTED STONES!\n  * wire_material: If wire wrapped, output the wire metal (e.g., "Antiqued Copper Wire"). If in a bezel or prong setting with zero wire, MUST return strictly: "None — Bezel Mounted".\n  * primary_medium: State the primary metal or mounting material. Use exactly one of these: ".925 Sterling Silver Bezel", "Silver Plated Bezel", "Gold Plated Bezel", "Copper Bezel", "Gold Tone Alloy Bezel", "Silver Tone Alloy Bezel", "Bronze Tone Alloy Bezel", "Glue-On Loop", "Drilled — Pinch Bail" (loose stone with a drilled hole and pinch bail through it, no bezel). Match the tone and finish visible in the photo. Do not leave blank!
+- chain_material: If a necklace chain is visible, identify it as exactly one of: "Silver Plated Snake Chain", "Gold Plated Snake Chain", "Sterling Silver Chain", "Cord". If no chain is visible, return "None".\n- seo_title: Generate a keyword-rich SEO product title (max 60 characters) optimized for Google. Combine the stone family, cut/shape, and keywords like "Handcrafted", "Natural", "OOAK", or "Lapidary Art". Separate with pipes (|) or em-dashes (—). Do NOT use quotes.\n- MANDATORY BENCH FINDINGS & JEWELRY LAWS:\n  * setting_ready: Look closely at the mounting. If cabochon is in a bezel setting, MUST return "Bezel Setting - Ready to Wear". If prong setting, return "Prong Setting - Ready to Wear". If wire wrapped, return "Wire Wrapped - Ready to Wear". NEVER LEAVE BLANK FOR MOUNTED STONES!\n  * wire_material: If wire wrapped, output the wire metal (e.g., "Antiqued Copper Wire"). If in a bezel or prong setting with zero wire, MUST return strictly: "None — Bezel Mounted".\n  * primary_medium: State the primary metal or mounting material. Use exactly one of these: ".925 Sterling Silver Bezel", "Silver Plated Bezel", "Gold Plated Bezel", "Copper Bezel", "Gold Tone Alloy Bezel", "Silver Tone Alloy Bezel", "Bronze Tone Alloy Bezel", "Glue-On Loop", "Drilled — Pinch Bail" (loose stone with a drilled hole and pinch bail through it, no bezel). Match the tone and finish visible in the photo. Do not leave blank!
   * surface_finish: Describe the stone's surface finish as seen in the photo. Use terms like "High Polish", "Matte", "Satin", "Natural/Raw", "Tumbled". Do not leave blank.\n  * secondary_medium: Look ONLY for a second distinct METAL component (e.g., a gold accent ring). If you see small stones or crystals on a bail, supply "None" for secondary_medium. Do NOT describe bail decorations here. If no second metal component exists, return strictly "None".\n  * bail_included: Look at the TOP of the piece. If there is a separate small clip or loop pinched onto the bezel (with or without accent stones), return "Silver Plated Pinch Bail". If the bail is welded or formed as part of the bezel frame with no separate clip, return "Integrated Bezel Bail". If there is no bail at all, return "None". Do NOT guess — only report what is physically visible.`;
 
       const geminiRes = await fetchWithRetry("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY, {
@@ -599,6 +602,7 @@ export const action = async ({ request }) => {
               type: "OBJECT",
               properties: {
                 generated_description: { type: "STRING" },
+                seo_title: { type: "STRING" },
                 primary_color: { type: "STRING" },
                 cut_and_shape: { type: "STRING" },
                 surface_finish: { type: "STRING" },
@@ -610,7 +614,8 @@ export const action = async ({ request }) => {
                 secondary_medium: { type: "STRING" },
                 wire_material: { type: "STRING" },
                 setting_ready: { type: "STRING" },
-                bail_included: { type: "STRING" }
+                bail_included: { type: "STRING" },
+                chain_material: { type: "STRING" }
               }
             }
           }
@@ -647,6 +652,7 @@ export const action = async ({ request }) => {
           tab2Data: {
             pieceId,
             generated_description: final_desc,
+            seo_title: parsedVision.seo_title || "",
             primary_color: parsedVision.primary_color || "",
             cut_and_shape: parsedVision.cut_and_shape || "",
             surface_finish: parsedVision.surface_finish || "",
