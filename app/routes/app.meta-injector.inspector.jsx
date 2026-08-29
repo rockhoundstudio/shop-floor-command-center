@@ -4,7 +4,6 @@ import { MagicIcon, SaveIcon } from "@shopify/polaris-icons";
 import { normalizeDropdownValue, DROPDOWN_OPTIONS } from "../utils/meta-injector.constants.jsx";
 
 const CUSTOM_FIELDS = [
-  { key: "shopify_title", label: "MASTER SHOPIFY TITLE (Edit Here)", type: "single_line_text_field", isShared: false },
   { key: "stone_family", label: "Stone Family", type: "single_line_text_field", isShared: true },
   { key: "color", label: "Color", type: "single_line_text_field", isShared: true }, 
   { key: "surface_finish", label: "Surface Finish", type: "single_line_text_field", isShared: true }, 
@@ -138,11 +137,6 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
     const newForm = {};
     const newFullForm = {};
     
-    if (product && product.title) {
-      newForm.shopify_title = product.title;
-      newFullForm.shopify_title = product.title;
-    }
-
     const hasMetafields = product && product.metafields && product.metafields.edges;
     
     if (hasMetafields) {
@@ -292,10 +286,9 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
     }
 
     if (product && product.title) {
-      newForm.piece_name = product.title.includes(" — ") ? product.title.split(" — ").pop().trim() : product.title;
-      newFullForm.piece_name = product.title.includes(" — ") ? product.title.split(" — ").pop().trim() : product.title;
+      newForm.piece_name = product.title;
+      newFullForm.piece_name = product.title;
     }
-
     if (product && product.variants && product.variants.edges && product.variants.edges[0]) {
       const price = product.variants.edges[0].node.price;
       if (price) {
@@ -337,8 +330,7 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
           });
           
           if (product.title) {
-            updatedState.shopify_title = product.title;
-            updatedState.piece_name = product.title.includes(" — ") ? product.title.split(" — ").pop().trim() : product.title;
+            updatedState.piece_name = product.title;
           }
           
           return updatedState;
@@ -364,7 +356,7 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
     setErrorMessage("");
 
     const product = products.find(p => p.id === selectedProductId) || {};
-    const title = fullMetaState.shopify_title || formState.shopify_title || product.title || "";
+    const title = product.title || "";
     const description = product.descriptionHtml || product.description || "";
     const imageUrl = product?.images?.edges?.[0]?.node?.url || "";
 
@@ -381,7 +373,7 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
       },
       { method: "post", action: "/app/meta-injector-autofill" }
     );
-  }, [selectedProductId, autoFillFetcher, products, promptStyle, formState, fullMetaState]);
+  }, [selectedProductId, autoFillFetcher, products, promptStyle, formState]);
 
   const handleTab2AutoFill = useCallback(() => {
     if (!selectedProductId) return;
@@ -391,7 +383,6 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
     const stoneFamily = fullMetaState.stone_family || "";
     const originHandle = fullMetaState.origin_handle || fullMetaState.origin_page_handle || "";
     const product = products.find(p => p.id === selectedProductId);
-    const titleToUse = fullMetaState.shopify_title || formState.shopify_title || product?.title || "";
 
     const formData = new FormData();
     const imageUrl = product?.images?.edges?.[0]?.node?.url || "";
@@ -402,14 +393,14 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
     formData.append("cut_and_shape", fullMetaState.cut_and_shape || "");
     formData.append("collection_location", fullMetaState.collection_location || "");
     formData.append("piece_name", fullMetaState.piece_name || "");
-    formData.append("productTitle", titleToUse);
+    formData.append("productTitle", product?.title || "");
     formData.append("imageUrl", imageUrl);
 
     tab2Fetcher.submit(
       formData,
       { method: "post", action: "/app/meta-injector-autofill" }
     );
-  }, [selectedProductId, tab2Fetcher, fullMetaState, products, formState]);
+  }, [selectedProductId, tab2Fetcher, fullMetaState, products]);
 
   const handleInject = useCallback(() => {
     if (!selectedProductId) return;
@@ -417,15 +408,13 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
     setErrorMessage("");
 
     const selectedProduct = products.find(p => p.id === selectedProductId);
-    const masterTitle = fullMetaState.shopify_title || formState.shopify_title || selectedProduct?.title || "";
-    const resolvedPieceName = masterTitle.includes(" — ") ? masterTitle.split(" — ").pop().trim() : masterTitle;
+    const rawTitle = selectedProduct?.title || formState.piece_name || "";
+    const resolvedPieceName = rawTitle.includes(" — ") ? rawTitle.split(" — ").pop().trim() : rawTitle;
     
     const payload = [];
     const entries = Object.entries(formState);
     
     entries.forEach(([key, value]) => {
-      if (key === "shopify_title") return; // Do not save the master title as a custom metafield
-
       let injectValue = value;
       if (key === "piece_name") {
         injectValue = resolvedPieceName;
@@ -455,21 +444,54 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
       }
     });
 
-    if (payload.length === 0 && !masterTitle) {
+    if (payload.length === 0) {
       setErrorMessage("No fields are populated. Fill at least one field to inject.");
       return;
     }
 
     injectFetcher.submit(
-      { 
-        intent: "saveMetafields", 
-        payload: JSON.stringify(payload),
-        productId: selectedProductId,
-        productTitle: masterTitle
-      },
+      { intent: "saveMetafields", payload: JSON.stringify(payload) },
       { method: "post", action: "/app/meta-injector-api" }
     );
-  }, [selectedProductId, formState, products, injectFetcher, fullMetaState]);
+  }, [selectedProductId, formState, products, injectFetcher]);
+
+  const handleSaveFullMeta = useCallback(() => {
+    if (!selectedProductId) return;
+    const changes = [];
+    
+    const ALWAYS_INCLUDE = ["seo_title", "weight_grams", "piece_name", "is_one_of_a_kind", "treated", "handcrafted_by", "primary_medium", "generated_description"];
+
+    Object.entries(fullMetaState).forEach(([key, value]) => {
+      const originalValue = originalMetaRef.current[key] || "";
+      const newValue = value || "";
+
+      const alwaysInclude = ALWAYS_INCLUDE.includes(key) && newValue !== "";
+      if ((alwaysInclude || originalValue !== newValue) && newValue !== "See Shopify metaobject") {
+        changes.push({
+          namespace: getNamespaceForKey(key),
+          key: key.replace(/-/g, "_"),
+          value: newValue,
+          type: "single_line_text_field"
+        });
+      }
+    });
+
+    if (changes.length > 0) {
+      const _sf = fullMetaState["stone_family"] || "";
+      const _pn = fullMetaState["piece_name"] || "";
+      if (_sf && _pn) {
+        const builtTitle = `${_sf} \u2014 ${_pn} \u2014 One-of-a-Kind Rockhound Studio`;
+        const idx = changes.findIndex(c => c.key === "seo_title");
+        if (idx >= 0) changes[idx].value = builtTitle;
+        else changes.push({ namespace: "global", key: "seo_title", value: builtTitle, type: "single_line_text_field" });
+      }
+
+      injectFetcher.submit(
+        { intent: "saveMetafields", productId: selectedProductId, metafields: JSON.stringify(changes) },
+        { method: "post", action: "/app/meta-injector-api" }
+      );
+    }
+  }, [selectedProductId, fullMetaState, injectFetcher]);
 
   useEffect(() => {
     const isIdle = autoFillFetcher.state === "idle";
@@ -477,7 +499,7 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
     
     if (isIdle && hasData) {
       const product = products.find(p => p.id === selectedProductId);
-      const productTitle = fullMetaState.shopify_title || product?.title || "";
+      const productTitle = product ? product.title : "";
 
       const isAutoFill = autoFillFetcher.data.intent === "autoFill";
       const isSmartAutoFill = autoFillFetcher.data.intent === "smartAutoFill";
@@ -571,7 +593,7 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
 
     if (isIdle && hasData) {
       const product = products.find(p => p.id === selectedProductId);
-      const productTitle = fullMetaState.shopify_title || formState.shopify_title || product?.title || "";
+      const productTitle = product ? product.title : "";
       const tab2Data = tab2Fetcher.data.tab2Data || {};
       const hasTab2Data = Object.keys(tab2Data).length > 0;
 
@@ -639,9 +661,9 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
       const isError = injectFetcher.data.success === false;
 
       if (isSuccess) {
-        setStatusMessage("Data cleanly locked into Shopify database.");
+        setStatusMessage("Metafields injected cleanly into Shopify database.");
         if (window.shopify && window.shopify.toast) {
-          window.shopify.toast.show("Update successful!");
+          window.shopify.toast.show("Metafields injected!");
         }
       }
 
@@ -695,7 +717,7 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
         val = formState.color;
     }
 
-    const reqKeys = ["shopify_title", "piece_name", "price", "weight_grams", "material", "stone_family", "collection_name", "origin_handle", "rescued_by", "treatment_status", "origin_story", "primary_use", "seo_title"];
+    const reqKeys = ["piece_name", "price", "weight_grams", "material", "stone_family", "collection_name", "origin_handle", "rescued_by", "treatment_status", "origin_story", "primary_use", "seo_title"];
     const isFilled = val !== undefined && val !== null && String(val).trim() !== "" && String(val).trim() !== "false";
     const isRequiredEmpty = !isFilled && reqKeys.includes(field.key);
     const isOptionalEmpty = !isFilled && !reqKeys.includes(field.key);
@@ -754,7 +776,7 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
                 accessibilityLabel={field.label}
                 multiline={field.multiline ? true : false}
                 autoComplete="off"
-                disabled={val === "See Shopify metaobject" && field.key !== "shopify_title"}
+                disabled={val === "See Shopify metaobject"}
               />
             )}
           </div>
@@ -875,19 +897,6 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
                 </div>
                 <div style={{ minHeight: "54px", flexGrow: 1 }}>
                   <Button 
-                    tone="critical" 
-                    onClick={() => injectFetcher.submit({ intent: "cleanGhostNamespaces", productId: selectedProductId }, { method: "post", action: "/app/meta-injector-api" })}
-                    accessibilityLabel="Clean Ghosts"
-                    size="large"
-                    fullWidth
-                    disabled={!selectedProductId}
-                    loading={injectFetcher.state !== "idle" && injectFetcher.formData?.get("intent") === "cleanGhostNamespaces"}
-                  >
-                    Wipe Ghosts
-                  </Button>
-                </div>
-                <div style={{ minHeight: "54px", flexGrow: 1 }}>
-                  <Button 
                     icon={SaveIcon} 
                     tone="success" 
                     variant="primary" 
@@ -929,20 +938,12 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
                 </div>
               )}
 
-              {injectFetcher.state === "idle" && injectFetcher.data?.message?.includes("Cleaned") && (
-                <div style={{ minHeight: "54px", marginBottom: "16px" }}>
-                  <Banner tone="success" title="Ghosts Cleaned">
-                    <Text as="p">{injectFetcher.data.message}</Text>
-                  </Banner>
-                </div>
-              )}
-
               <Text variant="headingLg" as="h3">Full Meta Report</Text>
 
               <BlockStack gap="300">
                 <Text variant="headingMd" as="h4">Section 1 — Core Ignition</Text>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
-                  {["shopify_title", "piece_name", "primary_medium", "secondary_medium", "handcrafted_by", "is_one_of_a_kind", "treated", "dimensions_mm", "weight_grams", "shipping_weight_oz", "cut_and_shape", "surface_finish", "color", "artist_notes", "generated_description", "price"].map(renderFullMetaField)}
+                  {["piece_name", "primary_medium", "secondary_medium", "handcrafted_by", "is_one_of_a_kind", "treated", "dimensions_mm", "weight_grams", "shipping_weight_oz", "cut_and_shape", "surface_finish", "color", "artist_notes", "generated_description", "price"].map(renderFullMetaField)}
                 </div>
               </BlockStack>
 
@@ -983,8 +984,8 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
       <div style={{ marginTop: "32px" }}>
         <Card padding="400">
           <BlockStack gap="400">
-            <Text variant="headingMd" as="h2">Nuclear Ghost Cleanup</Text>
-            <Text as="p">Scans all products and permanently deletes all rockhound, geo, and malformed custom keys across the store.</Text>
+            <Text variant="headingMd" as="h2">Bulk CamelCase Key Cleanup</Text>
+            <Text as="p">Scans all products and deletes any metafields with camelCase keys. Cleans all 35 products in one shot.</Text>
             
             {injectFetcher.state === "idle" && injectFetcher.data?.message?.includes("Nuclear sweep") && (
               <Banner tone={injectFetcher.data.success ? "success" : "critical"} title={injectFetcher.data.success ? "Operation Successful" : "Operation Failed"}>
@@ -995,10 +996,10 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
             <Button 
               tone="critical" 
               variant="primary"
-              onClick={() => injectFetcher.submit({ intent: "cleanAllGhostNamespaces" }, { method: "post", action: "/app/meta-injector-api" })}
-              loading={injectFetcher.state !== "idle" && injectFetcher.formData?.get("intent") === "cleanAllGhostNamespaces"}
+              onClick={() => injectFetcher.submit({ intent: "cleanAllCamelKeys" }, { method: "post", action: "/app/meta-injector-api" })}
+              loading={injectFetcher.state !== "idle" && injectFetcher.formData?.get("intent") === "cleanAllCamelKeys"}
             >
-              Clean ALL Ghost Namespaces (Store-Wide)
+              Clean All CamelCase Keys
             </Button>
           </BlockStack>
         </Card>
