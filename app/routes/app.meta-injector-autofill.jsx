@@ -640,27 +640,29 @@ export const action = async ({ request }) => {
         }
 
         return Response.json({
-          success: true, 
-          intent: "visionScan", 
-          pieceId,
-          generated_description: final_desc,
-          primary_color: parsedVision.primary_color || "",
-          cut_and_shape: parsedVision.cut_and_shape || "",
-          surface_finish: parsedVision.surface_finish || "",
-          stone_shape: parsedVision.stone_shape || "",
-          dimensions_mm: parsedVision.dimensions_mm || "",
-          pattern: parsedVision.pattern || "",
-          primary_use: resolved_primary_use,
-          primary_medium: resolved_primary_medium,
-          secondary_medium: resolved_secondary_medium,
-          wire_material: resolved_wire_material,
-          setting_ready: resolved_setting_ready,
-          bail_included: resolved_bail_included,
-          origin_story: extractedStory,
-          origin_handle: defaultOriginSlug,
-          origin_location: originSegment,
-          collection_name: defaultCollection.name,
-          collection_location: defaultCollection.name.replace(" Collection", "")
+          success: true,
+          intent: "visionScan",
+          tab2Data: {
+            pieceId,
+            generated_description: final_desc,
+            primary_color: parsedVision.primary_color || "",
+            cut_and_shape: parsedVision.cut_and_shape || "",
+            surface_finish: parsedVision.surface_finish || "",
+            stone_shape: parsedVision.stone_shape || "",
+            dimensions_mm: parsedVision.dimensions_mm || "",
+            color_pattern: parsedVision.pattern || "",
+            primary_use: resolved_primary_use,
+            primary_medium: resolved_primary_medium,
+            secondary_medium: resolved_secondary_medium,
+            wire_material: resolved_wire_material,
+            setting_ready: resolved_setting_ready,
+            bail_included: resolved_bail_included,
+            origin_story: extractedStory,
+            origin_handle: defaultOriginSlug,
+            origin_location: originSegment,
+            collection_name: defaultCollection.name,
+            collection_location: defaultCollection.name.replace(" Collection", "")
+          }
         });
       }
       return Response.json({ success: false, error: "Vision API Failure" });
