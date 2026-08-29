@@ -375,18 +375,20 @@ export const action = async ({ request }) => {
                   responseSchema: {
                     type: "OBJECT",
                     properties: {
+                      generated_description: { type: "STRING" },
                       primary_color: { type: "STRING" },
-                      stone_shape: { type: "STRING" },
-                      color_pattern: { type: "STRING" },
                       cut_and_shape: { type: "STRING" },
                       surface_finish: { type: "STRING" },
-                      honest_flaws_and_character: { type: "STRING" },
+                      stone_shape: { type: "STRING" },
+                      dimensions_mm: { type: "STRING" },
+                      pattern: { type: "STRING" },
                       primary_use: { type: "STRING" },
                       primary_medium: { type: "STRING" },
-                      setting_ready: { type: "STRING" },
+                      secondary_medium: { type: "STRING" },
                       wire_material: { type: "STRING" },
+                      setting_ready: { type: "STRING" },
                       bail_included: { type: "STRING" },
-                      generated_description: { type: "STRING" }
+                      chain_material: { type: "STRING" }
                     }
                   }
                 }
