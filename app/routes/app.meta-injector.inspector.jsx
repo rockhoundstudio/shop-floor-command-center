@@ -345,6 +345,11 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
   const [isSection3Open, setIsSection3Open] = useState(false);
   const [isSection4Open, setIsSection4Open] = useState(false);
 
+  const [pendingFixFields, setPendingFixFields] = useState([]);
+  const [currentFixIndex, setCurrentFixIndex] = useState(0);
+  const [fixPopupValue, setFixPopupValue] = useState("");
+  const [showFixPopup, setShowFixPopup] = useState(false);
+
   const handleSelectProduct = useCallback((id) => {
     setSelectedProductId(id);
     setStatusMessage("");
@@ -920,6 +925,24 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
           return updatedState;
         });
         setTab2StatusMessage("Auto-Fill complete \u2014 review fields before saving");
+
+        const REQUIRED_TAB2_FIELDS = [
+          { key: "generated_description", label: "Generated Description" },
+          { key: "color_pattern", label: "Color Pattern" },
+          { key: "collection_location", label: "Collection Location" },
+          { key: "origin_handle", label: "Origin Handle" },
+        ];
+        const missingFields = REQUIRED_TAB2_FIELDS.filter(f => {
+          const val = updatedState[f.key] || "";
+          return val.toString().trim() === "" || val === "[No story provided]";
+        });
+        if (missingFields.length > 0) {
+          setPendingFixFields(missingFields);
+          setCurrentFixIndex(0);
+          setFixPopupValue("");
+          setShowFixPopup(true);
+        }
+
         if (window.shopify && window.shopify.toast) {
           window.shopify.toast.show("Auto-Fill complete!");
         }
@@ -955,6 +978,37 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
       }
     }
   }, [injectFetcher.state, injectFetcher.data]);
+
+  const handleFixPopupConfirm = useCallback(() => {
+    const field = pendingFixFields[currentFixIndex];
+    if (field && fixPopupValue.trim() !== "") {
+      setFormState(prev => ({ ...prev, [field.key]: fixPopupValue.trim() }));
+      setFullMetaState(prev => ({ ...prev, [field.key]: fixPopupValue.trim() }));
+    }
+    const nextIndex = currentFixIndex + 1;
+    if (nextIndex < pendingFixFields.length) {
+      setCurrentFixIndex(nextIndex);
+      setFixPopupValue("");
+    } else {
+      setShowFixPopup(false);
+      setPendingFixFields([]);
+      setCurrentFixIndex(0);
+      setFixPopupValue("");
+    }
+  }, [pendingFixFields, currentFixIndex, fixPopupValue]);
+
+  const handleFixPopupSkip = useCallback(() => {
+    const nextIndex = currentFixIndex + 1;
+    if (nextIndex < pendingFixFields.length) {
+      setCurrentFixIndex(nextIndex);
+      setFixPopupValue("");
+    } else {
+      setShowFixPopup(false);
+      setPendingFixFields([]);
+      setCurrentFixIndex(0);
+      setFixPopupValue("");
+    }
+  }, [pendingFixFields, currentFixIndex]);
 
   const renderFullMetaField = (key) => {
     let field = null;
@@ -1337,6 +1391,39 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
           </BlockStack>
         </Card>
       </div>
+
+      {showFixPopup && pendingFixFields[currentFixIndex] && (
+        <div style={{
+          position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
+          background: "rgba(0,0,0,0.5)", zIndex: 9999,
+          display: "flex", alignItems: "center", justifyContent: "center"
+        }}>
+          <div style={{
+            background: "white", borderRadius: "12px", padding: "32px",
+            width: "480px", maxWidth: "90vw", boxShadow: "0 8px 32px rgba(0,0,0,0.2)"
+          }}>
+            <BlockStack gap="400">
+              <Text as="h2" variant="headingMd">
+                Missing: {pendingFixFields[currentFixIndex].label}
+              </Text>
+              <Text as="p" variant="bodyMd" tone="subdued">
+                Field {currentFixIndex + 1} of {pendingFixFields.length} — enter a value or skip.
+              </Text>
+              <TextField
+                value={fixPopupValue}
+                onChange={setFixPopupValue}
+                label={pendingFixFields[currentFixIndex].label}
+                autoComplete="off"
+                multiline={pendingFixFields[currentFixIndex].key === "generated_description" ? 4 : undefined}
+              />
+              <InlineStack gap="300" align="end">
+                <Button onClick={handleFixPopupSkip}>Skip</Button>
+                <Button variant="primary" onClick={handleFixPopupConfirm}>Save & Continue</Button>
+              </InlineStack>
+            </BlockStack>
+          </div>
+        </div>
+      )}
     </BlockStack>
   );
 }
