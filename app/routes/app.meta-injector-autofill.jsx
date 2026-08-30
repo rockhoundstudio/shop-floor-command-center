@@ -497,7 +497,11 @@ export const action = async ({ request }) => {
             authenticity,
             rarity,
             treated: "No",
-            is_ooak: "Yes"
+            is_ooak: "Yes",
+            age_group: "adult",
+            target_gender: "Unisex",
+            condition: "new",
+            google_product_category: "Apparel & Accessories > Jewelry"
           }
         });
       } catch (err) {
@@ -612,7 +616,11 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
           collection_name: parsed.collection_name || collectionData.name,
           collection_location: parsed.collection_location || collectionData.name.replace(" Collection", ""),
           canonical_title: parsed.stone_family + " — " + displayName + " — " + segment3,
-          seo_title: parsed.seo_title || seo_title
+          seo_title: parsed.seo_title || seo_title,
+          age_group: "adult",
+          target_gender: "Unisex",
+          condition: "new",
+          google_product_category: "Apparel & Accessories > Jewelry"
         };
         
         return Response.json({ titleParse: finalParse });
@@ -764,7 +772,11 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
             origin_handle: defaultOriginSlug,
             origin_location: parsedVision.origin_location || originSegment,
             collection_name: defaultCollection.name,
-            collection_location: defaultCollection.name.replace(" Collection", "")
+            collection_location: defaultCollection.name.replace(" Collection", ""),
+            age_group: "adult",
+            target_gender: "Unisex",
+            condition: "new",
+            google_product_category: "Apparel & Accessories > Jewelry"
           }
         });
       }
