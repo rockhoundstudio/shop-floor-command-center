@@ -42,9 +42,6 @@ export default function MetaInjectorV2() {
   ];
 
   const hasErrors = fetcher.data && fetcher.data.errors && fetcher.data.errors.length > 0;
-  const isTabOne = selectedTab === 0;
-  const isTabTwo = selectedTab === 1;
-  const isTabThree = selectedTab === 2;
 
   return (
     <Frame>
@@ -71,9 +68,16 @@ export default function MetaInjectorV2() {
             <Card padding="0">
               <Tabs tabs={tabs} selected={selectedTab} onSelect={setSelectedTab} fitted>
                 <Box padding="600" background="bg-surface-secondary">
-                  {isTabOne && <NewProductIntakeTab fetcher={fetcher} />}
-                  {isTabTwo && <IntakeBenchTab products={products} autoFillFetcher={autoFillFetcher} injectFetcher={injectFetcher} tab2Fetcher={tab2Fetcher} />}
-                  {isTabThree && <OperationsMatrixTab products={products} fetcher={fetcher} />}
+                  {/* CSS Toggle Weld: Components stay mounted to preserve state and active fetchers */}
+                  <div style={{ display: selectedTab === 0 ? 'block' : 'none' }}>
+                    <NewProductIntakeTab fetcher={fetcher} />
+                  </div>
+                  <div style={{ display: selectedTab === 1 ? 'block' : 'none' }}>
+                    <IntakeBenchTab products={products} autoFillFetcher={autoFillFetcher} injectFetcher={injectFetcher} tab2Fetcher={tab2Fetcher} />
+                  </div>
+                  <div style={{ display: selectedTab === 2 ? 'block' : 'none' }}>
+                    <OperationsMatrixTab products={products} fetcher={fetcher} />
+                  </div>
                 </Box>
               </Tabs>
             </Card>
