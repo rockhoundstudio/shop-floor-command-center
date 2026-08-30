@@ -22,7 +22,7 @@ const CUSTOM_FIELDS = [
   { key: "source_location", label: "Source / Discovery Location", type: "single_line_text_field", isShared: true },
   { key: "primary_use", label: "Primary Use", type: "single_line_text_field", isShared: true }, 
   { key: "handcrafted_by", label: "Handcrafted By", type: "single_line_text_field", isShared: true },
-  { key: "origin_story", label: "The Origin Story", type: "single_line_text_field", multiline: true, isShared: true },
+  { key: "origin_story", label: "The Origin Story", type: "multi_line_text_field", multiline: true, isShared: true },
 
   // ==========================================
   // SECTION B: PER-PIECE ROWS (The Hard Specs)
@@ -31,7 +31,7 @@ const CUSTOM_FIELDS = [
   { key: "cut_and_shape", label: "Cut / Shape", type: "single_line_text_field", isPerPiece: true }, 
   { key: "dimensions_mm", label: "Dimensions (mm)", type: "single_line_text_field", isPerPiece: true },
   { key: "weight_grams", label: "Weight (grams)", type: "single_line_text_field", isPerPiece: true },
-  { key: "honest_flaws", label: "Character Marks (Honest Flaws)", type: "single_line_text_field", multiline: true, isPerPiece: true },
+  { key: "honest_flaws", label: "Character Marks (Honest Flaws)", type: "multi_line_text_field", multiline: true, isPerPiece: true },
   { key: "price", label: "Price", type: "single_line_text_field", isPerPiece: true },
   { key: "seo_title", label: "SEO Title", type: "single_line_text_field", isPerPiece: true }
 ];
@@ -44,7 +44,7 @@ const FULL_META_GROUPS = [
       { key: "piece_name", label: "Piece Name", type: "text" },
       { key: "primary_medium", label: "Primary Medium", type: "text" },
       { key: "handcrafted_by", label: "Handcrafted By", type: "text" },
-      { key: "is_one_of_a_kind", label: "Is One of a Kind", type: "text" },
+      { key: "is_ooak", label: "Is One of a Kind", type: "text" },
       { key: "treated", label: "Treated", type: "text" }
     ]
   },
@@ -104,7 +104,7 @@ const NAMESPACE_MAP = {
     "stone_family", "color", "cut_and_shape", "surface_finish",
     "dimensions_mm", "weight_grams", "shipping_weight_oz", "price",
     "collection_name", "collection_location",
-    "primary_use", "bail_included", "is_one_of_a_kind", "treated",
+    "primary_use", "bail_included", "is_ooak", "treated",
     "found_object", "wire_material", "setting_ready", "material",
     "origin_story", "origin_handle", "honest_flaws_and_character",
     "artist_notes", "generated_description", "rescued_by", "stone_shape",
@@ -137,7 +137,7 @@ export function NewProductIntakeTab({ fetcher }) {
     origin_story: "",
     primary_use: "",
     handcrafted_by: "Bob & Janyce, Rockhound Studio",
-    is_one_of_a_kind: "Yes — one of a kind",
+    is_ooak: "Yes",
     treated: "Untreated — Natural",
     found_object: "true",
     condition: "new",
@@ -398,7 +398,7 @@ export function NewProductIntakeTab({ fetcher }) {
       origin_story: "",
       primary_use: "",
       handcrafted_by: "Bob & Janyce, Rockhound Studio",
-      is_one_of_a_kind: "Yes — one of a kind",
+      is_ooak: "Yes",
       treated: "Untreated — Natural",
       found_object: "true",
       condition: "new",
@@ -483,7 +483,6 @@ export function NewProductIntakeTab({ fetcher }) {
           p.id === pid ? { ...p, stagedResourceUrls: [resourceUrl] } : p
         ));
 
-        // 🟢 THE WELD: Extract from live useRef state to destroy the Stale Closure
         const scannedPiece = latestPieces.current.find(p => p.id === pid);
         const pName = scannedPiece ? scannedPiece.piece_name : "";
         const cName = latestShared.current.collection_name || "";
@@ -497,7 +496,7 @@ export function NewProductIntakeTab({ fetcher }) {
             imageUrl: resourceUrl,
             pieceName: pName,
             collectionName: cName,
-            imageBase64: base64,  // Forces image through pipeline instantly
+            imageBase64: base64,
             imageMimeType: mime
           },
           { method: "post", action: "/app/meta-injector-autofill" }
@@ -644,8 +643,6 @@ export function NewProductIntakeTab({ fetcher }) {
         ...(parsed.rock_formation && { rock_formation: parsed.rock_formation }),
       };
     });
-
-    
 
     if (parsed.canonical_title || parsed.product_title || parsed.seo_title) {
       const pieceTitleVal = parsed.canonical_title || parsed.product_title;
@@ -1358,7 +1355,7 @@ export function NewProductIntakeTab({ fetcher }) {
               {renderPanelRow("Stone Shape", "stone_shape", getVal("stone_shape", combinedData.stone_shape))}
               {renderPanelRow("Color Pattern", "color_pattern", getVal("color_pattern", combinedData.color_pattern))}
               {renderPanelRow("Handcrafted By", "handcrafted_by", getVal("handcrafted_by", combinedData.handcrafted_by))}
-              {renderPanelRow("Is One of a Kind", "is_one_of_a_kind", getVal("is_one_of_a_kind", combinedData.is_one_of_a_kind))}
+              {renderPanelRow("Is One of a Kind", "is_ooak", getVal("is_ooak", combinedData.is_ooak))}
               {renderPanelRow("Treated", "treated", getVal("treated", combinedData.treated))}
             </div>
 

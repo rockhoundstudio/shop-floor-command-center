@@ -1,3 +1,8 @@
+// ==========================================================================
+// ROCKHOUND STUDIO — TAB 2: META INSPECTOR Bench
+// File: app/routes/app.meta-injector.inspector.jsx
+// ==========================================================================
+
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { BlockStack, Card, Text, Banner, TextField, Select, Button, InlineStack, Collapsible } from "@shopify/polaris";
 import { MagicIcon, SaveIcon } from "@shopify/polaris-icons";
@@ -11,18 +16,18 @@ const CUSTOM_FIELDS = [
   { key: "source_location", label: "Source / Discovery Location", type: "single_line_text_field", isShared: true },
   { key: "primary_use", label: "Primary Use", type: "single_line_text_field", isShared: true }, 
   { key: "handcrafted_by", label: "Handcrafted By", type: "single_line_text_field", isShared: true },
-  { key: "origin_story", label: "The Origin Story", type: "single_line_text_field", multiline: true, isShared: true },
+  { key: "origin_story", label: "The Origin Story", type: "multi_line_text_field", multiline: true, isShared: true },
   { key: "piece_name", label: "Piece Name", type: "single_line_text_field", isPerPiece: true },
   { key: "cut_and_shape", label: "Cut / Shape", type: "single_line_text_field", isPerPiece: true }, 
   { key: "dimensions_mm", label: "Dimensions (mm)", type: "single_line_text_field", isPerPiece: true },
   { key: "weight_grams", label: "Weight (grams)", type: "single_line_text_field", isPerPiece: true },
-  { key: "honest_flaws", label: "Character Marks (Honest Flaws)", type: "single_line_text_field", multiline: true, isPerPiece: true },
+  { key: "honest_flaws", label: "Character Marks (Honest Flaws)", type: "multi_line_text_field", multiline: true, isPerPiece: true },
   { key: "price", label: "Price", type: "single_line_text_field", isPerPiece: true },
-  { key: "generated_description", label: "Generated Description", type: "single_line_text_field", multiline: true, isPerPiece: true }
+  { key: "generated_description", label: "Generated Description", type: "multi_line_text_field", multiline: true, isPerPiece: true }
 ];
 
 const FULL_META_GROUPS = [
-  { heading: "Always Fill", color: "#2E7D32", fields: [{ key: "piece_name", label: "Piece Name", type: "text" }, { key: "primary_medium", label: "Primary Medium", type: "text" }, { key: "handcrafted_by", label: "Handcrafted By", type: "text" }, { key: "is_one_of_a_kind", label: "Is One of a Kind", type: "text" }, { key: "treated", label: "Treated", type: "text" }] },
+  { heading: "Always Fill", color: "#2E7D32", fields: [{ key: "piece_name", label: "Piece Name", type: "text" }, { key: "primary_medium", label: "Primary Medium", type: "text" }, { key: "handcrafted_by", label: "Handcrafted By", type: "text" }, { key: "is_ooak", label: "Is One of a Kind", type: "text" }, { key: "treated", label: "Treated", type: "text" }] },
   { heading: "Stone Fields", color: "#1565C0", fields: [{ key: "stone_family", label: "Stone Family", type: "text" }, { key: "color", label: "Color", type: "text" }, { key: "cut_and_shape", label: "Cut and Shape", type: "text" }, { key: "surface_finish", label: "Surface Finish", type: "text" }, { key: "dimensions_mm", label: "Dimensions (mm)", type: "text" }, { key: "weight_grams", label: "Weight (grams)", type: "text" }] },
   { heading: "Story & Lore", color: "#E65100", fields: [{ key: "origin_story", label: "Origin Story", type: "text", multiline: true }, { key: "honest_flaws_and_character", label: "Honest Flaws and Character", type: "text", multiline: true }, { key: "collection_name", label: "Collection Name", type: "text" }, { key: "generated_description", label: "Generated Description", type: "text", multiline: true }] },
   { heading: "Mixed Media", color: "#6A1B9A", fields: [{ key: "found_object", label: "Found Object", type: "text" }] },
@@ -31,7 +36,7 @@ const FULL_META_GROUPS = [
 ];
 
 const NAMESPACE_MAP = {
-  custom: ["piece_name", "primary_medium", "secondary_medium", "handcrafted_by", "stone_family", "color", "cut_and_shape", "surface_finish", "dimensions_mm", "weight_grams", "shipping_weight_oz", "price", "collection_name", "collection_location", "primary_use", "bail_included", "is_one_of_a_kind", "treated", "found_object", "wire_material", "setting_ready", "material", "origin_story", "origin_handle", "honest_flaws_and_character", "artist_notes", "generated_description", "rescued_by", "stone_shape", "target_gender", "age_group", "condition", "color_pattern", "jewelry_type", "necklace_design", "chain_link_type", "jewelry_finding_type", "custom_product", "seo_title"],
+  custom: ["piece_name", "primary_medium", "secondary_medium", "handcrafted_by", "stone_family", "color", "cut_and_shape", "surface_finish", "dimensions_mm", "weight_grams", "shipping_weight_oz", "price", "collection_name", "collection_location", "primary_use", "bail_included", "is_ooak", "treated", "found_object", "wire_material", "setting_ready", "material", "origin_story", "origin_handle", "honest_flaws_and_character", "artist_notes", "generated_description", "rescued_by", "stone_shape", "target_gender", "age_group", "condition", "color_pattern", "jewelry_type", "necklace_design", "chain_link_type", "jewelry_finding_type", "custom_product", "seo_title"],
   geo: ["mohs_hardness", "luster", "fracture_pattern", "cleavage", "specific_gravity", "diaphaneity", "crystal_system", "geological_era", "geological_age", "mineral_class", "rock_composition", "rock_formation"]
 };
 
@@ -192,7 +197,7 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
       if (product && product.metafields && product.metafields.edges) {
         setFormState(prev => {
           const updatedState = { ...prev };
-          const dropdownFields = ["handcrafted_by", "is_one_of_a_kind", "treated", "found_object", "primary_use", "bail_included", "setting_ready", "wire_material", "stone_family", "color", "cut_and_shape", "surface_finish"];
+          const dropdownFields = ["handcrafted_by", "is_ooak", "treated", "found_object", "primary_use", "bail_included", "setting_ready", "wire_material", "stone_family", "color", "cut_and_shape", "surface_finish"];
           const textFields = ["piece_name", "primary_medium", "dimensions_mm", "weight_grams", "origin_story", "honest_flaws_and_character", "collection_name", "generated_description", "color_pattern", "seo_title"];
 
           product.metafields.edges.forEach(({ node }) => {
@@ -291,7 +296,6 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
       return;
     }
 
-    // WELDED: Pass descriptionHtml down the pipe to overwrite Shopify's native body_html
     const descHtml = formState.generated_description || fullMetaState.generated_description || "";
 
     injectFetcher.submit(
@@ -322,7 +326,7 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
             const hasNewValue = val !== undefined && val !== null && val.toString().trim() !== "" && val !== "See Shopify metaobject";
             if (hasNewValue) {
               let normalizedVal = val;
-              if (key === "treated" || key === "is_one_of_a_kind") {
+              if (key === "treated" || key === "is_ooak") {
                 if (val === true || val === "true") normalizedVal = "Yes";
                 else if (val === false || val === "false") normalizedVal = "No";
               }
@@ -334,14 +338,14 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
 
         setFullMetaState(prev => {
           const updatedState = { ...prev };
-          const ALWAYS_OVERWRITE = ["stone_family", "surface_finish", "handcrafted_by", "treated", "is_one_of_a_kind", "mohs_hardness", "luster", "fracture_pattern", "cleavage", "specific_gravity", "diaphaneity", "mineral_class", "crystal_system", "rock_composition", "rock_formation", "geological_era", "geological_age", "color", "stone_shape", "color_pattern", "cut_and_shape", "honest_flaws_and_character", "primary_use", "primary_medium", "setting_ready", "wire_material", "bail_included", "generated_description", "seo_title"];
+          const ALWAYS_OVERWRITE = ["stone_family", "surface_finish", "handcrafted_by", "treated", "is_ooak", "mohs_hardness", "luster", "fracture_pattern", "cleavage", "specific_gravity", "diaphaneity", "mineral_class", "crystal_system", "rock_composition", "rock_formation", "geological_era", "geological_age", "color", "stone_shape", "color_pattern", "cut_and_shape", "honest_flaws_and_character", "primary_use", "primary_medium", "setting_ready", "wire_material", "bail_included", "generated_description", "seo_title"];
 
           Object.entries(tab2Data).forEach(([key, val]) => {
             const hasNewValue = val !== undefined && val !== null && val.toString().trim() !== "" && val !== "See Shopify metaobject";
             const currentlyEmpty = !updatedState[key] || updatedState[key].toString().trim() === "";
             if (hasNewValue && (currentlyEmpty || ALWAYS_OVERWRITE.includes(key))) {
               let normalizedVal = val;
-              if (key === "treated" || key === "is_one_of_a_kind") {
+              if (key === "treated" || key === "is_ooak") {
                 if (val === true || val === "true") normalizedVal = "Yes";
                 else if (val === false || val === "false") normalizedVal = "No";
               }
@@ -538,7 +542,7 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
               <BlockStack gap="300">
                 <Text as="h4" variant="headingMd">Section 1 — Core Ignition</Text>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
-                  {["shopify_title", "piece_name", "primary_medium", "secondary_medium", "handcrafted_by", "is_one_of_a_kind", "treated", "dimensions_mm", "weight_grams", "shipping_weight_oz", "cut_and_shape", "surface_finish", "color", "artist_notes", "generated_description", "price"].map(renderFullMetaField)}
+                  {["shopify_title", "piece_name", "primary_medium", "secondary_medium", "handcrafted_by", "is_ooak", "treated", "dimensions_mm", "weight_grams", "shipping_weight_oz", "cut_and_shape", "surface_finish", "color", "artist_notes", "generated_description", "price"].map(renderFullMetaField)}
                 </div>
               </BlockStack>
 
