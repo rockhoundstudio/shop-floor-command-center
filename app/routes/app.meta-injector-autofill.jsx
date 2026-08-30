@@ -449,7 +449,13 @@ export const action = async ({ request }) => {
               const first = cleanJson.indexOf("{");
               const last = cleanJson.lastIndexOf("}");
               if (first !== -1 && last !== -1) cleanJson = cleanJson.slice(first, last + 1);
-              visionFields = JSON.parse(cleanJson);
+              
+              try {
+                visionFields = JSON.parse(cleanJson);
+              } catch (parseErr) {
+                console.warn("[tab2AutoFill] JSON Parse Error:", parseErr.message, "Raw:", cleanJson);
+                visionFields = { generated_description: `[JSON PARSE ERROR] ${parseErr.message}` };
+              }
               
               if (visionFields.primary_color) {
                   visionFields.color = visionFields.primary_color;
@@ -464,11 +470,12 @@ export const action = async ({ request }) => {
                   }
               }
             } else {
-               throw new Error(`Gemini API returned status: ${geminiRes.status}`);
+               const errText = await geminiRes.text();
+               throw new Error(`Gemini API returned status: ${geminiRes.status} - ${errText}`);
             }
           } catch (visionErr) {
             console.warn("[tab2AutoFill] Vision scan failed:", visionErr.message);
-            visionFields = {};
+            visionFields = { generated_description: `[API CRASH] ${visionErr.message}` };
           }
         }
 
@@ -610,7 +617,9 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
         
         return Response.json({ titleParse: finalParse });
       }
-      return Response.json({ titleParse: null, error: "Title parse error" }, { status: 500 });
+      
+      const errText = await geminiRes.text();
+      return Response.json({ titleParse: null, error: `Title parse error: ${geminiRes.status} - ${errText}` }, { status: 500 });
     }
 
     if (intent === "visionScan") {
@@ -711,7 +720,13 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
         if (first !== -1 && last !== -1) {
           cleanJson = cleanJson.slice(first, last + 1);
         }
-        const parsedVision = JSON.parse(cleanJson);
+        
+        let parsedVision;
+        try {
+          parsedVision = JSON.parse(cleanJson);
+        } catch (parseErr) {
+          return Response.json({ success: false, error: `JSON Parse Error: ${parseErr.message} | Raw string: ${cleanJson.substring(0, 100)}...` });
+        }
         
         const resolved_primary_use = parsedVision.primary_use || parsedVision.use || parsedVision.product_type || "";
         const resolved_primary_medium = parsedVision.primary_medium || parsedVision.medium || parsedVision.metal || parsedVision.primary_metal || "";
@@ -753,7 +768,9 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
           }
         });
       }
-      return Response.json({ success: false, error: "Vision API Failure" });
+      
+      const errText = await geminiRes.text();
+      return Response.json({ success: false, error: `Vision API Failure (${geminiRes.status}): ${errText}` });
     }
 
     return Response.json({ success: true, fields: {} });
