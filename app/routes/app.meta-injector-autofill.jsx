@@ -32,26 +32,28 @@ function buildMasterVisionPrompt({
 - cut_and_shape
 - surface_finish
 - honest_flaws_and_character
-- primary_use: Smart Switch! Force strictly to best match (e.g., "Pendant (Finished Jewelry)", "Necklace", "Ring / Bezel Setting", "Cabochon", "Wire Wrap (Finished Jewelry)"). If a chain is visible, classify as "Necklace".
+- origin_location: CRITICAL! Look at the provided Origin Segment ("${originSegment}"). Cross-reference it with the LIVE STORE DIRECTORY above and return the fully expanded, correct name (e.g., expand "cda" to "North Fork Coeur d'Alene" or "yakima" to "Yakima River Jasper").
+- primary_use: Smart Switch! Force strictly to best match (e.g., "Pendant (Finished Jewelry)", "Necklace", "Ring / Bezel Setting", "Cabochon", "Wire Wrap (Finished Jewelry)", "Loose Stone"). If a chain is visible, classify as "Necklace".
 - primary_medium
 - setting_ready
 - wire_material
 - bail_included
 - chain_material: If a necklace chain is visible, identify it as exactly one of: "Silver Plated Snake Chain", "Gold Plated Snake Chain", "Sterling Silver Chain", "Cord". If no chain is visible, return "None".
-- seo_title: Generate a keyword-rich SEO product title (max 60 characters) optimized for Google. Combine the stone family ("${stoneFamily}"), cut/shape, and keywords like "Handcrafted", "Natural", "OOAK", or "Lapidary Art". Separate with pipes (|) or em-dashes (—). Do NOT use quotes.
+- seo_title: Generate a keyword-rich SEO product title (max 60 characters) optimized for Google. Combine the stone family ("${stoneFamily}"), your newly corrected origin_location, cut/shape, and keywords like "Handcrafted", "Natural", "OOAK", or "Lapidary Art". Separate with pipes (|) or em-dashes (—). Do NOT use quotes.
 - generated_description: Write in Bob's voice. Past tense for the find. Plain and honest — say what happened, stop. No salesy language. Short sentences. One idea at a time. Use specific details from the FULL ORIGIN STORY below. End with: — Bob & Janyce, Rockhound Studio, Spokane Valley WA. 150–250 words. Stop when it's right.
 FULL ORIGIN STORY:
 ${originStory}
 CRITICAL DWELL WEB EMBED LAW: Look at the Origin Segment Janyce entered ("${originSegment}"). Check the LIVE STORE DIRECTORY above and match it to the exact corresponding Page and Collection. You MUST use those live excerpts to write short story hooks leading directly into TWO clickable HTML hyperlinks. 
   1. Origin Hook: Write a short story hook based on the matching Page excerpt, followed immediately by this exact anchor tag format: <a href="${targetUrlPath}">${fullCollectionTitle} Story</a>
   2. Collection Hook: Write a short hook based on the matching Collection excerpt, followed immediately by this exact anchor tag format: <a href="${collectionUrlPath}">${fullCollectionTitle} Collection</a>
-- MANDATORY BENCH FINDINGS & JEWELRY LAWS:
-  * setting_ready: Look closely at the mounting. If cabochon is in a bezel setting, MUST return "Bezel Setting - Ready to Wear". If prong setting, return "Prong Setting - Ready to Wear". If wire wrapped, return "Wire Wrapped - Ready to Wear". NEVER LEAVE BLANK FOR MOUNTED STONES!
-  * wire_material: If wire wrapped, output the wire metal (e.g., "Antiqued Copper Wire"). If in a bezel or prong setting with zero wire, MUST return strictly: "None — Bezel Mounted".
-  * primary_medium: State the primary metal or mounting material. Use exactly one of these: ".925 Sterling Silver Bezel", "Silver Plated Bezel", "Gold Plated Bezel", "Copper Bezel", "Gold Tone Alloy Bezel", "Silver Tone Alloy Bezel", "Bronze Tone Alloy Bezel", "Glue-On Loop", "Drilled — Pinch Bail" (loose stone with a drilled hole and pinch bail through it, no bezel). Match the tone and finish visible in the photo. Do not leave blank!
+- MANDATORY BENCH FINDINGS & JEWELRY LAWS (CRITICAL FOR LOOSE STONES):
+  * THE LOOSE STONE OVERRIDE: If this is a bare, loose stone with NO metal, setting, wire, or bail, you MUST return strictly "None" for setting_ready, wire_material, primary_medium, secondary_medium, chain_material, and bail_included. Do NOT guess or hallucinate metal for a bare rock.
+  * setting_ready: Look closely at the mounting. If cabochon is in a bezel setting, MUST return "Bezel Setting - Ready to Wear". If prong setting, return "Prong Setting - Ready to Wear". If wire wrapped, return "Wire Wrapped - Ready to Wear". If loose or unmounted, return "None".
+  * wire_material: If wire wrapped, output the wire metal (e.g., "Antiqued Copper Wire"). If in a bezel or prong setting with zero wire, or loose, MUST return strictly: "None".
+  * primary_medium: State the primary metal or mounting material. Use exactly one of these: ".925 Sterling Silver Bezel", "Silver Plated Bezel", "Gold Plated Bezel", "Copper Bezel", "Gold Tone Alloy Bezel", "Silver Tone Alloy Bezel", "Bronze Tone Alloy Bezel", "Glue-On Loop", "Drilled — Pinch Bail". Match the tone and finish visible in the photo. If loose and unmounted, return "None".
   * surface_finish: Describe the stone's surface finish as seen in the photo. Use terms like "High Polish", "Matte", "Satin", "Natural/Raw", "Tumbled". Do not leave blank.
-  * secondary_medium: Look ONLY for a second distinct METAL component (e.g., a gold accent ring). If you see small stones or crystals on a bail, supply "None" for secondary_medium. Do NOT describe bail decorations here. If no second metal component exists, return strictly "None".
-  * bail_included: Look at the TOP of the piece. If there is a separate small clip or loop pinched onto the bezel (with or without accent stones), return "Silver Plated Pinch Bail". If the bail is welded or formed as part of the bezel frame with no separate clip, return "Integrated Bezel Bail". If there is no bail at all, return "None". Do NOT guess — only report what is physically visible.`;
+  * secondary_medium: Look ONLY for a second distinct METAL component. If no second metal component exists, or if loose, return strictly "None".
+  * bail_included: Look at the TOP of the piece. If there is a separate small clip or loop pinched onto the bezel, return "Silver Plated Pinch Bail". If the bail is welded/integrated, return "Integrated Bezel Bail". If there is no bail at all, or if loose, return "None".`;
 }
 
 async function queryPostgres(sql, params) {
@@ -337,6 +339,7 @@ export const action = async ({ request }) => {
       const titleSegments = productTitle.split(/\s+[-—–]\s+/);
       const derivedFamily = titleSegments[0]?.trim() || stone_family;
       const derivedOrigin = titleSegments[1]?.trim() || "";
+      const pieceNameSegment = titleSegments[2]?.trim() || "New Piece";
 
       try {
         const geoFields = await getGeoData(admin, derivedFamily);
@@ -420,6 +423,7 @@ export const action = async ({ request }) => {
                     properties: {
                       generated_description: { type: "STRING" },
                       seo_title: { type: "STRING" },
+                      origin_location: { type: "STRING" },
                       primary_color: { type: "STRING" },
                       cut_and_shape: { type: "STRING" },
                       surface_finish: { type: "STRING" },
@@ -468,6 +472,8 @@ export const action = async ({ request }) => {
           }
         }
 
+        const correctedOrigin = visionFields.origin_location || derivedOrigin;
+
         return Response.json({
           tab2Data: {
             ...geoFields,
@@ -475,7 +481,8 @@ export const action = async ({ request }) => {
             origin_story,
             stone_family: derivedFamily,
             origin_handle: activeOriginHandle,
-            origin_location: derivedOrigin,
+            origin_location: correctedOrigin,
+            shopify_title: `${derivedFamily} — ${correctedOrigin} — ${pieceNameSegment}`,
             collection_name: collectionData.name,
             collection_location: collectionData.name.replace(" Collection", ""),
             seo_title: visionFields.seo_title || manual_seo_title,
@@ -517,8 +524,28 @@ export const action = async ({ request }) => {
 
       const matchedPage = pagesList.find(p => p.url.includes(resolvedHandle));
       const extractedStory = matchedPage ? matchedPage.excerpt : "";
+      
+      const pagesMenu = pagesList.map(p => `- Title: "${p.title}" | URL: ${p.url}`).join("\n");
+      const collectionsMenu = collectionsList.map(c => `- Title: "${c.title}" | URL: ${c.url}`).join("\n");
 
-      const promptText = `You are an expert lapidary assistant for Rockhound Studio. Analyze these segments:\n- Family: "${segment1}", Origin: "${segment2}", Title: "${segment3}"\nSet origin_handle strictly to: "${resolvedHandle}". Use "The Shopped Rock" for location if it is a vendor. stone_family must be exactly one of: ${stonePicklist} - pick the closest match to the Family segment. Correct typos and partial names. Return the exact string from this list, no variations, no lowercase.\nReturn valid JSON with these exact keys: stone_family, piece_name, origin_handle, origin_location, collection_name, collection_location, seo_title. Generate a keyword-rich seo_title for Google using the family and keywords like "Handcrafted" or "OOAK Lapidary Art". No markup. No extra keys.`;
+      const promptText = `You are an expert lapidary assistant for Rockhound Studio. Analyze these segments:
+- Family: "${segment1}"
+- Origin: "${segment2}"
+- Title: "${segment3}"
+
+LIVE STORE DIRECTORY:
+VALID PAGES IN STORE:
+${pagesMenu || "No live pages found."}
+
+VALID COLLECTIONS IN STORE:
+${collectionsMenu || "No live collections found."}
+
+INSTRUCTIONS:
+1. Check the Origin segment ("${segment2}") against the LIVE STORE DIRECTORY above. Auto-correct the 'origin_location', 'collection_name', and 'collection_location' to exactly match the live store titles (e.g. if the origin segment is an abbreviation like "cda", expand it to the full live page name). Use "The Shopped Rock" if it is a vendor.
+2. Set origin_handle strictly to: "${resolvedHandle}". 
+3. stone_family must be exactly one of: ${stonePicklist} - pick the closest match to the Family segment. Correct typos.
+
+Return valid JSON with these exact keys: stone_family, piece_name, origin_handle, origin_location, collection_name, collection_location, seo_title. Generate a keyword-rich seo_title for Google using the family and keywords like "Handcrafted" or "OOAK Lapidary Art". No markup. No extra keys.`;
 
       const geminiRes = await fetchWithRetry("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY, {
         method: "POST", 
@@ -575,9 +602,9 @@ export const action = async ({ request }) => {
           ...dbGeoData,
           origin_handle: resolvedHandle,
           origin_story: extractedStory,
-          origin_location: segment2,
-          collection_name: collectionData.name,
-          collection_location: collectionData.name.replace(" Collection", ""),
+          origin_location: parsed.origin_location || segment2,
+          collection_name: parsed.collection_name || collectionData.name,
+          collection_location: parsed.collection_location || collectionData.name.replace(" Collection", ""),
           canonical_title: parsed.stone_family + " — " + displayName + " — " + segment3,
           seo_title: parsed.seo_title || seo_title
         };
@@ -656,6 +683,7 @@ export const action = async ({ request }) => {
               properties: {
                 generated_description: { type: "STRING" },
                 seo_title: { type: "STRING" },
+                origin_location: { type: "STRING" },
                 primary_color: { type: "STRING" },
                 cut_and_shape: { type: "STRING" },
                 surface_finish: { type: "STRING" },
@@ -720,7 +748,7 @@ export const action = async ({ request }) => {
             bail_included: resolved_bail_included,
             origin_story: extractedStory,
             origin_handle: defaultOriginSlug,
-            origin_location: originSegment,
+            origin_location: parsedVision.origin_location || originSegment,
             collection_name: defaultCollection.name,
             collection_location: defaultCollection.name.replace(" Collection", "")
           }
