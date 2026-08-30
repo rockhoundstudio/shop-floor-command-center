@@ -32,7 +32,7 @@ function buildMasterVisionPrompt({
 - cut_and_shape
 - surface_finish
 - honest_flaws_and_character
-- origin_location: CRITICAL! Look at the provided Origin Segment ("${originSegment}"). Cross-reference it with the LIVE STORE DIRECTORY above and return the fully expanded, correct name (e.g., expand "cda" to "North Fork Coeur d'Alene" or "yakima" to "Yakima River Jasper").
+- origin_location: CRITICAL! Look at the provided Origin Segment ("${originSegment}"). Cross-reference it with the LIVE STORE DIRECTORY above and return the fully expanded, correct geographic name. **NEVER include prefixes like "Shop Lore:", "The", or "Collection" in this field.** (e.g., strictly return "Yakima River Canyon" or "North Fork Coeur d'Alene").
 - primary_use: Smart Switch! Force strictly to best match (e.g., "Pendant (Finished Jewelry)", "Necklace", "Ring / Bezel Setting", "Cabochon", "Wire Wrap (Finished Jewelry)", "Loose Stone"). If a chain is visible, classify as "Necklace".
 - primary_medium
 - setting_ready
@@ -114,7 +114,7 @@ async function fetchWithRetry(url, options, retries = 3, delay = 1500) {
     try {
       const res = await fetch(url, { ...options, signal: controller.signal });
       clearTimeout(id);
-      if (res.status !== 503 && res.status !== 429) {
+      if (res.status !== 503 && res.status !== 429 && res.status !== 500) {
         return res;
       }
       console.warn(`[Gemini Engine] API returned status ${res.status}. Retry ${i + 1} of ${retries} in ${delay}ms...`);
@@ -380,10 +380,6 @@ export const action = async ({ request }) => {
         const authenticity = "Genuine natural stone, hand-collected by Bob & Janyce, Rockhound Studio.";
         const rarity = "One-of-a-kind — no two stones are alike.";
 
-        const manual_seo_title = derivedOrigin
-          ? `Handcrafted ${derivedFamily} — ${derivedOrigin} — OOAK Lapidary Art`
-          : `Handcrafted ${derivedFamily} — OOAK Lapidary Art`;
-
         let visionFields = {};
         if (imageUrl) {
           try {
@@ -480,6 +476,9 @@ export const action = async ({ request }) => {
         }
 
         const correctedOrigin = visionFields.origin_location || derivedOrigin;
+        const manual_seo_title = correctedOrigin
+          ? `Handcrafted ${derivedFamily} — ${correctedOrigin} — OOAK Lapidary Art`
+          : `Handcrafted ${derivedFamily} — OOAK Lapidary Art`;
 
         return Response.json({
           tab2Data: {
@@ -551,7 +550,7 @@ VALID COLLECTIONS IN STORE:
 ${collectionsMenu || "No live collections found."}
 
 INSTRUCTIONS:
-1. Check the Origin segment ("${segment2}") against the LIVE STORE DIRECTORY above. Auto-correct the 'origin_location', 'collection_name', and 'collection_location' to exactly match the live store titles (e.g. if the origin segment is an abbreviation like "cda", expand it to the full live page name). Use "The Shopped Rock" if it is a vendor.
+1. Check the Origin segment ("${segment2}") against the LIVE STORE DIRECTORY above. Auto-correct the 'origin_location', 'collection_name', and 'collection_location' to exactly match the live store titles. **CRITICAL: NEVER include the prefixes "Shop Lore:", "The", or "Collection" in the origin_location field.** Extract strictly the geographic name (e.g. expand "cda" to "North Fork Coeur d'Alene"). Use "The Shopped Rock" if it is a vendor.
 2. Set origin_handle strictly to: "${resolvedHandle}". 
 3. stone_family must be exactly one of: ${stonePicklist} - pick the closest match to the Family segment. Correct typos.
 
@@ -595,15 +594,15 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
         
         const dbGeoData = await getGeoData(admin, parsed.stone_family || segment1);
         const matchedOriginPage = pagesList.find(p => p.url.includes(resolvedHandle));
-        const displayName = matchedOriginPage ? matchedOriginPage.title.replace(/^The\s+/i, "").trim() : collectionData.name.replace(/\s+Collection$/i, "").trim();
+        const displayName = matchedOriginPage ? matchedOriginPage.title.replace(/^(Shop Lore|Collection)[\s:\-]+/i, "").replace(/^The\s+/i, "").trim() : collectionData.name.replace(/\s+Collection$/i, "").trim();
         
         const seoTitleParts = [];
         if (parsed.stone_family || segment1) seoTitleParts.push(parsed.stone_family || segment1);
         
         let seo_title = "";
         if (seoTitleParts.length > 0) {
-          seo_title = segment2
-            ? `${seoTitleParts.join(" ")} — Found at ${segment2} — Rockhound Studio`
+          seo_title = parsed.origin_location || segment2
+            ? `${seoTitleParts.join(" ")} — Found at ${parsed.origin_location || segment2} — Rockhound Studio`
             : `${seoTitleParts.join(" ")} — Rockhound Studio`;
         }
 
@@ -615,7 +614,7 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
           origin_location: parsed.origin_location || segment2,
           collection_name: parsed.collection_name || collectionData.name,
           collection_location: parsed.collection_location || collectionData.name.replace(" Collection", ""),
-          canonical_title: parsed.stone_family + " — " + displayName + " — " + segment3,
+          canonical_title: parsed.stone_family + " — " + (parsed.origin_location || displayName) + " — " + segment3,
           seo_title: parsed.seo_title || seo_title,
           age_group: "adult",
           target_gender: "Unisex",
@@ -657,6 +656,11 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
 
       let imageBase64 = clientBase64 && clientBase64 !== "undefined" ? String(clientBase64).trim() : "";
       let imageMimeType = clientMime;
+      
+      // STRIP THE DATA URI PREFIX SO GEMINI DOESN'T CRASH (Intermittent Tab 1 failure fix)
+      if (imageBase64.includes(",")) {
+        imageBase64 = imageBase64.split(",")[1];
+      }
 
       if (!imageBase64) {
         const rawImageUrl = body.get("imageUrl");
