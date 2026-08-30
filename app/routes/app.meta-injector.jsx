@@ -21,6 +21,13 @@ export const action = engineAction;
 export default function MetaInjectorV2() {
   const { products } = useLoaderData() || {};
   const navigate = useNavigate();
+  
+  // ==========================================
+  // HARD-WIRED RELAYS (FETCHERS)
+  // WARNING: Child tabs MUST explicitly route these to the isolated files!
+  // Sidekick Save Example: injectFetcher.submit(data, { method: "post", action: "/app/meta-injector-api" })
+  // Sidekick Autofill Example: autoFillFetcher.submit(data, { method: "post", action: "/app/meta-injector-autofill" })
+  // ==========================================
   const fetcher = useFetcher();
   const autoFillFetcher = useFetcher();
   const tab2Fetcher = useFetcher();

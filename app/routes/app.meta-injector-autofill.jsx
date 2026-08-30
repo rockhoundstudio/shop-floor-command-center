@@ -490,7 +490,6 @@ export const action = async ({ request }) => {
             authenticity,
             rarity,
             treated: "No",
-            is_one_of_a_kind: "Yes",
             is_ooak: "Yes"
           }
         });
