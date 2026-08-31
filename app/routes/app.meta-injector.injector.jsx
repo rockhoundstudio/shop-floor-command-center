@@ -232,8 +232,13 @@ export function NewProductIntakeTab({ fetcher }) {
     const segments = value.split(/\s+[-—–]\s+/);
     if (segments.length === 3) {
       setLastScannedPieceId(id);
+      
+      const formData = new FormData();
+      formData.append("intent", "titleParse");
+      formData.append("pieceName", value);
+
       autoFillFetcher.submit(
-        { intent: "titleParse", pieceName: value },
+        formData,
         { method: "post", action: "/app/meta-injector-autofill" }
       );
     }
@@ -489,16 +494,18 @@ export function NewProductIntakeTab({ fetcher }) {
         const base64 = scannedPiece ? scannedPiece.imageBase64 : "";
         const mime = scannedPiece ? scannedPiece.imageMimeType : "image/jpeg";
 
+        // THE FIX: Forcing FormData to prevent stringification limits dropping the Base64 payload
+        const formData = new FormData();
+        formData.append("intent", "visionScan");
+        formData.append("pieceId", pid);
+        formData.append("imageUrl", resourceUrl);
+        formData.append("pieceName", pName);
+        formData.append("collectionName", cName);
+        formData.append("imageBase64", base64);
+        formData.append("imageMimeType", mime);
+
         visionFetcher.submit(
-          { 
-            intent: "visionScan", 
-            pieceId: pid, 
-            imageUrl: resourceUrl,
-            pieceName: pName,
-            collectionName: cName,
-            imageBase64: base64,
-            imageMimeType: mime
-          },
+          formData,
           { method: "post", action: "/app/meta-injector-autofill" }
         );
       })();
@@ -553,7 +560,9 @@ export function NewProductIntakeTab({ fetcher }) {
       (isScan && isError) && (() => {
         setPieces(prev => prev.map(p => {
           let updated = { ...p };
-          (p.id === data.pieceId) && (() => {
+          // If the pieceId isn't returned due to a hard crash, default to the first piece in the array
+          const targetId = data.pieceId || latestPieces.current[0]?.id;
+          (p.id === targetId) && (() => {
             let errStr = "Scan failed";
             data.error && (errStr = data.error);
             updated.scanError = errStr;
