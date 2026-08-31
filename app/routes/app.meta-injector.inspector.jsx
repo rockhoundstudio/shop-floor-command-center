@@ -36,7 +36,7 @@ const FULL_META_GROUPS = [
 ];
 
 const NAMESPACE_MAP = {
-  custom: ["piece_name", "primary_medium", "secondary_medium", "handcrafted_by", "stone_family", "color", "cut_and_shape", "surface_finish", "dimensions_mm", "weight_grams", "shipping_weight_oz", "price", "collection_name", "collection_location", "primary_use", "bail_included", "is_ooak", "treated", "found_object", "wire_material", "setting_ready", "material", "origin_story", "origin_handle", "honest_flaws_and_character", "artist_notes", "generated_description", "rescued_by", "stone_shape", "target_gender", "age_group", "condition", "color_pattern", "jewelry_type", "necklace_design", "chain_link_type", "jewelry_finding_type", "custom_product", "seo_title"],
+  custom: ["piece_name", "primary_medium", "secondary_medium", "handcrafted_by", "stone_family", "color", "cut_and_shape", "surface_finish", "dimensions_mm", "weight_grams", "shipping_weight_oz", "price", "collection_name", "collection_location", "primary_use", "bail_included", "is_ooak", "treated", "found_object", "wire_material", "setting_ready", "material", "origin_story", "origin_handle", "honest_flaws_and_character", "artist_notes", "generated_description", "rescued_by", "stone_shape", "target_gender", "age_group", "condition", "color_pattern", "jewelry_type", "necklace_design", "chain_link_type", "jewelry_finding_type", "custom_product", "seo_title", "google_product_category"],
   geo: ["mohs_hardness", "luster", "fracture_pattern", "cleavage", "specific_gravity", "diaphaneity", "crystal_system", "geological_era", "geological_age", "mineral_class", "rock_composition", "rock_formation"]
 };
 
@@ -116,13 +116,18 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
       if (newForm[camel] !== undefined) { if (!newForm[snake]) newForm[snake] = newForm[camel]; delete newForm[camel]; }
     });
 
+    // 🟢 THE GOOGLE 4 SEO FIELDS - Hardcoded Initial Defaults (DO NOT LOSE)
     if (!newFullForm.target_gender) newFullForm.target_gender = "Unisex";
     if (!newFullForm.age_group) newFullForm.age_group = "adult";
     if (!newFullForm.condition) newFullForm.condition = "new";
-    if (!newFullForm.handcrafted_by) newFullForm.handcrafted_by = "Bob & Janyce, Rockhound Studio";
+    if (!newFullForm.google_product_category) newFullForm.google_product_category = "Apparel & Accessories > Jewelry";
+
     if (!newForm.target_gender) newForm.target_gender = "Unisex";
     if (!newForm.age_group) newForm.age_group = "adult";
     if (!newForm.condition) newForm.condition = "new";
+    if (!newForm.google_product_category) newForm.google_product_category = "Apparel & Accessories > Jewelry";
+
+    if (!newFullForm.handcrafted_by) newFullForm.handcrafted_by = "Bob & Janyce, Rockhound Studio";
     if (!newForm.handcrafted_by) newForm.handcrafted_by = "Bob & Janyce, Rockhound Studio";
 
     if (!newFullForm.shipping_weight_oz && newFullForm.weight_grams) {
@@ -162,7 +167,7 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
 
     const customPM = product?.metafields?.edges?.find(e => e.node.namespace === "custom" && e.node.key === "primary_medium")?.node?.value;
     let bestPM = customPM || newForm.base_stone_type || "";
-    if (bestPM && bestPM.startsWith("[")) { try { const arr = JSON.parse(bestPM); bestPM = Array.isArray(arr) ? arr[0] : bestPM; } catch (e) { } }
+    if (bestPM && bestPM.startsWith("[")) { try { const arr = JSON.parse(bestPM); bestPM = Array.isArray(arr) ? bestPM : bestPM; } catch (e) { } }
     if (bestPM === "Stone") bestPM = ""; 
     
     newFullForm.primary_medium = bestPM;
@@ -353,6 +358,12 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
             }
           });
 
+          // 🟢 THE GOOGLE 4 SEO FIELDS - Hardwire Dynamic Overrides from Backend Auto-Fill
+          if (tab2Data.age_group) updatedState.age_group = tab2Data.age_group;
+          if (tab2Data.target_gender) updatedState.target_gender = tab2Data.target_gender;
+          if (tab2Data.condition) updatedState.condition = tab2Data.condition;
+          if (tab2Data.google_product_category) updatedState.google_product_category = tab2Data.google_product_category;
+
           if (productTitle) updatedState.piece_name = productTitle.includes(" \u2014 ") ? productTitle.split(" \u2014 ").pop().trim() : productTitle;
 
           const REQUIRED_TAB2_FIELDS = [{ key: "generated_description", label: "Generated Description" }, { key: "color_pattern", label: "Color Pattern" }, { key: "collection_location", label: "Collection Location" }, { key: "origin_handle", label: "Origin Handle" }];
@@ -448,12 +459,15 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
     const isOptionalEmpty = !isFilled && !reqKeys.includes(field.key);
     const isEmpty = !isFilled;
     
+    // 🟢 Dynamic Badge Colors logic
+    let dotFillColor = "#eab308"; // Optional empty
+    if (isFilled) dotFillColor = "#22c55e"; // Success filled
+    if (isRequiredEmpty) dotFillColor = "#ef4444"; // Error required
+
     const labelNode = (
       <div style={{ display: 'flex', alignItems: 'center' }}>
         <svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg" style={{ minWidth: '18px', marginRight: '8px' }}>
-          {isRequiredEmpty && <circle cx="9" cy="9" r="9" fill="#ef4444" />}
-          {isFilled && <circle cx="9" cy="9" r="9" fill="#22c55e" />}
-          {isOptionalEmpty && <circle cx="9" cy="9" r="9" fill="#eab308" />}
+          <circle cx="9" cy="9" r="9" fill={dotFillColor} />
         </svg>
         <span style={{ fontSize: '14px', fontWeight: '500' }}>{field.label}</span>
       </div>
@@ -559,7 +573,7 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
                 </div>
                 <Collapsible id="section-3-collapsible" open={isSection3Open} transition={{ duration: '200ms', timingFunction: 'ease-in-out' }}>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px', marginTop: '16px' }}>
-                    {["primary_use", "setting_ready", "wire_material", "bail_included", "color_pattern", "material", "jewelry_type", "necklace_design", "chain_link_type", "jewelry_finding_type", "target_gender", "age_group", "condition", "custom_product", "seo_title"].map(renderFullMetaField)}
+                    {["primary_use", "setting_ready", "wire_material", "bail_included", "color_pattern", "material", "jewelry_type", "necklace_design", "chain_link_type", "jewelry_finding_type", "target_gender", "age_group", "condition", "custom_product", "seo_title", "google_product_category"].map(renderFullMetaField)}
                   </div>
                 </Collapsible>
               </BlockStack>
