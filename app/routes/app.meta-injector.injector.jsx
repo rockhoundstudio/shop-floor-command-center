@@ -190,6 +190,7 @@ export function NewProductIntakeTab({ fetcher }) {
   const [errorMessage, setErrorMessage] = useState("");
   const [generatedDescription, setGeneratedDescription] = useState("");
   const [geoToast, setGeoToast] = useState(false);
+  const [reportToastActive, setReportToastActive] = useState(false);
   
   const [titleToastActive, setTitleToastActive] = useState(false);
   const [titleToastMsg, setTitleToastMsg] = useState("");
@@ -354,6 +355,31 @@ export function NewProductIntakeTab({ fetcher }) {
   const handleRemoveRow = useCallback((id) => {
     setPieces(prev => prev.filter(p => p.id !== id));
   }, []);
+
+  const handleCopyFieldReportTab1 = useCallback(() => {
+    const p = pieces[0] || {};
+    const report = `=== TAB 1 FIELD REPORT ===
+piece_name: ${p.piece_name || "EMPTY"}
+generated_description: ${p.generated_description || "EMPTY"}
+seo_title: ${p.seo_title || "EMPTY"}
+artist_notes: ${p.artist_notes || "EMPTY"}
+price: ${p.price || "EMPTY"}
+weight_grams: ${p.weight_grams || "EMPTY"}
+shipping_weight_oz: ${p.shipping_weight_oz || "EMPTY"}
+dimensions_mm: ${p.dimensions_mm || "EMPTY"}
+cut_and_shape: ${p.cut_and_shape || "EMPTY"}
+surface_finish: ${p.surface_finish || "EMPTY"}
+color: ${p.color || "EMPTY"}
+imageBase64: ${p.imageBase64 ? "PRESENT" : "EMPTY"}
+imageMimeType: ${p.imageMimeType || "EMPTY"}
+stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) ? p.stagedResourceUrls.join(", ") : "EMPTY"}
+=== END REPORT ===`;
+
+    navigator.clipboard.writeText(report).then(() => {
+      setReportToastActive(true);
+      setTimeout(() => setReportToastActive(false), 3000);
+    }).catch(err => console.error("Clipboard copy failed", err));
+  }, [pieces]);
 
   const handleCreateAll = useCallback(() => {
     setStatusMessage("");
@@ -1341,6 +1367,17 @@ export function NewProductIntakeTab({ fetcher }) {
           </div>
         )}
 
+        <div style={{ minHeight: "54px", marginBottom: "16px" }}>
+          <Button
+            size="large"
+            tone="base"
+            fullWidth
+            onClick={handleCopyFieldReportTab1}
+          >
+            Copy Field Report
+          </Button>
+        </div>
+
         <div style={{ minHeight: "54px" }}>
           {statusMessage !== "" ? (
             <Button
@@ -1452,6 +1489,7 @@ export function NewProductIntakeTab({ fetcher }) {
         </div>
       </BlockStack>
       {geoToast && <Toast content="Geo data loaded" onDismiss={() => setGeoToast(false)} />}
+      {reportToastActive && <Toast content="Field Report Copied!" onDismiss={() => setReportToastActive(false)} />}
       {titleToastActive && (
         <Toast
           content={titleToastMsg}
