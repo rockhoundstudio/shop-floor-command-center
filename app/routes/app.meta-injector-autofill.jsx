@@ -465,7 +465,7 @@ export const action = async ({ request }) => {
               if (visionFields.generated_description) {
                   const desc = visionFields.generated_description;
                   const lowerDesc = desc.toLowerCase();
-                  if (desc.startsWith("[VISION API CRASH]") || desc.startsWith("[") || lowerDesc.includes("timed out") || lowerDesc.includes("api") || lowerDesc.includes("error")) {
+                  if (desc.startsWith("[VISION API CRASH]") || desc.startsWith("[API CRASH]") || desc.startsWith("[JSON PARSE ERROR]") || lowerDesc.includes("timed out")) {
                       visionFields.generated_description = "";
                   }
               }
@@ -760,7 +760,7 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
 
         let final_desc = parsedVision.generated_description || parsedVision.description || "";
         const lowerDesc = final_desc.toLowerCase();
-        if (final_desc.startsWith("[VISION API CRASH]") || final_desc.startsWith("[") || lowerDesc.includes("timed out") || lowerDesc.includes("api") || lowerDesc.includes("error")) {
+        if (final_desc.startsWith("[VISION API CRASH]") || final_desc.startsWith("[API CRASH]") || final_desc.startsWith("[JSON PARSE ERROR]") || lowerDesc.includes("timed out")) {
             final_desc = "";
         }
 
