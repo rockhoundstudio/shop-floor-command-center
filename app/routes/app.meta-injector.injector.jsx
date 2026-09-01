@@ -488,26 +488,48 @@ export function NewProductIntakeTab({ fetcher }) {
           p.id === pid ? { ...p, stagedResourceUrls: [resourceUrl] } : p
         ));
 
-        const scannedPiece = latestPieces.current.find(p => p.id === pid);
-        const pName = scannedPiece ? scannedPiece.piece_name : "";
-        const cName = latestShared.current.collection_name || "";
-        const base64 = scannedPiece ? scannedPiece.imageBase64 : "";
-        const mime = scannedPiece ? scannedPiece.imageMimeType : "image/jpeg";
+        const executeVisionScan = (finalBase64, finalMime) => {
+          const currentPiece = latestPieces.current.find(p => p.id === pid);
+          const pName = currentPiece ? currentPiece.piece_name : "";
+          const cName = latestShared.current.collection_name || "";
 
-        // THE FIX: Forcing FormData to prevent stringification limits dropping the Base64 payload
-        const formData = new FormData();
-        formData.append("intent", "visionScan");
-        formData.append("pieceId", pid);
-        formData.append("imageUrl", resourceUrl);
-        formData.append("pieceName", pName);
-        formData.append("collectionName", cName);
-        formData.append("imageBase64", base64);
-        formData.append("imageMimeType", mime);
+          // THE FIX: Forcing FormData to prevent stringification limits dropping the Base64 payload
+          const formData = new FormData();
+          formData.append("intent", "visionScan");
+          formData.append("pieceId", pid);
+          formData.append("imageUrl", resourceUrl);
+          formData.append("pieceName", pName);
+          formData.append("collectionName", cName);
+          formData.append("imageBase64", finalBase64);
+          formData.append("imageMimeType", finalMime);
 
-        visionFetcher.submit(
-          formData,
-          { method: "post", action: "/app/meta-injector-autofill" }
-        );
+          visionFetcher.submit(
+            formData,
+            { method: "post", action: "/app/meta-injector-autofill" }
+          );
+        };
+
+        const initialPiece = latestPieces.current.find(p => p.id === pid);
+        if (initialPiece && initialPiece.imageBase64) {
+          executeVisionScan(initialPiece.imageBase64, initialPiece.imageMimeType);
+        } else {
+          let attempts = 0;
+          const maxAttempts = 25; // 25 polls * 200ms = 5 seconds
+          const pollInterval = setInterval(() => {
+            attempts++;
+            const currentPiece = latestPieces.current.find(p => p.id === pid);
+            const currentBase64 = currentPiece ? currentPiece.imageBase64 : "";
+            const currentMime = currentPiece ? currentPiece.imageMimeType : "image/jpeg";
+
+            if (currentBase64) {
+              clearInterval(pollInterval);
+              executeVisionScan(currentBase64, currentMime);
+            } else if (attempts >= maxAttempts) {
+              clearInterval(pollInterval);
+              executeVisionScan("", currentMime);
+            }
+          }, 200);
+        }
       })();
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
