@@ -85,7 +85,7 @@ async function saveToStoneCache(stoneName, geoResult) {
       console.log("[StoneCache] Saved new entry for:", stoneName);
     }
   } catch (err) {
-    console.error("[StoneCache] Save failed for:", stoneName, err.message);
+    console.error("[StoneCache] Save failed for:", stoneName, err);
   }
 }
 
@@ -110,7 +110,7 @@ const SHOPPED_ROCK_VENDORS = ["Richardson's Rock Ranch", "Irv's Rock and Jewelry
 async function fetchWithRetry(url, options, retries = 3, delay = 1500) {
   for (let i = 0; i < retries; i++) {
     const controller = new AbortController();
-    const id = setTimeout(() => controller.abort(), 20000);
+    const id = setTimeout(() => controller.abort(), 60000);
     try {
       const res = await fetch(url, { ...options, signal: controller.signal });
       clearTimeout(id);
@@ -120,7 +120,7 @@ async function fetchWithRetry(url, options, retries = 3, delay = 1500) {
       console.warn(`[Gemini Engine] API returned status ${res.status}. Retry ${i + 1} of ${retries} in ${delay}ms...`);
     } catch (err) {
       clearTimeout(id);
-      console.warn(`[Gemini Engine] Fetch error: ${err.message}. Retry ${i + 1} of ${retries}...`);
+      console.error(`[Gemini Engine] Fetch error on retry ${i + 1} of ${retries}:`, err);
     }
     
     if (i < retries - 1) {
@@ -173,7 +173,7 @@ async function getLiveStoreDirectory(admin) {
       }));
     }
   } catch (err) {
-    console.error("[Live Directory Scanner] Failed to fetch store inventory:", err.message);
+    console.error("[Live Directory Scanner] Failed to fetch store inventory:", err);
   }
   return { pagesList, collectionsList };
 }
@@ -242,7 +242,7 @@ async function getGeoData(admin, stoneFamily) {
       };
     }
   } catch (err) {
-    console.warn("[Geo Tier 1] geoLibrary lookup failed:", err.message);
+    console.error("[Geo Tier 1] geoLibrary lookup failed:", err);
   }
 
   try {
@@ -276,13 +276,13 @@ async function getGeoData(admin, stoneFamily) {
       }
     }
   } catch (err) {
-    console.error("[Geo Tier 2] PostgreSQL StoneProfile failed:", err.message);
+    console.error("[Geo Tier 2] PostgreSQL StoneProfile failed:", err);
   }
 
   try {
     if (MINDAT_API_KEY) {
       const controller = new AbortController();
-      const id = setTimeout(() => controller.abort(), 20000);
+      const id = setTimeout(() => controller.abort(), 60000);
       const mindatRes = await fetch(`https://api.mindat.org/minerals/?name=${encodeURIComponent(stoneFamily)}&format=json`, { 
         headers: { Authorization: `Token ${MINDAT_API_KEY}` },
         signal: controller.signal
@@ -306,7 +306,7 @@ async function getGeoData(admin, stoneFamily) {
       }
     }
   } catch (err) {
-    console.error("[Geo Tier 3] Mindat failed:", err.message);
+    console.error("[Geo Tier 3] Mindat failed:", err);
   }
 
   return { ...emptyGeo, geoSource: "none" };
@@ -324,7 +324,7 @@ export const action = async ({ request }) => {
         const geoFields = await getGeoData(admin, stoneFamily); 
         return Response.json({ geoFields }); 
       } catch (err) { 
-        console.error("[geoLookup] getGeoData crashed:", err.message); 
+        console.error("[geoLookup] getGeoData crashed:", err); 
         return Response.json({ geoFields: {} }); 
       }
     }
@@ -373,6 +373,7 @@ export const action = async ({ request }) => {
             const dateJson = await dateRes.json();
             collection_date = dateJson?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ?? "";
           } catch (e) {
+            console.error("[tab2AutoFill] Collection date extraction failed:", e);
             collection_date = "";
           }
         }
@@ -385,7 +386,7 @@ export const action = async ({ request }) => {
           try {
             const targetUrl = imageUrl.includes("?") ? `${imageUrl}&width=800` : `${imageUrl}?width=800`;
             const controller = new AbortController();
-            const id = setTimeout(() => controller.abort(), 20000);
+            const id = setTimeout(() => controller.abort(), 60000);
             const imageRes = await fetch(targetUrl, { signal: controller.signal });
             clearTimeout(id);
 
@@ -441,6 +442,9 @@ export const action = async ({ request }) => {
 
             if (geminiRes.ok) {
               const geminiData = await geminiRes.json();
+              if (!geminiData || !geminiData.candidates || geminiData.candidates.length === 0) {
+                 throw new Error("Gemini API returned empty or malformed response structure.");
+              }
               let cleanJson = (geminiData.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
               const first = cleanJson.indexOf("{");
               const last = cleanJson.lastIndexOf("}");
@@ -449,7 +453,7 @@ export const action = async ({ request }) => {
               try {
                 visionFields = JSON.parse(cleanJson);
               } catch (parseErr) {
-                console.warn("[tab2AutoFill] JSON Parse Error:", parseErr.message, "Raw:", cleanJson);
+                console.error("[tab2AutoFill] JSON Parse Error:", parseErr, "Raw:", cleanJson);
                 visionFields = { generated_description: `[JSON PARSE ERROR] ${parseErr.message}` };
               }
               
@@ -470,7 +474,7 @@ export const action = async ({ request }) => {
                throw new Error(`Gemini API returned status: ${geminiRes.status} - ${errText}`);
             }
           } catch (visionErr) {
-            console.warn("[tab2AutoFill] Vision scan failed:", visionErr.message);
+            console.error("[tab2AutoFill] Vision scan failed:", visionErr);
             visionFields = { generated_description: `[API CRASH] ${visionErr.message}` };
           }
         }
@@ -504,7 +508,7 @@ export const action = async ({ request }) => {
           }
         });
       } catch (err) {
-        console.error("[tab2AutoFill] crashed:", err.message);
+        console.error("[tab2AutoFill] crashed:", err);
         return Response.json({ tab2Data: {} });
       }
     }
@@ -524,7 +528,7 @@ export const action = async ({ request }) => {
           stonePicklist = stoneRows.map(r => r.stoneName).join(", ");
         }
       } catch (err) {
-        console.warn("[titleParse] StoneProfile picklist fetch failed, using fallback:", err.message);
+        console.error("[titleParse] StoneProfile picklist fetch failed, using fallback:", err);
       }
 
       const { pagesList, collectionsList } = await getLiveStoreDirectory(admin);
@@ -583,6 +587,9 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
 
       if (geminiRes.ok) {
         const data = await geminiRes.json();
+        if (!data || !data.candidates || data.candidates.length === 0) {
+          throw new Error("Gemini API returned empty or malformed response structure during titleParse.");
+        }
         let cleanJson = (data.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
         const first = cleanJson.indexOf("{");
         const last = cleanJson.lastIndexOf("}");
@@ -659,7 +666,7 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
       
       // STRIP THE DATA URI PREFIX SO GEMINI DOESN'T CRASH (Intermittent Tab 1 failure fix)
       if (imageBase64.includes(",")) {
-        imageBase64 = imageBase64.split(",")[1];
+        imageBase64 = imageBase64.substring(imageBase64.indexOf(",") + 1);
       }
 
       if (!imageBase64) {
@@ -667,7 +674,7 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
         if (rawImageUrl) {
           const targetUrl = rawImageUrl.includes("?") ? `${rawImageUrl}&width=800` : `${rawImageUrl}?width=800`;
           const controller = new AbortController();
-          const id = setTimeout(() => controller.abort(), 20000);
+          const id = setTimeout(() => controller.abort(), 60000);
           const imageRes = await fetch(targetUrl, { signal: controller.signal });
           clearTimeout(id);
           
@@ -725,6 +732,9 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
 
       if (geminiRes.ok) {
         const geminiData = await geminiRes.json();
+        if (!geminiData || !geminiData.candidates || geminiData.candidates.length === 0) {
+          throw new Error("Gemini API returned empty or malformed response structure during visionScan.");
+        }
         let cleanJson = (geminiData.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
         const first = cleanJson.indexOf("{");
         const last = cleanJson.lastIndexOf("}");
@@ -737,6 +747,7 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
         try {
           parsedVision = JSON.parse(cleanJson);
         } catch (parseErr) {
+          console.error("[visionScan] JSON Parse Error:", parseErr, "Raw string:", cleanJson);
           return Response.json({ success: false, error: `JSON Parse Error: ${parseErr.message} | Raw string: ${cleanJson.substring(0, 100)}...` });
         }
         
@@ -791,7 +802,7 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
 
     return Response.json({ success: true, fields: {} });
   } catch (error) {
-    console.error("Critical Failure:", error.message);
+    console.error("Critical Failure:", error);
     return Response.json({ success: false, error: error.message }, { status: 500 });
   }
 };
