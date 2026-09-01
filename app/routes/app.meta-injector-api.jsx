@@ -618,6 +618,88 @@ export const action = async ({ request }) => {
         } catch (e) {}
       }
 
+      // ==========================================
+      // 🟢 FIX: POST-CREATION METAFIELD INJECTION
+      // ==========================================
+      try {
+        const parsedPayload = JSON.parse(rawPayload);
+        const pieceData = (parsedPayload.pieces && parsedPayload.pieces.length > 0) ? parsedPayload.pieces[0] : {};
+        const flatPayload = { ...parsedPayload, ...pieceData };
+
+        const targetKeys = [
+          "cut_and_shape", 
+          "surface_finish", 
+          "color", 
+          "dimensions_mm", 
+          "artist_notes",
+          "stone_story", 
+          "origin_story", 
+          "character_marks", 
+          "honest_flaws", 
+          "honest_flaws_and_character", 
+          "is_ooak", 
+          "treated", 
+          "found_object", 
+          "custom_product", 
+          "piece_name", 
+          "stone_shape", 
+          "specific_gravity", 
+          "mohs_hardness"
+        ];
+        
+        const injectMetafieldsMap = new Map();
+
+        Object.entries(flatPayload).forEach(([key, value]) => {
+          if (value === null || value === undefined || String(value).trim() === "") return;
+          
+          let metaKey = key;
+          let isCustomField = targetKeys.includes(key);
+
+          if (key.startsWith("custom/")) {
+            isCustomField = true;
+            metaKey = key.split("custom/")[1];
+          }
+
+          if (isCustomField && metaKey) {
+             let resolvedValue = String(value);
+             if (metaKey === "treated" || metaKey === "is_ooak" || metaKey === "is_one_of_a_kind") {
+               if (resolvedValue === "true") resolvedValue = "Yes";
+               if (resolvedValue === "false") resolvedValue = "No";
+             }
+
+             injectMetafieldsMap.set(metaKey, {
+               ownerId: productId,
+               namespace: "custom",
+               key: metaKey,
+               type: "single_line_text_field",
+               value: resolvedValue
+             });
+          }
+        });
+
+        const injectMetafields = Array.from(injectMetafieldsMap.values());
+
+        if (injectMetafields.length > 0) {
+          const injectChunks = chunkArray(injectMetafields, 25);
+          for (const chunk of injectChunks) {
+            const injectResponse = await admin.graphql(
+              `#graphql
+              mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
+                metafieldsSet(metafields: $metafields) { userErrors { field message } }
+              }`,
+              { variables: { metafields: chunk } }
+            );
+            const injectResult = await injectResponse.json();
+            const errs = injectResult?.data?.metafieldsSet?.userErrors || [];
+            if (errs.length > 0) {
+              console.warn("[createProduct] Metafield Injection Warnings:", errs);
+            }
+          }
+        }
+      } catch (injectionError) {
+        console.error("[createProduct] Metafield Injection Exception:", injectionError);
+      }
+
       return data({ success: true, intent: "createProduct", productId: productId, productHandle: productHandle, userErrors: allUserErrors });
     } catch (error) {
       return data({ success: false, intent: "createProduct", error: error.message });
