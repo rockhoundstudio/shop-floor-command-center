@@ -143,6 +143,7 @@ export function NewProductIntakeTab({ fetcher }) {
     condition: "new",
     target_gender: "Unisex",
     age_group: "adult",
+    google_product_category: "Apparel & Accessories > Jewelry",
     primary_medium: "",
     secondary_medium: "",
     wire_material: "",
@@ -447,6 +448,7 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
       condition: "new",
       target_gender: "Unisex",
       age_group: "adult",
+      google_product_category: "Apparel & Accessories > Jewelry",
       primary_medium: "",
       secondary_medium: "",
       wire_material: "",
@@ -1492,6 +1494,7 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
 
             <div style={{ background: "#333333", padding: "6px 12px", borderRadius: "4px", width: "100%", fontWeight: "bold", color: "#ffffff", fontSize: "12px", marginTop: "8px" }}>SECTION 5 — Google & SEO Fields</div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
+              {renderPanelRow("Google Product Category", "google_product_category", getVal("google_product_category", sharedFields.google_product_category))}
               {renderPanelRow("Age Group", "age_group", getVal("age_group", sharedFields.age_group))}
               {renderPanelRow("Target Gender", "target_gender", getVal("target_gender", sharedFields.target_gender))}
               {renderPanelRow("Condition", "condition", getVal("condition", sharedFields.condition))}
