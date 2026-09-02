@@ -1,4 +1,4 @@
-﻿import { authenticate } from "../shopify.server";
+import { authenticate } from "../shopify.server";
 import { lookupStone } from "../utils/geoLibrary.jsx";
 import { TARGET_KEYS } from "../utils/metaScan";
 
@@ -349,7 +349,8 @@ export const action = async ({ request }) => {
         const collectionData = resolveCollectionData(derivedOrigin, activeOriginHandle, collectionsList);
         
         const matchedPage = pagesList.find(p => p.url.includes(activeOriginHandle));
-        const origin_story = matchedPage ? matchedPage.excerpt : "";
+        const extractedStory = matchedPage ? matchedPage.excerpt : "";
+        console.log("[DEBUG origin]", { originSegment: derivedOrigin, defaultOriginSlug: activeOriginHandle, matchedPage: matchedPage ? matchedPage.url : "NULL", extractedStoryLength: extractedStory.length });
 
         const pagesMenu = pagesList.map(p => `- Title: "${p.title}" | URL: ${p.url} | Excerpt: "${p.excerpt}"`).join("\n");
         const collectionsMenu = collectionsList.map(c => `- Title: "${c.title}" | URL: ${c.url} | Excerpt: "${c.excerpt}"`).join("\n");
@@ -660,6 +661,7 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
 
       const matchedPage = pagesList.find(p => p.url.includes(defaultOriginSlug));
       const extractedStory = matchedPage ? matchedPage.excerpt : "";
+      console.log("[DEBUG origin]", { originSegment, defaultOriginSlug, matchedPage: matchedPage ? matchedPage.url : "NULL", extractedStoryLength: extractedStory.length });
 
       let imageBase64 = clientBase64 && clientBase64 !== "undefined" ? String(clientBase64).trim() : "";
       let imageMimeType = clientMime;
