@@ -184,7 +184,7 @@ function resolveOriginHandle(locationSegment, pagesList) {
   if (cleanLoc.includes("richardson")) return "the-richardson-strike";
   if (cleanLoc.includes("irv")) return "the-shopped-rock";
   if (cleanLoc.includes("north fork") || cleanLoc.includes("north-fork") || cleanLoc.includes("cda") || cleanLoc.includes("nor")) return "the-north-fork-strike";
-  if (cleanLoc.includes("yakima") || cleanLoc.includes("yak") || cleanLoc.includes("chert")) return "chert-road-detour";
+  if (cleanLoc.includes("yakima") || cleanLoc.includes("yak") || cleanLoc.includes("chert")) return "the-shop-lore-chert-road-detour-yakima-river-jasper";
 
   const match = pagesList.find(p => p.title.toLowerCase().includes(cleanLoc) || p.url.includes(cleanLoc));
   return match ? match.url.replace("/pages/", "") : cleanLoc.replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, "-");
@@ -515,7 +515,7 @@ export const action = async ({ request }) => {
 
     if (intent === "titleParse") {
       const pieceNameInput = body.get("pieceName") || "";
-      const segments = pieceNameInput.split(/\s+[-—–]\s+/);
+      const segments = pieceNameInput.split(/\s+[—–-]\s+/);
       const segment1 = segments[0]?.trim() || "";
       const segment2 = segments[1]?.trim() || "";
       const segment3 = segments[2]?.trim() || "";
