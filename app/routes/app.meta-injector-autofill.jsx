@@ -554,7 +554,7 @@ VALID COLLECTIONS IN STORE:
 ${collectionsMenu || "No live collections found."}
 
 INSTRUCTIONS:
-1. Check the Origin segment ("${segment2}") against the LIVE STORE DIRECTORY above. Auto-correct the 'origin_location', 'collection_name', and 'collection_location' to exactly match the live store titles. **CRITICAL: NEVER include the prefixes "Shop Lore:", "The", or "Collection" in the origin_location field.** Extract strictly the geographic name (e.g. expand "cda" to "North Fork Coeur d'Alene"). Use "The Shopped Rock" if it is a vendor.
+1. The Origin segment ("${segment2}") is the AUTHORITY. Do NOT reclassify or override it. Set 'origin_location' to the clean geographic name derived from "${segment2}" — strip prefixes like "Shop Lore:", "The", or "Collection". Expand abbreviations (e.g. "cda" → "North Fork Coeur d'Alene", "yakima" → "Yakima Canyon"). Match 'collection_name' and 'collection_location' to the live store entry that corresponds to "${segment2}". Never substitute a vendor name or "The Shopped Rock" unless "${segment2}" explicitly contains a vendor name.
 2. Set origin_handle strictly to: "${resolvedHandle}". 
 3. stone_family must be exactly one of: ${stonePicklist} - pick the closest match to the Family segment. Correct typos.
 
