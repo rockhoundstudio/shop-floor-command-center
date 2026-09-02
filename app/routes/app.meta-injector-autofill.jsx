@@ -642,7 +642,7 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
       const clientMime = body.get("imageMimeType") || "image/jpeg";
       
       const titleInput = body.get("pieceName") || "";
-      const segments = titleInput.split(/\s+[-–—]\s+/);
+      const segments = titleInput.split(/\s+[—–-]\s+/);
       const derivedFamily = segments[0]?.trim() || "Unknown Stone";
       const originSegment = segments[1]?.trim() || "Unknown Origin";
       
