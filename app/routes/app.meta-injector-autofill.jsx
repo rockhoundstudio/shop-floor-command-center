@@ -349,8 +349,7 @@ export const action = async ({ request }) => {
         const collectionData = resolveCollectionData(derivedOrigin, activeOriginHandle, collectionsList);
         
         const matchedPage = pagesList.find(p => p.url.includes(activeOriginHandle));
-        const extractedStory = matchedPage ? matchedPage.excerpt : "";
-        console.log("[DEBUG origin]", { originSegment: derivedOrigin, defaultOriginSlug: activeOriginHandle, matchedPage: matchedPage ? matchedPage.url : "NULL", extractedStoryLength: extractedStory.length });
+        const origin_story = matchedPage ? matchedPage.excerpt : "";
 
         const pagesMenu = pagesList.map(p => `- Title: "${p.title}" | URL: ${p.url} | Excerpt: "${p.excerpt}"`).join("\n");
         const collectionsMenu = collectionsList.map(c => `- Title: "${c.title}" | URL: ${c.url} | Excerpt: "${c.excerpt}"`).join("\n");
@@ -772,6 +771,7 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
           tab2Data: {
             pieceId,
             generated_description: final_desc,
+            debug_origin: `seg=${originSegment}|slug=${defaultOriginSlug}|matched=${matchedPage ? matchedPage.url : "NULL"}|storyLen=${extractedStory.length}`,
             seo_title: parsedVision.seo_title || "",
             primary_color: parsedVision.primary_color || "",
             cut_and_shape: parsedVision.cut_and_shape || "",
