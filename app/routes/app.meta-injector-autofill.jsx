@@ -105,7 +105,7 @@ const MINDAT_KEY_MAP = {
   origin_location: "localities_count",
 };
 
-const SHOPPED_ROCK_VENDORS = ["Richardson's Rock Ranch", "Irv's Rock and Jewelry", "Irv's Rock & Jewelry"];
+const SHOPPED_ROCK_VENDORS = ["Richardson's Rock Ranch", "Irv's Rock and Jewelry", "Irv's Rock & Jewelry", "Rock and Gem Show"];
 
 async function fetchWithRetry(url, options, retries = 3, delay = 1500) {
   for (let i = 0; i < retries; i++) {
