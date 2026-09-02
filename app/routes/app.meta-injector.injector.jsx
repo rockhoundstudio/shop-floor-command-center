@@ -199,6 +199,18 @@ export function NewProductIntakeTab({ fetcher }) {
   const [lastScannedPieceId, setLastScannedPieceId] = useState(null);
 
   const handleScanGeminiPhotos = useCallback((piece) => {
+    // Check if the piece already has a base64 image; if so, we can call handleScanPhoto immediately.
+    if (piece?.imageBase64) {
+      handleScanPhoto({
+        piece,
+        updatePiece: handlePieceChange,
+        visionFetcher, // Fix: Changed autoFillFetcher to visionFetcher
+        setErrorMessage
+      });
+      return;
+    }
+
+    // Fallback: stage upload flow if base64 is not already set.
     !!(piece?.photoFiles?.[0]) && (() => {
       const formData = new FormData();
       formData.append("intent", "stagedUpload");
@@ -210,7 +222,7 @@ export function NewProductIntakeTab({ fetcher }) {
         encType: "multipart/form-data"
       });
     })();
-  }, [stageFetcher]);
+  }, [stageFetcher, visionFetcher]);
 
   const handleSharedFieldChange = useCallback((key, value) => {
     setSharedFields(prev => ({ ...prev, [key]: value }));
@@ -600,6 +612,7 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
             (tDims !== undefined && tDims !== "") && (updated.dimensions_mm = tDims);
             (tSeo !== undefined && tSeo !== "") && (updated.seo_title = tSeo);
             updated.scanError = "";
+            window.shopify?.toast?.show("Scan complete — fields loaded");
           })();
           return updated;
         }));

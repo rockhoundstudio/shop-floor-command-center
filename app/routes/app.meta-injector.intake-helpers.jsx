@@ -4,7 +4,7 @@
 // (100% Original Logic & Dash Delimiters Preserved + Strict Schema Map Added)
 // ==========================================================================
 
-export async function handleScanPhoto({ piece, updatePiece, autoFillFetcher, setErrorMessage }) {
+export async function handleScanPhoto({ piece, updatePiece, visionFetcher, setErrorMessage }) {
   const file = piece.photoFiles[0];
   if (!file) return;
 
@@ -13,7 +13,7 @@ export async function handleScanPhoto({ piece, updatePiece, autoFillFetcher, set
   const reader = new FileReader();
   reader.onload = () => {
     const base64 = reader.result.split(",")[1];
-    autoFillFetcher.submit(
+    visionFetcher.submit(
       {
         intent: "visionScan",
         pieceId: piece.id,
