@@ -1,4 +1,4 @@
-// ==========================================================================
+﻿// ==========================================================================
 // ROCKHOUND STUDIO — INTAKE HELPER FUNCTIONS
 // File: app/routes/app.meta-injector.intake-helpers.jsx
 // (100% Original Logic & Dash Delimiters Preserved + Strict Schema Map Added)
@@ -17,6 +17,7 @@ export async function handleScanPhoto({ piece, updatePiece, visionFetcher, setEr
       {
         intent: "visionScan",
         pieceId: piece.id,
+        pieceName: piece.piece_name || "",
         imageBase64: base64,
         imageMimeType: file.type || "image/jpeg"
       },
