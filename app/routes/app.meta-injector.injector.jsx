@@ -384,6 +384,10 @@ dimensions_mm: ${p.dimensions_mm || "EMPTY"}
 cut_and_shape: ${p.cut_and_shape || "EMPTY"}
 surface_finish: ${p.surface_finish || "EMPTY"}
 color: ${p.color || "EMPTY"}
+stone_shape: ${p.stone_shape || "EMPTY"}
+jewelry_type: ${p.jewelry_type || "EMPTY"}
+rarity: ${p.rarity || "EMPTY"}
+authenticity: ${p.authenticity || "EMPTY"}
 imageBase64: ${p.imageBase64 ? "PRESENT" : "EMPTY"}
 imageMimeType: ${p.imageMimeType || "EMPTY"}
 stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) ? p.stagedResourceUrls.join(", ") : "EMPTY"}
@@ -1522,6 +1526,7 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
     </Frame>
   );
 }
+
 
 
 
