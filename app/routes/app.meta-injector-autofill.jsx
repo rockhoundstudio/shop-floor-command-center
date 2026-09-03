@@ -1,4 +1,4 @@
-import { authenticate } from "../shopify.server";
+﻿import { authenticate } from "../shopify.server";
 import { lookupStone } from "../utils/geoLibrary.jsx";
 import { TARGET_KEYS } from "../utils/metaScan";
 
@@ -808,3 +808,4 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
     return Response.json({ success: false, error: error.message }, { status: 500 });
   }
 };
+
