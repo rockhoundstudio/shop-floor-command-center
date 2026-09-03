@@ -374,6 +374,7 @@ export function NewProductIntakeTab({ fetcher }) {
     const report = `=== TAB 1 FIELD REPORT ===
 piece_name: ${p.piece_name || "EMPTY"}
 generated_description: ${p.generated_description || "EMPTY"}
+debug_origin: ${p.debug_origin || "EMPTY"}
 seo_title: ${p.seo_title || "EMPTY"}
 artist_notes: ${p.artist_notes || "EMPTY"}
 price: ${p.price || "EMPTY"}
@@ -614,6 +615,7 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
             (tDims !== undefined && tDims !== "") && (updated.dimensions_mm = tDims);
             (tSeo !== undefined && tSeo !== "") && (updated.seo_title = tSeo);
             updated.scanError = "";
+            updated.debug_origin = data.debug_origin || "";
             window.shopify?.toast?.show("Scan complete — fields loaded");
           })();
           return updated;
@@ -1517,3 +1519,5 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
     </Frame>
   );
 }
+
+
