@@ -381,10 +381,9 @@ export const action = async ({ request }) => {
           }
         }
 
+        let visionFields = {};
         const authenticity = visionFields.authenticity || "Authentic";
         const rarity = visionFields.rarity || "Common";
-
-        let visionFields = {};
         if (imageUrl) {
           try {
             const targetUrl = imageUrl.includes("?") ? `${imageUrl}&width=800` : `${imageUrl}?width=800`;
@@ -820,6 +819,7 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
     return Response.json({ success: false, error: error.message }, { status: 500 });
   }
 };
+
 
 
 
