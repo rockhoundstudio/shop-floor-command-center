@@ -1,4 +1,4 @@
-import { 
+﻿import { 
   TextField, BlockStack, Card, Text, Badge, Grid, Button, Banner, 
   InlineStack, Page, Select, Box, ButtonGroup, 
   ResourceList, ResourceItem, Thumbnail, Divider, Tag
@@ -125,12 +125,14 @@ export default function ProductsTab({ products = [] }) {
     if (vocabFetcher.data?.vocabulary) setVocabulary(vocabFetcher.data.vocabulary);
   }, [vocabFetcher.data]);
 
-  if (autoFetcher.state === "idle" && autoFetcher.data?.merged && !mergedApplied.current) {
-    const merged = autoFetcher.data.merged;
-    const hasNew = Object.keys(merged).some(k => merged[k] !== fieldValues[k]);
-    if (hasNew) {
-      mergedApplied.current = true;
-      setFieldValues(prev => ({ ...prev, ...merged }));
+  if (autoFetcher.state === "idle" && !mergedApplied.current) {
+    const merged = autoFetcher.data?.merged || autoFetcher.data?.tab2Data || null;
+    if (merged && Object.keys(merged).length > 0) {
+      const hasNew = Object.keys(merged).some(k => merged[k] !== fieldValues[k]);
+      if (hasNew) {
+        mergedApplied.current = true;
+        setFieldValues(prev => ({ ...prev, ...merged }));
+      }
     }
   }
 
@@ -202,8 +204,8 @@ export default function ProductsTab({ products = [] }) {
     mergedApplied.current = false;
     const finalName = fieldValues.official_name === "__custom__" ? customName : fieldValues.official_name;
     autoFetcher.submit(
-      { intent: "autoFill", title: baseFields.title, description: baseFields.description || "", existingMeta: JSON.stringify({ ...fieldValues, official_name: finalName }) },
-      { method: "post", action: "/app/meta-injector" }
+      { intent: "tab2AutoFill", title: baseFields.title, description: baseFields.description || "", existingMeta: JSON.stringify({ ...fieldValues, official_name: finalName }) },
+      { method: "post", action: "/app/meta-injector-autofill" }
     );
   }
 
@@ -590,4 +592,3 @@ export default function ProductsTab({ products = [] }) {
     </BlockStack>
   );
 }
-

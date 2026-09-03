@@ -336,7 +336,7 @@ export const action = async ({ request }) => {
       const stone_family = body.get("stone_family") || "";
       const origin_handle = body.get("origin_handle") || "";
       const cut_and_shape = body.get("cut_and_shape") || "";
-      const productTitle = body.get("productTitle") || body.get("piece_name") || "";
+      const productTitle = body.get("productTitle") || body.get("piece_name") || body.get("title") || "";
       const imageUrl = body.get("imageUrl") || "";
 
       const titleSegments = productTitle.split(/\s+[-—–]\s+/);
@@ -820,6 +820,7 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
     return Response.json({ success: false, error: error.message }, { status: 500 });
   }
 };
+
 
 
 
