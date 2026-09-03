@@ -615,7 +615,7 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
             (tDims !== undefined && tDims !== "") && (updated.dimensions_mm = tDims);
             (tSeo !== undefined && tSeo !== "") && (updated.seo_title = tSeo);
             updated.scanError = "";
-            updated.debug_origin = data.debug_origin || "";
+            updated.debug_origin = data.tab2Data?.debug_origin || data.debug_origin || "";
             window.shopify?.toast?.show("Scan complete — fields loaded");
           })();
           return updated;
@@ -1519,5 +1519,6 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
     </Frame>
   );
 }
+
 
 
