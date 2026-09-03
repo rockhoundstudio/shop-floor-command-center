@@ -105,13 +105,13 @@ export const action = async ({ request }) => {
       );
 
       const TYPE_MAP = {
-        stone_story: "multi_line_text_field", 
-        origin_story: "multi_line_text_field",
-        character_marks: "multi_line_text_field",
-        honest_flaws: "multi_line_text_field",
-        honest_flaws_and_character: "multi_line_text_field",
-        generated_description: "multi_line_text_field",
-        artist_notes: "multi_line_text_field",
+        stone_story: "list.single_line_text_field", 
+        origin_story: "single_line_text_field",
+        character_marks: "list.single_line_text_field",
+        honest_flaws: "single_line_text_field",
+        honest_flaws_and_character: "single_line_text_field",
+        generated_description: "single_line_text_field",
+        artist_notes: "single_line_text_field",
         is_ooak: "single_line_text_field", 
         treated: "single_line_text_field",
         found_object: "single_line_text_field", 
@@ -563,13 +563,13 @@ export const action = async ({ request }) => {
       if (rawMetafields.length > 0 || googleMetafields.length > 0) {
         try {
             const TYPE_MAP = { 
-              stone_story: "multi_line_text_field", 
-              origin_story: "multi_line_text_field",
-              character_marks: "multi_line_text_field",
-              honest_flaws: "multi_line_text_field",
-              honest_flaws_and_character: "multi_line_text_field",
-              generated_description: "multi_line_text_field",
-              artist_notes: "multi_line_text_field",
+              stone_story: "list.single_line_text_field", 
+              origin_story: "single_line_text_field",
+              character_marks: "list.single_line_text_field",
+              honest_flaws: "single_line_text_field",
+              honest_flaws_and_character: "single_line_text_field",
+              generated_description: "single_line_text_field",
+              artist_notes: "single_line_text_field",
               is_ooak: "single_line_text_field", 
               treated: "single_line_text_field", 
               found_object: "single_line_text_field", 
@@ -824,3 +824,4 @@ export const action = async ({ request }) => {
     }
   }
 };
+
