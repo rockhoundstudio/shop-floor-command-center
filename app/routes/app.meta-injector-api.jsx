@@ -1,4 +1,4 @@
-import { data } from "react-router";
+﻿import { data } from "react-router";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 
@@ -549,7 +549,8 @@ export const action = async ({ request }) => {
              if (value === true || value === "true") value = "Yes";
              else if (value === false || value === "false") value = "No";
            }
-           rawMetafields.push({ key: finalKey, value: value, type: "single_line_text_field" });
+           const resolvedType = TYPE_MAP[finalKey] || TYPE_MAP[key] || "single_line_text_field";
+           rawMetafields.push({ key: finalKey, value: value, type: resolvedType });
         }
       });
 
