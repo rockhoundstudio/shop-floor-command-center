@@ -531,7 +531,7 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
 
         const executeVisionScan = (finalBase64, finalMime) => {
           const currentPiece = latestPieces.current.find(p => p.id === pid);
-          const pName = currentPiece ? currentPiece.piece_name : "";
+          const pName = currentPiece?.piece_name || document.querySelector(`[data-piece-id="${pid}"][data-field="piece_name"]`)?.value || "";
           const cName = latestShared.current.collection_name || "";
 
           // THE FIX: Forcing FormData to prevent stringification limits dropping the Base64 payload
@@ -616,6 +616,9 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
             (tSeo !== undefined && tSeo !== "") && (updated.seo_title = tSeo);
             updated.scanError = "";
             updated.debug_origin = data.tab2Data?.debug_origin || data.debug_origin || "";
+            updated.jewelry_type = data.tab2Data?.jewelry_type || "";
+            updated.rarity = data.tab2Data?.rarity || "";
+            updated.authenticity = data.tab2Data?.authenticity || "";
             window.shopify?.toast?.show("Scan complete — fields loaded");
           })();
           return updated;
@@ -1519,6 +1522,8 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
     </Frame>
   );
 }
+
+
 
 
 

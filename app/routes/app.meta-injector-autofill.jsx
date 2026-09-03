@@ -27,7 +27,10 @@ function buildMasterVisionPrompt({
   ${collectionsMenu || "No live collections found — use default URL."}
 
 - primary_color
-- stone_shape
+- stone_shape: Select EXACTLY one from this list: Round, Oval, Freeform, Teardrop, Pear, Cushion, Marquise, Rectangle, Square, Heart, N/A
+- jewelry_type: Select EXACTLY one from this list: Pendant, Bracelet, Anklet, Necklace, Earrings, Ring, Brooch, N/A
+- rarity: Select EXACTLY one from this list: Common, Uncommon, Rare, One-of-a-Kind (default: Common if unsure)
+- authenticity: Select EXACTLY one from this list: Authentic, Lab-Created, Unknown (default: Authentic for natural stones)
 - color_pattern
 - cut_and_shape
 - surface_finish
@@ -378,8 +381,8 @@ export const action = async ({ request }) => {
           }
         }
 
-        const authenticity = "Genuine natural stone, hand-collected by Bob & Janyce, Rockhound Studio.";
-        const rarity = "One-of-a-kind — no two stones are alike.";
+        const authenticity = visionFields.authenticity || "Authentic";
+        const rarity = visionFields.rarity || "Common";
 
         let visionFields = {};
         if (imageUrl) {
@@ -433,7 +436,10 @@ export const action = async ({ request }) => {
                       wire_material: { type: "STRING" },
                       setting_ready: { type: "STRING" },
                       bail_included: { type: "STRING" },
-                      chain_material: { type: "STRING" }
+                      chain_material: { type: "STRING" },
+                      jewelry_type: { type: "STRING" },
+                      rarity: { type: "STRING" },
+                      authenticity: { type: "STRING" }
                     }
                   }
                 }
@@ -724,7 +730,10 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
                 wire_material: { type: "STRING" },
                 setting_ready: { type: "STRING" },
                 bail_included: { type: "STRING" },
-                chain_material: { type: "STRING" }
+                chain_material: { type: "STRING" },
+                      jewelry_type: { type: "STRING" },
+                      rarity: { type: "STRING" },
+                      authenticity: { type: "STRING" }
               }
             }
           }
@@ -777,6 +786,9 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
             cut_and_shape: parsedVision.cut_and_shape || "",
             surface_finish: parsedVision.surface_finish || "",
             stone_shape: parsedVision.stone_shape || "",
+            jewelry_type: parsedVision.jewelry_type || "N/A",
+            rarity: parsedVision.rarity || "Common",
+            authenticity: parsedVision.authenticity || "Authentic",
             dimensions_mm: parsedVision.dimensions_mm || "",
             color_pattern: parsedVision.pattern || "",
             primary_use: resolved_primary_use,
@@ -808,5 +820,8 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
     return Response.json({ success: false, error: error.message }, { status: 500 });
   }
 };
+
+
+
 
 
