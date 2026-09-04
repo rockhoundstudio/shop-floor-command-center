@@ -29,6 +29,10 @@ function buildMasterVisionPrompt({
 - primary_color
 - stone_shape: Select EXACTLY one from this list: Round, Oval, Freeform, Teardrop, Pear, Cushion, Marquise, Rectangle, Square, Heart, N/A
 - jewelry_type: Select EXACTLY one from this list: Artisan jewelry, Fine jewelry, Accessories, N/A
+- necklace_design: Select EXACTLY one from this list: Pendant, Chain, Anklet, Bracelet, N/A
+- material: Select EXACTLY one from this list: Gold-plated, Silver-plated, Sterling Silver, Metal, Bronze, Nylon, Cotton, N/A
+- chain_link_type: Return chain style or "N/A" if none.
+- jewelry_finding_type: Return finding type or "N/A" if none.
 - rarity: Select EXACTLY one from this list: Common, Uncommon, Rare, One-of-a-Kind (default: Common if unsure)
 - authenticity: Select EXACTLY one from this list: Authentic, Lab-Created, Unknown (default: Authentic for natural stones)
 - color_pattern: Select EXACTLY one from this list: Green, Black, Blue flash, Red, White, Multicolor, Gold, Pink, Yellow, Silver, Purple, Striped, Clear, Yellow veins, None
@@ -420,6 +424,10 @@ export const action = async ({ request }) => {
                       bail_included: { type: "STRING" },
                       chain_material: { type: "STRING" },
                       jewelry_type: { type: "STRING" },
+                      necklace_design: { type: "STRING" },
+                      chain_link_type: { type: "STRING" },
+                      jewelry_finding_type: { type: "STRING" },
+                      material: { type: "STRING" },
                       rarity: { type: "STRING" },
                       authenticity: { type: "STRING" }
                     }
@@ -471,7 +479,7 @@ export const action = async ({ request }) => {
           ? `Handcrafted ${derivedFamily} — ${correctedOrigin} — OOAK Lapidary Art`
           : `Handcrafted ${derivedFamily} — OOAK Lapidary Art`;
 
-        // 🔴 STRICT EXPLICIT PAYLOAD MAPPING - Eliminates all hallucinations and unverified data leaks
+        // 🔴 STRICT EXPLICIT PAYLOAD MAPPING - Kills ghosts and forces N/A on empty Google fields
         return Response.json({
           success: true,
           intent: "tab2AutoFill",
@@ -503,6 +511,10 @@ export const action = async ({ request }) => {
             secondary_medium: visionFields.secondary_medium || "None",
             cut_and_shape: visionFields.cut_and_shape || "",
             jewelry_type: visionFields.jewelry_type || "N/A",
+            necklace_design: visionFields.necklace_design || "N/A",
+            chain_link_type: visionFields.chain_link_type || "N/A",
+            jewelry_finding_type: visionFields.jewelry_finding_type || "N/A",
+            material: visionFields.material || "N/A",
             color_pattern: visionFields.color_pattern || visionFields.pattern || "",
             dimensions_mm: visionFields.dimensions_mm || "",
             generated_description: visionFields.generated_description || "",
@@ -529,6 +541,7 @@ export const action = async ({ request }) => {
             geological_age: geoFields.geological_age || "",
             treated: "No",
             is_ooak: "Yes",
+            custom_product: "true",
             age_group: "adult",
             target_gender: "Unisex",
             condition: "new",
@@ -662,6 +675,7 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
           rock_composition: dbGeoData.rock_composition || "",
           rock_formation: dbGeoData.rock_formation || "",
           geological_age: dbGeoData.geological_age || "",
+          custom_product: "true",
           age_group: "adult",
           target_gender: "Unisex",
           condition: "new",
@@ -763,6 +777,10 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
                 bail_included: { type: "STRING" },
                 chain_material: { type: "STRING" },
                 jewelry_type: { type: "STRING" },
+                necklace_design: { type: "STRING" },
+                chain_link_type: { type: "STRING" },
+                jewelry_finding_type: { type: "STRING" },
+                material: { type: "STRING" },
                 rarity: { type: "STRING" },
                 authenticity: { type: "STRING" }
               }
@@ -819,6 +837,10 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
             surface_finish: parsedVision.surface_finish || "",
             stone_shape: parsedVision.stone_shape || "",
             jewelry_type: parsedVision.jewelry_type || "N/A",
+            necklace_design: parsedVision.necklace_design || "N/A",
+            chain_link_type: parsedVision.chain_link_type || "N/A",
+            jewelry_finding_type: parsedVision.jewelry_finding_type || "N/A",
+            material: parsedVision.material || "N/A",
             rarity: parsedVision.rarity || "Common",
             authenticity: parsedVision.authenticity || "Authentic",
             dimensions_mm: parsedVision.dimensions_mm || "",
@@ -834,6 +856,7 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
             origin_location: parsedVision.origin_location || originSegment,
             collection_name: defaultCollection.name,
             collection_location: defaultCollection.name.replace(" Collection", ""),
+            custom_product: "true",
             age_group: "adult",
             target_gender: "Unisex",
             condition: "new",
