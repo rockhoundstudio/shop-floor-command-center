@@ -497,3 +497,21 @@ export function getLabelForValue(value, metaobjectHandles = {}) {
 
   return value;
 }
+
+export const DEFAULT_DROPDOWNS = {
+  stone_family: "",
+  surface_finish: "",
+  color: "",
+  cut_and_shape: "",
+  handcrafted_by: "",
+  is_one_of_a_kind: "",
+  treated: "",
+  found_object: "",
+  primary_use: "",
+  setting_ready: "",
+  bail_included: "",
+  chain_material: "",
+  wire_material: "",
+  collection_location: "",
+  product_type: ""
+};

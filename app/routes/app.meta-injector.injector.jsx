@@ -1,4 +1,4 @@
-﻿// ==========================================================================
+// ==========================================================================
 // ROCKHOUND STUDIO — TAB 1: NEW PRODUCT INTAKE Bench
 // File: app/routes/app.meta-injector.injector.jsx
 // ==========================================================================
@@ -632,7 +632,7 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
       (isScan && isError) && (() => {
         setPieces(prev => prev.map(p => {
           let updated = { ...p };
-          // If the pieceId isn't returned due to a hard crash, default to the first piece in the array
+          // If the pieceId isnt returned due to a hard crash, default to the first piece in the array
           const targetId = data.pieceId || latestPieces.current[0]?.id;
           (p.id === targetId) && (() => {
             let errStr = "Scan failed";
@@ -1526,9 +1526,3 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
     </Frame>
   );
 }
-
-
-
-
-
-
