@@ -1,4 +1,4 @@
-﻿import { data } from "react-router";
+import { data } from "react-router";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 
@@ -20,6 +20,17 @@ function extractStoneName(title) {
   }
   return "Unknown";
 }
+
+const ORIGIN_HANDLE_MAP = {
+  "Richardson's Rock Ranch": { origin_handle: "the-richardson-strike", origin_page_handle: "the-shopped-rock" },
+  "Yakima Canyon": { origin_handle: "the-shop-lore-chert-road-detour-yakima-river-jasper", origin_page_handle: "the-shop-lore-chert-road-detour-yakima-river-jasper" },
+  "Yellowstone River": { origin_handle: "the-yellowstone-river", origin_page_handle: "the-yellowstone-river" },
+  "Rufus Serpentine": { origin_handle: "the-rufus-protocol", origin_page_handle: "the-rufus-protocol" },
+  "Nickel Back": { origin_handle: "nickel-back-collection", origin_page_handle: "nickel-back-collection" },
+  "The Shopped Rock": { origin_handle: "the-shopped-rock", origin_page_handle: "the-shopped-rock" },
+  "Spokane River": { origin_handle: null, origin_page_handle: null },
+  "North Fork CdA": { origin_handle: null, origin_page_handle: null },
+};
 
 export const action = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
@@ -103,6 +114,34 @@ export const action = async ({ request }) => {
         item.key !== "collectionLocation" && 
         item.key !== "is_one_of_a_kind" // Hard stripped to enforce is_ooak
       );
+
+      // 🔴 POST-PROCESS ORIGIN OVERRIDE: Enforces strict handle mappings based on collection_location
+      const colLocItem = payloadArray.find(item => item.key === "collection_location");
+      if (colLocItem && colLocItem.value) {
+        const originOverride = ORIGIN_HANDLE_MAP[colLocItem.value];
+        if (originOverride !== undefined) {
+          payloadArray = payloadArray.filter(item => item.key !== "origin_handle" && item.key !== "origin_page_handle");
+          
+          if (originOverride.origin_handle !== null) {
+            payloadArray.push({
+              key: "origin_handle",
+              value: originOverride.origin_handle,
+              type: "single_line_text_field",
+              namespace: "custom",
+              ownerId: colLocItem.ownerId
+            });
+          }
+          if (originOverride.origin_page_handle !== null) {
+            payloadArray.push({
+              key: "origin_page_handle",
+              value: originOverride.origin_page_handle,
+              type: "single_line_text_field",
+              namespace: "custom",
+              ownerId: colLocItem.ownerId
+            });
+          }
+        }
+      }
 
       const TYPE_MAP = {
         stone_story: "list.single_line_text_field", 
@@ -540,6 +579,21 @@ export const action = async ({ request }) => {
       const { pieces, intent, mediaUrlsJson, title: payloadTitle, metafieldsJson, ...sharedOnly } = payload;
       const combinedFields = { ...sharedOnly, ...piece };
       
+      // 🔴 POST-PROCESS ORIGIN OVERRIDE: Enforces strict handle mappings based on collection_location
+      const originOverride = ORIGIN_HANDLE_MAP[combinedFields.collection_location];
+      if (originOverride !== undefined) {
+        if (originOverride.origin_handle !== null) {
+          combinedFields.origin_handle = originOverride.origin_handle;
+        } else {
+          delete combinedFields.origin_handle;
+        }
+        if (originOverride.origin_page_handle !== null) {
+          combinedFields.origin_page_handle = originOverride.origin_page_handle;
+        } else {
+          delete combinedFields.origin_page_handle;
+        }
+      }
+
       const ignoreKeys = ["intent", "mediaUrlsJson", "descriptionHtml", "productType", "status", "pieces", "photoFiles", "photoPreviewUrls", "photos", "imageBase64", "imageMimeType", "stagedResourceUrls", "scanError", "scanToken", "isUploading", "id", "price", "collectionLocation", "age_group", "target_gender", "condition", "shipping_weight_oz", "collection_name", "collection_location", "seo_title"];
 
       const TYPE_MAP = {
@@ -839,5 +893,3 @@ export const action = async ({ request }) => {
     }
   }
 };
-
-
