@@ -1,4 +1,4 @@
-﻿import { authenticate } from "../shopify.server";
+import { authenticate } from "../shopify.server";
 import { lookupStone } from "../utils/geoLibrary.jsx";
 import { TARGET_KEYS } from "../utils/metaScan";
 
@@ -198,7 +198,7 @@ function resolveCollectionData(locationSegment, defaultOriginSlug, collectionsLi
   if (cleanLoc.includes("richardson")) return { slug: "richardsons-rock-ranch", name: "Richardson's Rock Ranch Collection" };
   if (cleanLoc.includes("irv")) return { slug: "the-shopped-rock", name: "The Shopped Rock Collection" };
   if (cleanLoc.includes("north fork") || cleanLoc.includes("north-fork") || cleanLoc.includes("cda") || cleanLoc.includes("nor")) return { slug: "north-fork-cda-collection", name: "North Fork CdA Collection" };
-  if (cleanLoc.includes("yakima") || cleanLoc.includes("yak") || cleanLoc.includes("chert")) return { slug: "yakima-canyon", name: "Chert Road Detour — Yakima River Jasper Collection" };
+  if (cleanLoc.includes("yakima") || cleanLoc.includes("yak") || cleanLoc.includes("chert")) return { slug: "chert-road-detour", name: "Chert Road Detour — Yakima River Jasper Collection" };
 
   const matchedCol = collectionsList.find(c => c.url.includes(defaultOriginSlug) || c.title.toLowerCase().includes(cleanLoc));
   if (matchedCol) {
@@ -253,7 +253,7 @@ async function getGeoData(admin, stoneFamily) {
       const cached = stoneProfileCache.get(search);
       if (cached) return { ...cached, geoSource: "cache" };
     } else {
-      const rows = await queryPostgres('SELECT * FROM "StoneProfile" WHERE LOWER("stone_name") = $1 LIMIT 1', [search]);
+      const rows = await queryPostgres('SELECT * FROM "StoneProfile" WHERE LOWER("stoneName") = $1 LIMIT 1', [search]);
       if (rows.length > 0) {
         const s = rows[0];
         const geoResult = {
@@ -357,6 +357,29 @@ export const action = async ({ request }) => {
         const pagesMenu = pagesList.map(p => `- Title: "${p.title}" | URL: ${p.url} | Excerpt: "${p.excerpt}"`).join("\n");
         const collectionsMenu = collectionsList.map(c => `- Title: "${c.title}" | URL: ${c.url} | Excerpt: "${c.excerpt}"`).join("\n");
 
+        const targetUrlPath = `/pages/${activeOriginHandle}`;
+        const collectionUrlPath = `/collections/${collectionData.slug}`;
+        const fullCollectionTitle = collectionData.name.replace(/\s+Collection$/i, "").trim();
+
+        let collection_date = "";
+        if (origin_story) {
+          try {
+            const datePrompt = `Read the following rockhound field story and extract the collection date. Return ONLY the date in this format: "Month YYYY". If no date is found, return an empty string.`;
+            const dateRes = await fetchWithRetry(
+              "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY,
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ contents: [{ parts: [{ text: datePrompt }] }] }),
+              }
+            );
+            const dateJson = await dateRes.json();
+            collection_date = dateJson?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ?? "";
+          } catch (e) {
+            console.error("[tab2AutoFill] Collection date extraction failed:", e);
+            collection_date = "";
+          }
+        }
 
         let visionFields = {};
         const authenticity = visionFields.authenticity || "Authentic";
@@ -492,6 +515,7 @@ export const action = async ({ request }) => {
               return LOCATION_MAP[collectionData.slug] || collectionData.name.replace(/\s*Collection$/i, "").trim();
             })(),
             seo_title: visionFields.seo_title || manual_seo_title,
+            collection_date,
             authenticity,
             rarity,
             treated: "No",
@@ -518,9 +542,9 @@ export const action = async ({ request }) => {
       let stonePicklist = "Agate, Amazonite, Amethyst, Andesite, Aventurine, Azurite, Brecciated Jasper, Brecciated Quartz, Calcite, Carnelian, Chalcedony, Chrysocolla, Citrine, Dalmatian Stone, Fluorite, Garnet, Hematite, Howlite, Jasper, Kyanite, Labradorite, Lapis Lazuli, Lepidolite, Malachite, Moonstone, Obsidian, Ocean Jasper, Onyx, Opal, Petrified Wood, Picture Jasper, Prehnite, Pyrite, Quartz, Quartzite, Rhodonite, Rhyolite, Rose Quartz, Serpentine, Smoky Quartz, Sodalite, Sunstone, Tiger's Eye, Tourmaline, Turquoise, Unakite, Variscite";
       
       try {
-        const stoneRows = await queryPostgres('SELECT "stone_name" FROM "StoneProfile" ORDER BY "stone_name"', []);
+        const stoneRows = await queryPostgres('SELECT "stoneName" FROM "StoneProfile" ORDER BY "stoneName"', []);
         if (stoneRows && stoneRows.length > 0) {
-          stonePicklist = stoneRows.map(r => r.stone_name).join(", ");
+          stonePicklist = stoneRows.map(r => r.stoneName).join(", ");
         }
       } catch (err) {
         console.error("[titleParse] StoneProfile picklist fetch failed, using fallback:", err);
@@ -809,4 +833,3 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
     return Response.json({ success: false, error: error.message }, { status: 500 });
   }
 };
-
