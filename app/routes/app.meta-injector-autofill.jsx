@@ -1,4 +1,4 @@
-﻿import { authenticate } from "../shopify.server";
+import { authenticate } from "../shopify.server";
 import { lookupStone } from "../utils/geoLibrary.jsx";
 import { TARGET_KEYS } from "../utils/metaScan";
 
@@ -43,7 +43,7 @@ function buildMasterVisionPrompt({
 - bail_included
 - chain_material: If a necklace chain is visible, identify it as exactly one of: "Silver Plated Snake Chain", "Gold Plated Snake Chain", "Sterling Silver Chain", "Cord". If no chain is visible, return "None".
 - seo_title: Generate a keyword-rich SEO product title (max 60 characters) optimized for Google. Combine the stone family ("${stoneFamily}"), your newly corrected origin_location, cut/shape, and keywords like "Handcrafted", "Natural", "OOAK", or "Lapidary Art". Separate with pipes (|) or em-dashes (—). Do NOT use quotes.
-- generated_description: Write in Bob's voice. Past tense for the find. Plain and honest — say what happened, stop. No salesy language. Short sentences. One idea at a time. Use specific details from the FULL ORIGIN STORY below. End with: — Bob & Janyce, Rockhound Studio, Spokane Valley WA. 150–250 words. Stop when it's right.
+- generated_description: Write in Bob's voice. Past tense for the find. Plain and honest — say what happened, stop. No salesy language. Short sentences. One idea at a time. Use specific details from the FULL ORIGIN STORY below. End with EXACTLY this line, using an em-dash: — Bob & Janyce, Rockhound Studio, Spokane Valley WA. Do not use hyphens or dashes other than the em-dash (—). 150–250 words. Stop when it's right.
 FULL ORIGIN STORY:
 ${originStory}
 CRITICAL DWELL WEB EMBED LAW: Look at the Origin Segment Janyce entered ("${originSegment}"). Check the LIVE STORE DIRECTORY above and match it to the exact corresponding Page and Collection. You MUST use those live excerpts to write short story hooks leading directly into TWO clickable HTML hyperlinks. 
@@ -463,16 +463,16 @@ export const action = async ({ request }) => {
               }
               
               if (visionFields.primary_color) {
-                  visionFields.color = visionFields.primary_color;
-                  delete visionFields.primary_color;
+                 visionFields.color = visionFields.primary_color;
+                 delete visionFields.primary_color;
               }
               
               if (visionFields.generated_description) {
-                  const desc = visionFields.generated_description;
-                  const lowerDesc = desc.toLowerCase();
-                  if (desc.startsWith("[VISION API CRASH]") || desc.startsWith("[API CRASH]") || desc.startsWith("[JSON PARSE ERROR]") || lowerDesc.includes("timed out")) {
-                      visionFields.generated_description = "";
-                  }
+                 const desc = visionFields.generated_description;
+                 const lowerDesc = desc.toLowerCase();
+                 if (desc.startsWith("[VISION API CRASH]") || desc.startsWith("[API CRASH]") || desc.startsWith("[JSON PARSE ERROR]") || lowerDesc.includes("timed out")) {
+                     visionFields.generated_description = "";
+                 }
               }
             } else {
                const errText = await geminiRes.text();
@@ -499,7 +499,21 @@ export const action = async ({ request }) => {
             origin_location: correctedOrigin,
             shopify_title: `${derivedFamily} — ${correctedOrigin} — ${pieceNameSegment}`,
             collection_name: collectionData.name,
-            collection_location: collectionData.name.replace(" Collection", ""),
+            collection_location: (() => {
+              const LOCATION_MAP = {
+                "chert-road-detour": "Yakima Canyon",
+                "yakima-canyon": "Yakima Canyon",
+                "the-yellowstone-river-collection": "Yellowstone River",
+                "the-rufus-serpentine-collection": "Rufus Serpentine",
+                "the-nickel-back-collection": "Nickel Back",
+                "the-spokane-river-collection": "Spokane River",
+                "north-fork-cda-collection": "North Fork CdA",
+                "richardsons-rock-ranch": "Richardson's Rock Ranch",
+                "the-3-000-mile-run-1": "The 3,000-Mile Run",
+                "the-shopped-rock": "The Shopped Rock",
+              };
+              return LOCATION_MAP[collectionData.slug] || collectionData.name.replace(/\s*Collection$/i, "").trim();
+            })(),
             seo_title: visionFields.seo_title || manual_seo_title,
             collection_date,
             authenticity,
@@ -761,7 +775,7 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
         }
         
         const resolved_primary_use = parsedVision.primary_use || parsedVision.use || parsedVision.product_type || "";
-        const resolved_primary_medium = parsedVision.primary_medium || parsedVision.medium || parsedVision.metal || parsedVision.primary_metal || "";
+        const resolved_primary_medium = parsedVision.primary_medium || parsedVision.medium || parsedVision.metal || parsedVision.primary_metal || "Natural Stone";
         const resolved_secondary_medium = parsedVision.secondary_medium || parsedVision.accent || parsedVision.secondary_metal || "";
         const resolved_wire_material = parsedVision.wire_material || parsedVision.wire || parsedVision.wire_wrap || "";
         const resolved_setting_ready = parsedVision.setting_ready || parsedVision.setting || parsedVision.mounting || parsedVision.bezel || "";
@@ -819,10 +833,3 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
     return Response.json({ success: false, error: error.message }, { status: 500 });
   }
 };
-
-
-
-
-
-
-
