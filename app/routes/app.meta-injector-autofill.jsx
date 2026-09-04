@@ -106,7 +106,7 @@ const MINDAT_KEY_MAP = {
   crystal_structure: "crystal_system",
   luster: "luster",
   specific_gravity: "density",
-  moh_hardness: "hardness",
+  mohs_hardness: "hardness",
   cleavage: "cleavage",
   fracture_pattern: "fracture",
   diaphaneity: "transparency",
@@ -325,6 +325,26 @@ async function getGeoData(admin, stoneFamily) {
   return emptyGeo;
 }
 
+// 🔴 THE OVERRIDE: Enforces strict handle mappings based on collection_location
+function applyOriginOverrides(collectionLocation, currentOriginHandle) {
+  const loc = (collectionLocation || "").trim();
+  const overrides = {
+    "Richardson's Rock Ranch": { origin_handle: "the-richardson-strike", origin_page_handle: "the-shopped-rock" },
+    "Yakima Canyon": { origin_handle: "the-shop-lore-chert-road-detour-yakima-river-jasper", origin_page_handle: "the-shop-lore-chert-road-detour-yakima-river-jasper" },
+    "Yellowstone River": { origin_handle: "the-yellowstone-river", origin_page_handle: "the-yellowstone-river" },
+    "Rufus Serpentine": { origin_handle: "the-rufus-protocol", origin_page_handle: "the-rufus-protocol" },
+    "Nickel Back": { origin_handle: "nickel-back-collection", origin_page_handle: "nickel-back-collection" },
+    "The Shopped Rock": { origin_handle: "the-shopped-rock", origin_page_handle: "the-shopped-rock" },
+    "Spokane River": { origin_handle: null, origin_page_handle: null },
+    "North Fork CdA": { origin_handle: null, origin_page_handle: null }
+  };
+
+  if (overrides[loc]) {
+    return overrides[loc];
+  }
+  return { origin_handle: currentOriginHandle, origin_page_handle: currentOriginHandle };
+}
+
 export const action = async ({ request }) => {
   try {
     const { admin } = await authenticate.admin(request);
@@ -481,6 +501,24 @@ export const action = async ({ request }) => {
           ? `Handcrafted ${derivedFamily} — ${correctedOrigin} — OOAK Lapidary Art`
           : `Handcrafted ${derivedFamily} — OOAK Lapidary Art`;
 
+        const resolved_collection_location = (() => {
+          const LOCATION_MAP = {
+            "chert-road-detour": "Yakima Canyon",
+            "yakima-canyon": "Yakima Canyon",
+            "the-yellowstone-river-collection": "Yellowstone River",
+            "the-rufus-serpentine-collection": "Rufus Serpentine",
+            "the-nickel-back-collection": "Nickel Back",
+            "the-spokane-river-collection": "Spokane River",
+            "north-fork-cda-collection": "North Fork CdA",
+            "richardsons-rock-ranch": "Richardson's Rock Ranch",
+            "the-3-000-mile-run-1": "The 3,000-Mile Run",
+            "the-shopped-rock": "The Shopped Rock",
+          };
+          return LOCATION_MAP[collectionData.slug] || collectionData.name.replace(/\s*Collection$/i, "").trim();
+        })();
+
+        const overrideData = applyOriginOverrides(resolved_collection_location, activeOriginHandle);
+
         // 🔴 STRICT EXPLICIT PAYLOAD MAPPING
         return Response.json({
           success: true,
@@ -488,25 +526,12 @@ export const action = async ({ request }) => {
           tab2Data: {
             origin_story: origin_story,
             stone_family: derivedFamily,
-            origin_handle: activeOriginHandle,
+            origin_handle: overrideData.origin_handle,
+            origin_page_handle: overrideData.origin_page_handle,
             origin_location: correctedOrigin,
             shopify_title: `${derivedFamily} — ${correctedOrigin} — ${pieceNameSegment}`,
             collection_name: collectionData.name,
-            collection_location: (() => {
-              const LOCATION_MAP = {
-                "chert-road-detour": "Yakima Canyon",
-                "yakima-canyon": "Yakima Canyon",
-                "the-yellowstone-river-collection": "Yellowstone River",
-                "the-rufus-serpentine-collection": "Rufus Serpentine",
-                "the-nickel-back-collection": "Nickel Back",
-                "the-spokane-river-collection": "Spokane River",
-                "north-fork-cda-collection": "North Fork CdA",
-                "richardsons-rock-ranch": "Richardson's Rock Ranch",
-                "the-3-000-mile-run-1": "The 3,000-Mile Run",
-                "the-shopped-rock": "The Shopped Rock",
-              };
-              return LOCATION_MAP[collectionData.slug] || collectionData.name.replace(/\s*Collection$/i, "").trim();
-            })(),
+            collection_location: resolved_collection_location,
             seo_title: visionFields.seo_title || manual_seo_title,
             authenticity: visionFields.authenticity || "Authentic",
             rarity: visionFields.rarity || "Common",
@@ -657,13 +682,17 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
             : `${seoTitleParts.join(" ")} — Rockhound Studio`;
         }
 
+        const collection_location_resolved = parsed.collection_location || collectionData.name.replace(/\s+Collection$/i, "").trim();
+        const overrideData = applyOriginOverrides(collection_location_resolved, resolvedHandle);
+
         const finalParse = {
           ...parsed,
-          origin_handle: resolvedHandle,
+          origin_handle: overrideData.origin_handle,
+          origin_page_handle: overrideData.origin_page_handle,
           origin_story: extractedStory,
           origin_location: parsed.origin_location || segment2,
           collection_name: parsed.collection_name || collectionData.name,
-          collection_location: parsed.collection_location || collectionData.name.replace(" Collection", ""),
+          collection_location: collection_location_resolved,
           canonical_title: parsed.stone_family + " — " + (parsed.origin_location || displayName) + " — " + segment3,
           seo_title: parsed.seo_title || seo_title,
           mohs_hardness: dbGeoData.mohs_hardness || "",
@@ -827,6 +856,9 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
             final_desc = "";
         }
 
+        const resolved_collection_location = defaultCollection.name.replace(/\s+Collection$/i, "").trim();
+        const overrideData = applyOriginOverrides(resolved_collection_location, defaultOriginSlug);
+
         // 🔴 STRICT EXPLICIT PAYLOAD MAPPING
         return Response.json({
           success: true,
@@ -857,10 +889,11 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
             setting_ready: resolved_setting_ready,
             bail_included: resolved_bail_included,
             origin_story: extractedStory,
-            origin_handle: defaultOriginSlug,
+            origin_handle: overrideData.origin_handle,
+            origin_page_handle: overrideData.origin_page_handle,
             origin_location: parsedVision.origin_location || originSegment,
             collection_name: defaultCollection.name,
-            collection_location: defaultCollection.name.replace(" Collection", ""),
+            collection_location: resolved_collection_location,
             custom_product: "true",
             age_group: "adult",
             target_gender: "Unisex",
