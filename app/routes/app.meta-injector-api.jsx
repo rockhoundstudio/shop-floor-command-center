@@ -1,4 +1,4 @@
-﻿import { data } from "react-router";
+import { data } from "react-router";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 
@@ -560,6 +560,22 @@ export const action = async ({ request }) => {
       if (combinedFields.condition && combinedFields.condition !== "") googleMetafields.push({ ownerId: productId, namespace: "google", key: "condition", type: "single_line_text_field", value: String(combinedFields.condition) });
       if (combinedFields.google_product_category) googleMetafields.push({ namespace: "google", key: "custom_label_0", type: "single_line_text_field", value: String(combinedFields.google_product_category) });
 
+      const COLLECTION_LOCATION_MAP = {
+        "chert-road-detour": "Yakima Canyon",
+        "yakima-canyon": "Yakima Canyon",
+        "the-yellowstone-river-collection": "Yellowstone River",
+        "the-rufus-serpentine-collection": "Rufus Serpentine",
+        "the-nickel-back-collection": "Nickel Back",
+        "the-spokane-river-collection": "Spokane River",
+        "north-fork-cda-collection": "North Fork CdA",
+        "richardsons-rock-ranch": "Richardson's Rock Ranch",
+        "the-3-000-mile-run-1": "The 3,000-Mile Run",
+        "the-shopped-rock": "The Shopped Rock",
+      };
+      const rawColLoc = combinedFields.collection_location || combinedFields.collectionLocation || "";
+      const resolvedColLoc = COLLECTION_LOCATION_MAP[rawColLoc] || rawColLoc;
+      if (resolvedColLoc) rawMetafields.push({ key: "collection_location", value: resolvedColLoc, type: "single_line_text_field" });
+
       if (rawMetafields.length > 0 || googleMetafields.length > 0) {
         try {
             const TYPE_MAP = { 
@@ -824,4 +840,3 @@ export const action = async ({ request }) => {
     }
   }
 };
-
