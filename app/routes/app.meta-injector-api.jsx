@@ -1,4 +1,4 @@
-import { data } from "react-router";
+﻿import { data } from "react-router";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 
@@ -542,6 +542,31 @@ export const action = async ({ request }) => {
       
       const ignoreKeys = ["intent", "mediaUrlsJson", "descriptionHtml", "productType", "status", "pieces", "photoFiles", "photoPreviewUrls", "photos", "imageBase64", "imageMimeType", "stagedResourceUrls", "scanError", "scanToken", "isUploading", "id", "price", "collectionLocation", "age_group", "target_gender", "condition", "shipping_weight_oz", "collection_name", "collection_location", "seo_title"];
 
+      const TYPE_MAP = {
+        stone_story: "list.single_line_text_field",
+        origin_story: "single_line_text_field",
+        character_marks: "list.single_line_text_field",
+        honest_flaws: "single_line_text_field",
+        honest_flaws_and_character: "single_line_text_field",
+        generated_description: "single_line_text_field",
+        artist_notes: "single_line_text_field",
+        is_ooak: "single_line_text_field",
+        treated: "single_line_text_field",
+        found_object: "single_line_text_field",
+        custom_product: "single_line_text_field",
+        is_one_of_a_kind: "single_line_text_field",
+        piece_name: "single_line_text_field",
+        cut_and_shape: "single_line_text_field",
+        surface_finish: "single_line_text_field",
+        dimensions_mm: "single_line_text_field",
+        stone_shape: "single_line_text_field",
+        color: "single_line_text_field",
+        specific_gravity: "single_line_text_field",
+        mohs_hardness: "single_line_text_field",
+        weight_grams: "number_decimal",
+        shipping_weight_oz: "number_decimal",
+        price: "number_decimal",
+      };
       Object.entries(combinedFields).forEach(([key, value]) => {
         if (!ignoreKeys.includes(key) && value !== undefined && value !== null && String(value).trim() !== "") {
            let finalKey = key === "specificGravity" ? "specific_gravity" : key;
@@ -578,33 +603,6 @@ export const action = async ({ request }) => {
 
       if (rawMetafields.length > 0 || googleMetafields.length > 0) {
         try {
-            const TYPE_MAP = { 
-              stone_story: "list.single_line_text_field", 
-              origin_story: "single_line_text_field",
-              character_marks: "list.single_line_text_field",
-              honest_flaws: "single_line_text_field",
-              honest_flaws_and_character: "single_line_text_field",
-              generated_description: "single_line_text_field",
-              artist_notes: "single_line_text_field",
-              is_ooak: "single_line_text_field", 
-              treated: "single_line_text_field", 
-              found_object: "single_line_text_field", 
-              custom_product: "single_line_text_field", 
-              is_one_of_a_kind: "single_line_text_field", 
-              piece_name: "single_line_text_field", 
-              cut_and_shape: "single_line_text_field", 
-              surface_finish: "single_line_text_field", 
-              dimensions_mm: "single_line_text_field", 
-              stone_shape: "single_line_text_field", 
-              color: "single_line_text_field", 
-              weight_grams: "number_decimal", 
-              specific_gravity: "single_line_text_field", 
-              mohs_hardness: "single_line_text_field", 
-              shipping_weight_oz: "number_decimal", 
-              price: "number_decimal" 
-            };
-
-            const metafieldsInput = rawMetafields.map(item => {
                let resolvedType = TYPE_MAP[item.key] || item.type || "single_line_text_field";
                let resolvedValue = String(item.value);
                if (resolvedType === "number_decimal") {
@@ -840,3 +838,5 @@ export const action = async ({ request }) => {
     }
   }
 };
+
+
