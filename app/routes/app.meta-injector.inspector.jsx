@@ -53,8 +53,6 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
   const [searchQuery, setSearchQuery] = useState("");
   const [tab2StatusMessage, setTab2StatusMessage] = useState("");
   const [tab2ErrorMessage, setTab2ErrorMessage] = useState("");
-  const [isSection3Open, setIsSection3Open] = useState(false);
-  const [isSection4Open, setIsSection4Open] = useState(false);
   const [pendingFixFields, setPendingFixFields] = useState([]);
   const [currentFixIndex, setCurrentFixIndex] = useState(0);
   const [fixPopupValue, setFixPopupValue] = useState("");
@@ -94,21 +92,6 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
           newFullForm[node.key] = parsedValue;
         }
       });
-
-      product.metafields.edges.forEach(({ node }) => {
-        const hasValue = node.value !== null && node.value !== undefined;
-        if (hasValue && node.namespace === "geo") {
-          let parsedValue = node.value;
-          if (parsedValue.startsWith("[")) {
-            try {
-              const arr = JSON.parse(parsedValue);
-              parsedValue = Array.isArray(arr) ? arr[0] : parsedValue;
-            } catch (e) { }
-          }
-          newForm[node.key] = parsedValue;
-          newFullForm[node.key] = parsedValue;
-        }
-      });
     }
 
     const CAMEL_TO_SNAKE = { crystalSystem: "crystal_system", geologicalEra: "geological_era", mineralClass: "mineral_class", rockComposition: "rock_composition", rockFormation: "rock_formation", geologicalAge: "geological_age", fracture: "fracture_pattern" };
@@ -123,58 +106,31 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
     if (!newFullForm.condition) newFullForm.condition = "new";
     if (!newFullForm.google_product_category) newFullForm.google_product_category = "Apparel & Accessories > Jewelry";
 
-    if (!newForm.target_gender) newForm.target_gender = "Unisex";
-    if (!newForm.age_group) newForm.age_group = "adult";
-    if (!newForm.condition) newForm.condition = "new";
-    if (!newForm.google_product_category) newForm.google_product_category = "Apparel & Accessories > Jewelry";
-
     if (!newFullForm.handcrafted_by) newFullForm.handcrafted_by = "Bob & Janyce, Rockhound Studio";
-    if (!newForm.handcrafted_by) newForm.handcrafted_by = "Bob & Janyce, Rockhound Studio";
-
     if (!newFullForm.shipping_weight_oz && newFullForm.weight_grams) {
       const grams = parseFloat(newFullForm.weight_grams);
       if (!isNaN(grams) && grams > 0) {
         newFullForm.shipping_weight_oz = (grams / 28.3495).toFixed(2);
-        newForm.shipping_weight_oz = newFullForm.shipping_weight_oz;
       }
     }
 
     if (!newForm.origin_story && newForm.stone_story) newForm.origin_story = newForm.stone_story;
-    
     if (newForm.origin_story && newForm.origin_story.startsWith("[")) {
       try { const arr = JSON.parse(newForm.origin_story); newForm.origin_story = Array.isArray(arr) ? arr[0] : newForm.origin_story; } catch (e) {}
-    }
-    if (newForm.stone_story && newForm.stone_story.startsWith("[")) {
-      try { const arr = JSON.parse(newForm.stone_story); newForm.origin_story = Array.isArray(arr) ? arr[0] : newForm.stone_story; } catch (e) { }
     }
     newFullForm.origin_story = newForm.origin_story;
 
     if (newForm.honest_flaws_and_character && newForm.honest_flaws_and_character.startsWith("[")) {
       try { const arr = JSON.parse(newForm.honest_flaws_and_character); newForm.honest_flaws_and_character = Array.isArray(arr) ? arr[0] : newForm.honest_flaws_and_character; } catch (e) { }
     }
-    if (newForm.character_marks && newForm.character_marks.startsWith("[")) {
-      try { const arr = JSON.parse(newForm.character_marks); newForm.honest_flaws_and_character = Array.isArray(arr) ? arr[0] : newForm.character_marks; } catch (e) { }
-    }
     newFullForm.honest_flaws_and_character = newForm.honest_flaws_and_character;
-
-    if (newForm.handcrafted_by && typeof newForm.handcrafted_by === 'string') {
-      if (newForm.handcrafted_by.startsWith("[")) { try { const arr = JSON.parse(newForm.handcrafted_by); newForm.handcrafted_by = Array.isArray(arr) ? arr[0] : newForm.handcrafted_by; } catch (e) {} }
-      if (newForm.handcrafted_by.includes("Bob & Janyce") || newForm.handcrafted_by.includes("Rockhound Studio")) newForm.handcrafted_by = "Bob & Janyce, Rockhound Studio";
-    }
-    if (newFullForm.handcrafted_by && typeof newFullForm.handcrafted_by === 'string') {
-      if (newFullForm.handcrafted_by.startsWith("[")) { try { const arr = JSON.parse(newFullForm.handcrafted_by); newFullForm.handcrafted_by = Array.isArray(arr) ? arr[0] : newFullForm.handcrafted_by; } catch (e) {} }
-      if (newFullForm.handcrafted_by.includes("Bob & Janyce") || newFullForm.handcrafted_by.includes("Rockhound Studio")) newFullForm.handcrafted_by = "Bob & Janyce, Rockhound Studio";
-    }
 
     const customPM = product?.metafields?.edges?.find(e => e.node.namespace === "custom" && e.node.key === "primary_medium")?.node?.value;
     let bestPM = customPM || newForm.base_stone_type || "";
-    if (bestPM && bestPM.startsWith("[")) { try { const arr = JSON.parse(bestPM); bestPM = Array.isArray(arr) ? bestPM : bestPM; } catch (e) { } }
     if (bestPM === "Stone") bestPM = ""; 
     
     newFullForm.primary_medium = bestPM;
-    newForm.primary_medium = bestPM;
     if (newForm.color) newFullForm.color = newForm.color;
-    if (!newFullForm.handcrafted_by || newFullForm.handcrafted_by.trim() === "") newFullForm.handcrafted_by = "Bob & Janyce, Rockhound Studio";
 
     if (product && product.title) {
       newForm.piece_name = product.title.includes(" — ") ? product.title.split(" — ").pop().trim() : product.title;
@@ -189,7 +145,6 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
     const seoTitleNode = product?.metafields?.edges?.find(e => e.node.namespace === "global" && e.node.key === "title_tag")?.node;
     if (seoTitleNode && seoTitleNode.value) {
         newFullForm.seo_title = seoTitleNode.value;
-        newForm.seo_title = seoTitleNode.value;
     }
     
     setFormState(newForm);
@@ -211,13 +166,6 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
               if (dropdownFields.includes(node.key)) updatedState[node.key] = normalizeDropdownValue(node.key, node.value);
               else if (textFields.includes(node.key)) updatedState[node.key] = node.value;
             }
-          });
-          
-          product.metafields.edges.forEach(({ node }) => {
-            if (node.namespace === "custom" && node.key === "primary_color" && node.value) updatedState.color = node.value;
-            if (node.namespace === "custom" && node.key === "secondary_colors" && node.value) updatedState.color_pattern = node.value;
-            if (node.namespace === "global" && node.key === "description_tag" && node.value) updatedState.generated_description = node.value;
-            if (node.namespace === "global" && node.key === "title_tag" && node.value) updatedState.seo_title = node.value;
           });
           
           if (product.title) {
@@ -288,49 +236,36 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
 
     Object.entries(fullMetaState).forEach(([key, value]) => {
       if (key === "shopify_title") return; 
-      
       if (!allowedKeys.includes(key)) return;
 
-      let injectValue = value;
+      let injectValue = String(value);
       if (key === "piece_name") injectValue = resolvedPieceName;
+
+      // 🔴 UNIVERSAL STEAMROLLER: Crush all hidden line breaks, 'Enter' keys, and carriage returns.
+      // Shopify's database schema will crash if a field originally defined as single-line receives a line break.
+      injectValue = injectValue.replace(/\\[rn]/g, " ").replace(/[\r\n]+/g, " ").replace(/\s{2,}/g, " ").trim();
 
       const config = CUSTOM_FIELDS.find(f => f.key === key);
       let fieldType = config && config.type ? config.type : "single_line_text_field";
       
+      // Keep definitions accurate for the API, but the value is already safely flattened.
       if (["honest_flaws_and_character", "origin_story", "generated_description", "artist_notes"].includes(key)) {
         fieldType = "multi_line_text_field";
       }
 
-      if (fieldType === "single_line_text_field" && typeof injectValue === "string") {
-        injectValue = injectValue.replace(/\r?\n|\r/g, " ").trim();
-      }
-
-      const isPopulated = injectValue !== undefined && injectValue !== null && injectValue.toString().trim() !== "" && injectValue.toString().trim() !== "N/A";
+      const isPopulated = injectValue !== "" && injectValue !== "N/A";
       
       if (isPopulated && injectValue !== "See Shopify metaobject") {
         let formatId = selectedProductId.includes("gid://") ? selectedProductId : `gid://shopify/Product/${selectedProductId}`;
         
         payload.push({
-          namespace: "custom", // 🔴 Hard-locked to custom
+          namespace: "custom", 
           key: key.replace(/-/g, "_"),
           type: fieldType,
           value: injectValue,
           ownerId: formatId
         });
       }
-    });
-
-    // 🔴 GHOST ASSASSIN: Actively blank out stubborn legacy fields so they disappear
-    const ghostsToKill = ["collection_date", "alt_text"];
-    let formatId = selectedProductId.includes("gid://") ? selectedProductId : `gid://shopify/Product/${selectedProductId}`;
-    ghostsToKill.forEach(ghost => {
-      payload.push({
-        namespace: "custom",
-        key: ghost,
-        type: "single_line_text_field",
-        value: " ", // 🔴 Blank space instantly overwrites the garbage text
-        ownerId: formatId
-      });
     });
 
     if (payload.length === 0 && !masterTitle) {
@@ -380,11 +315,12 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
 
         setFullMetaState(prev => {
           const updatedState = { ...prev };
-          const ALWAYS_OVERWRITE = ["stone_family", "surface_finish", "handcrafted_by", "treated", "is_ooak", "mohs_hardness", "luster", "fracture_pattern", "cleavage", "specific_gravity", "diaphaneity", "mineral_class", "crystal_system", "rock_composition", "rock_formation", "geological_era", "geological_age", "color", "stone_shape", "color_pattern", "cut_and_shape", "honest_flaws_and_character", "primary_use", "primary_medium", "setting_ready", "wire_material", "bail_included", "generated_description", "seo_title", "necklace_design", "material"];
+          const ALWAYS_OVERWRITE = ["mohs_hardness", "luster", "fracture_pattern", "cleavage", "specific_gravity", "diaphaneity", "mineral_class", "crystal_system", "rock_composition", "rock_formation", "geological_era", "geological_age", "generated_description", "seo_title"];
 
           Object.entries(tab2Data).forEach(([key, val]) => {
             const hasNewValue = val !== undefined && val !== null && val.toString().trim() !== "" && val !== "See Shopify metaobject";
             const currentlyEmpty = !updatedState[key] || updatedState[key].toString().trim() === "";
+            
             if (hasNewValue && (currentlyEmpty || ALWAYS_OVERWRITE.includes(key))) {
               let normalizedVal = val;
               if (key === "treated" || key === "is_ooak") {
@@ -394,11 +330,6 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
               updatedState[key] = normalizedVal;
             }
           });
-
-          if (tab2Data.age_group) updatedState.age_group = tab2Data.age_group;
-          if (tab2Data.target_gender) updatedState.target_gender = tab2Data.target_gender;
-          if (tab2Data.condition) updatedState.condition = tab2Data.condition;
-          if (tab2Data.google_product_category) updatedState.google_product_category = tab2Data.google_product_category;
 
           if (productTitle) updatedState.piece_name = productTitle.includes(" \u2014 ") ? productTitle.split(" \u2014 ").pop().trim() : productTitle;
 
@@ -603,25 +534,17 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
               </BlockStack>
 
               <BlockStack gap="300">
-                <div onClick={() => setIsSection3Open(!isSection3Open)} style={{ cursor: 'pointer', display: 'inline-block' }}>
-                  <Text as="h4" variant="headingMd">Section 3 — Google Machine</Text>
+                <Text as="h4" variant="headingMd">Section 3 — Google Machine</Text>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
+                  {["primary_use", "setting_ready", "wire_material", "bail_included", "color_pattern", "material", "jewelry_type", "necklace_design", "target_gender", "age_group", "condition", "custom_product", "seo_title", "google_product_category"].map(renderFullMetaField)}
                 </div>
-                <Collapsible id="section-3-collapsible" open={isSection3Open} transition={{ duration: '200ms', timingFunction: 'ease-in-out' }}>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px', marginTop: '16px' }}>
-                    {["primary_use", "setting_ready", "wire_material", "bail_included", "color_pattern", "material", "jewelry_type", "necklace_design", "target_gender", "age_group", "condition", "custom_product", "seo_title", "google_product_category"].map(renderFullMetaField)}
-                  </div>
-                </Collapsible>
               </BlockStack>
 
               <BlockStack gap="300">
-                <div onClick={() => setIsSection4Open(!isSection4Open)} style={{ cursor: 'pointer', display: 'inline-block' }}>
-                  <Text as="h4" variant="headingMd">Section 4 — Geo-Vault</Text>
+                <Text as="h4" variant="headingMd">Section 4 — Geo-Vault</Text>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
+                  {["mohs_hardness", "luster", "fracture_pattern", "cleavage", "specific_gravity", "diaphaneity", "mineral_class", "crystal_system", "rock_composition", "rock_formation", "geological_era", "geological_age"].map(renderFullMetaField)}
                 </div>
-                <Collapsible id="section-4-collapsible" open={isSection4Open} transition={{ duration: '200ms', timingFunction: 'ease-in-out' }}>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px', marginTop: '16px' }}>
-                    {["mohs_hardness", "luster", "fracture_pattern", "cleavage", "specific_gravity", "diaphaneity", "mineral_class", "crystal_system", "rock_composition", "rock_formation", "geological_era", "geological_age"].map(renderFullMetaField)}
-                  </div>
-                </Collapsible>
               </BlockStack>
 
             </BlockStack>
