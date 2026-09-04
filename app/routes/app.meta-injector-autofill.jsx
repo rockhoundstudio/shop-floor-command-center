@@ -321,21 +321,26 @@ export const action = async ({ request }) => {
     const body = await request.formData();
     const intent = body.get("intent");
 
+    // ==========================================
+    // INTENT: GEO LOOKUP
+    // ==========================================
     if (intent === "geoLookup") {
       const stoneFamily = body.get("stoneFamily") || "";
       try { 
         const geoFields = await getGeoData(admin, stoneFamily); 
-        return Response.json({ geoFields }); 
+        return Response.json({ success: true, intent: "geoLookup", geoFields }); 
       } catch (err) { 
         console.error("[geoLookup] getGeoData crashed:", err); 
-        return Response.json({ geoFields: {} }); 
+        return Response.json({ success: false, intent: "geoLookup", geoFields: {} }); 
       }
     }
 
+    // ==========================================
+    // INTENT: TAB 2 AUTOFILL (THE BENCH)
+    // ==========================================
     if (intent === "tab2AutoFill") {
       const stone_family = body.get("stone_family") || "";
       const origin_handle = body.get("origin_handle") || "";
-      const cut_and_shape = body.get("cut_and_shape") || "";
       const productTitle = body.get("productTitle") || body.get("piece_name") || body.get("title") || "";
       const imageUrl = body.get("imageUrl") || "";
 
@@ -348,18 +353,18 @@ export const action = async ({ request }) => {
         const geoFields = await getGeoData(admin, derivedFamily);
         const { pagesList, collectionsList } = await getLiveStoreDirectory(admin);
         
+        // 🔴 HOISTED SCOPE TO PREVENT CRASH
         const activeOriginHandle = origin_handle || resolveOriginHandle(derivedOrigin, pagesList);
         const collectionData = resolveCollectionData(derivedOrigin, activeOriginHandle, collectionsList);
+        const targetUrlPath = `/pages/${activeOriginHandle}`;
+        const collectionUrlPath = `/collections/${collectionData.slug}`;
+        const fullCollectionTitle = collectionData.name.replace(/\s+Collection$/i, "").trim();
         
         const matchedPage = pagesList.find(p => p.url.includes(activeOriginHandle));
         const origin_story = matchedPage ? matchedPage.excerpt : "";
 
         const pagesMenu = pagesList.map(p => `- Title: "${p.title}" | URL: ${p.url} | Excerpt: "${p.excerpt}"`).join("\n");
         const collectionsMenu = collectionsList.map(c => `- Title: "${c.title}" | URL: ${c.url} | Excerpt: "${c.excerpt}"`).join("\n");
-
-        const targetUrlPath = `/pages/${activeOriginHandle}`;
-        const collectionUrlPath = `/collections/${collectionData.slug}`;
-        const fullCollectionTitle = collectionData.name.replace(/\s+Collection$/i, "").trim();
 
         let collection_date = "";
         if (origin_story) {
@@ -382,8 +387,7 @@ export const action = async ({ request }) => {
         }
 
         let visionFields = {};
-        const authenticity = visionFields.authenticity || "Authentic";
-        const rarity = visionFields.rarity || "Common";
+        
         if (imageUrl) {
           try {
             const targetUrl = imageUrl.includes("?") ? `${imageUrl}&width=800` : `${imageUrl}?width=800`;
@@ -428,6 +432,7 @@ export const action = async ({ request }) => {
                       surface_finish: { type: "STRING" },
                       stone_shape: { type: "STRING" },
                       dimensions_mm: { type: "STRING" },
+                      color_pattern: { type: "STRING" },
                       pattern: { type: "STRING" },
                       primary_use: { type: "STRING" },
                       primary_medium: { type: "STRING" },
@@ -490,6 +495,8 @@ export const action = async ({ request }) => {
           : `Handcrafted ${derivedFamily} — OOAK Lapidary Art`;
 
         return Response.json({
+          success: true,
+          intent: "tab2AutoFill",
           tab2Data: {
             ...geoFields,
             ...visionFields,
@@ -516,8 +523,12 @@ export const action = async ({ request }) => {
             })(),
             seo_title: visionFields.seo_title || manual_seo_title,
             collection_date,
-            authenticity,
-            rarity,
+            authenticity: visionFields.authenticity || "Authentic",
+            rarity: visionFields.rarity || "Common",
+            secondary_medium: visionFields.secondary_medium || "None",
+            cut_and_shape: visionFields.cut_and_shape || "",
+            jewelry_type: visionFields.jewelry_type || "N/A",
+            color_pattern: visionFields.color_pattern || visionFields.pattern || "",
             treated: "No",
             is_ooak: "Yes",
             age_group: "adult",
@@ -528,10 +539,13 @@ export const action = async ({ request }) => {
         });
       } catch (err) {
         console.error("[tab2AutoFill] crashed:", err);
-        return Response.json({ tab2Data: {} });
+        return Response.json({ success: false, intent: "tab2AutoFill", tab2Data: {} });
       }
     }
 
+    // ==========================================
+    // INTENT: TITLE PARSE
+    // ==========================================
     if (intent === "titleParse") {
       const pieceNameInput = body.get("pieceName") || "";
       const segments = pieceNameInput.split(/\s+[—–-]\s+/);
@@ -648,13 +662,16 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
           google_product_category: "Apparel & Accessories > Jewelry"
         };
         
-        return Response.json({ titleParse: finalParse });
+        return Response.json({ success: true, intent: "titleParse", titleParse: finalParse });
       }
       
       const errText = await geminiRes.text();
-      return Response.json({ titleParse: null, error: `Title parse error: ${geminiRes.status} - ${errText}` }, { status: 500 });
+      return Response.json({ success: false, intent: "titleParse", titleParse: null, error: `Title parse error: ${geminiRes.status} - ${errText}` }, { status: 500 });
     }
 
+    // ==========================================
+    // INTENT: VISION SCAN (TAB 1 AUTO-PILOT)
+    // ==========================================
     if (intent === "visionScan") {
       const pieceId = body.get("pieceId");
       const clientBase64 = body.get("imageBase64");
@@ -667,24 +684,22 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
       
       const { pagesList, collectionsList } = await getLiveStoreDirectory(admin);
       
-      const pagesMenu = pagesList.map(p => `- Title: "${p.title}" | URL: ${p.url} | Excerpt: "${p.excerpt}"`).join("\n");
-      const collectionsMenu = collectionsList.map(c => `- Title: "${c.title}" | URL: ${c.url} | Excerpt: "${c.excerpt}"`).join("\n");
-
+      // 🔴 HOISTED SCOPE TO PREVENT CRASH
       const defaultOriginSlug = resolveOriginHandle(originSegment, pagesList);
       const defaultCollection = resolveCollectionData(originSegment, defaultOriginSlug, collectionsList);
       const targetUrlPath = `/pages/${defaultOriginSlug}`;
       const collectionUrlPath = `/collections/${defaultCollection.slug}`;
-
       const fullCollectionTitle = defaultCollection.name.replace(/\s+Collection$/i, "").trim();
 
       const matchedPage = pagesList.find(p => p.url.includes(defaultOriginSlug));
       const extractedStory = matchedPage ? matchedPage.excerpt : "";
-      console.log("[DEBUG origin]", { originSegment, defaultOriginSlug, matchedPage: matchedPage ? matchedPage.url : "NULL", extractedStoryLength: extractedStory.length });
+      
+      const pagesMenu = pagesList.map(p => `- Title: "${p.title}" | URL: ${p.url} | Excerpt: "${p.excerpt}"`).join("\n");
+      const collectionsMenu = collectionsList.map(c => `- Title: "${c.title}" | URL: ${c.url} | Excerpt: "${c.excerpt}"`).join("\n");
 
       let imageBase64 = clientBase64 && clientBase64 !== "undefined" ? String(clientBase64).trim() : "";
       let imageMimeType = clientMime;
       
-      // STRIP THE DATA URI PREFIX SO GEMINI DOESN'T CRASH (Intermittent Tab 1 failure fix)
       if (imageBase64.includes(",")) {
         imageBase64 = imageBase64.substring(imageBase64.indexOf(",") + 1);
       }
@@ -736,6 +751,7 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
                 surface_finish: { type: "STRING" },
                 stone_shape: { type: "STRING" },
                 dimensions_mm: { type: "STRING" },
+                color_pattern: { type: "STRING" },
                 pattern: { type: "STRING" },
                 primary_use: { type: "STRING" },
                 primary_medium: { type: "STRING" },
@@ -744,9 +760,9 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
                 setting_ready: { type: "STRING" },
                 bail_included: { type: "STRING" },
                 chain_material: { type: "STRING" },
-                      jewelry_type: { type: "STRING" },
-                      rarity: { type: "STRING" },
-                      authenticity: { type: "STRING" }
+                jewelry_type: { type: "STRING" },
+                rarity: { type: "STRING" },
+                authenticity: { type: "STRING" }
               }
             }
           }
@@ -771,15 +787,15 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
           parsedVision = JSON.parse(cleanJson);
         } catch (parseErr) {
           console.error("[visionScan] JSON Parse Error:", parseErr, "Raw string:", cleanJson);
-          return Response.json({ success: false, error: `JSON Parse Error: ${parseErr.message} | Raw string: ${cleanJson.substring(0, 100)}...` });
+          return Response.json({ success: false, intent: "visionScan", error: `JSON Parse Error: ${parseErr.message} | Raw string: ${cleanJson.substring(0, 100)}...` });
         }
         
         const resolved_primary_use = parsedVision.primary_use || parsedVision.use || parsedVision.product_type || "";
         const resolved_primary_medium = parsedVision.primary_medium || parsedVision.medium || parsedVision.metal || parsedVision.primary_metal || "Natural Stone";
-        const resolved_secondary_medium = parsedVision.secondary_medium || parsedVision.accent || parsedVision.secondary_metal || "";
-        const resolved_wire_material = parsedVision.wire_material || parsedVision.wire || parsedVision.wire_wrap || "";
-        const resolved_setting_ready = parsedVision.setting_ready || parsedVision.setting || parsedVision.mounting || parsedVision.bezel || "";
-        const resolved_bail_included = parsedVision.bail_included || parsedVision.bail || "";
+        const resolved_secondary_medium = parsedVision.secondary_medium || parsedVision.accent || parsedVision.secondary_metal || "None";
+        const resolved_wire_material = parsedVision.wire_material || parsedVision.wire || parsedVision.wire_wrap || "None";
+        const resolved_setting_ready = parsedVision.setting_ready || parsedVision.setting || parsedVision.mounting || parsedVision.bezel || "None";
+        const resolved_bail_included = parsedVision.bail_included || parsedVision.bail || "None";
 
         let final_desc = parsedVision.generated_description || parsedVision.description || "";
         const lowerDesc = final_desc.toLowerCase();
@@ -803,7 +819,7 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
             rarity: parsedVision.rarity || "Common",
             authenticity: parsedVision.authenticity || "Authentic",
             dimensions_mm: parsedVision.dimensions_mm || "",
-            color_pattern: parsedVision.pattern || "",
+            color_pattern: parsedVision.color_pattern || parsedVision.pattern || "",
             primary_use: resolved_primary_use,
             primary_medium: resolved_primary_medium,
             secondary_medium: resolved_secondary_medium,
@@ -824,12 +840,12 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
       }
       
       const errText = await geminiRes.text();
-      return Response.json({ success: false, error: `Vision API Failure (${geminiRes.status}): ${errText}` });
+      return Response.json({ success: false, intent: "visionScan", error: `Vision API Failure (${geminiRes.status}): ${errText}` });
     }
 
-    return Response.json({ success: true, fields: {} });
+    return Response.json({ success: true, intent: intent || "unknown", fields: {} });
   } catch (error) {
     console.error("Critical Failure:", error);
-    return Response.json({ success: false, error: error.message }, { status: 500 });
+    return Response.json({ success: false, intent: "unknown", error: error.message }, { status: 500 });
   }
 };
