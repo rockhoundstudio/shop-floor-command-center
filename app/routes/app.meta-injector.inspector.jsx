@@ -30,13 +30,12 @@ const FULL_META_GROUPS = [
   { heading: "Always Fill", color: "#2E7D32", fields: [{ key: "piece_name", label: "Piece Name", type: "text" }, { key: "primary_medium", label: "Primary Medium", type: "text" }, { key: "handcrafted_by", label: "Handcrafted By", type: "text" }, { key: "is_ooak", label: "Is One of a Kind", type: "text" }, { key: "treated", label: "Treated", type: "text" }] },
   { heading: "Stone Fields", color: "#1565C0", fields: [{ key: "stone_family", label: "Stone Family", type: "text" }, { key: "color", label: "Color", type: "text" }, { key: "cut_and_shape", label: "Cut and Shape", type: "text" }, { key: "surface_finish", label: "Surface Finish", type: "text" }, { key: "dimensions_mm", label: "Dimensions (mm)", type: "text" }, { key: "weight_grams", label: "Weight (grams)", type: "text" }] },
   { heading: "Story & Lore", color: "#E65100", fields: [{ key: "origin_story", label: "Origin Story", type: "text", multiline: true }, { key: "honest_flaws_and_character", label: "Honest Flaws and Character", type: "text", multiline: true }, { key: "collection_name", label: "Collection Name", type: "text" }, { key: "generated_description", label: "Generated Description", type: "text", multiline: true }] },
-  { heading: "Mixed Media", color: "#6A1B9A", fields: [{ key: "found_object", label: "Found Object", type: "text" }] },
   { heading: "Google / SEO", color: "#F9A825", fields: [{ key: "primary_use", label: "Primary Use", type: "text" }, { key: "bail_included", label: "Bail Included", type: "text" }, { key: "seo_title", label: "SEO Title", type: "text" }] },
   { heading: "Geo-Vault", color: "#4E342E", fields: [{ key: "mineral_class", label: "Mineral Class", type: "text" }, { key: "crystal_system", label: "Crystal System", type: "text" }, { key: "rock_composition", label: "Rock Composition", type: "text" }, { key: "rock_formation", label: "Rock Formation", type: "text" }, { key: "geological_era", label: "Geological Era", type: "text" }] }
 ];
 
 const NAMESPACE_MAP = {
-  custom: ["piece_name", "primary_medium", "secondary_medium", "handcrafted_by", "stone_family", "color", "cut_and_shape", "surface_finish", "dimensions_mm", "weight_grams", "shipping_weight_oz", "price", "collection_name", "collection_location", "primary_use", "bail_included", "is_ooak", "treated", "found_object", "wire_material", "setting_ready", "material", "origin_story", "origin_handle", "honest_flaws_and_character", "artist_notes", "generated_description", "rescued_by", "stone_shape", "target_gender", "age_group", "condition", "color_pattern", "jewelry_type", "necklace_design", "chain_link_type", "jewelry_finding_type", "custom_product", "seo_title", "google_product_category"],
+  custom: ["piece_name", "primary_medium", "secondary_medium", "handcrafted_by", "stone_family", "color", "cut_and_shape", "surface_finish", "dimensions_mm", "weight_grams", "shipping_weight_oz", "price", "collection_name", "collection_location", "primary_use", "bail_included", "is_ooak", "treated", "wire_material", "setting_ready", "material", "origin_story", "origin_handle", "honest_flaws_and_character", "artist_notes", "generated_description", "rescued_by", "stone_shape", "target_gender", "age_group", "condition", "color_pattern", "jewelry_type", "necklace_design", "custom_product", "seo_title", "google_product_category"],
   geo: ["mohs_hardness", "luster", "fracture_pattern", "cleavage", "specific_gravity", "diaphaneity", "crystal_system", "geological_era", "geological_age", "mineral_class", "rock_composition", "rock_formation"]
 };
 
@@ -116,7 +115,6 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
       if (newForm[camel] !== undefined) { if (!newForm[snake]) newForm[snake] = newForm[camel]; delete newForm[camel]; }
     });
 
-    // 🟢 THE GOOGLE 4 SEO FIELDS - Hardcoded Initial Defaults (DO NOT LOSE)
     if (!newFullForm.target_gender) newFullForm.target_gender = "Unisex";
     if (!newFullForm.age_group) newFullForm.age_group = "adult";
     if (!newFullForm.condition) newFullForm.condition = "new";
@@ -202,7 +200,7 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
       if (product && product.metafields && product.metafields.edges) {
         setFormState(prev => {
           const updatedState = { ...prev };
-          const dropdownFields = ["handcrafted_by", "is_ooak", "treated", "found_object", "primary_use", "bail_included", "setting_ready", "wire_material", "stone_family", "color", "cut_and_shape", "surface_finish"];
+          const dropdownFields = ["handcrafted_by", "is_ooak", "treated", "primary_use", "bail_included", "setting_ready", "wire_material", "stone_family", "color", "cut_and_shape", "surface_finish"];
           const textFields = ["piece_name", "primary_medium", "dimensions_mm", "weight_grams", "origin_story", "honest_flaws_and_character", "collection_name", "generated_description", "color_pattern", "seo_title"];
 
           product.metafields.edges.forEach(({ node }) => {
@@ -289,7 +287,6 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
       let injectValue = value;
       if (key === "piece_name") injectValue = resolvedPieceName;
 
-      // 🔴 SCRUBBER: Remove hidden line breaks from single line text fields to prevent Shopify rejection
       const config = CUSTOM_FIELDS.find(f => f.key === key);
       let fieldType = config && config.type ? config.type : "single_line_text_field";
       
@@ -359,7 +356,7 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
 
         setFullMetaState(prev => {
           const updatedState = { ...prev };
-          const ALWAYS_OVERWRITE = ["stone_family", "surface_finish", "handcrafted_by", "treated", "is_ooak", "mohs_hardness", "luster", "fracture_pattern", "cleavage", "specific_gravity", "diaphaneity", "mineral_class", "crystal_system", "rock_composition", "rock_formation", "geological_era", "geological_age", "color", "stone_shape", "color_pattern", "cut_and_shape", "honest_flaws_and_character", "primary_use", "primary_medium", "setting_ready", "wire_material", "bail_included", "generated_description", "seo_title"];
+          const ALWAYS_OVERWRITE = ["stone_family", "surface_finish", "handcrafted_by", "treated", "is_ooak", "mohs_hardness", "luster", "fracture_pattern", "cleavage", "specific_gravity", "diaphaneity", "mineral_class", "crystal_system", "rock_composition", "rock_formation", "geological_era", "geological_age", "color", "stone_shape", "color_pattern", "cut_and_shape", "honest_flaws_and_character", "primary_use", "primary_medium", "setting_ready", "wire_material", "bail_included", "generated_description", "seo_title", "necklace_design", "material"];
 
           Object.entries(tab2Data).forEach(([key, val]) => {
             const hasNewValue = val !== undefined && val !== null && val.toString().trim() !== "" && val !== "See Shopify metaobject";
@@ -374,7 +371,6 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
             }
           });
 
-          // 🟢 THE GOOGLE 4 SEO FIELDS - Hardwire Dynamic Overrides from Backend Auto-Fill
           if (tab2Data.age_group) updatedState.age_group = tab2Data.age_group;
           if (tab2Data.target_gender) updatedState.target_gender = tab2Data.target_gender;
           if (tab2Data.condition) updatedState.condition = tab2Data.condition;
@@ -472,13 +468,11 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
     const reqKeys = ["shopify_title", "piece_name", "price", "weight_grams", "material", "stone_family", "collection_name", "origin_handle", "rescued_by", "treatment_status", "origin_story", "primary_use", "seo_title"];
     const isFilled = val !== undefined && val !== null && String(val).trim() !== "" && String(val).trim() !== "false";
     const isRequiredEmpty = !isFilled && reqKeys.includes(field.key);
-    const isOptionalEmpty = !isFilled && !reqKeys.includes(field.key);
     const isEmpty = !isFilled;
     
-    // 🟢 Dynamic Badge Colors logic
-    let dotFillColor = "#eab308"; // Optional empty
-    if (isFilled) dotFillColor = "#22c55e"; // Success filled
-    if (isRequiredEmpty) dotFillColor = "#ef4444"; // Error required
+    let dotFillColor = "#eab308";
+    if (isFilled) dotFillColor = "#22c55e"; 
+    if (isRequiredEmpty) dotFillColor = "#ef4444"; 
 
     const labelNode = (
       <div style={{ display: 'flex', alignItems: 'center' }}>
@@ -580,7 +574,7 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
               <BlockStack gap="300">
                 <Text as="h4" variant="headingMd">Section 2 — Human Engine</Text>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
-                  {["origin_story", "rescued_by", "stone_shape", "collection_name", "origin_handle", "collection_location", "honest_flaws_and_character", "found_object"].map(renderFullMetaField)}
+                  {["origin_story", "rescued_by", "stone_shape", "collection_name", "origin_handle", "collection_location", "honest_flaws_and_character"].map(renderFullMetaField)}
                 </div>
               </BlockStack>
 
@@ -590,7 +584,7 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
                 </div>
                 <Collapsible id="section-3-collapsible" open={isSection3Open} transition={{ duration: '200ms', timingFunction: 'ease-in-out' }}>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px', marginTop: '16px' }}>
-                    {["primary_use", "setting_ready", "wire_material", "bail_included", "color_pattern", "material", "jewelry_type", "necklace_design", "chain_link_type", "jewelry_finding_type", "target_gender", "age_group", "condition", "custom_product", "seo_title", "google_product_category"].map(renderFullMetaField)}
+                    {["primary_use", "setting_ready", "wire_material", "bail_included", "color_pattern", "material", "jewelry_type", "necklace_design", "target_gender", "age_group", "condition", "custom_product", "seo_title", "google_product_category"].map(renderFullMetaField)}
                   </div>
                 </Collapsible>
               </BlockStack>
