@@ -21,7 +21,7 @@ const CUSTOM_FIELDS = [
   { key: "cut_and_shape", label: "Cut / Shape", type: "single_line_text_field", isPerPiece: true }, 
   { key: "dimensions_mm", label: "Dimensions (mm)", type: "single_line_text_field", isPerPiece: true },
   { key: "weight_grams", label: "Weight (grams)", type: "single_line_text_field", isPerPiece: true },
-  { key: "honest_flaws", label: "Character Marks (Honest Flaws)", type: "multi_line_text_field", multiline: true, isPerPiece: true },
+  { key: "honest_flaws_and_character", label: "Character Marks (Honest Flaws)", type: "multi_line_text_field", multiline: true, isPerPiece: true },
   { key: "price", label: "Price", type: "single_line_text_field", isPerPiece: true },
   { key: "generated_description", label: "Generated Description", type: "multi_line_text_field", multiline: true, isPerPiece: true }
 ];
@@ -280,9 +280,15 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
     const masterTitle = fullMetaState.shopify_title || formState.shopify_title || selectedProduct?.title || "";
     const resolvedPieceName = masterTitle.includes(" — ") ? masterTitle.split(" — ").pop().trim() : masterTitle;
     
+    // 🔴 THE GATEKEEPER: Officially recognize ONLY these exact fields
+    const allowedKeys = [...NAMESPACE_MAP.custom, ...NAMESPACE_MAP.geo];
+
     const payload = [];
     Object.entries(fullMetaState).forEach(([key, value]) => {
       if (key === "shopify_title") return; 
+      
+      // 🔴 GATEKEEPER ENGAGED: If the field isn't on the list, drop it immediately
+      if (!allowedKeys.includes(key)) return;
 
       let injectValue = value;
       if (key === "piece_name") injectValue = resolvedPieceName;
@@ -290,17 +296,24 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
       const config = CUSTOM_FIELDS.find(f => f.key === key);
       let fieldType = config && config.type ? config.type : "single_line_text_field";
       
+      if (["honest_flaws_and_character", "origin_story", "generated_description", "artist_notes"].includes(key)) {
+        fieldType = "multi_line_text_field";
+      }
+
       if (fieldType === "single_line_text_field" && typeof injectValue === "string") {
         injectValue = injectValue.replace(/\r?\n|\r/g, " ").trim();
       }
 
-      const isPopulated = injectValue !== undefined && injectValue !== null && injectValue.toString().trim() !== "";
+      // 🔴 N/A FILTER: If the AI output says exactly "N/A", completely ignore it so it doesn't save
+      const isPopulated = injectValue !== undefined && injectValue !== null && injectValue.toString().trim() !== "" && injectValue.toString().trim() !== "N/A";
       
       if (isPopulated && injectValue !== "See Shopify metaobject") {
         let formatId = selectedProductId.includes("gid://") ? selectedProductId : `gid://shopify/Product/${selectedProductId}`;
+        
+        let namespace = NAMESPACE_MAP.geo.includes(key) ? "geo" : "custom";
 
         payload.push({
-          namespace: "custom",
+          namespace: namespace,
           key: key.replace(/-/g, "_"),
           type: fieldType,
           value: injectValue,
