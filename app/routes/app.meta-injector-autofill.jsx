@@ -357,10 +357,6 @@ export const action = async ({ request }) => {
         const pagesMenu = pagesList.map(p => `- Title: "${p.title}" | URL: ${p.url} | Excerpt: "${p.excerpt}"`).join("\n");
         const collectionsMenu = collectionsList.map(c => `- Title: "${c.title}" | URL: ${c.url} | Excerpt: "${c.excerpt}"`).join("\n");
 
-        const targetUrlPath = `/pages/${activeOriginHandle}`;
-        const collectionUrlPath = `/collections/${collectionData.slug}`;
-        const fullCollectionTitle = collectionData.name.replace(/\s+Collection$/i, "").trim();
-        }
 
         let visionFields = {};
         const authenticity = visionFields.authenticity || "Authentic";

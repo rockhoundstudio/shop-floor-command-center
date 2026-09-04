@@ -603,6 +603,7 @@ export const action = async ({ request }) => {
 
       if (rawMetafields.length > 0 || googleMetafields.length > 0) {
         try {
+            const metafieldsInput = rawMetafields.map(item => {
                let resolvedType = TYPE_MAP[item.key] || item.type || "single_line_text_field";
                let resolvedValue = String(item.value);
                if (resolvedType === "number_decimal") {
