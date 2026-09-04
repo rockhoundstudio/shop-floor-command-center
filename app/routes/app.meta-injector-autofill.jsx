@@ -1,4 +1,4 @@
-import { authenticate } from "../shopify.server";
+﻿import { authenticate } from "../shopify.server";
 import { lookupStone } from "../utils/geoLibrary.jsx";
 import { TARGET_KEYS } from "../utils/metaScan";
 
@@ -198,7 +198,7 @@ function resolveCollectionData(locationSegment, defaultOriginSlug, collectionsLi
   if (cleanLoc.includes("richardson")) return { slug: "richardsons-rock-ranch", name: "Richardson's Rock Ranch Collection" };
   if (cleanLoc.includes("irv")) return { slug: "the-shopped-rock", name: "The Shopped Rock Collection" };
   if (cleanLoc.includes("north fork") || cleanLoc.includes("north-fork") || cleanLoc.includes("cda") || cleanLoc.includes("nor")) return { slug: "north-fork-cda-collection", name: "North Fork CdA Collection" };
-  if (cleanLoc.includes("yakima") || cleanLoc.includes("yak") || cleanLoc.includes("chert")) return { slug: "chert-road-detour", name: "Chert Road Detour — Yakima River Jasper Collection" };
+  if (cleanLoc.includes("yakima") || cleanLoc.includes("yak") || cleanLoc.includes("chert")) return { slug: "yakima-canyon", name: "Chert Road Detour — Yakima River Jasper Collection" };
 
   const matchedCol = collectionsList.find(c => c.url.includes(defaultOriginSlug) || c.title.toLowerCase().includes(cleanLoc));
   if (matchedCol) {
