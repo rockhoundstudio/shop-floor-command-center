@@ -28,10 +28,10 @@ function buildMasterVisionPrompt({
 
 - primary_color
 - stone_shape: Select EXACTLY one from this list: Round, Oval, Freeform, Teardrop, Pear, Cushion, Marquise, Rectangle, Square, Heart, N/A
-- jewelry_type: Select EXACTLY one from this list: Pendant, Bracelet, Anklet, Necklace, Earrings, Ring, Brooch, N/A
+- jewelry_type: Select EXACTLY one from this list: Artisan jewelry, Fine jewelry, Accessories, N/A
 - rarity: Select EXACTLY one from this list: Common, Uncommon, Rare, One-of-a-Kind (default: Common if unsure)
 - authenticity: Select EXACTLY one from this list: Authentic, Lab-Created, Unknown (default: Authentic for natural stones)
-- color_pattern
+- color_pattern: Select EXACTLY one from this list: Green, Black, Blue flash, Red, White, Multicolor, Gold, Pink, Yellow, Silver, Purple, Striped, Clear, Yellow veins, None
 - cut_and_shape
 - surface_finish
 - honest_flaws_and_character
