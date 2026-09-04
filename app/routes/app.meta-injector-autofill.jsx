@@ -253,7 +253,7 @@ async function getGeoData(admin, stoneFamily) {
       const cached = stoneProfileCache.get(search);
       if (cached) return { ...cached, geoSource: "cache" };
     } else {
-      const rows = await queryPostgres('SELECT * FROM "StoneProfile" WHERE LOWER("stoneName") = $1 LIMIT 1', [search]);
+      const rows = await queryPostgres('SELECT * FROM "StoneProfile" WHERE LOWER("stone_name") = $1 LIMIT 1', [search]);
       if (rows.length > 0) {
         const s = rows[0];
         const geoResult = {
@@ -542,9 +542,9 @@ export const action = async ({ request }) => {
       let stonePicklist = "Agate, Amazonite, Amethyst, Andesite, Aventurine, Azurite, Brecciated Jasper, Brecciated Quartz, Calcite, Carnelian, Chalcedony, Chrysocolla, Citrine, Dalmatian Stone, Fluorite, Garnet, Hematite, Howlite, Jasper, Kyanite, Labradorite, Lapis Lazuli, Lepidolite, Malachite, Moonstone, Obsidian, Ocean Jasper, Onyx, Opal, Petrified Wood, Picture Jasper, Prehnite, Pyrite, Quartz, Quartzite, Rhodonite, Rhyolite, Rose Quartz, Serpentine, Smoky Quartz, Sodalite, Sunstone, Tiger's Eye, Tourmaline, Turquoise, Unakite, Variscite";
       
       try {
-        const stoneRows = await queryPostgres('SELECT "stoneName" FROM "StoneProfile" ORDER BY "stoneName"', []);
+        const stoneRows = await queryPostgres('SELECT "stone_name" FROM "StoneProfile" ORDER BY "stone_name"', []);
         if (stoneRows && stoneRows.length > 0) {
-          stonePicklist = stoneRows.map(r => r.stoneName).join(", ");
+          stonePicklist = stoneRows.map(r => r.stone_name).join(", ");
         }
       } catch (err) {
         console.error("[titleParse] StoneProfile picklist fetch failed, using fallback:", err);
@@ -833,3 +833,4 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
     return Response.json({ success: false, error: error.message }, { status: 500 });
   }
 };
+
