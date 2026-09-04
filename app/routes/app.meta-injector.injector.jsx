@@ -1464,7 +1464,6 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
               {renderPanelRow("Honest Flaws", "honest_flaws_and_character", getVal("honest_flaws_and_character", combinedData.honest_flaws_and_character))}
               {renderPanelRow("Found Object", "found_object", getVal("found_object", combinedData.found_object))}
               {renderPanelRow("Collection Location", "collection_location", getVal("collection_location", combinedData.collection_location))}
-              {renderPanelRow("Collection Date", "collection_date", getVal("collection_date", combinedData.collection_date))}
             </div>
 
             {showJewelrySpecsPanel && (
