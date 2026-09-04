@@ -325,25 +325,16 @@ async function getGeoData(admin, stoneFamily) {
   return emptyGeo;
 }
 
-// 🔴 THE OVERRIDE: Enforces strict handle mappings based on collection_location
-function applyOriginOverrides(collectionLocation, currentOriginHandle) {
-  const loc = (collectionLocation || "").trim();
-  const overrides = {
-    "Richardson's Rock Ranch": { origin_handle: "the-richardson-strike", origin_page_handle: "the-shopped-rock" },
-    "Yakima Canyon": { origin_handle: "the-shop-lore-chert-road-detour-yakima-river-jasper", origin_page_handle: "the-shop-lore-chert-road-detour-yakima-river-jasper" },
-    "Yellowstone River": { origin_handle: "the-yellowstone-river", origin_page_handle: "the-yellowstone-river" },
-    "Rufus Serpentine": { origin_handle: "the-rufus-protocol", origin_page_handle: "the-rufus-protocol" },
-    "Nickel Back": { origin_handle: "nickel-back-collection", origin_page_handle: "nickel-back-collection" },
-    "The Shopped Rock": { origin_handle: "the-shopped-rock", origin_page_handle: "the-shopped-rock" },
-    "Spokane River": { origin_handle: null, origin_page_handle: null },
-    "North Fork CdA": { origin_handle: null, origin_page_handle: null }
-  };
-
-  if (overrides[loc]) {
-    return overrides[loc];
-  }
-  return { origin_handle: currentOriginHandle, origin_page_handle: currentOriginHandle };
-}
+const ORIGIN_HANDLE_MAP = {
+  "Richardson's Rock Ranch": { origin_handle: "the-richardson-strike", origin_page_handle: "the-shopped-rock" },
+  "Yakima Canyon": { origin_handle: "the-shop-lore-chert-road-detour-yakima-river-jasper", origin_page_handle: "the-shop-lore-chert-road-detour-yakima-river-jasper" },
+  "Yellowstone River": { origin_handle: "the-yellowstone-river", origin_page_handle: "the-yellowstone-river" },
+  "Rufus Serpentine": { origin_handle: "the-rufus-protocol", origin_page_handle: "the-rufus-protocol" },
+  "Nickel Back": { origin_handle: "nickel-back-collection", origin_page_handle: "nickel-back-collection" },
+  "The Shopped Rock": { origin_handle: "the-shopped-rock", origin_page_handle: "the-shopped-rock" },
+  "Spokane River": { origin_handle: null, origin_page_handle: null },
+  "North Fork CdA": { origin_handle: null, origin_page_handle: null },
+};
 
 export const action = async ({ request }) => {
   try {
@@ -517,64 +508,70 @@ export const action = async ({ request }) => {
           return LOCATION_MAP[collectionData.slug] || collectionData.name.replace(/\s*Collection$/i, "").trim();
         })();
 
-        const overrideData = applyOriginOverrides(resolved_collection_location, activeOriginHandle);
+        const finalPayload = {
+          origin_story: origin_story,
+          stone_family: derivedFamily,
+          origin_handle: activeOriginHandle,
+          origin_page_handle: activeOriginHandle,
+          origin_location: correctedOrigin,
+          shopify_title: `${derivedFamily} — ${correctedOrigin} — ${pieceNameSegment}`,
+          collection_name: collectionData.name,
+          collection_location: resolved_collection_location,
+          seo_title: visionFields.seo_title || manual_seo_title,
+          authenticity: visionFields.authenticity || "Authentic",
+          rarity: visionFields.rarity || "Common",
+          secondary_medium: visionFields.secondary_medium || "None",
+          cut_and_shape: visionFields.cut_and_shape || "",
+          jewelry_type: visionFields.jewelry_type || "N/A",
+          necklace_design: visionFields.necklace_design || "N/A",
+          chain_link_type: visionFields.chain_link_type || "N/A",
+          jewelry_finding_type: visionFields.jewelry_finding_type || "N/A",
+          material: visionFields.material || "N/A",
+          color_pattern: visionFields.color_pattern || visionFields.pattern || "",
+          dimensions_mm: visionFields.dimensions_mm || "",
+          honest_flaws_and_character: visionFields.honest_flaws_and_character || "Clean face, solid matrix, natural lapidary character.",
+          generated_description: visionFields.generated_description || "",
+          color: visionFields.color || "",
+          surface_finish: visionFields.surface_finish || "",
+          stone_shape: visionFields.stone_shape || "",
+          primary_use: visionFields.primary_use || "",
+          primary_medium: visionFields.primary_medium || "",
+          wire_material: visionFields.wire_material || "None",
+          setting_ready: visionFields.setting_ready || "None",
+          bail_included: visionFields.bail_included || "None",
+          chain_material: visionFields.chain_material || "None",
+          mohs_hardness: geoFields.mohs_hardness || "",
+          luster: geoFields.luster || "",
+          fracture_pattern: geoFields.fracture_pattern || "",
+          cleavage: geoFields.cleavage || "",
+          specific_gravity: geoFields.specific_gravity || "",
+          diaphaneity: geoFields.diaphaneity || "",
+          crystal_system: geoFields.crystal_system || "",
+          geological_era: geoFields.geological_era || "",
+          mineral_class: geoFields.mineral_class || "",
+          rock_composition: geoFields.rock_composition || "",
+          rock_formation: geoFields.rock_formation || "",
+          geological_age: geoFields.geological_age || "",
+          treated: "No",
+          is_ooak: "Yes",
+          custom_product: "true",
+          age_group: "adult",
+          target_gender: "Unisex",
+          condition: "new",
+          google_product_category: "Apparel & Accessories > Jewelry"
+        };
+
+        const originOverride = ORIGIN_HANDLE_MAP[finalPayload.collection_location];
+        if (originOverride) {
+          finalPayload.origin_handle = originOverride.origin_handle;
+          finalPayload.origin_page_handle = originOverride.origin_page_handle;
+        }
 
         // 🔴 STRICT EXPLICIT PAYLOAD MAPPING
         return Response.json({
           success: true,
           intent: "tab2AutoFill",
-          tab2Data: {
-            origin_story: origin_story,
-            stone_family: derivedFamily,
-            origin_handle: overrideData.origin_handle,
-            origin_page_handle: overrideData.origin_page_handle,
-            origin_location: correctedOrigin,
-            shopify_title: `${derivedFamily} — ${correctedOrigin} — ${pieceNameSegment}`,
-            collection_name: collectionData.name,
-            collection_location: resolved_collection_location,
-            seo_title: visionFields.seo_title || manual_seo_title,
-            authenticity: visionFields.authenticity || "Authentic",
-            rarity: visionFields.rarity || "Common",
-            secondary_medium: visionFields.secondary_medium || "None",
-            cut_and_shape: visionFields.cut_and_shape || "",
-            jewelry_type: visionFields.jewelry_type || "N/A",
-            necklace_design: visionFields.necklace_design || "N/A",
-            chain_link_type: visionFields.chain_link_type || "N/A",
-            jewelry_finding_type: visionFields.jewelry_finding_type || "N/A",
-            material: visionFields.material || "N/A",
-            color_pattern: visionFields.color_pattern || visionFields.pattern || "",
-            dimensions_mm: visionFields.dimensions_mm || "",
-            honest_flaws_and_character: visionFields.honest_flaws_and_character || "Clean face, solid matrix, natural lapidary character.",
-            generated_description: visionFields.generated_description || "",
-            color: visionFields.color || "",
-            surface_finish: visionFields.surface_finish || "",
-            stone_shape: visionFields.stone_shape || "",
-            primary_use: visionFields.primary_use || "",
-            primary_medium: visionFields.primary_medium || "",
-            wire_material: visionFields.wire_material || "None",
-            setting_ready: visionFields.setting_ready || "None",
-            bail_included: visionFields.bail_included || "None",
-            chain_material: visionFields.chain_material || "None",
-            mohs_hardness: geoFields.mohs_hardness || "",
-            luster: geoFields.luster || "",
-            fracture_pattern: geoFields.fracture_pattern || "",
-            cleavage: geoFields.cleavage || "",
-            specific_gravity: geoFields.specific_gravity || "",
-            diaphaneity: geoFields.diaphaneity || "",
-            crystal_system: geoFields.crystal_system || "",
-            geological_era: geoFields.geological_era || "",
-            mineral_class: geoFields.mineral_class || "",
-            rock_composition: geoFields.rock_composition || "",
-            rock_formation: geoFields.rock_formation || "",
-            geological_age: geoFields.geological_age || "",
-            treated: "No",
-            is_ooak: "Yes",
-            custom_product: "true",
-            age_group: "adult",
-            target_gender: "Unisex",
-            condition: "new",
-            google_product_category: "Apparel & Accessories > Jewelry"
-          }
+          tab2Data: finalPayload
         });
       } catch (err) {
         console.error("[tab2AutoFill] crashed:", err);
@@ -683,12 +680,11 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
         }
 
         const collection_location_resolved = parsed.collection_location || collectionData.name.replace(/\s+Collection$/i, "").trim();
-        const overrideData = applyOriginOverrides(collection_location_resolved, resolvedHandle);
 
-        const finalParse = {
+        const finalPayload = {
           ...parsed,
-          origin_handle: overrideData.origin_handle,
-          origin_page_handle: overrideData.origin_page_handle,
+          origin_handle: resolvedHandle,
+          origin_page_handle: resolvedHandle,
           origin_story: extractedStory,
           origin_location: parsed.origin_location || segment2,
           collection_name: parsed.collection_name || collectionData.name,
@@ -713,8 +709,14 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
           condition: "new",
           google_product_category: "Apparel & Accessories > Jewelry"
         };
+
+        const originOverride = ORIGIN_HANDLE_MAP[finalPayload.collection_location];
+        if (originOverride) {
+          finalPayload.origin_handle = originOverride.origin_handle;
+          finalPayload.origin_page_handle = originOverride.origin_page_handle;
+        }
         
-        return Response.json({ success: true, intent: "titleParse", titleParse: finalParse });
+        return Response.json({ success: true, intent: "titleParse", titleParse: finalPayload });
       }
       
       const errText = await geminiRes.text();
@@ -857,49 +859,56 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
         }
 
         const resolved_collection_location = defaultCollection.name.replace(/\s+Collection$/i, "").trim();
-        const overrideData = applyOriginOverrides(resolved_collection_location, defaultOriginSlug);
+
+        const finalPayload = {
+          pieceId,
+          generated_description: final_desc,
+          debug_origin: `seg=${originSegment}|slug=${defaultOriginSlug}|matched=${matchedPage ? matchedPage.url : "NULL"}|storyLen=${extractedStory.length}`,
+          seo_title: parsedVision.seo_title || "",
+          primary_color: parsedVision.primary_color || "",
+          cut_and_shape: parsedVision.cut_and_shape || "",
+          surface_finish: parsedVision.surface_finish || "",
+          stone_shape: parsedVision.stone_shape || "",
+          jewelry_type: parsedVision.jewelry_type || "N/A",
+          necklace_design: parsedVision.necklace_design || "N/A",
+          chain_link_type: parsedVision.chain_link_type || "N/A",
+          jewelry_finding_type: parsedVision.jewelry_finding_type || "N/A",
+          material: parsedVision.material || "N/A",
+          rarity: parsedVision.rarity || "Common",
+          authenticity: parsedVision.authenticity || "Authentic",
+          dimensions_mm: parsedVision.dimensions_mm || "",
+          color_pattern: parsedVision.color_pattern || parsedVision.pattern || "",
+          honest_flaws_and_character: parsedVision.honest_flaws_and_character || "Clean face, solid matrix, natural lapidary character.",
+          primary_use: resolved_primary_use,
+          primary_medium: resolved_primary_medium,
+          secondary_medium: resolved_secondary_medium,
+          wire_material: resolved_wire_material,
+          setting_ready: resolved_setting_ready,
+          bail_included: resolved_bail_included,
+          origin_story: extractedStory,
+          origin_handle: defaultOriginSlug,
+          origin_page_handle: defaultOriginSlug,
+          origin_location: parsedVision.origin_location || originSegment,
+          collection_name: defaultCollection.name,
+          collection_location: resolved_collection_location,
+          custom_product: "true",
+          age_group: "adult",
+          target_gender: "Unisex",
+          condition: "new",
+          google_product_category: "Apparel & Accessories > Jewelry"
+        };
+
+        const originOverride = ORIGIN_HANDLE_MAP[finalPayload.collection_location];
+        if (originOverride) {
+          finalPayload.origin_handle = originOverride.origin_handle;
+          finalPayload.origin_page_handle = originOverride.origin_page_handle;
+        }
 
         // 🔴 STRICT EXPLICIT PAYLOAD MAPPING
         return Response.json({
           success: true,
           intent: "visionScan",
-          tab2Data: {
-            pieceId,
-            generated_description: final_desc,
-            debug_origin: `seg=${originSegment}|slug=${defaultOriginSlug}|matched=${matchedPage ? matchedPage.url : "NULL"}|storyLen=${extractedStory.length}`,
-            seo_title: parsedVision.seo_title || "",
-            primary_color: parsedVision.primary_color || "",
-            cut_and_shape: parsedVision.cut_and_shape || "",
-            surface_finish: parsedVision.surface_finish || "",
-            stone_shape: parsedVision.stone_shape || "",
-            jewelry_type: parsedVision.jewelry_type || "N/A",
-            necklace_design: parsedVision.necklace_design || "N/A",
-            chain_link_type: parsedVision.chain_link_type || "N/A",
-            jewelry_finding_type: parsedVision.jewelry_finding_type || "N/A",
-            material: parsedVision.material || "N/A",
-            rarity: parsedVision.rarity || "Common",
-            authenticity: parsedVision.authenticity || "Authentic",
-            dimensions_mm: parsedVision.dimensions_mm || "",
-            color_pattern: parsedVision.color_pattern || parsedVision.pattern || "",
-            honest_flaws_and_character: parsedVision.honest_flaws_and_character || "Clean face, solid matrix, natural lapidary character.",
-            primary_use: resolved_primary_use,
-            primary_medium: resolved_primary_medium,
-            secondary_medium: resolved_secondary_medium,
-            wire_material: resolved_wire_material,
-            setting_ready: resolved_setting_ready,
-            bail_included: resolved_bail_included,
-            origin_story: extractedStory,
-            origin_handle: overrideData.origin_handle,
-            origin_page_handle: overrideData.origin_page_handle,
-            origin_location: parsedVision.origin_location || originSegment,
-            collection_name: defaultCollection.name,
-            collection_location: resolved_collection_location,
-            custom_product: "true",
-            age_group: "adult",
-            target_gender: "Unisex",
-            condition: "new",
-            google_product_category: "Apparel & Accessories > Jewelry"
-          }
+          tab2Data: finalPayload
         });
       }
       
