@@ -26,7 +26,7 @@ function buildMasterVisionPrompt({
   VALID COLLECTIONS IN STORE:
   ${collectionsMenu || "No live collections found — use default URL."}
 
-- primary_color
+- primary_color: Identify the dominant color of the stone.
 - stone_shape: Select EXACTLY one from this list: Round, Oval, Freeform, Teardrop, Pear, Cushion, Marquise, Rectangle, Square, Heart, N/A
 - jewelry_type: Select EXACTLY one from this list: Artisan jewelry, Fine jewelry, Accessories, N/A
 - necklace_design: Select EXACTLY one from this list: Pendant, Chain, Anklet, Bracelet, N/A
@@ -35,18 +35,13 @@ function buildMasterVisionPrompt({
 - jewelry_finding_type: Return finding type or "N/A" if none.
 - rarity: Select EXACTLY one from this list: Common, Uncommon, Rare, One-of-a-Kind (default: Common if unsure)
 - authenticity: Select EXACTLY one from this list: Authentic, Lab-Created, Unknown (default: Authentic for natural stones)
-- color_pattern: Select EXACTLY one from this list: Green, Black, Blue flash, Red, White, Multicolor, Gold, Pink, Yellow, Silver, Purple, Striped, Clear, Yellow veins, None
-- cut_and_shape
-- surface_finish
+- color_pattern: Analyze the visual texture of the stone. Select EXACTLY one from this lapidary list, or combine them if necessary: Brecciated, Banded, Landscape, Mottled, Striped, Solid, Plume, Dendritic, Spotted, Swirled, None.
+- cut_and_shape: (e.g. "Freeform Teardrop Cabochon", "Round Cabochon")
+- surface_finish: Describe the stone's surface finish as seen in the photo. Use terms like "High Polish", "Matte", "Satin", "Natural/Raw", "Tumbled". Do not leave blank.
 - dimensions_mm: Estimate physical dimensions in millimeters (Length x Width x Depth) based on visual proportions. DO NOT return "N/A" or leave blank. Provide your best lapidary estimate (e.g., "30 x 20 x 5 mm").
 - honest_flaws_and_character: Analyze the stone for vugs, pits, healed fractures, or raw edges. If you see them, list them honestly. If the stone is perfectly smooth and clean, output strictly: "Clean face, solid matrix, natural lapidary character."
 - origin_location: CRITICAL! Look at the provided Origin Segment ("${originSegment}"). Cross-reference it with the LIVE STORE DIRECTORY above and return the fully expanded, correct geographic name. **NEVER include prefixes like "Shop Lore:", "The", or "Collection" in this field.** (e.g., strictly return "Yakima River Canyon" or "North Fork Coeur d'Alene").
 - primary_use: Smart Switch! Force strictly to best match (e.g., "Pendant (Finished Jewelry)", "Necklace", "Ring / Bezel Setting", "Cabochon", "Wire Wrap (Finished Jewelry)", "Loose Stone"). If a chain is visible, classify as "Necklace".
-- primary_medium
-- setting_ready
-- wire_material
-- bail_included
-- chain_material: If a necklace chain is visible, identify it as exactly one of: "Silver Plated Snake Chain", "Gold Plated Snake Chain", "Sterling Silver Chain", "Cord". If no chain is visible, return "None".
 - seo_title: Generate a keyword-rich SEO product title (max 60 characters) optimized for Google. Combine the stone family ("${stoneFamily}"), your newly corrected origin_location, cut/shape, and keywords like "Handcrafted", "Natural", "OOAK", or "Lapidary Art". Separate with pipes (|) or em-dashes (—). Do NOT use quotes.
 - generated_description: Write in Bob's voice. Past tense for the find. Plain and honest — say what happened, stop. No salesy language. Short sentences. One idea at a time. Use specific details from the FULL ORIGIN STORY below. End with EXACTLY this line, using an em-dash: — Bob & Janyce, Rockhound Studio, Spokane Valley WA. Do not use hyphens or dashes other than the em-dash (—). 150–250 words. Stop when it's right.
 FULL ORIGIN STORY:
@@ -54,14 +49,20 @@ ${originStory}
 CRITICAL DWELL WEB EMBED LAW: Look at the Origin Segment Janyce entered ("${originSegment}"). Check the LIVE STORE DIRECTORY above and match it to the exact corresponding Page and Collection. You MUST use those live excerpts to write short story hooks leading directly into TWO clickable HTML hyperlinks. 
   1. Origin Hook: Write a short story hook based on the matching Page excerpt, followed immediately by this exact anchor tag format: <a href="${targetUrlPath}">${fullCollectionTitle} Story</a>
   2. Collection Hook: Write a short hook based on the matching Collection excerpt, followed immediately by this exact anchor tag format: <a href="${collectionUrlPath}">${fullCollectionTitle} Collection</a>
-- MANDATORY BENCH FINDINGS & JEWELRY LAWS (CRITICAL FOR LOOSE STONES):
-  * THE LOOSE STONE OVERRIDE: If this is a bare, loose stone with NO metal, setting, wire, or bail, you MUST return strictly "None" for setting_ready, wire_material, primary_medium, secondary_medium, chain_material, and bail_included. Do NOT guess or hallucinate metal for a bare rock.
-  * setting_ready: Look closely at the mounting. If cabochon is in a bezel setting, MUST return "Bezel Setting - Ready to Wear". If prong setting, return "Prong Setting - Ready to Wear". If wire wrapped, return "Wire Wrapped - Ready to Wear". If loose or unmounted, return "None".
-  * wire_material: If wire wrapped, output the wire metal (e.g., "Antiqued Copper Wire"). If in a bezel or prong setting with zero wire, or loose, MUST return strictly: "None".
-  * primary_medium: State the primary metal or mounting material. Use exactly one of these: ".925 Sterling Silver Bezel", "Silver Plated Bezel", "Gold Plated Bezel", "Copper Bezel", "Gold Tone Alloy Bezel", "Silver Tone Alloy Bezel", "Bronze Tone Alloy Bezel", "Glue-On Loop", "Drilled — Pinch Bail". Match the tone and finish visible in the photo. If loose and unmounted, return "None".
-  * surface_finish: Describe the stone's surface finish as seen in the photo. Use terms like "High Polish", "Matte", "Satin", "Natural/Raw", "Tumbled". Do not leave blank.
-  * secondary_medium: Look ONLY for a second distinct METAL component. If no second metal component exists, or if loose, return strictly "None".
-  * bail_included: Look at the TOP of the piece. If there is a separate small clip or loop pinched onto the bezel, return "Silver Plated Pinch Bail". If the bail is welded/integrated, return "Integrated Bezel Bail". If there is no bail at all, or if loose, return "None".`;
+
+- MANDATORY BENCH FINDINGS & JEWELRY LAWS (CRITICAL HARDWARE SCAN):
+  * THE MICROSCOPE DIRECTIVE: You MUST zoom in on the top edge of the stone. Look for a drilled hole, a metal pinch bail passing through a hole, or wire wrapping. DO NOT blindly default to "None" without checking the top edge!
+  * THE LOOSE STONE OVERRIDE: If this is truly a bare, loose stone with NO metal, hole, wire, or bail, you MUST return strictly "None" for setting_ready, wire_material, primary_medium, secondary_medium, chain_material, and bail_included. 
+  * setting_ready: Look closely at the mounting. If cabochon is in a bezel setting, return "Bezel Setting - Ready to Wear". If wire wrapped, return "Wire Wrapped - Ready to Wear". If it has a pinch bail, return "Pendant - Ready to Wear". If loose, return "None".
+  * wire_material: If wire wrapped, output the wire metal. If in a bezel, prong, pinch bail, or loose, MUST return strictly: "None".
+  * primary_medium: State the primary metal or mounting material. Use exactly one of these: ".925 Sterling Silver Bezel", "Silver Plated Bezel", "Gold Plated Bezel", "Copper Bezel", "Drilled — Pinch Bail". Match the tone and finish visible in the photo. If there is a hole drilled through the stone with a bail pinched into it, you MUST return "Drilled — Pinch Bail". If loose, return "None".
+  * secondary_medium: Look ONLY for a second distinct METAL component. If no second metal component exists, return strictly "None".
+  * bail_included: Look at the TOP of the piece. If there is a separate small clip or loop pinched onto the stone, return "Silver Plated Pinch Bail" or "Gold Plated Pinch Bail". If the bail is welded/integrated into a bezel, return "Integrated Bezel Bail". If no bail, return "None".
+  * chain_material: If a necklace chain is visible, identify it (e.g., "Silver Plated Snake Chain", "Cord"). If no chain, return "None".
+
+- NEGATIVE DIRECTIVES:
+  * DO NOT generate, output, or include a "collection_date" field.
+  * DO NOT generate, output, or include an "alt_text" field.`;
 }
 
 async function queryPostgres(sql, params) {
