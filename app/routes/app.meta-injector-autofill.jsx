@@ -34,6 +34,7 @@ function buildMasterVisionPrompt({
 - color_pattern: Select EXACTLY one from this list: Green, Black, Blue flash, Red, White, Multicolor, Gold, Pink, Yellow, Silver, Purple, Striped, Clear, Yellow veins, None
 - cut_and_shape
 - surface_finish
+- dimensions_mm: Estimate physical dimensions in millimeters (Length x Width x Depth) based on visual proportions. DO NOT return "N/A" or leave blank. Provide your best lapidary estimate (e.g., "30 x 20 x 5 mm").
 - honest_flaws_and_character
 - origin_location: CRITICAL! Look at the provided Origin Segment ("${originSegment}"). Cross-reference it with the LIVE STORE DIRECTORY above and return the fully expanded, correct geographic name. **NEVER include prefixes like "Shop Lore:", "The", or "Collection" in this field.** (e.g., strictly return "Yakima River Canyon" or "North Fork Coeur d'Alene").
 - primary_use: Smart Switch! Force strictly to best match (e.g., "Pendant (Finished Jewelry)", "Necklace", "Ring / Bezel Setting", "Cabochon", "Wire Wrap (Finished Jewelry)", "Loose Stone"). If a chain is visible, classify as "Necklace".
@@ -208,18 +209,16 @@ function resolveCollectionData(locationSegment, defaultOriginSlug, collectionsLi
   return { slug: defaultOriginSlug, name: `${locationSegment.trim()} Collection` };
 }
 
+// 🔴 STRICT GEO FORMATTING - Kills meta_status and duplicate moh_hardness leaks
 async function getGeoData(admin, stoneFamily) {
   const emptyGeo = {
-    hardness: "", luster: "", fracture: "", cleavage: "",
+    mohs_hardness: "", luster: "", fracture_pattern: "", cleavage: "",
     specific_gravity: "", diaphaneity: "", crystal_system: "",
     geological_era: "", mineral_class: "", rock_composition: "",
-    rock_formation: "", mohs_hardness: "", fracture_pattern: "",
-    geological_age: ""
+    rock_formation: "", geological_age: "", geoSource: "none"
   };
   
-  if (!stoneFamily || !admin) {
-    return { ...emptyGeo, geoSource: "none" };
-  }
+  if (!stoneFamily || !admin) return emptyGeo;
 
   const search = stoneFamily.toLowerCase().trim();
 
@@ -227,9 +226,9 @@ async function getGeoData(admin, stoneFamily) {
     const localResult = lookupStone(stoneFamily);
     if (localResult && Object.keys(localResult).length > 0) {
       return {
-        hardness: localResult.moh_hardness || localResult.hardness || "",
+        mohs_hardness: localResult.moh_hardness || localResult.hardness || "",
         luster: localResult.luster || "",
-        fracture: localResult.fracture_pattern || localResult.fracture || "",
+        fracture_pattern: localResult.fracture_pattern || localResult.fracture || "",
         cleavage: localResult.cleavage || "",
         specific_gravity: localResult.specific_gravity || "",
         diaphaneity: localResult.diaphaneity || "",
@@ -238,8 +237,6 @@ async function getGeoData(admin, stoneFamily) {
         mineral_class: localResult.mineral_class || "",
         rock_composition: localResult.rock_composition || "",
         rock_formation: localResult.rock_formation || "",
-        mohs_hardness: localResult.moh_hardness || localResult.hardness || "",
-        fracture_pattern: localResult.fracture_pattern || localResult.fracture || "",
         geological_age: localResult.geological_era || localResult.geological_age || "",
         geoSource: "library"
       };
@@ -257,9 +254,9 @@ async function getGeoData(admin, stoneFamily) {
       if (rows.length > 0) {
         const s = rows[0];
         const geoResult = {
-          hardness: s.hardness || "",
+          mohs_hardness: s.hardness || "",
           luster: s.luster || "",
-          fracture: s.fracture || "",
+          fracture_pattern: s.fracture || "",
           cleavage: s.cleavage || "",
           specific_gravity: s.specific_gravity || "",
           diaphaneity: s.diaphaneity || "",
@@ -268,12 +265,11 @@ async function getGeoData(admin, stoneFamily) {
           mineral_class: s.mineral_class || "",
           rock_composition: s.rock_composition || "",
           rock_formation: s.rock_formation || "",
-          mohs_hardness: s.hardness || "",
-          fracture_pattern: s.fracture || "",
-          geological_age: s.geological_era || ""
+          geological_age: s.geological_era || "",
+          geoSource: "database"
         };
         stoneProfileCache.set(search, geoResult);
-        return { ...geoResult, geoSource: "database" };
+        return geoResult;
       } else {
         stoneProfileCache.set(search, null);
       }
@@ -298,21 +294,30 @@ async function getGeoData(admin, stoneFamily) {
         const hardness = mineral.hardness || "";
         const specific_gravity = mineral.density || "";
         const geoResult = {
-          hardness, luster: mineral.luster || "", fracture: mineral.fracture || "", cleavage: mineral.cleavage || "",
-          specific_gravity, diaphaneity: mineral.transparency || "", crystal_system: mineral.crystal_system || "",
-          geological_era: "", mineral_class: mineral.mineral_class || "", rock_composition: "", rock_formation: "",
-          mohs_hardness: hardness, fracture_pattern: mineral.fracture || "", geological_age: ""
+          mohs_hardness: hardness, 
+          luster: mineral.luster || "", 
+          fracture_pattern: mineral.fracture || "", 
+          cleavage: mineral.cleavage || "",
+          specific_gravity, 
+          diaphaneity: mineral.transparency || "", 
+          crystal_system: mineral.crystal_system || "",
+          geological_era: "", 
+          mineral_class: mineral.mineral_class || "", 
+          rock_composition: "", 
+          rock_formation: "",
+          geological_age: "",
+          geoSource: "mindat"
         };
         stoneProfileCache.set(search, geoResult);
         await saveToStoneCache(search, geoResult);
-        return { ...geoResult, geoSource: "mindat" };
+        return geoResult;
       }
     }
   } catch (err) {
     console.error("[Geo Tier 3] Mindat failed:", err);
   }
 
-  return { ...emptyGeo, geoSource: "none" };
+  return emptyGeo;
 }
 
 export const action = async ({ request }) => {
@@ -321,9 +326,6 @@ export const action = async ({ request }) => {
     const body = await request.formData();
     const intent = body.get("intent");
 
-    // ==========================================
-    // INTENT: GEO LOOKUP
-    // ==========================================
     if (intent === "geoLookup") {
       const stoneFamily = body.get("stoneFamily") || "";
       try { 
@@ -335,9 +337,6 @@ export const action = async ({ request }) => {
       }
     }
 
-    // ==========================================
-    // INTENT: TAB 2 AUTOFILL (THE BENCH)
-    // ==========================================
     if (intent === "tab2AutoFill") {
       const stone_family = body.get("stone_family") || "";
       const origin_handle = body.get("origin_handle") || "";
@@ -353,7 +352,6 @@ export const action = async ({ request }) => {
         const geoFields = await getGeoData(admin, derivedFamily);
         const { pagesList, collectionsList } = await getLiveStoreDirectory(admin);
         
-        // 🔴 HOISTED SCOPE TO PREVENT CRASH
         const activeOriginHandle = origin_handle || resolveOriginHandle(derivedOrigin, pagesList);
         const collectionData = resolveCollectionData(derivedOrigin, activeOriginHandle, collectionsList);
         const targetUrlPath = `/pages/${activeOriginHandle}`;
@@ -365,26 +363,6 @@ export const action = async ({ request }) => {
 
         const pagesMenu = pagesList.map(p => `- Title: "${p.title}" | URL: ${p.url} | Excerpt: "${p.excerpt}"`).join("\n");
         const collectionsMenu = collectionsList.map(c => `- Title: "${c.title}" | URL: ${c.url} | Excerpt: "${c.excerpt}"`).join("\n");
-
-        let collection_date = "";
-        if (origin_story) {
-          try {
-            const datePrompt = `Read the following rockhound field story and extract the collection date. Return ONLY the date in this format: "Month YYYY". If no date is found, return an empty string.`;
-            const dateRes = await fetchWithRetry(
-              "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY,
-              {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ contents: [{ parts: [{ text: datePrompt }] }] }),
-              }
-            );
-            const dateJson = await dateRes.json();
-            collection_date = dateJson?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ?? "";
-          } catch (e) {
-            console.error("[tab2AutoFill] Collection date extraction failed:", e);
-            collection_date = "";
-          }
-        }
 
         let visionFields = {};
         
@@ -469,7 +447,6 @@ export const action = async ({ request }) => {
               
               if (visionFields.primary_color) {
                  visionFields.color = visionFields.primary_color;
-                 delete visionFields.primary_color;
               }
               
               if (visionFields.generated_description) {
@@ -494,13 +471,12 @@ export const action = async ({ request }) => {
           ? `Handcrafted ${derivedFamily} — ${correctedOrigin} — OOAK Lapidary Art`
           : `Handcrafted ${derivedFamily} — OOAK Lapidary Art`;
 
+        // 🔴 STRICT EXPLICIT PAYLOAD MAPPING - Eliminates all hallucinations and unverified data leaks
         return Response.json({
           success: true,
           intent: "tab2AutoFill",
           tab2Data: {
-            ...geoFields,
-            ...visionFields,
-            origin_story,
+            origin_story: origin_story,
             stone_family: derivedFamily,
             origin_handle: activeOriginHandle,
             origin_location: correctedOrigin,
@@ -522,13 +498,35 @@ export const action = async ({ request }) => {
               return LOCATION_MAP[collectionData.slug] || collectionData.name.replace(/\s*Collection$/i, "").trim();
             })(),
             seo_title: visionFields.seo_title || manual_seo_title,
-            collection_date,
             authenticity: visionFields.authenticity || "Authentic",
             rarity: visionFields.rarity || "Common",
             secondary_medium: visionFields.secondary_medium || "None",
             cut_and_shape: visionFields.cut_and_shape || "",
             jewelry_type: visionFields.jewelry_type || "N/A",
             color_pattern: visionFields.color_pattern || visionFields.pattern || "",
+            dimensions_mm: visionFields.dimensions_mm || "",
+            generated_description: visionFields.generated_description || "",
+            color: visionFields.color || "",
+            surface_finish: visionFields.surface_finish || "",
+            stone_shape: visionFields.stone_shape || "",
+            primary_use: visionFields.primary_use || "",
+            primary_medium: visionFields.primary_medium || "",
+            wire_material: visionFields.wire_material || "None",
+            setting_ready: visionFields.setting_ready || "None",
+            bail_included: visionFields.bail_included || "None",
+            chain_material: visionFields.chain_material || "None",
+            mohs_hardness: geoFields.mohs_hardness || "",
+            luster: geoFields.luster || "",
+            fracture_pattern: geoFields.fracture_pattern || "",
+            cleavage: geoFields.cleavage || "",
+            specific_gravity: geoFields.specific_gravity || "",
+            diaphaneity: geoFields.diaphaneity || "",
+            crystal_system: geoFields.crystal_system || "",
+            geological_era: geoFields.geological_era || "",
+            mineral_class: geoFields.mineral_class || "",
+            rock_composition: geoFields.rock_composition || "",
+            rock_formation: geoFields.rock_formation || "",
+            geological_age: geoFields.geological_age || "",
             treated: "No",
             is_ooak: "Yes",
             age_group: "adult",
@@ -543,9 +541,6 @@ export const action = async ({ request }) => {
       }
     }
 
-    // ==========================================
-    // INTENT: TITLE PARSE
-    // ==========================================
     if (intent === "titleParse") {
       const pieceNameInput = body.get("pieceName") || "";
       const segments = pieceNameInput.split(/\s+[—–-]\s+/);
@@ -648,7 +643,6 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
 
         const finalParse = {
           ...parsed,
-          ...dbGeoData,
           origin_handle: resolvedHandle,
           origin_story: extractedStory,
           origin_location: parsed.origin_location || segment2,
@@ -656,6 +650,18 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
           collection_location: parsed.collection_location || collectionData.name.replace(" Collection", ""),
           canonical_title: parsed.stone_family + " — " + (parsed.origin_location || displayName) + " — " + segment3,
           seo_title: parsed.seo_title || seo_title,
+          mohs_hardness: dbGeoData.mohs_hardness || "",
+          luster: dbGeoData.luster || "",
+          fracture_pattern: dbGeoData.fracture_pattern || "",
+          cleavage: dbGeoData.cleavage || "",
+          specific_gravity: dbGeoData.specific_gravity || "",
+          diaphaneity: dbGeoData.diaphaneity || "",
+          crystal_system: dbGeoData.crystal_system || "",
+          geological_era: dbGeoData.geological_era || "",
+          mineral_class: dbGeoData.mineral_class || "",
+          rock_composition: dbGeoData.rock_composition || "",
+          rock_formation: dbGeoData.rock_formation || "",
+          geological_age: dbGeoData.geological_age || "",
           age_group: "adult",
           target_gender: "Unisex",
           condition: "new",
@@ -669,9 +675,6 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
       return Response.json({ success: false, intent: "titleParse", titleParse: null, error: `Title parse error: ${geminiRes.status} - ${errText}` }, { status: 500 });
     }
 
-    // ==========================================
-    // INTENT: VISION SCAN (TAB 1 AUTO-PILOT)
-    // ==========================================
     if (intent === "visionScan") {
       const pieceId = body.get("pieceId");
       const clientBase64 = body.get("imageBase64");
@@ -684,7 +687,6 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
       
       const { pagesList, collectionsList } = await getLiveStoreDirectory(admin);
       
-      // 🔴 HOISTED SCOPE TO PREVENT CRASH
       const defaultOriginSlug = resolveOriginHandle(originSegment, pagesList);
       const defaultCollection = resolveCollectionData(originSegment, defaultOriginSlug, collectionsList);
       const targetUrlPath = `/pages/${defaultOriginSlug}`;
@@ -803,6 +805,7 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
             final_desc = "";
         }
 
+        // 🔴 STRICT EXPLICIT PAYLOAD MAPPING
         return Response.json({
           success: true,
           intent: "visionScan",
