@@ -34,9 +34,12 @@ const FULL_META_GROUPS = [
   { heading: "Geo-Vault", color: "#4E342E", fields: [{ key: "mineral_class", label: "Mineral Class", type: "text" }, { key: "crystal_system", label: "Crystal System", type: "text" }, { key: "rock_composition", label: "Rock Composition", type: "text" }, { key: "rock_formation", label: "Rock Formation", type: "text" }, { key: "geological_era", label: "Geological Era", type: "text" }] }
 ];
 
+// 🔴 THE MASTER LIST: Everything locked strictly to custom
 const NAMESPACE_MAP = {
-  custom: ["piece_name", "primary_medium", "secondary_medium", "handcrafted_by", "stone_family", "color", "cut_and_shape", "surface_finish", "dimensions_mm", "weight_grams", "shipping_weight_oz", "price", "collection_name", "collection_location", "primary_use", "bail_included", "is_ooak", "treated", "wire_material", "setting_ready", "material", "origin_story", "origin_handle", "honest_flaws_and_character", "artist_notes", "generated_description", "rescued_by", "stone_shape", "target_gender", "age_group", "condition", "color_pattern", "jewelry_type", "necklace_design", "custom_product", "seo_title", "google_product_category"],
-  geo: ["mohs_hardness", "luster", "fracture_pattern", "cleavage", "specific_gravity", "diaphaneity", "crystal_system", "geological_era", "geological_age", "mineral_class", "rock_composition", "rock_formation"]
+  custom: [
+    "piece_name", "primary_medium", "secondary_medium", "handcrafted_by", "stone_family", "color", "cut_and_shape", "surface_finish", "dimensions_mm", "weight_grams", "shipping_weight_oz", "price", "collection_name", "collection_location", "primary_use", "bail_included", "is_ooak", "treated", "wire_material", "setting_ready", "material", "origin_story", "origin_handle", "honest_flaws_and_character", "artist_notes", "generated_description", "rescued_by", "stone_shape", "target_gender", "age_group", "condition", "color_pattern", "jewelry_type", "necklace_design", "custom_product", "seo_title", "google_product_category",
+    "mohs_hardness", "luster", "fracture_pattern", "cleavage", "specific_gravity", "diaphaneity", "crystal_system", "geological_era", "geological_age", "mineral_class", "rock_composition", "rock_formation"
+  ]
 };
 
 export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2Fetcher }) {
@@ -280,14 +283,12 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
     const masterTitle = fullMetaState.shopify_title || formState.shopify_title || selectedProduct?.title || "";
     const resolvedPieceName = masterTitle.includes(" — ") ? masterTitle.split(" — ").pop().trim() : masterTitle;
     
-    // 🔴 THE GATEKEEPER: Officially recognize ONLY these exact fields
-    const allowedKeys = [...NAMESPACE_MAP.custom, ...NAMESPACE_MAP.geo];
-
+    const allowedKeys = NAMESPACE_MAP.custom;
     const payload = [];
+
     Object.entries(fullMetaState).forEach(([key, value]) => {
       if (key === "shopify_title") return; 
       
-      // 🔴 GATEKEEPER ENGAGED: If the field isn't on the list, drop it immediately
       if (!allowedKeys.includes(key)) return;
 
       let injectValue = value;
@@ -304,22 +305,32 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
         injectValue = injectValue.replace(/\r?\n|\r/g, " ").trim();
       }
 
-      // 🔴 N/A FILTER: If the AI output says exactly "N/A", completely ignore it so it doesn't save
       const isPopulated = injectValue !== undefined && injectValue !== null && injectValue.toString().trim() !== "" && injectValue.toString().trim() !== "N/A";
       
       if (isPopulated && injectValue !== "See Shopify metaobject") {
         let formatId = selectedProductId.includes("gid://") ? selectedProductId : `gid://shopify/Product/${selectedProductId}`;
         
-        let namespace = NAMESPACE_MAP.geo.includes(key) ? "geo" : "custom";
-
         payload.push({
-          namespace: namespace,
+          namespace: "custom", // 🔴 Hard-locked to custom
           key: key.replace(/-/g, "_"),
           type: fieldType,
           value: injectValue,
           ownerId: formatId
         });
       }
+    });
+
+    // 🔴 GHOST ASSASSIN: Actively blank out stubborn legacy fields so they disappear
+    const ghostsToKill = ["collection_date", "alt_text"];
+    let formatId = selectedProductId.includes("gid://") ? selectedProductId : `gid://shopify/Product/${selectedProductId}`;
+    ghostsToKill.forEach(ghost => {
+      payload.push({
+        namespace: "custom",
+        key: ghost,
+        type: "single_line_text_field",
+        value: " ", // 🔴 Blank space instantly overwrites the garbage text
+        ownerId: formatId
+      });
     });
 
     if (payload.length === 0 && !masterTitle) {
