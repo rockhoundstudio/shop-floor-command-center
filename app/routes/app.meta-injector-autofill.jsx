@@ -360,25 +360,6 @@ export const action = async ({ request }) => {
         const targetUrlPath = `/pages/${activeOriginHandle}`;
         const collectionUrlPath = `/collections/${collectionData.slug}`;
         const fullCollectionTitle = collectionData.name.replace(/\s+Collection$/i, "").trim();
-
-        let collection_date = "";
-        if (origin_story) {
-          try {
-            const datePrompt = `Read the following rockhound field story and extract the collection date. Return ONLY the date in this format: "Month YYYY". If no date is found, return an empty string.`;
-            const dateRes = await fetchWithRetry(
-              "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY,
-              {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ contents: [{ parts: [{ text: datePrompt }] }] }),
-              }
-            );
-            const dateJson = await dateRes.json();
-            collection_date = dateJson?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ?? "";
-          } catch (e) {
-            console.error("[tab2AutoFill] Collection date extraction failed:", e);
-            collection_date = "";
-          }
         }
 
         let visionFields = {};
@@ -515,7 +496,6 @@ export const action = async ({ request }) => {
               return LOCATION_MAP[collectionData.slug] || collectionData.name.replace(/\s*Collection$/i, "").trim();
             })(),
             seo_title: visionFields.seo_title || manual_seo_title,
-            collection_date,
             authenticity,
             rarity,
             treated: "No",
