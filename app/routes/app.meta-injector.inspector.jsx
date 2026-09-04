@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { BlockStack, Card, Text, Banner, TextField, Select, Button, InlineStack, Collapsible } from "@shopify/polaris";
-import { MagicIcon, SaveIcon } from "@shopify/polaris-icons";
+import { MagicIcon, SaveIcon, ClipboardIcon } from "@shopify/polaris-icons";
 import { normalizeDropdownValue, DROPDOWN_OPTIONS } from "../utils/meta-injector.constants.jsx";
 
 const CUSTOM_FIELDS = [
@@ -263,6 +263,16 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
     tab2Fetcher.submit(formData, { method: "post", action: "/app/meta-injector-autofill" });
   }, [selectedProductId, tab2Fetcher, fullMetaState, products, formState]);
 
+  const handleCopyTelemetry = useCallback(() => {
+    navigator.clipboard.writeText(JSON.stringify(fullMetaState, null, 2))
+      .then(() => {
+        if (window.shopify && window.shopify.toast) {
+          window.shopify.toast.show("Telemetry data copied to clipboard!");
+        }
+      })
+      .catch(err => console.error("Failed to copy telemetry:", err));
+  }, [fullMetaState]);
+
   const handleInject = useCallback(() => {
     if (!selectedProductId) return;
     setStatusMessage("");
@@ -273,17 +283,23 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
     const resolvedPieceName = masterTitle.includes(" — ") ? masterTitle.split(" — ").pop().trim() : masterTitle;
     
     const payload = [];
-    Object.entries(formState).forEach(([key, value]) => {
+    Object.entries(fullMetaState).forEach(([key, value]) => {
       if (key === "shopify_title") return; 
 
       let injectValue = value;
       if (key === "piece_name") injectValue = resolvedPieceName;
 
+      // 🔴 SCRUBBER: Remove hidden line breaks from single line text fields to prevent Shopify rejection
+      const config = CUSTOM_FIELDS.find(f => f.key === key);
+      let fieldType = config && config.type ? config.type : "single_line_text_field";
+      
+      if (fieldType === "single_line_text_field" && typeof injectValue === "string") {
+        injectValue = injectValue.replace(/\r?\n|\r/g, " ").trim();
+      }
+
       const isPopulated = injectValue !== undefined && injectValue !== null && injectValue.toString().trim() !== "";
       
       if (isPopulated && injectValue !== "See Shopify metaobject") {
-        const config = CUSTOM_FIELDS.find(f => f.key === key);
-        let fieldType = config && config.type ? config.type : "single_line_text_field";
         let formatId = selectedProductId.includes("gid://") ? selectedProductId : `gid://shopify/Product/${selectedProductId}`;
 
         payload.push({
@@ -536,6 +552,7 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
               <InlineStack align="space-between" gap="300">
                 <Button icon={MagicIcon} onClick={handleTab2AutoFill} size="large" fullWidth disabled={!selectedProductId} loading={tab2Fetcher.state !== "idle"}>RUN</Button>
                 <Button tone="critical" onClick={() => injectFetcher.submit({ intent: "cleanGhostNamespaces", productId: selectedProductId }, { method: "post", action: "/app/meta-injector-api" })} size="large" fullWidth disabled={!selectedProductId} loading={injectFetcher.state !== "idle" && injectFetcher.formData?.get("intent") === "cleanGhostNamespaces"}>Wipe Ghosts</Button>
+                <Button icon={ClipboardIcon} onClick={handleCopyTelemetry} size="large" fullWidth disabled={!selectedProductId}>Copy Telemetry</Button>
                 <Button icon={SaveIcon} tone="success" variant="primary" onClick={handleInject} size="large" fullWidth disabled={!selectedProductId} loading={injectFetcher.state !== "idle" && (injectFetcher.formData?.get("intent") === "saveProduct" || injectFetcher.formData?.get("intent") === "saveMetafields")}>Inject Metafields</Button>
               </InlineStack>
             </BlockStack>
