@@ -39,7 +39,7 @@ function buildMasterVisionPrompt({
 - cut_and_shape
 - surface_finish
 - dimensions_mm: Estimate physical dimensions in millimeters (Length x Width x Depth) based on visual proportions. DO NOT return "N/A" or leave blank. Provide your best lapidary estimate (e.g., "30 x 20 x 5 mm").
-- honest_flaws_and_character
+- honest_flaws_and_character: Analyze the stone for vugs, pits, healed fractures, or raw edges. If you see them, list them honestly. If the stone is perfectly smooth and clean, output strictly: "Clean face, solid matrix, natural lapidary character."
 - origin_location: CRITICAL! Look at the provided Origin Segment ("${originSegment}"). Cross-reference it with the LIVE STORE DIRECTORY above and return the fully expanded, correct geographic name. **NEVER include prefixes like "Shop Lore:", "The", or "Collection" in this field.** (e.g., strictly return "Yakima River Canyon" or "North Fork Coeur d'Alene").
 - primary_use: Smart Switch! Force strictly to best match (e.g., "Pendant (Finished Jewelry)", "Necklace", "Ring / Bezel Setting", "Cabochon", "Wire Wrap (Finished Jewelry)", "Loose Stone"). If a chain is visible, classify as "Necklace".
 - primary_medium
@@ -213,7 +213,7 @@ function resolveCollectionData(locationSegment, defaultOriginSlug, collectionsLi
   return { slug: defaultOriginSlug, name: `${locationSegment.trim()} Collection` };
 }
 
-// 🔴 STRICT GEO FORMATTING - Kills meta_status and duplicate moh_hardness leaks
+// 🔴 STRICT GEO FORMATTING
 async function getGeoData(admin, stoneFamily) {
   const emptyGeo = {
     mohs_hardness: "", luster: "", fracture_pattern: "", cleavage: "",
@@ -414,6 +414,7 @@ export const action = async ({ request }) => {
                       surface_finish: { type: "STRING" },
                       stone_shape: { type: "STRING" },
                       dimensions_mm: { type: "STRING" },
+                      honest_flaws_and_character: { type: "STRING" },
                       color_pattern: { type: "STRING" },
                       pattern: { type: "STRING" },
                       primary_use: { type: "STRING" },
@@ -479,7 +480,7 @@ export const action = async ({ request }) => {
           ? `Handcrafted ${derivedFamily} — ${correctedOrigin} — OOAK Lapidary Art`
           : `Handcrafted ${derivedFamily} — OOAK Lapidary Art`;
 
-        // 🔴 STRICT EXPLICIT PAYLOAD MAPPING - Kills ghosts and forces N/A on empty Google fields
+        // 🔴 STRICT EXPLICIT PAYLOAD MAPPING
         return Response.json({
           success: true,
           intent: "tab2AutoFill",
@@ -517,6 +518,7 @@ export const action = async ({ request }) => {
             material: visionFields.material || "N/A",
             color_pattern: visionFields.color_pattern || visionFields.pattern || "",
             dimensions_mm: visionFields.dimensions_mm || "",
+            honest_flaws_and_character: visionFields.honest_flaws_and_character || "Clean face, solid matrix, natural lapidary character.",
             generated_description: visionFields.generated_description || "",
             color: visionFields.color || "",
             surface_finish: visionFields.surface_finish || "",
@@ -767,6 +769,7 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
                 surface_finish: { type: "STRING" },
                 stone_shape: { type: "STRING" },
                 dimensions_mm: { type: "STRING" },
+                honest_flaws_and_character: { type: "STRING" },
                 color_pattern: { type: "STRING" },
                 pattern: { type: "STRING" },
                 primary_use: { type: "STRING" },
@@ -845,6 +848,7 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
             authenticity: parsedVision.authenticity || "Authentic",
             dimensions_mm: parsedVision.dimensions_mm || "",
             color_pattern: parsedVision.color_pattern || parsedVision.pattern || "",
+            honest_flaws_and_character: parsedVision.honest_flaws_and_character || "Clean face, solid matrix, natural lapidary character.",
             primary_use: resolved_primary_use,
             primary_medium: resolved_primary_medium,
             secondary_medium: resolved_secondary_medium,
