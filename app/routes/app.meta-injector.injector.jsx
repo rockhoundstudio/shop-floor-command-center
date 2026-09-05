@@ -117,8 +117,6 @@ const NAMESPACE_MAP = {
   ]
 };
 
-const getNamespaceForKey = (key) => "custom";
-
 export function NewProductIntakeTab({ fetcher }) {
   const stageFetcher = useFetcher();
   const autoFillFetcher = useFetcher();
@@ -224,6 +222,32 @@ export function NewProductIntakeTab({ fetcher }) {
       });
     })();
   }, [stageFetcher, visionFetcher]);
+
+  const handleFullRescan = useCallback((piece) => {
+    if (!piece.imageBase64 && !(piece.stagedResourceUrls && piece.stagedResourceUrls.length > 0)) {
+      if (window.shopify && window.shopify.toast) {
+        window.shopify.toast.show("Photo required for Full Rescan", { isError: true });
+      }
+      return;
+    }
+    
+    const pName = piece.piece_name || "";
+    const cName = latestShared.current.collection_name || "";
+
+    const formData = new FormData();
+    formData.append("intent", "fullRescan");
+    formData.append("pieceId", piece.id);
+    formData.append("imageUrl", piece.stagedResourceUrls?.[0] || "");
+    formData.append("pieceName", pName);
+    formData.append("collectionName", cName);
+    formData.append("imageBase64", piece.imageBase64 || "");
+    formData.append("imageMimeType", piece.imageMimeType || "image/jpeg");
+
+    visionFetcher.submit(
+      formData,
+      { method: "post", action: "/app/meta-injector-autofill" }
+    );
+  }, [visionFetcher]);
 
   const handleSharedFieldChange = useCallback((key, value) => {
     setSharedFields(prev => ({ ...prev, [key]: value }));
@@ -538,7 +562,6 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
           const pName = currentPiece?.piece_name || document.querySelector(`[data-piece-id="${pid}"][data-field="piece_name"]`)?.value || "";
           const cName = latestShared.current.collection_name || "";
 
-          // THE FIX: Forcing FormData to prevent stringification limits dropping the Base64 payload
           const formData = new FormData();
           formData.append("intent", "visionScan");
           formData.append("pieceId", pid);
@@ -586,7 +609,7 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
 
     (isIdle && hasData) && (() => {
       const data = visionFetcher.data;
-      const isScan = data.intent === "visionScan";
+      const isScan = data.intent === "visionScan" || data.intent === "fullRescan";
       const isSuccess = data.success === true;
       const isError = data.success === false;
 
@@ -632,7 +655,6 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
       (isScan && isError) && (() => {
         setPieces(prev => prev.map(p => {
           let updated = { ...p };
-          // If the pieceId isnt returned due to a hard crash, default to the first piece in the array
           const targetId = data.pieceId || latestPieces.current[0]?.id;
           (p.id === targetId) && (() => {
             let errStr = "Scan failed";
@@ -1067,7 +1089,7 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
                       {piece.photoFiles.length} of 5 photos
                     </Text>
 
-                    <div style={{ minHeight: "48px", marginTop: "8px" }}>
+                    <div style={{ display: "flex", gap: "12px", minHeight: "48px", marginTop: "8px" }}>
                       <Button
                         onClick={() => handleScanGeminiPhotos(piece)}
                         loading={isScanning}
@@ -1075,6 +1097,15 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
                       >
                         {isScanning && <Spinner size="small" />}
                         Scan with Gemini
+                      </Button>
+                      <Button
+                        variant="primary"
+                        tone="success"
+                        onClick={() => handleFullRescan(piece)}
+                        loading={isScanning && visionFetcher.formData?.get("intent") === "fullRescan"}
+                        disabled={disableScan}
+                      >
+                        Full Rescan
                       </Button>
                     </div>
 
