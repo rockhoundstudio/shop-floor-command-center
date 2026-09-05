@@ -1,614 +1,854 @@
-// ==========================================================================
-// ROCKHOUND STUDIO — TAB 2: META INSPECTOR Bench
-// File: app/routes/app.meta-injector.inspector.jsx
-// ==========================================================================
-
-import React, { useState, useEffect, useCallback, useRef } from "react";
-import { BlockStack, Card, Text, Banner, TextField, Select, Button, InlineStack, Collapsible } from "@shopify/polaris";
-import { MagicIcon, SaveIcon, ClipboardIcon } from "@shopify/polaris-icons";
-import { normalizeDropdownValue, DROPDOWN_OPTIONS } from "../utils/meta-injector.constants.jsx";
-
-const CUSTOM_FIELDS = [
-  { key: "shopify_title", label: "MASTER SHOPIFY TITLE (Edit Here)", type: "single_line_text_field", isShared: false },
-  { key: "stone_family", label: "Stone Family", type: "single_line_text_field", isShared: true },
-  { key: "color", label: "Color", type: "single_line_text_field", isShared: true }, 
-  { key: "surface_finish", label: "Surface Finish", type: "single_line_text_field", isShared: true }, 
-  { key: "source_location", label: "Source / Discovery Location", type: "single_line_text_field", isShared: true },
-  { key: "primary_use", label: "Primary Use", type: "single_line_text_field", isShared: true }, 
-  { key: "handcrafted_by", label: "Handcrafted By", type: "single_line_text_field", isShared: true },
-  { key: "origin_story", label: "The Origin Story", type: "multi_line_text_field", multiline: true, isShared: true },
-  { key: "piece_name", label: "Piece Name", type: "single_line_text_field", isPerPiece: true },
-  { key: "cut_and_shape", label: "Cut / Shape", type: "single_line_text_field", isPerPiece: true }, 
-  { key: "dimensions_mm", label: "Dimensions (mm)", type: "single_line_text_field", isPerPiece: true },
-  { key: "weight_grams", label: "Weight (grams)", type: "single_line_text_field", isPerPiece: true },
-  { key: "honest_flaws_and_character", label: "Character Marks (Honest Flaws)", type: "multi_line_text_field", multiline: true, isPerPiece: true },
-  { key: "price", label: "Price", type: "single_line_text_field", isPerPiece: true },
-  { key: "generated_description", label: "Generated Description", type: "multi_line_text_field", multiline: true, isPerPiece: true }
-];
-
-const FULL_META_GROUPS = [
-  { heading: "Always Fill", color: "#2E7D32", fields: [{ key: "piece_name", label: "Piece Name", type: "text" }, { key: "primary_medium", label: "Primary Medium", type: "text" }, { key: "handcrafted_by", label: "Handcrafted By", type: "text" }, { key: "is_ooak", label: "Is One of a Kind", type: "text" }, { key: "treated", label: "Treated", type: "text" }] },
-  { heading: "Stone Fields", color: "#1565C0", fields: [{ key: "stone_family", label: "Stone Family", type: "text" }, { key: "color", label: "Color", type: "text" }, { key: "cut_and_shape", label: "Cut and Shape", type: "text" }, { key: "surface_finish", label: "Surface Finish", type: "text" }, { key: "dimensions_mm", label: "Dimensions (mm)", type: "text" }, { key: "weight_grams", label: "Weight (grams)", type: "text" }] },
-  { heading: "Story & Lore", color: "#E65100", fields: [{ key: "origin_story", label: "Origin Story", type: "text", multiline: true }, { key: "honest_flaws_and_character", label: "Honest Flaws and Character", type: "text", multiline: true }, { key: "collection_name", label: "Collection Name", type: "text" }, { key: "generated_description", label: "Generated Description", type: "text", multiline: true }] },
-  { heading: "Google / SEO", color: "#F9A825", fields: [{ key: "primary_use", label: "Primary Use", type: "text" }, { key: "bail_included", label: "Bail Included", type: "text" }, { key: "seo_title", label: "SEO Title", type: "text" }] },
-  { heading: "Geo-Vault", color: "#4E342E", fields: [{ key: "mineral_class", label: "Mineral Class", type: "text" }, { key: "crystal_system", label: "Crystal System", type: "text" }, { key: "rock_composition", label: "Rock Composition", type: "text" }, { key: "rock_formation", label: "Rock Formation", type: "text" }, { key: "geological_era", label: "Geological Era", type: "text" }] }
-];
-
-// 🔴 THE MASTER LIST: Everything locked strictly to custom
-const NAMESPACE_MAP = {
-  custom: [
-    "piece_name", "primary_medium", "secondary_medium", "handcrafted_by", "stone_family", "color", "cut_and_shape", "surface_finish", "dimensions_mm", "weight_grams", "shipping_weight_oz", "price", "collection_name", "collection_location", "primary_use", "bail_included", "is_ooak", "treated", "wire_material", "setting_ready", "material", "origin_story", "origin_handle", "honest_flaws_and_character", "artist_notes", "generated_description", "rescued_by", "stone_shape", "target_gender", "age_group", "condition", "color_pattern", "jewelry_type", "necklace_design", "custom_product", "seo_title", "google_product_category",
-    "mohs_hardness", "luster", "fracture_pattern", "cleavage", "specific_gravity", "diaphaneity", "crystal_system", "geological_era", "geological_age", "mineral_class", "rock_composition", "rock_formation"
-  ]
-};
-
-export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2Fetcher }) {
-  const [selectedProductId, setSelectedProductId] = useState("");
-  const [formState, setFormState] = useState({});
-  const [fullMetaState, setFullMetaState] = useState({});
-  const originalMetaRef = useRef({});
-  const [statusMessage, setStatusMessage] = useState("");
-  const [errorMessage, setErrorMessage] = useState("");
-  const [promptStyle, setPromptStyle] = useState("");
-  const [searchQuery, setSearchQuery] = useState("");
-  const [tab2StatusMessage, setTab2StatusMessage] = useState("");
-  const [tab2ErrorMessage, setTab2ErrorMessage] = useState("");
-  const [pendingFixFields, setPendingFixFields] = useState([]);
-  const [currentFixIndex, setCurrentFixIndex] = useState(0);
-  const [fixPopupValue, setFixPopupValue] = useState("");
-  const [showFixPopup, setShowFixPopup] = useState(false);
-
-  const handleSelectProduct = useCallback((id) => {
-    setSelectedProductId(id);
-    setStatusMessage("");
-    setErrorMessage("");
-    setTab2StatusMessage("");
-    setTab2ErrorMessage("");
-
-    const product = products.find(p => p.id === id);
-    const newForm = {};
-    const newFullForm = {};
-    
-    if (product && product.title) {
-      newForm.shopify_title = product.title;
-      newFullForm.shopify_title = product.title;
-    }
-
-    const hasMetafields = product && product.metafields && product.metafields.edges;
-    
-    if (hasMetafields) {
-      product.metafields.edges.forEach(({ node }) => {
-        const hasValue = node.value !== null && node.value !== undefined;
-        if (hasValue && node.namespace === "custom") {
-          let parsedValue = node.value;
-          if (parsedValue && parsedValue.includes("gid://")) parsedValue = "See Shopify metaobject";
-          if (parsedValue && typeof parsedValue === 'string' && parsedValue.startsWith("[")) {
-            try {
-              const arr = JSON.parse(parsedValue);
-              parsedValue = Array.isArray(arr) ? arr[0] : parsedValue;
-            } catch (e) { }
-          }
-          newForm[node.key] = parsedValue;
-          newFullForm[node.key] = parsedValue;
-        }
-      });
-    }
-
-    const CAMEL_TO_SNAKE = { crystalSystem: "crystal_system", geologicalEra: "geological_era", mineralClass: "mineral_class", rockComposition: "rock_composition", rockFormation: "rock_formation", geologicalAge: "geological_age", fracture: "fracture_pattern" };
-    
-    Object.entries(CAMEL_TO_SNAKE).forEach(([camel, snake]) => {
-      if (newFullForm[camel] !== undefined) { if (!newFullForm[snake]) newFullForm[snake] = newFullForm[camel]; delete newFullForm[camel]; }
-      if (newForm[camel] !== undefined) { if (!newForm[snake]) newForm[snake] = newForm[camel]; delete newForm[camel]; }
-    });
-
-    if (!newFullForm.target_gender) newFullForm.target_gender = "Unisex";
-    if (!newFullForm.age_group) newFullForm.age_group = "adult";
-    if (!newFullForm.condition) newFullForm.condition = "new";
-    if (!newFullForm.google_product_category) newFullForm.google_product_category = "Apparel & Accessories > Jewelry";
-
-    if (!newFullForm.handcrafted_by) newFullForm.handcrafted_by = "Bob & Janyce, Rockhound Studio";
-    if (!newFullForm.shipping_weight_oz && newFullForm.weight_grams) {
-      const grams = parseFloat(newFullForm.weight_grams);
-      if (!isNaN(grams) && grams > 0) {
-        newFullForm.shipping_weight_oz = (grams / 28.3495).toFixed(2);
-      }
-    }
-
-    if (newForm.origin_story && newForm.origin_story.startsWith("[")) {
-      try { const arr = JSON.parse(newForm.origin_story); newForm.origin_story = Array.isArray(arr) ? arr[0] : newForm.origin_story; } catch (e) {}
-    }
-    newFullForm.origin_story = newForm.origin_story;
-
-    if (newForm.honest_flaws_and_character && newForm.honest_flaws_and_character.startsWith("[")) {
-      try { const arr = JSON.parse(newForm.honest_flaws_and_character); newForm.honest_flaws_and_character = Array.isArray(arr) ? arr[0] : newForm.honest_flaws_and_character; } catch (e) { }
-    }
-    newFullForm.honest_flaws_and_character = newForm.honest_flaws_and_character;
-
-    const customPM = product?.metafields?.edges?.find(e => e.node.namespace === "custom" && e.node.key === "primary_medium")?.node?.value;
-    let bestPM = customPM || newForm.base_stone_type || "";
-    if (bestPM === "Stone") bestPM = ""; 
-    
-    newFullForm.primary_medium = bestPM;
-    if (newForm.color) newFullForm.color = newForm.color;
-
-    if (product && product.title) {
-      newForm.piece_name = product.title.includes(" — ") ? product.title.split(" — ").pop().trim() : product.title;
-      newFullForm.piece_name = product.title.includes(" — ") ? product.title.split(" — ").pop().trim() : product.title;
-    }
-
-    if (product && product.variants && product.variants.edges && product.variants.edges[0]) {
-      const price = product.variants.edges[0].node.price;
-      if (price) { newForm.price = price; newFullForm.price = price; }
-    }
-
-    const seoTitleNode = product?.metafields?.edges?.find(e => e.node.namespace === "global" && e.node.key === "title_tag")?.node;
-    if (seoTitleNode && seoTitleNode.value) {
-        newFullForm.seo_title = seoTitleNode.value;
-    }
-    
-    delete newFullForm.stone_story;
-    setFormState(newForm);
-    setFullMetaState(newFullForm);
-    originalMetaRef.current = { ...newFullForm };
-  }, [products]);
-
-  useEffect(() => {
-    if (selectedProductId && products && products.length > 0) {
-      const product = products.find(p => p.id === selectedProductId);
-      if (product && product.metafields && product.metafields.edges) {
-        setFormState(prev => {
-          const updatedState = { ...prev };
-          const dropdownFields = ["handcrafted_by", "is_ooak", "treated", "primary_use", "bail_included", "setting_ready", "wire_material", "stone_family", "color", "cut_and_shape", "surface_finish"];
-          const textFields = ["piece_name", "primary_medium", "dimensions_mm", "weight_grams", "origin_story", "honest_flaws_and_character", "collection_name", "generated_description", "color_pattern", "seo_title"];
-
-          product.metafields.edges.forEach(({ node }) => {
-            if (node.namespace === "custom" && node.value && node.value.trim() !== "") {
-              if (dropdownFields.includes(node.key)) updatedState[node.key] = normalizeDropdownValue(node.key, node.value);
-              else if (textFields.includes(node.key)) updatedState[node.key] = node.value;
-            }
-          });
-          
-          if (product.title) {
-            updatedState.shopify_title = product.title;
-            updatedState.piece_name = product.title.includes(" — ") ? product.title.split(" — ").pop().trim() : product.title;
-          }
-          return updatedState;
-        });
-      }
-    }
-  }, [selectedProductId, products]);
-
-  const updateFormState = useCallback((key, value) => {
-    setFormState(prev => ({ ...prev, [key]: value }));
-    if (key === "color") setFullMetaState(prev => ({ ...prev, [key]: value }));
-  }, []);
-
-  const updateFullMetaState = useCallback((key, value) => {
-    setFullMetaState(prev => ({ ...prev, [key]: value }));
-  }, []);
-
-  const handleTab2AutoFill = useCallback(() => {
-    if (!selectedProductId) return;
-    setTab2StatusMessage("");
-    setTab2ErrorMessage("");
-
-    const stoneFamily = fullMetaState.stone_family || "";
-    const originHandle = fullMetaState.origin_handle || fullMetaState.origin_page_handle || "";
-    const product = products.find(p => p.id === selectedProductId);
-    const titleToUse = fullMetaState.shopify_title || formState.shopify_title || product?.title || "";
-    const imageUrl = product?.images?.edges?.[0]?.node?.url || "";
-
-    const formData = new FormData();
-    formData.append("intent", "tab2AutoFill");
-    formData.append("productId", selectedProductId);
-    formData.append("stone_family", stoneFamily);
-    formData.append("origin_handle", originHandle);
-    formData.append("cut_and_shape", fullMetaState.cut_and_shape || "");
-    formData.append("collection_location", fullMetaState.collection_location || "");
-    formData.append("piece_name", fullMetaState.piece_name || "");
-    formData.append("productTitle", titleToUse);
-    formData.append("imageUrl", imageUrl);
-
-    tab2Fetcher.submit(formData, { method: "post", action: "/app/meta-injector-autofill" });
-  }, [selectedProductId, tab2Fetcher, fullMetaState, products, formState]);
-
-  const handleFullRescan = useCallback(() => {
-    if (!selectedProductId) return;
-    setTab2StatusMessage("");
-    setTab2ErrorMessage("");
-
-    const stoneFamily = fullMetaState.stone_family || "";
-    const originHandle = fullMetaState.origin_handle || fullMetaState.origin_page_handle || "";
-    const product = products.find(p => p.id === selectedProductId);
-    const titleToUse = fullMetaState.shopify_title || formState.shopify_title || product?.title || "";
-    const imageUrl = product?.images?.edges?.[0]?.node?.url || "";
-
-    const formData = new FormData();
-    formData.append("intent", "fullRescan");
-    formData.append("productId", selectedProductId);
-    formData.append("stone_family", stoneFamily);
-    formData.append("origin_handle", originHandle);
-    formData.append("cut_and_shape", fullMetaState.cut_and_shape || "");
-    formData.append("collection_location", fullMetaState.collection_location || "");
-    formData.append("piece_name", fullMetaState.piece_name || "");
-    formData.append("productTitle", titleToUse);
-    formData.append("imageUrl", imageUrl);
-    formData.append("origin_story", fullMetaState.origin_story || "");
-    formData.append("honest_flaws_and_character", fullMetaState.honest_flaws_and_character || "");
-    formData.append("generated_description", fullMetaState.generated_description || "");
-    formData.append("price", fullMetaState.price || "");
-
-    tab2Fetcher.submit(formData, { method: "post", action: "/app/meta-injector-autofill" });
-  }, [selectedProductId, tab2Fetcher, fullMetaState, products, formState]);
-
-  const handleCopyTelemetry = useCallback(() => {
-    navigator.clipboard.writeText(JSON.stringify(fullMetaState, null, 2))
-      .then(() => {
-        if (window.shopify && window.shopify.toast) {
-          window.shopify.toast.show("Telemetry data copied to clipboard!");
-        }
-      })
-      .catch(err => console.error("Failed to copy telemetry:", err));
-  }, [fullMetaState]);
-
-  const handleInject = useCallback(() => {
-    if (!selectedProductId) return;
-    setStatusMessage("");
-    setErrorMessage("");
-
-    const selectedProduct = products.find(p => p.id === selectedProductId);
-    const masterTitle = fullMetaState.shopify_title || formState.shopify_title || selectedProduct?.title || "";
-    const resolvedPieceName = masterTitle.includes(" — ") ? masterTitle.split(" — ").pop().trim() : masterTitle;
-    
-    const allowedKeys = NAMESPACE_MAP.custom;
-    const payload = [];
-
-    Object.entries(fullMetaState).forEach(([key, value]) => {
-      if (key === "shopify_title") return; 
-      if (!allowedKeys.includes(key)) return;
-
-      let injectValue = String(value);
-      if (key === "piece_name") injectValue = resolvedPieceName;
-
-      // 🔴 UNIVERSAL STEAMROLLER: Crush all hidden line breaks, 'Enter' keys, and carriage returns.
-      // Shopify's database schema will crash if a field originally defined as single-line receives a line break.
-      injectValue = injectValue.replace(/\\[rn]/g, " ").replace(/[\r\n]+/g, " ").replace(/\s{2,}/g, " ").trim();
-
-      const config = CUSTOM_FIELDS.find(f => f.key === key);
-      let fieldType = config && config.type ? config.type : "single_line_text_field";
-      
-      // Keep definitions accurate for the API, but the value is already safely flattened.
-      if (["honest_flaws_and_character", "origin_story", "generated_description", "artist_notes"].includes(key)) {
-        fieldType = "multi_line_text_field";
-      }
-
-      const isPopulated = injectValue !== "" && injectValue !== "N/A";
-      
-      if (isPopulated && injectValue !== "See Shopify metaobject") {
-        let formatId = selectedProductId.includes("gid://") ? selectedProductId : `gid://shopify/Product/${selectedProductId}`;
-        
-        payload.push({
-          namespace: "custom", 
-          key: key.replace(/-/g, "_"),
-          type: fieldType,
-          value: injectValue,
-          ownerId: formatId
-        });
-      }
-    });
-
-    if (payload.length === 0 && !masterTitle) {
-      setErrorMessage("No fields are populated. Fill at least one field to inject.");
-      return;
-    }
-
-    const descHtml = formState.generated_description || fullMetaState.generated_description || "";
-
-    injectFetcher.submit(
-      { 
-        intent: "saveMetafields", 
-        payload: JSON.stringify(payload),
-        productId: selectedProductId,
-        productTitle: masterTitle,
-        descriptionHtml: descHtml
-      },
-      { method: "post", action: "/app/meta-injector-api" }
-    );
-  }, [selectedProductId, formState, products, injectFetcher, fullMetaState]);
-
-  useEffect(() => {
-    const isIdle = tab2Fetcher.state === "idle";
-    const hasData = tab2Fetcher.data !== undefined && tab2Fetcher.data !== null;
-
-    if (isIdle && hasData) {
-      const product = products.find(p => p.id === selectedProductId);
-      const productTitle = fullMetaState.shopify_title || formState.shopify_title || product?.title || "";
-      const tab2Data = tab2Fetcher.data.tab2Data || {};
-
-      if (Object.keys(tab2Data).length > 0) {
-        setFormState(prev => {
-          const updatedState = { ...prev };
-          Object.entries(tab2Data).forEach(([key, val]) => {
-            const hasNewValue = val !== undefined && val !== null && val.toString().trim() !== "" && val !== "See Shopify metaobject";
-            if (hasNewValue) {
-              let normalizedVal = val;
-              if (key === "treated" || key === "is_ooak") {
-                if (val === true || val === "true") normalizedVal = "Yes";
-                else if (val === false || val === "false") normalizedVal = "No";
-              }
-              updatedState[key] = normalizedVal;
-            }
-          });
-          return updatedState;
-        });
-
-        setFullMetaState(prev => {
-          const updatedState = { ...prev };
-          const ALWAYS_OVERWRITE = ["mohs_hardness", "luster", "fracture_pattern", "cleavage", "specific_gravity", "diaphaneity", "mineral_class", "crystal_system", "rock_composition", "rock_formation", "geological_era", "geological_age", "generated_description", "seo_title", "origin_story", "stone_story"];
-
-          Object.entries(tab2Data).forEach(([key, val]) => {
-            const hasNewValue = val !== undefined && val !== null && val.toString().trim() !== "" && val !== "See Shopify metaobject";
-            const currentlyEmpty = !updatedState[key] || updatedState[key].toString().trim() === "";
-            
-            if (hasNewValue && (currentlyEmpty || ALWAYS_OVERWRITE.includes(key))) {
-              let normalizedVal = val;
-              if (key === "treated" || key === "is_ooak") {
-                if (val === true || val === "true") normalizedVal = "Yes";
-                else if (val === false || val === "false") normalizedVal = "No";
-              }
-              updatedState[key] = normalizedVal;
-            }
-          });
-
-          if (productTitle) updatedState.piece_name = productTitle.includes(" \u2014 ") ? productTitle.split(" \u2014 ").pop().trim() : productTitle;
-
-          const REQUIRED_TAB2_FIELDS = [{ key: "generated_description", label: "Generated Description" }, { key: "color_pattern", label: "Color Pattern" }, { key: "collection_location", label: "Collection Location" }, { key: "origin_handle", label: "Origin Handle" }];
-          const missingFields = REQUIRED_TAB2_FIELDS.filter(f => {
-            const val = updatedState[f.key] || "";
-            return val.toString().trim() === "" || val === "[No story provided]";
-          });
-          if (missingFields.length > 0) {
-            setTimeout(() => {
-              setPendingFixFields(missingFields);
-              setCurrentFixIndex(0);
-              setFixPopupValue("");
-              setShowFixPopup(true);
-            }, 0);
-          }
-
-          return updatedState;
-        });
-        setTab2StatusMessage("Auto-Fill complete \u2014 review fields before saving");
-        if (window.shopify && window.shopify.toast) window.shopify.toast.show("Auto-Fill complete!");
-      } else {
-        setTab2ErrorMessage("Auto-Fill returned no data \u2014 check stone_family and origin_handle.");
-        if (window.shopify && window.shopify.toast) window.shopify.toast.show("Auto-Fill failed", { isError: true });
-      }
-    }
-  }, [tab2Fetcher.state, tab2Fetcher.data, selectedProductId, products]);
-
-  useEffect(() => {
-    const isIdle = injectFetcher.state === "idle";
-    const hasData = injectFetcher.data !== undefined && injectFetcher.data !== null;
-    if (isIdle && hasData) {
-      if (injectFetcher.data.success) {
-        setStatusMessage("Data cleanly locked into Shopify database.");
-        if (window.shopify && window.shopify.toast) window.shopify.toast.show("Update successful!");
-      } else {
-        setErrorMessage(injectFetcher.data.message || injectFetcher.data.error || "An unknown error occurred");
-        if (window.shopify && window.shopify.toast) window.shopify.toast.show("Action failed", { isError: true });
-      }
-    }
-  }, [injectFetcher.state, injectFetcher.data]);
-
-  const handleFixPopupConfirm = useCallback(() => {
-    const field = pendingFixFields[currentFixIndex];
-    if (field && fixPopupValue.trim() !== "") {
-      setFormState(prev => ({ ...prev, [field.key]: fixPopupValue.trim() }));
-      setFullMetaState(prev => ({ ...prev, [field.key]: fixPopupValue.trim() }));
-    }
-    const nextIndex = currentFixIndex + 1;
-    if (nextIndex < pendingFixFields.length) {
-      setCurrentFixIndex(nextIndex);
-      setFixPopupValue("");
-    } else {
-      setShowFixPopup(false); setPendingFixFields([]); setCurrentFixIndex(0); setFixPopupValue("");
-    }
-  }, [pendingFixFields, currentFixIndex, fixPopupValue]);
-
-  const handleFixPopupSkip = useCallback(() => {
-    const nextIndex = currentFixIndex + 1;
-    if (nextIndex < pendingFixFields.length) {
-      setCurrentFixIndex(nextIndex);
-      setFixPopupValue("");
-    } else {
-      setShowFixPopup(false); setPendingFixFields([]); setCurrentFixIndex(0); setFixPopupValue("");
-    }
-  }, [pendingFixFields, currentFixIndex]);
-
-  const renderFullMetaField = (key) => {
-    let field = null;
-    for (const group of FULL_META_GROUPS) {
-      const found = group.fields.find(f => f.key === key);
-      if (found) { field = found; break; }
-    }
-    if (!field) {
-      const rf = CUSTOM_FIELDS.find(f => f.key === key);
-      if (rf) field = rf; 
-    }
-    if (!field) {
-      field = { key: key, label: key.split(/[-_]/).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' '), type: 'text', multiline: key.includes("story") || key.includes("notes") || key.includes("flaws") || key.includes("character") || key === "generated_description" };
-    }
-
-    let val = fullMetaState[field.key] || "";
-    if (typeof val === 'string' && val.startsWith('[')) { try { const arr = JSON.parse(val); val = Array.isArray(arr) ? arr[0] : val; } catch(e) {} } else if (Array.isArray(val)) { val = val[0]; }
-
-    if ((field.key === "handcrafted_by" || field.key === "rescued_by") && typeof val === 'string') {
-        if (val.includes("Bob & Janyce") || val.includes("Rockhound Studio")) val = "Bob & Janyce, Rockhound Studio";
-    }
-    if (field.key === "primary_medium" && val === "Stone") val = "";
-    if (field.key === "color" && formState.color) val = formState.color;
-
-    const reqKeys = ["shopify_title", "piece_name", "price", "weight_grams", "material", "stone_family", "collection_name", "origin_handle", "rescued_by", "treatment_status", "origin_story", "primary_use", "seo_title"];
-    const isFilled = val !== undefined && val !== null && String(val).trim() !== "" && String(val).trim() !== "false";
-    const isRequiredEmpty = !isFilled && reqKeys.includes(field.key);
-    const isEmpty = !isFilled;
-    
-    let dotFillColor = "#eab308";
-    if (isFilled) dotFillColor = "#22c55e"; 
-    if (isRequiredEmpty) dotFillColor = "#ef4444"; 
-
-    const labelNode = (
-      <div style={{ display: 'flex', alignItems: 'center' }}>
-        <svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg" style={{ minWidth: '18px', marginRight: '8px' }}>
-          <circle cx="9" cy="9" r="9" fill={dotFillColor} />
-        </svg>
-        <span style={{ fontSize: '14px', fontWeight: '500' }}>{field.label}</span>
-      </div>
-    );
-
-    return (
-      <div key={field.key}>
-        <div style={{ backgroundColor: isEmpty ? "#FFF5F5" : "transparent", minHeight: "48px", padding: "8px", borderRadius: "4px" }}>
-          {field.type !== "text" && DROPDOWN_OPTIONS && DROPDOWN_OPTIONS[field.key] && DROPDOWN_OPTIONS[field.key].length > 0 ? (
-            <Select label={labelNode} options={[{ label: "Select...", value: "" }, ...(DROPDOWN_OPTIONS[field.key] || [])]} value={val} onChange={(v) => updateFullMetaState(field.key, v)} accessibilityLabel={field.label} />
-          ) : (
-            <TextField label={labelNode} value={val} onChange={(v) => updateFullMetaState(field.key, v)} accessibilityLabel={field.label} multiline={field.multiline ? true : false} autoComplete="off" disabled={!isEmpty && val === "See Shopify metaobject" && field.key !== "shopify_title"} />
-          )}
-        </div>
-      </div>
-    );
-  };
-
-  const safeProducts = products || [];
-  const filteredProducts = safeProducts.filter(p => p.title.toLowerCase().includes(searchQuery.toLowerCase()));
-
-  return (
-    <BlockStack gap="400">
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "24px", alignItems: "start" }}>
-        <div>
-          <Card padding="400">
-            <BlockStack gap="400">
-              <Text as="h2" variant="headingMd">1. Select Raw Inventory</Text>
-              <TextField value={searchQuery} onChange={setSearchQuery} placeholder="Search products by title..." autoComplete="off" clearButton onClearButtonClick={() => setSearchQuery("")} />
-              <div style={{ maxHeight: "70vh", overflowY: "auto", paddingRight: "8px", display: "flex", flexDirection: "column", gap: "8px" }}>
-                {filteredProducts.map(p => (
-                  <div key={p.id} style={{ minHeight: "54px" }}>
-                    <Button fullWidth size="large" textAlign="left" variant={selectedProductId === p.id ? "primary" : "secondary"} onClick={() => handleSelectProduct(p.id)}>
-                      <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-                        {p.images?.edges?.[0]?.node?.url ? <img src={p.images.edges[0].node.url} alt="" style={{ width: "48px", height: "48px", objectFit: "cover", borderRadius: "6px", flexShrink: 0 }} /> : <div style={{ width: "48px", height: "48px", backgroundColor: "#2a2a2a", border: "1px solid #444", borderRadius: "6px", flexShrink: 0 }} />}
-                        <span>{p.title}</span>
-                      </div>
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            </BlockStack>
-          </Card>
-        </div>
-
-        <div>
-          <Card padding="400">
-            <BlockStack gap="400">
-              <Text as="h2" variant="headingMd">2. Data Sieve & Injection</Text>
-              {statusMessage !== "" && <Banner title="Operation Successful" tone="success"><Text as="p">{statusMessage}</Text></Banner>}
-              {errorMessage !== "" && <Banner title="Operation Failed" tone="critical"><Text as="p">{errorMessage}</Text></Banner>}
-              
-              <TextField label="Gemini Presentation Style" placeholder="e.g. Write with OOAK grit — raw, earthy, one-of-a-kind stone energy." value={promptStyle} onChange={setPromptStyle} multiline={3} autoComplete="off" disabled={!selectedProductId} />
-
-              {selectedProductId && (() => {
-                const product = products.find(p => p.id === selectedProductId);
-                return (
-                  <BlockStack gap="200">
-                    <Text as="p" variant="bodyMd" tone="subdued">Review before running — edit if legacy data is incorrect:</Text>
-                    <TextField label="Product Title" value={formState.shopify_title || fullMetaState.shopify_title || product?.title || ""} onChange={(val) => { setFormState(prev => ({ ...prev, shopify_title: val })); setFullMetaState(prev => ({ ...prev, shopify_title: val })); }} autoComplete="off" helpText="Format: Stone Family — Origin Location — Piece Name" />
-                    <TextField label="Origin Handle (override)" value={formState.origin_handle || fullMetaState.origin_handle || ""} onChange={(val) => { setFormState(prev => ({ ...prev, origin_handle: val })); setFullMetaState(prev => ({ ...prev, origin_handle: val })); }} autoComplete="off" helpText="e.g. the-richardson-strike — leave blank to auto-resolve from title" />
-                  </BlockStack>
-                );
-              })()}
-
-              <InlineStack align="space-between" gap="300">
-                <Button icon={MagicIcon} onClick={handleTab2AutoFill} size="large" fullWidth disabled={!selectedProductId} loading={tab2Fetcher.state !== "idle"}>RUN</Button>
-                <Button icon={MagicIcon} onClick={handleFullRescan} size="large" fullWidth disabled={!selectedProductId} loading={tab2Fetcher.state !== "idle"} tone="success">Full Rescan</Button>
-                <Button tone="critical" onClick={() => injectFetcher.submit({ intent: "cleanGhostNamespaces", productId: selectedProductId }, { method: "post", action: "/app/meta-injector-api" })} size="large" fullWidth disabled={!selectedProductId} loading={injectFetcher.state !== "idle" && injectFetcher.formData?.get("intent") === "cleanGhostNamespaces"}>Wipe Ghosts</Button>
-                <Button icon={ClipboardIcon} onClick={handleCopyTelemetry} size="large" fullWidth disabled={!selectedProductId}>Copy Telemetry</Button>
-                <Button icon={SaveIcon} tone="success" variant="primary" onClick={handleInject} size="large" fullWidth disabled={!selectedProductId} loading={injectFetcher.state !== "idle" && (injectFetcher.formData?.get("intent") === "saveProduct" || injectFetcher.formData?.get("intent") === "saveMetafields")}>Inject Metafields</Button>
-              </InlineStack>
-            </BlockStack>
-          </Card>
-        </div>
-      </div>
-
-      {selectedProductId !== "" && (
-        <div style={{ marginTop: "32px" }}>
-          <Card padding="400">
-            <BlockStack gap="400">
-              {tab2StatusMessage !== "" && <Banner title="Operation Successful" tone="success"><Text as="p">{tab2StatusMessage}</Text></Banner>}
-              {tab2ErrorMessage !== "" && <Banner title="Operation Failed" tone="critical"><Text as="p">{tab2ErrorMessage}</Text></Banner>}
-              {injectFetcher.state === "idle" && injectFetcher.data?.message?.includes("Cleaned") && <Banner title="Ghosts Cleaned" tone="success"><Text as="p">{injectFetcher.data.message}</Text></Banner>}
-
-              <Text as="h3" variant="headingLg">Full Meta Report</Text>
-
-              <BlockStack gap="300">
-                <Text as="h4" variant="headingMd">Section 1 — Core Ignition</Text>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
-                  {["shopify_title", "piece_name", "primary_medium", "secondary_medium", "handcrafted_by", "is_ooak", "treated", "dimensions_mm", "weight_grams", "shipping_weight_oz", "cut_and_shape", "surface_finish", "color", "artist_notes", "generated_description", "price"].map(renderFullMetaField)}
-                </div>
-              </BlockStack>
-
-              <BlockStack gap="300">
-                <Text as="h4" variant="headingMd">Section 2 — Human Engine</Text>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
-                  {["origin_story", "rescued_by", "stone_shape", "collection_name", "origin_handle", "collection_location", "honest_flaws_and_character"].map(renderFullMetaField)}
-                </div>
-              </BlockStack>
-
-              <BlockStack gap="300">
-                <Text as="h4" variant="headingMd">Section 3 — Google Machine</Text>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
-                  {["primary_use", "setting_ready", "wire_material", "bail_included", "color_pattern", "material", "jewelry_type", "necklace_design", "target_gender", "age_group", "condition", "custom_product", "seo_title", "google_product_category"].map(renderFullMetaField)}
-                </div>
-              </BlockStack>
-
-              <BlockStack gap="300">
-                <Text as="h4" variant="headingMd">Section 4 — Geo-Vault</Text>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
-                  {["mohs_hardness", "luster", "fracture_pattern", "cleavage", "specific_gravity", "diaphaneity", "mineral_class", "crystal_system", "rock_composition", "rock_formation", "geological_era", "geological_age"].map(renderFullMetaField)}
-                </div>
-              </BlockStack>
-
-            </BlockStack>
-          </Card>
-        </div>
-      )}
-
-      <div style={{ marginTop: "32px" }}>
-        <Card padding="400">
-          <BlockStack gap="400">
-            <Text as="h2" variant="headingMd">Nuclear Ghost Cleanup</Text>
-            {injectFetcher.state === "idle" && injectFetcher.data?.message?.includes("Nuclear sweep") && <Banner title={injectFetcher.data.success ? "Operation Successful" : "Operation Failed"} tone={injectFetcher.data.success ? "success" : "critical"}><Text as="p">{injectFetcher.data.message}</Text></Banner>}
-            <Button tone="critical" variant="primary" onClick={() => injectFetcher.submit({ intent: "cleanAllGhostNamespaces" }, { method: "post", action: "/app/meta-injector-api" })} loading={injectFetcher.state !== "idle" && injectFetcher.formData?.get("intent") === "cleanAllGhostNamespaces"}>Clean ALL Ghost Namespaces (Store-Wide)</Button>
-          </BlockStack>
-        </Card>
-      </div>
-
-      {showFixPopup && pendingFixFields[currentFixIndex] && (
-        <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.5)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <div style={{ background: "white", borderRadius: "12px", padding: "32px", width: "480px", maxWidth: "90vw", boxShadow: "0 8px 32px rgba(0,0,0,0.2)" }}>
-            <BlockStack gap="400">
-              <Text as="h2" variant="headingMd">Missing: {pendingFixFields[currentFixIndex].label}</Text>
-              <Text as="p" variant="bodyMd" tone="subdued">Field {currentFixIndex + 1} of {pendingFixFields.length} — enter a value or skip.</Text>
-              <TextField value={fixPopupValue} onChange={setFixPopupValue} label={pendingFixFields[currentFixIndex].label} autoComplete="off" multiline={pendingFixFields[currentFixIndex].key === "generated_description" ? 4 : undefined} />
-              <InlineStack gap="300" align="end">
-                <Button onClick={handleFixPopupSkip}>Skip</Button>
-                <Button variant="primary" onClick={handleFixPopupConfirm}>Save & Continue</Button>
-              </InlineStack>
-            </BlockStack>
-          </div>
-        </div>
-      )}
-    </BlockStack>
-  );
+import { authenticate } from "../shopify.server";
+import { lookupStone } from "../utils/geoLibrary.jsx";
+import { TARGET_KEYS } from "../utils/metaScan";
+
+const stoneProfileCache = new Map();
+
+// ==========================================
+// 🔴 THE MASTER VISION PROMPT
+// Tune this once. Both Tab 1 (Intake) and Tab 2 (Bench) pull from here.
+// ==========================================
+function buildMasterVisionPrompt({
+  pagesMenu,
+  collectionsMenu,
+  stoneFamily,
+  originStory,
+  originSegment,
+  targetUrlPath,
+  fullCollectionTitle,
+  collectionUrlPath
+}) {
+  return `You are a lapidary artist and master jeweler for Rockhound Studio. Analyze this photo and return a JSON object.
+- LIVE STORE DIRECTORY (Your Dyslexia Safeguard — Read this menu!):
+  VALID PAGES IN STORE:
+  ${pagesMenu || "No live pages found — use default URL."}
+  
+  VALID COLLECTIONS IN STORE:
+  ${collectionsMenu || "No live collections found — use default URL."}
+
+- primary_color
+- stone_shape: Select EXACTLY one from this list: Round, Oval, Freeform, Teardrop, Pear, Cushion, Marquise, Rectangle, Square, Heart, N/A
+- jewelry_type: Select EXACTLY one from this list: Artisan jewelry, Fine jewelry, Accessories, N/A
+- rarity: Select EXACTLY one from this list: Common, Uncommon, Rare, One-of-a-Kind (default: Common if unsure)
+- authenticity: Select EXACTLY one from this list: Authentic, Lab-Created, Unknown (default: Authentic for natural stones)
+- color_pattern: Select EXACTLY one from this list: Green, Black, Blue flash, Red, White, Multicolor, Gold, Pink, Yellow, Silver, Purple, Striped, Clear, Yellow veins, None
+- cut_and_shape
+- surface_finish
+- dimensions_mm: Estimate physical dimensions in millimeters (Length x Width x Depth) based on visual proportions. DO NOT return "N/A" or leave blank. Provide your best lapidary estimate (e.g., "30 x 20 x 5 mm").
+- honest_flaws_and_character
+- origin_location: CRITICAL! Look at the provided Origin Segment ("${originSegment}"). Cross-reference it with the LIVE STORE DIRECTORY above and return the fully expanded, correct geographic name. **NEVER include prefixes like "Shop Lore:", "The", or "Collection" in this field.** (e.g., strictly return "Yakima River Canyon" or "North Fork Coeur d'Alene").
+- primary_use: Smart Switch! Force strictly to best match (e.g., "Pendant (Finished Jewelry)", "Necklace", "Ring / Bezel Setting", "Cabochon", "Wire Wrap (Finished Jewelry)", "Loose Stone"). If a chain is visible, classify as "Necklace".
+- primary_medium
+- setting_ready
+- wire_material
+- bail_included
+- chain_material: If a necklace chain is visible, identify it as exactly one of: "Silver Plated Snake Chain", "Gold Plated Snake Chain", "Sterling Silver Chain", "Cord". If no chain is visible, return "None".
+- seo_title: Generate a keyword-rich SEO product title (max 60 characters) optimized for Google. Combine the stone family ("${stoneFamily}"), your newly corrected origin_location, cut/shape, and keywords like "Handcrafted", "Natural", "OOAK", or "Lapidary Art". Separate with pipes (|) or em-dashes (—). Do NOT use quotes.
+- generated_description: Write in Bob's voice. Past tense for the find. Plain and honest — say what happened, stop. No salesy language. Short sentences. One idea at a time. Use specific details from the FULL ORIGIN STORY below. End with EXACTLY this line, using an em-dash: — Bob & Janyce, Rockhound Studio, Spokane Valley WA. Do not use hyphens or dashes other than the em-dash (—). 150–250 words. Stop when it's right.
+FULL ORIGIN STORY:
+${originStory}
+CRITICAL DWELL WEB EMBED LAW: Look at the Origin Segment Janyce entered ("${originSegment}"). Check the LIVE STORE DIRECTORY above and match it to the exact corresponding Page and Collection. You MUST use those live excerpts to write short story hooks leading directly into TWO clickable HTML hyperlinks. 
+  1. Origin Hook: Write a short story hook based on the matching Page excerpt, followed immediately by this exact anchor tag format: <a href="${targetUrlPath}">${fullCollectionTitle} Story</a>
+  2. Collection Hook: Write a short hook based on the matching Collection excerpt, followed immediately by this exact anchor tag format: <a href="${collectionUrlPath}">${fullCollectionTitle} Collection</a>
+- MANDATORY BENCH FINDINGS & JEWELRY LAWS (CRITICAL FOR LOOSE STONES):
+  * THE LOOSE STONE OVERRIDE: If this is a bare, loose stone with NO metal, setting, wire, or bail, you MUST return strictly "None" for setting_ready, wire_material, primary_medium, secondary_medium, chain_material, and bail_included. Do NOT guess or hallucinate metal for a bare rock.
+  * setting_ready: Look closely at the mounting. If cabochon is in a bezel setting, MUST return "Bezel Setting - Ready to Wear". If prong setting, return "Prong Setting - Ready to Wear". If wire wrapped, return "Wire Wrapped - Ready to Wear". If loose or unmounted, return "None".
+  * wire_material: If wire wrapped, output the wire metal (e.g., "Antiqued Copper Wire"). If in a bezel or prong setting with zero wire, or loose, MUST return strictly: "None".
+  * primary_medium: State the primary metal or mounting material. Use exactly one of these: ".925 Sterling Silver Bezel", "Silver Plated Bezel", "Gold Plated Bezel", "Copper Bezel", "Gold Tone Alloy Bezel", "Silver Tone Alloy Bezel", "Bronze Tone Alloy Bezel", "Glue-On Loop", "Drilled — Pinch Bail". Match the tone and finish visible in the photo. If loose and unmounted, return "None".
+  * surface_finish: Describe the stone's surface finish as seen in the photo. Use terms like "High Polish", "Matte", "Satin", "Natural/Raw", "Tumbled". Do not leave blank.
+  * secondary_medium: Look ONLY for a second distinct METAL component. If no second metal component exists, or if loose, return strictly "None".
+  * bail_included: Look at the TOP of the piece. If there is a separate small clip or loop pinched onto the bezel, return "Silver Plated Pinch Bail". If the bail is welded/integrated, return "Integrated Bezel Bail". If there is no bail at all, or if loose, return "None".`;
 }
 
-export default IntakeBenchTab;
+async function queryPostgres(sql, params) {
+  const { default: pg } = await import('pg');
+  const db = new pg.Client({
+    connectionString: process.env.DATABASE_URL,
+    ssl: { rejectUnauthorized: false }
+  });
+  await db.connect();
+  try {
+    const result = await db.query(sql, params);
+    return result.rows;
+  } finally {
+    await db.end();
+  }
+}
+
+async function saveToStoneCache(stoneName, geoResult) {
+  try {
+    const existing = await queryPostgres(
+      'SELECT id FROM "StoneCache" WHERE "stoneName" = $1 LIMIT 1',
+      [stoneName]
+    );
+    if (existing.length === 0) {
+      await queryPostgres(
+        'INSERT INTO "StoneCache" ("id", "stoneName", "data", "createdAt", "updatedAt") VALUES (gen_random_uuid()::text, $1, $2, NOW(), NOW())',
+        [stoneName, JSON.stringify(geoResult)]
+      );
+      console.log("[StoneCache] Saved new entry for:", stoneName);
+    }
+  } catch (err) {
+    console.error("[StoneCache] Save failed for:", stoneName, err);
+  }
+}
+
+const MINDAT_API_KEY = process.env.MINDAT_API_KEY;
+
+const MINDAT_KEY_MAP = {
+  official_name: "name",
+  mineral_class: "mindat_formula",
+  crystal_structure: "crystal_system",
+  luster: "luster",
+  specific_gravity: "density",
+  moh_hardness: "hardness",
+  cleavage: "cleavage",
+  fracture_pattern: "fracture",
+  diaphaneity: "transparency",
+  tenacity: "tenacity",
+  origin_location: "localities_count",
+};
+
+const SHOPPED_ROCK_VENDORS = ["Richardson's Rock Ranch", "Irv's Rock and Jewelry", "Irv's Rock & Jewelry", "Rock and Gem Show"];
+
+async function fetchWithRetry(url, options, retries = 3, delay = 1500) {
+  for (let i = 0; i < retries; i++) {
+    const controller = new AbortController();
+    const id = setTimeout(() => controller.abort(), 60000);
+    try {
+      const res = await fetch(url, { ...options, signal: controller.signal });
+      clearTimeout(id);
+      if (res.status !== 503 && res.status !== 429 && res.status !== 500) {
+        return res;
+      }
+      console.warn(`[Gemini Engine] API returned status ${res.status}. Retry ${i + 1} of ${retries} in ${delay}ms...`);
+    } catch (err) {
+      clearTimeout(id);
+      console.error(`[Gemini Engine] Fetch error on retry ${i + 1} of ${retries}:`, err);
+    }
+    
+    if (i < retries - 1) {
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      delay *= 2;
+    }
+  }
+  throw new Error("Gemini API connection timed out after multiple attempts.");
+}
+
+async function getLiveStoreDirectory(admin) {
+  let pagesList = [];
+  let collectionsList = [];
+  try {
+    const res = await admin.graphql(`
+      query {
+        pages(first: 100) {
+          edges {
+            node {
+              title
+              handle
+              body
+            }
+          }
+        }
+        collections(first: 100) {
+          edges {
+            node {
+              title
+              handle
+              description
+            }
+          }
+        }
+      }
+    `);
+    const data = await res.json();
+    if (data.data?.pages?.edges) {
+      pagesList = data.data.pages.edges.map(e => ({
+        title: e.node.title,
+        url: `/pages/${e.node.handle}`,
+        excerpt: (e.node.body || "").replace(/<[^>]*>?/gm, "").replace(/\s+/g, " ").trim().slice(0, 4000)
+      }));
+    }
+    if (data.data?.collections?.edges) {
+      collectionsList = data.data.collections.edges.map(e => ({
+        title: e.node.title,
+        url: `/collections/${e.node.handle}`,
+        excerpt: (e.node.description || "").replace(/<[^>]*>?/gm, "").replace(/\s+/g, " ").trim().slice(0, 2000)
+      }));
+    }
+  } catch (err) {
+    console.error("[Live Directory Scanner] Failed to fetch store inventory:", err);
+  }
+  return { pagesList, collectionsList };
+}
+
+function resolveOriginHandle(locationSegment, pagesList) {
+  const cleanLoc = (locationSegment || "").toLowerCase().trim();
+  if (!cleanLoc) return "";
+  if (cleanLoc.includes("richardson")) return "the-richardson-strike";
+  if (cleanLoc.includes("irv")) return "the-shopped-rock";
+  if (cleanLoc.includes("north fork") || cleanLoc.includes("north-fork") || cleanLoc.includes("cda") || cleanLoc.includes("nor")) return "the-north-fork-strike";
+  if (cleanLoc.includes("yakima") || cleanLoc.includes("yak") || cleanLoc.includes("chert")) return "the-shop-lore-chert-road-detour-yakima-river-jasper";
+
+  const match = pagesList.find(p => p.title.toLowerCase().includes(cleanLoc) || p.url.includes(cleanLoc));
+  return match ? match.url.replace("/pages/", "") : cleanLoc.replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, "-");
+}
+
+function resolveCollectionData(locationSegment, defaultOriginSlug, collectionsList = []) {
+  const cleanLoc = (locationSegment || "").toLowerCase().trim();
+  if (cleanLoc.includes("richardson")) return { slug: "richardsons-rock-ranch", name: "Richardson's Rock Ranch Collection" };
+  if (cleanLoc.includes("irv")) return { slug: "the-shopped-rock", name: "The Shopped Rock Collection" };
+  if (cleanLoc.includes("north fork") || cleanLoc.includes("north-fork") || cleanLoc.includes("cda") || cleanLoc.includes("nor")) return { slug: "north-fork-cda-collection", name: "North Fork CdA Collection" };
+  if (cleanLoc.includes("yakima") || cleanLoc.includes("yak") || cleanLoc.includes("chert")) return { slug: "chert-road-detour", name: "Chert Road Detour — Yakima River Jasper Collection" };
+
+  const matchedCol = collectionsList.find(c => c.url.includes(defaultOriginSlug) || c.title.toLowerCase().includes(cleanLoc));
+  if (matchedCol) {
+    return { slug: matchedCol.url.replace("/collections/", ""), name: matchedCol.title.endsWith("Collection") ? matchedCol.title : `${matchedCol.title} Collection` };
+  }
+
+  return { slug: defaultOriginSlug, name: `${locationSegment.trim()} Collection` };
+}
+
+// 🔴 STRICT GEO FORMATTING - Kills meta_status and duplicate moh_hardness leaks
+async function getGeoData(admin, stoneFamily) {
+  const emptyGeo = {
+    mohs_hardness: "", luster: "", fracture_pattern: "", cleavage: "",
+    specific_gravity: "", diaphaneity: "", crystal_system: "",
+    geological_era: "", mineral_class: "", rock_composition: "",
+    rock_formation: "", geological_age: "", geoSource: "none"
+  };
+  
+  if (!stoneFamily || !admin) return emptyGeo;
+
+  const search = stoneFamily.toLowerCase().trim();
+
+  try {
+    const localResult = lookupStone(stoneFamily);
+    if (localResult && Object.keys(localResult).length > 0) {
+      return {
+        mohs_hardness: localResult.moh_hardness || localResult.hardness || "",
+        luster: localResult.luster || "",
+        fracture_pattern: localResult.fracture_pattern || localResult.fracture || "",
+        cleavage: localResult.cleavage || "",
+        specific_gravity: localResult.specific_gravity || "",
+        diaphaneity: localResult.diaphaneity || "",
+        crystal_system: localResult.crystal_system || "",
+        geological_era: localResult.geological_era || localResult.geological_age || "",
+        mineral_class: localResult.mineral_class || "",
+        rock_composition: localResult.rock_composition || "",
+        rock_formation: localResult.rock_formation || "",
+        geological_age: localResult.geological_era || localResult.geological_age || "",
+        geoSource: "library"
+      };
+    }
+  } catch (err) {
+    console.error("[Geo Tier 1] geoLibrary lookup failed:", err);
+  }
+
+  try {
+    if (stoneProfileCache.has(search)) {
+      const cached = stoneProfileCache.get(search);
+      if (cached) return { ...cached, geoSource: "cache" };
+    } else {
+      const rows = await queryPostgres('SELECT * FROM "StoneProfile" WHERE LOWER("stoneName") = $1 LIMIT 1', [search]);
+      if (rows.length > 0) {
+        const s = rows[0];
+        const geoResult = {
+          mohs_hardness: s.hardness || "",
+          luster: s.luster || "",
+          fracture_pattern: s.fracture || "",
+          cleavage: s.cleavage || "",
+          specific_gravity: s.specific_gravity || "",
+          diaphaneity: s.diaphaneity || "",
+          crystal_system: s.crystal_system || "",
+          geological_era: s.geological_era || "",
+          mineral_class: s.mineral_class || "",
+          rock_composition: s.rock_composition || "",
+          rock_formation: s.rock_formation || "",
+          geological_age: s.geological_era || "",
+          geoSource: "database"
+        };
+        stoneProfileCache.set(search, geoResult);
+        return geoResult;
+      } else {
+        stoneProfileCache.set(search, null);
+      }
+    }
+  } catch (err) {
+    console.error("[Geo Tier 2] PostgreSQL StoneProfile failed:", err);
+  }
+
+  try {
+    if (MINDAT_API_KEY) {
+      const controller = new AbortController();
+      const id = setTimeout(() => controller.abort(), 60000);
+      const mindatRes = await fetch(`https://api.mindat.org/minerals/?name=${encodeURIComponent(stoneFamily)}&format=json`, { 
+        headers: { Authorization: `Token ${MINDAT_API_KEY}` },
+        signal: controller.signal
+      });
+      clearTimeout(id);
+      
+      const mindatData = await mindatRes.json();
+      const mineral = mindatData?.results?.[0];
+      if (mineral) {
+        const hardness = mineral.hardness || "";
+        const specific_gravity = mineral.density || "";
+        const geoResult = {
+          mohs_hardness: hardness, 
+          luster: mineral.luster || "", 
+          fracture_pattern: mineral.fracture || "", 
+          cleavage: mineral.cleavage || "",
+          specific_gravity, 
+          diaphaneity: mineral.transparency || "", 
+          crystal_system: mineral.crystal_system || "",
+          geological_era: "", 
+          mineral_class: mineral.mineral_class || "", 
+          rock_composition: "", 
+          rock_formation: "",
+          geological_age: "",
+          geoSource: "mindat"
+        };
+        stoneProfileCache.set(search, geoResult);
+        await saveToStoneCache(search, geoResult);
+        return geoResult;
+      }
+    }
+  } catch (err) {
+    console.error("[Geo Tier 3] Mindat failed:", err);
+  }
+
+  return emptyGeo;
+}
+
+export const action = async ({ request }) => {
+  try {
+    const { admin } = await authenticate.admin(request);
+    const body = await request.formData();
+    const intent = body.get("intent");
+
+    if (intent === "geoLookup") {
+      const stoneFamily = body.get("stoneFamily") || "";
+      try { 
+        const geoFields = await getGeoData(admin, stoneFamily); 
+        return Response.json({ success: true, intent: "geoLookup", geoFields }); 
+      } catch (err) { 
+        console.error("[geoLookup] getGeoData crashed:", err); 
+        return Response.json({ success: false, intent: "geoLookup", geoFields: {} }); 
+      }
+    }
+
+    if (intent === "tab2AutoFill") {
+      const stone_family = body.get("stone_family") || "";
+      const origin_handle = body.get("origin_handle") || "";
+      const productTitle = body.get("productTitle") || body.get("piece_name") || body.get("title") || "";
+      const imageUrl = body.get("imageUrl") || "";
+
+      const titleSegments = productTitle.split(/\s+[-—–]\s+/);
+      const derivedFamily = titleSegments[0]?.trim() || stone_family;
+      const derivedOrigin = titleSegments[1]?.trim() || "";
+      const pieceNameSegment = titleSegments[2]?.trim() || "New Piece";
+
+      try {
+        const geoFields = await getGeoData(admin, derivedFamily);
+        const { pagesList, collectionsList } = await getLiveStoreDirectory(admin);
+        
+        const activeOriginHandle = origin_handle || resolveOriginHandle(derivedOrigin, pagesList);
+        const collectionData = resolveCollectionData(derivedOrigin, activeOriginHandle, collectionsList);
+        const targetUrlPath = `/pages/${activeOriginHandle}`;
+        const collectionUrlPath = `/collections/${collectionData.slug}`;
+        const fullCollectionTitle = collectionData.name.replace(/\s+Collection$/i, "").trim();
+        
+        const matchedPage = pagesList.find(p => p.url.includes(activeOriginHandle));
+        const origin_story = matchedPage ? matchedPage.excerpt : "";
+
+        const pagesMenu = pagesList.map(p => `- Title: "${p.title}" | URL: ${p.url} | Excerpt: "${p.excerpt}"`).join("\n");
+        const collectionsMenu = collectionsList.map(c => `- Title: "${c.title}" | URL: ${c.url} | Excerpt: "${c.excerpt}"`).join("\n");
+
+        let visionFields = {};
+        
+        if (imageUrl) {
+          try {
+            const targetUrl = imageUrl.includes("?") ? `${imageUrl}&width=800` : `${imageUrl}?width=800`;
+            const controller = new AbortController();
+            const id = setTimeout(() => controller.abort(), 60000);
+            const imageRes = await fetch(targetUrl, { signal: controller.signal });
+            clearTimeout(id);
+
+            if (!imageRes.ok) throw new Error(`Shopify image fetch failed with status: ${imageRes.status}`);
+
+            const imageBuffer = await imageRes.arrayBuffer();
+            const imageBase64 = Buffer.from(imageBuffer).toString("base64");
+            const imageMimeType = (imageRes.headers.get("content-type") || "image/jpeg").split(";")[0].trim();
+
+            const visionPrompt = buildMasterVisionPrompt({
+              pagesMenu,
+              collectionsMenu,
+              stoneFamily: derivedFamily,
+              originStory: origin_story,
+              originSegment: derivedOrigin,
+              targetUrlPath,
+              fullCollectionTitle,
+              collectionUrlPath
+            });
+
+            const geminiRes = await fetchWithRetry("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                contents: [{ parts: [{ text: visionPrompt }, { inlineData: { mimeType: imageMimeType, data: imageBase64 } }] }],
+                generationConfig: { 
+                  responseMimeType: "application/json", 
+                  temperature: 0.1,
+                  responseSchema: {
+                    type: "OBJECT",
+                    properties: {
+                      generated_description: { type: "STRING" },
+                      seo_title: { type: "STRING" },
+                      origin_location: { type: "STRING" },
+                      primary_color: { type: "STRING" },
+                      cut_and_shape: { type: "STRING" },
+                      surface_finish: { type: "STRING" },
+                      stone_shape: { type: "STRING" },
+                      dimensions_mm: { type: "STRING" },
+                      color_pattern: { type: "STRING" },
+                      pattern: { type: "STRING" },
+                      primary_use: { type: "STRING" },
+                      primary_medium: { type: "STRING" },
+                      secondary_medium: { type: "STRING" },
+                      wire_material: { type: "STRING" },
+                      setting_ready: { type: "STRING" },
+                      bail_included: { type: "STRING" },
+                      chain_material: { type: "STRING" },
+                      jewelry_type: { type: "STRING" },
+                      rarity: { type: "STRING" },
+                      authenticity: { type: "STRING" }
+                    }
+                  }
+                }
+              })
+            });
+
+            if (geminiRes.ok) {
+              const geminiData = await geminiRes.json();
+              if (!geminiData || !geminiData.candidates || geminiData.candidates.length === 0) {
+                 throw new Error("Gemini API returned empty or malformed response structure.");
+              }
+              let cleanJson = (geminiData.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
+              const first = cleanJson.indexOf("{");
+              const last = cleanJson.lastIndexOf("}");
+              if (first !== -1 && last !== -1) cleanJson = cleanJson.slice(first, last + 1);
+              
+              try {
+                visionFields = JSON.parse(cleanJson);
+              } catch (parseErr) {
+                console.error("[tab2AutoFill] JSON Parse Error:", parseErr, "Raw:", cleanJson);
+                visionFields = { generated_description: `[JSON PARSE ERROR] ${parseErr.message}` };
+              }
+              
+              if (visionFields.primary_color) {
+                 visionFields.color = visionFields.primary_color;
+              }
+              
+              if (visionFields.generated_description) {
+                 const desc = visionFields.generated_description;
+                 const lowerDesc = desc.toLowerCase();
+                 if (desc.startsWith("[VISION API CRASH]") || desc.startsWith("[API CRASH]") || desc.startsWith("[JSON PARSE ERROR]") || lowerDesc.includes("timed out")) {
+                     visionFields.generated_description = "";
+                 }
+              }
+            } else {
+               const errText = await geminiRes.text();
+               throw new Error(`Gemini API returned status: ${geminiRes.status} - ${errText}`);
+            }
+          } catch (visionErr) {
+            console.error("[tab2AutoFill] Vision scan failed:", visionErr);
+            visionFields = { generated_description: `[API CRASH] ${visionErr.message}` };
+          }
+        }
+
+        const correctedOrigin = visionFields.origin_location || derivedOrigin;
+        const manual_seo_title = correctedOrigin
+          ? `Handcrafted ${derivedFamily} — ${correctedOrigin} — OOAK Lapidary Art`
+          : `Handcrafted ${derivedFamily} — OOAK Lapidary Art`;
+
+        // 🔴 STRICT EXPLICIT PAYLOAD MAPPING - Eliminates all hallucinations and unverified data leaks
+        return Response.json({
+          success: true,
+          intent: "tab2AutoFill",
+          tab2Data: {
+            origin_story: origin_story,
+            stone_family: derivedFamily,
+            origin_handle: activeOriginHandle,
+            origin_location: correctedOrigin,
+            shopify_title: `${derivedFamily} — ${correctedOrigin} — ${pieceNameSegment}`,
+            collection_name: collectionData.name,
+            collection_location: (() => {
+              const LOCATION_MAP = {
+                "chert-road-detour": "Yakima Canyon",
+                "yakima-canyon": "Yakima Canyon",
+                "the-yellowstone-river-collection": "Yellowstone River",
+                "the-rufus-serpentine-collection": "Rufus Serpentine",
+                "the-nickel-back-collection": "Nickel Back",
+                "the-spokane-river-collection": "Spokane River",
+                "north-fork-cda-collection": "North Fork CdA",
+                "richardsons-rock-ranch": "Richardson's Rock Ranch",
+                "the-3-000-mile-run-1": "The 3,000-Mile Run",
+                "the-shopped-rock": "The Shopped Rock",
+              };
+              return LOCATION_MAP[collectionData.slug] || collectionData.name.replace(/\s*Collection$/i, "").trim();
+            })(),
+            seo_title: visionFields.seo_title || manual_seo_title,
+            authenticity: visionFields.authenticity || "Authentic",
+            rarity: visionFields.rarity || "Common",
+            secondary_medium: visionFields.secondary_medium || "None",
+            cut_and_shape: visionFields.cut_and_shape || "",
+            jewelry_type: visionFields.jewelry_type || "N/A",
+            color_pattern: visionFields.color_pattern || visionFields.pattern || "",
+            dimensions_mm: visionFields.dimensions_mm || "",
+            generated_description: visionFields.generated_description || "",
+            color: visionFields.color || "",
+            surface_finish: visionFields.surface_finish || "",
+            stone_shape: visionFields.stone_shape || "",
+            primary_use: visionFields.primary_use || "",
+            primary_medium: visionFields.primary_medium || "",
+            wire_material: visionFields.wire_material || "None",
+            setting_ready: visionFields.setting_ready || "None",
+            bail_included: visionFields.bail_included || "None",
+            chain_material: visionFields.chain_material || "None",
+            mohs_hardness: geoFields.mohs_hardness || "",
+            luster: geoFields.luster || "",
+            fracture_pattern: geoFields.fracture_pattern || "",
+            cleavage: geoFields.cleavage || "",
+            specific_gravity: geoFields.specific_gravity || "",
+            diaphaneity: geoFields.diaphaneity || "",
+            crystal_system: geoFields.crystal_system || "",
+            geological_era: geoFields.geological_era || "",
+            mineral_class: geoFields.mineral_class || "",
+            rock_composition: geoFields.rock_composition || "",
+            rock_formation: geoFields.rock_formation || "",
+            geological_age: geoFields.geological_age || "",
+            treated: "No",
+            is_ooak: "Yes",
+            age_group: "adult",
+            target_gender: "Unisex",
+            condition: "new",
+            google_product_category: "Apparel & Accessories > Jewelry"
+          }
+        });
+      } catch (err) {
+        console.error("[tab2AutoFill] crashed:", err);
+        return Response.json({ success: false, intent: "tab2AutoFill", tab2Data: {} });
+      }
+    }
+
+    if (intent === "titleParse") {
+      const pieceNameInput = body.get("pieceName") || "";
+      const segments = pieceNameInput.split(/\s+[—–-]\s+/);
+      const segment1 = segments[0]?.trim() || "";
+      const segment2 = segments[1]?.trim() || "";
+      const segment3 = segments[2]?.trim() || "";
+
+      let stonePicklist = "Agate, Amazonite, Amethyst, Andesite, Aventurine, Azurite, Brecciated Jasper, Brecciated Quartz, Calcite, Carnelian, Chalcedony, Chrysocolla, Citrine, Dalmatian Stone, Fluorite, Garnet, Hematite, Howlite, Jasper, Kyanite, Labradorite, Lapis Lazuli, Lepidolite, Malachite, Moonstone, Obsidian, Ocean Jasper, Onyx, Opal, Petrified Wood, Picture Jasper, Prehnite, Pyrite, Quartz, Quartzite, Rhodonite, Rhyolite, Rose Quartz, Serpentine, Smoky Quartz, Sodalite, Sunstone, Tiger's Eye, Tourmaline, Turquoise, Unakite, Variscite";
+      
+      try {
+        const stoneRows = await queryPostgres('SELECT "stoneName" FROM "StoneProfile" ORDER BY "stoneName"', []);
+        if (stoneRows && stoneRows.length > 0) {
+          stonePicklist = stoneRows.map(r => r.stoneName).join(", ");
+        }
+      } catch (err) {
+        console.error("[titleParse] StoneProfile picklist fetch failed, using fallback:", err);
+      }
+
+      const { pagesList, collectionsList } = await getLiveStoreDirectory(admin);
+      const resolvedHandle = resolveOriginHandle(segment2, pagesList);
+      const collectionData = resolveCollectionData(segment2, resolvedHandle, collectionsList);
+
+      const matchedPage = pagesList.find(p => p.url.includes(resolvedHandle));
+      const extractedStory = matchedPage ? matchedPage.excerpt : "";
+      
+      const pagesMenu = pagesList.map(p => `- Title: "${p.title}" | URL: ${p.url}`).join("\n");
+      const collectionsMenu = collectionsList.map(c => `- Title: "${c.title}" | URL: ${c.url}`).join("\n");
+
+      const promptText = `You are an expert lapidary assistant for Rockhound Studio. Analyze these segments:
+- Family: "${segment1}"
+- Origin: "${segment2}"
+- Title: "${segment3}"
+
+LIVE STORE DIRECTORY:
+VALID PAGES IN STORE:
+${pagesMenu || "No live pages found."}
+
+VALID COLLECTIONS IN STORE:
+${collectionsMenu || "No live collections found."}
+
+INSTRUCTIONS:
+1. The Origin segment ("${segment2}") is the AUTHORITY. Do NOT reclassify or override it. Set 'origin_location' to the clean geographic name derived from "${segment2}" — strip prefixes like "Shop Lore:", "The", or "Collection". Expand abbreviations (e.g. "cda" → "North Fork Coeur d'Alene", "yakima" → "Yakima Canyon"). Match 'collection_name' and 'collection_location' to the live store entry that corresponds to "${segment2}". Never substitute a vendor name or "The Shopped Rock" unless "${segment2}" explicitly contains a vendor name.
+2. Set origin_handle strictly to: "${resolvedHandle}". 
+3. stone_family must be exactly one of: ${stonePicklist} - pick the closest match to the Family segment. Correct typos.
+
+Return valid JSON with these exact keys: stone_family, piece_name, origin_handle, origin_location, collection_name, collection_location, seo_title. Generate a keyword-rich seo_title for Google using the family and keywords like "Handcrafted" or "OOAK Lapidary Art". No markup. No extra keys.`;
+
+      const geminiRes = await fetchWithRetry("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY, {
+        method: "POST", 
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          contents: [{ parts: [{ text: promptText }] }],
+          generationConfig: { 
+            responseMimeType: "application/json", 
+            temperature: 0.1,
+            responseSchema: {
+              type: "OBJECT",
+              properties: {
+                stone_family: { type: "STRING" },
+                piece_name: { type: "STRING" },
+                origin_handle: { type: "STRING" },
+                origin_location: { type: "STRING" },
+                collection_name: { type: "STRING" },
+                collection_location: { type: "STRING" },
+                seo_title: { type: "STRING" }
+              },
+              required: ["stone_family", "piece_name", "origin_handle", "origin_location", "collection_name", "collection_location"]
+            }
+          }
+        })
+      });
+
+      if (geminiRes.ok) {
+        const data = await geminiRes.json();
+        if (!data || !data.candidates || data.candidates.length === 0) {
+          throw new Error("Gemini API returned empty or malformed response structure during titleParse.");
+        }
+        let cleanJson = (data.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
+        const first = cleanJson.indexOf("{");
+        const last = cleanJson.lastIndexOf("}");
+        
+        if (first !== -1 && last !== -1) {
+          cleanJson = cleanJson.slice(first, last + 1);
+        }
+        const parsed = JSON.parse(cleanJson);
+        
+        const dbGeoData = await getGeoData(admin, parsed.stone_family || segment1);
+        const matchedOriginPage = pagesList.find(p => p.url.includes(resolvedHandle));
+        const displayName = matchedOriginPage ? matchedOriginPage.title.replace(/^(Shop Lore|Collection)[\s:\-]+/i, "").replace(/^The\s+/i, "").trim() : collectionData.name.replace(/\s+Collection$/i, "").trim();
+        
+        const seoTitleParts = [];
+        if (parsed.stone_family || segment1) seoTitleParts.push(parsed.stone_family || segment1);
+        
+        let seo_title = "";
+        if (seoTitleParts.length > 0) {
+          seo_title = parsed.origin_location || segment2
+            ? `${seoTitleParts.join(" ")} — Found at ${parsed.origin_location || segment2} — Rockhound Studio`
+            : `${seoTitleParts.join(" ")} — Rockhound Studio`;
+        }
+
+        const finalParse = {
+          ...parsed,
+          origin_handle: resolvedHandle,
+          origin_story: extractedStory,
+          origin_location: parsed.origin_location || segment2,
+          collection_name: parsed.collection_name || collectionData.name,
+          collection_location: parsed.collection_location || collectionData.name.replace(" Collection", ""),
+          canonical_title: parsed.stone_family + " — " + (parsed.origin_location || displayName) + " — " + segment3,
+          seo_title: parsed.seo_title || seo_title,
+          mohs_hardness: dbGeoData.mohs_hardness || "",
+          luster: dbGeoData.luster || "",
+          fracture_pattern: dbGeoData.fracture_pattern || "",
+          cleavage: dbGeoData.cleavage || "",
+          specific_gravity: dbGeoData.specific_gravity || "",
+          diaphaneity: dbGeoData.diaphaneity || "",
+          crystal_system: dbGeoData.crystal_system || "",
+          geological_era: dbGeoData.geological_era || "",
+          mineral_class: dbGeoData.mineral_class || "",
+          rock_composition: dbGeoData.rock_composition || "",
+          rock_formation: dbGeoData.rock_formation || "",
+          geological_age: dbGeoData.geological_age || "",
+          age_group: "adult",
+          target_gender: "Unisex",
+          condition: "new",
+          google_product_category: "Apparel & Accessories > Jewelry"
+        };
+        
+        return Response.json({ success: true, intent: "titleParse", titleParse: finalParse });
+      }
+      
+      const errText = await geminiRes.text();
+      return Response.json({ success: false, intent: "titleParse", titleParse: null, error: `Title parse error: ${geminiRes.status} - ${errText}` }, { status: 500 });
+    }
+
+    if (intent === "visionScan") {
+      const pieceId = body.get("pieceId");
+      const clientBase64 = body.get("imageBase64");
+      const clientMime = body.get("imageMimeType") || "image/jpeg";
+      
+      const titleInput = body.get("pieceName") || body.get("piece_name") || "";
+      const segments = titleInput.split(/\s+[—–-]\s+/);
+      const derivedFamily = segments[0]?.trim() || "Unknown Stone";
+      const originSegment = segments[1]?.trim() || "Unknown Origin";
+      
+      const { pagesList, collectionsList } = await getLiveStoreDirectory(admin);
+      
+      const defaultOriginSlug = resolveOriginHandle(originSegment, pagesList);
+      const defaultCollection = resolveCollectionData(originSegment, defaultOriginSlug, collectionsList);
+      const targetUrlPath = `/pages/${defaultOriginSlug}`;
+      const collectionUrlPath = `/collections/${defaultCollection.slug}`;
+      const fullCollectionTitle = defaultCollection.name.replace(/\s+Collection$/i, "").trim();
+
+      const matchedPage = pagesList.find(p => p.url.includes(defaultOriginSlug));
+      const extractedStory = matchedPage ? matchedPage.excerpt : "";
+      
+      const pagesMenu = pagesList.map(p => `- Title: "${p.title}" | URL: ${p.url} | Excerpt: "${p.excerpt}"`).join("\n");
+      const collectionsMenu = collectionsList.map(c => `- Title: "${c.title}" | URL: ${c.url} | Excerpt: "${c.excerpt}"`).join("\n");
+
+      let imageBase64 = clientBase64 && clientBase64 !== "undefined" ? String(clientBase64).trim() : "";
+      let imageMimeType = clientMime;
+      
+      if (imageBase64.includes(",")) {
+        imageBase64 = imageBase64.substring(imageBase64.indexOf(",") + 1);
+      }
+
+      if (!imageBase64) {
+        const rawImageUrl = body.get("imageUrl");
+        if (rawImageUrl) {
+          const targetUrl = rawImageUrl.includes("?") ? `${rawImageUrl}&width=800` : `${rawImageUrl}?width=800`;
+          const controller = new AbortController();
+          const id = setTimeout(() => controller.abort(), 60000);
+          const imageRes = await fetch(targetUrl, { signal: controller.signal });
+          clearTimeout(id);
+          
+          if (!imageRes.ok) throw new Error(`Shopify image fetch failed with status: ${imageRes.status}`);
+
+          const imageBuffer = await imageRes.arrayBuffer();
+          imageBase64 = Buffer.from(imageBuffer).toString("base64");
+          imageMimeType = (imageRes.headers.get("content-type") || "image/jpeg").split(";")[0].trim();
+        }
+      }
+
+      const promptText = buildMasterVisionPrompt({
+        pagesMenu,
+        collectionsMenu,
+        stoneFamily: derivedFamily,
+        originStory: extractedStory,
+        originSegment,
+        targetUrlPath,
+        fullCollectionTitle,
+        collectionUrlPath
+      });
+
+      const geminiRes = await fetchWithRetry("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY, {
+        method: "POST", 
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          contents: [{ parts: [{ text: promptText }, { inlineData: { mimeType: imageMimeType, data: imageBase64 } }] }],
+          generationConfig: { 
+            responseMimeType: "application/json", 
+            temperature: 0.2,
+            responseSchema: {
+              type: "OBJECT",
+              properties: {
+                generated_description: { type: "STRING" },
+                seo_title: { type: "STRING" },
+                origin_location: { type: "STRING" },
+                primary_color: { type: "STRING" },
+                cut_and_shape: { type: "STRING" },
+                surface_finish: { type: "STRING" },
+                stone_shape: { type: "STRING" },
+                dimensions_mm: { type: "STRING" },
+                color_pattern: { type: "STRING" },
+                pattern: { type: "STRING" },
+                primary_use: { type: "STRING" },
+                primary_medium: { type: "STRING" },
+                secondary_medium: { type: "STRING" },
+                wire_material: { type: "STRING" },
+                setting_ready: { type: "STRING" },
+                bail_included: { type: "STRING" },
+                chain_material: { type: "STRING" },
+                jewelry_type: { type: "STRING" },
+                rarity: { type: "STRING" },
+                authenticity: { type: "STRING" }
+              }
+            }
+          }
+        })
+      });
+
+      if (geminiRes.ok) {
+        const geminiData = await geminiRes.json();
+        if (!geminiData || !geminiData.candidates || geminiData.candidates.length === 0) {
+          throw new Error("Gemini API returned empty or malformed response structure during visionScan.");
+        }
+        let cleanJson = (geminiData.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
+        const first = cleanJson.indexOf("{");
+        const last = cleanJson.lastIndexOf("}");
+        
+        if (first !== -1 && last !== -1) {
+          cleanJson = cleanJson.slice(first, last + 1);
+        }
+        
+        let parsedVision;
+        try {
+          parsedVision = JSON.parse(cleanJson);
+        } catch (parseErr) {
+          console.error("[visionScan] JSON Parse Error:", parseErr, "Raw string:", cleanJson);
+          return Response.json({ success: false, intent: "visionScan", error: `JSON Parse Error: ${parseErr.message} | Raw string: ${cleanJson.substring(0, 100)}...` });
+        }
+        
+        const resolved_primary_use = parsedVision.primary_use || parsedVision.use || parsedVision.product_type || "";
+        const resolved_primary_medium = parsedVision.primary_medium || parsedVision.medium || parsedVision.metal || parsedVision.primary_metal || "Natural Stone";
+        const resolved_secondary_medium = parsedVision.secondary_medium || parsedVision.accent || parsedVision.secondary_metal || "None";
+        const resolved_wire_material = parsedVision.wire_material || parsedVision.wire || parsedVision.wire_wrap || "None";
+        const resolved_setting_ready = parsedVision.setting_ready || parsedVision.setting || parsedVision.mounting || parsedVision.bezel || "None";
+        const resolved_bail_included = parsedVision.bail_included || parsedVision.bail || "None";
+
+        let final_desc = parsedVision.generated_description || parsedVision.description || "";
+        const lowerDesc = final_desc.toLowerCase();
+        if (final_desc.startsWith("[VISION API CRASH]") || final_desc.startsWith("[API CRASH]") || final_desc.startsWith("[JSON PARSE ERROR]") || lowerDesc.includes("timed out")) {
+            final_desc = "";
+        }
+
+        // 🔴 STRICT EXPLICIT PAYLOAD MAPPING
+        return Response.json({
+          success: true,
+          intent: "visionScan",
+          tab2Data: {
+            pieceId,
+            generated_description: final_desc,
+            debug_origin: `seg=${originSegment}|slug=${defaultOriginSlug}|matched=${matchedPage ? matchedPage.url : "NULL"}|storyLen=${extractedStory.length}`,
+            seo_title: parsedVision.seo_title || "",
+            primary_color: parsedVision.primary_color || "",
+            cut_and_shape: parsedVision.cut_and_shape || "",
+            surface_finish: parsedVision.surface_finish || "",
+            stone_shape: parsedVision.stone_shape || "",
+            jewelry_type: parsedVision.jewelry_type || "N/A",
+            rarity: parsedVision.rarity || "Common",
+            authenticity: parsedVision.authenticity || "Authentic",
+            dimensions_mm: parsedVision.dimensions_mm || "",
+            color_pattern: parsedVision.color_pattern || parsedVision.pattern || "",
+            primary_use: resolved_primary_use,
+            primary_medium: resolved_primary_medium,
+            secondary_medium: resolved_secondary_medium,
+            wire_material: resolved_wire_material,
+            setting_ready: resolved_setting_ready,
+            bail_included: resolved_bail_included,
+            origin_story: extractedStory,
+            origin_handle: defaultOriginSlug,
+            origin_location: parsedVision.origin_location || originSegment,
+            collection_name: defaultCollection.name,
+            collection_location: defaultCollection.name.replace(" Collection", ""),
+            age_group: "adult",
+            target_gender: "Unisex",
+            condition: "new",
+            google_product_category: "Apparel & Accessories > Jewelry"
+          }
+        });
+      }
+      
+      const errText = await geminiRes.text();
+      return Response.json({ success: false, intent: "visionScan", error: `Vision API Failure (${geminiRes.status}): ${errText}` });
+    }
+
+    return Response.json({ success: true, intent: intent || "unknown", fields: {} });
+  } catch (error) {
+    console.error("Critical Failure:", error);
+    return Response.json({ success: false, intent: "unknown", error: error.message }, { status: 500 });
+  }
+};
