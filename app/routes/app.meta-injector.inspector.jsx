@@ -1,4 +1,4 @@
-// ==========================================================================
+﻿// ==========================================================================
 // ROCKHOUND STUDIO — TAB 2: META INSPECTOR Bench
 // File: app/routes/app.meta-injector.inspector.jsx
 // ==========================================================================
@@ -374,7 +374,7 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
 
         setFullMetaState(prev => {
           const updatedState = { ...prev };
-          const ALWAYS_OVERWRITE = ["mohs_hardness", "luster", "fracture_pattern", "cleavage", "specific_gravity", "diaphaneity", "mineral_class", "crystal_system", "rock_composition", "rock_formation", "geological_era", "geological_age", "generated_description", "seo_title", "origin_story", "stone_story"];
+          const ALWAYS_OVERWRITE = ["mohs_hardness", "luster", "fracture_pattern", "cleavage", "specific_gravity", "diaphaneity", "mineral_class", "crystal_system", "rock_composition", "rock_formation", "geological_era", "geological_age", "generated_description", "seo_title", "origin_story", "stone_story", "primary_use", "bail_included", "setting_ready", "primary_medium", "alt_text"];
 
           Object.entries(tab2Data).forEach(([key, val]) => {
             const hasNewValue = val !== undefined && val !== null && val.toString().trim() !== "" && val !== "See Shopify metaobject";
