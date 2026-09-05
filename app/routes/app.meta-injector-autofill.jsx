@@ -357,11 +357,7 @@ export const action = async ({ request }) => {
     }
 
     if (intent === "tab2AutoFill" || intent === "fullRescan") {
-      if (intent === "fullRescan") {
-        // Force clear carried-over fields so Vision regenerates them fresh
-        body.set("stone_story", "");
-        body.set("origin_story", "");
-      }
+      
       const stone_family = body.get("stone_family") || "";
       const origin_handle = body.get("origin_handle") || "";
       const productTitle = body.get("productTitle") || body.get("piece_name") || body.get("title") || "";
@@ -383,7 +379,7 @@ export const action = async ({ request }) => {
         const fullCollectionTitle = collectionData.name.replace(/\s+Collection$/i, "").trim();
         
         const matchedPage = pagesList.find(p => p.url.includes(activeOriginHandle));
-        const origin_story = body.get("origin_story") || (matchedPage ? matchedPage.excerpt : "");
+        const origin_story = (intent === "fullRescan") ? (matchedPage ? matchedPage.excerpt : "") : (body.get("origin_story") || (matchedPage ? matchedPage.excerpt : ""));
 
         const pagesMenu = pagesList.map(p => `- Title: "${p.title}" | URL: ${p.url} | Excerpt: "${p.excerpt}"`).join("\n");
         const collectionsMenu = collectionsList.map(c => `- Title: "${c.title}" | URL: ${c.url} | Excerpt: "${c.excerpt}"`).join("\n");
