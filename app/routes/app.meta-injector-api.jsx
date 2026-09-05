@@ -45,7 +45,7 @@ function normalizeMetafieldValue(key, value) {
 function applyOriginOverridesBeforeApi(title, metafieldsArray) {
   if (!title || typeof title !== "string") return metafieldsArray;
   
-  const segments = title.split(/\s*[—–-]\s*/);
+  const segments = title.split(/\s*—\s*/);
   if (segments.length < 3) return metafieldsArray;
 
   const middleSegment = segments[1].trim();
