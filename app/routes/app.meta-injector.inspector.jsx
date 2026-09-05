@@ -4,7 +4,7 @@
 // ==========================================================================
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { BlockStack, Card, Text, Banner, TextField, Select, Button, InlineStack, Collapsible } from "@shopify/polaris";
+import { BlockStack, Card, Text, Banner, TextField, Select, Button, InlineStack, Collapsible, DropZone } from "@shopify/polaris";
 import { MagicIcon, SaveIcon, ClipboardIcon } from "@shopify/polaris-icons";
 import { normalizeDropdownValue, DROPDOWN_OPTIONS } from "../utils/meta-injector.constants.jsx";
 
@@ -57,6 +57,23 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
   const [currentFixIndex, setCurrentFixIndex] = useState(0);
   const [fixPopupValue, setFixPopupValue] = useState("");
   const [showFixPopup, setShowFixPopup] = useState(false);
+  const [overridePhoto, setOverridePhoto] = useState(null);
+
+  const handleDropOverridePhoto = useCallback((_dropFiles, acceptedFiles) => {
+    if (acceptedFiles.length > 0) {
+      const file = acceptedFiles[0];
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const base64String = reader.result.replace("data:", "").replace(/^.+,/, "");
+        setOverridePhoto({
+          base64: base64String,
+          mimeType: file.type,
+          previewUrl: URL.createObjectURL(file)
+        });
+      };
+      reader.readAsDataURL(file);
+    }
+  }, []);
 
   const handleSelectProduct = useCallback((id) => {
     setSelectedProductId(id);
@@ -64,6 +81,7 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
     setErrorMessage("");
     setTab2StatusMessage("");
     setTab2ErrorMessage("");
+    setOverridePhoto(null);
 
     const product = products.find(p => p.id === id);
     const newForm = {};
@@ -207,10 +225,16 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
     formData.append("collection_location", fullMetaState.collection_location || "");
     formData.append("piece_name", fullMetaState.piece_name || "");
     formData.append("productTitle", titleToUse);
-    formData.append("imageUrl", imageUrl);
+
+    if (overridePhoto) {
+      formData.append("imageBase64", overridePhoto.base64);
+      formData.append("imageMimeType", overridePhoto.mimeType);
+    } else {
+      formData.append("imageUrl", imageUrl);
+    }
 
     tab2Fetcher.submit(formData, { method: "post", action: "/app/meta-injector-autofill" });
-  }, [selectedProductId, tab2Fetcher, fullMetaState, products, formState]);
+  }, [selectedProductId, tab2Fetcher, fullMetaState, products, formState, overridePhoto]);
 
   const handleFullRescan = useCallback(() => {
     if (!selectedProductId) return;
@@ -232,14 +256,20 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
     formData.append("collection_location", fullMetaState.collection_location || "");
     formData.append("piece_name", fullMetaState.piece_name || "");
     formData.append("productTitle", titleToUse);
-    formData.append("imageUrl", imageUrl);
     formData.append("origin_story", fullMetaState.origin_story || "");
     formData.append("honest_flaws_and_character", fullMetaState.honest_flaws_and_character || "");
     formData.append("generated_description", fullMetaState.generated_description || "");
     formData.append("price", fullMetaState.price || "");
 
+    if (overridePhoto) {
+      formData.append("imageBase64", overridePhoto.base64);
+      formData.append("imageMimeType", overridePhoto.mimeType);
+    } else {
+      formData.append("imageUrl", imageUrl);
+    }
+
     tab2Fetcher.submit(formData, { method: "post", action: "/app/meta-injector-autofill" });
-  }, [selectedProductId, tab2Fetcher, fullMetaState, products, formState]);
+  }, [selectedProductId, tab2Fetcher, fullMetaState, products, formState, overridePhoto]);
 
   const handleCopyTelemetry = useCallback(() => {
     navigator.clipboard.writeText(JSON.stringify(fullMetaState, null, 2))
@@ -523,6 +553,27 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
                     <Text as="p" variant="bodyMd" tone="subdued">Review before running — edit if legacy data is incorrect:</Text>
                     <TextField label="Product Title" value={formState.shopify_title || fullMetaState.shopify_title || product?.title || ""} onChange={(val) => { setFormState(prev => ({ ...prev, shopify_title: val })); setFullMetaState(prev => ({ ...prev, shopify_title: val })); }} autoComplete="off" helpText="Format: Stone Family — Origin Location — Piece Name" />
                     <TextField label="Origin Handle (override)" value={formState.origin_handle || fullMetaState.origin_handle || ""} onChange={(val) => { setFormState(prev => ({ ...prev, origin_handle: val })); setFullMetaState(prev => ({ ...prev, origin_handle: val })); }} autoComplete="off" helpText="e.g. the-richardson-strike — leave blank to auto-resolve from title" />
+                    
+                    <div style={{ marginTop: "16px" }}>
+                      <Text variant="headingMd" as="h3" fontWeight="bold">Upload New Hero Photo (overrides Shopify image for rescan)</Text>
+                      {overridePhoto ? (
+                        <div style={{ display: "flex", gap: "16px", marginTop: "8px", alignItems: "center" }}>
+                          <img src={overridePhoto.previewUrl} alt="Override preview" style={{ width: "80px", height: "80px", objectFit: "cover", borderRadius: "6px" }} />
+                          <Button onClick={() => setOverridePhoto(null)} tone="critical">Remove</Button>
+                        </div>
+                      ) : (
+                        <div style={{ marginTop: "8px" }}>
+                          <DropZone 
+                            accept="image/jpeg, image/png" 
+                            type="image" 
+                            allowMultiple={false} 
+                            onDrop={handleDropOverridePhoto}
+                          >
+                            <DropZone.FileUpload actionTitle="Drop photo here or click to upload" />
+                          </DropZone>
+                        </div>
+                      )}
+                    </div>
                   </BlockStack>
                 );
               })()}
