@@ -212,6 +212,35 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
     tab2Fetcher.submit(formData, { method: "post", action: "/app/meta-injector-autofill" });
   }, [selectedProductId, tab2Fetcher, fullMetaState, products, formState]);
 
+  const handleFullRescan = useCallback(() => {
+    if (!selectedProductId) return;
+    setTab2StatusMessage("");
+    setTab2ErrorMessage("");
+
+    const stoneFamily = fullMetaState.stone_family || "";
+    const originHandle = fullMetaState.origin_handle || fullMetaState.origin_page_handle || "";
+    const product = products.find(p => p.id === selectedProductId);
+    const titleToUse = fullMetaState.shopify_title || formState.shopify_title || product?.title || "";
+    const imageUrl = product?.images?.edges?.[0]?.node?.url || "";
+
+    const formData = new FormData();
+    formData.append("intent", "fullRescan");
+    formData.append("productId", selectedProductId);
+    formData.append("stone_family", stoneFamily);
+    formData.append("origin_handle", originHandle);
+    formData.append("cut_and_shape", fullMetaState.cut_and_shape || "");
+    formData.append("collection_location", fullMetaState.collection_location || "");
+    formData.append("piece_name", fullMetaState.piece_name || "");
+    formData.append("productTitle", titleToUse);
+    formData.append("imageUrl", imageUrl);
+    formData.append("origin_story", fullMetaState.origin_story || "");
+    formData.append("honest_flaws_and_character", fullMetaState.honest_flaws_and_character || "");
+    formData.append("generated_description", fullMetaState.generated_description || "");
+    formData.append("price", fullMetaState.price || "");
+
+    tab2Fetcher.submit(formData, { method: "post", action: "/app/meta-injector-autofill" });
+  }, [selectedProductId, tab2Fetcher, fullMetaState, products, formState]);
+
   const handleCopyTelemetry = useCallback(() => {
     navigator.clipboard.writeText(JSON.stringify(fullMetaState, null, 2))
       .then(() => {
@@ -500,6 +529,7 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
 
               <InlineStack align="space-between" gap="300">
                 <Button icon={MagicIcon} onClick={handleTab2AutoFill} size="large" fullWidth disabled={!selectedProductId} loading={tab2Fetcher.state !== "idle"}>RUN</Button>
+                <Button icon={MagicIcon} onClick={handleFullRescan} size="large" fullWidth disabled={!selectedProductId} loading={tab2Fetcher.state !== "idle"} tone="success">Full Rescan</Button>
                 <Button tone="critical" onClick={() => injectFetcher.submit({ intent: "cleanGhostNamespaces", productId: selectedProductId }, { method: "post", action: "/app/meta-injector-api" })} size="large" fullWidth disabled={!selectedProductId} loading={injectFetcher.state !== "idle" && injectFetcher.formData?.get("intent") === "cleanGhostNamespaces"}>Wipe Ghosts</Button>
                 <Button icon={ClipboardIcon} onClick={handleCopyTelemetry} size="large" fullWidth disabled={!selectedProductId}>Copy Telemetry</Button>
                 <Button icon={SaveIcon} tone="success" variant="primary" onClick={handleInject} size="large" fullWidth disabled={!selectedProductId} loading={injectFetcher.state !== "idle" && (injectFetcher.formData?.get("intent") === "saveProduct" || injectFetcher.formData?.get("intent") === "saveMetafields")}>Inject Metafields</Button>
