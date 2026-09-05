@@ -6,6 +6,7 @@ export function OperationsMatrixTab({ products, fetcher }) {
   const safeProducts = products || [];
   const [selectedProductId, setSelectedProductId] = useState("");
   const [selectedIds, setSelectedIds] = useState(new Set());
+  const [searchQuery, setSearchQuery] = useState("");
 
   // --- Section 1: AI Forge State ---
   const [aiPrompt, setAiPrompt] = useState("You are a gritty, mechanic-style copywriter for a lapidary and handcrafted stone jewelry studio. Write a 160-character SEO meta description for this product. Be specific, earthy, and direct. No fluff.");
@@ -26,6 +27,16 @@ export function OperationsMatrixTab({ products, fetcher }) {
   // --- Section 3: Safety Nets State ---
   const [safetyMessage, setSafetyMessage] = useState("");
   const [safetyError, setSafetyError] = useState("");
+
+  // --- Search & Filtering Logic ---
+  const handleSearchChange = useCallback((value) => setSearchQuery(value), []);
+  const handleClearSearch = useCallback(() => setSearchQuery(""), []);
+
+  const filteredProducts = safeProducts.filter(p =>
+    p.title.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  const allFilteredSelected = filteredProducts.length > 0 && filteredProducts.every(p => selectedIds.has(p.id));
 
   // --- Handlers: Left Column Selection ---
   const handleSelectProduct = useCallback((id, title) => {
@@ -48,14 +59,17 @@ export function OperationsMatrixTab({ products, fetcher }) {
     });
   }, []);
 
-  const handleSelectAll = useCallback(() => {
-    const allIds = safeProducts.map(p => p.id);
-    setSelectedIds(new Set(allIds));
-  }, [safeProducts]);
-
-  const handleClearAll = useCallback(() => {
-    setSelectedIds(new Set());
-  }, []);
+  const toggleSelectAllFiltered = useCallback(() => {
+    setSelectedIds(prev => {
+      const newSet = new Set(prev);
+      if (allFilteredSelected) {
+        filteredProducts.forEach(p => newSet.delete(p.id));
+      } else {
+        filteredProducts.forEach(p => newSet.add(p.id));
+      }
+      return newSet;
+    });
+  }, [filteredProducts, allFilteredSelected]);
 
   // --- Handlers: AI Forge ---
   const handleGenerateSEO = useCallback(() => {
@@ -278,21 +292,33 @@ export function OperationsMatrixTab({ products, fetcher }) {
           <Card padding="400">
             <BlockStack gap="400">
               <Text variant="headingMd" as="h2">Target Product Selection</Text>
-              <Text as="p" tone="subdued">{selectedIds.size} of {safeProducts.length} selected for sweeps</Text>
+              <Text as="p" tone="subdued">{selectedIds.size} of {safeProducts.length} total selected</Text>
               
-              <InlineStack gap="300">
-                <div style={{ minHeight: "54px", flexGrow: 1 }}>
-                  <Button size="large" fullWidth onClick={handleSelectAll} accessibilityLabel="Select all products for batch operations">Select All</Button>
-                </div>
-                <div style={{ minHeight: "54px", flexGrow: 1 }}>
-                  <Button size="large" fullWidth onClick={handleClearAll} accessibilityLabel="Clear product selection">Clear All</Button>
-                </div>
-              </InlineStack>
+              <div style={{ minHeight: "54px" }}>
+                <TextField
+                  label="Search Products"
+                  value={searchQuery}
+                  onChange={handleSearchChange}
+                  clearButton
+                  onClearButtonClick={handleClearSearch}
+                  autoComplete="off"
+                />
+              </div>
+
+              <div style={{ minHeight: "54px" }}>
+                <Button size="large" fullWidth onClick={toggleSelectAllFiltered}>
+                  {allFilteredSelected 
+                    ? `Deselect All (${filteredProducts.length})` 
+                    : `Select All (${filteredProducts.length})`}
+                </Button>
+              </div>
 
               <div style={{ maxHeight: "60vh", overflowY: "auto", paddingRight: "8px", display: "flex", flexDirection: "column", gap: "8px" }}>
-                {safeProducts.map(p => {
+                {filteredProducts.map(p => {
                   const isSelected = selectedProductId === p.id;
                   const isChecked = selectedIds.has(p.id);
+                  const imageUrl = p.images?.edges?.[0]?.node?.url || p.featuredImage?.url;
+                  
                   return (
                     <div key={p.id} style={{ display: "flex", alignItems: "center", gap: "12px", minHeight: "54px" }}>
                       <div style={{ display: "flex", alignItems: "center", height: "54px" }}>
@@ -303,6 +329,11 @@ export function OperationsMatrixTab({ products, fetcher }) {
                           aria-label={`Select product ${p.title} for batch sweeps`}
                           style={{ width: "24px", height: "24px", cursor: "pointer" }}
                         />
+                      </div>
+                      <div style={{ width: "40px", height: "40px", flexShrink: 0, backgroundColor: "#e0e0e0", borderRadius: "4px", overflow: "hidden" }}>
+                        {imageUrl && (
+                          <img src={imageUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                        )}
                       </div>
                       <div style={{ flexGrow: 1, minHeight: "54px" }}>
                         <Button
@@ -492,4 +523,3 @@ export function OperationsMatrixTab({ products, fetcher }) {
     </BlockStack>
   );
 }
-
