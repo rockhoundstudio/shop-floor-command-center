@@ -44,12 +44,20 @@ function buildMasterVisionPrompt({
 - bail_included
 - chain_material: If a necklace chain is visible, identify it as exactly one of: "Silver Plated Snake Chain", "Gold Plated Snake Chain", "Sterling Silver Chain", "Cord". If no chain is visible, return "None".
 - seo_title: Generate a keyword-rich SEO product title (max 60 characters) optimized for Google. Combine the stone family ("${stoneFamily}"), your newly corrected origin_location, cut/shape, and keywords like "Handcrafted", "Natural", "OOAK", or "Lapidary Art". Separate with pipes (|) or em-dashes (—). Do NOT use quotes.
-- generated_description: Write in Bob's voice. Past tense for the find. Plain and honest — say what happened, stop. No salesy language. Short sentences. One idea at a time. Use specific details from the FULL ORIGIN STORY below. End with EXACTLY this line, using an em-dash: — Bob & Janyce, Rockhound Studio, Spokane Valley WA. Do not use hyphens or dashes other than the em-dash (—). 150–250 words. Stop when it's right.
+- generated_description: Write in Bob's voice using this STRICT 7-BLOCK FORMAT. Separate each block naturally. Do NOT use markdown headers.
+  1. Stone Description: Past tense for the find. Plain and honest — say what happened, stop. No salesy language. Short sentences. One idea at a time. Highlight the freeform revolution and honest flaws.
+  2. Origin Hook: Write a short story hook based on the FULL ORIGIN STORY below.
+  3. Collection Hook: Write a short hook about the ${fullCollectionTitle} Collection.
+  4. Signature: EXACTLY this line: — Bob & Janyce, Rockhound Studio, Spokane Valley WA.
+  5. Stone Data: Brief lapidary specs (cut, finish, dimensions).
+  6. Ready to Wear: Clearly state if the piece is set and ready to wear, or a raw/loose stone for makers.
+  7. Dwell Buttons: Include EXACTLY these two clickable HTML hyperlinks on their own lines:
+     <a href="${targetUrlPath}">${fullCollectionTitle} Story</a>
+     <a href="${collectionUrlPath}">${fullCollectionTitle} Collection</a>
+
 FULL ORIGIN STORY:
 ${originStory}
-CRITICAL DWELL WEB EMBED LAW: Look at the Origin Segment Janyce entered ("${originSegment}"). Check the LIVE STORE DIRECTORY above and match it to the exact corresponding Page and Collection. You MUST use those live excerpts to write short story hooks leading directly into TWO clickable HTML hyperlinks. 
-  1. Origin Hook: Write a short story hook based on the matching Page excerpt, followed immediately by this exact anchor tag format: <a href="${targetUrlPath}">${fullCollectionTitle} Story</a>
-  2. Collection Hook: Write a short hook based on the matching Collection excerpt, followed immediately by this exact anchor tag format: <a href="${collectionUrlPath}">${fullCollectionTitle} Collection</a>
+
 - MANDATORY BENCH FINDINGS & JEWELRY LAWS (CRITICAL FOR LOOSE STONES):
   * THE LOOSE STONE OVERRIDE: If this is a bare, loose stone with NO metal, setting, wire, or bail, you MUST return strictly "None" for setting_ready, wire_material, primary_medium, secondary_medium, chain_material, and bail_included. Do NOT guess or hallucinate metal for a bare rock.
   * setting_ready: Look closely at the mounting. If cabochon is in a bezel setting, MUST return "Bezel Setting - Ready to Wear". If prong setting, return "Prong Setting - Ready to Wear". If wire wrapped, return "Wire Wrapped - Ready to Wear". If loose or unmounted, return "None".
@@ -101,7 +109,7 @@ const MINDAT_KEY_MAP = {
   crystal_structure: "crystal_system",
   luster: "luster",
   specific_gravity: "density",
-  moh_hardness: "hardness",
+  mohs_hardness: "hardness",
   cleavage: "cleavage",
   fracture_pattern: "fracture",
   diaphaneity: "transparency",
@@ -226,7 +234,7 @@ async function getGeoData(admin, stoneFamily) {
     const localResult = lookupStone(stoneFamily);
     if (localResult && Object.keys(localResult).length > 0) {
       return {
-        mohs_hardness: localResult.moh_hardness || localResult.hardness || "",
+        mohs_hardness: localResult.moh_hardness || localResult.hardness || localResult.mohs_hardness || "",
         luster: localResult.luster || "",
         fracture_pattern: localResult.fracture_pattern || localResult.fracture || "",
         cleavage: localResult.cleavage || "",
@@ -254,7 +262,7 @@ async function getGeoData(admin, stoneFamily) {
       if (rows.length > 0) {
         const s = rows[0];
         const geoResult = {
-          mohs_hardness: s.hardness || "",
+          mohs_hardness: s.hardness || s.mohs_hardness || "",
           luster: s.luster || "",
           fracture_pattern: s.fracture || "",
           cleavage: s.cleavage || "",
@@ -320,6 +328,19 @@ async function getGeoData(admin, stoneFamily) {
   return emptyGeo;
 }
 
+// 🔴 SANITIZER: Strips bad keys and "See Shopify" contamination
+function sanitizeObject(obj) {
+  if (!obj) return obj;
+  for (let key in obj) {
+    if (["moh_hardness", "meta_status", "polishing_compound", "collection_date"].includes(key)) {
+      delete obj[key];
+    } else if (typeof obj[key] === "string" && obj[key].includes("See Shopify")) {
+      obj[key] = "";
+    }
+  }
+  return obj;
+}
+
 export const action = async ({ request }) => {
   try {
     const { admin } = await authenticate.admin(request);
@@ -330,7 +351,7 @@ export const action = async ({ request }) => {
       const stoneFamily = body.get("stoneFamily") || "";
       try { 
         const geoFields = await getGeoData(admin, stoneFamily); 
-        return Response.json({ success: true, intent: "geoLookup", geoFields }); 
+        return Response.json({ success: true, intent: "geoLookup", geoFields: sanitizeObject(geoFields) }); 
       } catch (err) { 
         console.error("[geoLookup] getGeoData crashed:", err); 
         return Response.json({ success: false, intent: "geoLookup", geoFields: {} }); 
@@ -339,7 +360,6 @@ export const action = async ({ request }) => {
 
     if (intent === "tab2AutoFill") {
       const stone_family = body.get("stone_family") || "";
-      const origin_handle = body.get("origin_handle") || "";
       const productTitle = body.get("productTitle") || body.get("piece_name") || body.get("title") || "";
       const imageUrl = body.get("imageUrl") || "";
 
@@ -352,13 +372,13 @@ export const action = async ({ request }) => {
         const geoFields = await getGeoData(admin, derivedFamily);
         const { pagesList, collectionsList } = await getLiveStoreDirectory(admin);
         
-        const activeOriginHandle = origin_handle || resolveOriginHandle(derivedOrigin, pagesList);
-        const collectionData = resolveCollectionData(derivedOrigin, activeOriginHandle, collectionsList);
-        const targetUrlPath = `/pages/${activeOriginHandle}`;
-        const collectionUrlPath = `/collections/${collectionData.slug}`;
-        const fullCollectionTitle = collectionData.name.replace(/\s+Collection$/i, "").trim();
+        const initialOriginHandle = resolveOriginHandle(derivedOrigin, pagesList);
+        const initialCollectionData = resolveCollectionData(derivedOrigin, initialOriginHandle, collectionsList);
+        const targetUrlPath = `/pages/${initialOriginHandle}`;
+        const collectionUrlPath = `/collections/${initialCollectionData.slug}`;
+        const fullCollectionTitle = initialCollectionData.name.replace(/\s+Collection$/i, "").trim();
         
-        const matchedPage = pagesList.find(p => p.url.includes(activeOriginHandle));
+        const matchedPage = pagesList.find(p => p.url.includes(initialOriginHandle));
         const origin_story = matchedPage ? matchedPage.excerpt : "";
 
         const pagesMenu = pagesList.map(p => `- Title: "${p.title}" | URL: ${p.url} | Excerpt: "${p.excerpt}"`).join("\n");
@@ -466,75 +486,63 @@ export const action = async ({ request }) => {
           }
         }
 
+        // 🔴 Auto-resolve origin_handle and page_handle based strictly on collection location, AFTER Vision.
         const correctedOrigin = visionFields.origin_location || derivedOrigin;
+        const finalOriginHandle = resolveOriginHandle(correctedOrigin, pagesList);
+        const finalCollectionData = resolveCollectionData(correctedOrigin, finalOriginHandle, collectionsList);
+        
         const manual_seo_title = correctedOrigin
           ? `Handcrafted ${derivedFamily} — ${correctedOrigin} — OOAK Lapidary Art`
           : `Handcrafted ${derivedFamily} — OOAK Lapidary Art`;
 
-        // 🔴 STRICT EXPLICIT PAYLOAD MAPPING - Eliminates all hallucinations and unverified data leaks
-        return Response.json({
-          success: true,
-          intent: "tab2AutoFill",
-          tab2Data: {
-            origin_story: origin_story,
-            stone_family: derivedFamily,
-            origin_handle: activeOriginHandle,
-            origin_location: correctedOrigin,
-            shopify_title: `${derivedFamily} — ${correctedOrigin} — ${pieceNameSegment}`,
-            collection_name: collectionData.name,
-            collection_location: (() => {
-              const LOCATION_MAP = {
-                "chert-road-detour": "Yakima Canyon",
-                "yakima-canyon": "Yakima Canyon",
-                "the-yellowstone-river-collection": "Yellowstone River",
-                "the-rufus-serpentine-collection": "Rufus Serpentine",
-                "the-nickel-back-collection": "Nickel Back",
-                "the-spokane-river-collection": "Spokane River",
-                "north-fork-cda-collection": "North Fork CdA",
-                "richardsons-rock-ranch": "Richardson's Rock Ranch",
-                "the-3-000-mile-run-1": "The 3,000-Mile Run",
-                "the-shopped-rock": "The Shopped Rock",
-              };
-              return LOCATION_MAP[collectionData.slug] || collectionData.name.replace(/\s*Collection$/i, "").trim();
-            })(),
-            seo_title: visionFields.seo_title || manual_seo_title,
-            authenticity: visionFields.authenticity || "Authentic",
-            rarity: visionFields.rarity || "Common",
-            secondary_medium: visionFields.secondary_medium || "None",
-            cut_and_shape: visionFields.cut_and_shape || "",
-            jewelry_type: visionFields.jewelry_type || "N/A",
-            color_pattern: visionFields.color_pattern || visionFields.pattern || "",
-            dimensions_mm: visionFields.dimensions_mm || "",
-            generated_description: visionFields.generated_description || "",
-            color: visionFields.color || "",
-            surface_finish: visionFields.surface_finish || "",
-            stone_shape: visionFields.stone_shape || "",
-            primary_use: visionFields.primary_use || "",
-            primary_medium: visionFields.primary_medium || "",
-            wire_material: visionFields.wire_material || "None",
-            setting_ready: visionFields.setting_ready || "None",
-            bail_included: visionFields.bail_included || "None",
-            chain_material: visionFields.chain_material || "None",
-            mohs_hardness: geoFields.mohs_hardness || "",
-            luster: geoFields.luster || "",
-            fracture_pattern: geoFields.fracture_pattern || "",
-            cleavage: geoFields.cleavage || "",
-            specific_gravity: geoFields.specific_gravity || "",
-            diaphaneity: geoFields.diaphaneity || "",
-            crystal_system: geoFields.crystal_system || "",
-            geological_era: geoFields.geological_era || "",
-            mineral_class: geoFields.mineral_class || "",
-            rock_composition: geoFields.rock_composition || "",
-            rock_formation: geoFields.rock_formation || "",
-            geological_age: geoFields.geological_age || "",
-            treated: "No",
-            is_ooak: "Yes",
-            age_group: "adult",
-            target_gender: "Unisex",
-            condition: "new",
-            google_product_category: "Apparel & Accessories > Jewelry"
-          }
+        const payload = sanitizeObject({
+          origin_story: origin_story,
+          stone_family: derivedFamily,
+          origin_handle: finalOriginHandle,
+          origin_page_handle: finalOriginHandle,
+          origin_location: correctedOrigin,
+          shopify_title: `${derivedFamily} — ${correctedOrigin} — ${pieceNameSegment}`,
+          collection_name: finalCollectionData.name,
+          collection_location: finalCollectionData.name.replace(/\s*Collection$/i, "").trim(),
+          seo_title: visionFields.seo_title || manual_seo_title,
+          authenticity: visionFields.authenticity || "Authentic",
+          rarity: visionFields.rarity || "Common",
+          secondary_medium: visionFields.secondary_medium || "None",
+          cut_and_shape: visionFields.cut_and_shape || "",
+          jewelry_type: visionFields.jewelry_type || "N/A",
+          color_pattern: visionFields.color_pattern || visionFields.pattern || "",
+          dimensions_mm: visionFields.dimensions_mm || "",
+          generated_description: visionFields.generated_description || "",
+          color: visionFields.color || "",
+          surface_finish: visionFields.surface_finish || "",
+          stone_shape: visionFields.stone_shape || "",
+          primary_use: visionFields.primary_use || "",
+          primary_medium: visionFields.primary_medium || "",
+          wire_material: visionFields.wire_material || "None",
+          setting_ready: visionFields.setting_ready || "None",
+          bail_included: visionFields.bail_included || "None",
+          chain_material: visionFields.chain_material || "None",
+          mohs_hardness: geoFields.mohs_hardness || "",
+          luster: geoFields.luster || "",
+          fracture_pattern: geoFields.fracture_pattern || "",
+          cleavage: geoFields.cleavage || "",
+          specific_gravity: geoFields.specific_gravity || "",
+          diaphaneity: geoFields.diaphaneity || "",
+          crystal_system: geoFields.crystal_system || "",
+          geological_era: geoFields.geological_era || "",
+          mineral_class: geoFields.mineral_class || "",
+          rock_composition: geoFields.rock_composition || "",
+          rock_formation: geoFields.rock_formation || "",
+          geological_age: geoFields.geological_age || "",
+          treated: "No",
+          is_ooak: "Yes",
+          age_group: "adult",
+          target_gender: "Unisex",
+          condition: "new",
+          google_product_category: "Apparel & Accessories > Jewelry"
         });
+
+        return Response.json({ success: true, intent: "tab2AutoFill", tab2Data: payload });
       } catch (err) {
         console.error("[tab2AutoFill] crashed:", err);
         return Response.json({ success: false, intent: "tab2AutoFill", tab2Data: {} });
@@ -641,9 +649,10 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
             : `${seoTitleParts.join(" ")} — Rockhound Studio`;
         }
 
-        const finalParse = {
+        const finalParse = sanitizeObject({
           ...parsed,
           origin_handle: resolvedHandle,
+          origin_page_handle: resolvedHandle,
           origin_story: extractedStory,
           origin_location: parsed.origin_location || segment2,
           collection_name: parsed.collection_name || collectionData.name,
@@ -666,7 +675,7 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
           target_gender: "Unisex",
           condition: "new",
           google_product_category: "Apparel & Accessories > Jewelry"
-        };
+        });
         
         return Response.json({ success: true, intent: "titleParse", titleParse: finalParse });
       }
@@ -675,7 +684,7 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
       return Response.json({ success: false, intent: "titleParse", titleParse: null, error: `Title parse error: ${geminiRes.status} - ${errText}` }, { status: 500 });
     }
 
-    if (intent === "visionScan") {
+    if (intent === "visionScan" || intent === "fullRescan") {
       const pieceId = body.get("pieceId");
       const clientBase64 = body.get("imageBase64");
       const clientMime = body.get("imageMimeType") || "image/jpeg";
@@ -694,6 +703,8 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
       const fullCollectionTitle = defaultCollection.name.replace(/\s+Collection$/i, "").trim();
 
       const matchedPage = pagesList.find(p => p.url.includes(defaultOriginSlug));
+      
+      // 🔴 intent:fullRescan forces the use of matchedPage excerpt directly, ignoring dead body states
       const extractedStory = matchedPage ? matchedPage.excerpt : "";
       
       const pagesMenu = pagesList.map(p => `- Title: "${p.title}" | URL: ${p.url} | Excerpt: "${p.excerpt}"`).join("\n");
@@ -788,8 +799,8 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
         try {
           parsedVision = JSON.parse(cleanJson);
         } catch (parseErr) {
-          console.error("[visionScan] JSON Parse Error:", parseErr, "Raw string:", cleanJson);
-          return Response.json({ success: false, intent: "visionScan", error: `JSON Parse Error: ${parseErr.message} | Raw string: ${cleanJson.substring(0, 100)}...` });
+          console.error(`[${intent}] JSON Parse Error:`, parseErr, "Raw string:", cleanJson);
+          return Response.json({ success: false, intent, error: `JSON Parse Error: ${parseErr.message} | Raw string: ${cleanJson.substring(0, 100)}...` });
         }
         
         const resolved_primary_use = parsedVision.primary_use || parsedVision.use || parsedVision.product_type || "";
@@ -805,45 +816,52 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
             final_desc = "";
         }
 
-        // 🔴 STRICT EXPLICIT PAYLOAD MAPPING
+        // 🔴 Apply handle resolution strictly AFTER Vision outputs to prevent hallucinations
+        const finalOriginLocation = parsedVision.origin_location || originSegment;
+        const finalOriginHandle = resolveOriginHandle(finalOriginLocation, pagesList);
+        const finalCollectionData = resolveCollectionData(finalOriginLocation, finalOriginHandle, collectionsList);
+
+        const payload = sanitizeObject({
+          pieceId,
+          generated_description: final_desc,
+          debug_origin: `seg=${originSegment}|slug=${finalOriginHandle}|matched=${matchedPage ? matchedPage.url : "NULL"}|storyLen=${extractedStory.length}`,
+          seo_title: parsedVision.seo_title || "",
+          primary_color: parsedVision.primary_color || "",
+          cut_and_shape: parsedVision.cut_and_shape || "",
+          surface_finish: parsedVision.surface_finish || "",
+          stone_shape: parsedVision.stone_shape || "",
+          jewelry_type: parsedVision.jewelry_type || "N/A",
+          rarity: parsedVision.rarity || "Common",
+          authenticity: parsedVision.authenticity || "Authentic",
+          dimensions_mm: parsedVision.dimensions_mm || "",
+          color_pattern: parsedVision.color_pattern || parsedVision.pattern || "",
+          primary_use: resolved_primary_use,
+          primary_medium: resolved_primary_medium,
+          secondary_medium: resolved_secondary_medium,
+          wire_material: resolved_wire_material,
+          setting_ready: resolved_setting_ready,
+          bail_included: resolved_bail_included,
+          origin_story: extractedStory,
+          origin_handle: finalOriginHandle,
+          origin_page_handle: finalOriginHandle,
+          origin_location: finalOriginLocation,
+          collection_name: finalCollectionData.name,
+          collection_location: finalCollectionData.name.replace(/\s*Collection$/i, "").trim(),
+          age_group: "adult",
+          target_gender: "Unisex",
+          condition: "new",
+          google_product_category: "Apparel & Accessories > Jewelry"
+        });
+
         return Response.json({
           success: true,
-          intent: "visionScan",
-          tab2Data: {
-            pieceId,
-            generated_description: final_desc,
-            debug_origin: `seg=${originSegment}|slug=${defaultOriginSlug}|matched=${matchedPage ? matchedPage.url : "NULL"}|storyLen=${extractedStory.length}`,
-            seo_title: parsedVision.seo_title || "",
-            primary_color: parsedVision.primary_color || "",
-            cut_and_shape: parsedVision.cut_and_shape || "",
-            surface_finish: parsedVision.surface_finish || "",
-            stone_shape: parsedVision.stone_shape || "",
-            jewelry_type: parsedVision.jewelry_type || "N/A",
-            rarity: parsedVision.rarity || "Common",
-            authenticity: parsedVision.authenticity || "Authentic",
-            dimensions_mm: parsedVision.dimensions_mm || "",
-            color_pattern: parsedVision.color_pattern || parsedVision.pattern || "",
-            primary_use: resolved_primary_use,
-            primary_medium: resolved_primary_medium,
-            secondary_medium: resolved_secondary_medium,
-            wire_material: resolved_wire_material,
-            setting_ready: resolved_setting_ready,
-            bail_included: resolved_bail_included,
-            origin_story: extractedStory,
-            origin_handle: defaultOriginSlug,
-            origin_location: parsedVision.origin_location || originSegment,
-            collection_name: defaultCollection.name,
-            collection_location: defaultCollection.name.replace(" Collection", ""),
-            age_group: "adult",
-            target_gender: "Unisex",
-            condition: "new",
-            google_product_category: "Apparel & Accessories > Jewelry"
-          }
+          intent,
+          tab2Data: payload
         });
       }
       
       const errText = await geminiRes.text();
-      return Response.json({ success: false, intent: "visionScan", error: `Vision API Failure (${geminiRes.status}): ${errText}` });
+      return Response.json({ success: false, intent, error: `Vision API Failure (${geminiRes.status}): ${errText}` });
     }
 
     return Response.json({ success: true, intent: intent || "unknown", fields: {} });
