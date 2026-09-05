@@ -16,9 +16,12 @@ function buildMasterVisionPrompt({
   originSegment,
   targetUrlPath,
   fullCollectionTitle,
-  collectionUrlPath
+  collectionUrlPath,
+  productTitle
 }) {
-  return `You are a lapidary artist and master jeweler for Rockhound Studio. Analyze this photo and return a JSON object.
+  return `CRITICAL: This product is ${productTitle}. The origin is determined by the title segment between the em-dashes. Do not invent or borrow origin stories from other stones. Do not use Rufus, railroad, Missoula Flood, or siltstone narrative unless the title explicitly contains 'Rufus'. For Richardson's Rock Ranch stones: the story is 95-degree Oregon heat, Janyce finding the blue flash on a 1,000 lb labradorite pallet, homemade backyard slab saw, lost 25% learning the angles. Use only the origin that matches this product's title.
+
+You are a lapidary artist and master jeweler for Rockhound Studio. Analyze this photo and return a JSON object.
 - LIVE STORE DIRECTORY (Your Dyslexia Safeguard — Read this menu!):
   VALID PAGES IN STORE:
   ${pagesMenu || "No live pages found — use default URL."}
@@ -231,7 +234,7 @@ async function getGeoData(admin, stoneFamily) {
     const localResult = lookupStone(stoneFamily);
     if (localResult && Object.keys(localResult).length > 0) {
       return {
-        mohs_hardness: localResult.moh_hardness || localResult.hardness || "",
+        mohs_hardness: localResult.mohs_hardness || localResult.hardness || "",
         luster: localResult.luster || "",
         fracture_pattern: localResult.fracture_pattern || localResult.fracture || "",
         cleavage: localResult.cleavage || "",
@@ -404,7 +407,8 @@ export const action = async ({ request }) => {
               originSegment: derivedOrigin,
               targetUrlPath,
               fullCollectionTitle,
-              collectionUrlPath
+              collectionUrlPath,
+              productTitle
             });
 
             const geminiRes = await fetchWithRetry("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY, {
@@ -779,7 +783,8 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
         originSegment,
         targetUrlPath,
         fullCollectionTitle,
-        collectionUrlPath
+        collectionUrlPath,
+        productTitle: titleInput
       });
 
       const geminiRes = await fetchWithRetry("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY, {
@@ -852,7 +857,7 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
         const resolved_setting_ready = parsedVision.setting_ready || parsedVision.setting || parsedVision.mounting || parsedVision.bezel || "None";
         const resolved_bail_included = parsedVision.bail_included || parsedVision.bail || "None";
 
-        let final_desc = parsedVision.generated_description || parsedVision.description || "";
+        let final_desc = parsedVision.generated_description || "";
         const lowerDesc = final_desc.toLowerCase();
         if (final_desc.startsWith("[VISION API CRASH]") || final_desc.startsWith("[API CRASH]") || final_desc.startsWith("[JSON PARSE ERROR]") || lowerDesc.includes("timed out")) {
             final_desc = "";
