@@ -114,7 +114,6 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
       }
     }
 
-    if (!newForm.origin_story && newForm.stone_story) newForm.origin_story = newForm.stone_story;
     if (newForm.origin_story && newForm.origin_story.startsWith("[")) {
       try { const arr = JSON.parse(newForm.origin_story); newForm.origin_story = Array.isArray(arr) ? arr[0] : newForm.origin_story; } catch (e) {}
     }
@@ -147,6 +146,7 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
         newFullForm.seo_title = seoTitleNode.value;
     }
     
+    delete newFullForm.stone_story;
     setFormState(newForm);
     setFullMetaState(newFullForm);
     originalMetaRef.current = { ...newFullForm };
