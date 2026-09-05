@@ -80,7 +80,6 @@ function applyOriginOverridesBeforeApi(title, metafieldsArray) {
 }
 
 const MASTER_TYPE_MAP = {
-  stone_story: "list.single_line_text_field",
   rescued_by: "single_line_text_field",
   origin_location: "single_line_text_field",
   geological_age: "single_line_text_field",
@@ -186,7 +185,6 @@ export const action = async ({ request }) => {
           "mohs_hardness": mohsVal,
           "crystal_system": "Trigonal",
           "primary_color": "Varies by specimen",
-          "stone_story": `A beautiful piece of natural ${stoneName}.`,
           "title_tag": `${stoneName}${pieceName ? ` — ${pieceName}` : ""} — One-of-a-Kind Rockhound Studio`,
           "description_tag": `Natural, one-of-a-kind ${stoneName} handcrafted by Bob and Janyce. Honest flaws, authentic character, and zero workshop fluff.`,
           "google_product_category": "Apparel & Accessories > Jewelry",
@@ -741,7 +739,6 @@ export const action = async ({ request }) => {
           "color", 
           "dimensions_mm", 
           "artist_notes",
-          "stone_story", 
           "origin_story", 
           "character_marks", 
           "honest_flaws", 
