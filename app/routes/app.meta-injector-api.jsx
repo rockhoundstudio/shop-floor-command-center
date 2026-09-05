@@ -21,15 +21,134 @@ function extractStoneName(title) {
   return "Unknown";
 }
 
-const ORIGIN_HANDLE_MAP = {
-  "Richardson's Rock Ranch": { origin_handle: "the-richardson-strike", origin_page_handle: "the-shopped-rock" },
-  "Yakima Canyon": { origin_handle: "the-shop-lore-chert-road-detour-yakima-river-jasper", origin_page_handle: "the-shop-lore-chert-road-detour-yakima-river-jasper" },
-  "Yellowstone River": { origin_handle: "the-yellowstone-river", origin_page_handle: "the-yellowstone-river" },
-  "Rufus Serpentine": { origin_handle: "the-rufus-protocol", origin_page_handle: "the-rufus-protocol" },
-  "Nickel Back": { origin_handle: "nickel-back-collection", origin_page_handle: "nickel-back-collection" },
-  "The Shopped Rock": { origin_handle: "the-shopped-rock", origin_page_handle: "the-shopped-rock" },
-  "Spokane River": { origin_handle: null, origin_page_handle: null },
-  "North Fork CdA": { origin_handle: null, origin_page_handle: null },
+function normalizeMetafieldValue(key, value) {
+  let val = String(value);
+
+  // 1. STRIP ⚠️ EMOJI PREFIX
+  if (val.startsWith("⚠️ ")) {
+    val = val.replace(/^⚠️\s*/, "");
+  }
+
+  // 2. NORMALIZE BOOLEAN-STYLE FIELDS
+  const booleanKeys = [
+    "is_ooak", "is_one_of_a_kind", "found_object", 
+    "custom_product", "setting_ready", "bail_included", "treated"
+  ];
+  if (booleanKeys.includes(key)) {
+    if (val.toLowerCase() === "true") val = "Yes";
+    else if (val.toLowerCase() === "false") val = "No";
+  }
+
+  return val;
+}
+
+function applyOriginOverridesBeforeApi(title, metafieldsArray) {
+  if (!title || typeof title !== "string") return metafieldsArray;
+  
+  const segments = title.split(/\s*[—–-]\s*/);
+  if (segments.length < 3) return metafieldsArray;
+
+  const middleSegment = segments[1].trim();
+  let override = null;
+
+  if (middleSegment === "Richardson's Rock Ranch") {
+    override = { origin_handle: "the-richardson-strike", origin_page_handle: "the-shopped-rock" };
+  } else if (middleSegment === "Yakima River Canyon" || middleSegment === "Yakima Canyon") {
+    override = { origin_handle: "the-shop-lore-chert-road-detour-yakima-river-jasper", origin_page_handle: "the-shop-lore-chert-road-detour-yakima-river-jasper" };
+  } else if (middleSegment === "Yellowstone River" || middleSegment === "Seven Sisters") {
+    override = { origin_handle: "the-yellowstone-river", origin_page_handle: "the-yellowstone-river" };
+  } else if (middleSegment === "Rufus" || middleSegment === "Rufus Serpentine") {
+    override = { origin_handle: "the-rufus-protocol", origin_page_handle: "the-rufus-protocol" };
+  } else if (middleSegment === "Nickel Back") {
+    override = { origin_handle: "the-nickel-back-collection", origin_page_handle: "the-nickel-back-collection" };
+  } else if (middleSegment === "North Fork CdA") {
+    override = { origin_handle: "north-fork-cda-collection", origin_page_handle: "north-fork-cda-collection" };
+  } else if (middleSegment === "Spokane River" || middleSegment === "Stateline") {
+    override = { origin_handle: "spokane-river-stateline", origin_page_handle: "spokane-river-stateline" };
+  }
+
+  if (override) {
+    const ownerId = metafieldsArray.length > 0 ? metafieldsArray[0].ownerId : null;
+    if (!ownerId) return metafieldsArray;
+
+    let newMetafields = metafieldsArray.filter(m => m.key !== "origin_handle" && m.key !== "origin_page_handle");
+    newMetafields.push({ ownerId: ownerId, namespace: "custom", key: "origin_handle", type: "single_line_text_field", value: override.origin_handle });
+    newMetafields.push({ ownerId: ownerId, namespace: "custom", key: "origin_page_handle", type: "single_line_text_field", value: override.origin_page_handle });
+    return newMetafields;
+  }
+  return metafieldsArray;
+}
+
+const MASTER_TYPE_MAP = {
+  stone_story: "list.single_line_text_field",
+  rescued_by: "single_line_text_field",
+  origin_location: "single_line_text_field",
+  geological_age: "single_line_text_field",
+  mohs_hardness: "single_line_text_field",
+  official_name: "single_line_text_field",
+  mineral_class: "single_line_text_field",
+  crystal_system: "single_line_text_field",
+  luster: "single_line_text_field",
+  rock_composition: "single_line_text_field",
+  specific_gravity: "single_line_text_field",
+  fracture_pattern: "single_line_text_field",
+  cleavage: "single_line_text_field",
+  tenacity: "single_line_text_field",
+  geological_era: "single_line_text_field",
+  rock_formation: "single_line_text_field",
+  primary_color: "single_line_text_field",
+  diaphaneity: "single_line_text_field",
+  character_marks: "list.single_line_text_field",
+  dimensions_mm: "single_line_text_field",
+  cut_type: "single_line_text_field",
+  bench_notes: "single_line_text_field",
+  stone_shape: "single_line_text_field",
+  surface_finish: "single_line_text_field",
+  treatment_status: "single_line_text_field",
+  secondary_colors: "single_line_text_field",
+  base_stone_type: "single_line_text_field",
+  hardness: "single_line_text_field",
+  origin_story: "single_line_text_field",
+  honest_flaws: "single_line_text_field",
+  honest_flaws_and_character: "single_line_text_field",
+  primary_medium: "single_line_text_field",
+  piece_name: "single_line_text_field",
+  stone_family: "single_line_text_field",
+  collection_name: "single_line_text_field",
+  collection_location: "single_line_text_field",
+  origin_handle: "single_line_text_field",
+  origin_page_handle: "single_line_text_field",
+  cut_and_shape: "single_line_text_field",
+  color_pattern: "single_line_text_field",
+  generated_description: "single_line_text_field",
+  primary_use: "single_line_text_field",
+  weight_grams: "number_decimal",
+  shipping_weight_oz: "number_decimal",
+  handcrafted_by: "single_line_text_field",
+  artist_notes: "single_line_text_field",
+  alt_text: "single_line_text_field",
+  is_ooak: "single_line_text_field",
+  found_object: "single_line_text_field",
+  custom_product: "single_line_text_field",
+  authenticity: "single_line_text_field",
+  rarity: "single_line_text_field",
+  color: "single_line_text_field",
+  setting_ready: "single_line_text_field",
+  bail_included: "single_line_text_field",
+  wire_material: "single_line_text_field",
+  chain_material: "single_line_text_field",
+  target_gender: "single_line_text_field",
+  age_group: "single_line_text_field",
+  condition: "single_line_text_field",
+  price: "number_decimal",
+  seo_title: "single_line_text_field",
+  secondary_medium: "single_line_text_field",
+  jewelry_type: "single_line_text_field",
+  necklace_design: "single_line_text_field",
+  chain_link_type: "single_line_text_field",
+  jewelry_finding_type: "single_line_text_field",
+  material: "single_line_text_field",
+  treated: "single_line_text_field"
 };
 
 export const action = async ({ request }) => {
@@ -112,64 +231,11 @@ export const action = async ({ request }) => {
       
       payloadArray = payloadArray.filter(item => 
         item.key !== "collectionLocation" && 
-        item.key !== "is_one_of_a_kind" // Hard stripped to enforce is_ooak
+        item.key !== "is_one_of_a_kind" &&
+        item.key !== "story_theme" 
       );
 
-      // 🔴 POST-PROCESS ORIGIN OVERRIDE: Enforces strict handle mappings based on collection_location
-      const colLocItem = payloadArray.find(item => item.key === "collection_location");
-      if (colLocItem && colLocItem.value) {
-        const originOverride = ORIGIN_HANDLE_MAP[colLocItem.value];
-        if (originOverride !== undefined) {
-          payloadArray = payloadArray.filter(item => item.key !== "origin_handle" && item.key !== "origin_page_handle");
-          
-          if (originOverride.origin_handle !== null) {
-            payloadArray.push({
-              key: "origin_handle",
-              value: originOverride.origin_handle,
-              type: "single_line_text_field",
-              namespace: "custom",
-              ownerId: colLocItem.ownerId
-            });
-          }
-          if (originOverride.origin_page_handle !== null) {
-            payloadArray.push({
-              key: "origin_page_handle",
-              value: originOverride.origin_page_handle,
-              type: "single_line_text_field",
-              namespace: "custom",
-              ownerId: colLocItem.ownerId
-            });
-          }
-        }
-      }
-
-      const TYPE_MAP = {
-        stone_story: "list.single_line_text_field", 
-        origin_story: "single_line_text_field",
-        character_marks: "list.single_line_text_field",
-        honest_flaws: "single_line_text_field",
-        honest_flaws_and_character: "single_line_text_field",
-        generated_description: "single_line_text_field",
-        artist_notes: "single_line_text_field",
-        is_ooak: "single_line_text_field", 
-        treated: "single_line_text_field",
-        found_object: "single_line_text_field", 
-        custom_product: "single_line_text_field",
-        piece_name: "single_line_text_field", 
-        cut_and_shape: "single_line_text_field",
-        surface_finish: "single_line_text_field", 
-        dimensions_mm: "single_line_text_field",
-        stone_shape: "single_line_text_field", 
-        seo_title: "single_line_text_field",
-        color: "single_line_text_field", 
-        weight_grams: "number_decimal",
-        specific_gravity: "single_line_text_field", 
-        mohs_hardness: "single_line_text_field",
-        shipping_weight_oz: "number_decimal", 
-        price: "number_decimal"
-      };
-
-      const setMetafields = payloadArray
+      let setMetafields = payloadArray
         .filter(item => item.value !== null && String(item.value).trim() !== "")
         .flatMap(item => {
           const fallbackProductId = formData.get("productId");
@@ -180,14 +246,12 @@ export const action = async ({ request }) => {
           let resolvedId = `gid://shopify/Product/${itemOwnerId.split("/").pop()}`;
           if (itemOwnerId.startsWith("gid://")) resolvedId = itemOwnerId;
 
-          const resolvedType = TYPE_MAP[item.key] || item.type || "single_line_text_field";
-          let resolvedValue = String(item.value).replace(/[—–]/g, '-');
+          const resolvedType = MASTER_TYPE_MAP[item.key] || item.type || "single_line_text_field";
           
-          if (resolvedType.startsWith("list.")) resolvedValue = JSON.stringify([String(item.value)]);
-          if (item.key === "treated" || item.key === "is_ooak") {
-            if (resolvedValue === "true") resolvedValue = "Yes";
-            else if (resolvedValue === "false") resolvedValue = "No";
-          }
+          let normalizedValue = normalizeMetafieldValue(item.key, item.value);
+          let resolvedValue = normalizedValue.replace(/[—–]/g, '-');
+          
+          if (resolvedType.startsWith("list.")) resolvedValue = JSON.stringify([normalizedValue]);
 
           let resolvedNamespace = item.namespace || "custom";
           if (item.key === "is_ooak" || resolvedNamespace === "none" || resolvedNamespace === "") {
@@ -210,6 +274,12 @@ export const action = async ({ request }) => {
 
           return fieldsToReturn;
         });
+
+      // Apply Origin Overrides right before Shopify API call
+      const productTitle = formData.get("productTitle");
+      if (productTitle) {
+        setMetafields = applyOriginOverridesBeforeApi(productTitle, setMetafields);
+      }
 
       if (setMetafields.length === 0) {
         return data({ intent: "saveMetafields", success: true, message: "No fields to save." });
@@ -579,57 +649,22 @@ export const action = async ({ request }) => {
       const { pieces, intent, mediaUrlsJson, title: payloadTitle, metafieldsJson, ...sharedOnly } = payload;
       const combinedFields = { ...sharedOnly, ...piece };
       
-      // 🔴 POST-PROCESS ORIGIN OVERRIDE: Enforces strict handle mappings based on collection_location
-      const originOverride = ORIGIN_HANDLE_MAP[combinedFields.collection_location];
-      if (originOverride !== undefined) {
-        if (originOverride.origin_handle !== null) {
-          combinedFields.origin_handle = originOverride.origin_handle;
-        } else {
-          delete combinedFields.origin_handle;
-        }
-        if (originOverride.origin_page_handle !== null) {
-          combinedFields.origin_page_handle = originOverride.origin_page_handle;
-        } else {
-          delete combinedFields.origin_page_handle;
-        }
-      }
+      const ignoreKeys = [
+        "intent", "mediaUrlsJson", "descriptionHtml", "productType", "status", 
+        "pieces", "photoFiles", "photoPreviewUrls", "photos", "imageBase64", 
+        "imageMimeType", "stagedResourceUrls", "scanError", "scanToken", 
+        "isUploading", "id", "price", "collectionLocation", "age_group", 
+        "target_gender", "condition", "shipping_weight_oz", "collection_name", 
+        "collection_location", "seo_title", "story_theme"
+      ];
 
-      const ignoreKeys = ["intent", "mediaUrlsJson", "descriptionHtml", "productType", "status", "pieces", "photoFiles", "photoPreviewUrls", "photos", "imageBase64", "imageMimeType", "stagedResourceUrls", "scanError", "scanToken", "isUploading", "id", "price", "collectionLocation", "age_group", "target_gender", "condition", "shipping_weight_oz", "collection_name", "collection_location", "seo_title"];
-
-      const TYPE_MAP = {
-        stone_story: "list.single_line_text_field",
-        origin_story: "single_line_text_field",
-        character_marks: "list.single_line_text_field",
-        honest_flaws: "single_line_text_field",
-        honest_flaws_and_character: "single_line_text_field",
-        generated_description: "single_line_text_field",
-        artist_notes: "single_line_text_field",
-        is_ooak: "single_line_text_field",
-        treated: "single_line_text_field",
-        found_object: "single_line_text_field",
-        custom_product: "single_line_text_field",
-        is_one_of_a_kind: "single_line_text_field",
-        piece_name: "single_line_text_field",
-        cut_and_shape: "single_line_text_field",
-        surface_finish: "single_line_text_field",
-        dimensions_mm: "single_line_text_field",
-        stone_shape: "single_line_text_field",
-        color: "single_line_text_field",
-        specific_gravity: "single_line_text_field",
-        mohs_hardness: "single_line_text_field",
-        weight_grams: "number_decimal",
-        shipping_weight_oz: "number_decimal",
-        price: "number_decimal",
-      };
       Object.entries(combinedFields).forEach(([key, value]) => {
         if (!ignoreKeys.includes(key) && value !== undefined && value !== null && String(value).trim() !== "") {
            let finalKey = key === "specificGravity" ? "specific_gravity" : key;
-           if (key === "treated" || key === "is_one_of_a_kind") {
-             if (value === true || value === "true") value = "Yes";
-             else if (value === false || value === "false") value = "No";
-           }
-           const resolvedType = TYPE_MAP[finalKey] || TYPE_MAP[key] || "single_line_text_field";
-           rawMetafields.push({ key: finalKey, value: value, type: resolvedType });
+           let normalizedValue = normalizeMetafieldValue(finalKey, value);
+
+           const resolvedType = MASTER_TYPE_MAP[finalKey] || MASTER_TYPE_MAP[key] || "single_line_text_field";
+           rawMetafields.push({ key: finalKey, value: normalizedValue, type: resolvedType });
         }
       });
 
@@ -658,7 +693,7 @@ export const action = async ({ request }) => {
       if (rawMetafields.length > 0 || googleMetafields.length > 0) {
         try {
             const metafieldsInput = rawMetafields.map(item => {
-               let resolvedType = TYPE_MAP[item.key] || item.type || "single_line_text_field";
+               let resolvedType = MASTER_TYPE_MAP[item.key] || item.type || "single_line_text_field";
                let resolvedValue = String(item.value);
                if (resolvedType === "number_decimal") {
                  let parsedNum = parseFloat(String(item.value).replace(/["']/g, ""));
@@ -672,7 +707,11 @@ export const action = async ({ request }) => {
                return { ownerId: productId, namespace: resolvedNamespace, key: item.key, type: resolvedType, value: resolvedValue };
             });
 
-            const allMetafieldsToSet = [...metafieldsInput, ...googleMetafields];
+            let allMetafieldsToSet = [...metafieldsInput, ...googleMetafields];
+            
+            // Apply Origin Overrides right before Shopify API call
+            allMetafieldsToSet = applyOriginOverridesBeforeApi(title, allMetafieldsToSet);
+
             const chunks = chunkArray(allMetafieldsToSet, 25);
             for (const chunk of chunks) {
               const metaResponse = await admin.graphql(
@@ -721,6 +760,7 @@ export const action = async ({ request }) => {
 
         Object.entries(flatPayload).forEach(([key, value]) => {
           if (value === null || value === undefined || String(value).trim() === "") return;
+          if (key === "story_theme") return; // Strip out story_theme
           
           let metaKey = key;
           let isCustomField = targetKeys.includes(key);
@@ -731,23 +771,22 @@ export const action = async ({ request }) => {
           }
 
           if (isCustomField && metaKey) {
-             let resolvedValue = String(value);
-             if (metaKey === "treated" || metaKey === "is_ooak" || metaKey === "is_one_of_a_kind") {
-               if (resolvedValue === "true") resolvedValue = "Yes";
-               if (resolvedValue === "false") resolvedValue = "No";
-             }
+             let resolvedValue = normalizeMetafieldValue(metaKey, value);
 
              injectMetafieldsMap.set(metaKey, {
                ownerId: productId,
                namespace: "custom",
                key: metaKey,
-               type: "single_line_text_field",
-               value: resolvedValue
+               type: MASTER_TYPE_MAP[metaKey] || "single_line_text_field",
+               value: (MASTER_TYPE_MAP[metaKey] || "").startsWith("list.") ? JSON.stringify([resolvedValue]) : resolvedValue
              });
           }
         });
 
-        const injectMetafields = Array.from(injectMetafieldsMap.values());
+        let injectMetafields = Array.from(injectMetafieldsMap.values());
+        
+        // Final override application before injection
+        injectMetafields = applyOriginOverridesBeforeApi(title, injectMetafields);
 
         if (injectMetafields.length > 0) {
           const injectChunks = chunkArray(injectMetafields, 25);
