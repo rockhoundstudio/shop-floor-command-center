@@ -750,7 +750,11 @@ export const action = async ({ request }) => {
           "piece_name", 
           "stone_shape", 
           "specific_gravity", 
-          "mohs_hardness"
+          "mohs_hardness",
+          "generated_description",
+          "collection_location",
+          "origin_handle",
+          "origin_page_handle"
         ];
         
         const injectMetafieldsMap = new Map();
