@@ -261,6 +261,12 @@ export function NewProductIntakeTab({ fetcher }) {
     setPieces(prev => prev.map(p => {
       let updated = { ...p };
       (p.id === id) && (updated[key] = value);
+      if (p.id === id && key === "weight_grams" && value !== "") {
+        const grams = parseFloat(value);
+        if (!isNaN(grams)) {
+          updated.shipping_weight_oz = String(Math.ceil((grams / 28.35) + 0.5));
+        }
+      }
       return updated;
     }));
   }, []);
@@ -1434,7 +1440,7 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
           >
             Copy Field Report
           </Button>
-        </div>
+          </div>
 
         <div style={{ minHeight: "54px" }}>
           {statusMessage !== "" ? (

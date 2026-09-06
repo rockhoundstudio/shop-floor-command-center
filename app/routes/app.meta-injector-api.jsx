@@ -655,7 +655,7 @@ export const action = async ({ request }) => {
         "pieces", "photoFiles", "photoPreviewUrls", "photos", "imageBase64", 
         "imageMimeType", "stagedResourceUrls", "scanError", "scanToken", 
         "isUploading", "id", "price", "collectionLocation", "age_group", 
-        "target_gender", "condition", "shipping_weight_oz", "collection_name", 
+        "target_gender", "condition", "collection_name", 
         "collection_location", "seo_title", "story_theme"
       ];
 
