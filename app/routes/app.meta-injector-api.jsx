@@ -43,40 +43,47 @@ function normalizeMetafieldValue(key, value) {
 }
 
 function applyOriginOverridesBeforeApi(title, metafieldsArray) {
-  if (!title || typeof title !== "string") return metafieldsArray;
-  
-  const segments = title.split(/\s*—\s*/);
-  if (segments.length < 3) return metafieldsArray;
+  let newMetafields = [...(metafieldsArray || [])];
 
-  const middleSegment = segments[1].trim();
-  let override = null;
+  if (title && typeof title === "string") {
+    const segments = title.split(/\s*—\s*/);
+    if (segments.length >= 3) {
+      const middleSegment = segments[1].trim();
+      let overrideHandle = null;
 
-  if (middleSegment === "Richardson's Rock Ranch") {
-    override = { origin_handle: "the-richardson-strike", origin_page_handle: "the-shopped-rock" };
-  } else if (middleSegment === "Yakima River Canyon" || middleSegment === "Yakima Canyon") {
-    override = { origin_handle: "the-shop-lore-chert-road-detour-yakima-river-jasper", origin_page_handle: "the-shop-lore-chert-road-detour-yakima-river-jasper" };
-  } else if (middleSegment === "Yellowstone River" || middleSegment === "Seven Sisters") {
-    override = { origin_handle: "the-yellowstone-river", origin_page_handle: "the-yellowstone-river" };
-  } else if (middleSegment === "Rufus" || middleSegment === "Rufus Serpentine") {
-    override = { origin_handle: "the-rufus-protocol", origin_page_handle: "the-rufus-protocol" };
-  } else if (middleSegment === "Nickel Back") {
-    override = { origin_handle: "the-nickel-back-collection", origin_page_handle: "the-nickel-back-collection" };
-  } else if (middleSegment === "North Fork CdA") {
-    override = { origin_handle: "north-fork-cda-collection", origin_page_handle: "north-fork-cda-collection" };
-  } else if (middleSegment === "Spokane River" || middleSegment === "Stateline") {
-    override = { origin_handle: "spokane-river-stateline", origin_page_handle: "spokane-river-stateline" };
+      if (middleSegment === "Richardson's Rock Ranch") {
+        overrideHandle = "the-richardson-strike";
+      } else if (middleSegment === "Yakima River Canyon" || middleSegment === "Yakima Canyon") {
+        overrideHandle = "the-shop-lore-chert-road-detour-yakima-river-jasper";
+      } else if (middleSegment === "Yellowstone River" || middleSegment === "Seven Sisters") {
+        overrideHandle = "the-yellowstone-river";
+      } else if (middleSegment === "Rufus" || middleSegment === "Rufus Serpentine") {
+        overrideHandle = "the-rufus-protocol";
+      } else if (middleSegment === "Nickel Back") {
+        overrideHandle = "the-nickel-back-collection";
+      } else if (middleSegment === "North Fork CdA") {
+        overrideHandle = "north-fork-cda-collection";
+      } else if (middleSegment === "Spokane River" || middleSegment === "Stateline") {
+        overrideHandle = "spokane-river-stateline";
+      }
+
+      if (overrideHandle) {
+        const ownerId = metafieldsArray.length > 0 ? metafieldsArray[0].ownerId : null;
+        if (ownerId) {
+          newMetafields = newMetafields.filter(m => m.key !== "origin_handle" && m.key !== "origin_page_handle");
+          newMetafields.push({ ownerId: ownerId, namespace: "custom", key: "origin_handle", type: "single_line_text_field", value: overrideHandle });
+        }
+      }
+    }
   }
 
-  if (override) {
-    const ownerId = metafieldsArray.length > 0 ? metafieldsArray[0].ownerId : null;
-    if (!ownerId) return metafieldsArray;
-
-    let newMetafields = metafieldsArray.filter(m => m.key !== "origin_handle" && m.key !== "origin_page_handle");
-    newMetafields.push({ ownerId: ownerId, namespace: "custom", key: "origin_handle", type: "single_line_text_field", value: override.origin_handle });
-    newMetafields.push({ ownerId: ownerId, namespace: "custom", key: "origin_page_handle", type: "single_line_text_field", value: override.origin_page_handle });
-    return newMetafields;
+  newMetafields = newMetafields.filter(m => m.key !== "origin_page_handle");
+  const originHandleField = newMetafields.find(m => m.key === "origin_handle");
+  if (originHandleField) {
+    newMetafields.push({ ...originHandleField, key: "origin_page_handle" });
   }
-  return metafieldsArray;
+
+  return newMetafields;
 }
 
 const MASTER_TYPE_MAP = {
@@ -234,7 +241,7 @@ export const action = async ({ request }) => {
       );
 
       let setMetafields = payloadArray
-        .filter(item => item.value !== null && String(item.value).trim() !== "")
+        .filter(item => item.value !== null && item.value !== undefined && String(item.value).trim() !== "" && MASTER_TYPE_MAP.hasOwnProperty(item.key))
         .flatMap(item => {
           const fallbackProductId = formData.get("productId");
           const itemOwnerId = item.ownerId || fallbackProductId;
@@ -659,10 +666,11 @@ export const action = async ({ request }) => {
       Object.entries(combinedFields).forEach(([key, value]) => {
         if (!ignoreKeys.includes(key) && value !== undefined && value !== null && String(value).trim() !== "") {
            let finalKey = key === "specificGravity" ? "specific_gravity" : key;
-           let normalizedValue = normalizeMetafieldValue(finalKey, value);
-
-           const resolvedType = MASTER_TYPE_MAP[finalKey] || MASTER_TYPE_MAP[key] || "single_line_text_field";
-           rawMetafields.push({ key: finalKey, value: normalizedValue, type: resolvedType });
+           if (MASTER_TYPE_MAP.hasOwnProperty(finalKey) || MASTER_TYPE_MAP.hasOwnProperty(key)) {
+             let normalizedValue = normalizeMetafieldValue(finalKey, value);
+             const resolvedType = MASTER_TYPE_MAP[finalKey] || MASTER_TYPE_MAP[key] || "single_line_text_field";
+             rawMetafields.push({ key: finalKey, value: normalizedValue, type: resolvedType });
+           }
         }
       });
 
@@ -772,15 +780,16 @@ export const action = async ({ request }) => {
           }
 
           if (isCustomField && metaKey) {
-             let resolvedValue = normalizeMetafieldValue(metaKey, value);
+            if (!MASTER_TYPE_MAP.hasOwnProperty(metaKey)) return;
+            let resolvedValue = normalizeMetafieldValue(metaKey, value);
 
-             injectMetafieldsMap.set(metaKey, {
-               ownerId: productId,
-               namespace: "custom",
-               key: metaKey,
-               type: MASTER_TYPE_MAP[metaKey] || "single_line_text_field",
-               value: (MASTER_TYPE_MAP[metaKey] || "").startsWith("list.") ? JSON.stringify([resolvedValue]) : resolvedValue
-             });
+            injectMetafieldsMap.set(metaKey, {
+              ownerId: productId,
+              namespace: "custom",
+              key: metaKey,
+              type: MASTER_TYPE_MAP[metaKey] || "single_line_text_field",
+              value: (MASTER_TYPE_MAP[metaKey] || "").startsWith("list.") ? JSON.stringify([resolvedValue]) : resolvedValue
+            });
           }
         });
 
