@@ -78,10 +78,6 @@ function applyOriginOverridesBeforeApi(title, metafieldsArray) {
   }
 
   newMetafields = newMetafields.filter(m => m.key !== "origin_page_handle");
-  const originHandleField = newMetafields.find(m => m.key === "origin_handle");
-  if (originHandleField) {
-    newMetafields.push({ ...originHandleField, key: "origin_page_handle" });
-  }
 
   return newMetafields;
 }

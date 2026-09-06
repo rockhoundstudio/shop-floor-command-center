@@ -645,6 +645,9 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
             updated.debug_origin = data.tab2Data?.debug_origin || data.debug_origin || "";
             updated.jewelry_type = data.tab2Data?.jewelry_type || "";
             updated.rarity = data.tab2Data?.rarity || "";
+            if (updated.is_ooak === "Yes" || updated.is_ooak === "true" || updated.is_ooak === true) {
+              updated.rarity = "One-of-a-Kind";
+            }
             updated.authenticity = data.tab2Data?.authenticity || "";
             window.shopify?.toast?.show("Scan complete — fields loaded");
           })();
