@@ -4,9 +4,9 @@
 // ==========================================================================
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { BlockStack, Card, Text, Banner, TextField, Select, Button, InlineStack, Collapsible, DropZone } from "@shopify/polaris";
+import { BlockStack, Card, Text, Banner, TextField, Select, Button, InlineStack, DropZone } from "@shopify/polaris";
 import { MagicIcon, SaveIcon, ClipboardIcon } from "@shopify/polaris-icons";
-import { normalizeDropdownValue, DROPDOWN_OPTIONS } from "../utils/meta-injector.constants.jsx";
+import { DROPDOWN_OPTIONS } from "../utils/meta-injector.constants.jsx";
 
 const CUSTOM_FIELDS = [
   { key: "shopify_title", label: "MASTER SHOPIFY TITLE (Edit Here)", type: "single_line_text_field", isShared: false },
@@ -21,6 +21,7 @@ const CUSTOM_FIELDS = [
   { key: "cut_and_shape", label: "Cut / Shape", type: "single_line_text_field", isPerPiece: true }, 
   { key: "dimensions_mm", label: "Dimensions (mm)", type: "single_line_text_field", isPerPiece: true },
   { key: "weight_grams", label: "Weight (grams)", type: "single_line_text_field", isPerPiece: true },
+  { key: "shipping_weight_oz", label: "Shipping Weight (oz)", type: "single_line_text_field", isPerPiece: true },
   { key: "honest_flaws_and_character", label: "Character Marks (Honest Flaws)", type: "multi_line_text_field", multiline: true, isPerPiece: true },
   { key: "price", label: "Price", type: "single_line_text_field", isPerPiece: true },
   { key: "generated_description", label: "Generated Description", type: "multi_line_text_field", multiline: true, isPerPiece: true }
@@ -28,7 +29,7 @@ const CUSTOM_FIELDS = [
 
 const FULL_META_GROUPS = [
   { heading: "Always Fill", color: "#2E7D32", fields: [{ key: "piece_name", label: "Piece Name", type: "text" }, { key: "primary_medium", label: "Primary Medium", type: "text" }, { key: "handcrafted_by", label: "Handcrafted By", type: "text" }, { key: "is_ooak", label: "Is One of a Kind", type: "text" }, { key: "treated", label: "Treated", type: "text" }] },
-  { heading: "Stone Fields", color: "#1565C0", fields: [{ key: "stone_family", label: "Stone Family", type: "text" }, { key: "color", label: "Color", type: "text" }, { key: "cut_and_shape", label: "Cut and Shape", type: "text" }, { key: "surface_finish", label: "Surface Finish", type: "text" }, { key: "dimensions_mm", label: "Dimensions (mm)", type: "text" }, { key: "weight_grams", label: "Weight (grams)", type: "text" }] },
+  { heading: "Stone Fields", color: "#1565C0", fields: [{ key: "stone_family", label: "Stone Family", type: "text" }, { key: "color", label: "Color", type: "text" }, { key: "cut_and_shape", label: "Cut and Shape", type: "text" }, { key: "surface_finish", label: "Surface Finish", type: "text" }, { key: "dimensions_mm", label: "Dimensions (mm)", type: "text" }, { key: "weight_grams", label: "Weight (grams)", type: "text" }, { key: "shipping_weight_oz", label: "Shipping Weight (oz)", type: "text" }] },
   { heading: "Story & Lore", color: "#E65100", fields: [{ key: "origin_story", label: "Origin Story", type: "text", multiline: true }, { key: "honest_flaws_and_character", label: "Honest Flaws and Character", type: "text", multiline: true }, { key: "collection_name", label: "Collection Name", type: "text" }, { key: "generated_description", label: "Generated Description", type: "text", multiline: true }] },
   { heading: "Google / SEO", color: "#F9A825", fields: [{ key: "primary_use", label: "Primary Use", type: "text" }, { key: "bail_included", label: "Bail Included", type: "text" }, { key: "seo_title", label: "SEO Title", type: "text" }] },
   { heading: "Geo-Vault", color: "#4E342E", fields: [{ key: "mineral_class", label: "Mineral Class", type: "text" }, { key: "crystal_system", label: "Crystal System", type: "text" }, { key: "rock_composition", label: "Rock Composition", type: "text" }, { key: "rock_formation", label: "Rock Formation", type: "text" }, { key: "geological_era", label: "Geological Era", type: "text" }] }
@@ -42,7 +43,7 @@ const NAMESPACE_MAP = {
   ]
 };
 
-export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2Fetcher }) {
+export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
   const [selectedProductId, setSelectedProductId] = useState("");
   const [formState, setFormState] = useState({});
   const [fullMetaState, setFullMetaState] = useState({});
@@ -117,6 +118,33 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
       });
     }
 
+    // 🔴 PHYSICAL LIVE VARIANT WEIGHT INGESTION
+    const firstVariant = product?.variants?.edges?.[0]?.node;
+    if (firstVariant && firstVariant.weight !== undefined && firstVariant.weight !== null) {
+      const vWeight = parseFloat(firstVariant.weight);
+      const vUnit = String(firstVariant.weightUnit || "OUNCES").toUpperCase();
+      let derivedGrams = 0;
+      let derivedOz = 0;
+
+      if (vUnit.includes("OUNCE") || vUnit === "OZ") {
+        derivedOz = vWeight;
+        derivedGrams = Math.round(vWeight * 28.3495);
+      } else if (vUnit.includes("GRAM") || vUnit === "G") {
+        derivedGrams = Math.round(vWeight);
+        derivedOz = parseFloat((vWeight / 28.3495).toFixed(2));
+      }
+
+      if (!newFullForm.weight_grams && derivedGrams > 0) {
+        newForm.weight_grams = String(derivedGrams);
+        newFullForm.weight_grams = String(derivedGrams);
+      }
+      if (!newFullForm.shipping_weight_oz && derivedOz > 0) {
+        const roundedOz = String(Math.ceil(derivedOz + 0.5));
+        newForm.shipping_weight_oz = roundedOz;
+        newFullForm.shipping_weight_oz = roundedOz;
+      }
+    }
+
     const CAMEL_TO_SNAKE = { 
       crystalSystem: "crystal_system", 
       geologicalEra: "geological_era", 
@@ -147,7 +175,9 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
     if (!newFullForm.shipping_weight_oz && newFullForm.weight_grams) {
       const grams = parseFloat(newFullForm.weight_grams);
       if (!isNaN(grams) && grams > 0) {
-        newFullForm.shipping_weight_oz = String(Math.ceil((grams / 28.35) + 0.5));
+        const oz = String(Math.ceil((grams / 28.35) + 0.5));
+        newFullForm.shipping_weight_oz = oz;
+        newForm.shipping_weight_oz = oz;
       }
     }
 
@@ -198,62 +228,47 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
     originalMetaRef.current = { ...newFullForm };
   }, [products]);
 
-  useEffect(() => {
-    if (selectedProductId && products && products.length > 0) {
-      const product = products.find(p => p.id === selectedProductId);
-      if (product) {
-        const allEdges = [
-          ...(product.customMeta?.edges || []),
-          ...(product.rockhoundMeta?.edges || []),
-          ...(product.geoMeta?.edges || []),
-          ...(product.metafields?.edges || [])
-        ];
+  const updateWeightFields = useCallback((key, value) => {
+    let newWeightGrams = "";
+    let newShippingOz = "";
 
-        const incoming = {};
-
-        allEdges.forEach(({ node }) => {
-          if (node && node.key && node.value && String(node.value).trim() !== "") {
-            incoming[node.key] = String(node.value).replace(/â€”/g, "—");
-          }
-        });
-
-        if (incoming.weight_grams && !incoming.shipping_weight_oz) {
-          const grams = parseFloat(incoming.weight_grams);
-          if (!isNaN(grams) && grams > 0) {
-            incoming.shipping_weight_oz = String(Math.ceil((grams / 28.35) + 0.5));
-          }
-        }
-
-        if (product.title) {
-          const cleanTitle = product.title.replace(/â€”/g, "—");
-          incoming.shopify_title = cleanTitle;
-          incoming.piece_name = cleanTitle.includes(" — ") ? cleanTitle.split(" — ").pop().trim() : cleanTitle;
-        }
-
-        setFormState(prev => ({ ...prev, ...incoming }));
-        setFullMetaState(prev => ({ ...prev, ...incoming }));
-        originalMetaRef.current = { ...originalMetaRef.current, ...incoming };
+    if (key === "weight_grams") {
+      newWeightGrams = value;
+      const parsedG = parseFloat(value);
+      if (!isNaN(parsedG) && parsedG > 0) {
+        newShippingOz = String(Math.ceil((parsedG / 28.35) + 0.5));
+      }
+    } else if (key === "shipping_weight_oz") {
+      newShippingOz = value;
+      const parsedOz = parseFloat(value);
+      if (!isNaN(parsedOz) && parsedOz > 0) {
+        newWeightGrams = String(Math.round(parsedOz * 28.3495));
       }
     }
-  }, [selectedProductId, products]);
 
-  const updateFormState = useCallback((key, value) => {
-    setFormState(prev => ({ ...prev, [key]: value }));
-    if (key === "color") setFullMetaState(prev => ({ ...prev, [key]: value }));
+    setFormState(prev => ({
+      ...prev,
+      [key]: value,
+      ...(key === "weight_grams" && newShippingOz ? { shipping_weight_oz: newShippingOz } : {}),
+      ...(key === "shipping_weight_oz" && newWeightGrams ? { weight_grams: newWeightGrams } : {})
+    }));
+
+    setFullMetaState(prev => ({
+      ...prev,
+      [key]: value,
+      ...(key === "weight_grams" && newShippingOz ? { shipping_weight_oz: newShippingOz } : {}),
+      ...(key === "shipping_weight_oz" && newWeightGrams ? { weight_grams: newWeightGrams } : {})
+    }));
   }, []);
 
   const updateFullMetaState = useCallback((key, value) => {
-    setFullMetaState(prev => {
-      const updated = { ...prev, [key]: value };
-      if (key === "weight_grams" && value !== "") {
-        const grams = parseFloat(value);
-        if (!isNaN(grams) && grams > 0) {
-          updated.shipping_weight_oz = String(Math.ceil((grams / 28.35) + 0.5));
-        }
-      }
-      return updated;
-    });
-  }, []);
+    if (key === "weight_grams" || key === "shipping_weight_oz") {
+      updateWeightFields(key, value);
+      return;
+    }
+    setFullMetaState(prev => ({ ...prev, [key]: value }));
+    setFormState(prev => ({ ...prev, [key]: value }));
+  }, [updateWeightFields]);
 
   const handleTab2AutoFill = useCallback(() => {
     if (!selectedProductId) return;
@@ -343,21 +358,27 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
     const allowedKeys = NAMESPACE_MAP.custom;
     const payload = [];
 
-    Object.entries(fullMetaState).forEach(([key, value]) => {
+    // Ensure weights are explicitly bound into state snapshot
+    const activeWeights = {
+      weight_grams: fullMetaState.weight_grams || formState.weight_grams || "",
+      shipping_weight_oz: fullMetaState.shipping_weight_oz || formState.shipping_weight_oz || ""
+    };
+
+    const combinedState = { ...fullMetaState, ...activeWeights };
+
+    Object.entries(combinedState).forEach(([key, value]) => {
       if (key === "shopify_title") return; 
       if (!allowedKeys.includes(key)) return;
 
-      let injectValue = String(value);
+      let injectValue = String(value !== null && value !== undefined ? value : "");
       if (key === "piece_name") injectValue = resolvedPieceName;
 
-      // 🔴 UNIVERSAL STEAMROLLER: Crush all hidden line breaks, 'Enter' keys, and carriage returns.
-      // Shopify's database schema will crash if a field originally defined as single-line receives a line break.
+      // Clean line breaks
       injectValue = injectValue.replace(/\\[rn]/g, " ").replace(/[\r\n]+/g, " ").replace(/\s{2,}/g, " ").trim();
 
       const config = CUSTOM_FIELDS.find(f => f.key === key);
       let fieldType = config && config.type ? config.type : "single_line_text_field";
       
-      // Keep definitions accurate for the API, but the value is already safely flattened.
       if (["honest_flaws_and_character", "origin_story", "generated_description", "artist_notes"].includes(key)) {
         fieldType = "multi_line_text_field";
       }
@@ -390,7 +411,9 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
         payload: JSON.stringify(payload),
         productId: selectedProductId,
         productTitle: masterTitle,
-        descriptionHtml: descHtml
+        descriptionHtml: descHtml,
+        weightGrams: activeWeights.weight_grams,
+        shippingWeightOz: activeWeights.shipping_weight_oz
       },
       { method: "post", action: "/app/meta-injector-api" }
     );
@@ -409,6 +432,7 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
         setFormState(prev => {
           const updatedState = { ...prev };
           Object.entries(tab2Data).forEach(([key, val]) => {
+            if (key === "weight_grams" || key === "shipping_weight_oz") return;
             const hasNewValue = val !== undefined && val !== null && val.toString().trim() !== "" && val !== "See Shopify metaobject";
             if (hasNewValue) {
               let normalizedVal = val;
@@ -427,6 +451,9 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
           const ALWAYS_OVERWRITE = ["mohs_hardness", "luster", "fracture_pattern", "cleavage", "specific_gravity", "diaphaneity", "mineral_class", "crystal_system", "rock_composition", "rock_formation", "geological_era", "geological_age", "generated_description", "seo_title", "origin_story", "stone_story", "primary_use", "bail_included", "setting_ready", "primary_medium", "alt_text"];
 
           Object.entries(tab2Data).forEach(([key, val]) => {
+            // NEVER allow AI autofill scans to overwrite manual bench weights
+            if (key === "weight_grams" || key === "shipping_weight_oz") return;
+
             const hasNewValue = val !== undefined && val !== null && val.toString().trim() !== "" && val !== "See Shopify metaobject";
             const currentlyEmpty = !updatedState[key] || updatedState[key].toString().trim() === "";
             
@@ -520,7 +547,7 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
       field = { key: key, label: key.split(/[-_]/).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' '), type: 'text', multiline: key.includes("story") || key.includes("notes") || key.includes("flaws") || key.includes("character") || key === "generated_description" };
     }
 
-    let val = fullMetaState[field.key] || "";
+    let val = fullMetaState[field.key] !== undefined && fullMetaState[field.key] !== null ? fullMetaState[field.key] : "";
     if (typeof val === 'string' && val.startsWith('[')) { 
       try { 
         const arr = JSON.parse(val); 
@@ -536,7 +563,7 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
     if (field.key === "primary_medium" && val === "Stone") val = "";
     if (field.key === "color" && formState.color) val = formState.color;
 
-    const reqKeys = ["shopify_title", "piece_name", "price", "weight_grams", "material", "stone_family", "collection_name", "origin_handle", "rescued_by", "treatment_status", "origin_story", "primary_use", "seo_title"];
+    const reqKeys = ["shopify_title", "piece_name", "price", "weight_grams", "shipping_weight_oz", "material", "stone_family", "collection_name", "origin_handle", "rescued_by", "treatment_status", "origin_story", "primary_use", "seo_title"];
     const isFilled = val !== undefined && val !== null && String(val).trim() !== "" && String(val).trim() !== "false";
     const isRequiredEmpty = !isFilled && reqKeys.includes(field.key);
     const isEmpty = !isFilled;

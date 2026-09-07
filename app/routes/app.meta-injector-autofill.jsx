@@ -127,22 +127,6 @@ async function saveToStoneCache(stoneName, geoResult) {
 
 const MINDAT_API_KEY = process.env.MINDAT_API_KEY;
 
-const MINDAT_KEY_MAP = {
-  official_name: "name",
-  mineral_class: "mindat_formula",
-  crystal_structure: "crystal_system",
-  luster: "luster",
-  specific_gravity: "density",
-  mohs_hardness: "hardness",
-  cleavage: "cleavage",
-  fracture_pattern: "fracture",
-  diaphaneity: "transparency",
-  tenacity: "tenacity",
-  origin_location: "localities_count",
-};
-
-const SHOPPED_ROCK_VENDORS = ["Richardson's Rock Ranch", "Irv's Rock and Jewelry", "Irv's Rock & Jewelry", "Rock and Gem Show"];
-
 async function fetchWithRetry(url, options, retries = 3, delay = 1500) {
   for (let i = 0; i < retries; i++) {
     const controller = new AbortController();
@@ -343,7 +327,7 @@ async function getGeoData(admin, stoneFamily) {
           mohs_hardness: hardness, 
           luster: mineral.luster || "", 
           fracture_pattern: mineral.fracture || "", 
-          cleavage: mineral.cleavage || "",
+          cleavage: mineral.cleavage || "", 
           specific_gravity, 
           diaphaneity: mineral.transparency || "", 
           crystal_system: mineral.crystal_system || "", 
@@ -366,7 +350,6 @@ async function getGeoData(admin, stoneFamily) {
   return emptyGeo;
 }
 
-// 🟢 FIX: Band-aid array completely amputated. Only handles Shopify metaobject tags.
 function sanitizeObject(obj) {
   if (!obj) return obj;
   for (let key in obj) {
@@ -403,6 +386,12 @@ export const action = async ({ request }) => {
       const rawProductTitle = body.get("productTitle") || body.get("piece_name") || body.get("title") || "";
       const productTitle = rawProductTitle.replace(/â€”/g, "—");
       const imageUrl = body.get("imageUrl") || "";
+
+      // Capture physical bench inputs to protect from being wiped
+      const bench_weight_grams = body.get("weight_grams") || "";
+      const bench_shipping_weight_oz = body.get("shipping_weight_oz") || "";
+      const bench_dimensions_mm = body.get("dimensions_mm") || "";
+      const bench_price = body.get("price") || "";
 
       const titleSegments = productTitle.split(/\s+[-—–]\s+/);
       const derivedFamily = titleSegments[0]?.trim() || stone_family;
@@ -491,7 +480,7 @@ export const action = async ({ request }) => {
             if (geminiRes.ok) {
               const geminiData = await geminiRes.json();
               if (!geminiData || !geminiData.candidates || geminiData.candidates.length === 0) {
-                 throw new Error("Gemini API returned empty or malformed response structure.");
+                 throw new Error("Gemini API returned empty response structure.");
               }
               let cleanJson = (geminiData.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
               const first = cleanJson.indexOf("{");
@@ -518,7 +507,7 @@ export const action = async ({ request }) => {
               }
             } else {
                const errText = await geminiRes.text();
-               throw new Error(`Gemini API returned status: ${geminiRes.status} - ${errText}`);
+               throw new Error(`Gemini API error: ${geminiRes.status} - ${errText}`);
             }
           } catch (visionErr) {
             console.error("[tab2AutoFill] Vision scan failed:", visionErr);
@@ -577,7 +566,12 @@ export const action = async ({ request }) => {
           age_group: "adult",
           target_gender: "Unisex",
           condition: "new",
-          google_product_category: "Apparel & Accessories > Jewelry"
+          google_product_category: "Apparel & Accessories > Jewelry",
+          // Retain physical bench attributes so they never get wiped
+          ...(bench_weight_grams ? { weight_grams: bench_weight_grams } : {}),
+          ...(bench_shipping_weight_oz ? { shipping_weight_oz: bench_shipping_weight_oz } : {}),
+          ...(bench_dimensions_mm ? { dimensions_mm: bench_dimensions_mm } : {}),
+          ...(bench_price ? { price: bench_price } : {})
         });
 
         return Response.json({ success: true, intent: "tab2AutoFill", tab2Data: payload });
@@ -594,7 +588,7 @@ export const action = async ({ request }) => {
       const segment2 = segments[1]?.trim() || "";
       const segment3 = segments[2]?.trim() || "";
 
-      let stonePicklist = "Agate, Amazonite, Amethyst, Andesite, Aventurine, Azurite, Brecciated Jasper, Brecciated Quartz, Calcite, Carnelian, Chalcedony, Chrysocolla, Citrine, Dalmatian Stone, Fluorite, Garnet, Hematite, Howlite, Jasper, Kyanite, Labradorite, Lapis Lazuli, Lepidolite, Malachite, Moonstone, Obsidian, Ocean Jasper, Onyx, Opal, Petrified Wood, Picture Jasper, Prehnite, Pyrite, Quartz, Quartzite, Rhodonite, Rhyolite, Rose Quartz, Serpentine, Smoky Quartz, Sodalite, Sunstone, Tiger's Eye, Tourmaline, Turquoise, Unakite, Variscite";
+      let stonePicklist = "Agate, Amazonite, Amethyst, Andesite, Aventurine, Azurite, Brecciated Jasper, Brecciated Quartz, Calcite, Carnelian, Chalcedony, Chrysocolla, Citrine, Dalmatian Stone, Fluorite, Garnet, Hematite, Howlite, Jasper, Kyanite, Labradorite, Lapis Lazuli, Lepidolite, Malachite, Moonstone, Obsidian, Ocean Jasper, Onyx, Opal, Petrified Wood, Picture Jasper, Prehnite, Pyrite, Quartz, Quartzite, Rhodonite, Rhyolite, Rose Quartz, Serpentine, Smoky Quartz, Sodalite, Sunstone, Tourmaline, Turquoise, Unakite, Variscite";
       
       try {
         const stoneRows = await queryPostgres('SELECT "stone_name" FROM "StoneProfile" ORDER BY "stone_name"', []);
@@ -630,7 +624,7 @@ ${collectionsMenu || "No live collections found."}
 INSTRUCTIONS:
 1. The Origin segment ("${segment2}") is the AUTHORITY. Do NOT reclassify or override it. Set 'origin_location' to the clean geographic name derived from "${segment2}" — strip prefixes like "Shop Lore:", "The", or "Collection". Expand abbreviations (e.g. "cda" → "North Fork Coeur d'Alene", "yakima" → "Yakima Canyon"). Match 'collection_name' and 'collection_location' to the live store entry that corresponds to "${segment2}". Never substitute a vendor name or "The Shopped Rock" unless "${segment2}" explicitly contains a vendor name.
 2. Set origin_handle strictly to: "${resolvedHandle}". 
-3. stone_family must be exactly one of: ${stonePicklist} - match only the mineral/stone type word from the title. Ignore all color, pattern, cut, and modifier words (e.g. "Green", "Picture", "Brecciated", "Freeform", "Teardrop"). Only the stone name itself counts. Pick the closest entry from the list.
+3. stone_family must be exactly one of: ${stonePicklist} - match only the mineral/stone type word from the title. Ignore all color, pattern, cut, and modifier words. Pick the closest entry from the list.
 
 Return valid JSON with these exact keys: stone_family, piece_name, origin_handle, origin_location, collection_name, collection_location, seo_title. Generate a keyword-rich seo_title for Google using the family and keywords like "Handcrafted" or "OOAK Lapidary Art". No markup. No extra keys.`;
 
@@ -662,7 +656,7 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
       if (geminiRes.ok) {
         const data = await geminiRes.json();
         if (!data || !data.candidates || data.candidates.length === 0) {
-          throw new Error("Gemini API returned empty or malformed response structure during titleParse.");
+          throw new Error("Gemini API returned empty response structure during titleParse.");
         }
         let cleanJson = (data.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
         const first = cleanJson.indexOf("{");
@@ -727,6 +721,14 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
       const clientBase64 = body.get("imageBase64");
       const clientMime = body.get("imageMimeType") || "image/jpeg";
       
+      // Preserve bench fields so full rescan never clears existing weight or measurements
+      const bench_weight_grams = body.get("weight_grams") || "";
+      const bench_shipping_weight_oz = body.get("shipping_weight_oz") || "";
+      const bench_dimensions_mm = body.get("dimensions_mm") || "";
+      const bench_price = body.get("price") || "";
+      const bench_origin_story = body.get("origin_story") || "";
+      const bench_honest_flaws = body.get("honest_flaws_and_character") || "";
+
       const rawTitleInput = body.get("productTitle") || body.get("pieceName") || body.get("piece_name") || "";
       const titleInput = rawTitleInput.replace(/â€”/g, "—");
       const segments = titleInput.split(/\s+[—–-]\s+/);
@@ -743,7 +745,7 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
       const fullCollectionTitle = defaultCollection.name.replace(/\s+Collection$/i, "").trim();
 
       const matchedPage = pagesList.find(p => p.url.includes(defaultOriginSlug));
-      const extractedStory = matchedPage ? matchedPage.excerpt : "";
+      const extractedStory = bench_origin_story || (matchedPage ? matchedPage.excerpt : "");
       
       const pagesMenu = pagesList.map(p => `- Title: "${p.title}" | URL: ${p.url} | Excerpt: "${p.excerpt}"`).join("\n");
       const collectionsMenu = collectionsList.map(c => `- Title: "${c.title}" | URL: ${c.url} | Excerpt: "${c.excerpt}"`).join("\n");
@@ -822,7 +824,7 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
       if (geminiRes.ok) {
         const geminiData = await geminiRes.json();
         if (!geminiData || !geminiData.candidates || geminiData.candidates.length === 0) {
-          throw new Error("Gemini API returned empty or malformed response structure during visionScan.");
+          throw new Error("Gemini API returned empty response structure during visionScan.");
         }
         let cleanJson = (geminiData.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
         const first = cleanJson.indexOf("{");
@@ -837,17 +839,17 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
           parsedVision = JSON.parse(cleanJson);
         } catch (parseErr) {
           console.error(`[${intent}] JSON Parse Error:`, parseErr, "Raw string:", cleanJson);
-          return Response.json({ success: false, intent, error: `JSON Parse Error: ${parseErr.message} | Raw string: ${cleanJson.substring(0, 100)}...` });
+          return Response.json({ success: false, intent, error: `JSON Parse Error: ${parseErr.message}` });
         }
         
         const resolved_primary_use = parsedVision.primary_use || parsedVision.use || parsedVision.product_type || "";
-        const resolved_primary_medium = parsedVision.primary_medium || parsedVision.medium || parsedVision.metal || parsedVision.primary_metal || "Natural Stone";
-        const resolved_secondary_medium = parsedVision.secondary_medium || parsedVision.accent || parsedVision.secondary_metal || "None";
-        const resolved_wire_material = parsedVision.wire_material || parsedVision.wire || parsedVision.wire_wrap || "None";
-        const resolved_setting_ready = parsedVision.setting_ready || parsedVision.setting || parsedVision.mounting || parsedVision.bezel || "None";
-        const resolved_bail_included = parsedVision.bail_included || parsedVision.bail || "None";
+        const resolved_primary_medium = parsedVision.primary_medium || parsedVision.medium || parsedVision.metal || "Natural Stone";
+        const resolved_secondary_medium = parsedVision.secondary_medium || "None";
+        const resolved_wire_material = parsedVision.wire_material || "None";
+        const resolved_setting_ready = parsedVision.setting_ready || "None";
+        const resolved_bail_included = parsedVision.bail_included || "None";
 
-        let final_desc = parsedVision.generated_description || parsedVision.description || "";
+        let final_desc = parsedVision.generated_description || "";
         const lowerDesc = final_desc.toLowerCase();
         if (final_desc.startsWith("[VISION API CRASH]") || final_desc.startsWith("[API CRASH]") || final_desc.startsWith("[JSON PARSE ERROR]") || lowerDesc.includes("timed out")) {
             final_desc = "";
@@ -897,7 +899,13 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
           age_group: "adult",
           target_gender: "Unisex",
           condition: "new",
-          google_product_category: "Apparel & Accessories > Jewelry"
+          google_product_category: "Apparel & Accessories > Jewelry",
+          // Preserve physical bench attributes during full rescan
+          honest_flaws_and_character: bench_honest_flaws || parsedVision.honest_flaws_and_character || "",
+          ...(bench_weight_grams ? { weight_grams: bench_weight_grams } : {}),
+          ...(bench_shipping_weight_oz ? { shipping_weight_oz: bench_shipping_weight_oz } : {}),
+          ...(bench_dimensions_mm ? { dimensions_mm: bench_dimensions_mm } : {}),
+          ...(bench_price ? { price: bench_price } : {})
         });
 
         return Response.json({

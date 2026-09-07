@@ -198,18 +198,16 @@ export function NewProductIntakeTab({ fetcher }) {
   const [lastScannedPieceId, setLastScannedPieceId] = useState(null);
 
   const handleScanGeminiPhotos = useCallback((piece) => {
-    // Check if the piece already has a base64 image; if so, we can call handleScanPhoto immediately.
     if (piece?.imageBase64) {
       handleScanPhoto({
         piece,
         updatePiece: handlePieceChange,
-        visionFetcher, // Fix: Changed autoFillFetcher to visionFetcher
+        visionFetcher,
         setErrorMessage
       });
       return;
     }
 
-    // Fallback: stage upload flow if base64 is not already set.
     !!(piece?.photoFiles?.[0]) && (() => {
       const formData = new FormData();
       formData.append("intent", "stagedUpload");
@@ -462,6 +460,7 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
     fetcher.submit(fd, { method: "post", action: "/app/meta-injector-api" });
   }, [sharedFields, pieces, fetcher]);
 
+  // 🟢 FIX: THE HARD WIPE (Stop Ghost Data Carryover)
   const handleStartNewBatch = useCallback(() => {
     setStatusMessage("");
     setErrorMessage("");
@@ -588,7 +587,7 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
           executeVisionScan(initialPiece.imageBase64, initialPiece.imageMimeType);
         } else {
           let attempts = 0;
-          const maxAttempts = 25; // 25 polls * 200ms = 5 seconds
+          const maxAttempts = 25; 
           const pollInterval = setInterval(() => {
             attempts++;
             const currentPiece = latestPieces.current.find(p => p.id === pid);
@@ -788,7 +787,7 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
 
       (isDesc && isSuccess) && (() => {
         let descStr = "";
-        data.description && (descStr = data.description);
+        data.generated_description && (descStr = data.generated_description);
         setPieces(prev => prev.map((p, i) =>
           p.id === data.pieceId || (!data.pieceId && i === 0)
             ? { ...p, generated_description: descStr, seo_title: data.seo_title || p.seo_title }

@@ -10,14 +10,32 @@ function chunkArray(arr, size) {
   return chunks;
 }
 
+// 🟢 FIX: THE GEO-STRIPPER
 function extractStoneName(title) {
-  const knownStones = ["Jasper", "Agate", "Amethyst", "Quartz", "Turquoise", "Obsidian", "Jade", "Opal"];
-  const upperTitle = title.toUpperCase();
-  for (const stone of knownStones) {
-    if (upperTitle.includes(stone.toUpperCase())) {
-      return stone;
-    }
+  if (!title) return "Unknown";
+  
+  // Isolate section one (everything before the first dash)
+  let sectionOne = title.split(/[—–-]/)[0].trim();
+  
+  // Dictionary of adjectives to strip out
+  const adjectives = [
+    "Green", "Blue", "Red", "Yellow", "Orange", "Purple", "Pink", "Black", "White", "Grey", "Gray", "Brown",
+    "Brecciated", "Picture", "Ocean", "Crazy Lace", "Plume", "Moss", "Dendritic", "Banded", "Polychrome",
+    "Imperial", "Royal", "Dark", "Light", "Clear", "Opaque", "Translucent", "Raw", "Rough", "Tumbled",
+    "Polished", "Natural", "Fossil", "Petrified", "Mookaite", "Kambaba", "Bumblebee", "Dalmatian", "Dragon Blood"
+  ];
+
+  let words = sectionOne.split(/\s+/);
+  
+  // Strip known adjectives
+  words = words.filter(word => !adjectives.some(adj => adj.toLowerCase() === word.toLowerCase()));
+
+  // Grab the last remaining word as the true base rock
+  if (words.length > 0) {
+    let baseRock = words[words.length - 1];
+    return baseRock.charAt(0).toUpperCase() + baseRock.slice(1).toLowerCase();
   }
+
   return "Unknown";
 }
 
@@ -29,9 +47,9 @@ function normalizeMetafieldValue(key, value) {
     val = val.replace(/^⚠️\s*/, "");
   }
 
-  // 2. NORMALIZE BOOLEAN-STYLE FIELDS
+  // 2. NORMALIZE BOOLEAN-STYLE FIELDS (Amputated legacy is_one_of_a_kind)
   const booleanKeys = [
-    "is_ooak", "is_one_of_a_kind", "found_object", 
+    "is_ooak", "found_object", 
     "custom_product", "setting_ready", "bail_included", "treated"
   ];
   if (booleanKeys.includes(key)) {
@@ -82,22 +100,18 @@ function applyOriginOverridesBeforeApi(title, metafieldsArray) {
   return newMetafields;
 }
 
+// 🟢 FIX: THE SCHEMA COLLISION (Ghost keys removed)
 const MASTER_TYPE_MAP = {
   rescued_by: "single_line_text_field",
   origin_location: "single_line_text_field",
   geological_age: "single_line_text_field",
   mohs_hardness: "single_line_text_field",
   official_name: "single_line_text_field",
-  mineral_class: "single_line_text_field",
-  crystal_system: "single_line_text_field",
   luster: "single_line_text_field",
-  rock_composition: "single_line_text_field",
   specific_gravity: "single_line_text_field",
   fracture_pattern: "single_line_text_field",
   cleavage: "single_line_text_field",
   tenacity: "single_line_text_field",
-  geological_era: "single_line_text_field",
-  rock_formation: "single_line_text_field",
   primary_color: "single_line_text_field",
   diaphaneity: "single_line_text_field",
   character_marks: "list.single_line_text_field",
@@ -110,9 +124,6 @@ const MASTER_TYPE_MAP = {
   secondary_colors: "single_line_text_field",
   base_stone_type: "single_line_text_field",
   hardness: "single_line_text_field",
-  origin_story: "single_line_text_field",
-  honest_flaws: "single_line_text_field",
-  honest_flaws_and_character: "single_line_text_field",
   primary_medium: "single_line_text_field",
   piece_name: "single_line_text_field",
   stone_family: "single_line_text_field",
@@ -121,36 +132,60 @@ const MASTER_TYPE_MAP = {
   origin_handle: "single_line_text_field",
   origin_page_handle: "single_line_text_field",
   cut_and_shape: "single_line_text_field",
-  color_pattern: "single_line_text_field",
-  generated_description: "single_line_text_field",
   primary_use: "single_line_text_field",
   weight_grams: "number_decimal",
   shipping_weight_oz: "number_decimal",
   handcrafted_by: "single_line_text_field",
-  artist_notes: "single_line_text_field",
   alt_text: "single_line_text_field",
   is_ooak: "single_line_text_field",
   found_object: "single_line_text_field",
   custom_product: "single_line_text_field",
-  authenticity: "single_line_text_field",
-  rarity: "single_line_text_field",
   color: "single_line_text_field",
   setting_ready: "single_line_text_field",
   bail_included: "single_line_text_field",
   wire_material: "single_line_text_field",
   chain_material: "single_line_text_field",
-  target_gender: "single_line_text_field",
-  age_group: "single_line_text_field",
-  condition: "single_line_text_field",
   price: "number_decimal",
   seo_title: "single_line_text_field",
   secondary_medium: "single_line_text_field",
-  jewelry_type: "single_line_text_field",
-  necklace_design: "single_line_text_field",
-  chain_link_type: "single_line_text_field",
-  jewelry_finding_type: "single_line_text_field",
-  material: "single_line_text_field",
-  treated: "single_line_text_field"
+  treated: "single_line_text_field",
+  
+  // HEAVY TEXT BLOCKS (Multi-line)
+  origin_story: "multi_line_text_field",
+  honest_flaws: "multi_line_text_field",
+  honest_flaws_and_character: "multi_line_text_field",
+  generated_description: "multi_line_text_field",
+  artist_notes: "multi_line_text_field",
+  
+  // SHOPIFY TAXONOMY / METAOBJECTS
+  color_pattern: "list.metaobject_reference",
+  "color-pattern": "list.metaobject_reference",
+  material: "metaobject_reference",
+  age_group: "metaobject_reference",
+  "age-group": "metaobject_reference",
+  jewelry_type: "metaobject_reference",
+  "jewelry-type": "metaobject_reference",
+  target_gender: "metaobject_reference",
+  "target-gender": "metaobject_reference",
+  necklace_design: "metaobject_reference",
+  "necklace-design": "metaobject_reference",
+  authenticity: "metaobject_reference",
+  rarity: "metaobject_reference",
+  condition: "metaobject_reference",
+  crystal_system: "metaobject_reference",
+  "crystal-system": "metaobject_reference",
+  mineral_class: "metaobject_reference",
+  "mineral-class": "metaobject_reference",
+  geological_era: "metaobject_reference",
+  "geological-era": "metaobject_reference",
+  rock_composition: "metaobject_reference",
+  "rock-composition": "metaobject_reference",
+  rock_formation: "metaobject_reference",
+  "rock-formation": "metaobject_reference",
+  chain_link_type: "metaobject_reference",
+  "chain-link-type": "metaobject_reference",
+  jewelry_finding_type: "metaobject_reference",
+  "jewelry-finding-type": "metaobject_reference",
 };
 
 export const action = async ({ request }) => {
@@ -229,12 +264,6 @@ export const action = async ({ request }) => {
       }
 
       let payloadArray = JSON.parse(rawPayload);
-      
-      payloadArray = payloadArray.filter(item => 
-        item.key !== "collectionLocation" && 
-        item.key !== "is_one_of_a_kind" &&
-        item.key !== "story_theme" 
-      );
 
       let setMetafields = payloadArray
         .filter(item => item.value !== null && item.value !== undefined && String(item.value).trim() !== "" && MASTER_TYPE_MAP.hasOwnProperty(item.key))
@@ -317,7 +346,6 @@ export const action = async ({ request }) => {
           if (newProductTitle) inputVars.title = newProductTitle;
           if (newDescriptionHtml) inputVars.descriptionHtml = newDescriptionHtml;
 
-          // 🔴 FIX: Changed ProductInput! to ProductUpdateInput!
           await admin.graphql(
             `#graphql
             mutation productUpdate($input: ProductUpdateInput!) {
@@ -395,7 +423,7 @@ export const action = async ({ request }) => {
 
     const lookupResult = await lookupResponse.json();
     const allMeta = lookupResult?.data?.product?.metafields?.edges || [];
-    const malformedKeys = ["cut_type", "crystalSystem", "geologicalEra", "mineralClass", "rockComposition", "rockFormation", "specificGravity", "mohsHardness"];
+    const malformedKeys = ["cut_type", "crystalSystem", "geologicalEra", "mineralClass", "rockComposition", "rockFormation", "specificGravity", "mohsHardness", "stone_story"];
     
     const toDelete = allMeta.map(e => e.node).filter(m => malformedKeys.includes(m.key));
 
@@ -428,7 +456,7 @@ export const action = async ({ request }) => {
       let totalScanned = 0;
       let totalDeleted = 0;
 
-      const customCamelKeys = ["cut_type", "crystalSystem", "geologicalEra", "mineralClass", "rockComposition", "rockFormation", "specificGravity", "mohsHardness", "hardness", "fracture"];
+      const customCamelKeys = ["cut_type", "crystalSystem", "geologicalEra", "mineralClass", "rockComposition", "rockFormation", "specificGravity", "mohsHardness", "hardness", "fracture", "stone_story"];
 
       while (hasNextPage) {
         const productsResponse = await admin.graphql(
@@ -578,7 +606,6 @@ export const action = async ({ request }) => {
       const productHandle = createdProduct.handle;
       const defaultVariantId = createdProduct.variants?.edges?.[0]?.node?.id;
 
-      // 🔴 FIX: Added 500ms breather to prevent indexing race condition
       await new Promise(resolve => setTimeout(resolve, 500));
 
       const seoDescription = payload.descriptionHtml || piece.generated_description || piece.descriptionHtml || "";
@@ -658,9 +685,9 @@ export const action = async ({ request }) => {
         "intent", "mediaUrlsJson", "descriptionHtml", "productType", "status", 
         "pieces", "photoFiles", "photoPreviewUrls", "photos", "imageBase64", 
         "imageMimeType", "stagedResourceUrls", "scanError", "scanToken", 
-        "isUploading", "id", "price", "collectionLocation", "age_group", 
+        "isUploading", "id", "price", "age_group", 
         "target_gender", "condition", "collection_name", 
-        "collection_location", "seo_title", "story_theme"
+        "collection_location", "seo_title"
       ];
 
       Object.entries(combinedFields).forEach(([key, value]) => {
@@ -674,7 +701,6 @@ export const action = async ({ request }) => {
         }
       });
 
-      // Google fields attached to Product (productId) instead of defaultVariantId
       if (combinedFields.age_group && combinedFields.age_group !== "") googleMetafields.push({ ownerId: productId, namespace: "google", key: "age_group", type: "single_line_text_field", value: String(combinedFields.age_group) });
       if (combinedFields.target_gender && combinedFields.target_gender !== "") googleMetafields.push({ ownerId: productId, namespace: "google", key: "target_gender", type: "single_line_text_field", value: String(combinedFields.target_gender) });
       if (combinedFields.condition && combinedFields.condition !== "") googleMetafields.push({ ownerId: productId, namespace: "google", key: "condition", type: "single_line_text_field", value: String(combinedFields.condition) });
@@ -692,7 +718,8 @@ export const action = async ({ request }) => {
         "the-3-000-mile-run-1": "The 3,000-Mile Run",
         "the-shopped-rock": "The Shopped Rock",
       };
-      const rawColLoc = combinedFields.collection_location || combinedFields.collectionLocation || "";
+      
+      const rawColLoc = combinedFields.collection_location || "";
       const resolvedColLoc = COLLECTION_LOCATION_MAP[rawColLoc] || rawColLoc;
       if (resolvedColLoc) rawMetafields.push({ key: "collection_location", value: resolvedColLoc, type: "single_line_text_field" });
 
@@ -715,7 +742,6 @@ export const action = async ({ request }) => {
 
             let allMetafieldsToSet = [...metafieldsInput, ...googleMetafields];
             
-            // Apply Origin Overrides right before Shopify API call
             allMetafieldsToSet = applyOriginOverridesBeforeApi(title, allMetafieldsToSet);
 
             const chunks = chunkArray(allMetafieldsToSet, 25);
@@ -769,7 +795,6 @@ export const action = async ({ request }) => {
 
         Object.entries(flatPayload).forEach(([key, value]) => {
           if (value === null || value === undefined || String(value).trim() === "") return;
-          if (key === "story_theme") return; // Strip out story_theme
           
           let metaKey = key;
           let isCustomField = targetKeys.includes(key);
@@ -795,7 +820,6 @@ export const action = async ({ request }) => {
 
         let injectMetafields = Array.from(injectMetafieldsMap.values());
         
-        // Final override application before injection
         injectMetafields = applyOriginOverridesBeforeApi(title, injectMetafields);
 
         if (injectMetafields.length > 0) {
@@ -847,7 +871,7 @@ export const action = async ({ request }) => {
       const toDelete = allMeta.map(e => e.node).filter(m => {
           if (["geo", "rockhound", "geology"].includes(m.namespace)) return true;
           if (m.namespace === "custom") {
-            if (["crystalSystem", "geologicalEra", "mineralClass", "rockComposition", "rockFormation", "specificGravity", "hardness", "fracture", "geoSource", "store_hardness", "store_luster", "store_fracture", "store_cleavage", "store_specific_gravity", "store_diaphaneity", "moh_hardness", "mohsHardness", "primary_color", "secondary_colors", "cut_type", "base_stone_type", "meta_status", "tenacity", "official_name", "polishing_compound", "dimensions", "chemical_formula", "crystal_structure", "refractive_index", "title_tag", "description_tag", "google_product_category", "color-pattern", "jewelry-material", "target-gender", "age-group", "seo_title", "age_group", "condition", "is_one_of_a-kind", "authenticity", "rarity"].includes(m.key)) return true;
+            if (["crystalSystem", "geologicalEra", "mineralClass", "rockComposition", "rockFormation", "specificGravity", "hardness", "fracture", "geoSource", "store_hardness", "store_luster", "store_fracture", "store_cleavage", "store_specific_gravity", "store_diaphaneity", "moh_hardness", "mohsHardness", "primary_color", "secondary_colors", "cut_type", "base_stone_type", "meta_status", "tenacity", "official_name", "polishing_compound", "dimensions", "chemical_formula", "crystal_structure", "refractive_index", "title_tag", "description_tag", "google_product_category", "color-pattern", "jewelry-material", "target-gender", "age-group", "seo_title", "age_group", "condition", "is_one_of_a-kind", "authenticity", "rarity", "stone_story"].includes(m.key)) return true;
             if (/[a-z][A-Z]/.test(m.key)) return true;
           }
           return false;
@@ -908,7 +932,7 @@ export const action = async ({ request }) => {
           const toDelete = allMeta.map(e => e.node).filter(m => {
               if (["geo", "rockhound"].includes(m.namespace)) return true;
               if (m.namespace === "custom") {
-                if (["crystalSystem", "geologicalEra", "mineralClass", "rockComposition", "rockFormation", "specificGravity", "hardness", "fracture", "geoSource", "store_hardness", "store_luster", "store_fracture", "store_cleavage", "store_specific_gravity", "store_diaphaneity", "moh_hardness", "mohsHardness", "primary_color", "secondary_colors", "cut_type", "base_stone_type", "meta_status", "tenacity", "official_name", "polishing_compound", "dimensions", "chemical_formula", "crystal_structure", "refractive_index", "title_tag", "description_tag", "google_product_category", "color-pattern", "jewelry-material", "target-gender", "age-group", "seo_title", "age_group", "condition", "is_one_of_a-kind", "authenticity", "rarity"].includes(m.key)) return true;
+                if (["crystalSystem", "geologicalEra", "mineralClass", "rockComposition", "rockFormation", "specificGravity", "hardness", "fracture", "geoSource", "store_hardness", "store_luster", "store_fracture", "store_cleavage", "store_specific_gravity", "store_diaphaneity", "moh_hardness", "mohsHardness", "primary_color", "secondary_colors", "cut_type", "base_stone_type", "meta_status", "tenacity", "official_name", "polishing_compound", "dimensions", "chemical_formula", "crystal_structure", "refractive_index", "title_tag", "description_tag", "google_product_category", "color-pattern", "jewelry-material", "target-gender", "age-group", "seo_title", "age_group", "condition", "is_one_of_a-kind", "authenticity", "rarity", "stone_story"].includes(m.key)) return true;
                 if (/[a-z][A-Z]/.test(m.key)) return true;
               }
               return false;
