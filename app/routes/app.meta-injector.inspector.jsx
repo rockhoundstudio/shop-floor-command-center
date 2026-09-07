@@ -92,15 +92,20 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
       newFullForm.shopify_title = product.title;
     }
 
-    const hasMetafields = product && product.metafields && product.metafields.edges;
+    const allEdges = [
+      ...(product?.customMeta?.edges || []),
+      ...(product?.rockhoundMeta?.edges || []),
+      ...(product?.geoMeta?.edges || []),
+      ...(product?.metafields?.edges || [])
+    ];
     
-    if (hasMetafields) {
-      product.metafields.edges.forEach(({ node }) => {
-        const hasValue = node.value !== null && node.value !== undefined;
-        if (hasValue && node.namespace === "custom") {
-          let parsedValue = node.value;
-          if (parsedValue && parsedValue.includes("gid://")) parsedValue = "See Shopify metaobject";
-          if (parsedValue && typeof parsedValue === 'string' && parsedValue.startsWith("[")) {
+    if (allEdges.length > 0) {
+      allEdges.forEach(({ node }) => {
+        const hasValue = node && node.value !== null && node.value !== undefined;
+        if (hasValue && (node.namespace === "custom" || node.namespace === "geo" || node.namespace === "rockhound")) {
+          let parsedValue = String(node.value);
+          if (parsedValue.includes("gid://")) parsedValue = "See Shopify metaobject";
+          if (parsedValue.startsWith("[")) {
             try {
               const arr = JSON.parse(parsedValue);
               parsedValue = Array.isArray(arr) ? arr[0] : parsedValue;
@@ -112,37 +117,57 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
       });
     }
 
-    const CAMEL_TO_SNAKE = { crystalSystem: "crystal_system", geologicalEra: "geological_era", mineralClass: "mineral_class", rockComposition: "rock_composition", rockFormation: "rock_formation", geologicalAge: "geological_age", fracture: "fracture_pattern" };
+    const CAMEL_TO_SNAKE = { 
+      crystalSystem: "crystal_system", 
+      geologicalEra: "geological_era", 
+      mineralClass: "mineral_class", 
+      rockComposition: "rock_composition", 
+      rockFormation: "rock_formation", 
+      geologicalAge: "geological_age", 
+      fracture: "fracture_pattern" 
+    };
     
     Object.entries(CAMEL_TO_SNAKE).forEach(([camel, snake]) => {
-      if (newFullForm[camel] !== undefined) { if (!newFullForm[snake]) newFullForm[snake] = newFullForm[camel]; delete newFullForm[camel]; }
-      if (newForm[camel] !== undefined) { if (!newForm[snake]) newForm[snake] = newForm[camel]; delete newForm[camel]; }
+      if (newFullForm[camel] !== undefined) { 
+        if (!newFullForm[snake]) newFullForm[snake] = newFullForm[camel]; 
+        delete newFullForm[camel]; 
+      }
+      if (newForm[camel] !== undefined) { 
+        if (!newForm[snake]) newForm[snake] = newForm[camel]; 
+        delete newForm[camel]; 
+      }
     });
 
     if (!newFullForm.target_gender) newFullForm.target_gender = "Unisex";
     if (!newFullForm.age_group) newFullForm.age_group = "adult";
     if (!newFullForm.condition) newFullForm.condition = "new";
     if (!newFullForm.google_product_category) newFullForm.google_product_category = "Apparel & Accessories > Jewelry";
-
     if (!newFullForm.handcrafted_by) newFullForm.handcrafted_by = "Bob & Janyce, Rockhound Studio";
+    
     if (!newFullForm.shipping_weight_oz && newFullForm.weight_grams) {
       const grams = parseFloat(newFullForm.weight_grams);
       if (!isNaN(grams) && grams > 0) {
-        newFullForm.shipping_weight_oz = (grams / 28.3495).toFixed(2);
+        newFullForm.shipping_weight_oz = String(Math.ceil((grams / 28.35) + 0.5));
       }
     }
 
     if (newForm.origin_story && newForm.origin_story.startsWith("[")) {
-      try { const arr = JSON.parse(newForm.origin_story); newForm.origin_story = Array.isArray(arr) ? arr[0] : newForm.origin_story; } catch (e) {}
+      try { 
+        const arr = JSON.parse(newForm.origin_story); 
+        newForm.origin_story = Array.isArray(arr) ? arr[0] : newForm.origin_story; 
+      } catch (e) {}
     }
     newFullForm.origin_story = newForm.origin_story;
 
     if (newForm.honest_flaws_and_character && newForm.honest_flaws_and_character.startsWith("[")) {
-      try { const arr = JSON.parse(newForm.honest_flaws_and_character); newForm.honest_flaws_and_character = Array.isArray(arr) ? arr[0] : newForm.honest_flaws_and_character; } catch (e) { }
+      try { 
+        const arr = JSON.parse(newForm.honest_flaws_and_character); 
+        newForm.honest_flaws_and_character = Array.isArray(arr) ? arr[0] : newForm.honest_flaws_and_character; 
+      } catch (e) { }
     }
     newFullForm.honest_flaws_and_character = newForm.honest_flaws_and_character;
 
-    const customPM = product?.metafields?.edges?.find(e => e.node.namespace === "custom" && e.node.key === "primary_medium")?.node?.value;
+    const customPM = allEdges.find(e => e.node.key === "primary_medium")?.node?.value;
     let bestPM = customPM || newForm.base_stone_type || "";
     if (bestPM === "Stone") bestPM = ""; 
     
@@ -156,12 +181,15 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
 
     if (product && product.variants && product.variants.edges && product.variants.edges[0]) {
       const price = product.variants.edges[0].node.price;
-      if (price) { newForm.price = price; newFullForm.price = price; }
+      if (price) { 
+        newForm.price = price; 
+        newFullForm.price = price; 
+      }
     }
 
-    const seoTitleNode = product?.metafields?.edges?.find(e => e.node.namespace === "global" && e.node.key === "title_tag")?.node;
+    const seoTitleNode = allEdges.find(e => e.node.key === "seo_title" || e.node.key === "title_tag")?.node;
     if (seoTitleNode && seoTitleNode.value) {
-        newFullForm.seo_title = seoTitleNode.value;
+      newFullForm.seo_title = seoTitleNode.value;
     }
     
     delete newFullForm.stone_story;
@@ -185,7 +213,7 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
 
         allEdges.forEach(({ node }) => {
           if (node && node.key && node.value && String(node.value).trim() !== "") {
-            incoming[node.key] = String(node.value).replace(/???/g, "?");
+            incoming[node.key] = String(node.value).replace(/â€”/g, "—");
           }
         });
 
@@ -197,9 +225,9 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
         }
 
         if (product.title) {
-          const cleanTitle = product.title.replace(/???/g, "?");
+          const cleanTitle = product.title.replace(/â€”/g, "—");
           incoming.shopify_title = cleanTitle;
-          incoming.piece_name = cleanTitle.includes(" ? ") ? cleanTitle.split(" ? ").pop().trim() : cleanTitle;
+          incoming.piece_name = cleanTitle.includes(" — ") ? cleanTitle.split(" — ").pop().trim() : cleanTitle;
         }
 
         setFormState(prev => ({ ...prev, ...incoming }));
@@ -412,7 +440,7 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
             }
           });
 
-          if (productTitle) updatedState.piece_name = productTitle.includes(" \u2014 ") ? productTitle.split(" \u2014 ").pop().trim() : productTitle;
+          if (productTitle) updatedState.piece_name = productTitle.includes(" — ") ? productTitle.split(" — ").pop().trim() : productTitle;
 
           const REQUIRED_TAB2_FIELDS = [{ key: "generated_description", label: "Generated Description" }, { key: "color_pattern", label: "Color Pattern" }, { key: "collection_location", label: "Collection Location" }, { key: "origin_handle", label: "Origin Handle" }];
           const missingFields = REQUIRED_TAB2_FIELDS.filter(f => {
@@ -430,10 +458,10 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
 
           return updatedState;
         });
-        setTab2StatusMessage("Auto-Fill complete \u2014 review fields before saving");
+        setTab2StatusMessage("Auto-Fill complete — review fields before saving");
         if (window.shopify && window.shopify.toast) window.shopify.toast.show("Auto-Fill complete!");
       } else {
-        setTab2ErrorMessage("Auto-Fill returned no data \u2014 check stone_family and origin_handle.");
+        setTab2ErrorMessage("Auto-Fill returned no data — check stone_family and origin_handle.");
         if (window.shopify && window.shopify.toast) window.shopify.toast.show("Auto-Fill failed", { isError: true });
       }
     }
@@ -493,10 +521,17 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
     }
 
     let val = fullMetaState[field.key] || "";
-    if (typeof val === 'string' && val.startsWith('[')) { try { const arr = JSON.parse(val); val = Array.isArray(arr) ? arr[0] : val; } catch(e) {} } else if (Array.isArray(val)) { val = val[0]; }
+    if (typeof val === 'string' && val.startsWith('[')) { 
+      try { 
+        const arr = JSON.parse(val); 
+        val = Array.isArray(arr) ? arr[0] : val; 
+      } catch(e) {} 
+    } else if (Array.isArray(val)) { 
+      val = val[0]; 
+    }
 
     if ((field.key === "handcrafted_by" || field.key === "rescued_by") && typeof val === 'string') {
-        if (val.includes("Bob & Janyce") || val.includes("Rockhound Studio")) val = "Bob & Janyce, Rockhound Studio";
+      if (val.includes("Bob & Janyce") || val.includes("Rockhound Studio")) val = "Bob & Janyce, Rockhound Studio";
     }
     if (field.key === "primary_medium" && val === "Stone") val = "";
     if (field.key === "color" && formState.color) val = formState.color;
