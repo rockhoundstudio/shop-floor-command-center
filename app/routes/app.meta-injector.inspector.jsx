@@ -1,4 +1,4 @@
-﻿// ==========================================================================
+// ==========================================================================
 // ROCKHOUND STUDIO — TAB 2: META INSPECTOR Bench
 // File: app/routes/app.meta-injector.inspector.jsx
 // ==========================================================================
@@ -202,7 +202,16 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
   }, []);
 
   const updateFullMetaState = useCallback((key, value) => {
-    setFullMetaState(prev => ({ ...prev, [key]: value }));
+    setFullMetaState(prev => {
+      const updated = { ...prev, [key]: value };
+      if (key === "weight_grams" && value !== "") {
+        const grams = parseFloat(value);
+        if (!isNaN(grams) && grams > 0) {
+          updated.shipping_weight_oz = String(Math.ceil((grams / 28.35) + 0.5));
+        }
+      }
+      return updated;
+    });
   }, []);
 
   const handleTab2AutoFill = useCallback(() => {
