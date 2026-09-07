@@ -1,4 +1,4 @@
-﻿import { authenticate } from "../shopify.server";
+import { authenticate } from "../shopify.server";
 import { lookupStone } from "../utils/geoLibrary.jsx";
 import { TARGET_KEYS } from "../utils/metaScan";
 
@@ -635,12 +635,12 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
         }
         const parsed = JSON.parse(cleanJson);
         
-        const dbGeoData = await getGeoData(admin, parsed.stone_family || segment1);
+        const dbGeoData = await getGeoData(admin, derivedFamily || parsed.stone_family || segment1);
         const matchedOriginPage = pagesList.find(p => p.url.includes(resolvedHandle));
         const displayName = matchedOriginPage ? matchedOriginPage.title.replace(/^(Shop Lore|Collection)[\s:\-]+/i, "").replace(/^The\s+/i, "").trim() : collectionData.name.replace(/\s+Collection$/i, "").trim();
         
         const seoTitleParts = [];
-        if (parsed.stone_family || segment1) seoTitleParts.push(parsed.stone_family || segment1);
+        if (derivedFamily || parsed.stone_family || segment1) seoTitleParts.push(derivedFamily || parsed.stone_family || segment1);
         
         let seo_title = "";
         if (seoTitleParts.length > 0) {
