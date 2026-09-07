@@ -13,8 +13,7 @@ useEffect(() => {
 
         allEdges.forEach(({ node }) => {
           if (node && node.key && node.value && String(node.value).trim() !== '') {
-            const cleanVal = String(node.value).replace(/â€”/g, '—');
-            incoming[node.key] = cleanVal;
+            incoming[node.key] = String(node.value).replace(/â€”/g, '—');
           }
         });
 
