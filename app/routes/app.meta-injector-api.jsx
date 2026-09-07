@@ -317,9 +317,10 @@ export const action = async ({ request }) => {
           if (newProductTitle) inputVars.title = newProductTitle;
           if (newDescriptionHtml) inputVars.descriptionHtml = newDescriptionHtml;
 
+          // 🔴 FIX: Changed ProductInput! to ProductUpdateInput!
           await admin.graphql(
             `#graphql
-            mutation productUpdate($input: ProductInput!) {
+            mutation productUpdate($input: ProductUpdateInput!) {
               productUpdate(input: $input) { userErrors { field message } }
             }`,
             { variables: { input: inputVars } }
@@ -576,6 +577,9 @@ export const action = async ({ request }) => {
       const productId = createdProduct.id;
       const productHandle = createdProduct.handle;
       const defaultVariantId = createdProduct.variants?.edges?.[0]?.node?.id;
+
+      // 🔴 FIX: Added 500ms breather to prevent indexing race condition
+      await new Promise(resolve => setTimeout(resolve, 500));
 
       const seoDescription = payload.descriptionHtml || piece.generated_description || piece.descriptionHtml || "";
       const seoMetafieldsToInject = [];
