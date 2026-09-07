@@ -1,4 +1,4 @@
-﻿// ==========================================================================
+// ==========================================================================
 // ROCKHOUND STUDIO — INTAKE HELPER FUNCTIONS
 // File: app/routes/app.meta-injector.intake-helpers.jsx
 // (100% Original Logic & Dash Delimiters Preserved + Strict Schema Map Added)
@@ -47,7 +47,7 @@ export async function handleGenerateDescription({ sharedFields, pieces, descFetc
 }
 
 // ==========================================
-// STRICT METAFIELD SCHEMA MAP (From Sidekick)
+// STRICT METAFIELD SCHEMA MAP (Aligned with API)
 // ==========================================
 const METAFIELD_SCHEMA = {
   // SHOPIFY TAXONOMY (Requires metaobject_reference)
@@ -71,7 +71,15 @@ const METAFIELD_SCHEMA = {
 
   // CUSTOM NAMESPACE (Strict Types)
   "weight_grams": { namespace: "custom", type: "number_decimal" },
-  "stone_story": { namespace: "custom", type: "list.single_line_text_field" },
+  "shipping_weight_oz": { namespace: "custom", type: "number_decimal" },
+  "price": { namespace: "custom", type: "number_decimal" },
+  
+  // HEAVY TEXT BLOCKS (Multi-line)
+  "origin_story": { namespace: "custom", type: "multi_line_text_field" },
+  "honest_flaws_and_character": { namespace: "custom", type: "multi_line_text_field" },
+  "honest_flaws": { namespace: "custom", type: "multi_line_text_field" },
+  "artist_notes": { namespace: "custom", type: "multi_line_text_field" },
+
   "character_marks": { namespace: "custom", type: "list.single_line_text_field" },
   
   // 🟢 ORIGIN HANDLE MAPPED CORRECTLY 
@@ -93,7 +101,9 @@ export function buildMetafieldsJson(sharedFields, piece) {
     "photos",
     "imageBase64",
     "imageMimeType",
-    "generated_description" // This belongs in body_html, not a metafield
+    "generated_description", // This belongs in body_html, not a metafield
+    "stone_story", // 🔴 GHOST PURGE: Never inject this
+    "story_theme"  // 🔴 GHOST PURGE: Never inject this
   ];
   
   const metaArr = [];
