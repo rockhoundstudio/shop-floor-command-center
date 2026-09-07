@@ -1,38 +1,18 @@
-generator client {
-  provider = "prisma-client-js"
-}
-
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
-model Session {
-  id                  String    @id
-  shop                String
-  state               String
-  isOnline            Boolean   @default(false)
-  scope               String?
-  expires             DateTime?
-  accessToken         String
-  userId              BigInt?
-  firstName           String?
-  lastName            String?
-  email               String?
-  accountOwner        Boolean   @default(false)
-  locale              String?
-  collaborator        Boolean?  @default(false)
-  emailVerified       Boolean?  @default(false)
-  refreshToken        String?
-  refreshTokenExpires DateTime?
+generator client {
+  provider = "prisma-client-js"
 }
 
 model StoneCache {
   id        String   @id @default(cuid())
-  stoneName String   @unique
+  stoneName String   @unique @map("stone_name")
   data      String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 }
 
 model DwellRule {
@@ -48,61 +28,28 @@ model DwellRule {
 model MenuSetting {
   id         String   @id @default(cuid())
   menuHandle String   @unique
-  isLocked   Boolean  @default(false)
-  autoSync   Boolean  @default(false)
-  updatedAt  DateTime @updatedAt
-}
-
-model MenuHistory {
-  id         String   @id @default(cuid())
-  menuHandle String
-  message    String
-  createdAt  DateTime @default(now())
 }
 
 model StoneProfile {
   id              String   @id @default(cuid())
-  stoneName       String   @unique
-  baseMineralName String?
-  colorPattern    String?
+  stoneName       String   @unique @map("stone_name")
+  baseMineralName String?  @map("base_mineral_name")
+  colorPattern    String?  @map("color_pattern")
   authenticity    String?
   rarity          String?
-  crystalSystem   String?
-  geologicalEra   String?
-  mineralClass    String?
-  rockComposition String?
-  rockFormation   String?
+  crystalSystem   String?  @map("crystal_system")
+  geologicalEra   String?  @map("geological_era")
+  mineralClass    String?  @map("mineral_class")
+  rockComposition String?  @map("rock_composition")
+  rockFormation   String?  @map("rock_formation")
   hardness        String?
   luster          String?
   fracture        String?
   cleavage        String?
-  specificGravity String?
+  specificGravity String?  @map("specific_gravity")
   diaphaneity     String?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-}
-
-model DbProfile {
-  id                    String   @id @default(uuid())
-  productGid            String   @unique
-  title                 String
-  googleColorPattern    String?
-  googleAuthenticity    String?
-  googleRarity          String?
-  googleCrystalSystem   String?
-  googleGeologicalEra   String?
-  googleMineralClass    String?
-  googleRockComposition String?
-  googleRockFormation   String?
-  storeHardness         String?
-  storeLuster           String?
-  storeFracture         String?
-  storeCleavage         String?
-  storeSpecificGravity  String?
-  storeDiaphaneity      String?
-  storeOriginLocation   String?
-  createdAt             DateTime @default(now())
-  updatedAt             DateTime @updatedAt
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
 }
 
 model TaxonomyGid {
@@ -113,5 +60,5 @@ model TaxonomyGid {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([category, term])
+  @@unique([category, term], name: "category_term")
 }
