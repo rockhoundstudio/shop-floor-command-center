@@ -1,197 +1,39 @@
-// ==========================================================================
-// ROCKHOUND STUDIO — TAB 2: META INSPECTOR Bench
-// File: app/routes/app.meta-injector.inspector.jsx
-// ==========================================================================
-
-import React, { useState, useEffect, useCallback, useRef } from "react";
-import { BlockStack, Card, Text, Banner, TextField, Select, Button, InlineStack, Collapsible, DropZone } from "@shopify/polaris";
-import { MagicIcon, SaveIcon, ClipboardIcon } from "@shopify/polaris-icons";
-import { normalizeDropdownValue, DROPDOWN_OPTIONS } from "../utils/meta-injector.constants.jsx";
-
-const CUSTOM_FIELDS = [
-  { key: "shopify_title", label: "MASTER SHOPIFY TITLE (Edit Here)", type: "single_line_text_field", isShared: false },
-  { key: "stone_family", label: "Stone Family", type: "single_line_text_field", isShared: true },
-  { key: "color", label: "Color", type: "single_line_text_field", isShared: true }, 
-  { key: "surface_finish", label: "Surface Finish", type: "single_line_text_field", isShared: true }, 
-  { key: "source_location", label: "Source / Discovery Location", type: "single_line_text_field", isShared: true },
-  { key: "primary_use", label: "Primary Use", type: "single_line_text_field", isShared: true }, 
-  { key: "handcrafted_by", label: "Handcrafted By", type: "single_line_text_field", isShared: true },
-  { key: "origin_story", label: "The Origin Story", type: "multi_line_text_field", multiline: true, isShared: true },
-  { key: "piece_name", label: "Piece Name", type: "single_line_text_field", isPerPiece: true },
-  { key: "cut_and_shape", label: "Cut / Shape", type: "single_line_text_field", isPerPiece: true }, 
-  { key: "dimensions_mm", label: "Dimensions (mm)", type: "single_line_text_field", isPerPiece: true },
-  { key: "weight_grams", label: "Weight (grams)", type: "single_line_text_field", isPerPiece: true },
-  { key: "honest_flaws_and_character", label: "Character Marks (Honest Flaws)", type: "multi_line_text_field", multiline: true, isPerPiece: true },
-  { key: "price", label: "Price", type: "single_line_text_field", isPerPiece: true },
-  { key: "generated_description", label: "Generated Description", type: "multi_line_text_field", multiline: true, isPerPiece: true }
-];
-
-const FULL_META_GROUPS = [
-  { heading: "Always Fill", color: "#2E7D32", fields: [{ key: "piece_name", label: "Piece Name", type: "text" }, { key: "primary_medium", label: "Primary Medium", type: "text" }, { key: "handcrafted_by", label: "Handcrafted By", type: "text" }, { key: "is_ooak", label: "Is One of a Kind", type: "text" }, { key: "treated", label: "Treated", type: "text" }] },
-  { heading: "Stone Fields", color: "#1565C0", fields: [{ key: "stone_family", label: "Stone Family", type: "text" }, { key: "color", label: "Color", type: "text" }, { key: "cut_and_shape", label: "Cut and Shape", type: "text" }, { key: "surface_finish", label: "Surface Finish", type: "text" }, { key: "dimensions_mm", label: "Dimensions (mm)", type: "text" }, { key: "weight_grams", label: "Weight (grams)", type: "text" }] },
-  { heading: "Story & Lore", color: "#E65100", fields: [{ key: "origin_story", label: "Origin Story", type: "text", multiline: true }, { key: "honest_flaws_and_character", label: "Honest Flaws and Character", type: "text", multiline: true }, { key: "collection_name", label: "Collection Name", type: "text" }, { key: "generated_description", label: "Generated Description", type: "text", multiline: true }] },
-  { heading: "Google / SEO", color: "#F9A825", fields: [{ key: "primary_use", label: "Primary Use", type: "text" }, { key: "bail_included", label: "Bail Included", type: "text" }, { key: "seo_title", label: "SEO Title", type: "text" }] },
-  { heading: "Geo-Vault", color: "#4E342E", fields: [{ key: "mineral_class", label: "Mineral Class", type: "text" }, { key: "crystal_system", label: "Crystal System", type: "text" }, { key: "rock_composition", label: "Rock Composition", type: "text" }, { key: "rock_formation", label: "Rock Formation", type: "text" }, { key: "geological_era", label: "Geological Era", type: "text" }] }
-];
-
-// 🔴 THE MASTER LIST: Everything locked strictly to custom
-const NAMESPACE_MAP = {
-  custom: [
-    "piece_name", "primary_medium", "secondary_medium", "handcrafted_by", "stone_family", "color", "cut_and_shape", "surface_finish", "dimensions_mm", "weight_grams", "shipping_weight_oz", "price", "collection_name", "collection_location", "primary_use", "bail_included", "is_ooak", "treated", "wire_material", "setting_ready", "material", "origin_story", "origin_handle", "honest_flaws_and_character", "artist_notes", "generated_description", "rescued_by", "stone_shape", "target_gender", "age_group", "condition", "color_pattern", "jewelry_type", "necklace_design", "custom_product", "seo_title", "google_product_category",
-    "mohs_hardness", "luster", "fracture_pattern", "cleavage", "specific_gravity", "diaphaneity", "crystal_system", "geological_era", "geological_age", "mineral_class", "rock_composition", "rock_formation"
-  ]
-};
-
-export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2Fetcher }) {
-  const [selectedProductId, setSelectedProductId] = useState("");
-  const [formState, setFormState] = useState({});
-  const [fullMetaState, setFullMetaState] = useState({});
-  const originalMetaRef = useRef({});
-  const [statusMessage, setStatusMessage] = useState("");
-  const [errorMessage, setErrorMessage] = useState("");
-  const [promptStyle, setPromptStyle] = useState("");
-  const [searchQuery, setSearchQuery] = useState("");
-  const [tab2StatusMessage, setTab2StatusMessage] = useState("");
-  const [tab2ErrorMessage, setTab2ErrorMessage] = useState("");
-  const [pendingFixFields, setPendingFixFields] = useState([]);
-  const [currentFixIndex, setCurrentFixIndex] = useState(0);
-  const [fixPopupValue, setFixPopupValue] = useState("");
-  const [showFixPopup, setShowFixPopup] = useState(false);
-  const [overridePhoto, setOverridePhoto] = useState(null);
-
-  const handleDropOverridePhoto = useCallback((_dropFiles, acceptedFiles) => {
-    if (acceptedFiles.length > 0) {
-      const file = acceptedFiles[0];
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        const base64String = reader.result.replace("data:", "").replace(/^.+,/, "");
-        setOverridePhoto({
-          base64: base64String,
-          mimeType: file.type,
-          previewUrl: URL.createObjectURL(file)
-        });
-      };
-      reader.readAsDataURL(file);
-    }
-  }, []);
-
-  const handleSelectProduct = useCallback((id) => {
-    setSelectedProductId(id);
-    setStatusMessage("");
-    setErrorMessage("");
-    setTab2StatusMessage("");
-    setTab2ErrorMessage("");
-    setOverridePhoto(null);
-
-    const product = products.find(p => p.id === id);
-    const newForm = {};
-    const newFullForm = {};
-    
-    if (product && product.title) {
-      newForm.shopify_title = product.title;
-      newFullForm.shopify_title = product.title;
-    }
-
-    const hasMetafields = product && product.metafields && product.metafields.edges;
-    
-    if (hasMetafields) {
-      product.metafields.edges.forEach(({ node }) => {
-        const hasValue = node.value !== null && node.value !== undefined;
-        if (hasValue && node.namespace === "custom") {
-          let parsedValue = node.value;
-          if (parsedValue && parsedValue.includes("gid://")) parsedValue = "See Shopify metaobject";
-          if (parsedValue && typeof parsedValue === 'string' && parsedValue.startsWith("[")) {
-            try {
-              const arr = JSON.parse(parsedValue);
-              parsedValue = Array.isArray(arr) ? arr[0] : parsedValue;
-            } catch (e) { }
-          }
-          newForm[node.key] = parsedValue;
-          newFullForm[node.key] = parsedValue;
-        }
-      });
-    }
-
-    const CAMEL_TO_SNAKE = { crystalSystem: "crystal_system", geologicalEra: "geological_era", mineralClass: "mineral_class", rockComposition: "rock_composition", rockFormation: "rock_formation", geologicalAge: "geological_age", fracture: "fracture_pattern" };
-    
-    Object.entries(CAMEL_TO_SNAKE).forEach(([camel, snake]) => {
-      if (newFullForm[camel] !== undefined) { if (!newFullForm[snake]) newFullForm[snake] = newFullForm[camel]; delete newFullForm[camel]; }
-      if (newForm[camel] !== undefined) { if (!newForm[snake]) newForm[snake] = newForm[camel]; delete newForm[camel]; }
-    });
-
-    if (!newFullForm.target_gender) newFullForm.target_gender = "Unisex";
-    if (!newFullForm.age_group) newFullForm.age_group = "adult";
-    if (!newFullForm.condition) newFullForm.condition = "new";
-    if (!newFullForm.google_product_category) newFullForm.google_product_category = "Apparel & Accessories > Jewelry";
-
-    if (!newFullForm.handcrafted_by) newFullForm.handcrafted_by = "Bob & Janyce, Rockhound Studio";
-    if (!newFullForm.shipping_weight_oz && newFullForm.weight_grams) {
-      const grams = parseFloat(newFullForm.weight_grams);
-      if (!isNaN(grams) && grams > 0) {
-        newFullForm.shipping_weight_oz = (grams / 28.3495).toFixed(2);
-      }
-    }
-
-    if (newForm.origin_story && newForm.origin_story.startsWith("[")) {
-      try { const arr = JSON.parse(newForm.origin_story); newForm.origin_story = Array.isArray(arr) ? arr[0] : newForm.origin_story; } catch (e) {}
-    }
-    newFullForm.origin_story = newForm.origin_story;
-
-    if (newForm.honest_flaws_and_character && newForm.honest_flaws_and_character.startsWith("[")) {
-      try { const arr = JSON.parse(newForm.honest_flaws_and_character); newForm.honest_flaws_and_character = Array.isArray(arr) ? arr[0] : newForm.honest_flaws_and_character; } catch (e) { }
-    }
-    newFullForm.honest_flaws_and_character = newForm.honest_flaws_and_character;
-
-    const customPM = product?.metafields?.edges?.find(e => e.node.namespace === "custom" && e.node.key === "primary_medium")?.node?.value;
-    let bestPM = customPM || newForm.base_stone_type || "";
-    if (bestPM === "Stone") bestPM = ""; 
-    
-    newFullForm.primary_medium = bestPM;
-    if (newForm.color) newFullForm.color = newForm.color;
-
-    if (product && product.title) {
-      newForm.piece_name = product.title.includes(" — ") ? product.title.split(" — ").pop().trim() : product.title;
-      newFullForm.piece_name = product.title.includes(" — ") ? product.title.split(" — ").pop().trim() : product.title;
-    }
-
-    if (product && product.variants && product.variants.edges && product.variants.edges[0]) {
-      const price = product.variants.edges[0].node.price;
-      if (price) { newForm.price = price; newFullForm.price = price; }
-    }
-
-    const seoTitleNode = product?.metafields?.edges?.find(e => e.node.namespace === "global" && e.node.key === "title_tag")?.node;
-    if (seoTitleNode && seoTitleNode.value) {
-        newFullForm.seo_title = seoTitleNode.value;
-    }
-    
-    delete newFullForm.stone_story;
-    setFormState(newForm);
-    setFullMetaState(newFullForm);
-    originalMetaRef.current = { ...newFullForm };
-  }, [products]);
-
-  useEffect(() => {
+useEffect(() => {
     if (selectedProductId && products && products.length > 0) {
       const product = products.find(p => p.id === selectedProductId);
-      if (product && product.metafields && product.metafields.edges) {
-        setFormState(prev => {
-          const updatedState = { ...prev };
-          const dropdownFields = ["handcrafted_by", "is_ooak", "treated", "primary_use", "bail_included", "setting_ready", "wire_material", "stone_family", "color", "cut_and_shape", "surface_finish"];
-          const textFields = ["piece_name", "primary_medium", "dimensions_mm", "weight_grams", "origin_story", "honest_flaws_and_character", "collection_name", "generated_description", "color_pattern", "seo_title"];
+      if (product) {
+        const allEdges = [
+          ...(product.customMeta?.edges || []),
+          ...(product.rockhoundMeta?.edges || []),
+          ...(product.geoMeta?.edges || []),
+          ...(product.metafields?.edges || [])
+        ];
 
-          product.metafields.edges.forEach(({ node }) => {
-            if (node.namespace === "custom" && node.value && node.value.trim() !== "") {
-              if (dropdownFields.includes(node.key)) updatedState[node.key] = normalizeDropdownValue(node.key, node.value);
-              else if (textFields.includes(node.key)) updatedState[node.key] = node.value;
-            }
-          });
-          
-          if (product.title) {
-            updatedState.shopify_title = product.title;
-            updatedState.piece_name = product.title.includes(" — ") ? product.title.split(" — ").pop().trim() : product.title;
+        const incoming = {};
+
+        allEdges.forEach(({ node }) => {
+          if (node && node.key && node.value && String(node.value).trim() !== '') {
+            const cleanVal = String(node.value).replace(/â€”/g, '—');
+            incoming[node.key] = cleanVal;
           }
-          return updatedState;
         });
+
+        if (incoming.weight_grams && !incoming.shipping_weight_oz) {
+          const grams = parseFloat(incoming.weight_grams);
+          if (!isNaN(grams) && grams > 0) {
+            incoming.shipping_weight_oz = String(Math.ceil((grams / 28.35) + 0.5));
+          }
+        }
+
+        if (product.title) {
+          const cleanTitle = product.title.replace(/â€”/g, '—');
+          incoming.shopify_title = cleanTitle;
+          incoming.piece_name = cleanTitle.includes(' — ') ? cleanTitle.split(' — ').pop().trim() : cleanTitle;
+        }
+
+        setFormState(prev => ({ ...prev, ...incoming }));
+        setFullMetaState(prev => ({ ...prev, ...incoming }));
+        originalMetaRef.current = { ...originalMetaRef.current, ...incoming };
       }
     }
   }, [selectedProductId, products]);
@@ -310,15 +152,19 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
       if (key === "piece_name") injectValue = resolvedPieceName;
 
       // 🔴 UNIVERSAL STEAMROLLER: Crush all hidden line breaks, 'Enter' keys, and carriage returns.
-      // Shopify's database schema will crash if a field originally defined as single-line receives a line break.
       injectValue = injectValue.replace(/\\[rn]/g, " ").replace(/[\r\n]+/g, " ").replace(/\s{2,}/g, " ").trim();
 
       const config = CUSTOM_FIELDS.find(f => f.key === key);
       let fieldType = config && config.type ? config.type : "single_line_text_field";
       
-      // Keep definitions accurate for the API, but the value is already safely flattened.
       if (["honest_flaws_and_character", "origin_story", "generated_description", "artist_notes"].includes(key)) {
         fieldType = "multi_line_text_field";
+      }
+
+      // 🟢 FIX: Safe-strip numbers before sending so Shopify doesn't crash the decimal schema
+      if (fieldType === "number_decimal") {
+        injectValue = injectValue.replace(/[^\d.-]/g, "");
+        if (!injectValue || isNaN(parseFloat(injectValue))) return; 
       }
 
       const isPopulated = injectValue !== "" && injectValue !== "N/A";
@@ -383,7 +229,8 @@ export function IntakeBenchTab({ products, autoFillFetcher, injectFetcher, tab2F
 
         setFullMetaState(prev => {
           const updatedState = { ...prev };
-          const ALWAYS_OVERWRITE = ["mohs_hardness", "luster", "fracture_pattern", "cleavage", "specific_gravity", "diaphaneity", "mineral_class", "crystal_system", "rock_composition", "rock_formation", "geological_era", "geological_age", "generated_description", "seo_title", "origin_story", "stone_story", "primary_use", "bail_included", "setting_ready", "primary_medium", "alt_text"];
+          // 🔴 REPAIRED: "stone_story" amputated from ALWAYS_OVERWRITE
+          const ALWAYS_OVERWRITE = ["mohs_hardness", "luster", "fracture_pattern", "cleavage", "specific_gravity", "diaphaneity", "mineral_class", "crystal_system", "rock_composition", "rock_formation", "geological_era", "geological_age", "generated_description", "seo_title", "origin_story", "primary_use", "bail_included", "setting_ready", "primary_medium", "alt_text"];
 
           Object.entries(tab2Data).forEach(([key, val]) => {
             const hasNewValue = val !== undefined && val !== null && val.toString().trim() !== "" && val !== "See Shopify metaobject";
