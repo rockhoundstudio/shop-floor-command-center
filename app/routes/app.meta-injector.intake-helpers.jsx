@@ -101,9 +101,7 @@ export function buildMetafieldsJson(sharedFields, piece) {
     "photos",
     "imageBase64",
     "imageMimeType",
-    "generated_description", // This belongs in body_html, not a metafield
-    "stone_story", // 🔴 GHOST PURGE: Never inject this
-    "story_theme"  // 🔴 GHOST PURGE: Never inject this
+    "generated_description" // This belongs in body_html, not a metafield
   ];
   
   const metaArr = [];
