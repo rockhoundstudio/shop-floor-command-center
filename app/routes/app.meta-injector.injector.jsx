@@ -260,7 +260,7 @@ export function NewProductIntakeTab({ fetcher }) {
   const handlePieceChange = useCallback((id, key, value) => {
     setPieces(prev => prev.map(p => {
       let updated = { ...p };
-      (p.id === id) && (updated[key] = value);
+      if (p.id === id) { updated[key] = value; }
       if (p.id === id && key === "weight_grams" && value !== "") {
         const grams = parseFloat(value);
         if (!isNaN(grams)) {
