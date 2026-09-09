@@ -116,7 +116,7 @@ const NAMESPACE_MAP = {
     "jewelry_finding_type", "custom_product", "seo_title",
     "mohs_hardness", "luster", "fracture_pattern", "cleavage", "specific_gravity",
     "diaphaneity", "crystal_system", "geological_era", "geological_age", "mineral_class",
-    "rock_composition", "rock_formation"
+    "rock_composition", "rock_formation", "origin_page_handle"
   ]
 };
 
@@ -438,6 +438,12 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
     let productType = "Wearable Art";
     (sharedFields.primary_use && sharedFields.primary_use !== "") && (productType = sharedFields.primary_use);
 
+    // BUG 3 FIX: Enforce Richardson's override for origin_page_handle
+    let finalOriginPageHandle = latestShared.current.origin_page_handle || latestShared.current.origin_handle;
+    if (latestShared.current.origin_handle === "the-richardson-strike") {
+      finalOriginPageHandle = "the-richardson-strike";
+    }
+
     const rawPayload = {
       intent: "createProduct",
       ...latestShared.current,
@@ -452,13 +458,13 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
       seo_title: pieces[0].seo_title,
       artist_notes: pieces[0].artist_notes,
       origin_handle: latestShared.current.origin_handle,
-      origin_page_handle: latestShared.current.origin_page_handle || latestShared.current.origin_handle,
-      bodyHtml: pieces[0].generated_description,
+      origin_page_handle: finalOriginPageHandle,
+      bodyHtml: pieces[0].generated_description, // BUG 1 FIX: Map description to bodyHtml
       title: pieces[0].canonical_title || buildTitle(latestShared.current, pieces[0]),
       descriptionHtml: pieces[0].generated_description,
       productType: productType,
       status: "DRAFT",
-      stone_story: "" // Clear the ghost field
+      stone_story: "" // BUG 4 FIX: Always send empty string to clear the ghost field
     };
 
     const payload = {};
@@ -476,6 +482,10 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
         payload[key] = val;
       }
     });
+
+    // BUG 1 & 2 FIX: Explicitly ensure description and SEO title make it to API layer
+    payload.descriptionHtml = pieces[0].generated_description || "";
+    payload.seo_title = pieces[0].seo_title || "";
 
     payload.metafieldsJson = buildMetafieldsJson(latestShared.current, pieces[0]);
     payload.mediaUrlsJson = JSON.stringify(pieces[0].stagedResourceUrls.filter(u => u !== undefined && u !== ""));
@@ -743,6 +753,14 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
         resolvedCollectionLoc = "Shopped Rock";
       }
 
+      // BUG 3 FIX: Enforce correct origin page handle assignment for Richardson's
+      let finalOriginPageHandle = parsed.origin_page_handle || parsed.origin_handle || prev.origin_page_handle;
+      if (parsed.origin_handle === "the-richardson-strike") {
+        finalOriginPageHandle = "the-richardson-strike";
+      } else if (finalOriginPageHandle === "the-shocked-rock") {
+        finalOriginPageHandle = "the-shopped-rock";
+      }
+
       return {
         ...prev,
         material: "Stone",
@@ -750,7 +768,7 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
         collection_name: parsed.collection_name || prev.collection_name,
         collection_location: resolvedCollectionLoc,
         origin_handle: parsed.origin_handle || prev.origin_handle, 
-        origin_page_handle: parsed.origin_page_handle || parsed.origin_handle || prev.origin_page_handle, 
+        origin_page_handle: finalOriginPageHandle, 
         origin_story: parsed.origin_story || prev.origin_story,
         specific_gravity: parsed.specific_gravity || prev.specific_gravity,
         diaphaneity: parsed.diaphaneity || prev.diaphaneity,
