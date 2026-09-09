@@ -23,6 +23,8 @@ const CUSTOM_FIELDS = [
   { key: "primary_use", label: "Primary Use", type: "single_line_text_field", isShared: true }, 
   { key: "handcrafted_by", label: "Handcrafted By", type: "single_line_text_field", isShared: true },
   { key: "origin_story", label: "The Origin Story", type: "multi_line_text_field", multiline: true, isShared: true },
+  { key: "origin_handle", label: "Origin Handle", type: "single_line_text_field", isShared: true },
+  { key: "origin_page_handle", label: "Origin Page Handle", type: "single_line_text_field", isShared: true },
 
   // ==========================================
   // SECTION B: PER-PIECE ROWS (The Hard Specs)
@@ -30,10 +32,11 @@ const CUSTOM_FIELDS = [
   { key: "piece_name", label: "Piece Name", type: "single_line_text_field", isPerPiece: true },
   { key: "cut_and_shape", label: "Cut / Shape", type: "single_line_text_field", isPerPiece: true }, 
   { key: "dimensions_mm", label: "Dimensions (mm)", type: "single_line_text_field", isPerPiece: true },
-  { key: "weight_grams", label: "Weight (grams)", type: "single_line_text_field", isPerPiece: true },
+  { key: "weight_grams", label: "Weight (grams)", type: "number_decimal", isPerPiece: true },
   { key: "honest_flaws", label: "Character Marks (Honest Flaws)", type: "multi_line_text_field", multiline: true, isPerPiece: true },
   { key: "price", label: "Price", type: "single_line_text_field", isPerPiece: true },
-  { key: "seo_title", label: "SEO Title", type: "single_line_text_field", isPerPiece: true }
+  { key: "seo_title", label: "SEO Title", type: "single_line_text_field", isPerPiece: true },
+  { key: "artist_notes", label: "Artist Notes", type: "single_line_text_field", isPerPiece: true }
 ];
 
 const FULL_META_GROUPS = [
@@ -130,6 +133,7 @@ export function NewProductIntakeTab({ fetcher }) {
     collection_location: "",
     origin_location: "",
     origin_handle: "", 
+    origin_page_handle: "",
     rescued_by: "Bob and Janyce",
     treatment_status: "100% Natural/Untreated",
     origin_story: "",
@@ -434,7 +438,7 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
     let productType = "Wearable Art";
     (sharedFields.primary_use && sharedFields.primary_use !== "") && (productType = sharedFields.primary_use);
 
-    const payload = {
+    const rawPayload = {
       intent: "createProduct",
       ...latestShared.current,
       piece_name: pieces[0].piece_name,
@@ -444,14 +448,37 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
       color: pieces[0].color,
       price: pieces[0].price,
       weight_grams: pieces[0].weight_grams,
+      shipping_weight_oz: pieces[0].shipping_weight_oz,
       seo_title: pieces[0].seo_title,
+      artist_notes: pieces[0].artist_notes,
+      origin_handle: latestShared.current.origin_handle,
+      origin_page_handle: latestShared.current.origin_page_handle || latestShared.current.origin_handle,
+      bodyHtml: pieces[0].generated_description,
       title: pieces[0].canonical_title || buildTitle(latestShared.current, pieces[0]),
       descriptionHtml: pieces[0].generated_description,
       productType: productType,
       status: "DRAFT",
-      metafieldsJson: buildMetafieldsJson(sharedFields, pieces[0]),
-      mediaUrlsJson: JSON.stringify(pieces[0].stagedResourceUrls.filter(u => u !== undefined && u !== ""))
+      stone_story: "" // Clear the ghost field
     };
+
+    const payload = {};
+    Object.keys(rawPayload).forEach(key => {
+      const val = rawPayload[key];
+      
+      // Explicitly kill the ghost field by ensuring it gets sent as empty string
+      if (key === "stone_story") {
+        payload[key] = "";
+        return;
+      }
+      
+      // Skip null, undefined, empty string, "N/A", or "None"
+      if (val !== null && val !== undefined && val !== "" && val !== "N/A" && val !== "None") {
+        payload[key] = val;
+      }
+    });
+
+    payload.metafieldsJson = buildMetafieldsJson(latestShared.current, pieces[0]);
+    payload.mediaUrlsJson = JSON.stringify(pieces[0].stagedResourceUrls.filter(u => u !== undefined && u !== ""));
 
     const fd = new FormData();
     fd.append("intent", "createProduct");
@@ -471,6 +498,7 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
       collection_location: "",
       origin_location: "",
       origin_handle: "",
+      origin_page_handle: "",
       rescued_by: "Bob and Janyce",
       treatment_status: "100% Natural/Untreated",
       origin_story: "",
@@ -722,6 +750,7 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
         collection_name: parsed.collection_name || prev.collection_name,
         collection_location: resolvedCollectionLoc,
         origin_handle: parsed.origin_handle || prev.origin_handle, 
+        origin_page_handle: parsed.origin_page_handle || parsed.origin_handle || prev.origin_page_handle, 
         origin_story: parsed.origin_story || prev.origin_story,
         specific_gravity: parsed.specific_gravity || prev.specific_gravity,
         diaphaneity: parsed.diaphaneity || prev.diaphaneity,
