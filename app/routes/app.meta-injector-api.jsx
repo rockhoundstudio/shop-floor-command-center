@@ -183,6 +183,16 @@ const MASTER_TYPE_MAP = {
   "jewelry-finding-type": "metaobject_reference",
 };
 
+const EXPLICIT_METAOBJECT_KEYS = [
+  "material", "color-pattern", "color_pattern", "jewelry-material", "jewelry_material",
+  "target-gender", "target_gender", "age-group", "age_group", "condition", "rarity", 
+  "authenticity", "jewelry-type", "jewelry_type", "necklace-design", "necklace_design", 
+  "crystal-system", "crystal_system", "geological-era", "geological_era", 
+  "mineral-class", "mineral_class", "rock-composition", "rock_composition", 
+  "rock-formation", "rock_formation", "chain-link-type", "chain_link_type",
+  "jewelry-finding-type", "jewelry_finding_type"
+];
+
 export const action = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
   const formData = await request.formData();
@@ -299,8 +309,8 @@ export const action = async ({ request }) => {
 
           const resolvedType = MASTER_TYPE_MAP[item.key];
           
-          // 🔴 GUARD FOR METAOBJECT REFERENCES: Skip "N/A" or "None"
-          if (resolvedType && resolvedType.includes("metaobject_reference")) {
+          // 🔴 GUARD FOR METAOBJECT REFERENCES: Skip "N/A", "None", empty
+          if ((resolvedType && resolvedType.includes("metaobject_reference")) || EXPLICIT_METAOBJECT_KEYS.includes(item.key)) {
             const valStr = String(item.value).trim().toLowerCase();
             if (["n/a", "none", "null", "undefined", ""].includes(valStr)) return false;
           }
@@ -356,8 +366,6 @@ export const action = async ({ request }) => {
       if (productTitle) {
         setMetafields = applyOriginOverridesBeforeApi(productTitle, setMetafields);
       }
-
-      console.log("METAFIELDS ABOUT TO BE SAVED:", JSON.stringify(setMetafields.filter(m => m.key.includes("weight")), null, 2));
 
       if (setMetafields.length > 0) {
         const chunks = chunkArray(setMetafields, 25);
@@ -696,8 +704,8 @@ export const action = async ({ request }) => {
         if (isCustomField && metaKey && MASTER_TYPE_MAP.hasOwnProperty(metaKey)) {
           const resolvedType = MASTER_TYPE_MAP[metaKey];
 
-          // 🔴 GUARD FOR METAOBJECT REFERENCES: Skip "N/A" or "None"
-          if (resolvedType && resolvedType.includes("metaobject_reference")) {
+          // 🔴 GUARD FOR METAOBJECT REFERENCES: Skip "N/A", "None", empty
+          if ((resolvedType && resolvedType.includes("metaobject_reference")) || EXPLICIT_METAOBJECT_KEYS.includes(metaKey)) {
             const valStr = String(value).trim().toLowerCase();
             if (["n/a", "none", "null", "undefined", ""].includes(valStr)) return;
           }
