@@ -1,4 +1,4 @@
-import { data } from "react-router";
+﻿import { data } from "react-router";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 
@@ -308,9 +308,14 @@ export const action = async ({ request }) => {
           let normalizedValue = normalizeMetafieldValue(item.key, item.value);
           let resolvedValue = normalizedValue;
           
+          // 🔴 FORCE DECIMAL STRING FORMAT FOR SHOPIFY VALIDATION
           if (resolvedType === "number_decimal") {
-            const parsedNum = parseFloat(String(normalizedValue).replace(/[^0-9.]/g, ""));
-            resolvedValue = isNaN(parsedNum) ? "0.0" : String(parsedNum);
+            const parsedNum = parseFloat(String(normalizedValue).replace(/[^0-9.-]/g, ""));
+            if (isNaN(parsedNum)) {
+              resolvedValue = "0.0";
+            } else {
+              resolvedValue = parsedNum % 1 === 0 ? parsedNum.toFixed(1) : String(parsedNum);
+            }
           } else if (resolvedType.startsWith("list.")) {
             resolvedValue = JSON.stringify([normalizedValue]);
           }
@@ -341,6 +346,8 @@ export const action = async ({ request }) => {
       if (productTitle) {
         setMetafields = applyOriginOverridesBeforeApi(productTitle, setMetafields);
       }
+
+      console.log("METAFIELDS ABOUT TO BE SAVED:", JSON.stringify(setMetafields.filter(m => m.key.includes("weight")), null, 2));
 
       if (setMetafields.length > 0) {
         const chunks = chunkArray(setMetafields, 25);
@@ -389,7 +396,7 @@ export const action = async ({ request }) => {
       // 🔴 Physical Variant Weight Sync
       const finalWeightGrams = directWeightGrams || payloadArray.find(item => item.key === "weight_grams")?.value;
       if (finalWeightGrams && fallbackProductId) {
-        const parsedGrams = parseFloat(String(finalWeightGrams).replace(/['"]/g, ""));
+        const parsedGrams = parseFloat(String(finalWeightGrams).replace(/[^0-9.-]/g, ""));
         if (!isNaN(parsedGrams) && parsedGrams > 0) {
           try {
             const productGid = `gid://shopify/Product/${fallbackProductId.split("/").pop()}`;
@@ -628,7 +635,7 @@ export const action = async ({ request }) => {
       await new Promise(resolve => setTimeout(resolve, 500));
 
       // Variant Price & Weight Sync
-      const weightGrams = parseFloat(String(payload.weight_grams || piece.weight_grams || 0));
+      const weightGrams = parseFloat(String(payload.weight_grams || piece.weight_grams || 0).replace(/[^0-9.-]/g, ""));
       if (defaultVariantId) {
         const variantUpdateInput = { id: defaultVariantId, price: price };
         if (!isNaN(weightGrams) && weightGrams > 0) {
@@ -675,9 +682,14 @@ export const action = async ({ request }) => {
         if (isCustomField && metaKey && MASTER_TYPE_MAP.hasOwnProperty(metaKey)) {
           let resolvedValue = normalizeMetafieldValue(metaKey, value);
 
+          // 🔴 FORCE DECIMAL STRING FORMAT FOR SHOPIFY VALIDATION
           if (MASTER_TYPE_MAP[metaKey] === "number_decimal") {
-            const parsed = parseFloat(String(resolvedValue).replace(/[^0-9.]/g, ""));
-            resolvedValue = isNaN(parsed) ? "0.0" : String(parsed);
+            const parsed = parseFloat(String(resolvedValue).replace(/[^0-9.-]/g, ""));
+            if (isNaN(parsed)) {
+              resolvedValue = "0.0";
+            } else {
+              resolvedValue = parsed % 1 === 0 ? parsed.toFixed(1) : String(parsed);
+            }
           }
 
           injectMetafieldsMap.set(metaKey, {
