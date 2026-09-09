@@ -18,6 +18,17 @@ function buildMasterVisionPrompt({
   fullCollectionTitle,
   collectionUrlPath
 }) {
+  let dwellButtonsHTML = `     <a href="${targetUrlPath}">${fullCollectionTitle} Story</a>\n     <a href="${collectionUrlPath}">${fullCollectionTitle} Collection</a>`;
+  
+  if (originSegment === "Richardson's Rock Ranch" || targetUrlPath.includes("the-richardson-strike")) {
+    dwellButtonsHTML = `     <a href="/pages/the-richardson-strike">Richardson's Rock Ranch Story</a>
+     <a href="/collections/richardsons-rock-ranch">Richardson's Rock Ranch Collection</a>
+     <a href="/pages/the-3-000-mile-run">The 3,000-Mile Run Story</a>
+     <a href="/collections/the-3-000-mile-run-1">The 3,000-Mile Run Collection</a>
+     <a href="/pages/the-shopped-rock">The Shopped Rock Story</a>
+     <a href="/collections/the-shopped-rock">The Shopped Rock Collection</a>`;
+  }
+
   return `You are a lapidary artist and master jeweler for Rockhound Studio. Analyze this photo and return a JSON object.
 - LIVE STORE DIRECTORY (Your Dyslexia Safeguard — Read this menu!):
   VALID PAGES IN STORE:
@@ -50,9 +61,8 @@ function buildMasterVisionPrompt({
   4. Signature: EXACTLY this line: — Bob & Janyce, Rockhound Studio, Spokane Valley WA.
   5. Stone Data: Brief lapidary specs (cut, finish, dimensions).
   6. Ready to Wear: Clearly state if the piece is set and ready to wear, or a raw/loose stone for makers.
-  7. Dwell Buttons: Include EXACTLY these two clickable HTML hyperlinks on their own lines:
-     <a href="${targetUrlPath}">${fullCollectionTitle} Story</a>
-     <a href="${collectionUrlPath}">${fullCollectionTitle} Collection</a>
+  7. Dwell Buttons: Include EXACTLY these clickable HTML hyperlinks on their own lines:
+${dwellButtonsHTML}
 
 FULL ORIGIN STORY:
 ${originStory}
@@ -519,6 +529,9 @@ export const action = async ({ request }) => {
         const finalOriginHandle = resolveOriginHandle(correctedOrigin, pagesList);
         const finalCollectionData = resolveCollectionData(correctedOrigin, finalOriginHandle, collectionsList);
         
+        // BUG 2 FIX: Ensure Richardson's page handle is absolutely enforced
+        const finalOriginPageHandle = finalOriginHandle === "the-richardson-strike" ? "the-richardson-strike" : finalOriginHandle;
+
         const manual_seo_title = correctedOrigin
           ? `Handcrafted ${derivedFamily} — ${correctedOrigin} — OOAK Lapidary Art`
           : `Handcrafted ${derivedFamily} — OOAK Lapidary Art`;
@@ -527,7 +540,7 @@ export const action = async ({ request }) => {
           origin_story: origin_story,
           stone_family: derivedFamily,
           origin_handle: finalOriginHandle,
-          origin_page_handle: finalOriginHandle,
+          origin_page_handle: finalOriginPageHandle,
           origin_location: correctedOrigin,
           shopify_title: `${derivedFamily} — ${correctedOrigin} — ${pieceNameSegment}`,
           collection_name: finalCollectionData.name,
@@ -681,10 +694,13 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
             : `${seoTitleParts.join(" ")} — Rockhound Studio`;
         }
 
+        // BUG 2 FIX: Ensure Richardson's page handle is absolutely enforced
+        const finalOriginPageHandle = resolvedHandle === "the-richardson-strike" ? "the-richardson-strike" : resolvedHandle;
+
         const finalParse = sanitizeObject({
           ...parsed,
           origin_handle: resolvedHandle,
-          origin_page_handle: resolvedHandle,
+          origin_page_handle: finalOriginPageHandle,
           origin_story: extractedStory,
           origin_location: parsed.origin_location || segment2,
           collection_name: parsed.collection_name || collectionData.name,
@@ -745,7 +761,12 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
       const fullCollectionTitle = defaultCollection.name.replace(/\s+Collection$/i, "").trim();
 
       const matchedPage = pagesList.find(p => p.url.includes(defaultOriginSlug));
-      const extractedStory = bench_origin_story || (matchedPage ? matchedPage.excerpt : "");
+      
+      // BUG 3 FIX: Reset origin_story if matched page differs from bench, to prevent stale carry-over
+      let extractedStory = matchedPage && matchedPage.excerpt ? matchedPage.excerpt : "";
+      if (!extractedStory) {
+        extractedStory = bench_origin_story;
+      }
       
       const pagesMenu = pagesList.map(p => `- Title: "${p.title}" | URL: ${p.url} | Excerpt: "${p.excerpt}"`).join("\n");
       const collectionsMenu = collectionsList.map(c => `- Title: "${c.title}" | URL: ${c.url} | Excerpt: "${c.excerpt}"`).join("\n");
@@ -859,6 +880,9 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
         const finalOriginHandle = resolveOriginHandle(finalOriginLocation, pagesList);
         const finalCollectionData = resolveCollectionData(finalOriginLocation, finalOriginHandle, collectionsList);
 
+        // BUG 2 FIX: Ensure Richardson's page handle is absolutely enforced
+        const finalOriginPageHandle = finalOriginHandle === "the-richardson-strike" ? "the-richardson-strike" : finalOriginHandle;
+
         const payload = sanitizeObject({
           pieceId,
           generated_description: final_desc,
@@ -880,7 +904,7 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
           bail_included: resolved_bail_included,
           origin_story: extractedStory,
           origin_handle: finalOriginHandle,
-          origin_page_handle: finalOriginHandle,
+          origin_page_handle: finalOriginPageHandle,
           origin_location: finalOriginLocation,
           collection_name: finalCollectionData.name,
           collection_location: finalCollectionData.name.replace(/\s*Collection$/i, "").trim(),
@@ -940,6 +964,17 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
       const matchedPage = pagesList.find(p => p.url.includes(defaultOriginSlug));
       const extractedStory = matchedPage ? matchedPage.excerpt : "";
 
+      let dwellButtonsHTML = `     <a href="${targetUrlPath}">${fullCollectionTitle} Story</a>\n     <a href="${collectionUrlPath}">${fullCollectionTitle} Collection</a>`;
+      
+      if (originSegment === "Richardson's Rock Ranch" || targetUrlPath.includes("the-richardson-strike")) {
+        dwellButtonsHTML = `     <a href="/pages/the-richardson-strike">Richardson's Rock Ranch Story</a>
+     <a href="/collections/richardsons-rock-ranch">Richardson's Rock Ranch Collection</a>
+     <a href="/pages/the-3-000-mile-run">The 3,000-Mile Run Story</a>
+     <a href="/collections/the-3-000-mile-run-1">The 3,000-Mile Run Collection</a>
+     <a href="/pages/the-shopped-rock">The Shopped Rock Story</a>
+     <a href="/collections/the-shopped-rock">The Shopped Rock Collection</a>`;
+      }
+
       const promptText = `You are a lapidary artist and master jeweler for Rockhound Studio.
 Write a product description in Bob's voice using this STRICT 7-BLOCK FORMAT based on the provided details.
 Do NOT use markdown headers. Separate each block naturally.
@@ -962,9 +997,8 @@ STRICT 7-BLOCK FORMAT:
 4. Signature: EXACTLY this line: — Bob & Janyce, Rockhound Studio, Spokane Valley WA.
 5. Stone Data: Brief lapidary specs (cut, finish, dimensions).
 6. Ready to Wear: Clearly state if the piece is set and ready to wear, or a raw/loose stone for makers.
-7. Dwell Buttons: Include EXACTLY these two clickable HTML hyperlinks on their own lines:
-     <a href="${targetUrlPath}">${fullCollectionTitle} Story</a>
-     <a href="${collectionUrlPath}">${fullCollectionTitle} Collection</a>`;
+7. Dwell Buttons: Include EXACTLY these clickable HTML hyperlinks on their own lines:
+${dwellButtonsHTML}`;
 
       const geminiRes = await fetchWithRetry("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY, {
         method: "POST",
