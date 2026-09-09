@@ -438,10 +438,12 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
     let productType = "Wearable Art";
     (sharedFields.primary_use && sharedFields.primary_use !== "") && (productType = sharedFields.primary_use);
 
-    // BUG 3 FIX: Enforce Richardson's override for origin_page_handle
+    // BUG 3 FIX: Enforce Richardson's override for origin_page_handle and fix 'shocked-rock' typo
     let finalOriginPageHandle = latestShared.current.origin_page_handle || latestShared.current.origin_handle;
     if (latestShared.current.origin_handle === "the-richardson-strike") {
       finalOriginPageHandle = "the-richardson-strike";
+    } else if (finalOriginPageHandle === "the-shocked-rock" || finalOriginPageHandle === "the-shopped-rock") {
+      finalOriginPageHandle = "the-shopped-rock";
     }
 
     const rawPayload = {
@@ -459,33 +461,37 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
       artist_notes: pieces[0].artist_notes,
       origin_handle: latestShared.current.origin_handle,
       origin_page_handle: finalOriginPageHandle,
-      bodyHtml: pieces[0].generated_description, // BUG 1 FIX: Map description to bodyHtml
       title: pieces[0].canonical_title || buildTitle(latestShared.current, pieces[0]),
-      descriptionHtml: pieces[0].generated_description,
       productType: productType,
-      status: "DRAFT",
-      stone_story: "" // BUG 4 FIX: Always send empty string to clear the ghost field
+      status: "DRAFT"
     };
 
     const payload = {};
     Object.keys(rawPayload).forEach(key => {
       const val = rawPayload[key];
-      
-      // Explicitly kill the ghost field by ensuring it gets sent as empty string
-      if (key === "stone_story") {
-        payload[key] = "";
-        return;
-      }
-      
       // Skip null, undefined, empty string, "N/A", or "None"
       if (val !== null && val !== undefined && val !== "" && val !== "N/A" && val !== "None") {
         payload[key] = val;
       }
     });
 
-    // BUG 1 & 2 FIX: Explicitly ensure description and SEO title make it to API layer
-    payload.descriptionHtml = pieces[0].generated_description || "";
-    payload.seo_title = pieces[0].seo_title || "";
+    // BUG 1 FIX: Explicitly ensure bodyHtml and descriptionHtml are sent
+    if (pieces[0].generated_description) {
+      payload.bodyHtml = pieces[0].generated_description;
+      payload.descriptionHtml = pieces[0].generated_description;
+    }
+    
+    // BUG 2 FIX: Explicitly ensure SEO title is sent
+    if (pieces[0].seo_title) {
+      payload.seo_title = pieces[0].seo_title;
+    }
+
+    // Explicitly map weight and artist notes just in case
+    if (pieces[0].weight_grams) payload.weight_grams = pieces[0].weight_grams;
+    if (pieces[0].artist_notes) payload.artist_notes = pieces[0].artist_notes;
+
+    // BUG 4 FIX: Always set stone_story to empty string to kill the ghost field
+    payload.stone_story = "";
 
     payload.metafieldsJson = buildMetafieldsJson(latestShared.current, pieces[0]);
     payload.mediaUrlsJson = JSON.stringify(pieces[0].stagedResourceUrls.filter(u => u !== undefined && u !== ""));
@@ -753,11 +759,11 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
         resolvedCollectionLoc = "Shopped Rock";
       }
 
-      // BUG 3 FIX: Enforce correct origin page handle assignment for Richardson's
+      // BUG 3 FIX: Enforce correct origin page handle assignment for Richardson's and fix typo
       let finalOriginPageHandle = parsed.origin_page_handle || parsed.origin_handle || prev.origin_page_handle;
       if (parsed.origin_handle === "the-richardson-strike") {
         finalOriginPageHandle = "the-richardson-strike";
-      } else if (finalOriginPageHandle === "the-shocked-rock") {
+      } else if (finalOriginPageHandle === "the-shocked-rock" || parsed.origin_handle === "the-shopped-rock") {
         finalOriginPageHandle = "the-shopped-rock";
       }
 
