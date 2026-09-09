@@ -1,4 +1,4 @@
-﻿import { data } from "react-router";
+import { data } from "react-router";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 
@@ -154,6 +154,8 @@ const MASTER_TYPE_MAP = {
   color_pattern: "list.metaobject_reference",
   "color-pattern": "list.metaobject_reference",
   material: "metaobject_reference",
+  jewelry_material: "metaobject_reference",
+  "jewelry-material": "metaobject_reference",
   age_group: "metaobject_reference",
   "age-group": "metaobject_reference",
   jewelry_type: "metaobject_reference",
@@ -290,13 +292,21 @@ export const action = async ({ request }) => {
       ];
 
       let setMetafields = payloadArray
-        .filter(item => 
-          item.value !== null && 
-          item.value !== undefined && 
-          String(item.value).trim() !== "" && 
-          MASTER_TYPE_MAP.hasOwnProperty(item.key) &&
-          !skippedUndefinedKeys.includes(item.key)
-        )
+        .filter(item => {
+          if (item.value === null || item.value === undefined || String(item.value).trim() === "") return false;
+          if (!MASTER_TYPE_MAP.hasOwnProperty(item.key)) return false;
+          if (skippedUndefinedKeys.includes(item.key)) return false;
+
+          const resolvedType = MASTER_TYPE_MAP[item.key];
+          
+          // 🔴 GUARD FOR METAOBJECT REFERENCES: Skip "N/A" or "None"
+          if (resolvedType && resolvedType.includes("metaobject_reference")) {
+            const valStr = String(item.value).trim().toLowerCase();
+            if (["n/a", "none", "null", "undefined", ""].includes(valStr)) return false;
+          }
+
+          return true;
+        })
         .flatMap(item => {
           const itemOwnerId = item.ownerId || fallbackProductId;
           if (!itemOwnerId) throw new Error(`Missing ownerId for field: ${item.key}`);
@@ -663,7 +673,11 @@ export const action = async ({ request }) => {
         "character_marks", "honest_flaws", "honest_flaws_and_character", 
         "is_ooak", "treated", "found_object", "custom_product", "piece_name", 
         "stone_shape", "specific_gravity", "mohs_hardness", "generated_description", 
-        "collection_location", "origin_handle", "origin_page_handle"
+        "collection_location", "origin_handle", "origin_page_handle",
+        "material", "color_pattern", "jewelry_material", "target_gender", "age_group", 
+        "condition", "rarity", "authenticity", "jewelry_type", "necklace_design", 
+        "crystal_system", "geological_era", "mineral_class", "rock_composition", 
+        "rock_formation"
       ];
       
       const injectMetafieldsMap = new Map();
@@ -680,10 +694,18 @@ export const action = async ({ request }) => {
         }
 
         if (isCustomField && metaKey && MASTER_TYPE_MAP.hasOwnProperty(metaKey)) {
+          const resolvedType = MASTER_TYPE_MAP[metaKey];
+
+          // 🔴 GUARD FOR METAOBJECT REFERENCES: Skip "N/A" or "None"
+          if (resolvedType && resolvedType.includes("metaobject_reference")) {
+            const valStr = String(value).trim().toLowerCase();
+            if (["n/a", "none", "null", "undefined", ""].includes(valStr)) return;
+          }
+
           let resolvedValue = normalizeMetafieldValue(metaKey, value);
 
           // 🔴 FORCE DECIMAL STRING FORMAT FOR SHOPIFY VALIDATION
-          if (MASTER_TYPE_MAP[metaKey] === "number_decimal") {
+          if (resolvedType === "number_decimal") {
             const parsed = parseFloat(String(resolvedValue).replace(/[^0-9.-]/g, ""));
             if (isNaN(parsed)) {
               resolvedValue = "0.0";
@@ -696,8 +718,8 @@ export const action = async ({ request }) => {
             ownerId: productId,
             namespace: "custom",
             key: metaKey,
-            type: MASTER_TYPE_MAP[metaKey] || "single_line_text_field",
-            value: (MASTER_TYPE_MAP[metaKey] || "").startsWith("list.") ? JSON.stringify([resolvedValue]) : resolvedValue
+            type: resolvedType || "single_line_text_field",
+            value: (resolvedType || "").startsWith("list.") ? JSON.stringify([resolvedValue]) : resolvedValue
           });
         }
       });
