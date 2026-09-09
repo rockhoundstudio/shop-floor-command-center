@@ -26,8 +26,14 @@ const GET_PRODUCTS_QUERY = `
             edges {
               node {
                 price
-                weight
-                weightUnit
+                inventoryItem {
+                  measurement {
+                    weight {
+                      value
+                      unit
+                    }
+                  }
+                }
               }
             }
           }
@@ -124,6 +130,13 @@ async function fetchAllProducts(graphql) {
         ...(product.rockhoundMeta?.edges || []),
         ...(product.geoMeta?.edges || []),
       ];
+      
+      const vNode = product.variants?.edges?.[0]?.node;
+      if (vNode && vNode.inventoryItem?.measurement?.weight) {
+        vNode.weight = vNode.inventoryItem.measurement.weight.value;
+        vNode.weightUnit = vNode.inventoryItem.measurement.weight.unit;
+      }
+
       return { ...product, metafields: { edges: allEdges } };
     });
 
