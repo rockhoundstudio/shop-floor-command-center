@@ -1,7 +1,10 @@
-import { authenticate } from "../shopify.server";
+﻿import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { ROCKHOUND_FIELDS } from "./meta-injector.constants.jsx";
 import { data as json } from "react-router";
+import React, { useEffect } from "react";
+import { useNavigate, useFetcher } from "react-router";
+import { Page, Layout, BlockStack, Banner, Card, Text, Box, Button, Divider } from "@shopify/polaris";
 
 const GET_PRODUCTS_QUERY = `
   query GetProducts($cursor: String) {
@@ -23,6 +26,8 @@ const GET_PRODUCTS_QUERY = `
             edges {
               node {
                 price
+                weight
+                weightUnit
               }
             }
           }
@@ -195,7 +200,6 @@ export async function action({ request }) {
   const formData = await request.formData();
   const intent = formData.get("intent");
 
-  // ── SAVE PRODUCT ───────────────────────────────────────────────────────────
   if (intent === "saveProduct" || intent === "saveMetafields") {
     try {
       const payloadStr = formData.get("payload") || formData.get("metafields");
@@ -250,7 +254,6 @@ export async function action({ request }) {
     }
   }
 
-  // ── STANDARDIZE ONE OF A KIND ──────────────────────────────────────────────
   if (intent === "standardizeOneOfAKind") {
     const results = [];
     let fixed = 0;
@@ -341,7 +344,6 @@ export async function action({ request }) {
     return { intent, results, fixed };
   }
 
-  // ── LEGACY MIGRATION ───────────────────────────────────────────────────────
   const results = [];
   let productsProcessed = 0;
   let fieldsMigrated = 0;
@@ -418,25 +420,20 @@ export async function action({ request }) {
         addedToThisProduct = true;
       };
 
-      // custom.dimensions_mm → rockhound.dimensions_mm
       if (custDim && !rhDim) {
         pushUpdate("dimensions_mm", custDim, "single_line_text_field");
       }
 
-      // custom.treatment_status → rockhound.treated
       if (custTreat && !rhTreat) {
         pushUpdate("treated", custTreat, "single_line_text_field");
       }
 
-      // custom.stone_story → rockhound.origin_story
       if (custStory && !rhStory) {
         pushUpdate("origin_story", custStory, "multi_line_text_field");
       }
 
-      // custom.character_marks & custom.bench_notes → rockhound.honest_flaws_and_character
       if (!rhFlaws) {
         let combinedFlaws = null;
-        
         if (custChar && custBench) {
           combinedFlaws = `${custChar}\n${custBench}`;
         } else if (custChar) {
@@ -461,7 +458,6 @@ export async function action({ request }) {
     }
 
     for (const chunk of chunks) {
-      // Extract just the Shopify input objects for the mutation
       const metafields = chunk.map(c => c.update);
 
       const setResponse = await admin.graphql(`
@@ -482,7 +478,6 @@ export async function action({ request }) {
         results.push({ status: "error", message: `Chunk failed: ${errors[0].message}` });
       } else {
         fieldsMigrated += chunk.length;
-        // Log individual successful migrations to the results array
         chunk.forEach(c => {
           results.push({ status: "success", message: `Migrated '${c.update.key}' for product: ${c.title}` });
         });
@@ -492,7 +487,6 @@ export async function action({ request }) {
     if (fieldsMigrated === 0 && results.length === 0) {
       results.push({ status: "success", message: `Scanned ${products.length} products. All fields are already migrated or blank.` });
     } else {
-      // Unshift a grand summary to the top of the report
       results.unshift({ status: "success", message: `SUMMARY: Scanned ${products.length} products. Migrated ${fieldsMigrated} total fields across ${productsProcessed} items.` });
     }
 
