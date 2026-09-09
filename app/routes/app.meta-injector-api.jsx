@@ -105,7 +105,7 @@ const MASTER_TYPE_MAP = {
   tenacity: "single_line_text_field",
   primary_color: "single_line_text_field",
   diaphaneity: "single_line_text_field",
-  character_marks: "list.single_line_text_field",
+  character_marks: "single_line_text_field",
   dimensions_mm: "single_line_text_field",
   cut_type: "single_line_text_field",
   bench_notes: "single_line_text_field",
@@ -124,8 +124,6 @@ const MASTER_TYPE_MAP = {
   origin_page_handle: "single_line_text_field",
   cut_and_shape: "single_line_text_field",
   primary_use: "single_line_text_field",
-  weight_grams: "single_line_text_field",
-  shipping_weight_oz: "single_line_text_field",
   handcrafted_by: "single_line_text_field",
   alt_text: "single_line_text_field",
   is_ooak: "single_line_text_field",
@@ -136,18 +134,22 @@ const MASTER_TYPE_MAP = {
   bail_included: "single_line_text_field",
   wire_material: "single_line_text_field",
   chain_material: "single_line_text_field",
-  price: "single_line_text_field",
   seo_title: "single_line_text_field",
   secondary_medium: "single_line_text_field",
   treated: "single_line_text_field",
-  
-  // HEAVY TEXT BLOCKS
-  origin_story: "multi_line_text_field",
-  honest_flaws: "multi_line_text_field",
-  honest_flaws_and_character: "multi_line_text_field",
+
+  // 🔴 NUMBERS: strictly number_decimal to match Shopify definitions
+  weight_grams: "number_decimal",
+  shipping_weight_oz: "number_decimal",
+  price: "number_decimal",
+
+  // 🔴 TEXT BLOCKS: align with definitions
+  origin_story: "single_line_text_field",
+  honest_flaws: "single_line_text_field",
+  honest_flaws_and_character: "single_line_text_field",
   generated_description: "multi_line_text_field",
-  artist_notes: "multi_line_text_field",
-  
+  artist_notes: "single_line_text_field",
+
   // SHOPIFY TAXONOMY / METAOBJECTS
   color_pattern: "list.metaobject_reference",
   "color-pattern": "list.metaobject_reference",
@@ -265,7 +267,7 @@ export const action = async ({ request }) => {
           ownerId: fallbackProductId,
           namespace: "custom",
           key: "weight_grams",
-          type: "single_line_text_field",
+          type: "number_decimal",
           value: String(directWeightGrams)
         });
       }
@@ -275,13 +277,26 @@ export const action = async ({ request }) => {
           ownerId: fallbackProductId,
           namespace: "custom",
           key: "shipping_weight_oz",
-          type: "single_line_text_field",
+          type: "number_decimal",
           value: String(directShippingWeightOz)
         });
       }
 
+      // Keys rejected by Shopify when custom definition doesn't exist
+      const skippedUndefinedKeys = [
+        "mineral_class", "crystal_system", "rock_formation", 
+        "rock_composition", "geological_era", "jewelry_type", 
+        "necklace_design", "color_pattern"
+      ];
+
       let setMetafields = payloadArray
-        .filter(item => item.value !== null && item.value !== undefined && String(item.value).trim() !== "" && MASTER_TYPE_MAP.hasOwnProperty(item.key))
+        .filter(item => 
+          item.value !== null && 
+          item.value !== undefined && 
+          String(item.value).trim() !== "" && 
+          MASTER_TYPE_MAP.hasOwnProperty(item.key) &&
+          !skippedUndefinedKeys.includes(item.key)
+        )
         .flatMap(item => {
           const itemOwnerId = item.ownerId || fallbackProductId;
           if (!itemOwnerId) throw new Error(`Missing ownerId for field: ${item.key}`);
@@ -289,11 +304,16 @@ export const action = async ({ request }) => {
           let resolvedId = `gid://shopify/Product/${itemOwnerId.split("/").pop()}`;
           if (itemOwnerId.startsWith("gid://")) resolvedId = itemOwnerId;
 
-          const resolvedType = MASTER_TYPE_MAP[item.key] || item.type || "single_line_text_field";
+          const resolvedType = MASTER_TYPE_MAP[item.key] || "single_line_text_field";
           let normalizedValue = normalizeMetafieldValue(item.key, item.value);
           let resolvedValue = normalizedValue;
           
-          if (resolvedType.startsWith("list.")) resolvedValue = JSON.stringify([normalizedValue]);
+          if (resolvedType === "number_decimal") {
+            const parsedNum = parseFloat(String(normalizedValue).replace(/[^0-9.]/g, ""));
+            resolvedValue = isNaN(parsedNum) ? "0.0" : String(parsedNum);
+          } else if (resolvedType.startsWith("list.")) {
+            resolvedValue = JSON.stringify([normalizedValue]);
+          }
 
           let resolvedNamespace = item.namespace || "custom";
           if (item.key === "is_ooak" || resolvedNamespace === "none" || resolvedNamespace === "") {
@@ -654,6 +674,11 @@ export const action = async ({ request }) => {
 
         if (isCustomField && metaKey && MASTER_TYPE_MAP.hasOwnProperty(metaKey)) {
           let resolvedValue = normalizeMetafieldValue(metaKey, value);
+
+          if (MASTER_TYPE_MAP[metaKey] === "number_decimal") {
+            const parsed = parseFloat(String(resolvedValue).replace(/[^0-9.]/g, ""));
+            resolvedValue = isNaN(parsed) ? "0.0" : String(parsed);
+          }
 
           injectMetafieldsMap.set(metaKey, {
             ownerId: productId,
