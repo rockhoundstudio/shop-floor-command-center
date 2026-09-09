@@ -14,10 +14,8 @@ function chunkArray(arr, size) {
 function extractStoneName(title) {
   if (!title) return "Unknown";
   
-  // Isolate section one (everything before the first dash)
   let sectionOne = title.split(/[—–-]/)[0].trim();
   
-  // Dictionary of adjectives to strip out
   const adjectives = [
     "Green", "Blue", "Red", "Yellow", "Orange", "Purple", "Pink", "Black", "White", "Grey", "Gray", "Brown",
     "Brecciated", "Picture", "Ocean", "Crazy Lace", "Plume", "Moss", "Dendritic", "Banded", "Polychrome",
@@ -26,11 +24,8 @@ function extractStoneName(title) {
   ];
 
   let words = sectionOne.split(/\s+/);
-  
-  // Strip known adjectives
   words = words.filter(word => !adjectives.some(adj => adj.toLowerCase() === word.toLowerCase()));
 
-  // Grab the last remaining word as the true base rock
   if (words.length > 0) {
     let baseRock = words[words.length - 1];
     return baseRock.charAt(0).toUpperCase() + baseRock.slice(1).toLowerCase();
@@ -42,12 +37,10 @@ function extractStoneName(title) {
 function normalizeMetafieldValue(key, value) {
   let val = String(value);
 
-  // 1. STRIP ⚠️ EMOJI PREFIX
   if (val.startsWith("⚠️ ")) {
     val = val.replace(/^⚠️\s*/, "");
   }
 
-  // 2. NORMALIZE BOOLEAN-STYLE FIELDS (Amputated legacy is_one_of_a_kind)
   const booleanKeys = [
     "is_ooak", "found_object", 
     "custom_product", "setting_ready", "bail_included", "treated"
@@ -96,11 +89,9 @@ function applyOriginOverridesBeforeApi(title, metafieldsArray) {
   }
 
   newMetafields = newMetafields.filter(m => m.key !== "origin_page_handle");
-
   return newMetafields;
 }
 
-// 🟢 FIX: THE SCHEMA COLLISION (Ghost keys removed)
 const MASTER_TYPE_MAP = {
   rescued_by: "single_line_text_field",
   origin_location: "single_line_text_field",
@@ -133,8 +124,8 @@ const MASTER_TYPE_MAP = {
   origin_page_handle: "single_line_text_field",
   cut_and_shape: "single_line_text_field",
   primary_use: "single_line_text_field",
-  weight_grams: "number_decimal",
-  shipping_weight_oz: "number_decimal",
+  weight_grams: "single_line_text_field",
+  shipping_weight_oz: "single_line_text_field",
   handcrafted_by: "single_line_text_field",
   alt_text: "single_line_text_field",
   is_ooak: "single_line_text_field",
@@ -145,12 +136,12 @@ const MASTER_TYPE_MAP = {
   bail_included: "single_line_text_field",
   wire_material: "single_line_text_field",
   chain_material: "single_line_text_field",
-  price: "number_decimal",
+  price: "single_line_text_field",
   seo_title: "single_line_text_field",
   secondary_medium: "single_line_text_field",
   treated: "single_line_text_field",
   
-  // HEAVY TEXT BLOCKS (Multi-line)
+  // HEAVY TEXT BLOCKS
   origin_story: "multi_line_text_field",
   honest_flaws: "multi_line_text_field",
   honest_flaws_and_character: "multi_line_text_field",
@@ -192,11 +183,6 @@ export const action = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
   const formData = await request.formData();
   const intent = formData.get("intent");
-
-  const allFormData = Object.fromEntries(formData);
-  console.log("=== INCOMING ACTION FORM DATA ===");
-  console.log(JSON.stringify(allFormData, null, 2));
-  console.log("=================================");
 
   // ==========================================
   // 🟢 INTENT 1: AUTO-FILL (Mindat & Cache)
@@ -258,28 +244,54 @@ export const action = async ({ request }) => {
   if (intent === "saveMetafields") {
     try {
       const rawPayload = formData.get("payload") || formData.get("metafields");
-      
-      if (!rawPayload) {
+      const directWeightGrams = formData.get("weightGrams");
+      const directShippingWeightOz = formData.get("shippingWeightOz");
+      const fallbackProductId = formData.get("productId");
+
+      if (!rawPayload && !directWeightGrams && !fallbackProductId) {
         return data({ intent: "saveMetafields", success: false, message: "No data provided to save." });
       }
 
-      let payloadArray = JSON.parse(rawPayload);
+      let payloadArray = [];
+      try {
+        if (rawPayload) payloadArray = JSON.parse(rawPayload);
+      } catch (e) {
+        payloadArray = [];
+      }
+
+      // Explicitly inject manual weight fields if passed directly through form
+      if (directWeightGrams && !payloadArray.some(p => p.key === "weight_grams")) {
+        payloadArray.push({
+          ownerId: fallbackProductId,
+          namespace: "custom",
+          key: "weight_grams",
+          type: "single_line_text_field",
+          value: String(directWeightGrams)
+        });
+      }
+
+      if (directShippingWeightOz && !payloadArray.some(p => p.key === "shipping_weight_oz")) {
+        payloadArray.push({
+          ownerId: fallbackProductId,
+          namespace: "custom",
+          key: "shipping_weight_oz",
+          type: "single_line_text_field",
+          value: String(directShippingWeightOz)
+        });
+      }
 
       let setMetafields = payloadArray
         .filter(item => item.value !== null && item.value !== undefined && String(item.value).trim() !== "" && MASTER_TYPE_MAP.hasOwnProperty(item.key))
         .flatMap(item => {
-          const fallbackProductId = formData.get("productId");
           const itemOwnerId = item.ownerId || fallbackProductId;
-          
           if (!itemOwnerId) throw new Error(`Missing ownerId for field: ${item.key}`);
 
           let resolvedId = `gid://shopify/Product/${itemOwnerId.split("/").pop()}`;
           if (itemOwnerId.startsWith("gid://")) resolvedId = itemOwnerId;
 
           const resolvedType = MASTER_TYPE_MAP[item.key] || item.type || "single_line_text_field";
-          
           let normalizedValue = normalizeMetafieldValue(item.key, item.value);
-          let resolvedValue = normalizedValue.replace(/[—–]/g, '-');
+          let resolvedValue = normalizedValue;
           
           if (resolvedType.startsWith("list.")) resolvedValue = JSON.stringify([normalizedValue]);
 
@@ -305,37 +317,33 @@ export const action = async ({ request }) => {
           return fieldsToReturn;
         });
 
-      // Apply Origin Overrides right before Shopify API call
       const productTitle = formData.get("productTitle");
       if (productTitle) {
         setMetafields = applyOriginOverridesBeforeApi(productTitle, setMetafields);
       }
 
-      if (setMetafields.length === 0) {
-        return data({ intent: "saveMetafields", success: true, message: "No fields to save." });
-      }
+      if (setMetafields.length > 0) {
+        const chunks = chunkArray(setMetafields, 25);
+        const allErrors = [];
 
-      const chunks = chunkArray(setMetafields, 25);
-      const allErrors = [];
+        for (const chunk of chunks) {
+          const response = await admin.graphql(
+            `#graphql
+            mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
+              metafieldsSet(metafields: $metafields) { userErrors { field message } }
+            }`,
+            { variables: { metafields: chunk } }
+          );
+          const result = await response.json();
+          allErrors.push(...(result?.data?.metafieldsSet?.userErrors || []));
+        }
 
-      for (const chunk of chunks) {
-        const response = await admin.graphql(
-          `#graphql
-          mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
-            metafieldsSet(metafields: $metafields) { userErrors { field message } }
-          }`,
-          { variables: { metafields: chunk } }
-        );
-        const result = await response.json();
-        allErrors.push(...(result?.data?.metafieldsSet?.userErrors || []));
-      }
-
-      if (allErrors.length > 0) {
-        return data({ success: false, message: "Saved with errors: " + allErrors.map(e => e.message).join(" | "), errors: allErrors });
+        if (allErrors.length > 0) {
+          return data({ success: false, message: "Saved with errors: " + allErrors.map(e => e.message).join(" | "), errors: allErrors });
+        }
       }
 
       // Base Product Update
-      const fallbackProductId = formData.get("productId");
       const newProductTitle = formData.get("productTitle");
       const newDescriptionHtml = formData.get("descriptionHtml");
 
@@ -358,38 +366,30 @@ export const action = async ({ request }) => {
         }
       }
 
-      // Variant Weight Update
-      const weightItem = payloadArray.find(item => item.key === "weight_grams");
-      if (weightItem && weightItem.value) {
-        const weightGrams = parseFloat(String(weightItem.value).replace(/['"]/g, ""));
-        if (!isNaN(weightGrams) && weightGrams > 0) {
+      // 🔴 Physical Variant Weight Sync
+      const finalWeightGrams = directWeightGrams || payloadArray.find(item => item.key === "weight_grams")?.value;
+      if (finalWeightGrams && fallbackProductId) {
+        const parsedGrams = parseFloat(String(finalWeightGrams).replace(/['"]/g, ""));
+        if (!isNaN(parsedGrams) && parsedGrams > 0) {
           try {
-            let targetProductId = formData.get("productId");
-            if (!targetProductId) {
-              const fallbackField = payloadArray.find(item => item.ownerId);
-              if (fallbackField) targetProductId = fallbackField.ownerId;
-            }
-            
-            if (targetProductId) {
-              const productGid = `gid://shopify/Product/${targetProductId.split("/").pop()}`;
-              const variantQuery = await admin.graphql(
+            const productGid = `gid://shopify/Product/${fallbackProductId.split("/").pop()}`;
+            const variantQuery = await admin.graphql(
+              `#graphql
+              query getDefaultVariant($id: ID!) {
+                product(id: $id) { variants(first: 1) { edges { node { id } } } }
+              }`,
+              { variables: { id: productGid } }
+            );
+            const variantData = await variantQuery.json();
+            const variantId = variantData?.data?.product?.variants?.edges?.[0]?.node?.id;
+            if (variantId) {
+              await admin.graphql(
                 `#graphql
-                query getDefaultVariant($id: ID!) {
-                  product(id: $id) { variants(first: 1) { edges { node { id } } } }
+                mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+                  productVariantsBulkUpdate(productId: $productId, variants: $variants) { userErrors { field message } }
                 }`,
-                { variables: { id: productGid } }
+                { variables: { productId: productGid, variants: [{ id: variantId, inventoryItem: { measurement: { weight: { value: parsedGrams / 28.3495, unit: "OUNCES" } } } }] } }
               );
-              const variantData = await variantQuery.json();
-              const variantId = variantData?.data?.product?.variants?.edges?.[0]?.node?.id;
-              if (variantId) {
-                await admin.graphql(
-                  `#graphql
-                  mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
-                    productVariantsBulkUpdate(productId: $productId, variants: $variants) { userErrors { field message } }
-                  }`,
-                  { variables: { productId: productGid, variants: [{ id: variantId, inventoryItem: { measurement: { weight: { value: weightGrams / 28.3495, unit: "OUNCES" } } } }] } }
-                );
-              }
             }
           } catch (weightErr) {
             console.warn("[saveMetafields] Variant weight update failed:", weightErr.message);
@@ -397,7 +397,7 @@ export const action = async ({ request }) => {
         }
       }
 
-      return data({ intent: "saveMetafields", success: true, message: "All metafields locked in." });
+      return data({ intent: "saveMetafields", success: true, message: "All metafields and variant weights locked in." });
     } catch (error) {
       return data({ intent: "saveMetafields", success: false, error: error.message });
     }
@@ -426,7 +426,6 @@ export const action = async ({ request }) => {
     const malformedKeys = ["cut_type", "crystalSystem", "geologicalEra", "mineralClass", "rockComposition", "rockFormation", "specificGravity", "mohsHardness", "stone_story"];
     
     const toDelete = allMeta.map(e => e.node).filter(m => malformedKeys.includes(m.key));
-
     if (toDelete.length === 0) return data({ success: true, message: "No malformed keys found. Already clean." });
 
     const deleteResponse = await admin.graphql(
@@ -442,7 +441,6 @@ export const action = async ({ request }) => {
     const deleted = deleteResult?.data?.metafieldsDelete?.deletedMetafields || [];
 
     if (deleteErrors.length > 0) return data({ success: false, message: "Delete had errors.", errors: deleteErrors });
-
     return data({ success: true, message: `Cleaned ${deleted.length} malformed metafield(s). Re-save the product to write them correctly.`, deleted });
   }
 
@@ -479,13 +477,14 @@ export const action = async ({ request }) => {
           const allMeta = productNode.metafields?.edges || [];
           
           const toDelete = allMeta.map(e => e.node).filter(m => {
-              if (m.namespace === "geo" || m.namespace === "rockhound") return true;
-              if (m.namespace === "custom") {
-                if (customCamelKeys.includes(m.key)) return true;
-                if (m.key.includes("-")) return true;
-              }
-              return false;
-            });
+            if (["geo", "rockhound"].includes(m.namespace)) return true;
+            if (m.namespace === "custom") {
+              if (["weight_grams", "shipping_weight_oz"].includes(m.key)) return false;
+              if (customCamelKeys.includes(m.key)) return true;
+              if (m.key.includes("-")) return true;
+            }
+            return false;
+          });
 
           if (toDelete.length > 0) {
             try {
@@ -572,7 +571,7 @@ export const action = async ({ request }) => {
       (payload.pieces && payload.pieces.length > 0) && (piece = payload.pieces[0]);
 
       const stoneFamily = payload.stone_family || "Unknown Stone";
-      const pieceName = piece.piece_name || "New Piece";
+      const pieceName = piece.piece_name || payload.piece_name || "New Piece";
       const originLocation = payload.collection_name ? payload.collection_name.replace(/\s+Collection$/i, "").trim() : (payload.origin_location || "Unknown Origin");
 
       const title = payload.title && !payload.title.includes("Unknown") ? payload.title : `${stoneFamily} — ${originLocation} — ${pieceName}`;
@@ -582,8 +581,8 @@ export const action = async ({ request }) => {
       const status = payload.status || "DRAFT";
 
       const allUserErrors = [];
-
       const seoTitle = payload.seo_title || `${stoneFamily} — ${pieceName} — One-of-a-Kind Rockhound Studio`;
+
       const createResponse = await admin.graphql(
         `#graphql
         mutation productCreate($input: ProductInput!) {
@@ -608,239 +607,78 @@ export const action = async ({ request }) => {
 
       await new Promise(resolve => setTimeout(resolve, 500));
 
-      const seoDescription = payload.descriptionHtml || piece.generated_description || piece.descriptionHtml || "";
-      const seoMetafieldsToInject = [];
-      if (seoTitle) seoMetafieldsToInject.push({ ownerId: productId, namespace: "global", key: "title_tag", value: seoTitle, type: "single_line_text_field" });
-      if (seoDescription) seoMetafieldsToInject.push({ ownerId: productId, namespace: "global", key: "description_tag", value: seoDescription.slice(0, 320), type: "single_line_text_field" });
+      // Variant Price & Weight Sync
+      const weightGrams = parseFloat(String(payload.weight_grams || piece.weight_grams || 0));
+      if (defaultVariantId) {
+        const variantUpdateInput = { id: defaultVariantId, price: price };
+        if (!isNaN(weightGrams) && weightGrams > 0) {
+          variantUpdateInput.inventoryItem = {
+            measurement: { weight: { value: weightGrams / 28.3495, unit: "OUNCES" } }
+          };
+        }
 
-      if (seoMetafieldsToInject.length > 0) {
-        try {
-          await admin.graphql(
-            `#graphql
-            mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
-              metafieldsSet(metafields: $metafields) { metafields { id key } }
-            }`,
-            { variables: { metafields: seoMetafieldsToInject } }
-          );
-        } catch (e) {}
-      }
-
-      if (price && defaultVariantId) {
         const variantResponse = await admin.graphql(
           `#graphql
           mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
             productVariantsBulkUpdate(productId: $productId, variants: $variants) { userErrors { field message } }
           } `,
-          { variables: { productId, variants: [{ id: defaultVariantId, price: price, inventoryItem: { measurement: { weight: { value: parseFloat(payload.weight_grams || piece.weight_grams || 0) / 28.3495, unit: "OUNCES" } } } }] } }
+          { variables: { productId, variants: [variantUpdateInput] } }
         );
         const variantResult = await variantResponse.json();
         allUserErrors.push(...(variantResult?.data?.productVariantsBulkUpdate?.userErrors || []));
       }
 
-      try {
-        const mediaUrlsJson = payload.mediaUrlsJson;
-        const mediaUrls = JSON.parse(mediaUrlsJson || "[]");
-        const validMediaUrls = mediaUrls.filter(u => typeof u === "string" && u.startsWith("http"));
-
-        if (validMediaUrls.length > 0) {
-          const mediaInput = validMediaUrls.map(url => ({ originalSource: url, mediaContentType: "IMAGE" }));
-          await new Promise(resolve => setTimeout(resolve, 3000));
-          const mediaResponse = await admin.graphql(
-            `#graphql
-            mutation productCreateMedia($productId: ID!, $media: [CreateMediaInput!]!) {
-              productCreateMedia(productId: $productId, media: $media) { mediaUserErrors { message } }
-            }`,
-            { variables: { productId, media: mediaInput } }
-          );
-          const mediaResult = await mediaResponse.json();
-          allUserErrors.push(...(mediaResult?.data?.productCreateMedia?.mediaUserErrors || []));
-        }
-      } catch (e) {}
-
-      if (payload.collection_name) {
-        try {
-          const collectionSearch = await admin.graphql(
-            `#graphql
-            query findCollection($title: String!) { collections(first: 5, query: $title) { edges { node { id title } } } }`,
-            { variables: { title: payload.collection_name } }
-          );
-          const collectionData = await collectionSearch.json();
-          const matchedCollection = collectionData?.data?.collections?.edges?.find(e => e.node.title.toLowerCase() === payload.collection_name.toLowerCase());
-          if (matchedCollection) {
-            await admin.graphql(
-              `#graphql
-              mutation addToCollection($id: ID!, $productIds: [ID!]!) { collectionAddProducts(id: $id, productIds: $productIds) { userErrors { message } } }`,
-              { variables: { id: matchedCollection.node.id, productIds: [productId] } }
-            );
-          }
-        } catch (collErr) {}
-      }
-
-      const rawMetafields = [];
-      const googleMetafields = [];
-      const { pieces, intent, mediaUrlsJson, title: payloadTitle, metafieldsJson, ...sharedOnly } = payload;
-      const combinedFields = { ...sharedOnly, ...piece };
-      
-      const ignoreKeys = [
-        "intent", "mediaUrlsJson", "descriptionHtml", "productType", "status", 
-        "pieces", "photoFiles", "photoPreviewUrls", "photos", "imageBase64", 
-        "imageMimeType", "stagedResourceUrls", "scanError", "scanToken", 
-        "isUploading", "id", "price", "age_group", 
-        "target_gender", "condition", "collection_name", 
-        "collection_location", "seo_title"
+      // Post-Creation Metafield Injection
+      const flatPayload = { ...payload, ...piece };
+      const targetKeys = [
+        "cut_and_shape", "surface_finish", "color", "dimensions_mm", 
+        "weight_grams", "shipping_weight_oz", "artist_notes", "origin_story", 
+        "character_marks", "honest_flaws", "honest_flaws_and_character", 
+        "is_ooak", "treated", "found_object", "custom_product", "piece_name", 
+        "stone_shape", "specific_gravity", "mohs_hardness", "generated_description", 
+        "collection_location", "origin_handle", "origin_page_handle"
       ];
+      
+      const injectMetafieldsMap = new Map();
 
-      Object.entries(combinedFields).forEach(([key, value]) => {
-        if (!ignoreKeys.includes(key) && value !== undefined && value !== null && String(value).trim() !== "") {
-           let finalKey = key === "specificGravity" ? "specific_gravity" : key;
-           if (MASTER_TYPE_MAP.hasOwnProperty(finalKey) || MASTER_TYPE_MAP.hasOwnProperty(key)) {
-             let normalizedValue = normalizeMetafieldValue(finalKey, value);
-             const resolvedType = MASTER_TYPE_MAP[finalKey] || MASTER_TYPE_MAP[key] || "single_line_text_field";
-             rawMetafields.push({ key: finalKey, value: normalizedValue, type: resolvedType });
-           }
+      Object.entries(flatPayload).forEach(([key, value]) => {
+        if (value === null || value === undefined || String(value).trim() === "") return;
+        
+        let metaKey = key;
+        let isCustomField = targetKeys.includes(key);
+
+        if (key.startsWith("custom/")) {
+          isCustomField = true;
+          metaKey = key.split("custom/")[1];
+        }
+
+        if (isCustomField && metaKey && MASTER_TYPE_MAP.hasOwnProperty(metaKey)) {
+          let resolvedValue = normalizeMetafieldValue(metaKey, value);
+
+          injectMetafieldsMap.set(metaKey, {
+            ownerId: productId,
+            namespace: "custom",
+            key: metaKey,
+            type: MASTER_TYPE_MAP[metaKey] || "single_line_text_field",
+            value: (MASTER_TYPE_MAP[metaKey] || "").startsWith("list.") ? JSON.stringify([resolvedValue]) : resolvedValue
+          });
         }
       });
 
-      if (combinedFields.age_group && combinedFields.age_group !== "") googleMetafields.push({ ownerId: productId, namespace: "google", key: "age_group", type: "single_line_text_field", value: String(combinedFields.age_group) });
-      if (combinedFields.target_gender && combinedFields.target_gender !== "") googleMetafields.push({ ownerId: productId, namespace: "google", key: "target_gender", type: "single_line_text_field", value: String(combinedFields.target_gender) });
-      if (combinedFields.condition && combinedFields.condition !== "") googleMetafields.push({ ownerId: productId, namespace: "google", key: "condition", type: "single_line_text_field", value: String(combinedFields.condition) });
-      if (combinedFields.google_product_category) googleMetafields.push({ namespace: "google", key: "custom_label_0", type: "single_line_text_field", value: String(combinedFields.google_product_category) });
+      let injectMetafields = Array.from(injectMetafieldsMap.values());
+      injectMetafields = applyOriginOverridesBeforeApi(title, injectMetafields);
 
-      const COLLECTION_LOCATION_MAP = {
-        "chert-road-detour": "Yakima Canyon",
-        "yakima-canyon": "Yakima Canyon",
-        "the-yellowstone-river-collection": "Yellowstone River",
-        "the-rufus-serpentine-collection": "Rufus Serpentine",
-        "the-nickel-back-collection": "Nickel Back",
-        "the-spokane-river-collection": "Spokane River",
-        "north-fork-cda-collection": "North Fork CdA",
-        "richardsons-rock-ranch": "Richardson's Rock Ranch",
-        "the-3-000-mile-run-1": "The 3,000-Mile Run",
-        "the-shopped-rock": "The Shopped Rock",
-      };
-      
-      const rawColLoc = combinedFields.collection_location || "";
-      const resolvedColLoc = COLLECTION_LOCATION_MAP[rawColLoc] || rawColLoc;
-      if (resolvedColLoc) rawMetafields.push({ key: "collection_location", value: resolvedColLoc, type: "single_line_text_field" });
-
-      if (rawMetafields.length > 0 || googleMetafields.length > 0) {
-        try {
-            const metafieldsInput = rawMetafields.map(item => {
-               let resolvedType = MASTER_TYPE_MAP[item.key] || item.type || "single_line_text_field";
-               let resolvedValue = String(item.value);
-               if (resolvedType === "number_decimal") {
-                 let parsedNum = parseFloat(String(item.value).replace(/["']/g, ""));
-                 resolvedValue = isNaN(parsedNum) ? "0.0" : String(parsedNum);
-               }
-               if (resolvedType.startsWith("list.")) resolvedValue = JSON.stringify([String(item.value)]);
-
-               let resolvedNamespace = item.namespace || "custom";
-               if (item.key === "is_ooak" || resolvedNamespace === "none" || resolvedNamespace === "") resolvedNamespace = "custom";
-
-               return { ownerId: productId, namespace: resolvedNamespace, key: item.key, type: resolvedType, value: resolvedValue };
-            });
-
-            let allMetafieldsToSet = [...metafieldsInput, ...googleMetafields];
-            
-            allMetafieldsToSet = applyOriginOverridesBeforeApi(title, allMetafieldsToSet);
-
-            const chunks = chunkArray(allMetafieldsToSet, 25);
-            for (const chunk of chunks) {
-              const metaResponse = await admin.graphql(
-                `#graphql
-                mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
-                  metafieldsSet(metafields: $metafields) { userErrors { field message } }
-                }`,
-                { variables: { metafields: chunk } }
-              );
-              const metaResult = await metaResponse.json();
-              allUserErrors.push(...(metaResult?.data?.metafieldsSet?.userErrors || []));
-            }
-        } catch (e) {}
-      }
-
-      // ==========================================
-      // 🟢 FIX: POST-CREATION METAFIELD INJECTION
-      // ==========================================
-      try {
-        const parsedPayload = JSON.parse(rawPayload);
-        const pieceData = (parsedPayload.pieces && parsedPayload.pieces.length > 0) ? parsedPayload.pieces[0] : {};
-        const flatPayload = { ...parsedPayload, ...pieceData };
-
-        const targetKeys = [
-          "cut_and_shape", 
-          "surface_finish", 
-          "color", 
-          "dimensions_mm", 
-          "artist_notes",
-          "origin_story", 
-          "character_marks", 
-          "honest_flaws", 
-          "honest_flaws_and_character", 
-          "is_ooak", 
-          "treated", 
-          "found_object", 
-          "custom_product", 
-          "piece_name", 
-          "stone_shape", 
-          "specific_gravity", 
-          "mohs_hardness",
-          "generated_description",
-          "collection_location",
-          "origin_handle",
-          "origin_page_handle"
-        ];
-        
-        const injectMetafieldsMap = new Map();
-
-        Object.entries(flatPayload).forEach(([key, value]) => {
-          if (value === null || value === undefined || String(value).trim() === "") return;
-          
-          let metaKey = key;
-          let isCustomField = targetKeys.includes(key);
-
-          if (key.startsWith("custom/")) {
-            isCustomField = true;
-            metaKey = key.split("custom/")[1];
-          }
-
-          if (isCustomField && metaKey) {
-            if (!MASTER_TYPE_MAP.hasOwnProperty(metaKey)) return;
-            let resolvedValue = normalizeMetafieldValue(metaKey, value);
-
-            injectMetafieldsMap.set(metaKey, {
-              ownerId: productId,
-              namespace: "custom",
-              key: metaKey,
-              type: MASTER_TYPE_MAP[metaKey] || "single_line_text_field",
-              value: (MASTER_TYPE_MAP[metaKey] || "").startsWith("list.") ? JSON.stringify([resolvedValue]) : resolvedValue
-            });
-          }
-        });
-
-        let injectMetafields = Array.from(injectMetafieldsMap.values());
-        
-        injectMetafields = applyOriginOverridesBeforeApi(title, injectMetafields);
-
-        if (injectMetafields.length > 0) {
-          const injectChunks = chunkArray(injectMetafields, 25);
-          for (const chunk of injectChunks) {
-            const injectResponse = await admin.graphql(
-              `#graphql
-              mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
-                metafieldsSet(metafields: $metafields) { userErrors { field message } }
-              }`,
-              { variables: { metafields: chunk } }
-            );
-            const injectResult = await injectResponse.json();
-            const errs = injectResult?.data?.metafieldsSet?.userErrors || [];
-            if (errs.length > 0) {
-              console.warn("[createProduct] Metafield Injection Warnings:", errs);
-            }
-          }
+      if (injectMetafields.length > 0) {
+        const injectChunks = chunkArray(injectMetafields, 25);
+        for (const chunk of injectChunks) {
+          await admin.graphql(
+            `#graphql
+            mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
+              metafieldsSet(metafields: $metafields) { userErrors { field message } }
+            }`,
+            { variables: { metafields: chunk } }
+          );
         }
-      } catch (injectionError) {
-        console.error("[createProduct] Metafield Injection Exception:", injectionError);
       }
 
       return data({ success: true, intent: "createProduct", productId: productId, productHandle: productHandle, userErrors: allUserErrors });
@@ -869,13 +707,14 @@ export const action = async ({ request }) => {
       const allMeta = lookupResult?.data?.product?.metafields?.edges || [];
 
       const toDelete = allMeta.map(e => e.node).filter(m => {
-          if (["geo", "rockhound", "geology"].includes(m.namespace)) return true;
-          if (m.namespace === "custom") {
-            if (["crystalSystem", "geologicalEra", "mineralClass", "rockComposition", "rockFormation", "specificGravity", "hardness", "fracture", "geoSource", "store_hardness", "store_luster", "store_fracture", "store_cleavage", "store_specific_gravity", "store_diaphaneity", "moh_hardness", "mohsHardness", "primary_color", "secondary_colors", "cut_type", "base_stone_type", "meta_status", "tenacity", "official_name", "polishing_compound", "dimensions", "chemical_formula", "crystal_structure", "refractive_index", "title_tag", "description_tag", "google_product_category", "color-pattern", "jewelry-material", "target-gender", "age-group", "seo_title", "age_group", "condition", "is_one_of_a-kind", "authenticity", "rarity", "stone_story"].includes(m.key)) return true;
-            if (/[a-z][A-Z]/.test(m.key)) return true;
-          }
-          return false;
-        });
+        if (["weight_grams", "shipping_weight_oz"].includes(m.key)) return false;
+        if (["geo", "rockhound", "geology"].includes(m.namespace)) return true;
+        if (m.namespace === "custom") {
+          if (["crystalSystem", "geologicalEra", "mineralClass", "rockComposition", "rockFormation", "specificGravity", "hardness", "fracture", "geoSource", "store_hardness", "store_luster", "store_fracture", "store_cleavage", "store_specific_gravity", "store_diaphaneity", "moh_hardness", "mohsHardness", "primary_color", "secondary_colors", "cut_type", "base_stone_type", "meta_status", "tenacity", "official_name", "polishing_compound", "dimensions", "chemical_formula", "crystal_structure", "refractive_index", "title_tag", "description_tag", "google_product_category", "color-pattern", "jewelry-material", "target-gender", "age-group", "seo_title", "age_group", "condition", "is_one_of_a-kind", "authenticity", "rarity", "stone_story"].includes(m.key)) return true;
+          if (/[a-z][A-Z]/.test(m.key)) return true;
+        }
+        return false;
+      });
 
       if (toDelete.length === 0) return data({ success: true, message: "No ghost namespaces or keys found.", deletedCount: 0, deletedKeys: [] });
 
@@ -930,13 +769,14 @@ export const action = async ({ request }) => {
           const allMeta = productNode.metafields?.edges || [];
           
           const toDelete = allMeta.map(e => e.node).filter(m => {
-              if (["geo", "rockhound"].includes(m.namespace)) return true;
-              if (m.namespace === "custom") {
-                if (["crystalSystem", "geologicalEra", "mineralClass", "rockComposition", "rockFormation", "specificGravity", "hardness", "fracture", "geoSource", "store_hardness", "store_luster", "store_fracture", "store_cleavage", "store_specific_gravity", "store_diaphaneity", "moh_hardness", "mohsHardness", "primary_color", "secondary_colors", "cut_type", "base_stone_type", "meta_status", "tenacity", "official_name", "polishing_compound", "dimensions", "chemical_formula", "crystal_structure", "refractive_index", "title_tag", "description_tag", "google_product_category", "color-pattern", "jewelry-material", "target-gender", "age-group", "seo_title", "age_group", "condition", "is_one_of_a-kind", "authenticity", "rarity", "stone_story"].includes(m.key)) return true;
-                if (/[a-z][A-Z]/.test(m.key)) return true;
-              }
-              return false;
-            });
+            if (["weight_grams", "shipping_weight_oz"].includes(m.key)) return false;
+            if (["geo", "rockhound"].includes(m.namespace)) return true;
+            if (m.namespace === "custom") {
+              if (["crystalSystem", "geologicalEra", "mineralClass", "rockComposition", "rockFormation", "specificGravity", "hardness", "fracture", "geoSource", "store_hardness", "store_luster", "store_fracture", "store_cleavage", "store_specific_gravity", "store_diaphaneity", "moh_hardness", "mohsHardness", "primary_color", "secondary_colors", "cut_type", "base_stone_type", "meta_status", "tenacity", "official_name", "polishing_compound", "dimensions", "chemical_formula", "crystal_structure", "refractive_index", "title_tag", "description_tag", "google_product_category", "color-pattern", "jewelry-material", "target-gender", "age-group", "seo_title", "age_group", "condition", "is_one_of_a-kind", "authenticity", "rarity", "stone_story"].includes(m.key)) return true;
+              if (/[a-z][A-Z]/.test(m.key)) return true;
+            }
+            return false;
+          });
 
           if (toDelete.length > 0) {
             try {
