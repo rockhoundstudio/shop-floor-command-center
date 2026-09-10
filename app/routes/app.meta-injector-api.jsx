@@ -409,7 +409,6 @@ export const action = async ({ request }) => {
           // Map descriptionHtml to bodyHtml for the productUpdate mutation
           if (newDescriptionHtml) { 
             inputVars.descriptionHtml = newDescriptionHtml; 
-            inputVars.bodyHtml = newDescriptionHtml;
             hasUpdates = true; 
           }
           if (seoTitleValue) { inputVars.seo = { title: seoTitleValue }; hasUpdates = true; }
