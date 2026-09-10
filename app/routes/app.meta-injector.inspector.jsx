@@ -403,6 +403,7 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
       return;
     }
 
+    // 🔴 FIX: Extract description explicitly to pass to API layer
     const descHtml = formState.generated_description || fullMetaState.generated_description || "";
 
     injectFetcher.submit(
@@ -411,7 +412,7 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
         payload: JSON.stringify(payload),
         productId: selectedProductId,
         productTitle: masterTitle,
-        descriptionHtml: descHtml,
+        descriptionHtml: descHtml, // Passes to bodyHtml in the API
         weightGrams: activeWeights.weight_grams,
         shippingWeightOz: activeWeights.shipping_weight_oz
       },
