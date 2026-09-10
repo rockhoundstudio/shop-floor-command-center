@@ -302,7 +302,7 @@ export const action = async ({ request }) => {
       const skippedUndefinedKeys = [
         "mineral_class", "crystal_system", "rock_formation", 
         "rock_composition", "geological_era", "jewelry_type", 
-        "necklace_design", "color_pattern"
+        "necklace_design", "color_pattern", "material"
       ];
 
       let setMetafields = payloadArray
