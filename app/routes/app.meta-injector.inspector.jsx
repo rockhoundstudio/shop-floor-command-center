@@ -403,7 +403,7 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
       return;
     }
 
-    const descHtml = pieces[0]?.generated_description || formState.generated_description || fullMetaState.generated_description || "";
+    const descHtml = formState.generated_description || fullMetaState.generated_description || "";
 
     injectFetcher.submit(
       { 
@@ -485,10 +485,6 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
 
           return updatedState;
         });
-
-        if (tab2Data.generated_description) {
-          setPieces(prev => prev.map((p, i) => i === 0 ? { ...p, generated_description: tab2Data.generated_description } : p));
-        }
 
         setTab2StatusMessage("Auto-Fill complete — review fields before saving");
         if (window.shopify && window.shopify.toast) window.shopify.toast.show("Auto-Fill complete!");
