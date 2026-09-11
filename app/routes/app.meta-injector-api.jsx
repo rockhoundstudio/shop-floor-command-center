@@ -199,7 +199,22 @@ const EXPLICIT_METAOBJECT_KEYS = [
 
 export const action = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
-  const formData = await request.formData();
+  const rawFormData = await request.formData();
+
+  // 🟢 FIX: THE INTAKE MANIFOLD FILTER
+  // Intercept all incoming strings and kill the AI geology autocorrect 
+  // before the data hits the distribution block.
+  const formData = new FormData();
+  for (const [key, value] of rawFormData.entries()) {
+    if (typeof value === "string") {
+      let safeString = value.replace(/the-shocked-rock/gi, "the-shopped-rock");
+      safeString = safeString.replace(/Shocked Rock/gi, "Shopped Rock");
+      formData.append(key, safeString);
+    } else {
+      formData.append(key, value); // Pass binary files (like image uploads) untouched
+    }
+  }
+
   const intent = formData.get("intent");
 
   // ==========================================
@@ -394,8 +409,7 @@ export const action = async ({ request }) => {
 
       // Base Product Update, SEO Update, and Ghost Kill
       const newProductTitle = formData.get("productTitle");
-      const rawDescriptionHtml = formData.get("descriptionHtml");
-      const newDescriptionHtml = rawDescriptionHtml ? rawDescriptionHtml.replace(/the-shocked-rock/gi, "the-shopped-rock") : rawDescriptionHtml;
+      const descriptionHtml = formData.get("descriptionHtml");
       
       const seoItem = payloadArray.find(p => p.key === "seo_title");
       const seoTitleValue = seoItem ? String(seoItem.value).trim() : null;
@@ -408,8 +422,8 @@ export const action = async ({ request }) => {
 
           if (newProductTitle) { inputVars.title = newProductTitle; hasUpdates = true; }
           // Map descriptionHtml to bodyHtml for the productUpdate mutation
-          if (newDescriptionHtml) { 
-            inputVars.descriptionHtml = newDescriptionHtml; 
+          if (descriptionHtml) { 
+            inputVars.descriptionHtml = descriptionHtml; 
             hasUpdates = true; 
           }
           if (seoTitleValue) { inputVars.seo = { title: seoTitleValue }; hasUpdates = true; }
@@ -648,7 +662,6 @@ export const action = async ({ request }) => {
 
       const title = payload.title && !payload.title.includes("Unknown") ? payload.title : `${stoneFamily} — ${originLocation} — ${pieceName}`;
       const descriptionHtml = payload.descriptionHtml || piece.generated_description || piece.descriptionHtml || "";
-      const sanitizedDescriptionHtml = descriptionHtml.replace(/the-shocked-rock/gi, "the-shopped-rock");
       const price = String(payload.price || piece.price || "0.00");
       const productType = payload.productType || "Wearable Art";
       const status = payload.status || "DRAFT";
@@ -666,7 +679,7 @@ export const action = async ({ request }) => {
         }`,
         { variables: { input: { 
             title, 
-            descriptionHtml: sanitizedDescriptionHtml, 
+            descriptionHtml: descriptionHtml, 
             productType, 
             status,
             seo: { title: seoTitle }

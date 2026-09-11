@@ -369,7 +369,11 @@ function sanitizeObject(obj) {
       if (obj[key].includes("See Shopify")) {
         obj[key] = "";
       } else {
-        obj[key] = obj[key].replace(/â€”/g, "—");
+        // 🟢 FIX: THE GLOBAL AI SCRUBBER
+        let cleaned = obj[key].replace(/â€”/g, "—");
+        cleaned = cleaned.replace(/the-shocked-rock/gi, "the-shopped-rock");
+        cleaned = cleaned.replace(/Shocked Rock/gi, "Shopped Rock");
+        obj[key] = cleaned;
       }
     }
   }
@@ -511,8 +515,6 @@ export const action = async ({ request }) => {
               }
               
               if (visionFields.generated_description) {
-                 visionFields.generated_description = visionFields.generated_description.replace(/the-shocked-rock/gi, "the-shopped-rock");
-                 visionFields.generated_description = visionFields.generated_description.replace(/the-shopped-rock/gi, "the-shopped-rock");
                  const desc = visionFields.generated_description;
                  const lowerDesc = desc.toLowerCase();
                  if (desc.startsWith("[VISION API CRASH]") || desc.startsWith("[API CRASH]") || desc.startsWith("[JSON PARSE ERROR]") || lowerDesc.includes("timed out")) {
@@ -876,8 +878,6 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
         const resolved_bail_included = parsedVision.bail_included || "None";
 
         let final_desc = parsedVision.generated_description || "";
-        final_desc = final_desc.replace(/the-shocked-rock/gi, "the-shopped-rock");
-        final_desc = final_desc.replace(/the-shopped-rock/gi, "the-shopped-rock");
         const lowerDesc = final_desc.toLowerCase();
         if (final_desc.startsWith("[VISION API CRASH]") || final_desc.startsWith("[API CRASH]") || final_desc.startsWith("[JSON PARSE ERROR]") || lowerDesc.includes("timed out")) {
             final_desc = "";
@@ -1033,11 +1033,8 @@ ${dwellButtonsHTML}`;
         if (first !== -1 && last !== -1) cleanJson = cleanJson.slice(first, last + 1);
         
         const parsed = JSON.parse(cleanJson);
-        if (parsed.generated_description) {
-          parsed.generated_description = parsed.generated_description.replace(/the-shocked-rock/gi, "the-shopped-rock");
-          parsed.generated_description = parsed.generated_description.replace(/the-shopped-rock/gi, "the-shopped-rock");
-        }
-        return Response.json({ success: true, intent, generated_description: parsed.generated_description });
+        const safeParsed = sanitizeObject(parsed);
+        return Response.json({ success: true, intent, generated_description: safeParsed.generated_description });
       }
       
       const errText = await geminiRes.text();
