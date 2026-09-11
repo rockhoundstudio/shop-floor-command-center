@@ -394,7 +394,8 @@ export const action = async ({ request }) => {
 
       // Base Product Update, SEO Update, and Ghost Kill
       const newProductTitle = formData.get("productTitle");
-      const newDescriptionHtml = formData.get("descriptionHtml");
+      const rawDescriptionHtml = formData.get("descriptionHtml");
+      const newDescriptionHtml = rawDescriptionHtml ? rawDescriptionHtml.replace(/the-shocked-rock/gi, "the-shopped-rock") : rawDescriptionHtml;
       
       const seoItem = payloadArray.find(p => p.key === "seo_title");
       const seoTitleValue = seoItem ? String(seoItem.value).trim() : null;
