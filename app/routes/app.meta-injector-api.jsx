@@ -647,6 +647,7 @@ export const action = async ({ request }) => {
 
       const title = payload.title && !payload.title.includes("Unknown") ? payload.title : `${stoneFamily} — ${originLocation} — ${pieceName}`;
       const descriptionHtml = payload.descriptionHtml || piece.generated_description || piece.descriptionHtml || "";
+      const sanitizedDescriptionHtml = descriptionHtml.replace(/the-shocked-rock/gi, "the-shopped-rock");
       const price = String(payload.price || piece.price || "0.00");
       const productType = payload.productType || "Wearable Art";
       const status = payload.status || "DRAFT";
@@ -664,7 +665,7 @@ export const action = async ({ request }) => {
         }`,
         { variables: { input: { 
             title, 
-            descriptionHtml, 
+            descriptionHtml: sanitizedDescriptionHtml, 
             productType, 
             status,
             seo: { title: seoTitle }
