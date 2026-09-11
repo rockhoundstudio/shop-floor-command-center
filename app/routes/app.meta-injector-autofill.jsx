@@ -25,6 +25,7 @@ function buildMasterVisionPrompt({
      <a href="/collections/richardsons-rock-ranch">Richardson's Rock Ranch Collection</a>
      <a href="/pages/the-3-000-mile-run">The 3,000-Mile Run Story</a>
      <a href="/collections/the-3-000-mile-run-1">The 3,000-Mile Run Collection</a>
+     CRITICAL: Copy the following six links EXACTLY as written. Do NOT alter, rewrite, or infer any href value. Every character must match precisely.
      <a href="/pages/the-shopped-rock">The Shopped Rock Story</a>
      <a href="/collections/the-shopped-rock">The Shopped Rock Collection</a>`;
   }
@@ -254,7 +255,7 @@ async function getGeoData(admin, stoneFamily) {
     if (localResult && Object.keys(localResult).length > 0) {
       return {
         mohs_hardness: localResult.moh_hardness || localResult.hardness || localResult.mohs_hardness || "",
-        luster: localResult.luster || "",
+         luster: localResult.luster || "",
         fracture_pattern: localResult.fracture_pattern || localResult.fracture || "",
         cleavage: localResult.cleavage || "",
         specific_gravity: localResult.specific_gravity || "",
@@ -971,6 +972,7 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
      <a href="/collections/richardsons-rock-ranch">Richardson's Rock Ranch Collection</a>
      <a href="/pages/the-3-000-mile-run">The 3,000-Mile Run Story</a>
      <a href="/collections/the-3-000-mile-run-1">The 3,000-Mile Run Collection</a>
+     CRITICAL: Copy the following six links EXACTLY as written. Do NOT alter, rewrite, or infer any href value. Every character must match precisely.
      <a href="/pages/the-shopped-rock">The Shopped Rock Story</a>
      <a href="/collections/the-shopped-rock">The Shopped Rock Collection</a>`;
       }
