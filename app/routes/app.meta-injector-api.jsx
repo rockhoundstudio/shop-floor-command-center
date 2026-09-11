@@ -112,7 +112,7 @@ const MASTER_TYPE_MAP = {
   character_marks: "single_line_text_field",
   dimensions_mm: "single_line_text_field",
   cut_type: "single_line_text_field",
-  bench_notes: "single_line_text_field",
+  bench_notes: "multi_line_text_field",
   stone_shape: "single_line_text_field",
   surface_finish: "single_line_text_field",
   treatment_status: "single_line_text_field",
@@ -148,11 +148,11 @@ const MASTER_TYPE_MAP = {
   price: "number_decimal",
 
   // 🔴 TEXT BLOCKS: align with definitions
-  origin_story: "single_line_text_field",
+  origin_story: "multi_line_text_field",
   honest_flaws: "single_line_text_field",
-  honest_flaws_and_character: "single_line_text_field",
+  honest_flaws_and_character: "multi_line_text_field",
   generated_description: "multi_line_text_field",
-  artist_notes: "single_line_text_field",
+  artist_notes: "multi_line_text_field",
 
   // SHOPIFY TAXONOMY / METAOBJECTS
   color_pattern: "list.metaobject_reference",
@@ -214,6 +214,7 @@ export const action = async ({ request }) => {
       formData.append(key, value); // Pass binary files (like image uploads) untouched
     }
   }
+
   console.log("[MANIFOLD CHECK] descriptionHtml:", formData.get("descriptionHtml")?.slice(0, 200));
 
   const intent = formData.get("intent");
