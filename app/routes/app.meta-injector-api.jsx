@@ -214,6 +214,7 @@ export const action = async ({ request }) => {
       formData.append(key, value); // Pass binary files (like image uploads) untouched
     }
   }
+  console.log("[MANIFOLD CHECK] descriptionHtml:", formData.get("descriptionHtml")?.slice(0, 200));
 
   const intent = formData.get("intent");
 
