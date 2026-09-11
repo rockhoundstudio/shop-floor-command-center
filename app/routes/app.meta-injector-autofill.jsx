@@ -31,6 +31,7 @@ function buildMasterVisionPrompt({
   }
 
   return `You are a lapidary artist and master jeweler for Rockhound Studio. Analyze this photo and return a JSON object.
+CRITICAL ANTI-HALLUCINATION RULE: NEVER use the word "shocked" or "Shocked Rock". The correct term is "Shopped Rock". Do NOT let your geological training autocorrect this.
 - LIVE STORE DIRECTORY (Your Dyslexia Safeguard — Read this menu!):
   VALID PAGES IN STORE:
   ${pagesMenu || "No live pages found — use default URL."}
@@ -626,6 +627,7 @@ export const action = async ({ request }) => {
       const collectionsMenu = collectionsList.map(c => `- Title: "${c.title}" | URL: ${c.url}`).join("\n");
 
       const promptText = `You are an expert lapidary assistant for Rockhound Studio. Analyze these segments:
+CRITICAL ANTI-HALLUCINATION RULE: NEVER use the word "shocked" or "Shocked Rock". The correct term is "Shopped Rock". Do NOT let your geological training autocorrect this.
 - Family: "${segment1}"
 - Origin: "${segment2}"
 - Title: "${segment3}"
@@ -982,6 +984,7 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
       }
 
       const promptText = `You are a lapidary artist and master jeweler for Rockhound Studio.
+CRITICAL ANTI-HALLUCINATION RULE: NEVER use the word "shocked" or "Shocked Rock". The correct term is "Shopped Rock". Do NOT let your geological training autocorrect this.
 Write a product description in Bob's voice using this STRICT 7-BLOCK FORMAT based on the provided details.
 Do NOT use markdown headers. Separate each block naturally.
 
