@@ -307,8 +307,20 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
     const titleToUse = fullMetaState.shopify_title || formState.shopify_title || product?.title || "";
     const imageUrl = product?.images?.edges?.[0]?.node?.url || "";
 
-    setFullMetaState(prev => ({ shopify_title: prev.shopify_title || "" }));
-    setFormState(prev => ({ shopify_title: prev.shopify_title || "" }));
+    setFullMetaState(prev => ({
+      shopify_title: prev.shopify_title || "",
+      origin_handle: prev.origin_handle || prev.origin_page_handle || "",
+      origin_page_handle: prev.origin_page_handle || "",
+      collection_location: prev.collection_location || "",
+      piece_name: prev.piece_name || ""
+    }));
+    setFormState(prev => ({
+      shopify_title: prev.shopify_title || "",
+      origin_handle: prev.origin_handle || prev.origin_page_handle || "",
+      origin_page_handle: prev.origin_page_handle || "",
+      collection_location: prev.collection_location || "",
+      piece_name: prev.piece_name || ""
+    }));
 
     const formData = new FormData();
     formData.append("intent", "fullRescan");
