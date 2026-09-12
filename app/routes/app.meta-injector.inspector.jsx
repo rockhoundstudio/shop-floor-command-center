@@ -1,4 +1,4 @@
-// ==========================================================================
+﻿// ==========================================================================
 // ROCKHOUND STUDIO — TAB 2: META INSPECTOR Bench
 // File: app/routes/app.meta-injector.inspector.jsx
 // ==========================================================================
@@ -459,6 +459,7 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
               updatedState[key] = normalizedVal;
             }
           });
+          fullMetaStateRef.current = updatedState;
           return updatedState;
         });
 
@@ -499,6 +500,7 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
             }, 0);
           }
 
+          fullMetaStateRef.current = updatedState;
           fullMetaStateRef.current = updatedState;
           return updatedState;
         });
