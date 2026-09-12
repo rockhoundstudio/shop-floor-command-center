@@ -352,31 +352,35 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
     }).catch(err => console.error("Clipboard copy failed", err));
   }, [pieces]);
 
+  // 🟢 FIX: Read directly from latest state refs at exact moment of click
   const handleCreateAll = useCallback(() => {
     setStatusMessage("");
     setErrorMessage("");
 
+    const currentShared = latestShared.current;
+    const currentPiece = latestPieces.current[0];
+
     let productType = "Wearable Art";
-    (sharedFields.primary_use && sharedFields.primary_use !== "") && (productType = sharedFields.primary_use);
+    (currentShared.primary_use && currentShared.primary_use !== "") && (productType = currentShared.primary_use);
 
     const payload = {
       intent: "createProduct",
-      ...latestShared.current,
-      piece_name: pieces[0].piece_name,
-      dimensions_mm: pieces[0].dimensions_mm,
-      cut_and_shape: pieces[0].cut_and_shape,
-      stone_shape: pieces[0].stone_shape,
-      surface_finish: pieces[0].surface_finish,
-      color: pieces[0].color,
-      price: pieces[0].price,
-      weight_grams: pieces[0].weight_grams,
-      seo_title: pieces[0].seo_title,
-      title: pieces[0].canonical_title || buildTitle(latestShared.current, pieces[0]),
-      descriptionHtml: pieces[0].generated_description,
+      ...currentShared,
+      piece_name: currentPiece.piece_name,
+      dimensions_mm: currentPiece.dimensions_mm,
+      cut_and_shape: currentPiece.cut_and_shape,
+      stone_shape: currentPiece.stone_shape,
+      surface_finish: currentPiece.surface_finish,
+      color: currentPiece.color,
+      price: currentPiece.price,
+      weight_grams: currentPiece.weight_grams,
+      seo_title: currentPiece.seo_title,
+      title: currentPiece.canonical_title || buildTitle(currentShared, currentPiece),
+      descriptionHtml: currentPiece.generated_description,
       productType: productType,
       status: "DRAFT",
-      metafieldsJson: buildMetafieldsJson(sharedFields, pieces[0]),
-      mediaUrlsJson: JSON.stringify(pieces[0].stagedResourceUrls.filter(u => u !== undefined && u !== ""))
+      metafieldsJson: buildMetafieldsJson(currentShared, currentPiece),
+      mediaUrlsJson: JSON.stringify(currentPiece.stagedResourceUrls.filter(u => u !== undefined && u !== ""))
     };
 
     const fd = new FormData();
@@ -384,7 +388,7 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
     fd.append("payload", JSON.stringify(payload));
 
     fetcher.submit(fd, { method: "post", action: "/app/meta-injector-api" });
-  }, [sharedFields, pieces, fetcher]);
+  }, [fetcher]);
 
   // 🟢 FIX: THE HARD WIPE (Stop Ghost Data Carryover)
   const handleStartNewBatch = useCallback(() => {
