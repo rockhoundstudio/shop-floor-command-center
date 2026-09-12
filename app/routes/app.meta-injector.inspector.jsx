@@ -307,20 +307,25 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
     const titleToUse = fullMetaState.shopify_title || formState.shopify_title || product?.title || "";
     const imageUrl = product?.images?.edges?.[0]?.node?.url || "";
 
-    setFullMetaState(prev => ({
-      shopify_title: prev.shopify_title || "",
-      origin_handle: prev.origin_handle || prev.origin_page_handle || "",
-      origin_page_handle: prev.origin_page_handle || "",
-      collection_location: prev.collection_location || "",
-      piece_name: prev.piece_name || ""
-    }));
-    setFormState(prev => ({
-      shopify_title: prev.shopify_title || "",
-      origin_handle: prev.origin_handle || prev.origin_page_handle || "",
-      origin_page_handle: prev.origin_page_handle || "",
-      collection_location: prev.collection_location || "",
-      piece_name: prev.piece_name || ""
-    }));
+    const RESCAN_PRESERVE_KEYS = [
+      "shopify_title",
+      "origin_handle", "origin_page_handle", "collection_location",
+      "stone_family", "color", "surface_finish", "source_location",
+      "primary_use", "handcrafted_by", "origin_story",
+      "piece_name", "cut_and_shape", "dimensions_mm",
+      "weight_grams", "shipping_weight_oz", "honest_flaws_and_character",
+      "price", "bench_notes", "character_marks", "primary_medium",
+      "secondary_medium", "treatment_status", "is_ooak", "treated",
+      "material", "stone_shape", "rescued_by", "alt_text",
+      "found_object", "wire_material", "bail_included", "setting_ready",
+      "jewelry_type", "necklace_design", "jewelry_finding_type",
+      "chain_link_type", "target_gender", "mohs_hardness", "luster",
+      "fracture_pattern", "cleavage", "specific_gravity", "diaphaneity",
+      "crystal_system", "geological_era", "geological_age", "mineral_class",
+      "rock_composition", "rock_formation"
+    ];
+    setFullMetaState(prev => Object.fromEntries(RESCAN_PRESERVE_KEYS.map(k => [k, prev[k] || ""])));
+    setFormState(prev => Object.fromEntries(RESCAN_PRESERVE_KEYS.map(k => [k, prev[k] || ""])));
 
     const formData = new FormData();
     formData.append("intent", "fullRescan");
