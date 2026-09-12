@@ -197,6 +197,54 @@ const EXPLICIT_METAOBJECT_KEYS = [
   "jewelry-finding-type", "jewelry_finding_type"
 ];
 
+// 🟢 THE GHOST DELETE SEQUENCE
+async function executeGhostDelete(admin, productGid) {
+  try {
+    const lookupResponse = await admin.graphql(
+      `#graphql
+      query getMetafields($ownerId: ID!) {
+        product(id: $ownerId) { metafields(first: 250) { edges { node { id namespace key } } } }
+      }`,
+      { variables: { ownerId: productGid } }
+    );
+    const lookupResult = await lookupResponse.json();
+    const allMeta = lookupResult?.data?.product?.metafields?.edges || [];
+
+    const ghostKeys = [
+      "stone_story", "story_theme", "rock_formation", "geological_era",
+      "crystal_system", "mineral_class", "rock_composition", "is_one_of_a_kind"
+    ];
+    const isCamelCase = (str) => /[a-z][A-Z]/.test(str);
+    const safeNamespaces = ["shopify", "judgeme", "mm-google-shopping", "mc-facebook"];
+
+    const toDelete = allMeta.map(e => e.node).filter(m => {
+      if (safeNamespaces.includes(m.namespace) || m.namespace.startsWith("app-")) return false;
+      if (m.namespace === "custom") {
+        if (ghostKeys.includes(m.key)) return true;
+        if (isCamelCase(m.key)) return true;
+      }
+      return false;
+    });
+
+    if (toDelete.length > 0) {
+      const deleteResponse = await admin.graphql(
+        `#graphql
+        mutation metafieldsDelete($metafields: [MetafieldIdentifierInput!]!) {
+          metafieldsDelete(metafields: $metafields) { deletedMetafields { key namespace ownerId } userErrors { field message } }
+        }`,
+        { variables: { metafields: toDelete.map(m => ({ ownerId: productGid, namespace: m.namespace, key: m.key })) } }
+      );
+      const deleteResult = await deleteResponse.json();
+      const deleted = deleteResult?.data?.metafieldsDelete?.deletedMetafields || [];
+      deleted.forEach(d => {
+        console.log(`[GHOST DELETE] Deleted ghost field: ${d.namespace}/${d.key}`);
+      });
+    }
+  } catch (err) {
+    console.error("Ghost delete error:", err);
+  }
+}
+
 export const action = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
   const rawFormData = await request.formData();
@@ -392,20 +440,21 @@ export const action = async ({ request }) => {
       }
 
       if (setMetafields.length > 0) {
-        const chunks = chunkArray(setMetafields, 25);
-        const allErrors = [];
+        // Deduplicate before execution to prevent double-writes
+        const uniqueSet = new Map();
+        setMetafields.forEach(m => uniqueSet.set(`${m.namespace}:${m.key}`, m));
+        setMetafields = Array.from(uniqueSet.values());
 
-        for (const chunk of chunks) {
-          const response = await admin.graphql(
-            `#graphql
-            mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
-              metafieldsSet(metafields: $metafields) { userErrors { field message } }
-            }`,
-            { variables: { metafields: chunk } }
-          );
-          const result = await response.json();
-          allErrors.push(...(result?.data?.metafieldsSet?.userErrors || []));
-        }
+        console.log("[CANONICAL WRITE]");
+        const response = await admin.graphql(
+          `#graphql
+          mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
+            metafieldsSet(metafields: $metafields) { userErrors { field message } }
+          }`,
+          { variables: { metafields: setMetafields } } // Exactly ONE call
+        );
+        const result = await response.json();
+        const allErrors = result?.data?.metafieldsSet?.userErrors || [];
 
         if (allErrors.length > 0) {
           return data({ success: false, message: "Saved with errors: " + allErrors.map(e => e.message).join(" | "), errors: allErrors });
@@ -443,14 +492,8 @@ export const action = async ({ request }) => {
             );
           }
 
-          // Kill stone_story ghost field immediately
-          await admin.graphql(
-            `#graphql
-            mutation metafieldsDelete($metafields: [MetafieldIdentifierInput!]!) {
-              metafieldsDelete(metafields: $metafields) { deletedMetafields { key } }
-            }`,
-            { variables: { metafields: [{ ownerId: productGid, namespace: "custom", key: "stone_story" }] } }
-          );
+          // Execute Ghost Delete Sequence
+          await executeGhostDelete(admin, productGid);
 
         } catch (err) {
           console.warn("[saveMetafields] Base update or ghost kill failed:", err.message);
@@ -788,17 +831,26 @@ export const action = async ({ request }) => {
       injectMetafields = applyOriginOverridesBeforeApi(title, injectMetafields);
 
       if (injectMetafields.length > 0) {
-        const injectChunks = chunkArray(injectMetafields, 25);
-        for (const chunk of injectChunks) {
-          await admin.graphql(
-            `#graphql
-            mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
-              metafieldsSet(metafields: $metafields) { userErrors { field message } }
-            }`,
-            { variables: { metafields: chunk } }
-          );
-        }
+        // Deduplicate before execution to prevent double-writes
+        const uniqueSet = new Map();
+        injectMetafields.forEach(m => uniqueSet.set(`${m.namespace}:${m.key}`, m));
+        injectMetafields = Array.from(uniqueSet.values());
+
+        console.log("[CANONICAL WRITE]");
+        const response = await admin.graphql(
+          `#graphql
+          mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
+            metafieldsSet(metafields: $metafields) { userErrors { field message } }
+          }`,
+          { variables: { metafields: injectMetafields } } // Exactly ONE call
+        );
+        const result = await response.json();
+        const createErrs = result?.data?.metafieldsSet?.userErrors || [];
+        if (createErrs.length > 0) allUserErrors.push(...createErrs);
       }
+
+      // Execute Ghost Delete Sequence
+      await executeGhostDelete(admin, createdProduct.id);
 
       return data({ success: true, intent: "createProduct", productId: productId, productHandle: productHandle, userErrors: allUserErrors });
     } catch (error) {
