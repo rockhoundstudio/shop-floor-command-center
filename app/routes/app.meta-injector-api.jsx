@@ -189,7 +189,7 @@ const MASTER_TYPE_MAP = {
 
 const EXPLICIT_METAOBJECT_KEYS = [
   "material", "color-pattern", "color_pattern", "jewelry-material", "jewelry_material",
-  "target-gender", "target_gender", "age-group", "age_group", "condition", "rarity", 
+  "target-gender", "target-gender", "age-group", "age_group", "condition", "rarity", 
   "authenticity", "jewelry-type", "jewelry_type", "necklace-design", "necklace_design", 
   "crystal-system", "crystal_system", "geological-era", "geological_era", 
   "mineral-class", "mineral_class", "rock-composition", "rock_composition", 
@@ -207,8 +207,11 @@ export const action = async ({ request }) => {
   const formData = new FormData();
   for (const [key, value] of rawFormData.entries()) {
     if (typeof value === "string") {
-      let safeString = value.replace(/the-shocked-rock/gi, "the-shopped-rock");
-      safeString = safeString.replace(/Shocked Rock/gi, "Shopped Rock");
+      let safeString = value;
+      safeString = safeString.replace(/Shocked\s*Rock/gi, "Shopped Rock");
+      safeString = safeString.replace(/the-shocked-rock/gi, "the-shopped-rock");
+      safeString = safeString.replace(/shocked[-_]rock/gi, "shopped-rock");
+      safeString = safeString.replace(/shocked%2Drock/gi, "shopped-rock");
       formData.append(key, safeString);
     } else {
       formData.append(key, value); // Pass binary files (like image uploads) untouched
