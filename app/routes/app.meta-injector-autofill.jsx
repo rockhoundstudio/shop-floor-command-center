@@ -984,10 +984,7 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
      <a href="/collections/the-shopped-rock">The Shopped Rock Collection</a>`;
       }
 
-      const promptText = `You are a lapidary artist and master jeweler for Rockhound Studio.
-CRITICAL ANTI-HALLUCINATION RULE: NEVER use the word "shocked" or "Shocked Rock". The correct term is "Shopped Rock". Do NOT let your geological training autocorrect this.
-Write a product description in Bob's voice using this STRICT 7-BLOCK FORMAT based on the provided details.
-Do NOT use markdown headers. Separate each block naturally.
+      const promptText = `You are writing a product description for Rockhound Studio, a lapidary art studio run by Bob and Janyce, married 34 years, both artists, both rockhounds. They cut and polish every stone themselves in Spokane Valley WA.
 
 DETAILS:
 - Stone Family: ${derivedFamily}
@@ -999,15 +996,58 @@ DETAILS:
 - Dimensions: ${pieceData.dimensions_mm || "N/A"}
 - Mounting/Medium: ${pieceData.primary_medium || "Loose Stone"}
 - Setting Ready: ${pieceData.setting_ready || "None"}
+- Mohs Hardness: ${pieceData.mohs_hardness || "N/A"}
+- Geological Age: ${pieceData.geological_age || "N/A"}
+- Rarity: ${pieceData.rarity || "Common"}
+- Character: ${pieceData.honest_flaws_and_character || "None"}
 
-STRICT 7-BLOCK FORMAT:
-1. Stone Description: Past tense for the find. Plain and honest — say what happened, stop. No salesy language. Short sentences. One idea at a time. Highlight the freeform revolution and honest flaws.
-2. Origin Hook: Write a short story hook based on the FULL ORIGIN STORY.
-3. Collection Hook: Write a short hook about the ${fullCollectionTitle} Collection.
-4. Signature: EXACTLY this line: — Bob & Janyce, Rockhound Studio, Spokane Valley WA.
-5. Stone Data: Brief lapidary specs (cut, finish, dimensions).
-6. Ready to Wear: Clearly state if the piece is set and ready to wear, or a raw/loose stone for makers.
-7. Dwell Buttons: Leave this block empty. Do not write any links or HTML here.`;
+VOICE RULES:
+- Past tense for the find. "I picked it up." Not "pick it up."
+- Plain and honest. Say what happened. Stop.
+- No salesy language. No Etsy language. No badges.
+- Short sentences. One idea at a time.
+- "We" for the partnership. "I" for Bob's personal moment with the stone.
+- The stone earns its own sale. Never push it.
+- The OOAK nature is self-evident. Never say "one of a kind" as a selling point.
+- No jewelry store language. This is freeform lapidary art.
+- Signature always: — Bob & Janyce, Rockhound Studio, Spokane Valley WA
+
+DESCRIPTION STRUCTURE — follow this order exactly:
+
+1. PHYSICAL DESCRIPTION
+What the stone looks like. Shape, color, flash, finish, character marks. Specific and honest. Let the stone speak first.
+
+2. ORIGIN HOOK
+1-2 sentences only. Pull from the origin_story field. Enough to make them want to read the full story. End with the placeholder: {{ORIGIN_LINK}}
+
+3. COLLECTION HOOK
+1-2 sentences connecting the stone to its collection. End with the placeholder: {{COLLECTION_LINKS}}
+
+4. QUICK-REFERENCE SPECS
+Stone: [stone_family]
+Dimensions: [dimensions_mm]
+Finish: [surface_finish]
+Setting: [primary_medium]
+Includes: [bail/chain/cord or "Loose stone, undrilled"]
+
+5. COLLECTOR DATA
+Mohs: [mohs_hardness]
+Formation: [geological_age]
+Rarity: [rarity]
+Character: [honest_flaws_and_character]
+
+6. ARTIST CALLOUT — only if loose stone or setting ready
+One plain sentence for jewelers and makers. Dimensions, drill status, setting suitability.
+
+7. SIGNATURE
+— Bob & Janyce, Rockhound Studio, Spokane Valley WA
+
+HARD RULES:
+- Do NOT generate any URLs or href links. Links are handled server-side.
+- Do NOT use the words: unique, one-of-a-kind, handmade, artisan, special, curated, stunning, beautiful, gorgeous, perfect, love, passion.
+- Do NOT hallucinate stone properties not provided in the input fields.
+- Output HTML only. Use <p> tags for paragraphs. No <h> tags. No <ul> or <li>.
+- Keep {{ORIGIN_LINK}} and {{COLLECTION_LINKS}} as literal placeholders. Do not replace them.`;
 
       const geminiRes = await fetchWithRetry("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY, {
         method: "POST",
