@@ -4,7 +4,7 @@
 // ==========================================================================
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { BlockStack, Card, Text, TextField, Select, Button, Banner, DropZone, Spinner, Frame, Toast, InlineGrid, Box, Divider } from "@shopify/polaris";
+import { BlockStack, Card, Text, TextField, Select, Button, Banner, DropZone, Spinner, Frame, Toast, InlineGrid, Divider } from "@shopify/polaris";
 import { PlusIcon, MagicIcon } from "@shopify/polaris-icons";
 import { useFetcher } from "react-router";
 import { ROCKHOUND_FIELDS, DEFAULT_DROPDOWNS, CHANNEL_REQUIREMENTS, getFieldStatus, productTypeOptions, collectionLocationOptions, normalizeDropdownValue, DROPDOWN_OPTIONS } from "../utils/meta-injector.constants.jsx";
@@ -36,87 +36,6 @@ const CUSTOM_FIELDS = [
   { key: "seo_title", label: "SEO Title", type: "single_line_text_field", isPerPiece: true }
 ];
 
-const FULL_META_GROUPS = [
-  {
-    heading: "Always Fill",
-    color: "#2E7D32",
-    fields: [
-      { key: "piece_name", label: "Piece Name", type: "text" },
-      { key: "primary_medium", label: "Primary Medium", type: "text" },
-      { key: "handcrafted_by", label: "Handcrafted By", type: "text" },
-      { key: "is_ooak", label: "Is One of a Kind", type: "text" },
-      { key: "treated", label: "Treated", type: "text" }
-    ]
-  },
-  {
-    heading: "Stone Fields",
-    color: "#1565C0",
-    fields: [
-      { key: "stone_family", label: "Stone Family", type: "text" },
-      { key: "color", label: "Color", type: "text" },
-      { key: "cut_and_shape", label: "Cut and Shape", type: "text" },
-      { key: "surface_finish", label: "Surface Finish", type: "text" },
-      { key: "dimensions_mm", label: "Dimensions (mm)", type: "text" },
-      { key: "weight_grams", label: "Weight (grams)", type: "text" }
-    ]
-  },
-  {
-    heading: "Story & Lore",
-    color: "#E65100",
-    fields: [
-      { key: "origin_story", label: "Origin Story", type: "text", multiline: true },
-      { key: "honest_flaws_and_character", label: "Honest Flaws and Character", type: "text", multiline: true },
-      { key: "collection_name", label: "Collection Name", type: "text" }
-    ]
-  },
-  {
-    heading: "Mixed Media",
-    color: "#6A1B9A",
-    fields: [
-      { key: "found_object", label: "Found Object", type: "text" }
-    ]
-  },
-  {
-    heading: "Google / SEO",
-    color: "#F9A825",
-    fields: [
-      { key: "primary_use", label: "Primary Use", type: "text" },
-      { key: "bail_included", label: "Bail Included", type: "text" },
-      { key: "seo_title", label: "SEO Title", type: "text" }
-    ]
-  },
-  {
-    heading: "Geo-Vault",
-    color: "#4E342E",
-    fields: [
-      { key: "mineral_class", label: "Mineral Class", type: "text" },
-      { key: "crystal_system", label: "Crystal System", type: "text" },
-      { key: "rock_composition", label: "Rock Composition", type: "text" },
-      { key: "rock_formation", label: "Rock Formation", type: "text" },
-      { key: "geological_era", label: "Geological Era", type: "text" }
-    ]
-  }
-];
-
-const NAMESPACE_MAP = {
-  custom: [
-    "piece_name", "primary_medium", "secondary_medium", "handcrafted_by",
-    "stone_family", "color", "cut_and_shape", "surface_finish",
-    "dimensions_mm", "weight_grams", "shipping_weight_oz", "price",
-    "collection_name", "collection_location",
-    "primary_use", "bail_included", "is_ooak", "treated",
-    "found_object", "wire_material", "setting_ready", "material",
-    "origin_story", "origin_handle", "honest_flaws_and_character",
-    "artist_notes", "generated_description", "rescued_by", "stone_shape",
-    "target_gender", "age_group", "condition", "color_pattern",
-    "jewelry_type", "necklace_design", "chain_link_type",
-    "jewelry_finding_type", "custom_product", "seo_title",
-    "mohs_hardness", "luster", "fracture_pattern", "cleavage", "specific_gravity",
-    "diaphaneity", "crystal_system", "geological_era", "geological_age", "mineral_class",
-    "rock_composition", "rock_formation"
-  ]
-};
-
 export function NewProductIntakeTab({ fetcher }) {
   const stageFetcher = useFetcher();
   const autoFillFetcher = useFetcher();
@@ -146,7 +65,11 @@ export function NewProductIntakeTab({ fetcher }) {
     secondary_medium: "",
     wire_material: "",
     setting_ready: "",
-    bail_included: ""
+    bail_included: "",
+    jewelry_finding_type: "",
+    chain_link_type: "",
+    necklace_design: "",
+    jewelry_type: ""
   });
 
   const [pieces, setPieces] = useState([
@@ -154,6 +77,7 @@ export function NewProductIntakeTab({ fetcher }) {
       id: Date.now().toString(),
       piece_name: "",
       dimensions_mm: "",
+      stone_shape: "",
       cut_and_shape: "",
       surface_finish: "",
       color: "",
@@ -371,6 +295,7 @@ export function NewProductIntakeTab({ fetcher }) {
         id: Date.now().toString() + Math.random().toString(),
         piece_name: "",
         dimensions_mm: "",
+        stone_shape: "",
         cut_and_shape: "",
         surface_finish: "",
         color: "",
@@ -440,6 +365,7 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
       piece_name: pieces[0].piece_name,
       dimensions_mm: pieces[0].dimensions_mm,
       cut_and_shape: pieces[0].cut_and_shape,
+      stone_shape: pieces[0].stone_shape,
       surface_finish: pieces[0].surface_finish,
       color: pieces[0].color,
       price: pieces[0].price,
@@ -487,12 +413,17 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
       secondary_medium: "",
       wire_material: "",
       setting_ready: "",
-      bail_included: ""
+      bail_included: "",
+      jewelry_finding_type: "",
+      chain_link_type: "",
+      necklace_design: "",
+      jewelry_type: ""
     });
     setPieces([{
       id: Date.now().toString(),
       piece_name: "",
       dimensions_mm: "",
+      stone_shape: "",
       cut_and_shape: "",
       surface_finish: "",
       color: "",
@@ -626,7 +557,11 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
           secondary_medium: data.tab2Data?.secondary_medium || data.secondary_medium || prev.secondary_medium,
           wire_material: data.tab2Data?.wire_material || data.wire_material || prev.wire_material,
           setting_ready: data.tab2Data?.setting_ready || data.setting_ready || prev.setting_ready,
-          bail_included: data.tab2Data?.bail_included || data.bail_included || prev.bail_included
+          bail_included: data.tab2Data?.bail_included || data.bail_included || prev.bail_included,
+          jewelry_finding_type: data.tab2Data?.jewelry_finding_type || data.jewelry_finding_type || prev.jewelry_finding_type,
+          chain_link_type: data.tab2Data?.chain_link_type || data.chain_link_type || prev.chain_link_type,
+          necklace_design: data.tab2Data?.necklace_design || data.necklace_design || prev.necklace_design,
+          jewelry_type: data.tab2Data?.jewelry_type || data.jewelry_type || prev.jewelry_type
         }));
 
         setPieces(prev => prev.map(p => {
@@ -639,16 +574,17 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
             const tFinish = data.tab2Data?.surface_finish || data.surface_finish;
             const tDims = data.tab2Data?.dimensions_mm || data.dimensions_mm;
             const tSeo = data.tab2Data?.seo_title || data.seo_title;
+            const tStoneShape = data.tab2Data?.stone_shape || data.stone_shape;
 
             (desc !== undefined && desc !== "") && (updated.generated_description = desc);
             (tColor !== undefined && tColor !== "") && (updated.color = tColor);
             (tShape !== undefined && tShape !== "") && (updated.cut_and_shape = tShape);
+            (tStoneShape !== undefined && tStoneShape !== "") && (updated.stone_shape = tStoneShape);
             (tFinish !== undefined && tFinish !== "") && (updated.surface_finish = tFinish);
             (tDims !== undefined && tDims !== "") && (updated.dimensions_mm = tDims);
             (tSeo !== undefined && tSeo !== "") && (updated.seo_title = tSeo);
             updated.scanError = "";
             updated.debug_origin = data.tab2Data?.debug_origin || data.debug_origin || "";
-            updated.jewelry_type = data.tab2Data?.jewelry_type || "";
             updated.rarity = data.tab2Data?.rarity || "";
             if (updated.is_ooak === "Yes" || updated.is_ooak === "true" || updated.is_ooak === true) {
               updated.rarity = "One-of-a-Kind";
@@ -1207,6 +1143,15 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
                         />
                       </div>
                       <div style={{ minHeight: "54px" }}>
+                        <TextField
+                          label={renderLabel("Stone Shape", "stone_shape", piece.stone_shape)}
+                          value={piece.stone_shape}
+                          onChange={(v) => handlePieceChange(piece.id, "stone_shape", v)}
+                          autoComplete="off"
+                          placeholder="e.g. Teardrop Cabochon"
+                        />
+                      </div>
+                      <div style={{ minHeight: "54px" }}>
                         <Select
                           label={renderLabel("Surface Finish", "surface_finish", piece.surface_finish)}
                           options={[...surfaceFinishOptions.map(o => ({ label: o, value: o }))]}
@@ -1323,7 +1268,7 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
           </BlockStack>
         </Card>
 
-        {isJewelry && (
+        {showJewelrySpecsPanel && (
           <Card padding="400" background="bg-surface-warning">
             <BlockStack gap="400">
               <InlineGrid columns={2} alignItems="center">
@@ -1365,6 +1310,42 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
                     onChange={(v) => handleSharedFieldChange("bail_included", v)}
                     autoComplete="off"
                     placeholder="e.g. Silver Filigree Pinch Bail"
+                  />
+                </div>
+                <div style={{ minHeight: "54px" }}>
+                  <TextField
+                    label={renderLabel("Finding Type", "jewelry_finding_type", sharedFields.jewelry_finding_type)}
+                    value={sharedFields.jewelry_finding_type}
+                    onChange={(v) => handleSharedFieldChange("jewelry_finding_type", v)}
+                    autoComplete="off"
+                    placeholder="e.g. Silver Plated Pinch Bail"
+                  />
+                </div>
+                <div style={{ minHeight: "54px" }}>
+                  <TextField
+                    label={renderLabel("Chain Link Type", "chain_link_type", sharedFields.chain_link_type)}
+                    value={sharedFields.chain_link_type}
+                    onChange={(v) => handleSharedFieldChange("chain_link_type", v)}
+                    autoComplete="off"
+                    placeholder="e.g. 2mm Black Leather Cord"
+                  />
+                </div>
+                <div style={{ minHeight: "54px" }}>
+                  <TextField
+                    label={renderLabel("Necklace Design", "necklace_design", sharedFields.necklace_design)}
+                    value={sharedFields.necklace_design}
+                    onChange={(v) => handleSharedFieldChange("necklace_design", v)}
+                    autoComplete="off"
+                    placeholder="e.g. Pendant"
+                  />
+                </div>
+                <div style={{ minHeight: "54px" }}>
+                  <TextField
+                    label={renderLabel("Jewelry Type", "jewelry_type", sharedFields.jewelry_type)}
+                    value={sharedFields.jewelry_type}
+                    onChange={(v) => handleSharedFieldChange("jewelry_type", v)}
+                    autoComplete="off"
+                    placeholder="e.g. Artisan Jewelry"
                   />
                 </div>
                 <div style={{ minHeight: "54px", gridColumn: "span 2" }}>
@@ -1483,7 +1464,7 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
               {renderPanelRow("Generated Description", "generated_description", getVal("generated_description", pieces[0]?.generated_description))}
               {renderPanelRow("SEO Title", "seo_title", getVal("seo_title", pieces[0]?.seo_title))}
               {renderPanelRow("Artist Notes", "artist_notes", getVal("artist_notes", pieces[0]?.artist_notes))}
-              {renderPanelRow("Stone Shape", "stone_shape", getVal("stone_shape", combinedData.stone_shape))}
+              {renderPanelRow("Stone Shape", "stone_shape", getVal("stone_shape", pieces[0]?.stone_shape))}
               {renderPanelRow("Color Pattern", "color_pattern", getVal("color_pattern", combinedData.color_pattern))}
               {renderPanelRow("Handcrafted By", "handcrafted_by", getVal("handcrafted_by", combinedData.handcrafted_by))}
               {renderPanelRow("Is One of a Kind", "is_ooak", getVal("is_ooak", combinedData.is_ooak))}
@@ -1514,10 +1495,10 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
                   {renderPanelRow("Wire Material", "wire_material", getVal("wire_material", sharedFields.wire_material))}
                   {renderPanelRow("Bail Included", "bail_included", getVal("bail_included", sharedFields.bail_included))}
                   {renderPanelRow("Setting Ready", "setting_ready", getVal("setting_ready", sharedFields.setting_ready))}
-                  {renderPanelRow("Jewelry Type", "jewelry_type", getVal("jewelry_type", combinedData.jewelry_type))}
-                  {renderPanelRow("Necklace Design", "necklace_design", getVal("necklace_design", combinedData.necklace_design))}
-                  {renderPanelRow("Chain Link Type", "chain_link_type", getVal("chain_link_type", combinedData.chain_link_type))}
-                  {renderPanelRow("Finding Type", "jewelry_finding_type", getVal("jewelry_finding_type", combinedData.jewelry_finding_type))}
+                  {renderPanelRow("Jewelry Type", "jewelry_type", getVal("jewelry_type", sharedFields.jewelry_type))}
+                  {renderPanelRow("Necklace Design", "necklace_design", getVal("necklace_design", sharedFields.necklace_design))}
+                  {renderPanelRow("Chain Link Type", "chain_link_type", getVal("chain_link_type", sharedFields.chain_link_type))}
+                  {renderPanelRow("Finding Type", "jewelry_finding_type", getVal("jewelry_finding_type", sharedFields.jewelry_finding_type))}
                 </div>
               </>
             )}
