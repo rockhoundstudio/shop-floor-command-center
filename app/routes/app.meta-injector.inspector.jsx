@@ -41,6 +41,7 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
   const [formState, setFormState] = useState({});
   const [fullMetaState, setFullMetaState] = useState({});
   const originalMetaRef = useRef({});
+  const fullMetaStateRef = useRef({});
   const [statusMessage, setStatusMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [promptStyle, setPromptStyle] = useState("");
@@ -218,6 +219,7 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
     delete newFullForm.stone_story;
     setFormState(newForm);
     setFullMetaState(newFullForm);
+    fullMetaStateRef.current = newFullForm;
     originalMetaRef.current = { ...newFullForm };
   }, [products]);
 
@@ -355,7 +357,7 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
       shipping_weight_oz: fullMetaState.shipping_weight_oz || formState.shipping_weight_oz || ""
     };
 
-    const combinedState = { ...fullMetaState, ...activeWeights };
+    const combinedState = { ...fullMetaState, ...fullMetaStateRef.current, ...activeWeights };
 
     Object.entries(combinedState).forEach(([key, value]) => {
       if (key === "shopify_title") return; 
@@ -475,6 +477,7 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
             }, 0);
           }
 
+          fullMetaStateRef.current = updatedState;
           return updatedState;
         });
 
