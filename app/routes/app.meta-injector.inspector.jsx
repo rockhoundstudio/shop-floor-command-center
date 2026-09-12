@@ -418,6 +418,7 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
       const product = products.find(p => p.id === selectedProductId);
       const productTitle = fullMetaState.shopify_title || formState.shopify_title || product?.title || "";
       const tab2Data = tab2Fetcher.data.tab2Data || {};
+      if (tab2Fetcher.data.generated_description) tab2Data.generated_description = tab2Fetcher.data.generated_description;
 
       if (Object.keys(tab2Data).length > 0) {
         setFormState(prev => {
