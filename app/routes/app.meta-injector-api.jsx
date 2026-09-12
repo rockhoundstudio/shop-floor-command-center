@@ -197,6 +197,13 @@ const EXPLICIT_METAOBJECT_KEYS = [
   "jewelry-finding-type", "jewelry_finding_type"
 ];
 
+// 🔴 CRITICAL NAMESPACE RULE: Never write these to the custom/ namespace
+const CRITICAL_SHOPIFY_KEYS = [
+  "mineral_class", "crystal_system", "rock_composition", "geological_era",
+  "rock_formation", "jewelry_type", "necklace_design", "color_pattern",
+  "authenticity", "rarity", "condition", "target_gender", "jewelry_material"
+];
+
 // 🟢 THE GHOST DELETE SEQUENCE
 async function executeGhostDelete(admin, productGid) {
   try {
@@ -368,18 +375,17 @@ export const action = async ({ request }) => {
         });
       }
 
-      // Keys rejected by Shopify when custom definition doesn't exist
-      const skippedUndefinedKeys = [
-        "mineral_class", "crystal_system", "rock_formation", 
-        "rock_composition", "geological_era", "jewelry_type", 
-        "necklace_design", "color_pattern", "material"
-      ];
-
       let setMetafields = payloadArray
         .filter(item => {
           if (item.value === null || item.value === undefined || String(item.value).trim() === "") return false;
           if (!MASTER_TYPE_MAP.hasOwnProperty(item.key)) return false;
-          if (skippedUndefinedKeys.includes(item.key)) return false;
+          
+          let ns = item.namespace || "custom";
+          if (item.key === "is_ooak" || ns === "none" || ns === "") ns = "custom";
+
+          // 🔴 CRITICAL NAMESPACE RULE: Never write these keys to custom/
+          if (CRITICAL_SHOPIFY_KEYS.includes(item.key) && ns === "custom") return false;
+          if (item.key === "material" && ns === "custom") return false;
 
           const resolvedType = MASTER_TYPE_MAP[item.key];
           
@@ -809,6 +815,10 @@ export const action = async ({ request }) => {
           isCustomField = true;
           metaKey = key.split("custom/")[1];
         }
+
+        // 🔴 CRITICAL NAMESPACE RULE: Never write these keys to custom/
+        if (CRITICAL_SHOPIFY_KEYS.includes(metaKey)) return;
+        if (metaKey === "material") return;
 
         if (isCustomField && metaKey && MASTER_TYPE_MAP.hasOwnProperty(metaKey)) {
           const resolvedType = MASTER_TYPE_MAP[metaKey];
