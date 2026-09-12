@@ -75,7 +75,7 @@ export const CHANNEL_REQUIREMENTS = {
 };
 
 export function getFieldStatus(key, value, context = {}) {
-  const isFilled = value !== undefined && value !== null && value.toString().trim() !== "" && value.toString().trim() !== "false";
+  const isFilled = value !== undefined && value !== null && value.toString().trim() !== "";
   if (isFilled) return "green";
 
   const primaryUse = context.primary_use || "";
@@ -307,11 +307,11 @@ DROPDOWN_OPTIONS.handcrafted_by = [
 
 DROPDOWN_OPTIONS.is_one_of_a_kind = [
   { label: "Yes — one of a kind", value: "true" },
-  { label: "No", value: "false" }
+  { label: "No", value: "No" }
 ];
 
 DROPDOWN_OPTIONS.treated = [
-  { label: "Untreated — Natural", value: "false" },
+  { label: "Untreated — Natural", value: "Untreated — Natural" },
   { label: "Stabilized", value: "Stabilized" },
   { label: "Dyed", value: "Dyed" },
   { label: "Resined", value: "Resined" },
@@ -320,7 +320,7 @@ DROPDOWN_OPTIONS.treated = [
 
 DROPDOWN_OPTIONS.found_object = [
   { label: "Yes — found in the wild", value: "true" },
-  { label: "No — purchased rough", value: "false" }
+  { label: "No — purchased rough", value: "No — purchased rough" }
 ];
 
 DROPDOWN_OPTIONS.primary_use = [
@@ -333,12 +333,12 @@ DROPDOWN_OPTIONS.primary_use = [
 
 DROPDOWN_OPTIONS.setting_ready = [
   { label: "Yes", value: "true" },
-  { label: "No", value: "false" }
+  { label: "No", value: "No" }
 ];
 
 DROPDOWN_OPTIONS.bail_included = [
   { label: "Yes", value: "true" },
-  { label: "No", value: "false" }
+  { label: "No", value: "No" }
 ];
 
 DROPDOWN_OPTIONS.chain_material = [
