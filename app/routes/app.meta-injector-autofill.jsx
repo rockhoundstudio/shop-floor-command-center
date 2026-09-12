@@ -989,7 +989,7 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
 DETAILS:
 - Stone Family: ${derivedFamily}
 - Origin / Location: ${originSegment}
-- Full Origin Story: ${extractedStory}
+- Origin Hook (first 300 chars only): ${extractedStory.slice(0, 300)}
 - Collection Name: ${fullCollectionTitle}
 - Cut & Shape: ${pieceData.cut_and_shape || "Freeform"}
 - Surface Finish: ${pieceData.surface_finish || "Natural/Polished"}
