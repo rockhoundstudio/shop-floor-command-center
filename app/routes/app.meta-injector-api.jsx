@@ -108,7 +108,7 @@ const MASTER_TYPE_MAP = {
   geological_age: "single_line_text_field",
   mohs_hardness: "single_line_text_field",
   official_name: "single_line_text_field",
-  luster: "single_line_text_field",
+   luster: "single_line_text_field",
   specific_gravity: "single_line_text_field",
   fracture_pattern: "single_line_text_field",
   cleavage: "single_line_text_field",
@@ -774,7 +774,7 @@ export const action = async ({ request }) => {
       const originLocation = payload.collection_name ? payload.collection_name.replace(/\s+Collection$/i, "").trim() : (payload.origin_location || "Unknown Origin");
 
       const title = payload.title && !payload.title.includes("Unknown") ? payload.title : `${stoneFamily} — ${originLocation} — ${pieceName}`;
-      const descriptionHtml = payload.descriptionHtml || piece.generated_description || piece.descriptionHtml || "";
+      const descriptionHtml = payload.descriptionHtml || "";
       const price = String(payload.price || piece.price || "0.00");
       const productType = payload.productType || "Wearable Art";
       const status = payload.status || "DRAFT";
