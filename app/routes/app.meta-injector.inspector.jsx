@@ -307,8 +307,8 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
     const titleToUse = fullMetaState.shopify_title || formState.shopify_title || product?.title || "";
     const imageUrl = product?.images?.edges?.[0]?.node?.url || "";
 
-    setFullMetaState({});
-    setFormState({});
+    setFullMetaState(prev => ({ shopify_title: prev.shopify_title || "" }));
+    setFormState(prev => ({ shopify_title: prev.shopify_title || "" }));
 
     const formData = new FormData();
     formData.append("intent", "fullRescan");
