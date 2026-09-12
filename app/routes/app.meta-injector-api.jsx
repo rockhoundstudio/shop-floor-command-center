@@ -203,6 +203,23 @@ const EXPLICIT_METAOBJECT_KEYS = [
   "jewelry-finding-type", "jewelry_finding_type"
 ];
 
+// 🔴 THE HARD SKIP LIST: These belong to the shopify/ namespace exclusively.
+const SKIP_KEYS = [
+  "color_pattern",
+  "jewelry_type",
+  "necklace_design",
+  "target_gender",
+  "mineral_class",
+  "crystal_system",
+  "rock_composition",
+  "geological_era",
+  "rock_formation",
+  "authenticity",
+  "rarity",
+  "condition",
+  "jewelry_material"
+];
+
 // 🟢 THE GHOST DELETE SEQUENCE
 async function executeGhostDelete(admin, productGid) {
   try {
@@ -218,7 +235,8 @@ async function executeGhostDelete(admin, productGid) {
 
     const ghostKeys = [
       "stone_story", "story_theme", "rock_formation", "geological_era",
-      "crystal_system", "mineral_class", "rock_composition", "is_one_of_a_kind"
+      "crystal_system", "mineral_class", "rock_composition", "is_one_of_a_kind",
+      "chain_material", "pattern"
     ];
     const isCamelCase = (str) => /[a-z][A-Z]/.test(str);
     const safeNamespaces = ["shopify", "judgeme", "mm-google-shopping", "mc-facebook"];
@@ -413,35 +431,43 @@ export const action = async ({ request }) => {
           let resolvedType = "single_line_text_field";
           const multiLineKeys = ["origin_story", "artist_notes", "honest_flaws_and_character", "bench_notes", "generated_description"];
           const decimalKeys = ["weight_grams", "shipping_weight_oz", "price"];
+          const listSingleLineKeys = ["character_marks"];
+
+          let normalizedValue = normalizeMetafieldValue(item.key, item.value);
+          let resolvedValue = normalizedValue;
 
           if (resolvedNamespace === "custom") {
             if (multiLineKeys.includes(item.key)) {
               resolvedType = "multi_line_text_field";
+              if (resolvedValue.length > 10000) resolvedValue = resolvedValue.slice(0, 10000);
             } else if (decimalKeys.includes(item.key)) {
               resolvedType = "number_decimal";
+              const parsedNum = parseFloat(String(normalizedValue).replace(/[^0-9.-]/g, ""));
+              if (isNaN(parsedNum)) {
+                resolvedValue = "0.0";
+              } else {
+                resolvedValue = parsedNum % 1 === 0 ? parsedNum.toFixed(1) : String(parsedNum);
+              }
+            } else if (listSingleLineKeys.includes(item.key)) {
+              resolvedType = "list.single_line_text_field";
+              resolvedValue = JSON.stringify([String(normalizedValue).trim()]);
+            } else {
+              resolvedType = "single_line_text_field";
+              if (resolvedValue.length > 255) resolvedValue = resolvedValue.slice(0, 255);
             }
           } else {
              // If somehow a non-custom namespace gets here, try the map
              resolvedType = MASTER_TYPE_MAP[item.key] || "single_line_text_field";
-          }
-
-          let normalizedValue = normalizeMetafieldValue(item.key, item.value);
-          let resolvedValue = normalizedValue;
-          
-          // 🔴 FORCE DECIMAL STRING FORMAT FOR SHOPIFY VALIDATION
-          if (resolvedType === "number_decimal") {
-            const parsedNum = parseFloat(String(normalizedValue).replace(/[^0-9.-]/g, ""));
-            if (isNaN(parsedNum)) {
-              resolvedValue = "0.0";
-            } else {
-              resolvedValue = parsedNum % 1 === 0 ? parsedNum.toFixed(1) : String(parsedNum);
-            }
-          } else if (resolvedType === "multi_line_text_field") {
-             // Truncate to 10000 chars
-             if (resolvedValue.length > 10000) resolvedValue = resolvedValue.slice(0, 10000);
-          } else if (resolvedType === "single_line_text_field") {
-             // Truncate to 255 chars
-             if (resolvedValue.length > 255) resolvedValue = resolvedValue.slice(0, 255);
+             if (resolvedType === "number_decimal") {
+               const parsedNum = parseFloat(String(normalizedValue).replace(/[^0-9.-]/g, ""));
+               if (isNaN(parsedNum)) {
+                 resolvedValue = "0.0";
+               } else {
+                 resolvedValue = parsedNum % 1 === 0 ? parsedNum.toFixed(1) : String(parsedNum);
+               }
+             } else if (resolvedType.startsWith("list.")) {
+               resolvedValue = JSON.stringify([normalizedValue]);
+             }
           }
 
           const fieldsToReturn = [];
@@ -846,27 +872,28 @@ export const action = async ({ request }) => {
             if (["n/a", "none", "null", "undefined", ""].includes(valStr)) return;
           }
 
-          let resolvedValue = normalizeMetafieldValue(metaKey, value);
-
-          // 🔴 FORCE DECIMAL STRING FORMAT FOR SHOPIFY VALIDATION
-          if (resolvedType === "number_decimal") {
-            const parsed = parseFloat(String(resolvedValue).replace(/[^0-9.-]/g, ""));
-            if (isNaN(parsed)) {
-              resolvedValue = "0.0";
-            } else {
-              resolvedValue = parsed % 1 === 0 ? parsed.toFixed(1) : String(parsed);
-            }
-          }
+          let normalizedValue = normalizeMetafieldValue(metaKey, value);
+          let resolvedValue = normalizedValue;
 
           // 🟢 THE FIX: Strictly assign types for the custom/ namespace during product creation too
           const multiLineKeys = ["origin_story", "artist_notes", "honest_flaws_and_character", "bench_notes", "generated_description"];
           const decimalKeys = ["weight_grams", "shipping_weight_oz", "price"];
+          const listSingleLineKeys = ["character_marks"];
 
           if (multiLineKeys.includes(metaKey)) {
             resolvedType = "multi_line_text_field";
             if (resolvedValue.length > 10000) resolvedValue = resolvedValue.slice(0, 10000);
           } else if (decimalKeys.includes(metaKey)) {
             resolvedType = "number_decimal";
+            const parsedNum = parseFloat(String(resolvedValue).replace(/[^0-9.-]/g, ""));
+            if (isNaN(parsedNum)) {
+              resolvedValue = "0.0";
+            } else {
+              resolvedValue = parsedNum % 1 === 0 ? parsedNum.toFixed(1) : String(parsedNum);
+            }
+          } else if (listSingleLineKeys.includes(metaKey)) {
+            resolvedType = "list.single_line_text_field";
+            resolvedValue = JSON.stringify([String(resolvedValue).trim()]);
           } else {
             resolvedType = "single_line_text_field";
             if (resolvedValue.length > 255) resolvedValue = resolvedValue.slice(0, 255);
