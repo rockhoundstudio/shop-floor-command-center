@@ -218,7 +218,9 @@ async function executeGhostDelete(admin, productGid) {
     const safeNamespaces = ["shopify", "judgeme", "mm-google-shopping", "mc-facebook"];
 
     const toDelete = allMeta.map(e => e.node).filter(m => {
+      // Never touch safe namespaces or internal app namespaces
       if (safeNamespaces.includes(m.namespace) || m.namespace.startsWith("app-")) return false;
+      
       if (m.namespace === "custom") {
         if (ghostKeys.includes(m.key)) return true;
         if (isCamelCase(m.key)) return true;
@@ -446,15 +448,22 @@ export const action = async ({ request }) => {
         setMetafields = Array.from(uniqueSet.values());
 
         console.log("[CANONICAL WRITE]");
-        const response = await admin.graphql(
-          `#graphql
-          mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
-            metafieldsSet(metafields: $metafields) { userErrors { field message } }
-          }`,
-          { variables: { metafields: setMetafields } } // Exactly ONE call
-        );
-        const result = await response.json();
-        const allErrors = result?.data?.metafieldsSet?.userErrors || [];
+        const chunks = chunkArray(setMetafields, 25);
+        const allErrors = [];
+
+        for (let i = 0; i < chunks.length; i++) {
+          console.log(`[BATCH ${i + 1} of ${chunks.length}]`);
+          const response = await admin.graphql(
+            `#graphql
+            mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
+              metafieldsSet(metafields: $metafields) { userErrors { field message } }
+            }`,
+            { variables: { metafields: chunks[i] } } // Exactly ONE call per batch
+          );
+          const result = await response.json();
+          const batchErrors = result?.data?.metafieldsSet?.userErrors || [];
+          if (batchErrors.length > 0) allErrors.push(...batchErrors);
+        }
 
         if (allErrors.length > 0) {
           return data({ success: false, message: "Saved with errors: " + allErrors.map(e => e.message).join(" | "), errors: allErrors });
@@ -468,9 +477,14 @@ export const action = async ({ request }) => {
       const seoItem = payloadArray.find(p => p.key === "seo_title");
       const seoTitleValue = seoItem ? String(seoItem.value).trim() : null;
 
-      if (fallbackProductId) {
+      let primaryProductId = fallbackProductId;
+      if (!primaryProductId && payloadArray.length > 0) {
+        primaryProductId = payloadArray[0].ownerId;
+      }
+
+      if (primaryProductId) {
         try {
-          const productGid = fallbackProductId.startsWith("gid://") ? fallbackProductId : `gid://shopify/Product/${fallbackProductId}`;
+          const productGid = primaryProductId.startsWith("gid://") ? primaryProductId : `gid://shopify/Product/${primaryProductId.split("/").pop()}`;
           let inputVars = { id: productGid };
           let hasUpdates = false;
 
@@ -837,16 +851,21 @@ export const action = async ({ request }) => {
         injectMetafields = Array.from(uniqueSet.values());
 
         console.log("[CANONICAL WRITE]");
-        const response = await admin.graphql(
-          `#graphql
-          mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
-            metafieldsSet(metafields: $metafields) { userErrors { field message } }
-          }`,
-          { variables: { metafields: injectMetafields } } // Exactly ONE call
-        );
-        const result = await response.json();
-        const createErrs = result?.data?.metafieldsSet?.userErrors || [];
-        if (createErrs.length > 0) allUserErrors.push(...createErrs);
+        const chunks = chunkArray(injectMetafields, 25);
+        
+        for (let i = 0; i < chunks.length; i++) {
+          console.log(`[BATCH ${i + 1} of ${chunks.length}]`);
+          const response = await admin.graphql(
+            `#graphql
+            mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
+              metafieldsSet(metafields: $metafields) { userErrors { field message } }
+            }`,
+            { variables: { metafields: chunks[i] } } // Exactly ONE call per batch
+          );
+          const result = await response.json();
+          const createErrs = result?.data?.metafieldsSet?.userErrors || [];
+          if (createErrs.length > 0) allUserErrors.push(...createErrs);
+        }
       }
 
       // Execute Ghost Delete Sequence
