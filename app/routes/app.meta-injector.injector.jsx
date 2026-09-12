@@ -102,6 +102,10 @@ export function NewProductIntakeTab({ fetcher }) {
   // 🟢 THE WELD: Live State References to bypass the Stale Closure ghost
   const latestPieces = useRef(pieces);
   const latestShared = useRef(sharedFields);
+  
+  // 🟢 FIX: Track the last title that triggered autofill to prevent accidental overwrites
+  const lastAutofilledTitle = useRef("");
+  
   useEffect(() => { latestPieces.current = pieces; }, [pieces]);
   useEffect(() => { latestShared.current = sharedFields; }, [sharedFields]);
 
@@ -196,8 +200,11 @@ export function NewProductIntakeTab({ fetcher }) {
   const handlePieceNameBlur = useCallback((id, value) => {
     if (!value) return;
     const segments = value.split(/\s+[-—–]\s+/);
-    if (segments.length === 3) {
+    
+    // 🟢 THE FIX: Only fire auto-fill if the title has 3 segments AND it's a completely new title
+    if (segments.length === 3 && value !== lastAutofilledTitle.current) {
       setLastScannedPieceId(id);
+      lastAutofilledTitle.current = value; // Lock it in so manual edits don't trigger it again
       
       const formData = new FormData();
       formData.append("intent", "titleParse");
@@ -451,6 +458,7 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
     setPhotoPreviewUrls([]);
     setGeneratedDescription("");
     setLastScannedPieceId(null);
+    lastAutofilledTitle.current = ""; // Reset the tracker on new batch
   }, []);
 
   useEffect(() => {
