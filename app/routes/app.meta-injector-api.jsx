@@ -389,17 +389,12 @@ export const action = async ({ request }) => {
         .filter(item => {
           if (item.value === null || item.value === undefined || String(item.value).trim() === "") return false;
           
-          if (SKIP_KEYS.includes(item.key)) return false;
-          
-          if (!MASTER_TYPE_MAP.hasOwnProperty(item.key)) return false;
+          let ns = item.namespace || "custom";
+          if (item.key === "is_ooak" || ns === "none" || ns === "") ns = "custom";
 
-          const resolvedType = MASTER_TYPE_MAP[item.key];
-          
-          // 🔴 GUARD FOR METAOBJECT REFERENCES: Skip "N/A", "None", empty
-          if ((resolvedType && resolvedType.includes("metaobject_reference")) || EXPLICIT_METAOBJECT_KEYS.includes(item.key)) {
-            const valStr = String(item.value).trim().toLowerCase();
-            if (["n/a", "none", "null", "undefined", ""].includes(valStr)) return false;
-          }
+          // 🔴 CRITICAL NAMESPACE RULE: Never write these keys to custom/
+          if (CRITICAL_SHOPIFY_KEYS.includes(item.key) && ns === "custom") return false;
+          if (item.key === "material" && ns === "custom") return false;
 
           return true;
         })
@@ -410,7 +405,27 @@ export const action = async ({ request }) => {
           let resolvedId = `gid://shopify/Product/${itemOwnerId.split("/").pop()}`;
           if (itemOwnerId.startsWith("gid://")) resolvedId = itemOwnerId;
 
-          const resolvedType = MASTER_TYPE_MAP[item.key] || "single_line_text_field";
+          let resolvedNamespace = item.namespace || "custom";
+          if (item.key === "is_ooak" || resolvedNamespace === "none" || resolvedNamespace === "") {
+            resolvedNamespace = "custom";
+          }
+
+          // 🟢 THE FIX: Strictly assign types for the custom/ namespace
+          let resolvedType = "single_line_text_field";
+          const multiLineKeys = ["origin_story", "artist_notes", "honest_flaws_and_character", "bench_notes", "generated_description"];
+          const decimalKeys = ["weight_grams", "shipping_weight_oz", "price"];
+
+          if (resolvedNamespace === "custom") {
+            if (multiLineKeys.includes(item.key)) {
+              resolvedType = "multi_line_text_field";
+            } else if (decimalKeys.includes(item.key)) {
+              resolvedType = "number_decimal";
+            }
+          } else {
+             // If somehow a non-custom namespace gets here, try the map
+             resolvedType = MASTER_TYPE_MAP[item.key] || "single_line_text_field";
+          }
+
           let normalizedValue = normalizeMetafieldValue(item.key, item.value);
           let resolvedValue = normalizedValue;
           
@@ -422,13 +437,12 @@ export const action = async ({ request }) => {
             } else {
               resolvedValue = parsedNum % 1 === 0 ? parsedNum.toFixed(1) : String(parsedNum);
             }
-          } else if (resolvedType.startsWith("list.")) {
-            resolvedValue = JSON.stringify([normalizedValue]);
-          }
-
-          let resolvedNamespace = item.namespace || "custom";
-          if (item.key === "is_ooak" || resolvedNamespace === "none" || resolvedNamespace === "") {
-            resolvedNamespace = "custom";
+          } else if (resolvedType === "multi_line_text_field") {
+             // Truncate to 10000 chars
+             if (resolvedValue.length > 10000) resolvedValue = resolvedValue.slice(0, 10000);
+          } else if (resolvedType === "single_line_text_field") {
+             // Truncate to 255 chars
+             if (resolvedValue.length > 255) resolvedValue = resolvedValue.slice(0, 255);
           }
 
           const fieldsToReturn = [];
@@ -822,10 +836,12 @@ export const action = async ({ request }) => {
           metaKey = key.split("custom/")[1];
         }
 
-        if (SKIP_KEYS.includes(metaKey)) return;
+        // 🔴 CRITICAL NAMESPACE RULE: Never write these keys to custom/
+        if (CRITICAL_SHOPIFY_KEYS.includes(metaKey)) return;
+        if (metaKey === "material") return;
 
         if (isCustomField && metaKey && MASTER_TYPE_MAP.hasOwnProperty(metaKey)) {
-          const resolvedType = MASTER_TYPE_MAP[metaKey];
+          let resolvedType = MASTER_TYPE_MAP[metaKey];
 
           // 🔴 GUARD FOR METAOBJECT REFERENCES: Skip "N/A", "None", empty
           if ((resolvedType && resolvedType.includes("metaobject_reference")) || EXPLICIT_METAOBJECT_KEYS.includes(metaKey)) {
@@ -845,12 +861,26 @@ export const action = async ({ request }) => {
             }
           }
 
+          // 🟢 THE FIX: Strictly assign types for the custom/ namespace during product creation too
+          const multiLineKeys = ["origin_story", "artist_notes", "honest_flaws_and_character", "bench_notes", "generated_description"];
+          const decimalKeys = ["weight_grams", "shipping_weight_oz", "price"];
+
+          if (multiLineKeys.includes(metaKey)) {
+            resolvedType = "multi_line_text_field";
+            if (resolvedValue.length > 10000) resolvedValue = resolvedValue.slice(0, 10000);
+          } else if (decimalKeys.includes(metaKey)) {
+            resolvedType = "number_decimal";
+          } else {
+            resolvedType = "single_line_text_field";
+            if (resolvedValue.length > 255) resolvedValue = resolvedValue.slice(0, 255);
+          }
+
           injectMetafieldsMap.set(metaKey, {
             ownerId: productId,
             namespace: "custom",
             key: metaKey,
-            type: resolvedType || "single_line_text_field",
-            value: (resolvedType || "").startsWith("list.") ? JSON.stringify([resolvedValue]) : resolvedValue
+            type: resolvedType,
+            value: resolvedType.startsWith("list.") ? JSON.stringify([resolvedValue]) : resolvedValue
           });
         }
       });
