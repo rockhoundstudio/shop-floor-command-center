@@ -1018,7 +1018,7 @@ VOICE RULES:
 DESCRIPTION STRUCTURE — follow this order exactly:
 
 1. PHYSICAL DESCRIPTION
-What the stone looks like. Shape, color, flash, finish, character marks. Specific and honest. Let the stone speak first.
+Start with the piece_name. What makes this stone different from every other stone of its type. Lead with bench_notes and artist_notes — these are Bob's direct observations from the wheel. Then describe shape, color, flash, finish. Specific and honest. If bench_notes describes something unexpected like a pine tree in the flash or a dendritic inclusion — that is your lead sentence. Do not bury it. Do not skip it.
 
 2. ORIGIN HOOK
 1-2 sentences only. Pull from the origin_story field. Enough to make them want to read the full story. End with the placeholder: {{ORIGIN_LINK}}
