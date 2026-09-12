@@ -394,7 +394,7 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
       return;
     }
 
-    const descHtml = formState.generated_description || fullMetaState.generated_description || "";
+    const descHtml = fullMetaState.generated_description || formState.generated_description || "";
 
     injectFetcher.submit(
       { 
