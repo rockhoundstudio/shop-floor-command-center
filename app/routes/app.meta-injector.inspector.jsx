@@ -313,7 +313,7 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
       "stone_family", "color", "surface_finish", "source_location",
       "primary_use", "handcrafted_by", "origin_story",
       "piece_name", "cut_and_shape", "dimensions_mm",
-      "weight_grams", "shipping_weight_oz", "honest_flaws_and_character",
+      "weight_grams", "shipping_weight_oz", "honest_flaws_and_character", "artist_notes",
       "price", "bench_notes", "character_marks", "primary_medium",
       "secondary_medium", "treatment_status", "is_ooak", "treated",
       "material", "stone_shape", "rescued_by", "alt_text",
@@ -326,6 +326,8 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
     ];
     setFullMetaState(prev => Object.fromEntries(RESCAN_PRESERVE_KEYS.map(k => [k, prev[k] || ""])));
     setFormState(prev => Object.fromEntries(RESCAN_PRESERVE_KEYS.map(k => [k, prev[k] || ""])));
+    setFullMetaState(prev => ({ ...prev, custom_product: prev.custom_product || "Yes" }));
+    setFormState(prev => ({ ...prev, custom_product: prev.custom_product || "Yes" }));
 
     const formData = new FormData();
     formData.append("intent", "fullRescan");
