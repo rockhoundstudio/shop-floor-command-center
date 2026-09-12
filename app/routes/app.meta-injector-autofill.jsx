@@ -1000,6 +1000,9 @@ DETAILS:
 - Geological Age: ${pieceData.geological_age || "N/A"}
 - Rarity: ${pieceData.rarity || "Common"}
 - Character: ${pieceData.honest_flaws_and_character || "None"}
+- Piece Name: ${pieceData.piece_name || "None"}
+- Bench Notes: ${pieceData.bench_notes || "None"}
+- Artist Notes: ${pieceData.artist_notes || "None"}
 
 VOICE RULES:
 - Past tense for the find. "I picked it up." Not "pick it up."
