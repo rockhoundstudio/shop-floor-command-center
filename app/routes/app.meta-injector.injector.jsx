@@ -69,7 +69,16 @@ export function NewProductIntakeTab({ fetcher }) {
     jewelry_finding_type: "",
     chain_link_type: "",
     necklace_design: "",
-    jewelry_type: ""
+    jewelry_type: "",
+    luster: "",
+    mohs_hardness: "",
+    specific_gravity: "",
+    fracture_pattern: "",
+    cleavage: "",
+    diaphaneity: "",
+    geological_age: "",
+    custom_product: "",
+    origin_page_handle: ""
   });
 
   const [pieces, setPieces] = useState([
@@ -90,12 +99,21 @@ export function NewProductIntakeTab({ fetcher }) {
       imageBase64: "",
       imageMimeType: "",
       stagedResourceUrls: [],
+      stagedUploadIndex: 0,
       generated_description: "",
       seo_title: "",
       artist_notes: "",
       scanError: "",
       scanToken: "",
-      isUploading: false
+      isUploading: false,
+      character_marks: "",
+      honest_flaws_and_character: "",
+      bench_notes: "",
+      alt_text: "",
+      color_pattern: "",
+      found_object: "true",
+      is_ooak: "Yes",
+      treated: "No"
     }
   ]);
 
@@ -201,10 +219,9 @@ export function NewProductIntakeTab({ fetcher }) {
     if (!value) return;
     const segments = value.split(/\s+[-—–]\s+/);
     
-    // 🟢 THE FIX: Only fire auto-fill if the title has 3 segments AND it's a completely new title
     if (segments.length === 3 && value !== lastAutofilledTitle.current) {
       setLastScannedPieceId(id);
-      lastAutofilledTitle.current = value; // Lock it in so manual edits don't trigger it again
+      lastAutofilledTitle.current = value; 
       
       const formData = new FormData();
       formData.append("intent", "titleParse");
@@ -315,12 +332,21 @@ export function NewProductIntakeTab({ fetcher }) {
         imageBase64: "",
         imageMimeType: "",
         stagedResourceUrls: [],
+        stagedUploadIndex: 0,
         generated_description: "",
         seo_title: "",
         artist_notes: "",
         scanError: "",
         scanToken: "",
-        isUploading: false
+        isUploading: false,
+        character_marks: "",
+        honest_flaws_and_character: "",
+        bench_notes: "",
+        alt_text: "",
+        color_pattern: "",
+        found_object: "true",
+        is_ooak: "Yes",
+        treated: "No"
       }
     ]);
   }, []);
@@ -359,7 +385,6 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
     }).catch(err => console.error("Clipboard copy failed", err));
   }, [pieces]);
 
-  // 🟢 FIX: Read directly from latest state refs at exact moment of click
   const handleCreateAll = useCallback(() => {
     setStatusMessage("");
     setErrorMessage("");
@@ -373,6 +398,7 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
     const payload = {
       intent: "createProduct",
       ...currentShared,
+      ...currentPiece,
       piece_name: currentPiece.piece_name,
       dimensions_mm: currentPiece.dimensions_mm,
       cut_and_shape: currentPiece.cut_and_shape,
@@ -397,7 +423,6 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
     fetcher.submit(fd, { method: "post", action: "/app/meta-injector-api" });
   }, [fetcher]);
 
-  // 🟢 FIX: THE HARD WIPE (Stop Ghost Data Carryover)
   const handleStartNewBatch = useCallback(() => {
     setStatusMessage("");
     setErrorMessage("");
@@ -428,7 +453,16 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
       jewelry_finding_type: "",
       chain_link_type: "",
       necklace_design: "",
-      jewelry_type: ""
+      jewelry_type: "",
+      luster: "",
+      mohs_hardness: "",
+      specific_gravity: "",
+      fracture_pattern: "",
+      cleavage: "",
+      diaphaneity: "",
+      geological_age: "",
+      custom_product: "",
+      origin_page_handle: ""
     });
     setPieces([{
       id: Date.now().toString(),
@@ -447,18 +481,27 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
       imageBase64: "",
       imageMimeType: "",
       stagedResourceUrls: [],
+      stagedUploadIndex: 0,
       generated_description: "",
       seo_title: "",
       artist_notes: "",
       scanError: "",
       scanToken: "",
-      isUploading: false
+      isUploading: false,
+      character_marks: "",
+      honest_flaws_and_character: "",
+      bench_notes: "",
+      alt_text: "",
+      color_pattern: "",
+      found_object: "true",
+      is_ooak: "Yes",
+      treated: "No"
     }]);
     setPhotoFiles([]);
     setPhotoPreviewUrls([]);
     setGeneratedDescription("");
     setLastScannedPieceId(null);
-    lastAutofilledTitle.current = ""; // Reset the tracker on new batch
+    lastAutofilledTitle.current = ""; 
   }, []);
 
   useEffect(() => {
@@ -501,50 +544,71 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
       })();
 
       (isStaged && isSuccess && resourceUrl) && (() => {
+        const currentPiece = latestPieces.current.find(p => p.id === pid);
+        const currentIndex = currentPiece?.stagedUploadIndex || 0;
+
         setPieces(prev => prev.map(p =>
-          p.id === pid ? { ...p, stagedResourceUrls: [resourceUrl] } : p
+          p.id === pid ? { 
+            ...p, 
+            stagedResourceUrls: [...(p.stagedResourceUrls || []), resourceUrl],
+            stagedUploadIndex: currentIndex + 1 
+          } : p
         ));
 
-        const executeVisionScan = (finalBase64, finalMime) => {
-          const currentPiece = latestPieces.current.find(p => p.id === pid);
-          const pName = currentPiece?.piece_name || document.querySelector(`[data-piece-id="${pid}"][data-field="piece_name"]`)?.value || "";
-          const cName = latestShared.current.collection_name || "";
+        if (currentIndex === 0) {
+          const executeVisionScan = (finalBase64, finalMime) => {
+            const latestP = latestPieces.current.find(p => p.id === pid);
+            const pName = latestP?.piece_name || document.querySelector(`[data-piece-id="${pid}"][data-field="piece_name"]`)?.value || "";
+            const cName = latestShared.current.collection_name || "";
 
+            const formData = new FormData();
+            formData.append("intent", "visionScan");
+            formData.append("pieceId", pid);
+            formData.append("imageUrl", resourceUrl);
+            formData.append("pieceName", pName);
+            formData.append("collectionName", cName);
+            formData.append("imageBase64", finalBase64);
+            formData.append("imageMimeType", finalMime);
+
+            visionFetcher.submit(
+              formData,
+              { method: "post", action: "/app/meta-injector-autofill" }
+            );
+          };
+
+          if (currentPiece && currentPiece.imageBase64) {
+            executeVisionScan(currentPiece.imageBase64, currentPiece.imageMimeType);
+          } else {
+            let attempts = 0;
+            const maxAttempts = 25; 
+            const pollInterval = setInterval(() => {
+              attempts++;
+              const latestP = latestPieces.current.find(p => p.id === pid);
+              const currentBase64 = latestP ? latestP.imageBase64 : "";
+              const currentMime = latestP ? latestP.imageMimeType : "image/jpeg";
+
+              if (currentBase64) {
+                clearInterval(pollInterval);
+                executeVisionScan(currentBase64, currentMime);
+              } else if (attempts >= maxAttempts) {
+                clearInterval(pollInterval);
+                executeVisionScan("", currentMime);
+              }
+            }, 200);
+          }
+        }
+
+        const nextIndex = currentIndex + 1;
+        if (currentPiece && currentPiece.photoFiles && nextIndex < currentPiece.photoFiles.length) {
           const formData = new FormData();
-          formData.append("intent", "visionScan");
+          formData.append("intent", "stagedUpload");
+          formData.append("file_0", currentPiece.photoFiles[nextIndex]);
           formData.append("pieceId", pid);
-          formData.append("imageUrl", resourceUrl);
-          formData.append("pieceName", pName);
-          formData.append("collectionName", cName);
-          formData.append("imageBase64", finalBase64);
-          formData.append("imageMimeType", finalMime);
-
-          visionFetcher.submit(
-            formData,
-            { method: "post", action: "/app/meta-injector-autofill" }
-          );
-        };
-
-        const initialPiece = latestPieces.current.find(p => p.id === pid);
-        if (initialPiece && initialPiece.imageBase64) {
-          executeVisionScan(initialPiece.imageBase64, initialPiece.imageMimeType);
-        } else {
-          let attempts = 0;
-          const maxAttempts = 25; 
-          const pollInterval = setInterval(() => {
-            attempts++;
-            const currentPiece = latestPieces.current.find(p => p.id === pid);
-            const currentBase64 = currentPiece ? currentPiece.imageBase64 : "";
-            const currentMime = currentPiece ? currentPiece.imageMimeType : "image/jpeg";
-
-            if (currentBase64) {
-              clearInterval(pollInterval);
-              executeVisionScan(currentBase64, currentMime);
-            } else if (attempts >= maxAttempts) {
-              clearInterval(pollInterval);
-              executeVisionScan("", currentMime);
-            }
-          }, 200);
+          stageFetcher.submit(formData, {
+            method: "post",
+            action: "/app/meta-injector-api",
+            encType: "multipart/form-data"
+          });
         }
       })();
     })();
@@ -1180,6 +1244,83 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
                           placeholder="Primary color"
                         />
                       </div>
+                      <div style={{ minHeight: "54px" }}>
+                        <TextField
+                          label={renderLabel("Color Pattern", "color_pattern", piece.color_pattern)}
+                          value={piece.color_pattern}
+                          onChange={(v) => handlePieceChange(piece.id, "color_pattern", v)}
+                          autoComplete="off"
+                        />
+                      </div>
+                      <div style={{ minHeight: "54px", gridColumn: "span 3" }}>
+                        <TextField
+                          label={renderLabel("Character Marks", "character_marks", piece.character_marks)}
+                          value={piece.character_marks}
+                          onChange={(v) => handlePieceChange(piece.id, "character_marks", v)}
+                          multiline={2}
+                          autoComplete="off"
+                        />
+                      </div>
+                      <div style={{ minHeight: "54px", gridColumn: "span 3" }}>
+                        <TextField
+                          label={renderLabel("Honest Flaws & Character", "honest_flaws_and_character", piece.honest_flaws_and_character)}
+                          value={piece.honest_flaws_and_character}
+                          onChange={(v) => handlePieceChange(piece.id, "honest_flaws_and_character", v)}
+                          multiline={2}
+                          autoComplete="off"
+                        />
+                      </div>
+                      <div style={{ minHeight: "54px", gridColumn: "span 3" }}>
+                        <TextField
+                          label={renderLabel("Bench Notes", "bench_notes", piece.bench_notes)}
+                          value={piece.bench_notes}
+                          onChange={(v) => handlePieceChange(piece.id, "bench_notes", v)}
+                          multiline={2}
+                          autoComplete="off"
+                        />
+                      </div>
+                      <div style={{ minHeight: "54px", gridColumn: "span 3" }}>
+                        <TextField
+                          label={renderLabel("Alt Text", "alt_text", piece.alt_text)}
+                          value={piece.alt_text}
+                          onChange={(v) => handlePieceChange(piece.id, "alt_text", v)}
+                          multiline={2}
+                          autoComplete="off"
+                        />
+                      </div>
+                      <div style={{ minHeight: "54px" }}>
+                        <Select
+                          label={renderLabel("Found Object", "found_object", piece.found_object)}
+                          options={[
+                            {label: "Yes", value: "true"},
+                            {label: "No", value: "false"}
+                          ]}
+                          value={piece.found_object}
+                          onChange={(v) => handlePieceChange(piece.id, "found_object", v)}
+                        />
+                      </div>
+                      <div style={{ minHeight: "54px" }}>
+                        <Select
+                          label={renderLabel("Is OOAK", "is_ooak", piece.is_ooak)}
+                          options={[
+                            {label: "Yes", value: "Yes"},
+                            {label: "No", value: "No"}
+                          ]}
+                          value={piece.is_ooak}
+                          onChange={(v) => handlePieceChange(piece.id, "is_ooak", v)}
+                        />
+                      </div>
+                      <div style={{ minHeight: "54px" }}>
+                        <Select
+                          label={renderLabel("Treated", "treated", piece.treated)}
+                          options={[
+                            {label: "Yes", value: "Yes"},
+                            {label: "No", value: "No"}
+                          ]}
+                          value={piece.treated}
+                          onChange={(v) => handlePieceChange(piece.id, "treated", v)}
+                        />
+                      </div>
                     </div>
 
                     {hasScanError && (
@@ -1232,6 +1373,14 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
                   autoComplete="off"
                 />
               </div>
+              <div style={{ minHeight: "54px" }}>
+                <TextField
+                  label={renderLabel("Collection Location", "collection_location", sharedFields.collection_location)}
+                  value={sharedFields.collection_location}
+                  onChange={(v) => handleSharedFieldChange("collection_location", v)}
+                  autoComplete="off"
+                />
+              </div>
               
               <div style={{ minHeight: "54px" }}>
                 <TextField
@@ -1242,6 +1391,22 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
                   placeholder="e.g. yakima-river-chert-road"
                 />
               </div>
+              <div style={{ minHeight: "54px" }}>
+                <TextField
+                  label={renderLabel("Origin Page Handle", "origin_page_handle", sharedFields.origin_page_handle)}
+                  value={sharedFields.origin_page_handle}
+                  onChange={(v) => handleSharedFieldChange("origin_page_handle", v)}
+                  autoComplete="off"
+                />
+              </div>
+              <div style={{ minHeight: "54px" }}>
+                <TextField
+                  label={renderLabel("Origin Location", "origin_location", sharedFields.origin_location)}
+                  value={sharedFields.origin_location}
+                  onChange={(v) => handleSharedFieldChange("origin_location", v)}
+                  autoComplete="off"
+                />
+              </div>
 
               <div style={{ minHeight: "54px" }}>
                 <Select
@@ -1249,6 +1414,14 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
                   options={[...rescuedByOptions.map(o => ({ label: o, value: o }))]}
                   value={sharedFields.rescued_by}
                   onChange={(v) => handleSharedFieldChange("rescued_by", v)}
+                />
+              </div>
+              <div style={{ minHeight: "54px" }}>
+                <TextField
+                  label={renderLabel("Handcrafted By", "handcrafted_by", sharedFields.handcrafted_by)}
+                  value={sharedFields.handcrafted_by}
+                  onChange={(v) => handleSharedFieldChange("handcrafted_by", v)}
+                  autoComplete="off"
                 />
               </div>
               <div style={{ minHeight: "54px" }}>
@@ -1274,6 +1447,88 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
                   options={[{ label: "Select...", value: "" }, ...productTypeOptions.map(o => ({ label: o, value: o }))]}
                   value={sharedFields.primary_use}
                   onChange={(v) => handleSharedFieldChange("primary_use", v)}
+                />
+              </div>
+              <div style={{ minHeight: "54px" }}>
+                <TextField
+                  label={renderLabel("Target Gender", "target_gender", sharedFields.target_gender)}
+                  value={sharedFields.target_gender}
+                  onChange={(v) => handleSharedFieldChange("target_gender", v)}
+                  autoComplete="off"
+                />
+              </div>
+              <div style={{ minHeight: "54px" }}>
+                <Select
+                  label={renderLabel("Custom Product", "custom_product", sharedFields.custom_product)}
+                  options={[
+                    {label: "Yes", value: "Yes"},
+                    {label: "No", value: "No"}
+                  ]}
+                  value={sharedFields.custom_product}
+                  onChange={(v) => handleSharedFieldChange("custom_product", v)}
+                />
+              </div>
+            </div>
+
+            {/* GEO VAULT FIELDS ADDED TO SECTION B */}
+            <div style={{ marginTop: "16px" }}>
+              <Text variant="headingSm" as="h3" fontWeight="bold">Geo Vault Details</Text>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "24px" }}>
+              <div style={{ minHeight: "54px" }}>
+                <TextField
+                  label={renderLabel("Luster", "luster", sharedFields.luster)}
+                  value={sharedFields.luster}
+                  onChange={(v) => handleSharedFieldChange("luster", v)}
+                  autoComplete="off"
+                />
+              </div>
+              <div style={{ minHeight: "54px" }}>
+                <TextField
+                  label={renderLabel("Mohs Hardness", "mohs_hardness", sharedFields.mohs_hardness)}
+                  value={sharedFields.mohs_hardness}
+                  onChange={(v) => handleSharedFieldChange("mohs_hardness", v)}
+                  autoComplete="off"
+                />
+              </div>
+              <div style={{ minHeight: "54px" }}>
+                <TextField
+                  label={renderLabel("Specific Gravity", "specific_gravity", sharedFields.specific_gravity)}
+                  value={sharedFields.specific_gravity}
+                  onChange={(v) => handleSharedFieldChange("specific_gravity", v)}
+                  autoComplete="off"
+                />
+              </div>
+              <div style={{ minHeight: "54px" }}>
+                <TextField
+                  label={renderLabel("Fracture Pattern", "fracture_pattern", sharedFields.fracture_pattern)}
+                  value={sharedFields.fracture_pattern}
+                  onChange={(v) => handleSharedFieldChange("fracture_pattern", v)}
+                  autoComplete="off"
+                />
+              </div>
+              <div style={{ minHeight: "54px" }}>
+                <TextField
+                  label={renderLabel("Cleavage", "cleavage", sharedFields.cleavage)}
+                  value={sharedFields.cleavage}
+                  onChange={(v) => handleSharedFieldChange("cleavage", v)}
+                  autoComplete="off"
+                />
+              </div>
+              <div style={{ minHeight: "54px" }}>
+                <TextField
+                  label={renderLabel("Diaphaneity", "diaphaneity", sharedFields.diaphaneity)}
+                  value={sharedFields.diaphaneity}
+                  onChange={(v) => handleSharedFieldChange("diaphaneity", v)}
+                  autoComplete="off"
+                />
+              </div>
+              <div style={{ minHeight: "54px" }}>
+                <TextField
+                  label={renderLabel("Geological Age", "geological_age", sharedFields.geological_age)}
+                  value={sharedFields.geological_age}
+                  onChange={(v) => handleSharedFieldChange("geological_age", v)}
+                  autoComplete="off"
                 />
               </div>
             </div>
