@@ -2,6 +2,12 @@ import { data } from "react-router";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 
+const CRITICAL_SHOPIFY_KEYS = [
+  "color_pattern", "jewelry_type", "necklace_design", "target_gender",
+  "mineral_class", "crystal_system", "rock_composition", "geological_era",
+  "rock_formation", "authenticity", "rarity", "condition", "jewelry_material"
+];
+
 function chunkArray(arr, size) {
   const chunks = [];
   for (let i = 0; i < arr.length; i += size) {
@@ -197,23 +203,6 @@ const EXPLICIT_METAOBJECT_KEYS = [
   "jewelry-finding-type", "jewelry_finding_type"
 ];
 
-// 🔴 THE HARD SKIP LIST: These belong to the shopify/ namespace exclusively.
-const SKIP_KEYS = [
-  "color_pattern",
-  "jewelry_type",
-  "necklace_design",
-  "target_gender",
-  "mineral_class",
-  "crystal_system",
-  "rock_composition",
-  "geological_era",
-  "rock_formation",
-  "authenticity",
-  "rarity",
-  "condition",
-  "jewelry_material"
-];
-
 // 🟢 THE GHOST DELETE SEQUENCE
 async function executeGhostDelete(admin, productGid) {
   try {
@@ -395,6 +384,16 @@ export const action = async ({ request }) => {
           // 🔴 CRITICAL NAMESPACE RULE: Never write these keys to custom/
           if (CRITICAL_SHOPIFY_KEYS.includes(item.key) && ns === "custom") return false;
           if (item.key === "material" && ns === "custom") return false;
+
+          if (!MASTER_TYPE_MAP.hasOwnProperty(item.key)) return false;
+
+          const resolvedType = MASTER_TYPE_MAP[item.key];
+          
+          // 🔴 GUARD FOR METAOBJECT REFERENCES: Skip "N/A", "None", empty
+          if ((resolvedType && resolvedType.includes("metaobject_reference")) || EXPLICIT_METAOBJECT_KEYS.includes(item.key)) {
+            const valStr = String(item.value).trim().toLowerCase();
+            if (["n/a", "none", "null", "undefined", ""].includes(valStr)) return false;
+          }
 
           return true;
         })
@@ -836,9 +835,7 @@ export const action = async ({ request }) => {
           metaKey = key.split("custom/")[1];
         }
 
-        // 🔴 CRITICAL NAMESPACE RULE: Never write these keys to custom/
-        if (CRITICAL_SHOPIFY_KEYS.includes(metaKey)) return;
-        if (metaKey === "material") return;
+        if (SKIP_KEYS.includes(metaKey)) return;
 
         if (isCustomField && metaKey && MASTER_TYPE_MAP.hasOwnProperty(metaKey)) {
           let resolvedType = MASTER_TYPE_MAP[metaKey];
