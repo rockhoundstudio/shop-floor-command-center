@@ -1007,8 +1007,7 @@ STRICT 7-BLOCK FORMAT:
 4. Signature: EXACTLY this line: — Bob & Janyce, Rockhound Studio, Spokane Valley WA.
 5. Stone Data: Brief lapidary specs (cut, finish, dimensions).
 6. Ready to Wear: Clearly state if the piece is set and ready to wear, or a raw/loose stone for makers.
-7. Dwell Buttons: Include EXACTLY these clickable HTML hyperlinks on their own lines:
-${dwellButtonsHTML}`;
+7. Dwell Buttons: Leave this block empty. Do not write any links or HTML here.\`;
 
       const geminiRes = await fetchWithRetry("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY, {
         method: "POST",
@@ -1035,7 +1034,8 @@ ${dwellButtonsHTML}`;
         
         const parsed = JSON.parse(cleanJson);
         const safeParsed = sanitizeObject(parsed);
-        return Response.json({ success: true, intent, generated_description: safeParsed.generated_description });
+        const finalDescription = (safeParsed.generated_description || "").trimEnd() + "\n" + dwellButtonsHTML;
+        return Response.json({ success: true, intent, generated_description: finalDescription });
       }
       
       const errText = await geminiRes.text();
