@@ -1,4 +1,4 @@
-﻿// ==========================================================================
+// ==========================================================================
 // ROCKHOUND STUDIO — TAB 2: META INSPECTOR Bench
 // File: app/routes/app.meta-injector.inspector.jsx
 // ==========================================================================
@@ -485,6 +485,7 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
           });
 
           if (productTitle) updatedState.piece_name = productTitle.includes(" — ") ? productTitle.split(" — ").pop().trim() : productTitle;
+          fullMetaStateRef.current = updatedState;
 
           const REQUIRED_TAB2_FIELDS = [{ key: "generated_description", label: "Generated Description" }, { key: "color_pattern", label: "Color Pattern" }, { key: "collection_location", label: "Collection Location" }, { key: "origin_handle", label: "Origin Handle" }];
           const missingFields = REQUIRED_TAB2_FIELDS.filter(f => {
