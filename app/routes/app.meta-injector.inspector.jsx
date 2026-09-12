@@ -314,9 +314,7 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
     formData.append("collection_location", fullMetaState.collection_location || "");
     formData.append("piece_name", fullMetaState.piece_name || "");
     formData.append("productTitle", titleToUse);
-    formData.append("origin_story", fullMetaState.origin_story || "");
     formData.append("honest_flaws_and_character", fullMetaState.honest_flaws_and_character || "");
-    formData.append("generated_description", fullMetaState.generated_description || "");
     formData.append("price", fullMetaState.price || "");
 
     if (overridePhoto) {
