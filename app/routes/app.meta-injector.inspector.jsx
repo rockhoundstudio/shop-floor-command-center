@@ -7,6 +7,7 @@ import React, { useState, useEffect, useCallback, useRef } from "react";
 import { BlockStack, Card, Text, Banner, TextField, Select, Button, InlineStack, DropZone } from "@shopify/polaris";
 import { MagicIcon, SaveIcon, ClipboardIcon } from "@shopify/polaris-icons";
 import { DROPDOWN_OPTIONS, FULL_META_GROUPS, getFieldStatus, ROCKHOUND_FIELDS } from "../utils/meta-injector.constants.jsx";
+import { useFetcher } from "react-router";
 
 const CUSTOM_FIELDS = [
   { key: "shopify_title", label: "MASTER SHOPIFY TITLE (Edit Here)", type: "single_line_text_field", isShared: false },
@@ -53,6 +54,9 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
   const [fixPopupValue, setFixPopupValue] = useState("");
   const [showFixPopup, setShowFixPopup] = useState(false);
   const [overridePhoto, setOverridePhoto] = useState(null);
+  const [productStatus, setProductStatus] = useState("DRAFT");
+  
+  const statusFetcher = useFetcher();
 
   const handleDropOverridePhoto = useCallback((_dropFiles, acceptedFiles) => {
     if (acceptedFiles.length > 0) {
@@ -79,6 +83,10 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
     setOverridePhoto(null);
 
     const product = products.find(p => p.id === id);
+    if (product) {
+      setProductStatus(product.status || "DRAFT");
+    }
+    
     const newForm = {};
     const newFullForm = {};
     
@@ -360,6 +368,39 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
       })
       .catch(err => console.error("Failed to copy telemetry:", err));
   }, [fullMetaState]);
+
+  const handleToggleStatus = useCallback(() => {
+    if (!selectedProductId) return;
+    const newStatus = productStatus === "ACTIVE" ? "DRAFT" : "ACTIVE";
+    
+    const formData = new FormData();
+    formData.append("intent", "toggleStatus");
+    formData.append("pieceId", selectedProductId);
+    formData.append("newStatus", newStatus);
+    
+    // Optimistic UI Update
+    setProductStatus(newStatus);
+    
+    statusFetcher.submit(formData, { method: "post", action: "/app/meta-injector-api" });
+  }, [selectedProductId, productStatus, statusFetcher]);
+  
+  useEffect(() => {
+    if (statusFetcher.state === "idle" && statusFetcher.data) {
+      if (statusFetcher.data.success) {
+        setProductStatus(statusFetcher.data.newStatus);
+        if (window.shopify?.toast) {
+          window.shopify.toast.show(`Status successfully updated to ${statusFetcher.data.newStatus}`);
+        }
+      } else {
+        // Revert on failure
+        setProductStatus(productStatus === "ACTIVE" ? "DRAFT" : "ACTIVE"); 
+        setErrorMessage(statusFetcher.data.error || "Failed to toggle status");
+        if (window.shopify?.toast) {
+          window.shopify.toast.show("Failed to update status", { isError: true });
+        }
+      }
+    }
+  }, [statusFetcher.state, statusFetcher.data]);
 
   const handleInject = useCallback(() => {
     if (!selectedProductId) return;
@@ -689,6 +730,18 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
                 <Button tone="critical" onClick={() => injectFetcher.submit({ intent: "cleanGhostNamespaces", productId: selectedProductId }, { method: "post", action: "/app/meta-injector-api" })} size="large" fullWidth disabled={!selectedProductId} loading={injectFetcher.state !== "idle" && injectFetcher.formData?.get("intent") === "cleanGhostNamespaces"}>Wipe Ghosts</Button>
                 <Button icon={ClipboardIcon} onClick={handleCopyTelemetry} size="large" fullWidth disabled={!selectedProductId}>Copy Telemetry</Button>
                 <Button icon={SaveIcon} tone="success" variant="primary" onClick={handleInject} size="large" fullWidth disabled={!selectedProductId} loading={injectFetcher.state !== "idle" && (injectFetcher.formData?.get("intent") === "saveProduct" || injectFetcher.formData?.get("intent") === "saveMetafields")}>Inject Metafields</Button>
+                {selectedProductId && (
+                  <Button 
+                    tone={productStatus === "ACTIVE" ? "critical" : "success"}
+                    variant="primary"
+                    size="large" 
+                    fullWidth 
+                    onClick={handleToggleStatus}
+                    loading={statusFetcher.state !== "idle"}
+                  >
+                    {productStatus === "ACTIVE" ? "Move to Draft" : "Publish"}
+                  </Button>
+                )}
               </InlineStack>
             </BlockStack>
           </Card>
