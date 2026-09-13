@@ -113,7 +113,9 @@ export function NewProductIntakeTab({ fetcher }) {
       color_pattern: "",
       found_object: "true",
       is_ooak: "Yes",
-      treated: "No"
+      treated: "No",
+      productId: null,
+      status: "DRAFT"
     }
   ]);
 
@@ -142,6 +144,37 @@ export function NewProductIntakeTab({ fetcher }) {
   const [titleToastError, setTitleToastError] = useState(false);
   
   const [lastScannedPieceId, setLastScannedPieceId] = useState(null);
+
+  const statusFetcher = useFetcher();
+
+  const handleToggleStatus = useCallback((pieceId, currentStatus, productId) => {
+    if (!productId) return;
+    const newStatus = currentStatus === "ACTIVE" ? "DRAFT" : "ACTIVE";
+
+    const fd = new FormData();
+    fd.append("intent", "toggleStatus");
+    fd.append("pieceId", productId);
+    fd.append("newStatus", newStatus);
+    
+    // We update UI optimistically, fetcher will confirm
+    setPieces(prev => prev.map(p => 
+      p.id === pieceId ? { ...p, status: newStatus } : p
+    ));
+
+    statusFetcher.submit(fd, { method: "post", action: "/app/meta-injector-api" });
+  }, [statusFetcher]);
+
+  useEffect(() => {
+    if (statusFetcher.state === "idle" && statusFetcher.data) {
+      if (!statusFetcher.data.success) {
+        setErrorMessage(statusFetcher.data.error || "Status toggle failed.");
+        if (window.shopify?.toast) window.shopify.toast.show("Status update failed", { isError: true });
+        // We could revert optimistic update here, but let's keep it simple for now
+      } else {
+        if (window.shopify?.toast) window.shopify.toast.show(`Status changed to ${statusFetcher.data.newStatus}`);
+      }
+    }
+  }, [statusFetcher.state, statusFetcher.data]);
 
   const handleScanGeminiPhotos = useCallback((piece) => {
     if (piece?.imageBase64) {
@@ -346,7 +379,9 @@ export function NewProductIntakeTab({ fetcher }) {
         color_pattern: "",
         found_object: "true",
         is_ooak: "Yes",
-        treated: "No"
+        treated: "No",
+        productId: null,
+        status: "DRAFT"
       }
     ]);
   }, []);
@@ -495,7 +530,9 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
       color_pattern: "",
       found_object: "true",
       is_ooak: "Yes",
-      treated: "No"
+      treated: "No",
+      productId: null,
+      status: "DRAFT"
     }]);
     setPhotoFiles([]);
     setPhotoPreviewUrls([]);
@@ -516,6 +553,14 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
       (isCreate && isSuccess) && (() => {
         let count = 0;
         fetcher.data.createdCount && (count = fetcher.data.createdCount);
+        
+        // Capture created product ID so we can toggle status later
+        if (fetcher.data.productId && pieces.length > 0) {
+          setPieces(prev => prev.map((p, i) => 
+            i === 0 ? { ...p, productId: fetcher.data.productId, status: "DRAFT" } : p
+          ));
+        }
+
         setStatusMessage(`Successfully created pieces.`);
       })();
 
@@ -525,7 +570,7 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
         setErrorMessage(errStr);
       })();
     })();
-  }, [fetcher.state, fetcher.data]);
+  }, [fetcher.state, fetcher.data, pieces.length]);
 
   useEffect(() => {
     const isIdle = stageFetcher.state === "idle";
@@ -1022,6 +1067,9 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
                 let rowDescDotColor = "#C62828";
                 (piece.generated_description && piece.generated_description !== "") && (rowDescDotColor = "#2E7D32");
 
+                const isStatusUpdating = statusFetcher.state !== "idle" && statusFetcher.formData?.get("pieceId") === piece.productId;
+                const statusButtonLabel = piece.status === "ACTIVE" ? "Move to Draft" : "Publish";
+
                 return (
                   <div key={piece.id} style={{ display: "flex", flexDirection: "column", gap: "16px", paddingBottom: "24px", borderBottom: "1px solid #e1e3e5" }}>
                     
@@ -1040,6 +1088,20 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
                           </Text>
                         </div>
                       </div>
+
+                      {piece.productId && (
+                        <div style={{ minHeight: "54px", width: "140px" }}>
+                          <Button
+                            size="large"
+                            fullWidth
+                            onClick={() => handleToggleStatus(piece.id, piece.status, piece.productId)}
+                            loading={isStatusUpdating}
+                            tone={piece.status === "ACTIVE" ? "critical" : "success"}
+                          >
+                            {statusButtonLabel}
+                          </Button>
+                        </div>
+                      )}
 
                       <div style={{ minHeight: "54px", width: "120px" }}>
                         <Button
