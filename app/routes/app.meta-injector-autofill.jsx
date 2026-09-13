@@ -51,6 +51,8 @@ CRITICAL ANTI-HALLUCINATION RULE: NEVER use the word "shocked" or "Shocked Rock"
 - setting_ready
 - wire_material
 - bail_included
+- alt_text: Write a concise, descriptive alt text for this image (max 125 characters). Describe the stone, its color, finish, and setting as seen in the photo. Plain language, no brand name.
+- found_object: Return "Yes" if this stone was field-collected or found in nature. Return "No" if it is a shopped, purchased, or imported stone.
 - chain_material: If a necklace chain is visible, identify it as exactly one of: "Silver Plated Snake Chain", "Gold Plated Snake Chain", "Sterling Silver Chain", "Cord". If no chain is visible, return "None".
 - seo_title: Generate a keyword-rich SEO product title (max 60 characters) optimized for Google. Combine the stone family ("${stoneFamily}"), your newly corrected origin_location, cut/shape, and keywords like "Handcrafted", "Natural", "OOAK", or "Lapidary Art". Separate with pipes (|) or em-dashes (—). Do NOT use quotes.
 - generated_description: Write in Bob's voice using this STRICT 7-BLOCK FORMAT. Separate each block naturally. Do NOT use markdown headers.
@@ -901,6 +903,7 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
           rarity: parsedVision.rarity || "Common",
           authenticity: parsedVision.authenticity || "Authentic",
           color_pattern: parsedVision.color_pattern || parsedVision.pattern || "",
+          material: (stoneFamily => stoneFamily.replace(/^(Dragon's Eye|Green|Blue|Fire|Rufus|Rainbow|Yellow|Red|Black|Oregon)\s+/i, "").trim())(parsedVision.stone_family || geoFields.stone_family || ""),
           primary_use: resolved_primary_use,
           primary_medium: resolved_primary_medium,
           secondary_medium: resolved_secondary_medium,
