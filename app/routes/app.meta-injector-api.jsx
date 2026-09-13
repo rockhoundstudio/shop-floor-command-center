@@ -1063,4 +1063,129 @@ export const action = async ({ request }) => {
       return data({ success: false, message: "Bulk clean failed", error: error.message });
     }
   }
+
+  // ==========================================
+  // 🟢 INTENT: TOGGLE STATUS
+  // ==========================================
+  if (intent === "toggleStatus") {
+    try {
+      const productId = formData.get("pieceId");
+      const newStatus = formData.get("newStatus"); // "ACTIVE" or "DRAFT"
+
+      if (!productId || !newStatus) {
+        return data({ success: false, error: "Missing pieceId or newStatus" });
+      }
+
+      const productGid = productId.startsWith("gid://") ? productId : `gid://shopify/Product/${productId.split("/").pop()}`;
+
+      if (newStatus === "ACTIVE") {
+        const response = await admin.graphql(
+          `#graphql
+          mutation productUpdate($input: ProductInput!) {
+            productUpdate(input: $input) {
+              product {
+                id
+                status
+              }
+              userErrors {
+                field
+                message
+              }
+            }
+          }`,
+          {
+            variables: {
+              input: {
+                id: productGid,
+                status: "ACTIVE"
+              }
+            }
+          }
+        );
+
+        const result = await response.json();
+        const userErrors = result?.data?.productUpdate?.userErrors || [];
+
+        if (userErrors.length > 0) {
+          return data({ success: false, error: userErrors.map(e => e.message).join(", ") });
+        }
+
+        const publishResponse = await admin.graphql(
+          `#graphql
+          mutation publishablePublish($id: ID!, $input: [PublicationInput!]!) {
+            publishablePublish(id: $id, input: $input) {
+              publishable {
+                availablePublicationCount
+              }
+              userErrors {
+                field
+                message
+              }
+            }
+          }`,
+          {
+            variables: {
+              id: productGid,
+              input: [
+                { publicationId: "gid://shopify/Publication/179140788475" },
+                { publicationId: "gid://shopify/Publication/179140821243" },
+                { publicationId: "gid://shopify/Publication/179140886779" },
+                { publicationId: "gid://shopify/Publication/179324944635" },
+                { publicationId: "gid://shopify/Publication/179488489723" },
+                { publicationId: "gid://shopify/Publication/179794477307" }
+              ]
+            }
+          }
+        );
+
+        const publishResult = await publishResponse.json();
+        const publishUserErrors = publishResult?.data?.publishablePublish?.userErrors || [];
+
+        if (publishUserErrors.length > 0) {
+          return data({ success: false, error: "Product set to ACTIVE, but publishing failed: " + publishUserErrors.map(e => e.message).join(", ") });
+        }
+
+        return data({ success: true, newStatus: "ACTIVE" });
+
+      } else if (newStatus === "DRAFT") {
+        const response = await admin.graphql(
+          `#graphql
+          mutation productUpdate($input: ProductInput!) {
+            productUpdate(input: $input) {
+              product {
+                id
+                status
+              }
+              userErrors {
+                field
+                message
+              }
+            }
+          }`,
+          {
+            variables: {
+              input: {
+                id: productGid,
+                status: "DRAFT"
+              }
+            }
+          }
+        );
+
+        const result = await response.json();
+        const userErrors = result?.data?.productUpdate?.userErrors || [];
+
+        if (userErrors.length > 0) {
+          return data({ success: false, error: userErrors.map(e => e.message).join(", ") });
+        }
+
+        return data({ success: true, newStatus: "DRAFT" });
+      }
+
+    } catch (error) {
+      console.error("[toggleStatus] error:", error);
+      return data({ success: false, error: error.message });
+    }
+  }
+
 };
