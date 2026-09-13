@@ -24,10 +24,7 @@ function buildMasterVisionPrompt({
     dwellButtonsHTML = `     <a href="/pages/the-richardson-strike">Richardson's Rock Ranch Story</a>
      <a href="/collections/richardsons-rock-ranch">Richardson's Rock Ranch Collection</a>
      <a href="/pages/the-3-000-mile-run">The 3,000-Mile Run Story</a>
-     <a href="/collections/the-3-000-mile-run-1">The 3,000-Mile Run Collection</a>
-     CRITICAL: Copy the following six links EXACTLY as written. Do NOT alter, rewrite, or infer any href value. Every character must match precisely.
-     <a href="/pages/the-shopped-rock">The Shopped Rock Story</a>
-     <a href="/collections/the-shopped-rock">The Shopped Rock Collection</a>`;
+     <a href="/collections/the-3-000-mile-run-1">The 3,000-Mile Run Collection</a>`;
   }
 
   return `You are a lapidary artist and master jeweler for Rockhound Studio. Analyze this photo and return a JSON object.
@@ -978,10 +975,7 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
         dwellButtonsHTML = `     <a href="/pages/the-richardson-strike">Richardson's Rock Ranch Story</a>
      <a href="/collections/richardsons-rock-ranch">Richardson's Rock Ranch Collection</a>
      <a href="/pages/the-3-000-mile-run">The 3,000-Mile Run Story</a>
-     <a href="/collections/the-3-000-mile-run-1">The 3,000-Mile Run Collection</a>
-     CRITICAL: Copy the following six links EXACTLY as written. Do NOT alter, rewrite, or infer any href value. Every character must match precisely.
-     <a href="/pages/the-shopped-rock">The Shopped Rock Story</a>
-     <a href="/collections/the-shopped-rock">The Shopped Rock Collection</a>`;
+     <a href="/collections/the-3-000-mile-run-1">The 3,000-Mile Run Collection</a>`;
       }
 
       const promptText = `You are writing a product description for Rockhound Studio, a lapidary art studio run by Bob and Janyce, married 34 years, both artists, both rockhounds. They cut and polish every stone themselves in Spokane Valley WA.
