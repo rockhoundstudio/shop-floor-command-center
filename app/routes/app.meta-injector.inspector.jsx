@@ -163,7 +163,7 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
         delete newFullForm[camel]; 
       }
       if (newForm[camel] !== undefined) { 
-        if (!newForm[snake]) newForm[snake] = newForm[camel]; 
+        if (!newForm[snake]) newForm[camel]; 
         delete newForm[camel]; 
       }
     });
@@ -506,7 +506,7 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
 
         setFullMetaState(prev => {
           const updatedState = { ...prev };
-          const ALWAYS_OVERWRITE = ["mohs_hardness", "luster", "fracture_pattern", "cleavage", "specific_gravity", "diaphaneity", "mineral_class", "crystal_system", "rock_composition", "rock_formation", "geological_era", "geological_age", "generated_description", "seo_title", "origin_story", "stone_story", "primary_use", "bail_included", "setting_ready", "primary_medium", "alt_text"];
+          const ALWAYS_OVERWRITE = ["mohs_hardness", "luster", "fracture_pattern", "cleavage", "specific_gravity", "diaphaneity", "mineral_class", "crystal_system", "rock_composition", "rock_formation", "geological_era", "geological_age", "generated_description", "seo_title", "origin_story", "stone_story", "primary_use", "bail_included", "setting_ready", "primary_medium", "alt_text", "found_object", "wire_material", "secondary_medium", "color", "surface_finish"];
 
           Object.entries(tab2Data).forEach(([key, val]) => {
             // NEVER allow AI autofill scans to overwrite manual bench weights
@@ -730,16 +730,6 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
                 <Button tone="critical" onClick={() => injectFetcher.submit({ intent: "cleanGhostNamespaces", productId: selectedProductId }, { method: "post", action: "/app/meta-injector-api" })} size="large" fullWidth disabled={!selectedProductId} loading={injectFetcher.state !== "idle" && injectFetcher.formData?.get("intent") === "cleanGhostNamespaces"}>Wipe Ghosts</Button>
                 <Button icon={ClipboardIcon} onClick={handleCopyTelemetry} size="large" fullWidth disabled={!selectedProductId}>Copy Telemetry</Button>
                 <Button icon={SaveIcon} tone="success" variant="primary" onClick={handleInject} size="large" fullWidth disabled={!selectedProductId} loading={injectFetcher.state !== "idle" && (injectFetcher.formData?.get("intent") === "saveProduct" || injectFetcher.formData?.get("intent") === "saveMetafields")}>Inject Metafields</Button>
-                <Button 
-                  tone={productStatus === "ACTIVE" ? "critical" : "success"}
-                  variant="primary"
-                  size="large" 
-                  fullWidth 
-                  onClick={handleToggleStatus}
-                  loading={statusFetcher.state !== "idle"}
-                >
-                  {productStatus === "ACTIVE" ? "Move to Draft" : "Publish"}
-                </Button>
               </InlineStack>
             </BlockStack>
           </Card>
