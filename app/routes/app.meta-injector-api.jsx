@@ -1115,7 +1115,7 @@ export const action = async ({ request }) => {
           mutation publishablePublish($id: ID!, $input: [PublicationInput!]!) {
             publishablePublish(id: $id, input: $input) {
               publishable {
-                availablePublicationCount
+                id
               }
               userErrors {
                 field
