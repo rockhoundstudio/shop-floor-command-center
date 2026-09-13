@@ -39,10 +39,11 @@ CRITICAL ANTI-HALLUCINATION RULE: NEVER use the word "shocked" or "Shocked Rock"
 
 - primary_color
 - stone_shape: Select EXACTLY one from this list: Round, Oval, Freeform, Teardrop, Pear, Cushion, Marquise, Rectangle, Square, Heart, Slab, Rough, N/A
-- jewelry_type: Select EXACTLY one from this list: Artisan jewelry, Fine jewelry, Accessories, N/A
+- jewelry_type: Select EXACTLY one from this list: Pendant, Necklace, Artisan jewelry, Fine jewelry, Accessories, N/A
 - rarity: Select EXACTLY one from this list: Common, Uncommon, Rare, One-of-a-Kind (default: Common if unsure)
 - authenticity: Select EXACTLY one from this list: Authentic, Lab-Created, Unknown (default: Authentic for natural stones)
 - color_pattern: Select EXACTLY one from this list: Green, Black, Blue flash, Red, White, Multicolor, Gold, Pink, Yellow, Silver, Purple, Striped, Clear, Yellow veins, None
+- google_product_category: Select EXACTLY one taxonomy path from this list that best matches the item: "Apparel & Accessories > Jewelry > Charms & Pendants" (for Pendants), "Apparel & Accessories > Jewelry > Necklaces" (for Necklaces with chains), "Apparel & Accessories > Jewelry > Rings", "Apparel & Accessories > Jewelry > Earrings", "Apparel & Accessories > Jewelry > Bracelets", "Arts & Entertainment > Hobbies & Creative Arts > Collectibles > Rocks & Fossils" (for raw/display specimens), "Arts & Entertainment > Hobbies & Creative Arts > Arts & Crafts > Crafting Materials > Beads & Charms" (for loose cabochons and unmounted stones), "Apparel & Accessories > Jewelry" (if unsure).
 - cut_and_shape
 - surface_finish
 - honest_flaws_and_character
@@ -487,7 +488,8 @@ export const action = async ({ request }) => {
                       chain_material: { type: "STRING" },
                       jewelry_type: { type: "STRING" },
                       rarity: { type: "STRING" },
-                      authenticity: { type: "STRING" }
+                      authenticity: { type: "STRING" },
+                      google_product_category: { type: "STRING" }
                     }
                   }
                 }
@@ -590,7 +592,7 @@ export const action = async ({ request }) => {
           age_group: "adult",
           target_gender: "Unisex",
           condition: "new",
-          google_product_category: "Apparel & Accessories > Jewelry",
+          google_product_category: visionFields.google_product_category || "Apparel & Accessories > Jewelry",
           // Retain physical bench attributes so they never get wiped
           ...(bench_weight_grams ? { weight_grams: bench_weight_grams } : {}),
           ...(bench_shipping_weight_oz ? { shipping_weight_oz: bench_shipping_weight_oz } : {}),
@@ -847,7 +849,8 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
                 chain_material: { type: "STRING" },
                 jewelry_type: { type: "STRING" },
                 rarity: { type: "STRING" },
-                authenticity: { type: "STRING" }
+                authenticity: { type: "STRING" },
+                google_product_category: { type: "STRING" }
               }
             }
           }
@@ -936,7 +939,7 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
           age_group: "adult",
           target_gender: "Unisex",
           condition: "new",
-          google_product_category: "Apparel & Accessories > Jewelry",
+          google_product_category: parsedVision.google_product_category || "Apparel & Accessories > Jewelry",
           // Preserve physical bench attributes during full rescan
           honest_flaws_and_character: bench_honest_flaws || parsedVision.honest_flaws_and_character || "",
           ...(bench_weight_grams ? { weight_grams: bench_weight_grams } : {}),

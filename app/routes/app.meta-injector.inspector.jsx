@@ -512,7 +512,8 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
 
         setFullMetaState(prev => {
           const updatedState = { ...prev };
-          const ALWAYS_OVERWRITE = ["mohs_hardness", "luster", "fracture_pattern", "cleavage", "specific_gravity", "diaphaneity", "mineral_class", "crystal_system", "rock_composition", "rock_formation", "geological_era", "geological_age", "generated_description", "seo_title", "origin_story", "stone_story", "primary_use", "bail_included", "setting_ready", "primary_medium", "alt_text", "found_object", "wire_material", "secondary_medium", "color", "surface_finish", "material"];
+          // 🟢 FIX: Added 'treated' and 'jewelry_type' so legacy scans overwrite them.
+          const ALWAYS_OVERWRITE = ["mohs_hardness", "luster", "fracture_pattern", "cleavage", "specific_gravity", "diaphaneity", "mineral_class", "crystal_system", "rock_composition", "rock_formation", "geological_era", "geological_age", "generated_description", "seo_title", "origin_story", "stone_story", "primary_use", "bail_included", "setting_ready", "primary_medium", "alt_text", "found_object", "wire_material", "secondary_medium", "color", "surface_finish", "material", "treated", "jewelry_type"];
 
           Object.entries(tab2Data).forEach(([key, val]) => {
             // NEVER allow AI autofill scans to overwrite manual bench weights
