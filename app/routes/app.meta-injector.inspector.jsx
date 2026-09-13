@@ -730,18 +730,16 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
                 <Button tone="critical" onClick={() => injectFetcher.submit({ intent: "cleanGhostNamespaces", productId: selectedProductId }, { method: "post", action: "/app/meta-injector-api" })} size="large" fullWidth disabled={!selectedProductId} loading={injectFetcher.state !== "idle" && injectFetcher.formData?.get("intent") === "cleanGhostNamespaces"}>Wipe Ghosts</Button>
                 <Button icon={ClipboardIcon} onClick={handleCopyTelemetry} size="large" fullWidth disabled={!selectedProductId}>Copy Telemetry</Button>
                 <Button icon={SaveIcon} tone="success" variant="primary" onClick={handleInject} size="large" fullWidth disabled={!selectedProductId} loading={injectFetcher.state !== "idle" && (injectFetcher.formData?.get("intent") === "saveProduct" || injectFetcher.formData?.get("intent") === "saveMetafields")}>Inject Metafields</Button>
-                {selectedProductId && (
-                  <Button 
-                    tone={productStatus === "ACTIVE" ? "critical" : "success"}
-                    variant="primary"
-                    size="large" 
-                    fullWidth 
-                    onClick={handleToggleStatus}
-                    loading={statusFetcher.state !== "idle"}
-                  >
-                    {productStatus === "ACTIVE" ? "Move to Draft" : "Publish"}
-                  </Button>
-                )}
+                <Button 
+                  tone={productStatus === "ACTIVE" ? "critical" : "success"}
+                  variant="primary"
+                  size="large" 
+                  fullWidth 
+                  onClick={handleToggleStatus}
+                  loading={statusFetcher.state !== "idle"}
+                >
+                  {productStatus === "ACTIVE" ? "Move to Draft" : "Publish"}
+                </Button>
               </InlineStack>
             </BlockStack>
           </Card>
