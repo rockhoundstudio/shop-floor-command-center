@@ -267,23 +267,6 @@ DROPDOWN_OPTIONS.surface_finish = [
   { label: "Tumbled", value: "Tumbled" }
 ];
 
-DROPDOWN_OPTIONS.color = [
-  { label: "Black", value: "Black" },
-  { label: "Blue", value: "Blue" },
-  { label: "Brown", value: "Brown" },
-  { label: "Gold", value: "Gold" },
-  { label: "Green", value: "Green" },
-  { label: "Grey", value: "Grey" },
-  { label: "Orange", value: "Orange" },
-  { label: "Pink", value: "Pink" },
-  { label: "Purple", value: "Purple" },
-  { label: "Red", value: "Red" },
-  { label: "Translucent", value: "Translucent" },
-  { label: "Translucent to Opaque", value: "Translucent to Opaque" },
-  { label: "White", value: "White" },
-  { label: "Yellow", value: "Yellow" }
-];
-
 DROPDOWN_OPTIONS.cut_and_shape = [
   { label: "Freeform", value: "Freeform" },
   { label: "Heart", value: "Heart" },
@@ -296,7 +279,8 @@ DROPDOWN_OPTIONS.cut_and_shape = [
   { label: "Surfboard", value: "Surfboard" },
   { label: "Teardrop", value: "Teardrop" },
   { label: "Trillion", value: "Trillion" },
-  { label: "Slab", value: "Slab" }
+  { label: "Slab", value: "Slab" },
+  { label: "Rough", value: "Rough" } // 🟢 ADDED: Rough taxonomy match
 ];
 
 DROPDOWN_OPTIONS.handcrafted_by = [

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { BlockStack, Card, Text, Banner, TextField, Button, InlineStack, Box } from "@shopify/polaris";
+import { useFetcher } from "react-router";
 import { ROCKHOUND_FIELDS } from "../utils/meta-injector.constants.jsx";
 
 export function OperationsMatrixTab({ products, fetcher }) {
@@ -7,6 +8,8 @@ export function OperationsMatrixTab({ products, fetcher }) {
   const [selectedProductId, setSelectedProductId] = useState("");
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [searchQuery, setSearchQuery] = useState("");
+
+  const statusFetcher = useFetcher();
 
   // --- Section 1: AI Forge State ---
   const [aiPrompt, setAiPrompt] = useState("You are a gritty, mechanic-style copywriter for a lapidary and handcrafted stone jewelry studio. Write a 160-character SEO meta description for this product. Be specific, earthy, and direct. No fluff.");
@@ -70,6 +73,26 @@ export function OperationsMatrixTab({ products, fetcher }) {
       return newSet;
     });
   }, [filteredProducts, allFilteredSelected]);
+
+  // 🟢 FIX: Live Status Toggle aligned with API
+  const handleToggleStatus = useCallback((pieceId, currentStatus) => {
+    const newStatus = currentStatus === "ACTIVE" ? "DRAFT" : "ACTIVE";
+    const fd = new FormData();
+    fd.append("intent", "toggleStatus");
+    fd.append("pieceId", pieceId);
+    fd.append("newStatus", newStatus);
+    statusFetcher.submit(fd, { method: "post", action: "/app/meta-injector-api" });
+  }, [statusFetcher]);
+
+  useEffect(() => {
+    if (statusFetcher.state === "idle" && statusFetcher.data) {
+      if (statusFetcher.data.success) {
+        if (window.shopify?.toast) window.shopify.toast.show(`Status updated to ${statusFetcher.data.newStatus}`);
+      } else {
+        if (window.shopify?.toast) window.shopify.toast.show("Status update failed", { isError: true });
+      }
+    }
+  }, [statusFetcher.state, statusFetcher.data]);
 
   // --- Handlers: AI Forge ---
   const handleGenerateSEO = useCallback(() => {
@@ -154,7 +177,11 @@ export function OperationsMatrixTab({ products, fetcher }) {
 
         const hasUpdates = payload.length > 0;
         if (hasUpdates) {
-          fetcher.submit({ intent: "saveProduct", payload: JSON.stringify(payload) }, { method: "post" });
+          // 🟢 FIX: Rerouted from "saveProduct" to "saveMetafields" and directed to the API endpoint
+          fetcher.submit(
+            { intent: "saveMetafields", payload: JSON.stringify(payload) }, 
+            { method: "post", action: "/app/meta-injector-api" }
+          );
         }
         
         if (!hasUpdates) {
@@ -221,6 +248,7 @@ export function OperationsMatrixTab({ products, fetcher }) {
         const hasMetafields = p.metafields && p.metafields.edges;
         if (hasMetafields) {
           p.metafields.edges.forEach(({ node }) => {
+            // 🟢 FIX VERIFIED: This correctly captures custom.material since it's mapped to custom
             const isRockhound = node.namespace === "rockhound" || node.namespace === "custom";
             if (isRockhound) {
               fieldMap[node.key] = node.value;
@@ -345,6 +373,18 @@ export function OperationsMatrixTab({ products, fetcher }) {
                           accessibilityLabel={`Load product ${p.title} into AI Forge`}
                         >
                           {p.title}
+                        </Button>
+                      </div>
+                      {/* 🟢 FIX: Added individual Status controls directly to the list */}
+                      <div style={{ width: "130px", flexShrink: 0, minHeight: "54px" }}>
+                        <Button
+                          size="large"
+                          fullWidth
+                          tone={p.status === "ACTIVE" ? "critical" : "success"}
+                          onClick={() => handleToggleStatus(p.id, p.status)}
+                          loading={statusFetcher.state !== "idle" && statusFetcher.formData?.get("pieceId") === p.id}
+                        >
+                          {p.status === "ACTIVE" ? "Move to Draft" : "Publish"}
                         </Button>
                       </div>
                     </div>

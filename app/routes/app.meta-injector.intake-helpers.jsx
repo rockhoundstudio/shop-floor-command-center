@@ -52,7 +52,6 @@ export async function handleGenerateDescription({ sharedFields, pieces, descFetc
 const METAFIELD_SCHEMA = {
   // SHOPIFY TAXONOMY (Requires metaobject_reference)
   "color-pattern": { namespace: "shopify", type: "list.metaobject_reference" },
-  "material": { namespace: "shopify", type: "metaobject_reference" },
   "age-group": { namespace: "shopify", type: "metaobject_reference" },
   "jewelry-type": { namespace: "shopify", type: "metaobject_reference" },
   "target-gender": { namespace: "shopify", type: "metaobject_reference" },
@@ -70,6 +69,8 @@ const METAFIELD_SCHEMA = {
   "jewelry-finding-type": { namespace: "shopify", type: "metaobject_reference" },
 
   // CUSTOM NAMESPACE (Strict Types)
+  // 🟢 FIX: Aligned material to custom / single_line_text_field
+  "material": { namespace: "custom", type: "single_line_text_field" },
   "weight_grams": { namespace: "custom", type: "number_decimal" },
   "shipping_weight_oz": { namespace: "custom", type: "number_decimal" },
   "price": { namespace: "custom", type: "number_decimal" },
@@ -83,7 +84,8 @@ const METAFIELD_SCHEMA = {
   "character_marks": { namespace: "custom", type: "list.single_line_text_field" },
   
   // 🟢 ORIGIN HANDLE MAPPED CORRECTLY 
-  "origin_page_handle": { namespace: "custom", type: "single_line_text_field" } 
+  "origin_page_handle": { namespace: "custom", type: "single_line_text_field" },
+  "origin_handle": { namespace: "custom", type: "single_line_text_field" }
 };
 
 export function buildMetafieldsJson(sharedFields, piece) {
@@ -106,18 +108,12 @@ export function buildMetafieldsJson(sharedFields, piece) {
   
   const metaArr = [];
   
-  Object.keys(allFields).forEach(rawKey => {
-    if (omitKeys.includes(rawKey) || allFields[rawKey] === undefined || allFields[rawKey] === null || allFields[rawKey] === "") {
+  Object.keys(allFields).forEach(key => {
+    if (omitKeys.includes(key) || allFields[key] === undefined || allFields[key] === null || allFields[key] === "") {
       return;
     }
 
-    let key = rawKey;
-    let val = allFields[rawKey];
-
-    // 1. FIX THE KEY MISMATCH
-    if (key === "origin_handle") {
-      key = "origin_page_handle";
-    }
+    let val = allFields[key];
 
     // 2. LOOKUP SCHEMA (Default to custom string if not mapped above)
     const schema = METAFIELD_SCHEMA[key] || { namespace: "custom", type: "single_line_text_field" };

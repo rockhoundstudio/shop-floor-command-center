@@ -401,7 +401,6 @@ export const action = async ({ request }) => {
 
           // 🔴 CRITICAL NAMESPACE RULE: Never write these keys to custom/
           if (CRITICAL_SHOPIFY_KEYS.includes(item.key) && ns === "custom") return false;
-          if (item.key === "material" && ns === "custom") return false;
 
           if (!MASTER_TYPE_MAP.hasOwnProperty(item.key)) return false;
 

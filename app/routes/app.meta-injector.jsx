@@ -1,5 +1,5 @@
 // FILE 1: app.meta-injector.jsx
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { useLoaderData, useFetcher, useNavigate } from "react-router";
 import {
   Page, Layout, Card, Text, Banner, BlockStack, Box, Tabs, Frame
@@ -36,7 +36,6 @@ export default function MetaInjectorV2() {
 
   const [selectedTab, setSelectedTab] = useState(0);
   const [selectedProductId, setSelectedProductId] = useState("");
-  const [productStatus, setProductStatus] = useState("DRAFT");
 
   const tabs = [
     { id: 'new-intake', content: '1. New Product Intake', accessibilityLabel: 'New Product Intake Tab' },
@@ -47,20 +46,13 @@ export default function MetaInjectorV2() {
   const hasErrors = fetcher.data && fetcher.data.errors && fetcher.data.errors.length > 0;
 
   const handleToggleStatus = () => {
-    const newStatus = productStatus === "ACTIVE" ? "DRAFT" : "ACTIVE";
     const formData = new FormData();
     formData.append("intent", "toggleStatus");
     formData.append("pieceId", selectedProductId);
-    formData.append("newStatus", newStatus);
+    formData.append("newStatus", "ACTIVE");
     
     statusFetcher.submit(formData, { method: "post", action: "/app/meta-injector-api" });
   };
-
-  useEffect(() => {
-    if (statusFetcher.state === "idle" && statusFetcher.data?.success) {
-      setProductStatus(statusFetcher.data.newStatus);
-    }
-  }, [statusFetcher.state, statusFetcher.data]);
 
   return (
     <Frame>
@@ -70,9 +62,8 @@ export default function MetaInjectorV2() {
         subtitle="Data Integrity & Operations Hub"
         backAction={{ content: "Dashboard", onAction: () => navigate("/app"), accessibilityLabel: "Back to Dashboard" }}
         primaryAction={{
-          content: productStatus === "ACTIVE" ? "Move to Draft" : "Publish",
-          onAction: handleToggleStatus,
-          loading: statusFetcher.state !== "idle"
+          content: "Publish / Draft",
+          onAction: handleToggleStatus
         }}
       >
         <Layout>

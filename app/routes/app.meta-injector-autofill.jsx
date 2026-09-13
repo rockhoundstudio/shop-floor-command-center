@@ -18,13 +18,14 @@ function buildMasterVisionPrompt({
   fullCollectionTitle,
   collectionUrlPath
 }) {
-  let dwellButtonsHTML = `     <a href="${targetUrlPath}">${fullCollectionTitle} Story</a>\n     <a href="${collectionUrlPath}">${fullCollectionTitle} Collection</a>`;
+  // 🟢 FIX: Added <br> tags to prevent link mashing in bodyHtml for Google Bot
+  let dwellButtonsHTML = `<br><br><a href="${targetUrlPath}">${fullCollectionTitle} Story</a>\n<br><a href="${collectionUrlPath}">${fullCollectionTitle} Collection</a>`;
   
   if (originSegment === "Richardson's Rock Ranch" || targetUrlPath.includes("the-richardson-strike")) {
-    dwellButtonsHTML = `     <a href="/pages/the-richardson-strike">Richardson's Rock Ranch Story</a>
-     <a href="/collections/richardsons-rock-ranch">Richardson's Rock Ranch Collection</a>
-     <a href="/pages/the-3-000-mile-run">The 3,000-Mile Run Story</a>
-     <a href="/collections/the-3-000-mile-run-1">The 3,000-Mile Run Collection</a>`;
+    dwellButtonsHTML = `<br><br><a href="/pages/the-richardson-strike">Richardson's Rock Ranch Story</a>
+<br><a href="/collections/richardsons-rock-ranch">Richardson's Rock Ranch Collection</a>
+<br><a href="/pages/the-3-000-mile-run">The 3,000-Mile Run Story</a>
+<br><a href="/collections/the-3-000-mile-run-1">The 3,000-Mile Run Collection</a>`;
   }
 
   return `You are a lapidary artist and master jeweler for Rockhound Studio. Analyze this photo and return a JSON object.
@@ -37,7 +38,7 @@ CRITICAL ANTI-HALLUCINATION RULE: NEVER use the word "shocked" or "Shocked Rock"
   ${collectionsMenu || "No live collections found — use default URL."}
 
 - primary_color
-- stone_shape: Select EXACTLY one from this list: Round, Oval, Freeform, Teardrop, Pear, Cushion, Marquise, Rectangle, Square, Heart, N/A
+- stone_shape: Select EXACTLY one from this list: Round, Oval, Freeform, Teardrop, Pear, Cushion, Marquise, Rectangle, Square, Heart, Slab, Rough, N/A
 - jewelry_type: Select EXACTLY one from this list: Artisan jewelry, Fine jewelry, Accessories, N/A
 - rarity: Select EXACTLY one from this list: Common, Uncommon, Rare, One-of-a-Kind (default: Common if unsure)
 - authenticity: Select EXACTLY one from this list: Authentic, Lab-Created, Unknown (default: Authentic for natural stones)
@@ -542,6 +543,9 @@ export const action = async ({ request }) => {
           ? `Handcrafted ${derivedFamily} — ${correctedOrigin} — OOAK Lapidary Art`
           : `Handcrafted ${derivedFamily} — OOAK Lapidary Art`;
 
+        // 🟢 FIX: Regex correctly targets derivedFamily so we never pass empty string
+        const finalMaterial = (stoneFam => stoneFam.replace(/^(Dragon's Eye|Green|Blue|Fire|Rufus|Rainbow|Yellow|Red|Black|Oregon)\s+/i, "").trim())(derivedFamily);
+
         const payload = sanitizeObject({
           origin_story: origin_story,
           stone_family: derivedFamily,
@@ -558,6 +562,7 @@ export const action = async ({ request }) => {
           cut_and_shape: visionFields.cut_and_shape || "",
           jewelry_type: visionFields.jewelry_type || "N/A",
           color_pattern: visionFields.color_pattern || visionFields.pattern || "",
+          material: finalMaterial,
           generated_description: visionFields.generated_description || "",
           color: visionFields.color || "",
           surface_finish: visionFields.surface_finish || "",
@@ -903,7 +908,7 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
           rarity: parsedVision.rarity || "Common",
           authenticity: parsedVision.authenticity || "Authentic",
           color_pattern: parsedVision.color_pattern || parsedVision.pattern || "",
-          material: (stoneFamily => stoneFamily.replace(/^(Dragon's Eye|Green|Blue|Fire|Rufus|Rainbow|Yellow|Red|Black|Oregon)\s+/i, "").trim())(parsedVision.stone_family || geoFields.stone_family || ""),
+          material: (stoneFam => stoneFam.replace(/^(Dragon's Eye|Green|Blue|Fire|Rufus|Rainbow|Yellow|Red|Black|Oregon)\s+/i, "").trim())(derivedFamily),
           primary_use: resolved_primary_use,
           primary_medium: resolved_primary_medium,
           secondary_medium: resolved_secondary_medium,
@@ -972,13 +977,13 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
       const matchedPage = pagesList.find(p => p.url.includes(defaultOriginSlug));
       const extractedStory = matchedPage ? matchedPage.excerpt : "";
 
-      let dwellButtonsHTML = `     <a href="${targetUrlPath}">${fullCollectionTitle} Story</a>\n     <a href="${collectionUrlPath}">${fullCollectionTitle} Collection</a>`;
+      let dwellButtonsHTML = `<br><br><a href="${targetUrlPath}">${fullCollectionTitle} Story</a>\n<br><a href="${collectionUrlPath}">${fullCollectionTitle} Collection</a>`;
       
       if (originSegment === "Richardson's Rock Ranch" || targetUrlPath.includes("the-richardson-strike")) {
-        dwellButtonsHTML = `     <a href="/pages/the-richardson-strike">Richardson's Rock Ranch Story</a>
-     <a href="/collections/richardsons-rock-ranch">Richardson's Rock Ranch Collection</a>
-     <a href="/pages/the-3-000-mile-run">The 3,000-Mile Run Story</a>
-     <a href="/collections/the-3-000-mile-run-1">The 3,000-Mile Run Collection</a>`;
+        dwellButtonsHTML = `<br><br><a href="/pages/the-richardson-strike">Richardson's Rock Ranch Story</a>
+<br><a href="/collections/richardsons-rock-ranch">Richardson's Rock Ranch Collection</a>
+<br><a href="/pages/the-3-000-mile-run">The 3,000-Mile Run Story</a>
+<br><a href="/collections/the-3-000-mile-run-1">The 3,000-Mile Run Collection</a>`;
       }
 
       const promptText = `You are writing a product description for Rockhound Studio, a lapidary art studio run by Bob and Janyce, married 34 years, both artists, both rockhounds. They cut and polish every stone themselves in Spokane Valley WA.

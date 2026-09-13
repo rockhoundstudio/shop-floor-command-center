@@ -430,10 +430,14 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
     let productType = "Wearable Art";
     (currentShared.primary_use && currentShared.primary_use !== "") && (productType = currentShared.primary_use);
 
+    // 🟢 FIX: Ensure material is strictly calculated exactly like the tab 2 engine
+    const derivedMaterial = (stoneFam => stoneFam.replace(/^(Dragon's Eye|Green|Blue|Fire|Rufus|Rainbow|Yellow|Red|Black|Oregon)\s+/i, "").trim())(currentShared.stone_family || "");
+
     const payload = {
       intent: "createProduct",
       ...currentShared,
       ...currentPiece,
+      material: derivedMaterial, // 🟢 Inject clean material override
       piece_name: currentPiece.piece_name,
       dimensions_mm: currentPiece.dimensions_mm,
       cut_and_shape: currentPiece.cut_and_shape,
@@ -671,19 +675,24 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
       const isError = data.success === false;
 
       (isScan && isSuccess) && (() => {
-        setSharedFields(prev => ({
-          ...prev,
-          primary_use: data.tab2Data?.primary_use || data.primary_use || prev.primary_use,
-          primary_medium: data.tab2Data?.primary_medium || data.primary_medium || prev.primary_medium,
-          secondary_medium: data.tab2Data?.secondary_medium || data.secondary_medium || prev.secondary_medium,
-          wire_material: data.tab2Data?.wire_material || data.wire_material || prev.wire_material,
-          setting_ready: data.tab2Data?.setting_ready || data.setting_ready || prev.setting_ready,
-          bail_included: data.tab2Data?.bail_included || data.bail_included || prev.bail_included,
-          jewelry_finding_type: data.tab2Data?.jewelry_finding_type || data.jewelry_finding_type || prev.jewelry_finding_type,
-          chain_link_type: data.tab2Data?.chain_link_type || data.chain_link_type || prev.chain_link_type,
-          necklace_design: data.tab2Data?.necklace_design || data.necklace_design || prev.necklace_design,
-          jewelry_type: data.tab2Data?.jewelry_type || data.jewelry_type || prev.jewelry_type
-        }));
+        setSharedFields(prev => {
+          const nextStoneFamily = data.tab2Data?.stone_family || data.stone_family || prev.stone_family || "";
+          const nextMaterial = data.tab2Data?.material || data.material || (stoneFam => stoneFam.replace(/^(Dragon's Eye|Green|Blue|Fire|Rufus|Rainbow|Yellow|Red|Black|Oregon)\s+/i, "").trim())(nextStoneFamily);
+          return {
+            ...prev,
+            material: nextMaterial || prev.material,
+            primary_use: data.tab2Data?.primary_use || data.primary_use || prev.primary_use,
+            primary_medium: data.tab2Data?.primary_medium || data.primary_medium || prev.primary_medium,
+            secondary_medium: data.tab2Data?.secondary_medium || data.secondary_medium || prev.secondary_medium,
+            wire_material: data.tab2Data?.wire_material || data.wire_material || prev.wire_material,
+            setting_ready: data.tab2Data?.setting_ready || data.setting_ready || prev.setting_ready,
+            bail_included: data.tab2Data?.bail_included || data.bail_included || prev.bail_included,
+            jewelry_finding_type: data.tab2Data?.jewelry_finding_type || data.jewelry_finding_type || prev.jewelry_finding_type,
+            chain_link_type: data.tab2Data?.chain_link_type || data.chain_link_type || prev.chain_link_type,
+            necklace_design: data.tab2Data?.necklace_design || data.necklace_design || prev.necklace_design,
+            jewelry_type: data.tab2Data?.jewelry_type || data.jewelry_type || prev.jewelry_type
+          };
+        });
 
         setPieces(prev => prev.map(p => {
           let updated = { ...p };
@@ -772,13 +781,18 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
         resolvedCollectionLoc = "Shopped Rock";
       }
 
+      // 🟢 FIX: Dynamic material stripping instead of hardcoded "Stone"
+      const nextStoneFamily = normalizeDropdownValue("stone_family", parsed.stone_family?.trim()) || prev.stone_family || "";
+      const derivedMaterial = (stoneFam => stoneFam.replace(/^(Dragon's Eye|Green|Blue|Fire|Rufus|Rainbow|Yellow|Red|Black|Oregon)\s+/i, "").trim())(nextStoneFamily);
+
       return {
         ...prev,
-        material: "Stone",
-        stone_family: normalizeDropdownValue("stone_family", parsed.stone_family?.trim()) || prev.stone_family,
+        material: derivedMaterial, 
+        stone_family: nextStoneFamily,
         collection_name: parsed.collection_name || prev.collection_name,
         collection_location: resolvedCollectionLoc,
         origin_handle: parsed.origin_handle || prev.origin_handle, 
+        origin_page_handle: parsed.origin_page_handle || parsed.origin_handle || prev.origin_page_handle, // 🟢 FIX: Ensure origin_page_handle is locked in
         origin_story: parsed.origin_story || prev.origin_story,
         specific_gravity: parsed.specific_gravity || prev.specific_gravity,
         diaphaneity: parsed.diaphaneity || prev.diaphaneity,
