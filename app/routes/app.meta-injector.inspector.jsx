@@ -693,7 +693,7 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
                   <div key={p.id} style={{ minHeight: "54px" }}>
                     <Button fullWidth size="large" textAlign="left" variant={selectedProductId === p.id ? "primary" : "secondary"} onClick={() => handleSelectProduct(p.id)}>
                       <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-                        {p.images?.edges?.[0]?.node?.url ? <img src={p.images.edges[0].node.url} alt="" style={{ minWidth: "120px", minHeight: "120px", width: "120px", height: "120px", objectFit: "contain", borderRadius: "6px", flexShrink: 0 }} /> : <div style={{ minWidth: "120px", minHeight: "120px", width: "120px", height: "120px", backgroundColor: "#2a2a2a", border: "1px solid #444", borderRadius: "6px", flexShrink: 0 }} />}
+                        {p.images?.edges?.[0]?.node?.url ? <img src={p.images.edges[0].node.url} alt="" style={{ minWidth: "120px", minHeight: "120px", width: "120px", height: "120px", objectFit: "cover", borderRadius: "6px", flexShrink: 0 }} /> : <div style={{ minWidth: "120px", minHeight: "120px", width: "120px", height: "120px", backgroundColor: "#2a2a2a", border: "1px solid #444", borderRadius: "6px", flexShrink: 0 }} />}
                         <span>{p.title}</span>
                       </div>
                     </Button>
@@ -725,7 +725,7 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
                       <Text variant="headingMd" as="h3" fontWeight="bold">Upload New Hero Photo (overrides Shopify image for rescan)</Text>
                       {overridePhoto ? (
                         <div style={{ display: "flex", gap: "16px", marginTop: "8px", alignItems: "center" }}>
-                          <img src={overridePhoto.previewUrl} alt="Override preview" style={{ minWidth: "120px", minHeight: "120px", width: "120px", height: "120px", objectFit: "contain", borderRadius: "6px" }} />
+                          <img src={overridePhoto.previewUrl} alt="Override preview" style={{ minWidth: "120px", minHeight: "120px", width: "120px", height: "120px", objectFit: "cover", borderRadius: "6px" }} />
                           <Button onClick={() => setOverridePhoto(null)} tone="critical">Remove</Button>
                         </div>
                       ) : (
