@@ -43,6 +43,7 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
   const [fullMetaState, setFullMetaState] = useState({});
   const originalMetaRef = useRef({});
   const fullMetaStateRef = useRef({});
+  const lastProcessedAiData = useRef(null); // 🟢 Safe State Bleed Tracker
   const [statusMessage, setStatusMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [promptStyle, setPromptStyle] = useState("");
@@ -57,6 +58,17 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
   const [productStatus, setProductStatus] = useState("DRAFT");
   
   const statusFetcher = useFetcher();
+
+  // 🔴 CHANGE — STATE BLEED FIX
+  // Watch the selected product ID. The exact moment it changes, we kill the stale AI data
+  // sitting in the fetcher before it has a chance to merge into the new product's state.
+  useEffect(() => {
+    if (tab2Fetcher && tab2Fetcher.data) {
+      tab2Fetcher.data = null;
+    }
+    // We strictly exclude tab2Fetcher from dependencies so it never wipes NEW incoming payloads.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedProductId]);
 
   const handleDropOverridePhoto = useCallback((_dropFiles, acceptedFiles) => {
     if (acceptedFiles.length > 0) {
