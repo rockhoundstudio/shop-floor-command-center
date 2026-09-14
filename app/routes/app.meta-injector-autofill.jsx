@@ -71,13 +71,14 @@ FULL ORIGIN STORY:
 ${originStory}
 
 - MANDATORY BENCH FINDINGS & JEWELRY LAWS (CRITICAL FOR LOOSE STONES):
-  * THE LOOSE STONE OVERRIDE: If this is a bare, loose stone with NO metal, setting, wire, or bail, you MUST return strictly "None" for setting_ready, wire_material, primary_medium, secondary_medium, chain_material, and bail_included. Do NOT guess or hallucinate metal for a bare rock.
-  * HARDWARE PHYSICS LAW: A "Glue-On Loop" requires a flat back. A "Drilled — Pinch Bail" requires a drilled hole. You cannot have both. If primary_medium is "Glue-On Loop" or "Drilled — Pinch Bail", you MUST set bail_included to "None".
+  * RAW SLAB BRANCH: If the stone is a raw slab (detected by image showing an unpolished flat stone with a ruler, or if cut_and_shape contains "Slab" or "Raw", or primary_use is "Loose Stone"), force these output values: google_product_category = "Arts & Entertainment > Hobbies & Creative Arts > Arts & Crafts > Crafting Materials", surface_finish = "Natural/Raw", jewelry_type = "N/A", setting_ready = "None", is_ooak = "Yes", rarity = "One-of-a-Kind". The generated_description for slabs must address lapidary hobbyists — describe the pattern potential, slab dimensions using the ruler in the image, and that it is ready to cut.
+  * THE LOOSE STONE OVERRIDE: If this is a bare, loose stone with NO metal, setting, wire, or bail, you MUST return strictly "None" for setting_ready, wire_material, secondary_medium, chain_material, and bail_included. Do NOT guess or hallucinate metal for a bare rock.
+  * HARDWARE PHYSICS LAW: A "Glue-On Loop" requires a flat back. A "Drilled — Pinch Bail" requires a drilled hole. You cannot have both. If secondary_medium is "Glue-On Loop" or "Drilled — Pinch Bail", you MUST set bail_included to "None".
   * setting_ready: Look closely at the mounting. If cabochon is in a bezel setting, MUST return "Bezel Setting - Ready to Wear". If prong setting, return "Prong Setting - Ready to Wear". If wire wrapped, return "Wire Wrapped - Ready to Wear". If loose or unmounted, return "None".
   * wire_material: If wire wrapped, output the wire metal (e.g., "Antiqued Copper Wire"). If in a bezel or prong setting with zero wire, or loose, MUST return strictly: "None".
-  * primary_medium: State the primary metal or mounting material. Use exactly one of these: ".925 Sterling Silver Bezel", "Silver Plated Bezel", "Gold Plated Bezel", "Copper Bezel", "Gold Tone Alloy Bezel", "Silver Tone Alloy Bezel", "Bronze Tone Alloy Bezel", "Glue-On Loop", "Drilled — Pinch Bail". Match the tone and finish visible in the photo. If loose and unmounted, return "None".
+  * primary_medium: primary_medium = the stone material itself (e.g. Labradorite, Brecciated Quartz, Green Jasper) — NEVER the setting, bail, or finding.
+  * secondary_medium: secondary_medium = the setting or finding (e.g. Silver Tone Alloy Bezel, Pinch Bail, None). The stone is always primary. The hardware is always secondary.
   * surface_finish: Describe the stone's surface finish as seen in the photo. Use terms like "High Polish", "Matte", "Satin", "Natural/Raw", "Tumbled". Do not leave blank.
-  * secondary_medium: Look ONLY for a second distinct METAL component. If no second metal component exists, or if loose, return strictly "None".
   * bail_included: Look at the TOP of the piece. If there is a separate small clip or loop pinched onto the bezel, return "Silver Plated Pinch Bail". If the bail is welded/integrated, return "Integrated Bezel Bail". If there is no bail at all, or if loose, return "None".`;
 }
 
