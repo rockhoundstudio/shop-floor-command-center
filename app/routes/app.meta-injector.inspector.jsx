@@ -120,6 +120,15 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
               parsedValue = Array.isArray(arr) ? arr[0] : parsedValue;
             } catch (e) { }
           }
+          
+          // 🟢 FIX: Force exact boolean capitilization on load so legacy data doesn't render as lowercase
+          const booleanKeys = ["is_ooak", "found_object", "custom_product", "setting_ready", "bail_included", "treated"];
+          if (booleanKeys.includes(node.key) && parsedValue !== "See Shopify metaobject") {
+            const lowerVal = parsedValue.toLowerCase().trim();
+            if (lowerVal === "true" || lowerVal === "yes") parsedValue = "Yes";
+            else if (lowerVal === "false" || lowerVal === "no") parsedValue = "No";
+          }
+
           newForm[node.key] = parsedValue;
           newFullForm[node.key] = parsedValue;
         }
@@ -499,9 +508,12 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
             const hasNewValue = val !== undefined && val !== null && val.toString().trim() !== "" && val !== "See Shopify metaobject";
             if (hasNewValue) {
               let normalizedVal = val;
-              if (key === "treated" || key === "is_ooak") {
-                if (val === true || val === "true") normalizedVal = "Yes";
-                else if (val === false || val === "false") normalizedVal = "No";
+              // 🟢 FIX: Force exact boolean capitalization during AutoFill merge
+              const booleanKeys = ["is_ooak", "found_object", "custom_product", "setting_ready", "bail_included", "treated"];
+              if (booleanKeys.includes(key)) {
+                const lowerVal = String(val).toLowerCase().trim();
+                if (lowerVal === "true" || lowerVal === "yes") normalizedVal = "Yes";
+                else if (lowerVal === "false" || lowerVal === "no") normalizedVal = "No";
               }
               updatedState[key] = normalizedVal;
             }
@@ -512,7 +524,6 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
 
         setFullMetaState(prev => {
           const updatedState = { ...prev };
-          // 🟢 FIX: Added 'treated' and 'jewelry_type' so legacy scans overwrite them.
           const ALWAYS_OVERWRITE = ["mohs_hardness", "luster", "fracture_pattern", "cleavage", "specific_gravity", "diaphaneity", "mineral_class", "crystal_system", "rock_composition", "rock_formation", "geological_era", "geological_age", "generated_description", "seo_title", "origin_story", "stone_story", "primary_use", "bail_included", "setting_ready", "primary_medium", "alt_text", "found_object", "wire_material", "secondary_medium", "color", "surface_finish", "material", "treated", "jewelry_type"];
 
           Object.entries(tab2Data).forEach(([key, val]) => {
@@ -524,9 +535,12 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
             
             if (hasNewValue && (currentlyEmpty || ALWAYS_OVERWRITE.includes(key))) {
               let normalizedVal = val;
-              if (key === "treated" || key === "is_ooak") {
-                if (val === true || val === "true") normalizedVal = "Yes";
-                else if (val === false || val === "false") normalizedVal = "No";
+              // 🟢 FIX: Force exact boolean capitalization during AutoFill merge
+              const booleanKeys = ["is_ooak", "found_object", "custom_product", "setting_ready", "bail_included", "treated"];
+              if (booleanKeys.includes(key)) {
+                const lowerVal = String(val).toLowerCase().trim();
+                if (lowerVal === "true" || lowerVal === "yes") normalizedVal = "Yes";
+                else if (lowerVal === "false" || lowerVal === "no") normalizedVal = "No";
               }
               updatedState[key] = normalizedVal;
             }
