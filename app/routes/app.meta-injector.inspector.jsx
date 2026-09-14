@@ -58,15 +58,6 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
   
   const statusFetcher = useFetcher();
 
-  // CHANGE — STATE BLEED FIX: Watch selectedProductId and wipe AI results instantly
-  useEffect(() => {
-    if (tab2Fetcher.data) {
-      tab2Fetcher.data = null;
-    }
-    setTab2StatusMessage("");
-    setTab2ErrorMessage("");
-  }, [selectedProductId, tab2Fetcher]);
-
   const handleDropOverridePhoto = useCallback((_dropFiles, acceptedFiles) => {
     if (acceptedFiles.length > 0) {
       const file = acceptedFiles[0];
