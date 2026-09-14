@@ -688,13 +688,17 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
             <BlockStack gap="400">
               <Text as="h2" variant="headingMd">1. Select Raw Inventory</Text>
               <TextField value={searchQuery} onChange={setSearchQuery} placeholder="Search products by title..." autoComplete="off" clearButton onClearButtonClick={() => setSearchQuery("")} />
-              <div style={{ maxHeight: "70vh", overflowY: "auto", paddingRight: "8px", display: "flex", flexDirection: "column", gap: "8px" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: "16px", overflowY: "auto", height: "600px", paddingRight: "8px" }}>
                 {filteredProducts.map(p => (
-                  <div key={p.id} style={{ minHeight: "54px" }}>
+                  <div key={p.id} style={{ minHeight: "140px", overflow: "hidden" }}>
                     <Button fullWidth size="large" textAlign="left" variant={selectedProductId === p.id ? "primary" : "secondary"} onClick={() => handleSelectProduct(p.id)}>
-                      <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-                        {p.images?.edges?.[0]?.node?.url ? <img src={p.images.edges[0].node.url} alt="" style={{ minWidth: "120px", minHeight: "120px", width: "120px", height: "120px", objectFit: "cover", borderRadius: "6px", flexShrink: 0 }} /> : <div style={{ minWidth: "120px", minHeight: "120px", width: "120px", height: "120px", backgroundColor: "#2a2a2a", border: "1px solid #444", borderRadius: "6px", flexShrink: 0 }} />}
-                        <span>{p.title}</span>
+                      <div style={{ display: "flex", alignItems: "center", gap: "16px", minHeight: "120px" }}>
+                        {p.images?.edges?.[0]?.node?.url ? (
+                          <img src={p.images.edges[0].node.url} alt="" style={{ minWidth: "120px", minHeight: "120px", width: "120px", height: "120px", objectFit: "cover", borderRadius: "6px", flexShrink: 0 }} />
+                        ) : (
+                          <div style={{ minWidth: "120px", minHeight: "120px", width: "120px", height: "120px", backgroundColor: "#2a2a2a", border: "1px solid #444", borderRadius: "6px", flexShrink: 0 }} />
+                        )}
+                        <span style={{ whiteSpace: "normal", wordBreak: "break-word" }}>{p.title}</span>
                       </div>
                     </Button>
                   </div>
