@@ -690,15 +690,28 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
               <TextField value={searchQuery} onChange={setSearchQuery} placeholder="Search products by title..." autoComplete="off" clearButton onClearButtonClick={() => setSearchQuery("")} />
               <div style={{ display: "flex", flexDirection: "column", gap: "16px", overflowY: "auto", height: "600px", paddingRight: "8px" }}>
                 {filteredProducts.map(p => (
-                  <div key={p.id} style={{ minHeight: "140px", overflow: "hidden" }}>
+                  <div key={p.id} style={{ minHeight: "140px", overflow: "hidden", flexShrink: 0 }}>
                     <Button fullWidth size="large" textAlign="left" variant={selectedProductId === p.id ? "primary" : "secondary"} onClick={() => handleSelectProduct(p.id)}>
-                      <div style={{ display: "flex", alignItems: "center", gap: "16px", minHeight: "120px" }}>
-                        {p.images?.edges?.[0]?.node?.url ? (
-                          <img src={p.images.edges[0].node.url} alt="" style={{ minWidth: "120px", minHeight: "120px", width: "120px", height: "120px", objectFit: "cover", borderRadius: "6px", flexShrink: 0 }} />
-                        ) : (
-                          <div style={{ minWidth: "120px", minHeight: "120px", width: "120px", height: "120px", backgroundColor: "#2a2a2a", border: "1px solid #444", borderRadius: "6px", flexShrink: 0 }} />
-                        )}
-                        <span style={{ whiteSpace: "normal", wordBreak: "break-word" }}>{p.title}</span>
+                      <div style={{ display: "flex", flexDirection: "column", width: "100%", padding: "4px 0" }}>
+                        <div style={{ marginBottom: "8px" }}>
+                          {p.images?.edges?.[0]?.node?.url ? (
+                            <img src={p.images.edges[0].node.url} alt="" style={{ width: "120px", height: "120px", minWidth: "120px", minHeight: "120px", objectFit: "cover", objectPosition: "center", borderRadius: "6px", flexShrink: 0 }} />
+                          ) : (
+                            <div style={{ width: "120px", height: "120px", minWidth: "120px", minHeight: "120px", backgroundColor: "#2a2a2a", border: "1px solid #444", borderRadius: "6px", flexShrink: 0 }} />
+                          )}
+                        </div>
+                        <div style={{ width: "100%", borderTop: "1px solid rgba(150, 150, 150, 0.3)", paddingTop: "8px" }}>
+                          {p.title.split(" — ").map((part, idx) => (
+                            <span key={idx} style={{ display: "block", marginBottom: "4px", whiteSpace: "normal", wordBreak: "break-word", fontWeight: idx === 0 ? "bold" : "normal" }}>
+                              {part}
+                            </span>
+                          ))}
+                          {p.variants?.edges?.[0]?.node?.price && (
+                            <span style={{ display: "block", marginBottom: "4px", whiteSpace: "normal", opacity: 0.8 }}>
+                              ${parseFloat(p.variants.edges[0].node.price).toFixed(2)}
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </Button>
                   </div>
@@ -729,7 +742,7 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
                       <Text variant="headingMd" as="h3" fontWeight="bold">Upload New Hero Photo (overrides Shopify image for rescan)</Text>
                       {overridePhoto ? (
                         <div style={{ display: "flex", gap: "16px", marginTop: "8px", alignItems: "center" }}>
-                          <img src={overridePhoto.previewUrl} alt="Override preview" style={{ minWidth: "120px", minHeight: "120px", width: "120px", height: "120px", objectFit: "cover", borderRadius: "6px" }} />
+                          <img src={overridePhoto.previewUrl} alt="Override preview" style={{ minWidth: "120px", minHeight: "120px", width: "120px", height: "120px", objectFit: "cover", objectPosition: "center", borderRadius: "6px" }} />
                           <Button onClick={() => setOverridePhoto(null)} tone="critical">Remove</Button>
                         </div>
                       ) : (
