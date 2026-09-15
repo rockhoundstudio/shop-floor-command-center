@@ -53,7 +53,7 @@ CRITICAL ANTI-HALLUCINATION RULE: NEVER use the word "shocked" or "Shocked Rock"
 - setting_ready
 - wire_material
 - bail_included
-- alt_text: Write a concise, descriptive alt text for this image (max 125 characters). Describe the stone, its color, finish, and setting as seen in the photo. Plain language, no brand name.
+- alt_text: Write a concise, descriptive alt text for this image (max 125 characters). Describe the stone, its color, finish, and setting as seen in the photo. Plain language, no brand name. alt_text must use the stone mineral name from title segment 1. Never describe the stone type from visual appearance. If the title says 'Breccia Aventurine', write 'Breccia Aventurine' in the alt_text — never 'jasper', 'green stone', or any visual inference.
 - found_object: Return "Yes" if this stone was field-collected or found in nature. Return "No" if it is a shopped, purchased, or imported stone.
 - chain_material: If a necklace chain is visible, identify it as exactly one of: "Silver Plated Snake Chain", "Gold Plated Snake Chain", "Sterling Silver Chain", "Cord". If no chain is visible, return "None".
 - seo_title: Generate a keyword-rich SEO product title (max 60 characters) optimized for Google. Combine the stone family ("${stoneFamily}"), your newly corrected origin_location, cut/shape, and keywords like "Handcrafted", "Natural", "OOAK", or "Lapidary Art". Separate with pipes (|) or em-dashes (—). Do NOT use quotes.
@@ -434,7 +434,7 @@ export const action = async ({ request }) => {
       let derivedFamily = titleSegments[0]?.trim() || stone_family;
       derivedFamily = cleanStoneFamilyShape(derivedFamily);
       const derivedOrigin = titleSegments[1]?.trim() || "";
-      const pieceNameSegment = titleSegments[2]?.trim() || "New Piece";
+      const pieceNameSegment = titleSegments.length >= 3 ? titleSegments[2].trim() : "";
 
       try {
         const geoFields = await getGeoData(admin, derivedFamily);
@@ -571,6 +571,7 @@ export const action = async ({ request }) => {
         const finalMaterial = (stoneFam => stoneFam.replace(/^(Dragon's Eye|Green|Blue|Fire|Rufus|Rainbow|Yellow|Red|Black|Oregon)\s+/i, "").trim())(derivedFamily);
 
         const parsedVision = visionFields || {};
+        const jewelry_type = visionFields.jewelry_type || "N/A";
 
         const payload = sanitizeObject({
           origin_story: origin_story,
@@ -587,8 +588,8 @@ export const action = async ({ request }) => {
           rarity: visionFields.rarity || "Common",
           secondary_medium: visionFields.secondary_medium || "None",
           cut_and_shape: visionFields.cut_and_shape || "",
-          jewelry_type: visionFields.jewelry_type || "N/A",
-          necklace_design: visionFields.jewelry_type === "Pendant" ? "Pendant" : (visionFields.necklace_design || ""),
+          jewelry_type: jewelry_type,
+          necklace_design: jewelry_type === "Pendant" ? "Pendant" : (visionFields.necklace_design || ""),
           color_pattern: visionFields.color_pattern || visionFields.pattern || "",
           material: finalMaterial,
           generated_description: visionFields.generated_description || "",
@@ -639,7 +640,7 @@ export const action = async ({ request }) => {
       const segments = pieceNameInput.split(/\s+[—–-]\s+/);
       const segment1 = segments[0]?.trim() || "";
       const segment2 = segments[1]?.trim() || "";
-      const segment3 = segments[2]?.trim() || "";
+      const segment3 = segments.length >= 3 ? segments[2].trim() : "";
 
       let stonePicklist = "Agate, Amazonite, Amethyst, Andesite, Aventurine, Azurite, Brecciated Jasper, Brecciated Quartz, Calcite, Carnelian, Chalcedony, Chrysocolla, Citrine, Dalmatian Stone, Fluorite, Garnet, Hematite, Howlite, Jasper, Kyanite, Labradorite, Lapis Lazuli, Lepidolite, Malachite, Moonstone, Obsidian, Ocean Jasper, Onyx, Opal, Petrified Wood, Picture Jasper, Prehnite, Pyrite, Quartz, Quartzite, Rhodonite, Rhyolite, Rose Quartz, Serpentine, Smoky Quartz, Sodalite, Sunstone, Tourmaline, Turquoise, Unakite, Variscite";
       
@@ -798,7 +799,7 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
       let derivedFamily = segments[0]?.trim() || "Unknown Stone";
       derivedFamily = cleanStoneFamilyShape(derivedFamily);
       const originSegment = segments[1]?.trim() || "Unknown Origin";
-      const pieceNameSegment = segments[2]?.trim() || "New Piece";
+      const pieceNameSegment = segments.length >= 3 ? segments[2].trim() : "";
       
       const geoFields = await getGeoData(admin, derivedFamily);
       const { pagesList, collectionsList } = await getLiveStoreDirectory(admin);
@@ -935,6 +936,7 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
         const finalOriginPageHandle = finalOriginHandle === "the-richardson-strike" ? "the-richardson-strike" : finalOriginHandle;
 
         const visionFields = parsedVision || {};
+        const jewelry_type = parsedVision.jewelry_type || "N/A";
 
         const payload = sanitizeObject({
           pieceId,
@@ -945,8 +947,8 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
           cut_and_shape: parsedVision.cut_and_shape || "",
           surface_finish: parsedVision.surface_finish || "",
           stone_shape: visionFields.stone_shape || parsedVision.stone_shape || "",
-          jewelry_type: parsedVision.jewelry_type || "N/A",
-          necklace_design: parsedVision.jewelry_type === "Pendant" ? "Pendant" : (parsedVision.necklace_design || ""),
+          jewelry_type: jewelry_type,
+          necklace_design: jewelry_type === "Pendant" ? "Pendant" : (parsedVision.necklace_design || ""),
           rarity: parsedVision.rarity || "Common",
           authenticity: parsedVision.authenticity || "Authentic",
           color_pattern: parsedVision.color_pattern || parsedVision.pattern || "",
