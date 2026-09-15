@@ -61,7 +61,7 @@ CRITICAL ANTI-HALLUCINATION RULE: NEVER use the word "shocked" or "Shocked Rock"
   1. Stone Description: Past tense for the find. Plain and honest â€” say what happened, stop. No salesy language. Short sentences. One idea at a time. Highlight the freeform revolution and honest flaws.
   2. Origin Hook: Write a short story hook based on the FULL ORIGIN STORY below.
   3. Collection Hook: Write a short hook about the ${fullCollectionTitle} Collection.
-  4. Signature: EXACTLY this line: â€” Bob & Janyce, Rockhound Studio, Spokane Valley WA.
+  4. Signature: EXACTLY this line: — Bob & Janyce, Rockhound Studio, Spokane Valley WA
   5. Stone Data: Brief lapidary specs (cut, finish, dimensions).
   6. Ready to Wear: Clearly state if the piece is set and ready to wear, or a raw/loose stone for makers.
   7. Dwell Buttons: Include EXACTLY these clickable HTML hyperlinks on their own lines:
