@@ -47,7 +47,7 @@ CRITICAL ANTI-HALLUCINATION RULE: NEVER use the word "shocked" or "Shocked Rock"
 - cut_and_shape
 - surface_finish
 - honest_flaws_and_character
-- origin_location: CRITICAL! Look at the provided Origin Segment ("${originSegment}"). Cross-reference it with the LIVE STORE DIRECTORY above and return the fully expanded, correct geographic name. **NEVER include prefixes like "Shop Lore:", "The", or "Collection" in this field.** (e.g., strictly return "Yakima River Canyon" or "North Fork Coeur d'Alene").
+- origin_location: CRITICAL! Look at the provided Origin Segment ("${originSegment}"). Cross-reference it with the LIVE STORE DIRECTORY above and return the fully expanded, correct geographic name. **NEVER include prefixes like "Shop Lore:", "The", or "Collection" in this field.** (e.g., strictly return "Yakima River Canyon" or "North Fork Coeur d'Alene"). collection_location must exactly match one value from this list only: Spokane River | Yakima Canyon | Yellowstone River | Richardson's Rock Ranch | The 3,000-Mile Run | Nickel Back | Rufus Serpentine | The Gallery | North Fork CdA. Never add state names, suffixes, or geographic variations. If the origin is Yakima River Canyon, Washington — output 'Yakima Canyon'. If the origin is Richardson's Rock Ranch, Oregon — output 'Richardson's Rock Ranch'. Match to the list exactly. No exceptions.
 - primary_use: Smart Switch! Force strictly to best match (e.g., "Pendant (Finished Jewelry)", "Necklace", "Ring / Bezel Setting", "Cabochon", "Wire Wrap (Finished Jewelry)", "Loose Stone"). If a chain is visible, classify as "Necklace".
 - primary_medium
 - setting_ready
