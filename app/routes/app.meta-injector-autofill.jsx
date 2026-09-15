@@ -387,6 +387,20 @@ function cleanStoneFamilyShape(familyStr) {
   return familyStr.replace(/(?:\s+(?:Round|Oval|Freeform|Teardrop|Pear|Heart|Square|Rectangle|Slab|Raw|Cabochon))+$/i, "").trim();
 }
 
+function mapCollectionLocation(rawLocation) {
+  const loc = (rawLocation || "").toLowerCase();
+  if (loc.includes("spokane river")) return "Spokane River";
+  if (loc.includes("yakima") || loc.includes("chert")) return "Yakima Canyon";
+  if (loc.includes("yellowstone")) return "Yellowstone River";
+  if (loc.includes("richardson")) return "Richardson's Rock Ranch";
+  if (loc.includes("3,000") || loc.includes("3000")) return "The 3,000-Mile Run";
+  if (loc.includes("nickel back")) return "Nickel Back";
+  if (loc.includes("rufus")) return "Rufus Serpentine";
+  if (loc.includes("gallery")) return "The Gallery";
+  if (loc.includes("north fork") || loc.includes("cda")) return "North Fork CdA";
+  return rawLocation.replace(/\s*Collection$/i, "").trim();
+}
+
 export const action = async ({ request }) => {
   try {
     const { admin } = await authenticate.admin(request);
@@ -493,6 +507,7 @@ export const action = async ({ request }) => {
                       bail_included: { type: "STRING" },
                       chain_material: { type: "STRING" },
                       jewelry_type: { type: "STRING" },
+                      necklace_design: { type: "STRING" },
                       rarity: { type: "STRING" },
                       authenticity: { type: "STRING" },
                       google_product_category: { type: "STRING" },
@@ -560,18 +575,20 @@ export const action = async ({ request }) => {
         const payload = sanitizeObject({
           origin_story: origin_story,
           stone_family: derivedFamily,
+          piece_name: pieceNameSegment,
           origin_handle: finalOriginHandle,
           origin_page_handle: finalOriginPageHandle,
           origin_location: correctedOrigin,
           shopify_title: `${derivedFamily} — ${correctedOrigin} — ${pieceNameSegment}`,
           collection_name: finalCollectionData.name,
-          collection_location: finalCollectionData.name.replace(/\s*Collection$/i, "").trim(),
+          collection_location: mapCollectionLocation(finalCollectionData.name),
           seo_title: visionFields.seo_title || manual_seo_title,
           authenticity: visionFields.authenticity || "Authentic",
           rarity: visionFields.rarity || "Common",
           secondary_medium: visionFields.secondary_medium || "None",
           cut_and_shape: visionFields.cut_and_shape || "",
           jewelry_type: visionFields.jewelry_type || "N/A",
+          necklace_design: visionFields.jewelry_type === "Pendant" ? "Pendant" : (visionFields.necklace_design || ""),
           color_pattern: visionFields.color_pattern || visionFields.pattern || "",
           material: finalMaterial,
           generated_description: visionFields.generated_description || "",
@@ -579,7 +596,7 @@ export const action = async ({ request }) => {
           surface_finish: visionFields.surface_finish || "",
           stone_shape: visionFields.stone_shape || parsedVision.stone_shape || "",
           primary_use: visionFields.primary_use || "",
-          primary_medium: visionFields.primary_medium || "",
+          primary_medium: derivedFamily,
           wire_material: visionFields.wire_material || "None",
           setting_ready: visionFields.setting_ready || "None",
           bail_included: visionFields.bail_included || "None",
@@ -727,12 +744,13 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
 
         const finalParse = sanitizeObject({
           ...parsed,
+          piece_name: segment3,
           origin_handle: resolvedHandle,
           origin_page_handle: finalOriginPageHandle,
           origin_story: extractedStory,
           origin_location: parsed.origin_location || segment2,
           collection_name: parsed.collection_name || collectionData.name,
-          collection_location: parsed.collection_location || collectionData.name.replace(" Collection", ""),
+          collection_location: mapCollectionLocation(parsed.collection_location || collectionData.name),
           canonical_title: parsed.stone_family + " — " + (parsed.origin_location || displayName) + " — " + segment3,
           seo_title: parsed.seo_title || seo_title,
           mohs_hardness: dbGeoData.mohs_hardness || "",
@@ -780,6 +798,7 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
       let derivedFamily = segments[0]?.trim() || "Unknown Stone";
       derivedFamily = cleanStoneFamilyShape(derivedFamily);
       const originSegment = segments[1]?.trim() || "Unknown Origin";
+      const pieceNameSegment = segments[2]?.trim() || "New Piece";
       
       const geoFields = await getGeoData(admin, derivedFamily);
       const { pagesList, collectionsList } = await getLiveStoreDirectory(admin);
@@ -864,6 +883,7 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
                 bail_included: { type: "STRING" },
                 chain_material: { type: "STRING" },
                 jewelry_type: { type: "STRING" },
+                necklace_design: { type: "STRING" },
                 rarity: { type: "STRING" },
                 authenticity: { type: "STRING" },
                 google_product_category: { type: "STRING" },
@@ -896,7 +916,6 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
         }
         
         const resolved_primary_use = parsedVision.primary_use || parsedVision.use || parsedVision.product_type || "";
-        const resolved_primary_medium = parsedVision.primary_medium || parsedVision.medium || parsedVision.metal || "Natural Stone";
         const resolved_secondary_medium = parsedVision.secondary_medium || "None";
         const resolved_wire_material = parsedVision.wire_material || "None";
         const resolved_setting_ready = parsedVision.setting_ready || "None";
@@ -927,22 +946,25 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
           surface_finish: parsedVision.surface_finish || "",
           stone_shape: visionFields.stone_shape || parsedVision.stone_shape || "",
           jewelry_type: parsedVision.jewelry_type || "N/A",
+          necklace_design: parsedVision.jewelry_type === "Pendant" ? "Pendant" : (parsedVision.necklace_design || ""),
           rarity: parsedVision.rarity || "Common",
           authenticity: parsedVision.authenticity || "Authentic",
           color_pattern: parsedVision.color_pattern || parsedVision.pattern || "",
           material: (stoneFam => stoneFam.replace(/^(Dragon's Eye|Green|Blue|Fire|Rufus|Rainbow|Yellow|Red|Black|Oregon)\s+/i, "").trim())(derivedFamily),
           primary_use: resolved_primary_use,
-          primary_medium: resolved_primary_medium,
+          primary_medium: derivedFamily,
           secondary_medium: resolved_secondary_medium,
           wire_material: resolved_wire_material,
           setting_ready: resolved_setting_ready,
           bail_included: resolved_bail_included,
           origin_story: extractedStory,
+          stone_family: derivedFamily,
+          piece_name: pieceNameSegment,
           origin_handle: finalOriginHandle,
           origin_page_handle: finalOriginPageHandle,
           origin_location: finalOriginLocation,
           collection_name: finalCollectionData.name,
-          collection_location: finalCollectionData.name.replace(/\s*Collection$/i, "").trim(),
+          collection_location: mapCollectionLocation(finalCollectionData.name),
           mohs_hardness: geoFields.mohs_hardness || "",
           luster: geoFields.luster || "",
           fracture_pattern: geoFields.fracture_pattern || "",
