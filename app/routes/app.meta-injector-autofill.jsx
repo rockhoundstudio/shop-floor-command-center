@@ -495,7 +495,8 @@ export const action = async ({ request }) => {
                       jewelry_type: { type: "STRING" },
                       rarity: { type: "STRING" },
                       authenticity: { type: "STRING" },
-                      google_product_category: { type: "STRING" }
+                      google_product_category: { type: "STRING" },
+                      alt_text: { type: "STRING" }
                     }
                   }
                 }
@@ -601,6 +602,7 @@ export const action = async ({ request }) => {
           target_gender: "Unisex",
           condition: "new",
           google_product_category: visionFields.google_product_category || "Apparel & Accessories > Jewelry",
+          alt_text: visionFields.alt_text || "",
           // Retain physical bench attributes so they never get wiped
           ...(bench_weight_grams ? { weight_grams: bench_weight_grams } : {}),
           ...(bench_shipping_weight_oz ? { shipping_weight_oz: bench_shipping_weight_oz } : {}),
@@ -659,7 +661,7 @@ ${collectionsMenu || "No live collections found."}
 INSTRUCTIONS:
 1. The Origin segment ("${segment2}") is the AUTHORITY. Do NOT reclassify or override it. Set 'origin_location' to the clean geographic name derived from "${segment2}" — strip prefixes like "Shop Lore:", "The", or "Collection". Expand abbreviations (e.g. "cda" → "North Fork Coeur d'Alene", "yakima" → "Yakima Canyon"). Match 'collection_name' and 'collection_location' to the live store entry that corresponds to "${segment2}". Never substitute a vendor name or "The Shopped Rock" unless "${segment2}" explicitly contains a vendor name.
 2. Set origin_handle strictly to: "${resolvedHandle}". 
-3. stone_family must be exactly one of: ${stonePicklist} - match only the mineral/stone type word from the title. Ignore all color, pattern, cut, and modifier words. Pick the closest entry from the list. Match stone_family against the gem dictionary list only. Ignore all shape descriptors, colors, cut names, and adjectives that follow the stone name. If the input is 'Botswana Agate Round Oval Cream', the correct output is 'Botswana Agate'.
+3. stone_family must be exactly one of: ${stonePicklist} - match only the mineral/stone type word from the title. Ignore all color, pattern, cut, and modifier words. Pick the closest entry from the list. Match stone_family against the gem dictionary list only. Ignore all shape descriptors, colors, cut names, and adjectives. If the input is 'Botswana Agate Round', output 'Botswana Agate'.
 
 Return valid JSON with these exact keys: stone_family, piece_name, origin_handle, origin_location, collection_name, collection_location, seo_title. Generate a keyword-rich seo_title for Google using the family and keywords like "Handcrafted" or "OOAK Lapidary Art". No markup. No extra keys.`;
 
@@ -864,7 +866,8 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
                 jewelry_type: { type: "STRING" },
                 rarity: { type: "STRING" },
                 authenticity: { type: "STRING" },
-                google_product_category: { type: "STRING" }
+                google_product_category: { type: "STRING" },
+                alt_text: { type: "STRING" }
               }
             }
           }
@@ -957,6 +960,7 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
           target_gender: "Unisex",
           condition: "new",
           google_product_category: parsedVision.google_product_category || "Apparel & Accessories > Jewelry",
+          alt_text: visionFields.alt_text || "",
           // Preserve physical bench attributes during full rescan
           honest_flaws_and_character: bench_honest_flaws || parsedVision.honest_flaws_and_character || "",
           ...(bench_weight_grams ? { weight_grams: bench_weight_grams } : {}),
