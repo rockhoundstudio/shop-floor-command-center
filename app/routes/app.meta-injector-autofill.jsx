@@ -382,6 +382,11 @@ function sanitizeObject(obj) {
   return obj;
 }
 
+function cleanStoneFamilyShape(familyStr) {
+  if (!familyStr) return familyStr;
+  return familyStr.replace(/(?:\s+(?:Round|Oval|Freeform|Teardrop|Pear|Heart|Square|Rectangle|Slab|Raw|Cabochon))+$/i, "").trim();
+}
+
 export const action = async ({ request }) => {
   try {
     const { admin } = await authenticate.admin(request);
@@ -412,7 +417,8 @@ export const action = async ({ request }) => {
       const bench_price = body.get("price") || "";
 
       const titleSegments = productTitle.split(/\s+[-—–]\s+/);
-      const derivedFamily = titleSegments[0]?.trim() || stone_family;
+      let derivedFamily = titleSegments[0]?.trim() || stone_family;
+      derivedFamily = cleanStoneFamilyShape(derivedFamily);
       const derivedOrigin = titleSegments[1]?.trim() || "";
       const pieceNameSegment = titleSegments[2]?.trim() || "New Piece";
 
@@ -548,6 +554,8 @@ export const action = async ({ request }) => {
         // 🟢 FIX: Regex correctly targets derivedFamily so we never pass empty string
         const finalMaterial = (stoneFam => stoneFam.replace(/^(Dragon's Eye|Green|Blue|Fire|Rufus|Rainbow|Yellow|Red|Black|Oregon)\s+/i, "").trim())(derivedFamily);
 
+        const parsedVision = visionFields || {};
+
         const payload = sanitizeObject({
           origin_story: origin_story,
           stone_family: derivedFamily,
@@ -568,7 +576,7 @@ export const action = async ({ request }) => {
           generated_description: visionFields.generated_description || "",
           color: visionFields.color || "",
           surface_finish: visionFields.surface_finish || "",
-          stone_shape: visionFields.stone_shape || "",
+          stone_shape: visionFields.stone_shape || parsedVision.stone_shape || "",
           primary_use: visionFields.primary_use || "",
           primary_medium: visionFields.primary_medium || "",
           wire_material: visionFields.wire_material || "None",
@@ -694,12 +702,16 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
         }
         const parsed = JSON.parse(cleanJson);
         
-        const dbGeoData = await getGeoData(admin, derivedFamily || parsed.stone_family || segment1);
+        if (parsed.stone_family) {
+          parsed.stone_family = cleanStoneFamilyShape(parsed.stone_family);
+        }
+
+        const dbGeoData = await getGeoData(admin, parsed.stone_family || segment1);
         const matchedOriginPage = pagesList.find(p => p.url.includes(resolvedHandle));
         const displayName = matchedOriginPage ? matchedOriginPage.title.replace(/^(Shop Lore|Collection)[\s:\-]+/i, "").replace(/^The\s+/i, "").trim() : collectionData.name.replace(/\s+Collection$/i, "").trim();
         
         const seoTitleParts = [];
-        if (derivedFamily || parsed.stone_family || segment1) seoTitleParts.push(derivedFamily || parsed.stone_family || segment1);
+        if (parsed.stone_family || segment1) seoTitleParts.push(parsed.stone_family || segment1);
         
         let seo_title = "";
         if (seoTitleParts.length > 0) {
@@ -733,6 +745,7 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
           rock_composition: dbGeoData.rock_composition || "",
           rock_formation: dbGeoData.rock_formation || "",
           geological_age: dbGeoData.geological_age || "",
+          is_ooak: "Yes",
           age_group: "adult",
           target_gender: "Unisex",
           condition: "new",
@@ -762,7 +775,8 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
       const rawTitleInput = body.get("productTitle") || body.get("pieceName") || body.get("piece_name") || "";
       const titleInput = rawTitleInput.replace(/â€”/g, "—");
       const segments = titleInput.split(/\s+[—–-]\s+/);
-      const derivedFamily = segments[0]?.trim() || "Unknown Stone";
+      let derivedFamily = segments[0]?.trim() || "Unknown Stone";
+      derivedFamily = cleanStoneFamilyShape(derivedFamily);
       const originSegment = segments[1]?.trim() || "Unknown Origin";
       
       const geoFields = await getGeoData(admin, derivedFamily);
@@ -898,6 +912,8 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
         // BUG 2 FIX: Ensure Richardson's page handle is absolutely enforced
         const finalOriginPageHandle = finalOriginHandle === "the-richardson-strike" ? "the-richardson-strike" : finalOriginHandle;
 
+        const visionFields = parsedVision || {};
+
         const payload = sanitizeObject({
           pieceId,
           generated_description: final_desc,
@@ -906,7 +922,7 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
           primary_color: parsedVision.primary_color || "",
           cut_and_shape: parsedVision.cut_and_shape || "",
           surface_finish: parsedVision.surface_finish || "",
-          stone_shape: parsedVision.stone_shape || "",
+          stone_shape: visionFields.stone_shape || parsedVision.stone_shape || "",
           jewelry_type: parsedVision.jewelry_type || "N/A",
           rarity: parsedVision.rarity || "Common",
           authenticity: parsedVision.authenticity || "Authentic",
@@ -936,6 +952,7 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
           rock_composition: geoFields.rock_composition || "",
           rock_formation: geoFields.rock_formation || "",
           geological_age: geoFields.geological_age || "",
+          is_ooak: "Yes",
           age_group: "adult",
           target_gender: "Unisex",
           condition: "new",
@@ -966,7 +983,8 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
       const sharedFields = JSON.parse(body.get("sharedFields") || "{}");
       const pieceData = JSON.parse(body.get("pieceData") || "{}");
       
-      const derivedFamily = sharedFields.stone_family || "Unknown Stone";
+      let derivedFamily = sharedFields.stone_family || "Unknown Stone";
+      derivedFamily = cleanStoneFamilyShape(derivedFamily);
       const originSegment = sharedFields.origin_location || "Unknown Origin";
       
       const { pagesList, collectionsList } = await getLiveStoreDirectory(admin);
