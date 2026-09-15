@@ -39,7 +39,7 @@ CRITICAL ANTI-HALLUCINATION RULE: NEVER use the word "shocked" or "Shocked Rock"
 
 - primary_color
 - stone_shape: Select EXACTLY one from this list: Round, Oval, Freeform, Teardrop, Pear, Cushion, Marquise, Rectangle, Square, Heart, Slab, Rough, N/A
-- jewelry_type: Select EXACTLY one from this list: Pendant, Necklace, Artisan jewelry, Fine jewelry, Accessories, N/A
+- jewelry_type: Select EXACTLY one from this list: Pendant, Necklace, Artisan jewelry, Fine jewelry, Accessories, N/A. PENDANT vs NECKLACE RULE: A Pendant is a stone set in a bezel, bail, or wire wrap that hangs from a cord or chain. The stone is the focal point. A Necklace is a chain or strand where the chain itself is the primary design — beaded strands, chain necklaces, chokers. If the product is a stone on a cord or chain, it is always a Pendant, never a Necklace. primary_use should also reflect this: use 'Pendant (Finished Jewelry)' not 'Necklace' when the stone is the focal point.
 - rarity: Select EXACTLY one from this list: Common, Uncommon, Rare, One-of-a-Kind (default: Common if unsure)
 - authenticity: Select EXACTLY one from this list: Authentic, Lab-Created, Unknown (default: Authentic for natural stones)
 - color_pattern: Select EXACTLY one from this list: Green, Black, Blue flash, Red, White, Multicolor, Gold, Pink, Yellow, Silver, Purple, Striped, Clear, Yellow veins, None
