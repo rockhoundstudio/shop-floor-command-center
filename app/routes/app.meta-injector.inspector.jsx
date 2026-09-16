@@ -60,13 +60,14 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
   const statusFetcher = useFetcher();
 
   // 🔴 CHANGE — STATE BLEED FIX
-  // Watch the selected product ID. The exact moment it changes, we kill the stale AI data
-  // sitting in the fetcher before it has a chance to merge into the new product's state.
+  // Watch the selected product ID. 
   useEffect(() => {
+    // 🟢 FIX: Prevent state bleed without mutating read-only fetcher data.
+    // By marking the current fetcher data as "processed" on product change,
+    // we force the merge effect to ignore it and prevent stale bleed-over.
     if (tab2Fetcher && tab2Fetcher.data) {
-      tab2Fetcher.data = null;
+      lastProcessedAiData.current = tab2Fetcher.data;
     }
-    // We strictly exclude tab2Fetcher from dependencies so it never wipes NEW incoming payloads.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedProductId]);
 
@@ -289,6 +290,14 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
       ...(key === "weight_grams" && newShippingOz ? { shipping_weight_oz: newShippingOz } : {}),
       ...(key === "shipping_weight_oz" && newWeightGrams ? { weight_grams: newWeightGrams } : {})
     }));
+
+    // 🟢 FIX: Synchronous Ref Update ensures active screen data is always ready for injection
+    fullMetaStateRef.current = {
+      ...fullMetaStateRef.current,
+      [key]: value,
+      ...(key === "weight_grams" && newShippingOz ? { shipping_weight_oz: newShippingOz } : {}),
+      ...(key === "shipping_weight_oz" && newWeightGrams ? { weight_grams: newWeightGrams } : {})
+    };
   }, []);
 
   const updateFullMetaState = useCallback((key, value) => {
@@ -298,6 +307,9 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
     }
     setFullMetaState(prev => ({ ...prev, [key]: value }));
     setFormState(prev => ({ ...prev, [key]: value }));
+    
+    // 🟢 FIX: Synchronous Ref Update ensures active screen data is always ready for injection
+    fullMetaStateRef.current = { ...fullMetaStateRef.current, [key]: value };
   }, [updateWeightFields]);
 
   const handleTab2AutoFill = useCallback(() => {
@@ -435,7 +447,7 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
     setErrorMessage("");
 
     const selectedProduct = products.find(p => p.id === selectedProductId);
-    const masterTitle = fullMetaState.shopify_title || formState.shopify_title || selectedProduct?.title || "";
+    const masterTitle = fullMetaStateRef.current.shopify_title || formState.shopify_title || selectedProduct?.title || "";
     const resolvedPieceName = masterTitle.includes(" — ") ? masterTitle.split(" — ").pop().trim() : masterTitle;
     
     const allowedKeys = NAMESPACE_MAP.custom;
@@ -443,11 +455,12 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
 
     // Ensure weights are explicitly bound into state snapshot
     const activeWeights = {
-      weight_grams: fullMetaState.weight_grams || formState.weight_grams || "",
-      shipping_weight_oz: fullMetaState.shipping_weight_oz || formState.shipping_weight_oz || ""
+      weight_grams: fullMetaStateRef.current.weight_grams || formState.weight_grams || "",
+      shipping_weight_oz: fullMetaStateRef.current.shipping_weight_oz || formState.shipping_weight_oz || ""
     };
 
-    const combinedState = { ...fullMetaState, ...fullMetaStateRef.current, ...activeWeights };
+    // 🟢 FIX: Absolute Overwrite. Trust the active visual state, drop the raw load merge.
+    const combinedState = { ...fullMetaStateRef.current, ...activeWeights };
 
     Object.entries(combinedState).forEach(([key, value]) => {
       if (key === "shopify_title") return; 
@@ -500,13 +513,15 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
       },
       { method: "post", action: "/app/meta-injector-api" }
     );
-  }, [selectedProductId, formState, products, injectFetcher, fullMetaState]);
+  }, [selectedProductId, formState, products, injectFetcher, fullMetaStateRef]);
 
   useEffect(() => {
     const isIdle = tab2Fetcher.state === "idle";
     const hasData = tab2Fetcher.data !== undefined && tab2Fetcher.data !== null;
 
-    if (isIdle && hasData) {
+    // 🟢 FIX: Guard against stale state bleed
+    if (isIdle && hasData && lastProcessedAiData.current !== tab2Fetcher.data) {
+      lastProcessedAiData.current = tab2Fetcher.data;
       const product = products.find(p => p.id === selectedProductId);
       const productTitle = fullMetaState.shopify_title || formState.shopify_title || product?.title || "";
       const tab2Data = tab2Fetcher.data.tab2Data || {};
@@ -576,7 +591,6 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
           }
 
           fullMetaStateRef.current = updatedState;
-          fullMetaStateRef.current = updatedState;
           return updatedState;
         });
 
@@ -589,25 +603,13 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
     }
   }, [tab2Fetcher.state, tab2Fetcher.data, selectedProductId, products]);
 
-  useEffect(() => {
-    const isIdle = injectFetcher.state === "idle";
-    const hasData = injectFetcher.data !== undefined && injectFetcher.data !== null;
-    if (isIdle && hasData) {
-      if (injectFetcher.data.success) {
-        setStatusMessage("Data cleanly locked into Shopify database.");
-        if (window.shopify && window.shopify.toast) window.shopify.toast.show("Update successful!");
-      } else {
-        setErrorMessage(injectFetcher.data.message || injectFetcher.data.error || "An unknown error occurred");
-        if (window.shopify && window.shopify.toast) window.shopify.toast.show("Action failed", { isError: true });
-      }
-    }
-  }, [injectFetcher.state, injectFetcher.data]);
-
   const handleFixPopupConfirm = useCallback(() => {
     const field = pendingFixFields[currentFixIndex];
     if (field && fixPopupValue.trim() !== "") {
       setFormState(prev => ({ ...prev, [field.key]: fixPopupValue.trim() }));
       setFullMetaState(prev => ({ ...prev, [field.key]: fixPopupValue.trim() }));
+      // 🟢 FIX: Synchronous Ref Update
+      fullMetaStateRef.current = { ...fullMetaStateRef.current, [field.key]: fixPopupValue.trim() };
     }
     const nextIndex = currentFixIndex + 1;
     if (nextIndex < pendingFixFields.length) {
@@ -747,8 +749,8 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
                 return (
                   <BlockStack gap="200">
                     <Text as="p" variant="bodyMd" tone="subdued">Review before running — edit if legacy data is incorrect:</Text>
-                    <TextField label="Product Title" value={formState.shopify_title || fullMetaState.shopify_title || product?.title || ""} onChange={(val) => { setFormState(prev => ({ ...prev, shopify_title: val })); setFullMetaState(prev => ({ ...prev, shopify_title: val })); }} autoComplete="off" helpText="Format: Stone Family — Origin Location — Piece Name" />
-                    <TextField label="Origin Handle (override)" value={formState.origin_handle || fullMetaState.origin_handle || ""} onChange={(val) => { setFormState(prev => ({ ...prev, origin_handle: val })); setFullMetaState(prev => ({ ...prev, origin_handle: val })); }} autoComplete="off" helpText="e.g. the-richardson-strike — leave blank to auto-resolve from title" />
+                    <TextField label="Product Title" value={formState.shopify_title || fullMetaState.shopify_title || product?.title || ""} onChange={(val) => { setFormState(prev => ({ ...prev, shopify_title: val })); setFullMetaState(prev => ({ ...prev, shopify_title: val })); fullMetaStateRef.current = { ...fullMetaStateRef.current, shopify_title: val }; }} autoComplete="off" helpText="Format: Stone Family — Origin Location — Piece Name" />
+                    <TextField label="Origin Handle (override)" value={formState.origin_handle || fullMetaState.origin_handle || ""} onChange={(val) => { setFormState(prev => ({ ...prev, origin_handle: val })); setFullMetaState(prev => ({ ...prev, origin_handle: val })); fullMetaStateRef.current = { ...fullMetaStateRef.current, origin_handle: val }; }} autoComplete="off" helpText="e.g. the-richardson-strike — leave blank to auto-resolve from title" />
                     
                     <div style={{ marginTop: "16px" }}>
                       <Text variant="headingMd" as="h3" fontWeight="bold">Upload New Hero Photo (overrides Shopify image for rescan)</Text>
