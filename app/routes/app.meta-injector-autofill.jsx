@@ -21,11 +21,14 @@ function buildMasterVisionPrompt({
   // 🟢 FIX: Added <br> tags to prevent link mashing in bodyHtml for Google Bot
   let dwellButtonsHTML = `<br><br><a href="${targetUrlPath}">${fullCollectionTitle} Story</a>\n<br><a href="${collectionUrlPath}">${fullCollectionTitle} Collection</a>`;
   
+  // 🟢 FIX: Enforcing the exact 6-link rule for Richardson's Rock Ranch
   if (originSegment === "Richardson's Rock Ranch" || targetUrlPath.includes("the-richardson-strike")) {
     dwellButtonsHTML = `<br><br><a href="/pages/the-richardson-strike">Richardson's Rock Ranch Story</a>
 <br><a href="/collections/richardsons-rock-ranch">Richardson's Rock Ranch Collection</a>
 <br><a href="/pages/the-3-000-mile-run">The 3,000-Mile Run Story</a>
-<br><a href="/collections/the-3-000-mile-run-1">The 3,000-Mile Run Collection</a>`;
+<br><a href="/collections/the-3-000-mile-run-1">The 3,000-Mile Run Collection</a>
+<br><a href="/pages/the-shopped-rock">The Shopped Rock Story</a>
+<br><a href="/collections/the-shopped-rock">The Shopped Rock Collection</a>`;
   }
 
   return `You are a lapidary artist and master jeweler for Rockhound Studio. Analyze this photo and return a JSON object.
@@ -74,7 +77,7 @@ ${originStory}
   * RAW SLAB BRANCH: If the image shows an unpolished flat stone next to a ruler, or if cut_and_shape contains "Slab" or "Raw", or primary_use is "Loose Stone", force these output values: Set google_product_category to exactly: Arts & Entertainment > Hobbies & Creative Arts > Arts & Crafts > Crafting Materials, surface_finish = "Natural/Raw", jewelry_type = "N/A", setting_ready = "None", is_ooak = "Yes", rarity = "One-of-a-Kind", bail_included = "None", wire_material = "None", necklace_design = "", jewelry_finding_type = "", chain_link_type = "". The generated_description must address lapidary hobbyists — describe pattern potential, slab dimensions from the ruler, and that it is ready to cut.
   * PRIMARY/SECONDARY MEDIUM RULE: primary_medium = the stone material itself (e.g. Labradorite, Brecciated Quartz, Green Jasper) — NEVER the setting, bail, or finding. secondary_medium = the setting or finding (e.g. Silver Tone Alloy Bezel, Pinch Bail, None). The stone is always primary. The hardware is always secondary. This rule applies to every product type without exception. primary_medium must always match the stone mineral name from the product title segment 1. Never infer or guess the stone type from color, texture, or appearance. If the title says 'Banded Micaceous Quartzite', primary_medium is 'Banded Micaceous Quartzite' — not 'Chert', not 'Quartz', not any other visual guess.
   * THE LOOSE STONE OVERRIDE: If this is a bare, loose stone with NO metal, setting, wire, or bail, you MUST return strictly "None" for setting_ready, wire_material, secondary_medium, chain_material, and bail_included. Do NOT guess or hallucinate metal for a bare rock.
-  * HARDWARE PHYSICS LAW: bail_included describes the visibly attached bail or mounting. jewelry_finding_type describes a separate finding only when one is visibly present. Never return both Integrated Bezel Bail and Pinch Bail for the same visible hardware. If the photo clearly shows an Integrated Bezel Bail, jewelry_finding_type must use the existing approved None or N/A value. If the photo clearly shows a separate Pinch Bail, use the existing approved Pinch Bail value consistently. If the hardware cannot be identified clearly, use the existing approved blank, None, or N/A value. Do not guess. Preserve the exact existing dropdown values.
+  * HARDWARE PHYSICS LAW: bail_included and jewelry_finding_type are STRICTLY MUTUALLY EXCLUSIVE. If bail_included is anything other than "None" (e.g., "Integrated Bezel Bail" or "Silver Plated Pinch Bail"), then jewelry_finding_type MUST be exactly "None". You cannot populate both. If the photo shows an Integrated Bezel Bail, set bail_included to "Integrated Bezel Bail" and force jewelry_finding_type to "None". Preserve the exact existing dropdown values. Do not guess.
   * setting_ready: Look closely at the mounting. If cabochon is in a bezel setting, MUST return "Bezel Setting - Ready to Wear". If prong setting, return "Prong Setting - Ready to Wear". If wire wrapped, return "Wire Wrapped - Ready to Wear". If loose or unmounted, return "None".
   * wire_material: If wire wrapped, output the wire metal (e.g., "Antiqued Copper Wire"). If in a bezel or prong setting with zero wire, or loose, MUST return strictly: "None".
   * surface_finish: Describe the stone's surface finish as seen in the photo. Use terms like "High Polish", "Matte", "Satin", "Natural/Raw", "Tumbled". Do not leave blank.
@@ -1031,11 +1034,14 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
 
       let dwellButtonsHTML = `<br><br><a href="${targetUrlPath}">${fullCollectionTitle} Story</a>\n<br><a href="${collectionUrlPath}">${fullCollectionTitle} Collection</a>`;
       
+      // 🟢 FIX: Enforcing the exact 6-link rule for Richardson's Rock Ranch
       if (originSegment === "Richardson's Rock Ranch" || targetUrlPath.includes("the-richardson-strike")) {
         dwellButtonsHTML = `<br><br><a href="/pages/the-richardson-strike">Richardson's Rock Ranch Story</a>
 <br><a href="/collections/richardsons-rock-ranch">Richardson's Rock Ranch Collection</a>
 <br><a href="/pages/the-3-000-mile-run">The 3,000-Mile Run Story</a>
-<br><a href="/collections/the-3-000-mile-run-1">The 3,000-Mile Run Collection</a>`;
+<br><a href="/collections/the-3-000-mile-run-1">The 3,000-Mile Run Collection</a>
+<br><a href="/pages/the-shopped-rock">The Shopped Rock Story</a>
+<br><a href="/collections/the-shopped-rock">The Shopped Rock Collection</a>`;
       }
 
       const promptText = `You are writing a product description for Rockhound Studio, a lapidary art studio run by Bob and Janyce, married 34 years, both artists, both rockhounds. They cut and polish every stone themselves in Spokane Valley WA.
