@@ -18,10 +18,8 @@ function buildMasterVisionPrompt({
   fullCollectionTitle,
   collectionUrlPath
 }) {
-  // 🟢 FIX: Added <br> tags to prevent link mashing in bodyHtml for Google Bot
   let dwellButtonsHTML = `<br><br><a href="${targetUrlPath}">${fullCollectionTitle} Story</a>\n<br><a href="${collectionUrlPath}">${fullCollectionTitle} Collection</a>`;
   
-  // 🟢 FIX: Enforcing the exact 6-link rule for Richardson's Rock Ranch
   if (originSegment === "Richardson's Rock Ranch" || targetUrlPath.includes("the-richardson-strike")) {
     dwellButtonsHTML = `<br><br><a href="/pages/the-richardson-strike">Richardson's Rock Ranch Story</a>
 <br><a href="/collections/richardsons-rock-ranch">Richardson's Rock Ranch Collection</a>
@@ -56,6 +54,7 @@ CRITICAL ANTI-HALLUCINATION RULE: NEVER use the word "shocked" or "Shocked Rock"
 - setting_ready
 - wire_material
 - bail_included
+- jewelry_finding_type: CRITICAL EXCLUSIVITY LAW. If bail_included has any value other than "None", this field MUST be exactly "None". 
 - alt_text: Write a concise, descriptive alt text for this image (max 125 characters). Describe the stone, its color, finish, and setting as seen in the photo. Plain language, no brand name. alt_text must use the stone mineral name from title segment 1. Never describe the stone type from visual appearance. If the title says 'Breccia Aventurine', write 'Breccia Aventurine' in the alt_text — never 'jasper', 'green stone', or any visual inference.
 - found_object: Return "Yes" if this stone was field-collected or found in nature. Return "No" if it is a shopped, purchased, or imported stone.
 - chain_material: If a necklace chain is visible, identify it as exactly one of: "Silver Plated Snake Chain", "Gold Plated Snake Chain", "Sterling Silver Chain", "Cord". If no chain is visible, return "None".
@@ -74,7 +73,7 @@ FULL ORIGIN STORY:
 ${originStory}
 
 - MANDATORY BENCH FINDINGS & JEWELRY LAWS (CRITICAL FOR LOOSE STONES):
-  * RAW SLAB BRANCH: If the image shows an unpolished flat stone next to a ruler, or if cut_and_shape contains "Slab" or "Raw", or primary_use is "Loose Stone", force these output values: Set google_product_category to exactly: Arts & Entertainment > Hobbies & Creative Arts > Arts & Crafts > Crafting Materials, surface_finish = "Natural/Raw", jewelry_type = "N/A", setting_ready = "None", is_ooak = "Yes", rarity = "One-of-a-Kind", bail_included = "None", wire_material = "None", necklace_design = "", jewelry_finding_type = "", chain_link_type = "". The generated_description must address lapidary hobbyists — describe pattern potential, slab dimensions from the ruler, and that it is ready to cut.
+  * RAW SLAB BRANCH: If the image shows an unpolished flat stone next to a ruler, or if cut_and_shape contains "Slab" or "Raw", or primary_use is "Loose Stone", force these output values: Set google_product_category to exactly: Arts & Entertainment > Hobbies & Creative Arts > Arts & Crafts > Crafting Materials, surface_finish = "Natural/Raw", jewelry_type = "N/A", setting_ready = "None", is_ooak = "Yes", rarity = "One-of-a-Kind", bail_included = "None", wire_material = "None", necklace_design = "", jewelry_finding_type = "None", chain_link_type = "None". The generated_description must address lapidary hobbyists — describe pattern potential, slab dimensions from the ruler, and that it is ready to cut.
   * PRIMARY/SECONDARY MEDIUM RULE: primary_medium = the stone material itself (e.g. Labradorite, Brecciated Quartz, Green Jasper) — NEVER the setting, bail, or finding. secondary_medium = the setting or finding (e.g. Silver Tone Alloy Bezel, Pinch Bail, None). The stone is always primary. The hardware is always secondary. This rule applies to every product type without exception. primary_medium must always match the stone mineral name from the product title segment 1. Never infer or guess the stone type from color, texture, or appearance. If the title says 'Banded Micaceous Quartzite', primary_medium is 'Banded Micaceous Quartzite' — not 'Chert', not 'Quartz', not any other visual guess.
   * THE LOOSE STONE OVERRIDE: If this is a bare, loose stone with NO metal, setting, wire, or bail, you MUST return strictly "None" for setting_ready, wire_material, secondary_medium, chain_material, and bail_included. Do NOT guess or hallucinate metal for a bare rock.
   * HARDWARE PHYSICS LAW: bail_included and jewelry_finding_type are STRICTLY MUTUALLY EXCLUSIVE. If bail_included is anything other than "None" (e.g., "Integrated Bezel Bail" or "Silver Plated Pinch Bail"), then jewelry_finding_type MUST be exactly "None". You cannot populate both. If the photo shows an Integrated Bezel Bail, set bail_included to "Integrated Bezel Bail" and force jewelry_finding_type to "None". Preserve the exact existing dropdown values. Do not guess.
@@ -514,6 +513,7 @@ export const action = async ({ request }) => {
                       chain_material: { type: "STRING" },
                       jewelry_type: { type: "STRING" },
                       necklace_design: { type: "STRING" },
+                      jewelry_finding_type: { type: "STRING" },
                       rarity: { type: "STRING" },
                       authenticity: { type: "STRING" },
                       google_product_category: { type: "STRING" },
@@ -578,6 +578,10 @@ export const action = async ({ request }) => {
 
         const parsedVision = visionFields || {};
         const jewelry_type = visionFields.jewelry_type || "N/A";
+        
+        // 🟢 FIX: Absolute enforcement of jewelry finding rule. If bail is active, finding MUST be None.
+        const activeBail = parsedVision.bail_included || "None";
+        const finalFindingType = activeBail !== "None" ? "None" : (parsedVision.jewelry_finding_type || "None");
 
         const payload = sanitizeObject({
           origin_story: origin_story,
@@ -596,6 +600,7 @@ export const action = async ({ request }) => {
           cut_and_shape: visionFields.cut_and_shape || "",
           jewelry_type: jewelry_type,
           necklace_design: jewelry_type === "Pendant" ? "Pendant" : (visionFields.necklace_design || ""),
+          jewelry_finding_type: finalFindingType,
           color_pattern: visionFields.color_pattern || visionFields.pattern || "",
           material: finalMaterial,
           generated_description: visionFields.generated_description || "",
@@ -606,7 +611,7 @@ export const action = async ({ request }) => {
           primary_medium: derivedFamily,
           wire_material: visionFields.wire_material || "None",
           setting_ready: visionFields.setting_ready || "None",
-          bail_included: visionFields.bail_included || "None",
+          bail_included: activeBail,
           chain_material: visionFields.chain_material || "None",
           mohs_hardness: geoFields.mohs_hardness || "",
           luster: geoFields.luster || "",
@@ -891,6 +896,7 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
                 chain_material: { type: "STRING" },
                 jewelry_type: { type: "STRING" },
                 necklace_design: { type: "STRING" },
+                jewelry_finding_type: { type: "STRING" },
                 rarity: { type: "STRING" },
                 authenticity: { type: "STRING" },
                 google_product_category: { type: "STRING" },
@@ -926,7 +932,10 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
         const resolved_secondary_medium = parsedVision.secondary_medium || "None";
         const resolved_wire_material = parsedVision.wire_material || "None";
         const resolved_setting_ready = parsedVision.setting_ready || "None";
-        const resolved_bail_included = parsedVision.bail_included || "None";
+
+        // 🟢 FIX: Absolute enforcement of jewelry finding rule. If bail is active, finding MUST be None.
+        const activeBail = parsedVision.bail_included || "None";
+        const finalFindingType = activeBail !== "None" ? "None" : (parsedVision.jewelry_finding_type || "None");
 
         let final_desc = parsedVision.generated_description || "";
         const lowerDesc = final_desc.toLowerCase();
@@ -955,6 +964,7 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
           stone_shape: visionFields.stone_shape || parsedVision.stone_shape || "",
           jewelry_type: jewelry_type,
           necklace_design: jewelry_type === "Pendant" ? "Pendant" : (parsedVision.necklace_design || ""),
+          jewelry_finding_type: finalFindingType,
           rarity: parsedVision.rarity || "Common",
           authenticity: parsedVision.authenticity || "Authentic",
           color_pattern: parsedVision.color_pattern || parsedVision.pattern || "",
@@ -964,7 +974,7 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
           secondary_medium: resolved_secondary_medium,
           wire_material: resolved_wire_material,
           setting_ready: resolved_setting_ready,
-          bail_included: resolved_bail_included,
+          bail_included: activeBail,
           origin_story: extractedStory,
           stone_family: derivedFamily,
           piece_name: pieceNameSegment,
