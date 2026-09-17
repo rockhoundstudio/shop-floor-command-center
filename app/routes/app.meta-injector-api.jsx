@@ -2,12 +2,6 @@ import { data } from "react-router";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 
-const CRITICAL_SHOPIFY_KEYS = [
-  "color_pattern", "jewelry_type", "necklace_design", "target_gender",
-  "mineral_class", "crystal_system", "rock_composition", "geological_era",
-  "rock_formation", "authenticity", "rarity", "condition", "jewelry_material"
-];
-
 function chunkArray(arr, size) {
   const chunks = [];
   for (let i = 0; i < arr.length; i += size) {
@@ -16,7 +10,6 @@ function chunkArray(arr, size) {
   return chunks;
 }
 
-// 🟢 FIX: THE GEO-STRIPPER
 function extractStoneName(title) {
   if (!title) return "Unknown";
   
@@ -62,7 +55,6 @@ function normalizeMetafieldValue(key, value) {
 function applyOriginOverridesBeforeApi(title, metafieldsArray) {
   let newMetafields = [...(metafieldsArray || [])];
 
-  // 1. Strip out ANY incoming handles so we can rebuild them accurately and kill typos
   newMetafields = newMetafields.filter(m => m.key !== "origin_handle" && m.key !== "origin_page_handle");
 
   if (title && typeof title === "string") {
@@ -102,13 +94,35 @@ function applyOriginOverridesBeforeApi(title, metafieldsArray) {
   return newMetafields;
 }
 
+function sanitizeDescription(html) {
+  if (!html || typeof html !== "string") return html;
+  let safeHtml = html;
+  
+  const targets = [
+    "/pages/the-shopped-rock",
+    "/collections/the-shopped-rock",
+    "/pages/the-shocked-rock",
+    "/collections/the-shocked-rock"
+  ];
+  
+  for (const target of targets) {
+    const regexNormal = new RegExp(`<a[^>]*href=["']?[^"'>]*${target.replace(/\//g, '\\/')}["']?[^>]*>.*?<\\/a>`, 'gi');
+    safeHtml = safeHtml.replace(regexNormal, "");
+    
+    const regexEscaped = new RegExp(`&lt;a[^&]*href=[&quot;']?[^&quot;'>]*${target.replace(/\//g, '\\/')}[&quot;']?[^&]*&gt;.*?&lt;\\/a&gt;`, 'gi');
+    safeHtml = safeHtml.replace(regexEscaped, "");
+  }
+  
+  return safeHtml;
+}
+
 const MASTER_TYPE_MAP = {
   rescued_by: "single_line_text_field",
   origin_location: "single_line_text_field",
   geological_age: "single_line_text_field",
   mohs_hardness: "single_line_text_field",
   official_name: "single_line_text_field",
-   luster: "single_line_text_field",
+  luster: "single_line_text_field",
   specific_gravity: "single_line_text_field",
   fracture_pattern: "single_line_text_field",
   cleavage: "single_line_text_field",
@@ -147,20 +161,14 @@ const MASTER_TYPE_MAP = {
   seo_title: "single_line_text_field",
   secondary_medium: "single_line_text_field",
   treated: "single_line_text_field",
-
-  // 🔴 NUMBERS: strictly number_decimal to match Shopify definitions
   weight_grams: "number_decimal",
   shipping_weight_oz: "number_decimal",
   price: "number_decimal",
-
-  // 🔴 TEXT BLOCKS: align with definitions
   origin_story: "multi_line_text_field",
   honest_flaws: "single_line_text_field",
   honest_flaws_and_character: "multi_line_text_field",
   generated_description: "multi_line_text_field",
   artist_notes: "multi_line_text_field",
-
-  // SHOPIFY TAXONOMY / METAOBJECTS
   color_pattern: "list.metaobject_reference",
   "color-pattern": "list.metaobject_reference",
   material: "metaobject_reference",
@@ -195,32 +203,14 @@ const MASTER_TYPE_MAP = {
 
 const EXPLICIT_METAOBJECT_KEYS = [
   "material", "color-pattern", "color_pattern", "jewelry-material", "jewelry_material",
-  "target-gender", "target-gender", "age-group", "age_group", "condition", "rarity", 
+  "target-gender", "age-group", "age_group", "condition", "rarity", 
   "authenticity", "jewelry-type", "jewelry_type", "necklace-design", "necklace_design", 
-  "crystal-system", "crystal-system", "geological-era", "geological_era", 
+  "crystal-system", "geological-era", "geological_era", 
   "mineral-class", "mineral_class", "rock-composition", "rock_composition", 
   "rock-formation", "rock_formation", "chain-link-type", "chain_link_type",
   "jewelry-finding-type", "jewelry_finding_type"
 ];
 
-// 🔴 THE HARD SKIP LIST: These belong to the shopify/ namespace exclusively.
-const SKIP_KEYS = [
-  "color_pattern",
-  "jewelry_type",
-  "necklace_design",
-  "target_gender",
-  "mineral_class",
-  "crystal_system",
-  "rock_composition",
-  "geological_era",
-  "rock_formation",
-  "authenticity",
-  "rarity",
-  "condition",
-  "jewelry_material"
-];
-
-// 🟢 THE GHOST DELETE SEQUENCE
 async function executeGhostDelete(admin, productGid) {
   try {
     const lookupResponse = await admin.graphql(
@@ -242,7 +232,6 @@ async function executeGhostDelete(admin, productGid) {
     const safeNamespaces = ["shopify", "judgeme", "mm-google-shopping", "mc-facebook"];
 
     const toDelete = allMeta.map(e => e.node).filter(m => {
-      // Never touch safe namespaces or internal app namespaces
       if (safeNamespaces.includes(m.namespace) || m.namespace.startsWith("app-")) return false;
       
       if (m.namespace === "custom") {
@@ -253,18 +242,13 @@ async function executeGhostDelete(admin, productGid) {
     });
 
     if (toDelete.length > 0) {
-      const deleteResponse = await admin.graphql(
+      await admin.graphql(
         `#graphql
         mutation metafieldsDelete($metafields: [MetafieldIdentifierInput!]!) {
           metafieldsDelete(metafields: $metafields) { deletedMetafields { key namespace ownerId } userErrors { field message } }
         }`,
         { variables: { metafields: toDelete.map(m => ({ ownerId: productGid, namespace: m.namespace, key: m.key })) } }
       );
-      const deleteResult = await deleteResponse.json();
-      const deleted = deleteResult?.data?.metafieldsDelete?.deletedMetafields || [];
-      deleted.forEach(d => {
-        console.log(`[GHOST DELETE] Deleted ghost field: ${d.namespace}/${d.key}`);
-      });
     }
   } catch (err) {
     console.error("Ghost delete error:", err);
@@ -275,28 +259,13 @@ export const action = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
   const rawFormData = await request.formData();
 
-  // 🟢 FIX: THE INTAKE MANIFOLD FILTER
   const formData = new FormData();
   for (const [key, value] of rawFormData.entries()) {
-    if (typeof value === "string") {
-      let safeString = value;
-      safeString = safeString.replace(/Shocked\s*Rock/gi, "Shopped Rock");
-      safeString = safeString.replace(/the-shocked-rock/gi, "the-shopped-rock");
-      safeString = safeString.replace(/shocked[-_]rock/gi, "shopped-rock");
-      safeString = safeString.replace(/shocked%2Drock/gi, "shopped-rock");
-      formData.append(key, safeString);
-    } else {
-      formData.append(key, value);
-    }
+    formData.append(key, value);
   }
-
-  console.log("[MANIFOLD CHECK] descriptionHtml:", formData.get("descriptionHtml")?.slice(0, 200));
 
   const intent = formData.get("intent");
 
-  // ==========================================
-  // 🟢 INTENT 1: AUTO-FILL (Mindat & Cache)
-  // ==========================================
   if (intent === "auto_fill_single") {
     const title = formData.get("title");
     const stoneName = extractStoneName(title);
@@ -343,20 +312,19 @@ export const action = async ({ request }) => {
 
       return data({ success: true, message: `Loaded data for ${stoneName} from database.`, fields: JSON.parse(cachedStone.data) });
     } catch (error) {
-      console.error("Cache Error:", error);
       return data({ success: false, message: "Database connection failed." }, { status: 500 });
     }
   }
 
-  // ==========================================
-  // 🔵 INTENT 2: LOCK DATA TO SHOPIFY
-  // ==========================================
   if (intent === "saveMetafields") {
     try {
+      const allErrors = [];
       const rawPayload = formData.get("payload") || formData.get("metafields");
       const directWeightGrams = formData.get("weightGrams");
       const directShippingWeightOz = formData.get("shippingWeightOz");
       const fallbackProductId = formData.get("productId");
+      const descriptionHtmlRaw = formData.get("descriptionHtml");
+      const descriptionHtml = sanitizeDescription(descriptionHtmlRaw);
 
       if (!rawPayload && !directWeightGrams && !fallbackProductId) {
         return data({ intent: "saveMetafields", success: false, message: "No data provided to save." });
@@ -369,7 +337,6 @@ export const action = async ({ request }) => {
         payloadArray = [];
       }
 
-      // Explicitly inject manual weight fields if passed directly through form
       if (directWeightGrams && !payloadArray.some(p => p.key === "weight_grams")) {
         payloadArray.push({
           ownerId: fallbackProductId,
@@ -390,102 +357,113 @@ export const action = async ({ request }) => {
         });
       }
 
-      let setMetafields = payloadArray
-        .filter(item => {
-          if (item.value === null || item.value === undefined || String(item.value).trim() === "") return false;
-          
-          let ns = item.namespace || "custom";
-          if (item.key === "is_ooak" || ns === "none" || ns === "") ns = "custom";
+      const finalShippingOz = directShippingWeightOz || payloadArray.find(item => item.key === "shipping_weight_oz")?.value;
+      const finalWeightGrams = directWeightGrams || payloadArray.find(item => item.key === "weight_grams")?.value;
 
-          // 🔴 CRITICAL NAMESPACE RULE: Never write these keys to custom/
-          if (CRITICAL_SHOPIFY_KEYS.includes(item.key) && ns === "custom") return false;
+      console.log(`[saveMetafields] Product ID: ${fallbackProductId}`);
+      console.log(`[saveMetafields] Payload fields received: ${payloadArray.length}`);
+      console.log(`[saveMetafields] descriptionHtml received: ${!!descriptionHtmlRaw}`);
+      console.log(`[saveMetafields] Submitted weight_grams: ${finalWeightGrams}`);
+      console.log(`[saveMetafields] Submitted shippingWeightOz: ${finalShippingOz}`);
 
-          if (!MASTER_TYPE_MAP.hasOwnProperty(item.key)) return false;
+      const explicitBlanks = [];
 
-          const resolvedType = MASTER_TYPE_MAP[item.key];
-          
-          // 🔴 GUARD FOR METAOBJECT REFERENCES: Skip "N/A", "None", empty
-          if ((resolvedType && resolvedType.includes("metaobject_reference")) || EXPLICIT_METAOBJECT_KEYS.includes(item.key)) {
-            const valStr = String(item.value).trim().toLowerCase();
-            if (["n/a", "none", "null", "undefined", ""].includes(valStr)) return false;
-          }
+      let setMetafields = payloadArray.flatMap(item => {
+        const itemOwnerId = item.ownerId || fallbackProductId;
+        if (!itemOwnerId) return [];
 
-          return true;
-        })
-        .flatMap(item => {
-          const itemOwnerId = item.ownerId || fallbackProductId;
-          if (!itemOwnerId) throw new Error(`Missing ownerId for field: ${item.key}`);
+        let resolvedId = itemOwnerId.startsWith("gid://") ? itemOwnerId : `gid://shopify/Product/${itemOwnerId.split("/").pop()}`;
+        
+        let resolvedNamespace = item.namespace || "custom";
+        if (item.key === "is_ooak" || resolvedNamespace === "none" || resolvedNamespace === "") {
+          resolvedNamespace = "custom";
+        }
 
-          let resolvedId = `gid://shopify/Product/${itemOwnerId.split("/").pop()}`;
-          if (itemOwnerId.startsWith("gid://")) resolvedId = itemOwnerId;
+        const valStr = String(item.value).trim();
+        
+        if (valStr === "" || valStr.toLowerCase() === "none" || valStr.toLowerCase() === "n/a" || valStr.toLowerCase() === "null" || valStr.toLowerCase() === "undefined") {
+          explicitBlanks.push({ ownerId: resolvedId, namespace: resolvedNamespace, key: item.key });
+          return [];
+        }
 
-          let resolvedNamespace = item.namespace || "custom";
-          if (item.key === "is_ooak" || resolvedNamespace === "none" || resolvedNamespace === "") {
-            resolvedNamespace = "custom";
-          }
+        let resolvedType = "single_line_text_field";
+        const multiLineKeys = ["origin_story", "artist_notes", "honest_flaws_and_character", "bench_notes", "generated_description"];
+        const decimalKeys = ["weight_grams", "shipping_weight_oz", "price"];
+        const listSingleLineKeys = ["character_marks"];
 
-          // 🟢 THE FIX: Strictly assign types for the custom/ namespace
-          let resolvedType = "single_line_text_field";
-          const multiLineKeys = ["origin_story", "artist_notes", "honest_flaws_and_character", "bench_notes", "generated_description"];
-          const decimalKeys = ["weight_grams", "shipping_weight_oz", "price"];
-          const listSingleLineKeys = ["character_marks"];
+        if (item.key === "generated_description") {
+          item.value = sanitizeDescription(valStr);
+        }
 
-          let normalizedValue = normalizeMetafieldValue(item.key, item.value);
-          let resolvedValue = normalizedValue;
+        let normalizedValue = normalizeMetafieldValue(item.key, item.value);
+        let resolvedValue = normalizedValue;
 
-          if (resolvedNamespace === "custom") {
-            if (multiLineKeys.includes(item.key)) {
-              resolvedType = "multi_line_text_field";
-              if (resolvedValue.length > 10000) resolvedValue = resolvedValue.slice(0, 10000);
-            } else if (decimalKeys.includes(item.key)) {
-              resolvedType = "number_decimal";
-              const parsedNum = parseFloat(String(normalizedValue).replace(/[^0-9.-]/g, ""));
-              if (isNaN(parsedNum)) {
-                resolvedValue = "0.0";
-              } else {
-                resolvedValue = parsedNum % 1 === 0 ? parsedNum.toFixed(1) : String(parsedNum);
-              }
-            } else if (listSingleLineKeys.includes(item.key)) {
-              resolvedType = "list.single_line_text_field";
-              resolvedValue = JSON.stringify([String(normalizedValue).trim()]);
-            } else {
-              resolvedType = "single_line_text_field";
-              if (resolvedValue.length > 255) resolvedValue = resolvedValue.slice(0, 255);
-            }
+        if (resolvedNamespace === "custom") {
+          if (multiLineKeys.includes(item.key)) {
+            resolvedType = "multi_line_text_field";
+            if (resolvedValue.length > 10000) resolvedValue = resolvedValue.slice(0, 10000);
+          } else if (decimalKeys.includes(item.key)) {
+            resolvedType = "number_decimal";
+            const parsedNum = parseFloat(String(normalizedValue).replace(/[^0-9.-]/g, ""));
+            resolvedValue = isNaN(parsedNum) ? "0.0" : (parsedNum % 1 === 0 ? parsedNum.toFixed(1) : String(parsedNum));
+          } else if (listSingleLineKeys.includes(item.key)) {
+            resolvedType = "list.single_line_text_field";
+            resolvedValue = JSON.stringify([String(normalizedValue).trim()]);
           } else {
-             resolvedType = MASTER_TYPE_MAP[item.key] || "single_line_text_field";
-             if (resolvedType === "number_decimal") {
-               const parsedNum = parseFloat(String(normalizedValue).replace(/[^0-9.-]/g, ""));
-               if (isNaN(parsedNum)) {
-                 resolvedValue = "0.0";
-               } else {
-                 resolvedValue = parsedNum % 1 === 0 ? parsedNum.toFixed(1) : String(parsedNum);
-               }
-             } else if (resolvedType.startsWith("list.")) {
-               resolvedValue = JSON.stringify([normalizedValue]);
-             }
+            resolvedType = "single_line_text_field";
+            if (resolvedValue.length > 255) resolvedValue = resolvedValue.slice(0, 255);
           }
+        } else {
+           resolvedType = MASTER_TYPE_MAP[item.key] || "single_line_text_field";
+           if (resolvedType === "number_decimal") {
+             const parsedNum = parseFloat(String(normalizedValue).replace(/[^0-9.-]/g, ""));
+             resolvedValue = isNaN(parsedNum) ? "0.0" : (parsedNum % 1 === 0 ? parsedNum.toFixed(1) : String(parsedNum));
+           } else if (resolvedType.startsWith("list.")) {
+             resolvedValue = JSON.stringify([normalizedValue]);
+           }
+        }
 
-          const fieldsToReturn = [];
+        const fieldsToReturn = [];
 
-          if (item.key === "seo_title") {
-            fieldsToReturn.push({ ownerId: resolvedId, namespace: "global", key: "title_tag", type: "single_line_text_field", value: resolvedValue });
-            fieldsToReturn.push({ ownerId: resolvedId, namespace: "custom", key: "seo_title", type: "single_line_text_field", value: resolvedValue });
-          } else if (item.key === "generated_description") {
-            fieldsToReturn.push({ ownerId: resolvedId, namespace: "global", key: "description_tag", type: "single_line_text_field", value: resolvedValue.slice(0, 320) });
-            fieldsToReturn.push({ ownerId: resolvedId, namespace: resolvedNamespace, key: item.key, type: resolvedType, value: resolvedValue });
-          } else if (["age_group", "target_gender", "condition"].includes(item.key)) {
-            fieldsToReturn.push({ ownerId: resolvedId, namespace: "google", key: item.key, type: "single_line_text_field", value: resolvedValue });
-          } else {
-            fieldsToReturn.push({ ownerId: resolvedId, namespace: resolvedNamespace, key: item.key, type: resolvedType, value: resolvedValue });
-          }
+        if (item.key === "seo_title") {
+          fieldsToReturn.push({ ownerId: resolvedId, namespace: "global", key: "title_tag", type: "single_line_text_field", value: resolvedValue });
+          fieldsToReturn.push({ ownerId: resolvedId, namespace: "custom", key: "seo_title", type: "single_line_text_field", value: resolvedValue });
+        } else if (item.key === "generated_description") {
+          fieldsToReturn.push({ ownerId: resolvedId, namespace: "global", key: "description_tag", type: "single_line_text_field", value: resolvedValue.slice(0, 320) });
+          fieldsToReturn.push({ ownerId: resolvedId, namespace: resolvedNamespace, key: item.key, type: resolvedType, value: resolvedValue });
+        } else if (["age_group", "target_gender", "condition"].includes(item.key)) {
+          fieldsToReturn.push({ ownerId: resolvedId, namespace: "google", key: item.key, type: "single_line_text_field", value: resolvedValue });
+        } else {
+          fieldsToReturn.push({ ownerId: resolvedId, namespace: resolvedNamespace, key: item.key, type: resolvedType, value: resolvedValue });
+        }
 
-          return fieldsToReturn;
-        });
+        return fieldsToReturn;
+      });
 
       const productTitle = formData.get("productTitle");
       if (productTitle) {
         setMetafields = applyOriginOverridesBeforeApi(productTitle, setMetafields);
+      }
+
+      if (explicitBlanks.length > 0) {
+        const chunks = chunkArray(explicitBlanks, 250);
+        for (let i = 0; i < chunks.length; i++) {
+          try {
+            const deleteResponse = await admin.graphql(
+              `#graphql
+              mutation metafieldsDelete($metafields: [MetafieldIdentifierInput!]!) {
+                metafieldsDelete(metafields: $metafields) { userErrors { message field } }
+              }`,
+              { variables: { metafields: chunks[i] } }
+            );
+            const deleteJson = await deleteResponse.json();
+            if (deleteJson?.data?.metafieldsDelete?.userErrors?.length) {
+              allErrors.push(...deleteJson.data.metafieldsDelete.userErrors);
+            }
+          } catch (err) {
+            allErrors.push({ message: `Delete blanks error: ${err.message}` });
+          }
+        }
       }
 
       if (setMetafields.length > 0) {
@@ -493,33 +471,26 @@ export const action = async ({ request }) => {
         setMetafields.forEach(m => uniqueSet.set(`${m.namespace}:${m.key}`, m));
         setMetafields = Array.from(uniqueSet.values());
 
-        console.log("[CANONICAL WRITE]");
         const chunks = chunkArray(setMetafields, 25);
-        const allErrors = [];
-
         for (let i = 0; i < chunks.length; i++) {
-          console.log(`[BATCH ${i + 1} of ${chunks.length}]`);
-          const response = await admin.graphql(
-            `#graphql
-            mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
-              metafieldsSet(metafields: $metafields) { userErrors { field message } }
-            }`,
-            { variables: { metafields: chunks[i] } }
-          );
-          const result = await response.json();
-          const batchErrors = result?.data?.metafieldsSet?.userErrors || [];
-          if (batchErrors.length > 0) allErrors.push(...batchErrors);
-        }
-
-        if (allErrors.length > 0) {
-          return data({ success: false, message: "Saved with errors: " + allErrors.map(e => e.message).join(" | "), errors: allErrors });
+          try {
+            const response = await admin.graphql(
+              `#graphql
+              mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
+                metafieldsSet(metafields: $metafields) { userErrors { field message } }
+              }`,
+              { variables: { metafields: chunks[i] } }
+            );
+            const result = await response.json();
+            const batchErrors = result?.data?.metafieldsSet?.userErrors || [];
+            if (batchErrors.length > 0) allErrors.push(...batchErrors);
+          } catch (err) {
+            allErrors.push({ message: `Metafields set error: ${err.message}` });
+          }
         }
       }
 
-      // Base Product Update, SEO Update, and Ghost Kill
       const newProductTitle = formData.get("productTitle");
-      const descriptionHtml = formData.get("descriptionHtml");
-      
       const seoItem = payloadArray.find(p => p.key === "seo_title");
       const seoTitleValue = seoItem ? String(seoItem.value).trim() : null;
 
@@ -536,35 +507,35 @@ export const action = async ({ request }) => {
 
           if (newProductTitle) { inputVars.title = newProductTitle; hasUpdates = true; }
           
-          if (descriptionHtml) { 
+          if (descriptionHtml !== null && descriptionHtml !== undefined) { 
             inputVars.descriptionHtml = descriptionHtml; 
             hasUpdates = true; 
           }
           if (seoTitleValue) { inputVars.seo = { title: seoTitleValue }; hasUpdates = true; }
 
           if (hasUpdates) {
-            await admin.graphql(
+            const updateResponse = await admin.graphql(
               `#graphql
               mutation productUpdate($input: ProductInput!) {
                 productUpdate(input: $input) { userErrors { field message } }
               }`,
               { variables: { input: inputVars } }
             );
+            const updateJson = await updateResponse.json();
+            if (updateJson?.data?.productUpdate?.userErrors?.length) {
+              allErrors.push(...updateJson.data.productUpdate.userErrors);
+            }
           }
 
-          // Execute Ghost Delete Sequence
           await executeGhostDelete(admin, productGid);
-
         } catch (err) {
-          console.warn("[saveMetafields] Base update or ghost kill failed:", err.message);
+          allErrors.push({ message: `Base update or ghost kill error: ${err.message}` });
         }
       }
 
-      // 🔴 Physical Variant Weight Sync
-      const finalShippingOz = directShippingWeightOz || payloadArray.find(item => item.key === "shipping_weight_oz")?.value;
       if (finalShippingOz && fallbackProductId) {
-        const parsedOz = parseFloat(String(finalShippingOz).replace(/[^0-9.-]/g, ""));
-        if (!isNaN(parsedOz) && parsedOz > 0) {
+        const parsedOz = parseFloat(String(finalShippingOz));
+        if (!isNaN(parsedOz) && parsedOz >= 0) {
           try {
             const productGid = `gid://shopify/Product/${fallbackProductId.split("/").pop()}`;
             const variantQuery = await admin.graphql(
@@ -576,30 +547,38 @@ export const action = async ({ request }) => {
             );
             const variantData = await variantQuery.json();
             const variantId = variantData?.data?.product?.variants?.edges?.[0]?.node?.id;
+            
             if (variantId) {
-              await admin.graphql(
+              console.log(`[saveMetafields] Writing official variant weight: ${parsedOz} OUNCES`);
+              const variantResponse = await admin.graphql(
                 `#graphql
                 mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
                   productVariantsBulkUpdate(productId: $productId, variants: $variants) { userErrors { field message } }
                 }`,
                 { variables: { productId: productGid, variants: [{ id: variantId, inventoryItem: { measurement: { weight: { value: parsedOz, unit: "OUNCES" } } } }] } }
               );
+              const variantJson = await variantResponse.json();
+              if (variantJson?.data?.productVariantsBulkUpdate?.userErrors?.length) {
+                allErrors.push(...variantJson.data.productVariantsBulkUpdate.userErrors);
+              }
             }
           } catch (weightErr) {
-            console.warn("[saveMetafields] Variant weight update failed:", weightErr.message);
+            allErrors.push({ message: `Variant weight update failed: ${weightErr.message}` });
           }
         }
       }
 
-      return data({ intent: "saveMetafields", success: true, message: "All metafields and variant weights locked in." });
+      if (allErrors.length > 0) {
+        return data({ intent: "saveMetafields", success: false, message: "Saved with errors.", errors: allErrors });
+      }
+
+      console.log(`[saveMetafields] Written ${setMetafields.length} metafields successfully.`);
+      return data({ intent: "saveMetafields", success: true, message: "All metafields and variant weights locked in.", writtenCount: setMetafields.length });
     } catch (error) {
       return data({ intent: "saveMetafields", success: false, error: error.message });
     }
   }
 
-  // ==========================================
-  // 🔴 INTENT 3: CLEAN MALFORMED KEYS
-  // ==========================================
   if (intent === "cleanMalformedKeys") {
     const productId = formData.get("productId");
     if (!productId) return data({ success: false, message: "No productId provided." });
@@ -638,9 +617,6 @@ export const action = async ({ request }) => {
     return data({ success: true, message: `Cleaned ${deleted.length} malformed metafield(s). Re-save the product to write them correctly.`, deleted });
   }
 
-  // ==========================================
-  // 🔴 INTENT 3.5: CLEAN ALL CAMEL KEYS (NUCLEAR SWEEP)
-  // ==========================================
   if (intent === "cleanAllCamelKeys") {
     try {
       let hasNextPage = true;
@@ -706,9 +682,6 @@ export const action = async ({ request }) => {
     }
   }
 
-  // ==========================================
-  // INTENT 4: STAGED UPLOAD
-  // ==========================================
   if (intent === "stagedUpload") {
     try {
       const file = formData.get("file_0");
@@ -752,9 +725,6 @@ export const action = async ({ request }) => {
     }
   }
 
-  // ==========================================
-  // INTENT 5: CREATE PRODUCT
-  // ==========================================
   if (intent === "createProduct") {
     try {
       const rawPayload = formData.get("payload");
@@ -769,7 +739,10 @@ export const action = async ({ request }) => {
       const originLocation = payload.collection_name ? payload.collection_name.replace(/\s+Collection$/i, "").trim() : (payload.origin_location || "Unknown Origin");
 
       const title = payload.title && !payload.title.includes("Unknown") ? payload.title : `${stoneFamily} — ${originLocation} — ${pieceName}`;
-      const descriptionHtml = payload.descriptionHtml || "";
+      
+      const descriptionHtmlRaw = payload.descriptionHtml || "";
+      const descriptionHtml = sanitizeDescription(descriptionHtmlRaw);
+      
       const price = String(payload.price || piece.price || "0.00");
       const productType = payload.productType || "Wearable Art";
       const status = payload.status || "DRAFT";
@@ -807,11 +780,11 @@ export const action = async ({ request }) => {
 
       await new Promise(resolve => setTimeout(resolve, 500));
 
-      // Variant Price & Weight Sync
-      const shippingOz = parseFloat(String(payload.shipping_weight_oz || piece.shipping_weight_oz || 0).replace(/[^0-9.-]/g, ""));
+      const shippingOzRaw = payload.shipping_weight_oz || piece.shipping_weight_oz || 0;
+      const shippingOz = parseFloat(String(shippingOzRaw));
       if (defaultVariantId) {
         const variantUpdateInput = { id: defaultVariantId, price: price };
-        if (!isNaN(shippingOz) && shippingOz > 0) {
+        if (!isNaN(shippingOz) && shippingOz >= 0) {
           variantUpdateInput.inventoryItem = {
             measurement: { weight: { value: shippingOz, unit: "OUNCES" } }
           };
@@ -828,7 +801,6 @@ export const action = async ({ request }) => {
         allUserErrors.push(...(variantResult?.data?.productVariantsBulkUpdate?.userErrors || []));
       }
 
-      // Post-Creation Metafield Injection
       const flatPayload = { ...payload, ...piece };
       const targetKeys = [
         "cut_and_shape", "surface_finish", "color", "dimensions_mm", 
@@ -856,21 +828,21 @@ export const action = async ({ request }) => {
           metaKey = key.split("custom/")[1];
         }
 
-        if (SKIP_KEYS.includes(metaKey)) return;
-
         if (isCustomField && metaKey && MASTER_TYPE_MAP.hasOwnProperty(metaKey)) {
           let resolvedType = MASTER_TYPE_MAP[metaKey];
 
-          // 🔴 GUARD FOR METAOBJECT REFERENCES: Skip "N/A", "None", empty
           if ((resolvedType && resolvedType.includes("metaobject_reference")) || EXPLICIT_METAOBJECT_KEYS.includes(metaKey)) {
             const valStr = String(value).trim().toLowerCase();
             if (["n/a", "none", "null", "undefined", ""].includes(valStr)) return;
           }
 
+          if (metaKey === "generated_description") {
+            value = sanitizeDescription(String(value));
+          }
+
           let normalizedValue = normalizeMetafieldValue(metaKey, value);
           let resolvedValue = normalizedValue;
 
-          // 🟢 THE FIX: Strictly assign types for the custom/ namespace during product creation too
           const multiLineKeys = ["origin_story", "artist_notes", "honest_flaws_and_character", "bench_notes", "generated_description"];
           const decimalKeys = ["weight_grams", "shipping_weight_oz", "price"];
           const listSingleLineKeys = ["character_marks"];
@@ -881,11 +853,7 @@ export const action = async ({ request }) => {
           } else if (decimalKeys.includes(metaKey)) {
             resolvedType = "number_decimal";
             const parsedNum = parseFloat(String(resolvedValue).replace(/[^0-9.-]/g, ""));
-            if (isNaN(parsedNum)) {
-              resolvedValue = "0.0";
-            } else {
-              resolvedValue = parsedNum % 1 === 0 ? parsedNum.toFixed(1) : String(parsedNum);
-            }
+            resolvedValue = isNaN(parsedNum) ? "0.0" : (parsedNum % 1 === 0 ? parsedNum.toFixed(1) : String(parsedNum));
           } else if (listSingleLineKeys.includes(metaKey)) {
             resolvedType = "list.single_line_text_field";
             resolvedValue = JSON.stringify([String(resolvedValue).trim()]);
@@ -912,11 +880,9 @@ export const action = async ({ request }) => {
         injectMetafields.forEach(m => uniqueSet.set(`${m.namespace}:${m.key}`, m));
         injectMetafields = Array.from(uniqueSet.values());
 
-        console.log("[CANONICAL WRITE]");
         const chunks = chunkArray(injectMetafields, 25);
         
         for (let i = 0; i < chunks.length; i++) {
-          console.log(`[BATCH ${i + 1} of ${chunks.length}]`);
           const response = await admin.graphql(
             `#graphql
             mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
@@ -930,7 +896,6 @@ export const action = async ({ request }) => {
         }
       }
 
-      // Execute Ghost Delete Sequence
       await executeGhostDelete(admin, createdProduct.id);
 
       return data({ success: true, intent: "createProduct", productId: productId, productHandle: productHandle, userErrors: allUserErrors });
@@ -939,9 +904,6 @@ export const action = async ({ request }) => {
     }
   }
 
-  // ==========================================
-  // 🔴 INTENT: CLEAN GHOST NAMESPACES (SINGLE PRODUCT)
-  // ==========================================
   if (intent === "cleanGhostNamespaces") {
     try {
       const productId = formData.get("productId");
@@ -989,9 +951,6 @@ export const action = async ({ request }) => {
     }
   }
 
-  // ==========================================
-  // 🔴 INTENT: CLEAN ALL GHOST NAMESPACES (ALL PRODUCTS)
-  // ==========================================
   if (intent === "cleanAllGhostNamespaces") {
     try {
       let hasNextPage = true;
@@ -1058,13 +1017,10 @@ export const action = async ({ request }) => {
     }
   }
 
-  // ==========================================
-  // 🟢 INTENT: TOGGLE STATUS
-  // ==========================================
   if (intent === "toggleStatus") {
     try {
       const productId = formData.get("pieceId");
-      const newStatus = formData.get("newStatus"); // "ACTIVE" or "DRAFT"
+      const newStatus = formData.get("newStatus"); 
 
       if (!productId || !newStatus) {
         return data({ success: false, error: "Missing pieceId or newStatus" });
@@ -1077,24 +1033,11 @@ export const action = async ({ request }) => {
           `#graphql
           mutation productUpdate($input: ProductInput!) {
             productUpdate(input: $input) {
-              product {
-                id
-                status
-              }
-              userErrors {
-                field
-                message
-              }
+              product { id status }
+              userErrors { field message }
             }
           }`,
-          {
-            variables: {
-              input: {
-                id: productGid,
-                status: "ACTIVE"
-              }
-            }
-          }
+          { variables: { input: { id: productGid, status: "ACTIVE" } } }
         );
 
         const result = await response.json();
@@ -1108,13 +1051,8 @@ export const action = async ({ request }) => {
           `#graphql
           mutation publishablePublish($id: ID!, $input: [PublicationInput!]!) {
             publishablePublish(id: $id, input: $input) {
-              publishable {
-                id
-              }
-              userErrors {
-                field
-                message
-              }
+              publishable { id }
+              userErrors { field message }
             }
           }`,
           {
@@ -1146,24 +1084,11 @@ export const action = async ({ request }) => {
           `#graphql
           mutation productUpdate($input: ProductInput!) {
             productUpdate(input: $input) {
-              product {
-                id
-                status
-              }
-              userErrors {
-                field
-                message
-              }
+              product { id status }
+              userErrors { field message }
             }
           }`,
-          {
-            variables: {
-              input: {
-                id: productGid,
-                status: "DRAFT"
-              }
-            }
-          }
+          { variables: { input: { id: productGid, status: "DRAFT" } } }
         );
 
         const result = await response.json();
