@@ -197,7 +197,7 @@ const EXPLICIT_METAOBJECT_KEYS = [
   "material", "color-pattern", "color_pattern", "jewelry-material", "jewelry_material",
   "target-gender", "target-gender", "age-group", "age_group", "condition", "rarity", 
   "authenticity", "jewelry-type", "jewelry_type", "necklace-design", "necklace_design", 
-  "crystal-system", "crystal_system", "geological-era", "geological_era", 
+  "crystal-system", "crystal-system", "geological-era", "geological_era", 
   "mineral-class", "mineral_class", "rock-composition", "rock_composition", 
   "rock-formation", "rock_formation", "chain-link-type", "chain_link_type",
   "jewelry-finding-type", "jewelry_finding_type"
@@ -276,8 +276,6 @@ export const action = async ({ request }) => {
   const rawFormData = await request.formData();
 
   // 🟢 FIX: THE INTAKE MANIFOLD FILTER
-  // Intercept all incoming strings and kill the AI geology autocorrect 
-  // before the data hits the distribution block.
   const formData = new FormData();
   for (const [key, value] of rawFormData.entries()) {
     if (typeof value === "string") {
@@ -288,7 +286,7 @@ export const action = async ({ request }) => {
       safeString = safeString.replace(/shocked%2Drock/gi, "shopped-rock");
       formData.append(key, safeString);
     } else {
-      formData.append(key, value); // Pass binary files (like image uploads) untouched
+      formData.append(key, value);
     }
   }
 
@@ -455,7 +453,6 @@ export const action = async ({ request }) => {
               if (resolvedValue.length > 255) resolvedValue = resolvedValue.slice(0, 255);
             }
           } else {
-             // If somehow a non-custom namespace gets here, try the map
              resolvedType = MASTER_TYPE_MAP[item.key] || "single_line_text_field";
              if (resolvedType === "number_decimal") {
                const parsedNum = parseFloat(String(normalizedValue).replace(/[^0-9.-]/g, ""));
@@ -492,7 +489,6 @@ export const action = async ({ request }) => {
       }
 
       if (setMetafields.length > 0) {
-        // Deduplicate before execution to prevent double-writes
         const uniqueSet = new Map();
         setMetafields.forEach(m => uniqueSet.set(`${m.namespace}:${m.key}`, m));
         setMetafields = Array.from(uniqueSet.values());
@@ -508,7 +504,7 @@ export const action = async ({ request }) => {
             mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
               metafieldsSet(metafields: $metafields) { userErrors { field message } }
             }`,
-            { variables: { metafields: chunks[i] } } // Exactly ONE call per batch
+            { variables: { metafields: chunks[i] } }
           );
           const result = await response.json();
           const batchErrors = result?.data?.metafieldsSet?.userErrors || [];
@@ -539,7 +535,7 @@ export const action = async ({ request }) => {
           let hasUpdates = false;
 
           if (newProductTitle) { inputVars.title = newProductTitle; hasUpdates = true; }
-          // Map descriptionHtml to bodyHtml for the productUpdate mutation
+          
           if (descriptionHtml) { 
             inputVars.descriptionHtml = descriptionHtml; 
             hasUpdates = true; 
@@ -565,10 +561,10 @@ export const action = async ({ request }) => {
       }
 
       // 🔴 Physical Variant Weight Sync
-      const finalWeightGrams = directWeightGrams || payloadArray.find(item => item.key === "weight_grams")?.value;
-      if (finalWeightGrams && fallbackProductId) {
-        const parsedGrams = parseFloat(String(finalWeightGrams).replace(/[^0-9.-]/g, ""));
-        if (!isNaN(parsedGrams) && parsedGrams > 0) {
+      const finalShippingOz = directShippingWeightOz || payloadArray.find(item => item.key === "shipping_weight_oz")?.value;
+      if (finalShippingOz && fallbackProductId) {
+        const parsedOz = parseFloat(String(finalShippingOz).replace(/[^0-9.-]/g, ""));
+        if (!isNaN(parsedOz) && parsedOz > 0) {
           try {
             const productGid = `gid://shopify/Product/${fallbackProductId.split("/").pop()}`;
             const variantQuery = await admin.graphql(
@@ -586,7 +582,7 @@ export const action = async ({ request }) => {
                 mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
                   productVariantsBulkUpdate(productId: $productId, variants: $variants) { userErrors { field message } }
                 }`,
-                { variables: { productId: productGid, variants: [{ id: variantId, inventoryItem: { measurement: { weight: { value: parsedGrams / 28.3495, unit: "OUNCES" } } } }] } }
+                { variables: { productId: productGid, variants: [{ id: variantId, inventoryItem: { measurement: { weight: { value: parsedOz, unit: "OUNCES" } } } }] } }
               );
             }
           } catch (weightErr) {
@@ -812,12 +808,12 @@ export const action = async ({ request }) => {
       await new Promise(resolve => setTimeout(resolve, 500));
 
       // Variant Price & Weight Sync
-      const weightGrams = parseFloat(String(payload.weight_grams || piece.weight_grams || 0).replace(/[^0-9.-]/g, ""));
+      const shippingOz = parseFloat(String(payload.shipping_weight_oz || piece.shipping_weight_oz || 0).replace(/[^0-9.-]/g, ""));
       if (defaultVariantId) {
         const variantUpdateInput = { id: defaultVariantId, price: price };
-        if (!isNaN(weightGrams) && weightGrams > 0) {
+        if (!isNaN(shippingOz) && shippingOz > 0) {
           variantUpdateInput.inventoryItem = {
-            measurement: { weight: { value: weightGrams / 28.3495, unit: "OUNCES" } }
+            measurement: { weight: { value: shippingOz, unit: "OUNCES" } }
           };
         }
 
@@ -912,7 +908,6 @@ export const action = async ({ request }) => {
       injectMetafields = applyOriginOverridesBeforeApi(title, injectMetafields);
 
       if (injectMetafields.length > 0) {
-        // Deduplicate before execution to prevent double-writes
         const uniqueSet = new Map();
         injectMetafields.forEach(m => uniqueSet.set(`${m.namespace}:${m.key}`, m));
         injectMetafields = Array.from(uniqueSet.values());
@@ -927,7 +922,7 @@ export const action = async ({ request }) => {
             mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
               metafieldsSet(metafields: $metafields) { userErrors { field message } }
             }`,
-            { variables: { metafields: chunks[i] } } // Exactly ONE call per batch
+            { variables: { metafields: chunks[i] } }
           );
           const result = await response.json();
           const createErrs = result?.data?.metafieldsSet?.userErrors || [];
