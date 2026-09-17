@@ -573,15 +573,14 @@ export const action = async ({ request }) => {
           ? `Handcrafted ${derivedFamily} — ${correctedOrigin} — OOAK Lapidary Art`
           : `Handcrafted ${derivedFamily} — OOAK Lapidary Art`;
 
-        // 🟢 FIX: Regex correctly targets derivedFamily so we never pass empty string
         const finalMaterial = (stoneFam => stoneFam.replace(/^(Dragon's Eye|Green|Blue|Fire|Rufus|Rainbow|Yellow|Red|Black|Oregon)\s+/i, "").trim())(derivedFamily);
 
         const parsedVision = visionFields || {};
         const jewelry_type = visionFields.jewelry_type || "N/A";
         
         // 🟢 FIX: Absolute enforcement of jewelry finding rule. If bail is active, finding MUST be None.
-        const activeBail = parsedVision.bail_included || "None";
-        const finalFindingType = activeBail !== "None" ? "None" : (parsedVision.jewelry_finding_type || "None");
+        const activeBail = String(parsedVision.bail_included || "None").trim();
+        const finalFindingType = (activeBail !== "None" && activeBail.toLowerCase() !== "none" && activeBail !== "") ? "None" : String(parsedVision.jewelry_finding_type || "None").trim();
 
         const payload = sanitizeObject({
           origin_story: origin_story,
@@ -934,8 +933,8 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
         const resolved_setting_ready = parsedVision.setting_ready || "None";
 
         // 🟢 FIX: Absolute enforcement of jewelry finding rule. If bail is active, finding MUST be None.
-        const activeBail = parsedVision.bail_included || "None";
-        const finalFindingType = activeBail !== "None" ? "None" : (parsedVision.jewelry_finding_type || "None");
+        const activeBail = String(parsedVision.bail_included || "None").trim();
+        const finalFindingType = (activeBail !== "None" && activeBail.toLowerCase() !== "none" && activeBail !== "") ? "None" : String(parsedVision.jewelry_finding_type || "None").trim();
 
         let final_desc = parsedVision.generated_description || "";
         const lowerDesc = final_desc.toLowerCase();
