@@ -1,8 +1,3 @@
-// ==========================================================================
-// ROCKHOUND STUDIO — TAB 2: META INSPECTOR Bench
-// File: app/routes/app.meta-injector.inspector.jsx
-// ==========================================================================
-
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { BlockStack, Card, Text, Banner, TextField, Select, Button, InlineStack, DropZone } from "@shopify/polaris";
 import { MagicIcon, SaveIcon, ClipboardIcon } from "@shopify/polaris-icons";
@@ -28,7 +23,6 @@ const CUSTOM_FIELDS = [
   { key: "generated_description", label: "Generated Description", type: "multi_line_text_field", multiline: true, isPerPiece: true }
 ];
 
-// 🔴 THE MASTER LIST: Everything locked strictly to custom
 const NAMESPACE_MAP = {
   custom: [
     "piece_name", "primary_medium", "secondary_medium", "handcrafted_by", "stone_family", "color", "cut_and_shape", "surface_finish", "dimensions_mm", "weight_grams", "shipping_weight_oz", "price", "collection_name", "collection_location", "primary_use", "bail_included", "is_ooak", "treated", "wire_material", "setting_ready", "material", "origin_story", "origin_handle", "honest_flaws_and_character", "artist_notes", "generated_description", "rescued_by", "stone_shape", "target_gender", "age_group", "condition", "color_pattern", "jewelry_type", "necklace_design", "custom_product", "seo_title", "google_product_category",
@@ -43,7 +37,7 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
   const [fullMetaState, setFullMetaState] = useState({});
   const originalMetaRef = useRef({});
   const fullMetaStateRef = useRef({});
-  const lastProcessedAiData = useRef(null); // 🟢 Safe State Bleed Tracker
+  const lastProcessedAiData = useRef(null);
   const [statusMessage, setStatusMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [promptStyle, setPromptStyle] = useState("");
@@ -59,16 +53,10 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
   
   const statusFetcher = useFetcher();
 
-  // 🔴 CHANGE — STATE BLEED FIX
-  // Watch the selected product ID. 
   useEffect(() => {
-    // 🟢 FIX: Prevent state bleed without mutating read-only fetcher data.
-    // By marking the current fetcher data as "processed" on product change,
-    // we force the merge effect to ignore it and prevent stale bleed-over.
     if (tab2Fetcher && tab2Fetcher.data) {
       lastProcessedAiData.current = tab2Fetcher.data;
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedProductId]);
 
   const handleDropOverridePhoto = useCallback((_dropFiles, acceptedFiles) => {
@@ -95,11 +83,14 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
     setTab2ErrorMessage("");
     setOverridePhoto(null);
     
-    // 🔴 STRICT STATE WIPE: Kill the bleed-over
     setFormState({});
     setFullMetaState({});
     fullMetaStateRef.current = {};
     originalMetaRef.current = {};
+    setPendingFixFields([]);
+    setCurrentFixIndex(0);
+    setShowFixPopup(false);
+    setFixPopupValue("");
 
     const product = products.find(p => p.id === id);
     if (product) {
@@ -134,8 +125,7 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
             } catch (e) { }
           }
           
-          // 🟢 FIX: Force exact boolean capitilization on load so legacy data doesn't render as lowercase
-          const booleanKeys = ["is_ooak", "found_object", "custom_product", "setting_ready", "bail_included", "treated"];
+          const booleanKeys = ["is_ooak", "found_object", "custom_product", "treated"];
           if (booleanKeys.includes(node.key) && parsedValue !== "See Shopify metaobject") {
             const lowerVal = parsedValue.toLowerCase().trim();
             if (lowerVal === "true" || lowerVal === "yes") parsedValue = "Yes";
@@ -148,7 +138,6 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
       });
     }
 
-    // 🔴 PHYSICAL LIVE VARIANT WEIGHT INGESTION
     const firstVariant = product?.variants?.edges?.[0]?.node;
     if (firstVariant && firstVariant.weight !== undefined && firstVariant.weight !== null) {
       const vWeight = parseFloat(firstVariant.weight);
@@ -205,7 +194,7 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
     if (!newFullForm.shipping_weight_oz && newFullForm.weight_grams) {
       const grams = parseFloat(newFullForm.weight_grams);
       if (!isNaN(grams) && grams > 0) {
-        const oz = String(Math.ceil((grams / 28.35) + 0.5));
+        const oz = String(Math.ceil((grams / 28.3495) + 0.5));
         newFullForm.shipping_weight_oz = oz;
         newForm.shipping_weight_oz = oz;
       }
@@ -267,7 +256,7 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
       newWeightGrams = value;
       const parsedG = parseFloat(value);
       if (!isNaN(parsedG) && parsedG > 0) {
-        newShippingOz = String(Math.ceil((parsedG / 28.35) + 0.5));
+        newShippingOz = String(Math.ceil((parsedG / 28.3495) + 0.5));
       }
     } else if (key === "shipping_weight_oz") {
       newShippingOz = value;
@@ -291,7 +280,6 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
       ...(key === "shipping_weight_oz" && newWeightGrams ? { weight_grams: newWeightGrams } : {})
     }));
 
-    // 🟢 FIX: Synchronous Ref Update ensures active screen data is always ready for injection
     fullMetaStateRef.current = {
       ...fullMetaStateRef.current,
       [key]: value,
@@ -308,7 +296,6 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
     setFullMetaState(prev => ({ ...prev, [key]: value }));
     setFormState(prev => ({ ...prev, [key]: value }));
     
-    // 🟢 FIX: Synchronous Ref Update ensures active screen data is always ready for injection
     fullMetaStateRef.current = { ...fullMetaStateRef.current, [key]: value };
   }, [updateWeightFields]);
 
@@ -366,10 +353,7 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
       "material", "stone_shape", "rescued_by", "alt_text",
       "found_object", "wire_material", "bail_included", "setting_ready",
       "jewelry_type", "necklace_design", "jewelry_finding_type",
-      "chain_link_type", "target_gender", "mohs_hardness", "luster",
-      "fracture_pattern", "cleavage", "specific_gravity", "diaphaneity",
-      "crystal_system", "geological_era", "geological_age", "mineral_class",
-      "rock_composition", "rock_formation"
+      "chain_link_type", "target_gender"
     ];
     setFullMetaState(prev => Object.fromEntries(RESCAN_PRESERVE_KEYS.map(k => [k, prev[k] || ""])));
     setFormState(prev => Object.fromEntries(RESCAN_PRESERVE_KEYS.map(k => [k, prev[k] || ""])));
@@ -417,7 +401,6 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
     formData.append("pieceId", selectedProductId);
     formData.append("newStatus", newStatus);
     
-    // Optimistic UI Update
     setProductStatus(newStatus);
     
     statusFetcher.submit(formData, { method: "post", action: "/app/meta-injector-api" });
@@ -431,7 +414,6 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
           window.shopify.toast.show(`Status successfully updated to ${statusFetcher.data.newStatus}`);
         }
       } else {
-        // Revert on failure
         setProductStatus(productStatus === "ACTIVE" ? "DRAFT" : "ACTIVE"); 
         setErrorMessage(statusFetcher.data.error || "Failed to toggle status");
         if (window.shopify?.toast) {
@@ -453,13 +435,11 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
     const allowedKeys = NAMESPACE_MAP.custom;
     const payload = [];
 
-    // Ensure weights are explicitly bound into state snapshot
     const activeWeights = {
       weight_grams: fullMetaStateRef.current.weight_grams || formState.weight_grams || "",
       shipping_weight_oz: fullMetaStateRef.current.shipping_weight_oz || formState.shipping_weight_oz || ""
     };
 
-    // 🟢 FIX: Absolute Overwrite. Trust the active visual state, drop the raw load merge.
     const combinedState = { ...fullMetaStateRef.current, ...activeWeights };
 
     Object.entries(combinedState).forEach(([key, value]) => {
@@ -469,8 +449,8 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
       let injectValue = String(value !== null && value !== undefined ? value : "");
       if (key === "piece_name") injectValue = resolvedPieceName;
 
-      // Clean line breaks
-      injectValue = injectValue.replace(/\\[rn]/g, " ").replace(/[\r\n]+/g, " ").replace(/\s{2,}/g, " ").trim();
+      // Do NOT scrub user edits here. Just trim raw whitespace.
+      injectValue = injectValue.trim();
 
       const config = CUSTOM_FIELDS.find(f => f.key === key);
       let fieldType = config && config.type ? config.type : "single_line_text_field";
@@ -507,7 +487,7 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
         payload: JSON.stringify(payload),
         productId: selectedProductId,
         productTitle: masterTitle,
-        descriptionHtml: descHtml, // Passes to bodyHtml in the API
+        descriptionHtml: descHtml,
         weightGrams: activeWeights.weight_grams,
         shippingWeightOz: activeWeights.shipping_weight_oz
       },
@@ -519,8 +499,12 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
     const isIdle = tab2Fetcher.state === "idle";
     const hasData = tab2Fetcher.data !== undefined && tab2Fetcher.data !== null;
 
-    // 🟢 FIX: Guard against stale state bleed
     if (isIdle && hasData && lastProcessedAiData.current !== tab2Fetcher.data) {
+      const fetcherProductId = tab2Fetcher.formData?.get("productId") || tab2Fetcher.formData?.get("pieceId");
+      if (fetcherProductId && fetcherProductId !== selectedProductId) {
+         return; 
+      }
+
       lastProcessedAiData.current = tab2Fetcher.data;
       const product = products.find(p => p.id === selectedProductId);
       const productTitle = fullMetaState.shopify_title || formState.shopify_title || product?.title || "";
@@ -535,8 +519,7 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
             const hasNewValue = val !== undefined && val !== null && val.toString().trim() !== "" && val !== "See Shopify metaobject";
             if (hasNewValue) {
               let normalizedVal = val;
-              // 🟢 FIX: Force exact boolean capitalization during AutoFill merge
-              const booleanKeys = ["is_ooak", "found_object", "custom_product", "setting_ready", "bail_included", "treated"];
+              const booleanKeys = ["is_ooak", "found_object", "custom_product", "treated"];
               if (booleanKeys.includes(key)) {
                 const lowerVal = String(val).toLowerCase().trim();
                 if (lowerVal === "true" || lowerVal === "yes") normalizedVal = "Yes";
@@ -551,10 +534,18 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
 
         setFullMetaState(prev => {
           const updatedState = { ...prev };
-          const ALWAYS_OVERWRITE = ["mohs_hardness", "luster", "fracture_pattern", "cleavage", "specific_gravity", "diaphaneity", "mineral_class", "crystal_system", "rock_composition", "rock_formation", "geological_era", "geological_age", "generated_description", "seo_title", "origin_story", "stone_story", "primary_use", "bail_included", "setting_ready", "primary_medium", "alt_text", "found_object", "wire_material", "secondary_medium", "color", "surface_finish", "material", "treated", "jewelry_type"];
+          // The Law of the Screen dictates that AI data overrides old ghost data ONLY for these specified fields
+          const ALWAYS_OVERWRITE = [
+            "mohs_hardness", "luster", "fracture_pattern", "cleavage", "specific_gravity", 
+            "diaphaneity", "mineral_class", "crystal_system", "rock_composition", 
+            "rock_formation", "geological_era", "geological_age", "generated_description", 
+            "seo_title", "origin_story", "stone_story", "primary_use", "bail_included", 
+            "setting_ready", "primary_medium", "alt_text", "found_object", "wire_material", 
+            "secondary_medium", "color", "surface_finish", "material", "treated", 
+            "jewelry_type", "jewelry_finding_type" // <-- ADDED hardware override
+          ];
 
           Object.entries(tab2Data).forEach(([key, val]) => {
-            // NEVER allow AI autofill scans to overwrite manual bench weights
             if (key === "weight_grams" || key === "shipping_weight_oz") return;
 
             const hasNewValue = val !== undefined && val !== null && val.toString().trim() !== "" && val !== "See Shopify metaobject";
@@ -562,8 +553,7 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
             
             if (hasNewValue && (currentlyEmpty || ALWAYS_OVERWRITE.includes(key))) {
               let normalizedVal = val;
-              // 🟢 FIX: Force exact boolean capitalization during AutoFill merge
-              const booleanKeys = ["is_ooak", "found_object", "custom_product", "setting_ready", "bail_included", "treated"];
+              const booleanKeys = ["is_ooak", "found_object", "custom_product", "treated"];
               if (booleanKeys.includes(key)) {
                 const lowerVal = String(val).toLowerCase().trim();
                 if (lowerVal === "true" || lowerVal === "yes") normalizedVal = "Yes";
@@ -608,7 +598,6 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
     if (field && fixPopupValue.trim() !== "") {
       setFormState(prev => ({ ...prev, [field.key]: fixPopupValue.trim() }));
       setFullMetaState(prev => ({ ...prev, [field.key]: fixPopupValue.trim() }));
-      // 🟢 FIX: Synchronous Ref Update
       fullMetaStateRef.current = { ...fullMetaStateRef.current, [field.key]: fixPopupValue.trim() };
     }
     const nextIndex = currentFixIndex + 1;

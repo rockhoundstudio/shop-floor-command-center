@@ -1,13 +1,8 @@
 import { authenticate } from "../shopify.server";
 import { lookupStone } from "../utils/geoLibrary.jsx";
-import { TARGET_KEYS } from "../utils/metaScan";
 
 const stoneProfileCache = new Map();
 
-// ==========================================
-// 🔴 THE MASTER VISION PROMPT
-// Tune this once. Both Tab 1 (Intake) and Tab 2 (Bench) pull from here.
-// ==========================================
 function buildMasterVisionPrompt({
   pagesMenu,
   collectionsMenu,
@@ -24,14 +19,11 @@ function buildMasterVisionPrompt({
     dwellButtonsHTML = `<br><br><a href="/pages/the-richardson-strike">Richardson's Rock Ranch Story</a>
 <br><a href="/collections/richardsons-rock-ranch">Richardson's Rock Ranch Collection</a>
 <br><a href="/pages/the-3-000-mile-run">The 3,000-Mile Run Story</a>
-<br><a href="/collections/the-3-000-mile-run-1">The 3,000-Mile Run Collection</a>
-<br><a href="/pages/the-shopped-rock">The Shopped Rock Story</a>
-<br><a href="/collections/the-shopped-rock">The Shopped Rock Collection</a>`;
+<br><a href="/collections/the-3-000-mile-run-1">The 3,000-Mile Run Collection</a>`;
   }
 
   return `You are a lapidary artist and master jeweler for Rockhound Studio. Analyze this photo and return a JSON object.
-CRITICAL ANTI-HALLUCINATION RULE: NEVER use the word "shocked" or "Shocked Rock". The correct term is "Shopped Rock". Do NOT let your geological training autocorrect this.
-- LIVE STORE DIRECTORY (Your Dyslexia Safeguard — Read this menu!):
+- LIVE STORE DIRECTORY:
   VALID PAGES IN STORE:
   ${pagesMenu || "No live pages found — use default URL."}
   
@@ -39,54 +31,49 @@ CRITICAL ANTI-HALLUCINATION RULE: NEVER use the word "shocked" or "Shocked Rock"
   ${collectionsMenu || "No live collections found — use default URL."}
 
 - primary_color
-- stone_shape: Select EXACTLY one from this list: Round, Oval, Freeform, Teardrop, Pear, Cushion, Marquise, Rectangle, Square, Heart, Slab, Rough, N/A
-- jewelry_type: Select EXACTLY one from this list: Pendant, Necklace, Artisan jewelry, Fine jewelry, Accessories, N/A. PENDANT vs NECKLACE RULE: A Pendant is a stone set in a bezel, bail, or wire wrap that hangs from a cord or chain. The stone is the focal point. A Necklace is a chain or strand where the chain itself is the primary design — beaded strands, chain necklaces, chokers. If the product is a stone on a cord or chain, it is always a Pendant, never a Necklace. primary_use should also reflect this: use 'Pendant (Finished Jewelry)' not 'Necklace' when the stone is the focal point.
-- rarity: Select EXACTLY one from this list: Common, Uncommon, Rare, One-of-a-Kind (default: Common if unsure)
-- authenticity: Select EXACTLY one from this list: Authentic, Lab-Created, Unknown (default: Authentic for natural stones)
-- color_pattern: Select EXACTLY one from this list: Green, Black, Blue flash, Red, White, Multicolor, Gold, Pink, Yellow, Silver, Purple, Striped, Clear, Yellow veins, None
-- google_product_category: Select EXACTLY one taxonomy path from this list that best matches the item: "Apparel & Accessories > Jewelry > Charms & Pendants" (for Pendants), "Apparel & Accessories > Jewelry > Necklaces" (for Necklaces with chains), "Apparel & Accessories > Jewelry > Rings", "Apparel & Accessories > Jewelry > Earrings", "Apparel & Accessories > Jewelry > Bracelets", "Arts & Entertainment > Hobbies & Creative Arts > Collectibles > Rocks & Fossils" (for raw/display specimens), "Arts & Entertainment > Hobbies & Creative Arts > Arts & Crafts > Crafting Materials > Beads & Charms" (for loose cabochons and unmounted stones), "Apparel & Accessories > Jewelry" (if unsure).
+- stone_shape: Select EXACTLY one: Round, Oval, Freeform, Teardrop, Pear, Cushion, Marquise, Rectangle, Square, Heart, Slab, Rough, N/A
+- jewelry_type: Select EXACTLY one: Pendant, Necklace, Artisan jewelry, Fine jewelry, Accessories, N/A. (Pendant = stone set in bezel/bail that hangs. Necklace = chain/strand is primary design. If stone on cord/chain, it is a Pendant).
+- rarity: Select EXACTLY one: Common, Uncommon, Rare, One-of-a-Kind
+- authenticity: Select EXACTLY one: Authentic, Lab-Created, Unknown
+- color_pattern: Select EXACTLY one: Green, Black, Blue flash, Red, White, Multicolor, Gold, Pink, Yellow, Silver, Purple, Striped, Clear, Yellow veins, None
+- google_product_category: "Apparel & Accessories > Jewelry > Charms & Pendants", "Arts & Entertainment > Hobbies & Creative Arts > Collectibles > Rocks & Fossils", "Arts & Entertainment > Hobbies & Creative Arts > Arts & Crafts > Crafting Materials", "Apparel & Accessories > Jewelry"
 - cut_and_shape
 - surface_finish
 - honest_flaws_and_character
-- origin_location: CRITICAL! Look at the provided Origin Segment ("${originSegment}"). Cross-reference it with the LIVE STORE DIRECTORY above and return the fully expanded, correct geographic name. **NEVER include prefixes like "Shop Lore:", "The", or "Collection" in this field.** (e.g., strictly return "Yakima River Canyon" or "North Fork Coeur d'Alene"). collection_location must exactly match one value from this list only: Spokane River | Yakima Canyon | Yellowstone River | Richardson's Rock Ranch | The 3,000-Mile Run | Nickel Back | Rufus Serpentine | The Gallery | North Fork CdA. Never add state names, suffixes, or geographic variations. If the origin is Yakima River Canyon, Washington — output 'Yakima Canyon'. If the origin is Richardson's Rock Ranch, Oregon — output 'Richardson's Rock Ranch'. Match to the list exactly. No exceptions.
-- primary_use: Smart Switch! Force strictly to best match (e.g., "Pendant (Finished Jewelry)", "Necklace", "Ring / Bezel Setting", "Cabochon", "Wire Wrap (Finished Jewelry)", "Loose Stone"). If a chain is visible, classify as "Necklace".
-- primary_medium
-- setting_ready
+- origin_location: Cross-reference "${originSegment}" with LIVE STORE DIRECTORY. Return geographic name ONLY. No prefixes like "Collection" or "The". (e.g., "Yakima Canyon" or "Richardson's Rock Ranch").
+- primary_use: "Pendant (Finished Jewelry)", "Necklace", "Ring / Bezel Setting", "Cabochon", "Wire Wrap (Finished Jewelry)", "Loose Stone".
+- primary_medium: Must match stone mineral name from title.
+- setting_ready: "Bezel Setting - Ready to Wear", "Prong Setting - Ready to Wear", "Wire Wrapped - Ready to Wear", "None".
 - wire_material
-- bail_included
-- jewelry_finding_type: CRITICAL EXCLUSIVITY LAW. If bail_included has any value other than "None", this field MUST be exactly "None". 
-- alt_text: Write a concise, descriptive alt text for this image (max 125 characters). Describe the stone, its color, finish, and setting as seen in the photo. Plain language, no brand name. alt_text must use the stone mineral name from title segment 1. Never describe the stone type from visual appearance. If the title says 'Breccia Aventurine', write 'Breccia Aventurine' in the alt_text — never 'jasper', 'green stone', or any visual inference.
-- found_object: Return "Yes" if this stone was field-collected or found in nature. Return "No" if it is a shopped, purchased, or imported stone.
-- chain_material: If a necklace chain is visible, identify it as exactly one of: "Silver Plated Snake Chain", "Gold Plated Snake Chain", "Sterling Silver Chain", "Cord". If no chain is visible, return "None".
-- seo_title: Generate a keyword-rich SEO product title (max 60 characters) optimized for Google. Combine the stone family ("${stoneFamily}"), your newly corrected origin_location, cut/shape, and keywords like "Handcrafted", "Natural", "OOAK", or "Lapidary Art". Separate with pipes (|) or em-dashes (—). Do NOT use quotes.
-- generated_description: Write in Bob's voice using this STRICT 7-BLOCK FORMAT. Separate each block naturally. Do NOT use markdown headers.
-  1. Stone Description: Past tense for the find. Plain and honest — say what happened, stop. No salesy language. Short sentences. One idea at a time. Highlight the freeform revolution and honest flaws.
-  2. Origin Hook: Write a short story hook based on the FULL ORIGIN STORY below.
-  3. Collection Hook: Write a short hook about the ${fullCollectionTitle} Collection.
-  4. Signature: EXACTLY this line: — Bob & Janyce, Rockhound Studio, Spokane Valley WA
-  5. Stone Data: Brief lapidary specs (cut, finish, dimensions).
-  6. Ready to Wear: Clearly state if the piece is set and ready to wear, or a raw/loose stone for makers.
-  7. Dwell Buttons: Include EXACTLY these clickable HTML hyperlinks on their own lines:
+- bail_included: "Silver Plated Pinch Bail", "Integrated Bezel Bail", "None".
+- jewelry_finding_type: MUST BE "None" if bail_included is not "None".
+- alt_text: Descriptive, max 125 chars. Use exact stone name.
+- found_object: Yes/No
+- chain_material: "Silver Plated Snake Chain", "Gold Plated Snake Chain", "Sterling Silver Chain", "Cord", "None".
+- seo_title: Max 60 chars. Stone family, origin, OOAK Lapidary Art.
+- generated_description: Write in Bob's voice (plain, honest, past tense for the find). No salesy language. Short sentences. 7-BLOCK FORMAT (No markdown headers):
+  1. Stone Description: Honest flaws, finish, flash.
+  2. Origin Hook: 1-2 sentences from ORIGIN STORY.
+  3. Collection Hook: 1-2 sentences about ${fullCollectionTitle}.
+  4. Signature: — Bob & Janyce, Rockhound Studio, Spokane Valley WA
+  5. Stone Data: Specs, cut, dimensions.
+  6. Ready to Wear: State if set or loose.
+  7. Dwell Buttons:
 ${dwellButtonsHTML}
 
 FULL ORIGIN STORY:
 ${originStory}
 
-- MANDATORY BENCH FINDINGS & JEWELRY LAWS (CRITICAL FOR LOOSE STONES):
-  * RAW SLAB BRANCH: If the image shows an unpolished flat stone next to a ruler, or if cut_and_shape contains "Slab" or "Raw", or primary_use is "Loose Stone", force these output values: Set google_product_category to exactly: Arts & Entertainment > Hobbies & Creative Arts > Arts & Crafts > Crafting Materials, surface_finish = "Natural/Raw", jewelry_type = "N/A", setting_ready = "None", is_ooak = "Yes", rarity = "One-of-a-Kind", bail_included = "None", wire_material = "None", necklace_design = "", jewelry_finding_type = "None", chain_link_type = "None". The generated_description must address lapidary hobbyists — describe pattern potential, slab dimensions from the ruler, and that it is ready to cut.
-  * PRIMARY/SECONDARY MEDIUM RULE: primary_medium = the stone material itself (e.g. Labradorite, Brecciated Quartz, Green Jasper) — NEVER the setting, bail, or finding. secondary_medium = the setting or finding (e.g. Silver Tone Alloy Bezel, Pinch Bail, None). The stone is always primary. The hardware is always secondary. This rule applies to every product type without exception. primary_medium must always match the stone mineral name from the product title segment 1. Never infer or guess the stone type from color, texture, or appearance. If the title says 'Banded Micaceous Quartzite', primary_medium is 'Banded Micaceous Quartzite' — not 'Chert', not 'Quartz', not any other visual guess.
-  * THE LOOSE STONE OVERRIDE: If this is a bare, loose stone with NO metal, setting, wire, or bail, you MUST return strictly "None" for setting_ready, wire_material, secondary_medium, chain_material, and bail_included. Do NOT guess or hallucinate metal for a bare rock.
-  * HARDWARE PHYSICS LAW: bail_included and jewelry_finding_type are STRICTLY MUTUALLY EXCLUSIVE. If bail_included is anything other than "None" (e.g., "Integrated Bezel Bail" or "Silver Plated Pinch Bail"), then jewelry_finding_type MUST be exactly "None". You cannot populate both. If the photo shows an Integrated Bezel Bail, set bail_included to "Integrated Bezel Bail" and force jewelry_finding_type to "None". Preserve the exact existing dropdown values. Do not guess.
-  * setting_ready: Look closely at the mounting. If cabochon is in a bezel setting, MUST return "Bezel Setting - Ready to Wear". If prong setting, return "Prong Setting - Ready to Wear". If wire wrapped, return "Wire Wrapped - Ready to Wear". If loose or unmounted, return "None".
-  * wire_material: If wire wrapped, output the wire metal (e.g., "Antiqued Copper Wire"). If in a bezel or prong setting with zero wire, or loose, MUST return strictly: "None".
-  * surface_finish: Describe the stone's surface finish as seen in the photo. Use terms like "High Polish", "Matte", "Satin", "Natural/Raw", "Tumbled". Do not leave blank.
-  * bail_included: Look at the TOP of the piece. If there is a separate small clip or loop pinched onto the bezel, return "Silver Plated Pinch Bail". If the bail is welded/integrated, return "Integrated Bezel Bail". If there is no bail at all, or if loose, return "None".`;
+MANDATORY LAWS:
+- HARDWARE PHYSICS LAW: bail_included and jewelry_finding_type are STRICTLY MUTUALLY EXCLUSIVE. If bail_included has any value other than "None", jewelry_finding_type MUST be exactly "None".
+- LOOSE STONE OVERRIDE: If bare loose stone with no metal, you MUST return strictly "None" for setting_ready, wire_material, secondary_medium, chain_material, and bail_included.
+- PRIMARY/SECONDARY MEDIUM RULE: primary_medium is the stone. secondary_medium is the hardware/setting.`;
 }
 
 function extractStoneName(title) {
   if (!title) return "Unknown";
   
-  const sanitizedTitle = String(title).replace(/Ã¢â‚¬â€/g, "—");
+  const sanitizedTitle = String(title).replace(/Ã¢â‚¬â€/g, "—").replace(/â€”/g, "—");
   const sectionOne = sanitizedTitle.split(/[—–-]/)[0].trim();
   
   const adjectives = [
@@ -256,7 +243,6 @@ async function getGeoData(admin, stoneFamily) {
   const cleanStoneName = extractStoneName(stoneFamily);
   const search = cleanStoneName.toLowerCase().trim();
 
-  // TIER 1: Local hardcoded library
   try {
     const localResult = lookupStone(cleanStoneName);
     if (localResult && Object.keys(localResult).length > 0) {
@@ -280,7 +266,6 @@ async function getGeoData(admin, stoneFamily) {
     console.error("[Geo Tier 1] geoLibrary lookup failed:", err);
   }
 
-  // TIER 2A: PostgreSQL StoneCache
   try {
     const cacheRows = await queryPostgres('SELECT data FROM "StoneCache" WHERE LOWER("stone_name") = $1 LIMIT 1', [search]);
     if (cacheRows.length > 0 && cacheRows[0].data) {
@@ -291,7 +276,6 @@ async function getGeoData(admin, stoneFamily) {
     console.error("[Geo Tier 2A] PostgreSQL StoneCache lookup failed:", err.message);
   }
 
-  // TIER 2B: PostgreSQL StoneProfile Table
   try {
     if (stoneProfileCache.has(search)) {
       const cached = stoneProfileCache.get(search);
@@ -325,7 +309,6 @@ async function getGeoData(admin, stoneFamily) {
     console.error("[Geo Tier 2B] PostgreSQL StoneProfile failed:", err);
   }
 
-  // TIER 3: Mindat API
   try {
     if (MINDAT_API_KEY) {
       const controller = new AbortController();
@@ -375,12 +358,7 @@ function sanitizeObject(obj) {
       if (obj[key].includes("See Shopify")) {
         obj[key] = "";
       } else {
-        let cleaned = obj[key].replace(/Ã¢â‚¬"/g, "—");
-        cleaned = cleaned.replace(/Shocked\s*Rock/gi, "Shopped Rock");
-        cleaned = cleaned.replace(/the-shocked-rock/gi, "the-shopped-rock");
-        cleaned = cleaned.replace(/shocked[-_]rock/gi, "shopped-rock");
-        cleaned = cleaned.replace(/shocked%2Drock/gi, "shopped-rock");
-        obj[key] = cleaned;
+        obj[key] = obj[key].replace(/Ã¢â‚¬"/g, "—").replace(/â€”/g, "—");
       }
     }
   }
@@ -426,10 +404,9 @@ export const action = async ({ request }) => {
     if (intent === "tab2AutoFill") {
       const stone_family = body.get("stone_family") || "";
       const rawProductTitle = body.get("productTitle") || body.get("piece_name") || body.get("title") || "";
-      const productTitle = rawProductTitle.replace(/Ã¢â‚¬â€/g, "—");
+      const productTitle = rawProductTitle.replace(/Ã¢â‚¬â€/g, "—").replace(/â€”/g, "—");
       const imageUrl = body.get("imageUrl") || "";
 
-      // Capture physical bench inputs to protect from being wiped
       const bench_weight_grams = body.get("weight_grams") || "";
       const bench_shipping_weight_oz = body.get("shipping_weight_oz") || "";
       const bench_dimensions_mm = body.get("dimensions_mm") || "";
@@ -566,7 +543,6 @@ export const action = async ({ request }) => {
         const finalOriginHandle = resolveOriginHandle(correctedOrigin, pagesList);
         const finalCollectionData = resolveCollectionData(correctedOrigin, finalOriginHandle, collectionsList);
         
-        // BUG 2 FIX: Ensure Richardson's page handle is absolutely enforced
         const finalOriginPageHandle = finalOriginHandle === "the-richardson-strike" ? "the-richardson-strike" : finalOriginHandle;
 
         const manual_seo_title = correctedOrigin
@@ -576,11 +552,15 @@ export const action = async ({ request }) => {
         const finalMaterial = (stoneFam => stoneFam.replace(/^(Dragon's Eye|Green|Blue|Fire|Rufus|Rainbow|Yellow|Red|Black|Oregon)\s+/i, "").trim())(derivedFamily);
 
         const parsedVision = visionFields || {};
-        const jewelry_type = visionFields.jewelry_type || "N/A";
+        const jewelry_type = parsedVision.jewelry_type || "N/A";
         
-        // 🟢 FIX: Absolute enforcement of jewelry finding rule. If bail is active, finding MUST be None.
-        const activeBail = String(parsedVision.bail_included || "None").trim();
-        const finalFindingType = (activeBail !== "None" && activeBail.toLowerCase() !== "none" && activeBail !== "") ? "None" : String(parsedVision.jewelry_finding_type || "None").trim();
+        let activeBail = String(parsedVision.bail_included || "None").trim();
+        if (activeBail.toLowerCase() === "none" || activeBail === "") activeBail = "None";
+        
+        let finalFindingType = String(parsedVision.jewelry_finding_type || "None").trim();
+        if (activeBail !== "None") {
+            finalFindingType = "None";
+        }
 
         const payload = sanitizeObject({
           origin_story: origin_story,
@@ -631,7 +611,6 @@ export const action = async ({ request }) => {
           condition: "new",
           google_product_category: visionFields.google_product_category || "Apparel & Accessories > Jewelry",
           alt_text: visionFields.alt_text || "",
-          // Retain physical bench attributes so they never get wiped
           ...(bench_weight_grams ? { weight_grams: bench_weight_grams } : {}),
           ...(bench_shipping_weight_oz ? { shipping_weight_oz: bench_shipping_weight_oz } : {}),
           ...(bench_dimensions_mm ? { dimensions_mm: bench_dimensions_mm } : {}),
@@ -646,7 +625,7 @@ export const action = async ({ request }) => {
     }
 
     if (intent === "titleParse") {
-      const pieceNameInput = (body.get("pieceName") || "").replace(/Ã¢â‚¬â€/g, "—");
+      const pieceNameInput = (body.get("pieceName") || "").replace(/Ã¢â‚¬â€/g, "—").replace(/â€”/g, "—");
       const segments = pieceNameInput.split(/\s+[—–-]\s+/);
       const segment1 = segments[0]?.trim() || "";
       const segment2 = segments[1]?.trim() || "";
@@ -674,7 +653,6 @@ export const action = async ({ request }) => {
       const collectionsMenu = collectionsList.map(c => `- Title: "${c.title}" | URL: ${c.url}`).join("\n");
 
       const promptText = `You are an expert lapidary assistant for Rockhound Studio. Analyze these segments:
-CRITICAL ANTI-HALLUCINATION RULE: NEVER use the word "shocked" or "Shocked Rock". The correct term is "Shopped Rock". Do NOT let your geological training autocorrect this.
 - Family: "${segment1}"
 - Origin: "${segment2}"
 - Title: "${segment3}"
@@ -687,9 +665,9 @@ VALID COLLECTIONS IN STORE:
 ${collectionsMenu || "No live collections found."}
 
 INSTRUCTIONS:
-1. The Origin segment ("${segment2}") is the AUTHORITY. Do NOT reclassify or override it. Set 'origin_location' to the clean geographic name derived from "${segment2}" — strip prefixes like "Shop Lore:", "The", or "Collection". Expand abbreviations (e.g. "cda" → "North Fork Coeur d'Alene", "yakima" → "Yakima Canyon"). Match 'collection_name' and 'collection_location' to the live store entry that corresponds to "${segment2}". Never substitute a vendor name or "The Shopped Rock" unless "${segment2}" explicitly contains a vendor name.
+1. The Origin segment ("${segment2}") is the AUTHORITY. Set 'origin_location' to the clean geographic name derived from "${segment2}" — strip prefixes like "Collection". Match 'collection_name' and 'collection_location' to the live store entry that corresponds to "${segment2}".
 2. Set origin_handle strictly to: "${resolvedHandle}". 
-3. stone_family must be exactly one of: ${stonePicklist} - match only the mineral/stone type word from the title. Ignore all color, pattern, cut, and modifier words. Pick the closest entry from the list. Match stone_family against the gem dictionary list only. Ignore all shape descriptors, colors, cut names, and adjectives. If the input is 'Botswana Agate Round', output 'Botswana Agate'.
+3. stone_family must be exactly one of: ${stonePicklist} - match only the mineral/stone type word from the title. Ignore all color, pattern, cut, and modifier words. Pick the closest entry from the list.
 
 Return valid JSON with these exact keys: stone_family, piece_name, origin_handle, origin_location, collection_name, collection_location, seo_title. Generate a keyword-rich seo_title for Google using the family and keywords like "Handcrafted" or "OOAK Lapidary Art". No markup. No extra keys.`;
 
@@ -750,7 +728,6 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
             : `${seoTitleParts.join(" ")} — Rockhound Studio`;
         }
 
-        // BUG 2 FIX: Ensure Richardson's page handle is absolutely enforced
         const finalOriginPageHandle = resolvedHandle === "the-richardson-strike" ? "the-richardson-strike" : resolvedHandle;
 
         const finalParse = sanitizeObject({
@@ -795,7 +772,6 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
       const clientBase64 = body.get("imageBase64");
       const clientMime = body.get("imageMimeType") || "image/jpeg";
       
-      // Preserve bench fields so full rescan never clears existing weight or measurements
       const bench_weight_grams = body.get("weight_grams") || "";
       const bench_shipping_weight_oz = body.get("shipping_weight_oz") || "";
       const bench_dimensions_mm = body.get("dimensions_mm") || "";
@@ -804,7 +780,7 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
       const bench_honest_flaws = body.get("honest_flaws_and_character") || "";
 
       const rawTitleInput = body.get("productTitle") || body.get("pieceName") || body.get("piece_name") || "";
-      const titleInput = rawTitleInput.replace(/â€”/g, "—");
+      const titleInput = rawTitleInput.replace(/â€”/g, "—").replace(/Ã¢â‚¬â€/g, "—");
       const segments = titleInput.split(/\s+[—–-]\s+/);
       let derivedFamily = segments[0]?.trim() || "Unknown Stone";
       derivedFamily = cleanStoneFamilyShape(derivedFamily);
@@ -822,7 +798,6 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
 
       const matchedPage = pagesList.find(p => p.url.includes(defaultOriginSlug));
       
-      // BUG 3 FIX: Reset origin_story if matched page differs from bench, to prevent stale carry-over
       let extractedStory = matchedPage && matchedPage.excerpt ? matchedPage.excerpt : "";
       if (!extractedStory) {
         extractedStory = bench_origin_story;
@@ -932,9 +907,13 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
         const resolved_wire_material = parsedVision.wire_material || "None";
         const resolved_setting_ready = parsedVision.setting_ready || "None";
 
-        // 🟢 FIX: Absolute enforcement of jewelry finding rule. If bail is active, finding MUST be None.
-        const activeBail = String(parsedVision.bail_included || "None").trim();
-        const finalFindingType = (activeBail !== "None" && activeBail.toLowerCase() !== "none" && activeBail !== "") ? "None" : String(parsedVision.jewelry_finding_type || "None").trim();
+        let activeBail = String(parsedVision.bail_included || "None").trim();
+        if (activeBail.toLowerCase() === "none" || activeBail === "") activeBail = "None";
+        
+        let finalFindingType = String(parsedVision.jewelry_finding_type || "None").trim();
+        if (activeBail !== "None") {
+            finalFindingType = "None";
+        }
 
         let final_desc = parsedVision.generated_description || "";
         const lowerDesc = final_desc.toLowerCase();
@@ -946,7 +925,6 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
         const finalOriginHandle = resolveOriginHandle(finalOriginLocation, pagesList);
         const finalCollectionData = resolveCollectionData(finalOriginLocation, finalOriginHandle, collectionsList);
 
-        // BUG 2 FIX: Ensure Richardson's page handle is absolutely enforced
         const finalOriginPageHandle = finalOriginHandle === "the-richardson-strike" ? "the-richardson-strike" : finalOriginHandle;
 
         const visionFields = parsedVision || {};
@@ -1000,7 +978,6 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
           condition: "new",
           google_product_category: parsedVision.google_product_category || "Apparel & Accessories > Jewelry",
           alt_text: visionFields.alt_text || "",
-          // Preserve physical bench attributes during full rescan
           honest_flaws_and_character: bench_honest_flaws || parsedVision.honest_flaws_and_character || "",
           ...(bench_weight_grams ? { weight_grams: bench_weight_grams } : {}),
           ...(bench_shipping_weight_oz ? { shipping_weight_oz: bench_shipping_weight_oz } : {}),
@@ -1019,9 +996,6 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
       return Response.json({ success: false, intent, error: `Vision API Failure (${geminiRes.status}): ${errText}` });
     }
 
-    // ==========================================
-    // 🟢 THE MAGIC WAND RECEIVER (generateDescription)
-    // ==========================================
     if (intent === "generateDescription") {
       const sharedFields = JSON.parse(body.get("sharedFields") || "{}");
       const pieceData = JSON.parse(body.get("pieceData") || "{}");
@@ -1043,14 +1017,11 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
 
       let dwellButtonsHTML = `<br><br><a href="${targetUrlPath}">${fullCollectionTitle} Story</a>\n<br><a href="${collectionUrlPath}">${fullCollectionTitle} Collection</a>`;
       
-      // 🟢 FIX: Enforcing the exact 6-link rule for Richardson's Rock Ranch
       if (originSegment === "Richardson's Rock Ranch" || targetUrlPath.includes("the-richardson-strike")) {
         dwellButtonsHTML = `<br><br><a href="/pages/the-richardson-strike">Richardson's Rock Ranch Story</a>
 <br><a href="/collections/richardsons-rock-ranch">Richardson's Rock Ranch Collection</a>
 <br><a href="/pages/the-3-000-mile-run">The 3,000-Mile Run Story</a>
-<br><a href="/collections/the-3-000-mile-run-1">The 3,000-Mile Run Collection</a>
-<br><a href="/pages/the-shopped-rock">The Shopped Rock Story</a>
-<br><a href="/collections/the-shopped-rock">The Shopped Rock Collection</a>`;
+<br><a href="/collections/the-3-000-mile-run-1">The 3,000-Mile Run Collection</a>`;
       }
 
       const promptText = `You are writing a product description for Rockhound Studio, a lapidary art studio run by Bob and Janyce, married 34 years, both artists, both rockhounds. They cut and polish every stone themselves in Spokane Valley WA.
@@ -1080,14 +1051,13 @@ VOICE RULES:
 - Short sentences. One idea at a time.
 - "We" for the partnership. "I" for Bob's personal moment with the stone.
 - The stone earns its own sale. Never push it.
-- The OOAK nature is self-evident. Never say "one of a kind" as a selling point.
 - No jewelry store language. This is freeform lapidary art.
 - Signature always: — Bob & Janyce, Rockhound Studio, Spokane Valley WA
 
 DESCRIPTION STRUCTURE — follow this order exactly:
 
 1. PHYSICAL DESCRIPTION
-Start with the piece_name. What makes this stone different from every other stone of its type. Lead with bench_notes and artist_notes — these are Bob's direct observations from the wheel. Then describe shape, color, flash, finish. Specific and honest. If bench_notes describes something unexpected like a pine tree in the flash or a dendritic inclusion — that is your lead sentence. Do not bury it. Do not skip it.
+Start with the piece_name. What makes this stone different from every other stone of its type. Lead with bench_notes and artist_notes — these are Bob's direct observations from the wheel. Then describe shape, color, flash, finish. Specific and honest.
 
 2. ORIGIN HOOK
 1-2 sentences only. Pull from the origin_story field. Enough to make them want to read the full story. End with the placeholder: {{ORIGIN_LINK}}
