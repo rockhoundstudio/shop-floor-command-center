@@ -449,7 +449,7 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
       let injectValue = String(value !== null && value !== undefined ? value : "");
       if (key === "piece_name") injectValue = resolvedPieceName;
 
-      // Do NOT scrub user edits here. Just trim raw whitespace.
+      // ABSOLUTE LAW OF THE SCREEN FIX: Scrubber removed. Trim only.
       injectValue = injectValue.trim();
 
       const config = CUSTOM_FIELDS.find(f => f.key === key);
@@ -534,7 +534,7 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
 
         setFullMetaState(prev => {
           const updatedState = { ...prev };
-          // The Law of the Screen dictates that AI data overrides old ghost data ONLY for these specified fields
+          // GHOST HARDWARE FIX: jewelry_finding_type explicitly added to ALWAYS_OVERWRITE
           const ALWAYS_OVERWRITE = [
             "mohs_hardness", "luster", "fracture_pattern", "cleavage", "specific_gravity", 
             "diaphaneity", "mineral_class", "crystal_system", "rock_composition", 
@@ -542,7 +542,7 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
             "seo_title", "origin_story", "stone_story", "primary_use", "bail_included", 
             "setting_ready", "primary_medium", "alt_text", "found_object", "wire_material", 
             "secondary_medium", "color", "surface_finish", "material", "treated", 
-            "jewelry_type", "jewelry_finding_type" // <-- ADDED hardware override
+            "jewelry_type", "jewelry_finding_type"
           ];
 
           Object.entries(tab2Data).forEach(([key, val]) => {
