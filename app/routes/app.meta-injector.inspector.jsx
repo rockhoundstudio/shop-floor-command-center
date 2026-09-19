@@ -534,7 +534,6 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
 
         setFullMetaState(prev => {
           const updatedState = { ...prev };
-          // GHOST HARDWARE FIX: jewelry_finding_type explicitly added to ALWAYS_OVERWRITE
           const ALWAYS_OVERWRITE = [
             "mohs_hardness", "luster", "fracture_pattern", "cleavage", "specific_gravity", 
             "diaphaneity", "mineral_class", "crystal_system", "rock_composition", 

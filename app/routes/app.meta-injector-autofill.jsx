@@ -3,6 +3,27 @@ import { lookupStone } from "../utils/geoLibrary.jsx";
 
 const stoneProfileCache = new Map();
 
+// ==========================================
+// 🟢 UPGRADED DYSLEXIA FORMATTING SAFEGUARD
+// Catches all punctuation smashing (periods, commas, etc.)
+// ==========================================
+function formatDyslexiaText(text) {
+  if (!text) return "";
+  let cleaned = text;
+  
+  // Force space after period, exclamation, or question mark if missing
+  cleaned = cleaned.replace(/([a-z0-9])([.?!])([A-Z])/g, "$1$2 $3");
+  
+  // Force space after comma if missing
+  cleaned = cleaned.replace(/([a-z0-9]),([A-Za-z])/gi, "$1, $2");
+  
+  // Force visual spacing between HTML paragraphs
+  cleaned = cleaned.replace(/<\/p>\s*<p>/g, "</p>\n\n<p>");
+  cleaned = cleaned.replace(/<br\s*\/?>/gi, "<br>\n");
+  
+  return cleaned.trim();
+}
+
 function extractShapeFromString(str) {
   if (!str) return "";
   const SHAPES = ["Round", "Oval", "Freeform", "Teardrop", "Pear", "Cushion", "Marquise", "Rectangle", "Square", "Heart", "Slab", "Rough", "Cabochon"];
@@ -66,17 +87,17 @@ function buildMasterVisionPrompt({
   2. Origin Hook: 1-2 sentences from ORIGIN STORY.
   3. Collection Hook: 1-2 sentences about ${fullCollectionTitle}.
   4. Signature: — Bob & Janyce, Rockhound Studio, Spokane Valley WA
-  5. Stone Data: Specs, cut, dimensions.
+  5. Stone Data: Specs, cut. (DO NOT GUESS DIMENSIONS HERE).
   6. Ready to Wear: State if set or loose.
   7. Dwell Buttons:
 ${dwellButtonsHTML}
 
 FULL ORIGIN STORY (CRITICAL LORE FIREWALL - READ CAREFULLY):
 ${originStory}
-WARNING: The story above is a master document covering multiple distinct stones (e.g., Labradorite, Fire Obsidian, Botswana Agate). Scan the text and extract ONLY the 1-2 sentence narrative that explicitly matches "${stoneFamily}". Completely ignore the rest of the text (and other sister stones) to prevent cross-contamination.
+WARNING: The story above is a master document covering multiple distinct stones. Scan the text and extract ONLY the 1-2 sentence narrative that explicitly matches "${stoneFamily}". Completely ignore the rest of the text to prevent cross-contamination.
 
 MANDATORY LAWS:
-- HARDWARE PHYSICS LAW: bail_included and jewelry_finding_type are STRICTLY MUTUALLY EXCLUSIVE. If bail_included has any value other than "None", jewelry_finding_type MUST be exactly "None".
+- HARDWARE PHYSICS LAW: bail_included and jewelry_finding_type are STRICTLY MUTUALLY EXCLUSIVE.
 - LOOSE STONE OVERRIDE: If bare loose stone with no metal, you MUST return strictly "None" for setting_ready, wire_material, secondary_medium, chain_material, and bail_included.
 - PRIMARY/SECONDARY MEDIUM RULE: primary_medium is the stone. secondary_medium is the hardware/setting.`;
 }
@@ -195,14 +216,14 @@ async function getLiveStoreDirectory(admin) {
       pagesList = data.data.pages.edges.map(e => ({
         title: e.node.title,
         url: `/pages/${e.node.handle}`,
-        excerpt: (e.node.body || "").replace(/<[^>]*>?/gm, "").replace(/\s+/g, " ").trim().slice(0, 4000)
+        excerpt: (e.node.body || "").replace(/<[^>]*>?/gm, "").replace(/\s+/g, " ").trim().slice(0, 10000)
       }));
     }
     if (data.data?.collections?.edges) {
       collectionsList = data.data.collections.edges.map(e => ({
         title: e.node.title,
         url: `/collections/${e.node.handle}`,
-        excerpt: (e.node.description || "").replace(/<[^>]*>?/gm, "").replace(/\s+/g, " ").trim().slice(0, 2000)
+        excerpt: (e.node.description || "").replace(/<[^>]*>?/gm, "").replace(/\s+/g, " ").trim().slice(0, 5000)
       }));
     }
   } catch (err) {
@@ -536,10 +557,12 @@ export const action = async ({ request }) => {
               }
               
               if (visionFields.generated_description) {
-                 const desc = visionFields.generated_description;
+                 let desc = formatDyslexiaText(visionFields.generated_description);
                  const lowerDesc = desc.toLowerCase();
                  if (desc.startsWith("[VISION API CRASH]") || desc.startsWith("[API CRASH]") || desc.startsWith("[JSON PARSE ERROR]") || lowerDesc.includes("timed out")) {
                      visionFields.generated_description = "";
+                 } else {
+                     visionFields.generated_description = desc;
                  }
               }
             } else {
@@ -552,7 +575,6 @@ export const action = async ({ request }) => {
           }
         }
 
-        // ABSOLUTE SHAPE LOCK - Override AI Hallucinations
         if (derivedShape) {
             visionFields.stone_shape = derivedShape;
             if (visionFields.cut_and_shape && !visionFields.cut_and_shape.toLowerCase().includes(derivedShape.toLowerCase())) {
@@ -574,6 +596,9 @@ export const action = async ({ request }) => {
 
         const finalMaterial = (stoneFam => stoneFam.replace(/^(Dragon's Eye|Green|Blue|Fire|Rufus|Rainbow|Yellow|Red|Black|Oregon)\s+/i, "").trim())(derivedFamily);
 
+        // 🟢 TITLE LOCK: Prioritize incoming `stone_family` to prevent legacy bleed
+        const finalFamilyTitle = stone_family || derivedFamily;
+
         const parsedVision = visionFields || {};
         const jewelry_type = parsedVision.jewelry_type || "N/A";
         
@@ -587,12 +612,12 @@ export const action = async ({ request }) => {
 
         const payload = sanitizeObject({
           origin_story: origin_story,
-          stone_family: derivedFamily,
+          stone_family: finalFamilyTitle,
           piece_name: pieceNameSegment,
           origin_handle: finalOriginHandle,
           origin_page_handle: finalOriginPageHandle,
           origin_location: correctedOrigin,
-          shopify_title: `${derivedFamily} — ${correctedOrigin} — ${pieceNameSegment}`,
+          shopify_title: `${finalFamilyTitle} — ${correctedOrigin} — ${pieceNameSegment}`,
           collection_name: finalCollectionData.name,
           collection_location: mapCollectionLocation(finalCollectionData.name),
           seo_title: visionFields.seo_title || manual_seo_title,
@@ -941,12 +966,13 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
         }
 
         let final_desc = parsedVision.generated_description || "";
+        final_desc = formatDyslexiaText(final_desc);
         const lowerDesc = final_desc.toLowerCase();
+        
         if (final_desc.startsWith("[VISION API CRASH]") || final_desc.startsWith("[API CRASH]") || final_desc.startsWith("[JSON PARSE ERROR]") || lowerDesc.includes("timed out")) {
             final_desc = "";
         }
 
-        // ABSOLUTE SHAPE LOCK - Override AI Hallucinations
         if (derivedShape) {
             parsedVision.stone_shape = derivedShape;
             if (parsedVision.cut_and_shape && !parsedVision.cut_and_shape.toLowerCase().includes(derivedShape.toLowerCase())) {
@@ -964,6 +990,9 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
 
         const visionFields = parsedVision || {};
         const jewelry_type = parsedVision.jewelry_type || "N/A";
+
+        // 🟢 TITLE LOCK: Prioritize incoming `stone_family` to prevent legacy bleed
+        const finalFamilyTitle = bench_honest_flaws ? (body.get("stone_family") || derivedFamily) : derivedFamily;
 
         const payload = sanitizeObject({
           pieceId,
@@ -988,7 +1017,7 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
           setting_ready: resolved_setting_ready,
           bail_included: activeBail,
           origin_story: extractedStory,
-          stone_family: derivedFamily,
+          stone_family: finalFamilyTitle,
           piece_name: pieceNameSegment,
           origin_handle: finalOriginHandle,
           origin_page_handle: finalOriginPageHandle,
@@ -1103,7 +1132,7 @@ Start with the piece_name. What makes this stone different from every other ston
 
 4. QUICK-REFERENCE SPECS
 Stone: [stone_family]
-Dimensions: [dimensions_mm]
+Dimensions: EXACTLY [dimensions_mm]. Do not guess or estimate sizes.
 Finish: [surface_finish]
 Setting: [primary_medium]
 Includes: [bail/chain/cord or "Loose stone, undrilled"]
@@ -1154,7 +1183,10 @@ HARD RULES:
         
         const parsed = JSON.parse(cleanJson);
         const safeParsed = sanitizeObject(parsed);
-        const finalDescription = (safeParsed.generated_description || "").trimEnd() + "\n" + dwellButtonsHTML;
+        
+        let desc = formatDyslexiaText(safeParsed.generated_description || "");
+        
+        const finalDescription = desc + "\n\n" + dwellButtonsHTML;
         return Response.json({ success: true, intent, generated_description: finalDescription });
       }
       
