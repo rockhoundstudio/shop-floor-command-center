@@ -267,6 +267,22 @@ export const action = async ({ request }) => {
 
   let intent = formData.get("intent");
 
+  // ==========================================
+  // SHARED AI ENGINE PASS-THROUGH
+  // Seamlessly catches AI intents and hands them to the server utility
+  // ==========================================
+  if (
+    intent === "tab2AutoFill" || 
+    intent === "fullRescan" || 
+    intent === "visionScan" || 
+    intent === "generateDescription" || 
+    intent === "geoLookup" || 
+    intent === "titleParse"
+  ) {
+    const autofillResult = await executeAutofill(intent, formData, admin);
+    return data(autofillResult);
+  }
+
   if (intent === "auto_fill_single") {
     const title = formData.get("title");
     const stoneName = extractStoneName(title);
