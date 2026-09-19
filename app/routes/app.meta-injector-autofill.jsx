@@ -33,6 +33,15 @@ function extractShapeFromString(str) {
   return "";
 }
 
+function enforceOriginOverrides(loc) {
+  if (!loc) return loc;
+  const lower = loc.toLowerCase();
+  if (lower.includes("yakima") || lower.includes("chert")) return "Yakima Canyon";
+  if (lower.includes("spokane")) return "Spokane River";
+  if (lower.includes("richardson")) return "Richardson's Rock Ranch";
+  return loc;
+}
+
 function buildMasterVisionPrompt({
   pagesMenu,
   collectionsMenu,
@@ -44,9 +53,19 @@ function buildMasterVisionPrompt({
   fullCollectionTitle,
   collectionUrlPath
 }) {
-  let dwellButtonsHTML = `<br><br><a href="${targetUrlPath}">${fullCollectionTitle} Story</a>\n<br><a href="${collectionUrlPath}">${fullCollectionTitle} Collection</a>`;
+  let dwellButtonsHTML = "";
   
-  if (originSegment === "Richardson's Rock Ranch" || targetUrlPath.includes("the-richardson-strike")) {
+  if (targetUrlPath && targetUrlPath !== "/pages/") {
+    dwellButtonsHTML += `<br><br><a href="${targetUrlPath}">${fullCollectionTitle} Story</a>\n`;
+  } else {
+    dwellButtonsHTML += `<br><br>`;
+  }
+  
+  if (collectionUrlPath && collectionUrlPath !== "/collections/") {
+    dwellButtonsHTML += `${dwellButtonsHTML.endsWith('\n') ? '' : '<br>'}<a href="${collectionUrlPath}">${fullCollectionTitle} Collection</a>`;
+  }
+  
+  if (originSegment.toLowerCase().includes("richardson") || (targetUrlPath && targetUrlPath.includes("the-richardson-strike"))) {
     dwellButtonsHTML = `<br><br><a href="/pages/the-richardson-strike">Richardson's Rock Ranch Story</a>
 <br><a href="/collections/richardsons-rock-ranch">Richardson's Rock Ranch Collection</a>
 <br><a href="/pages/the-3-000-mile-run">The 3,000-Mile Run Story</a>
@@ -236,7 +255,8 @@ function resolveOriginHandle(locationSegment, pagesList) {
   const cleanLoc = (locationSegment || "").toLowerCase().trim();
   if (!cleanLoc) return "";
   if (cleanLoc.includes("richardson")) return "the-richardson-strike";
-  if (cleanLoc.includes("irv")) return "";
+  if (cleanLoc.includes("irv")) return ""; // Shopped Rock burned
+  if (cleanLoc.includes("spokane")) return ""; // No origin page for Spokane
   if (cleanLoc.includes("north fork") || cleanLoc.includes("north-fork") || cleanLoc.includes("cda") || cleanLoc.includes("nor")) return "the-north-fork-strike";
   if (cleanLoc.includes("yakima") || cleanLoc.includes("yak") || cleanLoc.includes("chert")) return "the-shop-lore-chert-road-detour-yakima-river-jasper";
 
@@ -247,11 +267,10 @@ function resolveOriginHandle(locationSegment, pagesList) {
 function resolveCollectionData(locationSegment, defaultOriginSlug, collectionsList = []) {
   const cleanLoc = (locationSegment || "").toLowerCase().trim();
 
-  if (cleanLoc.includes("yakima")) return { slug: "chert-road-detour", name: "Chert Road Detour — Yakima River Jasper Collection" };
-  if (cleanLoc.includes("chert")) return { slug: "chert-road-detour", name: "Chert Road Detour — Yakima River Jasper Collection" };
-
+  if (cleanLoc.includes("yakima") || cleanLoc.includes("chert")) return { slug: "chert-road-detour", name: "Chert Road Detour — Yakima River Jasper Collection" };
   if (cleanLoc.includes("richardson")) return { slug: "richardsons-rock-ranch", name: "Richardson's Rock Ranch Collection" };
-  if (cleanLoc.includes("irv")) return { slug: "", name: "" };
+  if (cleanLoc.includes("spokane")) return { slug: "the-spokane-river-collection", name: "Spokane River Stones and Stories" };
+  if (cleanLoc.includes("irv")) return { slug: "", name: "" }; // Shopped Rock burned
   if (cleanLoc.includes("north fork") || cleanLoc.includes("north-fork") || cleanLoc.includes("cda") || cleanLoc.includes("nor")) return { slug: "north-fork-cda-collection", name: "North Fork CdA Collection" };
 
   const matchedCol = collectionsList.find(c => c.url.includes(defaultOriginSlug) || c.title.toLowerCase().includes(cleanLoc));
@@ -416,6 +435,12 @@ function mapCollectionLocation(rawLocation) {
   return rawLocation.replace(/\s*Collection$/i, "").trim();
 }
 
+// 🟢 NEW HELPER: Replaces the strict-breaking IIFE used for material generation
+function getDerivedMaterial(stoneFam) {
+  if (!stoneFam) return "";
+  return stoneFam.replace(/^(Dragon's Eye|Green|Blue|Fire|Rufus|Rainbow|Yellow|Red|Black|Oregon)\s+/i, "").trim();
+}
+
 export const action = async ({ request }) => {
   try {
     const { admin } = await authenticate.admin(request);
@@ -448,7 +473,7 @@ export const action = async ({ request }) => {
       const rawFamilySegment = titleSegments[0]?.trim() || stone_family;
       const derivedShape = extractShapeFromString(rawFamilySegment);
       let derivedFamily = cleanStoneFamilyShape(rawFamilySegment);
-      const derivedOrigin = titleSegments[1]?.trim() || "";
+      const derivedOrigin = enforceOriginOverrides(titleSegments[1]?.trim() || "");
       const pieceNameSegment = titleSegments.length >= 3 ? titleSegments[2].trim() : "";
 
       try {
@@ -457,8 +482,8 @@ export const action = async ({ request }) => {
         
         const initialOriginHandle = resolveOriginHandle(derivedOrigin, pagesList);
         const initialCollectionData = resolveCollectionData(derivedOrigin, initialOriginHandle, collectionsList);
-        const targetUrlPath = `/pages/${initialOriginHandle}`;
-        const collectionUrlPath = `/collections/${initialCollectionData.slug}`;
+        const targetUrlPath = initialOriginHandle ? `/pages/${initialOriginHandle}` : "";
+        const collectionUrlPath = initialCollectionData.slug ? `/collections/${initialCollectionData.slug}` : "";
         const fullCollectionTitle = initialCollectionData.name.replace(/\s+Collection$/i, "").trim();
         
         const matchedPage = pagesList.find(p => p.url.includes(initialOriginHandle));
@@ -584,7 +609,7 @@ export const action = async ({ request }) => {
             }
         }
 
-        const correctedOrigin = visionFields.origin_location || derivedOrigin;
+        const correctedOrigin = enforceOriginOverrides(visionFields.origin_location || derivedOrigin);
         const finalOriginHandle = resolveOriginHandle(correctedOrigin, pagesList);
         const finalCollectionData = resolveCollectionData(correctedOrigin, finalOriginHandle, collectionsList);
         
@@ -594,10 +619,11 @@ export const action = async ({ request }) => {
           ? `Handcrafted ${derivedFamily} — ${correctedOrigin} — OOAK Lapidary Art`
           : `Handcrafted ${derivedFamily} — OOAK Lapidary Art`;
 
-        const finalMaterial = (stoneFam => stoneFam.replace(/^(Dragon's Eye|Green|Blue|Fire|Rufus|Rainbow|Yellow|Red|Black|Oregon)\s+/i, "").trim())(derivedFamily);
+        // 🟢 FIXED: Use helper function instead of IIFE
+        const finalMaterial = getDerivedMaterial(derivedFamily);
 
         // 🟢 TITLE LOCK: Prioritize incoming `stone_family` to prevent legacy bleed
-        const finalFamilyTitle = stone_family || derivedFamily;
+        const finalFamilyTitle = stone_family ? cleanStoneFamilyShape(stone_family) : derivedFamily;
 
         const parsedVision = visionFields || {};
         const jewelry_type = parsedVision.jewelry_type || "N/A";
@@ -675,8 +701,8 @@ export const action = async ({ request }) => {
     if (intent === "titleParse") {
       const pieceNameInput = (body.get("pieceName") || "").replace(/Ã¢â‚¬â€/g, "—").replace(/â€”/g, "—");
       const segments = pieceNameInput.split(/\s+[—–-]\s+/);
-      const segment1 = segments[0]?.trim() || "";
-      const segment2 = segments[1]?.trim() || "";
+      const segment1 = cleanStoneFamilyShape(segments[0]?.trim() || "");
+      const segment2 = enforceOriginOverrides(segments[1]?.trim() || "");
       const segment3 = segments.length >= 3 ? segments[2].trim() : "";
 
       let stonePicklist = "Agate, Amazonite, Amethyst, Andesite, Aventurine, Azurite, Brecciated Jasper, Brecciated Quartz, Calcite, Carnelian, Chalcedony, Chrysocolla, Citrine, Dalmatian Stone, Fluorite, Garnet, Hematite, Howlite, Jasper, Kyanite, Labradorite, Lapis Lazuli, Lepidolite, Malachite, Moonstone, Obsidian, Ocean Jasper, Onyx, Opal, Petrified Wood, Picture Jasper, Prehnite, Pyrite, Quartz, Quartzite, Rhodonite, Rhyolite, Rose Quartz, Serpentine, Smoky Quartz, Sodalite, Sunstone, Tourmaline, Turquoise, Unakite, Variscite";
@@ -769,10 +795,12 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
         const seoTitleParts = [];
         if (parsed.stone_family || segment1) seoTitleParts.push(parsed.stone_family || segment1);
         
+        const correctedOriginLoc = enforceOriginOverrides(parsed.origin_location || segment2);
+
         let seo_title = "";
         if (seoTitleParts.length > 0) {
-          seo_title = parsed.origin_location || segment2
-            ? `${seoTitleParts.join(" ")} — Found at ${parsed.origin_location || segment2} — Rockhound Studio`
+          seo_title = correctedOriginLoc
+            ? `${seoTitleParts.join(" ")} — Found at ${correctedOriginLoc} — Rockhound Studio`
             : `${seoTitleParts.join(" ")} — Rockhound Studio`;
         }
 
@@ -784,10 +812,10 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
           origin_handle: resolvedHandle,
           origin_page_handle: finalOriginPageHandle,
           origin_story: extractedStory,
-          origin_location: parsed.origin_location || segment2,
+          origin_location: correctedOriginLoc,
           collection_name: parsed.collection_name || collectionData.name,
           collection_location: mapCollectionLocation(parsed.collection_location || collectionData.name),
-          canonical_title: parsed.stone_family + " — " + (parsed.origin_location || displayName) + " — " + segment3,
+          canonical_title: parsed.stone_family + " — " + (correctedOriginLoc || displayName) + " — " + segment3,
           seo_title: parsed.seo_title || seo_title,
           mohs_hardness: dbGeoData.mohs_hardness || "",
           luster: dbGeoData.luster || "",
@@ -833,7 +861,7 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
       const rawFamilySegment = segments[0]?.trim() || "Unknown Stone";
       const derivedShape = extractShapeFromString(rawFamilySegment);
       let derivedFamily = cleanStoneFamilyShape(rawFamilySegment);
-      const originSegment = segments[1]?.trim() || "Unknown Origin";
+      const originSegment = enforceOriginOverrides(segments[1]?.trim() || "Unknown Origin");
       const pieceNameSegment = segments.length >= 3 ? segments[2].trim() : "";
       
       const geoFields = await getGeoData(admin, derivedFamily);
@@ -841,8 +869,8 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
       
       const defaultOriginSlug = resolveOriginHandle(originSegment, pagesList);
       const defaultCollection = resolveCollectionData(originSegment, defaultOriginSlug, collectionsList);
-      const targetUrlPath = `/pages/${defaultOriginSlug}`;
-      const collectionUrlPath = `/collections/${defaultCollection.slug}`;
+      const targetUrlPath = defaultOriginSlug ? `/pages/${defaultOriginSlug}` : "";
+      const collectionUrlPath = defaultCollection.slug ? `/collections/${defaultCollection.slug}` : "";
       const fullCollectionTitle = defaultCollection.name.replace(/\s+Collection$/i, "").trim();
 
       const matchedPage = pagesList.find(p => p.url.includes(defaultOriginSlug));
@@ -982,7 +1010,7 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
             }
         }
 
-        const finalOriginLocation = parsedVision.origin_location || originSegment;
+        const finalOriginLocation = enforceOriginOverrides(parsedVision.origin_location || originSegment);
         const finalOriginHandle = resolveOriginHandle(finalOriginLocation, pagesList);
         const finalCollectionData = resolveCollectionData(finalOriginLocation, finalOriginHandle, collectionsList);
 
@@ -991,8 +1019,11 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
         const visionFields = parsedVision || {};
         const jewelry_type = parsedVision.jewelry_type || "N/A";
 
+        // 🟢 FIXED: Use helper function instead of IIFE
+        const finalMaterial = getDerivedMaterial(derivedFamily);
+
         // 🟢 TITLE LOCK: Prioritize incoming `stone_family` to prevent legacy bleed
-        const finalFamilyTitle = bench_honest_flaws ? (body.get("stone_family") || derivedFamily) : derivedFamily;
+        const finalFamilyTitle = bench_honest_flaws ? cleanStoneFamilyShape(body.get("stone_family") || derivedFamily) : cleanStoneFamilyShape(derivedFamily);
 
         const payload = sanitizeObject({
           pieceId,
@@ -1009,7 +1040,7 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
           rarity: parsedVision.rarity || "Common",
           authenticity: parsedVision.authenticity || "Authentic",
           color_pattern: parsedVision.color_pattern || parsedVision.pattern || "",
-          material: (stoneFam => stoneFam.replace(/^(Dragon's Eye|Green|Blue|Fire|Rufus|Rainbow|Yellow|Red|Black|Oregon)\s+/i, "").trim())(derivedFamily),
+          material: finalMaterial,
           primary_use: resolved_primary_use,
           primary_medium: derivedFamily,
           secondary_medium: resolved_secondary_medium,
@@ -1066,22 +1097,30 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
       
       let derivedFamily = sharedFields.stone_family || "Unknown Stone";
       derivedFamily = cleanStoneFamilyShape(derivedFamily);
-      const originSegment = sharedFields.origin_location || "Unknown Origin";
+      const originSegment = enforceOriginOverrides(sharedFields.origin_location || "Unknown Origin");
       
       const { pagesList, collectionsList } = await getLiveStoreDirectory(admin);
       const defaultOriginSlug = resolveOriginHandle(originSegment, pagesList);
       const defaultCollection = resolveCollectionData(originSegment, defaultOriginSlug, collectionsList);
       
-      const targetUrlPath = `/pages/${defaultOriginSlug}`;
-      const collectionUrlPath = `/collections/${defaultCollection.slug}`;
+      const targetUrlPath = defaultOriginSlug ? `/pages/${defaultOriginSlug}` : "";
+      const collectionUrlPath = defaultCollection.slug ? `/collections/${defaultCollection.slug}` : "";
       const fullCollectionTitle = defaultCollection.name.replace(/\s+Collection$/i, "").trim();
 
       const matchedPage = pagesList.find(p => p.url.includes(defaultOriginSlug));
       const extractedStory = matchedPage ? matchedPage.excerpt : "";
 
-      let dwellButtonsHTML = `<br><br><a href="${targetUrlPath}">${fullCollectionTitle} Story</a>\n<br><a href="${collectionUrlPath}">${fullCollectionTitle} Collection</a>`;
+      let dwellButtonsHTML = "";
+      if (targetUrlPath && targetUrlPath !== "/pages/") {
+        dwellButtonsHTML += `<br><br><a href="${targetUrlPath}">${fullCollectionTitle} Story</a>\n`;
+      } else {
+        dwellButtonsHTML += `<br><br>`;
+      }
+      if (collectionUrlPath && collectionUrlPath !== "/collections/") {
+        dwellButtonsHTML += `${dwellButtonsHTML.endsWith('\n') ? '' : '<br>'}<a href="${collectionUrlPath}">${fullCollectionTitle} Collection</a>`;
+      }
       
-      if (originSegment === "Richardson's Rock Ranch" || targetUrlPath.includes("the-richardson-strike")) {
+      if (originSegment.toLowerCase().includes("richardson") || (targetUrlPath && targetUrlPath.includes("the-richardson-strike"))) {
         dwellButtonsHTML = `<br><br><a href="/pages/the-richardson-strike">Richardson's Rock Ranch Story</a>
 <br><a href="/collections/richardsons-rock-ranch">Richardson's Rock Ranch Collection</a>
 <br><a href="/pages/the-3-000-mile-run">The 3,000-Mile Run Story</a>

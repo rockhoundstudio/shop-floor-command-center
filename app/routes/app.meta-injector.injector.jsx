@@ -34,6 +34,12 @@ const CUSTOM_FIELDS = [
   { key: "seo_title", label: "SEO Title", type: "single_line_text_field", isPerPiece: true }
 ];
 
+// 🟢 NEW HELPER: Replaces the strict-breaking IIFE used for material generation
+function getDerivedMaterial(stoneFam) {
+  if (!stoneFam) return "";
+  return stoneFam.replace(/^(Dragon's Eye|Green|Blue|Fire|Rufus|Rainbow|Yellow|Red|Black|Oregon)\s+/i, "").trim();
+}
+
 export function NewProductIntakeTab({ fetcher }) {
   const stageFetcher = useFetcher();
   const autoFillFetcher = useFetcher();
@@ -167,7 +173,6 @@ export function NewProductIntakeTab({ fetcher }) {
       if (!statusFetcher.data.success) {
         setErrorMessage(statusFetcher.data.error || "Status toggle failed.");
         if (window.shopify?.toast) window.shopify.toast.show("Status update failed", { isError: true });
-        // We could revert optimistic update here, but let's keep it simple for now
       } else {
         if (window.shopify?.toast) window.shopify.toast.show(`Status changed to ${statusFetcher.data.newStatus}`);
       }
@@ -428,14 +433,14 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
     let productType = "Wearable Art";
     (currentShared.primary_use && currentShared.primary_use !== "") && (productType = currentShared.primary_use);
 
-    // 🟢 FIX: Ensure material is strictly calculated exactly like the tab 2 engine
-    const derivedMaterial = (stoneFam => stoneFam.replace(/^(Dragon's Eye|Green|Blue|Fire|Rufus|Rainbow|Yellow|Red|Black|Oregon)\s+/i, "").trim())(currentShared.stone_family || "");
+    // 🟢 FIXED: Use helper function instead of inline IIFE to prevent strictly typed linter crashes
+    const derivedMaterial = getDerivedMaterial(currentShared.stone_family || "");
 
     const payload = {
       intent: "createProduct",
       ...currentShared,
       ...currentPiece,
-      material: derivedMaterial, // 🟢 Inject clean material override
+      material: derivedMaterial,
       piece_name: currentPiece.piece_name,
       dimensions_mm: currentPiece.dimensions_mm,
       cut_and_shape: currentPiece.cut_and_shape,
@@ -675,7 +680,10 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
       (isScan && isSuccess) && (() => {
         setSharedFields(prev => {
           const nextStoneFamily = data.tab2Data?.stone_family || data.stone_family || prev.stone_family || "";
-          const nextMaterial = data.tab2Data?.material || data.material || (stoneFam => stoneFam.replace(/^(Dragon's Eye|Green|Blue|Fire|Rufus|Rainbow|Yellow|Red|Black|Oregon)\s+/i, "").trim())(nextStoneFamily);
+          
+          // 🟢 FIXED: Use helper function instead of inline IIFE
+          const nextMaterial = data.tab2Data?.material || data.material || getDerivedMaterial(nextStoneFamily);
+
           return {
             ...prev,
             material: nextMaterial || prev.material,
@@ -776,9 +784,9 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
     setSharedFields(prev => {
       let resolvedCollectionLoc = parsed.collection_location || prev.collection_location;
 
-      // 🟢 FIX: Dynamic material stripping instead of hardcoded "Stone"
+      // 🟢 FIXED: Use helper function instead of inline IIFE
       const nextStoneFamily = normalizeDropdownValue("stone_family", parsed.stone_family?.trim()) || prev.stone_family || "";
-      const derivedMaterial = (stoneFam => stoneFam.replace(/^(Dragon's Eye|Green|Blue|Fire|Rufus|Rainbow|Yellow|Red|Black|Oregon)\s+/i, "").trim())(nextStoneFamily);
+      const derivedMaterial = getDerivedMaterial(nextStoneFamily);
 
       return {
         ...prev,
@@ -787,7 +795,7 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
         collection_name: parsed.collection_name || prev.collection_name,
         collection_location: resolvedCollectionLoc,
         origin_handle: parsed.origin_handle || prev.origin_handle, 
-        origin_page_handle: parsed.origin_page_handle || parsed.origin_handle || prev.origin_page_handle, // 🟢 FIX: Ensure origin_page_handle is locked in
+        origin_page_handle: parsed.origin_page_handle || parsed.origin_handle || prev.origin_page_handle, 
         origin_story: parsed.origin_story || prev.origin_story,
         specific_gravity: parsed.specific_gravity || prev.specific_gravity,
         diaphaneity: parsed.diaphaneity || prev.diaphaneity,
