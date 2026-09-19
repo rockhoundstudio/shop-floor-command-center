@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { BlockStack, Card, Text, Banner, TextField, Button, InlineStack, Box, Badge, ProgressBar } from "@shopify/polaris";
+import { BlockStack, Card, Text, Banner, TextField, Button, InlineStack, Box, Badge, ProgressBar, Modal } from "@shopify/polaris";
 import { useFetcher } from "react-router";
 
 // --- Strict Allowed Statuses ---
@@ -36,6 +36,9 @@ export function OperationsMatrixTab({ products, fetcher }) {
   
   const [safetyMessage, setSafetyMessage] = useState("");
   const [safetyError, setSafetyError] = useState("");
+  
+  // --- Telemetry State ---
+  const [telemetryData, setTelemetryData] = useState(null);
 
   const statusFetcher = useFetcher();
   const batchFetcher = useFetcher();
@@ -218,11 +221,10 @@ export function OperationsMatrixTab({ products, fetcher }) {
       updateProductState(currentId, STATUS.SCANNING, ["Initiating AI Autofill service..."]);
       
       const fd = new FormData();
-      fd.append("intent", "batchAuditItem"); // This is just an intent until the API is implemented
+      fd.append("intent", "batchAuditItem"); 
       fd.append("pieceId", currentId);
-      fd.append("runMode", runMode); // DRY_RUN or LIVE_RUN
+      fd.append("runMode", runMode); 
       
-      // Strict server-side verification: The API must reject live saves without this explicitly set
       if (runMode === "LIVE_RUN") {
         fd.append("explicitConfirm", "true");
       }
@@ -239,17 +241,39 @@ export function OperationsMatrixTab({ products, fetcher }) {
       const { intent, success, pieceId, finalStatus, logs = [] } = batchFetcher.data;
       
       if (intent === "batchAuditItem" && pieceId) {
-        // Update the piece with the exact pipeline status from the server
         const appliedStatus = finalStatus || (success ? STATUS.COMPLETE : STATUS.FAILED);
         updateProductState(pieceId, appliedStatus, logs);
         
-        // Move to next item after a small governor delay to respect rate limits
         setTimeout(() => {
           setQueueIndex(prev => prev + 1);
         }, 1500);
       }
     }
   }, [batchFetcher.state, batchFetcher.data, updateProductState]);
+
+  // --- Batch Visibility Controls ---
+  const handleVisibilityChange = useCallback((action) => {
+    if (queueIds.length === 0) return;
+    
+    // Safety check for live operations
+    if (runMode !== "LIVE_RUN") {
+      setSafetyError(`Cannot execute ${action}. You must switch to LIVE RUN to alter Shopify status.`);
+      return;
+    }
+
+    const confirm = window.confirm(`WARNING: You are about to execute ${action} on ${queueIds.length} queued pieces.\n\nAre you sure you want to alter their live Shopify state?`);
+    if (!confirm) return;
+
+    setSafetyError("");
+    setSafetyMessage(`Dispatching ${action} command for ${queueIds.length} products...`);
+    
+    const fd = new FormData();
+    fd.append("intent", "batchVisibilityUpdate");
+    fd.append("action", action); // DRAFT, ACTIVE, PUBLISH
+    fd.append("pieceIds", JSON.stringify(queueIds));
+    
+    batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-api" });
+  }, [queueIds, runMode, batchFetcher]);
 
   // --- Export Reports ---
   const handleExportAuditReport = useCallback(() => {
@@ -338,6 +362,10 @@ export function OperationsMatrixTab({ products, fetcher }) {
                   
                   const imageUrl = p.images?.edges?.[0]?.node?.url || p.featuredImage?.url || p.media?.edges?.[0]?.node?.image?.url;
                   
+                  // Read true Shopify status
+                  const trueStatus = p.status || "UNKNOWN";
+                  const statusTone = trueStatus === 'ACTIVE' ? 'success' : 'attention';
+                  
                   return (
                     <div 
                       key={p.id} 
@@ -356,7 +384,7 @@ export function OperationsMatrixTab({ products, fetcher }) {
                         flexDirection: "column"
                       }} 
                     >
-                      {/* Top section: Checkbox, Image, Badge */}
+                      {/* Top section: Checkbox, Image, Badges */}
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "8px" }}>
                         <div style={{ display: "flex", gap: "12px" }}>
                           <input 
@@ -371,19 +399,36 @@ export function OperationsMatrixTab({ products, fetcher }) {
                             )}
                           </div>
                         </div>
-                        <Badge tone={getStatusTone(currentStatus)} size="large">{currentStatus}</Badge>
+                        
+                        {/* Dual Status Indicators: Engine Pipeline & Shopify Reality */}
+                        <div style={{ display: "flex", flexDirection: "column", gap: "6px", alignItems: "flex-end" }}>
+                          <Badge tone={getStatusTone(currentStatus)} size="large">{currentStatus}</Badge>
+                          <Badge tone={statusTone} size="small">{trueStatus}</Badge>
+                        </div>
                       </div>
 
-                      {/* Bottom section: Tab 2 Text Wrapping Format */}
+                      {/* Bottom section: Tab 2 Text Wrapping Format & Telemetry */}
                       <div style={{ width: "100%", borderTop: "1px solid rgba(150, 150, 150, 0.3)", paddingTop: "8px" }}>
                         {p.title.split(" — ").map((part, idx) => (
                           <span key={idx} style={{ display: "block", marginBottom: "4px", whiteSpace: "normal", wordBreak: "break-word", fontWeight: idx === 0 ? "bold" : "normal", color: "#202223" }}>
                             {part}
                           </span>
                         ))}
-                        <span style={{ display: "block", marginTop: "4px", whiteSpace: "normal", opacity: 0.8, fontSize: "12px", color: "#6d7175" }}>
-                          {p.id.replace('gid://shopify/Product/', '')}
-                        </span>
+                        
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "4px" }}>
+                          <span style={{ whiteSpace: "normal", opacity: 0.8, fontSize: "12px", color: "#6d7175" }}>
+                            {p.id.replace('gid://shopify/Product/', '')}
+                          </span>
+                          <Button 
+                            size="micro" 
+                            onClick={(e) => { 
+                              e.stopPropagation(); // Prevents checkbox from toggling when inspecting
+                              setTelemetryData(p); 
+                            }}
+                          >
+                            Telemetry
+                          </Button>
+                        </div>
                       </div>
                     </div>
                   );
@@ -496,6 +541,32 @@ export function OperationsMatrixTab({ products, fetcher }) {
               </BlockStack>
             </Card>
 
+            {/* NEW: Batch State Controls */}
+            <Card padding="400">
+              <BlockStack gap="400">
+                <Text variant="headingLg" as="h2">Live Store Status</Text>
+                <Text as="p" tone="subdued">These actions apply to all currently queued items and require LIVE RUN mode.</Text>
+                
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "12px" }}>
+                  <div style={{ flexGrow: 1, minWidth: "100px" }}>
+                    <Button fullWidth onClick={() => handleVisibilityChange("DRAFT")} disabled={queueIds.length === 0 || isOrchestratorActive}>
+                      Set to Draft
+                    </Button>
+                  </div>
+                  <div style={{ flexGrow: 1, minWidth: "100px" }}>
+                    <Button fullWidth onClick={() => handleVisibilityChange("ACTIVE")} disabled={queueIds.length === 0 || isOrchestratorActive}>
+                      Set to Active
+                    </Button>
+                  </div>
+                  <div style={{ flexGrow: 1, minWidth: "120px" }}>
+                    <Button fullWidth tone="success" variant="primary" onClick={() => handleVisibilityChange("PUBLISH")} disabled={queueIds.length === 0 || isOrchestratorActive}>
+                      Publish (All Channels)
+                    </Button>
+                  </div>
+                </div>
+              </BlockStack>
+            </Card>
+
             <Card padding="400">
               <BlockStack gap="400">
                 <Text variant="headingLg" as="h2">Data & Auditing</Text>
@@ -513,6 +584,40 @@ export function OperationsMatrixTab({ products, fetcher }) {
           </BlockStack>
         </div>
       </div>
+
+      {/* Telemetry Modal for Raw Data Inspections */}
+      {telemetryData && (
+        <Modal
+          open={!!telemetryData}
+          onClose={() => setTelemetryData(null)}
+          title={`Telemetry Diagnostics: ${telemetryData.title}`}
+          size="large"
+        >
+          <Modal.Section>
+            <Text as="p" tone="subdued" style={{ marginBottom: "16px" }}>
+              Raw object mapping direct from the GraphQL index. Use this to verify internal tags, metafields, and structural integrity.
+            </Text>
+            <div style={{ 
+              backgroundColor: "#1a1a1a", 
+              padding: "16px", 
+              borderRadius: "6px",
+              maxHeight: "60vh",
+              overflowY: "auto"
+            }}>
+              <pre style={{ 
+                margin: 0, 
+                color: "#00ff00", 
+                whiteSpace: "pre-wrap", 
+                wordBreak: "break-word",
+                fontFamily: "monospace",
+                fontSize: "13px"
+              }}>
+                {JSON.stringify(telemetryData, null, 2)}
+              </pre>
+            </div>
+          </Modal.Section>
+        </Modal>
+      )}
     </BlockStack>
   );
 }
