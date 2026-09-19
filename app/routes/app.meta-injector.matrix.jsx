@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { BlockStack, Card, Text, Banner, TextField, Button, InlineStack, Box, Badge, ProgressBar } from "@shopify/polaris";
 import { useFetcher } from "react-router";
-import { ROCKHOUND_FIELDS } from "../utils/meta-injector.constants.jsx";
 
 // --- Strict Allowed Statuses ---
 const STATUS = {
@@ -252,7 +251,6 @@ export function OperationsMatrixTab({ products, fetcher }) {
     }
   }, [batchFetcher.state, batchFetcher.data, updateProductState]);
 
-
   // --- Export Reports ---
   const handleExportAuditReport = useCallback(() => {
     try {
@@ -281,7 +279,6 @@ export function OperationsMatrixTab({ products, fetcher }) {
     }
   }, [queueIds, safeProducts, productStates]);
 
-  // Helper for UI styling
   const getStatusTone = (status) => {
     switch(status) {
       case STATUS.COMPLETE: return "success";
@@ -311,12 +308,12 @@ export function OperationsMatrixTab({ products, fetcher }) {
               
               <div style={{ minHeight: "54px" }}>
                 <TextField
-                  label="Search Products"
                   value={searchQuery}
                   onChange={handleSearchChange}
                   clearButton
                   onClearButtonClick={handleClearSearch}
                   autoComplete="off"
+                  placeholder="Search products by title..."
                   disabled={isOrchestratorActive && !isPaused}
                 />
               </div>
@@ -332,45 +329,61 @@ export function OperationsMatrixTab({ products, fetcher }) {
                 </Button>
               </div>
 
-              <div style={{ maxHeight: "65vh", overflowY: "auto", paddingRight: "8px", display: "flex", flexDirection: "column", gap: "10px" }}>
+              {/* Exact Tab 2 scrolling container format */}
+              <div style={{ display: "flex", flexDirection: "column", gap: "16px", overflowY: "auto", height: "600px", paddingRight: "8px" }}>
                 {filteredProducts.map(p => {
                   const isChecked = queueIds.includes(p.id);
                   const pState = productStates[p.id];
                   const currentStatus = pState?.status || STATUS.QUEUED;
                   
-                  // Extract image safely based on Shopify GraphQL format
                   const imageUrl = p.images?.edges?.[0]?.node?.url || p.featuredImage?.url || p.media?.edges?.[0]?.node?.image?.url;
                   
                   return (
-                    <div key={p.id} style={{ display: "flex", alignItems: "center", gap: "16px", minHeight: "64px", padding: "12px", border: "1px solid #E1E3E5", borderRadius: "8px", backgroundColor: isChecked ? "#F4F6F8" : "transparent" }}>
-                      
-                      {/* Checkbox (No shrinking) */}
-                      <div style={{ flexShrink: 0, display: "flex", alignItems: "center", height: "100%" }}>
-                        <input
-                          type="checkbox"
-                          checked={isChecked}
-                          onChange={() => handleToggleProductSelection(p.id)}
-                          disabled={isOrchestratorActive && !isPaused}
-                          style={{ width: "24px", height: "24px", cursor: "pointer" }}
-                        />
-                      </div>
-
-                      {/* Thumbnail (40x40 fixed) */}
-                      <div style={{ width: "40px", height: "40px", flexShrink: 0, backgroundColor: "#e0e0e0", borderRadius: "4px", overflow: "hidden" }}>
-                        {imageUrl && (
-                          <img src={imageUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                        )}
-                      </div>
-
-                      {/* Title & Subtitle (minWidth: 0 prevents flex blowouts, truncate prevents wrapping) */}
-                      <div style={{ flexGrow: 1, minWidth: 0, overflow: "hidden" }}>
-                        <Text as="p" fontWeight="bold" truncate>{p.title}</Text>
-                        <Text as="p" tone="subdued" variant="bodySm" truncate>{p.id.replace('gid://shopify/Product/', '')}</Text>
-                      </div>
-
-                      {/* Badge Container (Fixed width to prevent squeezing) */}
-                      <div style={{ flexShrink: 0, width: "110px", textAlign: "right" }}>
+                    <div 
+                      key={p.id} 
+                      onClick={() => handleToggleProductSelection(p.id)}
+                      style={{ 
+                        minHeight: "140px", 
+                        overflow: "hidden", 
+                        flexShrink: 0, 
+                        border: "1px solid #c9cccf", 
+                        borderRadius: "8px", 
+                        backgroundColor: isChecked ? "#f0f2f4" : "#ffffff", 
+                        cursor: isOrchestratorActive && !isPaused ? "not-allowed" : "pointer", 
+                        padding: "12px",
+                        boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
+                        display: "flex",
+                        flexDirection: "column"
+                      }} 
+                    >
+                      {/* Top section: Checkbox, Image, Badge */}
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "8px" }}>
+                        <div style={{ display: "flex", gap: "12px" }}>
+                          <input 
+                            type="checkbox" 
+                            checked={isChecked} 
+                            readOnly 
+                            style={{ width: "20px", height: "20px", marginTop: "4px", pointerEvents: "none" }} 
+                          />
+                          <div style={{ width: "120px", height: "120px", minWidth: "120px", minHeight: "120px", backgroundColor: "#2a2a2a", border: "1px solid #444", borderRadius: "6px", flexShrink: 0, overflow: "hidden" }}>
+                            {imageUrl && (
+                              <img src={imageUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                            )}
+                          </div>
+                        </div>
                         <Badge tone={getStatusTone(currentStatus)} size="large">{currentStatus}</Badge>
+                      </div>
+
+                      {/* Bottom section: Tab 2 Text Wrapping Format */}
+                      <div style={{ width: "100%", borderTop: "1px solid rgba(150, 150, 150, 0.3)", paddingTop: "8px" }}>
+                        {p.title.split(" — ").map((part, idx) => (
+                          <span key={idx} style={{ display: "block", marginBottom: "4px", whiteSpace: "normal", wordBreak: "break-word", fontWeight: idx === 0 ? "bold" : "normal", color: "#202223" }}>
+                            {part}
+                          </span>
+                        ))}
+                        <span style={{ display: "block", marginTop: "4px", whiteSpace: "normal", opacity: 0.8, fontSize: "12px", color: "#6d7175" }}>
+                          {p.id.replace('gid://shopify/Product/', '')}
+                        </span>
                       </div>
                     </div>
                   );
@@ -400,12 +413,11 @@ export function OperationsMatrixTab({ products, fetcher }) {
                   </Banner>
                 )}
 
-                {/* Mode Toggle */}
                 <Box padding="400" background="bg-surface-secondary" borderRadius="200">
                   <BlockStack gap="300">
                     <Text as="h3" variant="headingMd">Safety Mode</Text>
-                    <InlineStack gap="300">
-                      <div style={{ flexGrow: 1 }}>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: "12px" }}>
+                      <div style={{ flexGrow: 1, minWidth: "120px" }}>
                         <Button 
                           size="large" 
                           fullWidth 
@@ -413,10 +425,10 @@ export function OperationsMatrixTab({ products, fetcher }) {
                           onClick={() => setRunMode("DRY_RUN")}
                           disabled={isOrchestratorActive}
                         >
-                          DRY RUN (Scan Only)
+                          DRY RUN
                         </Button>
                       </div>
-                      <div style={{ flexGrow: 1 }}>
+                      <div style={{ flexGrow: 1, minWidth: "120px" }}>
                         <Button 
                           size="large" 
                           fullWidth 
@@ -425,14 +437,13 @@ export function OperationsMatrixTab({ products, fetcher }) {
                           onClick={() => setRunMode("LIVE_RUN")}
                           disabled={isOrchestratorActive}
                         >
-                          LIVE RUN (Write to Store)
+                          LIVE RUN
                         </Button>
                       </div>
-                    </InlineStack>
+                    </div>
                   </BlockStack>
                 </Box>
 
-                {/* Progress Dashboard */}
                 <Box padding="400" border="1px solid #E1E3E5" borderRadius="200">
                   <BlockStack gap="200">
                     <InlineStack align="space-between">
@@ -442,7 +453,7 @@ export function OperationsMatrixTab({ products, fetcher }) {
                     <ProgressBar progress={progressPercentage} color={runMode === "LIVE_RUN" ? "critical" : "primary"} />
                     
                     {queueIds.length > 0 && queueIndex < queueIds.length && (
-                      <div style={{ marginTop: "12px" }}>
+                      <div style={{ marginTop: "12px", minWidth: 0, overflow: "hidden" }}>
                         <Text as="p" tone="subdued">Current Target:</Text>
                         <Text as="p" fontWeight="bold">{safeProducts.find(p => p.id === queueIds[queueIndex])?.title || "Unknown"}</Text>
                       </div>
@@ -450,10 +461,9 @@ export function OperationsMatrixTab({ products, fetcher }) {
                   </BlockStack>
                 </Box>
 
-                {/* Engine Controls */}
-                <InlineStack gap="300">
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "12px" }}>
                   {!isOrchestratorActive && (
-                    <div style={{ flexGrow: 1 }}>
+                    <div style={{ flexGrow: 1, minWidth: "120px" }}>
                       <Button size="large" fullWidth variant="primary" onClick={startBatch} disabled={queueIds.length === 0}>
                         Start Batch
                       </Button>
@@ -461,7 +471,7 @@ export function OperationsMatrixTab({ products, fetcher }) {
                   )}
                   
                   {isOrchestratorActive && !isPaused && (
-                    <div style={{ flexGrow: 1 }}>
+                    <div style={{ flexGrow: 1, minWidth: "120px" }}>
                       <Button size="large" fullWidth onClick={pauseBatch}>
                         Pause Batch
                       </Button>
@@ -469,19 +479,19 @@ export function OperationsMatrixTab({ products, fetcher }) {
                   )}
                   
                   {isOrchestratorActive && isPaused && (
-                    <div style={{ flexGrow: 1 }}>
+                    <div style={{ flexGrow: 1, minWidth: "120px" }}>
                       <Button size="large" fullWidth variant="primary" onClick={resumeBatch}>
                         Resume Batch
                       </Button>
                     </div>
                   )}
 
-                  <div style={{ flexGrow: 1 }}>
+                  <div style={{ flexGrow: 1, minWidth: "120px" }}>
                     <Button size="large" fullWidth tone="critical" onClick={clearCheckpoint} disabled={queueIds.length === 0 && !isOrchestratorActive}>
                       Clear Queue & Stop
                     </Button>
                   </div>
-                </InlineStack>
+                </div>
 
               </BlockStack>
             </Card>
@@ -490,13 +500,13 @@ export function OperationsMatrixTab({ products, fetcher }) {
               <BlockStack gap="400">
                 <Text variant="headingLg" as="h2">Data & Auditing</Text>
                 
-                <InlineStack gap="300">
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "12px" }}>
                   <div style={{ flexGrow: 1 }}>
                     <Button size="large" fullWidth onClick={handleExportAuditReport} disabled={queueIds.length === 0}>
                       Export Error/Audit Report
                     </Button>
                   </div>
-                </InlineStack>
+                </div>
               </BlockStack>
             </Card>
 
