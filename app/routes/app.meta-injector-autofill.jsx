@@ -3,10 +3,20 @@ import { lookupStone } from "../utils/geoLibrary.jsx";
 
 const stoneProfileCache = new Map();
 
+function extractShapeFromString(str) {
+  if (!str) return "";
+  const SHAPES = ["Round", "Oval", "Freeform", "Teardrop", "Pear", "Cushion", "Marquise", "Rectangle", "Square", "Heart", "Slab", "Rough", "Cabochon"];
+  for (const shape of SHAPES) {
+    if (new RegExp(`\\b${shape}\\b`, "i").test(str)) return shape;
+  }
+  return "";
+}
+
 function buildMasterVisionPrompt({
   pagesMenu,
   collectionsMenu,
   stoneFamily,
+  derivedShape,
   originStory,
   originSegment,
   targetUrlPath,
@@ -31,7 +41,7 @@ function buildMasterVisionPrompt({
   ${collectionsMenu || "No live collections found — use default URL."}
 
 - primary_color
-- stone_shape: Select EXACTLY one: Round, Oval, Freeform, Teardrop, Pear, Cushion, Marquise, Rectangle, Square, Heart, Slab, Rough, N/A
+- stone_shape: Select EXACTLY one: Round, Oval, Freeform, Teardrop, Pear, Cushion, Marquise, Rectangle, Square, Heart, Slab, Rough, N/A. (CRITICAL SHAPE LOCK: The title explicitly states "${derivedShape || 'None'}". If not 'None', you MUST output this exact shape and ignore any visual confusion).
 - jewelry_type: Select EXACTLY one: Pendant, Necklace, Artisan jewelry, Fine jewelry, Accessories, N/A. (Pendant = stone set in bezel/bail that hangs. Necklace = chain/strand is primary design. If stone on cord/chain, it is a Pendant).
 - rarity: Select EXACTLY one: Common, Uncommon, Rare, One-of-a-Kind
 - authenticity: Select EXACTLY one: Authentic, Lab-Created, Unknown
@@ -61,8 +71,9 @@ function buildMasterVisionPrompt({
   7. Dwell Buttons:
 ${dwellButtonsHTML}
 
-FULL ORIGIN STORY:
+FULL ORIGIN STORY (CRITICAL LORE FIREWALL - READ CAREFULLY):
 ${originStory}
+WARNING: The story above is a master document covering multiple distinct stones (e.g., Labradorite, Fire Obsidian, Botswana Agate). Scan the text and extract ONLY the 1-2 sentence narrative that explicitly matches "${stoneFamily}". Completely ignore the rest of the text (and other sister stones) to prevent cross-contamination.
 
 MANDATORY LAWS:
 - HARDWARE PHYSICS LAW: bail_included and jewelry_finding_type are STRICTLY MUTUALLY EXCLUSIVE. If bail_included has any value other than "None", jewelry_finding_type MUST be exactly "None".
@@ -413,8 +424,9 @@ export const action = async ({ request }) => {
       const bench_price = body.get("price") || "";
 
       const titleSegments = productTitle.split(/\s+[-—–]\s+/);
-      let derivedFamily = titleSegments[0]?.trim() || stone_family;
-      derivedFamily = cleanStoneFamilyShape(derivedFamily);
+      const rawFamilySegment = titleSegments[0]?.trim() || stone_family;
+      const derivedShape = extractShapeFromString(rawFamilySegment);
+      let derivedFamily = cleanStoneFamilyShape(rawFamilySegment);
       const derivedOrigin = titleSegments[1]?.trim() || "";
       const pieceNameSegment = titleSegments.length >= 3 ? titleSegments[2].trim() : "";
 
@@ -454,6 +466,7 @@ export const action = async ({ request }) => {
               pagesMenu,
               collectionsMenu,
               stoneFamily: derivedFamily,
+              derivedShape,
               originStory: origin_story,
               originSegment: derivedOrigin,
               targetUrlPath,
@@ -537,6 +550,16 @@ export const action = async ({ request }) => {
             console.error("[tab2AutoFill] Vision scan failed:", visionErr);
             visionFields = { generated_description: `[API CRASH] ${visionErr.message}` };
           }
+        }
+
+        // ABSOLUTE SHAPE LOCK - Override AI Hallucinations
+        if (derivedShape) {
+            visionFields.stone_shape = derivedShape;
+            if (visionFields.cut_and_shape && !visionFields.cut_and_shape.toLowerCase().includes(derivedShape.toLowerCase())) {
+                visionFields.cut_and_shape = `${derivedShape} Cabochon`;
+            } else if (!visionFields.cut_and_shape) {
+                visionFields.cut_and_shape = `${derivedShape} Cabochon`;
+            }
         }
 
         const correctedOrigin = visionFields.origin_location || derivedOrigin;
@@ -782,8 +805,9 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
       const rawTitleInput = body.get("productTitle") || body.get("pieceName") || body.get("piece_name") || "";
       const titleInput = rawTitleInput.replace(/â€”/g, "—").replace(/Ã¢â‚¬â€/g, "—");
       const segments = titleInput.split(/\s+[—–-]\s+/);
-      let derivedFamily = segments[0]?.trim() || "Unknown Stone";
-      derivedFamily = cleanStoneFamilyShape(derivedFamily);
+      const rawFamilySegment = segments[0]?.trim() || "Unknown Stone";
+      const derivedShape = extractShapeFromString(rawFamilySegment);
+      let derivedFamily = cleanStoneFamilyShape(rawFamilySegment);
       const originSegment = segments[1]?.trim() || "Unknown Origin";
       const pieceNameSegment = segments.length >= 3 ? segments[2].trim() : "";
       
@@ -834,6 +858,7 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
         pagesMenu,
         collectionsMenu,
         stoneFamily: derivedFamily,
+        derivedShape,
         originStory: extractedStory,
         originSegment,
         targetUrlPath,
@@ -919,6 +944,16 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
         const lowerDesc = final_desc.toLowerCase();
         if (final_desc.startsWith("[VISION API CRASH]") || final_desc.startsWith("[API CRASH]") || final_desc.startsWith("[JSON PARSE ERROR]") || lowerDesc.includes("timed out")) {
             final_desc = "";
+        }
+
+        // ABSOLUTE SHAPE LOCK - Override AI Hallucinations
+        if (derivedShape) {
+            parsedVision.stone_shape = derivedShape;
+            if (parsedVision.cut_and_shape && !parsedVision.cut_and_shape.toLowerCase().includes(derivedShape.toLowerCase())) {
+                parsedVision.cut_and_shape = `${derivedShape} Cabochon`;
+            } else if (!parsedVision.cut_and_shape) {
+                parsedVision.cut_and_shape = `${derivedShape} Cabochon`;
+            }
         }
 
         const finalOriginLocation = parsedVision.origin_location || originSegment;
@@ -1029,7 +1064,7 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
 DETAILS:
 - Stone Family: ${derivedFamily}
 - Origin / Location: ${originSegment}
-- Origin Hook (first 300 chars only): ${extractedStory.slice(0, 300)}
+- Full Origin Story: ${extractedStory}
 - Collection Name: ${fullCollectionTitle}
 - Cut & Shape: ${pieceData.cut_and_shape || "Freeform"}
 - Surface Finish: ${pieceData.surface_finish || "Natural/Polished"}
@@ -1043,6 +1078,7 @@ DETAILS:
 - Piece Name: ${pieceData.piece_name || "None"}
 - Bench Notes: ${pieceData.bench_notes || "None"}
 - Artist Notes: ${pieceData.artist_notes || "None"}
+- Chain/Cord Database Status: ${pieceData.chain_link_type || "None"}
 
 VOICE RULES:
 - Past tense for the find. "I picked it up." Not "pick it up."
@@ -1060,7 +1096,7 @@ DESCRIPTION STRUCTURE — follow this order exactly:
 Start with the piece_name. What makes this stone different from every other stone of its type. Lead with bench_notes and artist_notes — these are Bob's direct observations from the wheel. Then describe shape, color, flash, finish. Specific and honest.
 
 2. ORIGIN HOOK
-1-2 sentences only. Pull from the origin_story field. Enough to make them want to read the full story. End with the placeholder: {{ORIGIN_LINK}}
+1-2 sentences only. Scan the Full Origin Story and ONLY pull the specific part that talks about ${derivedFamily}. Ignore stories about other stones. End with the placeholder: {{ORIGIN_LINK}}
 
 3. COLLECTION HOOK
 1-2 sentences connecting the stone to its collection. End with the placeholder: {{COLLECTION_LINKS}}
@@ -1085,10 +1121,12 @@ One plain sentence for jewelers and makers. Dimensions, drill status, setting su
 — Bob & Janyce, Rockhound Studio, Spokane Valley WA
 
 HARD RULES:
+- LORE FIREWALL: The Full Origin Story provided is from a master document covering multiple sister stones. ONLY pull the narrative matching ${derivedFamily}. Do not mention other stones or unrelated finds.
+- CORD/CHAIN CONFLICT LAW: You are strictly forbidden from mentioning a "dark cord", "chain", or necklace UNLESS the 'Chain/Cord Database Status' above explicitly lists it. If it says "None" or is empty, do not mention a cord.
+- STRICT HTML ONLY: You MUST wrap every single paragraph in <p></p> tags. Do not use raw \\n line breaks. No <h> tags. No <ul> or <li>.
 - Do NOT generate any URLs or href links. Links are handled server-side.
 - Do NOT use the words: unique, one-of-a-kind, handmade, artisan, special, curated, stunning, beautiful, gorgeous, perfect, love, passion.
 - Do NOT hallucinate stone properties not provided in the input fields.
-- Output HTML only. Use <p> tags for paragraphs. No <h> tags. No <ul> or <li>.
 - Keep {{ORIGIN_LINK}} and {{COLLECTION_LINKS}} as literal placeholders. Do not replace them.`;
 
       const geminiRes = await fetchWithRetry("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY, {
