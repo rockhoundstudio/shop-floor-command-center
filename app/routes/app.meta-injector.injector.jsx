@@ -10,8 +10,6 @@ import { useFetcher } from "react-router";
 import { ROCKHOUND_FIELDS, DEFAULT_DROPDOWNS, CHANNEL_REQUIREMENTS, getFieldStatus, productTypeOptions, collectionLocationOptions, normalizeDropdownValue, DROPDOWN_OPTIONS } from "../utils/meta-injector.constants.jsx";
 import { handleScanPhoto, handleGenerateDescription, buildMetafieldsJson, buildTitle } from "./app.meta-injector.intake-helpers.jsx";
 
-const SHOPPED_ROCK_VENDORS = ["Richardson's Rock Ranch", "Irv's Rock and Jewelry"];
-
 const CUSTOM_FIELDS = [
   // ==========================================
   // SECTION A: SHARED BATCH FIELDS (The Story & Material)
@@ -241,7 +239,7 @@ export function NewProductIntakeTab({ fetcher }) {
       if (p.id === id && key === "weight_grams" && value !== "") {
         const grams = parseFloat(value);
         if (!isNaN(grams)) {
-          updated.shipping_weight_oz = String(Math.ceil((grams / 28.35) + 0.5));
+          updated.shipping_weight_oz = String(Math.ceil((grams / 28.3495) + 0.5));
         }
       }
       return updated;
@@ -777,9 +775,6 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
 
     setSharedFields(prev => {
       let resolvedCollectionLoc = parsed.collection_location || prev.collection_location;
-      if (SHOPPED_ROCK_VENDORS.includes(parsed.origin_name)) {
-        resolvedCollectionLoc = "Shopped Rock";
-      }
 
       // 🟢 FIX: Dynamic material stripping instead of hardcoded "Stone"
       const nextStoneFamily = normalizeDropdownValue("stone_family", parsed.stone_family?.trim()) || prev.stone_family || "";
