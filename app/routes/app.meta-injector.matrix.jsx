@@ -332,15 +332,20 @@ export function OperationsMatrixTab({ products, fetcher }) {
                 </Button>
               </div>
 
-              <div style={{ maxHeight: "60vh", overflowY: "auto", paddingRight: "8px", display: "flex", flexDirection: "column", gap: "8px" }}>
+              <div style={{ maxHeight: "65vh", overflowY: "auto", paddingRight: "8px", display: "flex", flexDirection: "column", gap: "10px" }}>
                 {filteredProducts.map(p => {
                   const isChecked = queueIds.includes(p.id);
                   const pState = productStates[p.id];
                   const currentStatus = pState?.status || STATUS.QUEUED;
                   
+                  // Extract image safely based on Shopify GraphQL format
+                  const imageUrl = p.images?.edges?.[0]?.node?.url || p.featuredImage?.url || p.media?.edges?.[0]?.node?.image?.url;
+                  
                   return (
-                    <div key={p.id} style={{ display: "flex", alignItems: "center", gap: "12px", minHeight: "54px", padding: "8px", border: "1px solid #E1E3E5", borderRadius: "8px", backgroundColor: isChecked ? "#F4F6F8" : "transparent" }}>
-                      <div style={{ display: "flex", alignItems: "center", height: "54px" }}>
+                    <div key={p.id} style={{ display: "flex", alignItems: "center", gap: "16px", minHeight: "64px", padding: "12px", border: "1px solid #E1E3E5", borderRadius: "8px", backgroundColor: isChecked ? "#F4F6F8" : "transparent" }}>
+                      
+                      {/* Checkbox (No shrinking) */}
+                      <div style={{ flexShrink: 0, display: "flex", alignItems: "center", height: "100%" }}>
                         <input
                           type="checkbox"
                           checked={isChecked}
@@ -349,11 +354,22 @@ export function OperationsMatrixTab({ products, fetcher }) {
                           style={{ width: "24px", height: "24px", cursor: "pointer" }}
                         />
                       </div>
-                      <div style={{ flexGrow: 1 }}>
-                        <Text as="p" fontWeight="bold">{p.title}</Text>
-                        <Text as="p" tone="subdued" variant="bodySm">{p.id.replace('gid://shopify/Product/', '')}</Text>
+
+                      {/* Thumbnail (40x40 fixed) */}
+                      <div style={{ width: "40px", height: "40px", flexShrink: 0, backgroundColor: "#e0e0e0", borderRadius: "4px", overflow: "hidden" }}>
+                        {imageUrl && (
+                          <img src={imageUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                        )}
                       </div>
-                      <div style={{ flexShrink: 0, textAlign: "right" }}>
+
+                      {/* Title & Subtitle (minWidth: 0 prevents flex blowouts, truncate prevents wrapping) */}
+                      <div style={{ flexGrow: 1, minWidth: 0, overflow: "hidden" }}>
+                        <Text as="p" fontWeight="bold" truncate>{p.title}</Text>
+                        <Text as="p" tone="subdued" variant="bodySm" truncate>{p.id.replace('gid://shopify/Product/', '')}</Text>
+                      </div>
+
+                      {/* Badge Container (Fixed width to prevent squeezing) */}
+                      <div style={{ flexShrink: 0, width: "110px", textAlign: "right" }}>
                         <Badge tone={getStatusTone(currentStatus)} size="large">{currentStatus}</Badge>
                       </div>
                     </div>
