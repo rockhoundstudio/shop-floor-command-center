@@ -1,35 +1,88 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { BlockStack, Card, Text, Banner, TextField, Button, InlineStack, Box } from "@shopify/polaris";
+import { BlockStack, Card, Text, Banner, TextField, Button, InlineStack, Box, Badge, ProgressBar } from "@shopify/polaris";
 import { useFetcher } from "react-router";
 import { ROCKHOUND_FIELDS } from "../utils/meta-injector.constants.jsx";
 
+// --- Strict Allowed Statuses ---
+const STATUS = {
+  QUEUED: "Queued",
+  SCANNING: "Scanning",
+  NEEDS_REVIEW: "Needs Review",
+  VALIDATED: "Validated",
+  SAVING: "Saving",
+  VERIFYING: "Verifying",
+  COMPLETE: "Complete",
+  FAILED: "Failed",
+  SKIPPED: "Skipped"
+};
+
+// 🔴 IMPORTANT: Replace these placeholder GIDs with the actual verified Shopify GIDs for the protected products
+const VERIFIED_SKIP_LIST = [
+  { id: "gid://shopify/Product/REPLACE_WITH_CREEK_FIND_GID", reason: "The Creek Find is permanently set to photos-check-only." },
+  { id: "gid://shopify/Product/REPLACE_WITH_SUNRISE_GID", reason: "The Sunrise is locked pending structural state bug fix." }
+];
+
 export function OperationsMatrixTab({ products, fetcher }) {
   const safeProducts = products || [];
-  const [selectedProductId, setSelectedProductId] = useState("");
-  const [selectedIds, setSelectedIds] = useState(new Set());
   const [searchQuery, setSearchQuery] = useState("");
-
-  const statusFetcher = useFetcher();
-
-  // --- Section 1: AI Forge State ---
-  const [aiPrompt, setAiPrompt] = useState("You are a gritty, mechanic-style copywriter for a lapidary and handcrafted stone jewelry studio. Write a 160-character SEO meta description for this product. Be specific, earthy, and direct. No fluff.");
-  const [productTitle, setProductTitle] = useState("");
-  const [generatedOutput, setGeneratedOutput] = useState("");
-
-  // --- Section 2: Global Sweeps State ---
-  const [batchState, setBatchState] = useState({
-    isActive: false,
-    type: "",
-    chunks: [],
-    currentIndex: 0,
-    status: "idle",
-    message: "",
-    error: ""
-  });
-
-  // --- Section 3: Safety Nets State ---
+  
+  // --- Batch Orchestrator State ---
+  const [runMode, setRunMode] = useState("DRY_RUN"); // "DRY_RUN" | "LIVE_RUN"
+  const [isOrchestratorActive, setIsOrchestratorActive] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
+  
+  const [queueIds, setQueueIds] = useState([]);
+  const [queueIndex, setQueueIndex] = useState(0);
+  const [productStates, setProductStates] = useState({}); // Record<GID, { status, logs: [] }>
+  
   const [safetyMessage, setSafetyMessage] = useState("");
   const [safetyError, setSafetyError] = useState("");
+
+  const statusFetcher = useFetcher();
+  const batchFetcher = useFetcher();
+
+  // --- Resumability: Browser LocalStorage Checkpoints ---
+  useEffect(() => {
+    try {
+      const savedState = localStorage.getItem("rockhound_batch_checkpoint");
+      if (savedState) {
+        const parsed = JSON.parse(savedState);
+        if (parsed.queueIds && parsed.queueIds.length > 0) {
+          setQueueIds(parsed.queueIds);
+          setQueueIndex(parsed.queueIndex || 0);
+          setProductStates(parsed.productStates || {});
+          setRunMode(parsed.runMode || "DRY_RUN");
+          setIsPaused(true); // Always load in a paused state for safety
+          setSafetyMessage("Browser-resumable checkpoint found. The batch can resume after a page reload. Server-side durable job storage will be added only if the API requires it.");
+        }
+      }
+    } catch (e) {
+      console.warn("Could not load batch checkpoint", e);
+    }
+  }, []);
+
+  const saveCheckpoint = useCallback((ids, index, states, mode) => {
+    try {
+      localStorage.setItem("rockhound_batch_checkpoint", JSON.stringify({
+        queueIds: ids,
+        queueIndex: index,
+        productStates: states,
+        runMode: mode
+      }));
+    } catch (e) {
+      console.warn("Could not save batch checkpoint", e);
+    }
+  }, []);
+
+  const clearCheckpoint = useCallback(() => {
+    localStorage.removeItem("rockhound_batch_checkpoint");
+    setQueueIds([]);
+    setQueueIndex(0);
+    setProductStates({});
+    setIsOrchestratorActive(false);
+    setIsPaused(false);
+    setSafetyMessage("Batch cleared.");
+  }, []);
 
   // --- Search & Filtering Logic ---
   const handleSearchChange = useCallback((value) => setSearchQuery(value), []);
@@ -39,288 +92,222 @@ export function OperationsMatrixTab({ products, fetcher }) {
     p.title.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  const allFilteredSelected = filteredProducts.length > 0 && filteredProducts.every(p => selectedIds.has(p.id));
+  const allFilteredSelected = filteredProducts.length > 0 && filteredProducts.every(p => queueIds.includes(p.id));
 
-  // --- Handlers: Left Column Selection ---
-  const handleSelectProduct = useCallback((id, title) => {
-    setSelectedProductId(id);
-    setProductTitle(title);
-    setGeneratedOutput("");
-  }, []);
-
+  // --- Left Column: Queue Selection ---
   const handleToggleProductSelection = useCallback((id) => {
-    setSelectedIds(prev => {
-      const newSet = new Set(prev);
-      const isSelected = newSet.has(id);
-      if (isSelected) {
-        newSet.delete(id);
-      }
-      if (!isSelected) {
-        newSet.add(id);
-      }
-      return newSet;
+    if (isOrchestratorActive && !isPaused) return; // Prevent selection changes while running
+    
+    setQueueIds(prev => {
+      const newIds = prev.includes(id) ? prev.filter(pid => pid !== id) : [...prev, id];
+      
+      // Initialize state for new selections
+      setProductStates(states => {
+        const newStates = { ...states };
+        if (!newStates[id]) {
+          newStates[id] = { status: STATUS.QUEUED, logs: [] };
+        }
+        return newStates;
+      });
+      
+      saveCheckpoint(newIds, queueIndex, productStates, runMode);
+      return newIds;
     });
-  }, []);
+  }, [isOrchestratorActive, isPaused, queueIndex, productStates, runMode, saveCheckpoint]);
 
   const toggleSelectAllFiltered = useCallback(() => {
-    setSelectedIds(prev => {
-      const newSet = new Set(prev);
+    if (isOrchestratorActive && !isPaused) return;
+
+    setQueueIds(prev => {
+      let newIds = [...prev];
       if (allFilteredSelected) {
-        filteredProducts.forEach(p => newSet.delete(p.id));
+        newIds = newIds.filter(id => !filteredProducts.find(p => p.id === id));
       } else {
-        filteredProducts.forEach(p => newSet.add(p.id));
-      }
-      return newSet;
-    });
-  }, [filteredProducts, allFilteredSelected]);
-
-  // 🟢 FIX: Live Status Toggle aligned with API
-  const handleToggleStatus = useCallback((pieceId, currentStatus) => {
-    const newStatus = currentStatus === "ACTIVE" ? "DRAFT" : "ACTIVE";
-    const fd = new FormData();
-    fd.append("intent", "toggleStatus");
-    fd.append("pieceId", pieceId);
-    fd.append("newStatus", newStatus);
-    statusFetcher.submit(fd, { method: "post", action: "/app/meta-injector-api" });
-  }, [statusFetcher]);
-
-  useEffect(() => {
-    if (statusFetcher.state === "idle" && statusFetcher.data) {
-      if (statusFetcher.data.success) {
-        if (window.shopify?.toast) window.shopify.toast.show(`Status updated to ${statusFetcher.data.newStatus}`);
-      } else {
-        if (window.shopify?.toast) window.shopify.toast.show("Status update failed", { isError: true });
-      }
-    }
-  }, [statusFetcher.state, statusFetcher.data]);
-
-  // --- Handlers: AI Forge ---
-  const handleGenerateSEO = useCallback(() => {
-    if (!productTitle) return;
-    setGeneratedOutput("");
-    const payload = JSON.stringify({ title: productTitle, instructions: aiPrompt });
-    fetcher.submit({ intent: "generateSEO", formData: payload }, { method: "post" });
-  }, [productTitle, aiPrompt, fetcher]);
-
-  const handleCopyOutput = useCallback(() => {
-    if (!generatedOutput) return;
-    navigator.clipboard.writeText(generatedOutput);
-  }, [generatedOutput]);
-
-  // --- Handlers: Global Sweeps ---
-  const startBatchSweep = useCallback((type) => {
-    const hasSelectedProducts = selectedIds.size > 0;
-    const targetProducts = hasSelectedProducts 
-      ? safeProducts.filter(p => selectedIds.has(p.id)) 
-      : safeProducts;
-
-    const newChunks = [];
-    for (let i = 0; i < targetProducts.length; i += 10) {
-      newChunks.push(targetProducts.slice(i, i + 10));
-    }
-    
-    setBatchState({
-      isActive: true,
-      type: type,
-      chunks: newChunks,
-      currentIndex: 0,
-      status: "processing",
-      message: "",
-      error: ""
-    });
-  }, [safeProducts, selectedIds]);
-
-  // Handle batch processing steps
-  useEffect(() => {
-    const isProcessing = batchState.isActive && batchState.status === "processing";
-    
-    if (isProcessing) {
-      const currentChunk = batchState.chunks[batchState.currentIndex];
-      
-      if (currentChunk) {
-        setBatchState(prev => ({ ...prev, status: "waiting_for_network" }));
-        const payload = [];
-
-        const isOoak = batchState.type === "ooak";
-        const isOrigins = batchState.type === "origins";
-
-        if (isOoak) {
-          currentChunk.forEach(p => {
-            const formatId = p.id.includes("gid://") ? p.id : `gid://shopify/Product/${p.id}`;
-            payload.push({
-              ownerId: formatId,
-              namespace: "custom",
-              key: "is_one_of_a_kind",
-              value: "Yes — one of a kind",
-              type: "single_line_text_field"
-            });
-          });
-        }
-
-        if (isOrigins) {
-          currentChunk.forEach(p => {
-            const parts = p.title.split(" — ");
-            const hasOriginPart = parts.length >= 3;
-            if (hasOriginPart) {
-              const origin = parts[1].trim();
-              const formatId = p.id.includes("gid://") ? p.id : `gid://shopify/Product/${p.id}`;
-              payload.push({
-                ownerId: formatId,
-                namespace: "custom",
-                key: "collection_location",
-                value: origin,
-                type: "single_line_text_field"
-              });
-            }
-          });
-        }
-
-        const hasUpdates = payload.length > 0;
-        if (hasUpdates) {
-          // 🟢 FIX: Rerouted from "saveProduct" to "saveMetafields" and directed to the API endpoint
-          fetcher.submit(
-            { intent: "saveMetafields", payload: JSON.stringify(payload) }, 
-            { method: "post", action: "/app/meta-injector-api" }
-          );
-        }
-        
-        if (!hasUpdates) {
-          setBatchState(prev => ({ ...prev, status: "waiting_for_idle" }));
-        }
-      }
-      
-      if (!currentChunk) {
-        setBatchState(prev => ({ ...prev, isActive: false, status: "complete", message: "Sweep completed successfully across target products." }));
-      }
-    }
-  }, [batchState, fetcher]);
-
-  // Handle network lock for batch processor
-  useEffect(() => {
-    const isWaitingForNetwork = batchState.status === "waiting_for_network";
-    const isFetcherActive = fetcher.state !== "idle";
-    
-    if (isWaitingForNetwork && isFetcherActive) {
-      setBatchState(prev => ({ ...prev, status: "waiting_for_idle" }));
-    }
-  }, [batchState.status, fetcher.state]);
-
-  // Handle 10-product governor pause between chunks
-  useEffect(() => {
-    const isWaitingForIdle = batchState.status === "waiting_for_idle";
-    const isFetcherIdle = fetcher.state === "idle";
-    
-    if (isWaitingForIdle && isFetcherIdle) {
-      setBatchState(prev => ({ ...prev, status: "paused" }));
-      setTimeout(() => {
-        setBatchState(prev => ({ ...prev, currentIndex: prev.currentIndex + 1, status: "processing" }));
-      }, 1000); // 1-second pause limits server hammering
-    }
-  }, [batchState.status, fetcher.state]);
-
-  // --- Listeners: AI Forge Fetcher Responses ---
-  useEffect(() => {
-    const isIdle = fetcher.state === "idle";
-    const hasData = fetcher.data !== undefined && fetcher.data !== null;
-
-    if (isIdle && hasData) {
-      const isGenerateSEO = fetcher.data.intent === "generateSEO";
-      const isSuccess = fetcher.data.success === true;
-      
-      if (isGenerateSEO && isSuccess) {
-        setGeneratedOutput(fetcher.data.seoDescription || fetcher.data.text || "");
-      }
-    }
-  }, [fetcher.state, fetcher.data]);
-
-  // --- Handlers: Safety Nets ---
-  const handleExportCSV = useCallback(() => {
-    setSafetyMessage("");
-    setSafetyError("");
-    try {
-      const headers = ["Product ID", "Title", ...ROCKHOUND_FIELDS.map(f => f.key)];
-      let csv = headers.join(",") + "\n";
-      
-      safeProducts.forEach(p => {
-        const row = [`"${p.id}"`, `"${p.title.replace(/"/g, '""')}"`];
-        const fieldMap = {};
-        
-        const hasMetafields = p.metafields && p.metafields.edges;
-        if (hasMetafields) {
-          p.metafields.edges.forEach(({ node }) => {
-            // 🟢 FIX VERIFIED: This correctly captures custom.material since it's mapped to custom
-            const isRockhound = node.namespace === "rockhound" || node.namespace === "custom";
-            if (isRockhound) {
-              fieldMap[node.key] = node.value;
-            }
-          });
-        }
-        
-        ROCKHOUND_FIELDS.forEach(f => {
-          const val = fieldMap[f.key] || "";
-          row.push(`"${val.toString().replace(/"/g, '""')}"`);
+        filteredProducts.forEach(p => {
+          if (!newIds.includes(p.id)) newIds.push(p.id);
         });
+      }
+
+      setProductStates(states => {
+        const newStates = { ...states };
+        newIds.forEach(id => {
+          if (!newStates[id]) newStates[id] = { status: STATUS.QUEUED, logs: [] };
+        });
+        return newStates;
+      });
+
+      saveCheckpoint(newIds, queueIndex, productStates, runMode);
+      return newIds;
+    });
+  }, [allFilteredSelected, filteredProducts, isOrchestratorActive, isPaused, queueIndex, productStates, runMode, saveCheckpoint]);
+
+  // --- The Batch State Machine ---
+  const startBatch = useCallback(() => {
+    if (queueIds.length === 0) {
+      setSafetyError("No products selected in the queue.");
+      return;
+    }
+    if (runMode === "LIVE_RUN") {
+      const confirm = window.confirm("WARNING: LIVE RUN ACTIVE.\n\nThis will write data directly to Shopify for the queued products. Have you completed a Dry Run first?\n\nClick OK to proceed with Live Injection.");
+      if (!confirm) return;
+    }
+    
+    setSafetyError("");
+    setSafetyMessage(`Batch started in ${runMode} mode.`);
+    setIsOrchestratorActive(true);
+    setIsPaused(false);
+  }, [queueIds.length, runMode]);
+
+  const pauseBatch = useCallback(() => {
+    setIsPaused(true);
+    setSafetyMessage("Batch paused. You can resume when ready.");
+  }, []);
+
+  const resumeBatch = useCallback(() => {
+    setIsPaused(false);
+    setSafetyMessage(`Batch resumed in ${runMode} mode.`);
+  }, [runMode]);
+
+  const updateProductState = useCallback((id, status, newLogs = []) => {
+    setProductStates(prev => {
+      const updated = { ...prev };
+      const existingLogs = updated[id]?.logs || [];
+      updated[id] = {
+        status: status,
+        logs: [...existingLogs, ...newLogs]
+      };
+      saveCheckpoint(queueIds, queueIndex, updated, runMode);
+      return updated;
+    });
+  }, [queueIds, queueIndex, runMode, saveCheckpoint]);
+
+  // --- Core Processing Loop ---
+  useEffect(() => {
+    if (!isOrchestratorActive || isPaused) return;
+    if (batchFetcher.state !== "idle") return; // Wait for current network call
+
+    if (queueIndex >= queueIds.length) {
+      setIsOrchestratorActive(false);
+      setIsPaused(false);
+      setSafetyMessage("Batch processing complete! Review the statuses below or export the report.");
+      return;
+    }
+
+    const currentId = queueIds[queueIndex];
+    const currentProduct = safeProducts.find(p => p.id === currentId);
+    const currentState = productStates[currentId]?.status;
+
+    // 1. HARD GATES (Skip Logic using explicit GIDs and strict types)
+    if (currentState === STATUS.QUEUED) {
+      // Check explicit GID skip list
+      const skipRule = VERIFIED_SKIP_LIST.find(skip => skip.id === currentId);
+      if (skipRule) {
+        updateProductState(currentId, STATUS.SKIPPED, [`Skipped: ${skipRule.reason}`]);
+        setTimeout(() => setQueueIndex(i => i + 1), 500);
+        return;
+      }
+      
+      // Accessory Check (Using productType, not just title)
+      const productType = currentProduct?.productType?.toLowerCase() || "";
+      if (productType.includes("accessory") || productType.includes("accessories") || productType === "chain" || productType === "cord") {
+        updateProductState(currentId, STATUS.SKIPPED, ["Skipped: Accessories are excluded automatically."]);
+        setTimeout(() => setQueueIndex(i => i + 1), 500);
+        return;
+      }
+      
+      // If passing hard gates, move to Scanning and fire the API intent
+      updateProductState(currentId, STATUS.SCANNING, ["Initiating AI Autofill service..."]);
+      
+      const fd = new FormData();
+      fd.append("intent", "batchAuditItem"); // This is just an intent until the API is implemented
+      fd.append("pieceId", currentId);
+      fd.append("runMode", runMode); // DRY_RUN or LIVE_RUN
+      
+      // Strict server-side verification: The API must reject live saves without this explicitly set
+      if (runMode === "LIVE_RUN") {
+        fd.append("explicitConfirm", "true");
+      }
+
+      batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-api" });
+      return;
+    }
+
+  }, [isOrchestratorActive, isPaused, queueIndex, queueIds, productStates, batchFetcher.state, safeProducts, runMode, updateProductState]);
+
+  // --- Listen to API Responses ---
+  useEffect(() => {
+    if (batchFetcher.state === "idle" && batchFetcher.data) {
+      const { intent, success, pieceId, finalStatus, logs = [] } = batchFetcher.data;
+      
+      if (intent === "batchAuditItem" && pieceId) {
+        // Update the piece with the exact pipeline status from the server
+        const appliedStatus = finalStatus || (success ? STATUS.COMPLETE : STATUS.FAILED);
+        updateProductState(pieceId, appliedStatus, logs);
         
-        csv += row.join(",") + "\n";
+        // Move to next item after a small governor delay to respect rate limits
+        setTimeout(() => {
+          setQueueIndex(prev => prev + 1);
+        }, 1500);
+      }
+    }
+  }, [batchFetcher.state, batchFetcher.data, updateProductState]);
+
+
+  // --- Export Reports ---
+  const handleExportAuditReport = useCallback(() => {
+    try {
+      let csv = "Product ID,Title,Final Status,Logs\n";
+      
+      queueIds.forEach(id => {
+        const product = safeProducts.find(p => p.id === id);
+        const state = productStates[id] || { status: "Unknown", logs: [] };
+        const title = product ? product.title.replace(/"/g, '""') : "Unknown";
+        const combinedLogs = state.logs.join(" | ").replace(/"/g, '""');
+        
+        csv += `"${id}","${title}","${state.status}","${combinedLogs}"\n`;
       });
       
       const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      link.setAttribute("download", `rockhound_inventory_${Date.now()}.csv`);
+      link.setAttribute("download", `rockhound_batch_audit_${Date.now()}.csv`);
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
-      setSafetyMessage("CSV Export compiled and downloaded successfully.");
+      setSafetyMessage("Audit Report downloaded successfully.");
     } catch (e) {
-      setSafetyError("Failed to compile CSV export.");
+      setSafetyError("Failed to compile Audit Report.");
     }
-  }, [safeProducts]);
+  }, [queueIds, safeProducts, productStates]);
 
-  const handleJSONSnapshot = useCallback(() => {
-    setSafetyMessage("");
-    setSafetyError("");
-    try {
-      const data = safeProducts.map(p => {
-        const fields = {};
-        const hasMetafields = p.metafields && p.metafields.edges;
-        
-        if (hasMetafields) {
-          p.metafields.edges.forEach(({ node }) => {
-            const isRockhound = node.namespace === "rockhound" || node.namespace === "custom";
-            if (isRockhound) {
-              fields[node.key] = node.value;
-            }
-          });
-        }
-        return { id: p.id, title: p.title, fields: fields };
-      });
-      
-      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.setAttribute("download", `rockhound_snapshot_${Date.now()}.json`);
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      setSafetyMessage("Full JSON snapshot compiled and downloaded successfully.");
-    } catch (e) {
-      setSafetyError("Failed to compile JSON snapshot.");
+  // Helper for UI styling
+  const getStatusTone = (status) => {
+    switch(status) {
+      case STATUS.COMPLETE: return "success";
+      case STATUS.FAILED: return "critical";
+      case STATUS.NEEDS_REVIEW: return "warning";
+      case STATUS.SKIPPED: return "info";
+      case STATUS.QUEUED: return undefined;
+      case STATUS.SCANNING:
+      case STATUS.VALIDATED:
+      case STATUS.SAVING:
+      case STATUS.VERIFYING: return "magic";
+      default: return undefined;
     }
-  }, [safeProducts]);
+  };
 
-  const isGeneratingSEO = fetcher.state !== "idle" && fetcher.formData?.get("intent") === "generateSEO";
+  const progressPercentage = queueIds.length > 0 ? Math.round((queueIndex / queueIds.length) * 100) : 0;
 
   return (
     <BlockStack gap="600">
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "24px", alignItems: "start" }}>
+        
+        {/* LEFT COLUMN: Queue Selection */}
         <div>
           <Card padding="400">
             <BlockStack gap="400">
-              <Text variant="headingMd" as="h2">Target Product Selection</Text>
-              <Text as="p" tone="subdued">{selectedIds.size} of {safeProducts.length} total selected</Text>
+              <Text variant="headingMd" as="h2">Batch Queue ({queueIds.length} queued)</Text>
               
               <div style={{ minHeight: "54px" }}>
                 <TextField
@@ -330,62 +317,44 @@ export function OperationsMatrixTab({ products, fetcher }) {
                   clearButton
                   onClearButtonClick={handleClearSearch}
                   autoComplete="off"
+                  disabled={isOrchestratorActive && !isPaused}
                 />
               </div>
 
               <div style={{ minHeight: "54px" }}>
-                <Button size="large" fullWidth onClick={toggleSelectAllFiltered}>
-                  {allFilteredSelected 
-                    ? `Deselect All (${filteredProducts.length})` 
-                    : `Select All (${filteredProducts.length})`}
+                <Button 
+                  size="large" 
+                  fullWidth 
+                  onClick={toggleSelectAllFiltered}
+                  disabled={isOrchestratorActive && !isPaused}
+                >
+                  {allFilteredSelected ? `Deselect All (${filteredProducts.length})` : `Select All (${filteredProducts.length})`}
                 </Button>
               </div>
 
               <div style={{ maxHeight: "60vh", overflowY: "auto", paddingRight: "8px", display: "flex", flexDirection: "column", gap: "8px" }}>
                 {filteredProducts.map(p => {
-                  const isSelected = selectedProductId === p.id;
-                  const isChecked = selectedIds.has(p.id);
-                  const imageUrl = p.images?.edges?.[0]?.node?.url || p.featuredImage?.url;
+                  const isChecked = queueIds.includes(p.id);
+                  const pState = productStates[p.id];
+                  const currentStatus = pState?.status || STATUS.QUEUED;
                   
                   return (
-                    <div key={p.id} style={{ display: "flex", alignItems: "center", gap: "12px", minHeight: "54px" }}>
+                    <div key={p.id} style={{ display: "flex", alignItems: "center", gap: "12px", minHeight: "54px", padding: "8px", border: "1px solid #E1E3E5", borderRadius: "8px", backgroundColor: isChecked ? "#F4F6F8" : "transparent" }}>
                       <div style={{ display: "flex", alignItems: "center", height: "54px" }}>
                         <input
                           type="checkbox"
                           checked={isChecked}
                           onChange={() => handleToggleProductSelection(p.id)}
-                          aria-label={`Select product ${p.title} for batch sweeps`}
+                          disabled={isOrchestratorActive && !isPaused}
                           style={{ width: "24px", height: "24px", cursor: "pointer" }}
                         />
                       </div>
-                      <div style={{ width: "40px", height: "40px", flexShrink: 0, backgroundColor: "#e0e0e0", borderRadius: "4px", overflow: "hidden" }}>
-                        {imageUrl && (
-                          <img src={imageUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                        )}
+                      <div style={{ flexGrow: 1 }}>
+                        <Text as="p" fontWeight="bold">{p.title}</Text>
+                        <Text as="p" tone="subdued" variant="bodySm">{p.id.replace('gid://shopify/Product/', '')}</Text>
                       </div>
-                      <div style={{ flexGrow: 1, minHeight: "54px" }}>
-                        <Button
-                          fullWidth
-                          size="large"
-                          textAlign="left"
-                          variant={isSelected ? "primary" : "secondary"}
-                          onClick={() => handleSelectProduct(p.id, p.title)}
-                          accessibilityLabel={`Load product ${p.title} into AI Forge`}
-                        >
-                          {p.title}
-                        </Button>
-                      </div>
-                      {/* 🟢 FIX: Added individual Status controls directly to the list */}
-                      <div style={{ width: "130px", flexShrink: 0, minHeight: "54px" }}>
-                        <Button
-                          size="large"
-                          fullWidth
-                          tone={p.status === "ACTIVE" ? "critical" : "success"}
-                          onClick={() => handleToggleStatus(p.id, p.status)}
-                          loading={statusFetcher.state !== "idle" && statusFetcher.formData?.get("pieceId") === p.id}
-                        >
-                          {p.status === "ACTIVE" ? "Move to Draft" : "Publish"}
-                        </Button>
+                      <div style={{ flexShrink: 0, textAlign: "right" }}>
+                        <Badge tone={getStatusTone(currentStatus)} size="large">{currentStatus}</Badge>
                       </div>
                     </div>
                   );
@@ -395,168 +364,126 @@ export function OperationsMatrixTab({ products, fetcher }) {
           </Card>
         </div>
 
+        {/* RIGHT COLUMN: Orchestrator Controls */}
         <div>
           <BlockStack gap="600">
+            
             <Card padding="400">
               <BlockStack gap="400">
-                <Text variant="headingLg" as="h2">Section 1: AI Forge</Text>
-                <div style={{ minHeight: "54px" }}>
-                  <TextField
-                    label="AI Persona Prompt"
-                    value={aiPrompt}
-                    onChange={setAiPrompt}
-                    multiline={3}
-                    accessibilityLabel="Edit AI Persona Prompt"
-                    autoComplete="off"
-                  />
-                </div>
-                <div style={{ minHeight: "54px" }}>
-                  <TextField
-                    label="Product Title"
-                    value={productTitle}
-                    onChange={setProductTitle}
-                    accessibilityLabel="Enter Product Title for SEO generation"
-                    autoComplete="off"
-                  />
-                </div>
-                <div style={{ minHeight: "54px" }}>
-                  <Button
-                    size="large"
-                    variant="primary"
-                    onClick={handleGenerateSEO}
-                    accessibilityLabel="Generate Description"
-                    loading={isGeneratingSEO}
-                    disabled={!productTitle}
-                  >
-                    Generate Description
-                  </Button>
-                </div>
-                <div style={{ minHeight: "54px" }}>
-                  <TextField
-                    label="Generated Output"
-                    value={generatedOutput}
-                    multiline={4}
-                    readOnly
-                    accessibilityLabel="Generated SEO Description Output"
-                    autoComplete="off"
-                  />
-                </div>
-                <div style={{ minHeight: "54px" }}>
-                  <Button
-                    size="large"
-                    onClick={handleCopyOutput}
-                    accessibilityLabel="Copy output to clipboard"
-                    disabled={!generatedOutput}
-                  >
-                    Copy to Clipboard
-                  </Button>
-                </div>
-              </BlockStack>
-            </Card>
-
-            <Card padding="400">
-              <BlockStack gap="400">
-                <Text variant="headingLg" as="h2">Section 2: Global Sweeps</Text>
+                <Text variant="headingLg" as="h2">Orchestrator Controls</Text>
                 
-                {batchState.message !== "" && (
-                  <div style={{ minHeight: "54px" }}>
-                    <Banner tone="success" title="Sweep Complete">
-                      <Text as="p">{batchState.message}</Text>
-                    </Banner>
-                  </div>
+                {safetyMessage && (
+                  <Banner tone="success" onDismiss={() => setSafetyMessage("")}>
+                    <Text as="p">{safetyMessage}</Text>
+                  </Banner>
+                )}
+                
+                {safetyError && (
+                  <Banner tone="critical" onDismiss={() => setSafetyError("")}>
+                    <Text as="p">{safetyError}</Text>
+                  </Banner>
                 )}
 
-                {batchState.error !== "" && (
-                  <div style={{ minHeight: "54px" }}>
-                    <Banner tone="critical" title="Sweep Error">
-                      <Text as="p">{batchState.error}</Text>
-                    </Banner>
-                  </div>
-                )}
-
-                {batchState.isActive && (
-                  <Box padding="400" background="bg-surface-secondary" borderRadius="200">
-                    <BlockStack gap="200">
-                      <Text as="p" fontWeight="bold">Processing Batch {batchState.currentIndex + 1} of {batchState.chunks.length}</Text>
-                      <Text as="p" tone="subdued">System Governor active. Status: {batchState.status}</Text>
-                      <div style={{ width: "100%", height: "12px", backgroundColor: "#E1E3E5", borderRadius: "6px", overflow: "hidden", marginTop: "8px" }}>
-                        <div style={{ width: `${((batchState.currentIndex) / batchState.chunks.length) * 100}%`, height: "100%", backgroundColor: "#2C6ECB", transition: "width 0.3s ease" }}></div>
+                {/* Mode Toggle */}
+                <Box padding="400" background="bg-surface-secondary" borderRadius="200">
+                  <BlockStack gap="300">
+                    <Text as="h3" variant="headingMd">Safety Mode</Text>
+                    <InlineStack gap="300">
+                      <div style={{ flexGrow: 1 }}>
+                        <Button 
+                          size="large" 
+                          fullWidth 
+                          variant={runMode === "DRY_RUN" ? "primary" : "secondary"}
+                          onClick={() => setRunMode("DRY_RUN")}
+                          disabled={isOrchestratorActive}
+                        >
+                          DRY RUN (Scan Only)
+                        </Button>
                       </div>
-                    </BlockStack>
-                  </Box>
-                )}
+                      <div style={{ flexGrow: 1 }}>
+                        <Button 
+                          size="large" 
+                          fullWidth 
+                          variant={runMode === "LIVE_RUN" ? "primary" : "secondary"}
+                          tone={runMode === "LIVE_RUN" ? "critical" : undefined}
+                          onClick={() => setRunMode("LIVE_RUN")}
+                          disabled={isOrchestratorActive}
+                        >
+                          LIVE RUN (Write to Store)
+                        </Button>
+                      </div>
+                    </InlineStack>
+                  </BlockStack>
+                </Box>
 
+                {/* Progress Dashboard */}
+                <Box padding="400" border="1px solid #E1E3E5" borderRadius="200">
+                  <BlockStack gap="200">
+                    <InlineStack align="space-between">
+                      <Text as="p" fontWeight="bold">Batch Progress</Text>
+                      <Text as="p">{queueIndex} of {queueIds.length} Processed</Text>
+                    </InlineStack>
+                    <ProgressBar progress={progressPercentage} color={runMode === "LIVE_RUN" ? "critical" : "primary"} />
+                    
+                    {queueIds.length > 0 && queueIndex < queueIds.length && (
+                      <div style={{ marginTop: "12px" }}>
+                        <Text as="p" tone="subdued">Current Target:</Text>
+                        <Text as="p" fontWeight="bold">{safeProducts.find(p => p.id === queueIds[queueIndex])?.title || "Unknown"}</Text>
+                      </div>
+                    )}
+                  </BlockStack>
+                </Box>
+
+                {/* Engine Controls */}
                 <InlineStack gap="300">
-                  <div style={{ minHeight: "54px", flexGrow: 1 }}>
-                    <Button
-                      size="large"
-                      fullWidth
-                      onClick={() => startBatchSweep("ooak")}
-                      accessibilityLabel="Standardize OOAK across target products"
-                      disabled={batchState.isActive}
-                    >
-                      Standardize OOAK
-                    </Button>
-                  </div>
-                  <div style={{ minHeight: "54px", flexGrow: 1 }}>
-                    <Button
-                      size="large"
-                      fullWidth
-                      onClick={() => startBatchSweep("origins")}
-                      accessibilityLabel="Sweep Origins across target products"
-                      disabled={batchState.isActive}
-                    >
-                      Sweep Origins
+                  {!isOrchestratorActive && (
+                    <div style={{ flexGrow: 1 }}>
+                      <Button size="large" fullWidth variant="primary" onClick={startBatch} disabled={queueIds.length === 0}>
+                        Start Batch
+                      </Button>
+                    </div>
+                  )}
+                  
+                  {isOrchestratorActive && !isPaused && (
+                    <div style={{ flexGrow: 1 }}>
+                      <Button size="large" fullWidth onClick={pauseBatch}>
+                        Pause Batch
+                      </Button>
+                    </div>
+                  )}
+                  
+                  {isOrchestratorActive && isPaused && (
+                    <div style={{ flexGrow: 1 }}>
+                      <Button size="large" fullWidth variant="primary" onClick={resumeBatch}>
+                        Resume Batch
+                      </Button>
+                    </div>
+                  )}
+
+                  <div style={{ flexGrow: 1 }}>
+                    <Button size="large" fullWidth tone="critical" onClick={clearCheckpoint} disabled={queueIds.length === 0 && !isOrchestratorActive}>
+                      Clear Queue & Stop
                     </Button>
                   </div>
                 </InlineStack>
+
               </BlockStack>
             </Card>
 
             <Card padding="400">
               <BlockStack gap="400">
-                <Text variant="headingLg" as="h2">Section 3: Safety Nets</Text>
+                <Text variant="headingLg" as="h2">Data & Auditing</Text>
                 
-                {safetyMessage !== "" && (
-                  <div style={{ minHeight: "54px" }}>
-                    <Banner tone="success" title="File Download Started">
-                      <Text as="p">{safetyMessage}</Text>
-                    </Banner>
-                  </div>
-                )}
-
-                {safetyError !== "" && (
-                  <div style={{ minHeight: "54px" }}>
-                    <Banner tone="critical" title="File Creation Failed">
-                      <Text as="p">{safetyError}</Text>
-                    </Banner>
-                  </div>
-                )}
-
                 <InlineStack gap="300">
-                  <div style={{ minHeight: "54px", flexGrow: 1 }}>
-                    <Button
-                      size="large"
-                      fullWidth
-                      onClick={handleExportCSV}
-                      accessibilityLabel="Export CSV of all Metafields"
-                    >
-                      Export CSV
-                    </Button>
-                  </div>
-                  <div style={{ minHeight: "54px", flexGrow: 1 }}>
-                    <Button
-                      size="large"
-                      fullWidth
-                      onClick={handleJSONSnapshot}
-                      accessibilityLabel="Download JSON Snapshot"
-                    >
-                      JSON Snapshot
+                  <div style={{ flexGrow: 1 }}>
+                    <Button size="large" fullWidth onClick={handleExportAuditReport} disabled={queueIds.length === 0}>
+                      Export Error/Audit Report
                     </Button>
                   </div>
                 </InlineStack>
               </BlockStack>
             </Card>
+
           </BlockStack>
         </div>
       </div>
