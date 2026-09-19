@@ -359,6 +359,10 @@ export const action = async ({ request }) => {
 
       const finalShippingOz = directShippingWeightOz || payloadArray.find(item => item.key === "shipping_weight_oz")?.value;
       const finalWeightGrams = directWeightGrams || payloadArray.find(item => item.key === "weight_grams")?.value;
+      
+      // Extract alt_text for Media update
+      const altTextItem = payloadArray.find(item => item.key === "alt_text");
+      const altTextValue = altTextItem ? String(altTextItem.value).trim() : null;
 
       console.log(`[saveMetafields] Product ID: ${fallbackProductId}`);
       console.log(`[saveMetafields] Payload fields received: ${payloadArray.length}`);
@@ -533,6 +537,51 @@ export const action = async ({ request }) => {
         }
       }
 
+      // --- NEW IMAGE ALT-TEXT UPDATE PIPELINE ---
+      if (altTextValue && altTextValue.toLowerCase() !== "none" && altTextValue.toLowerCase() !== "n/a" && primaryProductId) {
+        try {
+          const productGid = primaryProductId.startsWith("gid://") ? primaryProductId : `gid://shopify/Product/${primaryProductId.split("/").pop()}`;
+          
+          const mediaQuery = await admin.graphql(
+            `#graphql
+            query getProductMedia($id: ID!) {
+              product(id: $id) { media(first: 10) { edges { node { id mediaContentType } } } }
+            }`,
+            { variables: { id: productGid } }
+          );
+          const mediaData = await mediaQuery.json();
+          const mediaEdges = mediaData?.data?.product?.media?.edges || [];
+          
+          const mediaToUpdate = mediaEdges
+            .filter(edge => edge.node.mediaContentType === "IMAGE")
+            .map(edge => ({
+              id: edge.node.id,
+              alt: altTextValue
+            }));
+
+          if (mediaToUpdate.length > 0) {
+            console.log(`[saveMetafields] Updating Alt Text for ${mediaToUpdate.length} images...`);
+            const mediaUpdateResponse = await admin.graphql(
+              `#graphql
+              mutation updateProductMedia($productId: ID!, $media: [UpdateMediaInput!]!) {
+                productUpdateMedia(productId: $productId, media: $media) {
+                  userErrors { field message }
+                }
+              }`,
+              { variables: { productId: productGid, media: mediaToUpdate } }
+            );
+            const mediaUpdateJson = await mediaUpdateResponse.json();
+            const mediaErrors = mediaUpdateJson?.data?.productUpdateMedia?.userErrors || [];
+            if (mediaErrors.length > 0) {
+              allErrors.push(...mediaErrors);
+            }
+          }
+        } catch (mediaErr) {
+          allErrors.push({ message: `Image Alt Text update failed: ${mediaErr.message}` });
+        }
+      }
+      // ------------------------------------------
+
       if (finalShippingOz && fallbackProductId) {
         const parsedOz = parseFloat(String(finalShippingOz));
         if (!isNaN(parsedOz) && parsedOz >= 0) {
@@ -573,7 +622,7 @@ export const action = async ({ request }) => {
       }
 
       console.log(`[saveMetafields] Written ${setMetafields.length} metafields successfully.`);
-      return data({ intent: "saveMetafields", success: true, message: "All metafields and variant weights locked in.", writtenCount: setMetafields.length });
+      return data({ intent: "saveMetafields", success: true, message: "All metafields, alt text, and variant weights locked in.", writtenCount: setMetafields.length });
     } catch (error) {
       return data({ intent: "saveMetafields", success: false, error: error.message });
     }
