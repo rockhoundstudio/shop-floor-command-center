@@ -212,21 +212,12 @@ const EXPLICIT_METAOBJECT_KEYS = [
   "jewelry-finding-type", "jewelry_finding_type"
 ];
 
-// ==========================================
-// 🟢 UPGRADED DYSLEXIA FORMATTING SAFEGUARD
-// Catches all punctuation smashing (periods, commas, etc.)
-// ==========================================
 function formatDyslexiaText(text) {
   if (!text) return "";
   let cleaned = text;
   
-  // Force space after period, exclamation, or question mark if missing
   cleaned = cleaned.replace(/([a-z0-9])([.?!])([A-Z])/g, "$1$2 $3");
-  
-  // Force space after comma if missing
   cleaned = cleaned.replace(/([a-z0-9]),([A-Za-z])/gi, "$1, $2");
-  
-  // Force visual spacing between HTML paragraphs
   cleaned = cleaned.replace(/<\/p>\s*<p>/g, "</p>\n\n<p>");
   cleaned = cleaned.replace(/<br\s*\/?>/gi, "<br>\n");
   
@@ -330,48 +321,8 @@ MANDATORY LAWS:
 - PRIMARY/SECONDARY MEDIUM RULE: primary_medium is the stone. secondary_medium is the hardware/setting.`;
 }
 
+// Memory cache safely remains outside Vite's compiler vision
 const stoneProfileCache = new Map();
-
-// 🟢 REPAIR: Persistent Database Connection Pool
-let dbPool = null;
-
-async function queryPostgres(sql, params) {
-  if (!dbPool) {
-    const { default: pg } = await import('pg');
-    dbPool = new pg.Pool({
-      connectionString: process.env.DATABASE_URL,
-      ssl: { rejectUnauthorized: false },
-      max: 15
-    });
-  }
-  try {
-    const result = await dbPool.query(sql, params);
-    return result.rows;
-  } catch (err) {
-    console.error("[Postgres Pool Error]:", err);
-    throw err;
-  }
-}
-
-async function saveToStoneCache(stoneName, geoResult) {
-  try {
-    const existing = await queryPostgres(
-      'SELECT id FROM "StoneCache" WHERE "stone_name" = $1 LIMIT 1',
-      [stoneName]
-    );
-    if (existing.length === 0) {
-      await queryPostgres(
-        'INSERT INTO "StoneCache" ("id", "stone_name", "data", "created_at", "updated_at") VALUES (gen_random_uuid()::text, $1, $2, NOW(), NOW())',
-        [stoneName, JSON.stringify(geoResult)]
-      );
-      console.log("[StoneCache] Saved new entry for:", stoneName);
-    }
-  } catch (err) {
-    console.error("[StoneCache] Save failed for:", stoneName, err);
-  }
-}
-
-const MINDAT_API_KEY = process.env.MINDAT_API_KEY;
 
 async function fetchWithRetry(url, options, retries = 3, delay = 1500) {
   for (let i = 0; i < retries; i++) {
@@ -448,8 +399,8 @@ function resolveOriginHandle(locationSegment, pagesList) {
   const cleanLoc = (locationSegment || "").toLowerCase().trim();
   if (!cleanLoc) return "";
   if (cleanLoc.includes("richardson")) return "the-richardson-strike";
-  if (cleanLoc.includes("irv")) return ""; // Shopped Rock burned
-  if (cleanLoc.includes("spokane")) return ""; // No origin page for Spokane
+  if (cleanLoc.includes("irv")) return ""; 
+  if (cleanLoc.includes("spokane")) return ""; 
   if (cleanLoc.includes("north fork") || cleanLoc.includes("north-fork") || cleanLoc.includes("cda") || cleanLoc.includes("nor")) return "the-north-fork-strike";
   if (cleanLoc.includes("yakima") || cleanLoc.includes("yak") || cleanLoc.includes("chert")) return "the-shop-lore-chert-road-detour-yakima-river-jasper";
 
@@ -463,7 +414,7 @@ function resolveCollectionData(locationSegment, defaultOriginSlug, collectionsLi
   if (cleanLoc.includes("yakima") || cleanLoc.includes("chert")) return { slug: "chert-road-detour", name: "Chert Road Detour — Yakima River Jasper Collection" };
   if (cleanLoc.includes("richardson")) return { slug: "richardsons-rock-ranch", name: "Richardson's Rock Ranch Collection" };
   if (cleanLoc.includes("spokane")) return { slug: "the-spokane-river-collection", name: "Spokane River Stones and Stories" };
-  if (cleanLoc.includes("irv")) return { slug: "", name: "" }; // Shopped Rock burned
+  if (cleanLoc.includes("irv")) return { slug: "", name: "" }; 
   if (cleanLoc.includes("north fork") || cleanLoc.includes("north-fork") || cleanLoc.includes("cda") || cleanLoc.includes("nor")) return { slug: "north-fork-cda-collection", name: "North Fork CdA Collection" };
 
   const matchedCol = collectionsList.find(c => c.url.includes(defaultOriginSlug) || c.title.toLowerCase().includes(cleanLoc));
@@ -472,128 +423,6 @@ function resolveCollectionData(locationSegment, defaultOriginSlug, collectionsLi
   }
 
   return { slug: defaultOriginSlug, name: `${locationSegment.trim()} Collection` };
-}
-
-async function getGeoData(admin, stoneFamily) {
-  const emptyGeo = {
-    mohs_hardness: "", luster: "", fracture_pattern: "", cleavage: "",
-    specific_gravity: "", diaphaneity: "", crystal_system: "",
-    geological_era: "", mineral_class: "", rock_composition: "",
-    rock_formation: "", geological_age: "", geoSource: "none"
-  };
-  
-  if (!stoneFamily || !admin) return emptyGeo;
-
-  const cleanStoneName = extractStoneName(stoneFamily);
-  const search = cleanStoneName.toLowerCase().trim();
-
-  try {
-    const { lookupStone } = await import("../utils/geoLibrary.jsx");
-    const localResult = lookupStone(cleanStoneName);
-    if (localResult && Object.keys(localResult).length > 0) {
-      return {
-        mohs_hardness: localResult.moh_hardness || localResult.hardness || localResult.mohs_hardness || "",
-         luster: localResult.luster || "",
-        fracture_pattern: localResult.fracture_pattern || localResult.fracture || "",
-        cleavage: localResult.cleavage || "",
-        specific_gravity: localResult.specific_gravity || "",
-        diaphaneity: localResult.diaphaneity || "",
-        crystal_system: localResult.crystal_system || "",
-        geological_era: localResult.geological_era || localResult.geological_age || "",
-        mineral_class: localResult.mineral_class || "",
-        rock_composition: localResult.rock_composition || "",
-        rock_formation: localResult.rock_formation || "",
-        geological_age: localResult.geological_era || localResult.geological_age || "",
-        geoSource: "library"
-      };
-    }
-  } catch (err) {
-    console.error("[Geo Tier 1] geoLibrary lookup failed:", err);
-  }
-
-  try {
-    const cacheRows = await queryPostgres('SELECT data FROM "StoneCache" WHERE LOWER("stone_name") = $1 LIMIT 1', [search]);
-    if (cacheRows.length > 0 && cacheRows[0].data) {
-      const parsed = typeof cacheRows[0].data === "string" ? JSON.parse(cacheRows[0].data) : cacheRows[0].data;
-      return { ...parsed, geoSource: "cache" };
-    }
-  } catch (err) {
-    console.error("[Geo Tier 2A] PostgreSQL StoneCache lookup failed:", err.message);
-  }
-
-  try {
-    if (stoneProfileCache.has(search)) {
-      const cached = stoneProfileCache.get(search);
-      if (cached) return { ...cached, geoSource: "cache" };
-    } else {
-      const rows = await queryPostgres('SELECT * FROM "StoneProfile" WHERE LOWER("stone_name") = $1 LIMIT 1', [search]);
-      if (rows.length > 0) {
-        const s = rows[0];
-        const geoResult = {
-          mohs_hardness: s.hardness || s.mohs_hardness || "",
-          luster: s.luster || "",
-          fracture_pattern: s.fracture || "",
-          cleavage: s.cleavage || "",
-          specific_gravity: s.specific_gravity || "",
-          diaphaneity: s.diaphaneity || "",
-          crystal_system: s.crystal_system || "",
-          geological_era: s.geological_era || "",
-          mineral_class: s.mineral_class || "",
-          rock_composition: s.rock_composition || "",
-          rock_formation: s.rock_formation || "",
-          geological_age: s.geological_era || "",
-          geoSource: "database"
-        };
-        stoneProfileCache.set(search, geoResult);
-        return geoResult;
-      } else {
-        stoneProfileCache.set(search, null);
-      }
-    }
-  } catch (err) {
-    console.error("[Geo Tier 2B] PostgreSQL StoneProfile failed:", err);
-  }
-
-  try {
-    if (MINDAT_API_KEY) {
-      const controller = new AbortController();
-      const id = setTimeout(() => controller.abort(), 60000);
-      const mindatRes = await fetch(`https://api.mindat.org/minerals/?name=${encodeURIComponent(cleanStoneName)}&format=json`, { 
-        headers: { Authorization: `Token ${MINDAT_API_KEY}` },
-        signal: controller.signal
-      });
-      clearTimeout(id);
-      
-      const mindatData = await mindatRes.json();
-      const mineral = mindatData?.results?.[0];
-      if (mineral) {
-        const hardness = mineral.hardness || "";
-        const specific_gravity = mineral.density || "";
-        const geoResult = {
-          mohs_hardness: hardness, 
-          luster: mineral.luster || "", 
-          fracture_pattern: mineral.fracture || "", 
-          cleavage: mineral.cleavage || "", 
-          specific_gravity, 
-          diaphaneity: mineral.transparency || "", 
-          crystal_system: mineral.crystal_system || "", 
-          geological_era: "", 
-          mineral_class: mineral.mineral_class || "", 
-          rock_composition: "", 
-          rock_formation: "",
-          geological_age: "",
-          geoSource: "mindat"
-        };
-        stoneProfileCache.set(search, geoResult);
-        await saveToStoneCache(search, geoResult);
-        return geoResult;
-      }
-    }
-  } catch (err) {
-    console.error("[Geo Tier 3] Mindat failed:", err);
-  }
-
-  return emptyGeo;
 }
 
 function sanitizeObject(obj) {
@@ -687,6 +516,172 @@ async function executeGhostDelete(admin, productGid) {
 
 export const action = async ({ request }) => {
   try {
+    // 🟢 REPAIR: Firewall Node dependencies inside the action block. 
+    // React Router's Vite plugin completely strips this block during the client build, 
+    // ensuring 'pg' and 'global' never leak to the browser.
+    
+    if (!global.__dbPool) {
+      const { default: pg } = await import('pg');
+      global.__dbPool = new pg.Pool({
+        connectionString: process.env.DATABASE_URL,
+        ssl: { rejectUnauthorized: false },
+        max: 15
+      });
+    }
+    const dbPool = global.__dbPool;
+
+    async function queryPostgres(sql, params) {
+      try {
+        const result = await dbPool.query(sql, params);
+        return result.rows;
+      } catch (err) {
+        console.error("[Postgres Pool Error]:", err);
+        throw err;
+      }
+    }
+
+    async function saveToStoneCache(stoneName, geoResult) {
+      try {
+        const existing = await queryPostgres(
+          'SELECT id FROM "StoneCache" WHERE "stone_name" = $1 LIMIT 1',
+          [stoneName]
+        );
+        if (existing.length === 0) {
+          await queryPostgres(
+            'INSERT INTO "StoneCache" ("id", "stone_name", "data", "created_at", "updated_at") VALUES (gen_random_uuid()::text, $1, $2, NOW(), NOW())',
+            [stoneName, JSON.stringify(geoResult)]
+          );
+          console.log("[StoneCache] Saved new entry for:", stoneName);
+        }
+      } catch (err) {
+        console.error("[StoneCache] Save failed for:", stoneName, err);
+      }
+    }
+
+    async function getGeoData(admin, stoneFamily) {
+      const MINDAT_API_KEY = process.env.MINDAT_API_KEY;
+      
+      const emptyGeo = {
+        mohs_hardness: "", luster: "", fracture_pattern: "", cleavage: "",
+        specific_gravity: "", diaphaneity: "", crystal_system: "",
+        geological_era: "", mineral_class: "", rock_composition: "",
+        rock_formation: "", geological_age: "", geoSource: "none"
+      };
+      
+      if (!stoneFamily || !admin) return emptyGeo;
+
+      const cleanStoneName = extractStoneName(stoneFamily);
+      const search = cleanStoneName.toLowerCase().trim();
+
+      try {
+        const { lookupStone } = await import("../utils/geoLibrary.jsx");
+        const localResult = lookupStone(cleanStoneName);
+        if (localResult && Object.keys(localResult).length > 0) {
+          return {
+            mohs_hardness: localResult.moh_hardness || localResult.hardness || localResult.mohs_hardness || "",
+             luster: localResult.luster || "",
+            fracture_pattern: localResult.fracture_pattern || localResult.fracture || "",
+            cleavage: localResult.cleavage || "",
+            specific_gravity: localResult.specific_gravity || "",
+            diaphaneity: localResult.diaphaneity || "",
+            crystal_system: localResult.crystal_system || "",
+            geological_era: localResult.geological_era || localResult.geological_age || "",
+            mineral_class: localResult.mineral_class || "",
+            rock_composition: localResult.rock_composition || "",
+            rock_formation: localResult.rock_formation || "",
+            geological_age: localResult.geological_era || localResult.geological_age || "",
+            geoSource: "library"
+          };
+        }
+      } catch (err) {
+        console.error("[Geo Tier 1] geoLibrary lookup failed:", err);
+      }
+
+      try {
+        const cacheRows = await queryPostgres('SELECT data FROM "StoneCache" WHERE LOWER("stone_name") = $1 LIMIT 1', [search]);
+        if (cacheRows.length > 0 && cacheRows[0].data) {
+          const parsed = typeof cacheRows[0].data === "string" ? JSON.parse(cacheRows[0].data) : cacheRows[0].data;
+          return { ...parsed, geoSource: "cache" };
+        }
+      } catch (err) {
+        console.error("[Geo Tier 2A] PostgreSQL StoneCache lookup failed:", err.message);
+      }
+
+      try {
+        if (stoneProfileCache.has(search)) {
+          const cached = stoneProfileCache.get(search);
+          if (cached) return { ...cached, geoSource: "cache" };
+        } else {
+          const rows = await queryPostgres('SELECT * FROM "StoneProfile" WHERE LOWER("stone_name") = $1 LIMIT 1', [search]);
+          if (rows.length > 0) {
+            const s = rows[0];
+            const geoResult = {
+              mohs_hardness: s.hardness || s.mohs_hardness || "",
+              luster: s.luster || "",
+              fracture_pattern: s.fracture || "",
+              cleavage: s.cleavage || "",
+              specific_gravity: s.specific_gravity || "",
+              diaphaneity: s.diaphaneity || "",
+              crystal_system: s.crystal_system || "",
+              geological_era: s.geological_era || "",
+              mineral_class: s.mineral_class || "",
+              rock_composition: s.rock_composition || "",
+              rock_formation: s.rock_formation || "",
+              geological_age: s.geological_era || "",
+              geoSource: "database"
+            };
+            stoneProfileCache.set(search, geoResult);
+            return geoResult;
+          } else {
+            stoneProfileCache.set(search, null);
+          }
+        }
+      } catch (err) {
+        console.error("[Geo Tier 2B] PostgreSQL StoneProfile failed:", err);
+      }
+
+      try {
+        if (MINDAT_API_KEY) {
+          const controller = new AbortController();
+          const id = setTimeout(() => controller.abort(), 60000);
+          const mindatRes = await fetch(`https://api.mindat.org/minerals/?name=${encodeURIComponent(cleanStoneName)}&format=json`, { 
+            headers: { Authorization: `Token ${MINDAT_API_KEY}` },
+            signal: controller.signal
+          });
+          clearTimeout(id);
+          
+          const mindatData = await mindatRes.json();
+          const mineral = mindatData?.results?.[0];
+          if (mineral) {
+            const hardness = mineral.hardness || "";
+            const specific_gravity = mineral.density || "";
+            const geoResult = {
+              mohs_hardness: hardness, 
+              luster: mineral.luster || "", 
+              fracture_pattern: mineral.fracture || "", 
+              cleavage: mineral.cleavage || "", 
+              specific_gravity, 
+              diaphaneity: mineral.transparency || "", 
+              crystal_system: mineral.crystal_system || "", 
+              geological_era: "", 
+              mineral_class: mineral.mineral_class || "", 
+              rock_composition: "", 
+              rock_formation: "",
+              geological_age: "",
+              geoSource: "mindat"
+            };
+            stoneProfileCache.set(search, geoResult);
+            await saveToStoneCache(search, geoResult);
+            return geoResult;
+          }
+        }
+      } catch (err) {
+        console.error("[Geo Tier 3] Mindat failed:", err);
+      }
+
+      return emptyGeo;
+    }
+
     const { admin } = await authenticate.admin(request);
     const body = await request.formData();
     const intent = body.get("intent");
@@ -1331,9 +1326,6 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
       return Response.json({ success: false, intent, error: `Vision API Failure (${geminiRes.status}): ${errText}` });
     }
 
-    // ==========================================
-    // TAB 3: LOAD PRODUCT DATA (Strict Dry Run Payload Builder)
-    // ==========================================
     if (intent === "loadProductData") {
       try {
         const pieceId = body.get("pieceId");
@@ -1458,9 +1450,6 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
       }
     }
 
-    // ==========================================
-    // TAB 3: LIVE REPAIR ENGINE
-    // ==========================================
     if (intent === "executeRepairPlan") {
       try {
         const pieceId = body.get("pieceId");
