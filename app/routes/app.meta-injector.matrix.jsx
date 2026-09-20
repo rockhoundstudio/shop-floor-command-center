@@ -67,18 +67,19 @@ export function OperationsMatrixTab({ products, fetcher }) {
   const [safetyError, setSafetyError] = useState("");
 
   const batchFetcher = useFetcher();
-  const singleSaveFetcher = useFetcher(); // Dedicated fetcher for the single-piece save button
+  const singleSaveFetcher = useFetcher(); 
 
-  // --- Visual Bench Data Extractor (CALIBRATED) ---
+  // --- Visual Bench Data Extractor (CALIBRATED TO TELEMETRY) ---
   const extractCurrentMeta = useCallback((product, key) => {
     if (!product) return "";
-    if (key === "shopify_title") return product.title || "";
     
-    // Shopify stores pricing and variants in a nested structure
+    // Shopify Core Data
+    if (key === "shopify_title") return product.title || "";
     if (key === "price" && product.variants?.edges?.[0]?.node?.price) {
-      return product.variants.edges[0].node.price;
+      return String(product.variants.edges[0].node.price);
     }
-
+    
+    // Collect all metafield buckets
     const allEdges = [
       ...(product.customMeta?.edges || []),
       ...(product.rockhoundMeta?.edges || []),
@@ -86,17 +87,21 @@ export function OperationsMatrixTab({ products, fetcher }) {
       ...(product.metafields?.edges || [])
     ];
     
-    const node = allEdges.find(e => e.node.key === key)?.node;
+    // Find exact key match
+    const node = allEdges.find(e => e?.node?.key === key)?.node;
     if (!node || node.value === null || node.value === undefined) return "";
     
     let val = String(node.value);
-    if (val.includes("gid://")) val = "See Shopify metaobject";
+    if (val.includes("gid://")) return "See Shopify metaobject";
+    
+    // Clean array strings (e.g. '["emerald green..."]')
     if (val.startsWith("[")) {
       try {
         const arr = JSON.parse(val);
-        val = Array.isArray(arr) ? arr[0] : val;
-      } catch (e) { }
+        return Array.isArray(arr) ? String(arr[0]) : val;
+      } catch (e) { return val; }
     }
+    
     return val;
   }, []);
 
@@ -111,7 +116,7 @@ export function OperationsMatrixTab({ products, fetcher }) {
       });
     });
     setBenchState(newBenchState);
-    setPushKeys([]); 
+    setPushKeys([]); // Clear checkboxes
   }, [safeProducts, extractCurrentMeta]);
 
   const clearBench = useCallback(() => {
@@ -134,6 +139,7 @@ export function OperationsMatrixTab({ products, fetcher }) {
     Object.entries(benchState).forEach(([key, value]) => {
       if (key === "shopify_title") return; 
       let injectValue = String(value !== null && value !== undefined ? value : "").trim();
+      
       if (injectValue !== "" && injectValue !== "N/A" && injectValue !== "See Shopify metaobject") {
         payload.push({
           ownerId: selectedBenchId,
@@ -154,7 +160,8 @@ export function OperationsMatrixTab({ products, fetcher }) {
         productTitle: masterTitle,
         descriptionHtml: benchState.generated_description || "",
         weightGrams: benchState.weight_grams || "",
-        shippingWeightOz: benchState.shipping_weight_oz || ""
+        shippingWeightOz: benchState.shipping_weight_oz || "",
+        price: benchState.price || ""
       },
       { method: "post", action: "/app/meta-injector-api" }
     );
@@ -179,7 +186,7 @@ export function OperationsMatrixTab({ products, fetcher }) {
   useEffect(() => {
     if (singleSaveFetcher.state === "idle" && singleSaveFetcher.data) {
       if (singleSaveFetcher.data.success) {
-        setSafetyMessage(`Successfully saved data to ${singleSaveFetcher.data.pieceId}`);
+        setSafetyMessage(`Successfully saved data to current piece.`);
       } else {
         setSafetyError(`Failed to save: ${singleSaveFetcher.data.error || singleSaveFetcher.data.message}`);
       }
@@ -348,7 +355,7 @@ export function OperationsMatrixTab({ products, fetcher }) {
             label={labelNode} 
             value={val} 
             onChange={(v) => setBenchState(prev => ({ ...prev, [key]: v }))} 
-            multiline={fieldConfig.multiline || key.includes("story") || key.includes("notes") || key.includes("character") ? 3 : false} 
+            multiline={fieldConfig.multiline || key.includes("story") || key.includes("notes") || key.includes("character") || key.includes("description") ? 3 : false} 
             autoComplete="off" 
           />
         )}
