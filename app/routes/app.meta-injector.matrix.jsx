@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { BlockStack, Card, Text, Banner, TextField, Button, InlineStack, Box, Badge, ProgressBar } from "@shopify/polaris";
+import { BlockStack, Card, Text, Banner, TextField, Select, Button, InlineStack, Box, Badge, ProgressBar } from "@shopify/polaris";
 import { useFetcher } from "react-router";
 import { MagicIcon } from "@shopify/polaris-icons";
 import { FULL_META_GROUPS, DROPDOWN_OPTIONS } from "../utils/meta-injector.constants.jsx";
@@ -23,7 +23,6 @@ const CUSTOM_FIELDS = [
   { key: "generated_description", label: "Generated Description", type: "multi_line_text_field" }
 ];
 
-// --- Strict Allowed Statuses ---
 const STATUS = {
   QUEUED: "Queued",
   SCANNING: "Scanning",
@@ -34,7 +33,6 @@ const STATUS = {
   SKIPPED: "Skipped"
 };
 
-// 🔴 IMPORTANT: Replace these placeholder GIDs with actual Shopify GIDs for protected products
 const VERIFIED_SKIP_LIST = [
   { id: "gid://shopify/Product/REPLACE_WITH_CREEK_FIND_GID", reason: "The Creek Find is permanently set to photos-check-only." },
   { id: "gid://shopify/Product/REPLACE_WITH_SUNRISE_GID", reason: "The Sunrise is locked pending structural state bug fix." }
@@ -52,223 +50,26 @@ export function OperationsMatrixTab({ products, fetcher }) {
   const [searchQuery, setSearchQuery] = useState("");
   
   // --- Batch Orchestrator State ---
-  const [runMode, setRunMode] = useState("DRY_RUN"); // Restricted to DRY_RUN for now
+  const [runMode, setRunMode] = useState("DRY_RUN"); 
   const [isOrchestratorActive, setIsOrchestratorActive] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   
   const [queueIds, setQueueIds] = useState([]);
   const [queueIndex, setQueueIndex] = useState(0);
-  const [productStates, setProductStates] = useState({}); // Record<GID, { status, logs: [] }>
+  const [productStates, setProductStates] = useState({}); 
   
-  // --- Visual Bench State ---
+  // --- Visual Bench (Mass Formatter) State ---
   const [selectedBenchId, setSelectedBenchId] = useState(null);
-  const [dryRunResults, setDryRunResults] = useState({}); // Record<GID, { proposedChanges: {}, proposedDeletions: [] }>
+  const [benchState, setBenchState] = useState({}); // Holds the editable text values
+  const [pushKeys, setPushKeys] = useState([]); // Holds the keys of the checked boxes
 
   const [safetyMessage, setSafetyMessage] = useState("");
   const [safetyError, setSafetyError] = useState("");
 
   const batchFetcher = useFetcher();
 
-  // --- Resumability: Browser LocalStorage Checkpoints ---
-  useEffect(() => {
-    try {
-      const savedState = localStorage.getItem("rockhound_standardizer_checkpoint");
-      if (savedState) {
-        const parsed = JSON.parse(savedState);
-        if (parsed.queueIds && parsed.queueIds.length > 0) {
-          setQueueIds(parsed.queueIds);
-          setQueueIndex(parsed.queueIndex || 0);
-          setProductStates(parsed.productStates || {});
-          setDryRunResults(parsed.dryRunResults || {});
-          setRunMode("DRY_RUN"); // Force Dry Run for safety
-          setIsPaused(true);
-          setSafetyMessage("Browser checkpoint found. Standardizer is paused.");
-        }
-      }
-    } catch (e) {
-      console.warn("Could not load checkpoint", e);
-    }
-  }, []);
-
-  const saveCheckpoint = useCallback((ids, index, states, results) => {
-    try {
-      localStorage.setItem("rockhound_standardizer_checkpoint", JSON.stringify({
-        queueIds: ids,
-        queueIndex: index,
-        productStates: states,
-        dryRunResults: results
-      }));
-    } catch (e) {
-      console.warn("Could not save checkpoint", e);
-    }
-  }, []);
-
-  const clearCheckpoint = useCallback(() => {
-    localStorage.removeItem("rockhound_standardizer_checkpoint");
-    setQueueIds([]);
-    setQueueIndex(0);
-    setProductStates({});
-    setDryRunResults({});
-    setSelectedBenchId(null);
-    setIsOrchestratorActive(false);
-    setIsPaused(false);
-    setSafetyMessage("Bench cleared.");
-  }, []);
-
-  // --- Search & Filtering ---
-  const handleSearchChange = useCallback((value) => setSearchQuery(value), []);
-  const handleClearSearch = useCallback(() => setSearchQuery(""), []);
-
-  const filteredProducts = safeProducts.filter(p =>
-    p.title.toLowerCase().includes(searchQuery.toLowerCase())
-  );
-
-  const allFilteredSelected = filteredProducts.length > 0 && filteredProducts.every(p => queueIds.includes(p.id));
-
-  // --- Left Column: Queue Selection ---
-  const handleToggleProductSelection = useCallback((id) => {
-    if (isOrchestratorActive && !isPaused) return; 
-    
-    setQueueIds(prev => {
-      const newIds = prev.includes(id) ? prev.filter(pid => pid !== id) : [...prev, id];
-      setProductStates(states => {
-        const newStates = { ...states };
-        if (!newStates[id]) newStates[id] = { status: STATUS.QUEUED, logs: [] };
-        return newStates;
-      });
-      saveCheckpoint(newIds, queueIndex, productStates, dryRunResults);
-      return newIds;
-    });
-  }, [isOrchestratorActive, isPaused, queueIndex, productStates, dryRunResults, saveCheckpoint]);
-
-  const toggleSelectAllFiltered = useCallback(() => {
-    if (isOrchestratorActive && !isPaused) return;
-    setQueueIds(prev => {
-      let newIds = [...prev];
-      if (allFilteredSelected) {
-        newIds = newIds.filter(id => !filteredProducts.find(p => p.id === id));
-      } else {
-        filteredProducts.forEach(p => {
-          if (!newIds.includes(p.id)) newIds.push(p.id);
-        });
-      }
-      setProductStates(states => {
-        const newStates = { ...states };
-        newIds.forEach(id => {
-          if (!newStates[id]) newStates[id] = { status: STATUS.QUEUED, logs: [] };
-        });
-        return newStates;
-      });
-      saveCheckpoint(newIds, queueIndex, productStates, dryRunResults);
-      return newIds;
-    });
-  }, [allFilteredSelected, filteredProducts, isOrchestratorActive, isPaused, queueIndex, productStates, dryRunResults, saveCheckpoint]);
-
-  // --- The Batch State Machine ---
-  const startBatch = useCallback(() => {
-    if (queueIds.length === 0) {
-      setSafetyError("No products loaded on the rack.");
-      return;
-    }
-    if (runMode === "LIVE_RUN") {
-      setSafetyError("LIVE RUN is locked out pending API verification. Dry Run only.");
-      setRunMode("DRY_RUN");
-      return;
-    }
-    
-    setSafetyError("");
-    setSafetyMessage(`Standardizer started in ${runMode} mode.`);
-    setIsOrchestratorActive(true);
-    setIsPaused(false);
-  }, [queueIds.length, runMode]);
-
-  const pauseBatch = useCallback(() => {
-    setIsPaused(true);
-    setSafetyMessage("Standardizer paused.");
-  }, []);
-
-  const resumeBatch = useCallback(() => {
-    setIsPaused(false);
-    setSafetyMessage(`Standardizer resumed in ${runMode} mode.`);
-  }, [runMode]);
-
-  const updateProductState = useCallback((id, status, newLogs = []) => {
-    setProductStates(prev => {
-      const updated = { ...prev };
-      const existingLogs = updated[id]?.logs || [];
-      updated[id] = { status: status, logs: [...existingLogs, ...newLogs] };
-      saveCheckpoint(queueIds, queueIndex, updated, dryRunResults);
-      return updated;
-    });
-  }, [queueIds, queueIndex, dryRunResults, saveCheckpoint]);
-
-  // --- Core Processing Loop ---
-  useEffect(() => {
-    if (!isOrchestratorActive || isPaused) return;
-    if (batchFetcher.state !== "idle") return; 
-
-    if (queueIndex >= queueIds.length) {
-      setIsOrchestratorActive(false);
-      setIsPaused(false);
-      setSafetyMessage("Diagnostic Sweep Complete. Review the Visual Bench for proposed changes.");
-      return;
-    }
-
-    const currentId = queueIds[queueIndex];
-    const currentProduct = safeProducts.find(p => p.id === currentId);
-    const currentState = productStates[currentId]?.status;
-
-    if (currentState === STATUS.QUEUED) {
-      const skipRule = VERIFIED_SKIP_LIST.find(skip => skip.id === currentId);
-      if (skipRule) {
-        updateProductState(currentId, STATUS.SKIPPED, [`Skipped: ${skipRule.reason}`]);
-        setTimeout(() => setQueueIndex(i => i + 1), 500);
-        return;
-      }
-      
-      const productType = currentProduct?.productType?.toLowerCase() || "";
-      if (productType.includes("accessory") || productType === "chain" || productType === "cord") {
-        updateProductState(currentId, STATUS.SKIPPED, ["Skipped: Accessory detected."]);
-        setTimeout(() => setQueueIndex(i => i + 1), 500);
-        return;
-      }
-      
-      updateProductState(currentId, STATUS.SCANNING, ["Running chassis diagnostic..."]);
-      
-      const fd = new FormData();
-      fd.append("intent", "standardizeBatchItem"); 
-      fd.append("pieceId", currentId);
-      fd.append("runMode", runMode); 
-      batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-api" });
-      return;
-    }
-  }, [isOrchestratorActive, isPaused, queueIndex, queueIds, productStates, batchFetcher.state, safeProducts, runMode, updateProductState]);
-
-  // --- Listen to API Responses ---
-  useEffect(() => {
-    if (batchFetcher.state === "idle" && batchFetcher.data) {
-      const { intent, success, pieceId, finalStatus, logs = [], proposedChanges = {}, proposedDeletions = [] } = batchFetcher.data;
-      
-      if (intent === "standardizeBatchItem" && pieceId) {
-        const appliedStatus = finalStatus || (success ? STATUS.VALIDATED : STATUS.FAILED);
-        
-        setDryRunResults(prev => {
-          const next = { ...prev, [pieceId]: { proposedChanges, proposedDeletions } };
-          saveCheckpoint(queueIds, queueIndex, productStates, next);
-          return next;
-        });
-
-        updateProductState(pieceId, appliedStatus, logs);
-        
-        setTimeout(() => {
-          setQueueIndex(prev => prev + 1);
-        }, 800);
-      }
-    }
-  }, [batchFetcher.state, batchFetcher.data, updateProductState, queueIds, queueIndex, productStates, saveCheckpoint]);
-
   // --- Visual Bench Data Extractor ---
-  const extractCurrentMeta = (product, key) => {
+  const extractCurrentMeta = useCallback((product, key) => {
     if (key === "shopify_title") return product?.title || "";
     if (!product) return "";
     
@@ -291,11 +92,155 @@ export function OperationsMatrixTab({ products, fetcher }) {
       } catch (e) { }
     }
     return val;
-  };
+  }, []);
 
+  // --- Load a product to the Editable Bench ---
+  const loadToBench = useCallback((id) => {
+    setSelectedBenchId(id);
+    const product = safeProducts.find(p => p.id === id);
+    const newBenchState = {};
+    SECTIONS.forEach(sec => {
+      sec.keys.forEach(key => {
+        newBenchState[key] = extractCurrentMeta(product, key);
+      });
+    });
+    setBenchState(newBenchState);
+    setPushKeys([]); // Clear checkboxes so you don't accidentally push old fields
+  }, [safeProducts, extractCurrentMeta]);
+
+  const clearBench = useCallback(() => {
+    setQueueIds([]);
+    setQueueIndex(0);
+    setProductStates({});
+    setSelectedBenchId(null);
+    setBenchState({});
+    setPushKeys([]);
+    setIsOrchestratorActive(false);
+    setIsPaused(false);
+    setSafetyMessage("Rack & Bench cleared.");
+  }, []);
+
+  // --- Search & Filtering ---
+  const handleSearchChange = useCallback((value) => setSearchQuery(value), []);
+  const handleClearSearch = useCallback(() => setSearchQuery(""), []);
+  const filteredProducts = safeProducts.filter(p => p.title.toLowerCase().includes(searchQuery.toLowerCase()));
+  const allFilteredSelected = filteredProducts.length > 0 && filteredProducts.every(p => queueIds.includes(p.id));
+
+  // --- Rack Queue Selection ---
+  const handleToggleProductSelection = useCallback((id) => {
+    if (isOrchestratorActive && !isPaused) return; 
+    setQueueIds(prev => {
+      const newIds = prev.includes(id) ? prev.filter(pid => pid !== id) : [...prev, id];
+      setProductStates(states => {
+        const newStates = { ...states };
+        if (!newStates[id]) newStates[id] = { status: STATUS.QUEUED, logs: [] };
+        return newStates;
+      });
+      return newIds;
+    });
+  }, [isOrchestratorActive, isPaused]);
+
+  const toggleSelectAllFiltered = useCallback(() => {
+    if (isOrchestratorActive && !isPaused) return;
+    setQueueIds(prev => {
+      let newIds = [...prev];
+      if (allFilteredSelected) {
+        newIds = newIds.filter(id => !filteredProducts.find(p => p.id === id));
+      } else {
+        filteredProducts.forEach(p => { if (!newIds.includes(p.id)) newIds.push(p.id); });
+      }
+      setProductStates(states => {
+        const newStates = { ...states };
+        newIds.forEach(id => { if (!newStates[id]) newStates[id] = { status: STATUS.QUEUED, logs: [] }; });
+        return newStates;
+      });
+      return newIds;
+    });
+  }, [allFilteredSelected, filteredProducts, isOrchestratorActive, isPaused]);
+
+  // --- The Batch State Machine ---
+  const startBatch = useCallback(() => {
+    if (queueIds.length === 0) {
+      setSafetyError("No products loaded on the rack.");
+      return;
+    }
+    if (pushKeys.length === 0) {
+      setSafetyError("No fields checked. You must check the boxes next to the fields you want to mass-format.");
+      return;
+    }
+    if (runMode === "LIVE_RUN") {
+      setSafetyError("LIVE RUN is locked pending API verification. Switching to Dry Run.");
+      setRunMode("DRY_RUN");
+      return;
+    }
+    
+    setSafetyError("");
+    setSafetyMessage(`Mass Formatter started in ${runMode} mode.`);
+    setIsOrchestratorActive(true);
+    setIsPaused(false);
+  }, [queueIds.length, pushKeys.length, runMode]);
+
+  const updateProductState = useCallback((id, status, newLogs = []) => {
+    setProductStates(prev => {
+      const updated = { ...prev };
+      const existingLogs = updated[id]?.logs || [];
+      updated[id] = { status: status, logs: [...existingLogs, ...newLogs] };
+      return updated;
+    });
+  }, []);
+
+  // --- Core Processing Loop ---
+  useEffect(() => {
+    if (!isOrchestratorActive || isPaused) return;
+    if (batchFetcher.state !== "idle") return; 
+
+    if (queueIndex >= queueIds.length) {
+      setIsOrchestratorActive(false);
+      setIsPaused(false);
+      setSafetyMessage(`Mass Format (${runMode}) Complete.`);
+      return;
+    }
+
+    const currentId = queueIds[queueIndex];
+    const currentProduct = safeProducts.find(p => p.id === currentId);
+    const currentState = productStates[currentId]?.status;
+
+    if (currentState === STATUS.QUEUED) {
+      const skipRule = VERIFIED_SKIP_LIST.find(skip => skip.id === currentId);
+      if (skipRule) {
+        updateProductState(currentId, STATUS.SKIPPED, [`Skipped: ${skipRule.reason}`]);
+        setTimeout(() => setQueueIndex(i => i + 1), 500);
+        return;
+      }
+      
+      updateProductState(currentId, STATUS.SCANNING, ["Applying template fields..."]);
+      
+      // In a real live run, this would compile the benchState[keys] in pushKeys and send it to the save intent.
+      // For now, it acts as a Dry Run diagnostic simulator.
+      const fd = new FormData();
+      fd.append("intent", "standardizeBatchItem"); 
+      fd.append("pieceId", currentId);
+      fd.append("runMode", runMode); 
+      batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-api" });
+      return;
+    }
+  }, [isOrchestratorActive, isPaused, queueIndex, queueIds, productStates, batchFetcher.state, safeProducts, runMode, updateProductState, pushKeys, benchState]);
+
+  // --- Listen to API Responses ---
+  useEffect(() => {
+    if (batchFetcher.state === "idle" && batchFetcher.data) {
+      const { intent, success, pieceId, finalStatus, logs = [] } = batchFetcher.data;
+      if (intent === "standardizeBatchItem" && pieceId) {
+        const appliedStatus = finalStatus || (success ? STATUS.VALIDATED : STATUS.FAILED);
+        updateProductState(pieceId, appliedStatus, logs);
+        setTimeout(() => setQueueIndex(prev => prev + 1), 800);
+      }
+    }
+  }, [batchFetcher.state, batchFetcher.data, updateProductState]);
+
+  // --- Visual Bench Field Renderer ---
   const renderVisualBenchField = (key) => {
     if (!selectedBenchId) return null;
-    const product = safeProducts.find(p => p.id === selectedBenchId);
     
     let fieldConfig = null;
     for (const group of FULL_META_GROUPS || []) {
@@ -303,42 +248,45 @@ export function OperationsMatrixTab({ products, fetcher }) {
       if (found) { fieldConfig = found; break; }
     }
     if (!fieldConfig) fieldConfig = CUSTOM_FIELDS?.find(f => f.key === key);
-    if (!fieldConfig) fieldConfig = { key, label: key.split(/[-_]/).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ') };
+    if (!fieldConfig) fieldConfig = { key, label: key.split(/[-_]/).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' '), type: 'text' };
 
-    const currentValue = extractCurrentMeta(product, key);
-    const isFilled = currentValue.trim() !== "";
-    
-    const benchResults = dryRunResults[selectedBenchId] || { proposedChanges: {}, proposedDeletions: [] };
-    const proposedChange = benchResults.proposedChanges[key];
-    const isProposedForDeletion = benchResults.proposedDeletions.includes(key);
+    const isChecked = pushKeys.includes(key);
+    const val = benchState[key] || "";
 
-    const dotFillColor = isFilled ? "#22c55e" : "#ef4444"; 
+    const labelNode = (
+      <div style={{ display: 'flex', alignItems: 'center', paddingBottom: "4px" }} onClick={(e) => e.stopPropagation()}>
+        <input 
+          type="checkbox" 
+          checked={isChecked}
+          onChange={(e) => {
+            if (e.target.checked) setPushKeys(prev => [...prev, key]);
+            else setPushKeys(prev => prev.filter(k => k !== key));
+          }}
+          style={{ width: "18px", height: "18px", marginRight: "8px", cursor: "pointer", accentColor: "#005bd3" }}
+        />
+        <span style={{ fontSize: '13px', fontWeight: 'bold', color: isChecked ? "#005bd3" : "#202223" }}>
+          {fieldConfig.label}
+        </span>
+      </div>
+    );
 
     return (
-      <div key={key} style={{ backgroundColor: isFilled ? "transparent" : "#FFF5F5", minHeight: "48px", padding: "8px", borderRadius: "4px", borderBottom: "1px solid #f0f0f0" }}>
-        <div style={{ display: 'flex', alignItems: 'center', marginBottom: "4px" }}>
-          <svg width="14" height="14" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg" style={{ minWidth: '14px', marginRight: '8px' }}>
-            <circle cx="9" cy="9" r="9" fill={dotFillColor} />
-          </svg>
-          <span style={{ fontSize: '13px', fontWeight: 'bold', color: "#202223" }}>{fieldConfig.label}</span>
-        </div>
-        
-        <Text as="p" variant="bodyMd" color={isFilled ? "default" : "subdued"}>
-          {isFilled ? currentValue : "— Blank —"}
-        </Text>
-
-        {/* DRY RUN PROPOSAL RENDERERS */}
-        {proposedChange && (
-          <div style={{ marginTop: "8px", padding: "8px", backgroundColor: "#e3f1df", borderRadius: "4px", borderLeft: "4px solid #22c55e" }}>
-            <Text as="p" variant="bodySm" fontWeight="bold" tone="success">🔧 Proposed Fill/Update:</Text>
-            <Text as="p" variant="bodyMd">{proposedChange}</Text>
-          </div>
-        )}
-        
-        {isProposedForDeletion && (
-          <div style={{ marginTop: "8px", padding: "8px", backgroundColor: "#fbeae5", borderRadius: "4px", borderLeft: "4px solid #ef4444" }}>
-            <Text as="p" variant="bodySm" fontWeight="bold" tone="critical">🗑️ Proposed for Rust Removal (Deletion)</Text>
-          </div>
+      <div key={key} style={{ backgroundColor: isChecked ? "#e8f4fc" : "transparent", padding: "8px", borderRadius: "6px", border: isChecked ? "2px solid #005bd3" : "1px solid transparent" }}>
+        {fieldConfig.type !== "text" && DROPDOWN_OPTIONS && DROPDOWN_OPTIONS[key] && DROPDOWN_OPTIONS[key].length > 0 ? (
+          <Select 
+            label={labelNode} 
+            options={[{ label: "Select...", value: "" }, ...DROPDOWN_OPTIONS[key]]} 
+            value={val} 
+            onChange={(v) => setBenchState(prev => ({ ...prev, [key]: v }))} 
+          />
+        ) : (
+          <TextField 
+            label={labelNode} 
+            value={val} 
+            onChange={(v) => setBenchState(prev => ({ ...prev, [key]: v }))} 
+            multiline={fieldConfig.multiline || key.includes("story") || key.includes("notes") || key.includes("character") ? 3 : false} 
+            autoComplete="off" 
+          />
         )}
       </div>
     );
@@ -361,13 +309,14 @@ export function OperationsMatrixTab({ products, fetcher }) {
 
   return (
     <BlockStack gap="600">
-      <div style={{ display: "grid", gridTemplateColumns: "350px 1fr", gap: "24px", alignItems: "start" }}>
+      {/* SHRUNK RACK COLUMN TO 260px TO FIT SIDEKICK */}
+      <div style={{ display: "grid", gridTemplateColumns: "260px 1fr", gap: "20px", alignItems: "start" }}>
         
         {/* LEFT COLUMN: The Rack */}
         <div>
-          <Card padding="400">
+          <Card padding="300">
             <BlockStack gap="400">
-              <Text variant="headingMd" as="h2">The Rack ({queueIds.length} loaded)</Text>
+              <Text variant="headingMd" as="h2">The Rack ({queueIds.length})</Text>
               
               <TextField
                 value={searchQuery}
@@ -375,7 +324,7 @@ export function OperationsMatrixTab({ products, fetcher }) {
                 clearButton
                 onClearButtonClick={handleClearSearch}
                 autoComplete="off"
-                placeholder="Search inventory..."
+                placeholder="Search..."
                 disabled={isOrchestratorActive && !isPaused}
               />
 
@@ -385,15 +334,14 @@ export function OperationsMatrixTab({ products, fetcher }) {
                 onClick={toggleSelectAllFiltered}
                 disabled={isOrchestratorActive && !isPaused}
               >
-                {allFilteredSelected ? `Unload All (${filteredProducts.length})` : `Load All (${filteredProducts.length})`}
+                {allFilteredSelected ? `Unload (${filteredProducts.length})` : `Load (${filteredProducts.length})`}
               </Button>
 
-              <div style={{ display: "flex", flexDirection: "column", gap: "12px", overflowY: "auto", height: "70vh", paddingRight: "8px" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: "10px", overflowY: "auto", height: "70vh", paddingRight: "4px" }}>
                 {filteredProducts.map(p => {
                   const isChecked = queueIds.includes(p.id);
                   const isSelectedForBench = selectedBenchId === p.id;
-                  const pState = productStates[p.id];
-                  const currentStatus = pState?.status || STATUS.QUEUED;
+                  const currentStatus = productStates[p.id]?.status || STATUS.QUEUED;
                   const imageUrl = p.images?.edges?.[0]?.node?.url || p.featuredImage?.url || p.media?.edges?.[0]?.node?.image?.url;
                   
                   return (
@@ -401,40 +349,35 @@ export function OperationsMatrixTab({ products, fetcher }) {
                       key={p.id} 
                       onClick={() => handleToggleProductSelection(p.id)}
                       style={{ 
-                        overflow: "hidden", 
                         flexShrink: 0, 
                         border: isSelectedForBench ? "2px solid #005bd3" : "1px solid #c9cccf", 
-                        borderRadius: "8px", 
+                        borderRadius: "6px", 
                         backgroundColor: isChecked ? "#f0f2f4" : "#ffffff", 
                         cursor: isOrchestratorActive && !isPaused ? "not-allowed" : "pointer", 
                         padding: "8px",
                         display: "flex",
-                        gap: "12px"
+                        flexDirection: "column",
+                        gap: "8px"
                       }} 
                     >
-                      <div style={{ width: "60px", height: "60px", backgroundColor: "#2a2a2a", borderRadius: "4px", overflow: "hidden", flexShrink: 0 }}>
-                        {imageUrl && <img src={imageUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />}
-                      </div>
-                      
-                      <div style={{ display: "flex", flexDirection: "column", flexGrow: 1, minWidth: 0, justifyContent: "center" }}>
-                        <Text as="p" variant="bodyMd" fontWeight="bold" truncate>{p.title.split(" — ").pop()}</Text>
-                        <div style={{ marginTop: "4px" }}>
+                      <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+                        <div style={{ width: "40px", height: "40px", backgroundColor: "#2a2a2a", borderRadius: "4px", overflow: "hidden", flexShrink: 0 }}>
+                          {imageUrl && <img src={imageUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />}
+                        </div>
+                        <div style={{ flexGrow: 1, minWidth: 0 }}>
+                          <Text as="p" variant="bodySm" fontWeight="bold" truncate>{p.title.split(" — ").pop()}</Text>
                           <Badge tone={getStatusTone(currentStatus)} size="small">{currentStatus}</Badge>
                         </div>
                       </div>
 
-                      <div style={{ display: "flex", alignItems: "center" }}>
-                        <Button 
-                          size="micro" 
-                          variant={isSelectedForBench ? "primary" : "secondary"}
-                          onClick={(e) => { 
-                            e.stopPropagation(); 
-                            setSelectedBenchId(p.id); 
-                          }}
-                        >
-                          Bench
-                        </Button>
-                      </div>
+                      <Button 
+                        size="micro" 
+                        fullWidth
+                        variant={isSelectedForBench ? "primary" : "secondary"}
+                        onClick={(e) => { e.stopPropagation(); loadToBench(p.id); }}
+                      >
+                        Drop on Bench
+                      </Button>
                     </div>
                   );
                 })}
@@ -443,14 +386,14 @@ export function OperationsMatrixTab({ products, fetcher }) {
           </Card>
         </div>
 
-        {/* RIGHT COLUMN: Standardizer Controls & Visual Bench */}
+        {/* RIGHT COLUMN: Standardizer Controls & Editable Bench */}
         <div>
           <BlockStack gap="600">
             
-            {/* Orchestrator Controls */}
+            {/* The Wrench (Orchestrator Controls) */}
             <Card padding="400">
               <BlockStack gap="400">
-                <Text variant="headingLg" as="h2">Standardization Engine</Text>
+                <Text variant="headingLg" as="h2">Mass Formatter Engine</Text>
                 
                 {safetyMessage && (
                   <Banner tone="info" onDismiss={() => setSafetyMessage("")}>
@@ -463,65 +406,60 @@ export function OperationsMatrixTab({ products, fetcher }) {
                   </Banner>
                 )}
 
-                <Box padding="400" background="bg-surface-secondary" borderRadius="200">
-                  <BlockStack gap="300">
-                    <Text as="h3" variant="headingMd">Safety Mode (Locked)</Text>
-                    <div style={{ display: "flex", gap: "12px" }}>
-                      <Button size="large" variant="primary" disabled>DRY RUN ACTIVE</Button>
-                      <Button size="large" disabled tone="critical">LIVE RUN (LOCKED)</Button>
-                    </div>
-                    <Text as="p" variant="bodySm" tone="subdued">Live Run is disabled pending API deployment and allowlist verification. Diagnostics only.</Text>
-                  </BlockStack>
-                </Box>
-
-                <Box padding="400" border="1px solid #E1E3E5" borderRadius="200">
+                <Box padding="400" border="1px solid #E1E3E5" borderRadius="200" background="bg-surface-secondary">
                   <BlockStack gap="200">
                     <InlineStack align="space-between">
-                      <Text as="p" fontWeight="bold">Diagnostic Progress</Text>
-                      <Text as="p">{queueIndex} of {queueIds.length} Scanned</Text>
+                      <Text as="p" fontWeight="bold">Format Progress</Text>
+                      <Text as="p">{queueIndex} of {queueIds.length} Processed</Text>
                     </InlineStack>
                     <ProgressBar progress={progressPercentage} color="primary" />
                   </BlockStack>
                 </Box>
 
-                <div style={{ display: "flex", gap: "12px" }}>
+                <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
                   {!isOrchestratorActive && (
-                    <Button size="large" variant="primary" icon={MagicIcon} onClick={startBatch} disabled={queueIds.length === 0}>
-                      Run Diagnostics
+                    <Button size="large" variant="primary" icon={MagicIcon} onClick={startBatch} disabled={queueIds.length === 0 || pushKeys.length === 0}>
+                      {`Push ${pushKeys.length} Checked Fields to ${queueIds.length} Pieces (Dry Run)`}
                     </Button>
                   )}
                   {isOrchestratorActive && !isPaused && (
-                    <Button size="large" onClick={pauseBatch}>Pause</Button>
+                    <Button size="large" onClick={() => setIsPaused(true)}>Pause</Button>
                   )}
                   {isOrchestratorActive && isPaused && (
-                    <Button size="large" variant="primary" onClick={resumeBatch}>Resume</Button>
+                    <Button size="large" variant="primary" onClick={() => setIsPaused(false)}>Resume</Button>
                   )}
-                  <Button size="large" tone="critical" onClick={clearCheckpoint} disabled={queueIds.length === 0 && !isOrchestratorActive}>
+                  <Button size="large" tone="critical" onClick={clearBench}>
                     Clear Rack & Reset
                   </Button>
                 </div>
               </BlockStack>
             </Card>
 
-            {/* Visual Bench */}
+            {/* Editable Template Bench */}
             <Card padding="400">
               <BlockStack gap="400">
-                <Text variant="headingLg" as="h2">The Visual Bench</Text>
+                <InlineStack align="space-between">
+                  <Text variant="headingLg" as="h2">The Formatter Template</Text>
+                  <Badge tone={pushKeys.length > 0 ? "success" : "attention"}>
+                    {pushKeys.length} Fields Checked for Mass Update
+                  </Badge>
+                </InlineStack>
                 
                 {!selectedBenchId ? (
                   <Box padding="800" background="bg-surface-secondary" borderRadius="200">
-                    <Text as="p" alignment="center" tone="subdued">Select "Bench" on any piece in the rack to drop it here for inspection.</Text>
+                    <Text as="p" alignment="center" tone="subdued">Drop a piece on the bench to load its data. Edit the fields, then check the boxes next to the ones you want to stamp across the Rack.</Text>
                   </Box>
                 ) : (
                   <BlockStack gap="600">
-                    <Text as="h3" variant="headingMd">{safeProducts.find(p => p.id === selectedBenchId)?.title}</Text>
+                    <Text as="h3" variant="headingMd" color="success">Base Loaded: {safeProducts.find(p => p.id === selectedBenchId)?.title}</Text>
                     
                     {SECTIONS.map((section, idx) => (
                       <BlockStack key={idx} gap="300">
                         <Text as="h4" variant="headingSm" fontWeight="bold" tone="subdued" style={{ borderBottom: "2px solid #e1e3e5", paddingBottom: "4px" }}>
                           {section.title}
                         </Text>
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '16px' }}>
+                        {/* TIGHTER GRID TO ACCOMMODATE SIDEKICK */}
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(210px, 1fr))', gap: '16px' }}>
                           {section.keys.map(key => renderVisualBenchField(key))}
                         </div>
                       </BlockStack>
