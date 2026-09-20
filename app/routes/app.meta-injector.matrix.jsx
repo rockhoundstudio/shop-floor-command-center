@@ -69,17 +69,15 @@ export function OperationsMatrixTab({ products, fetcher }) {
   const batchFetcher = useFetcher();
   const singleSaveFetcher = useFetcher(); 
 
-  // --- Visual Bench Data Extractor (CALIBRATED TO TELEMETRY) ---
+  // --- Visual Bench Data Extractor (CALIBRATED) ---
   const extractCurrentMeta = useCallback((product, key) => {
     if (!product) return "";
     
-    // Shopify Core Data
     if (key === "shopify_title") return product.title || "";
     if (key === "price" && product.variants?.edges?.[0]?.node?.price) {
       return String(product.variants.edges[0].node.price);
     }
     
-    // Collect all metafield buckets
     const allEdges = [
       ...(product.customMeta?.edges || []),
       ...(product.rockhoundMeta?.edges || []),
@@ -87,14 +85,13 @@ export function OperationsMatrixTab({ products, fetcher }) {
       ...(product.metafields?.edges || [])
     ];
     
-    // Find exact key match
     const node = allEdges.find(e => e?.node?.key === key)?.node;
     if (!node || node.value === null || node.value === undefined) return "";
     
     let val = String(node.value);
+    
     if (val.includes("gid://")) return "See Shopify metaobject";
     
-    // Clean array strings (e.g. '["emerald green..."]')
     if (val.startsWith("[")) {
       try {
         const arr = JSON.parse(val);
@@ -131,7 +128,7 @@ export function OperationsMatrixTab({ products, fetcher }) {
     setSafetyMessage("Rack & Bench cleared.");
   }, []);
 
-  // --- Single Piece Save ---
+  // --- Single Piece Save (Wired directly to API) ---
   const handleSinglePieceSave = useCallback(() => {
     if (!selectedBenchId) return;
     
@@ -144,7 +141,7 @@ export function OperationsMatrixTab({ products, fetcher }) {
         payload.push({
           ownerId: selectedBenchId,
           namespace: "custom", 
-          key: key.replace(/-/g, "_"),
+          key: key, // Keep exact hyphens/underscores defined in SECTIONS
           value: injectValue
         });
       }
@@ -152,19 +149,16 @@ export function OperationsMatrixTab({ products, fetcher }) {
 
     const masterTitle = benchState.shopify_title || safeProducts.find(p => p.id === selectedBenchId)?.title;
     
-    singleSaveFetcher.submit(
-      { 
-        intent: "saveMetafields", 
-        payload: JSON.stringify(payload),
-        productId: selectedBenchId,
-        productTitle: masterTitle,
-        descriptionHtml: benchState.generated_description || "",
-        weightGrams: benchState.weight_grams || "",
-        shippingWeightOz: benchState.shipping_weight_oz || "",
-        price: benchState.price || ""
-      },
-      { method: "post", action: "/app/meta-injector-api" }
-    );
+    const fd = new FormData();
+    fd.append("intent", "saveMetafields");
+    fd.append("productId", selectedBenchId);
+    fd.append("productTitle", masterTitle);
+    fd.append("payload", JSON.stringify(payload));
+    if (benchState.weight_grams) fd.append("weightGrams", benchState.weight_grams);
+    if (benchState.shipping_weight_oz) fd.append("shippingWeightOz", benchState.shipping_weight_oz);
+    if (benchState.generated_description) fd.append("descriptionHtml", benchState.generated_description);
+    
+    singleSaveFetcher.submit(fd, { method: "post", action: "/app/meta-injector-api" });
   }, [selectedBenchId, benchState, safeProducts, singleSaveFetcher]);
 
   // --- Telemetry Diagnostics ---
@@ -185,10 +179,12 @@ export function OperationsMatrixTab({ products, fetcher }) {
   // --- Listen to Single Save Responses ---
   useEffect(() => {
     if (singleSaveFetcher.state === "idle" && singleSaveFetcher.data) {
-      if (singleSaveFetcher.data.success) {
-        setSafetyMessage(`Successfully saved data to current piece.`);
-      } else {
-        setSafetyError(`Failed to save: ${singleSaveFetcher.data.error || singleSaveFetcher.data.message}`);
+      if (singleSaveFetcher.data.intent === "saveMetafields") {
+        if (singleSaveFetcher.data.success) {
+          setSafetyMessage(`Successfully saved data to current piece.`);
+        } else {
+          setSafetyError(`Failed to save: ${singleSaveFetcher.data.error || singleSaveFetcher.data.message}`);
+        }
       }
     }
   }, [singleSaveFetcher.state, singleSaveFetcher.data]);
@@ -241,11 +237,6 @@ export function OperationsMatrixTab({ products, fetcher }) {
       setSafetyError("No fields checked. You must check the boxes next to the fields you want to mass-format.");
       return;
     }
-    if (runMode === "LIVE_RUN") {
-      setSafetyError("LIVE RUN is locked pending API verification. Switching to Dry Run.");
-      setRunMode("DRY_RUN");
-      return;
-    }
     
     setSafetyError("");
     setSafetyMessage(`Mass Formatter started in ${runMode} mode.`);
@@ -262,7 +253,7 @@ export function OperationsMatrixTab({ products, fetcher }) {
     });
   }, []);
 
-  // --- Core Processing Loop ---
+  // --- Core Processing Loop (Correctly pushing checked keys to API) ---
   useEffect(() => {
     if (!isOrchestratorActive || isPaused) return;
     if (batchFetcher.state !== "idle") return; 
@@ -288,23 +279,57 @@ export function OperationsMatrixTab({ products, fetcher }) {
       
       updateProductState(currentId, STATUS.SCANNING, ["Applying template fields..."]);
       
+      if (runMode === "DRY_RUN") {
+        updateProductState(currentId, STATUS.VALIDATED, [`DRY RUN: Validated ${pushKeys.length} fields. No data saved.`]);
+        setTimeout(() => setQueueIndex(i => i + 1), 500);
+        return;
+      }
+
+      // LIVE RUN: Push ONLY the fields checked in `pushKeys`
+      const payload = [];
+      let weightGrams = "";
+      let shippingWeightOz = "";
+      let descHtml = "";
+
+      pushKeys.forEach(key => {
+        if (key === "shopify_title") return; 
+        
+        let val = benchState[key] !== undefined ? benchState[key] : "";
+        
+        if (key === "weight_grams") weightGrams = val;
+        if (key === "shipping_weight_oz") shippingWeightOz = val;
+        if (key === "generated_description") descHtml = val;
+        
+        payload.push({
+          ownerId: currentId,
+          namespace: "custom",
+          key: key,
+          value: val
+        });
+      });
+
       const fd = new FormData();
-      fd.append("intent", "standardizeBatchItem"); 
-      fd.append("pieceId", currentId);
-      fd.append("runMode", runMode); 
+      fd.append("intent", "saveMetafields"); 
+      fd.append("productId", currentId);
+      fd.append("payload", JSON.stringify(payload));
+      if (weightGrams) fd.append("weightGrams", weightGrams);
+      if (shippingWeightOz) fd.append("shippingWeightOz", shippingWeightOz);
+      if (descHtml) fd.append("descriptionHtml", descHtml);
+
       batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-api" });
       return;
     }
   }, [isOrchestratorActive, isPaused, queueIndex, queueIds, productStates, batchFetcher.state, safeProducts, runMode, updateProductState, pushKeys, benchState]);
 
-  // --- Listen to API Responses ---
+  // --- Listen to Batch API Responses ---
   useEffect(() => {
     if (batchFetcher.state === "idle" && batchFetcher.data) {
-      const { intent, success, pieceId, finalStatus, logs = [] } = batchFetcher.data;
-      if (intent === "standardizeBatchItem" && pieceId) {
-        const appliedStatus = finalStatus || (success ? STATUS.VALIDATED : STATUS.FAILED);
+      const { intent, success, pieceId, message, errors } = batchFetcher.data;
+      if (intent === "saveMetafields" && pieceId) {
+        const appliedStatus = success ? STATUS.COMPLETE : STATUS.FAILED;
+        const logs = errors ? errors.map(e => e.message) : [message || "Fields successfully updated."];
         updateProductState(pieceId, appliedStatus, logs);
-        setTimeout(() => setQueueIndex(prev => prev + 1), 800);
+        setTimeout(() => setQueueIndex(prev => prev + 1), 500);
       }
     }
   }, [batchFetcher.state, batchFetcher.data, updateProductState]);
@@ -370,8 +395,7 @@ export function OperationsMatrixTab({ products, fetcher }) {
       case STATUS.FAILED: return "critical";
       case STATUS.NEEDS_REVIEW: return "warning";
       case STATUS.SKIPPED: return "info";
-      case STATUS.SCANNING:
-      case STATUS.SAVING: return "magic";
+      case STATUS.SCANNING: return "magic";
       default: return undefined;
     }
   };
@@ -463,7 +487,32 @@ export function OperationsMatrixTab({ products, fetcher }) {
             {/* The Wrench (Orchestrator Controls) */}
             <Card padding="400">
               <BlockStack gap="400">
-                <Text variant="headingLg" as="h2">Mass Formatter Engine</Text>
+                <InlineStack align="space-between">
+                  <Text variant="headingLg" as="h2">Mass Formatter Engine</Text>
+                  <div style={{ display: "flex", gap: "8px" }}>
+                    <Button 
+                      size="large" 
+                      variant={runMode === "DRY_RUN" ? "primary" : "secondary"}
+                      onClick={() => setRunMode("DRY_RUN")}
+                      disabled={isOrchestratorActive}
+                    >
+                      DRY RUN
+                    </Button>
+                    <Button 
+                      size="large" 
+                      variant={runMode === "LIVE_RUN" ? "primary" : "secondary"}
+                      tone={runMode === "LIVE_RUN" ? "critical" : undefined}
+                      onClick={() => {
+                        if (window.confirm("WARNING: LIVE RUN ACTIVE.\n\nThis will permanently overwrite the checked fields on all queued pieces. Ensure you have tested 'Save to Current Piece' on a single item first.")) {
+                          setRunMode("LIVE_RUN");
+                        }
+                      }}
+                      disabled={isOrchestratorActive}
+                    >
+                      LIVE RUN
+                    </Button>
+                  </div>
+                </InlineStack>
                 
                 {safetyMessage && (
                   <Banner tone="info" onDismiss={() => setSafetyMessage("")}>
@@ -489,7 +538,7 @@ export function OperationsMatrixTab({ products, fetcher }) {
                 <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
                   {!isOrchestratorActive && (
                     <Button size="large" variant="primary" icon={MagicIcon} onClick={startBatch} disabled={queueIds.length === 0 || pushKeys.length === 0}>
-                      {`Push ${pushKeys.length} Checked Fields to ${queueIds.length} Pieces (Dry Run)`}
+                      {`Push ${pushKeys.length} Checked Fields to ${queueIds.length} Pieces (${runMode === "LIVE_RUN" ? "LIVE" : "Dry Run"})`}
                     </Button>
                   )}
                   {isOrchestratorActive && !isPaused && (
