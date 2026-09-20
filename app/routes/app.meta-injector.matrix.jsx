@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect } from "react";
 import { BlockStack, Card, Text, Banner, TextField, Button, InlineStack, Box, Badge, ProgressBar } from "@shopify/polaris";
-import { MagicIcon, ClipboardIcon, SaveIcon, SparklesIcon } from "@shopify/polaris-icons";
+import { MagicIcon, ClipboardIcon, SaveIcon } from "@shopify/polaris-icons";
 import { useFetcher } from "react-router";
 
 const STATUS = {
@@ -13,10 +13,65 @@ const STATUS = {
 };
 
 const SECTIONS = [
-  { title: "Section 1 — Core Ignition", keys: ["shopify_title", "piece_name", "primary_medium", "secondary_medium", "handcrafted_by", "is_ooak", "treated", "dimensions_mm", "weight_grams", "shipping_weight_oz", "cut_and_shape", "surface_finish", "color", "artist_notes", "generated_description", "price", "character_marks", "bench_notes", "alt_text", "found_object", "stone_family", "treatment_status"] },
-  { title: "Section 2 — Human Engine", keys: ["origin_story", "rescued_by", "stone_shape", "collection_name", "origin_handle", "collection_location", "honest_flaws_and_character", "origin_location", "origin_page_handle"] },
-  { title: "Section 3 — Google Machine", keys: ["primary_use", "setting_ready", "wire_material", "bail_included", "color_pattern", "material", "jewelry_type", "necklace_design", "target_gender", "age_group", "condition", "custom_product", "seo_title", "google_product_category", "primary_color", "rarity", "authenticity", "jewelry_finding_type", "chain_link_type"] },
-  { title: "Section 4 — Geo-Vault", keys: ["mohs_hardness", "luster", "fracture_pattern", "cleavage", "specific_gravity", "diaphaneity", "mineral_class", "crystal_system", "rock_composition", "rock_formation", "geological_era", "geological_age"] }
+  {
+    title: "Section 1 — Core Ignition (GREEN)",
+    keys: [
+      "global.title_tag", "global.description_tag", "custom.seo_title",
+      "custom.is_ooak", "custom.is_one_of_a_kind", "custom.handcrafted_by", 
+      "custom.piece_name", "custom.origin_story", "custom.origin_location", 
+      "custom.origin_page_handle", "custom.origin_handle", "custom.honest_flaws_and_character", 
+      "custom.collection_name", "custom.collection_location", "custom.collection_date"
+    ]
+  },
+  {
+    title: "Section 2 — Maker, Collector & Geo-Vault (BLUE)",
+    keys: [
+      "custom.mohs_hardness", "custom.rock_composition", "custom.rock-composition",
+      "custom.rock_formation", "custom.rock-formation", "custom.geological_era",
+      "custom.geological-era", "custom.geological_age", "custom.crystal_system",
+      "custom.crystal-system", "custom.specific_gravity", "custom.cleavage",
+      "custom.diaphaneity", "custom.fracture_pattern", "custom.mineral_class",
+      "custom.mineral-class", "custom.stone_family", "custom.stone_shape",
+      "custom.surface_finish", "custom.cut_and_shape", "custom.dimensions_mm",
+      "custom.weight_grams", "custom.shipping_weight_oz", "custom.treatment_status",
+      "custom.treated", "custom.color", "custom.color_pattern", "custom.primary_color", 
+      "custom.primary_medium", "custom.secondary_medium", "custom.material", 
+      "custom.primary_use", "custom.setting_ready", "custom.wire_material", 
+      "custom.bail_included", "custom.chain_link_type", "custom.necklace_design", 
+      "custom.necklace-design", "custom.jewelry_type", "custom.jewelry_finding_type", 
+      "custom.custom_product", "custom.found_object", "custom.rescued_by", 
+      "custom.authenticity", "custom.rarity", "custom.luster", "custom.character_marks", 
+      "custom.artist_notes", "custom.generated_description", "custom.price", 
+      "custom.alt_text"
+    ]
+  },
+  {
+    title: "Section 3 — Shopify & Google Channels (GRAY)",
+    keys: [
+      "google.age_group", "google.condition", "google.target_gender",
+      "shopify.age-group", "shopify.condition", "shopify.target-gender",
+      "shopify.authenticity", "shopify.chain-link-type", "shopify.color-pattern",
+      "shopify.construction", "shopify.crystal-system", "shopify.geological-era",
+      "shopify.jewelry-finding-type", "shopify.jewelry-material",
+      "shopify.jewelry-type", "shopify.material", "shopify.material-origin",
+      "shopify.mineral-class", "shopify.necklace-design",
+      "shopify.product-classification", "shopify.product-use", "shopify.rarity",
+      "shopify.rock-composition", "shopify.rock-formation",
+      "custom.google_product_category", "custom.target_gender",
+      "mc-facebook.google_product_category", "mm-google-shopping.age_group",
+      "mm-google-shopping.condition", "mm-google-shopping.custom_product",
+      "mm-google-shopping.google_product_category",
+      "app--3890849--eligibility.eligibility_details"
+    ]
+  },
+  {
+    title: "Section 4 — Internal Bench & Legacy (BLACK)",
+    keys: [
+      "custom.bench_notes", "custom.badge", "custom.widget",
+      "custom.review_widget_data", "judgeme.badge", "judgeme.widget",
+      "judgeme.review_widget_data"
+    ]
+  }
 ];
 
 const LEGACY_MAP = {
@@ -327,28 +382,18 @@ export function OperationsMatrixTab({ products }) {
     const items = sectionKeys.map(k => {
        let status = "MISSING";
        
-       // Handle namespacing check
-       const nsKeyGlobal = `global.${k}`;
-       const nsKeyGoogle = `google.${k}`;
-       const nsKeyCustom = `custom.${k}`;
-       
-       const hasCustom = data.currentMetafields.hasOwnProperty(nsKeyCustom);
-       const hasGlobal = data.currentMetafields.hasOwnProperty(nsKeyGlobal);
-       const hasGoogle = data.currentMetafields.hasOwnProperty(nsKeyGoogle);
+       // Read the exact field from the array
+       const hasCurrent = data.currentMetafields.hasOwnProperty(k);
+       // ADDED FIX: String conversion up front to prevent null mapping
+       let currentVal = hasCurrent ? String(data.currentMetafields[k] || "") : "";
 
-       const hasCurrent = hasCustom || hasGlobal || hasGoogle;
-       
-       // Priority read: global/google -> custom
-       let currentVal = "";
-       if (hasGlobal) currentVal = String(data.currentMetafields[nsKeyGlobal]);
-       else if (hasGoogle) currentVal = String(data.currentMetafields[nsKeyGoogle]);
-       else if (hasCustom) currentVal = String(data.currentMetafields[nsKeyCustom]);
-       else if (k === "shopify_title" || k === "price") {
-           currentVal = data.canonicalFields[k]; 
-       }
-
-       if (hasCurrent || k === "shopify_title" || k === "price") {
-          status = currentVal.trim() === "" ? "EMPTY" : "LOADED";
+       if (k === "global.title_tag" || k === "shopify_title") {
+           // Fallback to Shopify title if no global title tag exists
+           // ADDED FIX: Wrap the entire evaluation in String()
+           currentVal = String(data.canonicalFields["shopify_title"] || currentVal || ""); 
+           status = currentVal.trim() === "" ? "EMPTY" : "LOADED";
+       } else if (hasCurrent) {
+           status = currentVal.trim() === "" ? "EMPTY" : "LOADED";
        }
 
        let legacyKeyForCanonical = null;
@@ -401,7 +446,7 @@ export function OperationsMatrixTab({ products }) {
                  value={item.propVal}
                  onChange={(val) => handleRepairPlanChange(item.key, val)}
                  autoComplete="off"
-                 multiline={item.key === "generated_description" || item.key === "origin_story" ? 2 : undefined}
+                 multiline={item.key === "custom.generated_description" || item.key === "custom.origin_story" ? 2 : undefined}
               />
             </div>
           ))}
@@ -578,7 +623,7 @@ export function OperationsMatrixTab({ products }) {
                     <Button 
                       size="large" 
                       variant="primary" 
-                      icon={SparklesIcon}
+                      icon={MagicIcon}
                       onClick={executeAIFill} 
                       disabled={queueIds.length === 0 || Object.keys(manifestData).length === 0 || isLoadingData}
                       loading={isExecuting && executionMode === "AI_FILL"}
@@ -644,7 +689,7 @@ export function OperationsMatrixTab({ products }) {
                       <Button 
                         size="medium" 
                         variant="primary" 
-                        icon={SparklesIcon} 
+                        icon={MagicIcon} 
                         onClick={handleExecuteSingleAI}
                         loading={batchFetcher.state !== "idle" && !isExecuting}
                       >

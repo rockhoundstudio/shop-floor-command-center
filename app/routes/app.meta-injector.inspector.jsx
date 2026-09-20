@@ -38,6 +38,8 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
   const originalMetaRef = useRef({});
   const fullMetaStateRef = useRef({});
   const lastProcessedAiData = useRef(null);
+  const lastAutofilledTitle = useRef("");
+  
   const [statusMessage, setStatusMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [promptStyle, setPromptStyle] = useState("");
@@ -92,6 +94,7 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
     setShowFixPopup(false);
     setFixPopupValue("");
     lastProcessedAiData.current = null; // Prevent bleeding
+    lastAutofilledTitle.current = "";
 
     const product = products.find(p => p.id === id);
     if (product) {
@@ -155,7 +158,6 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
         delete newFullForm[camel]; 
       }
       if (newForm[camel] !== undefined) { 
-        // THIS IS THE LINE THAT CRASHED THE LINTER (newForm[camel];). It is now fixed.
         if (!newForm[snake]) newForm[snake] = newForm[camel]; 
         delete newForm[camel]; 
       }
@@ -224,6 +226,18 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
     originalMetaRef.current = { ...newFullForm };
   }, [products]);
 
+  const handleTitleBlur = useCallback((value) => {
+    if (!value) return;
+    const segments = value.split(/\s+[-—–]\s+/);
+    if (segments.length >= 3 && value !== lastAutofilledTitle.current) {
+      lastAutofilledTitle.current = value;
+      const formData = new FormData();
+      formData.append("intent", "titleParse");
+      formData.append("pieceName", value);
+      tab2Fetcher.submit(formData, { method: "post", action: "/app/meta-injector-autofill" });
+    }
+  }, [tab2Fetcher]);
+
   const updateWeightFields = useCallback((key, value) => {
     let newShippingOz = "";
 
@@ -288,6 +302,8 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
     formData.append("collection_location", fullMetaState.collection_location || "");
     formData.append("piece_name", fullMetaState.piece_name || "");
     formData.append("productTitle", titleToUse);
+    formData.append("origin_story", fullMetaState.origin_story || formState.origin_story || "");
+    formData.append("artist_notes", fullMetaState.artist_notes || formState.artist_notes || "");
 
     if (overridePhoto) {
       formData.append("imageBase64", overridePhoto.base64);
@@ -340,6 +356,8 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
     formData.append("productTitle", titleToUse);
     formData.append("honest_flaws_and_character", fullMetaState.honest_flaws_and_character || "");
     formData.append("price", fullMetaState.price || "");
+    formData.append("origin_story", fullMetaState.origin_story || formState.origin_story || "");
+    formData.append("artist_notes", fullMetaState.artist_notes || formState.artist_notes || "");
 
     if (overridePhoto) {
       formData.append("imageBase64", overridePhoto.base64);
@@ -469,11 +487,27 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
 
     if (isIdle && hasData && lastProcessedAiData.current !== tab2Fetcher.data) {
       const fetcherProductId = tab2Fetcher.formData?.get("productId") || tab2Fetcher.formData?.get("pieceId");
-      if (fetcherProductId && fetcherProductId !== selectedProductId) {
+      if (fetcherProductId && fetcherProductId !== selectedProductId && tab2Fetcher.data.intent !== "titleParse") {
          return; 
       }
 
       lastProcessedAiData.current = tab2Fetcher.data;
+
+      // 🟢 PHASE 1 TITLE PARSE OVERRIDE
+      if (tab2Fetcher.data.intent === "titleParse" && tab2Fetcher.data.titleParse) {
+        const parsed = tab2Fetcher.data.titleParse;
+        setFullMetaState(prev => {
+          const updated = { ...prev, ...parsed };
+          if (parsed.canonical_title) updated.shopify_title = parsed.canonical_title;
+          fullMetaStateRef.current = updated;
+          return updated;
+        });
+        setFormState(prev => ({ ...prev, shopify_title: parsed.canonical_title || prev.shopify_title }));
+        setTab2StatusMessage("Title parsed — Geo-Vault & Dwell Web loaded");
+        if (window.shopify?.toast) window.shopify.toast.show("Title parsed!");
+        return;
+      }
+
       const product = products.find(p => p.id === selectedProductId);
       const productTitle = fullMetaState.shopify_title || formState.shopify_title || product?.title || "";
       const tab2Data = tab2Fetcher.data.tab2Data || {};
@@ -694,7 +728,20 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
         <div>
           <Card padding="400">
             <BlockStack gap="400">
-              <Text as="h2" variant="headingMd">2. Data Sieve & Injection</Text>
+              <InlineStack align="space-between" blockAlign="center">
+                <Text as="h2" variant="headingMd">2. Data Sieve & Injection</Text>
+                {selectedProductId && (
+                  <Button 
+                    size="micro" 
+                    tone={productStatus === "ACTIVE" ? "success" : "critical"}
+                    onClick={handleToggleStatus}
+                    loading={statusFetcher.state !== "idle"}
+                  >
+                    {productStatus === "ACTIVE" ? "🟢 ACTIVE (Click to Draft)" : "🔴 DRAFT (Click to Publish)"}
+                  </Button>
+                )}
+              </InlineStack>
+
               {statusMessage !== "" && <Banner title="Operation Successful" tone="success"><Text as="p">{statusMessage}</Text></Banner>}
               {errorMessage !== "" && <Banner title="Operation Failed" tone="critical"><Text as="p">{errorMessage}</Text></Banner>}
               
@@ -705,7 +752,18 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
                 return (
                   <BlockStack gap="200">
                     <Text as="p" variant="bodyMd" tone="subdued">Review before running — edit if legacy data is incorrect:</Text>
-                    <TextField label="Product Title" value={formState.shopify_title || fullMetaState.shopify_title || product?.title || ""} onChange={(val) => { setFormState(prev => ({ ...prev, shopify_title: val })); setFullMetaState(prev => ({ ...prev, shopify_title: val })); fullMetaStateRef.current = { ...fullMetaStateRef.current, shopify_title: val }; }} autoComplete="off" helpText="Format: Stone Family — Origin Location — Piece Name" />
+                    <TextField 
+                      label="Product Title" 
+                      value={formState.shopify_title || fullMetaState.shopify_title || product?.title || ""} 
+                      onChange={(val) => { 
+                        setFormState(prev => ({ ...prev, shopify_title: val })); 
+                        setFullMetaState(prev => ({ ...prev, shopify_title: val })); 
+                        fullMetaStateRef.current = { ...fullMetaStateRef.current, shopify_title: val }; 
+                      }} 
+                      onBlur={() => handleTitleBlur(formState.shopify_title || fullMetaState.shopify_title || product?.title || "")}
+                      autoComplete="off" 
+                      helpText="Format: Stone Family — Origin Location — Piece Name" 
+                    />
                     <TextField label="Origin Handle (override)" value={formState.origin_handle || fullMetaState.origin_handle || ""} onChange={(val) => { setFormState(prev => ({ ...prev, origin_handle: val })); setFullMetaState(prev => ({ ...prev, origin_handle: val })); fullMetaStateRef.current = { ...fullMetaStateRef.current, origin_handle: val }; }} autoComplete="off" helpText="e.g. the-richardson-strike — leave blank to auto-resolve from title" />
                     
                     <div style={{ marginTop: "16px" }}>

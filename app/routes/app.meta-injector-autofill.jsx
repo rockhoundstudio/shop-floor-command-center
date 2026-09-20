@@ -1,7 +1,216 @@
+import { data } from "react-router";
 import { authenticate } from "../shopify.server";
-import { lookupStone } from "../utils/geoLibrary.jsx";
+import prisma from "../db.server";
+import { executeAutofill } from "../utils/meta-injector.autofill.server.jsx";
 
-const stoneProfileCache = new Map();
+function chunkArray(arr, size) {
+  const chunks = [];
+  for (let i = 0; i < arr.length; i += size) {
+    chunks.push(arr.slice(i, i + size));
+  }
+  return chunks;
+}
+
+function extractStoneName(title) {
+  if (!title) return "Unknown";
+  
+  let sectionOne = title.split(/[—–-]/)[0].trim();
+  
+  const adjectives = [
+    "Green", "Blue", "Red", "Yellow", "Orange", "Purple", "Pink", "Black", "White", "Grey", "Gray", "Brown",
+    "Brecciated", "Picture", "Ocean", "Crazy Lace", "Plume", "Moss", "Dendritic", "Banded", "Polychrome",
+    "Imperial", "Royal", "Dark", "Light", "Clear", "Opaque", "Translucent", "Raw", "Rough", "Tumbled",
+    "Polished", "Natural", "Fossil", "Petrified", "Mookaite", "Kambaba", "Bumblebee", "Dalmatian", "Dragon Blood"
+  ];
+
+  let words = sectionOne.split(/\s+/);
+  words = words.filter(word => !adjectives.some(adj => adj.toLowerCase() === word.toLowerCase()));
+
+  if (words.length > 0) {
+    let baseRock = words[words.length - 1];
+    return baseRock.charAt(0).toUpperCase() + baseRock.slice(1).toLowerCase();
+  }
+
+  return "Unknown";
+}
+
+function normalizeMetafieldValue(key, value) {
+  let val = String(value);
+
+  if (val.startsWith("⚠️ ")) {
+    val = val.replace(/^⚠️\s*/, "");
+  }
+
+  const booleanKeys = [
+    "is_ooak", "found_object", 
+    "custom_product", "setting_ready", "bail_included", "treated"
+  ];
+  if (booleanKeys.includes(key)) {
+    if (val.toLowerCase() === "true") val = "Yes";
+    else if (val.toLowerCase() === "false") val = "No";
+  }
+
+  return val;
+}
+
+function applyOriginOverridesBeforeApi(title, metafieldsArray) {
+  let newMetafields = [...(metafieldsArray || [])];
+
+  newMetafields = newMetafields.filter(m => m.key !== "origin_handle" && m.key !== "origin_page_handle");
+
+  if (title && typeof title === "string") {
+    const segments = title.split(/\s*—\s*/);
+    if (segments.length >= 3) {
+      const middleSegment = segments[1].trim();
+      let overrideHandle = null;
+
+      if (middleSegment === "Richardson's Rock Ranch") {
+        overrideHandle = "the-richardson-strike";
+      } else if (middleSegment === "Yakima River Canyon" || middleSegment === "Yakima Canyon") {
+        overrideHandle = "the-shop-lore-chert-road-detour-yakima-river-jasper";
+      } else if (middleSegment === "Yellowstone River" || middleSegment === "Seven Sisters") {
+        overrideHandle = "the-yellowstone-river";
+      } else if (middleSegment === "Rufus" || middleSegment === "Rufus Serpentine") {
+        overrideHandle = "the-rufus-protocol";
+      } else if (middleSegment === "Nickel Back") {
+        overrideHandle = "the-nickel-back-collection";
+      } else if (middleSegment === "North Fork CdA") {
+        overrideHandle = "north-fork-cda-collection";
+      } else if (middleSegment === "Spokane River" || middleSegment === "Stateline") {
+        overrideHandle = "spokane-river-stateline";
+      } else if (middleSegment === "Irv's Rock and Jewelry" || middleSegment === "Irv's") {
+        overrideHandle = "the-shopped-rock";
+      }
+
+      if (overrideHandle) {
+        const ownerId = metafieldsArray.length > 0 ? metafieldsArray[0].ownerId : null;
+        if (ownerId) {
+          newMetafields.push({ ownerId: ownerId, namespace: "custom", key: "origin_handle", type: "single_line_text_field", value: overrideHandle });
+          newMetafields.push({ ownerId: ownerId, namespace: "custom", key: "origin_page_handle", type: "single_line_text_field", value: overrideHandle });
+        }
+      }
+    }
+  }
+
+  return newMetafields;
+}
+
+function sanitizeDescription(html) {
+  if (!html || typeof html !== "string") return html;
+  let safeHtml = html;
+  
+  const targets = [
+    "/pages/the-shopped-rock",
+    "/collections/the-shopped-rock",
+    "/pages/the-shocked-rock",
+    "/collections/the-shocked-rock"
+  ];
+  
+  for (const target of targets) {
+    const regexNormal = new RegExp(`<a[^>]*href=["']?[^"'>]*${target.replace(/\//g, '\\/')}["']?[^>]*>.*?<\\/a>`, 'gi');
+    safeHtml = safeHtml.replace(regexNormal, "");
+    
+    const regexEscaped = new RegExp(`&lt;a[^&]*href=[&quot;']?[^&quot;'>]*${target.replace(/\//g, '\\/')}[&quot;']?[^&]*&gt;.*?&lt;\\/a&gt;`, 'gi');
+    safeHtml = safeHtml.replace(regexEscaped, "");
+  }
+  
+  return safeHtml;
+}
+
+const MASTER_TYPE_MAP = {
+  rescued_by: "single_line_text_field",
+  origin_location: "single_line_text_field",
+  geological_age: "single_line_text_field",
+  mohs_hardness: "single_line_text_field",
+  official_name: "single_line_text_field",
+  luster: "single_line_text_field",
+  specific_gravity: "single_line_text_field",
+  fracture_pattern: "single_line_text_field",
+  cleavage: "single_line_text_field",
+  tenacity: "single_line_text_field",
+  primary_color: "single_line_text_field",
+  diaphaneity: "single_line_text_field",
+  character_marks: "single_line_text_field",
+  dimensions_mm: "single_line_text_field",
+  cut_type: "single_line_text_field",
+  bench_notes: "multi_line_text_field",
+  stone_shape: "single_line_text_field",
+  surface_finish: "single_line_text_field",
+  treatment_status: "single_line_text_field",
+  secondary_colors: "single_line_text_field",
+  base_stone_type: "single_line_text_field",
+  hardness: "single_line_text_field",
+  primary_medium: "single_line_text_field",
+  piece_name: "single_line_text_field",
+  stone_family: "single_line_text_field",
+  collection_name: "single_line_text_field",
+  collection_location: "single_line_text_field",
+  origin_handle: "single_line_text_field",
+  origin_page_handle: "single_line_text_field",
+  cut_and_shape: "single_line_text_field",
+  primary_use: "single_line_text_field",
+  handcrafted_by: "single_line_text_field",
+  alt_text: "single_line_text_field",
+  is_ooak: "single_line_text_field",
+  found_object: "single_line_text_field",
+  custom_product: "single_line_text_field",
+  color: "single_line_text_field",
+  setting_ready: "single_line_text_field",
+  bail_included: "single_line_text_field",
+  wire_material: "single_line_text_field",
+  chain_material: "single_line_text_field",
+  seo_title: "single_line_text_field",
+  secondary_medium: "single_line_text_field",
+  treated: "single_line_text_field",
+  weight_grams: "number_decimal",
+  shipping_weight_oz: "number_decimal",
+  price: "number_decimal",
+  origin_story: "multi_line_text_field",
+  honest_flaws: "single_line_text_field",
+  honest_flaws_and_character: "multi_line_text_field",
+  generated_description: "multi_line_text_field",
+  artist_notes: "multi_line_text_field",
+  color_pattern: "list.metaobject_reference",
+  "color-pattern": "list.metaobject_reference",
+  material: "metaobject_reference",
+  jewelry_material: "metaobject_reference",
+  "jewelry-material": "metaobject_reference",
+  age_group: "metaobject_reference",
+  "age-group": "metaobject_reference",
+  jewelry_type: "metaobject_reference",
+  "jewelry-type": "metaobject_reference",
+  target_gender: "metaobject_reference",
+  "target-gender": "metaobject_reference",
+  necklace_design: "metaobject_reference",
+  "necklace-design": "metaobject_reference",
+  authenticity: "metaobject_reference",
+  rarity: "metaobject_reference",
+  condition: "metaobject_reference",
+  crystal_system: "metaobject_reference",
+  "crystal-system": "metaobject_reference",
+  mineral_class: "metaobject_reference",
+  "mineral-class": "metaobject_reference",
+  geological_era: "metaobject_reference",
+  "geological-era": "metaobject_reference",
+  rock_composition: "metaobject_reference",
+  "rock-composition": "metaobject_reference",
+  rock_formation: "metaobject_reference",
+  "rock-formation": "metaobject_reference",
+  chain_link_type: "metaobject_reference",
+  "chain-link-type": "metaobject_reference",
+  jewelry_finding_type: "metaobject_reference",
+  "jewelry-finding-type": "metaobject_reference",
+};
+
+const EXPLICIT_METAOBJECT_KEYS = [
+  "material", "color-pattern", "color_pattern", "jewelry-material", "jewelry_material",
+  "target-gender", "age-group", "age_group", "condition", "rarity", 
+  "authenticity", "jewelry-type", "jewelry_type", "necklace-design", "necklace_design", 
+  "crystal-system", "geological-era", "geological_era", 
+  "mineral-class", "mineral_class", "rock-composition", "rock_composition", 
+  "rock-formation", "rock_formation", "chain-link-type", "chain_link_type",
+  "jewelry-finding-type", "jewelry_finding_type"
+];
 
 // ==========================================
 // 🟢 UPGRADED DYSLEXIA FORMATTING SAFEGUARD
@@ -121,42 +330,26 @@ MANDATORY LAWS:
 - PRIMARY/SECONDARY MEDIUM RULE: primary_medium is the stone. secondary_medium is the hardware/setting.`;
 }
 
-function extractStoneName(title) {
-  if (!title) return "Unknown";
-  
-  const sanitizedTitle = String(title).replace(/Ã¢â‚¬â€/g, "—").replace(/â€”/g, "—");
-  const sectionOne = sanitizedTitle.split(/[—–-]/)[0].trim();
-  
-  const adjectives = [
-    "Green", "Blue", "Red", "Yellow", "Orange", "Purple", "Pink", "Black", "White", "Grey", "Gray", "Brown",
-    "Brecciated", "Picture", "Ocean", "Crazy Lace", "Plume", "Moss", "Dendritic", "Banded", "Polychrome",
-    "Imperial", "Royal", "Dark", "Light", "Clear", "Opaque", "Translucent", "Raw", "Rough", "Tumbled",
-    "Polished", "Natural", "Fossil", "Petrified", "Mookaite", "Kambaba", "Bumblebee", "Dalmatian", "Dragon Blood"
-  ];
+const stoneProfileCache = new Map();
 
-  let words = sectionOne.split(/\s+/);
-  words = words.filter(word => !adjectives.some(adj => adj.toLowerCase() === word.toLowerCase()));
-
-  if (words.length > 0) {
-    const baseRock = words[words.length - 1];
-    return baseRock.charAt(0).toUpperCase() + baseRock.slice(1).toLowerCase();
-  }
-
-  return sectionOne;
-}
+// 🟢 REPAIR: Persistent Database Connection Pool
+let dbPool = null;
 
 async function queryPostgres(sql, params) {
-  const { default: pg } = await import('pg');
-  const db = new pg.Client({
-    connectionString: process.env.DATABASE_URL,
-    ssl: { rejectUnauthorized: false }
-  });
-  await db.connect();
+  if (!dbPool) {
+    const { default: pg } = await import('pg');
+    dbPool = new pg.Pool({
+      connectionString: process.env.DATABASE_URL,
+      ssl: { rejectUnauthorized: false },
+      max: 15
+    });
+  }
   try {
-    const result = await db.query(sql, params);
+    const result = await dbPool.query(sql, params);
     return result.rows;
-  } finally {
-    await db.end();
+  } catch (err) {
+    console.error("[Postgres Pool Error]:", err);
+    throw err;
   }
 }
 
@@ -295,6 +488,7 @@ async function getGeoData(admin, stoneFamily) {
   const search = cleanStoneName.toLowerCase().trim();
 
   try {
+    const { lookupStone } = await import("../utils/geoLibrary.jsx");
     const localResult = lookupStone(cleanStoneName);
     if (localResult && Object.keys(localResult).length > 0) {
       return {
@@ -435,7 +629,6 @@ function mapCollectionLocation(rawLocation) {
   return rawLocation.replace(/\s*Collection$/i, "").trim();
 }
 
-// 🟢 NEW HELPER: Replaces the strict-breaking IIFE used for material generation
 function getDerivedMaterial(stoneFam) {
   if (!stoneFam) return "";
   return stoneFam.replace(/^(Dragon's Eye|Green|Blue|Fire|Rufus|Rainbow|Yellow|Red|Black|Oregon)\s+/i, "").trim();
@@ -619,10 +812,8 @@ export const action = async ({ request }) => {
           ? `Handcrafted ${derivedFamily} — ${correctedOrigin} — OOAK Lapidary Art`
           : `Handcrafted ${derivedFamily} — OOAK Lapidary Art`;
 
-        // 🟢 FIXED: Use helper function instead of IIFE
         const finalMaterial = getDerivedMaterial(derivedFamily);
 
-        // 🟢 TITLE LOCK: Prioritize incoming `stone_family` to prevent legacy bleed
         const finalFamilyTitle = stone_family ? cleanStoneFamilyShape(stone_family) : derivedFamily;
 
         const parsedVision = visionFields || {};
@@ -1019,10 +1210,8 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
         const visionFields = parsedVision || {};
         const jewelry_type = parsedVision.jewelry_type || "N/A";
 
-        // 🟢 FIXED: Use helper function instead of IIFE
         const finalMaterial = getDerivedMaterial(derivedFamily);
 
-        // 🟢 TITLE LOCK: Prioritize incoming `stone_family` to prevent legacy bleed
         const finalFamilyTitle = bench_honest_flaws ? cleanStoneFamilyShape(body.get("stone_family") || derivedFamily) : cleanStoneFamilyShape(derivedFamily);
 
         const payload = sanitizeObject({
@@ -1225,7 +1414,10 @@ HARD RULES:
         
         let desc = formatDyslexiaText(safeParsed.generated_description || "");
         
-        const finalDescription = desc + "\n\n" + dwellButtonsHTML;
+        // Nuke the explicit Gemini placeholders so they don't render on the storefront
+        desc = desc.replace(/\{\{ORIGIN_LINK\}\}/gi, "").replace(/\{\{COLLECTION_LINKS\}\}/gi, "");
+        
+        const finalDescription = desc.trim() + "\n\n" + dwellButtonsHTML;
         return Response.json({ success: true, intent, generated_description: finalDescription });
       }
       
