@@ -1,8 +1,27 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { BlockStack, Card, Text, Banner, TextField, Button, InlineStack, Box, Badge, ProgressBar, Icon } from "@shopify/polaris";
+import { BlockStack, Card, Text, Banner, TextField, Button, InlineStack, Box, Badge, ProgressBar } from "@shopify/polaris";
 import { useFetcher } from "react-router";
-import { MagicIcon, AlertMinorIcon, CheckIcon } from "@shopify/polaris-icons";
-import { CUSTOM_FIELDS, FULL_META_GROUPS, DROPDOWN_OPTIONS } from "../utils/meta-injector.constants.jsx";
+import { MagicIcon } from "@shopify/polaris-icons";
+import { FULL_META_GROUPS, DROPDOWN_OPTIONS } from "../utils/meta-injector.constants.jsx";
+
+const CUSTOM_FIELDS = [
+  { key: "shopify_title", label: "MASTER SHOPIFY TITLE (Edit Here)", type: "single_line_text_field" },
+  { key: "stone_family", label: "Stone Family", type: "single_line_text_field" },
+  { key: "color", label: "Color", type: "single_line_text_field" }, 
+  { key: "surface_finish", label: "Surface Finish", type: "single_line_text_field" }, 
+  { key: "source_location", label: "Source / Discovery Location", type: "single_line_text_field" },
+  { key: "primary_use", label: "Primary Use", type: "single_line_text_field" }, 
+  { key: "handcrafted_by", label: "Handcrafted By", type: "single_line_text_field" },
+  { key: "origin_story", label: "The Origin Story", type: "multi_line_text_field" },
+  { key: "piece_name", label: "Piece Name", type: "single_line_text_field" },
+  { key: "cut_and_shape", label: "Cut / Shape", type: "single_line_text_field" }, 
+  { key: "dimensions_mm", label: "Dimensions (mm)", type: "single_line_text_field" },
+  { key: "weight_grams", label: "Weight (grams)", type: "single_line_text_field" },
+  { key: "shipping_weight_oz", label: "Shipping Weight (oz)", type: "single_line_text_field" },
+  { key: "honest_flaws_and_character", label: "Character Marks (Honest Flaws)", type: "multi_line_text_field" },
+  { key: "price", label: "Price", type: "single_line_text_field" },
+  { key: "generated_description", label: "Generated Description", type: "multi_line_text_field" }
+];
 
 // --- Strict Allowed Statuses ---
 const STATUS = {
@@ -293,7 +312,7 @@ export function OperationsMatrixTab({ products, fetcher }) {
     const proposedChange = benchResults.proposedChanges[key];
     const isProposedForDeletion = benchResults.proposedDeletions.includes(key);
 
-    const dotFillColor = isFilled ? "#22c55e" : "#ef4444"; // Green if filled, Red if empty
+    const dotFillColor = isFilled ? "#22c55e" : "#ef4444"; 
 
     return (
       <div key={key} style={{ backgroundColor: isFilled ? "transparent" : "#FFF5F5", minHeight: "48px", padding: "8px", borderRadius: "4px", borderBottom: "1px solid #f0f0f0" }}>
@@ -404,7 +423,6 @@ export function OperationsMatrixTab({ products, fetcher }) {
                         </div>
                       </div>
 
-                      {/* Drop to Bench Button */}
                       <div style={{ display: "flex", alignItems: "center" }}>
                         <Button 
                           size="micro" 
@@ -510,8 +528,8 @@ export function OperationsMatrixTab({ products, fetcher }) {
                     ))}
                   </BlockStack>
                 )}
-              </Card>
-            </BlockStack>
+              </BlockStack>
+            </Card>
 
           </BlockStack>
         </div>
