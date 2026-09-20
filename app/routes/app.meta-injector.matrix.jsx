@@ -1,11 +1,14 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useEffect } from "react";
 import { BlockStack, Card, Text, Banner, TextField, Button, InlineStack, Box, Badge, ProgressBar } from "@shopify/polaris";
 import { MagicIcon } from "@shopify/polaris-icons";
+import { useFetcher } from "react-router";
 
 const STATUS = {
   QUEUED: "Queued",
   SCANNING: "Scanning",
   VALIDATED: "Manifest Built",
+  COMPLETE: "Repaired",
+  FAILED: "Failed",
   SKIPPED: "Skipped"
 };
 
@@ -46,11 +49,18 @@ export function OperationsMatrixTab({ products }) {
   const [searchQuery, setSearchQuery] = useState("");
   
   const [isEngineActive, setIsEngineActive] = useState(false);
+  const [isExecuting, setIsExecuting] = useState(false);
+  const [executeIndex, setExecuteIndex] = useState(0);
+
   const [queueIds, setQueueIds] = useState([]);
   const [productStates, setProductStates] = useState({}); 
-  const [manifestData, setManifestData] = useState({}); // Stores the manifest array per GID
+  const [manifestData, setManifestData] = useState({}); 
   
   const [selectedBenchId, setSelectedBenchId] = useState(null);
+  const [safetyMessage, setSafetyMessage] = useState("");
+  const [safetyError, setSafetyError] = useState("");
+
+  const batchFetcher = useFetcher();
 
   const handleSearchChange = useCallback((value) => setSearchQuery(value), []);
   const handleClearSearch = useCallback(() => setSearchQuery(""), []);
@@ -58,21 +68,30 @@ export function OperationsMatrixTab({ products }) {
   const filteredProducts = safeProducts.filter(p => p.title.toLowerCase().includes(searchQuery.toLowerCase()));
   const allFilteredSelected = filteredProducts.length > 0 && filteredProducts.every(p => queueIds.includes(p.id));
 
+  const updateProductState = useCallback((id, status, newLogs = []) => {
+    setProductStates(prev => {
+      const updated = { ...prev };
+      const existingLogs = updated[id]?.logs || [];
+      updated[id] = { status: status, logs: [...existingLogs, ...newLogs] };
+      return updated;
+    });
+  }, []);
+
   const handleToggleProductSelection = useCallback((id) => {
-    if (isEngineActive) return; 
+    if (isEngineActive || isExecuting) return; 
     setQueueIds(prev => {
       const newIds = prev.includes(id) ? prev.filter(pid => pid !== id) : [...prev, id];
       setProductStates(states => {
         const newStates = { ...states };
-        if (!newStates[id]) newStates[id] = { status: STATUS.QUEUED };
+        if (!newStates[id]) newStates[id] = { status: STATUS.QUEUED, logs: [] };
         return newStates;
       });
       return newIds;
     });
-  }, [isEngineActive]);
+  }, [isEngineActive, isExecuting]);
 
   const toggleSelectAllFiltered = useCallback(() => {
-    if (isEngineActive) return;
+    if (isEngineActive || isExecuting) return;
     setQueueIds(prev => {
       let newIds = [...prev];
       if (allFilteredSelected) {
@@ -82,12 +101,12 @@ export function OperationsMatrixTab({ products }) {
       }
       setProductStates(states => {
         const newStates = { ...states };
-        newIds.forEach(id => { if (!newStates[id]) newStates[id] = { status: STATUS.QUEUED }; });
+        newIds.forEach(id => { if (!newStates[id]) newStates[id] = { status: STATUS.QUEUED, logs: [] }; });
         return newStates;
       });
       return newIds;
     });
-  }, [allFilteredSelected, filteredProducts, isEngineActive]);
+  }, [allFilteredSelected, filteredProducts, isEngineActive, isExecuting]);
 
   const clearBench = useCallback(() => {
     setQueueIds([]);
@@ -95,12 +114,18 @@ export function OperationsMatrixTab({ products }) {
     setManifestData({});
     setSelectedBenchId(null);
     setIsEngineActive(false);
+    setIsExecuting(false);
+    setExecuteIndex(0);
+    setSafetyMessage("Rack and Bench cleared.");
+    setSafetyError("");
   }, []);
 
-  // --- THE MANIFEST BUILDER ---
+  // --- THE DRY RUN MANIFEST BUILDER ---
   const generateRepairPlan = useCallback(() => {
     if (queueIds.length === 0) return;
     setIsEngineActive(true);
+    setSafetyMessage("Building Diagnostic Manifests...");
+    setSafetyError("");
 
     const newManifests = { ...manifestData };
     const newStates = { ...productStates };
@@ -151,7 +176,7 @@ export function OperationsMatrixTab({ products }) {
         }
       });
 
-      // 2. SEMANTIC DUPLICATE REVIEW (is_one_of_a_kind vs is_ooak)
+      // 2. SEMANTIC DUPLICATE REVIEW
       const hasOneOfKind = meta.hasOwnProperty("is_one_of_a_kind");
       const hasOoak = meta.hasOwnProperty("is_ooak");
       if (hasOneOfKind && hasOoak) {
@@ -160,7 +185,7 @@ export function OperationsMatrixTab({ products }) {
         processedKeys.add("is_one_of_a_kind");
         processedKeys.add("is_ooak");
       } else if (hasOneOfKind && !hasOoak) {
-        manifest.push({ key: "is_one_of_a_kind", current: meta["is_one_of_a_kind"], propKey: "is_ooak", propVal: normalizeBoolean(meta["is_one_of_a_kind"]), class: "COPY TO CANONICAL KEY", status: "yellow", section: "Legacy Diagnostics" });
+        manifest.push({ key: "is_one_of_a_kind", current: meta["is_one_of_a_kind"], propKey: "is_ooak", propVal: meta["is_one_of_a_kind"], class: "COPY TO CANONICAL KEY", status: "yellow", section: "Legacy Diagnostics" });
         processedKeys.add("is_one_of_a_kind");
         processedKeys.add("is_ooak");
       }
@@ -207,18 +232,88 @@ export function OperationsMatrixTab({ products }) {
       });
 
       newManifests[id] = manifest;
-      newStates[id] = { status: STATUS.VALIDATED };
+      newStates[id] = { status: STATUS.VALIDATED, logs: ["Manifest Built"] };
     });
 
     setManifestData(newManifests);
     setProductStates(newStates);
     setIsEngineActive(false);
+    setSafetyMessage("Diagnostic manifests built. Ready for review or execution.");
   }, [queueIds, safeProducts, manifestData, productStates]);
+
+
+  // --- LIVE REPAIR EXECUTION LOOP ---
+  const executeRepairs = useCallback(() => {
+    if (queueIds.length === 0) return;
+    if (Object.keys(manifestData).length !== queueIds.length) {
+       setSafetyError("You must Generate Repair Plan for all queued items before executing.");
+       return;
+    }
+    if (window.confirm("WARNING: LIVE RUN.\n\nThis will execute the authorized repairs (COPY, NORMALIZE, REMOVE) on the live Shopify database for all queued items. Proceed?")) {
+       setSafetyError("");
+       setSafetyMessage("Execution Engine engaged. Mutating live data...");
+       setIsExecuting(true);
+       setExecuteIndex(0);
+    }
+  }, [queueIds, manifestData]);
+
+  useEffect(() => {
+    if (!isExecuting) return;
+    if (batchFetcher.state !== "idle") return;
+
+    if (executeIndex >= queueIds.length) {
+      setIsExecuting(false);
+      setSafetyMessage(`Live Repairs Complete. Processed ${queueIds.length} items.`);
+      return;
+    }
+
+    const currentId = queueIds[executeIndex];
+    const manifest = manifestData[currentId];
+
+    if (!manifest || manifest.length === 0) {
+      updateProductState(currentId, STATUS.SKIPPED, ["No manifest built."]);
+      setTimeout(() => setExecuteIndex(i => i + 1), 500);
+      return;
+    }
+
+    const needsRepair = manifest.some(m => ["COPY TO CANONICAL KEY", "NORMALIZE VALUE", "REMOVE AFTER VERIFICATION"].includes(m.class));
+
+    if (!needsRepair) {
+      updateProductState(currentId, STATUS.VALIDATED, ["Clean. No mutations required."]);
+      setTimeout(() => setExecuteIndex(i => i + 1), 500);
+      return;
+    }
+
+    updateProductState(currentId, STATUS.SCANNING, ["Executing live repairs..."]);
+
+    const fd = new FormData();
+    fd.append("intent", "executeRepairPlan");
+    fd.append("pieceId", currentId);
+    fd.append("manifest", JSON.stringify(manifest));
+
+    batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-api" });
+
+  }, [isExecuting, executeIndex, queueIds, manifestData, batchFetcher.state, updateProductState]);
+
+  useEffect(() => {
+    if (batchFetcher.state === "idle" && batchFetcher.data) {
+      const { intent, success, pieceId, message, errors } = batchFetcher.data;
+      if (intent === "executeRepairPlan" && pieceId) {
+        const appliedStatus = success ? STATUS.COMPLETE : STATUS.FAILED;
+        const logs = errors ? errors.map(e => e.message) : [message];
+        updateProductState(pieceId, appliedStatus, logs);
+        setTimeout(() => setExecuteIndex(i => i + 1), 500);
+      }
+    }
+  }, [batchFetcher.state, batchFetcher.data, updateProductState]);
+
 
   const getStatusTone = (status) => {
     switch(status) {
       case STATUS.VALIDATED: return "success";
+      case STATUS.COMPLETE: return "success";
       case STATUS.SCANNING: return "magic";
+      case STATUS.FAILED: return "critical";
       case STATUS.QUEUED: return "info";
       default: return undefined;
     }
@@ -267,6 +362,7 @@ export function OperationsMatrixTab({ products }) {
   };
 
   const activeManifest = selectedBenchId ? manifestData[selectedBenchId] : null;
+  const progressPercentage = queueIds.length > 0 ? Math.round((executeIndex / queueIds.length) * 100) : 0;
 
   return (
     <BlockStack gap="600">
@@ -290,14 +386,14 @@ export function OperationsMatrixTab({ products }) {
                 onClearButtonClick={handleClearSearch}
                 autoComplete="off"
                 placeholder="Search..."
-                disabled={isEngineActive}
+                disabled={isEngineActive || isExecuting}
               />
 
               <Button 
                 size="large" 
                 fullWidth 
                 onClick={toggleSelectAllFiltered}
-                disabled={isEngineActive}
+                disabled={isEngineActive || isExecuting}
               >
                 {allFilteredSelected ? `Unload (${filteredProducts.length})` : `Load (${filteredProducts.length})`}
               </Button>
@@ -318,7 +414,7 @@ export function OperationsMatrixTab({ products }) {
                         border: isSelectedForBench ? "2px solid #005bd3" : "1px solid #c9cccf", 
                         borderRadius: "6px", 
                         backgroundColor: isChecked ? "#f0f2f4" : "#ffffff", 
-                        cursor: isEngineActive ? "not-allowed" : "pointer", 
+                        cursor: isEngineActive || isExecuting ? "not-allowed" : "pointer", 
                         padding: "8px",
                         display: "flex",
                         flexDirection: "column",
@@ -358,42 +454,65 @@ export function OperationsMatrixTab({ products }) {
         {/* RIGHT COLUMN: Repair Manifest Viewer */}
         <div>
           <BlockStack gap="600">
-            <Text variant="headingLg" as="h2">2. Repair Bench & Dry Run Diagnostics</Text>
+            <Text variant="headingLg" as="h2">2. Repair Bench & Engine Diagnostics</Text>
+
+            {safetyMessage && (
+              <Banner tone="info" onDismiss={() => setSafetyMessage("")}>
+                <Text as="p">{safetyMessage}</Text>
+              </Banner>
+            )}
+            {safetyError && (
+              <Banner tone="critical" onDismiss={() => setSafetyError("")}>
+                <Text as="p">{safetyError}</Text>
+              </Banner>
+            )}
 
             <Card padding="400">
               <BlockStack gap="400">
                 <InlineStack align="space-between">
-                  <Text variant="headingMd" as="h3">Dry Run Orchestrator</Text>
-                  <Button 
-                    size="large" 
-                    variant="primary" 
-                    icon={MagicIcon} 
-                    onClick={generateRepairPlan} 
-                    disabled={queueIds.length === 0}
-                    loading={isEngineActive}
-                  >
-                    GENERATE REPAIR PLAN
-                  </Button>
+                  <Text variant="headingMd" as="h3">Repair Engine Orchestrator</Text>
+                  <div style={{ display: "flex", gap: "8px" }}>
+                    <Button 
+                      size="large" 
+                      variant="secondary" 
+                      icon={MagicIcon} 
+                      onClick={generateRepairPlan} 
+                      disabled={queueIds.length === 0 || isExecuting}
+                      loading={isEngineActive}
+                    >
+                      GENERATE REPAIR PLAN (DRY RUN)
+                    </Button>
+                    <Button 
+                      size="large" 
+                      variant="primary" 
+                      tone="critical" 
+                      onClick={executeRepairs} 
+                      disabled={queueIds.length === 0 || Object.keys(manifestData).length === 0 || isEngineActive}
+                      loading={isExecuting}
+                    >
+                      EXECUTE REPAIRS (LIVE)
+                    </Button>
+                  </div>
                 </InlineStack>
 
-                <Banner tone="info">
-                  <Text as="p">This bench is running in strictly isolated <strong>Dry Run</strong> mode. No live Shopify mutations, overrides, or deletions will occur. The plan operates safely off the product GID.</Text>
+                <Banner tone="warning">
+                  <Text as="p">Review the generated Dry Run manifests before executing. The Live execution will only apply changes flagged as <strong>COPY TO CANONICAL KEY</strong>, <strong>NORMALIZE VALUE</strong>, and <strong>REMOVE AFTER VERIFICATION</strong>.</Text>
                 </Banner>
 
-                {queueIds.length > 0 && (
+                {isExecuting && queueIds.length > 0 && (
                   <Box padding="400" border="1px solid #E1E3E5" borderRadius="200" background="bg-surface-secondary">
                     <BlockStack gap="200">
                       <InlineStack align="space-between">
-                        <Text as="p" fontWeight="bold">Diagnostic Generation</Text>
-                        <Text as="p">{Object.keys(manifestData).length} of {queueIds.length} Manifests Built</Text>
+                        <Text as="p" fontWeight="bold">Live Execution Progress</Text>
+                        <Text as="p">{executeIndex} of {queueIds.length} Processed</Text>
                       </InlineStack>
-                      <ProgressBar progress={Object.keys(manifestData).length > 0 ? Math.round((Object.keys(manifestData).length / queueIds.length) * 100) : 0} color="primary" />
+                      <ProgressBar progress={progressPercentage} color="primary" />
                     </BlockStack>
                   </Box>
                 )}
 
                 <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
-                  <Button size="large" tone="critical" onClick={clearBench}>Clear Rack & Reset Bench</Button>
+                  <Button size="large" tone="critical" onClick={clearBench} disabled={isExecuting}>Clear Rack & Reset Bench</Button>
                 </div>
               </BlockStack>
             </Card>
@@ -405,7 +524,7 @@ export function OperationsMatrixTab({ products }) {
                     <Text variant="headingLg" as="h2">Diagnostic Manifest Readout</Text>
                     <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                       <svg width="12" height="12"><circle cx="6" cy="6" r="6" fill="#22c55e" /></svg><Text variant="bodySm">Consistent / Keep</Text>
-                      <svg width="12" height="12" style={{ marginLeft: "8px" }}><circle cx="6" cy="6" r="6" fill="#eab308" /></svg><Text variant="bodySm">Review Required</Text>
+                      <svg width="12" height="12" style={{ marginLeft: "8px" }}><circle cx="6" cy="6" r="6" fill="#eab308" /></svg><Text variant="bodySm">Review / Repair Queued</Text>
                       <svg width="12" height="12" style={{ marginLeft: "8px" }}><circle cx="6" cy="6" r="6" fill="#ef4444" /></svg><Text variant="bodySm">Conflict / Required Empty</Text>
                     </div>
                   </div>
