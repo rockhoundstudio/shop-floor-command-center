@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { BlockStack, Card, Text, Banner, TextField, Select, Button, InlineStack, Box, Badge, ProgressBar } from "@shopify/polaris";
 import { useFetcher } from "react-router";
-import { MagicIcon } from "@shopify/polaris-icons";
+import { MagicIcon, SaveIcon } from "@shopify/polaris-icons";
 import { FULL_META_GROUPS, DROPDOWN_OPTIONS } from "../utils/meta-injector.constants.jsx";
 
 const CUSTOM_FIELDS = [
@@ -60,24 +60,30 @@ export function OperationsMatrixTab({ products, fetcher }) {
   
   // --- Visual Bench (Mass Formatter) State ---
   const [selectedBenchId, setSelectedBenchId] = useState(null);
-  const [benchState, setBenchState] = useState({}); // Holds the editable text values
-  const [pushKeys, setPushKeys] = useState([]); // Holds the keys of the checked boxes
+  const [benchState, setBenchState] = useState({}); 
+  const [pushKeys, setPushKeys] = useState([]); 
 
   const [safetyMessage, setSafetyMessage] = useState("");
   const [safetyError, setSafetyError] = useState("");
 
   const batchFetcher = useFetcher();
+  const singleSaveFetcher = useFetcher(); // Dedicated fetcher for the single-piece save button
 
-  // --- Visual Bench Data Extractor ---
+  // --- Visual Bench Data Extractor (CALIBRATED) ---
   const extractCurrentMeta = useCallback((product, key) => {
-    if (key === "shopify_title") return product?.title || "";
     if (!product) return "";
+    if (key === "shopify_title") return product.title || "";
     
+    // Shopify stores pricing and variants in a nested structure
+    if (key === "price" && product.variants?.edges?.[0]?.node?.price) {
+      return product.variants.edges[0].node.price;
+    }
+
     const allEdges = [
-      ...(product?.customMeta?.edges || []),
-      ...(product?.rockhoundMeta?.edges || []),
-      ...(product?.geoMeta?.edges || []),
-      ...(product?.metafields?.edges || [])
+      ...(product.customMeta?.edges || []),
+      ...(product.rockhoundMeta?.edges || []),
+      ...(product.geoMeta?.edges || []),
+      ...(product.metafields?.edges || [])
     ];
     
     const node = allEdges.find(e => e.node.key === key)?.node;
@@ -105,7 +111,7 @@ export function OperationsMatrixTab({ products, fetcher }) {
       });
     });
     setBenchState(newBenchState);
-    setPushKeys([]); // Clear checkboxes so you don't accidentally push old fields
+    setPushKeys([]); 
   }, [safeProducts, extractCurrentMeta]);
 
   const clearBench = useCallback(() => {
@@ -119,6 +125,40 @@ export function OperationsMatrixTab({ products, fetcher }) {
     setIsPaused(false);
     setSafetyMessage("Rack & Bench cleared.");
   }, []);
+
+  // --- Single Piece Save ---
+  const handleSinglePieceSave = useCallback(() => {
+    if (!selectedBenchId) return;
+    
+    const payload = [];
+    Object.entries(benchState).forEach(([key, value]) => {
+      if (key === "shopify_title") return; 
+      let injectValue = String(value !== null && value !== undefined ? value : "").trim();
+      if (injectValue !== "" && injectValue !== "N/A" && injectValue !== "See Shopify metaobject") {
+        payload.push({
+          ownerId: selectedBenchId,
+          namespace: "custom", 
+          key: key.replace(/-/g, "_"),
+          value: injectValue
+        });
+      }
+    });
+
+    const masterTitle = benchState.shopify_title || safeProducts.find(p => p.id === selectedBenchId)?.title;
+    
+    singleSaveFetcher.submit(
+      { 
+        intent: "saveMetafields", 
+        payload: JSON.stringify(payload),
+        productId: selectedBenchId,
+        productTitle: masterTitle,
+        descriptionHtml: benchState.generated_description || "",
+        weightGrams: benchState.weight_grams || "",
+        shippingWeightOz: benchState.shipping_weight_oz || ""
+      },
+      { method: "post", action: "/app/meta-injector-api" }
+    );
+  }, [selectedBenchId, benchState, safeProducts, singleSaveFetcher]);
 
   // --- Telemetry Diagnostics ---
   const handleCopyTelemetry = useCallback(() => {
@@ -134,6 +174,17 @@ export function OperationsMatrixTab({ products, fetcher }) {
       })
       .catch(err => console.error("Failed to copy:", err));
   }, [selectedBenchId, safeProducts]);
+
+  // --- Listen to Single Save Responses ---
+  useEffect(() => {
+    if (singleSaveFetcher.state === "idle" && singleSaveFetcher.data) {
+      if (singleSaveFetcher.data.success) {
+        setSafetyMessage(`Successfully saved data to ${singleSaveFetcher.data.pieceId}`);
+      } else {
+        setSafetyError(`Failed to save: ${singleSaveFetcher.data.error || singleSaveFetcher.data.message}`);
+      }
+    }
+  }, [singleSaveFetcher.state, singleSaveFetcher.data]);
 
   // --- Search & Filtering ---
   const handleSearchChange = useCallback((value) => setSearchQuery(value), []);
@@ -230,8 +281,6 @@ export function OperationsMatrixTab({ products, fetcher }) {
       
       updateProductState(currentId, STATUS.SCANNING, ["Applying template fields..."]);
       
-      // In a real live run, this would compile the benchState[keys] in pushKeys and send it to the save intent.
-      // For now, it acts as a Dry Run diagnostic simulator.
       const fd = new FormData();
       fd.append("intent", "standardizeBatchItem"); 
       fd.append("pieceId", currentId);
@@ -266,7 +315,7 @@ export function OperationsMatrixTab({ products, fetcher }) {
     if (!fieldConfig) fieldConfig = { key, label: key.split(/[-_]/).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' '), type: 'text' };
 
     const isChecked = pushKeys.includes(key);
-    const val = benchState[key] || "";
+    const val = benchState[key] !== undefined ? benchState[key] : "";
 
     const labelNode = (
       <div style={{ display: 'flex', alignItems: 'center', paddingBottom: "4px" }} onClick={(e) => e.stopPropagation()}>
@@ -324,7 +373,6 @@ export function OperationsMatrixTab({ products, fetcher }) {
 
   return (
     <BlockStack gap="600">
-      {/* SHRUNK RACK COLUMN TO 260px TO FIT SIDEKICK */}
       <div style={{ display: "grid", gridTemplateColumns: "260px 1fr", gap: "20px", alignItems: "start" }}>
         
         {/* LEFT COLUMN: The Rack */}
@@ -457,12 +505,24 @@ export function OperationsMatrixTab({ products, fetcher }) {
                   <Text variant="headingLg" as="h2">The Formatter Template</Text>
                   <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
                     {selectedBenchId && (
-                      <Button size="micro" onClick={handleCopyTelemetry}>
+                      <Button 
+                        size="medium" 
+                        variant="primary" 
+                        icon={SaveIcon} 
+                        onClick={handleSinglePieceSave}
+                        loading={singleSaveFetcher.state !== "idle"}
+                        tone="success"
+                      >
+                        Save to Current Piece
+                      </Button>
+                    )}
+                    {selectedBenchId && (
+                      <Button size="medium" onClick={handleCopyTelemetry}>
                         Copy Telemetry
                       </Button>
                     )}
                     <Badge tone={pushKeys.length > 0 ? "success" : "attention"}>
-                      {pushKeys.length} Fields Checked for Mass Update
+                      {pushKeys.length} Checked for Mass Update
                     </Badge>
                   </div>
                 </InlineStack>
