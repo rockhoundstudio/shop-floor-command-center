@@ -213,6 +213,7 @@ const EXPLICIT_METAOBJECT_KEYS = [
 ];
 
 async function executeGhostDelete(admin, productGid) {
+  const errors = [];
   try {
     const lookupResponse = await admin.graphql(
       `#graphql
@@ -243,17 +244,23 @@ async function executeGhostDelete(admin, productGid) {
     });
 
     if (toDelete.length > 0) {
-      await admin.graphql(
+      const deleteResponse = await admin.graphql(
         `#graphql
         mutation metafieldsDelete($metafields: [MetafieldIdentifierInput!]!) {
           metafieldsDelete(metafields: $metafields) { deletedMetafields { key namespace ownerId } userErrors { field message } }
         }`,
         { variables: { metafields: toDelete.map(m => ({ ownerId: productGid, namespace: m.namespace, key: m.key })) } }
       );
+      const deleteJson = await deleteResponse.json();
+      const userErrors = deleteJson?.data?.metafieldsDelete?.userErrors || [];
+      if (userErrors.length > 0) {
+        errors.push(...userErrors);
+      }
     }
   } catch (err) {
-    console.error("Ghost delete error:", err);
+    errors.push({ message: `Ghost kill failure: ${err.message}` });
   }
+  return errors;
 }
 
 export const action = async ({ request }) => {
@@ -372,49 +379,14 @@ export const action = async ({ request }) => {
       const legacyFields = {};
 
       const CANONICAL_KEYS = [
-        "global.title_tag", "global.description_tag", "custom.seo_title",
-        "custom.is_ooak", "custom.is_one_of_a_kind", "custom.handcrafted_by",
-        "custom.piece_name", "custom.origin_story", "custom.origin_location",
-        "custom.origin_page_handle", "custom.origin_handle", "custom.honest_flaws_and_character",
-        "custom.collection_name", "custom.collection_location", "custom.collection_date",
-        "custom.mohs_hardness", "custom.rock_composition", "custom.rock-composition",
-        "custom.rock_formation", "custom.rock-formation", "custom.geological_era",
-        "custom.geological-era", "custom.geological_age", "custom.crystal_system",
-        "custom.crystal-system", "custom.specific_gravity", "custom.cleavage",
-        "custom.diaphaneity", "custom.fracture_pattern", "custom.mineral_class",
-        "custom.mineral-class", "custom.stone_family", "custom.stone_shape",
-        "custom.surface_finish", "custom.cut_and_shape", "custom.dimensions_mm",
-        "custom.weight_grams", "custom.shipping_weight_oz", "custom.treatment_status",
-        "custom.treated", "custom.color", "custom.color_pattern", "custom.primary_color",
-        "custom.primary_medium", "custom.secondary_medium", "custom.material",
-        "custom.primary_use", "custom.setting_ready", "custom.wire_material",
-        "custom.bail_included", "custom.chain_link_type", "custom.necklace_design",
-        "custom.necklace-design", "custom.jewelry_type", "custom.jewelry_finding_type",
-        "custom.custom_product", "custom.found_object", "custom.rescued_by",
-        "custom.authenticity", "custom.rarity", "custom.luster", "custom.character_marks",
-        "custom.artist_notes", "custom.generated_description", "custom.price",
-        "custom.alt_text",
-        "google.age_group", "google.condition", "google.target_gender",
-        "shopify.age-group", "shopify.condition", "shopify.target-gender",
-        "shopify.authenticity", "shopify.chain-link-type", "shopify.color-pattern",
-        "shopify.construction", "shopify.crystal-system", "shopify.geological-era",
-        "shopify.jewelry-finding-type", "shopify.jewelry-material",
-        "shopify.jewelry-type", "shopify.material", "shopify.material-origin",
-        "shopify.mineral-class", "shopify.necklace-design",
-        "shopify.product-classification", "shopify.product-use", "shopify.rarity",
-        "shopify.rock-composition", "shopify.rock-formation",
-        "custom.google_product_category", "custom.target_gender",
-        "mc-facebook.google_product_category", "mm-google-shopping.age_group",
-        "mm-google-shopping.condition", "mm-google-shopping.custom_product",
-        "mm-google-shopping.google_product_category",
-        "app--3890849--eligibility.eligibility_details",
-        "custom.bench_notes", "custom.badge", "custom.widget",
-        "custom.review_widget_data", "judgeme.badge", "judgeme.widget",
-        "judgeme.review_widget_data"
+         "shopify_title", "piece_name", "primary_medium", "secondary_medium", "handcrafted_by", "is_ooak", "treated", "dimensions_mm", "weight_grams", "shipping_weight_oz", "cut_and_shape", "surface_finish", "color", "artist_notes", "generated_description", "price", "character_marks", "bench_notes", "alt_text", "found_object", "stone_family", "treatment_status",
+         "origin_story", "rescued_by", "stone_shape", "collection_name", "origin_handle", "collection_location", "honest_flaws_and_character", "origin_location", "origin_page_handle",
+         "primary_use", "setting_ready", "wire_material", "bail_included", "color_pattern", "material", "jewelry_type", "necklace_design", "target_gender", "age_group", "condition", "custom_product", "seo_title", "google_product_category", "primary_color", "rarity", "authenticity", "jewelry_finding_type", "chain_link_type",
+         "mohs_hardness", "luster", "fracture_pattern", "cleavage", "specific_gravity", "diaphaneity", "mineral_class", "crystal_system", "rock_composition", "rock_formation", "geological_era", "geological_age"
       ];
 
       CANONICAL_KEYS.forEach(k => {
-         let val = currentMetafields[k] ?? "";
+         let val = rawMeta[k] ?? "";
          canonicalFields[k] = val;
          repairPlan[k] = val; // Default repair plan to actual current value, avoiding replacing with undefined/null
       });
@@ -426,19 +398,19 @@ export const action = async ({ request }) => {
       repairPlan["price"] = canonicalFields["price"];
 
       const LEGACY_MAP_LOCAL = {
-        "custom.crystal-system": "custom.crystal_system",
-        "custom.mineral-class": "custom.mineral_class",
-        "custom.rock-composition": "custom.rock_composition",
-        "custom.geological-era": "custom.geological_era",
-        "custom.rock-formation": "custom.rock_formation",
-        "custom.necklace-design": "custom.necklace_design",
-        "custom.is_one_of_a_kind": "custom.is_ooak"
+        "crystal-system": "crystal_system",
+        "mineral-class": "mineral_class",
+        "rock-composition": "rock_composition",
+        "geological-era": "geological_era",
+        "rock-formation": "rock_formation",
+        "necklace-design": "necklace_design",
+        "is_one_of_a_kind": "is_ooak"
       };
 
       Object.entries(LEGACY_MAP_LOCAL).forEach(([leg, can]) => {
-         if (currentMetafields[leg] !== undefined) {
+         if (rawMeta[leg] !== undefined) {
             legacyFields[leg] = {
-               value: String(currentMetafields[leg]),
+               value: String(rawMeta[leg]),
                canonicalTarget: can,
                canonicalCurrent: canonicalFields[can]
             };
@@ -480,33 +452,25 @@ export const action = async ({ request }) => {
       const setToShopify = [];
       const deleteFromShopify = [];
 
-      Object.entries(repairPlan).forEach(([fullKey, val]) => {
+      Object.entries(repairPlan).forEach(([key, val]) => {
         // Skip title/price. This module strictly updates metafields.
-        if (fullKey === "shopify_title" || fullKey === "price") return;
-
-        let ns = "custom";
-        let key = fullKey;
-        if (fullKey.includes(".")) {
-            const parts = fullKey.split(".");
-            ns = parts[0];
-            key = parts.slice(1).join(".");
-        }
+        if (key === "shopify_title" || key === "price") return;
 
         const valStr = String(val).trim();
         
         // If it was edited down to empty, push for delete.
         if (valStr === "" || valStr.toLowerCase() === "none" || valStr.toLowerCase() === "n/a" || valStr.toLowerCase() === "null" || valStr.toLowerCase() === "undefined") {
-          deleteFromShopify.push({ ownerId: productGid, namespace: ns, key: key });
+          deleteFromShopify.push({ ownerId: productGid, namespace: "custom", key: key });
           
           const standardKey = key.replace(/_/g, '-');
-          if (ns === "custom" && (EXPLICIT_METAOBJECT_KEYS.includes(standardKey) || EXPLICIT_METAOBJECT_KEYS.includes(key))) {
+          if (EXPLICIT_METAOBJECT_KEYS.includes(standardKey) || EXPLICIT_METAOBJECT_KEYS.includes(key)) {
              deleteFromShopify.push({ ownerId: productGid, namespace: "shopify", key: standardKey });
           }
         } else {
           let resolvedType = MASTER_TYPE_MAP[key] || "single_line_text_field";
           let resolvedValue = normalizeMetafieldValue(key, valStr);
 
-          const multiLineKeys = ["origin_story", "artist_notes", "honest_flaws_and_character", "bench_notes", "generated_description", "description_tag"];
+          const multiLineKeys = ["origin_story", "artist_notes", "honest_flaws_and_character", "bench_notes", "generated_description"];
           const decimalKeys = ["weight_grams", "shipping_weight_oz", "price"];
           const listSingleLineKeys = ["character_marks"];
 
@@ -530,28 +494,23 @@ export const action = async ({ request }) => {
             if (resolvedValue.length > 255) resolvedValue = resolvedValue.slice(0, 255);
           }
 
-          if (ns === "custom" && key === "seo_title") {
+          if (key === "seo_title") {
             setToShopify.push({ ownerId: productGid, namespace: "global", key: "title_tag", type: "single_line_text_field", value: resolvedValue });
-            setToShopify.push({ ownerId: productGid, namespace: ns, key: key, type: resolvedType, value: resolvedValue });
-          } else if (ns === "custom" && key === "generated_description") {
+            setToShopify.push({ ownerId: productGid, namespace: "custom", key: "seo_title", type: "single_line_text_field", value: resolvedValue });
+          } else if (key === "generated_description") {
             setToShopify.push({ ownerId: productGid, namespace: "global", key: "description_tag", type: "single_line_text_field", value: resolvedValue.slice(0, 320) });
-            setToShopify.push({ ownerId: productGid, namespace: ns, key: key, type: resolvedType, value: resolvedValue });
+            setToShopify.push({ ownerId: productGid, namespace: "custom", key: key, type: resolvedType, value: resolvedValue });
+          } else if (["age_group", "target_gender", "condition"].includes(key)) {
+            setToShopify.push({ ownerId: productGid, namespace: "google", key: key, type: "single_line_text_field", value: resolvedValue });
           } else {
-            setToShopify.push({ ownerId: productGid, namespace: ns, key: key, type: resolvedType, value: resolvedValue });
+            setToShopify.push({ ownerId: productGid, namespace: "custom", key: key, type: resolvedType, value: resolvedValue });
           }
         }
       });
 
       // Queue up legacy keys for explicit destruction
-      legacyKeysToRemove.forEach(fullKey => {
-        let ns = "custom";
-        let key = fullKey;
-        if (fullKey.includes(".")) {
-            const parts = fullKey.split(".");
-            ns = parts[0];
-            key = parts.slice(1).join(".");
-        }
-        deleteFromShopify.push({ ownerId: productGid, namespace: ns, key: key });
+      legacyKeysToRemove.forEach(key => {
+        deleteFromShopify.push({ ownerId: productGid, namespace: "custom", key: key });
       });
 
       const allErrors = [];
@@ -982,7 +941,8 @@ export const action = async ({ request }) => {
             }
           }
 
-          await executeGhostDelete(admin, productGid);
+          const ghostErrs = await executeGhostDelete(admin, productGid);
+          if (ghostErrs.length > 0) allErrors.push(...ghostErrs);
         } catch (err) {
           allErrors.push({ message: `Base update or ghost kill error: ${err.message}` });
         }
@@ -1410,7 +1370,8 @@ export const action = async ({ request }) => {
         }
       }
 
-      await executeGhostDelete(admin, createdProduct.id);
+      const ghostErrs = await executeGhostDelete(admin, createdProduct.id);
+      if (ghostErrs.length > 0) allUserErrors.push(...ghostErrs);
 
       return data({ success: true, intent: "createProduct", productId: productId, productHandle: productHandle, userErrors: allUserErrors });
     } catch (error) {
