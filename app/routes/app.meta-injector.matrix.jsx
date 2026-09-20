@@ -1,41 +1,18 @@
-import React, { useState, useEffect, useCallback } from "react";
-import { BlockStack, Card, Text, Banner, TextField, Select, Button, InlineStack, Box, Badge, ProgressBar } from "@shopify/polaris";
-import { useFetcher } from "react-router";
-import { MagicIcon, SaveIcon } from "@shopify/polaris-icons";
-import { FULL_META_GROUPS, DROPDOWN_OPTIONS } from "../utils/meta-injector.constants.jsx";
-
-const CUSTOM_FIELDS = [
-  { key: "shopify_title", label: "MASTER SHOPIFY TITLE (Edit Here)", type: "single_line_text_field" },
-  { key: "stone_family", label: "Stone Family", type: "single_line_text_field" },
-  { key: "color", label: "Color", type: "single_line_text_field" }, 
-  { key: "surface_finish", label: "Surface Finish", type: "single_line_text_field" }, 
-  { key: "source_location", label: "Source / Discovery Location", type: "single_line_text_field" },
-  { key: "primary_use", label: "Primary Use", type: "single_line_text_field" }, 
-  { key: "handcrafted_by", label: "Handcrafted By", type: "single_line_text_field" },
-  { key: "origin_story", label: "The Origin Story", type: "multi_line_text_field" },
-  { key: "piece_name", label: "Piece Name", type: "single_line_text_field" },
-  { key: "cut_and_shape", label: "Cut / Shape", type: "single_line_text_field" }, 
-  { key: "dimensions_mm", label: "Dimensions (mm)", type: "single_line_text_field" },
-  { key: "weight_grams", label: "Weight (grams)", type: "single_line_text_field" },
-  { key: "shipping_weight_oz", label: "Shipping Weight (oz)", type: "single_line_text_field" },
-  { key: "honest_flaws_and_character", label: "Character Marks (Honest Flaws)", type: "multi_line_text_field" },
-  { key: "price", label: "Price", type: "single_line_text_field" },
-  { key: "generated_description", label: "Generated Description", type: "multi_line_text_field" }
-];
+import React, { useState, useCallback } from "react";
+import { BlockStack, Card, Text, Banner, TextField, Button, InlineStack, Box, Badge, ProgressBar } from "@shopify/polaris";
+import { MagicIcon } from "@shopify/polaris-icons";
 
 const STATUS = {
   QUEUED: "Queued",
   SCANNING: "Scanning",
-  NEEDS_REVIEW: "Needs Review",
-  VALIDATED: "Validated",
-  COMPLETE: "Complete",
-  FAILED: "Failed",
+  VALIDATED: "Manifest Built",
   SKIPPED: "Skipped"
 };
 
-const VERIFIED_SKIP_LIST = [
-  { id: "gid://shopify/Product/REPLACE_WITH_CREEK_FIND_GID", reason: "The Creek Find is permanently set to photos-check-only." },
-  { id: "gid://shopify/Product/REPLACE_WITH_SUNRISE_GID", reason: "The Sunrise is locked pending structural state bug fix." }
+const REQUIRED_KEYS = [
+  "piece_name", "price", "weight_grams", "material", "stone_family", 
+  "collection_name", "origin_handle", "rescued_by", "treatment_status", 
+  "origin_story", "primary_use", "seo_title"
 ];
 
 const SECTIONS = [
@@ -45,172 +22,57 @@ const SECTIONS = [
   { title: "Section 4 — Geo-Vault", keys: ["mohs_hardness", "luster", "fracture_pattern", "cleavage", "specific_gravity", "diaphaneity", "mineral_class", "crystal_system", "rock_composition", "rock_formation", "geological_era", "geological_age"] }
 ];
 
-export function OperationsMatrixTab({ products, fetcher }) {
+const LEGACY_MAP = {
+  "crystal-system": "crystal_system",
+  "mineral-class": "mineral_class",
+  "rock-composition": "rock_composition",
+  "geological-era": "geological_era",
+  "rock-formation": "rock_formation",
+  "necklace-design": "necklace_design"
+};
+
+const BOOLEAN_KEYS = ["found_object", "bail_included", "setting_ready", "treated", "custom_product", "is_ooak"];
+
+function normalizeBoolean(val) {
+  if (!val) return "CONFLICT";
+  const lower = String(val).toLowerCase().trim();
+  if (["true", "yes", "1", "[true]", "[\"yes\"]"].includes(lower)) return "true";
+  if (["false", "no", "0", "[false]", "[\"no\"]"].includes(lower)) return "false";
+  return "CONFLICT";
+}
+
+export function OperationsMatrixTab({ products }) {
   const safeProducts = products || [];
   const [searchQuery, setSearchQuery] = useState("");
   
-  // --- Batch Orchestrator State ---
-  const [runMode, setRunMode] = useState("DRY_RUN"); 
-  const [isOrchestratorActive, setIsOrchestratorActive] = useState(false);
-  const [isPaused, setIsPaused] = useState(false);
-  
+  const [isEngineActive, setIsEngineActive] = useState(false);
   const [queueIds, setQueueIds] = useState([]);
-  const [queueIndex, setQueueIndex] = useState(0);
   const [productStates, setProductStates] = useState({}); 
+  const [manifestData, setManifestData] = useState({}); // Stores the manifest array per GID
   
-  // --- Visual Bench (Mass Formatter) State ---
   const [selectedBenchId, setSelectedBenchId] = useState(null);
-  const [benchState, setBenchState] = useState({}); 
-  const [pushKeys, setPushKeys] = useState([]); 
 
-  const [safetyMessage, setSafetyMessage] = useState("");
-  const [safetyError, setSafetyError] = useState("");
-
-  const batchFetcher = useFetcher();
-  const singleSaveFetcher = useFetcher(); 
-
-  // --- Visual Bench Data Extractor (CALIBRATED) ---
-  const extractCurrentMeta = useCallback((product, key) => {
-    if (!product) return "";
-    
-    if (key === "shopify_title") return product.title || "";
-    if (key === "price" && product.variants?.edges?.[0]?.node?.price) {
-      return String(product.variants.edges[0].node.price);
-    }
-    
-    const allEdges = [
-      ...(product.customMeta?.edges || []),
-      ...(product.rockhoundMeta?.edges || []),
-      ...(product.geoMeta?.edges || []),
-      ...(product.metafields?.edges || [])
-    ];
-    
-    const node = allEdges.find(e => e?.node?.key === key)?.node;
-    if (!node || node.value === null || node.value === undefined) return "";
-    
-    let val = String(node.value);
-    
-    if (val.includes("gid://")) return "See Shopify metaobject";
-    
-    if (val.startsWith("[")) {
-      try {
-        const arr = JSON.parse(val);
-        return Array.isArray(arr) ? String(arr[0]) : val;
-      } catch (e) { return val; }
-    }
-    
-    return val;
-  }, []);
-
-  // --- Load a product to the Editable Bench ---
-  const loadToBench = useCallback((id) => {
-    setSelectedBenchId(id);
-    const product = safeProducts.find(p => p.id === id);
-    const newBenchState = {};
-    SECTIONS.forEach(sec => {
-      sec.keys.forEach(key => {
-        newBenchState[key] = extractCurrentMeta(product, key);
-      });
-    });
-    setBenchState(newBenchState);
-    setPushKeys([]); // Clear checkboxes
-  }, [safeProducts, extractCurrentMeta]);
-
-  const clearBench = useCallback(() => {
-    setQueueIds([]);
-    setQueueIndex(0);
-    setProductStates({});
-    setSelectedBenchId(null);
-    setBenchState({});
-    setPushKeys([]);
-    setIsOrchestratorActive(false);
-    setIsPaused(false);
-    setSafetyMessage("Rack & Bench cleared.");
-  }, []);
-
-  // --- Single Piece Save (Wired directly to API) ---
-  const handleSinglePieceSave = useCallback(() => {
-    if (!selectedBenchId) return;
-    
-    const payload = [];
-    Object.entries(benchState).forEach(([key, value]) => {
-      if (key === "shopify_title") return; 
-      let injectValue = String(value !== null && value !== undefined ? value : "").trim();
-      
-      if (injectValue !== "" && injectValue !== "N/A" && injectValue !== "See Shopify metaobject") {
-        payload.push({
-          ownerId: selectedBenchId,
-          namespace: "custom", 
-          key: key, // Keep exact hyphens/underscores defined in SECTIONS
-          value: injectValue
-        });
-      }
-    });
-
-    const masterTitle = benchState.shopify_title || safeProducts.find(p => p.id === selectedBenchId)?.title;
-    
-    const fd = new FormData();
-    fd.append("intent", "saveMetafields");
-    fd.append("productId", selectedBenchId);
-    fd.append("productTitle", masterTitle);
-    fd.append("payload", JSON.stringify(payload));
-    if (benchState.weight_grams) fd.append("weightGrams", benchState.weight_grams);
-    if (benchState.shipping_weight_oz) fd.append("shippingWeightOz", benchState.shipping_weight_oz);
-    if (benchState.generated_description) fd.append("descriptionHtml", benchState.generated_description);
-    
-    singleSaveFetcher.submit(fd, { method: "post", action: "/app/meta-injector-api" });
-  }, [selectedBenchId, benchState, safeProducts, singleSaveFetcher]);
-
-  // --- Telemetry Diagnostics ---
-  const handleCopyTelemetry = useCallback(() => {
-    if (!selectedBenchId) return;
-    const product = safeProducts.find(p => p.id === selectedBenchId);
-    navigator.clipboard.writeText(JSON.stringify(product, null, 2))
-      .then(() => {
-        if (window.shopify && window.shopify.toast) {
-          window.shopify.toast.show("Telemetry copied to clipboard!");
-        } else {
-          alert("Telemetry copied to clipboard!");
-        }
-      })
-      .catch(err => console.error("Failed to copy:", err));
-  }, [selectedBenchId, safeProducts]);
-
-  // --- Listen to Single Save Responses ---
-  useEffect(() => {
-    if (singleSaveFetcher.state === "idle" && singleSaveFetcher.data) {
-      if (singleSaveFetcher.data.intent === "saveMetafields") {
-        if (singleSaveFetcher.data.success) {
-          setSafetyMessage(`Successfully saved data to current piece.`);
-        } else {
-          setSafetyError(`Failed to save: ${singleSaveFetcher.data.error || singleSaveFetcher.data.message}`);
-        }
-      }
-    }
-  }, [singleSaveFetcher.state, singleSaveFetcher.data]);
-
-  // --- Search & Filtering ---
   const handleSearchChange = useCallback((value) => setSearchQuery(value), []);
   const handleClearSearch = useCallback(() => setSearchQuery(""), []);
+  
   const filteredProducts = safeProducts.filter(p => p.title.toLowerCase().includes(searchQuery.toLowerCase()));
   const allFilteredSelected = filteredProducts.length > 0 && filteredProducts.every(p => queueIds.includes(p.id));
 
-  // --- Rack Queue Selection ---
   const handleToggleProductSelection = useCallback((id) => {
-    if (isOrchestratorActive && !isPaused) return; 
+    if (isEngineActive) return; 
     setQueueIds(prev => {
       const newIds = prev.includes(id) ? prev.filter(pid => pid !== id) : [...prev, id];
       setProductStates(states => {
         const newStates = { ...states };
-        if (!newStates[id]) newStates[id] = { status: STATUS.QUEUED, logs: [] };
+        if (!newStates[id]) newStates[id] = { status: STATUS.QUEUED };
         return newStates;
       });
       return newIds;
     });
-  }, [isOrchestratorActive, isPaused]);
+  }, [isEngineActive]);
 
   const toggleSelectAllFiltered = useCallback(() => {
-    if (isOrchestratorActive && !isPaused) return;
+    if (isEngineActive) return;
     setQueueIds(prev => {
       let newIds = [...prev];
       if (allFilteredSelected) {
@@ -220,197 +82,206 @@ export function OperationsMatrixTab({ products, fetcher }) {
       }
       setProductStates(states => {
         const newStates = { ...states };
-        newIds.forEach(id => { if (!newStates[id]) newStates[id] = { status: STATUS.QUEUED, logs: [] }; });
+        newIds.forEach(id => { if (!newStates[id]) newStates[id] = { status: STATUS.QUEUED }; });
         return newStates;
       });
       return newIds;
     });
-  }, [allFilteredSelected, filteredProducts, isOrchestratorActive, isPaused]);
+  }, [allFilteredSelected, filteredProducts, isEngineActive]);
 
-  // --- The Batch State Machine ---
-  const startBatch = useCallback(() => {
-    if (queueIds.length === 0) {
-      setSafetyError("No products loaded on the rack.");
-      return;
-    }
-    if (pushKeys.length === 0) {
-      setSafetyError("No fields checked. You must check the boxes next to the fields you want to mass-format.");
-      return;
-    }
-    
-    setSafetyError("");
-    setSafetyMessage(`Mass Formatter started in ${runMode} mode.`);
-    setIsOrchestratorActive(true);
-    setIsPaused(false);
-  }, [queueIds.length, pushKeys.length, runMode]);
-
-  const updateProductState = useCallback((id, status, newLogs = []) => {
-    setProductStates(prev => {
-      const updated = { ...prev };
-      const existingLogs = updated[id]?.logs || [];
-      updated[id] = { status: status, logs: [...existingLogs, ...newLogs] };
-      return updated;
-    });
+  const clearBench = useCallback(() => {
+    setQueueIds([]);
+    setProductStates({});
+    setManifestData({});
+    setSelectedBenchId(null);
+    setIsEngineActive(false);
   }, []);
 
-  // --- Core Processing Loop (Correctly pushing checked keys to API) ---
-  useEffect(() => {
-    if (!isOrchestratorActive || isPaused) return;
-    if (batchFetcher.state !== "idle") return; 
+  // --- THE MANIFEST BUILDER ---
+  const generateRepairPlan = useCallback(() => {
+    if (queueIds.length === 0) return;
+    setIsEngineActive(true);
 
-    if (queueIndex >= queueIds.length) {
-      setIsOrchestratorActive(false);
-      setIsPaused(false);
-      setSafetyMessage(`Mass Format (${runMode}) Complete.`);
-      return;
-    }
+    const newManifests = { ...manifestData };
+    const newStates = { ...productStates };
 
-    const currentId = queueIds[queueIndex];
-    const currentProduct = safeProducts.find(p => p.id === currentId);
-    const currentState = productStates[currentId]?.status;
+    queueIds.forEach(id => {
+      const product = safeProducts.find(p => p.id === id);
+      if (!product) return;
 
-    if (currentState === STATUS.QUEUED) {
-      const skipRule = VERIFIED_SKIP_LIST.find(skip => skip.id === currentId);
-      if (skipRule) {
-        updateProductState(currentId, STATUS.SKIPPED, [`Skipped: ${skipRule.reason}`]);
-        setTimeout(() => setQueueIndex(i => i + 1), 500);
-        return;
+      const isAccessory = product.title.toLowerCase().includes("cord") || product.title.toLowerCase().includes("bail");
+      const manifest = [];
+      const processedKeys = new Set();
+      const meta = {};
+
+      if (product.title) meta["shopify_title"] = product.title;
+      if (product.variants?.edges?.[0]?.node?.price) meta["price"] = product.variants.edges[0].node.price;
+
+      const allEdges = [
+        ...(product?.customMeta?.edges || []),
+        ...(product?.rockhoundMeta?.edges || []),
+        ...(product?.geoMeta?.edges || []),
+        ...(product?.metafields?.edges || [])
+      ];
+
+      allEdges.forEach(({ node }) => {
+        if (node && node.namespace === "custom") {
+          meta[node.key] = String(node.value);
+        }
+      });
+
+      // 1. LEGACY MAPPING CONFLICT RESOLUTION
+      Object.entries(LEGACY_MAP).forEach(([legacy, canonical]) => {
+        const hasLeg = meta.hasOwnProperty(legacy);
+        const hasCan = meta.hasOwnProperty(canonical);
+
+        if (hasLeg && hasCan) {
+          if (meta[legacy] === meta[canonical]) {
+            manifest.push({ key: legacy, current: meta[legacy], propKey: "-", propVal: "-", class: "REMOVE AFTER VERIFICATION", status: "yellow", section: "Legacy Diagnostics" });
+          } else {
+            manifest.push({ key: legacy, current: meta[legacy], propKey: canonical, propVal: "???", class: "CONFLICT", status: "red", section: "Legacy Diagnostics" });
+            manifest.push({ key: canonical, current: meta[canonical], propKey: canonical, propVal: "???", class: "CONFLICT", status: "red", section: "Legacy Diagnostics" });
+            processedKeys.add(canonical);
+          }
+          processedKeys.add(legacy);
+        } else if (hasLeg && !hasCan) {
+          manifest.push({ key: legacy, current: meta[legacy], propKey: canonical, propVal: meta[legacy], class: "COPY TO CANONICAL KEY", status: "yellow", section: "Legacy Diagnostics" });
+          processedKeys.add(legacy);
+          processedKeys.add(canonical); 
+        }
+      });
+
+      // 2. SEMANTIC DUPLICATE REVIEW (is_one_of_a_kind vs is_ooak)
+      const hasOneOfKind = meta.hasOwnProperty("is_one_of_a_kind");
+      const hasOoak = meta.hasOwnProperty("is_ooak");
+      if (hasOneOfKind && hasOoak) {
+        manifest.push({ key: "is_one_of_a_kind", current: meta["is_one_of_a_kind"], propKey: "is_ooak", propVal: "???", class: "CONFLICT", status: "red", section: "Legacy Diagnostics" });
+        manifest.push({ key: "is_ooak", current: meta["is_ooak"], propKey: "is_ooak", propVal: "???", class: "CONFLICT", status: "red", section: "Legacy Diagnostics" });
+        processedKeys.add("is_one_of_a_kind");
+        processedKeys.add("is_ooak");
+      } else if (hasOneOfKind && !hasOoak) {
+        manifest.push({ key: "is_one_of_a_kind", current: meta["is_one_of_a_kind"], propKey: "is_ooak", propVal: normalizeBoolean(meta["is_one_of_a_kind"]), class: "COPY TO CANONICAL KEY", status: "yellow", section: "Legacy Diagnostics" });
+        processedKeys.add("is_one_of_a_kind");
+        processedKeys.add("is_ooak");
       }
-      
-      updateProductState(currentId, STATUS.SCANNING, ["Applying template fields..."]);
-      
-      if (runMode === "DRY_RUN") {
-        updateProductState(currentId, STATUS.VALIDATED, [`DRY RUN: Validated ${pushKeys.length} fields. No data saved.`]);
-        setTimeout(() => setQueueIndex(i => i + 1), 500);
-        return;
-      }
 
-      // LIVE RUN: Push ONLY the fields checked in `pushKeys`
-      const payload = [];
-      let weightGrams = "";
-      let shippingWeightOz = "";
-      let descHtml = "";
+      // 3. MAIN SECTION PROCESSING
+      SECTIONS.forEach(sec => {
+        sec.keys.forEach(k => {
+          if (processedKeys.has(k)) return;
 
-      pushKeys.forEach(key => {
-        if (key === "shopify_title") return; 
-        
-        let val = benchState[key] !== undefined ? benchState[key] : "";
-        
-        if (key === "weight_grams") weightGrams = val;
-        if (key === "shipping_weight_oz") shippingWeightOz = val;
-        if (key === "generated_description") descHtml = val;
-        
-        payload.push({
-          ownerId: currentId,
-          namespace: "custom",
-          key: key,
-          value: val
+          const isReq = REQUIRED_KEYS.includes(k);
+          
+          if (meta.hasOwnProperty(k)) {
+            const currentVal = meta[k];
+            let proposedVal = currentVal;
+            let classification = "KEEP";
+            let status = "green";
+
+            if (BOOLEAN_KEYS.includes(k)) {
+              const norm = normalizeBoolean(currentVal);
+              if (norm === "CONFLICT") {
+                classification = "CONFLICT"; status = "red"; proposedVal = "???";
+              } else if (norm !== currentVal) {
+                classification = "NORMALIZE VALUE"; status = "yellow"; proposedVal = norm;
+              }
+            }
+
+            manifest.push({ key: k, current: currentVal, propKey: k, propVal: proposedVal, class: classification, status: status, section: sec.title });
+          } else {
+            if (isAccessory && (sec.title === "Section 4 — Geo-Vault" || sec.title === "Section 1 — Core Ignition")) {
+              manifest.push({ key: k, current: "N/A", propKey: k, propVal: "N/A", class: "KEEP", status: "green", section: sec.title });
+            } else {
+              manifest.push({ key: k, current: "None", propKey: k, propVal: "None", class: "MISSING", status: isReq ? "red" : "yellow", section: sec.title });
+            }
+          }
+          processedKeys.add(k);
         });
       });
 
-      const fd = new FormData();
-      fd.append("intent", "saveMetafields"); 
-      fd.append("productId", currentId);
-      fd.append("payload", JSON.stringify(payload));
-      if (weightGrams) fd.append("weightGrams", weightGrams);
-      if (shippingWeightOz) fd.append("shippingWeightOz", shippingWeightOz);
-      if (descHtml) fd.append("descriptionHtml", descHtml);
+      // 4. UNKNOWN KEYS
+      Object.keys(meta).forEach(k => {
+        if (!processedKeys.has(k) && k !== "shopify_title" && k !== "price") {
+          manifest.push({ key: k, current: meta[k], propKey: "???", propVal: "???", class: "UNKNOWN KEY", status: "yellow", section: "Unknown Variables" });
+        }
+      });
 
-      batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-api" });
-      return;
-    }
-  }, [isOrchestratorActive, isPaused, queueIndex, queueIds, productStates, batchFetcher.state, safeProducts, runMode, updateProductState, pushKeys, benchState]);
+      newManifests[id] = manifest;
+      newStates[id] = { status: STATUS.VALIDATED };
+    });
 
-  // --- Listen to Batch API Responses ---
-  useEffect(() => {
-    if (batchFetcher.state === "idle" && batchFetcher.data) {
-      const { intent, success, pieceId, message, errors } = batchFetcher.data;
-      if (intent === "saveMetafields" && pieceId) {
-        const appliedStatus = success ? STATUS.COMPLETE : STATUS.FAILED;
-        const logs = errors ? errors.map(e => e.message) : [message || "Fields successfully updated."];
-        updateProductState(pieceId, appliedStatus, logs);
-        setTimeout(() => setQueueIndex(prev => prev + 1), 500);
-      }
-    }
-  }, [batchFetcher.state, batchFetcher.data, updateProductState]);
-
-  // --- Visual Bench Field Renderer ---
-  const renderVisualBenchField = (key) => {
-    if (!selectedBenchId) return null;
-    
-    let fieldConfig = null;
-    for (const group of FULL_META_GROUPS || []) {
-      const found = group.fields.find(f => f.key === key);
-      if (found) { fieldConfig = found; break; }
-    }
-    if (!fieldConfig) fieldConfig = CUSTOM_FIELDS?.find(f => f.key === key);
-    if (!fieldConfig) fieldConfig = { key, label: key.split(/[-_]/).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' '), type: 'text' };
-
-    const isChecked = pushKeys.includes(key);
-    const val = benchState[key] !== undefined ? benchState[key] : "";
-
-    const labelNode = (
-      <div style={{ display: 'flex', alignItems: 'center', paddingBottom: "4px" }} onClick={(e) => e.stopPropagation()}>
-        <input 
-          type="checkbox" 
-          checked={isChecked}
-          onChange={(e) => {
-            if (e.target.checked) setPushKeys(prev => [...prev, key]);
-            else setPushKeys(prev => prev.filter(k => k !== key));
-          }}
-          style={{ width: "18px", height: "18px", marginRight: "8px", cursor: "pointer", accentColor: "#005bd3" }}
-        />
-        <span style={{ fontSize: '13px', fontWeight: 'bold', color: isChecked ? "#005bd3" : "#202223" }}>
-          {fieldConfig.label}
-        </span>
-      </div>
-    );
-
-    return (
-      <div key={key} style={{ backgroundColor: isChecked ? "#e8f4fc" : "transparent", padding: "8px", borderRadius: "6px", border: isChecked ? "2px solid #005bd3" : "1px solid transparent" }}>
-        {fieldConfig.type !== "text" && DROPDOWN_OPTIONS && DROPDOWN_OPTIONS[key] && DROPDOWN_OPTIONS[key].length > 0 ? (
-          <Select 
-            label={labelNode} 
-            options={[{ label: "Select...", value: "" }, ...DROPDOWN_OPTIONS[key]]} 
-            value={val} 
-            onChange={(v) => setBenchState(prev => ({ ...prev, [key]: v }))} 
-          />
-        ) : (
-          <TextField 
-            label={labelNode} 
-            value={val} 
-            onChange={(v) => setBenchState(prev => ({ ...prev, [key]: v }))} 
-            multiline={fieldConfig.multiline || key.includes("story") || key.includes("notes") || key.includes("character") || key.includes("description") ? 3 : false} 
-            autoComplete="off" 
-          />
-        )}
-      </div>
-    );
-  };
+    setManifestData(newManifests);
+    setProductStates(newStates);
+    setIsEngineActive(false);
+  }, [queueIds, safeProducts, manifestData, productStates]);
 
   const getStatusTone = (status) => {
     switch(status) {
-      case STATUS.COMPLETE:
       case STATUS.VALIDATED: return "success";
-      case STATUS.FAILED: return "critical";
-      case STATUS.NEEDS_REVIEW: return "warning";
-      case STATUS.SKIPPED: return "info";
       case STATUS.SCANNING: return "magic";
+      case STATUS.QUEUED: return "info";
       default: return undefined;
     }
   };
 
-  const progressPercentage = queueIds.length > 0 ? Math.round((queueIndex / queueIds.length) * 100) : 0;
+  const getIndicatorColor = (status) => {
+    if (status === "green") return "#22c55e";
+    if (status === "yellow") return "#eab308";
+    if (status === "red") return "#ef4444";
+    return "transparent";
+  };
+
+  const renderManifestTable = (sectionTitle, items) => {
+    if (!items || items.length === 0) return null;
+    return (
+      <BlockStack gap="300" key={sectionTitle}>
+        <Text as="h4" variant="headingSm" fontWeight="bold" tone="subdued" style={{ borderBottom: "2px solid #e1e3e5", paddingBottom: "4px" }}>
+          {sectionTitle}
+        </Text>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '15px 1.5fr 1.5fr 1.5fr 1.5fr 1fr', gap: '10px', padding: '0 8px', fontWeight: 'bold', fontSize: '12px', color: '#5c5f62' }}>
+            <div></div>
+            <div>Current Key</div>
+            <div>Current Value</div>
+            <div>Proposed Key</div>
+            <div>Proposed Value</div>
+            <div>Action</div>
+          </div>
+          {items.map((item, i) => (
+            <div key={i} style={{ display: 'grid', gridTemplateColumns: '15px 1.5fr 1.5fr 1.5fr 1.5fr 1fr', gap: '10px', padding: '8px', backgroundColor: item.status === "red" ? "#fef2f2" : item.status === "yellow" ? "#fefce8" : "#f0fdf4", border: `1px solid ${getIndicatorColor(item.status)}`, borderRadius: '6px', alignItems: 'center' }}>
+              <svg width="12" height="12" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="9" cy="9" r="9" fill={getIndicatorColor(item.status)} />
+              </svg>
+              <Text as="span" variant="bodySm" fontWeight="bold">{item.key}</Text>
+              <Text as="span" variant="bodySm" truncate>{item.current}</Text>
+              <Text as="span" variant="bodySm" fontWeight="bold">{item.propKey}</Text>
+              <Text as="span" variant="bodySm" truncate>{item.propVal}</Text>
+              <Badge tone={item.status === "red" ? "critical" : item.status === "yellow" ? "attention" : "success"}>
+                {item.class}
+              </Badge>
+            </div>
+          ))}
+        </div>
+      </BlockStack>
+    );
+  };
+
+  const activeManifest = selectedBenchId ? manifestData[selectedBenchId] : null;
 
   return (
     <BlockStack gap="600">
+      <BlockStack gap="200">
+        <Text variant="headingXl" as="h1">Meta Injector</Text>
+        <Text variant="headingMd" tone="subdued">Data Integrity & Operations Hub</Text>
+      </BlockStack>
+
       <div style={{ display: "grid", gridTemplateColumns: "260px 1fr", gap: "20px", alignItems: "start" }}>
         
-        {/* LEFT COLUMN: The Rack */}
+        {/* LEFT COLUMN: 1. Select Raw Inventory */}
         <div>
           <Card padding="300">
             <BlockStack gap="400">
-              <Text variant="headingMd" as="h2">The Rack ({queueIds.length})</Text>
+              <Text variant="headingMd" as="h2">1. Select Raw Inventory ({queueIds.length})</Text>
               
               <TextField
                 value={searchQuery}
@@ -419,14 +290,14 @@ export function OperationsMatrixTab({ products, fetcher }) {
                 onClearButtonClick={handleClearSearch}
                 autoComplete="off"
                 placeholder="Search..."
-                disabled={isOrchestratorActive && !isPaused}
+                disabled={isEngineActive}
               />
 
               <Button 
                 size="large" 
                 fullWidth 
                 onClick={toggleSelectAllFiltered}
-                disabled={isOrchestratorActive && !isPaused}
+                disabled={isEngineActive}
               >
                 {allFilteredSelected ? `Unload (${filteredProducts.length})` : `Load (${filteredProducts.length})`}
               </Button>
@@ -447,7 +318,7 @@ export function OperationsMatrixTab({ products, fetcher }) {
                         border: isSelectedForBench ? "2px solid #005bd3" : "1px solid #c9cccf", 
                         borderRadius: "6px", 
                         backgroundColor: isChecked ? "#f0f2f4" : "#ffffff", 
-                        cursor: isOrchestratorActive && !isPaused ? "not-allowed" : "pointer", 
+                        cursor: isEngineActive ? "not-allowed" : "pointer", 
                         padding: "8px",
                         display: "flex",
                         flexDirection: "column",
@@ -468,9 +339,13 @@ export function OperationsMatrixTab({ products, fetcher }) {
                         size="micro" 
                         fullWidth
                         variant={isSelectedForBench ? "primary" : "secondary"}
-                        onClick={(e) => { e.stopPropagation(); loadToBench(p.id); }}
+                        onClick={(e) => { 
+                          e.stopPropagation(); 
+                          if (manifestData[p.id]) setSelectedBenchId(p.id);
+                          else alert("Generate Repair Plan first to view this item's manifest.");
+                        }}
                       >
-                        Drop on Bench
+                        View Manifest on Bench
                       </Button>
                     </div>
                   );
@@ -480,132 +355,80 @@ export function OperationsMatrixTab({ products, fetcher }) {
           </Card>
         </div>
 
-        {/* RIGHT COLUMN: Standardizer Controls & Editable Bench */}
+        {/* RIGHT COLUMN: Repair Manifest Viewer */}
         <div>
           <BlockStack gap="600">
-            
-            {/* The Wrench (Orchestrator Controls) */}
+            <Text variant="headingLg" as="h2">2. Repair Bench & Dry Run Diagnostics</Text>
+
             <Card padding="400">
               <BlockStack gap="400">
                 <InlineStack align="space-between">
-                  <Text variant="headingLg" as="h2">Mass Formatter Engine</Text>
-                  <div style={{ display: "flex", gap: "8px" }}>
-                    <Button 
-                      size="large" 
-                      variant={runMode === "DRY_RUN" ? "primary" : "secondary"}
-                      onClick={() => setRunMode("DRY_RUN")}
-                      disabled={isOrchestratorActive}
-                    >
-                      DRY RUN
-                    </Button>
-                    <Button 
-                      size="large" 
-                      variant={runMode === "LIVE_RUN" ? "primary" : "secondary"}
-                      tone={runMode === "LIVE_RUN" ? "critical" : undefined}
-                      onClick={() => {
-                        if (window.confirm("WARNING: LIVE RUN ACTIVE.\n\nThis will permanently overwrite the checked fields on all queued pieces. Ensure you have tested 'Save to Current Piece' on a single item first.")) {
-                          setRunMode("LIVE_RUN");
-                        }
-                      }}
-                      disabled={isOrchestratorActive}
-                    >
-                      LIVE RUN
-                    </Button>
-                  </div>
+                  <Text variant="headingMd" as="h3">Dry Run Orchestrator</Text>
+                  <Button 
+                    size="large" 
+                    variant="primary" 
+                    icon={MagicIcon} 
+                    onClick={generateRepairPlan} 
+                    disabled={queueIds.length === 0}
+                    loading={isEngineActive}
+                  >
+                    GENERATE REPAIR PLAN
+                  </Button>
                 </InlineStack>
-                
-                {safetyMessage && (
-                  <Banner tone="info" onDismiss={() => setSafetyMessage("")}>
-                    <Text as="p">{safetyMessage}</Text>
-                  </Banner>
-                )}
-                {safetyError && (
-                  <Banner tone="critical" onDismiss={() => setSafetyError("")}>
-                    <Text as="p">{safetyError}</Text>
-                  </Banner>
-                )}
 
-                <Box padding="400" border="1px solid #E1E3E5" borderRadius="200" background="bg-surface-secondary">
-                  <BlockStack gap="200">
-                    <InlineStack align="space-between">
-                      <Text as="p" fontWeight="bold">Format Progress</Text>
-                      <Text as="p">{queueIndex} of {queueIds.length} Processed</Text>
-                    </InlineStack>
-                    <ProgressBar progress={progressPercentage} color="primary" />
-                  </BlockStack>
-                </Box>
+                <Banner tone="info">
+                  <Text as="p">This bench is running in strictly isolated <strong>Dry Run</strong> mode. No live Shopify mutations, overrides, or deletions will occur. The plan operates safely off the product GID.</Text>
+                </Banner>
+
+                {queueIds.length > 0 && (
+                  <Box padding="400" border="1px solid #E1E3E5" borderRadius="200" background="bg-surface-secondary">
+                    <BlockStack gap="200">
+                      <InlineStack align="space-between">
+                        <Text as="p" fontWeight="bold">Diagnostic Generation</Text>
+                        <Text as="p">{Object.keys(manifestData).length} of {queueIds.length} Manifests Built</Text>
+                      </InlineStack>
+                      <ProgressBar progress={Object.keys(manifestData).length > 0 ? Math.round((Object.keys(manifestData).length / queueIds.length) * 100) : 0} color="primary" />
+                    </BlockStack>
+                  </Box>
+                )}
 
                 <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
-                  {!isOrchestratorActive && (
-                    <Button size="large" variant="primary" icon={MagicIcon} onClick={startBatch} disabled={queueIds.length === 0 || pushKeys.length === 0}>
-                      {`Push ${pushKeys.length} Checked Fields to ${queueIds.length} Pieces (${runMode === "LIVE_RUN" ? "LIVE" : "Dry Run"})`}
-                    </Button>
-                  )}
-                  {isOrchestratorActive && !isPaused && (
-                    <Button size="large" onClick={() => setIsPaused(true)}>Pause</Button>
-                  )}
-                  {isOrchestratorActive && isPaused && (
-                    <Button size="large" variant="primary" onClick={() => setIsPaused(false)}>Resume</Button>
-                  )}
-                  <Button size="large" tone="critical" onClick={clearBench}>
-                    Clear Rack & Reset
-                  </Button>
+                  <Button size="large" tone="critical" onClick={clearBench}>Clear Rack & Reset Bench</Button>
                 </div>
               </BlockStack>
             </Card>
 
-            {/* Editable Template Bench */}
             <Card padding="400">
               <BlockStack gap="400">
                 <InlineStack align="space-between">
-                  <Text variant="headingLg" as="h2">The Formatter Template</Text>
-                  <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
-                    {selectedBenchId && (
-                      <Button 
-                        size="medium" 
-                        variant="primary" 
-                        icon={SaveIcon} 
-                        onClick={handleSinglePieceSave}
-                        loading={singleSaveFetcher.state !== "idle"}
-                        tone="success"
-                      >
-                        Save to Current Piece
-                      </Button>
-                    )}
-                    {selectedBenchId && (
-                      <Button size="medium" onClick={handleCopyTelemetry}>
-                        Copy Telemetry
-                      </Button>
-                    )}
-                    <Badge tone={pushKeys.length > 0 ? "success" : "attention"}>
-                      {pushKeys.length} Checked for Mass Update
-                    </Badge>
+                  <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+                    <Text variant="headingLg" as="h2">Diagnostic Manifest Readout</Text>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                      <svg width="12" height="12"><circle cx="6" cy="6" r="6" fill="#22c55e" /></svg><Text variant="bodySm">Consistent / Keep</Text>
+                      <svg width="12" height="12" style={{ marginLeft: "8px" }}><circle cx="6" cy="6" r="6" fill="#eab308" /></svg><Text variant="bodySm">Review Required</Text>
+                      <svg width="12" height="12" style={{ marginLeft: "8px" }}><circle cx="6" cy="6" r="6" fill="#ef4444" /></svg><Text variant="bodySm">Conflict / Required Empty</Text>
+                    </div>
                   </div>
                 </InlineStack>
                 
-                {!selectedBenchId ? (
+                {!activeManifest ? (
                   <Box padding="800" background="bg-surface-secondary" borderRadius="200">
-                    <Text as="p" alignment="center" tone="subdued">Drop a piece on the bench to load its data. Edit the fields, then check the boxes next to the ones you want to stamp across the Rack.</Text>
+                    <Text as="p" alignment="center" tone="subdued">Load inventory, hit GENERATE REPAIR PLAN, then drop a piece on the bench to view its diagnostic readout.</Text>
                   </Box>
                 ) : (
                   <BlockStack gap="600">
-                    <Text as="h3" variant="headingMd" color="success">Base Loaded: {safeProducts.find(p => p.id === selectedBenchId)?.title}</Text>
+                    <Text as="h3" variant="headingMd" color="success">GID Lock: {selectedBenchId}</Text>
                     
-                    {SECTIONS.map((section, idx) => (
-                      <BlockStack key={idx} gap="300">
-                        <Text as="h4" variant="headingSm" fontWeight="bold" tone="subdued" style={{ borderBottom: "2px solid #e1e3e5", paddingBottom: "4px" }}>
-                          {section.title}
-                        </Text>
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(210px, 1fr))', gap: '16px' }}>
-                          {section.keys.map(key => renderVisualBenchField(key))}
-                        </div>
-                      </BlockStack>
-                    ))}
+                    {renderManifestTable("Legacy Diagnostics", activeManifest.filter(m => m.section === "Legacy Diagnostics"))}
+                    {renderManifestTable("Section 1 — Core Ignition", activeManifest.filter(m => m.section === "Section 1 — Core Ignition"))}
+                    {renderManifestTable("Section 2 — Human Engine", activeManifest.filter(m => m.section === "Section 2 — Human Engine"))}
+                    {renderManifestTable("Section 3 — Google Machine", activeManifest.filter(m => m.section === "Section 3 — Google Machine"))}
+                    {renderManifestTable("Section 4 — Geo-Vault", activeManifest.filter(m => m.section === "Section 4 — Geo-Vault"))}
+                    {renderManifestTable("Unknown Variables", activeManifest.filter(m => m.section === "Unknown Variables"))}
                   </BlockStack>
                 )}
               </BlockStack>
             </Card>
-
           </BlockStack>
         </div>
       </div>
