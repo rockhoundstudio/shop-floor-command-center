@@ -120,6 +120,21 @@ export function OperationsMatrixTab({ products, fetcher }) {
     setSafetyMessage("Rack & Bench cleared.");
   }, []);
 
+  // --- Telemetry Diagnostics ---
+  const handleCopyTelemetry = useCallback(() => {
+    if (!selectedBenchId) return;
+    const product = safeProducts.find(p => p.id === selectedBenchId);
+    navigator.clipboard.writeText(JSON.stringify(product, null, 2))
+      .then(() => {
+        if (window.shopify && window.shopify.toast) {
+          window.shopify.toast.show("Telemetry copied to clipboard!");
+        } else {
+          alert("Telemetry copied to clipboard!");
+        }
+      })
+      .catch(err => console.error("Failed to copy:", err));
+  }, [selectedBenchId, safeProducts]);
+
   // --- Search & Filtering ---
   const handleSearchChange = useCallback((value) => setSearchQuery(value), []);
   const handleClearSearch = useCallback(() => setSearchQuery(""), []);
@@ -440,9 +455,16 @@ export function OperationsMatrixTab({ products, fetcher }) {
               <BlockStack gap="400">
                 <InlineStack align="space-between">
                   <Text variant="headingLg" as="h2">The Formatter Template</Text>
-                  <Badge tone={pushKeys.length > 0 ? "success" : "attention"}>
-                    {pushKeys.length} Fields Checked for Mass Update
-                  </Badge>
+                  <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
+                    {selectedBenchId && (
+                      <Button size="micro" onClick={handleCopyTelemetry}>
+                        Copy Telemetry
+                      </Button>
+                    )}
+                    <Badge tone={pushKeys.length > 0 ? "success" : "attention"}>
+                      {pushKeys.length} Fields Checked for Mass Update
+                    </Badge>
+                  </div>
                 </InlineStack>
                 
                 {!selectedBenchId ? (
@@ -458,7 +480,6 @@ export function OperationsMatrixTab({ products, fetcher }) {
                         <Text as="h4" variant="headingSm" fontWeight="bold" tone="subdued" style={{ borderBottom: "2px solid #e1e3e5", paddingBottom: "4px" }}>
                           {section.title}
                         </Text>
-                        {/* TIGHTER GRID TO ACCOMMODATE SIDEKICK */}
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(210px, 1fr))', gap: '16px' }}>
                           {section.keys.map(key => renderVisualBenchField(key))}
                         </div>
