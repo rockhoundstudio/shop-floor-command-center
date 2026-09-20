@@ -93,7 +93,7 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
     setCurrentFixIndex(0);
     setShowFixPopup(false);
     setFixPopupValue("");
-    lastProcessedAiData.current = null; // Prevent bleeding
+    lastProcessedAiData.current = null;
     lastAutofilledTitle.current = "";
 
     const product = products.find(p => p.id === id);
@@ -330,16 +330,15 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
       "shopify_title",
       "origin_handle", "origin_page_handle", "collection_location",
       "stone_family", "color", "surface_finish", "source_location",
-      "primary_use", "handcrafted_by", "origin_story",
-      "piece_name", "cut_and_shape", "dimensions_mm",
-      "weight_grams", "shipping_weight_oz", "honest_flaws_and_character", "artist_notes",
-      "price", "bench_notes", "character_marks", "primary_medium",
+      "primary_use", "handcrafted_by", "piece_name", "cut_and_shape", "dimensions_mm",
+      "weight_grams", "shipping_weight_oz", "price", "bench_notes", "character_marks", "primary_medium",
       "secondary_medium", "treatment_status", "is_ooak", "treated",
       "material", "stone_shape", "rescued_by", "alt_text",
       "found_object", "wire_material", "bail_included", "setting_ready",
       "jewelry_type", "necklace_design", "jewelry_finding_type",
       "chain_link_type", "target_gender"
     ];
+    
     setFullMetaState(prev => Object.fromEntries(RESCAN_PRESERVE_KEYS.map(k => [k, prev[k] || ""])));
     setFormState(prev => Object.fromEntries(RESCAN_PRESERVE_KEYS.map(k => [k, prev[k] || ""])));
     setFullMetaState(prev => ({ ...prev, custom_product: prev.custom_product || "Yes" }));
@@ -354,7 +353,7 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
     formData.append("collection_location", fullMetaState.collection_location || "");
     formData.append("piece_name", fullMetaState.piece_name || "");
     formData.append("productTitle", titleToUse);
-    formData.append("honest_flaws_and_character", fullMetaState.honest_flaws_and_character || "");
+    formData.append("honest_flaws_and_character", fullMetaState.honest_flaws_and_character || formState.honest_flaws_and_character || "");
     formData.append("price", fullMetaState.price || "");
     formData.append("origin_story", fullMetaState.origin_story || formState.origin_story || "");
     formData.append("artist_notes", fullMetaState.artist_notes || formState.artist_notes || "");
