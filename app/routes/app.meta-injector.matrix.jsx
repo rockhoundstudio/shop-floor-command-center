@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect } from "react";
 import { BlockStack, Card, Text, Banner, TextField, Button, InlineStack, Box, Badge, ProgressBar } from "@shopify/polaris";
-import { MagicIcon } from "@shopify/polaris-icons";
+import { MagicIcon, ClipboardIcon, SaveIcon } from "@shopify/polaris-icons";
 import { useFetcher } from "react-router";
 
 const STATUS = {
@@ -34,7 +34,7 @@ const LEGACY_MAP = {
   "necklace-design": "necklace_design"
 };
 
-const BOOLEAN_KEYS = ["found_object", "bail_included", "setting_ready", "treated", "custom_product", "is_ooak"];
+const BOOLEAN_KEYS = ["found_object", "setting_ready", "treated", "custom_product", "is_ooak"];
 
 function normalizeBoolean(val) {
   if (!val) return "CONFLICT";
@@ -299,14 +299,41 @@ export function OperationsMatrixTab({ products }) {
     if (batchFetcher.state === "idle" && batchFetcher.data) {
       const { intent, success, pieceId, message, errors } = batchFetcher.data;
       if (intent === "executeRepairPlan" && pieceId) {
-        const appliedStatus = success ? STATUS.COMPLETE : STATUS.FAILED;
-        const logs = errors ? errors.map(e => e.message) : [message];
-        updateProductState(pieceId, appliedStatus, logs);
+        
+        if (!success) {
+           console.error("Execute Repair Error from Backend:", batchFetcher.data);
+           setIsExecuting(false);
+           setSafetyError(`Engine halted on ${pieceId}. Error: ${errors ? errors[0]?.message : (batchFetcher.data.error || "Unknown Error")}`);
+           updateProductState(pieceId, STATUS.FAILED, errors ? errors.map(e => e.message) : ["Unknown Backend Error"]);
+           return;
+        }
+        
+        updateProductState(pieceId, STATUS.COMPLETE, [message || "Repairs applied."]);
+        
+        // This ensures the loop fires properly on success
         setTimeout(() => setExecuteIndex(i => i + 1), 500);
       }
     }
   }, [batchFetcher.state, batchFetcher.data, updateProductState]);
 
+
+  // --- MANUAL OVERRIDES & GLOBAL TELEMETRY ---
+  const handleExecuteSingleRepair = useCallback(() => {
+    if (!selectedBenchId) return;
+    const manifest = manifestData[selectedBenchId];
+    if (!manifest) {
+       alert("Generate Repair Plan for this item first.");
+       return;
+    }
+    
+    const fd = new FormData();
+    fd.append("intent", "executeRepairPlan");
+    fd.append("pieceId", selectedBenchId);
+    fd.append("manifest", JSON.stringify(manifest));
+
+    updateProductState(selectedBenchId, STATUS.SCANNING, ["Executing single repair..."]);
+    batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-api" });
+  }, [selectedBenchId, manifestData, batchFetcher, updateProductState]);
 
   const getStatusTone = (status) => {
     switch(status) {
@@ -513,6 +540,24 @@ export function OperationsMatrixTab({ products }) {
 
                 <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
                   <Button size="large" tone="critical" onClick={clearBench} disabled={isExecuting}>Clear Rack & Reset Bench</Button>
+                  
+                  {/* GLOBAL TELEMETRY BUTTON RESTORED AND VISIBLE ALWAYS */}
+                  <Button size="large" icon={ClipboardIcon} onClick={() => {
+                    const payload = {
+                      selectedBenchId,
+                      productStates,
+                      fetcherState: batchFetcher.state,
+                      fetcherData: batchFetcher.data,
+                    };
+                    navigator.clipboard.writeText(JSON.stringify(payload, null, 2))
+                      .then(() => {
+                        if (window.shopify && window.shopify.toast) window.shopify.toast.show("Global Telemetry Copied!");
+                        else alert("Global Telemetry Copied!");
+                      })
+                      .catch(err => console.error(err));
+                  }}>
+                    Global Telemetry Dump
+                  </Button>
                 </div>
               </BlockStack>
             </Card>
@@ -528,6 +573,22 @@ export function OperationsMatrixTab({ products }) {
                       <svg width="12" height="12" style={{ marginLeft: "8px" }}><circle cx="6" cy="6" r="6" fill="#ef4444" /></svg><Text variant="bodySm">Conflict / Required Empty</Text>
                     </div>
                   </div>
+                  
+                  <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
+                    {selectedBenchId && (
+                      <Button 
+                        size="medium" 
+                        variant="primary" 
+                        icon={SaveIcon} 
+                        onClick={handleExecuteSingleRepair}
+                        loading={batchFetcher.state !== "idle" && !isExecuting}
+                        tone="success"
+                      >
+                        Execute Single Repair
+                      </Button>
+                    )}
+                  </div>
+
                 </InlineStack>
                 
                 {!activeManifest ? (
