@@ -7,32 +7,8 @@ import React, { useState, useEffect, useCallback, useRef } from "react";
 import { BlockStack, Card, Text, TextField, Select, Button, Banner, DropZone, Spinner, Frame, Toast, InlineGrid, Divider } from "@shopify/polaris";
 import { PlusIcon, MagicIcon } from "@shopify/polaris-icons";
 import { useFetcher } from "react-router";
-import { ROCKHOUND_FIELDS, DEFAULT_DROPDOWNS, CHANNEL_REQUIREMENTS, getFieldStatus, productTypeOptions, collectionLocationOptions, normalizeDropdownValue, DROPDOWN_OPTIONS } from "../utils/meta-injector.constants.jsx";
+import { ROCKHOUND_FIELDS, DEFAULT_DROPDOWNS, CHANNEL_REQUIREMENTS, getFieldStatus, productTypeOptions, collectionLocationOptions, normalizeDropdownValue, DROPDOWN_OPTIONS, FULL_META_GROUPS, TARGET_KEYS } from "../utils/meta-injector.constants.jsx";
 import { handleScanPhoto, handleGenerateDescription, buildMetafieldsJson, buildTitle } from "./app.meta-injector.intake-helpers.jsx";
-
-const CUSTOM_FIELDS = [
-  // ==========================================
-  // SECTION A: SHARED BATCH FIELDS (The Story & Material)
-  // ==========================================
-  { key: "stone_family", label: "Stone Family", type: "single_line_text_field", isShared: true },
-  { key: "color", label: "Color", type: "single_line_text_field", isShared: true }, 
-  { key: "surface_finish", label: "Surface Finish", type: "single_line_text_field", isShared: true }, 
-  { key: "source_location", label: "Source / Discovery Location", type: "single_line_text_field", isShared: true },
-  { key: "primary_use", label: "Primary Use", type: "single_line_text_field", isShared: true }, 
-  { key: "handcrafted_by", label: "Handcrafted By", type: "single_line_text_field", isShared: true },
-  { key: "origin_story", label: "The Origin Story", type: "multi_line_text_field", multiline: true, isShared: true },
-
-  // ==========================================
-  // SECTION B: PER-PIECE ROWS (The Hard Specs)
-  // ==========================================
-  { key: "piece_name", label: "Piece Name", type: "single_line_text_field", isPerPiece: true },
-  { key: "cut_and_shape", label: "Cut / Shape", type: "single_line_text_field", isPerPiece: true }, 
-  { key: "dimensions_mm", label: "Dimensions (mm)", type: "single_line_text_field", isPerPiece: true },
-  { key: "weight_grams", label: "Weight (grams)", type: "single_line_text_field", isPerPiece: true },
-  { key: "honest_flaws", label: "Character Marks (Honest Flaws)", type: "multi_line_text_field", multiline: true, isPerPiece: true },
-  { key: "price", label: "Price", type: "single_line_text_field", isPerPiece: true },
-  { key: "seo_title", label: "SEO Title", type: "single_line_text_field", isPerPiece: true }
-];
 
 // 🟢 NEW HELPER: Replaces the strict-breaking IIFE used for material generation
 function getDerivedMaterial(stoneFam) {
@@ -46,7 +22,7 @@ export function NewProductIntakeTab({ fetcher }) {
   const visionFetcher = useFetcher();
   const descriptionFetcher = useFetcher();
 
-  const [sharedFields, setSharedFields] = useState({
+  const initialSharedState = {
     material: "",
     stone_family: "",
     collection_name: "",
@@ -56,6 +32,7 @@ export function NewProductIntakeTab({ fetcher }) {
     rescued_by: "Bob and Janyce",
     treatment_status: "100% Natural/Untreated",
     origin_story: "",
+    stone_story: "",
     primary_use: "",
     handcrafted_by: "Bob & Janyce, Rockhound Studio",
     is_ooak: "Yes",
@@ -81,47 +58,56 @@ export function NewProductIntakeTab({ fetcher }) {
     cleavage: "",
     diaphaneity: "",
     geological_age: "",
-    custom_product: "",
-    origin_page_handle: ""
-  });
+    geological_era: "",
+    mineral_class: "",
+    rock_composition: "",
+    rock_formation: "",
+    tenacity: "",
+    custom_product: "Yes",
+    origin_page_handle: "",
+    authenticity: "",
+    rarity: ""
+  };
 
-  const [pieces, setPieces] = useState([
-    {
-      id: Date.now().toString(),
-      piece_name: "",
-      dimensions_mm: "",
-      stone_shape: "",
-      cut_and_shape: "",
-      surface_finish: "",
-      color: "",
-      price: "",
-      weight_grams: "",
-      shipping_weight_oz: "",
-      photoFiles: [],
-      photoPreviewUrls: [],
-      photos: [],
-      imageBase64: "",
-      imageMimeType: "",
-      stagedResourceUrls: [],
-      stagedUploadIndex: 0,
-      generated_description: "",
-      seo_title: "",
-      artist_notes: "",
-      scanError: "",
-      scanToken: "",
-      isUploading: false,
-      character_marks: "",
-      honest_flaws_and_character: "",
-      bench_notes: "",
-      alt_text: "",
-      color_pattern: "",
-      found_object: "true",
-      is_ooak: "Yes",
-      treated: "No",
-      productId: null,
-      status: "DRAFT"
-    }
-  ]);
+  const initialPieceState = {
+    id: Date.now().toString(),
+    piece_name: "",
+    official_name: "",
+    dimensions_mm: "",
+    stone_shape: "",
+    cut_type: "",
+    cut_and_shape: "",
+    surface_finish: "",
+    color: "",
+    primary_color: "",
+    secondary_colors: "",
+    price: "",
+    weight_grams: "",
+    shipping_weight_oz: "",
+    photoFiles: [],
+    photoPreviewUrls: [],
+    photos: [],
+    imageBase64: "",
+    imageMimeType: "",
+    stagedResourceUrls: [],
+    stagedUploadIndex: 0,
+    generated_description: "",
+    seo_title: "",
+    artist_notes: "",
+    scanError: "",
+    scanToken: "",
+    isUploading: false,
+    character_marks: "",
+    honest_flaws_and_character: "",
+    bench_notes: "",
+    alt_text: "",
+    color_pattern: "",
+    productId: null,
+    status: "DRAFT"
+  };
+
+  const [sharedFields, setSharedFields] = useState(initialSharedState);
+  const [pieces, setPieces] = useState([initialPieceState]);
 
   // 🟢 THE WELD: Live State References to bypass the Stale Closure ghost
   const latestPieces = useRef(pieces);
@@ -351,43 +337,9 @@ export function NewProductIntakeTab({ fetcher }) {
   const handleAddRow = useCallback(() => {
     setPieces(prev => [
       ...prev,
-      {
-        id: Date.now().toString() + Math.random().toString(),
-        piece_name: "",
-        dimensions_mm: "",
-        stone_shape: "",
-        cut_and_shape: "",
-        surface_finish: "",
-        color: "",
-        price: "",
-        weight_grams: "",
-        shipping_weight_oz: "",
-        photoFiles: [],
-        photoPreviewUrls: [],
-        photos: [],
-        imageBase64: "",
-        imageMimeType: "",
-        stagedResourceUrls: [],
-        stagedUploadIndex: 0,
-        generated_description: "",
-        seo_title: "",
-        artist_notes: "",
-        scanError: "",
-        scanToken: "",
-        isUploading: false,
-        character_marks: "",
-        honest_flaws_and_character: "",
-        bench_notes: "",
-        alt_text: "",
-        color_pattern: "",
-        found_object: "true",
-        is_ooak: "Yes",
-        treated: "No",
-        productId: null,
-        status: "DRAFT"
-      }
+      { ...initialPieceState, id: Date.now().toString() + Math.random().toString() }
     ]);
-  }, []);
+  }, [initialPieceState]);
 
   const handleRemoveRow = useCallback((id) => {
     setPieces(prev => prev.filter(p => p.id !== id));
@@ -433,7 +385,6 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
     let productType = "Wearable Art";
     (currentShared.primary_use && currentShared.primary_use !== "") && (productType = currentShared.primary_use);
 
-    // 🟢 FIXED: Use helper function instead of inline IIFE to prevent strictly typed linter crashes
     const derivedMaterial = getDerivedMaterial(currentShared.stone_family || "");
 
     const payload = {
@@ -468,85 +419,14 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
   const handleStartNewBatch = useCallback(() => {
     setStatusMessage("");
     setErrorMessage("");
-    setSharedFields({
-      material: "",
-      stone_family: "",
-      collection_name: "",
-      collection_location: "",
-      origin_location: "",
-      origin_handle: "",
-      rescued_by: "Bob and Janyce",
-      treatment_status: "100% Natural/Untreated",
-      origin_story: "",
-      primary_use: "",
-      handcrafted_by: "Bob & Janyce, Rockhound Studio",
-      is_ooak: "Yes",
-      treated: "Untreated — Natural",
-      found_object: "true",
-      condition: "new",
-      target_gender: "Unisex",
-      age_group: "adult",
-      google_product_category: "Apparel & Accessories > Jewelry",
-      primary_medium: "",
-      secondary_medium: "",
-      wire_material: "",
-      setting_ready: "",
-      bail_included: "",
-      jewelry_finding_type: "",
-      chain_link_type: "",
-      necklace_design: "",
-      jewelry_type: "",
-      luster: "",
-      mohs_hardness: "",
-      specific_gravity: "",
-      fracture_pattern: "",
-      cleavage: "",
-      diaphaneity: "",
-      geological_age: "",
-      custom_product: "",
-      origin_page_handle: ""
-    });
-    setPieces([{
-      id: Date.now().toString(),
-      piece_name: "",
-      dimensions_mm: "",
-      stone_shape: "",
-      cut_and_shape: "",
-      surface_finish: "",
-      color: "",
-      price: "",
-      weight_grams: "",
-      shipping_weight_oz: "",
-      photoFiles: [],
-      photoPreviewUrls: [],
-      photos: [],
-      imageBase64: "",
-      imageMimeType: "",
-      stagedResourceUrls: [],
-      stagedUploadIndex: 0,
-      generated_description: "",
-      seo_title: "",
-      artist_notes: "",
-      scanError: "",
-      scanToken: "",
-      isUploading: false,
-      character_marks: "",
-      honest_flaws_and_character: "",
-      bench_notes: "",
-      alt_text: "",
-      color_pattern: "",
-      found_object: "true",
-      is_ooak: "Yes",
-      treated: "No",
-      productId: null,
-      status: "DRAFT"
-    }]);
+    setSharedFields(initialSharedState);
+    setPieces([initialPieceState]);
     setPhotoFiles([]);
     setPhotoPreviewUrls([]);
     setGeneratedDescription("");
     setLastScannedPieceId(null);
     lastAutofilledTitle.current = ""; 
-  }, []);
+  }, [initialSharedState, initialPieceState]);
 
   useEffect(() => {
     const isIdle = fetcher.state === "idle";
@@ -680,8 +560,6 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
       (isScan && isSuccess) && (() => {
         setSharedFields(prev => {
           const nextStoneFamily = data.tab2Data?.stone_family || data.stone_family || prev.stone_family || "";
-          
-          // 🟢 FIXED: Use helper function instead of inline IIFE
           const nextMaterial = data.tab2Data?.material || data.material || getDerivedMaterial(nextStoneFamily);
 
           return {
@@ -784,7 +662,6 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
     setSharedFields(prev => {
       let resolvedCollectionLoc = parsed.collection_location || prev.collection_location;
 
-      // 🟢 FIXED: Use helper function instead of inline IIFE
       const nextStoneFamily = normalizeDropdownValue("stone_family", parsed.stone_family?.trim()) || prev.stone_family || "";
       const derivedMaterial = getDerivedMaterial(nextStoneFamily);
 
@@ -884,47 +761,10 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
   let isDescLoading = false;
   (descriptionFetcher.state !== "idle") && (isDescLoading = true);
 
-  const rescuedByOptions = ["", "Bob", "Janyce", "Bob and Janyce"];
-  const treatmentStatusOptions = ["100% Natural/Untreated", "Heat Treated", "Dyed", "Stabilized", "Irradiated", "Coated"];
-  const surfaceFinishOptions = ["", "High Polish", "Matte", "Satin", "Hand Polish", "Natural"];
-
   const isJewelry = ["Pendant (Finished Jewelry)", "Wire Wrap (Finished Jewelry)", "Ring / Bezel Setting", "Pendant", "Wire Wrap", "Ring", "Necklace", "Earrings", "Bracelet", "Jewelry", "Wearable Art"].some(type => (sharedFields.primary_use || "").includes(type));
 
   const combinedData = { ...sharedFields, ...(pieces[0] || {}) };
-  const scanKeys = [
-    ...ROCKHOUND_FIELDS.map(f => f.key),
-    "origin_story",
-    "price",
-    "honest_flaws_and_character",
-    "stone_shape",
-    "mohs_hardness",
-    "luster",
-    "fracture_pattern",
-    "cleavage",
-    "specific_gravity",
-    "diaphaneity",
-    "crystal_system",
-    "geological_era",
-    "mineral_class",
-    "rock_composition",
-    "rock_formation",
-    "geological_age",
-    "age_group",
-    "target_gender",
-    "color_pattern",
-    "jewelry_type",
-    "necklace_design",
-    "chain_link_type",
-    "jewelry_finding_type",
-    "authenticity",
-    "rarity",
-    "condition",
-    "found_object",
-    "setting_ready",
-    "bail_included",
-    "wire_material",
-    "seo_title"
-  ];
+  const scanKeys = TARGET_KEYS;
 
   const actionData = fetcher.data;
   let useSaved = false;
@@ -1002,7 +842,21 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
     );
   };
 
-  const showJewelrySpecsPanel = (sharedFields.primary_use || "").toLowerCase().includes("jewelry");
+  const showJewelrySpecsPanel = (sharedFields.primary_use || "").toLowerCase().includes("jewelry") || (sharedFields.primary_use || "").toLowerCase().includes("wearable") || (sharedFields.primary_use || "").toLowerCase().includes("pendant");
+
+  // 🟢 DYNAMICALLY RENDER BAYS FROM CONSTANTS
+  const renderDiagnosticBay = (group) => {
+    return (
+      <div key={group.heading} style={{ marginBottom: "16px" }}>
+        <div style={{ background: "#333333", padding: "6px 12px", borderRadius: "4px", width: "100%", fontWeight: "bold", color: group.color, fontSize: "12px", marginBottom: "8px" }}>
+          {group.heading.toUpperCase()}
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
+          {group.fields.map(field => renderPanelRow(field.label, field.key, getVal(field.key, combinedData[field.key])))}
+        </div>
+      </div>
+    );
+  };
 
   return (
     <Frame>
@@ -1309,7 +1163,7 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
                       <div style={{ minHeight: "54px" }}>
                         <Select
                           label={renderLabel("Surface Finish", "surface_finish", piece.surface_finish)}
-                          options={[...surfaceFinishOptions.map(o => ({ label: o, value: o }))]}
+                          options={[...DROPDOWN_OPTIONS.surface_finish]}
                           value={piece.surface_finish}
                           onChange={(v) => handlePieceChange(piece.id, "surface_finish", v)}
                         />
@@ -1490,7 +1344,7 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
               <div style={{ minHeight: "54px" }}>
                 <Select
                   label={renderLabel("Rescued By", "rescued_by", sharedFields.rescued_by)}
-                  options={[...rescuedByOptions.map(o => ({ label: o, value: o }))]}
+                  options={[{ label: "Bob and Janyce", value: "Bob and Janyce" }, { label: "Bob", value: "Bob" }, { label: "Janyce", value: "Janyce" }]}
                   value={sharedFields.rescued_by}
                   onChange={(v) => handleSharedFieldChange("rescued_by", v)}
                 />
@@ -1506,7 +1360,7 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
               <div style={{ minHeight: "54px" }}>
                 <Select
                   label={renderLabel("Treatment Status", "treatment_status", sharedFields.treatment_status)}
-                  options={[...treatmentStatusOptions.map(o => ({ label: o, value: o }))]}
+                  options={[...DROPDOWN_OPTIONS.treated]}
                   value={sharedFields.treatment_status}
                   onChange={(v) => handleSharedFieldChange("treatment_status", v)}
                 />
@@ -1516,6 +1370,15 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
                   label={renderLabel("Origin Story", "origin_story", sharedFields.origin_story)}
                   value={sharedFields.origin_story}
                   onChange={(v) => handleSharedFieldChange("origin_story", v)}
+                  autoComplete="off"
+                  multiline={2}
+                />
+              </div>
+              <div style={{ minHeight: "54px", gridColumn: "span 2" }}>
+                <TextField
+                  label={renderLabel("Stone Story", "stone_story", sharedFields.stone_story)}
+                  value={sharedFields.stone_story}
+                  onChange={(v) => handleSharedFieldChange("stone_story", v)}
                   autoComplete="off"
                   multiline={2}
                 />
@@ -1607,6 +1470,30 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
                   label={renderLabel("Geological Age", "geological_age", sharedFields.geological_age)}
                   value={sharedFields.geological_age}
                   onChange={(v) => handleSharedFieldChange("geological_age", v)}
+                  autoComplete="off"
+                />
+              </div>
+              <div style={{ minHeight: "54px" }}>
+                <TextField
+                  label={renderLabel("Mineral Class", "mineral_class", sharedFields.mineral_class)}
+                  value={sharedFields.mineral_class}
+                  onChange={(v) => handleSharedFieldChange("mineral_class", v)}
+                  autoComplete="off"
+                />
+              </div>
+              <div style={{ minHeight: "54px" }}>
+                <TextField
+                  label={renderLabel("Crystal System", "crystal_system", sharedFields.crystal_system)}
+                  value={sharedFields.crystal_system}
+                  onChange={(v) => handleSharedFieldChange("crystal_system", v)}
+                  autoComplete="off"
+                />
+              </div>
+              <div style={{ minHeight: "54px" }}>
+                <TextField
+                  label={renderLabel("Tenacity", "tenacity", sharedFields.tenacity)}
+                  value={sharedFields.tenacity}
+                  onChange={(v) => handleSharedFieldChange("tenacity", v)}
                   autoComplete="off"
                 />
               </div>
@@ -1796,85 +1683,7 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
         <div style={{ background: "#1a1a1a", padding: "20px", borderRadius: "8px", marginTop: "16px" }}>
           <BlockStack gap="400">
             <Text variant="headingMd" as="h2" style={{ fontSize: "16px", fontWeight: "bold", color: "#ffffff" }}>Metafield Status Panel — All Fields</Text>
-
-            <div style={{ background: "#333333", padding: "6px 12px", borderRadius: "4px", width: "100%", fontWeight: "bold", color: "#ffffff", fontSize: "12px" }}>SECTION 1 — Per-Piece Fields</div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
-              {renderPanelRow("Piece Name", "piece_name", getVal("piece_name", pieces[0]?.piece_name))}
-              {renderPanelRow("Price", "price", getVal("price", pieces[0]?.price))}
-              {renderPanelRow("Weight (grams)", "weight_grams", getVal("weight_grams", pieces[0]?.weight_grams))}
-              {renderPanelRow("Shipping Weight (oz)", "shipping_weight_oz", getVal("shipping_weight_oz", pieces[0]?.shipping_weight_oz))}
-              {renderPanelRow("Dimensions (mm)", "dimensions_mm", getVal("dimensions_mm", pieces[0]?.dimensions_mm))}
-              {renderPanelRow("Cut & Shape", "cut_and_shape", getVal("cut_and_shape", pieces[0]?.cut_and_shape))}
-              {renderPanelRow("Surface Finish", "surface_finish", getVal("surface_finish", pieces[0]?.surface_finish))}
-              {renderPanelRow("Color", "color", getVal("color", pieces[0]?.color))}
-              {renderPanelRow("Generated Description", "generated_description", getVal("generated_description", pieces[0]?.generated_description))}
-              {renderPanelRow("SEO Title", "seo_title", getVal("seo_title", pieces[0]?.seo_title))}
-              {renderPanelRow("Artist Notes", "artist_notes", getVal("artist_notes", pieces[0]?.artist_notes))}
-              {renderPanelRow("Stone Shape", "stone_shape", getVal("stone_shape", pieces[0]?.stone_shape))}
-              {renderPanelRow("Color Pattern", "color_pattern", getVal("color_pattern", combinedData.color_pattern))}
-              {renderPanelRow("Handcrafted By", "handcrafted_by", getVal("handcrafted_by", combinedData.handcrafted_by))}
-              {renderPanelRow("Is One of a Kind", "is_ooak", getVal("is_ooak", combinedData.is_ooak))}
-              {renderPanelRow("Treated", "treated", getVal("treated", combinedData.treated))}
-            </div>
-
-            <div style={{ background: "#333333", padding: "6px 12px", borderRadius: "4px", width: "100%", fontWeight: "bold", color: "#ffffff", fontSize: "12px", marginTop: "8px" }}>SECTION 2 — Shared Batch Fields</div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
-              {renderPanelRow("Material", "material", getVal("material", sharedFields.material))}
-              {renderPanelRow("Stone Family", "stone_family", getVal("stone_family", sharedFields.stone_family))}
-              {renderPanelRow("Collection Name", "collection_name", getVal("collection_name", sharedFields.collection_name))}
-              {renderPanelRow("Origin Handle", "origin_handle", getVal("origin_handle", sharedFields.origin_handle))}
-              {renderPanelRow("Rescued By", "rescued_by", getVal("rescued_by", sharedFields.rescued_by))}
-              {renderPanelRow("Treatment Status", "treatment_status", getVal("treatment_status", sharedFields.treatment_status))}
-              {renderPanelRow("Origin Story", "origin_story", getVal("origin_story", sharedFields.origin_story))}
-              {renderPanelRow("Primary Use", "primary_use", getVal("primary_use", sharedFields.primary_use))}
-              {renderPanelRow("Honest Flaws", "honest_flaws_and_character", getVal("honest_flaws_and_character", combinedData.honest_flaws_and_character))}
-              {renderPanelRow("Found Object", "found_object", getVal("found_object", combinedData.found_object))}
-              {renderPanelRow("Collection Location", "collection_location", getVal("collection_location", combinedData.collection_location))}
-            </div>
-
-            {showJewelrySpecsPanel && (
-              <>
-                <div style={{ background: "#333333", padding: "6px 12px", borderRadius: "4px", width: "100%", fontWeight: "bold", color: "#ffffff", fontSize: "12px", marginTop: "8px" }}>SECTION 3 — Jewelry Specs</div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
-                  {renderPanelRow("Primary Medium", "primary_medium", getVal("primary_medium", sharedFields.primary_medium))}
-                  {renderPanelRow("Secondary Medium", "secondary_medium", getVal("secondary_medium", sharedFields.secondary_medium))}
-                  {renderPanelRow("Wire Material", "wire_material", getVal("wire_material", sharedFields.wire_material))}
-                  {renderPanelRow("Bail Included", "bail_included", getVal("bail_included", sharedFields.bail_included))}
-                  {renderPanelRow("Setting Ready", "setting_ready", getVal("setting_ready", sharedFields.setting_ready))}
-                  {renderPanelRow("Jewelry Type", "jewelry_type", getVal("jewelry_type", sharedFields.jewelry_type))}
-                  {renderPanelRow("Necklace Design", "necklace_design", getVal("necklace_design", sharedFields.necklace_design))}
-                  {renderPanelRow("Chain Link Type", "chain_link_type", getVal("chain_link_type", sharedFields.chain_link_type))}
-                  {renderPanelRow("Finding Type", "jewelry_finding_type", getVal("jewelry_finding_type", sharedFields.jewelry_finding_type))}
-                </div>
-              </>
-            )}
-
-            <div style={{ background: "#333333", padding: "6px 12px", borderRadius: "4px", width: "100%", fontWeight: "bold", color: "#ffffff", fontSize: "12px", marginTop: "8px" }}>SECTION 4 — Geo Vault Fields</div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
-              {renderPanelRow("Mohs Hardness", "mohs_hardness", getVal("mohs_hardness", sharedFields.mohs_hardness))}
-              {renderPanelRow("Specific Gravity", "specific_gravity", getVal("specific_gravity", sharedFields.specific_gravity))}
-              {renderPanelRow("Mineral Class", "mineral_class", getVal("mineral_class", sharedFields.mineral_class))}
-              {renderPanelRow("Crystal System", "crystal_system", getVal("crystal_system", sharedFields.crystal_system))}
-              {renderPanelRow("Rock Composition", "rock_composition", getVal("rock_composition", sharedFields.rock_composition))}
-              {renderPanelRow("Rock Formation", "rock_formation", getVal("rock_formation", sharedFields.rock_formation))}
-              {renderPanelRow("Geological Era", "geological_era", getVal("geological_era", sharedFields.geological_era))}
-              {renderPanelRow("Geological Age", "geological_age", getVal("geological_age", sharedFields.geological_age))}
-              {renderPanelRow("Fracture Pattern", "fracture_pattern", getVal("fracture_pattern", sharedFields.fracture_pattern))}
-              {renderPanelRow("Diaphaneity", "diaphaneity", getVal("diaphaneity", sharedFields.diaphaneity))}
-              {renderPanelRow("Luster", "luster", getVal("luster", sharedFields.luster))}
-              {renderPanelRow("Cleavage", "cleavage", getVal("cleavage", sharedFields.cleavage))}
-              {renderPanelRow("Fracture", "fracture", getVal("fracture", sharedFields.fracture))}
-            </div>
-
-            <div style={{ background: "#333333", padding: "6px 12px", borderRadius: "4px", width: "100%", fontWeight: "bold", color: "#ffffff", fontSize: "12px", marginTop: "8px" }}>SECTION 5 — Google & SEO Fields</div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
-              {renderPanelRow("Google Product Category", "google_product_category", getVal("google_product_category", sharedFields.google_product_category))}
-              {renderPanelRow("Age Group", "age_group", getVal("age_group", sharedFields.age_group))}
-              {renderPanelRow("Target Gender", "target_gender", getVal("target_gender", sharedFields.target_gender))}
-              {renderPanelRow("Condition", "condition", getVal("condition", sharedFields.condition))}
-              {renderPanelRow("Authenticity", "authenticity", getVal("authenticity", combinedData.authenticity))}
-              {renderPanelRow("Rarity", "rarity", getVal("rarity", combinedData.rarity))}
-            </div>
+            {FULL_META_GROUPS.map(group => renderDiagnosticBay(group))}
           </BlockStack>
         </div>
       </BlockStack>
