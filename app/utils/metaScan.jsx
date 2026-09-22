@@ -4,13 +4,11 @@
 
 // --- 1. KEY DEFINITIONS ---
 
-export const TARGET_KEYS = [
-  "official_name", "stone_story", "cut_type", "stone_shape", "surface_finish",
-  "treatment_status", "primary_color", "secondary_colors", "bench_notes",
-  "rock_composition", "character_marks", "dimensions_mm", "moh_hardness", 
-  "specific_gravity", "crystal_system", "luster", "cleavage", "fracture_pattern", 
-  "diaphaneity", "tenacity"
-];
+// 🟢 Import the Master 62-Field Target Array as the single source of truth
+import { TARGET_KEYS } from "./meta-injector.constants.jsx";
+
+// Re-export to maintain compatibility with legacy routes that import TARGET_KEYS from metaScan
+export { TARGET_KEYS };
 
 export const MANUAL_KEYS = [
   "official_name", "stone_story", "cut_type", "stone_shape", "surface_finish",
@@ -19,7 +17,7 @@ export const MANUAL_KEYS = [
 ];
 
 export const DATABASE_KEYS = [
-  "moh_hardness", 
+  "mohs_hardness", // 🟢 ALIAS APPLIED: moh_hardness -> mohs_hardness
   "specific_gravity", 
   "crystal_system", 
   "luster", 
@@ -42,7 +40,7 @@ export const FIELD_LABELS = {
   "rock_composition": "Rock Composition",
   "character_marks": "Character Marks",
   "dimensions_mm": "Dimensions (mm)",
-  "moh_hardness": "Mohs Hardness", 
+  "mohs_hardness": "Mohs Hardness", // 🟢 ALIAS APPLIED: moh_hardness -> mohs_hardness
   "specific_gravity": "Specific Gravity",
   "crystal_system": "Crystal System",
   "luster": "Luster",

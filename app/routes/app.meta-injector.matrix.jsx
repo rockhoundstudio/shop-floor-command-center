@@ -1,3 +1,7 @@
+// ==========================================================================
+// ROCKHOUND STUDIO — TAB 3: OPERATIONS MATRIX
+// File: app/routes/app.meta-injector.matrix.jsx
+// ==========================================================================
 import React, { useState, useCallback, useEffect } from "react";
 import { BlockStack, Card, Text, Banner, TextField, Button, InlineStack, Box, Badge, ProgressBar } from "@shopify/polaris";
 import { MagicIcon, ClipboardIcon, SaveIcon } from "@shopify/polaris-icons";
@@ -14,62 +18,65 @@ const STATUS = {
 
 const SECTIONS = [
   {
-    title: "Section 1 — Core Ignition (GREEN)",
+    title: "Bay 1 — Core Ignition & Lore (GREEN)",
     keys: [
-      "global.title_tag", "global.description_tag", "custom.seo_title",
+      "global.title_tag", "global.description_tag", "custom.shopify_title",
+      "custom.piece_name", "custom.official_name", "custom.seo_title",
       "custom.is_ooak", "custom.is_one_of_a_kind", "custom.handcrafted_by", 
-      "custom.piece_name", "custom.origin_story", "custom.origin_location", 
-      "custom.origin_page_handle", "custom.origin_handle", "custom.honest_flaws_and_character", 
-      "custom.collection_name", "custom.collection_location", "custom.collection_date"
+      "custom.rescued_by", "custom.stone_family", "custom.origin_location", 
+      "custom.origin_page_handle", "custom.origin_handle", "custom.collection_name", 
+      "custom.collection_location", "custom.origin_story", "custom.stone_story", 
+      "custom.generated_description"
     ]
   },
   {
-    title: "Section 2 — Maker, Collector & Geo-Vault (BLUE)",
+    title: "Bay 2 — Physical Specs & Lapidary Bench (BLUE)",
     keys: [
-      "custom.mohs_hardness", "custom.rock_composition", "custom.rock-composition",
-      "custom.rock_formation", "custom.rock-formation", "custom.geological_era",
-      "custom.geological-era", "custom.geological_age", "custom.crystal_system",
-      "custom.crystal-system", "custom.specific_gravity", "custom.cleavage",
-      "custom.diaphaneity", "custom.fracture_pattern", "custom.mineral_class",
-      "custom.mineral-class", "custom.stone_family", "custom.stone_shape",
-      "custom.surface_finish", "custom.cut_and_shape", "custom.dimensions_mm",
-      "custom.weight_grams", "custom.shipping_weight_oz", "custom.treatment_status",
-      "custom.treated", "custom.color", "custom.color_pattern", "custom.primary_color", 
-      "custom.primary_medium", "custom.secondary_medium", "custom.material", 
-      "custom.primary_use", "custom.setting_ready", "custom.wire_material", 
-      "custom.bail_included", "custom.chain_link_type", "custom.necklace_design", 
-      "custom.necklace-design", "custom.jewelry_type", "custom.jewelry_finding_type", 
-      "custom.custom_product", "custom.found_object", "custom.rescued_by", 
-      "custom.authenticity", "custom.rarity", "custom.luster", "custom.character_marks", 
-      "custom.artist_notes", "custom.generated_description", "custom.price", 
-      "custom.alt_text"
+      "custom.dimensions_mm", "custom.weight_grams", "custom.shipping_weight_oz", 
+      "custom.price", "custom.stone_shape", "custom.cut_type", "custom.cut_and_shape", 
+      "custom.surface_finish", "custom.color", "custom.primary_color", 
+      "custom.secondary_colors", "custom.color_pattern", "custom.treatment_status", 
+      "custom.treated", "custom.character_marks", "custom.honest_flaws_and_character", 
+      "custom.bench_notes", "custom.artist_notes", "custom.alt_text"
     ]
   },
   {
-    title: "Section 3 — Shopify & Google Channels (GRAY)",
+    title: "Bay 3 — Geo-Vault Science (TEAL)",
     keys: [
+      "custom.mohs_hardness", "custom.moh_hardness", "custom.specific_gravity", 
+      "custom.crystal_system", "custom.crystal-system", "custom.luster", 
+      "custom.cleavage", "custom.fracture_pattern", "custom.diaphaneity", 
+      "custom.tenacity", "custom.mineral_class", "custom.mineral-class", 
+      "custom.rock_composition", "custom.rock-composition", "custom.rock_formation", 
+      "custom.rock-formation", "custom.geological_era", "custom.geological-era", 
+      "custom.geological_age"
+    ]
+  },
+  {
+    title: "Bay 4 — Jewelry & Hardware Settings (ORANGE)",
+    keys: [
+      "custom.primary_use", "custom.primary_medium", "custom.secondary_medium", 
+      "custom.material", "custom.jewelry_type", "custom.necklace_design", 
+      "custom.necklace-design", "custom.setting_ready", "custom.wire_material", 
+      "custom.bail_included", "custom.chain_material", "custom.chain_link_type", 
+      "custom.chain-link-type", "custom.jewelry_finding_type"
+    ]
+  },
+  {
+    title: "Bay 5 — Google Channels & Legacy (GRAY)",
+    keys: [
+      "custom.google_product_category", "custom.age_group", "custom.target_gender", 
+      "custom.condition", "custom.authenticity", "custom.rarity", 
+      "custom.custom_product", "custom.found_object",
       "google.age_group", "google.condition", "google.target_gender",
       "shopify.age-group", "shopify.condition", "shopify.target-gender",
       "shopify.authenticity", "shopify.chain-link-type", "shopify.color-pattern",
-      "shopify.construction", "shopify.crystal-system", "shopify.geological-era",
+      "shopify.crystal-system", "shopify.geological-era",
       "shopify.jewelry-finding-type", "shopify.jewelry-material",
       "shopify.jewelry-type", "shopify.material", "shopify.material-origin",
       "shopify.mineral-class", "shopify.necklace-design",
-      "shopify.product-classification", "shopify.product-use", "shopify.rarity",
-      "shopify.rock-composition", "shopify.rock-formation",
-      "custom.google_product_category", "custom.target_gender",
-      "mc-facebook.google_product_category", "mm-google-shopping.age_group",
-      "mm-google-shopping.condition", "mm-google-shopping.custom_product",
-      "mm-google-shopping.google_product_category",
-      "app--3890849--eligibility.eligibility_details"
-    ]
-  },
-  {
-    title: "Section 4 — Internal Bench & Legacy (BLACK)",
-    keys: [
-      "custom.bench_notes", "custom.badge", "custom.widget",
-      "custom.review_widget_data", "judgeme.badge", "judgeme.widget",
-      "judgeme.review_widget_data"
+      "shopify.rarity", "shopify.rock-composition", "shopify.rock-formation",
+      "custom.badge", "custom.widget", "custom.review_widget_data"
     ]
   }
 ];
@@ -81,7 +88,9 @@ const LEGACY_MAP = {
   "geological-era": "geological_era",
   "rock-formation": "rock_formation",
   "necklace-design": "necklace_design",
-  "is_one_of_a_kind": "is_ooak"
+  "is_one_of_a_kind": "is_ooak",
+  "chain-link-type": "chain_link_type",
+  "moh_hardness": "mohs_hardness"
 };
 
 export function OperationsMatrixTab({ products }) {
@@ -466,7 +475,6 @@ export function OperationsMatrixTab({ products }) {
     batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-api" });
   }, [selectedBenchId, batchFetcher, updateProductState]);
 
-
   const getStatusTone = (status) => {
     switch(status) {
       case STATUS.VALIDATED: return "success";
@@ -495,7 +503,7 @@ export function OperationsMatrixTab({ products }) {
        const hasCurrent = data.currentMetafields.hasOwnProperty(k);
        let currentVal = hasCurrent ? String(data.currentMetafields[k] || "") : "";
 
-       if (k === "global.title_tag" || k === "shopify_title") {
+       if (k === "global.title_tag" || k === "shopify_title" || k === "custom.shopify_title") {
            currentVal = String(data.canonicalFields["shopify_title"] || currentVal || ""); 
            status = currentVal.trim() === "" ? "EMPTY" : "LOADED";
        } else if (hasCurrent) {
@@ -519,6 +527,12 @@ export function OperationsMatrixTab({ products }) {
           propVal: data.repairPlan[k] ?? ""
        };
     });
+
+    const isMultilineKey = (k) => [
+      "custom.generated_description", "custom.origin_story", "custom.stone_story", 
+      "custom.bench_notes", "custom.character_marks", "custom.honest_flaws_and_character", 
+      "custom.artist_notes"
+    ].includes(k);
 
     return (
       <BlockStack gap="300" key={sectionTitle}>
@@ -552,7 +566,7 @@ export function OperationsMatrixTab({ products }) {
                  value={item.propVal}
                  onChange={(val) => handleRepairPlanChange(item.key, val)}
                  autoComplete="off"
-                 multiline={item.key === "custom.generated_description" || item.key === "custom.origin_story" ? 2 : undefined}
+                 multiline={isMultilineKey(item.key) ? 2 : undefined}
               />
             </div>
           ))}
@@ -600,7 +614,7 @@ export function OperationsMatrixTab({ products }) {
     <BlockStack gap="600">
       <BlockStack gap="200">
         <Text variant="headingXl" as="h1">Meta Injector</Text>
-        <Text variant="headingMd" tone="subdued">Data Integrity & Operations Hub</Text>
+        <Text variant="headingMd" tone="subdued">Data Integrity & Operations Hub — 60+ Field Standard</Text>
       </BlockStack>
 
       <div style={{ display: "grid", gridTemplateColumns: "260px 1fr", gap: "20px", alignItems: "start" }}>
