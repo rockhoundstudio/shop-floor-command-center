@@ -287,7 +287,8 @@ export function OperationsMatrixTab({ products }) {
         const fd = new FormData();
         fd.append("intent", "titleParse");
         fd.append("pieceName", titleToParse);
-        batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-api" });
+        // SPLICE 3: Re-Route to AI Engine
+        batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-autofill" });
       }
       else if (aiStep === 2 && !tempAiData.fullRescanRequested) {
         setTempAiData(prev => ({ ...prev, fullRescanRequested: true }));
@@ -306,7 +307,8 @@ export function OperationsMatrixTab({ products }) {
         fd.append("honest_flaws_and_character", manifest.currentMetafields["custom.honest_flaws_and_character"] || "");
         fd.append("weight_grams", manifest.currentMetafields["custom.weight_grams"] || "");
         fd.append("dimensions_mm", manifest.currentMetafields["custom.dimensions_mm"] || "");
-        batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-api" });
+        // SPLICE 3: Re-Route to AI Engine
+        batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-autofill" });
       }
       else if (aiStep === 3 && !tempAiData.generateDescRequested) {
         setTempAiData(prev => ({ ...prev, generateDescRequested: true }));
@@ -319,7 +321,8 @@ export function OperationsMatrixTab({ products }) {
             origin_location: tempAiData.tab2Data?.origin_location || tempAiData.titleParse?.origin_location
         }));
         fd.append("pieceData", JSON.stringify(tempAiData.tab2Data || {}));
-        batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-api" });
+        // SPLICE 3: Re-Route to AI Engine
+        batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-autofill" });
       }
       else if (aiStep === 4) {
         updateProductState(currentId, STATUS.VALIDATED, ["AI Pipeline Complete. Data staged."]);
@@ -361,33 +364,45 @@ export function OperationsMatrixTab({ products }) {
   // --- FETCHER RESPONSE HANDLER (LOAD OR EXECUTE) ---
   useEffect(() => {
     if (batchFetcher.state === "idle" && batchFetcher.data) {
-      const { intent, success, pieceId, message, error, errors, logs, finalStatus, titleParse, tab2Data, generated_description } = batchFetcher.data;
+      const { intent, success, pieceId, productId, message, error, errors, logs, status, finalStatus, titleParse, tab2Data, generated_description } = batchFetcher.data;
+      
+      // SPLICE 1: Allow resolution of pieceId OR productId depending on intent
+      const targetId = pieceId || productId;
       
       // 1. Load Data Response
-      if (intent === "loadProductData" && pieceId) {
+      if (intent === "loadProductData" && targetId) {
          if (!success) {
-            updateProductState(pieceId, STATUS.FAILED, [error || message || "Failed to load data"]);
+            updateProductState(targetId, STATUS.FAILED, [error || message || "Failed to load data"]);
          } else {
-            setManifestData(prev => ({ ...prev, [pieceId]: batchFetcher.data }));
-            updateProductState(pieceId, STATUS.VALIDATED, ["Data Loaded. Manifest Built."]);
+            setManifestData(prev => ({ ...prev, [targetId]: batchFetcher.data }));
+            updateProductState(targetId, STATUS.VALIDATED, ["Data Loaded. Manifest Built."]);
          }
          if (isLoadingData) setTimeout(() => setLoadIndex(i => i + 1), 100);
       }
 
       // 2. Legacy / Repair Executions
-      if ((intent === "executeRepairPlan" || intent === "batchAuditItem" || intent === "saveMetafields") && pieceId && executionMode !== "AI_BATCH_PIPELINE") {
+      if ((intent === "executeRepairPlan" || intent === "batchAuditItem" || intent === "saveMetafields") && targetId && executionMode !== "AI_BATCH_PIPELINE") {
         if (!success) {
            console.error("Execute Error from Backend:", batchFetcher.data);
            setIsExecuting(false);
            const errMsg = errors ? errors[0]?.message : (error || (logs && logs[logs.length-1]) || "Unknown Error");
-           setSafetyError(`Engine halted on ${pieceId}. Error: ${errMsg}`);
-           updateProductState(pieceId, STATUS.FAILED, errors ? errors.map(e => e.message) : (logs || ["Unknown Backend Error"]));
+           setSafetyError(`Engine halted on ${targetId}. Error: ${errMsg}`);
+           updateProductState(targetId, STATUS.FAILED, errors ? errors.map(e => e.message) : (logs || ["Unknown Backend Error"]));
            return;
         }
         
         const successLogs = logs || [message || "Operation applied successfully."];
-        const statusToSet = finalStatus === "Needs Review" ? STATUS.FAILED : STATUS.COMPLETE;
-        updateProductState(pieceId, statusToSet, successLogs);
+        
+        // SPLICE 2: Accurately parse NO_CHANGES_REQUIRED to prevent false Repaired badges
+        let statusToSet = STATUS.COMPLETE;
+        if (status === "NO_CHANGES_REQUIRED" || message === "No changes required.") {
+            statusToSet = STATUS.SKIPPED;
+            successLogs.push("No changes required.");
+        } else if (finalStatus === "Needs Review" || status === "REPAIR_FAILED") {
+            statusToSet = STATUS.FAILED;
+        }
+
+        updateProductState(targetId, statusToSet, successLogs);
         
         if (isExecuting) {
            setTempAiData({});
@@ -472,7 +487,8 @@ export function OperationsMatrixTab({ products }) {
     fd.append("explicitConfirm", "true");
 
     updateProductState(selectedBenchId, STATUS.SCANNING, ["Spinning up single Gemini AI run..."]);
-    batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-api" });
+    // SPLICE 3 applied here as well to ensure manual AI hits the correct engine
+    batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-autofill" });
   }, [selectedBenchId, batchFetcher, updateProductState]);
 
   const getStatusTone = (status) => {
