@@ -545,12 +545,12 @@ export function OperationsMatrixTab({ products }) {
                         data.legacyFields[legacyKeyForCanonical].value !== currentVal;
 
     let fieldStatus = "Unchanged";
-    if (currentVal.trim() === "" && String(propVal).trim() === "") {
-        fieldStatus = "Blank";
-    } else if (hasConflict) {
+    if (hasConflict) {
         fieldStatus = "Conflict";
-    } else if (currentVal !== propVal && String(propVal).trim() !== "") {
+    } else if (isProposed && currentVal !== propVal) {
         fieldStatus = "Proposed change";
+    } else if (currentVal.trim() === "" && (!isProposed || propVal.trim() === "")) {
+        fieldStatus = "Blank";
     }
 
     const fieldMeta = data.metadata?.[key] || {};
@@ -654,11 +654,11 @@ export function OperationsMatrixTab({ products }) {
               const propCount = propStr.length;
               
               const limit = FIELD_LIMITS[key] || null;
-              const isOverLimit = limit !== null && (currentCount > limit || propCount > limit);
+              const isOverLimit = limit !== null && (currentCount > limit || (meta.isProposed && propCount > limit));
               
               const isBlank = meta.fieldStatus === "Blank";
               const isRequired = ["global.title_tag", "custom.shopify_title", "custom.price"].includes(key);
-              const isIntegrationOwned = key.startsWith("google.") || key.startsWith("shopify.");
+              const isIntegrationOwned = key.startsWith("google.") || key.startsWith("shopify.") || key.startsWith("mm-google") || key.startsWith("mc-facebook");
               
               const rawKey = key.split('.')[1] || key;
               const isAlias = Object.keys(LEGACY_MAP).includes(rawKey) || Object.values(LEGACY_MAP).includes(rawKey);
@@ -680,7 +680,7 @@ export function OperationsMatrixTab({ products }) {
                   "current value present": currentStr.trim().length > 0,
                   "current character count": currentCount,
                   "proposed value present": meta.isProposed && propStr.trim().length > 0,
-                  "proposed character count": propCount,
+                  "proposed character count": meta.isProposed ? propCount : 0,
                   "proposal status": proposalStatus,
                   "over-limit": isOverLimit
               };
@@ -691,7 +691,9 @@ export function OperationsMatrixTab({ products }) {
 
               if (!isLong) {
                   record["current value"] = currentStr;
-                  record["proposed value"] = propStr;
+                  if (meta.isProposed) {
+                      record["proposed value"] = propStr;
+                  }
               }
 
               if (meta.fieldStatus === "Unchanged") fieldsByStatus.unchanged.push(record);
