@@ -93,6 +93,23 @@ const LEGACY_MAP = {
   "moh_hardness": "mohs_hardness"
 };
 
+const FIELD_LIMITS = {
+  "global.title_tag": 70,
+  "custom.seo_title": 70,
+  "global.description_tag": 320,
+  "custom.shopify_title": 255,
+  "custom.piece_name": 255,
+  "custom.official_name": 255,
+  "custom.origin_story": 100000,
+  "custom.stone_story": 100000,
+  "custom.generated_description": 100000,
+  "custom.artist_notes": 100000,
+  "custom.bench_notes": 100000,
+  "custom.alt_text": 100000,
+  "custom.character_marks": 255,
+  "custom.honest_flaws_and_character": 255
+};
+
 const formatLabel = (key) => {
   const parts = key.split('.');
   const name = parts[parts.length - 1];
@@ -511,18 +528,19 @@ export function OperationsMatrixTab({ products }) {
   ].includes(k);
 
   const getFieldMetadata = (key, data) => {
-    const hasCurrent = data.currentMetafields.hasOwnProperty(key);
+    const hasCurrent = data.currentMetafields?.hasOwnProperty(key);
     let currentVal = hasCurrent ? String(data.currentMetafields[key] || "") : "";
 
     if (key === "global.title_tag" || key === "shopify_title" || key === "custom.shopify_title") {
-        currentVal = String(data.canonicalFields["shopify_title"] || currentVal || ""); 
+        currentVal = String(data.canonicalFields?.["shopify_title"] || currentVal || ""); 
     }
 
-    const propVal = data.repairPlan[key] ?? "";
+    const isProposed = data.repairPlan !== undefined && data.repairPlan.hasOwnProperty(key);
+    const propVal = isProposed ? String(data.repairPlan[key] ?? "") : "";
     
     let legacyKeyForCanonical = null;
     Object.entries(LEGACY_MAP).forEach(([leg, can]) => { if (can === key) legacyKeyForCanonical = leg; });
-    const hasConflict = legacyKeyForCanonical && data.legacyFields[legacyKeyForCanonical] && 
+    const hasConflict = legacyKeyForCanonical && data.legacyFields?.[legacyKeyForCanonical] && 
                         data.legacyFields[legacyKeyForCanonical].value && currentVal && 
                         data.legacyFields[legacyKeyForCanonical].value !== currentVal;
 
@@ -539,7 +557,7 @@ export function OperationsMatrixTab({ products }) {
     const source = fieldMeta.source || "Not reported";
     const stage = fieldMeta.stage || "Not reported";
 
-    return { currentVal, propVal, fieldStatus, source, stage, hasConflict };
+    return { currentVal, propVal, isProposed, fieldStatus, source, stage, hasConflict };
   };
 
   const getDiagnosticsStats = (data) => {
@@ -583,20 +601,21 @@ export function OperationsMatrixTab({ products }) {
 
       const longTextFields = [
           "global.description_tag", "custom.origin_story", "custom.generated_description",
-          "custom.artist_notes", "custom.bench_notes", "custom.alt_text"
+          "custom.artist_notes", "custom.bench_notes", "custom.alt_text", "custom.stone_story"
       ];
 
       let summary = {
-          "total fields": 0,
+          "standardFields": 62,
+          "observedIntegrationFields": 0,
+          "aliasFields": 0,
+          "totalObservedFields": 0,
           "loaded fields": 0,
           "blank fields": 0,
           "proposed changes": 0,
           "conflicts": 0,
-          "aliases": 0,
           "optional blanks": 0,
           "required missing fields": 0,
           "over-limit text fields": 0,
-          "integration-owned fields": 0,
           "fields updated": data.fieldsUpdated !== undefined ? data.fieldsUpdated : 0,
           "legacy fields removed": Object.keys(data.legacyFields || {}).length,
           "read-back status": data.metadata?.read_back || "Not reported"
@@ -625,7 +644,7 @@ export function OperationsMatrixTab({ products }) {
 
       SECTIONS.forEach(sec => {
           sec.keys.forEach(key => {
-              summary["total fields"]++;
+              summary["totalObservedFields"]++;
               const meta = getFieldMetadata(key, data);
               
               const isLong = longTextFields.includes(key);
@@ -634,15 +653,24 @@ export function OperationsMatrixTab({ products }) {
               const currentCount = currentStr.length;
               const propCount = propStr.length;
               
-              const isOverLimit = isLong ? (currentCount > 100000 || propCount > 100000) : (currentCount > 255 || propCount > 255);
+              const limit = FIELD_LIMITS[key] || null;
+              const isOverLimit = limit !== null && (currentCount > limit || propCount > limit);
+              
               const isBlank = meta.fieldStatus === "Blank";
               const isRequired = ["global.title_tag", "custom.shopify_title", "custom.price"].includes(key);
               const isIntegrationOwned = key.startsWith("google.") || key.startsWith("shopify.");
-              const isAlias = Object.keys(LEGACY_MAP).includes(key) || Object.values(LEGACY_MAP).includes(key);
+              
+              const rawKey = key.split('.')[1] || key;
+              const isAlias = Object.keys(LEGACY_MAP).includes(rawKey) || Object.values(LEGACY_MAP).includes(rawKey);
 
               if (isOverLimit) summary["over-limit text fields"]++;
-              if (isIntegrationOwned) summary["integration-owned fields"]++;
-              if (isAlias) summary["aliases"]++;
+              if (isIntegrationOwned) summary["observedIntegrationFields"]++;
+              if (isAlias) summary["aliasFields"]++;
+
+              let proposalStatus = "Not provided";
+              if (meta.isProposed) {
+                  proposalStatus = propStr.trim().length > 0 ? "Provided" : "Empty";
+              }
 
               const record = {
                   "namespace/key": key,
@@ -650,11 +678,16 @@ export function OperationsMatrixTab({ products }) {
                   "source": meta.source,
                   "stage": meta.stage,
                   "current value present": currentStr.trim().length > 0,
-                  "proposed value present": propStr.trim().length > 0,
                   "current character count": currentCount,
+                  "proposed value present": meta.isProposed && propStr.trim().length > 0,
                   "proposed character count": propCount,
+                  "proposal status": proposalStatus,
                   "over-limit": isOverLimit
               };
+
+              if (limit !== null) {
+                  record["field-specific limit"] = limit;
+              }
 
               if (!isLong) {
                   record["current value"] = currentStr;
@@ -688,7 +721,7 @@ export function OperationsMatrixTab({ products }) {
               if (isIntegrationOwned) fieldsByStatus.integrationOwned.push(record);
               if (isOverLimit) fieldsByStatus.overLimit.push(record);
 
-              const srcBucket = fieldsBySource[meta.source] ? meta.source : "Not reported";
+              const srcBucket = fieldsBySource.hasOwnProperty(meta.source) ? meta.source : "Not reported";
               fieldsBySource[srcBucket].push(record);
           });
       });
