@@ -110,6 +110,23 @@ const FIELD_LIMITS = {
   "custom.honest_flaws_and_character": 255
 };
 
+const PROTECTED_FIELDS = [
+  "custom.stone_family", "custom.stone_shape", "custom.cut_and_shape",
+  "custom.surface_finish", "custom.color_pattern", "custom.google_product_category",
+  "custom.setting_ready", "custom.wire_material", "custom.bail_included",
+  "custom.chain_material", "custom.jewelry_finding_type", "custom.shopify_title",
+  "global.title_tag", "custom.artist_notes", "custom.bench_notes"
+];
+
+const HARDWARE_FIELDS = [
+  "custom.setting_ready", "custom.wire_material", "custom.bail_included",
+  "custom.chain_material", "custom.jewelry_finding_type"
+];
+
+const GENERIC_VALUES = ["None", "Unknown", "N/A", "N/a", "none", "unknown", "n/a"];
+const REQUIRED_FIELDS = ["global.title_tag", "custom.shopify_title", "custom.price"];
+const INTEGRATION_PREFIXES = ["google.", "shopify.", "mm-google", "mc-facebook"];
+
 const formatLabel = (key) => {
   const parts = key.split('.');
   const name = parts[parts.length - 1];
@@ -306,6 +323,91 @@ export function OperationsMatrixTab({ products }) {
     setTempAiData({});
   }, [queueIds, manifestData]);
 
+  const getFieldMetadata = (key, data) => {
+    const hasCurrent = data.currentMetafields?.hasOwnProperty(key);
+    let currentVal = hasCurrent ? String(data.currentMetafields[key] || "") : "";
+
+    if (key === "custom.shopify_title" || key === "shopify_title") {
+        currentVal = String(data.canonicalFields?.["shopify_title"] || currentVal || ""); 
+    }
+
+    const isProposed = data.repairPlan !== undefined && data.repairPlan.hasOwnProperty(key);
+    const propVal = isProposed ? String(data.repairPlan[key] ?? "") : "";
+
+    let fieldMeta = data.metadata?.[key] || {};
+    let source = fieldMeta.source || "Not reported";
+    let stage = fieldMeta.stage || "Not reported";
+
+    let fieldStatus = "Unchanged";
+    let isBlockedAction = false;
+    let reasons = [];
+
+    const isRequired = REQUIRED_FIELDS.includes(key);
+    const isProtected = PROTECTED_FIELDS.includes(key);
+    const isHardware = HARDWARE_FIELDS.includes(key);
+    const isIntegration = INTEGRATION_PREFIXES.some(prefix => key.startsWith(prefix));
+    
+    const rawKey = key.split('.')[1] || key;
+    const isAlias = Object.keys(LEGACY_MAP).includes(rawKey) || Object.values(LEGACY_MAP).includes(rawKey);
+
+    const currentCount = currentVal.length;
+    const propCount = propVal.length;
+    const limit = FIELD_LIMITS[key] || null;
+    const isOverLimit = limit !== null && (currentCount > limit || (isProposed && propCount > limit));
+
+    if (isOverLimit) {
+        reasons.push("Over limit");
+    }
+    if (isAlias) reasons.push("Alias");
+    if (isIntegration) reasons.push("Integration owned");
+
+    const currentExists = currentVal.trim() !== "";
+    const proposalExists = isProposed && propVal.trim() !== "";
+
+    if (currentExists) {
+        if (!isProposed || !proposalExists) {
+            fieldStatus = "Proposal not provided";
+        } else if (currentVal === propVal) {
+            fieldStatus = "Unchanged";
+        } else {
+            if (isProtected) {
+                fieldStatus = "Degrade";
+                reasons.push("Degrade");
+                isBlockedAction = true;
+            } else {
+                fieldStatus = "Conflict";
+                reasons.push("Conflict");
+                isBlockedAction = true;
+            }
+        }
+    } else {
+        if (!proposalExists) {
+            fieldStatus = isRequired ? "Required missing" : "Optional blank";
+            if (isRequired) reasons.push("Required missing");
+        } else {
+            if (source === "Not reported") {
+                fieldStatus = "Unverified proposal";
+                reasons.push("Unverified proposal");
+                isBlockedAction = true;
+            } else if (isHardware && GENERIC_VALUES.includes(propVal.trim())) {
+                fieldStatus = "Blocked";
+                reasons.push("Generic hardware fill into blank");
+                isBlockedAction = true;
+            } else {
+                fieldStatus = "Proposed";
+                reasons.push("Proposed");
+            }
+        }
+    }
+
+    if (isOverLimit && !isBlockedAction) {
+        fieldStatus = "Over limit";
+        isBlockedAction = true;
+    }
+
+    return { currentVal, propVal, isProposed, fieldStatus, source, stage, isBlockedAction, reasons, currentExists, proposalExists };
+  };
+
   useEffect(() => {
     if (!isExecuting) return;
     if (batchFetcher.state !== "idle") return;
@@ -332,10 +434,21 @@ export function OperationsMatrixTab({ products }) {
       if (!tempAiData.repairRequested) {
         setTempAiData({ repairRequested: true });
         updateProductState(currentId, STATUS.SCANNING, ["Executing structural repairs..."]);
+        
         const fd = new FormData();
         fd.append("intent", "executeRepairPlan");
         fd.append("pieceId", currentId);
-        fd.append("repairPlan", JSON.stringify(manifest.repairPlan));
+        
+        // Filter out Blocked, Degraded, Conflict, Unverified, Generic Hardware writes
+        const safePlan = {};
+        Object.keys(manifest.repairPlan).forEach(key => {
+            const meta = getFieldMetadata(key, manifest);
+            if (!meta.isBlockedAction) {
+                safePlan[key] = manifest.repairPlan[key];
+            }
+        });
+
+        fd.append("repairPlan", JSON.stringify(safePlan));
         fd.append("legacyKeysToRemove", JSON.stringify(Object.keys(manifest.legacyFields || {})));
         batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-api" });
       }
@@ -369,7 +482,6 @@ export function OperationsMatrixTab({ products }) {
         fd.append("weight_grams", manifest.currentMetafields["custom.weight_grams"] || "");
         fd.append("dimensions_mm", manifest.currentMetafields["custom.dimensions_mm"] || "");
         
-        // INJECTION FIX: Starved Vision API needs shape data to accurately identify cuts
         fd.append("stone_shape", manifest.currentMetafields["custom.stone_shape"] || manifest.canonicalFields["custom.stone_shape"] || "");
         fd.append("cut_and_shape", manifest.currentMetafields["custom.cut_and_shape"] || manifest.canonicalFields["custom.cut_and_shape"] || "");
 
@@ -399,14 +511,12 @@ export function OperationsMatrixTab({ products }) {
             const visionData = tempAiData.tab2Data || {};
             const descData = tempAiData.generated_description || "";
 
-            // Merge Vision Data
             Object.keys(visionData).forEach(k => {
                 if (k !== "generated_description" && k !== "pieceId" && k !== "debug_origin" && k !== "intent" && k !== "success") {
                     newPlan[k.includes('.') ? k : `custom.${k}`] = visionData[k];
                 }
             });
             
-            // INJECTION FIX: Unchoke the Geo Pipeline. Render DB passes science data through titleParse.
             Object.keys(titleData).forEach(k => {
                 if (k !== "pieceId" && k !== "intent" && k !== "success") {
                     newPlan[k.includes('.') ? k : `custom.${k}`] = titleData[k];
@@ -541,7 +651,16 @@ export function OperationsMatrixTab({ products }) {
     const fd = new FormData();
     fd.append("intent", "executeRepairPlan");
     fd.append("pieceId", selectedBenchId);
-    fd.append("repairPlan", JSON.stringify(manifest.repairPlan));
+    
+    const safePlan = {};
+    Object.keys(manifest.repairPlan).forEach(key => {
+        const meta = getFieldMetadata(key, manifest);
+        if (!meta.isBlockedAction) {
+            safePlan[key] = manifest.repairPlan[key];
+        }
+    });
+
+    fd.append("repairPlan", JSON.stringify(safePlan));
     fd.append("legacyKeysToRemove", JSON.stringify(Object.keys(manifest.legacyFields || {})));
 
     updateProductState(selectedBenchId, STATUS.SCANNING, ["Executing single structural repair..."]);
@@ -578,73 +697,34 @@ export function OperationsMatrixTab({ products }) {
     "custom.artist_notes"
   ].includes(k);
 
-  const getFieldMetadata = (key, data) => {
-    const hasCurrent = data.currentMetafields?.hasOwnProperty(key);
-    let currentVal = hasCurrent ? String(data.currentMetafields[key] || "") : "";
-
-    // Strictly separate Product Title from SEO Title to prevent conflict false-positives
-    if (key === "custom.shopify_title" || key === "shopify_title") {
-        currentVal = String(data.canonicalFields?.["shopify_title"] || currentVal || ""); 
-    }
-
-    const isProposed = data.repairPlan !== undefined && data.repairPlan.hasOwnProperty(key);
-    const propVal = isProposed ? String(data.repairPlan[key] ?? "") : "";
-    
-    let legacyKeyForCanonical = null;
-    Object.entries(LEGACY_MAP).forEach(([leg, can]) => { if (can === key) legacyKeyForCanonical = leg; });
-    const hasConflict = legacyKeyForCanonical && data.legacyFields?.[legacyKeyForCanonical] && 
-                        data.legacyFields[legacyKeyForCanonical].value && currentVal && 
-                        data.legacyFields[legacyKeyForCanonical].value !== currentVal;
-
-    const isRequired = ["global.title_tag", "custom.shopify_title", "custom.price"].includes(key);
-
-    let fieldStatus = "Unchanged";
-    if (hasConflict) {
-        fieldStatus = "Conflict";
-    } else if (currentVal.trim() === "" && (!isProposed || propVal.trim() === "")) {
-        fieldStatus = isRequired ? "Required missing" : "Optional blank";
-    } else if (currentVal.trim() !== "" && (!isProposed || propVal.trim() === "")) {
-        fieldStatus = "Unchanged";
-    } else if (isProposed && currentVal !== propVal && propVal.trim() !== "") {
-        fieldStatus = "Proposed change";
-    } else if (isProposed && currentVal === propVal) {
-        fieldStatus = "Unchanged";
-    }
-
-    const fieldMeta = data.metadata?.[key] || {};
-    const source = fieldMeta.source || "Not reported";
-    const stage = fieldMeta.stage || "Not reported";
-
-    return { currentVal, propVal, isProposed, fieldStatus, source, stage, hasConflict };
-  };
-
   const getDiagnosticsStats = (data) => {
     if (!data) return null;
-    let filledCount = 0;
-    let blankCount = 0;
-    let changesCount = 0;
-    let conflictsCount = 0;
-    let totalCount = 0;
+    let stats = {
+        proposed: 0,
+        blocked: 0,
+        degraded: 0,
+        conflicts: 0,
+        unverified: 0,
+        optionalBlanks: 0,
+        requiredMissing: 0,
+        approvedWrite: 0
+    };
 
     SECTIONS.forEach(sec => {
         sec.keys.forEach(k => {
-            totalCount++;
             const meta = getFieldMetadata(k, data);
-            if (meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing") blankCount++;
-            else filledCount++;
-
-            if (meta.fieldStatus === "Proposed change") changesCount++;
-            if (meta.fieldStatus === "Conflict") conflictsCount++;
+            if (meta.fieldStatus === "Proposed") stats.proposed++;
+            if (meta.isBlockedAction) stats.blocked++;
+            if (meta.fieldStatus === "Degrade") stats.degraded++;
+            if (meta.fieldStatus === "Conflict") stats.conflicts++;
+            if (meta.fieldStatus === "Unverified proposal") stats.unverified++;
+            if (meta.fieldStatus === "Optional blank") stats.optionalBlanks++;
+            if (meta.fieldStatus === "Required missing") stats.requiredMissing++;
+            if (meta.fieldStatus === "Proposed" && !meta.isBlockedAction) stats.approvedWrite++;
         });
     });
 
-    return {
-        total: totalCount,
-        filled: filledCount,
-        blank: blankCount,
-        changes: changesCount,
-        conflicts: conflictsCount
-    };
+    return stats;
   };
 
   const handleCollectTelemetry = useCallback(() => {
@@ -692,77 +772,59 @@ export function OperationsMatrixTab({ products }) {
               
               const isLong = longTextFields.includes(key);
               const isNote = noteFields.includes(key);
-              const currentStr = meta.currentVal || "";
-              const propStr = meta.propVal || "";
-              const currentCount = currentStr.length;
-              const propCount = propStr.length;
-              
               const limit = FIELD_LIMITS[key] || null;
-              const isOverLimit = limit !== null && (currentCount > limit || (meta.isProposed && propCount > limit));
-              
-              const isBlank = meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing";
-              const isRequired = meta.fieldStatus === "Required missing";
-              const isIntegrationOwned = key.startsWith("google.") || key.startsWith("shopify.") || key.startsWith("mm-google") || key.startsWith("mc-facebook");
-              
+
+              const isIntegrationOwned = INTEGRATION_PREFIXES.some(prefix => key.startsWith(prefix));
               const rawKey = key.split('.')[1] || key;
               const isAlias = Object.keys(LEGACY_MAP).includes(rawKey) || Object.values(LEGACY_MAP).includes(rawKey);
 
-              if (isOverLimit) summary["over-limit"]++;
+              if (meta.reasons.includes("Over limit")) summary["over-limit"]++;
               if (isIntegrationOwned) {
                   summary["observedIntegrationFields"]++;
                   summary["integration-owned"]++;
               }
               if (isAlias) summary["aliasFields"]++;
 
-              if (currentStr.trim().length > 0) summary["loaded"]++;
+              if (meta.currentExists) summary["loaded"]++;
               
-              if (isBlank) {
+              if (meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing") {
                   summary["blank"]++;
-                  if (isRequired) summary["required missing"]++;
+                  if (meta.fieldStatus === "Required missing") summary["required missing"]++;
                   else summary["optional blanks"]++;
               }
               
-              if (meta.fieldStatus === "Proposed change") summary["proposed"]++;
+              if (meta.fieldStatus === "Proposed") summary["proposed"]++;
               if (meta.fieldStatus === "Conflict") summary["conflicts"]++;
 
               let proposalStatus = "Not provided";
               if (meta.isProposed) {
-                  proposalStatus = propStr.trim().length > 0 ? "Provided" : "Empty";
+                  proposalStatus = meta.propVal.trim().length > 0 ? "Provided" : "Empty";
               }
 
-              let reasons = [];
-              if (meta.fieldStatus === "Proposed change") reasons.push("Proposed");
-              if (meta.fieldStatus === "Conflict") reasons.push("Conflict");
-              if (isRequired) reasons.push("Required missing");
-              if (isAlias) reasons.push("Alias");
-              if (isIntegrationOwned) reasons.push("Integration-owned");
-              if (isOverLimit) reasons.push("Over-limit");
-              if (meta.fieldStatus === "Failed") reasons.push("Error");
-
-              const isIssue = reasons.length > 0;
-              const isPresentNote = isNote && (currentStr.trim().length > 0 || (meta.isProposed && propStr.trim().length > 0));
+              const isIssue = meta.reasons.length > 0 || meta.isBlockedAction || meta.fieldStatus === "Proposed";
+              const isPresentNote = isNote && (meta.currentExists || meta.proposalExists);
 
               if (isIssue || isPresentNote) {
                   const record = {
                       "namespace/key": key,
-                      "current value present": currentStr.trim().length > 0,
-                      "proposed value present": meta.isProposed && propStr.trim().length > 0,
-                      "current character count": currentCount,
-                      "proposed character count": meta.isProposed ? propCount : 0,
+                      "current value present": meta.currentExists,
+                      "proposed value present": meta.proposalExists,
+                      "current character count": meta.currentVal.length,
+                      "proposed character count": meta.isProposed ? meta.propVal.length : 0,
                       "status": meta.fieldStatus,
                       "proposal status": proposalStatus,
                       "source": meta.source,
                       "stage": meta.stage
                   };
 
-                  if (isIssue && reasons.length > 0) record.reason = reasons.join(", ");
-                  if (isOverLimit) record["over-limit"] = true;
+                  if (meta.reasons.length > 0) record.reason = meta.reasons.join(", ");
+                  if (meta.reasons.includes("Over limit")) record["over-limit"] = true;
 
                   if (!isLong) {
                       const getPreview = (text) => text.length > 255 ? text.substring(0, 252) + "..." : text;
-                      record["current value"] = isNote ? getPreview(currentStr) : currentStr;
+                      record["current value"] = isNote ? getPreview(meta.currentVal) : meta.currentVal;
                       if (meta.isProposed) {
-                          record["proposed value"] = isNote ? getPreview(propStr) : propStr;
+                          record["proposed value"] = isNote ? getPreview(meta.propVal) : meta.propVal;
                       }
                   }
 
@@ -812,7 +874,6 @@ export function OperationsMatrixTab({ products }) {
     if (!data) return null;
 
     const stats = getDiagnosticsStats(data);
-    
     const shopifyReadStatus = data.success ? "Success" : "Failed";
     const geminiStatus = data.metadata?.gemini_status || "Not reported";
     const visionStatus = data.metadata?.vision_status || "Not reported";
@@ -842,22 +903,28 @@ export function OperationsMatrixTab({ products }) {
             </Box>
 
             <Box padding="300" background="bg-surface-secondary" borderRadius="100" borderColor="border" borderWidth="1">
-              <Text as="p" variant="headingSm" tone="subdued">Field Metrics</Text>
+              <Text as="p" variant="headingSm" tone="subdued">Repair Engine</Text>
               <BlockStack gap="100">
-                <Text as="p" fontWeight="bold">Total Fields: {stats.total}</Text>
-                <Text as="p" fontWeight="bold">Filled: <span style={{ color: "#22c55e" }}>{stats.filled}</span></Text>
-                <Text as="p" fontWeight="bold">Blank: <span style={{ color: "#eab308" }}>{stats.blank}</span></Text>
+                <Text as="p" fontWeight="bold">Proposed changes: {stats.proposed}</Text>
+                <Text as="p" fontWeight="bold" color="critical">Blocked changes: {stats.blocked}</Text>
+                <Text as="p" fontWeight="bold" color="critical">Degraded fields: {stats.degraded}</Text>
+                <Text as="p" fontWeight="bold" color="critical">Conflicts: {stats.conflicts}</Text>
+                <Text as="p" fontWeight="bold" color="attention">Unverified proposals: {stats.unverified}</Text>
+                <Text as="p" fontWeight="bold" color="success">Fields approved for write: {stats.approvedWrite}</Text>
               </BlockStack>
             </Box>
 
             <Box padding="300" background="bg-surface-secondary" borderRadius="100" borderColor="border" borderWidth="1">
-              <Text as="p" variant="headingSm" tone="subdued">Repair Engine</Text>
+              <Text as="p" variant="headingSm" tone="subdued">Field Metrics</Text>
               <BlockStack gap="100">
-                <Text as="p" fontWeight="bold">Proposed Changes: <span style={{ color: "#005bd3" }}>{stats.changes}</span></Text>
-                <Text as="p" fontWeight="bold">Conflicts Detected: <span style={{ color: "#ef4444" }}>{stats.conflicts}</span></Text>
+                <Text as="p" fontWeight="bold">Total Fields: {stats.total}</Text>
+                <Text as="p" fontWeight="bold">Filled: <span style={{ color: "#22c55e" }}>{stats.filled}</span></Text>
+                <Text as="p" fontWeight="bold">Optional blanks: <span style={{ color: "#eab308" }}>{stats.optionalBlanks}</span></Text>
+                <Text as="p" fontWeight="bold" color="critical">Required missing fields: {stats.requiredMissing}</Text>
                 <Text as="p" fontWeight="bold">Fields Updated (Last Run): {data.fieldsUpdated !== undefined ? data.fieldsUpdated : "Not reported"}</Text>
               </BlockStack>
             </Box>
+
           </div>
         </BlockStack>
       </Card>
@@ -876,9 +943,9 @@ export function OperationsMatrixTab({ products }) {
       if (activeFilter === "All") return true;
       const meta = getFieldMetadata(k, data);
       if (activeFilter === "Blank" && (meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing")) return true;
-      if (activeFilter === "Proposed changes" && meta.fieldStatus === "Proposed change") return true;
-      if (activeFilter === "Conflicts" && meta.fieldStatus === "Conflict") return true;
-      if (activeFilter === "Needs review" && meta.fieldStatus === "Needs review") return true;
+      if (activeFilter === "Proposed changes" && meta.fieldStatus === "Proposed") return true;
+      if (activeFilter === "Conflicts" && (meta.fieldStatus === "Conflict" || meta.fieldStatus === "Degrade")) return true;
+      if (activeFilter === "Needs review" && (meta.fieldStatus === "Required missing" || meta.fieldStatus === "Unverified proposal")) return true;
       if (activeFilter === meta.source) return true;
       return false;
     });
@@ -902,10 +969,10 @@ export function OperationsMatrixTab({ products }) {
               const meta = getFieldMetadata(key, data);
               const isBlank = meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing";
               
-              let statusTone = undefined;
-              if (meta.fieldStatus === "Optional blank") statusTone = "attention";
-              if (meta.fieldStatus === "Required missing" || meta.fieldStatus === "Conflict" || meta.fieldStatus === "Failed") statusTone = "critical";
-              if (meta.fieldStatus === "Proposed change") statusTone = "success";
+              let statusTone = "info";
+              if (meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Unverified proposal") statusTone = "attention";
+              if (["Required missing", "Conflict", "Degrade", "Blocked", "Over limit", "Failed"].includes(meta.fieldStatus)) statusTone = "critical";
+              if (meta.fieldStatus === "Proposed") statusTone = "success";
               if (meta.fieldStatus === "Unchanged") statusTone = "new";
 
               return (
@@ -940,7 +1007,7 @@ export function OperationsMatrixTab({ products }) {
                                 onChange={(val) => handleRepairPlanChange(key, val)}
                                 autoComplete="off"
                                 multiline={isMultilineKey(key) ? 3 : undefined}
-                                placeholder={meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing" ? "Blank" : (meta.fieldStatus === "Unchanged (Not provided)" ? "Not provided" : "")}
+                                placeholder={meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing" ? "Blank" : (meta.fieldStatus === "Proposal not provided" ? "Not provided" : "")}
                             />
                         </div>
                     </div>
