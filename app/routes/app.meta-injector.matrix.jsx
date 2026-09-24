@@ -327,6 +327,7 @@ export function OperationsMatrixTab({ products }) {
     const hasCurrent = data.currentMetafields?.hasOwnProperty(key);
     let currentVal = hasCurrent ? String(data.currentMetafields[key] || "") : "";
 
+    // Strictly separate Product Title from SEO Title to prevent conflict false-positives
     if (key === "custom.shopify_title" || key === "shopify_title") {
         currentVal = String(data.canonicalFields?.["shopify_title"] || currentVal || ""); 
     }
@@ -339,6 +340,7 @@ export function OperationsMatrixTab({ products }) {
     let stage = fieldMeta.stage || "Not reported";
 
     let fieldStatus = "Unchanged";
+    let proposalStatus = isProposed ? (propVal.trim() !== "" ? "Provided" : "Empty") : "Not provided";
     let isBlockedAction = false;
     let reasons = [];
 
@@ -346,7 +348,6 @@ export function OperationsMatrixTab({ products }) {
     const isProtected = PROTECTED_FIELDS.includes(key);
     const isHardware = HARDWARE_FIELDS.includes(key);
     const isIntegration = INTEGRATION_PREFIXES.some(prefix => key.startsWith(prefix));
-    
     const rawKey = key.split('.')[1] || key;
     const isAlias = Object.keys(LEGACY_MAP).includes(rawKey) || Object.values(LEGACY_MAP).includes(rawKey);
 
@@ -355,9 +356,7 @@ export function OperationsMatrixTab({ products }) {
     const limit = FIELD_LIMITS[key] || null;
     const isOverLimit = limit !== null && (currentCount > limit || (isProposed && propCount > limit));
 
-    if (isOverLimit) {
-        reasons.push("Over limit");
-    }
+    if (isOverLimit) reasons.push("Over limit");
     if (isAlias) reasons.push("Alias");
     if (isIntegration) reasons.push("Integration owned");
 
@@ -365,8 +364,9 @@ export function OperationsMatrixTab({ products }) {
     const proposalExists = isProposed && propVal.trim() !== "";
 
     if (currentExists) {
-        if (!isProposed || !proposalExists) {
-            fieldStatus = "Proposal not provided";
+        if (!proposalExists) {
+            fieldStatus = "Unchanged";
+            proposalStatus = "Not provided";
         } else if (currentVal === propVal) {
             fieldStatus = "Unchanged";
         } else {
@@ -405,7 +405,7 @@ export function OperationsMatrixTab({ products }) {
         isBlockedAction = true;
     }
 
-    return { currentVal, propVal, isProposed, fieldStatus, source, stage, isBlockedAction, reasons, currentExists, proposalExists };
+    return { currentVal, propVal, isProposed, fieldStatus, proposalStatus, source, stage, isBlockedAction, reasons, currentExists, proposalExists };
   };
 
   useEffect(() => {
@@ -482,6 +482,7 @@ export function OperationsMatrixTab({ products }) {
         fd.append("weight_grams", manifest.currentMetafields["custom.weight_grams"] || "");
         fd.append("dimensions_mm", manifest.currentMetafields["custom.dimensions_mm"] || "");
         
+        // INJECTION FIX: Starved Vision API needs shape data to accurately identify cuts
         fd.append("stone_shape", manifest.currentMetafields["custom.stone_shape"] || manifest.canonicalFields["custom.stone_shape"] || "");
         fd.append("cut_and_shape", manifest.currentMetafields["custom.cut_and_shape"] || manifest.canonicalFields["custom.cut_and_shape"] || "");
 
@@ -506,10 +507,27 @@ export function OperationsMatrixTab({ products }) {
         setManifestData(prev => {
             const existing = prev[currentId];
             const newPlan = { ...existing.repairPlan };
+            const diagnostics = { ...(existing.diagnostics || {}) };
             
             const titleData = tempAiData.titleParse || {};
             const visionData = tempAiData.tab2Data || {};
             const descData = tempAiData.generated_description || "";
+
+            // Record stage success
+            if (tempAiData.titleParseRequested) {
+                diagnostics.gemini = "Success";
+                diagnostics.geoLibrary = titleData?.geoSource === "library" ? "Success" : (titleData?.geoSource || "Not reported");
+                diagnostics.stage = "titleParse";
+            }
+            if (tempAiData.fullRescanRequested) {
+                diagnostics.vision = "Success";
+                diagnostics.gemini = "Success";
+                diagnostics.stage = "fullRescan";
+            }
+            if (tempAiData.generateDescRequested) {
+                diagnostics.gemini = "Success";
+                diagnostics.stage = "generateDescription";
+            }
 
             Object.keys(visionData).forEach(k => {
                 if (k !== "generated_description" && k !== "pieceId" && k !== "debug_origin" && k !== "intent" && k !== "success") {
@@ -518,14 +536,14 @@ export function OperationsMatrixTab({ products }) {
             });
             
             Object.keys(titleData).forEach(k => {
-                if (k !== "pieceId" && k !== "intent" && k !== "success") {
+                if (k !== "pieceId" && k !== "intent" && k !== "success" && k !== "geoSource") {
                     newPlan[k.includes('.') ? k : `custom.${k}`] = titleData[k];
                 }
             });
 
             if (descData) newPlan["custom.generated_description"] = descData;
 
-            return { ...prev, [currentId]: { ...existing, repairPlan: newPlan } };
+            return { ...prev, [currentId]: { ...existing, repairPlan: newPlan, diagnostics } };
         });
         
         setTempAiData({});
@@ -546,7 +564,23 @@ export function OperationsMatrixTab({ products }) {
          if (!success) {
             updateProductState(targetId, STATUS.FAILED, [error || message || "Failed to load data"]);
          } else {
-            setManifestData(prev => ({ ...prev, [targetId]: batchFetcher.data }));
+            setManifestData(prev => {
+                const prevDiag = prev[targetId]?.diagnostics || {};
+                return {
+                    ...prev,
+                    [targetId]: {
+                        ...batchFetcher.data,
+                        diagnostics: {
+                            shopifyRead: batchFetcher.data.success ? "Success" : "Failed",
+                            gemini: prevDiag.gemini === "Success" ? "Success" : "Not called",
+                            vision: prevDiag.vision === "Success" ? "Success" : "Not called",
+                            geoLibrary: prevDiag.geoLibrary === "Success" ? "Success" : "Not called",
+                            readBack: "Not called",
+                            stage: "loadProductData"
+                        }
+                    }
+                };
+            });
             updateProductState(targetId, STATUS.VALIDATED, ["Data Loaded. Manifest Built."]);
          }
          if (isLoadingData) setTimeout(() => setLoadIndex(i => i + 1), 100);
@@ -565,6 +599,22 @@ export function OperationsMatrixTab({ products }) {
         if (intent === "batchAuditItem" && success) {
             updateProductState(targetId, STATUS.SCANNING, ["AI Run complete. Fetching fresh data..."]);
             setSafetyMessage("Single AI Run complete. Reloading manifest to display new data...");
+            setManifestData(prev => {
+                const existing = prev[targetId];
+                if (!existing) return prev;
+                return {
+                    ...prev,
+                    [targetId]: {
+                        ...existing,
+                        diagnostics: {
+                            ...existing.diagnostics,
+                            gemini: "Success",
+                            vision: "Success",
+                            stage: "batchAuditItem"
+                        }
+                    }
+                };
+            });
             setTimeout(() => {
                 const fd = new FormData();
                 fd.append("intent", "loadProductData");
@@ -572,6 +622,25 @@ export function OperationsMatrixTab({ products }) {
                 batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-api" });
             }, 500);
             return;
+        }
+
+        if (intent === "executeRepairPlan" && success) {
+            setManifestData(prev => {
+                const existing = prev[targetId];
+                if (!existing) return prev;
+                return {
+                    ...prev,
+                    [targetId]: {
+                        ...existing,
+                        diagnostics: {
+                            ...existing.diagnostics,
+                            shopifyRead: "Success",
+                            readBack: "Not called",
+                            stage: "executeRepairPlan"
+                        }
+                    }
+                };
+            });
         }
 
         const successLogs = logs || [message || "Operation applied successfully."];
@@ -606,6 +675,14 @@ export function OperationsMatrixTab({ products }) {
                 updateProductState(currentId, STATUS.FAILED, [error || `Gemini failed at ${intent}`]);
                 setIsExecuting(false);
                 setSafetyError(`Engine halted on item ${executeIndex + 1}. Error: ${error || "Unknown Gemini API Error"}`);
+                setManifestData(prev => {
+                    const existing = prev[currentId];
+                    if (!existing) return prev;
+                    const diagnostics = { ...existing.diagnostics, error: error || `Gemini failed at ${intent}` };
+                    if (intent === "titleParse" || intent === "generateDescription") diagnostics.gemini = "Failed";
+                    if (intent === "fullRescan") { diagnostics.vision = "Failed"; diagnostics.gemini = "Failed"; }
+                    return { ...prev, [currentId]: { ...existing, diagnostics } };
+                });
                 return;
             }
 
@@ -697,6 +774,65 @@ export function OperationsMatrixTab({ products }) {
     "custom.artist_notes"
   ].includes(k);
 
+  const getSystemStatus = () => {
+      const data = manifestData[selectedBenchId];
+      let diag = data?.diagnostics || {
+          shopifyRead: "Not reported",
+          gemini: "Not reported",
+          vision: "Not reported",
+          geoLibrary: "Not reported",
+          readBack: "Not called",
+          stage: "Not reported",
+          error: null
+      };
+
+      let shopifyReadStatus = diag.shopifyRead;
+      let geminiStatus = diag.gemini;
+      let visionStatus = diag.vision;
+      let geoLibraryStatus = diag.geoLibrary;
+      let readBackStatus = diag.readBack;
+      let currentStage = diag.stage || "Not reported";
+
+      const isCurrentlyProcessing = (isLoadingData && queueIds[loadIndex] === selectedBenchId) ||
+                                    (isExecuting && queueIds[executeIndex] === selectedBenchId);
+      
+      let finalStageDisplay = executionMode || "Not reported";
+      let fetcherStateDisplay = batchFetcher.state;
+      let loadingStateDisplay = isLoadingData ? "Loading" : "Idle";
+      let errorMessageDisplay = safetyError || diag.error || "None";
+
+      if (isCurrentlyProcessing) {
+          if (isLoadingData) {
+              shopifyReadStatus = "Running";
+          } else if (executionMode === "AI_BATCH_PIPELINE") {
+              if (aiStep === 1) { geminiStatus = "Running"; currentStage = "titleParse"; }
+              if (aiStep === 2) { geminiStatus = "Running"; visionStatus = "Running"; currentStage = "fullRescan"; }
+              if (aiStep === 3) { geminiStatus = "Running"; currentStage = "generateDescription"; }
+          } else if (executionMode === "REPAIR") {
+              shopifyReadStatus = "Running"; 
+              currentStage = "executeRepairPlan";
+          }
+      }
+
+      if (batchFetcher.state !== "idle" && batchFetcher.formData?.get("pieceId") === selectedBenchId) {
+          const intent = batchFetcher.formData?.get("intent");
+          if (intent === "batchAuditItem") {
+              geminiStatus = "Running";
+              visionStatus = "Running";
+              currentStage = "batchAuditItem";
+          }
+          if (intent === "executeRepairPlan") {
+              shopifyReadStatus = "Running";
+              currentStage = "executeRepairPlan";
+          }
+      }
+
+      return {
+          shopifyReadStatus, geminiStatus, visionStatus, geoLibraryStatus, readBackStatus,
+          currentStage, finalStageDisplay, fetcherStateDisplay, loadingStateDisplay, errorMessageDisplay
+      };
+  };
+
   const getDiagnosticsStats = (data) => {
     if (!data) return null;
     let stats = {
@@ -707,12 +843,20 @@ export function OperationsMatrixTab({ products }) {
         unverified: 0,
         optionalBlanks: 0,
         requiredMissing: 0,
-        approvedWrite: 0
+        approvedWrite: 0,
+        total: 0,
+        filled: 0,
+        blank: 0
     };
 
     SECTIONS.forEach(sec => {
         sec.keys.forEach(k => {
+            stats.total++;
             const meta = getFieldMetadata(k, data);
+            
+            if (meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing") stats.blank++;
+            else stats.filled++;
+
             if (meta.fieldStatus === "Proposed") stats.proposed++;
             if (meta.isBlockedAction) stats.blocked++;
             if (meta.fieldStatus === "Degrade") stats.degraded++;
@@ -736,6 +880,7 @@ export function OperationsMatrixTab({ products }) {
       const data = manifestData[selectedBenchId];
       const productState = productStates[selectedBenchId];
       const product = safeProducts.find(p => p.id === selectedBenchId) || {};
+      const statusObj = getSystemStatus();
 
       const longTextFields = [
           "global.description_tag", "custom.generated_description", "custom.origin_story"
@@ -760,7 +905,7 @@ export function OperationsMatrixTab({ products }) {
           "over-limit": 0,
           "fields updated": data.fieldsUpdated !== undefined ? data.fieldsUpdated : 0,
           "legacy fields removed": Object.keys(data.legacyFields || {}).length,
-          "read-back status": data.metadata?.read_back || "Not reported"
+          "read-back status": statusObj.readBackStatus
       };
 
       const issuesAndNotes = [];
@@ -772,8 +917,7 @@ export function OperationsMatrixTab({ products }) {
               
               const isLong = longTextFields.includes(key);
               const isNote = noteFields.includes(key);
-              const limit = FIELD_LIMITS[key] || null;
-
+              
               const isIntegrationOwned = INTEGRATION_PREFIXES.some(prefix => key.startsWith(prefix));
               const rawKey = key.split('.')[1] || key;
               const isAlias = Object.keys(LEGACY_MAP).includes(rawKey) || Object.values(LEGACY_MAP).includes(rawKey);
@@ -794,12 +938,7 @@ export function OperationsMatrixTab({ products }) {
               }
               
               if (meta.fieldStatus === "Proposed") summary["proposed"]++;
-              if (meta.fieldStatus === "Conflict") summary["conflicts"]++;
-
-              let proposalStatus = "Not provided";
-              if (meta.isProposed) {
-                  proposalStatus = meta.propVal.trim().length > 0 ? "Provided" : "Empty";
-              }
+              if (meta.fieldStatus === "Conflict" || meta.fieldStatus === "Degrade") summary["conflicts"]++;
 
               const isIssue = meta.reasons.length > 0 || meta.isBlockedAction || meta.fieldStatus === "Proposed";
               const isPresentNote = isNote && (meta.currentExists || meta.proposalExists);
@@ -812,7 +951,7 @@ export function OperationsMatrixTab({ products }) {
                       "current character count": meta.currentVal.length,
                       "proposed character count": meta.isProposed ? meta.propVal.length : 0,
                       "status": meta.fieldStatus,
-                      "proposal status": proposalStatus,
+                      "proposal status": meta.proposalStatus,
                       "source": meta.source,
                       "stage": meta.stage
                   };
@@ -841,15 +980,15 @@ export function OperationsMatrixTab({ products }) {
               "scan status": productState?.status || "Unknown"
           },
           pipeline: {
-              "Shopify read status": data.success ? "Success" : "Failed",
-              "Gemini status": data.metadata?.gemini_status || "Not reported",
-              "Vision status": data.metadata?.vision_status || "Not reported",
-              "Geo Library status": data.metadata?.geo_status || "Not reported",
-              "current stage": aiStep,
-              "final stage": executionMode || "Not reported",
-              "fetcher state": batchFetcher.state,
-              "loading state": isLoadingData ? "Loading" : "Idle",
-              "error message": safetyError || null
+              "Shopify read status": statusObj.shopifyReadStatus,
+              "Gemini status": statusObj.geminiStatus,
+              "Vision status": statusObj.visionStatus,
+              "Geo Library status": statusObj.geoLibraryStatus,
+              "current stage": statusObj.currentStage,
+              "final stage": statusObj.finalStageDisplay,
+              "fetcher state": statusObj.fetcherStateDisplay,
+              "loading state": statusObj.loadingStateDisplay,
+              "error message": statusObj.errorMessageDisplay
           },
           summary,
           issuesAndNotes
@@ -874,11 +1013,7 @@ export function OperationsMatrixTab({ products }) {
     if (!data) return null;
 
     const stats = getDiagnosticsStats(data);
-    const shopifyReadStatus = data.success ? "Success" : "Failed";
-    const geminiStatus = data.metadata?.gemini_status || "Not reported";
-    const visionStatus = data.metadata?.vision_status || "Not reported";
-    const geoLibraryStatus = data.metadata?.geo_status || "Not reported";
-    const readBackStatus = data.metadata?.read_back || "Not reported";
+    const statusObj = getSystemStatus();
 
     return (
       <Card padding="400">
@@ -894,11 +1029,11 @@ export function OperationsMatrixTab({ products }) {
             <Box padding="300" background="bg-surface-secondary" borderRadius="100" borderColor="border" borderWidth="1">
               <Text as="p" variant="headingSm" tone="subdued">System Status</Text>
               <BlockStack gap="100" align="start">
-                <Text as="p" fontWeight="bold">Shopify Read: <Badge tone={shopifyReadStatus === "Success" ? "success" : "critical"}>{shopifyReadStatus}</Badge></Text>
-                <Text as="p" fontWeight="bold">Gemini API: <Badge tone="info">{geminiStatus}</Badge></Text>
-                <Text as="p" fontWeight="bold">Vision API: <Badge tone="info">{visionStatus}</Badge></Text>
-                <Text as="p" fontWeight="bold">Geo Library: <Badge tone="info">{geoLibraryStatus}</Badge></Text>
-                <Text as="p" fontWeight="bold">Read-back: <Badge tone="info">{readBackStatus}</Badge></Text>
+                <Text as="p" fontWeight="bold">Shopify Read: <Badge tone={statusObj.shopifyReadStatus === "Success" ? "success" : (statusObj.shopifyReadStatus === "Running" ? "magic" : "critical")}>{statusObj.shopifyReadStatus}</Badge></Text>
+                <Text as="p" fontWeight="bold">Gemini API: <Badge tone={statusObj.geminiStatus === "Running" ? "magic" : "info"}>{statusObj.geminiStatus}</Badge></Text>
+                <Text as="p" fontWeight="bold">Vision API: <Badge tone={statusObj.visionStatus === "Running" ? "magic" : "info"}>{statusObj.visionStatus}</Badge></Text>
+                <Text as="p" fontWeight="bold">Geo Library: <Badge tone="info">{statusObj.geoLibraryStatus}</Badge></Text>
+                <Text as="p" fontWeight="bold">Read-back: <Badge tone="info">{statusObj.readBackStatus}</Badge></Text>
               </BlockStack>
             </Box>
 
@@ -969,9 +1104,9 @@ export function OperationsMatrixTab({ products }) {
               const meta = getFieldMetadata(key, data);
               const isBlank = meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing";
               
-              let statusTone = "info";
-              if (meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Unverified proposal") statusTone = "attention";
-              if (["Required missing", "Conflict", "Degrade", "Blocked", "Over limit", "Failed"].includes(meta.fieldStatus)) statusTone = "critical";
+              let statusTone = undefined;
+              if (meta.fieldStatus === "Optional blank") statusTone = "attention";
+              if (["Required missing", "Conflict", "Degrade", "Blocked", "Over limit", "Failed", "Unverified proposal"].includes(meta.fieldStatus)) statusTone = "critical";
               if (meta.fieldStatus === "Proposed") statusTone = "success";
               if (meta.fieldStatus === "Unchanged") statusTone = "new";
 
@@ -1026,7 +1161,7 @@ export function OperationsMatrixTab({ products }) {
   const filterOptions = [
     {label: 'All', value: 'All'},
     {label: 'Needs review', value: 'Needs review'},
-    {label: 'Proposed changes', value: 'Proposed changes'},
+    {label: 'Proposed changes', value: 'Proposed'},
     {label: 'Conflicts', value: 'Conflicts'},
     {label: 'Blank', value: 'Blank'},
     {label: 'Shopify', value: 'Shopify'},
