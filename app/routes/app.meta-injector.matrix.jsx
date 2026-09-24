@@ -134,7 +134,7 @@ export function OperationsMatrixTab({ products }) {
   const [queueIds, setQueueIds] = useState([]);
   const [productStates, setProductStates] = useState({}); 
   const [manifestData, setManifestData] = useState({}); 
-  const [lastProcessedData, setLastProcessedData] = useState(null); // Prevents multi-processing bugs
+  const [lastProcessedData, setLastProcessedData] = useState(null);
   
   const [selectedBenchId, setSelectedBenchId] = useState(null);
   const [safetyMessage, setSafetyMessage] = useState("");
@@ -216,7 +216,10 @@ export function OperationsMatrixTab({ products }) {
   }, []);
 
   const generateRepairPlan = useCallback(() => {
-    if (queueIds.length === 0) return;
+    if (queueIds.length === 0) {
+       setSafetyError("Cannot generate plan: No inventory selected. Please check items in the left column first.");
+       return;
+    }
     setIsLoadingData(true);
     setLoadIndex(0);
     setSafetyMessage("Fetching live product data and building manifests by GID...");
@@ -243,11 +246,14 @@ export function OperationsMatrixTab({ products }) {
   }, [isLoadingData, loadIndex, queueIds, batchFetcher.state, updateProductState]);
 
   const executeRepairs = useCallback(() => {
-    if (queueIds.length === 0) return;
+    if (queueIds.length === 0) {
+       setSafetyError("Cannot execute: No items loaded on the bench.");
+       return;
+    }
     
     const readyItems = queueIds.filter(id => manifestData[id]);
     if (readyItems.length === 0) {
-       setSafetyError("You must Generate Repair Plan (Load Data) before executing.");
+       setSafetyError("Cannot execute: You must click 'GENERATE REPAIR PLAN' first to load data.");
        return;
     }
     
@@ -270,11 +276,14 @@ export function OperationsMatrixTab({ products }) {
   }, [queueIds, manifestData]);
 
   const executeAIFill = useCallback(() => {
-    if (queueIds.length === 0) return;
+    if (queueIds.length === 0) {
+       setSafetyError("Cannot run AI: No items loaded on the bench.");
+       return;
+    }
     
     const readyItems = queueIds.filter(id => manifestData[id]);
     if (readyItems.length === 0) {
-       setSafetyError("You must Generate Repair Plan (Load Data) before executing.");
+       setSafetyError("Cannot run AI: You must click 'GENERATE REPAIR PLAN' first to load data.");
        return;
     }
     
@@ -305,7 +314,7 @@ export function OperationsMatrixTab({ products }) {
       setIsExecuting(false);
       setExecutionMode(null);
       setAiStep(0);
-      setSafetyMessage(`Execution Complete. Processed ${queueIds.length} items.`);
+      setSafetyMessage(`Execution Complete. Processed ${queueIds.length} items. Note: AI Autofill only populates fields where visual or titled data is evident.`);
       return;
     }
 
@@ -439,6 +448,19 @@ export function OperationsMatrixTab({ products }) {
            return;
         }
         
+        // SPECIAL CASE for batchAuditItem: It mutated the live db, so reload to see the autofill!
+        if (intent === "batchAuditItem" && success) {
+            updateProductState(targetId, STATUS.SCANNING, ["AI Run complete. Fetching fresh data..."]);
+            setSafetyMessage("Single AI Run complete. Reloading manifest to display new data...");
+            setTimeout(() => {
+                const fd = new FormData();
+                fd.append("intent", "loadProductData");
+                fd.append("pieceId", targetId);
+                batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-api" });
+            }, 500);
+            return;
+        }
+
         const successLogs = logs || [message || "Operation applied successfully."];
         
         let statusToSet = STATUS.COMPLETE;
@@ -509,7 +531,7 @@ export function OperationsMatrixTab({ products }) {
     if (!selectedBenchId) return;
     const manifest = manifestData[selectedBenchId];
     if (!manifest) {
-       alert("Generate Repair Plan for this item first.");
+       setSafetyError("Generate Repair Plan for this item first.");
        return;
     }
     
@@ -1070,7 +1092,7 @@ export function OperationsMatrixTab({ products }) {
                       variant="secondary" 
                       icon={MagicIcon} 
                       onClick={generateRepairPlan} 
-                      disabled={queueIds.length === 0 || isExecuting || isLoadingData}
+                      disabled={isLoadingData || isExecuting}
                       loading={isLoadingData}
                     >
                       GENERATE REPAIR PLAN (LOAD DATA)
@@ -1081,7 +1103,7 @@ export function OperationsMatrixTab({ products }) {
                       variant="primary" 
                       tone="critical" 
                       onClick={executeRepairs} 
-                      disabled={queueIds.length === 0 || Object.keys(manifestData).length === 0 || isLoadingData}
+                      disabled={isLoadingData || isExecuting}
                       loading={isExecuting && executionMode === "REPAIR"}
                     >
                       EXECUTE REPAIRS (LIVE)
@@ -1092,7 +1114,7 @@ export function OperationsMatrixTab({ products }) {
                       variant="primary" 
                       icon={MagicIcon}
                       onClick={executeAIFill} 
-                      disabled={queueIds.length === 0 || Object.keys(manifestData).length === 0 || isLoadingData}
+                      disabled={isLoadingData || isExecuting}
                       loading={isExecuting && executionMode === "AI_BATCH_PIPELINE"}
                     >
                       EXECUTE AI AUTO-FILL (STAGE)
