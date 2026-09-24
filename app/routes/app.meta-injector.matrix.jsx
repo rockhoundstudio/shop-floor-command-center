@@ -369,6 +369,7 @@ export function OperationsMatrixTab({ products }) {
         fd.append("weight_grams", manifest.currentMetafields["custom.weight_grams"] || "");
         fd.append("dimensions_mm", manifest.currentMetafields["custom.dimensions_mm"] || "");
         
+        // INJECTION FIX: Starved Vision API needs shape data to accurately identify cuts
         fd.append("stone_shape", manifest.currentMetafields["custom.stone_shape"] || manifest.canonicalFields["custom.stone_shape"] || "");
         fd.append("cut_and_shape", manifest.currentMetafields["custom.cut_and_shape"] || manifest.canonicalFields["custom.cut_and_shape"] || "");
 
@@ -398,12 +399,14 @@ export function OperationsMatrixTab({ products }) {
             const visionData = tempAiData.tab2Data || {};
             const descData = tempAiData.generated_description || "";
 
+            // Merge Vision Data
             Object.keys(visionData).forEach(k => {
                 if (k !== "generated_description" && k !== "pieceId" && k !== "debug_origin" && k !== "intent" && k !== "success") {
                     newPlan[k.includes('.') ? k : `custom.${k}`] = visionData[k];
                 }
             });
             
+            // INJECTION FIX: Unchoke the Geo Pipeline. Render DB passes science data through titleParse.
             Object.keys(titleData).forEach(k => {
                 if (k !== "pieceId" && k !== "intent" && k !== "success") {
                     newPlan[k.includes('.') ? k : `custom.${k}`] = titleData[k];
@@ -464,6 +467,7 @@ export function OperationsMatrixTab({ products }) {
         const successLogs = logs || [message || "Operation applied successfully."];
         
         let statusToSet = STATUS.COMPLETE;
+        // Zero-change repairs must be skipped, specifically checking fieldsUpdated
         if (status === "NO_CHANGES_REQUIRED" || message === "No changes required." || fieldsUpdated === 0) {
             statusToSet = STATUS.SKIPPED;
             successLogs.push("No changes required.");
@@ -600,7 +604,7 @@ export function OperationsMatrixTab({ products }) {
     } else if (currentVal.trim() === "" && (!isProposed || propVal.trim() === "")) {
         fieldStatus = isRequired ? "Required missing" : "Optional blank";
     } else if (currentVal.trim() !== "" && (!isProposed || propVal.trim() === "")) {
-        fieldStatus = "Unchanged (Not provided)";
+        fieldStatus = "Unchanged";
     } else if (isProposed && currentVal !== propVal && propVal.trim() !== "") {
         fieldStatus = "Proposed change";
     } else if (isProposed && currentVal === propVal) {
