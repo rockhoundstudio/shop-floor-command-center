@@ -343,7 +343,7 @@ export function OperationsMatrixTab({ products }) {
     else if (executionMode === "AI_BATCH_PIPELINE") {
       if (aiStep === 1 && !tempAiData.titleParseRequested) {
         setTempAiData(prev => ({ ...prev, titleParseRequested: true }));
-        updateProductState(currentId, STATUS.SCANNING, ["Stage 1: Parsing Title & Origin (Gemini)..."]);
+        updateProductState(currentId, STATUS.SCANNING, ["Stage 1: Parsing Title & Origin (Gemini + Render DB)..."]);
         
         const titleToParse = manifest.canonicalFields?.shopify_title || product.title;
         const fd = new FormData();
@@ -368,6 +368,11 @@ export function OperationsMatrixTab({ products }) {
         fd.append("honest_flaws_and_character", manifest.currentMetafields["custom.honest_flaws_and_character"] || "");
         fd.append("weight_grams", manifest.currentMetafields["custom.weight_grams"] || "");
         fd.append("dimensions_mm", manifest.currentMetafields["custom.dimensions_mm"] || "");
+        
+        // INJECTION FIX: Starved Vision API needs shape data to accurately identify cuts
+        fd.append("stone_shape", manifest.currentMetafields["custom.stone_shape"] || manifest.canonicalFields["custom.stone_shape"] || "");
+        fd.append("cut_and_shape", manifest.currentMetafields["custom.cut_and_shape"] || manifest.canonicalFields["custom.cut_and_shape"] || "");
+
         batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-autofill" });
       }
       else if (aiStep === 3 && !tempAiData.generateDescRequested) {
@@ -394,20 +399,20 @@ export function OperationsMatrixTab({ products }) {
             const visionData = tempAiData.tab2Data || {};
             const descData = tempAiData.generated_description || "";
 
+            // Merge Vision Data
             Object.keys(visionData).forEach(k => {
                 if (k !== "generated_description" && k !== "pieceId" && k !== "debug_origin" && k !== "intent" && k !== "success") {
-                    newPlan[`custom.${k}`] = visionData[k];
+                    newPlan[k.includes('.') ? k : `custom.${k}`] = visionData[k];
                 }
             });
             
-            if (titleData.stone_family) newPlan["custom.stone_family"] = titleData.stone_family;
-            if (titleData.piece_name) newPlan["custom.piece_name"] = titleData.piece_name;
-            if (titleData.origin_handle) newPlan["custom.origin_handle"] = titleData.origin_handle;
-            if (titleData.origin_page_handle) newPlan["custom.origin_page_handle"] = titleData.origin_page_handle;
-            if (titleData.origin_location) newPlan["custom.origin_location"] = titleData.origin_location;
-            if (titleData.collection_name) newPlan["custom.collection_name"] = titleData.collection_name;
-            if (titleData.collection_location) newPlan["custom.collection_location"] = titleData.collection_location;
-            if (titleData.seo_title) newPlan["custom.seo_title"] = titleData.seo_title;
+            // INJECTION FIX: Unchoke the Geo Pipeline. Render DB passes science data through titleParse.
+            Object.keys(titleData).forEach(k => {
+                if (k !== "pieceId" && k !== "intent" && k !== "success") {
+                    newPlan[k.includes('.') ? k : `custom.${k}`] = titleData[k];
+                }
+            });
+
             if (descData) newPlan["custom.generated_description"] = descData;
 
             return { ...prev, [currentId]: { ...existing, repairPlan: newPlan } };
@@ -595,10 +600,16 @@ export function OperationsMatrixTab({ products }) {
     let fieldStatus = "Unchanged";
     if (hasConflict) {
         fieldStatus = "Conflict";
-    } else if (isProposed && currentVal !== propVal) {
-        fieldStatus = "Proposed change";
     } else if (currentVal.trim() === "" && (!isProposed || propVal.trim() === "")) {
         fieldStatus = "Blank";
+    } else if (currentVal.trim() !== "" && !isProposed) {
+        fieldStatus = "Unchanged";
+    } else if (currentVal.trim() === "" && isProposed && propVal.trim() !== "") {
+        fieldStatus = "Proposed";
+    } else if (isProposed && currentVal !== propVal) {
+        fieldStatus = "Conflict";
+    } else if (isProposed && currentVal === propVal) {
+        fieldStatus = "Unchanged";
     }
 
     const fieldMeta = data.metadata?.[key] || {};
@@ -623,7 +634,7 @@ export function OperationsMatrixTab({ products }) {
             if (meta.fieldStatus === "Blank") blankCount++;
             else filledCount++;
 
-            if (meta.fieldStatus === "Proposed change") changesCount++;
+            if (meta.fieldStatus === "Proposed") changesCount++;
             if (meta.fieldStatus === "Conflict") conflictsCount++;
         });
     });
@@ -648,8 +659,11 @@ export function OperationsMatrixTab({ products }) {
       const product = safeProducts.find(p => p.id === selectedBenchId) || {};
 
       const longTextFields = [
-          "global.description_tag", "custom.origin_story", "custom.generated_description",
-          "custom.artist_notes", "custom.bench_notes", "custom.alt_text", "custom.stone_story"
+          "global.description_tag", "custom.generated_description", "custom.origin_story"
+      ];
+
+      const noteFields = [
+          "custom.artist_notes", "custom.bench_notes"
       ];
 
       let summary = {
@@ -657,38 +671,20 @@ export function OperationsMatrixTab({ products }) {
           "observedIntegrationFields": 0,
           "aliasFields": 0,
           "totalObservedFields": 0,
-          "loaded fields": 0,
-          "blank fields": 0,
-          "proposed changes": 0,
+          "loaded": 0,
+          "blank": 0,
+          "proposed": 0,
           "conflicts": 0,
           "optional blanks": 0,
-          "required missing fields": 0,
-          "over-limit text fields": 0,
+          "required missing": 0,
+          "integration-owned": 0,
+          "over-limit": 0,
           "fields updated": data.fieldsUpdated !== undefined ? data.fieldsUpdated : 0,
           "legacy fields removed": Object.keys(data.legacyFields || {}).length,
           "read-back status": data.metadata?.read_back || "Not reported"
       };
 
-      const fieldsByStatus = {
-          unchanged: [],
-          proposed: [],
-          conflict: [],
-          optionalBlank: [],
-          requiredMissing: [],
-          alias: [],
-          integrationOwned: [],
-          overLimit: []
-      };
-
-      const fieldsBySource = {
-          "Shopify": [],
-          "Gemini": [],
-          "Vision": [],
-          "Geo Library": [],
-          "Derived": [],
-          "Manual": [],
-          "Not reported": []
-      };
+      const issuesAndNotes = [];
 
       SECTIONS.forEach(sec => {
           sec.keys.forEach(key => {
@@ -696,6 +692,7 @@ export function OperationsMatrixTab({ products }) {
               const meta = getFieldMetadata(key, data);
               
               const isLong = longTextFields.includes(key);
+              const isNote = noteFields.includes(key);
               const currentStr = meta.currentVal || "";
               const propStr = meta.propVal || "";
               const currentCount = currentStr.length;
@@ -711,68 +708,67 @@ export function OperationsMatrixTab({ products }) {
               const rawKey = key.split('.')[1] || key;
               const isAlias = Object.keys(LEGACY_MAP).includes(rawKey) || Object.values(LEGACY_MAP).includes(rawKey);
 
-              if (isOverLimit) summary["over-limit text fields"]++;
-              if (isIntegrationOwned) summary["observedIntegrationFields"]++;
+              if (isOverLimit) summary["over-limit"]++;
+              if (isIntegrationOwned) {
+                  summary["observedIntegrationFields"]++;
+                  summary["integration-owned"]++;
+              }
               if (isAlias) summary["aliasFields"]++;
+
+              if (currentStr.trim().length > 0) summary["loaded"]++;
+              
+              if (isBlank) {
+                  summary["blank"]++;
+                  if (isRequired) summary["required missing"]++;
+                  else summary["optional blanks"]++;
+              }
+              
+              if (meta.fieldStatus === "Proposed") summary["proposed"]++;
+              if (meta.fieldStatus === "Conflict") summary["conflicts"]++;
 
               let proposalStatus = "Not provided";
               if (meta.isProposed) {
                   proposalStatus = propStr.trim().length > 0 ? "Provided" : "Empty";
               }
 
-              const record = {
-                  "namespace/key": key,
-                  "status": meta.fieldStatus,
-                  "source": meta.source,
-                  "stage": meta.stage,
-                  "current value present": currentStr.trim().length > 0,
-                  "current character count": currentCount,
-                  "proposed value present": meta.isProposed && propStr.trim().length > 0,
-                  "proposed character count": meta.isProposed ? propCount : 0,
-                  "proposal status": proposalStatus,
-                  "over-limit": isOverLimit
-              };
+              let reasons = [];
+              if (meta.fieldStatus === "Proposed") reasons.push("Proposed");
+              if (meta.fieldStatus === "Conflict") reasons.push("Conflict");
+              if (isBlank && isRequired) reasons.push("Required missing");
+              if (isAlias) reasons.push("Alias");
+              if (isIntegrationOwned) reasons.push("Integration-owned");
+              if (isOverLimit) reasons.push("Over-limit");
+              if (meta.fieldStatus === "Failed") reasons.push("Error");
 
-              if (limit !== null) {
-                  record["field-specific limit"] = limit;
-              }
+              const isIssue = reasons.length > 0;
+              const isPresentNote = isNote && (currentStr.trim().length > 0 || (meta.isProposed && propStr.trim().length > 0));
 
-              if (!isLong) {
-                  record["current value"] = currentStr;
-                  if (meta.isProposed) {
-                      record["proposed value"] = propStr;
+              if (isIssue || isPresentNote) {
+                  const record = {
+                      "namespace/key": key,
+                      "current value present": currentStr.trim().length > 0,
+                      "proposed value present": meta.isProposed && propStr.trim().length > 0,
+                      "current character count": currentCount,
+                      "proposed character count": meta.isProposed ? propCount : 0,
+                      "status": meta.fieldStatus,
+                      "proposal status": proposalStatus,
+                      "source": meta.source,
+                      "stage": meta.stage
+                  };
+
+                  if (isIssue) record.reason = reasons.join(", ");
+                  if (isOverLimit) record["over-limit"] = true;
+
+                  if (!isLong) {
+                      const getPreview = (text) => text.length > 255 ? text.substring(0, 252) + "..." : text;
+                      record["current value"] = isNote ? getPreview(currentStr) : currentStr;
+                      if (meta.isProposed) {
+                          record["proposed value"] = isNote ? getPreview(propStr) : propStr;
+                      }
                   }
-              }
 
-              if (meta.fieldStatus === "Unchanged") fieldsByStatus.unchanged.push(record);
-              if (meta.fieldStatus === "Proposed change") {
-                  fieldsByStatus.proposed.push(record);
-                  summary["proposed changes"]++;
+                  issuesAndNotes.push(record);
               }
-              if (meta.fieldStatus === "Conflict") {
-                  fieldsByStatus.conflict.push(record);
-                  summary["conflicts"]++;
-              }
-              
-              if (isBlank) {
-                  summary["blank fields"]++;
-                  if (isRequired) {
-                      fieldsByStatus.requiredMissing.push(record);
-                      summary["required missing fields"]++;
-                  } else {
-                      fieldsByStatus.optionalBlank.push(record);
-                      summary["optional blanks"]++;
-                  }
-              } else {
-                  summary["loaded fields"]++;
-              }
-
-              if (isAlias) fieldsByStatus.alias.push(record);
-              if (isIntegrationOwned) fieldsByStatus.integrationOwned.push(record);
-              if (isOverLimit) fieldsByStatus.overLimit.push(record);
-
-              const srcBucket = fieldsBySource.hasOwnProperty(meta.source) ? meta.source : "Not reported";
-              fieldsBySource[srcBucket].push(record);
           });
       });
 
@@ -795,8 +791,7 @@ export function OperationsMatrixTab({ products }) {
               "error message": safetyError || null
           },
           summary,
-          fieldsByStatus,
-          fieldsBySource
+          issuesAndNotes
       };
 
       navigator.clipboard.writeText(JSON.stringify(payload, null, 2))
@@ -883,7 +878,7 @@ export function OperationsMatrixTab({ products }) {
       if (activeFilter === "All") return true;
       const meta = getFieldMetadata(k, data);
       if (activeFilter === "Blank" && meta.fieldStatus === "Blank") return true;
-      if (activeFilter === "Proposed changes" && meta.fieldStatus === "Proposed change") return true;
+      if (activeFilter === "Proposed" && meta.fieldStatus === "Proposed") return true;
       if (activeFilter === "Conflicts" && meta.fieldStatus === "Conflict") return true;
       if (activeFilter === "Needs review" && meta.fieldStatus === "Needs review") return true;
       if (activeFilter === meta.source) return true;
@@ -912,7 +907,7 @@ export function OperationsMatrixTab({ products }) {
               let statusTone = "info";
               if (isBlank) statusTone = "attention";
               if (meta.fieldStatus === "Conflict" || meta.fieldStatus === "Failed") statusTone = "critical";
-              if (meta.fieldStatus === "Proposed change") statusTone = "success";
+              if (meta.fieldStatus === "Proposed") statusTone = "success";
               if (meta.fieldStatus === "Unchanged") statusTone = "new";
 
               return (
@@ -966,7 +961,7 @@ export function OperationsMatrixTab({ products }) {
   const filterOptions = [
     {label: 'All', value: 'All'},
     {label: 'Needs review', value: 'Needs review'},
-    {label: 'Proposed changes', value: 'Proposed changes'},
+    {label: 'Proposed', value: 'Proposed'},
     {label: 'Conflicts', value: 'Conflicts'},
     {label: 'Blank', value: 'Blank'},
     {label: 'Shopify', value: 'Shopify'},
@@ -1103,7 +1098,7 @@ export function OperationsMatrixTab({ products }) {
                       variant="primary" 
                       tone="critical" 
                       onClick={executeRepairs} 
-                      disabled={isLoadingData || isExecuting}
+                      disabled={Object.keys(manifestData).length === 0 || isLoadingData || isExecuting}
                       loading={isExecuting && executionMode === "REPAIR"}
                     >
                       EXECUTE REPAIRS (LIVE)
@@ -1114,7 +1109,7 @@ export function OperationsMatrixTab({ products }) {
                       variant="primary" 
                       icon={MagicIcon}
                       onClick={executeAIFill} 
-                      disabled={isLoadingData || isExecuting}
+                      disabled={Object.keys(manifestData).length === 0 || isLoadingData || isExecuting}
                       loading={isExecuting && executionMode === "AI_BATCH_PIPELINE"}
                     >
                       EXECUTE AI AUTO-FILL (STAGE)
@@ -1141,20 +1136,7 @@ export function OperationsMatrixTab({ products }) {
                 <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", marginTop: "12px" }}>
                   <Button size="large" tone="critical" onClick={clearBench} disabled={isExecuting || isLoadingData}>Clear Rack & Reset Bench</Button>
                   
-                  <Button size="large" icon={ClipboardIcon} onClick={() => {
-                    const payload = {
-                      selectedBenchId,
-                      productStates,
-                      fetcherState: batchFetcher.state,
-                      fetcherData: batchFetcher.data,
-                    };
-                    navigator.clipboard.writeText(JSON.stringify(payload, null, 2))
-                      .then(() => {
-                        if (window.shopify && window.shopify.toast) window.shopify.toast.show("Global Telemetry Copied!");
-                        else alert("Global Telemetry Copied!");
-                      })
-                      .catch(err => console.error(err));
-                  }}>
+                  <Button size="large" icon={ClipboardIcon} onClick={handleCollectTelemetry}>
                     Global Telemetry Dump
                   </Button>
                 </div>
