@@ -134,6 +134,7 @@ export function OperationsMatrixTab({ products }) {
   const [queueIds, setQueueIds] = useState([]);
   const [productStates, setProductStates] = useState({}); 
   const [manifestData, setManifestData] = useState({}); 
+  const [lastProcessedData, setLastProcessedData] = useState(null); // Prevents multi-processing bugs
   
   const [selectedBenchId, setSelectedBenchId] = useState(null);
   const [safetyMessage, setSafetyMessage] = useState("");
@@ -209,6 +210,7 @@ export function OperationsMatrixTab({ products }) {
     setAiStep(0);
     setTempAiData({});
     setLoadIndex(0);
+    setLastProcessedData(null);
     setSafetyMessage("Rack and Bench cleared.");
     setSafetyError("");
   }, []);
@@ -242,35 +244,57 @@ export function OperationsMatrixTab({ products }) {
 
   const executeRepairs = useCallback(() => {
     if (queueIds.length === 0) return;
-    if (Object.keys(manifestData).length !== queueIds.length) {
-       setSafetyError("You must Generate Repair Plan (Load Data) for all queued items before executing.");
+    
+    const readyItems = queueIds.filter(id => manifestData[id]);
+    if (readyItems.length === 0) {
+       setSafetyError("You must Generate Repair Plan (Load Data) before executing.");
        return;
     }
-    if (window.confirm("WARNING: LIVE RUN.\n\nThis will execute structural repairs (edits and deletions) on the live Shopify database for all queued items. Proceed?")) {
-       setSafetyError("");
-       setSafetyMessage("Structural Repair Engine engaged. Mutating live data...");
-       setExecutionMode("REPAIR");
-       setIsExecuting(true);
-       setExecuteIndex(0);
-       setTempAiData({});
+    
+    if (readyItems.length < queueIds.length) {
+        if (!window.confirm(`WARNING: LIVE RUN.\n\nOnly ${readyItems.length} of ${queueIds.length} queued items have loaded manifests. The others will be skipped.\n\nProceed?`)) {
+            return;
+        }
+    } else {
+        if (!window.confirm("WARNING: LIVE RUN.\n\nThis will execute structural repairs (edits and deletions) on the live Shopify database for all queued items. Proceed?")) {
+            return;
+        }
     }
+    
+    setSafetyError("");
+    setSafetyMessage("Structural Repair Engine engaged. Mutating live data...");
+    setExecutionMode("REPAIR");
+    setIsExecuting(true);
+    setExecuteIndex(0);
+    setTempAiData({});
   }, [queueIds, manifestData]);
 
   const executeAIFill = useCallback(() => {
     if (queueIds.length === 0) return;
-    if (Object.keys(manifestData).length !== queueIds.length) {
-       setSafetyError("You must Generate Repair Plan for all queued items before running AI Batch Fill.");
+    
+    const readyItems = queueIds.filter(id => manifestData[id]);
+    if (readyItems.length === 0) {
+       setSafetyError("You must Generate Repair Plan (Load Data) before executing.");
        return;
     }
-    if (window.confirm("WARNING: AI MULTI-STAGE PIPELINE.\n\nThis will trigger title parsing, vision scanning, and description generation sequentially for all queued items. The results will be staged locally on the bench for review. Proceed?")) {
-       setSafetyError("");
-       setSafetyMessage("Industrial AI Batch Pipeline engaged. Firing up the Gemini cores...");
-       setExecutionMode("AI_BATCH_PIPELINE");
-       setIsExecuting(true);
-       setExecuteIndex(0);
-       setAiStep(1);
-       setTempAiData({});
+    
+    if (readyItems.length < queueIds.length) {
+        if (!window.confirm(`WARNING: AI MULTI-STAGE PIPELINE.\n\nOnly ${readyItems.length} of ${queueIds.length} queued items have loaded manifests. The others will be skipped.\n\nProceed?`)) {
+            return;
+        }
+    } else {
+        if (!window.confirm("WARNING: AI MULTI-STAGE PIPELINE.\n\nThis will trigger title parsing, vision scanning, and description generation sequentially for all queued items. The results will be staged locally on the bench for review. Proceed?")) {
+            return;
+        }
     }
+    
+    setSafetyError("");
+    setSafetyMessage("Industrial AI Batch Pipeline engaged. Firing up the Gemini cores...");
+    setExecutionMode("AI_BATCH_PIPELINE");
+    setIsExecuting(true);
+    setExecuteIndex(0);
+    setAiStep(1);
+    setTempAiData({});
   }, [queueIds, manifestData]);
 
   useEffect(() => {
@@ -388,7 +412,9 @@ export function OperationsMatrixTab({ products }) {
   }, [isExecuting, executionMode, executeIndex, queueIds, manifestData, batchFetcher.state, updateProductState, aiStep, tempAiData, safeProducts]);
 
   useEffect(() => {
-    if (batchFetcher.state === "idle" && batchFetcher.data) {
+    // We bind to the specific fetcher data to avoid continuous looping
+    if (batchFetcher.state === "idle" && batchFetcher.data && batchFetcher.data !== lastProcessedData) {
+      setLastProcessedData(batchFetcher.data);
       const { intent, success, pieceId, productId, message, error, errors, logs, status, finalStatus, titleParse, tab2Data, generated_description, fieldsUpdated } = batchFetcher.data;
       
       const targetId = pieceId || productId;
@@ -463,7 +489,7 @@ export function OperationsMatrixTab({ products }) {
         }
       }
     }
-  }, [batchFetcher.state, batchFetcher.data, executionMode, aiStep, executeIndex, queueIds, updateProductState, isLoadingData, isExecuting]);
+  }, [batchFetcher.state, batchFetcher.data, lastProcessedData, executionMode, aiStep, executeIndex, queueIds, updateProductState, isLoadingData, isExecuting]);
 
   const handleRepairPlanChange = (key, value) => {
     if (!selectedBenchId) return;
