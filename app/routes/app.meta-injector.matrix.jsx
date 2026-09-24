@@ -369,7 +369,6 @@ export function OperationsMatrixTab({ products }) {
         fd.append("weight_grams", manifest.currentMetafields["custom.weight_grams"] || "");
         fd.append("dimensions_mm", manifest.currentMetafields["custom.dimensions_mm"] || "");
         
-        // INJECTION FIX: Starved Vision API needs shape data to accurately identify cuts
         fd.append("stone_shape", manifest.currentMetafields["custom.stone_shape"] || manifest.canonicalFields["custom.stone_shape"] || "");
         fd.append("cut_and_shape", manifest.currentMetafields["custom.cut_and_shape"] || manifest.canonicalFields["custom.cut_and_shape"] || "");
 
@@ -399,14 +398,12 @@ export function OperationsMatrixTab({ products }) {
             const visionData = tempAiData.tab2Data || {};
             const descData = tempAiData.generated_description || "";
 
-            // Merge Vision Data
             Object.keys(visionData).forEach(k => {
                 if (k !== "generated_description" && k !== "pieceId" && k !== "debug_origin" && k !== "intent" && k !== "success") {
                     newPlan[k.includes('.') ? k : `custom.${k}`] = visionData[k];
                 }
             });
             
-            // INJECTION FIX: Unchoke the Geo Pipeline. Render DB passes science data through titleParse.
             Object.keys(titleData).forEach(k => {
                 if (k !== "pieceId" && k !== "intent" && k !== "success") {
                     newPlan[k.includes('.') ? k : `custom.${k}`] = titleData[k];
@@ -426,7 +423,6 @@ export function OperationsMatrixTab({ products }) {
   }, [isExecuting, executionMode, executeIndex, queueIds, manifestData, batchFetcher.state, updateProductState, aiStep, tempAiData, safeProducts]);
 
   useEffect(() => {
-    // We bind to the specific fetcher data to avoid continuous looping
     if (batchFetcher.state === "idle" && batchFetcher.data && batchFetcher.data !== lastProcessedData) {
       setLastProcessedData(batchFetcher.data);
       const { intent, success, pieceId, productId, message, error, errors, logs, status, finalStatus, titleParse, tab2Data, generated_description, fieldsUpdated } = batchFetcher.data;
@@ -453,7 +449,6 @@ export function OperationsMatrixTab({ products }) {
            return;
         }
         
-        // SPECIAL CASE for batchAuditItem: It mutated the live db, so reload to see the autofill!
         if (intent === "batchAuditItem" && success) {
             updateProductState(targetId, STATUS.SCANNING, ["AI Run complete. Fetching fresh data..."]);
             setSafetyMessage("Single AI Run complete. Reloading manifest to display new data...");
@@ -469,7 +464,6 @@ export function OperationsMatrixTab({ products }) {
         const successLogs = logs || [message || "Operation applied successfully."];
         
         let statusToSet = STATUS.COMPLETE;
-        // Zero-change repairs must be skipped, specifically checking fieldsUpdated
         if (status === "NO_CHANGES_REQUIRED" || message === "No changes required." || fieldsUpdated === 0) {
             statusToSet = STATUS.SKIPPED;
             successLogs.push("No changes required.");
@@ -584,7 +578,8 @@ export function OperationsMatrixTab({ products }) {
     const hasCurrent = data.currentMetafields?.hasOwnProperty(key);
     let currentVal = hasCurrent ? String(data.currentMetafields[key] || "") : "";
 
-    if (key === "global.title_tag" || key === "shopify_title" || key === "custom.shopify_title") {
+    // Strictly separate Product Title from SEO Title to prevent conflict false-positives
+    if (key === "custom.shopify_title" || key === "shopify_title") {
         currentVal = String(data.canonicalFields?.["shopify_title"] || currentVal || ""); 
     }
 
@@ -597,17 +592,17 @@ export function OperationsMatrixTab({ products }) {
                         data.legacyFields[legacyKeyForCanonical].value && currentVal && 
                         data.legacyFields[legacyKeyForCanonical].value !== currentVal;
 
+    const isRequired = ["global.title_tag", "custom.shopify_title", "custom.price"].includes(key);
+
     let fieldStatus = "Unchanged";
     if (hasConflict) {
         fieldStatus = "Conflict";
     } else if (currentVal.trim() === "" && (!isProposed || propVal.trim() === "")) {
-        fieldStatus = "Blank";
-    } else if (currentVal.trim() !== "" && !isProposed) {
-        fieldStatus = "Unchanged";
-    } else if (currentVal.trim() === "" && isProposed && propVal.trim() !== "") {
-        fieldStatus = "Proposed";
-    } else if (isProposed && currentVal !== propVal) {
-        fieldStatus = "Conflict";
+        fieldStatus = isRequired ? "Required missing" : "Optional blank";
+    } else if (currentVal.trim() !== "" && (!isProposed || propVal.trim() === "")) {
+        fieldStatus = "Unchanged (Not provided)";
+    } else if (isProposed && currentVal !== propVal && propVal.trim() !== "") {
+        fieldStatus = "Proposed change";
     } else if (isProposed && currentVal === propVal) {
         fieldStatus = "Unchanged";
     }
@@ -631,10 +626,10 @@ export function OperationsMatrixTab({ products }) {
         sec.keys.forEach(k => {
             totalCount++;
             const meta = getFieldMetadata(k, data);
-            if (meta.fieldStatus === "Blank") blankCount++;
+            if (meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing") blankCount++;
             else filledCount++;
 
-            if (meta.fieldStatus === "Proposed") changesCount++;
+            if (meta.fieldStatus === "Proposed change") changesCount++;
             if (meta.fieldStatus === "Conflict") conflictsCount++;
         });
     });
@@ -701,8 +696,8 @@ export function OperationsMatrixTab({ products }) {
               const limit = FIELD_LIMITS[key] || null;
               const isOverLimit = limit !== null && (currentCount > limit || (meta.isProposed && propCount > limit));
               
-              const isBlank = meta.fieldStatus === "Blank";
-              const isRequired = ["global.title_tag", "custom.shopify_title", "custom.price"].includes(key);
+              const isBlank = meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing";
+              const isRequired = meta.fieldStatus === "Required missing";
               const isIntegrationOwned = key.startsWith("google.") || key.startsWith("shopify.") || key.startsWith("mm-google") || key.startsWith("mc-facebook");
               
               const rawKey = key.split('.')[1] || key;
@@ -723,7 +718,7 @@ export function OperationsMatrixTab({ products }) {
                   else summary["optional blanks"]++;
               }
               
-              if (meta.fieldStatus === "Proposed") summary["proposed"]++;
+              if (meta.fieldStatus === "Proposed change") summary["proposed"]++;
               if (meta.fieldStatus === "Conflict") summary["conflicts"]++;
 
               let proposalStatus = "Not provided";
@@ -732,9 +727,9 @@ export function OperationsMatrixTab({ products }) {
               }
 
               let reasons = [];
-              if (meta.fieldStatus === "Proposed") reasons.push("Proposed");
+              if (meta.fieldStatus === "Proposed change") reasons.push("Proposed");
               if (meta.fieldStatus === "Conflict") reasons.push("Conflict");
-              if (isBlank && isRequired) reasons.push("Required missing");
+              if (isRequired) reasons.push("Required missing");
               if (isAlias) reasons.push("Alias");
               if (isIntegrationOwned) reasons.push("Integration-owned");
               if (isOverLimit) reasons.push("Over-limit");
@@ -756,7 +751,7 @@ export function OperationsMatrixTab({ products }) {
                       "stage": meta.stage
                   };
 
-                  if (isIssue) record.reason = reasons.join(", ");
+                  if (isIssue && reasons.length > 0) record.reason = reasons.join(", ");
                   if (isOverLimit) record["over-limit"] = true;
 
                   if (!isLong) {
@@ -814,7 +809,6 @@ export function OperationsMatrixTab({ products }) {
 
     const stats = getDiagnosticsStats(data);
     
-    // Attempting to extract global API status from data if available
     const shopifyReadStatus = data.success ? "Success" : "Failed";
     const geminiStatus = data.metadata?.gemini_status || "Not reported";
     const visionStatus = data.metadata?.vision_status || "Not reported";
@@ -877,8 +871,8 @@ export function OperationsMatrixTab({ products }) {
     const filteredKeys = section.keys.filter(k => {
       if (activeFilter === "All") return true;
       const meta = getFieldMetadata(k, data);
-      if (activeFilter === "Blank" && meta.fieldStatus === "Blank") return true;
-      if (activeFilter === "Proposed" && meta.fieldStatus === "Proposed") return true;
+      if (activeFilter === "Blank" && (meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing")) return true;
+      if (activeFilter === "Proposed changes" && meta.fieldStatus === "Proposed change") return true;
       if (activeFilter === "Conflicts" && meta.fieldStatus === "Conflict") return true;
       if (activeFilter === "Needs review" && meta.fieldStatus === "Needs review") return true;
       if (activeFilter === meta.source) return true;
@@ -902,12 +896,12 @@ export function OperationsMatrixTab({ products }) {
           <div style={{ padding: "16px", display: "flex", flexDirection: "column", gap: "24px" }}>
             {filteredKeys.map((key) => {
               const meta = getFieldMetadata(key, data);
-              const isBlank = meta.fieldStatus === "Blank";
+              const isBlank = meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing";
               
-              let statusTone = "info";
-              if (isBlank) statusTone = "attention";
-              if (meta.fieldStatus === "Conflict" || meta.fieldStatus === "Failed") statusTone = "critical";
-              if (meta.fieldStatus === "Proposed") statusTone = "success";
+              let statusTone = undefined;
+              if (meta.fieldStatus === "Optional blank") statusTone = "attention";
+              if (meta.fieldStatus === "Required missing" || meta.fieldStatus === "Conflict" || meta.fieldStatus === "Failed") statusTone = "critical";
+              if (meta.fieldStatus === "Proposed change") statusTone = "success";
               if (meta.fieldStatus === "Unchanged") statusTone = "new";
 
               return (
@@ -942,7 +936,7 @@ export function OperationsMatrixTab({ products }) {
                                 onChange={(val) => handleRepairPlanChange(key, val)}
                                 autoComplete="off"
                                 multiline={isMultilineKey(key) ? 3 : undefined}
-                                placeholder={isBlank ? "Blank" : ""}
+                                placeholder={meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing" ? "Blank" : (meta.fieldStatus === "Unchanged (Not provided)" ? "Not provided" : "")}
                             />
                         </div>
                     </div>
@@ -961,7 +955,7 @@ export function OperationsMatrixTab({ products }) {
   const filterOptions = [
     {label: 'All', value: 'All'},
     {label: 'Needs review', value: 'Needs review'},
-    {label: 'Proposed', value: 'Proposed'},
+    {label: 'Proposed changes', value: 'Proposed changes'},
     {label: 'Conflicts', value: 'Conflicts'},
     {label: 'Blank', value: 'Blank'},
     {label: 'Shopify', value: 'Shopify'},
