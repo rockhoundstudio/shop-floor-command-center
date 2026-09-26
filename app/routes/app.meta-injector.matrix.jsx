@@ -501,6 +501,7 @@ export function OperationsMatrixTab({ products }) {
         batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-autofill" });
       }
       else if (aiStep === 4) {
+        // Record final stage completion and end scanning visually
         updateProductState(currentId, STATUS.VALIDATED, ["AI Pipeline Complete. Data staged."]);
         
         setManifestData(prev => {
@@ -516,17 +517,16 @@ export function OperationsMatrixTab({ products }) {
             if (tempAiData.titleParseRequested) {
                 diagnostics.gemini = "Success";
                 diagnostics.geoLibrary = titleData?.geoSource === "library" ? "Success" : (titleData?.geoSource || "Not reported");
-                diagnostics.stage = "titleParse";
             }
             if (tempAiData.fullRescanRequested) {
                 diagnostics.vision = "Success";
                 diagnostics.gemini = "Success";
-                diagnostics.stage = "fullRescan";
             }
             if (tempAiData.generateDescRequested) {
                 diagnostics.gemini = "Success";
-                diagnostics.stage = "generateDescription";
             }
+            
+            diagnostics.stage = "generateDescription";
 
             Object.keys(visionData).forEach(k => {
                 if (k !== "generated_description" && k !== "pieceId" && k !== "debug_origin" && k !== "intent" && k !== "success") {
@@ -890,7 +890,7 @@ export function OperationsMatrixTab({ products }) {
       ];
 
       let summary = {
-          "standardFields": 62,
+          "standardFields": 68,
           "observedIntegrationFields": 0,
           "aliasFields": 0,
           "totalObservedFields": 0,
@@ -1123,8 +1123,8 @@ export function OperationsMatrixTab({ products }) {
       const meta = getFieldMetadata(k, data);
       if (activeFilter === "Blank" && (meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing")) return true;
       if (activeFilter === "Proposed changes" && meta.fieldStatus === "Proposed") return true;
-      if (activeFilter === "Conflicts" && (meta.fieldStatus === "Conflict" || meta.fieldStatus === "Degrade")) return true;
-      if (activeFilter === "Needs review" && (meta.fieldStatus === "Required missing" || meta.fieldStatus === "Unverified proposal")) return true;
+      if (activeFilter === "Conflicts" && (meta.fieldStatus === "Conflict" || meta.fieldStatus === "Degrade" || meta.fieldStatus === "Needs review")) return true;
+      if (activeFilter === "Needs review" && (meta.fieldStatus === "Required missing" || meta.fieldStatus === "Unverified proposal" || meta.fieldStatus === "Needs review")) return true;
       if (activeFilter === meta.source) return true;
       return false;
     });
@@ -1151,6 +1151,7 @@ export function OperationsMatrixTab({ products }) {
               let statusTone = undefined;
               if (meta.fieldStatus === "Optional blank") statusTone = "attention";
               if (["Required missing", "Conflict", "Degrade", "Blocked", "Over limit", "Failed", "Unverified proposal"].includes(meta.fieldStatus)) statusTone = "critical";
+              if (meta.fieldStatus === "Needs review") statusTone = "warning";
               if (meta.fieldStatus === "Proposed") statusTone = "success";
               if (meta.fieldStatus === "Unchanged") statusTone = "new";
 
