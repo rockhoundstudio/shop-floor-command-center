@@ -366,7 +366,6 @@ export function OperationsMatrixTab({ products }) {
     if (currentExists) {
         if (!proposalExists) {
             fieldStatus = "Unchanged";
-            proposalStatus = "Not provided";
         } else if (currentVal === propVal) {
             fieldStatus = "Unchanged";
         } else {
@@ -940,31 +939,37 @@ export function OperationsMatrixTab({ products }) {
               if (meta.fieldStatus === "Proposed") summary["proposed"]++;
               if (meta.fieldStatus === "Conflict" || meta.fieldStatus === "Degrade") summary["conflicts"]++;
 
-              const isIssue = meta.reasons.length > 0 || meta.isBlockedAction || meta.fieldStatus === "Proposed";
+              const isExcludedStatus = meta.fieldStatus === "Unchanged" || meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Proposal not provided";
+              const isActionableIssue = !isExcludedStatus;
               const isPresentNote = isNote && (meta.currentExists || meta.proposalExists);
 
-              if (isIssue || isPresentNote) {
+              if (isActionableIssue || isPresentNote) {
                   const record = {
-                      "namespace/key": key,
-                      "current value present": meta.currentExists,
-                      "proposed value present": meta.proposalExists,
-                      "current character count": meta.currentVal.length,
-                      "proposed character count": meta.isProposed ? meta.propVal.length : 0,
-                      "status": meta.fieldStatus,
-                      "proposal status": meta.proposalStatus,
-                      "source": meta.source,
-                      "stage": meta.stage
+                      "namespace/key": key
                   };
 
-                  if (meta.reasons.length > 0) record.reason = meta.reasons.join(", ");
-                  if (meta.reasons.includes("Over limit")) record["over-limit"] = true;
-
                   if (!isLong) {
-                      const getPreview = (text) => text.length > 255 ? text.substring(0, 252) + "..." : text;
-                      record["current value"] = isNote ? getPreview(meta.currentVal) : meta.currentVal;
-                      if (meta.isProposed) {
-                          record["proposed value"] = isNote ? getPreview(meta.propVal) : meta.propVal;
-                      }
+                      const truncateStr = (text) => text.length > 100 ? text.substring(0, 97) + "..." : text;
+                      if (meta.currentExists) record["current value"] = isNote ? meta.currentVal : truncateStr(meta.currentVal);
+                      if (meta.proposalExists) record["proposed value"] = isNote ? meta.propVal : truncateStr(meta.propVal);
+                  } else {
+                      record["current value present"] = meta.currentExists;
+                      record["proposed value present"] = meta.proposalExists;
+                      record["current character count"] = meta.currentVal.length;
+                      record["proposed character count"] = meta.proposalExists ? meta.propVal.length : 0;
+                  }
+
+                  record.status = meta.fieldStatus;
+                  record.source = meta.source;
+                  record.stage = meta.stage;
+
+                  let rowReasons = [];
+                  if (meta.reasons.length > 0) rowReasons.push(...meta.reasons);
+                  if (isAlias) rowReasons.push("Alias");
+                  if (isIntegrationOwned) rowReasons.push("Integration owned");
+
+                  if (rowReasons.length > 0) {
+                      record.reason = [...new Set(rowReasons)].join(", ");
                   }
 
                   issuesAndNotes.push(record);
@@ -976,7 +981,6 @@ export function OperationsMatrixTab({ products }) {
           product: {
               "product GID": selectedBenchId,
               "product title": product.title || "Unknown",
-              "selected bench ID": selectedBenchId,
               "scan status": productState?.status || "Unknown"
           },
           pipeline: {
@@ -993,6 +997,46 @@ export function OperationsMatrixTab({ products }) {
           summary,
           issuesAndNotes
       };
+
+      let serializedPayload = JSON.stringify(payload, null, 2);
+
+      if (serializedPayload.length > 8000) {
+          payload.issuesAndNotes.forEach(issue => {
+              if (issue["namespace/key"] !== "custom.bench_notes" && issue["namespace/key"] !== "custom.artist_notes") {
+                  delete issue["current value"];
+                  delete issue["proposed value"];
+                  delete issue["reason"];
+              }
+          });
+          serializedPayload = JSON.stringify(payload, null, 2);
+      }
+
+      if (serializedPayload.length > 8000) {
+          const sortedIssues = [...payload.issuesAndNotes].sort((a, b) => {
+              const getPriority = (item) => {
+                  const k = item["namespace/key"];
+                  if (k === "custom.bench_notes" || k === "custom.artist_notes") return 0; 
+                  if (item.status === "Required missing") return 1;
+                  if (item.status === "Degrade" || item.status === "Conflict" || item.status === "Blocked") return 2;
+                  if (item.status === "Failed") return 3;
+                  return 4; 
+              };
+              return getPriority(a) - getPriority(b);
+          });
+
+          let omittedCount = 0;
+          
+          while (JSON.stringify(payload, null, 2).length > 8000 && sortedIssues.length > 0) {
+              const removed = sortedIssues.pop();
+              if (removed["namespace/key"] === "custom.bench_notes" || removed["namespace/key"] === "custom.artist_notes") {
+                  sortedIssues.push(removed);
+                  break;
+              }
+              omittedCount++;
+              payload.issuesAndNotes = sortedIssues;
+              payload.omittedRecords = omittedCount;
+          }
+      }
 
       navigator.clipboard.writeText(JSON.stringify(payload, null, 2))
           .then(() => {
