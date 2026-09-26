@@ -302,7 +302,10 @@ ${dwellButtonsHTML}
 
 FULL ORIGIN STORY (CRITICAL LORE FIREWALL - READ CAREFULLY):
 ${originStory}
-WARNING: Extract ONLY the 1-2 sentence narrative matching "${stoneFamily}".`;
+WARNING: Extract ONLY the 1-2 sentence narrative matching "${stoneFamily}".
+
+ORIGIN PAGE DATE RULE:
+If the provided origin-page story contains an explicit collection date, trip date, month, year, or date range, use it only when it is factually present and relevant to the story. Never invent or infer a date. If no explicit date is present, do not mention one.`;
 }
 
 export const action = async ({ request }) => {
@@ -381,6 +384,16 @@ export const action = async ({ request }) => {
       const defaultOriginSlug = resolveOriginHandle(originSegment, pagesList);
       const defaultCollection = resolveCollectionData(originSegment, defaultOriginSlug, collectionsList);
 
+      const matchedPage = pagesList.find(p => p.url.includes(defaultOriginSlug));
+      
+      let extractedStory = matchedPage && matchedPage.excerpt ? matchedPage.excerpt : "";
+      if (!extractedStory) {
+        extractedStory = body.get("origin_story") || "";
+      }
+      
+      const pagesMenu = pagesList.map(p => `- Title: "${p.title}" | URL: ${p.url} | Excerpt: "${p.excerpt}"`).join("\n");
+      const collectionsMenu = collectionsList.map(c => `- Title: "${c.title}" | URL: ${c.url} | Excerpt: "${c.excerpt}"`).join("\n");
+
       let imageBase64 = body.get("imageBase64") || "";
       let imageMimeType = body.get("imageMimeType") || "image/jpeg";
       if (!imageBase64 && body.get("imageUrl")) {
@@ -391,7 +404,7 @@ export const action = async ({ request }) => {
       const promptText = buildMasterVisionPrompt({
         pagesMenu: pagesList.map(p => `- Title: "${p.title}"`).join("\n"),
         collectionsMenu: collectionsList.map(c => `- Title: "${c.title}"`).join("\n"),
-        stoneFamily: derivedFamily, derivedShape, originStory: body.get("origin_story") || "",
+        stoneFamily: derivedFamily, derivedShape, originStory: extractedStory,
         originSegment, targetUrlPath: defaultOriginSlug ? `/pages/${defaultOriginSlug}` : "",
         fullCollectionTitle: defaultCollection.name, collectionUrlPath: defaultCollection.slug ? `/collections/${defaultCollection.slug}` : ""
       });
