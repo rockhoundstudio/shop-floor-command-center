@@ -354,7 +354,16 @@ export const action = async ({ request }) => {
       });
     }
 
-    if (intent === "saveMetafields" || intent === "cleanMalformedKeys" || intent === "cleanAllCamelKeys" || intent === "stagedUpload" || intent === "createProduct" || intent === "cleanGhostNamespaces" || intent === "cleanAllGhostNamespaces" || intent === "toggleStatus" || intent === "batchAuditItem") {
+    if (intent === "saveMetafields") {
+       return Response.json({
+           intent: "saveMetafields",
+           success: false,
+           error: "Tab 2 injection is currently disabled for safety. Please use the Operations Matrix (Tab 3) for verified staging and injection.",
+           message: "Route deprecated. Use Tab 3."
+       });
+    }
+
+    if (intent === "cleanMalformedKeys" || intent === "cleanAllCamelKeys" || intent === "stagedUpload" || intent === "createProduct" || intent === "cleanGhostNamespaces" || intent === "cleanAllGhostNamespaces" || intent === "toggleStatus" || intent === "batchAuditItem") {
        return await executeAutofill(intent, body, admin);
     }
 
