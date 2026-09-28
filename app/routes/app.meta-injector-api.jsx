@@ -61,10 +61,7 @@ const PIN_CONFIG = {
 
   // SEO & Taxonomy
   authenticity: { target: "metafield", ns: "shopify", key: "authenticity", type: "list.metaobject_reference" },
-  rarity: { target: "metafield", ns: "shopify", key: "rarity", type: "list.metaobject_reference" },
-  
-  // Separate Output
-  generated_description: { target: "metafield", ns: "custom", key: "generated_description", type: "multi_line_text_field" }
+  rarity: { target: "metafield", ns: "shopify", key: "rarity", type: "list.metaobject_reference" }
 };
 
 const METAOBJECT_DICT = {
