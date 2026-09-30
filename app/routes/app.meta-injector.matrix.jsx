@@ -6,7 +6,6 @@ import React, { useState, useCallback, useEffect } from "react";
 import { BlockStack, Card, Text, Banner, TextField, Button, InlineStack, Box, Badge, ProgressBar, Select, Divider } from "@shopify/polaris";
 import { MagicIcon, ClipboardIcon, SaveIcon, ChevronDownIcon, ChevronUpIcon } from "@shopify/polaris-icons";
 import { useFetcher } from "react-router";
-import { CENTRAL_BRAIN_CONFIG } from "../utils/meta-injector.constants.jsx";
 
 const STATUS = {
   QUEUED: "Queued",
@@ -17,33 +16,121 @@ const STATUS = {
   SKIPPED: "Skipped"
 };
 
-// Dynamically build SECTIONS based strictly on the 45-pin CENTRAL_BRAIN_CONFIG
-const SECTIONS = [];
-CENTRAL_BRAIN_CONFIG.forEach(config => {
-  let sec = SECTIONS.find(s => s.title === config.group);
-  if (!sec) {
-    sec = { title: config.group, keys: [] };
-    SECTIONS.push(sec);
+const SECTIONS = [
+  {
+    title: "1. Identity and Merchandising",
+    keys: [
+      "global.title_tag", "global.description_tag", "custom.shopify_title",
+      "custom.piece_name", "custom.official_name", "custom.seo_title",
+      "custom.is_ooak", "custom.is_one_of_a_kind", "custom.handcrafted_by", 
+      "custom.rescued_by"
+    ]
+  },
+  {
+    title: "2. Stone Facts and Physical Details",
+    keys: [
+      "custom.dimensions_mm", "custom.weight_grams", "custom.shipping_weight_oz", 
+      "custom.stone_shape", "custom.cut_type", "custom.cut_and_shape", 
+      "custom.surface_finish", "custom.color", "custom.primary_color", 
+      "custom.secondary_colors", "custom.color_pattern", "custom.treatment_status", 
+      "custom.treated", "custom.character_marks", "custom.honest_flaws_and_character", 
+      "custom.bench_notes", "custom.artist_notes", "custom.alt_text",
+      "custom.mohs_hardness", "custom.moh_hardness", "custom.specific_gravity", 
+      "custom.crystal_system", "custom.crystal-system", "custom.luster", 
+      "custom.cleavage", "custom.fracture_pattern", "custom.diaphaneity", 
+      "custom.tenacity", "custom.mineral_class", "custom.mineral-class", 
+      "custom.rock_composition", "custom.rock-composition", "custom.rock_formation", 
+      "custom.rock-formation", "custom.geological_era", "custom.geological-era", 
+      "custom.geological_age"
+    ]
+  },
+  {
+    title: "3. Origin, Story, and Collection",
+    keys: [
+      "custom.stone_family", "custom.origin_location", "custom.origin_page_handle", 
+      "custom.origin_handle", "custom.collection_name", "custom.collection_location", 
+      "custom.origin_story", "custom.stone_story", "custom.generated_description"
+    ]
+  },
+  {
+    title: "4. Jewelry and Setting",
+    keys: [
+      "custom.primary_use", "custom.primary_medium", "custom.secondary_medium", 
+      "custom.material", "custom.jewelry_type", "custom.necklace_design", 
+      "custom.necklace-design", "custom.setting_ready", "custom.wire_material", 
+      "custom.bail_included", "custom.chain_material", "custom.chain_link_type", 
+      "custom.chain-link-type", "custom.jewelry_finding_type"
+    ]
+  },
+  {
+    title: "5. Search, Sales, and Media",
+    keys: [
+      "custom.price", "custom.google_product_category", "custom.age_group", "custom.target_gender", 
+      "custom.condition", "custom.authenticity", "custom.rarity", 
+      "custom.custom_product", "custom.found_object",
+      "google.age_group", "google.condition", "google.target_gender",
+      "shopify.age-group", "shopify.condition", "shopify.target-gender",
+      "shopify.authenticity", "shopify.chain-link-type", "shopify.color-pattern",
+      "shopify.crystal-system", "shopify.geological-era",
+      "shopify.jewelry-finding-type", "shopify.jewelry-material",
+      "shopify.jewelry-type", "shopify.material", "shopify.material-origin",
+      "shopify.mineral-class", "shopify.necklace-design",
+      "shopify.rarity", "shopify.rock-composition", "shopify.rock-formation",
+      "custom.badge", "custom.widget", "custom.review_widget_data"
+    ]
   }
-  sec.keys.push(config.pin);
-});
+];
 
-const FIELD_LIMITS = {
-  "shopify_title": 255,
-  "seo_title": 70,
-  "poetic_hook": 320,
-  "piece_name": 255,
-  "origin_story": 100000,
-  "craftsmanship": 100000,
-  "bench_notes": 100000,
-  "alt_text": 100000,
-  "honest_flaws_and_character": 255
+const LEGACY_MAP = {
+  "crystal-system": "crystal_system",
+  "mineral-class": "mineral_class",
+  "rock-composition": "rock_composition",
+  "geological-era": "geological_era",
+  "rock-formation": "rock_formation",
+  "necklace-design": "necklace_design",
+  "is_one_of_a_kind": "is_ooak",
+  "chain-link-type": "chain_link_type",
+  "moh_hardness": "mohs_hardness"
 };
 
-const REQUIRED_FIELDS = ["shopify_title", "price"];
+const FIELD_LIMITS = {
+  "global.title_tag": 70,
+  "custom.seo_title": 70,
+  "global.description_tag": 320,
+  "custom.shopify_title": 255,
+  "custom.piece_name": 255,
+  "custom.official_name": 255,
+  "custom.origin_story": 100000,
+  "custom.stone_story": 100000,
+  "custom.generated_description": 100000,
+  "custom.artist_notes": 100000,
+  "custom.bench_notes": 100000,
+  "custom.alt_text": 100000,
+  "custom.character_marks": 255,
+  "custom.honest_flaws_and_character": 255
+};
+
+const PROTECTED_FIELDS = [
+  "custom.stone_family", "custom.stone_shape", "custom.cut_and_shape",
+  "custom.surface_finish", "custom.color_pattern", "custom.google_product_category",
+  "custom.setting_ready", "custom.wire_material", "custom.bail_included",
+  "custom.chain_material", "custom.jewelry_finding_type", "custom.shopify_title",
+  "global.title_tag", "custom.artist_notes", "custom.bench_notes"
+];
+
+const HARDWARE_FIELDS = [
+  "custom.setting_ready", "custom.wire_material", "custom.bail_included",
+  "custom.chain_material", "custom.jewelry_finding_type"
+];
+
+const GENERIC_VALUES = ["None", "Unknown", "N/A", "N/a", "none", "unknown", "n/a"];
+const REQUIRED_FIELDS = ["global.title_tag", "custom.shopify_title", "custom.price"];
+const INTEGRATION_PREFIXES = ["google.", "shopify.", "mm-google", "mc-facebook"];
 
 const formatLabel = (key) => {
-  return key.replace(/[_-]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+  const parts = key.split('.');
+  const name = parts[parts.length - 1];
+  return name.replace(/[_-]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 };
 
 export function OperationsMatrixTab({ products }) {
@@ -72,13 +159,13 @@ export function OperationsMatrixTab({ products }) {
 
   // UI States for Accessibility & Review
   const [activeFilter, setActiveFilter] = useState("All");
-  
-  // Build initial expanded state dynamically from the SECTIONS array
-  const initialExpandedBays = {};
-  SECTIONS.forEach(sec => {
-    initialExpandedBays[sec.title] = true;
+  const [expandedBays, setExpandedBays] = useState({
+    "1. Identity and Merchandising": true,
+    "2. Stone Facts and Physical Details": true,
+    "3. Origin, Story, and Collection": true,
+    "4. Jewelry and Setting": true,
+    "5. Search, Sales, and Media": true
   });
-  const [expandedBays, setExpandedBays] = useState(initialExpandedBays);
 
   const batchFetcher = useFetcher();
 
@@ -237,89 +324,85 @@ export function OperationsMatrixTab({ products }) {
   }, [queueIds, manifestData]);
 
   const getFieldMetadata = (key, data) => {
-    const pinDef = CENTRAL_BRAIN_CONFIG.find(c => c.pin === key);
-    
-    const currentVal = String(data.canonicalFields?.[key] || "");
-    const isProposed = data.repairPlan && data.repairPlan.hasOwnProperty(key);
-    const propVal = isProposed ? String(data.repairPlan[key] ?? "") : "";
+    const hasCurrent = data.currentMetafields?.hasOwnProperty(key);
+    let currentVal = hasCurrent ? String(data.currentMetafields[key] || "") : "";
 
-    // STRICT 45-PIN ISOLATION: Block any keys sent from backend not in our explicit blueprint
-    if (!pinDef) {
-        return {
-            currentVal, propVal, isProposed, 
-            fieldStatus: "Blocked", 
-            proposalStatus: isProposed ? "Provided" : "Not provided",
-            source: "Unknown", 
-            stage: "Matrix", 
-            isBlockedAction: true, 
-            reasons: ["Not in 45-pin Central Brain config"], 
-            currentExists: currentVal.trim() !== "", 
-            proposalExists: isProposed && propVal.trim() !== ""
-        };
+    // Strictly separate Product Title from SEO Title to prevent conflict false-positives
+    if (key === "custom.shopify_title" || key === "shopify_title") {
+        currentVal = String(data.canonicalFields?.["shopify_title"] || currentVal || ""); 
     }
 
-    let source = pinDef.source || "Manual";
-    let stage = "Matrix";
+    const isProposed = data.repairPlan !== undefined && data.repairPlan.hasOwnProperty(key);
+    const propVal = isProposed ? String(data.repairPlan[key] ?? "") : "";
+
+    let fieldMeta = data.metadata?.[key] || {};
+    let source = fieldMeta.source || "Not reported";
+    let stage = fieldMeta.stage || "Not reported";
 
     let fieldStatus = "Unchanged";
     let proposalStatus = isProposed ? (propVal.trim() !== "" ? "Provided" : "Empty") : "Not provided";
     let isBlockedAction = false;
     let reasons = [];
 
+    const isRequired = REQUIRED_FIELDS.includes(key);
+    const isProtected = PROTECTED_FIELDS.includes(key);
+    const isHardware = HARDWARE_FIELDS.includes(key);
+    const isIntegration = INTEGRATION_PREFIXES.some(prefix => key.startsWith(prefix));
+    const rawKey = key.split('.')[1] || key;
+    const isAlias = Object.keys(LEGACY_MAP).includes(rawKey) || Object.values(LEGACY_MAP).includes(rawKey);
+
+    const currentCount = currentVal.length;
+    const propCount = propVal.length;
+    const limit = FIELD_LIMITS[key] || null;
+    const isOverLimit = limit !== null && (currentCount > limit || (isProposed && propCount > limit));
+
+    if (isOverLimit) reasons.push("Over limit");
+    if (isAlias) reasons.push("Alias");
+    if (isIntegration) reasons.push("Integration owned");
+
     const currentExists = currentVal.trim() !== "";
     const proposalExists = isProposed && propVal.trim() !== "";
 
-    // Length Limits
-    const limit = FIELD_LIMITS[key] || null;
-    if (limit !== null && propVal.length > limit) {
-        reasons.push("Over limit");
-        isBlockedAction = true;
-        fieldStatus = "Over limit";
-    }
-
-    // Phase 1 Rules & Logic Blocks
-    if (pinDef.destination === "unresolved" || pinDef.shopifyType === "unresolved") {
-        fieldStatus = "Blocked";
-        reasons.push("Unresolved Shopify destination");
-        isBlockedAction = true;
-    }
-    
-    if (pinDef.inputType === "list.metaobject_reference" && propVal.trim() !== "" && !propVal.startsWith("gid://")) {
-        const lowerVal = propVal.toLowerCase();
-        // Fallbacks that are explicitly mapped in the API
-        const isKnownAuth = key === "authenticity" && ["genuine", "authentic", "replica"].includes(lowerVal);
-        const isKnownRarity = key === "rarity" && ["common", "rare", "one-of-a-kind"].includes(lowerVal);
-        
-        if (!isKnownAuth && !isKnownRarity) {
-            fieldStatus = "Blocked";
-            reasons.push("Requires verified Metaobject GID");
-            isBlockedAction = true;
-        }
-    }
-    
-    if (key === "google_product_category" && propVal.trim() !== "" && !propVal.startsWith("gid://")) {
-        fieldStatus = "Blocked";
-        reasons.push("Requires exact Taxonomy Node GID");
-        isBlockedAction = true;
-    }
-
-    if (!isBlockedAction) {
-        if (currentExists) {
-            if (!proposalExists || currentVal === propVal) {
-                fieldStatus = "Unchanged";
-            } else {
-                fieldStatus = "Proposed";
-                reasons.push("Update proposed");
-            }
+    if (currentExists) {
+        if (!proposalExists) {
+            fieldStatus = "Unchanged";
+            proposalStatus = "Not provided";
+        } else if (currentVal === propVal) {
+            fieldStatus = "Unchanged";
         } else {
-            if (!proposalExists) {
-                fieldStatus = REQUIRED_FIELDS.includes(key) ? "Required missing" : "Optional blank";
-                if (REQUIRED_FIELDS.includes(key)) reasons.push("Required missing");
+            if (isProtected) {
+                fieldStatus = "Degrade";
+                reasons.push("Degrade");
+                isBlockedAction = true;
             } else {
-                fieldStatus = "Proposed";
-                reasons.push("Fill proposed");
+                fieldStatus = "Conflict";
+                reasons.push("Conflict");
+                isBlockedAction = true;
             }
         }
+    } else {
+        if (!proposalExists) {
+            fieldStatus = isRequired ? "Required missing" : "Optional blank";
+            if (isRequired) reasons.push("Required missing");
+        } else {
+            if (source === "Not reported") {
+                fieldStatus = "Unverified proposal";
+                reasons.push("Unverified proposal");
+                isBlockedAction = true;
+            } else if (isHardware && GENERIC_VALUES.includes(propVal.trim())) {
+                fieldStatus = "Blocked";
+                reasons.push("Generic hardware fill into blank");
+                isBlockedAction = true;
+            } else {
+                fieldStatus = "Proposed";
+                reasons.push("Proposed");
+            }
+        }
+    }
+
+    if (isOverLimit && !isBlockedAction) {
+        fieldStatus = "Over limit";
+        isBlockedAction = true;
     }
 
     return { currentVal, propVal, isProposed, fieldStatus, proposalStatus, source, stage, isBlockedAction, reasons, currentExists, proposalExists };
@@ -356,7 +439,7 @@ export function OperationsMatrixTab({ products }) {
         fd.append("intent", "executeRepairPlan");
         fd.append("pieceId", currentId);
         
-        // Filter out Blocked writes based on the strict blueprint
+        // Filter out Blocked, Degraded, Conflict, Unverified, Generic Hardware writes
         const safePlan = {};
         Object.keys(manifest.repairPlan).forEach(key => {
             const meta = getFieldMetadata(key, manifest);
@@ -395,12 +478,13 @@ export function OperationsMatrixTab({ products }) {
         fd.append("imageUrl", imageUrl);
         fd.append("stone_family", tempAiData.titleParse?.stone_family || "");
         fd.append("origin_story", tempAiData.titleParse?.origin_story || "");
-        fd.append("honest_flaws_and_character", manifest.canonicalFields["honest_flaws_and_character"] || "");
-        fd.append("weight_grams", manifest.canonicalFields["weight_grams"] || "");
-        fd.append("dimensions_mm", manifest.canonicalFields["dimensions_mm"] || "");
+        fd.append("honest_flaws_and_character", manifest.currentMetafields["custom.honest_flaws_and_character"] || "");
+        fd.append("weight_grams", manifest.currentMetafields["custom.weight_grams"] || "");
+        fd.append("dimensions_mm", manifest.currentMetafields["custom.dimensions_mm"] || "");
         
-        fd.append("stone_shape", manifest.canonicalFields["cut_and_shape"] || "");
-        fd.append("cut_and_shape", manifest.canonicalFields["cut_and_shape"] || "");
+        // INJECTION FIX: Starved Vision API needs shape data to accurately identify cuts
+        fd.append("stone_shape", manifest.currentMetafields["custom.stone_shape"] || manifest.canonicalFields["custom.stone_shape"] || "");
+        fd.append("cut_and_shape", manifest.currentMetafields["custom.cut_and_shape"] || manifest.canonicalFields["custom.cut_and_shape"] || "");
 
         batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-autofill" });
       }
@@ -427,35 +511,37 @@ export function OperationsMatrixTab({ products }) {
             
             const titleData = tempAiData.titleParse || {};
             const visionData = tempAiData.tab2Data || {};
+            const descData = tempAiData.generated_description || "";
 
+            // Record stage success
             if (tempAiData.titleParseRequested) {
                 diagnostics.gemini = "Success";
                 diagnostics.geoLibrary = titleData?.geoSource === "library" ? "Success" : (titleData?.geoSource || "Not reported");
+                diagnostics.stage = "titleParse";
             }
             if (tempAiData.fullRescanRequested) {
                 diagnostics.vision = "Success";
                 diagnostics.gemini = "Success";
+                diagnostics.stage = "fullRescan";
             }
             if (tempAiData.generateDescRequested) {
                 diagnostics.gemini = "Success";
+                diagnostics.stage = "generateDescription";
             }
-            
-            diagnostics.stage = "generateDescription";
 
             Object.keys(visionData).forEach(k => {
                 if (k !== "generated_description" && k !== "pieceId" && k !== "debug_origin" && k !== "intent" && k !== "success") {
-                    newPlan[k] = visionData[k];
+                    newPlan[k.includes('.') ? k : `custom.${k}`] = visionData[k];
                 }
             });
             
             Object.keys(titleData).forEach(k => {
                 if (k !== "pieceId" && k !== "intent" && k !== "success" && k !== "geoSource") {
-                    newPlan[k] = titleData[k];
+                    newPlan[k.includes('.') ? k : `custom.${k}`] = titleData[k];
                 }
             });
 
-            // Note: `generated_description` has been intentionally stripped from the newPlan matrix payload 
-            // as it is not part of the 45-pin blueprint.
+            if (descData) newPlan["custom.generated_description"] = descData;
 
             return { ...prev, [currentId]: { ...existing, repairPlan: newPlan, diagnostics } };
         });
@@ -683,7 +769,9 @@ export function OperationsMatrixTab({ products }) {
   };
 
   const isMultilineKey = (k) => [
-    "origin_story", "bench_notes", "honest_flaws_and_character", "craftsmanship"
+    "custom.generated_description", "custom.origin_story", "custom.stone_story", 
+    "custom.bench_notes", "custom.character_marks", "custom.honest_flaws_and_character", 
+    "custom.artist_notes"
   ].includes(k);
 
   const getSystemStatus = () => {
@@ -795,19 +883,28 @@ export function OperationsMatrixTab({ products }) {
       const statusObj = getSystemStatus();
 
       const longTextFields = [
-          "origin_story", "craftsmanship", "bench_notes"
+          "global.description_tag", "custom.generated_description", "custom.origin_story"
+      ];
+
+      const noteFields = [
+          "custom.artist_notes", "custom.bench_notes"
       ];
 
       let summary = {
-          "standardFields": 45,
+          "standardFields": 62,
+          "observedIntegrationFields": 0,
+          "aliasFields": 0,
+          "totalObservedFields": 0,
           "loaded": 0,
           "blank": 0,
           "proposed": 0,
           "conflicts": 0,
           "optional blanks": 0,
           "required missing": 0,
+          "integration-owned": 0,
           "over-limit": 0,
           "fields updated": data.fieldsUpdated !== undefined ? data.fieldsUpdated : 0,
+          "legacy fields removed": Object.keys(data.legacyFields || {}).length,
           "read-back status": statusObj.readBackStatus
       };
 
@@ -815,10 +912,23 @@ export function OperationsMatrixTab({ products }) {
 
       SECTIONS.forEach(sec => {
           sec.keys.forEach(key => {
+              summary["totalObservedFields"]++;
               const meta = getFieldMetadata(key, data);
+              
               const isLong = longTextFields.includes(key);
+              const isNote = noteFields.includes(key);
+              
+              const isIntegrationOwned = INTEGRATION_PREFIXES.some(prefix => key.startsWith(prefix));
+              const rawKey = key.split('.')[1] || key;
+              const isAlias = Object.keys(LEGACY_MAP).includes(rawKey) || Object.values(LEGACY_MAP).includes(rawKey);
 
               if (meta.reasons.includes("Over limit")) summary["over-limit"]++;
+              if (isIntegrationOwned) {
+                  summary["observedIntegrationFields"]++;
+                  summary["integration-owned"]++;
+              }
+              if (isAlias) summary["aliasFields"]++;
+
               if (meta.currentExists) summary["loaded"]++;
               
               if (meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing") {
@@ -830,34 +940,31 @@ export function OperationsMatrixTab({ products }) {
               if (meta.fieldStatus === "Proposed") summary["proposed"]++;
               if (meta.fieldStatus === "Conflict" || meta.fieldStatus === "Degrade") summary["conflicts"]++;
 
-              const isExcludedStatus = meta.fieldStatus === "Unchanged" || meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Proposal not provided";
-              const isActionableIssue = !isExcludedStatus;
+              const isIssue = meta.reasons.length > 0 || meta.isBlockedAction || meta.fieldStatus === "Proposed";
+              const isPresentNote = isNote && (meta.currentExists || meta.proposalExists);
 
-              if (isActionableIssue) {
+              if (isIssue || isPresentNote) {
                   const record = {
-                      "pin": key
+                      "namespace/key": key,
+                      "current value present": meta.currentExists,
+                      "proposed value present": meta.proposalExists,
+                      "current character count": meta.currentVal.length,
+                      "proposed character count": meta.isProposed ? meta.propVal.length : 0,
+                      "status": meta.fieldStatus,
+                      "proposal status": meta.proposalStatus,
+                      "source": meta.source,
+                      "stage": meta.stage
                   };
 
+                  if (meta.reasons.length > 0) record.reason = meta.reasons.join(", ");
+                  if (meta.reasons.includes("Over limit")) record["over-limit"] = true;
+
                   if (!isLong) {
-                      const truncateStr = (text) => text.length > 100 ? text.substring(0, 97) + "..." : text;
-                      if (meta.currentExists) record["current value"] = truncateStr(meta.currentVal);
-                      if (meta.proposalExists) record["proposed value"] = truncateStr(meta.propVal);
-                  } else {
-                      record["current value present"] = meta.currentExists;
-                      record["proposed value present"] = meta.proposalExists;
-                      record["current character count"] = meta.currentVal.length;
-                      record["proposed character count"] = meta.proposalExists ? meta.propVal.length : 0;
-                  }
-
-                  record.status = meta.fieldStatus;
-                  record.source = meta.source;
-                  record.stage = meta.stage;
-
-                  let rowReasons = [];
-                  if (meta.reasons.length > 0) rowReasons.push(...meta.reasons);
-
-                  if (rowReasons.length > 0) {
-                      record.reason = [...new Set(rowReasons)].join(", ");
+                      const getPreview = (text) => text.length > 255 ? text.substring(0, 252) + "..." : text;
+                      record["current value"] = isNote ? getPreview(meta.currentVal) : meta.currentVal;
+                      if (meta.isProposed) {
+                          record["proposed value"] = isNote ? getPreview(meta.propVal) : meta.propVal;
+                      }
                   }
 
                   issuesAndNotes.push(record);
@@ -869,6 +976,7 @@ export function OperationsMatrixTab({ products }) {
           product: {
               "product GID": selectedBenchId,
               "product title": product.title || "Unknown",
+              "selected bench ID": selectedBenchId,
               "scan status": productState?.status || "Unknown"
           },
           pipeline: {
@@ -886,9 +994,7 @@ export function OperationsMatrixTab({ products }) {
           issuesAndNotes
       };
 
-      let serializedPayload = JSON.stringify(payload, null, 2);
-
-      navigator.clipboard.writeText(serializedPayload)
+      navigator.clipboard.writeText(JSON.stringify(payload, null, 2))
           .then(() => {
               if (window.shopify && window.shopify.toast) {
                   window.shopify.toast.show("Telemetry copied");
@@ -935,7 +1041,7 @@ export function OperationsMatrixTab({ products }) {
               <Text as="p" variant="headingSm" tone="subdued">Repair Engine</Text>
               <BlockStack gap="100">
                 <Text as="p" fontWeight="bold">Proposed changes: {stats.proposed}</Text>
-                <Text as="p" fontWeight="bold" color="critical">Blocked writes: {stats.blocked}</Text>
+                <Text as="p" fontWeight="bold" color="critical">Blocked changes: {stats.blocked}</Text>
                 <Text as="p" fontWeight="bold" color="critical">Degraded fields: {stats.degraded}</Text>
                 <Text as="p" fontWeight="bold" color="critical">Conflicts: {stats.conflicts}</Text>
                 <Text as="p" fontWeight="bold" color="attention">Unverified proposals: {stats.unverified}</Text>
@@ -973,8 +1079,8 @@ export function OperationsMatrixTab({ products }) {
       const meta = getFieldMetadata(k, data);
       if (activeFilter === "Blank" && (meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing")) return true;
       if (activeFilter === "Proposed changes" && meta.fieldStatus === "Proposed") return true;
-      if (activeFilter === "Conflicts" && (meta.fieldStatus === "Conflict" || meta.fieldStatus === "Degrade" || meta.fieldStatus === "Needs review")) return true;
-      if (activeFilter === "Needs review" && (meta.fieldStatus === "Required missing" || meta.fieldStatus === "Unverified proposal" || meta.fieldStatus === "Needs review")) return true;
+      if (activeFilter === "Conflicts" && (meta.fieldStatus === "Conflict" || meta.fieldStatus === "Degrade")) return true;
+      if (activeFilter === "Needs review" && (meta.fieldStatus === "Required missing" || meta.fieldStatus === "Unverified proposal")) return true;
       if (activeFilter === meta.source) return true;
       return false;
     });
@@ -1001,7 +1107,6 @@ export function OperationsMatrixTab({ products }) {
               let statusTone = undefined;
               if (meta.fieldStatus === "Optional blank") statusTone = "attention";
               if (["Required missing", "Conflict", "Degrade", "Blocked", "Over limit", "Failed", "Unverified proposal"].includes(meta.fieldStatus)) statusTone = "critical";
-              if (meta.fieldStatus === "Needs review") statusTone = "warning";
               if (meta.fieldStatus === "Proposed") statusTone = "success";
               if (meta.fieldStatus === "Unchanged") statusTone = "new";
 
@@ -1059,16 +1164,19 @@ export function OperationsMatrixTab({ products }) {
     {label: 'Proposed changes', value: 'Proposed'},
     {label: 'Conflicts', value: 'Conflicts'},
     {label: 'Blank', value: 'Blank'},
-    {label: 'Derived', value: 'derived'},
-    {label: 'Manual', value: 'manual'},
-    {label: 'AI', value: 'AI'}
+    {label: 'Shopify', value: 'Shopify'},
+    {label: 'Gemini', value: 'Gemini'},
+    {label: 'Vision', value: 'Vision'},
+    {label: 'Geo Library', value: 'Geo Library'},
+    {label: 'Derived', value: 'Derived'},
+    {label: 'Manual', value: 'Manual'}
   ];
 
   return (
     <BlockStack gap="600">
       <BlockStack gap="200">
         <Text variant="headingXl" as="h1">Meta Injector</Text>
-        <Text variant="headingMd" tone="subdued">Data Integrity & Operations Hub — 45-Pin Central Brain</Text>
+        <Text variant="headingMd" tone="subdued">Data Integrity & Operations Hub — Accessible Diagnostic View</Text>
       </BlockStack>
 
       <div style={{ display: "grid", gridTemplateColumns: "280px 1fr", gap: "24px", alignItems: "start" }}>
