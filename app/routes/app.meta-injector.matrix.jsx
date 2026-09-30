@@ -46,7 +46,7 @@ const formatLabel = (key) => {
   return key.replace(/[_-]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 };
 
-const OperationsMatrixTab = ({ products }) => {
+export function OperationsMatrixTab({ products }) {
   const safeProducts = products || [];
   const [searchQuery, setSearchQuery] = useState("");
   
@@ -375,7 +375,7 @@ const OperationsMatrixTab = ({ products }) => {
         setTempAiData(prev => ({ ...prev, titleParseRequested: true }));
         updateProductState(currentId, STATUS.SCANNING, ["Stage 1: Parsing Title & Origin (Gemini + Render DB)..."]);
         
-        const titleToParse = manifest.repairPlan?.shopify_title || manifest.canonicalFields?.shopify_title || product.title;
+        const titleToParse = manifest.canonicalFields?.shopify_title || product.title;
         const fd = new FormData();
         fd.append("intent", "titleParse");
         fd.append("pieceName", titleToParse);
@@ -385,7 +385,7 @@ const OperationsMatrixTab = ({ products }) => {
         setTempAiData(prev => ({ ...prev, fullRescanRequested: true }));
         updateProductState(currentId, STATUS.SCANNING, ["Stage 2: Vision API Deep Scan (Gemini)..."]);
         
-        const titleToParse = tempAiData.titleParse?.shopify_title || manifest.repairPlan?.shopify_title || manifest.canonicalFields?.shopify_title || product.title;
+        const titleToParse = manifest.canonicalFields?.shopify_title || product.title;
         const imageUrl = product.images?.edges?.[0]?.node?.url || product.featuredImage?.url || product.media?.edges?.[0]?.node?.image?.url || "";
         
         const fd = new FormData();
@@ -414,14 +414,7 @@ const OperationsMatrixTab = ({ products }) => {
             stone_family: tempAiData.tab2Data?.stone_family || tempAiData.titleParse?.stone_family,
             origin_location: tempAiData.tab2Data?.origin_location || tempAiData.titleParse?.origin_location
         }));
-        
-        // Pass the merged vision and title data so the prompt has context
-        const pieceData = { ...(tempAiData.titleParse || {}), ...(tempAiData.tab2Data || {}) };
-        
-        // Ensure manual bench notes override any AI hallucination
-        pieceData.bench_notes = manifest.repairPlan?.bench_notes || manifest.canonicalFields?.bench_notes || "";
-        
-        fd.append("pieceData", JSON.stringify(pieceData));
+        fd.append("pieceData", JSON.stringify(tempAiData.tab2Data || {}));
         batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-autofill" });
       }
       else if (aiStep === 4) {
@@ -449,36 +442,22 @@ const OperationsMatrixTab = ({ products }) => {
             
             diagnostics.stage = "generateDescription";
 
-            // Map titleParse results
-            Object.keys(titleData).forEach(k => {
-                if (k === "shopify_title") {
-                    newPlan[k] = titleData[k]; // Only map to shopify_title, do not map canonical_title directly to a pin
-                } else if (k !== "pieceId" && k !== "intent" && k !== "success" && k !== "geoSource" && k !== "canonical_title") {
-                    newPlan[k] = titleData[k];
-                }
-            });
-
-            // Map vision results
             Object.keys(visionData).forEach(k => {
-                if (k !== "generated_description" && k !== "bench_notes" && k !== "pieceId" && k !== "debug_origin" && k !== "intent" && k !== "success") {
+                if (k !== "generated_description" && k !== "pieceId" && k !== "debug_origin" && k !== "intent" && k !== "success") {
                     newPlan[k] = visionData[k];
                 }
             });
             
-            // Map manual bench_notes
-            newPlan.bench_notes = existing.repairPlan?.bench_notes || existing.canonicalFields?.bench_notes || "";
+            Object.keys(titleData).forEach(k => {
+                if (k !== "pieceId" && k !== "intent" && k !== "success" && k !== "geoSource") {
+                    newPlan[k] = titleData[k];
+                }
+            });
 
-            return { 
-                ...prev, 
-                [currentId]: { 
-                    ...existing, 
-                    repairPlan: newPlan, 
-                    diagnostics,
-                    auxiliaryOutputs: {
-                        generated_description: tempAiData.generated_description || ""
-                    }
-                } 
-            };
+            // Note: `generated_description` has been intentionally stripped from the newPlan matrix payload 
+            // as it is not part of the 45-pin blueprint.
+
+            return { ...prev, [currentId]: { ...existing, repairPlan: newPlan, diagnostics } };
         });
         
         setTempAiData({});
@@ -491,7 +470,7 @@ const OperationsMatrixTab = ({ products }) => {
   useEffect(() => {
     if (batchFetcher.state === "idle" && batchFetcher.data && batchFetcher.data !== lastProcessedData) {
       setLastProcessedData(batchFetcher.data);
-      const { intent, success, pieceId, productId, message, error, errors, logs, status, titleParse, tab2Data, generated_description, fieldsUpdated } = batchFetcher.data;
+      const { intent, success, pieceId, productId, message, error, errors, logs, status, finalStatus, titleParse, tab2Data, generated_description, fieldsUpdated } = batchFetcher.data;
       
       const targetId = pieceId || productId;
       
@@ -521,39 +500,71 @@ const OperationsMatrixTab = ({ products }) => {
          if (isLoadingData) setTimeout(() => setLoadIndex(i => i + 1), 100);
       }
 
-      if (intent === "executeRepairPlan" && targetId && executionMode !== "AI_BATCH_PIPELINE") {
+      if ((intent === "executeRepairPlan" || intent === "batchAuditItem" || intent === "saveMetafields") && targetId && executionMode !== "AI_BATCH_PIPELINE") {
         if (!success) {
+           console.error("Execute Error from Backend:", batchFetcher.data);
            setIsExecuting(false);
-           const errMsg = errors ? errors[0]?.message : (error || message || "Unknown Error");
+           const errMsg = errors ? errors[0]?.message : (error || (logs && logs[logs.length-1]) || "Unknown Error");
            setSafetyError(`Engine halted on ${targetId}. Error: ${errMsg}`);
-           updateProductState(targetId, STATUS.FAILED, errors ? errors.map(e => e.message) : [errMsg]);
-           return; // Halt immediately, preserve repair plan
+           updateProductState(targetId, STATUS.FAILED, errors ? errors.map(e => e.message) : (logs || ["Unknown Backend Error"]));
+           return;
         }
         
-        setManifestData(prev => {
-            const existing = prev[targetId];
-            if (!existing) return prev;
-            return {
-                ...prev,
-                [targetId]: {
-                    ...existing,
-                    diagnostics: {
-                        ...existing.diagnostics,
-                        shopifyRead: "Success",
-                        readBack: batchFetcher.data.readBackVerified ? "Verified" : "Conflicts Found",
-                        stage: "executeRepairPlan"
+        if (intent === "batchAuditItem" && success) {
+            updateProductState(targetId, STATUS.SCANNING, ["AI Run complete. Fetching fresh data..."]);
+            setSafetyMessage("Single AI Run complete. Reloading manifest to display new data...");
+            setManifestData(prev => {
+                const existing = prev[targetId];
+                if (!existing) return prev;
+                return {
+                    ...prev,
+                    [targetId]: {
+                        ...existing,
+                        diagnostics: {
+                            ...existing.diagnostics,
+                            gemini: "Success",
+                            vision: "Success",
+                            stage: "batchAuditItem"
+                        }
                     }
-                }
-            };
-        });
+                };
+            });
+            setTimeout(() => {
+                const fd = new FormData();
+                fd.append("intent", "loadProductData");
+                fd.append("pieceId", targetId);
+                batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-api" });
+            }, 500);
+            return;
+        }
 
+        if (intent === "executeRepairPlan" && success) {
+            setManifestData(prev => {
+                const existing = prev[targetId];
+                if (!existing) return prev;
+                return {
+                    ...prev,
+                    [targetId]: {
+                        ...existing,
+                        diagnostics: {
+                            ...existing.diagnostics,
+                            shopifyRead: "Success",
+                            readBack: "Not called",
+                            stage: "executeRepairPlan"
+                        }
+                    }
+                };
+            });
+        }
+
+        const successLogs = logs || [message || "Operation applied successfully."];
+        
         let statusToSet = STATUS.COMPLETE;
-        const successLogs = logs ? [...logs] : [message || "Operation applied successfully."];
-
-        if (status === "NO_CHANGES_REQUIRED" || (fieldsUpdated === 0 && batchFetcher.data.legacyKeysRemoved === 0)) {
+        // Zero-change repairs must be skipped, specifically checking fieldsUpdated
+        if (status === "NO_CHANGES_REQUIRED" || message === "No changes required." || fieldsUpdated === 0) {
             statusToSet = STATUS.SKIPPED;
             successLogs.push("No changes required.");
-        } else if (status === "REPAIR_FAILED") {
+        } else if (finalStatus === "Needs Review" || status === "REPAIR_FAILED") {
             statusToSet = STATUS.FAILED;
         }
 
@@ -577,7 +588,7 @@ const OperationsMatrixTab = ({ products }) => {
             if (!success) {
                 updateProductState(currentId, STATUS.FAILED, [error || `Gemini failed at ${intent}`]);
                 setIsExecuting(false);
-                setSafetyError(`Engine halted on item ${executeIndex + 1} during ${intent}. Error: ${error || "Unknown Gemini API Error"}`);
+                setSafetyError(`Engine halted on item ${executeIndex + 1}. Error: ${error || "Unknown Gemini API Error"}`);
                 setManifestData(prev => {
                     const existing = prev[currentId];
                     if (!existing) return prev;
@@ -586,7 +597,7 @@ const OperationsMatrixTab = ({ products }) => {
                     if (intent === "fullRescan") { diagnostics.vision = "Failed"; diagnostics.gemini = "Failed"; }
                     return { ...prev, [currentId]: { ...existing, diagnostics } };
                 });
-                return; // Halt on error, preserve tempAiData
+                return;
             }
 
             if (intent === "titleParse") {
@@ -650,16 +661,15 @@ const OperationsMatrixTab = ({ products }) => {
   const handleExecuteSingleAI = useCallback(() => {
     if (!selectedBenchId) return;
     
-    // Setup for single AI run
-    setExecutionMode("AI_BATCH_PIPELINE");
-    setIsExecuting(true);
-    setQueueIds([selectedBenchId]); // Temporarily isolate queue to just this item
-    setExecuteIndex(0);
-    setAiStep(1);
-    setTempAiData({});
+    const fd = new FormData();
+    fd.append("intent", "batchAuditItem");
+    fd.append("pieceId", selectedBenchId);
+    fd.append("runMode", "LIVE_RUN");
+    fd.append("explicitConfirm", "true");
 
-    updateProductState(selectedBenchId, STATUS.SCANNING, ["Spinning up Gemini AI pipeline..."]);
-  }, [selectedBenchId, updateProductState]);
+    updateProductState(selectedBenchId, STATUS.SCANNING, ["Spinning up single Gemini AI run..."]);
+    batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-autofill" });
+  }, [selectedBenchId, batchFetcher, updateProductState]);
 
   const getStatusTone = (status) => {
     switch(status) {
@@ -718,6 +728,11 @@ const OperationsMatrixTab = ({ products }) => {
 
       if (batchFetcher.state !== "idle" && batchFetcher.formData?.get("pieceId") === selectedBenchId) {
           const intent = batchFetcher.formData?.get("intent");
+          if (intent === "batchAuditItem") {
+              geminiStatus = "Running";
+              visionStatus = "Running";
+              currentStage = "batchAuditItem";
+          }
           if (intent === "executeRepairPlan") {
               shopifyReadStatus = "Running";
               currentStage = "executeRepairPlan";
@@ -792,6 +807,7 @@ const OperationsMatrixTab = ({ products }) => {
           "optional blanks": 0,
           "required missing": 0,
           "over-limit": 0,
+          "fields updated": data.fieldsUpdated !== undefined ? data.fieldsUpdated : 0,
           "read-back status": statusObj.readBackStatus
       };
 
@@ -908,10 +924,10 @@ const OperationsMatrixTab = ({ products }) => {
               <Text as="p" variant="headingSm" tone="subdued">System Status</Text>
               <BlockStack gap="100" align="start">
                 <Text as="p" fontWeight="bold">Shopify Read: <Badge tone={statusObj.shopifyReadStatus === "Success" ? "success" : (statusObj.shopifyReadStatus === "Running" ? "magic" : "critical")}>{statusObj.shopifyReadStatus}</Badge></Text>
-                <Text as="p" fontWeight="bold">Gemini API: <Badge tone={statusObj.geminiStatus === "Running" ? "magic" : (statusObj.geminiStatus === "Failed" ? "critical" : "info")}>{statusObj.geminiStatus}</Badge></Text>
-                <Text as="p" fontWeight="bold">Vision API: <Badge tone={statusObj.visionStatus === "Running" ? "magic" : (statusObj.visionStatus === "Failed" ? "critical" : "info")}>{statusObj.visionStatus}</Badge></Text>
+                <Text as="p" fontWeight="bold">Gemini API: <Badge tone={statusObj.geminiStatus === "Running" ? "magic" : "info"}>{statusObj.geminiStatus}</Badge></Text>
+                <Text as="p" fontWeight="bold">Vision API: <Badge tone={statusObj.visionStatus === "Running" ? "magic" : "info"}>{statusObj.visionStatus}</Badge></Text>
                 <Text as="p" fontWeight="bold">Geo Library: <Badge tone="info">{statusObj.geoLibraryStatus}</Badge></Text>
-                <Text as="p" fontWeight="bold">Read-back: <Badge tone={statusObj.readBackStatus === "Verified" ? "success" : (statusObj.readBackStatus === "Conflicts Found" ? "critical" : "info")}>{statusObj.readBackStatus}</Badge></Text>
+                <Text as="p" fontWeight="bold">Read-back: <Badge tone="info">{statusObj.readBackStatus}</Badge></Text>
               </BlockStack>
             </Box>
 
@@ -934,27 +950,11 @@ const OperationsMatrixTab = ({ products }) => {
                 <Text as="p" fontWeight="bold">Filled: <span style={{ color: "#22c55e" }}>{stats.filled}</span></Text>
                 <Text as="p" fontWeight="bold">Optional blanks: <span style={{ color: "#eab308" }}>{stats.optionalBlanks}</span></Text>
                 <Text as="p" fontWeight="bold" color="critical">Required missing fields: {stats.requiredMissing}</Text>
+                <Text as="p" fontWeight="bold">Fields Updated (Last Run): {data.fieldsUpdated !== undefined ? data.fieldsUpdated : "Not reported"}</Text>
               </BlockStack>
             </Box>
 
           </div>
-
-          {/* Auxiliary Output Display */}
-          {data.auxiliaryOutputs && data.auxiliaryOutputs.generated_description && (
-             <Box padding="300" background="bg-surface" borderRadius="100" borderColor="border" borderWidth="1">
-                <Text as="p" variant="headingSm" tone="subdued" style={{ marginBottom: "8px" }}>Auxiliary Output: Generated Description</Text>
-                <Text as="p" variant="bodyMd" tone="critical" style={{ marginBottom: "12px", fontStyle: "italic" }}>
-                   Note: The 45-pin architecture does not define a Shopify destination for this text. Review it here, but it will not be saved by the Repair Engine.
-                </Text>
-                <TextField
-                   value={data.auxiliaryOutputs.generated_description}
-                   readOnly
-                   multiline={5}
-                   autoComplete="off"
-                />
-             </Box>
-          )}
-
         </BlockStack>
       </Card>
     );
@@ -1290,7 +1290,6 @@ const OperationsMatrixTab = ({ products }) => {
       </div>
     </BlockStack>
   );
-};
+}
 
-export { OperationsMatrixTab };
 export default OperationsMatrixTab;

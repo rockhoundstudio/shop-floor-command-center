@@ -1,678 +1,697 @@
-import { authenticate } from "../shopify.server";
-import { executeAutofill } from "../utils/meta-injector.autofill.server.jsx";
+import { lookupStone } from "./geoLibrary.jsx";
 
-// 🟢 Structural Engine — No Prisma Import Here
+const stoneProfileCache = new Map();
 
-const PIN_CONFIG = {
-  // Native Branches (Bypass Metafields)
-  shopify_title: { target: "native", path: "title" },
-  price: { target: "native_variant", path: "price" },
-  shipping_weight_oz: { target: "native_variant", path: "weight" },
-  seo_title: { target: "native", path: "seo_title" },
-  poetic_hook: { target: "native", path: "seo_description" },
-  alt_text: { target: "native_media", path: "alt" },
-  google_product_category: { target: "native", path: "category" },
-  collection_name: { target: "native_collection", path: "collections" },
-
-  // Identity & Sales (Metafields)
-  piece_name: { target: "metafield", ns: "custom", key: "piece_name", type: "single_line_text_field" },
-  stone_family: { target: "metafield", ns: "custom", key: "stone_family", type: "single_line_text_field" },
-  weight_grams: { target: "metafield", ns: "custom", key: "weight_grams", type: "number_decimal" },
-  is_ooak: { target: "metafield", ns: "custom", key: "is_one_of_a_kind", type: "single_line_text_field" },
-
-  // Physical Reality
-  dimensions_mm: { target: "metafield", ns: "custom", key: "dimensions_mm", type: "single_line_text_field" },
-  cut_and_shape: { target: "metafield", ns: "custom", key: "cut_and_shape", type: "single_line_text_field" },
-  surface_finish: { target: "metafield", ns: "custom", key: "surface_finish", type: "single_line_text_field" },
-  primary_color: { target: "metafield", ns: "custom", key: "primary_color", type: "single_line_text_field" },
-  color_pattern: { target: "metafield", ns: "shopify", key: "color-pattern", type: "list.metaobject_reference" },
-  honest_flaws_and_character: { target: "metafield", ns: "custom", key: "honest_flaws_and_character", type: "multi_line_text_field" },
-  bench_notes: { target: "metafield", ns: "custom", key: "bench_notes", type: "multi_line_text_field" },
-  product_format: { target: "metafield", ns: "custom", key: "product_format", type: "single_line_text_field" },
-
-  // Hardware & Settings
-  primary_use: { target: "metafield", ns: "shopify", key: "product-use", type: "list.metaobject_reference" },
-  jewelry_type: { target: "metafield", ns: "shopify", key: "jewelry-type", type: "list.metaobject_reference" },
-  primary_medium: { target: "metafield", ns: "shopify", key: "material", type: "list.metaobject_reference" },
-  secondary_medium: { target: "metafield", ns: "shopify", key: "jewelry-material", type: "list.metaobject_reference" },
-  setting_ready: { target: "metafield", ns: "custom", key: "setting_ready", type: "boolean" },
-  bail_included: { target: "metafield", ns: "custom", key: "bail_included", type: "boolean" },
-  chain_material: { target: "metafield", ns: "custom", key: "chain_material", type: "single_line_text_field" },
-  jewelry_finding_type: { target: "metafield", ns: "shopify", key: "jewelry-finding-type", type: "list.metaobject_reference" },
-
-  // Geological Base
-  mohs_hardness: { target: "metafield", ns: "custom", key: "mohs_hardness", type: "single_line_text_field" },
-  specific_gravity: { target: "metafield", ns: "custom", key: "specific_gravity", type: "single_line_text_field" },
-  crystal_system: { target: "metafield", ns: "shopify", key: "crystal-system", type: "list.metaobject_reference" },
-  fracture_pattern: { target: "metafield", ns: "custom", key: "fracture_pattern", type: "single_line_text_field" },
-  cleavage: { target: "metafield", ns: "custom", key: "cleavage", type: "single_line_text_field" },
-  luster: { target: "metafield", ns: "custom", key: "luster", type: "single_line_text_field" },
-  diaphaneity: { target: "metafield", ns: "custom", key: "diaphaneity", type: "single_line_text_field" },
-  mineral_class: { target: "metafield", ns: "shopify", key: "mineral-class", type: "list.metaobject_reference" },
-  geological_era: { target: "metafield", ns: "shopify", key: "geological-era", type: "list.metaobject_reference" },
-  rock_formation: { target: "metafield", ns: "shopify", key: "rock-formation", type: "list.metaobject_reference" },
-
-  // Origin & Narrative
-  origin_location: { target: "metafield", ns: "custom", key: "origin_location", type: "single_line_text_field" },
-  origin_handle: { target: "metafield", ns: "custom", key: "origin_page_handle", type: "single_line_text_field" },
-  collection_location: { target: "metafield", ns: "custom", key: "collection_location", type: "single_line_text_field" },
-  origin_story: { target: "metafield", ns: "custom", key: "origin_story", type: "multi_line_text_field" },
-  craftsmanship: { target: "metafield", ns: "custom", key: "craftsmanship", type: "multi_line_text_field" },
-
-  // SEO & Taxonomy
-  authenticity: { target: "metafield", ns: "shopify", key: "authenticity", type: "list.metaobject_reference" },
-  rarity: { target: "metafield", ns: "shopify", key: "rarity", type: "list.metaobject_reference" }
-};
-
-const METAOBJECT_DICT = {
-  "shopify.authenticity": {
-    "genuine": "gid://shopify/Metaobject/151951114491",
-    "authentic": "gid://shopify/Metaobject/151951114491",
-    "replica": "gid://shopify/Metaobject/156128346363"
-  },
-  "shopify.rarity": {
-    "common": "gid://shopify/Metaobject/151951147259",
-    "rare": "gid://shopify/Metaobject/154252050683",
-    "one-of-a-kind": "gid://shopify/Metaobject/154252050683"
-  }
-};
-
-const LEGACY_MAP_LOCAL = {
-  "custom.crystal-system": "custom.crystal_system",
-  "custom.mineral-class": "custom.mineral_class",
-  "custom.rock-composition": "custom.rock_composition",
-  "custom.geological-era": "custom.geological_era",
-  "custom.rock-formation": "custom.rock_formation",
-  "custom.necklace-design": "custom.necklace_design",
-  "custom.is_one_of_a_kind": "custom.is_ooak"
-};
-
-function chunkArray(arr, size) {
-  const chunks = [];
-  for (let i = 0; i < arr.length; i += size) chunks.push(arr.slice(i, i + size));
-  return chunks;
-}
-
-function normalizeMetafieldValue(key, value, type) {
-  let val = String(value).replace(/^⚠️\s*/, "");
+// ==========================================
+// 🟢 UPGRADED DYSLEXIA FORMATTING SAFEGUARD
+// ==========================================
+function formatDyslexiaText(text) {
+  if (!text) return "";
+  let cleaned = text;
   
-  if (type === "boolean") {
-     const lower = val.toLowerCase();
-     if (lower === "yes" || lower === "true" || lower === "1") return "true";
-     if (lower === "no" || lower === "false" || lower === "0") return "false";
-     return val; 
-  }
-
-  const booleanKeys = ["is_ooak", "found_object", "custom_product", "setting_ready", "bail_included", "treated"];
-  if (booleanKeys.includes(key) && type !== "boolean") {
-    if (val.toLowerCase() === "true") val = "Yes";
-    else if (val.toLowerCase() === "false") val = "No";
-  }
-  return val;
+  // Force space after period, exclamation, or question mark if missing
+  cleaned = cleaned.replace(/([a-z0-9])([.?!])([A-Z])/g, "$1$2 $3");
+  
+  // Force space after comma if missing
+  cleaned = cleaned.replace(/([a-z0-9]),([A-Za-z])/gi, "$1, $2");
+  
+  // Force visual spacing between HTML paragraphs
+  cleaned = cleaned.replace(/<\/p>\s*<p>/g, "</p>\n\n<p>");
+  cleaned = cleaned.replace(/<br\s*\/?>/gi, "<br>\n");
+  
+  return cleaned.trim();
 }
 
-function sanitizeDescription(html) {
-  if (!html || typeof html !== "string") return html;
-  let safeHtml = html;
-  const targets = ["/pages/the-shopped-rock", "/collections/the-shopped-rock", "/pages/the-shocked-rock", "/collections/the-shocked-rock"];
-  for (const target of targets) {
-    const regexNormal = new RegExp(`<a[^>]*href=["']?[^"'>]*${target.replace(/\//g, '\\/')}["']?[^>]*>.*?<\\/a>`, 'gi');
-    safeHtml = safeHtml.replace(regexNormal, "");
-    const regexEscaped = new RegExp(`&lt;a[^&]*href=[&quot;']?[^&quot;'>]*${target.replace(/\//g, '\\/')}[&quot;']?[^&]*&gt;.*?&lt;\\/a&gt;`, 'gi');
-    safeHtml = safeHtml.replace(regexEscaped, "");
+function extractShapeFromString(str) {
+  if (!str) return "";
+  const SHAPES = ["Round", "Oval", "Freeform", "Teardrop", "Pear", "Cushion", "Marquise", "Rectangle", "Square", "Heart", "Slab", "Rough", "Cabochon"];
+  for (const shape of SHAPES) {
+    if (new RegExp(`\\b${shape}\\b`, "i").test(str)) return shape;
   }
-  return safeHtml;
+  return "";
 }
 
-export const action = async ({ request }) => {
+function enforceOriginOverrides(loc) {
+  if (!loc) return loc;
+  const lower = loc.toLowerCase();
+  if (lower.includes("yakima") || lower.includes("chert")) return "Yakima Canyon";
+  if (lower.includes("spokane")) return "Spokane River";
+  if (lower.includes("richardson")) return "Richardson's Rock Ranch";
+  return loc;
+}
+
+function getDwellButtons(originSegment, targetUrlPath, collectionUrlPath, fullCollectionTitle) {
+  let dwellButtonsHTML = ``;
+  const lowerOrigin = (originSegment || "").toLowerCase();
+
+  if (lowerOrigin.includes("richardson")) {
+    dwellButtonsHTML = `<a href="/pages/the-richardson-strike">Richardson's Rock Ranch Story →</a><br>\n<a href="/collections/richardsons-rock-ranch">Richardson's Rock Ranch Collection →</a><br>\n<a href="/pages/the-3-000-mile-run">The 3,000-Mile Run Story →</a><br>\n<a href="/collections/the-3-000-mile-run-1">The 3,000-Mile Run Collection →</a>`;
+  } else if (lowerOrigin.includes("north fork") || lowerOrigin.includes("cda")) {
+    dwellButtonsHTML = `<a href="/pages/the-north-fork-strike">The North Fork Strike →</a><br>\n<a href="/collections/north-fork-cda-collection">North Fork CdA Collection →</a>`;
+  } else if (lowerOrigin.includes("spokane")) {
+    dwellButtonsHTML = `<a href="/collections/the-spokane-river-collection">Spokane River Collection →</a>`;
+  } else if (!lowerOrigin.includes("irv") && !lowerOrigin.includes("gem show") && !lowerOrigin.includes("shopped rock")) {
+    if (targetUrlPath && targetUrlPath !== "/pages/") {
+      dwellButtonsHTML += `<a href="${targetUrlPath}">${fullCollectionTitle} Story →</a><br>\n`;
+    }
+    if (collectionUrlPath && collectionUrlPath !== "/collections/") {
+      dwellButtonsHTML += `<a href="${collectionUrlPath}">${fullCollectionTitle} Collection →</a>`;
+    }
+  }
+  return dwellButtonsHTML;
+}
+
+// ==========================================
+// 🟢 PROMPT 1: TITLE PARSER
+// ==========================================
+function buildTitleParsePrompt(segment1, segment2, segment3, pagesMenu, collectionsMenu, stonePicklist) {
+  return `You are the Hellstone 3.0 Lapidary Data Extractor. Parse these dictated segments:
+- Segment 1: "${segment1}"
+- Segment 2: "${segment2}"
+- Segment 3: "${segment3}"
+
+LIVE STORE DIRECTORY:
+PAGES: ${pagesMenu || "None"}
+COLLECTIONS: ${collectionsMenu || "None"}
+
+STEP 1: Match 'stone_family' exactly to one of these Render DB names: ${stonePicklist}. Ignore SEO words.
+STEP 2: Match 'origin_location' exactly to a live store collection/origin. If vendor/show, use "The Shopped Rock".
+STEP 3: Extract the unique 'piece_name'.
+STEP 4: Isolate 'seo_modifiers' (e.g., "Freeform Cabochon", "High Polish").
+STEP 5: Construct 'shopify_title' using EXACTLY this format with spaced hyphens:
+[stone_family] [seo_modifiers] - [origin_location] - [piece_name]
+
+Return JSON:
+{
+  "stone_family": "",
+  "origin_location": "",
+  "piece_name": "",
+  "seo_modifiers": "",
+  "seo_title": "Keyword rich SEO title for Google",
+  "shopify_title": "",
+  "collection_name": "",
+  "collection_location": "",
+  "origin_handle": ""
+}`;
+}
+
+// ==========================================
+// 🟢 PROMPT 2: VISUAL PROCESSOR
+// ==========================================
+function buildMasterVisionPrompt({ pagesMenu, collectionsMenu, stoneFamily, derivedShape, originSegment }) {
+  return `You are the Hellstone 3.0 Lead Lapidary Inspector. Analyze this raw shop-floor photo (which includes a measuring tape) and output strict, honest mechanical data. Never use marketing fluff.
+
+STEP 1: BENCH VARIABLES (Physical Reality)
+- dimensions_mm: Read the tape. (e.g., "38x38x5mm").
+- cut_shape: Geometry (e.g., Round, Oval, Freeform). The title states "${derivedShape || 'None'}". If not 'None', respect it.
+- finish_stage: Polish level (e.g., 600-grit, High Polish).
+- honest_flaws: Visible vugs, healed fractures. Be brutally honest.
+- product_format: Finished Cabochon, Maker Blank, etc.
+
+STEP 2: MAKER VARIABLES (The Grit)
+Based on the stone family (${stoneFamily}) and visual structure:
+- wheel_feel: How will this cut? Treat risk cautiously.
+- blowout_risk: Where are the fracture points?
+- tool_barrier: Specific polishing difficulty?
+
+STEP 3: THE HOOK & SYSTEM VARIABLES
+- poetic_hook: Meta description. Poetic, spare, story-driven. Under 160 characters.
+- Map the standard Shopify fields at the root level based on the image and Origin ("${originSegment}"). 
+
+Return JSON ONLY:
+{
+  "bench": {
+    "dimensions_mm": "",
+    "cut_shape": "",
+    "finish_stage": "",
+    "honest_flaws": "",
+    "product_format": ""
+  },
+  "maker": {
+    "wheel_feel": "",
+    "blowout_risk": "",
+    "tool_barrier": ""
+  },
+  "narrative": {
+    "poetic_hook": ""
+  },
+  "seo_title": "",
+  "origin_location": "",
+  "primary_color": "",
+  "cut_and_shape": "",
+  "surface_finish": "",
+  "stone_shape": "",
+  "color_pattern": "",
+  "pattern": "",
+  "primary_use": "Pendant / Cabochon / Loose Stone",
+  "jewelry_type": "Pendant / Necklace / N/A",
+  "necklace_design": "",
+  "jewelry_finding_type": "None",
+  "rarity": "One-of-a-Kind",
+  "authenticity": "Authentic",
+  "primary_medium": "${stoneFamily}",
+  "secondary_medium": "None",
+  "wire_material": "None",
+  "setting_ready": "None",
+  "bail_included": "None",
+  "chain_material": "None",
+  "google_product_category": "Apparel & Accessories > Jewelry",
+  "alt_text": ""
+}`;
+}
+
+// ==========================================
+// 🟢 PROMPT 3: DESCRIPTION GENERATOR
+// ==========================================
+function buildDescriptionPrompt(derivedFamily, extractedStory, collectionStory, pieceData, dwellButtonsHTML) {
+  return `You write two product story fields from the supplied source material for Rockhound Studio.
+
+INPUTS:
+- Stone Family: ${derivedFamily}
+- Full Origin Page Text: ${extractedStory || "None"}
+- Full Collection Page Text: ${collectionStory || "None"}
+- Maker Notes (Bench/Flaws/Format): ${JSON.stringify(pieceData)}
+
+RULES:
+- Grounding: Use only facts stated in the supplied text. Scan the master text and ONLY extract the narrative explicitly matching ${derivedFamily}.
+- Zero Hallucination: Do not invent dates, locations, techniques, or results. Do not infer craftsmanship details not provided.
+- Tone: Plain, concise. Past tense for the find. "I" or "we" to match the source.
+- Strict Boundaries: If the source does not support a detail, leave it out. No salesy language.
+- Dwell Buttons: Embed the exact HTML block provided below at the very end of the craftsmanship text.
+
+DWELL BUTTONS TO APPEND:
+${dwellButtonsHTML}
+
+OUTPUT FORMAT (JSON only):
+{
+  "narrative": {
+    "origin_story": "Write 2-3 sentences connecting the stone to its Origin and Collection using the source text. Use <p> tags.",
+    "craftsmanship": "Write the physical description, specs, honest flaws, and Bob & Janyce's signature. Use <p> tags. Append the exact DWELL BUTTONS HTML block at the very end."
+  }
+}`;
+}
+
+function extractStoneName(title) {
+  if (!title) return "Unknown";
+  
+  const sanitizedTitle = String(title).replace(/—/g, "-");
+  const sectionOne = sanitizedTitle.split(/\s+-\s+/)[0].trim();
+  
+  const adjectives = [
+    "Green", "Blue", "Red", "Yellow", "Orange", "Purple", "Pink", "Black", "White", "Grey", "Gray", "Brown",
+    "Brecciated", "Picture", "Ocean", "Crazy Lace", "Plume", "Moss", "Dendritic", "Banded", "Polychrome",
+    "Imperial", "Royal", "Dark", "Light", "Clear", "Opaque", "Translucent", "Raw", "Rough", "Tumbled",
+    "Polished", "Natural", "Fossil", "Petrified", "Mookaite", "Kambaba", "Bumblebee", "Dalmatian", "Dragon Blood"
+  ];
+
+  let words = sectionOne.split(/\s+/);
+  words = words.filter(word => !adjectives.some(adj => adj.toLowerCase() === word.toLowerCase()));
+
+  if (words.length > 0) {
+    const baseRock = words[words.length - 1];
+    return baseRock.charAt(0).toUpperCase() + baseRock.slice(1).toLowerCase();
+  }
+
+  return sectionOne;
+}
+
+async function queryPostgres(sql, params) {
+  const { default: pg } = await import('pg');
+  const db = new pg.Client({
+    connectionString: process.env.DATABASE_URL,
+    ssl: { rejectUnauthorized: false }
+  });
+  await db.connect();
   try {
-    const { admin } = await authenticate.admin(request);
-    const body = await request.formData();
-    const intent = body.get("intent");
-
-    if (intent === "loadProductData") {
-      const pieceId = body.get("pieceId");
-      const productGid = pieceId.startsWith("gid://") ? pieceId : `gid://shopify/Product/${pieceId.split("/").pop()}`;
-
-      const productQuery = await admin.graphql(`
-        query getProduct($id: ID!) {
-          product(id: $id) {
-            id title
-            seo { title description }
-            category { name }
-            variants(first: 1) { edges { node { id price weight weightUnit } } }
-            media(first: 1) { edges { node { ... on MediaImage { id image { altText } } } } }
-            collections(first: 10) { edges { node { id title } } }
-            metafields(first: 250) { edges { node { namespace key value } } }
-          }
-        }
-      `, { variables: { id: productGid } });
-
-      const productData = await productQuery.json();
-      const product = productData?.data?.product;
-      if (!product) return Response.json({ intent: "loadProductData", success: false, message: "Product not found" });
-
-      const currentMetafields = {};
-      if (product.metafields?.edges) {
-        product.metafields.edges.forEach(({node}) => {
-            currentMetafields[`${node.namespace}.${node.key}`] = node.value;
-        });
-      }
-
-      const canonicalFields = {};
-      const repairPlan = {};
-      const legacyFields = {};
-
-      Object.keys(PIN_CONFIG).forEach(inKey => {
-         const cfg = PIN_CONFIG[inKey];
-         if (cfg.target === "metafield") {
-             const dotKey = `${cfg.ns}.${cfg.key}`;
-             canonicalFields[inKey] = currentMetafields[dotKey] ?? "";
-             repairPlan[inKey] = currentMetafields[dotKey] ?? "";
-         } else if (cfg.target === "native") {
-             if (inKey === "shopify_title") canonicalFields[inKey] = product.title || "";
-             if (inKey === "seo_title") canonicalFields[inKey] = product.seo?.title || "";
-             if (inKey === "poetic_hook") canonicalFields[inKey] = product.seo?.description || "";
-             if (inKey === "google_product_category") canonicalFields[inKey] = product.category?.name || "";
-             repairPlan[inKey] = canonicalFields[inKey];
-         } else if (cfg.target === "native_variant") {
-             const variant = product.variants?.edges?.[0]?.node;
-             if (inKey === "price") canonicalFields[inKey] = variant?.price || "0.00";
-             if (inKey === "shipping_weight_oz") canonicalFields[inKey] = variant?.weight ? String(variant.weight) : "";
-             repairPlan[inKey] = canonicalFields[inKey];
-         } else if (cfg.target === "native_media") {
-             canonicalFields[inKey] = product.media?.edges?.[0]?.node?.image?.altText || "";
-             repairPlan[inKey] = canonicalFields[inKey];
-         } else if (cfg.target === "native_collection") {
-             canonicalFields[inKey] = product.collections?.edges?.map(e => e.node.title).join(", ") || "";
-             repairPlan[inKey] = canonicalFields[inKey];
-         }
-      });
-
-      canonicalFields["global.title_tag"] = currentMetafields["global.title_tag"] ?? "";
-      canonicalFields["global.description_tag"] = currentMetafields["global.description_tag"] ?? "";
-
-      Object.entries(LEGACY_MAP_LOCAL).forEach(([leg, can]) => {
-         if (currentMetafields[leg] !== undefined) {
-            legacyFields[leg] = {
-               value: String(currentMetafields[leg]),
-               canonicalTarget: can,
-               canonicalCurrent: canonicalFields[can] || ""
-            };
-         }
-      });
-
-      return Response.json({
-         intent: "loadProductData",
-         success: true,
-         productId: product.id,
-         productTitle: product.title,
-         currentMetafields,
-         canonicalFields,
-         legacyFields,
-         repairPlan
-      });
-    }
-
-    if (intent === "executeRepairPlan") {
-      const pieceId = body.get("pieceId");
-      const rawPlan = body.get("repairPlan");
-      const rawLegacy = body.get("legacyKeysToRemove");
-      
-      if (!pieceId || !rawPlan) {
-        return Response.json({ intent: "executeRepairPlan", success: false, status: "REPAIR_FAILED", message: "Missing pieceId or repairPlan payload." });
-      }
-
-      const repairPlan = JSON.parse(rawPlan);
-      const legacyKeysToRemove = rawLegacy ? JSON.parse(rawLegacy) : [];
-      const productGid = pieceId.startsWith("gid://") ? pieceId : `gid://shopify/Product/${pieceId.split("/").pop()}`;
-
-      const lookupResponse = await admin.graphql(`
-        query getProductLookup($id: ID!) {
-          product(id: $id) { 
-            title
-            seo { title description }
-            category { name }
-            variants(first: 1) { edges { node { id price weight weightUnit } } }
-            media(first: 1) { edges { node { ... on MediaImage { id image { altText } } } } }
-            collections(first: 10) { edges { node { id title } } }
-            metafields(first: 250) { edges { node { namespace key value type id } } } 
-          }
-        }
-      `, { variables: { id: productGid } });
-      
-      const lookupData = await lookupResponse.json();
-      const product = lookupData?.data?.product;
-      if (!product) {
-         return Response.json({ intent: "executeRepairPlan", success: false, status: "REPAIR_FAILED", message: "Product not found on lookup." });
-      }
-
-      const currentMetaList = product.metafields?.edges || [];
-      const currentMetafields = {};
-      currentMetaList.forEach(e => { currentMetafields[`${e.node.namespace}.${e.node.key}`] = e.node.value; });
-
-      const currentFields = {};
-      Object.keys(PIN_CONFIG).forEach(inKey => {
-         const cfg = PIN_CONFIG[inKey];
-         if (cfg.target === "metafield") {
-             currentFields[inKey] = currentMetafields[`${cfg.ns}.${cfg.key}`] || null;
-         } else if (cfg.target === "native") {
-             if (inKey === "shopify_title") currentFields[inKey] = product.title || "";
-             if (inKey === "seo_title") currentFields[inKey] = product.seo?.title || "";
-             if (inKey === "poetic_hook") currentFields[inKey] = product.seo?.description || "";
-             if (inKey === "google_product_category") currentFields[inKey] = product.category?.name || "";
-         } else if (cfg.target === "native_variant") {
-             const variant = product.variants?.edges?.[0]?.node;
-             if (inKey === "price") currentFields[inKey] = variant?.price || "0.00";
-             if (inKey === "shipping_weight_oz") currentFields[inKey] = variant?.weight ? String(variant.weight) : "";
-         } else if (cfg.target === "native_media") {
-             currentFields[inKey] = product.media?.edges?.[0]?.node?.image?.altText || "";
-         } else if (cfg.target === "native_collection") {
-             currentFields[inKey] = product.collections?.edges?.map(e => e.node.title).join(", ") || "";
-         }
-      });
-
-      const proposedChanges = {};
-      const setToShopify = [];
-      const deleteFromShopify = [];
-      const allErrors = [];
-      
-      let prodUpdates = {};
-      let varUpdates = {};
-      let mediaUpdates = [];
-      let reqProd = false, reqVar = false, reqMedia = false;
-      let collectionsToResolve = [];
-      let fieldsUpdatedCount = 0;
-
-      const variantId = product.variants?.edges?.[0]?.node?.id;
-      const mediaId = product.media?.edges?.[0]?.node?.id;
-
-      // Import the Central Brain config dynamically if needed, or rely on Matrix filtering.
-      // But we must enforce it strictly here.
-      Object.entries(repairPlan).forEach(([fullKey, val]) => {
-        const valStr = String(val !== null && val !== undefined ? val : "").trim();
-        const config = PIN_CONFIG[fullKey];
-
-        // Ensure ONLY verified pins from PIN_CONFIG are allowed
-        if (!config) {
-            allErrors.push({ field: fullKey, message: `Blocked: Pin '${fullKey}' is unknown or lacks a verified destination.` });
-            return;
-        }
-
-        if (config.target === "unresolved" || !config.target) {
-            allErrors.push({ field: fullKey, message: `Blocked: Pin '${fullKey}' is marked as unresolved destination.` });
-            return;
-        }
-
-        if (config.target === "metafield" && (!config.ns || !config.key || !config.type)) {
-            allErrors.push({ field: fullKey, message: `Blocked: Pin '${fullKey}' is missing metafield definition components.` });
-            return;
-        }
-
-        const ns = config.ns || "custom";
-        const key = config.key || fullKey;
-        const type = config.type || "single_line_text_field";
-        const target = config.target;
-
-        if (target === "metafield") {
-            const currentVal = currentMetafields[`${ns}.${key}`] || null;
-            if (valStr === "" || valStr.toLowerCase() === "none" || valStr.toLowerCase() === "n/a" || valStr.toLowerCase() === "null" || valStr.toLowerCase() === "undefined") {
-              if (currentVal !== null) {
-                  deleteFromShopify.push({ ownerId: productGid, namespace: ns, key: key });
-                  proposedChanges[fullKey] = { from: currentVal, to: "" };
-              }
-            } else {
-              let resolvedValue = normalizeMetafieldValue(key, valStr, type);
-              
-              if (key === "craftsmanship" || key === "bench_notes" || key === "origin_story" || key === "honest_flaws_and_character") {
-                 resolvedValue = sanitizeDescription(resolvedValue);
-              }
-
-              if (type === "number_decimal") {
-                const parsedNum = parseFloat(String(resolvedValue).replace(/[^0-9.-]/g, ""));
-                resolvedValue = isNaN(parsedNum) ? "0.0" : (parsedNum % 1 === 0 ? parsedNum.toFixed(1) : String(parsedNum));
-              } else if (type.includes("metaobject_reference")) {
-                if (!resolvedValue.startsWith("gid://")) {
-                  const dict = METAOBJECT_DICT[`${ns}.${key}`] || {};
-                  const mappedGid = dict[resolvedValue.toLowerCase()];
-                  if (mappedGid) {
-                    resolvedValue = type.startsWith("list.") ? JSON.stringify([mappedGid]) : mappedGid;
-                  } else {
-                    allErrors.push({ field: fullKey, message: `Blocked: No Metaobject GID mapping found for '${resolvedValue}' in ${ns}.${key}. Cannot safely write to list.metaobject_reference.` });
-                    return; 
-                  }
-                } else {
-                   resolvedValue = type.startsWith("list.") && !resolvedValue.startsWith("[") ? JSON.stringify([resolvedValue]) : resolvedValue;
-                }
-              } else if (type === "multi_line_text_field") {
-                if (resolvedValue.length > 10000) resolvedValue = resolvedValue.slice(0, 10000);
-              } else if (type === "list.single_line_text_field") {
-                if (!resolvedValue.startsWith("[")) resolvedValue = JSON.stringify([resolvedValue]);
-              } else if (type !== "boolean") {
-                if (resolvedValue.length > 255) resolvedValue = resolvedValue.slice(0, 255);
-              }
-
-              if (currentVal !== resolvedValue) {
-                 setToShopify.push({ ownerId: productGid, namespace: ns, key: key, type: type, value: resolvedValue });
-                 proposedChanges[fullKey] = { from: currentVal, to: resolvedValue };
-              }
-            }
-        } else {
-            const currentVal = currentFields[fullKey] || "";
-            if (valStr !== currentVal && valStr !== "") {
-               
-               if (target === "native") {
-                  if (fullKey === "shopify_title") { prodUpdates.title = valStr; reqProd = true; }
-                  if (fullKey === "seo_title") { prodUpdates.seo = prodUpdates.seo || {}; prodUpdates.seo.title = valStr; reqProd = true; }
-                  if (fullKey === "poetic_hook") { prodUpdates.seo = prodUpdates.seo || {}; prodUpdates.seo.description = valStr; reqProd = true; }
-                  if (fullKey === "google_product_category") {
-                     if (valStr && !valStr.startsWith("gid://shopify/TaxonomyNode/")) {
-                        allErrors.push({ field: fullKey, message: `Blocked: google_product_category requires a TaxonomyNode GID. Got: '${valStr}'`});
-                        return;
-                     } else if (valStr) {
-                        prodUpdates.productCategory = { productTaxonomyNodeId: valStr };
-                        reqProd = true;
-                     }
-                  }
-               } else if (target === "native_variant") {
-                  if (!variantId) { allErrors.push({ field: fullKey, message: `Blocked: Cannot update ${fullKey}, variant ID missing.`}); return; }
-                  if (fullKey === "price") { varUpdates.price = String(valStr); reqVar = true; }
-                  if (fullKey === "shipping_weight_oz") { 
-                      varUpdates.weight = parseFloat(valStr) || 0; 
-                      varUpdates.weightUnit = "OUNCES"; 
-                      reqVar = true; 
-                  }
-               } else if (target === "native_media") {
-                  if (!mediaId) { allErrors.push({ field: fullKey, message: `Blocked: Cannot update ${fullKey}, media ID missing.`}); return; }
-                  if (fullKey === "alt_text") { mediaUpdates.push({ id: mediaId, alt: valStr }); reqMedia = true; }
-               } else if (target === "native_collection") {
-                  if (valStr) {
-                     collectionsToResolve = valStr.split(",").map(s => s.trim()).filter(s => s);
-                  }
-               }
-               
-               proposedChanges[fullKey] = { from: currentVal, to: valStr };
-            }
-        }
-      });
-
-      if (collectionsToResolve.length > 0) {
-         prodUpdates.collectionsToJoin = [];
-         for (const cname of collectionsToResolve) {
-             if (cname.startsWith("gid://")) {
-                 prodUpdates.collectionsToJoin.push(cname);
-                 reqProd = true;
-             } else {
-                 try {
-                     const cRes = await admin.graphql(`query { collections(first:1, query: "title:'${cname.replace(/'/g, "\\'")}'") { edges { node { id } } } }`);
-                     const cData = await cRes.json();
-                     if (cData?.errors) {
-                         cData.errors.forEach(e => allErrors.push({ field: "GraphQL", message: `Error querying collection: ${e.message}`}));
-                     }
-                     const cid = cData?.data?.collections?.edges?.[0]?.node?.id;
-                     if (cid) {
-                         prodUpdates.collectionsToJoin.push(cid);
-                         reqProd = true;
-                     } else {
-                         allErrors.push({ field: "collection_name", message: `Blocked: Collection not found: '${cname}'`});
-                     }
-                 } catch (e) {
-                     allErrors.push({ field: "collection_name", message: `Error querying collection '${cname}': ${e.message}`});
-                 }
-             }
-         }
-      }
-
-      legacyKeysToRemove.forEach(fullKey => {
-        let ns = "custom";
-        let key = fullKey;
-        if (fullKey.includes(".")) {
-            const parts = fullKey.split(".");
-            ns = parts[0];
-            key = parts.slice(1).join(".");
-        }
-        if (currentMetafields[`${ns}.${key}`] !== undefined) {
-           deleteFromShopify.push({ ownerId: productGid, namespace: ns, key: key });
-           proposedChanges[fullKey] = { from: currentMetafields[`${ns}.${key}`], to: null };
-        }
-      });
-
-      if (setToShopify.length === 0 && deleteFromShopify.length === 0 && !reqProd && !reqVar && !reqMedia) {
-          if (allErrors.length > 0) {
-              return Response.json({ 
-                  intent: "executeRepairPlan", pieceId, success: false, status: "REPAIR_FAILED",
-                  errors: allErrors, currentMetafields, repairPlan, proposedChanges, fieldsUpdated: 0, legacyKeysRemoved: 0,
-                  conflicts: {}, missingFields: [], unknownFields: [], readBackVerified: false, message: "Shopify write blocked by errors."
-              });
-          }
-          return Response.json({
-              intent: "executeRepairPlan", pieceId, success: true, status: "NO_CHANGES_REQUIRED",
-              fieldsUpdated: 0, legacyKeysRemoved: 0, message: "No changes required.",
-              currentMetafields, repairPlan, proposedChanges, conflicts: {}, missingFields: [], unknownFields: [], readBackVerified: true
-          });
-      }
-
-      if (deleteFromShopify.length > 0) {
-        const uniqueDel = new Map();
-        deleteFromShopify.forEach(m => uniqueDel.set(`${m.namespace}:${m.key}`, m));
-        const chunks = chunkArray(Array.from(uniqueDel.values()), 250);
-        for (let i = 0; i < chunks.length; i++) {
-          try {
-            const deleteResponse = await admin.graphql(
-              `#graphql
-              mutation metafieldsDelete($metafields: [MetafieldIdentifierInput!]!) {
-                metafieldsDelete(metafields: $metafields) { userErrors { message field } }
-              }`,
-              { variables: { metafields: chunks[i] } }
-            );
-            const deleteJson = await deleteResponse.json();
-            if (deleteJson?.errors) {
-                deleteJson.errors.forEach(e => allErrors.push({ field: "GraphQL", message: e.message }));
-            }
-            if (deleteJson?.data?.metafieldsDelete?.userErrors?.length) {
-                allErrors.push(...deleteJson.data.metafieldsDelete.userErrors);
-            }
-          } catch (delErr) { allErrors.push({ field: "Exception", message: `API Error on Delete: ${delErr.message}` }); }
-        }
-      }
-
-      if (setToShopify.length > 0) {
-        const uniqueSet = new Map();
-        setToShopify.forEach(m => uniqueSet.set(`${m.namespace}:${m.key}`, m));
-        const chunks = chunkArray(Array.from(uniqueSet.values()), 25);
-        for (let i = 0; i < chunks.length; i++) {
-          try {
-            const setResponse = await admin.graphql(
-              `#graphql
-              mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
-                metafieldsSet(metafields: $metafields) { userErrors { field message } }
-              }`,
-              { variables: { metafields: chunks[i] } }
-            );
-            const setJson = await setResponse.json();
-            if (setJson?.errors) {
-                setJson.errors.forEach(e => allErrors.push({ field: "GraphQL", message: e.message }));
-            }
-            if (setJson?.data?.metafieldsSet?.userErrors?.length) {
-                allErrors.push(...setJson.data.metafieldsSet.userErrors);
-            } else if (!setJson?.errors) {
-                fieldsUpdatedCount += chunks[i].length;
-            }
-          } catch (setErr) { allErrors.push({ field: "Exception", message: `API Error on Set: ${setErr.message}` }); }
-        }
-      }
-
-      if (reqProd) {
-         try {
-             const res = await admin.graphql(`
-               mutation productUpdate($input: ProductInput!) {
-                 productUpdate(input: $input) { userErrors { field message } }
-               }
-             `, { variables: { input: { id: productGid, ...prodUpdates } } });
-             const json = await res.json();
-             if (json?.errors) {
-                 json.errors.forEach(e => allErrors.push({ field: "GraphQL", message: e.message }));
-             }
-             if (json?.data?.productUpdate?.userErrors?.length) {
-                 allErrors.push(...json.data.productUpdate.userErrors);
-             } else if (!json?.errors) {
-                 fieldsUpdatedCount++;
-             }
-         } catch (err) { allErrors.push({ field: "Exception", message: `API Error on productUpdate: ${err.message}` }); }
-      }
-
-      if (reqVar) {
-         try {
-             const res = await admin.graphql(`
-               mutation productVariantUpdate($input: ProductVariantInput!) {
-                 productVariantUpdate(input: $input) { userErrors { field message } }
-               }
-             `, { variables: { input: { id: variantId, ...varUpdates } } });
-             const json = await res.json();
-             if (json?.errors) {
-                 json.errors.forEach(e => allErrors.push({ field: "GraphQL", message: e.message }));
-             }
-             if (json?.data?.productVariantUpdate?.userErrors?.length) {
-                 allErrors.push(...json.data.productVariantUpdate.userErrors);
-             } else if (!json?.errors) {
-                 fieldsUpdatedCount++;
-             }
-         } catch (err) { allErrors.push({ field: "Exception", message: `API Error on variantUpdate: ${err.message}` }); }
-      }
-
-      if (reqMedia) {
-         try {
-             const res = await admin.graphql(`
-               mutation productUpdateMedia($media: [UpdateMediaInput!]!, $productId: ID!) {
-                 productUpdateMedia(media: $media, productId: $productId) { userErrors { field message } }
-               }
-             `, { variables: { media: mediaUpdates, productId: productGid } });
-             const json = await res.json();
-             if (json?.errors) {
-                 json.errors.forEach(e => allErrors.push({ field: "GraphQL", message: e.message }));
-             }
-             if (json?.data?.productUpdateMedia?.userErrors?.length) {
-                 allErrors.push(...json.data.productUpdateMedia.userErrors);
-             } else if (!json?.errors) {
-                 fieldsUpdatedCount++;
-             }
-         } catch (err) { allErrors.push({ field: "Exception", message: `API Error on mediaUpdate: ${err.message}` }); }
-      }
-
-      if (allErrors.length > 0) {
-         return Response.json({ 
-             intent: "executeRepairPlan", pieceId, success: false, status: "REPAIR_FAILED",
-             errors: allErrors, currentMetafields, repairPlan, proposedChanges, fieldsUpdated: fieldsUpdatedCount, legacyKeysRemoved: deleteFromShopify.length,
-             conflicts: {}, missingFields: [], unknownFields: [], readBackVerified: false, message: "Shopify write produced errors or blocked fields."
-         });
-      }
-
-      await new Promise(r => setTimeout(r, 600)); 
-      
-      const readBackResponse = await admin.graphql(`
-        query getProductLookup($id: ID!) {
-          product(id: $id) { 
-            title
-            seo { title description }
-            category { name }
-            variants(first: 1) { edges { node { id price weight weightUnit } } }
-            media(first: 1) { edges { node { ... on MediaImage { id image { altText } } } } }
-            collections(first: 10) { edges { node { id title } } }
-            metafields(first: 250) { edges { node { namespace key value type } } } 
-          }
-        }
-      `, { variables: { id: productGid } });
-      
-      const readBackData = await readBackResponse.json();
-      const newProduct = readBackData?.data?.product;
-      const newMetaList = newProduct?.metafields?.edges || [];
-      const newMetafields = {};
-      newMetaList.forEach(e => { newMetafields[`${e.node.namespace}.${e.node.key}`] = e.node.value; });
-
-      let readBackVerified = true;
-      const conflicts = {};
-
-      Object.entries(proposedChanges).forEach(([fullKey, change]) => {
-         const config = PIN_CONFIG[fullKey];
-         const expected = change.to;
-         if (expected === null || expected === "") return; 
-
-         let target = "metafield", ns = "custom", key = fullKey;
-         if (config) {
-             target = config.target;
-             ns = config.ns || ns;
-             key = config.key || key;
-         } else if (fullKey.includes(".")) {
-             const parts = fullKey.split(".");
-             ns = parts[0];
-             key = parts.slice(1).join(".");
-         }
-
-         if (target === "metafield") {
-             const actual = newMetafields[`${ns}.${key}`];
-             const expStr = String(expected).trim();
-             const actStr = String(actual !== undefined && actual !== null ? actual : "").trim();
-             
-             if (config?.type === "number_decimal") {
-                 if (parseFloat(expStr) !== parseFloat(actStr)) {
-                     readBackVerified = false;
-                     conflicts[fullKey] = { expected: expStr, actual: actStr };
-                 }
-             } else {
-                 if (expStr !== actStr) {
-                     readBackVerified = false;
-                     conflicts[fullKey] = { expected: expStr, actual: actStr };
-                 }
-             }
-         } else {
-             let actStr = "";
-             if (fullKey === "shopify_title") actStr = newProduct?.title || "";
-             if (fullKey === "seo_title") actStr = newProduct?.seo?.title || "";
-             if (fullKey === "poetic_hook") actStr = newProduct?.seo?.description || "";
-             if (fullKey === "price") actStr = newProduct?.variants?.edges?.[0]?.node?.price || "";
-             if (fullKey === "shipping_weight_oz") actStr = newProduct?.variants?.edges?.[0]?.node?.weight ? String(newProduct.variants.edges[0].node.weight) : "";
-             if (fullKey === "alt_text") actStr = newProduct?.media?.edges?.[0]?.node?.image?.altText || "";
-             
-             const expStr = String(expected).trim();
-             if (actStr.trim() !== expStr && fullKey !== "google_product_category" && fullKey !== "collection_name") {
-                 readBackVerified = false;
-                 conflicts[fullKey] = { expected: expStr, actual: actStr };
-             }
-         }
-      });
-
-      if (!readBackVerified) {
-            return Response.json({
-              intent: "executeRepairPlan", pieceId, success: false, status: "REPAIR_FAILED",
-              fieldsUpdated: fieldsUpdatedCount, legacyKeysRemoved: deleteFromShopify.length,
-              message: "Repair failed: Read-back verification detected conflicts.",
-              currentMetafields, repairPlan, proposedChanges, conflicts, missingFields: [], unknownFields: [], readBackVerified: false
-          });
-      }
-
-      return Response.json({ 
-        intent: "executeRepairPlan", pieceId, success: true, status: "REPAIRED",
-        fieldsUpdated: fieldsUpdatedCount, legacyKeysRemoved: deleteFromShopify.length,
-        message: `Repair successful: ${fieldsUpdatedCount} fields updated, ${deleteFromShopify.length} legacy keys cleared.`,
-        currentMetafields, repairPlan, proposedChanges, conflicts: {}, missingFields: [], unknownFields: [], readBackVerified: true
-      });
-    }
-
-    if (intent === "saveMetafields") {
-       return Response.json({
-           intent: "saveMetafields",
-           success: false,
-           error: "Tab 2 injection is currently disabled for safety. Please use the Operations Matrix (Tab 3) for verified staging and injection.",
-           message: "Route deprecated. Use Tab 3."
-       });
-    }
-
-    if (intent === "cleanMalformedKeys" || intent === "cleanAllCamelKeys" || intent === "stagedUpload" || intent === "createProduct" || intent === "cleanGhostNamespaces" || intent === "cleanAllGhostNamespaces" || intent === "toggleStatus" || intent === "batchAuditItem") {
-       return await executeAutofill(intent, body, admin);
-    }
-
-    return Response.json({ success: true, intent: intent || "unknown" });
-  } catch (error) {
-    return Response.json({ success: false, intent: "unknown", error: error.message }, { status: 500 });
+    const result = await db.query(sql, params);
+    return result.rows;
+  } finally {
+    await db.end();
   }
-};
+}
+
+async function saveToStoneCache(stoneName, geoResult) {
+  try {
+    const existing = await queryPostgres(
+      'SELECT id FROM "StoneCache" WHERE "stone_name" = $1 LIMIT 1',
+      [stoneName]
+    );
+    if (existing.length === 0) {
+      await queryPostgres(
+        'INSERT INTO "StoneCache" ("id", "stone_name", "data", "created_at", "updated_at") VALUES (gen_random_uuid()::text, $1, $2, NOW(), NOW())',
+        [stoneName, JSON.stringify(geoResult)]
+      );
+      console.log("[StoneCache] Saved new entry for:", stoneName);
+    }
+  } catch (err) {
+    console.error("[StoneCache] Save failed for:", stoneName, err);
+  }
+}
+
+const MINDAT_API_KEY = process.env.MINDAT_API_KEY;
+
+async function fetchWithRetry(url, options, retries = 3, delay = 1500) {
+  for (let i = 0; i < retries; i++) {
+    const controller = new AbortController();
+    const id = setTimeout(() => controller.abort(), 60000);
+    try {
+      const res = await fetch(url, { ...options, signal: controller.signal });
+      clearTimeout(id);
+      if (res.status !== 503 && res.status !== 429 && res.status !== 500) {
+        return res;
+      }
+      console.warn(`[Gemini Engine] API returned status ${res.status}. Retry ${i + 1} of ${retries} in ${delay}ms...`);
+    } catch (err) {
+      clearTimeout(id);
+      console.error(`[Gemini Engine] Fetch error on retry ${i + 1} of ${retries}:`, err);
+    }
+    
+    if (i < retries - 1) {
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      delay *= 2;
+    }
+  }
+  throw new Error("Gemini API connection timed out after multiple attempts.");
+}
+
+async function getLiveStoreDirectory(admin) {
+  let pagesList = [];
+  let collectionsList = [];
+  try {
+    const res = await admin.graphql(`
+      query {
+        pages(first: 100) { edges { node { title handle body } } }
+        collections(first: 100) { edges { node { title handle description } } }
+      }
+    `);
+    const data = await res.json();
+    if (data.data?.pages?.edges) {
+      pagesList = data.data.pages.edges.map(e => ({
+        title: e.node.title,
+        url: `/pages/${e.node.handle}`,
+        excerpt: (e.node.body || "").replace(/<[^>]*>?/gm, "").replace(/\s+/g, " ").trim().slice(0, 10000)
+      }));
+    }
+    if (data.data?.collections?.edges) {
+      collectionsList = data.data.collections.edges.map(e => ({
+        title: e.node.title,
+        url: `/collections/${e.node.handle}`,
+        excerpt: (e.node.description || "").replace(/<[^>]*>?/gm, "").replace(/\s+/g, " ").trim().slice(0, 5000)
+      }));
+    }
+  } catch (err) {
+    console.error("[Live Directory Scanner] Failed to fetch store inventory:", err);
+  }
+  return { pagesList, collectionsList };
+}
+
+function resolveOriginHandle(locationSegment, pagesList) {
+  const cleanLoc = (locationSegment || "").toLowerCase().trim();
+  if (!cleanLoc) return "";
+  if (cleanLoc.includes("richardson")) return "the-richardson-strike";
+  if (cleanLoc.includes("irv") || cleanLoc.includes("shopped") || cleanLoc.includes("gem show")) return "";
+  if (cleanLoc.includes("spokane")) return "";
+  if (cleanLoc.includes("north fork") || cleanLoc.includes("cda") || cleanLoc.includes("nor")) return "the-north-fork-strike";
+  if (cleanLoc.includes("yakima") || cleanLoc.includes("yak") || cleanLoc.includes("chert")) return "the-shop-lore-chert-road-detour-yakima-river-jasper";
+
+  const match = pagesList.find(p => p.title.toLowerCase().includes(cleanLoc) || p.url.includes(cleanLoc));
+  return match ? match.url.replace("/pages/", "") : cleanLoc.replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, "-");
+}
+
+function resolveCollectionData(locationSegment, defaultOriginSlug, collectionsList = []) {
+  const cleanLoc = (locationSegment || "").toLowerCase().trim();
+
+  if (cleanLoc.includes("yakima") || cleanLoc.includes("chert")) return { slug: "chert-road-detour", name: "Chert Road Detour — Yakima River Jasper Collection" };
+  if (cleanLoc.includes("richardson")) return { slug: "richardsons-rock-ranch", name: "Richardson's Rock Ranch Collection" };
+  if (cleanLoc.includes("spokane")) return { slug: "the-spokane-river-collection", name: "Spokane River Stones and Stories" };
+  if (cleanLoc.includes("irv") || cleanLoc.includes("shopped") || cleanLoc.includes("gem show")) return { slug: "the-shopped-rock", name: "The Shopped Rock Collection" };
+  if (cleanLoc.includes("north fork") || cleanLoc.includes("cda") || cleanLoc.includes("nor")) return { slug: "north-fork-cda-collection", name: "North Fork CdA Collection" };
+
+  const matchedCol = collectionsList.find(c => c.url.includes(defaultOriginSlug) || c.title.toLowerCase().includes(cleanLoc));
+  if (matchedCol) {
+    return { slug: matchedCol.url.replace("/collections/", ""), name: matchedCol.title.endsWith("Collection") ? matchedCol.title : `${matchedCol.title} Collection` };
+  }
+
+  return { slug: defaultOriginSlug, name: `${locationSegment.trim()} Collection` };
+}
+
+async function getGeoData(admin, stoneFamily) {
+  const emptyGeo = {
+    mohs_hardness: "", luster: "", fracture_pattern: "", cleavage: "",
+    specific_gravity: "", diaphaneity: "", crystal_system: "",
+    geological_era: "", mineral_class: "", rock_composition: "",
+    rock_formation: "", geological_age: "", geoSource: "none"
+  };
+  
+  if (!stoneFamily || !admin) return emptyGeo;
+
+  const cleanStoneName = extractStoneName(stoneFamily);
+  const search = cleanStoneName.toLowerCase().trim();
+
+  try {
+    const localResult = lookupStone(cleanStoneName);
+    if (localResult && Object.keys(localResult).length > 0) {
+      return {
+        mohs_hardness: localResult.moh_hardness || localResult.hardness || localResult.mohs_hardness || "",
+         luster: localResult.luster || "",
+        fracture_pattern: localResult.fracture_pattern || localResult.fracture || "",
+        cleavage: localResult.cleavage || "",
+        specific_gravity: localResult.specific_gravity || "",
+        diaphaneity: localResult.diaphaneity || "",
+        crystal_system: localResult.crystal_system || "",
+        geological_era: localResult.geological_era || localResult.geological_age || "",
+        mineral_class: localResult.mineral_class || "",
+        rock_composition: localResult.rock_composition || "",
+        rock_formation: localResult.rock_formation || "",
+        geological_age: localResult.geological_era || localResult.geological_age || "",
+        geoSource: "library"
+      };
+    }
+  } catch (err) { }
+
+  try {
+    const cacheRows = await queryPostgres('SELECT data FROM "StoneCache" WHERE LOWER("stone_name") = $1 LIMIT 1', [search]);
+    if (cacheRows.length > 0 && cacheRows[0].data) {
+      const parsed = typeof cacheRows[0].data === "string" ? JSON.parse(cacheRows[0].data) : cacheRows[0].data;
+      return { ...parsed, geoSource: "cache" };
+    }
+  } catch (err) { }
+
+  try {
+    if (stoneProfileCache.has(search)) {
+      const cached = stoneProfileCache.get(search);
+      if (cached) return { ...cached, geoSource: "cache" };
+    } else {
+      const rows = await queryPostgres('SELECT * FROM "StoneProfile" WHERE LOWER("stone_name") = $1 LIMIT 1', [search]);
+      if (rows.length > 0) {
+        const s = rows[0];
+        const geoResult = {
+          mohs_hardness: s.hardness || s.mohs_hardness || "", luster: s.luster || "", fracture_pattern: s.fracture || "",
+          cleavage: s.cleavage || "", specific_gravity: s.specific_gravity || "", diaphaneity: s.diaphaneity || "",
+          crystal_system: s.crystal_system || "", geological_era: s.geological_era || "", mineral_class: s.mineral_class || "",
+          rock_composition: s.rock_composition || "", rock_formation: s.rock_formation || "", geological_age: s.geological_era || "",
+          geoSource: "database"
+        };
+        stoneProfileCache.set(search, geoResult);
+        return geoResult;
+      } else {
+        stoneProfileCache.set(search, null);
+      }
+    }
+  } catch (err) { }
+
+  return emptyGeo;
+}
+
+function sanitizeObject(obj) {
+  if (!obj) return obj;
+  for (let key in obj) {
+    if (typeof obj[key] === "string") {
+      if (obj[key].includes("See Shopify")) {
+        obj[key] = "";
+      } else {
+        obj[key] = obj[key].replace(/—/g, "-");
+      }
+    }
+  }
+  return obj;
+}
+
+function cleanStoneFamilyShape(familyStr) {
+  if (!familyStr) return familyStr;
+  return familyStr.replace(/(?:\s+(?:Round|Oval|Freeform|Teardrop|Pear|Heart|Square|Rectangle|Slab|Raw|Cabochon))+$/i, "").trim();
+}
+
+function mapCollectionLocation(rawLocation) {
+  const loc = (rawLocation || "").toLowerCase();
+  if (loc.includes("spokane river")) return "Spokane River";
+  if (loc.includes("yakima") || loc.includes("chert")) return "Yakima Canyon";
+  if (loc.includes("yellowstone")) return "Yellowstone River";
+  if (loc.includes("richardson")) return "Richardson's Rock Ranch";
+  if (loc.includes("3,000") || loc.includes("3000")) return "The 3,000-Mile Run";
+  if (loc.includes("nickel back")) return "Nickel Back";
+  if (loc.includes("rufus")) return "Rufus Serpentine";
+  if (loc.includes("gallery")) return "The Gallery";
+  if (loc.includes("north fork") || loc.includes("cda")) return "North Fork CdA";
+  return rawLocation.replace(/\s*Collection$/i, "").trim();
+}
+
+function getDerivedMaterial(stoneFam) {
+  if (!stoneFam) return "";
+  return stoneFam.replace(/^(Dragon's Eye|Green|Blue|Fire|Rufus|Rainbow|Yellow|Red|Black|Oregon)\s+/i, "").trim();
+}
+
+// ==========================================
+// 🟢 THE CORE AUTOFILL ENGINE EXPORT
+// ==========================================
+export async function executeAutofill(intent, body, admin) {
+  try {
+    if (intent === "geoLookup") {
+      const stoneFamily = body.get("stoneFamily") || "";
+      try { 
+        const geoFields = await getGeoData(admin, stoneFamily); 
+        return { success: true, intent: "geoLookup", geoFields: sanitizeObject(geoFields) }; 
+      } catch (err) { 
+        console.error("[geoLookup] getGeoData crashed:", err); 
+        return { success: false, intent: "geoLookup", geoFields: {} }; 
+      }
+    }
+
+    if (intent === "titleParse") {
+      const pieceNameInput = (body.get("pieceName") || "").replace(/—/g, "-");
+      const segments = pieceNameInput.split(/\s+-\s+/);
+      const segment1 = cleanStoneFamilyShape(segments[0]?.trim() || "");
+      const segment2 = enforceOriginOverrides(segments[1]?.trim() || "");
+      const segment3 = segments.length >= 3 ? segments[2].trim() : "";
+
+      let stonePicklist = "Agate, Amazonite, Amethyst, Andesite, Aventurine, Azurite, Brecciated Jasper, Brecciated Quartz, Calcite, Carnelian, Chalcedony, Chrysocolla, Citrine, Dalmatian Stone, Fluorite, Garnet, Hematite, Howlite, Jasper, Kyanite, Labradorite, Lapis Lazuli, Lepidolite, Malachite, Moonstone, Obsidian, Ocean Jasper, Onyx, Opal, Petrified Wood, Picture Jasper, Prehnite, Pyrite, Quartz, Quartzite, Rhodonite, Rhyolite, Rose Quartz, Serpentine, Smoky Quartz, Sodalite, Sunstone, Tourmaline, Turquoise, Unakite, Variscite";
+      
+      const { pagesList, collectionsList } = await getLiveStoreDirectory(admin);
+      const resolvedHandle = resolveOriginHandle(segment2, pagesList);
+      const collectionData = resolveCollectionData(segment2, resolvedHandle, collectionsList);
+
+      const pagesMenu = pagesList.map(p => `- Title: "${p.title}" | URL: ${p.url}`).join("\n");
+      const collectionsMenu = collectionsList.map(c => `- Title: "${c.title}" | URL: ${c.url}`).join("\n");
+
+      const promptText = buildTitleParsePrompt(segment1, segment2, segment3, pagesMenu, collectionsMenu, stonePicklist);
+
+      const geminiRes = await fetchWithRetry("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY, {
+        method: "POST", 
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          contents: [{ parts: [{ text: promptText }] }],
+          generationConfig: { responseMimeType: "application/json", temperature: 0.1 }
+        })
+      });
+
+      if (geminiRes.ok) {
+        const data = await geminiRes.json();
+        let cleanJson = (data.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
+        const parsed = JSON.parse(cleanJson.slice(cleanJson.indexOf("{"), cleanJson.lastIndexOf("}") + 1));
+        
+        if (parsed.stone_family) parsed.stone_family = cleanStoneFamilyShape(parsed.stone_family);
+
+        const dbGeoData = await getGeoData(admin, parsed.stone_family || segment1);
+        const matchedOriginPage = pagesList.find(p => p.url.includes(resolvedHandle));
+        const displayName = matchedOriginPage ? matchedOriginPage.title.replace(/^(Shop Lore|Collection)[\s:\-]+/i, "").replace(/^The\s+/i, "").trim() : collectionData.name.replace(/\s+Collection$/i, "").trim();
+        
+        const correctedOriginLoc = enforceOriginOverrides(parsed.origin_location || segment2);
+        const finalOriginPageHandle = resolvedHandle === "the-richardson-strike" ? "the-richardson-strike" : resolvedHandle;
+
+        const finalParse = sanitizeObject({
+          ...parsed,
+          piece_name: parsed.piece_name || segment3,
+          origin_handle: resolvedHandle,
+          origin_page_handle: finalOriginPageHandle,
+          origin_location: correctedOriginLoc,
+          collection_name: parsed.collection_name || collectionData.name,
+          collection_location: mapCollectionLocation(parsed.collection_location || collectionData.name),
+          canonical_title: parsed.shopify_title || `${parsed.stone_family} - ${correctedOriginLoc || displayName} - ${segment3}`,
+          seo_title: parsed.seo_title,
+          ...dbGeoData,
+          is_ooak: "Yes",
+          age_group: "adult",
+          target_gender: "Unisex",
+          condition: "new",
+          google_product_category: "Apparel & Accessories > Jewelry"
+        });
+        
+        return { success: true, intent: "titleParse", titleParse: finalParse };
+      }
+      const errText = await geminiRes.text();
+      return { success: false, intent: "titleParse", titleParse: null, error: `Title parse error: ${geminiRes.status} - ${errText}` };
+    }
+
+    if (intent === "visionScan" || intent === "fullRescan" || intent === "tab2AutoFill") {
+      const pieceId = body.get("pieceId");
+      const clientBase64 = body.get("imageBase64");
+      const clientMime = body.get("imageMimeType") || "image/jpeg";
+      
+      const bench_weight_grams = body.get("weight_grams") || "";
+      const bench_shipping_weight_oz = body.get("shipping_weight_oz") || "";
+      const bench_dimensions_mm = body.get("dimensions_mm") || "";
+      const bench_price = body.get("price") || "";
+      const bench_honest_flaws = body.get("honest_flaws_and_character") || "";
+
+      const rawTitleInput = body.get("productTitle") || body.get("pieceName") || body.get("piece_name") || "";
+      const titleInput = rawTitleInput.replace(/—/g, "-");
+      const segments = titleInput.split(/\s+-\s+/);
+      const rawFamilySegment = segments[0]?.trim() || body.get("stone_family") || "Unknown Stone";
+      const derivedShape = extractShapeFromString(rawFamilySegment);
+      let derivedFamily = cleanStoneFamilyShape(rawFamilySegment);
+      const originSegment = enforceOriginOverrides(segments[1]?.trim() || "Unknown Origin");
+      const pieceNameSegment = segments.length >= 3 ? segments[2].trim() : "";
+      
+      const geoFields = await getGeoData(admin, derivedFamily);
+      const { pagesList, collectionsList } = await getLiveStoreDirectory(admin);
+      
+      const defaultOriginSlug = resolveOriginHandle(originSegment, pagesList);
+      const defaultCollection = resolveCollectionData(originSegment, defaultOriginSlug, collectionsList);
+
+      const pagesMenu = pagesList.map(p => `- Title: "${p.title}" | URL: ${p.url}`).join("\n");
+      const collectionsMenu = collectionsList.map(c => `- Title: "${c.title}" | URL: ${c.url}`).join("\n");
+
+      let imageBase64 = clientBase64 && clientBase64 !== "undefined" ? String(clientBase64).trim() : "";
+      let imageMimeType = clientMime;
+      
+      if (imageBase64.includes(",")) imageBase64 = imageBase64.substring(imageBase64.indexOf(",") + 1);
+
+      if (!imageBase64) {
+        const rawImageUrl = body.get("imageUrl");
+        if (rawImageUrl) {
+          const targetUrl = rawImageUrl.includes("?") ? `${rawImageUrl}&width=800` : `${rawImageUrl}?width=800`;
+          const imageRes = await fetch(targetUrl);
+          if (imageRes.ok) {
+            const imageBuffer = await imageRes.arrayBuffer();
+            imageBase64 = Buffer.from(imageBuffer).toString("base64");
+            imageMimeType = (imageRes.headers.get("content-type") || "image/jpeg").split(";")[0].trim();
+          }
+        }
+      }
+
+      const promptText = buildMasterVisionPrompt({
+        pagesMenu, collectionsMenu, stoneFamily: derivedFamily, derivedShape, originSegment
+      });
+
+      const geminiRes = await fetchWithRetry("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY, {
+        method: "POST", 
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          contents: [{ parts: [{ text: promptText }, { inlineData: { mimeType: imageMimeType, data: imageBase64 } }] }],
+          generationConfig: { responseMimeType: "application/json", temperature: 0.2 }
+        })
+      });
+
+      if (geminiRes.ok) {
+        const geminiData = await geminiRes.json();
+        let cleanJson = (geminiData.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
+        const parsedVision = JSON.parse(cleanJson.slice(cleanJson.indexOf("{"), cleanJson.lastIndexOf("}") + 1));
+        
+        let finalFindingType = String(parsedVision.jewelry_finding_type || "None").trim();
+        let activeBail = String(parsedVision.bail_included || "None").trim();
+        if (activeBail !== "None" && activeBail !== "") finalFindingType = "None";
+
+        const finalOriginLocation = enforceOriginOverrides(parsedVision.origin_location || originSegment);
+        const finalOriginHandle = resolveOriginHandle(finalOriginLocation, pagesList);
+        const finalCollectionData = resolveCollectionData(finalOriginLocation, finalOriginHandle, collectionsList);
+
+        // Map 47-pin extraction strictly into flat payload for existing UI
+        const payload = sanitizeObject({
+          pieceId,
+          stone_family: derivedFamily,
+          piece_name: pieceNameSegment,
+          origin_handle: finalOriginHandle,
+          origin_location: finalOriginLocation,
+          collection_name: finalCollectionData.name,
+          collection_location: mapCollectionLocation(finalCollectionData.name),
+          seo_title: parsedVision.seo_title || "",
+          primary_color: parsedVision.primary_color || "",
+          cut_and_shape: parsedVision.cut_and_shape || `${parsedVision.bench?.cut_shape} Cabochon` || "",
+          surface_finish: parsedVision.surface_finish || parsedVision.bench?.finish_stage || "",
+          stone_shape: parsedVision.stone_shape || parsedVision.bench?.cut_shape || derivedShape || "",
+          jewelry_type: parsedVision.jewelry_type || "N/A",
+          necklace_design: parsedVision.jewelry_type === "Pendant" ? "Pendant" : (parsedVision.necklace_design || ""),
+          jewelry_finding_type: finalFindingType,
+          rarity: parsedVision.rarity || "One-of-a-Kind",
+          authenticity: parsedVision.authenticity || "Authentic",
+          color_pattern: parsedVision.color_pattern || parsedVision.pattern || "",
+          material: getDerivedMaterial(derivedFamily),
+          primary_use: parsedVision.primary_use || "",
+          primary_medium: derivedFamily,
+          secondary_medium: parsedVision.secondary_medium || "None",
+          wire_material: parsedVision.wire_material || "None",
+          setting_ready: parsedVision.setting_ready || "None",
+          bail_included: activeBail,
+          chain_material: parsedVision.chain_material || "None",
+          ...geoFields,
+          is_ooak: "Yes",
+          age_group: "adult",
+          target_gender: "Unisex",
+          condition: "new",
+          google_product_category: parsedVision.google_product_category || "Apparel & Accessories > Jewelry",
+          alt_text: parsedVision.alt_text || "",
+          honest_flaws_and_character: bench_honest_flaws || parsedVision.bench?.honest_flaws || "",
+          ...(bench_weight_grams ? { weight_grams: bench_weight_grams } : {}),
+          ...(bench_shipping_weight_oz ? { shipping_weight_oz: bench_shipping_weight_oz } : {}),
+          ...(bench_dimensions_mm ? { dimensions_mm: bench_dimensions_mm } : {}),
+          ...(bench_price ? { price: bench_price } : {})
+        });
+
+        return { success: true, intent, tab2Data: payload };
+      }
+      return { success: false, intent, error: "Vision API Failure" };
+    }
+
+    if (intent === "generateDescription") {
+      const sharedFields = JSON.parse(body.get("sharedFields") || "{}");
+      const pieceData = JSON.parse(body.get("pieceData") || "{}");
+      
+      let derivedFamily = cleanStoneFamilyShape(sharedFields.stone_family || "Unknown Stone");
+      const originSegment = enforceOriginOverrides(sharedFields.origin_location || "Unknown Origin");
+      
+      const { pagesList, collectionsList } = await getLiveStoreDirectory(admin);
+      const defaultOriginSlug = resolveOriginHandle(originSegment, pagesList);
+      const defaultCollection = resolveCollectionData(originSegment, defaultOriginSlug, collectionsList);
+      
+      const targetUrlPath = defaultOriginSlug ? `/pages/${defaultOriginSlug}` : "";
+      const collectionUrlPath = defaultCollection.slug ? `/collections/${defaultCollection.slug}` : "";
+      const fullCollectionTitle = defaultCollection.name.replace(/\s+Collection$/i, "").trim();
+
+      const matchedPage = pagesList.find(p => p.url.includes(defaultOriginSlug));
+      const extractedStory = matchedPage ? matchedPage.excerpt : "";
+
+      const matchedCollection = collectionsList.find(c => c.url.includes(defaultCollection.slug));
+      const collectionStory = matchedCollection ? matchedCollection.excerpt : "";
+
+      const dwellButtonsHTML = getDwellButtons(originSegment, targetUrlPath, collectionUrlPath, fullCollectionTitle);
+      const promptText = buildDescriptionPrompt(derivedFamily, extractedStory, collectionStory, pieceData, dwellButtonsHTML);
+
+      const geminiRes = await fetchWithRetry("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: promptText }] }],
+          generationConfig: {
+            responseMimeType: "application/json",
+            temperature: 0.2
+          }
+        })
+      });
+
+      if (geminiRes.ok) {
+        const data = await geminiRes.json();
+        let cleanJson = (data.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
+        const parsed = JSON.parse(cleanJson.slice(cleanJson.indexOf("{"), cleanJson.lastIndexOf("}") + 1));
+        
+        let finalDescription = formatDyslexiaText(parsed.narrative?.origin_story) + "\n\n" + formatDyslexiaText(parsed.narrative?.craftsmanship);
+        return { success: true, intent, generated_description: finalDescription };
+      }
+      return { success: false, intent, error: "Generate Description Failure" };
+    }
+
+    return { success: true, intent: intent || "unknown", fields: {} };
+  } catch (error) {
+    console.error("Critical Failure in executeAutofill:", error);
+    return { success: false, intent: intent || "unknown", error: error.message };
+  }
+}

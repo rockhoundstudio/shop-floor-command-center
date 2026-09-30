@@ -64,65 +64,6 @@ const PIN_CONFIG = {
   rarity: { target: "metafield", ns: "shopify", key: "rarity", type: "list.metaobject_reference" }
 };
 
-export const CENTRAL_BRAIN_CONFIG = [
-  // --- Identity/sales ---
-  { pin: "shopify_title", group: "Identity/sales", inputType: "single_line_text_field", source: "AI", destination: "native", shopifyType: "native" },
-  { pin: "piece_name", group: "Identity/sales", inputType: "single_line_text_field", source: "AI", destination: "metafield", namespace: "custom", key: "piece_name", shopifyType: "single_line_text_field" },
-  { pin: "stone_family", group: "Identity/sales", inputType: "single_line_text_field", source: "AI", destination: "unresolved", namespace: "custom", key: "stone_family", shopifyType: "unresolved" },
-  { pin: "price", group: "Identity/sales", inputType: "single_line_text_field", source: "manual", destination: "native_variant", shopifyType: "native" },
-  { pin: "weight_grams", group: "Identity/sales", inputType: "number_decimal", source: "manual", destination: "metafield", namespace: "custom", key: "weight_grams", shopifyType: "number_decimal" },
-  { pin: "shipping_weight_oz", group: "Identity/sales", inputType: "number_decimal", source: "derived", destination: "native_variant", shopifyType: "native" },
-  { pin: "is_ooak", group: "Identity/sales", inputType: "single_line_text_field", source: "AI", destination: "metafield", namespace: "custom", key: "is_one_of_a_kind", shopifyType: "single_line_text_field" },
-
-  // --- Physical ---
-  { pin: "dimensions_mm", group: "Physical", inputType: "single_line_text_field", source: "manual", destination: "metafield", namespace: "custom", key: "dimensions_mm", shopifyType: "single_line_text_field" },
-  { pin: "cut_and_shape", group: "Physical", inputType: "single_line_text_field", source: "AI", destination: "unresolved", namespace: "custom", key: "cut_and_shape", shopifyType: "unresolved" },
-  { pin: "surface_finish", group: "Physical", inputType: "single_line_text_field", source: "AI", destination: "metafield", namespace: "custom", key: "surface_finish", shopifyType: "single_line_text_field" },
-  { pin: "primary_color", group: "Physical", inputType: "single_line_text_field", source: "AI", destination: "unresolved", namespace: "custom", key: "primary_color", shopifyType: "unresolved" },
-  { pin: "color_pattern", group: "Physical", inputType: "list.metaobject_reference", source: "AI", destination: "metafield", namespace: "shopify", key: "color-pattern", shopifyType: "list.metaobject_reference" },
-  { pin: "honest_flaws_and_character", group: "Physical", inputType: "multi_line_text_field", source: "AI", destination: "metafield", namespace: "custom", key: "honest_flaws_and_character", shopifyType: "multi_line_text_field" },
-  { pin: "bench_notes", group: "Physical", inputType: "multi_line_text_field", source: "manual", destination: "metafield", namespace: "custom", key: "bench_notes", shopifyType: "multi_line_text_field" },
-  { pin: "product_format", group: "Physical", inputType: "single_line_text_field", source: "AI", destination: "unresolved", namespace: "custom", key: "product_format", shopifyType: "unresolved" },
-
-  // --- Hardware ---
-  { pin: "primary_use", group: "Hardware", inputType: "list.metaobject_reference", source: "AI", destination: "metafield", namespace: "shopify", key: "product-use", shopifyType: "list.metaobject_reference" },
-  { pin: "jewelry_type", group: "Hardware", inputType: "list.metaobject_reference", source: "AI", destination: "metafield", namespace: "shopify", key: "jewelry-type", shopifyType: "list.metaobject_reference" },
-  { pin: "primary_medium", group: "Hardware", inputType: "list.metaobject_reference", source: "AI", destination: "metafield", namespace: "shopify", key: "material", shopifyType: "list.metaobject_reference" },
-  { pin: "secondary_medium", group: "Hardware", inputType: "list.metaobject_reference", source: "AI", destination: "metafield", namespace: "shopify", key: "jewelry-material", shopifyType: "list.metaobject_reference" },
-  { pin: "setting_ready", group: "Hardware", inputType: "boolean", source: "AI", destination: "unresolved", namespace: "custom", key: "setting_ready", shopifyType: "unresolved" },
-  { pin: "bail_included", group: "Hardware", inputType: "boolean", source: "AI", destination: "unresolved", namespace: "custom", key: "bail_included", shopifyType: "unresolved" },
-  { pin: "chain_material", group: "Hardware", inputType: "single_line_text_field", source: "AI", destination: "unresolved", namespace: "custom", key: "chain_material", shopifyType: "unresolved" },
-  { pin: "jewelry_finding_type", group: "Hardware", inputType: "list.metaobject_reference", source: "AI", destination: "metafield", namespace: "shopify", key: "jewelry-finding-type", shopifyType: "list.metaobject_reference" },
-
-  // --- Geological ---
-  { pin: "mohs_hardness", group: "Geological", inputType: "single_line_text_field", source: "derived", destination: "metafield", namespace: "custom", key: "mohs_hardness", shopifyType: "single_line_text_field" },
-  { pin: "specific_gravity", group: "Geological", inputType: "single_line_text_field", source: "derived", destination: "metafield", namespace: "custom", key: "specific_gravity", shopifyType: "single_line_text_field" },
-  { pin: "crystal_system", group: "Geological", inputType: "list.metaobject_reference", source: "derived", destination: "metafield", namespace: "shopify", key: "crystal-system", shopifyType: "list.metaobject_reference" },
-  { pin: "fracture_pattern", group: "Geological", inputType: "single_line_text_field", source: "derived", destination: "metafield", namespace: "custom", key: "fracture_pattern", shopifyType: "single_line_text_field" },
-  { pin: "cleavage", group: "Geological", inputType: "single_line_text_field", source: "derived", destination: "metafield", namespace: "custom", key: "cleavage", shopifyType: "single_line_text_field" },
-  { pin: "luster", group: "Geological", inputType: "single_line_text_field", source: "derived", destination: "metafield", namespace: "custom", key: "luster", shopifyType: "single_line_text_field" },
-  { pin: "diaphaneity", group: "Geological", inputType: "single_line_text_field", source: "derived", destination: "metafield", namespace: "custom", key: "diaphaneity", shopifyType: "single_line_text_field" },
-  { pin: "mineral_class", group: "Geological", inputType: "list.metaobject_reference", source: "derived", destination: "metafield", namespace: "shopify", key: "mineral-class", shopifyType: "list.metaobject_reference" },
-  { pin: "geological_era", group: "Geological", inputType: "list.metaobject_reference", source: "derived", destination: "metafield", namespace: "shopify", key: "geological-era", shopifyType: "list.metaobject_reference" },
-  { pin: "rock_formation", group: "Geological", inputType: "list.metaobject_reference", source: "derived", destination: "metafield", namespace: "shopify", key: "rock-formation", shopifyType: "list.metaobject_reference" },
-
-  // --- Origin/narrative ---
-  { pin: "origin_location", group: "Origin/narrative", inputType: "single_line_text_field", source: "AI", destination: "metafield", namespace: "custom", key: "origin_location", shopifyType: "single_line_text_field" },
-  { pin: "origin_handle", group: "Origin/narrative", inputType: "single_line_text_field", source: "derived", destination: "metafield", namespace: "custom", key: "origin_page_handle", shopifyType: "single_line_text_field" },
-  { pin: "collection_name", group: "Origin/narrative", inputType: "single_line_text_field", source: "derived", destination: "native_collection", shopifyType: "native" },
-  { pin: "collection_location", group: "Origin/narrative", inputType: "single_line_text_field", source: "derived", destination: "unresolved", namespace: "custom", key: "collection_location", shopifyType: "unresolved" },
-  { pin: "origin_story", group: "Origin/narrative", inputType: "multi_line_text_field", source: "AI", destination: "metafield", namespace: "custom", key: "origin_story", shopifyType: "multi_line_text_field" },
-  { pin: "craftsmanship", group: "Origin/narrative", inputType: "multi_line_text_field", source: "AI", destination: "unresolved", namespace: "custom", key: "craftsmanship", shopifyType: "unresolved" },
-  { pin: "poetic_hook", group: "Origin/narrative", inputType: "single_line_text_field", source: "AI", destination: "native", key: "seo_description", shopifyType: "native" },
-
-  // --- SEO/taxonomy ---
-  { pin: "seo_title", group: "SEO/taxonomy", inputType: "single_line_text_field", source: "AI", destination: "native", key: "seo_title", shopifyType: "native" },
-  { pin: "alt_text", group: "SEO/taxonomy", inputType: "single_line_text_field", source: "AI", destination: "native_media", key: "alt", shopifyType: "native" },
-  { pin: "google_product_category", group: "SEO/taxonomy", inputType: "single_line_text_field", source: "AI", destination: "native", key: "category", shopifyType: "native" },
-  { pin: "authenticity", group: "SEO/taxonomy", inputType: "list.metaobject_reference", source: "AI", destination: "metafield", namespace: "shopify", key: "authenticity", shopifyType: "list.metaobject_reference" },
-  { pin: "rarity", group: "SEO/taxonomy", inputType: "list.metaobject_reference", source: "AI", destination: "metafield", namespace: "shopify", key: "rarity", shopifyType: "list.metaobject_reference" }
-];
-
 const METAOBJECT_DICT = {
   "shopify.authenticity": {
     "genuine": "gid://shopify/Metaobject/151951114491",
@@ -348,31 +289,23 @@ export const action = async ({ request }) => {
 
       Object.entries(repairPlan).forEach(([fullKey, val]) => {
         const valStr = String(val !== null && val !== undefined ? val : "").trim();
-        const pinDef = CENTRAL_BRAIN_CONFIG.find(c => c.pin === fullKey);
+        const config = PIN_CONFIG[fullKey];
 
-        // Ensure ONLY verified pins from CENTRAL_BRAIN_CONFIG are allowed
-        if (!pinDef) {
-            allErrors.push({ field: fullKey, message: `Blocked: Pin '${fullKey}' is unknown or lacks a verified destination.` });
-            return;
+        let ns = "custom", key = fullKey, type = "single_line_text_field", target = "metafield";
+        if (config) {
+           target = config.target;
+           ns = config.ns || ns;
+           key = config.key || key;
+           type = config.type || type;
+        } else {
+           if (fullKey.includes(".")) {
+              const parts = fullKey.split(".");
+              ns = parts[0];
+              key = parts.slice(1).join(".");
+           }
         }
-
-        if (pinDef.destination === "unresolved" || pinDef.shopifyType === "unresolved") {
-            allErrors.push({ field: fullKey, message: `Blocked: Pin '${fullKey}' is marked as unresolved destination.` });
-            return;
-        }
-
-        const target = pinDef.destination;
 
         if (target === "metafield") {
-            if (!pinDef.namespace || !pinDef.key || !pinDef.shopifyType) {
-                allErrors.push({ field: fullKey, message: `Blocked: Pin '${fullKey}' is missing metafield definition components.` });
-                return;
-            }
-            
-            const ns = pinDef.namespace;
-            const key = pinDef.key;
-            const type = pinDef.shopifyType;
-
             const currentVal = currentMetafields[`${ns}.${key}`] || null;
             if (valStr === "" || valStr.toLowerCase() === "none" || valStr.toLowerCase() === "n/a" || valStr.toLowerCase() === "null" || valStr.toLowerCase() === "undefined") {
               if (currentVal !== null) {
@@ -382,7 +315,7 @@ export const action = async ({ request }) => {
             } else {
               let resolvedValue = normalizeMetafieldValue(key, valStr, type);
               
-              if (key === "craftsmanship" || key === "bench_notes" || key === "origin_story" || key === "honest_flaws_and_character") {
+              if (key === "generated_description" || key === "craftsmanship" || key === "bench_notes" || key === "origin_story" || key === "honest_flaws_and_character") {
                  resolvedValue = sanitizeDescription(resolvedValue);
               }
 
@@ -396,7 +329,7 @@ export const action = async ({ request }) => {
                   if (mappedGid) {
                     resolvedValue = type.startsWith("list.") ? JSON.stringify([mappedGid]) : mappedGid;
                   } else {
-                    allErrors.push({ field: fullKey, message: `Blocked: No Metaobject GID mapping found for '${resolvedValue}' in ${ns}.${key}. Cannot safely write to list.metaobject_reference.` });
+                    allErrors.push({ message: `Blocked: No Metaobject GID mapping found for '${resolvedValue}' in ${ns}.${key}. Cannot safely write to list.metaobject_reference.` });
                     return; 
                   }
                 } else {
@@ -418,22 +351,22 @@ export const action = async ({ request }) => {
         } else {
             const currentVal = currentFields[fullKey] || "";
             if (valStr !== currentVal && valStr !== "") {
+               proposedChanges[fullKey] = { from: currentVal, to: valStr };
                
                if (target === "native") {
                   if (fullKey === "shopify_title") { prodUpdates.title = valStr; reqProd = true; }
                   if (fullKey === "seo_title") { prodUpdates.seo = prodUpdates.seo || {}; prodUpdates.seo.title = valStr; reqProd = true; }
                   if (fullKey === "poetic_hook") { prodUpdates.seo = prodUpdates.seo || {}; prodUpdates.seo.description = valStr; reqProd = true; }
                   if (fullKey === "google_product_category") {
-                     if (valStr && !valStr.startsWith("gid://shopify/TaxonomyNode/")) {
-                        allErrors.push({ field: fullKey, message: `Blocked: google_product_category requires a TaxonomyNode GID. Got: '${valStr}'`});
-                        return;
+                     if (valStr && !valStr.startsWith("gid://")) {
+                        allErrors.push({ message: `google_product_category requires a TaxonomyNode GID. Got: '${valStr}'`});
                      } else if (valStr) {
                         prodUpdates.productCategory = { productTaxonomyNodeId: valStr };
                         reqProd = true;
                      }
                   }
                } else if (target === "native_variant") {
-                  if (!variantId) { allErrors.push({ field: fullKey, message: `Blocked: Cannot update ${fullKey}, variant ID missing.`}); return; }
+                  if (!variantId) { allErrors.push({message: `Cannot update ${fullKey}, variant ID missing.`}); return; }
                   if (fullKey === "price") { varUpdates.price = String(valStr); reqVar = true; }
                   if (fullKey === "shipping_weight_oz") { 
                       varUpdates.weight = parseFloat(valStr) || 0; 
@@ -441,15 +374,13 @@ export const action = async ({ request }) => {
                       reqVar = true; 
                   }
                } else if (target === "native_media") {
-                  if (!mediaId) { allErrors.push({ field: fullKey, message: `Blocked: Cannot update ${fullKey}, media ID missing.`}); return; }
+                  if (!mediaId) { allErrors.push({message: `Cannot update ${fullKey}, media ID missing.`}); return; }
                   if (fullKey === "alt_text") { mediaUpdates.push({ id: mediaId, alt: valStr }); reqMedia = true; }
                } else if (target === "native_collection") {
                   if (valStr) {
                      collectionsToResolve = valStr.split(",").map(s => s.trim()).filter(s => s);
                   }
                }
-               
-               proposedChanges[fullKey] = { from: currentVal, to: valStr };
             }
         }
       });
@@ -464,18 +395,15 @@ export const action = async ({ request }) => {
                  try {
                      const cRes = await admin.graphql(`query { collections(first:1, query: "title:'${cname.replace(/'/g, "\\'")}'") { edges { node { id } } } }`);
                      const cData = await cRes.json();
-                     if (cData?.errors) {
-                         cData.errors.forEach(e => allErrors.push({ field: "GraphQL", message: `Error querying collection: ${e.message}`}));
-                     }
                      const cid = cData?.data?.collections?.edges?.[0]?.node?.id;
                      if (cid) {
                          prodUpdates.collectionsToJoin.push(cid);
                          reqProd = true;
                      } else {
-                         allErrors.push({ field: "collection_name", message: `Blocked: Collection not found: '${cname}'`});
+                         allErrors.push({ message: `Collection not found: '${cname}'`});
                      }
                  } catch (e) {
-                     allErrors.push({ field: "collection_name", message: `Error querying collection '${cname}': ${e.message}`});
+                     allErrors.push({ message: `Error querying collection '${cname}': ${e.message}`});
                  }
              }
          }
@@ -524,13 +452,8 @@ export const action = async ({ request }) => {
               { variables: { metafields: chunks[i] } }
             );
             const deleteJson = await deleteResponse.json();
-            if (deleteJson?.errors) {
-                deleteJson.errors.forEach(e => allErrors.push({ field: "GraphQL", message: e.message }));
-            }
-            if (deleteJson?.data?.metafieldsDelete?.userErrors?.length) {
-                allErrors.push(...deleteJson.data.metafieldsDelete.userErrors);
-            }
-          } catch (delErr) { allErrors.push({ field: "Exception", message: `API Error on Delete: ${delErr.message}` }); }
+            if (deleteJson?.data?.metafieldsDelete?.userErrors?.length) allErrors.push(...deleteJson.data.metafieldsDelete.userErrors);
+          } catch (delErr) { allErrors.push({ message: `API Error on Delete: ${delErr.message}` }); }
         }
       }
 
@@ -548,15 +471,12 @@ export const action = async ({ request }) => {
               { variables: { metafields: chunks[i] } }
             );
             const setJson = await setResponse.json();
-            if (setJson?.errors) {
-                setJson.errors.forEach(e => allErrors.push({ field: "GraphQL", message: e.message }));
-            }
             if (setJson?.data?.metafieldsSet?.userErrors?.length) {
                 allErrors.push(...setJson.data.metafieldsSet.userErrors);
-            } else if (!setJson?.errors) {
+            } else {
                 fieldsUpdatedCount += chunks[i].length;
             }
-          } catch (setErr) { allErrors.push({ field: "Exception", message: `API Error on Set: ${setErr.message}` }); }
+          } catch (setErr) { allErrors.push({ message: `API Error on Set: ${setErr.message}` }); }
         }
       }
 
@@ -568,15 +488,12 @@ export const action = async ({ request }) => {
                }
              `, { variables: { input: { id: productGid, ...prodUpdates } } });
              const json = await res.json();
-             if (json?.errors) {
-                 json.errors.forEach(e => allErrors.push({ field: "GraphQL", message: e.message }));
-             }
              if (json?.data?.productUpdate?.userErrors?.length) {
                  allErrors.push(...json.data.productUpdate.userErrors);
-             } else if (!json?.errors) {
+             } else {
                  fieldsUpdatedCount++;
              }
-         } catch (err) { allErrors.push({ field: "Exception", message: `API Error on productUpdate: ${err.message}` }); }
+         } catch (err) { allErrors.push({ message: `API Error on productUpdate: ${err.message}` }); }
       }
 
       if (reqVar) {
@@ -587,15 +504,12 @@ export const action = async ({ request }) => {
                }
              `, { variables: { input: { id: variantId, ...varUpdates } } });
              const json = await res.json();
-             if (json?.errors) {
-                 json.errors.forEach(e => allErrors.push({ field: "GraphQL", message: e.message }));
-             }
              if (json?.data?.productVariantUpdate?.userErrors?.length) {
                  allErrors.push(...json.data.productVariantUpdate.userErrors);
-             } else if (!json?.errors) {
+             } else {
                  fieldsUpdatedCount++;
              }
-         } catch (err) { allErrors.push({ field: "Exception", message: `API Error on variantUpdate: ${err.message}` }); }
+         } catch (err) { allErrors.push({ message: `API Error on variantUpdate: ${err.message}` }); }
       }
 
       if (reqMedia) {
@@ -606,22 +520,19 @@ export const action = async ({ request }) => {
                }
              `, { variables: { media: mediaUpdates, productId: productGid } });
              const json = await res.json();
-             if (json?.errors) {
-                 json.errors.forEach(e => allErrors.push({ field: "GraphQL", message: e.message }));
-             }
              if (json?.data?.productUpdateMedia?.userErrors?.length) {
                  allErrors.push(...json.data.productUpdateMedia.userErrors);
-             } else if (!json?.errors) {
+             } else {
                  fieldsUpdatedCount++;
              }
-         } catch (err) { allErrors.push({ field: "Exception", message: `API Error on mediaUpdate: ${err.message}` }); }
+         } catch (err) { allErrors.push({ message: `API Error on mediaUpdate: ${err.message}` }); }
       }
 
       if (allErrors.length > 0) {
          return Response.json({ 
              intent: "executeRepairPlan", pieceId, success: false, status: "REPAIR_FAILED",
              errors: allErrors, currentMetafields, repairPlan, proposedChanges, fieldsUpdated: fieldsUpdatedCount, legacyKeysRemoved: deleteFromShopify.length,
-             conflicts: {}, missingFields: [], unknownFields: [], readBackVerified: false, message: "Shopify write produced errors or blocked fields."
+             conflicts: {}, missingFields: [], unknownFields: [], readBackVerified: false, message: "Shopify write produced errors."
          });
       }
 
