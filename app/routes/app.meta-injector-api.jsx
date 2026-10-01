@@ -3,6 +3,20 @@ import { executeAutofill } from "../utils/meta-injector.autofill.server.jsx";
 
 // 🟢 Structural Engine — No Prisma Import Here
 
+const ALLOWED_TAB3_KEYS = [
+  "shopify_title", "piece_name", "stone_family", "price", "weight_grams", 
+  "shipping_weight_oz", "is_ooak", "dimensions_mm", "cut_and_shape", 
+  "surface_finish", "primary_color", "color_pattern", "honest_flaws_and_character", 
+  "bench_notes", "product_format", "primary_use", "jewelry_type", 
+  "primary_medium", "secondary_medium", "setting_ready", "bail_included", 
+  "chain_material", "jewelry_finding_type", "mohs_hardness", "specific_gravity", 
+  "crystal_system", "fracture_pattern", "cleavage", "luster", "diaphaneity", 
+  "mineral_class", "geological_era", "rock_formation", "origin_location", 
+  "origin_handle", "collection_name", "collection_location", "origin_story", 
+  "craftsmanship", "poetic_hook", "seo_title", "alt_text", 
+  "google_product_category", "authenticity", "rarity"
+];
+
 const MASTER_TYPE_MAP = {
   rescued_by: "single_line_text_field", origin_location: "single_line_text_field", geological_age: "single_line_text_field",
   mohs_hardness: "single_line_text_field", official_name: "single_line_text_field", luster: "single_line_text_field",
@@ -193,6 +207,12 @@ export const action = async ({ request }) => {
             key = parts.slice(1).join(".");
         }
 
+        // 🟢 STRICT 45-PIN ALLOWLIST ENFORCEMENT
+        if (!ALLOWED_TAB3_KEYS.includes(key)) return;
+
+        // 🟢 BLOCKED KEYS UNTIL VERIFIED
+        if (key === "jewelry_type") return;
+
         const valStr = String(val !== null && val !== undefined ? val : "").trim();
         const currentVal = currentMetafields[fullKey] || null;
 
@@ -202,7 +222,9 @@ export const action = async ({ request }) => {
               proposedChanges[fullKey] = { from: currentVal, to: "" };
           }
         } else {
-          let resolvedType = MASTER_TYPE_MAP[key] || "single_line_text_field";
+          let resolvedType = MASTER_TYPE_MAP[key];
+          if (!resolvedType) return; // Block unverified types instead of guessing or defaulting
+
           let resolvedValue = normalizeMetafieldValue(key, valStr);
 
           if (key === "generated_description") resolvedValue = sanitizeDescription(resolvedValue);
@@ -235,6 +257,10 @@ export const action = async ({ request }) => {
             ns = parts[0];
             key = parts.slice(1).join(".");
         }
+
+        // 🟢 STRICT 45-PIN ALLOWLIST ENFORCEMENT FOR DELETES
+        if (!ALLOWED_TAB3_KEYS.includes(key)) return;
+
         if (currentMetafields[fullKey] !== undefined) {
            deleteFromShopify.push({ ownerId: productGid, namespace: ns, key: key });
            proposedChanges[fullKey] = { from: currentMetafields[fullKey], to: null };

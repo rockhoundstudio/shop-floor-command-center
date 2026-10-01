@@ -3,7 +3,7 @@
 // File: app/routes/app.meta-injector.matrix.jsx
 // ==========================================================================
 import React, { useState, useCallback, useEffect } from "react";
-import { BlockStack, Card, Text, Banner, TextField, Button, InlineStack, Box, Badge, ProgressBar, Select, Divider } from "@shopify/polaris";
+import { BlockStack, Card, Text, Banner, TextField, Button, InlineStack, Box, Badge, ProgressBar, Select } from "@shopify/polaris";
 import { MagicIcon, ClipboardIcon, SaveIcon, ChevronDownIcon, ChevronUpIcon } from "@shopify/polaris-icons";
 import { useFetcher } from "react-router";
 
@@ -20,112 +20,106 @@ const SECTIONS = [
   {
     title: "1. Identity and Merchandising",
     keys: [
-      "global.title_tag", "global.description_tag", "custom.shopify_title",
-      "custom.piece_name", "custom.official_name", "custom.seo_title",
-      "custom.is_ooak", "custom.is_one_of_a_kind", "custom.handcrafted_by", 
-      "custom.rescued_by"
+      "shopify_title",
+      "custom.piece_name",
+      "custom.is_ooak",
+      "custom.product_format",
+      "custom.craftsmanship",
+      "custom.poetic_hook",
+      "custom.seo_title"
     ]
   },
   {
     title: "2. Stone Facts and Physical Details",
     keys: [
-      "custom.dimensions_mm", "custom.weight_grams", "custom.shipping_weight_oz", 
-      "custom.stone_shape", "custom.cut_type", "custom.cut_and_shape", 
-      "custom.surface_finish", "custom.color", "custom.primary_color", 
-      "custom.secondary_colors", "custom.color_pattern", "custom.treatment_status", 
-      "custom.treated", "custom.character_marks", "custom.honest_flaws_and_character", 
-      "custom.bench_notes", "custom.artist_notes", "custom.alt_text",
-      "custom.mohs_hardness", "custom.moh_hardness", "custom.specific_gravity", 
-      "custom.crystal_system", "custom.crystal-system", "custom.luster", 
-      "custom.cleavage", "custom.fracture_pattern", "custom.diaphaneity", 
-      "custom.tenacity", "custom.mineral_class", "custom.mineral-class", 
-      "custom.rock_composition", "custom.rock-composition", "custom.rock_formation", 
-      "custom.rock-formation", "custom.geological_era", "custom.geological-era", 
-      "custom.geological_age"
+      "custom.weight_grams",
+      "custom.shipping_weight_oz",
+      "custom.dimensions_mm",
+      "custom.cut_and_shape",
+      "custom.surface_finish",
+      "custom.primary_color",
+      "custom.color_pattern",
+      "custom.honest_flaws_and_character",
+      "custom.bench_notes",
+      "custom.mohs_hardness",
+      "custom.specific_gravity",
+      "custom.crystal_system",
+      "custom.fracture_pattern",
+      "custom.cleavage",
+      "custom.luster",
+      "custom.diaphaneity",
+      "custom.mineral_class",
+      "custom.geological_era",
+      "custom.rock_formation"
     ]
   },
   {
     title: "3. Origin, Story, and Collection",
     keys: [
-      "custom.stone_family", "custom.origin_location", "custom.origin_page_handle", 
-      "custom.origin_handle", "custom.collection_name", "custom.collection_location", 
-      "custom.origin_story", "custom.stone_story", "custom.generated_description"
+      "custom.stone_family",
+      "custom.origin_location",
+      "custom.origin_handle",
+      "custom.collection_name",
+      "custom.collection_location",
+      "custom.origin_story"
     ]
   },
   {
     title: "4. Jewelry and Setting",
     keys: [
-      "custom.primary_use", "custom.primary_medium", "custom.secondary_medium", 
-      "custom.material", "custom.jewelry_type", "custom.necklace_design", 
-      "custom.necklace-design", "custom.setting_ready", "custom.wire_material", 
-      "custom.bail_included", "custom.chain_material", "custom.chain_link_type", 
-      "custom.chain-link-type", "custom.jewelry_finding_type"
+      "custom.primary_use",
+      "custom.jewelry_type",
+      "custom.primary_medium",
+      "custom.secondary_medium",
+      "custom.setting_ready",
+      "custom.bail_included",
+      "custom.chain_material",
+      "custom.jewelry_finding_type"
     ]
   },
   {
     title: "5. Search, Sales, and Media",
     keys: [
-      "custom.price", "custom.google_product_category", "custom.age_group", "custom.target_gender", 
-      "custom.condition", "custom.authenticity", "custom.rarity", 
-      "custom.custom_product", "custom.found_object",
-      "google.age_group", "google.condition", "google.target_gender",
-      "shopify.age-group", "shopify.condition", "shopify.target-gender",
-      "shopify.authenticity", "shopify.chain-link-type", "shopify.color-pattern",
-      "shopify.crystal-system", "shopify.geological-era",
-      "shopify.jewelry-finding-type", "shopify.jewelry-material",
-      "shopify.jewelry-type", "shopify.material", "shopify.material-origin",
-      "shopify.mineral-class", "shopify.necklace-design",
-      "shopify.rarity", "shopify.rock-composition", "shopify.rock-formation",
-      "custom.badge", "custom.widget", "custom.review_widget_data"
+      "price",
+      "custom.alt_text",
+      "custom.google_product_category",
+      "custom.authenticity",
+      "custom.rarity"
     ]
   }
 ];
 
-const LEGACY_MAP = {
-  "crystal-system": "crystal_system",
-  "mineral-class": "mineral_class",
-  "rock-composition": "rock_composition",
-  "geological-era": "geological_era",
-  "rock-formation": "rock_formation",
-  "necklace-design": "necklace_design",
-  "is_one_of_a_kind": "is_ooak",
-  "chain-link-type": "chain_link_type",
-  "moh_hardness": "mohs_hardness"
-};
+const BLOCKED_UNVERIFIED_PINS = [
+  "custom.jewelry_type"
+];
 
 const FIELD_LIMITS = {
-  "global.title_tag": 70,
   "custom.seo_title": 70,
-  "global.description_tag": 320,
-  "custom.shopify_title": 255,
+  "shopify_title": 255,
   "custom.piece_name": 255,
-  "custom.official_name": 255,
   "custom.origin_story": 100000,
-  "custom.stone_story": 100000,
-  "custom.generated_description": 100000,
-  "custom.artist_notes": 100000,
   "custom.bench_notes": 100000,
   "custom.alt_text": 100000,
-  "custom.character_marks": 255,
-  "custom.honest_flaws_and_character": 255
+  "custom.honest_flaws_and_character": 255,
+  "custom.poetic_hook": 160
 };
 
 const PROTECTED_FIELDS = [
-  "custom.stone_family", "custom.stone_shape", "custom.cut_and_shape",
-  "custom.surface_finish", "custom.color_pattern", "custom.google_product_category",
-  "custom.setting_ready", "custom.wire_material", "custom.bail_included",
-  "custom.chain_material", "custom.jewelry_finding_type", "custom.shopify_title",
-  "global.title_tag", "custom.artist_notes", "custom.bench_notes"
+  "custom.stone_family", "custom.cut_and_shape", "custom.surface_finish",
+  "custom.color_pattern", "custom.google_product_category", "custom.setting_ready",
+  "custom.bail_included", "custom.chain_material", "custom.jewelry_finding_type",
+  "shopify_title", "custom.bench_notes"
 ];
 
 const HARDWARE_FIELDS = [
-  "custom.setting_ready", "custom.wire_material", "custom.bail_included",
-  "custom.chain_material", "custom.jewelry_finding_type"
+  "custom.setting_ready", "custom.bail_included", "custom.chain_material",
+  "custom.jewelry_finding_type"
 ];
 
 const GENERIC_VALUES = ["None", "Unknown", "N/A", "N/a", "none", "unknown", "n/a"];
-const REQUIRED_FIELDS = ["global.title_tag", "custom.shopify_title", "custom.price"];
+const REQUIRED_FIELDS = ["shopify_title", "price"];
 const INTEGRATION_PREFIXES = ["google.", "shopify.", "mm-google", "mc-facebook"];
+const NATIVE_FIELDS = ["price", "shopify_title"];
 
 const formatLabel = (key) => {
   const parts = key.split('.');
@@ -328,7 +322,7 @@ export function OperationsMatrixTab({ products }) {
     let currentVal = hasCurrent ? String(data.currentMetafields[key] || "") : "";
 
     // Strictly separate Product Title from SEO Title to prevent conflict false-positives
-    if (key === "custom.shopify_title" || key === "shopify_title") {
+    if (key === "shopify_title") {
         currentVal = String(data.canonicalFields?.["shopify_title"] || currentVal || ""); 
     }
 
@@ -348,8 +342,6 @@ export function OperationsMatrixTab({ products }) {
     const isProtected = PROTECTED_FIELDS.includes(key);
     const isHardware = HARDWARE_FIELDS.includes(key);
     const isIntegration = INTEGRATION_PREFIXES.some(prefix => key.startsWith(prefix));
-    const rawKey = key.split('.')[1] || key;
-    const isAlias = Object.keys(LEGACY_MAP).includes(rawKey) || Object.values(LEGACY_MAP).includes(rawKey);
 
     const currentCount = currentVal.length;
     const propCount = propVal.length;
@@ -357,7 +349,6 @@ export function OperationsMatrixTab({ products }) {
     const isOverLimit = limit !== null && (currentCount > limit || (isProposed && propCount > limit));
 
     if (isOverLimit) reasons.push("Over limit");
-    if (isAlias) reasons.push("Alias");
     if (isIntegration) reasons.push("Integration owned");
 
     const currentExists = currentVal.trim() !== "";
@@ -405,6 +396,14 @@ export function OperationsMatrixTab({ products }) {
         isBlockedAction = true;
     }
 
+    if (BLOCKED_UNVERIFIED_PINS.includes(key)) {
+        if (isProposed && propVal.trim() !== "") {
+            fieldStatus = "Blocked";
+            reasons.push("Type/destination unverified");
+        }
+        isBlockedAction = true;
+    }
+
     return { currentVal, propVal, isProposed, fieldStatus, proposalStatus, source, stage, isBlockedAction, reasons, currentExists, proposalExists };
   };
 
@@ -449,7 +448,7 @@ export function OperationsMatrixTab({ products }) {
         });
 
         fd.append("repairPlan", JSON.stringify(safePlan));
-        fd.append("legacyKeysToRemove", JSON.stringify(Object.keys(manifest.legacyFields || {})));
+        fd.append("legacyKeysToRemove", JSON.stringify([]));
         batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-api" });
       }
     } 
@@ -472,7 +471,7 @@ export function OperationsMatrixTab({ products }) {
         const imageUrl = product.images?.edges?.[0]?.node?.url || product.featuredImage?.url || product.media?.edges?.[0]?.node?.image?.url || "";
         
         const fd = new FormData();
-        fd.append("intent", "fullRescan");
+        fd.append("intent", "tab3FullRescan");
         fd.append("pieceId", currentId);
         fd.append("productTitle", titleToParse);
         fd.append("imageUrl", imageUrl);
@@ -495,10 +494,10 @@ export function OperationsMatrixTab({ products }) {
         const fd = new FormData();
         fd.append("intent", "generateDescription");
         fd.append("sharedFields", JSON.stringify({
-            stone_family: tempAiData.tab2Data?.stone_family || tempAiData.titleParse?.stone_family,
-            origin_location: tempAiData.tab2Data?.origin_location || tempAiData.titleParse?.origin_location
+            stone_family: tempAiData.tab3Data?.stone_family || tempAiData.titleParse?.stone_family,
+            origin_location: tempAiData.tab3Data?.origin_location || tempAiData.titleParse?.origin_location
         }));
-        fd.append("pieceData", JSON.stringify(tempAiData.tab2Data || {}));
+        fd.append("pieceData", JSON.stringify(tempAiData.tab3Data || {}));
         batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-autofill" });
       }
       else if (aiStep === 4) {
@@ -510,7 +509,7 @@ export function OperationsMatrixTab({ products }) {
             const diagnostics = { ...(existing.diagnostics || {}) };
             
             const titleData = tempAiData.titleParse || {};
-            const visionData = tempAiData.tab2Data || {};
+            const visionData = tempAiData.tab3Data || {};
             const descData = tempAiData.generated_description || "";
 
             // Record stage success
@@ -522,7 +521,7 @@ export function OperationsMatrixTab({ products }) {
             if (tempAiData.fullRescanRequested) {
                 diagnostics.vision = "Success";
                 diagnostics.gemini = "Success";
-                diagnostics.stage = "fullRescan";
+                diagnostics.stage = "tab3FullRescan";
             }
             if (tempAiData.generateDescRequested) {
                 diagnostics.gemini = "Success";
@@ -531,13 +530,21 @@ export function OperationsMatrixTab({ products }) {
 
             Object.keys(visionData).forEach(k => {
                 if (k !== "generated_description" && k !== "pieceId" && k !== "debug_origin" && k !== "intent" && k !== "success") {
-                    newPlan[k.includes('.') ? k : `custom.${k}`] = visionData[k];
+                    if (NATIVE_FIELDS.includes(k) || k.includes('.')) {
+                        newPlan[k] = visionData[k];
+                    } else {
+                        newPlan[`custom.${k}`] = visionData[k];
+                    }
                 }
             });
             
             Object.keys(titleData).forEach(k => {
                 if (k !== "pieceId" && k !== "intent" && k !== "success" && k !== "geoSource") {
-                    newPlan[k.includes('.') ? k : `custom.${k}`] = titleData[k];
+                    if (NATIVE_FIELDS.includes(k) || k.includes('.')) {
+                        newPlan[k] = titleData[k];
+                    } else {
+                        newPlan[`custom.${k}`] = titleData[k];
+                    }
                 }
             });
 
@@ -556,7 +563,7 @@ export function OperationsMatrixTab({ products }) {
   useEffect(() => {
     if (batchFetcher.state === "idle" && batchFetcher.data && batchFetcher.data !== lastProcessedData) {
       setLastProcessedData(batchFetcher.data);
-      const { intent, success, pieceId, productId, message, error, errors, logs, status, finalStatus, titleParse, tab2Data, generated_description, fieldsUpdated } = batchFetcher.data;
+      const { intent, success, pieceId, productId, message, error, errors, logs, status, finalStatus, titleParse, tab3Data, generated_description, fieldsUpdated } = batchFetcher.data;
       
       const targetId = pieceId || productId;
       
@@ -667,7 +674,7 @@ export function OperationsMatrixTab({ products }) {
         
         const isExpectedResponse = 
             (aiStep === 1 && intent === "titleParse") ||
-            (aiStep === 2 && intent === "fullRescan") ||
+            (aiStep === 2 && intent === "tab3FullRescan") ||
             (aiStep === 3 && intent === "generateDescription");
         
         if (isExpectedResponse) {
@@ -680,7 +687,7 @@ export function OperationsMatrixTab({ products }) {
                     if (!existing) return prev;
                     const diagnostics = { ...existing.diagnostics, error: error || `Gemini failed at ${intent}` };
                     if (intent === "titleParse" || intent === "generateDescription") diagnostics.gemini = "Failed";
-                    if (intent === "fullRescan") { diagnostics.vision = "Failed"; diagnostics.gemini = "Failed"; }
+                    if (intent === "tab3FullRescan") { diagnostics.vision = "Failed"; diagnostics.gemini = "Failed"; }
                     return { ...prev, [currentId]: { ...existing, diagnostics } };
                 });
                 return;
@@ -690,8 +697,8 @@ export function OperationsMatrixTab({ products }) {
                 setTempAiData(prev => ({ ...prev, titleParse: titleParse }));
                 setAiStep(2); 
             } 
-            else if (intent === "fullRescan") {
-                setTempAiData(prev => ({ ...prev, tab2Data: tab2Data }));
+            else if (intent === "tab3FullRescan") {
+                setTempAiData(prev => ({ ...prev, tab3Data: tab3Data }));
                 setAiStep(3); 
             } 
             else if (intent === "generateDescription") {
@@ -738,7 +745,7 @@ export function OperationsMatrixTab({ products }) {
     });
 
     fd.append("repairPlan", JSON.stringify(safePlan));
-    fd.append("legacyKeysToRemove", JSON.stringify(Object.keys(manifest.legacyFields || {})));
+    fd.append("legacyKeysToRemove", JSON.stringify([]));
 
     updateProductState(selectedBenchId, STATUS.SCANNING, ["Executing single structural repair..."]);
     batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-api" });
@@ -806,7 +813,7 @@ export function OperationsMatrixTab({ products }) {
               shopifyReadStatus = "Running";
           } else if (executionMode === "AI_BATCH_PIPELINE") {
               if (aiStep === 1) { geminiStatus = "Running"; currentStage = "titleParse"; }
-              if (aiStep === 2) { geminiStatus = "Running"; visionStatus = "Running"; currentStage = "fullRescan"; }
+              if (aiStep === 2) { geminiStatus = "Running"; visionStatus = "Running"; currentStage = "tab3FullRescan"; }
               if (aiStep === 3) { geminiStatus = "Running"; currentStage = "generateDescription"; }
           } else if (executionMode === "REPAIR") {
               shopifyReadStatus = "Running"; 
@@ -883,17 +890,16 @@ export function OperationsMatrixTab({ products }) {
       const statusObj = getSystemStatus();
 
       const longTextFields = [
-          "global.description_tag", "custom.generated_description", "custom.origin_story"
+          "custom.generated_description", "custom.origin_story"
       ];
 
       const noteFields = [
-          "custom.artist_notes", "custom.bench_notes"
+          "custom.bench_notes"
       ];
 
       let summary = {
-          "standardFields": 62,
+          "standardFields": 45,
           "observedIntegrationFields": 0,
-          "aliasFields": 0,
           "totalObservedFields": 0,
           "loaded": 0,
           "blank": 0,
@@ -904,7 +910,6 @@ export function OperationsMatrixTab({ products }) {
           "integration-owned": 0,
           "over-limit": 0,
           "fields updated": data.fieldsUpdated !== undefined ? data.fieldsUpdated : 0,
-          "legacy fields removed": Object.keys(data.legacyFields || {}).length,
           "read-back status": statusObj.readBackStatus
       };
 
@@ -919,15 +924,12 @@ export function OperationsMatrixTab({ products }) {
               const isNote = noteFields.includes(key);
               
               const isIntegrationOwned = INTEGRATION_PREFIXES.some(prefix => key.startsWith(prefix));
-              const rawKey = key.split('.')[1] || key;
-              const isAlias = Object.keys(LEGACY_MAP).includes(rawKey) || Object.values(LEGACY_MAP).includes(rawKey);
 
               if (meta.reasons.includes("Over limit")) summary["over-limit"]++;
               if (isIntegrationOwned) {
                   summary["observedIntegrationFields"]++;
                   summary["integration-owned"]++;
               }
-              if (isAlias) summary["aliasFields"]++;
 
               if (meta.currentExists) summary["loaded"]++;
               

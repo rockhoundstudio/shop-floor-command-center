@@ -460,6 +460,47 @@ ${originStory}
 WARNING: Extract ONLY the 1-2 sentence narrative matching "${stoneFamily}".`;
 }
 
+// ==========================================
+// PROMPT 4: TAB 3 VISION RESCAN (NO JEWELRY_TYPE)
+// ==========================================
+function buildTab3VisionPrompt({ pagesMenu, collectionsMenu, stoneFamily, derivedShape, originStory, originSegment, targetUrlPath, fullCollectionTitle, collectionUrlPath }) {
+  return `You are a lapidary artist for Rockhound Studio. Analyze this photo and return a JSON object.
+- LIVE STORE DIRECTORY:
+  VALID PAGES IN STORE: ${pagesMenu || "No live pages"}
+  VALID COLLECTIONS: ${collectionsMenu || "No live collections"}
+
+Return ONLY a JSON object. OMIT any keys if you cannot determine the value (do not send null or empty strings). DO NOT include "jewelry_type".
+
+Potential JSON Keys:
+- piece_name: The name of the piece.
+- cut_and_shape: Respect freeform cuts.
+- surface_finish: High Polish, Matte, Satin, Natural/Raw, Tumbled.
+- primary_color
+- color_pattern
+- honest_flaws_and_character: Plainly state any pits, vugs, healed fractures, or asymmetry. Honesty over perfection.
+- bench_notes: Bob's direct observations from the wheel.
+- product_format: Cabochon, Pendant, Necklace, Specimen, Loose Stone.
+- primary_use: e.g., "Pendant (Finished Jewelry)", "Ring / Bezel Setting", "Cabochon", "Loose Stone".
+- primary_medium: Must match stone mineral name.
+- secondary_medium: The setting or finding.
+- setting_ready: "Bezel Setting - Ready to Wear", "Wire Wrapped - Ready to Wear", "None".
+- bail_included: e.g., "Silver Plated Pinch Bail", "None".
+- chain_material: e.g., "Silver Plated Snake Chain", "None".
+- jewelry_finding_type: MUST BE "None" if bail_included is not "None".
+- origin_location: Geographic name ONLY based on "${originSegment}".
+- craftsmanship: Always use "Handcrafted by Bob and Janyce" if it's a finished piece.
+- poetic_hook: Poetic, spare, story-driven meta description. Under 160 characters. Like the stone decided, not the maker. Never clinical.
+- seo_title: Max 60 chars. Stone family, origin, OOAK Lapidary Art.
+- alt_text: Descriptive alt text (max 125 chars). Use mineral name. No visual guessing.
+- google_product_category: Taxonomy path.
+- authenticity: Authentic, Lab-Created.
+- rarity: Common, Uncommon, Rare, One-of-a-Kind.
+
+FULL ORIGIN STORY (CRITICAL LORE FIREWALL - READ CAREFULLY):
+${originStory}
+`;
+}
+
 export const action = async ({ request }) => {
   try {
     const { admin } = await authenticate.admin(request);
@@ -589,6 +630,82 @@ export const action = async ({ request }) => {
         return Response.json({ success: true, intent, tab2Data: payload });
       }
       return Response.json({ success: false, intent, error: "Vision API Failure" });
+    }
+
+    if (intent === "tab3FullRescan") {
+      const pieceId = body.get("pieceId") || body.get("productId") || "NEW";
+      const rawTitleInput = body.get("productTitle") || body.get("pieceName") || body.get("piece_name") || "";
+      const segments = rawTitleInput.split(/\s+[—–-]\s+/);
+      const derivedFamily = cleanStoneFamilyShape(segments[0]?.trim() || body.get("stone_family") || "Unknown Stone");
+      const derivedShape = extractShapeFromString(segments[0]?.trim() || "");
+      const originSegment = enforceOriginOverrides(segments[1]?.trim() || "Unknown Origin");
+      const pieceNameInput = segments.length >= 3 ? segments[2].trim() : "";
+
+      const geoFields = await getGeoData(admin, derivedFamily);
+      const { pagesList, collectionsList } = await getLiveStoreDirectory(admin);
+      const defaultOriginSlug = resolveOriginHandle(originSegment, pagesList);
+      const defaultCollection = resolveCollectionData(originSegment, defaultOriginSlug, collectionsList);
+
+      const matchedPage = pagesList.find(p => p.url.includes(defaultOriginSlug));
+      
+      let extractedStory = matchedPage && matchedPage.excerpt ? matchedPage.excerpt : "";
+      if (!extractedStory) {
+        extractedStory = body.get("origin_story") || "";
+      }
+      
+      let imageBase64 = body.get("imageBase64") || "";
+      let imageMimeType = body.get("imageMimeType") || "image/jpeg";
+      if (!imageBase64 && body.get("imageUrl")) {
+        const imageRes = await fetch(body.get("imageUrl"));
+        imageBase64 = Buffer.from(await imageRes.arrayBuffer()).toString("base64");
+      }
+
+      const promptText = buildTab3VisionPrompt({
+        pagesMenu: pagesList.map(p => `- Title: "${p.title}"`).join("\n"),
+        collectionsMenu: collectionsList.map(c => `- Title: "${c.title}"`).join("\n"),
+        stoneFamily: derivedFamily, derivedShape, originStory: extractedStory,
+        originSegment, targetUrlPath: defaultOriginSlug ? `/pages/${defaultOriginSlug}` : "",
+        fullCollectionTitle: defaultCollection.name, collectionUrlPath: defaultCollection.slug ? `/collections/${defaultCollection.slug}` : ""
+      });
+
+      const geminiRes = await fetchWithRetry("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contents: [{ parts: [{ text: promptText }, { inlineData: { mimeType: imageMimeType, data: imageBase64 } }] }], generationConfig: { responseMimeType: "application/json", temperature: 0.2 } })
+      });
+
+      if (geminiRes.ok) {
+        const data = await geminiRes.json();
+        let cleanJson = (data.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
+        const parsedVision = JSON.parse(cleanJson.slice(cleanJson.indexOf("{"), cleanJson.lastIndexOf("}") + 1));
+        
+        delete parsedVision.jewelry_type; // Explicitly ensure this is scrubbed
+
+        const payload = sanitizeObject({
+          pieceId,
+          shopify_title: rawTitleInput,
+          piece_name: parsedVision.piece_name || pieceNameInput,
+          stone_family: derivedFamily,
+          origin_location: parsedVision.origin_location || originSegment,
+          origin_handle: defaultOriginSlug,
+          collection_name: defaultCollection.name,
+          collection_location: mapCollectionLocation(defaultCollection.name),
+          origin_story: extractedStory,
+          is_ooak: "Yes", 
+          ...geoFields,
+          ...parsedVision
+        });
+
+        // Strip undefined, null, or empty string values to leave them unset in the caller
+        const finalPayload = {};
+        for (const [k, v] of Object.entries(payload)) {
+          if (v !== undefined && v !== null && v !== "") {
+            finalPayload[k] = v;
+          }
+        }
+        
+        return Response.json({ success: true, intent, tab3Data: finalPayload });
+      }
+      return Response.json({ success: false, intent, error: "Vision API Failure (Tab 3)" });
     }
 
     if (intent === "generateDescription") {
