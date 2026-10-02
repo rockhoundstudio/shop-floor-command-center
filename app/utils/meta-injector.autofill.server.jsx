@@ -464,7 +464,6 @@ export async function executeAutofill(intent, body, admin) {
       const bench_weight_grams = body.get("weight_grams") || "";
       const bench_shipping_weight_oz = body.get("shipping_weight_oz") || "";
       const bench_dimensions_mm = body.get("dimensions_mm") || "";
-      const bench_price = body.get("price") || "";
 
       const titleSegments = productTitle.split(/\s+[-—–]\s+/);
       const rawFamilySegment = titleSegments[0]?.trim() || stone_family;
@@ -638,7 +637,6 @@ export async function executeAutofill(intent, body, admin) {
           origin_handle: finalOriginHandle,
           origin_page_handle: finalOriginPageHandle,
           origin_location: correctedOrigin,
-          shopify_title: `${finalFamilyTitle} — ${correctedOrigin} — ${pieceNameSegment}`,
           collection_name: finalCollectionData.name,
           collection_location: mapCollectionLocation(finalCollectionData.name),
           seo_title: visionFields.seo_title || manual_seo_title,
@@ -682,8 +680,7 @@ export async function executeAutofill(intent, body, admin) {
           alt_text: visionFields.alt_text || "",
           ...(bench_weight_grams ? { weight_grams: bench_weight_grams } : {}),
           ...(bench_shipping_weight_oz ? { shipping_weight_oz: bench_shipping_weight_oz } : {}),
-          ...(bench_dimensions_mm ? { dimensions_mm: bench_dimensions_mm } : {}),
-          ...(bench_price ? { price: bench_price } : {})
+          ...(bench_dimensions_mm ? { dimensions_mm: bench_dimensions_mm } : {})
         });
 
         return { success: true, intent: "tab2AutoFill", tab2Data: payload };
@@ -846,7 +843,6 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
       const bench_weight_grams = body.get("weight_grams") || "";
       const bench_shipping_weight_oz = body.get("shipping_weight_oz") || "";
       const bench_dimensions_mm = body.get("dimensions_mm") || "";
-      const bench_price = body.get("price") || "";
       const bench_origin_story = body.get("origin_story") || "";
       const bench_honest_flaws = body.get("honest_flaws_and_character") || "";
 
@@ -1069,8 +1065,7 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
           honest_flaws_and_character: bench_honest_flaws || parsedVision.honest_flaws_and_character || "",
           ...(bench_weight_grams ? { weight_grams: bench_weight_grams } : {}),
           ...(bench_shipping_weight_oz ? { shipping_weight_oz: bench_shipping_weight_oz } : {}),
-          ...(bench_dimensions_mm ? { dimensions_mm: bench_dimensions_mm } : {}),
-          ...(bench_price ? { price: bench_price } : {})
+          ...(bench_dimensions_mm ? { dimensions_mm: bench_dimensions_mm } : {})
         });
 
         return {
