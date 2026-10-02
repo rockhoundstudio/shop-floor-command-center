@@ -60,8 +60,8 @@ const SECTIONS = [
       "custom.origin_location",
       "custom.origin_handle",
       "custom.collection_name",
-      "custom.collection_location",
-      "custom.origin_story"
+      "custom.collection_location"
+      // custom.origin_story is hidden from UI/Review but remains part of the 45-pin telemetry pipeline
     ]
   },
   {
@@ -97,7 +97,6 @@ const FIELD_LIMITS = {
   "custom.seo_title": 70,
   "shopify_title": 255,
   "custom.piece_name": 255,
-  "custom.origin_story": 100000,
   "custom.bench_notes": 100000,
   "custom.alt_text": 100000,
   "custom.honest_flaws_and_character": 255,
@@ -120,6 +119,9 @@ const GENERIC_VALUES = ["None", "Unknown", "N/A", "N/a", "none", "unknown", "n/a
 const REQUIRED_FIELDS = ["shopify_title", "price"];
 const INTEGRATION_PREFIXES = ["google.", "shopify.", "mm-google", "mc-facebook"];
 const NATIVE_FIELDS = ["price", "shopify_title"];
+
+// Used strictly for global telemetry tracking to preserve 45-count. Do not render.
+const HIDDEN_CONTEXT_FIELDS = ["custom.origin_story"]; 
 
 const formatLabel = (key) => {
   const parts = key.split('.');
@@ -354,6 +356,11 @@ export function OperationsMatrixTab({ products }) {
     const currentExists = currentVal.trim() !== "";
     const proposalExists = isProposed && propVal.trim() !== "";
 
+    // Do not trigger warnings or statuses for hidden source-context keys
+    if (HIDDEN_CONTEXT_FIELDS.includes(key)) {
+        return { currentVal, propVal, isProposed, fieldStatus: "Hidden Source", proposalStatus, source, stage, isBlockedAction: true, reasons: ["Hidden Context"], currentExists, proposalExists };
+    }
+
     if (currentExists) {
         if (!proposalExists) {
             fieldStatus = "Unchanged";
@@ -438,11 +445,11 @@ export function OperationsMatrixTab({ products }) {
         fd.append("intent", "executeRepairPlan");
         fd.append("pieceId", currentId);
         
-        // Filter out Blocked, Degraded, Conflict, Unverified, Generic Hardware writes
+        // Filter out Blocked, Degraded, Conflict, Unverified, Generic Hardware writes, and Hidden Context
         const safePlan = {};
         Object.keys(manifest.repairPlan).forEach(key => {
             const meta = getFieldMetadata(key, manifest);
-            if (!meta.isBlockedAction) {
+            if (!meta.isBlockedAction && !HIDDEN_CONTEXT_FIELDS.includes(key)) {
                 safePlan[key] = manifest.repairPlan[key];
             }
         });
@@ -476,7 +483,10 @@ export function OperationsMatrixTab({ products }) {
         fd.append("productTitle", titleToParse);
         fd.append("imageUrl", imageUrl);
         fd.append("stone_family", tempAiData.titleParse?.stone_family || "");
+        
+        // origin_story must be passed strictly as context to autofill tools, never displayed or overwritten
         fd.append("origin_story", tempAiData.titleParse?.origin_story || "");
+        
         fd.append("honest_flaws_and_character", manifest.currentMetafields["custom.honest_flaws_and_character"] || "");
         fd.append("weight_grams", manifest.currentMetafields["custom.weight_grams"] || "");
         fd.append("dimensions_mm", manifest.currentMetafields["custom.dimensions_mm"] || "");
@@ -739,7 +749,7 @@ export function OperationsMatrixTab({ products }) {
     const safePlan = {};
     Object.keys(manifest.repairPlan).forEach(key => {
         const meta = getFieldMetadata(key, manifest);
-        if (!meta.isBlockedAction) {
+        if (!meta.isBlockedAction && !HIDDEN_CONTEXT_FIELDS.includes(key)) {
             safePlan[key] = manifest.repairPlan[key];
         }
     });
@@ -776,7 +786,7 @@ export function OperationsMatrixTab({ products }) {
   };
 
   const isMultilineKey = (k) => [
-    "custom.generated_description", "custom.origin_story", "custom.stone_story", 
+    "custom.generated_description", "custom.stone_story", 
     "custom.bench_notes", "custom.character_marks", "custom.honest_flaws_and_character", 
     "custom.artist_notes"
   ].includes(k);
@@ -865,13 +875,13 @@ export function OperationsMatrixTab({ products }) {
             else stats.filled++;
 
             if (meta.fieldStatus === "Proposed") stats.proposed++;
-            if (meta.isBlockedAction) stats.blocked++;
+            if (meta.isBlockedAction && !HIDDEN_CONTEXT_FIELDS.includes(k)) stats.blocked++;
             if (meta.fieldStatus === "Degrade") stats.degraded++;
             if (meta.fieldStatus === "Conflict") stats.conflicts++;
             if (meta.fieldStatus === "Unverified proposal") stats.unverified++;
             if (meta.fieldStatus === "Optional blank") stats.optionalBlanks++;
             if (meta.fieldStatus === "Required missing") stats.requiredMissing++;
-            if (meta.fieldStatus === "Proposed" && !meta.isBlockedAction) stats.approvedWrite++;
+            if (meta.fieldStatus === "Proposed" && !meta.isBlockedAction && !HIDDEN_CONTEXT_FIELDS.includes(k)) stats.approvedWrite++;
         });
     });
 
@@ -890,7 +900,7 @@ export function OperationsMatrixTab({ products }) {
       const statusObj = getSystemStatus();
 
       const longTextFields = [
-          "custom.generated_description", "custom.origin_story"
+          "custom.generated_description"
       ];
 
       const noteFields = [
@@ -917,7 +927,14 @@ export function OperationsMatrixTab({ products }) {
 
       SECTIONS.forEach(sec => {
           sec.keys.forEach(key => {
+              // Ensure we maintain the 45 total count, even for hidden keys
               summary["totalObservedFields"]++;
+              
+              if (HIDDEN_CONTEXT_FIELDS.includes(key)) {
+                  // Bypass evaluation metrics entirely for hidden context fields to prevent skewing
+                  return;
+              }
+
               const meta = getFieldMetadata(key, data);
               
               const isLong = longTextFields.includes(key);
@@ -1077,6 +1094,9 @@ export function OperationsMatrixTab({ products }) {
     if (!data) return null;
 
     const filteredKeys = section.keys.filter(k => {
+      // Never render hidden context fields
+      if (HIDDEN_CONTEXT_FIELDS.includes(k)) return false;
+      
       if (activeFilter === "All") return true;
       const meta = getFieldMetadata(k, data);
       if (activeFilter === "Blank" && (meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing")) return true;

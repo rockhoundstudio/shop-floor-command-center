@@ -469,7 +469,7 @@ function buildTab3VisionPrompt({ pagesMenu, collectionsMenu, stoneFamily, derive
   VALID PAGES IN STORE: ${pagesMenu || "No live pages"}
   VALID COLLECTIONS: ${collectionsMenu || "No live collections"}
 
-Return ONLY a JSON object. OMIT any keys if you cannot determine the value (do not send null or empty strings). DO NOT include "jewelry_type".
+Return ONLY a JSON object. OMIT any keys if you cannot determine the value (do not send null or empty strings). DO NOT include "jewelry_type" or "origin_story".
 
 Potential JSON Keys:
 - piece_name: The name of the piece.
@@ -679,6 +679,7 @@ export const action = async ({ request }) => {
         const parsedVision = JSON.parse(cleanJson.slice(cleanJson.indexOf("{"), cleanJson.lastIndexOf("}") + 1));
         
         delete parsedVision.jewelry_type; // Explicitly ensure this is scrubbed
+        delete parsedVision.origin_story; // CRITICAL: Prevent AI hallucination from overwriting the raw context
 
         const payload = sanitizeObject({
           pieceId,
@@ -710,7 +711,37 @@ export const action = async ({ request }) => {
 
     if (intent === "generateDescription") {
       const sharedFields = JSON.parse(body.get("sharedFields") || "{}");
-      const promptText = `Write a description for Rockhound Studio. Focus on: ${sharedFields.stone_family}.`;
+      const pieceDataStr = body.get("pieceData");
+      let promptText = "";
+
+      if (pieceDataStr) {
+        // Tab 3 / Matrix Pipeline Flow
+        try {
+          const pieceData = JSON.parse(pieceDataStr);
+          const derivedFamily = sharedFields.stone_family || pieceData.stone_family || "";
+          const originSegment = sharedFields.origin_location || pieceData.origin_location || "";
+          const extractedStory = pieceData.origin_story || "";
+          const fullCollectionTitle = pieceData.collection_name || "";
+          const targetUrlPath = pieceData.origin_handle ? `/pages/${pieceData.origin_handle}` : "";
+          const collectionUrlPath = pieceData.collection_location ? `/collections/${pieceData.collection_location}` : "";
+          
+          promptText = buildDescriptionPrompt(
+            derivedFamily,
+            originSegment,
+            extractedStory,
+            fullCollectionTitle,
+            pieceData,
+            targetUrlPath,
+            collectionUrlPath
+          ) + "\n\nCRITICAL RULE: The generated product description may contain a short origin hook and link to the origin page. Do not duplicate the full origin story in the description.";
+        } catch (e) {
+          promptText = `Write a description for Rockhound Studio. Focus on: ${sharedFields.stone_family}.`;
+        }
+      } else {
+        // Shared/Legacy Fallback Flow
+        promptText = `Write a description for Rockhound Studio. Focus on: ${sharedFields.stone_family}.`;
+      }
+
       const geminiRes = await fetchWithRetry("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ contents: [{ parts: [{ text: promptText }] }], generationConfig: { responseMimeType: "application/json", temperature: 0.2 } })
@@ -718,9 +749,23 @@ export const action = async ({ request }) => {
 
       if (geminiRes.ok) {
         const data = await geminiRes.json();
-        let cleanJson = (data.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
-        const parsed = JSON.parse(cleanJson.slice(cleanJson.indexOf("{"), cleanJson.lastIndexOf("}") + 1));
-        return Response.json({ success: true, intent, generated_description: formatDyslexiaText(parsed.generated_description) });
+        let rawText = (data.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
+        
+        let generatedDescription = "";
+        if (pieceDataStr) {
+            // Tab 3 Flow outputs raw HTML — strip markdown codeblocks if Gemini added them
+            generatedDescription = rawText.replace(/^```html\n?/, "").replace(/\n?```$/, "").trim();
+        } else {
+            // Legacy flow expects JSON
+            try {
+                const parsed = JSON.parse(rawText.slice(rawText.indexOf("{"), rawText.lastIndexOf("}") + 1));
+                generatedDescription = parsed.generated_description;
+            } catch (e) {
+                generatedDescription = rawText;
+            }
+        }
+
+        return Response.json({ success: true, intent, generated_description: formatDyslexiaText(generatedDescription) });
       }
       return Response.json({ success: false, intent, error: "Description failed" });
     }
