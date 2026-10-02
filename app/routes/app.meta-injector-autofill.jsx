@@ -464,36 +464,60 @@ WARNING: Extract ONLY the 1-2 sentence narrative matching "${stoneFamily}".`;
 // PROMPT 4: TAB 3 VISION RESCAN (NO JEWELRY_TYPE)
 // ==========================================
 function buildTab3VisionPrompt({ pagesMenu, collectionsMenu, stoneFamily, derivedShape, originStory, originSegment, targetUrlPath, fullCollectionTitle, collectionUrlPath, currentData }) {
+  const currentDataStr = Object.entries(currentData || {})
+    .filter(([k, v]) => v !== undefined && v !== null && v !== "")
+    .map(([k, v]) => `- ${k}: ${v}`)
+    .join("\n");
+
   return `You are a lapidary artist for Rockhound Studio. Analyze this photo and return a JSON object.
 - LIVE STORE DIRECTORY:
   VALID PAGES IN STORE: ${pagesMenu || "No live pages"}
   VALID COLLECTIONS: ${collectionsMenu || "No live collections"}
 
 CURRENT KNOWN DATA (Preserve these exactly unless an explicit operator correction contradicts them):
-- Cut and Shape: ${currentData?.cut_and_shape || "Unknown"}
-- Flaws & Character: ${currentData?.honest_flaws_and_character || "Unknown"}
-- Dimensions: ${currentData?.dimensions_mm || "Unknown"}
-- Weight: ${currentData?.weight_grams || "Unknown"}
+${currentDataStr || "- No explicit data provided."}
 
 CRITICAL RULES FOR TAB 3:
 1. Explicit operator-provided corrections take priority over image inference and stale product data.
 2. If no explicit correction is supplied, preserve a nonblank current value exactly. Do not replace a specific value with a broader or less precise one (e.g., keep "Freeform Teardrop Cabochon", do not degrade to "Freeform Teardrop").
 3. Never generate or propose a price. Price is manual.
-4. Do not infer chain material, cord, bail, wire wrapping, or readiness from an image when the source data doesn't explicitly establish it. Leave uncertain values unresolved using the existing omit convention.
+4. Do not infer jewelry, chain material, cord, bail, wire wrapping, or readiness from an image when the source data doesn't explicitly establish it. Leave uncertain values unresolved using the existing omit convention.
 5. Treat origin_story as hidden, read-only context from the existing origin page. Do not generate or save an origin story. Use the page only for supported metadata.
-6. Omit missing bench or artist notes. Never write "None" as filler.
+6. Omit missing bench or artist notes. Never write "None" or "Unknown" as filler.
 7. Do not invent details. Leave unknown fields entirely unset.
 
-Return ONLY a JSON object. OMIT any keys if you cannot determine the value (do not send null or empty strings). DO NOT include "jewelry_type", "origin_story", or "price".
+Return ONLY a JSON object. OMIT any keys if you cannot determine the value supported by evidence (do not send null or empty strings). DO NOT include "jewelry_type", "origin_story", "price", "weight_grams", or "shipping_weight_oz".
 
-Potential JSON Keys:
+Potential JSON Keys to evaluate and propose if blank:
+- shopify_title: Title.
 - piece_name: The name of the piece.
+- is_ooak: "Yes"
+- product_format: Describe the evidenced physical form (e.g., Cabochon, Pendant, Specimen, Loose Stone). Do not guess when unclear.
+- craftsmanship: Include only documented work or techniques. Do not use generic filler unless the source supports it.
+- poetic_hook: Write one short, plain, factual hook based on the origin page (under 160 characters). Do not recreate the origin story.
+- seo_title: Create a clear search title using supported product, stone, and origin facts (max 70 chars).
+- dimensions_mm: Leave unchanged if provided.
 - cut_and_shape: Respect freeform cuts.
 - surface_finish: High Polish, Matte, Satin, Natural/Raw, Tumbled.
 - primary_color
 - color_pattern
 - honest_flaws_and_character: Plainly state any pits, vugs, healed fractures, or asymmetry. Honesty over perfection.
 - bench_notes: Bob's direct observations from the wheel.
+- mohs_hardness
+- specific_gravity
+- crystal_system
+- fracture_pattern
+- cleavage
+- luster
+- diaphaneity
+- mineral_class
+- geological_era
+- rock_formation
+- stone_family: Derived family.
+- origin_location: Geographic name ONLY based on "${originSegment}".
+- origin_handle: Resolved handle.
+- collection_name: Resolved collection.
+- collection_location: Resolved collection location.
 - primary_use: e.g., "Pendant (Finished Jewelry)", "Ring / Bezel Setting", "Cabochon", "Loose Stone".
 - primary_medium: Must match stone mineral name.
 - secondary_medium: The setting or finding.
@@ -501,17 +525,10 @@ Potential JSON Keys:
 - bail_included: e.g., "Silver Plated Pinch Bail", "None".
 - chain_material: e.g., "Silver Plated Snake Chain", "None".
 - jewelry_finding_type: MUST BE "None" if bail_included is not "None".
-- origin_location: Geographic name ONLY based on "${originSegment}".
 - alt_text: Descriptive alt text (max 125 chars). Use mineral name. No visual guessing.
 - google_product_category: Taxonomy path.
 - authenticity: Authentic, Lab-Created.
 - rarity: Common, Uncommon, Rare, One-of-a-Kind.
-
-NEW TAB 3 STAGED PROPOSAL RULES:
-- product_format: Describe the evidenced physical form (e.g., Cabochon, Pendant, Specimen, Loose Stone). Do not guess when unclear.
-- craftsmanship: Include only documented work or techniques. Do not use generic filler such as "Handcrafted by Bob and Janyce" unless the source supports it.
-- poetic_hook: Write one short, plain, factual hook based on the origin page (under 160 characters). Do not recreate the origin story.
-- seo_title: Create a clear search title using supported product, stone, and origin facts (max 70 chars).
 
 FULL ORIGIN STORY (CRITICAL LORE FIREWALL - READ CAREFULLY):
 ${originStory}
@@ -677,12 +694,13 @@ export const action = async ({ request }) => {
         imageBase64 = Buffer.from(await imageRes.arrayBuffer()).toString("base64");
       }
 
-      const currentData = {
-        cut_and_shape: body.get("cut_and_shape") || body.get("stone_shape") || "",
-        honest_flaws_and_character: body.get("honest_flaws_and_character") || "",
-        weight_grams: body.get("weight_grams") || "",
-        dimensions_mm: body.get("dimensions_mm") || ""
-      };
+      // Collect all passed current values to protect them during Gemini generation
+      const currentData = {};
+      for (const [key, value] of body.entries()) {
+        if (value && typeof value === 'string' && value.trim() !== "" && !["intent", "pieceId", "productId", "productTitle", "imageBase64", "imageMimeType", "imageUrl"].includes(key)) {
+            currentData[key] = value.trim();
+        }
+      }
 
       const promptText = buildTab3VisionPrompt({
         pagesMenu: pagesList.map(p => `- Title: "${p.title}"`).join("\n"),
@@ -706,6 +724,8 @@ export const action = async ({ request }) => {
         delete parsedVision.jewelry_type; // Explicitly ensure this is scrubbed
         delete parsedVision.origin_story; // CRITICAL: Prevent AI hallucination from overwriting the raw context
         delete parsedVision.price; // CRITICAL: Never propose a price
+        delete parsedVision.weight_grams;
+        delete parsedVision.shipping_weight_oz;
 
         const payload = sanitizeObject({
           pieceId,
