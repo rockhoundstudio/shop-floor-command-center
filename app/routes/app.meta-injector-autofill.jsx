@@ -480,20 +480,19 @@ ${currentDataStr || "- No explicit data provided."}
 CRITICAL RULES FOR TAB 3:
 1. Explicit operator-provided corrections take priority over image inference and stale product data.
 2. If no explicit correction is supplied, preserve a nonblank current value exactly. Do not replace a specific value with a broader or less precise one (e.g., keep "Freeform Teardrop Cabochon", do not degrade to "Freeform Teardrop").
-3. Never generate or propose a price. Price is manual.
+3. Never generate or propose a shopify_title or price. These are manual.
 4. Do not infer jewelry, chain material, cord, bail, wire wrapping, or readiness from an image when the source data doesn't explicitly establish it. Leave uncertain values unresolved using the existing omit convention.
 5. Treat origin_story as hidden, read-only context from the existing origin page. Do not generate or save an origin story. Use the page only for supported metadata.
 6. Omit missing bench or artist notes. Never write "None" or "Unknown" as filler.
 7. Do not invent details. Leave unknown fields entirely unset.
 
-Return ONLY a JSON object. OMIT any keys if you cannot determine the value supported by evidence (do not send null or empty strings). DO NOT include "jewelry_type", "origin_story", "price", "weight_grams", or "shipping_weight_oz".
+Return ONLY a JSON object. OMIT any keys if you cannot determine the value supported by evidence (do not send null or empty strings). DO NOT include "jewelry_type", "origin_story", "price", "shopify_title", "weight_grams", or "shipping_weight_oz".
 
 Potential JSON Keys to evaluate and propose if blank:
-- shopify_title: Title.
 - piece_name: The name of the piece.
 - is_ooak: "Yes"
 - product_format: Describe the evidenced physical form (e.g., Cabochon, Pendant, Specimen, Loose Stone). Do not guess when unclear.
-- craftsmanship: Include only documented work or techniques. Do not use generic filler unless the source supports it.
+- craftsmanship: When the supplied product facts identify the work as handcrafted by Bob & Janyce, propose exactly "Handcrafted". Do not describe it as "Hand-polished cabochon." Do not add tool or polishing-method wording. If the supplied facts do not support "Handcrafted", omit this proposal.
 - poetic_hook: Write one short, plain, factual hook based on the origin page (under 160 characters). Do not recreate the origin story.
 - seo_title: Create a clear search title using supported product, stone, and origin facts (max 70 chars).
 - dimensions_mm: Leave unchanged if provided.
@@ -724,6 +723,7 @@ export const action = async ({ request }) => {
         delete parsedVision.jewelry_type; // Explicitly ensure this is scrubbed
         delete parsedVision.origin_story; // CRITICAL: Prevent AI hallucination from overwriting the raw context
         delete parsedVision.price; // CRITICAL: Never propose a price
+        delete parsedVision.shopify_title; // CRITICAL: Never propose a shopify_title
         delete parsedVision.weight_grams;
         delete parsedVision.shipping_weight_oz;
 
