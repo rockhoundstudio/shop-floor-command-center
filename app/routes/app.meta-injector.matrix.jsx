@@ -60,8 +60,8 @@ const SECTIONS = [
       "custom.origin_location",
       "custom.origin_handle",
       "custom.collection_name",
-      "custom.collection_location"
-      // custom.origin_story is hidden from UI/Review but remains part of the 45-pin telemetry pipeline
+      "custom.collection_location",
+      "custom.origin_story" // Hidden context field, maintained for 45-pin count
     ]
   },
   {
@@ -895,130 +895,136 @@ export function OperationsMatrixTab({ products }) {
       }
 
       const data = manifestData[selectedBenchId];
-      const productState = productStates[selectedBenchId];
       const product = safeProducts.find(p => p.id === selectedBenchId) || {};
       const statusObj = getSystemStatus();
+      const diag = data.diagnostics || {};
 
-      const longTextFields = [
-          "custom.generated_description"
-      ];
-
-      const noteFields = [
-          "custom.bench_notes"
-      ];
-
-      let summary = {
-          "standardFields": 45,
-          "observedIntegrationFields": 0,
-          "totalObservedFields": 0,
-          "loaded": 0,
-          "blank": 0,
-          "proposed": 0,
-          "conflicts": 0,
-          "optional blanks": 0,
-          "required missing": 0,
-          "integration-owned": 0,
-          "over-limit": 0,
-          "fields updated": data.fieldsUpdated !== undefined ? data.fieldsUpdated : 0,
-          "read-back status": statusObj.readBackStatus
+      let stats = {
+          loaded: 0,
+          blank: 0,
+          proposed: 0,
+          blocked: 0,
+          protected: 0,
+          conflicting: 0,
+          updated: data.fieldsUpdated !== undefined ? data.fieldsUpdated : "Not recorded",
+          errored: "Not recorded"
       };
 
-      const issuesAndNotes = [];
+      const pinRows = [];
+      let hasBlockersForWrite = false;
 
+      // Process all 45 pins in SECTIONS
       SECTIONS.forEach(sec => {
           sec.keys.forEach(key => {
-              // Ensure we maintain the 45 total count, even for hidden keys
-              summary["totalObservedFields"]++;
-              
-              if (HIDDEN_CONTEXT_FIELDS.includes(key)) {
-                  // Bypass evaluation metrics entirely for hidden context fields to prevent skewing
-                  return;
-              }
-
               const meta = getFieldMetadata(key, data);
               
-              const isLong = longTextFields.includes(key);
-              const isNote = noteFields.includes(key);
-              
-              const isIntegrationOwned = INTEGRATION_PREFIXES.some(prefix => key.startsWith(prefix));
+              if (meta.currentExists) stats.loaded++;
+              if (meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing") stats.blank++;
+              if (meta.fieldStatus === "Proposed") stats.proposed++;
+              if (meta.isBlockedAction && !HIDDEN_CONTEXT_FIELDS.includes(key)) stats.blocked++;
+              if (PROTECTED_FIELDS.includes(key)) stats.protected++;
+              if (meta.fieldStatus === "Conflict" || meta.fieldStatus === "Degrade") stats.conflicting++;
 
-              if (meta.reasons.includes("Over limit")) summary["over-limit"]++;
-              if (isIntegrationOwned) {
-                  summary["observedIntegrationFields"]++;
-                  summary["integration-owned"]++;
+              // Determine if there are blockers preventing a write
+              if (["Conflict", "Degrade", "Blocked", "Unverified proposal", "Required missing"].includes(meta.fieldStatus) && !HIDDEN_CONTEXT_FIELDS.includes(key)) {
+                  hasBlockersForWrite = true;
               }
 
-              if (meta.currentExists) summary["loaded"]++;
-              
-              if (meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing") {
-                  summary["blank"]++;
-                  if (meta.fieldStatus === "Required missing") summary["required missing"]++;
-                  else summary["optional blanks"]++;
-              }
-              
-              if (meta.fieldStatus === "Proposed") summary["proposed"]++;
-              if (meta.fieldStatus === "Conflict" || meta.fieldStatus === "Degrade") summary["conflicts"]++;
-
-              const isIssue = meta.reasons.length > 0 || meta.isBlockedAction || meta.fieldStatus === "Proposed";
-              const isPresentNote = isNote && (meta.currentExists || meta.proposalExists);
-
-              if (isIssue || isPresentNote) {
-                  const record = {
-                      "namespace/key": key,
-                      "current value present": meta.currentExists,
-                      "proposed value present": meta.proposalExists,
-                      "current character count": meta.currentVal.length,
-                      "proposed character count": meta.isProposed ? meta.propVal.length : 0,
-                      "status": meta.fieldStatus,
-                      "proposal status": meta.proposalStatus,
-                      "source": meta.source,
-                      "stage": meta.stage
+              // Format row
+              if (key === "custom.origin_story") {
+                  const sourceAvailable = (meta.currentExists || meta.proposalExists) ? "Yes" : "No";
+                  pinRows.push(`- ${key}: [Hidden Context] Source Available: ${sourceAvailable}`);
+              } else {
+                  const cleanText = (str) => {
+                      if (!str) return "";
+                      const cleaned = String(str).replace(/\n/g, " ").trim();
+                      return cleaned.length > 40 ? cleaned.substring(0, 37) + "..." : cleaned;
                   };
-
-                  if (meta.reasons.length > 0) record.reason = meta.reasons.join(", ");
-                  if (meta.reasons.includes("Over limit")) record["over-limit"] = true;
-
-                  if (!isLong) {
-                      const getPreview = (text) => text.length > 255 ? text.substring(0, 252) + "..." : text;
-                      record["current value"] = isNote ? getPreview(meta.currentVal) : meta.currentVal;
-                      if (meta.isProposed) {
-                          record["proposed value"] = isNote ? getPreview(meta.propVal) : meta.propVal;
-                      }
+                  
+                  const curr = cleanText(meta.currentVal);
+                  const prop = cleanText(meta.propVal);
+                  let row = `- ${key}: Current: [${curr}], Proposed: [${prop}], Status: [${meta.fieldStatus}]`;
+                  if (meta.reasons.length > 0) {
+                      row += `, Reason: [${meta.reasons.join(", ")}]`;
                   }
-
-                  issuesAndNotes.push(record);
+                  pinRows.push(row);
               }
           });
       });
 
-      const payload = {
-          product: {
-              "product GID": selectedBenchId,
-              "product title": product.title || "Unknown",
-              "selected bench ID": selectedBenchId,
-              "scan status": productState?.status || "Unknown"
-          },
-          pipeline: {
-              "Shopify read status": statusObj.shopifyReadStatus,
-              "Gemini status": statusObj.geminiStatus,
-              "Vision status": statusObj.visionStatus,
-              "Geo Library status": statusObj.geoLibraryStatus,
-              "current stage": statusObj.currentStage,
-              "final stage": statusObj.finalStageDisplay,
-              "fetcher state": statusObj.fetcherStateDisplay,
-              "loading state": statusObj.loadingStateDisplay,
-              "error message": statusObj.errorMessageDisplay
-          },
-          summary,
-          issuesAndNotes
-      };
+      // Generated Description (Separate from 45 pins)
+      const genDescVal = data.repairPlan?.["custom.generated_description"] || data.currentMetafields?.["custom.generated_description"] || "";
+      const descExists = !!genDescVal;
+      const descPreview = descExists ? String(genDescVal).substring(0, 80).replace(/\n/g, " ") + "..." : "None";
 
-      navigator.clipboard.writeText(JSON.stringify(payload, null, 2))
+      // AI Stages Evaluation based on actual telemetry
+      const titleParseStatus = (diag.stage === "titleParse" || diag.stage === "tab3FullRescan" || diag.stage === "generateDescription" || diag.stage === "batchAuditItem") ? (diag.gemini || "Unknown") : "Not called";
+      const visionStatus = diag.vision || "Not called";
+      const geoStatus = diag.geoLibrary || "Not called";
+      const descStatus = descExists && data.repairPlan?.["custom.generated_description"] ? "Success" : (diag.stage === "generateDescription" ? (diag.gemini || "Unknown") : "Not called");
+
+      // Shopify Write/Read Status
+      const shopifyRead = statusObj.shopifyReadStatus;
+      const shopifyWrite = data.fieldsUpdated !== undefined ? (data.fieldsUpdated > 0 ? "Success" : "Success (0 changes)") : "Not called";
+      const readBack = statusObj.readBackStatus;
+
+      // Recommendations Logic
+      const recommendations = [];
+      if (hasBlockersForWrite) {
+          recommendations.push("1. DO NOT WRITE. Review and manually resolve blocked, conflicting, or unverified pins listed above.");
+          recommendations.push("2. Verify Shopify Metafield definitions for any 'Unverified proposal' pins before approving.");
+      } else if (stats.proposed > 0 && shopifyWrite === "Not called") {
+          recommendations.push("1. Data is staged and validated. Proceed with 'Execute Single Repair'.");
+      } else if (shopifyWrite.includes("Success")) {
+          recommendations.push("1. Write successful. Verify live changes in Shopify admin if necessary.");
+      } else {
+          recommendations.push("1. Load data or generate a repair plan to begin.");
+      }
+
+      const report = `=== ROCKHOUND STUDIO TELEMETRY REPORT ===
+Product: ${product.title || "Unknown"}
+GID: ${selectedBenchId}
+Run Time: ${new Date().toISOString()}
+
+--- PIPELINE STATUS ---
+[Shopify IO]
+Read: ${shopifyRead}
+Write: ${shopifyWrite}
+Read-Back: ${readBack}
+
+[AI Stages]
+Title Parse: ${titleParseStatus}
+Vision Scan: ${visionStatus}
+Geo Library: ${geoStatus}
+Story Gen: ${descStatus}
+
+--- 45-PIN SUMMARY ---
+Loaded: ${stats.loaded}
+Blank: ${stats.blank}
+Proposed: ${stats.proposed}
+Blocked: ${stats.blocked}
+Protected: ${stats.protected}
+Conflicting: ${stats.conflicting}
+Updated: ${stats.updated}
+Errored: ${stats.errored}
+
+--- GENERATED DESCRIPTION ---
+Status: ${descStatus}
+Preview: ${descPreview}
+
+--- PIN DETAILS ---
+${pinRows.join("\n")}
+
+--- RECOMMENDATIONS ---
+${recommendations.join("\n")}
+=========================================`;
+
+      navigator.clipboard.writeText(report)
           .then(() => {
               if (window.shopify && window.shopify.toast) {
-                  window.shopify.toast.show("Telemetry copied");
+                  window.shopify.toast.show("Telemetry report copied");
               } else {
-                  setSafetyMessage("Telemetry copied");
+                  setSafetyMessage("Telemetry report copied to clipboard.");
               }
           })
           .catch(err => {
