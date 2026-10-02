@@ -463,13 +463,28 @@ WARNING: Extract ONLY the 1-2 sentence narrative matching "${stoneFamily}".`;
 // ==========================================
 // PROMPT 4: TAB 3 VISION RESCAN (NO JEWELRY_TYPE)
 // ==========================================
-function buildTab3VisionPrompt({ pagesMenu, collectionsMenu, stoneFamily, derivedShape, originStory, originSegment, targetUrlPath, fullCollectionTitle, collectionUrlPath }) {
+function buildTab3VisionPrompt({ pagesMenu, collectionsMenu, stoneFamily, derivedShape, originStory, originSegment, targetUrlPath, fullCollectionTitle, collectionUrlPath, currentData }) {
   return `You are a lapidary artist for Rockhound Studio. Analyze this photo and return a JSON object.
 - LIVE STORE DIRECTORY:
   VALID PAGES IN STORE: ${pagesMenu || "No live pages"}
   VALID COLLECTIONS: ${collectionsMenu || "No live collections"}
 
-Return ONLY a JSON object. OMIT any keys if you cannot determine the value (do not send null or empty strings). DO NOT include "jewelry_type" or "origin_story".
+CURRENT KNOWN DATA (Preserve these exactly unless an explicit operator correction contradicts them):
+- Cut and Shape: ${currentData?.cut_and_shape || "Unknown"}
+- Flaws & Character: ${currentData?.honest_flaws_and_character || "Unknown"}
+- Dimensions: ${currentData?.dimensions_mm || "Unknown"}
+- Weight: ${currentData?.weight_grams || "Unknown"}
+
+CRITICAL RULES FOR TAB 3:
+1. Explicit operator-provided corrections take priority over image inference and stale product data.
+2. If no explicit correction is supplied, preserve a nonblank current value exactly. Do not replace a specific value with a broader or less precise one (e.g., keep "Freeform Teardrop Cabochon", do not degrade to "Freeform Teardrop").
+3. Never generate or propose a price. Price is manual.
+4. Do not infer chain material, cord, bail, wire wrapping, or readiness from an image when the source data doesn't explicitly establish it. Leave uncertain values unresolved using the existing omit convention.
+5. Treat origin_story as hidden, read-only context from the existing origin page. Do not generate or save an origin story. Use the page only for supported metadata.
+6. Omit missing bench or artist notes. Never write "None" as filler.
+7. Do not invent details. Leave unknown fields entirely unset.
+
+Return ONLY a JSON object. OMIT any keys if you cannot determine the value (do not send null or empty strings). DO NOT include "jewelry_type", "origin_story", or "price".
 
 Potential JSON Keys:
 - piece_name: The name of the piece.
@@ -660,12 +675,20 @@ export const action = async ({ request }) => {
         imageBase64 = Buffer.from(await imageRes.arrayBuffer()).toString("base64");
       }
 
+      const currentData = {
+        cut_and_shape: body.get("cut_and_shape") || body.get("stone_shape") || "",
+        honest_flaws_and_character: body.get("honest_flaws_and_character") || "",
+        weight_grams: body.get("weight_grams") || "",
+        dimensions_mm: body.get("dimensions_mm") || ""
+      };
+
       const promptText = buildTab3VisionPrompt({
         pagesMenu: pagesList.map(p => `- Title: "${p.title}"`).join("\n"),
         collectionsMenu: collectionsList.map(c => `- Title: "${c.title}"`).join("\n"),
         stoneFamily: derivedFamily, derivedShape, originStory: extractedStory,
         originSegment, targetUrlPath: defaultOriginSlug ? `/pages/${defaultOriginSlug}` : "",
-        fullCollectionTitle: defaultCollection.name, collectionUrlPath: defaultCollection.slug ? `/collections/${defaultCollection.slug}` : ""
+        fullCollectionTitle: defaultCollection.name, collectionUrlPath: defaultCollection.slug ? `/collections/${defaultCollection.slug}` : "",
+        currentData
       });
 
       const geminiRes = await fetchWithRetry("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY, {
@@ -680,6 +703,7 @@ export const action = async ({ request }) => {
         
         delete parsedVision.jewelry_type; // Explicitly ensure this is scrubbed
         delete parsedVision.origin_story; // CRITICAL: Prevent AI hallucination from overwriting the raw context
+        delete parsedVision.price; // CRITICAL: Never propose a price
 
         const payload = sanitizeObject({
           pieceId,
@@ -733,7 +757,7 @@ export const action = async ({ request }) => {
             pieceData,
             targetUrlPath,
             collectionUrlPath
-          ) + "\n\nCRITICAL RULE: The generated product description may contain a short origin hook and link to the origin page. Do not duplicate the full origin story in the description.";
+          ) + "\n\nCRITICAL RULE: The generated product description may contain a short origin hook and link to the origin page. Do not duplicate the full origin story in the description. Omit missing bench or artist notes. Never write 'None' as filler in the description.";
         } catch (e) {
           promptText = `Write a description for Rockhound Studio. Focus on: ${sharedFields.stone_family}.`;
         }
