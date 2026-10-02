@@ -494,7 +494,6 @@ Potential JSON Keys:
 - color_pattern
 - honest_flaws_and_character: Plainly state any pits, vugs, healed fractures, or asymmetry. Honesty over perfection.
 - bench_notes: Bob's direct observations from the wheel.
-- product_format: Cabochon, Pendant, Necklace, Specimen, Loose Stone.
 - primary_use: e.g., "Pendant (Finished Jewelry)", "Ring / Bezel Setting", "Cabochon", "Loose Stone".
 - primary_medium: Must match stone mineral name.
 - secondary_medium: The setting or finding.
@@ -503,13 +502,16 @@ Potential JSON Keys:
 - chain_material: e.g., "Silver Plated Snake Chain", "None".
 - jewelry_finding_type: MUST BE "None" if bail_included is not "None".
 - origin_location: Geographic name ONLY based on "${originSegment}".
-- craftsmanship: Always use "Handcrafted by Bob and Janyce" if it's a finished piece.
-- poetic_hook: Poetic, spare, story-driven meta description. Under 160 characters. Like the stone decided, not the maker. Never clinical.
-- seo_title: Max 60 chars. Stone family, origin, OOAK Lapidary Art.
 - alt_text: Descriptive alt text (max 125 chars). Use mineral name. No visual guessing.
 - google_product_category: Taxonomy path.
 - authenticity: Authentic, Lab-Created.
 - rarity: Common, Uncommon, Rare, One-of-a-Kind.
+
+NEW TAB 3 STAGED PROPOSAL RULES:
+- product_format: Describe the evidenced physical form (e.g., Cabochon, Pendant, Specimen, Loose Stone). Do not guess when unclear.
+- craftsmanship: Include only documented work or techniques. Do not use generic filler such as "Handcrafted by Bob and Janyce" unless the source supports it.
+- poetic_hook: Write one short, plain, factual hook based on the origin page (under 160 characters). Do not recreate the origin story.
+- seo_title: Create a clear search title using supported product, stone, and origin facts (max 70 chars).
 
 FULL ORIGIN STORY (CRITICAL LORE FIREWALL - READ CAREFULLY):
 ${originStory}
