@@ -320,7 +320,7 @@ RETURN THESE EXACT JSON KEYS ONLY. DO NOT GENERATE A PRODUCT DESCRIPTION.
 - chain_material: Identify the visible chain or cord. INVENTORY OPTIONS: "Silver Plated Snake Chain", "Gold Plated Snake Chain". Do not mislabel a visible cord as a snake chain (use "Black Cord", etc.). Do not infer plating from color alone. Distinguish clearly absent hardware ("None") from hardware out of view. Do not silently leave blank if clearly supported by image.
 - alt_text: Descriptive alt text (max 125 chars). Use mineral name. No visual guessing.
 - found_object: "Yes" if field-collected, "No" if shopped/imported.
-- seo_title: Keyword-rich SEO title (max 60 chars) optimized for Google.
+- seo_title: Max 70 chars. Natural, descriptive wording based on supported facts: Piece name, stone description/family, finished product format, craftsmanship, and clean origin (e.g., use "Yakima Canyon" not "Yakima River Canyon"). Example: "The Catalyst | Handcrafted Green Jasper Pendant from Yakima Canyon". Include "Handcrafted" only when supported. Do not use generic "OOAK Lapidary Art" if specific details are available. No prices, quotes, HTML, or keyword stuffing. Shorten intelligently if necessary.
 
 DO NOT output "generated_description". Your job is purely factual physical extraction.`;
 }
@@ -444,7 +444,7 @@ function buildMasterVisionPrompt({ pagesMenu, collectionsMenu, stoneFamily, deri
 - alt_text: Descriptive, max 125 chars.
 - found_object: Yes/No
 - chain_material: Identify the visible chain or cord. INVENTORY OPTIONS: "Silver Plated Snake Chain", "Gold Plated Snake Chain". Do not mislabel a visible cord as a snake chain (use "Black Cord", etc.). Do not infer plating from color alone. Distinguish clearly absent hardware ("None") from hardware out of view. Do not silently leave blank if clearly supported by image.
-- seo_title: Max 60 chars. Stone family, origin, OOAK Lapidary Art.
+- seo_title: Max 70 chars. Natural, descriptive wording based on supported facts: Piece name, stone description/family, finished product format, craftsmanship, and clean origin (e.g., use "Yakima Canyon" not "Yakima River Canyon"). Example: "The Catalyst | Handcrafted Green Jasper Pendant from Yakima Canyon". Include "Handcrafted" only when supported. Do not use generic "OOAK Lapidary Art" if specific details are available. No prices, quotes, HTML, or keyword stuffing. Shorten intelligently if necessary.
 - generated_description: Write in Bob's voice (plain, honest, past tense). No salesy language. Short sentences. 7-BLOCK FORMAT:
   1. Stone Description: Honest flaws, finish, flash.
   2. Origin Hook: 1-2 sentences from ORIGIN STORY.
@@ -495,7 +495,7 @@ Potential JSON Keys to evaluate and propose if blank:
 - product_format: Describe the evidenced physical form (e.g., Cabochon, Pendant, Specimen, Loose Stone). Do not guess when unclear. If existing data indicates a Pendant/Finished Jewelry, use that over the stone shape.
 - craftsmanship: When the supplied product facts identify the work as handcrafted by Bob & Janyce, propose exactly "Handcrafted". Do not describe it as "Hand-polished cabochon." Do not add tool or polishing-method wording. If the supplied facts do not support "Handcrafted", omit this proposal.
 - poetic_hook: Write one short, plain, factual hook based on the origin page (under 160 characters). Do not recreate the origin story.
-- seo_title: Create a clear search title using supported product, stone, and origin facts (max 70 chars).
+- seo_title: Max 70 chars. Natural, descriptive wording based on supported facts: Piece name, stone description/family, finished product format, craftsmanship, and clean origin (e.g., use "Yakima Canyon" not "Yakima River Canyon"). Example: "The Catalyst | Handcrafted Green Jasper Pendant from Yakima Canyon". Include "Handcrafted" only when supported. Do not use generic "OOAK Lapidary Art" if specific details are available. No prices, quotes, HTML, or keyword stuffing. Shorten intelligently if necessary.
 - dimensions_mm: Leave unchanged if provided.
 - cut_and_shape: Respect freeform cuts. Keep exactly as provided in current data if present.
 - surface_finish: High Polish, Matte, Satin, Natural/Raw, Tumbled.
