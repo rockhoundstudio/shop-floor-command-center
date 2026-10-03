@@ -45,7 +45,8 @@ const MASTER_TYPE_MAP = {
   geological_era: "metaobject_reference", "geological-era": "metaobject_reference", rock_composition: "metaobject_reference",
   "rock-composition": "metaobject_reference", rock_formation: "metaobject_reference", "rock-formation": "metaobject_reference",
   chain_link_type: "metaobject_reference", "chain-link-type": "metaobject_reference", jewelry_finding_type: "metaobject_reference",
-  "jewelry-finding-type": "metaobject_reference"
+  "jewelry-finding-type": "metaobject_reference", product_format: "single_line_text_field", craftsmanship: "single_line_text_field",
+  poetic_hook: "single_line_text_field", google_product_category: "single_line_text_field"
 };
 
 const EXPLICIT_METAOBJECT_KEYS = [
@@ -66,7 +67,7 @@ function chunkArray(arr, size) {
 
 function normalizeMetafieldValue(key, value) {
   let val = String(value).replace(/^⚠️\s*/, "");
-  const booleanKeys = ["is_ooak", "found_object", "custom_product", "setting_ready", "bail_included", "treated"];
+  const booleanKeys = ["is_ooak", "found_object", "custom_product", "treated"]; // Removed hardware descriptors
   if (booleanKeys.includes(key)) {
     if (val.toLowerCase() === "true") val = "Yes";
     else if (val.toLowerCase() === "false") val = "No";
@@ -190,11 +191,49 @@ export const action = async ({ request }) => {
       const lookupData = await lookupResponse.json();
       const currentMetaList = lookupData?.data?.product?.metafields?.edges || [];
       const currentMetafields = {};
-      currentMetaList.forEach(e => { currentMetafields[`${e.node.namespace}.${e.node.key}`] = e.node.value; });
+      const currentMetafieldsTypes = {};
+      currentMetaList.forEach(e => { 
+        const fullKey = `${e.node.namespace}.${e.node.key}`;
+        currentMetafields[fullKey] = e.node.value;
+        currentMetafieldsTypes[fullKey] = e.node.type; 
+      });
+
+      // Fetch dynamic definitions for true types
+      let hasNextPage = true;
+      let cursor = null;
+      const defs = {};
+
+      try {
+          while (hasNextPage) {
+              const defQuery = `#graphql
+                query getDefs($cursor: String) {
+                  metafieldDefinitions(first: 250, ownerType: PRODUCT, after: $cursor) {
+                    pageInfo { hasNextPage endCursor }
+                    edges { node { namespace key type { name } } }
+                  }
+                }
+              `;
+              const defRes = await admin.graphql(defQuery, cursor ? { variables: { cursor } } : {});
+              const defJson = await defRes.json();
+              const defData = defJson?.data?.metafieldDefinitions;
+              
+              defData?.edges?.forEach(e => {
+                  const t = e.node.type;
+                  const fullKey = `${e.node.namespace}.${e.node.key}`;
+                  defs[fullKey] = (t && typeof t === 'object' && t.name) ? t.name : t;
+              });
+              
+              hasNextPage = defData?.pageInfo?.hasNextPage;
+              cursor = defData?.pageInfo?.endCursor;
+          }
+      } catch (e) {
+          console.error("Failed to load metafield definitions:", e);
+      }
 
       const proposedChanges = {};
       const setToShopify = [];
       const deleteFromShopify = [];
+      const blockedFields = {};
       
       Object.entries(repairPlan).forEach(([fullKey, val]) => {
         if (fullKey === "shopify_title" || fullKey === "price") return;
@@ -213,39 +252,63 @@ export const action = async ({ request }) => {
         // 🟢 BLOCKED KEYS UNTIL VERIFIED
         if (key === "jewelry_type") return;
 
-        const valStr = String(val !== null && val !== undefined ? val : "").trim();
         const currentVal = currentMetafields[fullKey] || null;
+        const valStr = String(val !== null && val !== undefined ? val : "").trim();
+        
+        // Blank strings must not implicitly delete. 
+        // Deletions must arrive via explicit instructions in legacyKeysToRemove.
+        if (valStr === "") return; 
 
-        if (valStr === "" || valStr.toLowerCase() === "none" || valStr.toLowerCase() === "n/a" || valStr.toLowerCase() === "null" || valStr.toLowerCase() === "undefined") {
-          if (currentVal !== null) {
-              deleteFromShopify.push({ ownerId: productGid, namespace: ns, key: key });
-              proposedChanges[fullKey] = { from: currentVal, to: "" };
+        // Resolve exact type from definition or stored type
+        let resolvedType = defs[fullKey] || currentMetafieldsTypes[fullKey];
+
+        if (defs[fullKey] && currentMetafieldsTypes[fullKey] && defs[fullKey] !== currentMetafieldsTypes[fullKey]) {
+            blockedFields[fullKey] = `Type conflict: Definition is ${defs[fullKey]} but stored is ${currentMetafieldsTypes[fullKey]}`;
+            return;
+        }
+        if (!resolvedType) {
+            blockedFields[fullKey] = "No type definition found";
+            return;
+        }
+
+        let resolvedValue = normalizeMetafieldValue(key, valStr);
+        if (key === "generated_description") resolvedValue = sanitizeDescription(resolvedValue);
+
+        if (resolvedType === "number_decimal" || resolvedType === "number_integer") {
+          const parsedNum = parseFloat(String(resolvedValue).replace(/[^0-9.-]/g, ""));
+          if (isNaN(parsedNum)) {
+             blockedFields[fullKey] = `Invalid numeric value: ${resolvedValue}`;
+             return;
+          }
+          resolvedValue = resolvedType === "number_integer" ? String(Math.round(parsedNum)) : String(parsedNum);
+        } else if (resolvedType === "list.single_line_text_field") {
+          try {
+             const parsed = JSON.parse(resolvedValue);
+             if (!Array.isArray(parsed)) throw new Error();
+             resolvedValue = JSON.stringify(parsed);
+          } catch {
+             if (!resolvedValue.startsWith("[")) resolvedValue = JSON.stringify([resolvedValue]);
+          }
+        } else if (resolvedType.includes("metaobject_reference")) {
+          if (!String(resolvedValue).startsWith("gid://") && !String(resolvedValue).includes('["gid://')) {
+             blockedFields[fullKey] = `Requires metaobject reference ID, got text: ${resolvedValue}`;
+             return;
+          }
+        } else if (resolvedType === "multi_line_text_field") {
+          if (resolvedValue.length > 10000) {
+             blockedFields[fullKey] = `Value exceeds 10,000 characters limit`;
+             return;
           }
         } else {
-          let resolvedType = MASTER_TYPE_MAP[key];
-          if (!resolvedType) return; // Block unverified types instead of guessing or defaulting
-
-          let resolvedValue = normalizeMetafieldValue(key, valStr);
-
-          if (key === "generated_description") resolvedValue = sanitizeDescription(resolvedValue);
-
-          if (resolvedType === "number_decimal") {
-            const parsedNum = parseFloat(String(resolvedValue).replace(/[^0-9.-]/g, ""));
-            resolvedValue = isNaN(parsedNum) ? "0.0" : (parsedNum % 1 === 0 ? parsedNum.toFixed(1) : String(parsedNum));
-          } else if (resolvedType === "list.single_line_text_field") {
-            if (!resolvedValue.startsWith("[")) resolvedValue = JSON.stringify([resolvedValue]);
-          } else if (resolvedType.includes("metaobject_reference")) {
-            if (!String(resolvedValue).startsWith("gid://")) resolvedType = "single_line_text_field";
-          } else if (resolvedType === "multi_line_text_field") {
-            if (resolvedValue.length > 10000) resolvedValue = resolvedValue.slice(0, 10000);
-          } else {
-            if (resolvedValue.length > 255) resolvedValue = resolvedValue.slice(0, 255);
+          if (resolvedValue.length > 255) {
+             blockedFields[fullKey] = `Value exceeds 255 characters limit`;
+             return;
           }
+        }
 
-          if (currentVal !== resolvedValue) {
-             setToShopify.push({ ownerId: productGid, namespace: ns, key: key, type: resolvedType, value: resolvedValue });
-             proposedChanges[fullKey] = { from: currentVal, to: resolvedValue };
-          }
+        if (currentVal !== resolvedValue) {
+           setToShopify.push({ ownerId: productGid, namespace: ns, key: key, type: resolvedType, value: resolvedValue });
+           proposedChanges[fullKey] = { from: currentVal, to: resolvedValue };
         }
       });
 
@@ -268,15 +331,18 @@ export const action = async ({ request }) => {
       });
 
       if (setToShopify.length === 0 && deleteFromShopify.length === 0) {
+          if (Object.keys(blockedFields).length > 0) {
+              return Response.json({
+                  intent: "executeRepairPlan", pieceId, success: false, status: "REPAIR_BLOCKED",
+                  message: "All requested changes were blocked due to validation or type errors.",
+                  fieldsUpdated: 0, legacyKeysRemoved: 0,
+                  currentMetafields, repairPlan, proposedChanges, conflicts: {}, blockedFields, missingFields: [], unknownFields: [], readBackVerified: true
+              });
+          }
           return Response.json({
-              intent: "executeRepairPlan",
-              pieceId,
-              success: true,
-              status: "NO_CHANGES_REQUIRED",
-              fieldsUpdated: 0,
-              legacyKeysRemoved: 0,
-              message: "No changes required.",
-              currentMetafields, repairPlan, proposedChanges, conflicts: {}, missingFields: [], unknownFields: [], readBackVerified: true
+              intent: "executeRepairPlan", pieceId, success: true, status: "NO_CHANGES_REQUIRED",
+              fieldsUpdated: 0, legacyKeysRemoved: 0, message: "No changes required.",
+              currentMetafields, repairPlan, proposedChanges, conflicts: {}, blockedFields, missingFields: [], unknownFields: [], readBackVerified: true
           });
       }
 
@@ -324,7 +390,7 @@ export const action = async ({ request }) => {
          return Response.json({ 
              intent: "executeRepairPlan", pieceId, success: false, status: "REPAIR_FAILED",
              errors: allErrors, currentMetafields, repairPlan, proposedChanges, fieldsUpdated: 0, legacyKeysRemoved: 0,
-             conflicts: {}, missingFields: [], unknownFields: [], readBackVerified: false, message: "Shopify write produced errors."
+             conflicts: {}, blockedFields, missingFields: [], unknownFields: [], readBackVerified: false, message: "Shopify write produced errors."
          });
       }
 
@@ -368,15 +434,19 @@ export const action = async ({ request }) => {
              intent: "executeRepairPlan", pieceId, success: false, status: "REPAIR_FAILED",
              fieldsUpdated: setToShopify.length, legacyKeysRemoved: deleteFromShopify.length,
              message: "Repair failed: Read-back verification detected conflicts.",
-             currentMetafields, repairPlan, proposedChanges, conflicts, missingFields: [], unknownFields: [], readBackVerified: false
+             currentMetafields, repairPlan, proposedChanges, conflicts, blockedFields, missingFields: [], unknownFields: [], readBackVerified: false
           });
       }
+
+      const successMsg = Object.keys(blockedFields).length > 0 
+          ? `Partial success: ${setToShopify.length} fields updated, ${deleteFromShopify.length} keys cleared. ${Object.keys(blockedFields).length} blocked.`
+          : `Repair successful: ${setToShopify.length} fields updated, ${deleteFromShopify.length} legacy keys cleared.`;
 
       return Response.json({ 
         intent: "executeRepairPlan", pieceId, success: true, status: "REPAIRED",
         fieldsUpdated: setToShopify.length, legacyKeysRemoved: deleteFromShopify.length,
-        message: `Repair successful: ${setToShopify.length} fields updated, ${deleteFromShopify.length} legacy keys cleared.`,
-        currentMetafields, repairPlan, proposedChanges, conflicts: {}, missingFields: [], unknownFields: [], readBackVerified: true
+        message: successMsg,
+        currentMetafields, repairPlan, proposedChanges, conflicts: {}, blockedFields, missingFields: [], unknownFields: [], readBackVerified: true
       });
     }
 
