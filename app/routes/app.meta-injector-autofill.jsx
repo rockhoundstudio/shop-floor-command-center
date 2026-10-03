@@ -479,24 +479,25 @@ ${currentDataStr || "- No explicit data provided."}
 
 CRITICAL RULES FOR TAB 3:
 1. Explicit operator-provided corrections take priority over image inference and stale product data.
-2. If no explicit correction is supplied, preserve a nonblank current value exactly. Do not replace a specific value with a broader or less precise one (e.g., keep "Freeform Teardrop Cabochon", do not degrade to "Freeform Teardrop").
+2. If no explicit correction is supplied, preserve a nonblank current value exactly. Do not replace a specific value with a broader or less precise one (e.g., keep "Freeform Teardrop Cabochon", do not degrade to "Freeform Teardrop"). Preserve finding details exactly (e.g., keep "Drilled stone with a pinned pinch bail").
 3. Never generate or propose a shopify_title or price. These are manual.
 4. Do not infer jewelry, chain material, cord, bail, wire wrapping, or readiness from an image when the source data doesn't explicitly establish it. Leave uncertain values unresolved using the existing omit convention.
 5. Treat origin_story as hidden, read-only context from the existing origin page. Do not generate or save an origin story. Use the page only for supported metadata.
 6. Omit missing bench or artist notes. Never write "None" or "Unknown" as filler.
 7. Do not invent details. Leave unknown fields entirely unset.
+8. If the current data establishes the piece is a pendant or finished jewelry (e.g., jewelry_type is "Pendant" or finding details are present), the product_format MUST be "Pendant" or similar finished form, even if the cut_and_shape is "Cabochon". The cut and shape of the stone does not override the finished format of the piece.
 
 Return ONLY a JSON object. OMIT any keys if you cannot determine the value supported by evidence (do not send null or empty strings). DO NOT include "jewelry_type", "origin_story", "price", "shopify_title", "weight_grams", or "shipping_weight_oz".
 
 Potential JSON Keys to evaluate and propose if blank:
 - piece_name: The name of the piece.
 - is_ooak: "Yes"
-- product_format: Describe the evidenced physical form (e.g., Cabochon, Pendant, Specimen, Loose Stone). Do not guess when unclear.
+- product_format: Describe the evidenced physical form (e.g., Cabochon, Pendant, Specimen, Loose Stone). Do not guess when unclear. If existing data indicates a Pendant/Finished Jewelry, use that over the stone shape.
 - craftsmanship: When the supplied product facts identify the work as handcrafted by Bob & Janyce, propose exactly "Handcrafted". Do not describe it as "Hand-polished cabochon." Do not add tool or polishing-method wording. If the supplied facts do not support "Handcrafted", omit this proposal.
 - poetic_hook: Write one short, plain, factual hook based on the origin page (under 160 characters). Do not recreate the origin story.
 - seo_title: Create a clear search title using supported product, stone, and origin facts (max 70 chars).
 - dimensions_mm: Leave unchanged if provided.
-- cut_and_shape: Respect freeform cuts.
+- cut_and_shape: Respect freeform cuts. Keep exactly as provided in current data if present.
 - surface_finish: High Polish, Matte, Satin, Natural/Raw, Tumbled.
 - primary_color
 - color_pattern
@@ -517,13 +518,13 @@ Potential JSON Keys to evaluate and propose if blank:
 - origin_handle: Resolved handle.
 - collection_name: Resolved collection.
 - collection_location: Resolved collection location.
-- primary_use: e.g., "Pendant (Finished Jewelry)", "Ring / Bezel Setting", "Cabochon", "Loose Stone".
+- primary_use: e.g., "Pendant (Finished Jewelry)", "Ring / Bezel Setting", "Cabochon", "Loose Stone". Keep current nonblank value unless explicitly corrected.
 - primary_medium: Must match stone mineral name.
 - secondary_medium: The setting or finding.
 - setting_ready: "Bezel Setting - Ready to Wear", "Wire Wrapped - Ready to Wear", "None".
 - bail_included: e.g., "Silver Plated Pinch Bail", "None".
 - chain_material: e.g., "Silver Plated Snake Chain", "None".
-- jewelry_finding_type: MUST BE "None" if bail_included is not "None".
+- jewelry_finding_type: Use explicit provided construction details if available. Do not invent details.
 - alt_text: Descriptive alt text (max 125 chars). Use mineral name. No visual guessing.
 - google_product_category: Taxonomy path.
 - authenticity: Authentic, Lab-Created.
@@ -720,6 +721,23 @@ export const action = async ({ request }) => {
         let cleanJson = (data.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
         const parsedVision = JSON.parse(cleanJson.slice(cleanJson.indexOf("{"), cleanJson.lastIndexOf("}") + 1));
         
+        // Final sanity check merging logic ensuring currentData overrides when not manually altered
+        if (currentData.product_format && (currentData.jewelry_type === "Pendant" || currentData.primary_use?.includes("Pendant") || currentData.jewelry_finding_type)) {
+            parsedVision.product_format = currentData.product_format;
+        }
+
+        if (currentData.jewelry_finding_type) {
+             parsedVision.jewelry_finding_type = currentData.jewelry_finding_type;
+        }
+
+        if (currentData.primary_use) {
+            parsedVision.primary_use = currentData.primary_use;
+        }
+        
+        if (currentData.cut_and_shape) {
+            parsedVision.cut_and_shape = currentData.cut_and_shape;
+        }
+
         delete parsedVision.jewelry_type; // Explicitly ensure this is scrubbed
         delete parsedVision.origin_story; // CRITICAL: Prevent AI hallucination from overwriting the raw context
         delete parsedVision.price; // CRITICAL: Never propose a price
