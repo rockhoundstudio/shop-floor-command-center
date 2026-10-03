@@ -316,8 +316,8 @@ RETURN THESE EXACT JSON KEYS ONLY. DO NOT GENERATE A PRODUCT DESCRIPTION.
 - setting_ready: Look closely at the mounting. "Bezel Setting - Ready to Wear", "Wire Wrapped - Ready to Wear", or "None" for loose stones.
 - wire_material: "Antiqued Copper Wire" etc. "None" if no wire.
 - bail_included: e.g. "Silver Plated Pinch Bail", "Integrated Bezel Bail", or "None".
-- jewelry_finding_type: Describes construction or attachment. Compatible with bail_included. Do not infer drilling or pinning from bail name alone. Do not invent details if unknown.
-- chain_material: e.g. "Silver Plated Snake Chain", "Cord", or "None".
+- jewelry_finding_type: Identify the finding or setting. INVENTORY OPTIONS: "Silver Plated Pinch Bail", "Glue-On Bail", "Assorted Glue-In Setting". Do not describe them as "cheap". Do not infer hidden drilling, pinning, or glue from generic metal shapes alone. Preserve explicitly supplied construction descriptions. Compatible with bail_included (never force to None merely because a bail is included). Do not invent details if unknown. Do not silently leave blank if clearly supported by image.
+- chain_material: Identify the visible chain or cord. INVENTORY OPTIONS: "Silver Plated Snake Chain", "Gold Plated Snake Chain". Do not mislabel a visible cord as a snake chain (use "Black Cord", etc.). Do not infer plating from color alone. Distinguish clearly absent hardware ("None") from hardware out of view. Do not silently leave blank if clearly supported by image.
 - alt_text: Descriptive alt text (max 125 chars). Use mineral name. No visual guessing.
 - found_object: "Yes" if field-collected, "No" if shopped/imported.
 - seo_title: Keyword-rich SEO title (max 60 chars) optimized for Google.
@@ -440,10 +440,10 @@ function buildMasterVisionPrompt({ pagesMenu, collectionsMenu, stoneFamily, deri
 - setting_ready: "Bezel Setting - Ready to Wear", "None".
 - wire_material
 - bail_included: "Silver Plated Pinch Bail", "Integrated Bezel Bail", "None".
-- jewelry_finding_type: Describes construction or attachment. Compatible with bail_included. Do not infer drilling or pinning from bail name alone. Do not invent details if unknown.
+- jewelry_finding_type: Identify the finding or setting. INVENTORY OPTIONS: "Silver Plated Pinch Bail", "Glue-On Bail", "Assorted Glue-In Setting". Do not describe them as "cheap". Do not infer hidden drilling, pinning, or glue from generic metal shapes alone. Preserve explicitly supplied construction descriptions. Compatible with bail_included (never force to None merely because a bail is included). Do not invent details if unknown. Do not silently leave blank if clearly supported by image.
 - alt_text: Descriptive, max 125 chars.
 - found_object: Yes/No
-- chain_material: "Silver Plated Snake Chain", "None".
+- chain_material: Identify the visible chain or cord. INVENTORY OPTIONS: "Silver Plated Snake Chain", "Gold Plated Snake Chain". Do not mislabel a visible cord as a snake chain (use "Black Cord", etc.). Do not infer plating from color alone. Distinguish clearly absent hardware ("None") from hardware out of view. Do not silently leave blank if clearly supported by image.
 - seo_title: Max 60 chars. Stone family, origin, OOAK Lapidary Art.
 - generated_description: Write in Bob's voice (plain, honest, past tense). No salesy language. Short sentences. 7-BLOCK FORMAT:
   1. Stone Description: Honest flaws, finish, flash.
@@ -523,8 +523,8 @@ Potential JSON Keys to evaluate and propose if blank:
 - secondary_medium: The setting or finding.
 - setting_ready: "Bezel Setting - Ready to Wear", "Wire Wrapped - Ready to Wear", "None".
 - bail_included: e.g., "Silver Plated Pinch Bail", "None".
-- chain_material: e.g., "Silver Plated Snake Chain", "None".
-- jewelry_finding_type: Use explicit provided construction details if available. Do not invent details.
+- chain_material: Identify the visible chain or cord. INVENTORY OPTIONS: "Silver Plated Snake Chain", "Gold Plated Snake Chain". Do not mislabel a visible cord as a snake chain (use "Black Cord", etc.). Do not infer plating from color alone. Distinguish clearly absent hardware from hardware out of view. Do not silently leave blank if clearly supported by image.
+- jewelry_finding_type: Identify the finding or setting. INVENTORY OPTIONS: "Silver Plated Pinch Bail", "Glue-On Bail", "Assorted Glue-In Setting". Do not describe them as "cheap". Do not infer hidden drilling, pinning, or glue from generic metal shapes alone. Use explicitly provided construction details if available. Compatible with bail_included. Do not invent details if unknown. Do not silently leave blank if clearly supported by image.
 - alt_text: Descriptive alt text (max 125 chars). Use mineral name. No visual guessing.
 - google_product_category: Taxonomy path.
 - authenticity: Authentic, Lab-Created.
@@ -736,6 +736,10 @@ export const action = async ({ request }) => {
 
         if (currentData.bail_included) {
             parsedVision.bail_included = currentData.bail_included;
+        }
+
+        if (currentData.chain_material) {
+            parsedVision.chain_material = currentData.chain_material;
         }
 
         if (currentData.secondary_medium) {
