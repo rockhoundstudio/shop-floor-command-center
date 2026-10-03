@@ -123,7 +123,14 @@ const POLICY_PRE_APPROVED_FIELDS = [
   "custom.surface_finish",
   "custom.poetic_hook",
   "custom.craftsmanship",
-  "custom.product_format"
+  "custom.product_format",
+  "custom.primary_color",
+  "custom.color_pattern",
+  "custom.honest_flaws_and_character",
+  "custom.setting_ready",
+  "custom.chain_material",
+  "custom.jewelry_finding_type",
+  "custom.seo_title"
 ];
 
 const GENERIC_VALUES = ["None", "Unknown", "N/A", "N/a", "none", "unknown", "n/a"];
@@ -420,6 +427,19 @@ export function OperationsMatrixTab({ products }) {
         reasons.push("Generic hardware fill into blank");
     }
 
+    // New Backend Technical Blockers
+    const apiBlockReason = data.blockedFields?.[key] || data.blockedFields?.[unprefixedKey];
+    if (apiBlockReason) {
+        hasTechnicalBlock = true;
+        reasons.push(`Backend Block: ${apiBlockReason}`);
+    }
+
+    const conflictData = data.conflicts?.[key] || data.conflicts?.[unprefixedKey];
+    if (conflictData) {
+        hasTechnicalBlock = true;
+        reasons.push(`Read-back Mismatch: ${conflictData.expected} != ${conflictData.actual}`);
+    }
+
     // Content Review Status Evaluation
     if (currentExists) {
         if (!proposalExists) {
@@ -457,6 +477,8 @@ export function OperationsMatrixTab({ products }) {
     if (hasTechnicalBlock && fieldStatus !== "Unchanged" && fieldStatus !== "Optional blank" && fieldStatus !== "Required missing") {
         if (isOverLimit) {
             fieldStatus = "Over limit";
+        } else if (apiBlockReason || conflictData) {
+            fieldStatus = "API Error / Blocked";
         } else if (reasons.includes("Type/destination unverified") || reasons.includes("Generic hardware fill into blank")) {
             fieldStatus = "Blocked";
         }
@@ -704,7 +726,7 @@ export function OperationsMatrixTab({ products }) {
   useEffect(() => {
     if (batchFetcher.state === "idle" && batchFetcher.data && batchFetcher.data !== lastProcessedData) {
       setLastProcessedData(batchFetcher.data);
-      const { intent, success, pieceId, productId, message, error, errors, logs, status, finalStatus, titleParse, tab3Data, generated_description, fieldsUpdated, verifiedGeoValues } = batchFetcher.data;
+      const { intent, success, pieceId, productId, message, error, errors, logs, status, finalStatus, titleParse, tab3Data, generated_description, fieldsUpdated, legacyKeysRemoved, verifiedGeoValues, blockedFields, conflicts, readBackVerified } = batchFetcher.data;
       
       const targetId = pieceId || productId;
       
@@ -735,12 +757,37 @@ export function OperationsMatrixTab({ products }) {
       }
 
       if ((intent === "executeRepairPlan" || intent === "batchAuditItem" || intent === "saveMetafields") && targetId && executionMode !== "AI_BATCH_PIPELINE") {
+        
+        if (intent === "executeRepairPlan") {
+            setManifestData(prev => {
+                const existing = prev[targetId];
+                if (!existing) return prev;
+                return {
+                    ...prev,
+                    [targetId]: {
+                        ...existing,
+                        currentMetafields: batchFetcher.data.currentMetafields || existing.currentMetafields,
+                        fieldsUpdated: batchFetcher.data.fieldsUpdated !== undefined ? batchFetcher.data.fieldsUpdated : existing.fieldsUpdated,
+                        legacyKeysRemoved: batchFetcher.data.legacyKeysRemoved !== undefined ? batchFetcher.data.legacyKeysRemoved : existing.legacyKeysRemoved,
+                        blockedFields: batchFetcher.data.blockedFields || {},
+                        conflicts: batchFetcher.data.conflicts || {},
+                        diagnostics: {
+                            ...existing.diagnostics,
+                            shopifyRead: "Success",
+                            readBack: batchFetcher.data.readBackVerified === true ? "Success" : (batchFetcher.data.readBackVerified === false ? "Failed" : "Not called"),
+                            stage: "executeRepairPlan"
+                        }
+                    }
+                };
+            });
+        }
+
         if (!success) {
            console.error("Execute Error from Backend:", batchFetcher.data);
            setIsExecuting(false);
-           const errMsg = errors ? errors[0]?.message : (error || (logs && logs[logs.length-1]) || "Unknown Error");
+           const errMsg = message || error || (errors ? errors[0]?.message : "Unknown Error");
            setSafetyError(`Engine halted on ${targetId}. Error: ${errMsg}`);
-           updateProductState(targetId, STATUS.FAILED, errors ? errors.map(e => e.message) : (logs || ["Unknown Backend Error"]));
+           updateProductState(targetId, STATUS.FAILED, errors ? errors.map(e => e.message) : (logs || [errMsg]));
            return;
         }
         
@@ -772,32 +819,13 @@ export function OperationsMatrixTab({ products }) {
             return;
         }
 
-        if (intent === "executeRepairPlan" && success) {
-            setManifestData(prev => {
-                const existing = prev[targetId];
-                if (!existing) return prev;
-                return {
-                    ...prev,
-                    [targetId]: {
-                        ...existing,
-                        diagnostics: {
-                            ...existing.diagnostics,
-                            shopifyRead: "Success",
-                            readBack: "Not called",
-                            stage: "executeRepairPlan"
-                        }
-                    }
-                };
-            });
-        }
-
         const successLogs = logs || [message || "Operation applied successfully."];
         
         let statusToSet = STATUS.COMPLETE;
-        if (status === "NO_CHANGES_REQUIRED" || message === "No changes required." || fieldsUpdated === 0) {
+        if (status === "NO_CHANGES_REQUIRED" || message === "No changes required." || (fieldsUpdated === 0 && (!blockedFields || Object.keys(blockedFields).length === 0))) {
             statusToSet = STATUS.SKIPPED;
             successLogs.push("No changes required.");
-        } else if (finalStatus === "Needs Review" || status === "REPAIR_FAILED") {
+        } else if (finalStatus === "Needs Review" || status === "REPAIR_FAILED" || readBackVerified === false) {
             statusToSet = STATUS.FAILED;
         }
 
@@ -1107,7 +1135,23 @@ export function OperationsMatrixTab({ products }) {
       const descStatus = descExists && data.repairPlan?.["custom.generated_description"] ? "Success" : (diag.stage === "generateDescription" ? (diag.gemini || "Unknown") : "Not called");
 
       const shopifyRead = statusObj.shopifyReadStatus;
-      const shopifyWrite = data.fieldsUpdated !== undefined ? (data.fieldsUpdated > 0 ? "Success" : "Success (0 changes)") : "Not called";
+      let shopifyWrite = "Not called";
+      if (diag.stage === "executeRepairPlan") {
+          if (data.fieldsUpdated !== undefined) {
+              if (data.fieldsUpdated > 0) {
+                  shopifyWrite = `Success (${data.fieldsUpdated} updated${data.legacyKeysRemoved ? `, ${data.legacyKeysRemoved} deleted` : ""})`;
+                  if (data.blockedFields && Object.keys(data.blockedFields).length > 0) {
+                      shopifyWrite = `Partial Success (${data.fieldsUpdated} updated, ${Object.keys(data.blockedFields).length} blocked)`;
+                  }
+              } else if (data.blockedFields && Object.keys(data.blockedFields).length > 0) {
+                  shopifyWrite = `Blocked (${Object.keys(data.blockedFields).length} fields)`;
+              } else {
+                  shopifyWrite = "Success (No changes required)";
+              }
+          } else {
+              shopifyWrite = "Failed / Unknown";
+          }
+      }
       const readBack = statusObj.readBackStatus;
 
       const recommendations = [];
@@ -1200,7 +1244,7 @@ ${recommendations.join("\n")}
                   <Text as="p" fontWeight="bold">Gemini API: <Badge tone={statusObj.geminiStatus === "Running" ? "magic" : "info"}>{statusObj.geminiStatus}</Badge></Text>
                   <Text as="p" fontWeight="bold">Vision API: <Badge tone={statusObj.visionStatus === "Running" ? "magic" : "info"}>{statusObj.visionStatus}</Badge></Text>
                   <Text as="p" fontWeight="bold">Geo Library: <Badge tone="info">{statusObj.geoLibraryStatus}</Badge></Text>
-                  <Text as="p" fontWeight="bold">Read-back: <Badge tone="info">{statusObj.readBackStatus}</Badge></Text>
+                  <Text as="p" fontWeight="bold">Read-back: <Badge tone={statusObj.readBackStatus === "Success" ? "success" : (statusObj.readBackStatus === "Failed" ? "critical" : "info")}>{statusObj.readBackStatus}</Badge></Text>
                 </BlockStack>
               </div>
             </Box>
@@ -1283,7 +1327,7 @@ ${recommendations.join("\n")}
               
               let statusTone = undefined;
               if (meta.fieldStatus === "Optional blank") statusTone = "attention";
-              if (["Required missing", "Conflict", "Degrade", "Blocked", "Over limit", "Failed", "Unverified proposal", "Manual only"].includes(meta.fieldStatus)) statusTone = "critical";
+              if (["Required missing", "Conflict", "Degrade", "Blocked", "API Error / Blocked", "Over limit", "Failed", "Unverified proposal", "Manual only"].includes(meta.fieldStatus)) statusTone = "critical";
               if (meta.fieldStatus === "Proposed" || meta.fieldStatus === "Approved, not saved" || meta.fieldStatus === "Pre-approved, not saved") statusTone = "success";
               if (meta.fieldStatus === "Unchanged") statusTone = "new";
               if (meta.fieldStatus === "Approved, blocked" || meta.fieldStatus === "Pre-approved, blocked") statusTone = "warning";
@@ -1303,7 +1347,7 @@ ${recommendations.join("\n")}
               } else if (meta.isContentPreApproved && meta.hasTechnicalBlock) {
                   boxBg = "#fff3cd"; boxBorder = "#ffecb5"; textColor = "#664d03";
                   const technicalBlockers = meta.reasons.filter(r => !["Proposed", "Category pre-approved", "Verified Geo Library", "Pre-approved by operator policy", "Historical: Conflict (Pre-approved)", "Historical: Degrade (Pre-approved)", "Historical: Unverified proposal (Pre-approved)"].includes(r)).join(", ");
-                  statusText = `Pre-approved. Cannot save until field destination/type is verified. (${technicalBlockers})`;
+                  statusText = `Pre-approved. Cannot save until field destination/type is verified or limits resolved. (${technicalBlockers})`;
               } else if (meta.isApproved && !meta.hasTechnicalBlock) {
                   boxBg = "#d1e7dd"; boxBorder = "#badbcc"; textColor = "#0f5132";
                   statusText = "Approved and technically eligible.";
