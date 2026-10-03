@@ -355,6 +355,23 @@ export function OperationsMatrixTab({ products }) {
     let proposalStatus = isProposed ? (propVal.trim() !== "" ? "Provided" : "Empty") : "Not provided";
     let isBlockedAction = false;
     let reasons = [];
+    
+    let isContentPreApproved = false;
+    let preApprovalReason = "";
+
+    const currentExists = currentVal.trim() !== "";
+    const proposalExists = isProposed && propVal.trim() !== "";
+
+    if (key === "custom.google_product_category" && proposalExists) {
+        isContentPreApproved = true;
+        preApprovalReason = "Category pre-approved";
+    }
+
+    // [Integration Limitation]: Provenance for verified Geo Library values is lost before reaching this matrix.
+    // The autofill backend merges geoFields and parsedVision (Gemini output) together, with parsedVision potentially
+    // overwriting the verified library values. Because of this, we cannot safely establish that the current proposal
+    // is exactly the verified library value. We must not falsely pre-approve them here until the backend is updated
+    // to preserve strict field-level provenance.
 
     const isRequired = REQUIRED_FIELDS.includes(key);
     const isProtected = PROTECTED_FIELDS.includes(key);
@@ -364,16 +381,13 @@ export function OperationsMatrixTab({ products }) {
     const currentCount = currentVal.length;
     const propCount = propVal.length;
     const limit = FIELD_LIMITS[key] || null;
-    
-    const currentExists = currentVal.trim() !== "";
-    const proposalExists = isProposed && propVal.trim() !== "";
 
     const isManualOnly = (key === "price" || key === "shopify_title");
     const exactApprovalVal = currentApprovals?.[productId]?.[key];
     const isApproved = exactApprovalVal !== undefined && exactApprovalVal === propVal && propVal.trim() !== "";
 
     if (HIDDEN_CONTEXT_FIELDS.includes(key)) {
-        return { currentVal, propVal, isProposed, fieldStatus: "Hidden Source", proposalStatus, source, stage, isBlockedAction: true, reasons: ["Hidden Context"], currentExists, proposalExists, isApproved: false, hasTechnicalBlock: true, contentNeedsReview: false };
+        return { currentVal, propVal, isProposed, fieldStatus: "Hidden Source", proposalStatus, source, stage, isBlockedAction: true, reasons: ["Hidden Context"], currentExists, proposalExists, isApproved: false, hasTechnicalBlock: true, contentNeedsReview: false, isContentPreApproved: false, preApprovalReason: "" };
     }
 
     let hasTechnicalBlock = false;
@@ -407,12 +421,12 @@ export function OperationsMatrixTab({ products }) {
         } else {
             if (isProtected) {
                 contentNeedsReview = true;
-                fieldStatus = "Degrade";
-                reasons.push("Degrade");
+                if (!isContentPreApproved) fieldStatus = "Degrade";
+                reasons.push(isContentPreApproved ? "Historical: Degrade (Pre-approved)" : "Degrade");
             } else {
                 contentNeedsReview = true;
-                fieldStatus = "Conflict";
-                reasons.push("Conflict");
+                if (!isContentPreApproved) fieldStatus = "Conflict";
+                reasons.push(isContentPreApproved ? "Historical: Conflict (Pre-approved)" : "Conflict");
             }
         }
     } else {
@@ -422,10 +436,10 @@ export function OperationsMatrixTab({ products }) {
         } else {
             if (source === "Not reported") {
                 contentNeedsReview = true;
-                fieldStatus = "Unverified proposal";
-                reasons.push("Unverified proposal");
+                if (!isContentPreApproved) fieldStatus = "Unverified proposal";
+                reasons.push(isContentPreApproved ? "Historical: Unverified proposal (Pre-approved)" : "Unverified proposal");
             } else {
-                fieldStatus = "Proposed";
+                if (!isContentPreApproved) fieldStatus = "Proposed";
                 reasons.push("Proposed");
             }
         }
@@ -440,9 +454,17 @@ export function OperationsMatrixTab({ products }) {
         }
     }
 
-    // React to Approvals
+    // React to Approvals & Pre-Approvals
     if (proposalExists && currentVal !== propVal && !isManualOnly) {
-        if (isApproved) {
+        if (isContentPreApproved) {
+            if (hasTechnicalBlock) {
+                fieldStatus = "Pre-approved, blocked";
+                isBlockedAction = true;
+            } else {
+                fieldStatus = "Pre-approved, not saved";
+                isBlockedAction = false;
+            }
+        } else if (isApproved) {
             if (hasTechnicalBlock) {
                 fieldStatus = "Approved, blocked";
                 isBlockedAction = true;
@@ -451,7 +473,7 @@ export function OperationsMatrixTab({ products }) {
                 isBlockedAction = false;
             }
         } else {
-            // If not manually approved, content blocks stop saves
+            // If not manually approved and not pre-approved, content blocks stop saves
             if (contentNeedsReview || hasTechnicalBlock) {
                 isBlockedAction = true;
             } else {
@@ -478,7 +500,8 @@ export function OperationsMatrixTab({ products }) {
 
     return { 
       currentVal, propVal, isProposed, fieldStatus, proposalStatus, source, stage, 
-      isBlockedAction, reasons, currentExists, proposalExists, isApproved, hasTechnicalBlock, contentNeedsReview 
+      isBlockedAction, reasons, currentExists, proposalExists, isApproved, hasTechnicalBlock, contentNeedsReview,
+      isContentPreApproved, preApprovalReason
     };
   };
 
@@ -983,14 +1006,14 @@ export function OperationsMatrixTab({ products }) {
             if (meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing") stats.blank++;
             else stats.filled++;
 
-            if (meta.fieldStatus === "Proposed" || meta.fieldStatus === "Approved, not saved" || meta.fieldStatus === "Approved, blocked") stats.proposed++;
+            if (meta.fieldStatus === "Proposed" || meta.fieldStatus === "Approved, not saved" || meta.fieldStatus === "Approved, blocked" || meta.fieldStatus === "Pre-approved, not saved" || meta.fieldStatus === "Pre-approved, blocked") stats.proposed++;
             if (meta.isBlockedAction && !HIDDEN_CONTEXT_FIELDS.includes(k)) stats.blocked++;
             if (meta.fieldStatus === "Degrade") stats.degraded++;
             if (meta.fieldStatus === "Conflict") stats.conflicts++;
             if (meta.fieldStatus === "Unverified proposal") stats.unverified++;
             if (meta.fieldStatus === "Optional blank") stats.optionalBlanks++;
             if (meta.fieldStatus === "Required missing") stats.requiredMissing++;
-            if ((meta.fieldStatus === "Proposed" || meta.fieldStatus === "Approved, not saved") && !meta.isBlockedAction && !HIDDEN_CONTEXT_FIELDS.includes(k)) stats.approvedWrite++;
+            if ((meta.fieldStatus === "Proposed" || meta.fieldStatus === "Approved, not saved" || meta.fieldStatus === "Pre-approved, not saved") && !meta.isBlockedAction && !HIDDEN_CONTEXT_FIELDS.includes(k)) stats.approvedWrite++;
         });
     });
 
@@ -1029,7 +1052,7 @@ export function OperationsMatrixTab({ products }) {
               
               if (meta.currentExists) stats.loaded++;
               if (meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing") stats.blank++;
-              if (meta.fieldStatus === "Proposed" || meta.fieldStatus === "Approved, not saved" || meta.fieldStatus === "Approved, blocked") stats.proposed++;
+              if (meta.fieldStatus === "Proposed" || meta.fieldStatus === "Approved, not saved" || meta.fieldStatus === "Approved, blocked" || meta.fieldStatus === "Pre-approved, not saved" || meta.fieldStatus === "Pre-approved, blocked") stats.proposed++;
               if (meta.isBlockedAction && !HIDDEN_CONTEXT_FIELDS.includes(key)) stats.blocked++;
               if (PROTECTED_FIELDS.includes(key)) stats.protected++;
               if (meta.fieldStatus === "Conflict" || meta.fieldStatus === "Degrade") stats.conflicting++;
@@ -1074,7 +1097,7 @@ export function OperationsMatrixTab({ products }) {
 
       const recommendations = [];
       if (hasBlockersForWrite) {
-          recommendations.push("1. DO NOT WRITE. Review and manually resolve blocked, conflicting, or unverified pins listed above. Approve suggestions where applicable.");
+          recommendations.push("1. DO NOT WRITE. Review and manually resolve blocked, conflicting, or unverified pins listed above. Approve unverified suggestions where applicable (Verified Geo Library and Category values are pre-approved).");
           recommendations.push("2. Verify Shopify Metafield definitions for any 'Unverified proposal' pins before approving.");
       } else if (stats.proposed > 0 && shopifyWrite === "Not called") {
           recommendations.push("1. Data is staged and validated. Proceed with 'Execute Single Repair'.");
@@ -1215,9 +1238,9 @@ ${recommendations.join("\n")}
       const meta = getFieldMetadata(k, data, selectedBenchId, approvals);
       
       if (activeFilter === "Blank" && (meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing")) return true;
-      if (activeFilter === "Proposed changes" && (meta.fieldStatus === "Proposed" || meta.fieldStatus === "Approved, not saved" || meta.fieldStatus === "Approved, blocked")) return true;
+      if (activeFilter === "Proposed changes" && (meta.fieldStatus === "Proposed" || meta.fieldStatus === "Approved, not saved" || meta.fieldStatus === "Approved, blocked" || meta.fieldStatus === "Pre-approved, not saved" || meta.fieldStatus === "Pre-approved, blocked")) return true;
       if (activeFilter === "Conflicts" && (meta.fieldStatus === "Conflict" || meta.fieldStatus === "Degrade")) return true;
-      if (activeFilter === "Needs review" && (meta.fieldStatus === "Required missing" || meta.fieldStatus === "Unverified proposal" || (meta.contentNeedsReview && !meta.isApproved))) return true;
+      if (activeFilter === "Needs review" && (meta.fieldStatus === "Required missing" || meta.fieldStatus === "Unverified proposal" || (meta.contentNeedsReview && !meta.isApproved && !meta.isContentPreApproved))) return true;
       if (activeFilter === meta.source) return true;
       return false;
     });
@@ -1246,19 +1269,27 @@ ${recommendations.join("\n")}
               let statusTone = undefined;
               if (meta.fieldStatus === "Optional blank") statusTone = "attention";
               if (["Required missing", "Conflict", "Degrade", "Blocked", "Over limit", "Failed", "Unverified proposal", "Manual only"].includes(meta.fieldStatus)) statusTone = "critical";
-              if (meta.fieldStatus === "Proposed" || meta.fieldStatus === "Approved, not saved") statusTone = "success";
+              if (meta.fieldStatus === "Proposed" || meta.fieldStatus === "Approved, not saved" || meta.fieldStatus === "Pre-approved, not saved") statusTone = "success";
               if (meta.fieldStatus === "Unchanged") statusTone = "new";
-              if (meta.fieldStatus === "Approved, blocked") statusTone = "warning";
+              if (meta.fieldStatus === "Approved, blocked" || meta.fieldStatus === "Pre-approved, blocked") statusTone = "warning";
 
               const isManualOnly = key === "price" || key === "shopify_title";
-              const canApprove = meta.proposalExists && meta.currentVal !== meta.propVal && !isManualOnly;
+              const canApprove = meta.proposalExists && meta.currentVal !== meta.propVal && !isManualOnly && !meta.isContentPreApproved;
+              const isPreApprovedDisplay = meta.isContentPreApproved && meta.proposalExists && meta.currentVal !== meta.propVal;
               
               let boxBg = "#f8f9fa";
               let boxBorder = "#dee2e6";
               let textColor = "#212529";
               let statusText = "Ready for review";
 
-              if (meta.isApproved && !meta.hasTechnicalBlock) {
+              if (meta.isContentPreApproved && !meta.hasTechnicalBlock) {
+                  boxBg = "#d1e7dd"; boxBorder = "#badbcc"; textColor = "#0f5132";
+                  statusText = "Pre-approved, not saved.";
+              } else if (meta.isContentPreApproved && meta.hasTechnicalBlock) {
+                  boxBg = "#fff3cd"; boxBorder = "#ffecb5"; textColor = "#664d03";
+                  const technicalBlockers = meta.reasons.filter(r => !["Proposed", "Category pre-approved", "Historical: Conflict (Pre-approved)", "Historical: Degrade (Pre-approved)", "Historical: Unverified proposal (Pre-approved)"].includes(r)).join(", ");
+                  statusText = `Pre-approved. Cannot save until field destination/type is verified. (${technicalBlockers})`;
+              } else if (meta.isApproved && !meta.hasTechnicalBlock) {
                   boxBg = "#d1e7dd"; boxBorder = "#badbcc"; textColor = "#0f5132";
                   statusText = "Approved and technically eligible.";
               } else if (meta.isApproved && meta.hasTechnicalBlock) {
@@ -1332,6 +1363,19 @@ ${recommendations.join("\n")}
                                 </div>
                                 <div style={{ marginTop: "8px", marginLeft: "36px", minWidth: 0, wordBreak: "break-word", overflowWrap: "anywhere" }}>
                                     <Text as="p" tone={(!meta.isApproved && meta.hasTechnicalBlock) || (meta.isApproved && meta.hasTechnicalBlock) ? "critical" : "subdued"} fontWeight="medium" style={{ color: textColor }}>
+                                        {statusText}
+                                    </Text>
+                                </div>
+                            </div>
+                        )}
+
+                        {isPreApprovedDisplay && (
+                            <div style={{ marginTop: "12px", backgroundColor: boxBg, border: `1px solid ${boxBorder}`, borderRadius: "8px", padding: "12px", minWidth: 0, boxSizing: "border-box" }}>
+                                <div style={{ minWidth: 0, wordBreak: "break-word", overflowWrap: "anywhere" }}>
+                                    <Text as="p" fontWeight="bold" style={{ color: textColor }}>
+                                        {meta.preApprovalReason}
+                                    </Text>
+                                    <Text as="p" tone={meta.hasTechnicalBlock ? "critical" : "subdued"} fontWeight="medium" style={{ color: textColor, marginTop: "4px" }}>
                                         {statusText}
                                     </Text>
                                 </div>
