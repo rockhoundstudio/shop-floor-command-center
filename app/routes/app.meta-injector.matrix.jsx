@@ -1128,37 +1128,43 @@ ${recommendations.join("\n")}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "16px" }}>
             
             <Box padding="300" background="bg-surface-secondary" borderRadius="100" borderColor="border" borderWidth="1">
-              <Text as="p" variant="headingSm" tone="subdued">System Status</Text>
-              <BlockStack gap="100" align="start">
-                <Text as="p" fontWeight="bold">Shopify Read: <Badge tone={statusObj.shopifyReadStatus === "Success" ? "success" : (statusObj.shopifyReadStatus === "Running" ? "magic" : "critical")}>{statusObj.shopifyReadStatus}</Badge></Text>
-                <Text as="p" fontWeight="bold">Gemini API: <Badge tone={statusObj.geminiStatus === "Running" ? "magic" : "info"}>{statusObj.geminiStatus}</Badge></Text>
-                <Text as="p" fontWeight="bold">Vision API: <Badge tone={statusObj.visionStatus === "Running" ? "magic" : "info"}>{statusObj.visionStatus}</Badge></Text>
-                <Text as="p" fontWeight="bold">Geo Library: <Badge tone="info">{statusObj.geoLibraryStatus}</Badge></Text>
-                <Text as="p" fontWeight="bold">Read-back: <Badge tone="info">{statusObj.readBackStatus}</Badge></Text>
-              </BlockStack>
+              <div style={{ minWidth: 0, wordBreak: "break-word", overflowWrap: "anywhere" }}>
+                <Text as="p" variant="headingSm" tone="subdued">System Status</Text>
+                <BlockStack gap="100" align="start">
+                  <Text as="p" fontWeight="bold">Shopify Read: <Badge tone={statusObj.shopifyReadStatus === "Success" ? "success" : (statusObj.shopifyReadStatus === "Running" ? "magic" : "critical")}>{statusObj.shopifyReadStatus}</Badge></Text>
+                  <Text as="p" fontWeight="bold">Gemini API: <Badge tone={statusObj.geminiStatus === "Running" ? "magic" : "info"}>{statusObj.geminiStatus}</Badge></Text>
+                  <Text as="p" fontWeight="bold">Vision API: <Badge tone={statusObj.visionStatus === "Running" ? "magic" : "info"}>{statusObj.visionStatus}</Badge></Text>
+                  <Text as="p" fontWeight="bold">Geo Library: <Badge tone="info">{statusObj.geoLibraryStatus}</Badge></Text>
+                  <Text as="p" fontWeight="bold">Read-back: <Badge tone="info">{statusObj.readBackStatus}</Badge></Text>
+                </BlockStack>
+              </div>
             </Box>
 
             <Box padding="300" background="bg-surface-secondary" borderRadius="100" borderColor="border" borderWidth="1">
-              <Text as="p" variant="headingSm" tone="subdued">Repair Engine</Text>
-              <BlockStack gap="100">
-                <Text as="p" fontWeight="bold">Proposed changes: {stats.proposed}</Text>
-                <Text as="p" fontWeight="bold" color="critical">Blocked changes: {stats.blocked}</Text>
-                <Text as="p" fontWeight="bold" color="critical">Degraded fields: {stats.degraded}</Text>
-                <Text as="p" fontWeight="bold" color="critical">Conflicts: {stats.conflicts}</Text>
-                <Text as="p" fontWeight="bold" color="attention">Unverified proposals: {stats.unverified}</Text>
-                <Text as="p" fontWeight="bold" color="success">Fields approved for write: {stats.approvedWrite}</Text>
-              </BlockStack>
+              <div style={{ minWidth: 0, wordBreak: "break-word", overflowWrap: "anywhere" }}>
+                <Text as="p" variant="headingSm" tone="subdued">Repair Engine</Text>
+                <BlockStack gap="100">
+                  <Text as="p" fontWeight="bold">Proposed changes: {stats.proposed}</Text>
+                  <Text as="p" fontWeight="bold" color="critical">Blocked changes: {stats.blocked}</Text>
+                  <Text as="p" fontWeight="bold" color="critical">Degraded fields: {stats.degraded}</Text>
+                  <Text as="p" fontWeight="bold" color="critical">Conflicts: {stats.conflicts}</Text>
+                  <Text as="p" fontWeight="bold" color="attention">Unverified proposals: {stats.unverified}</Text>
+                  <Text as="p" fontWeight="bold" color="success">Fields approved for write: {stats.approvedWrite}</Text>
+                </BlockStack>
+              </div>
             </Box>
 
             <Box padding="300" background="bg-surface-secondary" borderRadius="100" borderColor="border" borderWidth="1">
-              <Text as="p" variant="headingSm" tone="subdued">Field Metrics</Text>
-              <BlockStack gap="100">
-                <Text as="p" fontWeight="bold">Total Fields: {stats.total}</Text>
-                <Text as="p" fontWeight="bold">Filled: <span style={{ color: "#22c55e" }}>{stats.filled}</span></Text>
-                <Text as="p" fontWeight="bold">Optional blanks: <span style={{ color: "#eab308" }}>{stats.optionalBlanks}</span></Text>
-                <Text as="p" fontWeight="bold" color="critical">Required missing fields: {stats.requiredMissing}</Text>
-                <Text as="p" fontWeight="bold">Fields Updated (Last Run): {data.fieldsUpdated !== undefined ? data.fieldsUpdated : "Not reported"}</Text>
-              </BlockStack>
+              <div style={{ minWidth: 0, wordBreak: "break-word", overflowWrap: "anywhere" }}>
+                <Text as="p" variant="headingSm" tone="subdued">Field Metrics</Text>
+                <BlockStack gap="100">
+                  <Text as="p" fontWeight="bold">Total Fields: {stats.total}</Text>
+                  <Text as="p" fontWeight="bold">Filled: <span style={{ color: "#22c55e" }}>{stats.filled}</span></Text>
+                  <Text as="p" fontWeight="bold">Optional blanks: <span style={{ color: "#eab308" }}>{stats.optionalBlanks}</span></Text>
+                  <Text as="p" fontWeight="bold" color="critical">Required missing fields: {stats.requiredMissing}</Text>
+                  <Text as="p" fontWeight="bold">Fields Updated (Last Run): {data.fieldsUpdated !== undefined ? data.fieldsUpdated : "Not reported"}</Text>
+                </BlockStack>
+              </div>
             </Box>
 
           </div>
@@ -1196,14 +1202,16 @@ ${recommendations.join("\n")}
       <Card padding="0" key={section.title}>
         <div 
             onClick={() => toggleBay(section.title)} 
-            style={{ padding: "16px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center", backgroundColor: "#f9fafb", borderBottom: isExpanded ? "1px solid #e1e3e5" : "none" }}
+            style={{ padding: "16px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center", backgroundColor: "#f9fafb", borderBottom: isExpanded ? "1px solid #e1e3e5" : "none", minWidth: 0, boxSizing: "border-box" }}
         >
-          <Text as="h3" variant="headingLg" fontWeight="bold">{section.title} ({filteredKeys.length} fields)</Text>
+          <div style={{ minWidth: 0 }}>
+            <Text as="h3" variant="headingLg" fontWeight="bold">{section.title} ({filteredKeys.length} fields)</Text>
+          </div>
           <Button variant="plain" icon={isExpanded ? ChevronUpIcon : ChevronDownIcon} />
         </div>
         
         {isExpanded && (
-          <div style={{ padding: "16px", display: "flex", flexDirection: "column", gap: "24px" }}>
+          <div style={{ padding: "16px", display: "flex", flexDirection: "column", gap: "24px", minWidth: 0, boxSizing: "border-box" }}>
             {filteredKeys.map((key) => {
               const meta = getFieldMetadata(key, data, selectedBenchId, approvals);
               const isBlank = meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing";
@@ -1242,15 +1250,17 @@ ${recommendations.join("\n")}
 
               return (
                 <Box key={key} padding="300" background={isBlank ? "bg-surface-warning" : "bg-surface"} borderColor="border" borderWidth="1" borderRadius="200">
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: "20px" }}>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: "20px", boxSizing: "border-box", minWidth: 0 }}>
                     
                     {/* Left Panel: Labels & Metadata */}
-                    <div style={{ flex: "1 1 300px", minWidth: "300px" }}>
+                    <div style={{ flex: "1 1 250px", minWidth: 0, maxWidth: "100%", boxSizing: "border-box" }}>
                       <BlockStack gap="100">
-                        <Text as="h4" variant="headingMd" fontWeight="bold">{formatLabel(key)}</Text>
-                        <Text as="p" variant="bodySm" tone="subdued" fontWeight="medium">{key}</Text>
+                        <div style={{ wordBreak: "break-word", overflowWrap: "anywhere" }}>
+                            <Text as="h4" variant="headingMd" fontWeight="bold">{formatLabel(key)}</Text>
+                            <Text as="p" variant="bodySm" tone="subdued" fontWeight="medium">{key}</Text>
+                        </div>
                         
-                        <div style={{ marginTop: "12px", display: "flex", flexDirection: "column", gap: "6px" }}>
+                        <div style={{ marginTop: "12px", display: "flex", flexDirection: "column", gap: "6px", wordBreak: "break-word", overflowWrap: "anywhere" }}>
                             <Text as="p" variant="bodyMd" fontWeight="bold">Status: <Badge tone={statusTone}>{meta.fieldStatus}</Badge></Text>
                             <Text as="p" variant="bodyMd" fontWeight="bold">Source: <Text as="span" fontWeight="regular">{meta.source}</Text></Text>
                             <Text as="p" variant="bodyMd" fontWeight="bold">Stage: <Text as="span" fontWeight="regular">{meta.stage}</Text></Text>
@@ -1259,13 +1269,15 @@ ${recommendations.join("\n")}
                     </div>
 
                     {/* Right Panel: Current & Proposal Values */}
-                    <div style={{ flex: "2 1 400px", display: "flex", flexDirection: "column", gap: "12px" }}>
-                        <div style={{ padding: "12px", backgroundColor: "#f4f6f8", borderRadius: "8px", border: "1px solid #d2d5d8" }}>
+                    <div style={{ flex: "2 1 300px", display: "flex", flexDirection: "column", gap: "12px", minWidth: 0, maxWidth: "100%", boxSizing: "border-box" }}>
+                        <div style={{ padding: "12px", backgroundColor: "#f4f6f8", borderRadius: "8px", border: "1px solid #d2d5d8", minWidth: 0, wordBreak: "break-word", overflowWrap: "anywhere", boxSizing: "border-box" }}>
                             <Text as="p" variant="headingSm" tone="subdued" fontWeight="bold" style={{ marginBottom: "6px" }}>Current Shopify Value</Text>
-                            <Text as="p" variant="bodyLg">{meta.currentVal || <span style={{ color: "#8c9196", fontStyle: "italic" }}>Blank</span>}</Text>
+                            <div style={{ whiteSpace: "pre-wrap", minWidth: 0 }}>
+                                <Text as="p" variant="bodyLg">{meta.currentVal || <span style={{ color: "#8c9196", fontStyle: "italic" }}>Blank</span>}</Text>
+                            </div>
                         </div>
                         
-                        <div>
+                        <div style={{ minWidth: 0, width: "100%", boxSizing: "border-box" }}>
                             <Text as="p" variant="headingSm" tone="subdued" fontWeight="bold" style={{ marginBottom: "6px" }}>Bench Proposal Value</Text>
                             <TextField
                                 value={meta.propVal}
@@ -1277,21 +1289,21 @@ ${recommendations.join("\n")}
                         </div>
 
                         {canApprove && (
-                            <div style={{ marginTop: "12px", backgroundColor: boxBg, border: `1px solid ${boxBorder}`, borderRadius: "8px", padding: "12px" }}>
-                                <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                            <div style={{ marginTop: "12px", backgroundColor: boxBg, border: `1px solid ${boxBorder}`, borderRadius: "8px", padding: "12px", minWidth: 0, boxSizing: "border-box" }}>
+                                <div style={{ display: "flex", alignItems: "flex-start", gap: "12px", minWidth: 0, boxSizing: "border-box" }}>
                                     <input
                                         type="checkbox"
                                         id={`approve-${key}`}
                                         checked={meta.isApproved || false}
                                         onChange={(e) => handleToggleApproval(selectedBenchId, key, meta.propVal, e.target.checked)}
-                                        style={{ width: "24px", height: "24px", cursor: "pointer", accentColor: textColor }}
+                                        style={{ width: "24px", height: "24px", flexShrink: 0, cursor: "pointer", accentColor: textColor, marginTop: "2px" }}
                                         aria-label={`Approve suggestion for ${formatLabel(key)}: ${meta.propVal}`}
                                     />
-                                    <label htmlFor={`approve-${key}`} style={{ fontWeight: "bold", fontSize: "16px", cursor: "pointer", color: textColor, display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px", flex: 1 }}>
-                                        Approve this suggestion: <span style={{ fontWeight: "normal", wordBreak: "break-word" }}>"{meta.propVal}"</span>
+                                    <label htmlFor={`approve-${key}`} style={{ fontWeight: "bold", fontSize: "16px", cursor: "pointer", color: textColor, display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px", flex: 1, minWidth: 0, wordBreak: "break-word", overflowWrap: "anywhere" }}>
+                                        Approve this suggestion: <span style={{ fontWeight: "normal", whiteSpace: "pre-wrap" }}>"{meta.propVal}"</span>
                                     </label>
                                 </div>
-                                <div style={{ marginTop: "8px", marginLeft: "36px" }}>
+                                <div style={{ marginTop: "8px", marginLeft: "36px", minWidth: 0, wordBreak: "break-word", overflowWrap: "anywhere" }}>
                                     <Text as="p" tone={(!meta.isApproved && meta.hasTechnicalBlock) || (meta.isApproved && meta.hasTechnicalBlock) ? "critical" : "subdued"} fontWeight="medium" style={{ color: textColor }}>
                                         {statusText}
                                     </Text>
@@ -1333,7 +1345,7 @@ ${recommendations.join("\n")}
         <Text variant="headingMd" tone="subdued">Data Integrity & Operations Hub — Accessible Diagnostic View</Text>
       </BlockStack>
 
-      <div style={{ display: "grid", gridTemplateColumns: "280px 1fr", gap: "24px", alignItems: "start" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "280px minmax(0, 1fr)", gap: "24px", alignItems: "start", boxSizing: "border-box", maxWidth: "100%" }}>
         
         {/* LEFT COLUMN: 1. Select Raw Inventory */}
         <div>
@@ -1360,7 +1372,7 @@ ${recommendations.join("\n")}
                 {allFilteredSelected ? `Unload (${filteredProducts.length})` : `Load (${filteredProducts.length})`}
               </Button>
 
-              <div style={{ display: "flex", flexDirection: "column", gap: "10px", overflowY: "auto", height: "70vh", paddingRight: "4px" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: "10px", overflowY: "auto", height: "70vh", paddingRight: "4px", minWidth: 0 }}>
                 {filteredProducts.map(p => {
                   const isChecked = queueIds.includes(p.id);
                   const isSelectedForBench = selectedBenchId === p.id;
@@ -1380,10 +1392,11 @@ ${recommendations.join("\n")}
                         padding: "12px",
                         display: "flex",
                         flexDirection: "column",
-                        gap: "12px"
+                        gap: "12px",
+                        minWidth: 0
                       }} 
                     >
-                      <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
+                      <div style={{ display: "flex", gap: "12px", alignItems: "center", minWidth: 0 }}>
                         <div style={{ width: "48px", height: "48px", backgroundColor: "#2a2a2a", borderRadius: "6px", overflow: "hidden", flexShrink: 0 }}>
                           {imageUrl && <img src={imageUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />}
                         </div>
@@ -1416,7 +1429,7 @@ ${recommendations.join("\n")}
         </div>
 
         {/* RIGHT COLUMN: Repair Manifest Viewer */}
-        <div>
+        <div style={{ minWidth: 0, width: "100%", maxWidth: "100%", boxSizing: "border-box" }}>
           <BlockStack gap="600">
             <Text variant="headingXl" as="h2">2. Repair Bench & Engine Diagnostics</Text>
 
@@ -1435,7 +1448,7 @@ ${recommendations.join("\n")}
               <BlockStack gap="400">
                 <InlineStack align="space-between">
                   <Text variant="headingLg" as="h3">Repair Engine Orchestrator</Text>
-                  <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
+                  <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", minWidth: 0 }}>
                     <Button 
                       size="large" 
                       variant="secondary" 
@@ -1487,7 +1500,7 @@ ${recommendations.join("\n")}
                   </Box>
                 )}
 
-                <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", marginTop: "12px" }}>
+                <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", marginTop: "12px", minWidth: 0 }}>
                   <Button size="large" tone="critical" onClick={clearBench} disabled={isExecuting || isLoadingData}>Clear Rack & Reset Bench</Button>
                   
                   <Button size="large" icon={ClipboardIcon} onClick={handleCollectTelemetry}>
@@ -1503,9 +1516,13 @@ ${recommendations.join("\n")}
               </Box>
             ) : (
               <BlockStack gap="600">
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", backgroundColor: "#f0fdf4", padding: "16px", borderRadius: "8px", border: "2px solid #22c55e" }}>
-                    <Text as="h3" variant="headingLg" fontWeight="bold" style={{ color: "#166534" }}>GID Lock: {selectedBenchId}</Text>
-                    <div style={{ display: "flex", gap: "16px" }}>
+                <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", alignItems: "center", backgroundColor: "#f0fdf4", padding: "16px", borderRadius: "8px", border: "2px solid #22c55e", gap: "16px", minWidth: 0, boxSizing: "border-box" }}>
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                        <Text as="h3" variant="headingLg" fontWeight="bold" style={{ color: "#166534" }}>
+                            <span style={{ wordBreak: "break-word", overflowWrap: "anywhere" }}>GID Lock: {selectedBenchId}</span>
+                        </Text>
+                    </div>
+                    <div style={{ display: "flex", gap: "16px", flexWrap: "wrap", minWidth: 0 }}>
                       <Button 
                         size="large" 
                         variant="primary" 
