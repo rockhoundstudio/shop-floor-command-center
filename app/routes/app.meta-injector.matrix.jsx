@@ -115,6 +115,17 @@ const HARDWARE_FIELDS = [
   "custom.jewelry_finding_type"
 ];
 
+const POLICY_PRE_APPROVED_FIELDS = [
+  "custom.rarity",
+  "custom.authenticity",
+  "custom.alt_text",
+  "custom.stone_family",
+  "custom.surface_finish",
+  "custom.poetic_hook",
+  "custom.craftsmanship",
+  "custom.product_format"
+];
+
 const GENERIC_VALUES = ["None", "Unknown", "N/A", "N/a", "none", "unknown", "n/a"];
 const REQUIRED_FIELDS = ["shopify_title", "price"];
 const INTEGRATION_PREFIXES = ["google.", "shopify.", "mm-google", "mc-facebook"];
@@ -375,10 +386,10 @@ export function OperationsMatrixTab({ products }) {
     ) {
         isContentPreApproved = true;
         preApprovalReason = "Verified Geo Library";
+    } else if (POLICY_PRE_APPROVED_FIELDS.includes(key) && proposalExists) {
+        isContentPreApproved = true;
+        preApprovalReason = "Pre-approved by operator policy";
     }
-
-    // [Integration Connection]: The backend preserves verified Geo Library values and returns them in the verifiedGeoValues map. 
-    // This matrix checks that map to grant trusted pre-approval when the exact library value survives the AI merge.
 
     const isRequired = REQUIRED_FIELDS.includes(key);
     const isProtected = PROTECTED_FIELDS.includes(key);
@@ -1105,7 +1116,7 @@ export function OperationsMatrixTab({ products }) {
 
       const recommendations = [];
       if (hasBlockersForWrite) {
-          recommendations.push("1. DO NOT WRITE. Review and manually resolve blocked, conflicting, or unverified pins listed above. Approve suggestions where applicable (Verified Geo Library and Category values are pre-approved).");
+          recommendations.push("1. DO NOT WRITE. Review and manually resolve blocked, conflicting, or unverified pins listed above. Approve suggestions where applicable (Verified Geo Library, Category, and policy-designated values are pre-approved).");
           recommendations.push("2. Verify Shopify Metafield definitions for any 'Unverified proposal' pins before approving.");
       } else if (stats.proposed > 0 && shopifyWrite === "Not called") {
           recommendations.push("1. Data is staged and validated. Proceed with 'Execute Single Repair'.");
@@ -1295,7 +1306,7 @@ ${recommendations.join("\n")}
                   statusText = "Pre-approved, not saved.";
               } else if (meta.isContentPreApproved && meta.hasTechnicalBlock) {
                   boxBg = "#fff3cd"; boxBorder = "#ffecb5"; textColor = "#664d03";
-                  const technicalBlockers = meta.reasons.filter(r => !["Proposed", "Category pre-approved", "Verified Geo Library", "Historical: Conflict (Pre-approved)", "Historical: Degrade (Pre-approved)", "Historical: Unverified proposal (Pre-approved)"].includes(r)).join(", ");
+                  const technicalBlockers = meta.reasons.filter(r => !["Proposed", "Category pre-approved", "Verified Geo Library", "Pre-approved by operator policy", "Historical: Conflict (Pre-approved)", "Historical: Degrade (Pre-approved)", "Historical: Unverified proposal (Pre-approved)"].includes(r)).join(", ");
                   statusText = `Pre-approved. Cannot save until field destination/type is verified. (${technicalBlockers})`;
               } else if (meta.isApproved && !meta.hasTechnicalBlock) {
                   boxBg = "#d1e7dd"; boxBorder = "#badbcc"; textColor = "#0f5132";
