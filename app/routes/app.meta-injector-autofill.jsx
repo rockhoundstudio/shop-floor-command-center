@@ -316,7 +316,7 @@ RETURN THESE EXACT JSON KEYS ONLY. DO NOT GENERATE A PRODUCT DESCRIPTION.
 - setting_ready: Look closely at the mounting. "Bezel Setting - Ready to Wear", "Wire Wrapped - Ready to Wear", or "None" for loose stones.
 - wire_material: "Antiqued Copper Wire" etc. "None" if no wire.
 - bail_included: e.g. "Silver Plated Pinch Bail", "Integrated Bezel Bail", or "None".
-- jewelry_finding_type: Describes the construction or attachment. This is compatible with bail_included (e.g., bail_included: "Silver Plated Pinch Bail" and jewelry_finding_type: "Drilled stone with a pinned pinch bail"). Use this example to explain compatibility, not as a default for every product. Do not infer drilling or pinning from bail material or bail name alone. Use explicit operator-confirmed construction details when present in existing inputs. If those details are unavailable, do not invent them.
+- jewelry_finding_type: Describes construction or attachment. Compatible with bail_included. Do not infer drilling or pinning from bail name alone. Do not invent details if unknown.
 - chain_material: e.g. "Silver Plated Snake Chain", "Cord", or "None".
 - alt_text: Descriptive alt text (max 125 chars). Use mineral name. No visual guessing.
 - found_object: "Yes" if field-collected, "No" if shopped/imported.
@@ -750,6 +750,23 @@ export const action = async ({ request }) => {
             parsedVision.cut_and_shape = currentData.cut_and_shape;
         }
 
+        // Establish strictly verified values before they are potentially overwritten by parsedVision
+        const verifiedGeoValues = {};
+        if (geoFields.geoSource === "library") {
+            const geoKeys = [
+                "mohs_hardness", "luster", "fracture_pattern", "cleavage", 
+                "specific_gravity", "diaphaneity", "crystal_system", 
+                "geological_era", "mineral_class", "rock_formation", "geological_age"
+            ];
+            geoKeys.forEach(key => {
+                if (geoFields[key] !== undefined && geoFields[key] !== null && geoFields[key] !== "") {
+                    verifiedGeoValues[key] = geoFields[key];
+                    // Ensure the vision parser cannot override a verified library value
+                    parsedVision[key] = geoFields[key];
+                }
+            });
+        }
+
         delete parsedVision.jewelry_type; // Explicitly ensure this is scrubbed
         delete parsedVision.origin_story; // CRITICAL: Prevent AI hallucination from overwriting the raw context
         delete parsedVision.price; // CRITICAL: Never propose a price
@@ -780,7 +797,7 @@ export const action = async ({ request }) => {
           }
         }
         
-        return Response.json({ success: true, intent, tab3Data: finalPayload });
+        return Response.json({ success: true, intent, tab3Data: finalPayload, verifiedGeoValues });
       }
       return Response.json({ success: false, intent, error: "Vision API Failure (Tab 3)" });
     }
@@ -830,7 +847,7 @@ export const action = async ({ request }) => {
         let generatedDescription = "";
         if (pieceDataStr) {
             // Tab 3 Flow outputs raw HTML — strip markdown codeblocks if Gemini added them
-            generatedDescription = rawText.replace(/^```html\n?/, "").replace(/\n?```$/, "").trim();
+            generatedDescription = rawText.replace(/^```html\n?/, "").replace(/\n?পদে?$/, "").trim();
         } else {
             // Legacy flow expects JSON
             try {
