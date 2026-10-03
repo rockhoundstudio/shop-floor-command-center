@@ -1,1654 +1,874 @@
-// ==========================================================================
-// ROCKHOUND STUDIO — TAB 3: OPERATIONS MATRIX
-// File: app/routes/app.meta-injector.matrix.jsx
-// ==========================================================================
-import React, { useState, useCallback, useEffect } from "react";
-import { BlockStack, Card, Text, Banner, TextField, Button, InlineStack, Box, Badge, ProgressBar, Select } from "@shopify/polaris";
-import { MagicIcon, ClipboardIcon, SaveIcon, ChevronDownIcon, ChevronUpIcon } from "@shopify/polaris-icons";
-import { useFetcher } from "react-router";
+import { authenticate } from "../shopify.server";
 
-const STATUS = {
-  QUEUED: "Queued",
-  SCANNING: "Scanning",
-  VALIDATED: "Manifest Built",
-  COMPLETE: "Repaired",
-  FAILED: "Failed",
-  SKIPPED: "Skipped"
-};
+// 🟢 AI Engine — No Prisma Import Here
 
-const SECTIONS = [
-  {
-    title: "1. Identity and Merchandising",
-    keys: [
-      "shopify_title",
-      "custom.piece_name",
-      "custom.is_ooak",
-      "custom.product_format",
-      "custom.craftsmanship",
-      "custom.poetic_hook",
-      "custom.seo_title"
-    ]
-  },
-  {
-    title: "2. Stone Facts and Physical Details",
-    keys: [
-      "custom.weight_grams",
-      "custom.shipping_weight_oz",
-      "custom.dimensions_mm",
-      "custom.cut_and_shape",
-      "custom.surface_finish",
-      "custom.primary_color",
-      "custom.color_pattern",
-      "custom.honest_flaws_and_character",
-      "custom.bench_notes",
-      "custom.mohs_hardness",
-      "custom.specific_gravity",
-      "custom.crystal_system",
-      "custom.fracture_pattern",
-      "custom.cleavage",
-      "custom.luster",
-      "custom.diaphaneity",
-      "custom.mineral_class",
-      "custom.geological_era",
-      "custom.rock_formation"
-    ]
-  },
-  {
-    title: "3. Origin, Story, and Collection",
-    keys: [
-      "custom.stone_family",
-      "custom.origin_location",
-      "custom.origin_handle",
-      "custom.collection_name",
-      "custom.collection_location",
-      "custom.origin_story" // Hidden context field, maintained for 45-pin count
-    ]
-  },
-  {
-    title: "4. Jewelry and Setting",
-    keys: [
-      "custom.primary_use",
-      "custom.jewelry_type",
-      "custom.primary_medium",
-      "custom.secondary_medium",
-      "custom.setting_ready",
-      "custom.bail_included",
-      "custom.chain_material",
-      "custom.jewelry_finding_type"
-    ]
-  },
-  {
-    title: "5. Search, Sales, and Media",
-    keys: [
-      "price",
-      "custom.alt_text",
-      "custom.google_product_category",
-      "custom.authenticity",
-      "custom.rarity"
-    ]
+const stoneProfileCache = new Map();
+let dbPool = null;
+
+async function queryPostgres(sql, params) {
+  if (!dbPool) {
+    const { default: pg } = await import('pg');
+    dbPool = new pg.Pool({
+      connectionString: process.env.DATABASE_URL,
+      ssl: { rejectUnauthorized: false },
+      max: 15
+    });
   }
-];
-
-const BLOCKED_UNVERIFIED_PINS = [
-  "custom.jewelry_type"
-];
-
-const FIELD_LIMITS = {
-  "custom.seo_title": 70,
-  "shopify_title": 255,
-  "custom.piece_name": 255,
-  "custom.bench_notes": 100000,
-  "custom.alt_text": 100000,
-  "custom.honest_flaws_and_character": 255,
-  "custom.poetic_hook": 160
-};
-
-const PROTECTED_FIELDS = [
-  "custom.stone_family", "custom.cut_and_shape", "custom.surface_finish",
-  "custom.color_pattern", "custom.google_product_category", "custom.setting_ready",
-  "custom.bail_included", "custom.chain_material", "custom.jewelry_finding_type",
-  "shopify_title", "custom.bench_notes"
-];
-
-const HARDWARE_FIELDS = [
-  "custom.setting_ready", "custom.bail_included", "custom.chain_material",
-  "custom.jewelry_finding_type"
-];
-
-const POLICY_PRE_APPROVED_FIELDS = [
-  "custom.rarity",
-  "custom.authenticity",
-  "custom.alt_text",
-  "custom.stone_family",
-  "custom.surface_finish",
-  "custom.poetic_hook",
-  "custom.craftsmanship",
-  "custom.product_format"
-];
-
-const GENERIC_VALUES = ["None", "Unknown", "N/A", "N/a", "none", "unknown", "n/a"];
-const REQUIRED_FIELDS = ["shopify_title", "price"];
-const INTEGRATION_PREFIXES = ["google.", "shopify.", "mm-google", "mc-facebook"];
-const NATIVE_FIELDS = ["price", "shopify_title"];
-
-// Used strictly for global telemetry tracking to preserve 45-count. Do not render.
-const HIDDEN_CONTEXT_FIELDS = ["custom.origin_story"]; 
-
-const formatLabel = (key) => {
-  const parts = key.split('.');
-  const name = parts[parts.length - 1];
-  return name.replace(/[_-]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-};
-
-export function OperationsMatrixTab({ products }) {
-  const safeProducts = products || [];
-  const [searchQuery, setSearchQuery] = useState("");
-  
-  // Data Loading State
-  const [isLoadingData, setIsLoadingData] = useState(false);
-  const [loadIndex, setLoadIndex] = useState(0);
-
-  // Execution State
-  const [isExecuting, setIsExecuting] = useState(false);
-  const [executionMode, setExecutionMode] = useState(null);
-  const [executeIndex, setExecuteIndex] = useState(0);
-  const [aiStep, setAiStep] = useState(0);
-  const [tempAiData, setTempAiData] = useState({});
-
-  const [queueIds, setQueueIds] = useState([]);
-  const [productStates, setProductStates] = useState({}); 
-  const [manifestData, setManifestData] = useState({}); 
-  const [lastProcessedData, setLastProcessedData] = useState(null);
-  const [approvals, setApprovals] = useState({}); // Stores exact text approvals by pieceId and key
-  
-  const [selectedBenchId, setSelectedBenchId] = useState(null);
-  const [safetyMessage, setSafetyMessage] = useState("");
-  const [safetyError, setSafetyError] = useState("");
-
-  // UI States for Accessibility & Review
-  const [activeFilter, setActiveFilter] = useState("All");
-  const [expandedBays, setExpandedBays] = useState({
-    "1. Identity and Merchandising": true,
-    "2. Stone Facts and Physical Details": true,
-    "3. Origin, Story, and Collection": true,
-    "4. Jewelry and Setting": true,
-    "5. Search, Sales, and Media": true
-  });
-
-  const batchFetcher = useFetcher();
-
-  const handleSearchChange = useCallback((value) => setSearchQuery(value), []);
-  const handleClearSearch = useCallback(() => setSearchQuery(""), []);
-  
-  const filteredProducts = safeProducts.filter(p => p.title.toLowerCase().includes(searchQuery.toLowerCase()));
-  const allFilteredSelected = filteredProducts.length > 0 && filteredProducts.every(p => queueIds.includes(p.id));
-
-  const updateProductState = useCallback((id, status, newLogs = []) => {
-    setProductStates(prev => {
-      const updated = { ...prev };
-      const existingLogs = updated[id]?.logs || [];
-      updated[id] = { status: status, logs: [...existingLogs, ...newLogs] };
-      return updated;
-    });
-  }, []);
-
-  const handleToggleProductSelection = useCallback((id) => {
-    if (isLoadingData || isExecuting) return; 
-    setQueueIds(prev => {
-      const newIds = prev.includes(id) ? prev.filter(pid => pid !== id) : [...prev, id];
-      setProductStates(states => {
-        const newStates = { ...states };
-        if (!newStates[id]) newStates[id] = { status: STATUS.QUEUED, logs: [] };
-        return newStates;
-      });
-      return newIds;
-    });
-  }, [isLoadingData, isExecuting]);
-
-  const toggleSelectAllFiltered = useCallback(() => {
-    if (isLoadingData || isExecuting) return;
-    setQueueIds(prev => {
-      let newIds = [...prev];
-      if (allFilteredSelected) {
-        newIds = newIds.filter(id => !filteredProducts.find(p => p.id === id));
-      } else {
-        filteredProducts.forEach(p => { if (!newIds.includes(p.id)) newIds.push(p.id); });
-      }
-      setProductStates(states => {
-        const newStates = { ...states };
-        newIds.forEach(id => { if (!newStates[id]) newStates[id] = { status: STATUS.QUEUED, logs: [] }; });
-        return newStates;
-      });
-      return newIds;
-    });
-  }, [allFilteredSelected, filteredProducts, isLoadingData, isExecuting]);
-
-  const clearBench = useCallback(() => {
-    setQueueIds([]);
-    setProductStates({});
-    setManifestData({});
-    setApprovals({});
-    setSelectedBenchId(null);
-    setIsLoadingData(false);
-    setIsExecuting(false);
-    setExecutionMode(null);
-    setExecuteIndex(0);
-    setAiStep(0);
-    setTempAiData({});
-    setLoadIndex(0);
-    setLastProcessedData(null);
-    setSafetyMessage("Rack and Bench cleared.");
-    setSafetyError("");
-  }, []);
-
-  const generateRepairPlan = useCallback(() => {
-    if (queueIds.length === 0) {
-       setSafetyError("Cannot generate plan: No inventory selected. Please check items in the left column first.");
-       return;
-    }
-    setApprovals({}); // Clear approvals on new overall run
-    setIsLoadingData(true);
-    setLoadIndex(0);
-    setSafetyMessage("Fetching live product data and building manifests by GID...");
-    setSafetyError("");
-  }, [queueIds]);
-
-  const handleToggleApproval = useCallback((pieceId, key, propVal, isChecked) => {
-    setApprovals(prev => {
-      const next = { ...prev };
-      if (!next[pieceId]) next[pieceId] = {};
-      if (isChecked) {
-        next[pieceId][key] = propVal;
-      } else {
-        delete next[pieceId][key];
-      }
-      return next;
-    });
-  }, []);
-
-  useEffect(() => {
-    if (!isLoadingData) return;
-    if (batchFetcher.state !== "idle") return;
-
-    if (loadIndex >= queueIds.length) {
-      setIsLoadingData(false);
-      setSafetyMessage(`Data loaded and manifests built for ${queueIds.length} items.`);
-      return;
-    }
-
-    const currentId = queueIds[loadIndex];
-    updateProductState(currentId, STATUS.SCANNING, ["Fetching live metafields by GID..."]);
-
-    const fd = new FormData();
-    fd.append("intent", "loadProductData");
-    fd.append("pieceId", currentId);
-    batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-api" });
-  }, [isLoadingData, loadIndex, queueIds, batchFetcher.state, updateProductState]);
-
-  const executeRepairs = useCallback(() => {
-    if (queueIds.length === 0) {
-       setSafetyError("Cannot execute: No items loaded on the bench.");
-       return;
-    }
-    
-    const readyItems = queueIds.filter(id => manifestData[id]);
-    if (readyItems.length === 0) {
-       setSafetyError("Cannot execute: You must click 'GENERATE REPAIR PLAN' first to load data.");
-       return;
-    }
-    
-    if (readyItems.length < queueIds.length) {
-        if (!window.confirm(`WARNING: LIVE RUN.\n\nOnly ${readyItems.length} of ${queueIds.length} queued items have loaded manifests. The others will be skipped.\n\nProceed?`)) {
-            return;
-        }
-    } else {
-        if (!window.confirm("WARNING: LIVE RUN.\n\nThis will execute structural repairs (edits and deletions) on the live Shopify database for all queued items. Proceed?")) {
-            return;
-        }
-    }
-    
-    setSafetyError("");
-    setSafetyMessage("Structural Repair Engine engaged. Mutating live data...");
-    setExecutionMode("REPAIR");
-    setIsExecuting(true);
-    setExecuteIndex(0);
-    setTempAiData({});
-  }, [queueIds, manifestData]);
-
-  const executeAIFill = useCallback(() => {
-    if (queueIds.length === 0) {
-       setSafetyError("Cannot run AI: No items loaded on the bench.");
-       return;
-    }
-    
-    const readyItems = queueIds.filter(id => manifestData[id]);
-    if (readyItems.length === 0) {
-       setSafetyError("Cannot run AI: You must click 'GENERATE REPAIR PLAN' first to load data.");
-       return;
-    }
-    
-    setApprovals({}); // Switching to new AI run globally clears approvals
-    setSafetyError("");
-    setSafetyMessage("Industrial AI Batch Pipeline engaged. Firing up the Gemini cores...");
-    setExecutionMode("AI_BATCH_PIPELINE");
-    setIsExecuting(true);
-    setExecuteIndex(0);
-    setAiStep(1);
-    setTempAiData({});
-  }, [queueIds, manifestData]);
-
-  const getFieldMetadata = (key, data, productId, currentApprovals) => {
-    const hasCurrent = data.currentMetafields?.hasOwnProperty(key);
-    let currentVal = hasCurrent ? String(data.currentMetafields[key] || "") : "";
-
-    if (key === "shopify_title") {
-        currentVal = String(data.canonicalFields?.["shopify_title"] || currentVal || ""); 
-    }
-
-    const isProposed = data.repairPlan !== undefined && data.repairPlan.hasOwnProperty(key);
-    const propVal = isProposed ? String(data.repairPlan[key] ?? "") : "";
-
-    let fieldMeta = data.metadata?.[key] || {};
-    let source = fieldMeta.source || "Not reported";
-    let stage = fieldMeta.stage || "Not reported";
-
-    let fieldStatus = "Unchanged";
-    let proposalStatus = isProposed ? (propVal.trim() !== "" ? "Provided" : "Empty") : "Not provided";
-    let isBlockedAction = false;
-    let reasons = [];
-    
-    let isContentPreApproved = false;
-    let preApprovalReason = "";
-
-    const currentExists = currentVal.trim() !== "";
-    const proposalExists = isProposed && propVal.trim() !== "";
-
-    const unprefixedKey = key.replace(/^custom\./, '');
-
-    if (key === "custom.google_product_category" && proposalExists) {
-        isContentPreApproved = true;
-        preApprovalReason = "Category pre-approved";
-    } else if (
-        data.verifiedGeoValues && 
-        data.verifiedGeoValues[unprefixedKey] !== undefined && 
-        String(data.verifiedGeoValues[unprefixedKey]) === propVal && 
-        proposalExists
-    ) {
-        isContentPreApproved = true;
-        preApprovalReason = "Verified Geo Library";
-    } else if (POLICY_PRE_APPROVED_FIELDS.includes(key) && proposalExists) {
-        isContentPreApproved = true;
-        preApprovalReason = "Pre-approved by operator policy";
-    }
-
-    const isRequired = REQUIRED_FIELDS.includes(key);
-    const isProtected = PROTECTED_FIELDS.includes(key);
-    const isHardware = HARDWARE_FIELDS.includes(key);
-    const isIntegration = INTEGRATION_PREFIXES.some(prefix => key.startsWith(prefix));
-
-    const currentCount = currentVal.length;
-    const propCount = propVal.length;
-    const limit = FIELD_LIMITS[key] || null;
-
-    const isManualOnly = (key === "price" || key === "shopify_title");
-    const exactApprovalVal = currentApprovals?.[productId]?.[key];
-    const isApproved = exactApprovalVal !== undefined && exactApprovalVal === propVal && propVal.trim() !== "";
-
-    if (HIDDEN_CONTEXT_FIELDS.includes(key)) {
-        return { currentVal, propVal, isProposed, fieldStatus: "Hidden Source", proposalStatus, source, stage, isBlockedAction: true, reasons: ["Hidden Context"], currentExists, proposalExists, isApproved: false, hasTechnicalBlock: true, contentNeedsReview: false, isContentPreApproved: false, preApprovalReason: "" };
-    }
-
-    let hasTechnicalBlock = false;
-    let contentNeedsReview = false;
-
-    // Technical Verification Layer
-    const isOverLimit = limit !== null && (currentCount > limit || (isProposed && propCount > limit));
-    if (isOverLimit) {
-        hasTechnicalBlock = true;
-        reasons.push("Over limit");
-    }
-    
-    if (isIntegration) reasons.push("Integration owned");
-
-    if (BLOCKED_UNVERIFIED_PINS.includes(key) && proposalExists) {
-        hasTechnicalBlock = true;
-        reasons.push("Type/destination unverified");
-    }
-
-    if (isHardware && GENERIC_VALUES.includes(propVal.trim()) && proposalExists) {
-        hasTechnicalBlock = true;
-        reasons.push("Generic hardware fill into blank");
-    }
-
-    // Content Review Status Evaluation
-    if (currentExists) {
-        if (!proposalExists) {
-            fieldStatus = "Unchanged";
-        } else if (currentVal === propVal) {
-            fieldStatus = "Unchanged";
-        } else {
-            if (isProtected) {
-                contentNeedsReview = true;
-                if (!isContentPreApproved) fieldStatus = "Degrade";
-                reasons.push(isContentPreApproved ? "Historical: Degrade (Pre-approved)" : "Degrade");
-            } else {
-                contentNeedsReview = true;
-                if (!isContentPreApproved) fieldStatus = "Conflict";
-                reasons.push(isContentPreApproved ? "Historical: Conflict (Pre-approved)" : "Conflict");
-            }
-        }
-    } else {
-        if (!proposalExists) {
-            fieldStatus = isRequired ? "Required missing" : "Optional blank";
-            if (isRequired) reasons.push("Required missing");
-        } else {
-            if (source === "Not reported") {
-                contentNeedsReview = true;
-                if (!isContentPreApproved) fieldStatus = "Unverified proposal";
-                reasons.push(isContentPreApproved ? "Historical: Unverified proposal (Pre-approved)" : "Unverified proposal");
-            } else {
-                if (!isContentPreApproved) fieldStatus = "Proposed";
-                reasons.push("Proposed");
-            }
-        }
-    }
-
-    // Apply baseline technical overrides
-    if (hasTechnicalBlock && fieldStatus !== "Unchanged" && fieldStatus !== "Optional blank" && fieldStatus !== "Required missing") {
-        if (isOverLimit) {
-            fieldStatus = "Over limit";
-        } else if (reasons.includes("Type/destination unverified") || reasons.includes("Generic hardware fill into blank")) {
-            fieldStatus = "Blocked";
-        }
-    }
-
-    // React to Approvals & Pre-Approvals
-    if (proposalExists && currentVal !== propVal && !isManualOnly) {
-        if (isContentPreApproved) {
-            if (hasTechnicalBlock) {
-                fieldStatus = "Pre-approved, blocked";
-                isBlockedAction = true;
-            } else {
-                fieldStatus = "Pre-approved, not saved";
-                isBlockedAction = false;
-            }
-        } else if (isApproved) {
-            if (hasTechnicalBlock) {
-                fieldStatus = "Approved, blocked";
-                isBlockedAction = true;
-            } else {
-                fieldStatus = "Approved, not saved";
-                isBlockedAction = false;
-            }
-        } else {
-            // If not manually approved and not pre-approved, content blocks stop saves
-            if (contentNeedsReview || hasTechnicalBlock) {
-                isBlockedAction = true;
-            } else {
-                // "Proposed" fields are inherently safe when not blocked technically
-                isBlockedAction = false; 
-            }
-        }
-    } else {
-        // Enforce blocks on Unchanged, Blanks, Missing
-        if (hasTechnicalBlock || fieldStatus === "Optional blank" || fieldStatus === "Required missing") {
-            isBlockedAction = true;
-        }
-    }
-
-    // Absolute enforcements for manual only (prices and shopify titles)
-    if (isManualOnly) {
-        isBlockedAction = true;
-        hasTechnicalBlock = true;
-        if (proposalExists && currentVal !== propVal) {
-            fieldStatus = "Manual only";
-            if (!reasons.includes("Manual only")) reasons.push("Manual only");
-        }
-    }
-
-    return { 
-      currentVal, propVal, isProposed, fieldStatus, proposalStatus, source, stage, 
-      isBlockedAction, reasons, currentExists, proposalExists, isApproved, hasTechnicalBlock, contentNeedsReview,
-      isContentPreApproved, preApprovalReason
-    };
-  };
-
-  useEffect(() => {
-    if (!isExecuting) return;
-    if (batchFetcher.state !== "idle") return;
-
-    if (executeIndex >= queueIds.length) {
-      setIsExecuting(false);
-      setExecutionMode(null);
-      setAiStep(0);
-      setSafetyMessage(`Execution Complete. Processed ${queueIds.length} items. Note: AI Autofill only populates fields where visual or titled data is evident.`);
-      return;
-    }
-
-    const currentId = queueIds[executeIndex];
-    const manifest = manifestData[currentId];
-    const product = safeProducts.find(p => p.id === currentId);
-
-    if (!manifest || !product) {
-      updateProductState(currentId, STATUS.SKIPPED, ["No manifest or product data built."]);
-      setTimeout(() => setExecuteIndex(i => i + 1), 500);
-      return;
-    }
-
-    if (executionMode === "REPAIR") {
-      if (!tempAiData.repairRequested) {
-        setTempAiData({ repairRequested: true });
-        updateProductState(currentId, STATUS.SCANNING, ["Executing structural repairs..."]);
-        
-        const fd = new FormData();
-        fd.append("intent", "executeRepairPlan");
-        fd.append("pieceId", currentId);
-        
-        // Save execution utilizes the derived metadata to determine safety
-        const safePlan = {};
-        Object.keys(manifest.repairPlan).forEach(key => {
-            const meta = getFieldMetadata(key, manifest, currentId, approvals);
-            if (!meta.isBlockedAction && !HIDDEN_CONTEXT_FIELDS.includes(key)) {
-                safePlan[key] = manifest.repairPlan[key];
-            }
-        });
-
-        fd.append("repairPlan", JSON.stringify(safePlan));
-        fd.append("legacyKeysToRemove", JSON.stringify([]));
-        batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-api" });
-      }
-    } 
-    else if (executionMode === "AI_BATCH_PIPELINE") {
-      if (aiStep === 1 && !tempAiData.titleParseRequested) {
-        setTempAiData(prev => ({ ...prev, titleParseRequested: true }));
-        updateProductState(currentId, STATUS.SCANNING, ["Stage 1: Parsing Title & Origin (Gemini + Render DB)..."]);
-        
-        const titleToParse = manifest.canonicalFields?.shopify_title || product.title;
-        const fd = new FormData();
-        fd.append("intent", "titleParse");
-        fd.append("pieceName", titleToParse);
-        batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-autofill" });
-      }
-      else if (aiStep === 2 && !tempAiData.fullRescanRequested) {
-        setTempAiData(prev => ({ ...prev, fullRescanRequested: true }));
-        updateProductState(currentId, STATUS.SCANNING, ["Stage 2: Vision API Deep Scan (Gemini)..."]);
-        
-        const titleToParse = manifest.canonicalFields?.shopify_title || product.title;
-        const imageUrl = product.images?.edges?.[0]?.node?.url || product.featuredImage?.url || product.media?.edges?.[0]?.node?.image?.url || "";
-        
-        const fd = new FormData();
-        fd.append("intent", "tab3FullRescan");
-        fd.append("pieceId", currentId);
-        fd.append("productTitle", titleToParse);
-        fd.append("imageUrl", imageUrl);
-        fd.append("stone_family", tempAiData.titleParse?.stone_family || "");
-        
-        fd.append("origin_story", tempAiData.titleParse?.origin_story || "");
-        
-        fd.append("honest_flaws_and_character", manifest.currentMetafields["custom.honest_flaws_and_character"] || "");
-        fd.append("weight_grams", manifest.currentMetafields["custom.weight_grams"] || "");
-        fd.append("dimensions_mm", manifest.currentMetafields["custom.dimensions_mm"] || "");
-        
-        fd.append("stone_shape", manifest.currentMetafields["custom.stone_shape"] || manifest.canonicalFields["custom.stone_shape"] || "");
-        fd.append("cut_and_shape", manifest.currentMetafields["custom.cut_and_shape"] || manifest.canonicalFields["custom.cut_and_shape"] || "");
-
-        // [Integration Note]: The operator may have confirmed construction details like 'jewelry_finding_type'
-        // (e.g., "Drilled stone with a pinned pinch bail"). However, starting an AI batch run clears the 
-        // explicit 'approvals' state. To prevent sending unapproved 'repairPlan' AI proposals as facts, 
-        // we strictly fall back to current saved values in 'currentMetafields'. 
-        // A mechanism to persist unsaved operator-confirmed inputs across AI runs is required.
-        const hardwareKeys = [
-            "bail_included",
-            "secondary_medium",
-            "jewelry_finding_type",
-            "primary_use",
-            "product_format",
-            "jewelry_type"
-        ];
-        
-        hardwareKeys.forEach(k => {
-            const fullKey = `custom.${k}`;
-            let val = "";
-            if (approvals[currentId] && approvals[currentId][fullKey] !== undefined) {
-                val = approvals[currentId][fullKey];
-            } else if (manifest.currentMetafields && manifest.currentMetafields[fullKey]) {
-                val = manifest.currentMetafields[fullKey];
-            }
-            if (val) {
-                fd.append(k, val);
-            }
-        });
-
-        batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-autofill" });
-      }
-      else if (aiStep === 3 && !tempAiData.generateDescRequested) {
-        setTempAiData(prev => ({ ...prev, generateDescRequested: true }));
-        updateProductState(currentId, STATUS.SCANNING, ["Stage 3: Generating Story Narrative (Gemini)..."]);
-        
-        const fd = new FormData();
-        fd.append("intent", "generateDescription");
-        fd.append("sharedFields", JSON.stringify({
-            stone_family: tempAiData.tab3Data?.stone_family || tempAiData.titleParse?.stone_family,
-            origin_location: tempAiData.tab3Data?.origin_location || tempAiData.titleParse?.origin_location
-        }));
-        fd.append("pieceData", JSON.stringify(tempAiData.tab3Data || {}));
-        batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-autofill" });
-      }
-      else if (aiStep === 4) {
-        updateProductState(currentId, STATUS.VALIDATED, ["AI Pipeline Complete. Data staged."]);
-        
-        setManifestData(prev => {
-            const existing = prev[currentId];
-            const newPlan = { ...existing.repairPlan };
-            const diagnostics = { ...(existing.diagnostics || {}) };
-            
-            const titleData = tempAiData.titleParse || {};
-            const visionData = tempAiData.tab3Data || {};
-            const descData = tempAiData.generated_description || "";
-            const verifiedGeo = tempAiData.verifiedGeoValues || {};
-
-            // Record stage success
-            if (tempAiData.titleParseRequested) {
-                diagnostics.gemini = "Success";
-                diagnostics.geoLibrary = titleData?.geoSource === "library" ? "Success" : (titleData?.geoSource || "Not reported");
-                diagnostics.stage = "titleParse";
-            }
-            if (tempAiData.fullRescanRequested) {
-                diagnostics.vision = "Success";
-                diagnostics.gemini = "Success";
-                diagnostics.stage = "tab3FullRescan";
-            }
-            if (tempAiData.generateDescRequested) {
-                diagnostics.gemini = "Success";
-                diagnostics.stage = "generateDescription";
-            }
-
-            Object.keys(visionData).forEach(k => {
-                if (k !== "generated_description" && k !== "pieceId" && k !== "debug_origin" && k !== "intent" && k !== "success") {
-                    if (NATIVE_FIELDS.includes(k) || k.includes('.')) {
-                        newPlan[k] = visionData[k];
-                    } else {
-                        newPlan[`custom.${k}`] = visionData[k];
-                    }
-                }
-            });
-            
-            Object.keys(titleData).forEach(k => {
-                if (k !== "pieceId" && k !== "intent" && k !== "success" && k !== "geoSource") {
-                    if (NATIVE_FIELDS.includes(k) || k.includes('.')) {
-                        newPlan[k] = titleData[k];
-                    } else {
-                        newPlan[`custom.${k}`] = titleData[k];
-                    }
-                }
-            });
-
-            if (descData) newPlan["custom.generated_description"] = descData;
-
-            return { ...prev, [currentId]: { ...existing, repairPlan: newPlan, diagnostics, verifiedGeoValues: verifiedGeo } };
-        });
-        
-        setTempAiData({});
-        setAiStep(1); 
-        setTimeout(() => setExecuteIndex(i => i + 1), 500);
-      }
-    }
-  }, [isExecuting, executionMode, executeIndex, queueIds, manifestData, batchFetcher.state, updateProductState, aiStep, tempAiData, safeProducts, approvals]);
-
-  useEffect(() => {
-    if (batchFetcher.state === "idle" && batchFetcher.data && batchFetcher.data !== lastProcessedData) {
-      setLastProcessedData(batchFetcher.data);
-      const { intent, success, pieceId, productId, message, error, errors, logs, status, finalStatus, titleParse, tab3Data, generated_description, fieldsUpdated, verifiedGeoValues } = batchFetcher.data;
-      
-      const targetId = pieceId || productId;
-      
-      if (intent === "loadProductData" && targetId) {
-         if (!success) {
-            updateProductState(targetId, STATUS.FAILED, [error || message || "Failed to load data"]);
-         } else {
-            setManifestData(prev => {
-                const prevDiag = prev[targetId]?.diagnostics || {};
-                return {
-                    ...prev,
-                    [targetId]: {
-                        ...batchFetcher.data,
-                        diagnostics: {
-                            shopifyRead: batchFetcher.data.success ? "Success" : "Failed",
-                            gemini: prevDiag.gemini === "Success" ? "Success" : "Not called",
-                            vision: prevDiag.vision === "Success" ? "Success" : "Not called",
-                            geoLibrary: prevDiag.geoLibrary === "Success" ? "Success" : "Not called",
-                            readBack: "Not called",
-                            stage: "loadProductData"
-                        }
-                    }
-                };
-            });
-            updateProductState(targetId, STATUS.VALIDATED, ["Data Loaded. Manifest Built."]);
-         }
-         if (isLoadingData) setTimeout(() => setLoadIndex(i => i + 1), 100);
-      }
-
-      if ((intent === "executeRepairPlan" || intent === "batchAuditItem" || intent === "saveMetafields") && targetId && executionMode !== "AI_BATCH_PIPELINE") {
-        if (!success) {
-           console.error("Execute Error from Backend:", batchFetcher.data);
-           setIsExecuting(false);
-           const errMsg = errors ? errors[0]?.message : (error || (logs && logs[logs.length-1]) || "Unknown Error");
-           setSafetyError(`Engine halted on ${targetId}. Error: ${errMsg}`);
-           updateProductState(targetId, STATUS.FAILED, errors ? errors.map(e => e.message) : (logs || ["Unknown Backend Error"]));
-           return;
-        }
-        
-        if (intent === "batchAuditItem" && success) {
-            updateProductState(targetId, STATUS.SCANNING, ["AI Run complete. Fetching fresh data..."]);
-            setSafetyMessage("Single AI Run complete. Reloading manifest to display new data...");
-            setManifestData(prev => {
-                const existing = prev[targetId];
-                if (!existing) return prev;
-                return {
-                    ...prev,
-                    [targetId]: {
-                        ...existing,
-                        diagnostics: {
-                            ...existing.diagnostics,
-                            gemini: "Success",
-                            vision: "Success",
-                            stage: "batchAuditItem"
-                        }
-                    }
-                };
-            });
-            setTimeout(() => {
-                const fd = new FormData();
-                fd.append("intent", "loadProductData");
-                fd.append("pieceId", targetId);
-                batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-api" });
-            }, 500);
-            return;
-        }
-
-        if (intent === "executeRepairPlan" && success) {
-            setManifestData(prev => {
-                const existing = prev[targetId];
-                if (!existing) return prev;
-                return {
-                    ...prev,
-                    [targetId]: {
-                        ...existing,
-                        diagnostics: {
-                            ...existing.diagnostics,
-                            shopifyRead: "Success",
-                            readBack: "Not called",
-                            stage: "executeRepairPlan"
-                        }
-                    }
-                };
-            });
-        }
-
-        const successLogs = logs || [message || "Operation applied successfully."];
-        
-        let statusToSet = STATUS.COMPLETE;
-        if (status === "NO_CHANGES_REQUIRED" || message === "No changes required." || fieldsUpdated === 0) {
-            statusToSet = STATUS.SKIPPED;
-            successLogs.push("No changes required.");
-        } else if (finalStatus === "Needs Review" || status === "REPAIR_FAILED") {
-            statusToSet = STATUS.FAILED;
-        }
-
-        updateProductState(targetId, statusToSet, successLogs);
-        
-        if (isExecuting) {
-           setTempAiData({});
-           setTimeout(() => setExecuteIndex(i => i + 1), 500);
-        }
-      }
-
-      if (executionMode === "AI_BATCH_PIPELINE") {
-        const currentId = queueIds[executeIndex];
-        
-        const isExpectedResponse = 
-            (aiStep === 1 && intent === "titleParse") ||
-            (aiStep === 2 && intent === "tab3FullRescan") ||
-            (aiStep === 3 && intent === "generateDescription");
-        
-        if (isExpectedResponse) {
-            if (!success) {
-                updateProductState(currentId, STATUS.FAILED, [error || `Gemini failed at ${intent}`]);
-                setIsExecuting(false);
-                setSafetyError(`Engine halted on item ${executeIndex + 1}. Error: ${error || "Unknown Gemini API Error"}`);
-                setManifestData(prev => {
-                    const existing = prev[currentId];
-                    if (!existing) return prev;
-                    const diagnostics = { ...existing.diagnostics, error: error || `Gemini failed at ${intent}` };
-                    if (intent === "titleParse" || intent === "generateDescription") diagnostics.gemini = "Failed";
-                    if (intent === "tab3FullRescan") { diagnostics.vision = "Failed"; diagnostics.gemini = "Failed"; }
-                    return { ...prev, [currentId]: { ...existing, diagnostics } };
-                });
-                return;
-            }
-
-            if (intent === "titleParse") {
-                setTempAiData(prev => ({ ...prev, titleParse: titleParse }));
-                setAiStep(2); 
-            } 
-            else if (intent === "tab3FullRescan") {
-                setTempAiData(prev => ({ ...prev, tab3Data: tab3Data, verifiedGeoValues: verifiedGeoValues }));
-                setAiStep(3); 
-            } 
-            else if (intent === "generateDescription") {
-                setTempAiData(prev => ({ ...prev, generated_description: generated_description }));
-                setAiStep(4); 
-            }
-        }
-      }
-    }
-  }, [batchFetcher.state, batchFetcher.data, lastProcessedData, executionMode, aiStep, executeIndex, queueIds, updateProductState, isLoadingData, isExecuting]);
-
-  const handleRepairPlanChange = (key, value) => {
-    if (!selectedBenchId) return;
-    
-    // Clear previously approved value if the proposal text is modified manually
-    setApprovals(prev => {
-        if (prev[selectedBenchId] && prev[selectedBenchId][key] !== undefined) {
-            const next = { ...prev };
-            delete next[selectedBenchId][key];
-            return next;
-        }
-        return prev;
-    });
-
-    setManifestData(prev => ({
-       ...prev,
-       [selectedBenchId]: {
-          ...prev[selectedBenchId],
-          repairPlan: {
-             ...prev[selectedBenchId].repairPlan,
-             [key]: value
-          }
-       }
-    }));
-  };
-
-  const handleExecuteSingleRepair = useCallback(() => {
-    if (!selectedBenchId) return;
-    const manifest = manifestData[selectedBenchId];
-    if (!manifest) {
-       setSafetyError("Generate Repair Plan for this item first.");
-       return;
-    }
-    
-    const fd = new FormData();
-    fd.append("intent", "executeRepairPlan");
-    fd.append("pieceId", selectedBenchId);
-    
-    const safePlan = {};
-    Object.keys(manifest.repairPlan).forEach(key => {
-        const meta = getFieldMetadata(key, manifest, selectedBenchId, approvals);
-        if (!meta.isBlockedAction && !HIDDEN_CONTEXT_FIELDS.includes(key)) {
-            safePlan[key] = manifest.repairPlan[key];
-        }
-    });
-
-    fd.append("repairPlan", JSON.stringify(safePlan));
-    fd.append("legacyKeysToRemove", JSON.stringify([]));
-
-    updateProductState(selectedBenchId, STATUS.SCANNING, ["Executing single structural repair..."]);
-    batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-api" });
-  }, [selectedBenchId, manifestData, approvals, batchFetcher, updateProductState]);
-
-  const handleExecuteSingleAI = useCallback(() => {
-    if (!selectedBenchId) return;
-    
-    setApprovals(prev => {
-        const next = { ...prev };
-        delete next[selectedBenchId];
-        return next;
-    });
-    
-    const fd = new FormData();
-    fd.append("intent", "batchAuditItem");
-    fd.append("pieceId", selectedBenchId);
-    fd.append("runMode", "LIVE_RUN");
-    fd.append("explicitConfirm", "true");
-
-    updateProductState(selectedBenchId, STATUS.SCANNING, ["Spinning up single Gemini AI run..."]);
-    batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-autofill" });
-  }, [selectedBenchId, batchFetcher, updateProductState]);
-
-  const getStatusTone = (status) => {
-    switch(status) {
-      case STATUS.VALIDATED: return "success";
-      case STATUS.COMPLETE: return "success";
-      case STATUS.SCANNING: return "magic";
-      case STATUS.FAILED: return "critical";
-      case STATUS.QUEUED: return "info";
-      default: return undefined;
-    }
-  };
-
-  const isMultilineKey = (k) => [
-    "custom.generated_description", "custom.stone_story", 
-    "custom.bench_notes", "custom.character_marks", "custom.honest_flaws_and_character", 
-    "custom.artist_notes"
-  ].includes(k);
-
-  const getSystemStatus = () => {
-      const data = manifestData[selectedBenchId];
-      let diag = data?.diagnostics || {
-          shopifyRead: "Not reported",
-          gemini: "Not reported",
-          vision: "Not reported",
-          geoLibrary: "Not reported",
-          readBack: "Not called",
-          stage: "Not reported",
-          error: null
-      };
-
-      let shopifyReadStatus = diag.shopifyRead;
-      let geminiStatus = diag.gemini;
-      let visionStatus = diag.vision;
-      let geoLibraryStatus = diag.geoLibrary;
-      let readBackStatus = diag.readBack;
-      let currentStage = diag.stage || "Not reported";
-
-      const isCurrentlyProcessing = (isLoadingData && queueIds[loadIndex] === selectedBenchId) ||
-                                    (isExecuting && queueIds[executeIndex] === selectedBenchId);
-      
-      let finalStageDisplay = executionMode || "Not reported";
-      let fetcherStateDisplay = batchFetcher.state;
-      let loadingStateDisplay = isLoadingData ? "Loading" : "Idle";
-      let errorMessageDisplay = safetyError || diag.error || "None";
-
-      if (isCurrentlyProcessing) {
-          if (isLoadingData) {
-              shopifyReadStatus = "Running";
-          } else if (executionMode === "AI_BATCH_PIPELINE") {
-              if (aiStep === 1) { geminiStatus = "Running"; currentStage = "titleParse"; }
-              if (aiStep === 2) { geminiStatus = "Running"; visionStatus = "Running"; currentStage = "tab3FullRescan"; }
-              if (aiStep === 3) { geminiStatus = "Running"; currentStage = "generateDescription"; }
-          } else if (executionMode === "REPAIR") {
-              shopifyReadStatus = "Running"; 
-              currentStage = "executeRepairPlan";
-          }
-      }
-
-      if (batchFetcher.state !== "idle" && batchFetcher.formData?.get("pieceId") === selectedBenchId) {
-          const intent = batchFetcher.formData?.get("intent");
-          if (intent === "batchAuditItem") {
-              geminiStatus = "Running";
-              visionStatus = "Running";
-              currentStage = "batchAuditItem";
-          }
-          if (intent === "executeRepairPlan") {
-              shopifyReadStatus = "Running";
-              currentStage = "executeRepairPlan";
-          }
-      }
-
-      return {
-          shopifyReadStatus, geminiStatus, visionStatus, geoLibraryStatus, readBackStatus,
-          currentStage, finalStageDisplay, fetcherStateDisplay, loadingStateDisplay, errorMessageDisplay
-      };
-  };
-
-  const getDiagnosticsStats = (data) => {
-    if (!data) return null;
-    let stats = {
-        proposed: 0,
-        blocked: 0,
-        degraded: 0,
-        conflicts: 0,
-        unverified: 0,
-        optionalBlanks: 0,
-        requiredMissing: 0,
-        approvedWrite: 0,
-        total: 0,
-        filled: 0,
-        blank: 0
-    };
-
-    SECTIONS.forEach(sec => {
-        sec.keys.forEach(k => {
-            stats.total++;
-            const meta = getFieldMetadata(k, data, selectedBenchId, approvals);
-            
-            if (meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing") stats.blank++;
-            else stats.filled++;
-
-            if (meta.fieldStatus === "Proposed" || meta.fieldStatus === "Approved, not saved" || meta.fieldStatus === "Approved, blocked" || meta.fieldStatus === "Pre-approved, not saved" || meta.fieldStatus === "Pre-approved, blocked") stats.proposed++;
-            if (meta.isBlockedAction && !HIDDEN_CONTEXT_FIELDS.includes(k)) stats.blocked++;
-            if (meta.fieldStatus === "Degrade") stats.degraded++;
-            if (meta.fieldStatus === "Conflict") stats.conflicts++;
-            if (meta.fieldStatus === "Unverified proposal") stats.unverified++;
-            if (meta.fieldStatus === "Optional blank") stats.optionalBlanks++;
-            if (meta.fieldStatus === "Required missing") stats.requiredMissing++;
-            if ((meta.fieldStatus === "Proposed" || meta.fieldStatus === "Approved, not saved" || meta.fieldStatus === "Pre-approved, not saved") && !meta.isBlockedAction && !HIDDEN_CONTEXT_FIELDS.includes(k)) stats.approvedWrite++;
-        });
-    });
-
-    return stats;
-  };
-
-  const handleCollectTelemetry = useCallback(() => {
-      if (!selectedBenchId || !manifestData[selectedBenchId]) {
-          setSafetyError("Cannot collect telemetry: No active bench item.");
-          return;
-      }
-
-      const data = manifestData[selectedBenchId];
-      const product = safeProducts.find(p => p.id === selectedBenchId) || {};
-      const statusObj = getSystemStatus();
-      const diag = data.diagnostics || {};
-
-      let stats = {
-          loaded: 0,
-          blank: 0,
-          proposed: 0,
-          blocked: 0,
-          protected: 0,
-          conflicting: 0,
-          updated: data.fieldsUpdated !== undefined ? data.fieldsUpdated : "Not recorded",
-          errored: "Not recorded"
-      };
-
-      const pinRows = [];
-      let hasBlockersForWrite = false;
-
-      // Process all 45 pins in SECTIONS
-      SECTIONS.forEach(sec => {
-          sec.keys.forEach(key => {
-              const meta = getFieldMetadata(key, data, selectedBenchId, approvals);
-              
-              if (meta.currentExists) stats.loaded++;
-              if (meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing") stats.blank++;
-              if (meta.fieldStatus === "Proposed" || meta.fieldStatus === "Approved, not saved" || meta.fieldStatus === "Approved, blocked" || meta.fieldStatus === "Pre-approved, not saved" || meta.fieldStatus === "Pre-approved, blocked") stats.proposed++;
-              if (meta.isBlockedAction && !HIDDEN_CONTEXT_FIELDS.includes(key)) stats.blocked++;
-              if (PROTECTED_FIELDS.includes(key)) stats.protected++;
-              if (meta.fieldStatus === "Conflict" || meta.fieldStatus === "Degrade") stats.conflicting++;
-
-              if (meta.isBlockedAction && !HIDDEN_CONTEXT_FIELDS.includes(key)) {
-                  hasBlockersForWrite = true;
-              }
-
-              if (key === "custom.origin_story") {
-                  const sourceAvailable = (meta.currentExists || meta.proposalExists) ? "Yes" : "No";
-                  pinRows.push(`- ${key}: [Hidden Context] Source Available: ${sourceAvailable}`);
-              } else {
-                  const cleanText = (str) => {
-                      if (!str) return "";
-                      const cleaned = String(str).replace(/\n/g, " ").trim();
-                      return cleaned.length > 40 ? cleaned.substring(0, 37) + "..." : cleaned;
-                  };
-                  
-                  const curr = cleanText(meta.currentVal);
-                  const prop = cleanText(meta.propVal);
-                  let row = `- ${key}: Current: [${curr}], Proposed: [${prop}], Status: [${meta.fieldStatus}]`;
-                  if (meta.reasons.length > 0) {
-                      row += `, Reason: [${meta.reasons.join(", ")}]`;
-                  }
-                  pinRows.push(row);
-              }
-          });
-      });
-
-      const genDescVal = data.repairPlan?.["custom.generated_description"] || data.currentMetafields?.["custom.generated_description"] || "";
-      const descExists = !!genDescVal;
-      const descPreview = descExists ? String(genDescVal).substring(0, 80).replace(/\n/g, " ") + "..." : "None";
-
-      const titleParseStatus = (diag.stage === "titleParse" || diag.stage === "tab3FullRescan" || diag.stage === "generateDescription" || diag.stage === "batchAuditItem") ? (diag.gemini || "Unknown") : "Not called";
-      const visionStatus = diag.vision || "Not called";
-      const geoStatus = diag.geoLibrary || "Not called";
-      const descStatus = descExists && data.repairPlan?.["custom.generated_description"] ? "Success" : (diag.stage === "generateDescription" ? (diag.gemini || "Unknown") : "Not called");
-
-      const shopifyRead = statusObj.shopifyReadStatus;
-      const shopifyWrite = data.fieldsUpdated !== undefined ? (data.fieldsUpdated > 0 ? "Success" : "Success (0 changes)") : "Not called";
-      const readBack = statusObj.readBackStatus;
-
-      const recommendations = [];
-      if (hasBlockersForWrite) {
-          recommendations.push("1. DO NOT WRITE. Review and manually resolve blocked, conflicting, or unverified pins listed above. Approve suggestions where applicable (Verified Geo Library, Category, and policy-designated values are pre-approved).");
-          recommendations.push("2. Verify Shopify Metafield definitions for any 'Unverified proposal' pins before approving.");
-      } else if (stats.proposed > 0 && shopifyWrite === "Not called") {
-          recommendations.push("1. Data is staged and validated. Proceed with 'Execute Single Repair'.");
-      } else if (shopifyWrite.includes("Success")) {
-          recommendations.push("1. Write successful. Verify live changes in Shopify admin if necessary.");
-      } else {
-          recommendations.push("1. Load data or generate a repair plan to begin.");
-      }
-
-      const report = `=== ROCKHOUND STUDIO TELEMETRY REPORT ===
-Product: ${product.title || "Unknown"}
-GID: ${selectedBenchId}
-Run Time: ${new Date().toISOString()}
-
---- PIPELINE STATUS ---
-[Shopify IO]
-Read: ${shopifyRead}
-Write: ${shopifyWrite}
-Read-Back: ${readBack}
-
-[AI Stages]
-Title Parse: ${titleParseStatus}
-Vision Scan: ${visionStatus}
-Geo Library: ${geoStatus}
-Story Gen: ${descStatus}
-
---- 45-PIN SUMMARY ---
-Loaded: ${stats.loaded}
-Blank: ${stats.blank}
-Proposed: ${stats.proposed}
-Blocked: ${stats.blocked}
-Protected: ${stats.protected}
-Conflicting: ${stats.conflicting}
-Updated: ${stats.updated}
-Errored: ${stats.errored}
-
---- GENERATED DESCRIPTION ---
-Status: ${descStatus}
-Preview: ${descPreview}
-
---- PIN DETAILS ---
-${pinRows.join("\n")}
-
---- RECOMMENDATIONS ---
-${recommendations.join("\n")}
-=========================================`;
-
-      navigator.clipboard.writeText(report)
-          .then(() => {
-              if (window.shopify && window.shopify.toast) {
-                  window.shopify.toast.show("Telemetry report copied");
-              } else {
-                  setSafetyMessage("Telemetry report copied to clipboard.");
-              }
-          })
-          .catch(err => {
-              console.error("Clipboard error", err);
-              setSafetyError("Failed to copy telemetry to clipboard.");
-          });
-  }, [selectedBenchId, manifestData, safeProducts, approvals, batchFetcher.state, isLoadingData, safetyError, aiStep, executionMode, getSystemStatus]);
-
-  const renderDiagnosticHeader = () => {
-    const data = manifestData[selectedBenchId];
-    if (!data) return null;
-
-    const stats = getDiagnosticsStats(data);
-    const statusObj = getSystemStatus();
-
-    return (
-      <Card padding="400">
-        <BlockStack gap="400">
-          <InlineStack align="space-between" blockAlign="center">
-            <Text variant="headingLg" as="h3">Diagnostic Header</Text>
-            <Button size="large" variant="primary" icon={ClipboardIcon} onClick={handleCollectTelemetry}>
-              Collect Telemetry
-            </Button>
-          </InlineStack>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "16px" }}>
-            
-            <Box padding="300" background="bg-surface-secondary" borderRadius="100" borderColor="border" borderWidth="1">
-              <div style={{ minWidth: 0, wordBreak: "break-word", overflowWrap: "anywhere" }}>
-                <Text as="p" variant="headingSm" tone="subdued">System Status</Text>
-                <BlockStack gap="100" align="start">
-                  <Text as="p" fontWeight="bold">Shopify Read: <Badge tone={statusObj.shopifyReadStatus === "Success" ? "success" : (statusObj.shopifyReadStatus === "Running" ? "magic" : "critical")}>{statusObj.shopifyReadStatus}</Badge></Text>
-                  <Text as="p" fontWeight="bold">Gemini API: <Badge tone={statusObj.geminiStatus === "Running" ? "magic" : "info"}>{statusObj.geminiStatus}</Badge></Text>
-                  <Text as="p" fontWeight="bold">Vision API: <Badge tone={statusObj.visionStatus === "Running" ? "magic" : "info"}>{statusObj.visionStatus}</Badge></Text>
-                  <Text as="p" fontWeight="bold">Geo Library: <Badge tone="info">{statusObj.geoLibraryStatus}</Badge></Text>
-                  <Text as="p" fontWeight="bold">Read-back: <Badge tone="info">{statusObj.readBackStatus}</Badge></Text>
-                </BlockStack>
-              </div>
-            </Box>
-
-            <Box padding="300" background="bg-surface-secondary" borderRadius="100" borderColor="border" borderWidth="1">
-              <div style={{ minWidth: 0, wordBreak: "break-word", overflowWrap: "anywhere" }}>
-                <Text as="p" variant="headingSm" tone="subdued">Repair Engine</Text>
-                <BlockStack gap="100">
-                  <Text as="p" fontWeight="bold">Proposed changes: {stats.proposed}</Text>
-                  <Text as="p" fontWeight="bold" color="critical">Blocked changes: {stats.blocked}</Text>
-                  <Text as="p" fontWeight="bold" color="critical">Degraded fields: {stats.degraded}</Text>
-                  <Text as="p" fontWeight="bold" color="critical">Conflicts: {stats.conflicts}</Text>
-                  <Text as="p" fontWeight="bold" color="attention">Unverified proposals: {stats.unverified}</Text>
-                  <Text as="p" fontWeight="bold" color="success">Fields approved for write: {stats.approvedWrite}</Text>
-                </BlockStack>
-              </div>
-            </Box>
-
-            <Box padding="300" background="bg-surface-secondary" borderRadius="100" borderColor="border" borderWidth="1">
-              <div style={{ minWidth: 0, wordBreak: "break-word", overflowWrap: "anywhere" }}>
-                <Text as="p" variant="headingSm" tone="subdued">Field Metrics</Text>
-                <BlockStack gap="100">
-                  <Text as="p" fontWeight="bold">Total Fields: {stats.total}</Text>
-                  <Text as="p" fontWeight="bold">Filled: <span style={{ color: "#22c55e" }}>{stats.filled}</span></Text>
-                  <Text as="p" fontWeight="bold">Optional blanks: <span style={{ color: "#eab308" }}>{stats.optionalBlanks}</span></Text>
-                  <Text as="p" fontWeight="bold" color="critical">Required missing fields: {stats.requiredMissing}</Text>
-                  <Text as="p" fontWeight="bold">Fields Updated (Last Run): {data.fieldsUpdated !== undefined ? data.fieldsUpdated : "Not reported"}</Text>
-                </BlockStack>
-              </div>
-            </Box>
-
-          </div>
-        </BlockStack>
-      </Card>
-    );
-  };
-
-  const toggleBay = (title) => {
-    setExpandedBays(prev => ({ ...prev, [title]: !prev[title] }));
-  };
-
-  const renderManifestTable = (section) => {
-    const data = manifestData[selectedBenchId];
-    if (!data) return null;
-
-    const filteredKeys = section.keys.filter(k => {
-      if (HIDDEN_CONTEXT_FIELDS.includes(k)) return false;
-      
-      if (activeFilter === "All") return true;
-      const meta = getFieldMetadata(k, data, selectedBenchId, approvals);
-      
-      if (activeFilter === "Blank" && (meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing")) return true;
-      if (activeFilter === "Proposed changes" && (meta.fieldStatus === "Proposed" || meta.fieldStatus === "Approved, not saved" || meta.fieldStatus === "Approved, blocked" || meta.fieldStatus === "Pre-approved, not saved" || meta.fieldStatus === "Pre-approved, blocked")) return true;
-      if (activeFilter === "Conflicts" && (meta.fieldStatus === "Conflict" || meta.fieldStatus === "Degrade")) return true;
-      if (activeFilter === "Needs review" && (meta.fieldStatus === "Required missing" || meta.fieldStatus === "Unverified proposal" || (meta.contentNeedsReview && !meta.isApproved && !meta.isContentPreApproved))) return true;
-      if (activeFilter === meta.source) return true;
-      return false;
-    });
-
-    if (filteredKeys.length === 0) return null;
-    const isExpanded = expandedBays[section.title];
-
-    return (
-      <Card padding="0" key={section.title}>
-        <div 
-            onClick={() => toggleBay(section.title)} 
-            style={{ padding: "16px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center", backgroundColor: "#f9fafb", borderBottom: isExpanded ? "1px solid #e1e3e5" : "none", minWidth: 0, boxSizing: "border-box" }}
-        >
-          <div style={{ minWidth: 0 }}>
-            <Text as="h3" variant="headingLg" fontWeight="bold">{section.title} ({filteredKeys.length} fields)</Text>
-          </div>
-          <Button variant="plain" icon={isExpanded ? ChevronUpIcon : ChevronDownIcon} />
-        </div>
-        
-        {isExpanded && (
-          <div style={{ padding: "16px", display: "flex", flexDirection: "column", gap: "24px", minWidth: 0, boxSizing: "border-box" }}>
-            {filteredKeys.map((key) => {
-              const meta = getFieldMetadata(key, data, selectedBenchId, approvals);
-              const isBlank = meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing";
-              
-              let statusTone = undefined;
-              if (meta.fieldStatus === "Optional blank") statusTone = "attention";
-              if (["Required missing", "Conflict", "Degrade", "Blocked", "Over limit", "Failed", "Unverified proposal", "Manual only"].includes(meta.fieldStatus)) statusTone = "critical";
-              if (meta.fieldStatus === "Proposed" || meta.fieldStatus === "Approved, not saved" || meta.fieldStatus === "Pre-approved, not saved") statusTone = "success";
-              if (meta.fieldStatus === "Unchanged") statusTone = "new";
-              if (meta.fieldStatus === "Approved, blocked" || meta.fieldStatus === "Pre-approved, blocked") statusTone = "warning";
-
-              const isManualOnly = key === "price" || key === "shopify_title";
-              const canApprove = meta.proposalExists && meta.currentVal !== meta.propVal && !isManualOnly && !meta.isContentPreApproved;
-              const isPreApprovedDisplay = meta.isContentPreApproved && meta.proposalExists && meta.currentVal !== meta.propVal;
-              
-              let boxBg = "#f8f9fa";
-              let boxBorder = "#dee2e6";
-              let textColor = "#212529";
-              let statusText = "Ready for review";
-
-              if (meta.isContentPreApproved && !meta.hasTechnicalBlock) {
-                  boxBg = "#d1e7dd"; boxBorder = "#badbcc"; textColor = "#0f5132";
-                  statusText = "Pre-approved, not saved.";
-              } else if (meta.isContentPreApproved && meta.hasTechnicalBlock) {
-                  boxBg = "#fff3cd"; boxBorder = "#ffecb5"; textColor = "#664d03";
-                  const technicalBlockers = meta.reasons.filter(r => !["Proposed", "Category pre-approved", "Verified Geo Library", "Pre-approved by operator policy", "Historical: Conflict (Pre-approved)", "Historical: Degrade (Pre-approved)", "Historical: Unverified proposal (Pre-approved)"].includes(r)).join(", ");
-                  statusText = `Pre-approved. Cannot save until field destination/type is verified. (${technicalBlockers})`;
-              } else if (meta.isApproved && !meta.hasTechnicalBlock) {
-                  boxBg = "#d1e7dd"; boxBorder = "#badbcc"; textColor = "#0f5132";
-                  statusText = "Approved and technically eligible.";
-              } else if (meta.isApproved && meta.hasTechnicalBlock) {
-                  boxBg = "#fff3cd"; boxBorder = "#ffecb5"; textColor = "#664d03";
-                  statusText = "Suggestion approved. Cannot save until field destination/type is verified or limits resolved.";
-              } else if (!meta.isApproved && meta.hasTechnicalBlock) {
-                  boxBg = "#f8d7da"; boxBorder = "#f5c2c7"; textColor = "#842029";
-                  statusText = "Blocked by technical error. Review needed.";
-              } else if (!meta.isApproved && meta.contentNeedsReview) {
-                  boxBg = "#fff3cd"; boxBorder = "#ffecb5"; textColor = "#664d03";
-                  statusText = "Review needed to verify content explicitly before write can occur.";
-              } else if (!meta.isApproved && meta.fieldStatus === "Proposed") {
-                  boxBg = "#e2e3e5"; boxBorder = "#d3d6d8"; textColor = "#41464c";
-                  statusText = "Safe suggestion. Approval optional but recorded if checked.";
-              }
-
-              return (
-                <Box key={key} padding="300" background={isBlank ? "bg-surface-warning" : "bg-surface"} borderColor="border" borderWidth="1" borderRadius="200">
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: "20px", boxSizing: "border-box", minWidth: 0 }}>
-                    
-                    {/* Left Panel: Labels & Metadata */}
-                    <div style={{ flex: "1 1 250px", minWidth: 0, maxWidth: "100%", boxSizing: "border-box" }}>
-                      <BlockStack gap="100">
-                        <div style={{ wordBreak: "break-word", overflowWrap: "anywhere" }}>
-                            <Text as="h4" variant="headingMd" fontWeight="bold">{formatLabel(key)}</Text>
-                            <Text as="p" variant="bodySm" tone="subdued" fontWeight="medium">{key}</Text>
-                        </div>
-                        
-                        <div style={{ marginTop: "12px", display: "flex", flexDirection: "column", gap: "6px", wordBreak: "break-word", overflowWrap: "anywhere" }}>
-                            <Text as="p" variant="bodyMd" fontWeight="bold">Status: <Badge tone={statusTone}>{meta.fieldStatus}</Badge></Text>
-                            <Text as="p" variant="bodyMd" fontWeight="bold">Source: <Text as="span" fontWeight="regular">{meta.source}</Text></Text>
-                            <Text as="p" variant="bodyMd" fontWeight="bold">Stage: <Text as="span" fontWeight="regular">{meta.stage}</Text></Text>
-                        </div>
-                      </BlockStack>
-                    </div>
-
-                    {/* Right Panel: Current & Proposal Values */}
-                    <div style={{ flex: "2 1 300px", display: "flex", flexDirection: "column", gap: "12px", minWidth: 0, maxWidth: "100%", boxSizing: "border-box" }}>
-                        <div style={{ padding: "12px", backgroundColor: "#f4f6f8", borderRadius: "8px", border: "1px solid #d2d5d8", minWidth: 0, wordBreak: "break-word", overflowWrap: "anywhere", boxSizing: "border-box" }}>
-                            <Text as="p" variant="headingSm" tone="subdued" fontWeight="bold" style={{ marginBottom: "6px" }}>Current Shopify Value</Text>
-                            <div style={{ whiteSpace: "pre-wrap", minWidth: 0 }}>
-                                <Text as="p" variant="bodyLg">{meta.currentVal || <span style={{ color: "#8c9196", fontStyle: "italic" }}>Blank</span>}</Text>
-                            </div>
-                        </div>
-                        
-                        <div style={{ minWidth: 0, width: "100%", boxSizing: "border-box" }}>
-                            <Text as="p" variant="headingSm" tone="subdued" fontWeight="bold" style={{ marginBottom: "6px" }}>Bench Proposal Value</Text>
-                            <TextField
-                                value={meta.propVal}
-                                onChange={(val) => handleRepairPlanChange(key, val)}
-                                autoComplete="off"
-                                multiline={isMultilineKey(key) ? 3 : undefined}
-                                placeholder={meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing" ? "Blank" : (meta.fieldStatus === "Proposal not provided" ? "Not provided" : "")}
-                            />
-                        </div>
-
-                        {canApprove && (
-                            <div style={{ marginTop: "12px", backgroundColor: boxBg, border: `1px solid ${boxBorder}`, borderRadius: "8px", padding: "12px", minWidth: 0, boxSizing: "border-box" }}>
-                                <div style={{ display: "flex", alignItems: "flex-start", gap: "12px", minWidth: 0, boxSizing: "border-box" }}>
-                                    <input
-                                        type="checkbox"
-                                        id={`approve-${key}`}
-                                        checked={meta.isApproved || false}
-                                        onChange={(e) => handleToggleApproval(selectedBenchId, key, meta.propVal, e.target.checked)}
-                                        style={{ width: "24px", height: "24px", flexShrink: 0, cursor: "pointer", accentColor: textColor, marginTop: "2px" }}
-                                        aria-label={`Approve suggestion for ${formatLabel(key)}: ${meta.propVal}`}
-                                    />
-                                    <label htmlFor={`approve-${key}`} style={{ fontWeight: "bold", fontSize: "16px", cursor: "pointer", color: textColor, display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px", flex: 1, minWidth: 0, wordBreak: "break-word", overflowWrap: "anywhere" }}>
-                                        Approve this suggestion: <span style={{ fontWeight: "normal", whiteSpace: "pre-wrap" }}>"{meta.propVal}"</span>
-                                    </label>
-                                </div>
-                                <div style={{ marginTop: "8px", marginLeft: "36px", minWidth: 0, wordBreak: "break-word", overflowWrap: "anywhere" }}>
-                                    <Text as="p" tone={(!meta.isApproved && meta.hasTechnicalBlock) || (meta.isApproved && meta.hasTechnicalBlock) ? "critical" : "subdued"} fontWeight="medium" style={{ color: textColor }}>
-                                        {statusText}
-                                    </Text>
-                                </div>
-                            </div>
-                        )}
-
-                        {isPreApprovedDisplay && (
-                            <div style={{ marginTop: "12px", backgroundColor: boxBg, border: `1px solid ${boxBorder}`, borderRadius: "8px", padding: "12px", minWidth: 0, boxSizing: "border-box" }}>
-                                <div style={{ minWidth: 0, wordBreak: "break-word", overflowWrap: "anywhere" }}>
-                                    <Text as="p" fontWeight="bold" style={{ color: textColor }}>
-                                        {meta.preApprovalReason}
-                                    </Text>
-                                    <Text as="p" tone={meta.hasTechnicalBlock ? "critical" : "subdued"} fontWeight="medium" style={{ color: textColor, marginTop: "4px" }}>
-                                        {statusText}
-                                    </Text>
-                                </div>
-                            </div>
-                        )}
-
-                    </div>
-                  </div>
-                </Box>
-              );
-            })}
-          </div>
-        )}
-      </Card>
-    );
-  };
-
-  const progressPercentage = queueIds.length > 0 ? Math.round(((isLoadingData ? loadIndex : executeIndex) / queueIds.length) * 100) : 0;
-
-  const filterOptions = [
-    {label: 'All', value: 'All'},
-    {label: 'Needs review', value: 'Needs review'},
-    {label: 'Proposed changes', value: 'Proposed changes'},
-    {label: 'Conflicts', value: 'Conflicts'},
-    {label: 'Blank', value: 'Blank'},
-    {label: 'Shopify', value: 'Shopify'},
-    {label: 'Gemini', value: 'Gemini'},
-    {label: 'Vision', value: 'Vision'},
-    {label: 'Geo Library', value: 'Geo Library'},
-    {label: 'Derived', value: 'Derived'},
-    {label: 'Manual', value: 'Manual'}
-  ];
-
-  return (
-    <BlockStack gap="600">
-      <BlockStack gap="200">
-        <Text variant="headingXl" as="h1">Meta Injector</Text>
-        <Text variant="headingMd" tone="subdued">Data Integrity & Operations Hub — Accessible Diagnostic View</Text>
-      </BlockStack>
-
-      <div style={{ display: "grid", gridTemplateColumns: "280px minmax(0, 1fr)", gap: "24px", alignItems: "start", boxSizing: "border-box", maxWidth: "100%" }}>
-        
-        {/* LEFT COLUMN: 1. Select Raw Inventory */}
-        <div>
-          <Card padding="300">
-            <BlockStack gap="400">
-              <Text variant="headingMd" as="h2" fontWeight="bold">1. Select Raw Inventory ({queueIds.length})</Text>
-              
-              <TextField
-                value={searchQuery}
-                onChange={handleSearchChange}
-                clearButton
-                onClearButtonClick={handleClearSearch}
-                autoComplete="off"
-                placeholder="Search inventory..."
-                disabled={isLoadingData || isExecuting}
-              />
-
-              <Button 
-                size="large" 
-                fullWidth 
-                onClick={toggleSelectAllFiltered}
-                disabled={isLoadingData || isExecuting}
-              >
-                {allFilteredSelected ? `Unload (${filteredProducts.length})` : `Load (${filteredProducts.length})`}
-              </Button>
-
-              <div style={{ display: "flex", flexDirection: "column", gap: "10px", overflowY: "auto", height: "70vh", paddingRight: "4px", minWidth: 0 }}>
-                {filteredProducts.map(p => {
-                  const isChecked = queueIds.includes(p.id);
-                  const isSelectedForBench = selectedBenchId === p.id;
-                  const currentStatus = productStates[p.id]?.status || STATUS.QUEUED;
-                  const imageUrl = p.images?.edges?.[0]?.node?.url || p.featuredImage?.url || p.media?.edges?.[0]?.node?.image?.url;
-                  
-                  return (
-                    <div 
-                      key={p.id} 
-                      onClick={() => handleToggleProductSelection(p.id)}
-                      style={{ 
-                        flexShrink: 0, 
-                        border: isSelectedForBench ? "3px solid #005bd3" : "2px solid #c9cccf", 
-                        borderRadius: "8px", 
-                        backgroundColor: isChecked ? "#f0f2f4" : "#ffffff", 
-                        cursor: isLoadingData || isExecuting ? "not-allowed" : "pointer", 
-                        padding: "12px",
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: "12px",
-                        minWidth: 0
-                      }} 
-                    >
-                      <div style={{ display: "flex", gap: "12px", alignItems: "center", minWidth: 0 }}>
-                        <div style={{ width: "48px", height: "48px", backgroundColor: "#2a2a2a", borderRadius: "6px", overflow: "hidden", flexShrink: 0 }}>
-                          {imageUrl && <img src={imageUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />}
-                        </div>
-                        <div style={{ flexGrow: 1, minWidth: 0 }}>
-                          <Text as="p" variant="bodyLg" fontWeight="bold" truncate>{p.title.split(" — ").pop()}</Text>
-                          <div style={{ marginTop: "4px" }}>
-                            <Badge tone={getStatusTone(currentStatus)} size="medium">{currentStatus}</Badge>
-                          </div>
-                        </div>
-                      </div>
-
-                      <Button 
-                        size="medium" 
-                        fullWidth
-                        variant={isSelectedForBench ? "primary" : "secondary"}
-                        onClick={(e) => { 
-                          e.stopPropagation(); 
-                          if (manifestData[p.id]) setSelectedBenchId(p.id);
-                          else alert("Hit GENERATE REPAIR PLAN (Load Data) first to fetch this item's live data.");
-                        }}
-                      >
-                        View Manifest on Bench
-                      </Button>
-                    </div>
-                  );
-                })}
-              </div>
-            </BlockStack>
-          </Card>
-        </div>
-
-        {/* RIGHT COLUMN: Repair Manifest Viewer */}
-        <div style={{ minWidth: 0, width: "100%", maxWidth: "100%", boxSizing: "border-box" }}>
-          <BlockStack gap="600">
-            <Text variant="headingXl" as="h2">2. Repair Bench & Engine Diagnostics</Text>
-
-            {safetyMessage && (
-              <Banner tone="info" onDismiss={() => setSafetyMessage("")}>
-                <Text as="p" variant="bodyLg" fontWeight="medium">{safetyMessage}</Text>
-              </Banner>
-            )}
-            {safetyError && (
-              <Banner tone="critical" onDismiss={() => setSafetyError("")}>
-                <Text as="p" variant="bodyLg" fontWeight="medium">{safetyError}</Text>
-              </Banner>
-            )}
-
-            <Card padding="400">
-              <BlockStack gap="400">
-                <InlineStack align="space-between">
-                  <Text variant="headingLg" as="h3">Repair Engine Orchestrator</Text>
-                  <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", minWidth: 0 }}>
-                    <Button 
-                      size="large" 
-                      variant="secondary" 
-                      icon={MagicIcon} 
-                      onClick={generateRepairPlan} 
-                      disabled={isLoadingData || isExecuting}
-                      loading={isLoadingData}
-                    >
-                      GENERATE REPAIR PLAN (LOAD DATA)
-                    </Button>
-                    
-                    <Button 
-                      size="large" 
-                      variant="primary" 
-                      tone="critical" 
-                      onClick={executeRepairs} 
-                      disabled={Object.keys(manifestData).length === 0 || isLoadingData || isExecuting}
-                      loading={isExecuting && executionMode === "REPAIR"}
-                    >
-                      EXECUTE REPAIRS (LIVE)
-                    </Button>
-
-                    <Button 
-                      size="large" 
-                      variant="primary" 
-                      icon={MagicIcon}
-                      onClick={executeAIFill} 
-                      disabled={Object.keys(manifestData).length === 0 || isLoadingData || isExecuting}
-                      loading={isExecuting && executionMode === "AI_BATCH_PIPELINE"}
-                    >
-                      EXECUTE AI AUTO-FILL (STAGE)
-                    </Button>
-                  </div>
-                </InlineStack>
-
-                <Banner tone="warning">
-                  <Text as="p" variant="bodyLg"><strong>Structural Repairs</strong> writes your edited Local Repair Plan to Shopify. <strong>AI Auto-Fill</strong> spins up Gemini to generate missing data and stages it below for you to review before writing.</Text>
-                </Banner>
-
-                {(isExecuting || isLoadingData) && queueIds.length > 0 && (
-                  <Box padding="400" border="1px solid #E1E3E5" borderRadius="200" background="bg-surface-secondary">
-                    <BlockStack gap="200">
-                      <InlineStack align="space-between">
-                        <Text as="p" variant="headingMd">{isLoadingData ? "Fetching Live Data..." : "Live Execution Progress"}</Text>
-                        <Text as="p" variant="headingMd">{isLoadingData ? loadIndex : executeIndex} of {queueIds.length} Processed</Text>
-                      </InlineStack>
-                      <ProgressBar progress={progressPercentage} color="primary" size="large" />
-                    </BlockStack>
-                  </Box>
-                )}
-
-                <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", marginTop: "12px", minWidth: 0 }}>
-                  <Button size="large" tone="critical" onClick={clearBench} disabled={isExecuting || isLoadingData}>Clear Rack & Reset Bench</Button>
-                  
-                  <Button size="large" icon={ClipboardIcon} onClick={handleCollectTelemetry}>
-                    Global Telemetry Dump
-                  </Button>
-                </div>
-              </BlockStack>
-            </Card>
-
-            {!selectedBenchId || !manifestData[selectedBenchId] ? (
-              <Box padding="800" background="bg-surface-secondary" borderRadius="200" borderColor="border" borderWidth="1">
-                <Text as="p" variant="headingLg" alignment="center" tone="subdued">Load inventory, hit GENERATE REPAIR PLAN, then drop a piece on the bench to view its diagnostic readout.</Text>
-              </Box>
-            ) : (
-              <BlockStack gap="600">
-                <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", alignItems: "center", backgroundColor: "#f0fdf4", padding: "16px", borderRadius: "8px", border: "2px solid #22c55e", gap: "16px", minWidth: 0, boxSizing: "border-box" }}>
-                    <div style={{ minWidth: 0, flex: 1 }}>
-                        <Text as="h3" variant="headingLg" fontWeight="bold" style={{ color: "#166534" }}>
-                            <span style={{ wordBreak: "break-word", overflowWrap: "anywhere" }}>GID Lock: {selectedBenchId}</span>
-                        </Text>
-                    </div>
-                    <div style={{ display: "flex", gap: "16px", flexWrap: "wrap", minWidth: 0 }}>
-                      <Button 
-                        size="large" 
-                        variant="primary" 
-                        icon={MagicIcon} 
-                        onClick={handleExecuteSingleAI}
-                        loading={batchFetcher.state !== "idle" && !isExecuting}
-                      >
-                        Run AI (Single)
-                      </Button>
-                      <Button 
-                        size="large" 
-                        variant="primary" 
-                        icon={SaveIcon} 
-                        onClick={handleExecuteSingleRepair}
-                        loading={batchFetcher.state !== "idle" && !isExecuting}
-                        tone="success"
-                      >
-                        Execute Single Repair
-                      </Button>
-                    </div>
-                </div>
-
-                {renderDiagnosticHeader()}
-
-                <Card padding="400">
-                    <InlineStack align="space-between" blockAlign="center">
-                        <Text variant="headingLg" as="h3">Review Board Controls</Text>
-                        <Select
-                            label="Filter Fields"
-                            labelInline
-                            options={filterOptions}
-                            onChange={(val) => setActiveFilter(val)}
-                            value={activeFilter}
-                        />
-                    </InlineStack>
-                </Card>
-
-                {SECTIONS.map(sec => renderManifestTable(sec))}
-                
-              </BlockStack>
-            )}
-          </BlockStack>
-        </div>
-      </div>
-    </BlockStack>
-  );
+  try {
+    const result = await dbPool.query(sql, params);
+    return result.rows;
+  } catch (err) {
+    console.error("[Postgres Pool Error]:", err);
+    throw err;
+  }
 }
 
-export default OperationsMatrixTab;
+async function saveToStoneCache(stoneName, geoResult) {
+  try {
+    const existing = await queryPostgres(
+      'SELECT id FROM "StoneCache" WHERE "stone_name" = $1 LIMIT 1',
+      [stoneName]
+    );
+    if (existing.length === 0) {
+      await queryPostgres(
+        'INSERT INTO "StoneCache" ("id", "stone_name", "data", "created_at", "updated_at") VALUES (gen_random_uuid()::text, $1, $2, NOW(), NOW())',
+        [stoneName, JSON.stringify(geoResult)]
+      );
+    }
+  } catch (err) {
+    console.error("[StoneCache] Save failed for:", stoneName, err);
+  }
+}
+
+const MINDAT_API_KEY = process.env.MINDAT_API_KEY;
+
+async function fetchWithRetry(url, options, retries = 3, delay = 1500) {
+  for (let i = 0; i < retries; i++) {
+    const controller = new AbortController();
+    const id = setTimeout(() => controller.abort(), 60000);
+    try {
+      const res = await fetch(url, { ...options, signal: controller.signal });
+      clearTimeout(id);
+      if (res.status !== 503 && res.status !== 429 && res.status !== 500) return res;
+    } catch (err) {
+      clearTimeout(id);
+    }
+    if (i < retries - 1) {
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      delay *= 2;
+    }
+  }
+  throw new Error("Gemini API connection timed out.");
+}
+
+async function getLiveStoreDirectory(admin) {
+  let pagesList = [];
+  let collectionsList = [];
+  try {
+    const res = await admin.graphql(`
+      query {
+        pages(first: 100) { edges { node { title handle body } } }
+        collections(first: 100) { edges { node { title handle description } } }
+      }
+    `);
+    const data = await res.json();
+    if (data.data?.pages?.edges) {
+      pagesList = data.data.pages.edges.map(e => ({
+        title: e.node.title,
+        url: `/pages/${e.node.handle}`,
+        excerpt: (e.node.body || "").replace(/<[^>]*>?/gm, "").replace(/\s+/g, " ").trim().slice(0, 10000)
+      }));
+    }
+    if (data.data?.collections?.edges) {
+      collectionsList = data.data.collections.edges.map(e => ({
+        title: e.node.title,
+        url: `/collections/${e.node.handle}`,
+        excerpt: (e.node.description || "").replace(/<[^>]*>?/gm, "").replace(/\s+/g, " ").trim().slice(0, 5000)
+      }));
+    }
+  } catch (err) {
+    console.error("Failed to fetch store inventory:", err);
+  }
+  return { pagesList, collectionsList };
+}
+
+function extractStoneName(title) {
+  if (!title) return "Unknown";
+  let sectionOne = title.split(/[—–-]/)[0].trim();
+  const adjectives = ["Green", "Blue", "Red", "Yellow", "Orange", "Purple", "Pink", "Black", "White", "Grey", "Gray", "Brown", "Brecciated", "Picture", "Ocean", "Crazy Lace", "Plume", "Moss", "Dendritic", "Banded", "Polychrome", "Imperial", "Royal", "Dark", "Light", "Clear", "Opaque", "Translucent", "Raw", "Rough", "Tumbled", "Polished", "Natural", "Fossil", "Petrified", "Mookaite", "Kambaba", "Bumblebee", "Dalmatian", "Dragon Blood"];
+  let words = sectionOne.split(/\s+/);
+  words = words.filter(word => !adjectives.some(adj => adj.toLowerCase() === word.toLowerCase()));
+  if (words.length > 0) {
+    let baseRock = words[words.length - 1];
+    return baseRock.charAt(0).toUpperCase() + baseRock.slice(1).toLowerCase();
+  }
+  return "Unknown";
+}
+
+function resolveOriginHandle(locationSegment, pagesList) {
+  const cleanLoc = (locationSegment || "").toLowerCase().trim();
+  if (!cleanLoc) return "";
+  if (cleanLoc.includes("richardson")) return "the-richardson-strike";
+  if (cleanLoc.includes("irv")) return ""; 
+  if (cleanLoc.includes("spokane")) return ""; 
+  if (cleanLoc.includes("north fork") || cleanLoc.includes("cda")) return "the-north-fork-strike";
+  if (cleanLoc.includes("yakima") || cleanLoc.includes("chert")) return "the-shop-lore-chert-road-detour-yakima-river-jasper";
+  const match = pagesList.find(p => p.title.toLowerCase().includes(cleanLoc) || p.url.includes(cleanLoc));
+  return match ? match.url.replace("/pages/", "") : cleanLoc.replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, "-");
+}
+
+function resolveCollectionData(locationSegment, defaultOriginSlug, collectionsList = []) {
+  const cleanLoc = (locationSegment || "").toLowerCase().trim();
+  if (cleanLoc.includes("yakima") || cleanLoc.includes("chert")) return { slug: "chert-road-detour", name: "Chert Road Detour — Yakima River Jasper Collection" };
+  if (cleanLoc.includes("richardson")) return { slug: "richardsons-rock-ranch", name: "Richardson's Rock Ranch Collection" };
+  if (cleanLoc.includes("spokane")) return { slug: "the-spokane-river-collection", name: "Spokane River Stones and Stories" };
+  if (cleanLoc.includes("irv")) return { slug: "", name: "" }; 
+  if (cleanLoc.includes("north fork") || cleanLoc.includes("cda")) return { slug: "north-fork-cda-collection", name: "North Fork CdA Collection" };
+  const matchedCol = collectionsList.find(c => c.url.includes(defaultOriginSlug) || c.title.toLowerCase().includes(cleanLoc));
+  if (matchedCol) {
+    return { slug: matchedCol.url.replace("/collections/", ""), name: matchedCol.title.endsWith("Collection") ? matchedCol.title : `${matchedCol.title} Collection` };
+  }
+  return { slug: defaultOriginSlug, name: `${locationSegment.trim()} Collection` };
+}
+
+async function getGeoData(admin, stoneFamily) {
+  const emptyGeo = { mohs_hardness: "", luster: "", fracture_pattern: "", cleavage: "", specific_gravity: "", diaphaneity: "", crystal_system: "", geological_era: "", mineral_class: "", rock_composition: "", rock_formation: "", geological_age: "", geoSource: "none" };
+  if (!stoneFamily || !admin) return emptyGeo;
+  const cleanStoneName = extractStoneName(stoneFamily);
+  const search = cleanStoneName.toLowerCase().trim();
+
+  try {
+    const { lookupStone } = await import("../utils/geoLibrary.jsx");
+    const localResult = lookupStone(cleanStoneName);
+    if (localResult && Object.keys(localResult).length > 0) {
+      return {
+        mohs_hardness: localResult.moh_hardness || localResult.hardness || "",
+        luster: localResult.luster || "", fracture_pattern: localResult.fracture_pattern || localResult.fracture || "",
+        cleavage: localResult.cleavage || "", specific_gravity: localResult.specific_gravity || "",
+        diaphaneity: localResult.diaphaneity || "", crystal_system: localResult.crystal_system || "",
+        geological_era: localResult.geological_era || localResult.geological_age || "",
+        mineral_class: localResult.mineral_class || "", rock_composition: localResult.rock_composition || "",
+        rock_formation: localResult.rock_formation || "", geological_age: localResult.geological_era || localResult.geological_age || "",
+        geoSource: "library"
+      };
+    }
+  } catch (err) {}
+
+  try {
+    const cacheRows = await queryPostgres('SELECT data FROM "StoneCache" WHERE LOWER("stone_name") = $1 LIMIT 1', [search]);
+    if (cacheRows.length > 0 && cacheRows[0].data) {
+      const parsed = typeof cacheRows[0].data === "string" ? JSON.parse(cacheRows[0].data) : cacheRows[0].data;
+      return { ...parsed, geoSource: "cache" };
+    }
+  } catch (err) {}
+
+  try {
+    if (stoneProfileCache.has(search)) {
+      const cached = stoneProfileCache.get(search);
+      if (cached) return { ...cached, geoSource: "cache" };
+    } else {
+      const rows = await queryPostgres('SELECT * FROM "StoneProfile" WHERE LOWER("stone_name") = $1 LIMIT 1', [search]);
+      if (rows.length > 0) {
+        const s = rows[0];
+        const geoResult = {
+          mohs_hardness: s.hardness || s.mohs_hardness || "", luster: s.luster || "", fracture_pattern: s.fracture || "", cleavage: s.cleavage || "",
+          specific_gravity: s.specific_gravity || "", diaphaneity: s.diaphaneity || "", crystal_system: s.crystal_system || "",
+          geological_era: s.geological_era || "", mineral_class: s.mineral_class || "", rock_composition: s.rock_composition || "",
+          rock_formation: s.rock_formation || "", geological_age: s.geological_era || "", geoSource: "database"
+        };
+        stoneProfileCache.set(search, geoResult);
+        return geoResult;
+      }
+    }
+  } catch (err) {}
+
+  try {
+    if (MINDAT_API_KEY) {
+      const controller = new AbortController();
+      const id = setTimeout(() => controller.abort(), 60000);
+      const mindatRes = await fetch(`https://api.mindat.org/minerals/?name=${encodeURIComponent(cleanStoneName)}&format=json`, { headers: { Authorization: `Token ${MINDAT_API_KEY}` }, signal: controller.signal });
+      clearTimeout(id);
+      const mindatData = await mindatRes.json();
+      const mineral = mindatData?.results?.[0];
+      if (mineral) {
+        const geoResult = {
+          mohs_hardness: mineral.hardness || "", luster: mineral.luster || "", fracture_pattern: mineral.fracture || "", cleavage: mineral.cleavage || "",
+          specific_gravity: mineral.density || "", diaphaneity: mineral.transparency || "", crystal_system: mineral.crystal_system || "",
+          geological_era: "", mineral_class: mineral.mineral_class || "", rock_composition: "", rock_formation: "", geological_age: "", geoSource: "mindat"
+        };
+        stoneProfileCache.set(search, geoResult);
+        await saveToStoneCache(search, geoResult);
+        return geoResult;
+      }
+    }
+  } catch (err) {}
+
+  return emptyGeo;
+}
+
+function sanitizeObject(obj) {
+  if (!obj) return obj;
+  for (let key in obj) {
+    if (typeof obj[key] === "string") {
+      if (obj[key].includes("See Shopify")) obj[key] = "";
+      else obj[key] = obj[key].replace(/Ã¢â‚¬"/g, "—").replace(/â€”/g, "—");
+    }
+  }
+  return obj;
+}
+
+function formatDyslexiaText(text) {
+  if (!text) return "";
+  let cleaned = text.replace(/([a-z0-9])([.?!])([A-Z])/g, "$1$2 $3").replace(/([a-z0-9]),([A-Za-z])/gi, "$1, $2");
+  return cleaned.replace(/<\/p>\s*<p>/g, "</p>\n\n<p>").replace(/<br\s*\/?>/gi, "<br>\n").trim();
+}
+
+function extractShapeFromString(str) {
+  if (!str) return "";
+  const SHAPES = ["Round", "Oval", "Freeform", "Teardrop", "Pear", "Cushion", "Marquise", "Rectangle", "Square", "Heart", "Slab", "Rough", "Cabochon"];
+  for (const shape of SHAPES) {
+    if (new RegExp(`\\b${shape}\\b`, "i").test(str)) return shape;
+  }
+  return "";
+}
+
+function enforceOriginOverrides(loc) {
+  if (!loc) return loc;
+  const lower = loc.toLowerCase();
+  if (lower.includes("yakima") || lower.includes("chert")) return "Yakima Canyon";
+  if (lower.includes("spokane")) return "Spokane River";
+  if (lower.includes("richardson")) return "Richardson's Rock Ranch";
+  return loc;
+}
+
+function cleanStoneFamilyShape(familyStr) {
+  if (!familyStr) return familyStr;
+  return familyStr.replace(/(?:\s+(?:Round|Oval|Freeform|Teardrop|Pear|Heart|Square|Rectangle|Slab|Raw|Cabochon))+$/i, "").trim();
+}
+
+function mapCollectionLocation(rawLocation) {
+  const loc = (rawLocation || "").toLowerCase();
+  if (loc.includes("spokane river")) return "Spokane River";
+  if (loc.includes("yakima") || loc.includes("chert")) return "Yakima Canyon";
+  if (loc.includes("richardson")) return "Richardson's Rock Ranch";
+  return rawLocation.replace(/\s*Collection$/i, "").trim();
+}
+
+function getDerivedMaterial(stoneFam) {
+  if (!stoneFam) return "";
+  return stoneFam.replace(/^(Dragon's Eye|Green|Blue|Fire|Rufus|Rainbow|Yellow|Red|Black|Oregon)\s+/i, "").trim();
+}
+
+// ==========================================
+// PROMPT 1: TITLE PARSE
+// ==========================================
+function buildTitleParsePrompt(segment1, segment2, segment3, pagesMenu, collectionsMenu, stonePicklist) {
+  return `You are an expert lapidary assistant for Rockhound Studio. Analyze these segments:
+CRITICAL ANTI-HALLUCINATION RULE: NEVER use the word "shocked" or "Shocked Rock". The correct term is "Shopped Rock". Do NOT let your geological training autocorrect this.
+- Family: "${segment1}"
+- Origin: "${segment2}"
+- Title: "${segment3}"
+
+LIVE STORE DIRECTORY:
+VALID PAGES IN STORE:
+${pagesMenu || "No live pages found."}
+
+VALID COLLECTIONS IN STORE:
+${collectionsMenu || "No live collections found."}
+
+INSTRUCTIONS:
+1. The Origin segment ("${segment2}") is the AUTHORITY. Do NOT reclassify or override it. Set 'origin_location' to the clean geographic name derived from "${segment2}" — strip prefixes like "Shop Lore:", "The", or "Collection". Expand abbreviations (e.g. "cda" -> "North Fork Coeur d'Alene", "yakima" -> "Yakima Canyon"). Match 'collection_name' and 'collection_location' to the live store entry that corresponds to "${segment2}". Never substitute a vendor name or "The Shopped Rock" unless "${segment2}" explicitly contains a vendor name.
+2. Resolve 'origin_handle' directly from the Live Store Directory based on the origin. 
+3. 'stone_family' must be exactly one of: ${stonePicklist} - match only the mineral/stone type word from the title. Ignore all color, pattern, cut, and modifier words. Pick the closest entry from the list. If the input is 'Botswana Agate Round', output 'Botswana Agate'.
+
+Return valid JSON with these exact keys: stone_family, piece_name, origin_handle, origin_location, collection_name, collection_location, seo_title. Generate a keyword-rich seo_title for Google using the family and keywords like "Handcrafted" or "OOAK Lapidary Art". No markup. No extra keys.`;
+}
+
+// ==========================================
+// PROMPT 2: VISION SCAN / FULL RESCAN
+// ==========================================
+function buildVisionPrompt(pagesMenu, collectionsMenu, stoneFamily, originSegment, cutAndShapeInput) {
+  return `You are a lapidary artist and master jeweler for Rockhound Studio. Analyze this photo and return a JSON object.
+CRITICAL ANTI-HALLUCINATION RULE: NEVER use the word "shocked" or "Shocked Rock". The correct term is "Shopped Rock". Do NOT let your geological training autocorrect this.
+
+- LIVE STORE DIRECTORY (Your Dyslexia Safeguard — Read this menu!):
+  VALID PAGES IN STORE:
+  ${pagesMenu || "No live pages found — use default URL."}
+  
+  VALID COLLECTIONS IN STORE:
+  ${collectionsMenu || "No live collections found — use default URL."}
+
+RETURN THESE EXACT JSON KEYS ONLY. DO NOT GENERATE A PRODUCT DESCRIPTION.
+- primary_color
+- stone_shape: Select EXACTLY one from this list: Round, Oval, Freeform, Teardrop, Pear, Cushion, Marquise, Rectangle, Square, Heart, Slab, Rough, N/A. FREEFORM REVOLUTION RULE: We are not a jewelry store. We cut freeform. If the stone is asymmetrical or follows its natural boundary, it is "Freeform". Do not force it into "Oval" or "Teardrop".
+- jewelry_type: Select EXACTLY one from this list: Pendant, Necklace, Artisan jewelry, Fine jewelry, Accessories, N/A. PENDANT vs NECKLACE RULE: A Pendant is a stone set in a bezel, bail, or wire wrap that hangs from a cord or chain. The stone is the focal point. A Necklace is a chain or strand where the chain itself is the primary design.
+- rarity: Select EXACTLY one: Common, Uncommon, Rare, One-of-a-Kind (default: One-of-a-Kind for our freeform stones)
+- authenticity: Select EXACTLY one: Authentic, Lab-Created, Unknown (default: Authentic)
+- color_pattern: Select EXACTLY one: Green, Black, Blue flash, Red, White, Multicolor, Gold, Pink, Yellow, Silver, Purple, Striped, Clear, Yellow veins, None
+- google_product_category: Select the taxonomy path that best matches the item. "Apparel & Accessories > Jewelry > Charms & Pendants" (for Pendants), "Arts & Entertainment > Hobbies & Creative Arts > Collectibles > Rocks & Fossils" (for raw/display specimens).
+- cut_and_shape: Maintain freeform classifications. If the input cut is "${cutAndShapeInput}", respect it.
+- surface_finish: High Polish, Matte, Satin, Natural/Raw, Tumbled.
+- honest_flaws_and_character: Plainly state any pits, vugs, healed fractures, or asymmetry. Honesty over perfection.
+- origin_location: CRITICAL! Look at the Origin Segment ("${originSegment}"). Cross-reference with the LIVE STORE DIRECTORY and return the fully expanded geographic name. NEVER include prefixes like "Shop Lore:".
+- primary_use: Smart Switch! e.g., "Pendant (Finished Jewelry)", "Necklace", "Ring / Bezel Setting", "Cabochon", "Wire Wrap (Finished Jewelry)", "Loose Stone".
+- primary_medium: The stone material itself (e.g. Labradorite) — NEVER the setting. Must match title.
+- secondary_medium: The setting or finding (e.g. Silver Plated Metal).
+- setting_ready: Look closely at the mounting. "Bezel Setting - Ready to Wear", "Wire Wrapped - Ready to Wear", or "None" for loose stones.
+- wire_material: "Antiqued Copper Wire" etc. "None" if no wire.
+- bail_included: e.g. "Silver Plated Pinch Bail", "Integrated Bezel Bail", or "None".
+- jewelry_finding_type: Identify the finding or setting. INVENTORY OPTIONS: "Silver Plated Pinch Bail", "Glue-On Bail", "Assorted Glue-In Setting". Do not describe them as "cheap". Do not infer hidden drilling, pinning, or glue from generic metal shapes alone. Preserve explicitly supplied construction descriptions. Compatible with bail_included (never force to None merely because a bail is included). Do not invent details if unknown. Do not silently leave blank if clearly supported by image.
+- chain_material: Identify the visible chain or cord. INVENTORY OPTIONS: "Silver Plated Snake Chain", "Gold Plated Snake Chain". Do not mislabel a visible cord as a snake chain (use "Black Cord", etc.). Do not infer plating from color alone. Distinguish clearly absent hardware ("None") from hardware out of view. Do not silently leave blank if clearly supported by image.
+- alt_text: Descriptive alt text (max 125 chars). Use mineral name. No visual guessing.
+- found_object: "Yes" if field-collected, "No" if shopped/imported.
+- seo_title: Keyword-rich SEO title (max 60 chars) optimized for Google.
+
+DO NOT output "generated_description". Your job is purely factual physical extraction.`;
+}
+
+// ==========================================
+// PROMPT 3: DESCRIPTION GENERATOR
+// ==========================================
+function buildDescriptionPrompt(derivedFamily, originSegment, extractedStory, fullCollectionTitle, pieceData, targetUrlPath, collectionUrlPath) {
+  let dwellButtonsHTML = `<br><br><a href="${targetUrlPath}">${fullCollectionTitle} Story</a>\n<br><a href="${collectionUrlPath}">${fullCollectionTitle} Collection</a>`;
+  
+  if (originSegment === "Richardson's Rock Ranch" || targetUrlPath.includes("the-richardson-strike")) {
+    dwellButtonsHTML = `<br><br><a href="/pages/the-richardson-strike">Richardson's Rock Ranch Story</a>
+<br><a href="/collections/richardsons-rock-ranch">Richardson's Rock Ranch Collection</a>
+<br><a href="/pages/the-3-000-mile-run">The 3,000-Mile Run Story</a>
+<br><a href="/collections/the-3-000-mile-run-1">The 3,000-Mile Run Collection</a>`;
+  }
+
+  return `You are writing a product description for Rockhound Studio, a lapidary art studio run by Bob and Janyce, married 34 years, both artists, both rockhounds. They cut and polish every stone themselves in Spokane Valley WA.
+
+DETAILS:
+- Stone Family: ${derivedFamily}
+- Origin / Location: ${originSegment}
+- Origin Hook (first 300 chars only): ${extractedStory.slice(0, 300)}
+- Collection Name: ${fullCollectionTitle}
+- Cut & Shape: ${pieceData.cut_and_shape || "Freeform"}
+- Surface Finish: ${pieceData.surface_finish || "Natural/Polished"}
+- Dimensions: ${pieceData.dimensions_mm || "N/A"}
+- Mounting/Medium: ${pieceData.primary_medium || "Loose Stone"}
+- Setting Ready: ${pieceData.setting_ready || "None"}
+- Mohs Hardness: ${pieceData.mohs_hardness || "N/A"}
+- Geological Age: ${pieceData.geological_age || "N/A"}
+- Rarity: ${pieceData.rarity || "One-of-a-Kind"}
+- Character Marks: ${pieceData.honest_flaws_and_character || "None"}
+- Piece Name: ${pieceData.piece_name || "None"}
+- Bench Notes: ${pieceData.bench_notes || "None"}
+- Artist Notes: ${pieceData.artist_notes || "None"}
+
+VOICE RULES (CRITICAL):
+- Past tense for the find. "I picked it up." Not "pick it up."
+- Plain and honest. Say what happened. Stop.
+- No Etsy, jewelry-counter, corporate, or sales language. We are NOT a jewelry store. We are lapidary artists.
+- Short sentences. One idea at a time.
+- "We" for the partnership. "I" for Bob's personal moment with the stone.
+- The stone earns its own sale. Never push it.
+- Freeform cuts are valid and should not be normalized into generic jewelry shapes.
+- The OOAK nature is self-evident. Never use the phrase "one of a kind" as a cheap selling point.
+- Honest flaws and character must be stated plainly. Honesty over perfection.
+- Signature always: — Bob & Janyce, Rockhound Studio, Spokane Valley WA
+
+DESCRIPTION STRUCTURE — follow this order exactly:
+
+1. PHYSICAL DESCRIPTION
+Lead with bench_notes and artist_notes (${pieceData.bench_notes || "N/A"}, ${pieceData.artist_notes || "N/A"}). These are Bob's direct observations from the wheel. If bench_notes describes something unexpected like a pine tree in the flash or a dendritic inclusion — that is your lead sentence. Do not bury it. Do not skip it. Then describe shape, color, and finish. Specific and honest.
+
+2. ORIGIN HOOK
+1-2 sentences only. Pull from the origin_story field. Enough to make them want to read the full story.
+
+3. COLLECTION HOOK
+1-2 sentences connecting the stone to its collection.
+
+4. QUICK-REFERENCE SPECS
+Stone: [stone_family]
+Dimensions: [dimensions_mm]
+Finish: [surface_finish]
+Setting: [primary_medium]
+Includes: [bail/chain/cord or "Loose stone, undrilled"]
+
+5. COLLECTOR DATA
+Mohs: [mohs_hardness]
+Formation: [geological_age]
+Rarity: [rarity]
+Character: [honest_flaws_and_character]
+
+6. ARTIST CALLOUT — only if loose stone or setting ready
+One plain sentence for jewelers and makers. Dimensions, drill status, setting suitability.
+
+7. SIGNATURE
+— Bob & Janyce, Rockhound Studio, Spokane Valley WA
+
+8. DWELL BUTTONS
+Include EXACTLY these clickable HTML hyperlinks on their own lines (DO NOT ALTER THEM):
+${dwellButtonsHTML}
+
+HARD RULES:
+- Do NOT generate any URLs or href links of your own. Use the exact DWELL BUTTONS block provided above.
+- Do NOT use the words: unique, handmade, artisan, special, curated, stunning, beautiful, gorgeous, perfect, love, passion.
+- Do NOT hallucinate stone properties not provided.
+- Output HTML only. Use <p> tags for paragraphs. No <h> tags. No <ul> or <li>.
+
+ORIGIN PAGE DATE RULE:
+If the provided origin-page story contains an explicit collection date, trip date, month, year, or date range, use it only when it is factually present and relevant to the story. Never invent or infer a date. If no explicit date is present, do not mention one.`;
+}
+
+function buildMasterVisionPrompt({ pagesMenu, collectionsMenu, stoneFamily, derivedShape, originStory, originSegment, targetUrlPath, fullCollectionTitle, collectionUrlPath }) {
+  let dwellButtonsHTML = `<br><br>`;
+  if (targetUrlPath && targetUrlPath !== "/pages/") dwellButtonsHTML = `<br><br><a href="${targetUrlPath}">${fullCollectionTitle} Story</a>\n`;
+  if (collectionUrlPath && collectionUrlPath !== "/collections/") dwellButtonsHTML += `<br><a href="${collectionUrlPath}">${fullCollectionTitle} Collection</a>`;
+  
+  return `You are a lapidary artist for Rockhound Studio. Analyze this photo and return a JSON object.
+- LIVE STORE DIRECTORY:
+  VALID PAGES IN STORE: ${pagesMenu || "No live pages"}
+  VALID COLLECTIONS: ${collectionsMenu || "No live collections"}
+
+- primary_color
+- stone_shape: Select EXACTLY one: Round, Oval, Freeform, Teardrop, Pear, Cushion, Marquise, Rectangle, Square, Heart, Slab, Rough, N/A. (Title states: "${derivedShape || 'None'}").
+- jewelry_type: Select EXACTLY one: Pendant, Necklace, Artisan jewelry, Fine jewelry, Accessories, N/A.
+- rarity: Select EXACTLY one: Common, Uncommon, Rare, One-of-a-Kind
+- authenticity: Select EXACTLY one: Authentic, Lab-Created, Unknown
+- color_pattern: Select EXACTLY one: Green, Black, Blue flash, Red, White, Multicolor, Gold, Pink, Yellow, Silver, Purple, Striped, Clear, Yellow veins, None
+- google_product_category: "Apparel & Accessories > Jewelry"
+- cut_and_shape
+- surface_finish
+- honest_flaws_and_character
+- origin_location: Cross-reference "${originSegment}" with LIVE STORE DIRECTORY. Return geographic name ONLY.
+- primary_use: "Pendant (Finished Jewelry)", "Necklace", "Ring / Bezel Setting", "Cabochon", "Wire Wrap (Finished Jewelry)", "Loose Stone".
+- primary_medium: Must match stone mineral name.
+- setting_ready: "Bezel Setting - Ready to Wear", "None".
+- wire_material
+- bail_included: "Silver Plated Pinch Bail", "Integrated Bezel Bail", "None".
+- jewelry_finding_type: Identify the finding or setting. INVENTORY OPTIONS: "Silver Plated Pinch Bail", "Glue-On Bail", "Assorted Glue-In Setting". Do not describe them as "cheap". Do not infer hidden drilling, pinning, or glue from generic metal shapes alone. Preserve explicitly supplied construction descriptions. Compatible with bail_included (never force to None merely because a bail is included). Do not invent details if unknown. Do not silently leave blank if clearly supported by image.
+- alt_text: Descriptive, max 125 chars.
+- found_object: Yes/No
+- chain_material: Identify the visible chain or cord. INVENTORY OPTIONS: "Silver Plated Snake Chain", "Gold Plated Snake Chain". Do not mislabel a visible cord as a snake chain (use "Black Cord", etc.). Do not infer plating from color alone. Distinguish clearly absent hardware ("None") from hardware out of view. Do not silently leave blank if clearly supported by image.
+- seo_title: Max 60 chars. Stone family, origin, OOAK Lapidary Art.
+- generated_description: Write in Bob's voice (plain, honest, past tense). No salesy language. Short sentences. 7-BLOCK FORMAT:
+  1. Stone Description: Honest flaws, finish, flash.
+  2. Origin Hook: 1-2 sentences from ORIGIN STORY.
+  3. Collection Hook: 1-2 sentences about ${fullCollectionTitle}.
+  4. Signature: — Bob & Janyce, Rockhound Studio, Spokane Valley WA
+  5. Stone Data: Specs, cut.
+  6. Ready to Wear: State if set or loose.
+  7. Dwell Buttons:
+${dwellButtonsHTML}
+
+FULL ORIGIN STORY (CRITICAL LORE FIREWALL - READ CAREFULLY):
+${originStory}
+WARNING: Extract ONLY the 1-2 sentence narrative matching "${stoneFamily}".`;
+}
+
+// ==========================================
+// PROMPT 4: TAB 3 VISION RESCAN (NO JEWELRY_TYPE)
+// ==========================================
+function buildTab3VisionPrompt({ pagesMenu, collectionsMenu, stoneFamily, derivedShape, originStory, originSegment, targetUrlPath, fullCollectionTitle, collectionUrlPath, currentData }) {
+  const currentDataStr = Object.entries(currentData || {})
+    .filter(([k, v]) => v !== undefined && v !== null && v !== "")
+    .map(([k, v]) => `- ${k}: ${v}`)
+    .join("\n");
+
+  return `You are a lapidary artist for Rockhound Studio. Analyze this photo and return a JSON object.
+- LIVE STORE DIRECTORY:
+  VALID PAGES IN STORE: ${pagesMenu || "No live pages"}
+  VALID COLLECTIONS: ${collectionsMenu || "No live collections"}
+
+CURRENT KNOWN DATA (Preserve these exactly unless an explicit operator correction contradicts them):
+${currentDataStr || "- No explicit data provided."}
+
+CRITICAL RULES FOR TAB 3:
+1. Explicit operator-provided corrections take priority over image inference and stale product data.
+2. If no explicit correction is supplied, preserve a nonblank current value exactly. Do not replace a specific value with a broader or less precise one (e.g., keep "Freeform Teardrop Cabochon", do not degrade to "Freeform Teardrop"). Preserve finding details exactly (e.g., keep "Drilled stone with a pinned pinch bail").
+3. Never generate or propose a shopify_title or price. These are manual.
+4. Do not infer jewelry, chain material, cord, bail, wire wrapping, or readiness from an image when the source data doesn't explicitly establish it. Leave uncertain values unresolved using the existing omit convention.
+5. Treat origin_story as hidden, read-only context from the existing origin page. Do not generate or save an origin story. Use the page only for supported metadata.
+6. Omit missing bench or artist notes. Never write "None" or "Unknown" as filler.
+7. Do not invent details. Leave unknown fields entirely unset.
+8. If the current data establishes the piece is a pendant or finished jewelry (e.g., jewelry_type is "Pendant" or finding details are present), the product_format MUST be "Pendant" or similar finished form, even if the cut_and_shape is "Cabochon". The cut and shape of the stone does not override the finished format of the piece.
+
+Return ONLY a JSON object. OMIT any keys if you cannot determine the value supported by evidence (do not send null or empty strings). DO NOT include "jewelry_type", "origin_story", "price", "shopify_title", "weight_grams", or "shipping_weight_oz".
+
+Potential JSON Keys to evaluate and propose if blank:
+- piece_name: The name of the piece.
+- is_ooak: "Yes"
+- product_format: Describe the evidenced physical form (e.g., Cabochon, Pendant, Specimen, Loose Stone). Do not guess when unclear. If existing data indicates a Pendant/Finished Jewelry, use that over the stone shape.
+- craftsmanship: When the supplied product facts identify the work as handcrafted by Bob & Janyce, propose exactly "Handcrafted". Do not describe it as "Hand-polished cabochon." Do not add tool or polishing-method wording. If the supplied facts do not support "Handcrafted", omit this proposal.
+- poetic_hook: Write one short, plain, factual hook based on the origin page (under 160 characters). Do not recreate the origin story.
+- seo_title: Create a clear search title using supported product, stone, and origin facts (max 70 chars).
+- dimensions_mm: Leave unchanged if provided.
+- cut_and_shape: Respect freeform cuts. Keep exactly as provided in current data if present.
+- surface_finish: High Polish, Matte, Satin, Natural/Raw, Tumbled.
+- primary_color
+- color_pattern
+- honest_flaws_and_character: Plainly state any pits, vugs, healed fractures, or asymmetry. Honesty over perfection.
+- bench_notes: Bob's direct observations from the wheel.
+- mohs_hardness
+- specific_gravity
+- crystal_system
+- fracture_pattern
+- cleavage
+- luster
+- diaphaneity
+- mineral_class
+- geological_era
+- rock_formation
+- stone_family: Derived family.
+- origin_location: Geographic name ONLY based on "${originSegment}".
+- origin_handle: Resolved handle.
+- collection_name: Resolved collection.
+- collection_location: Resolved collection location.
+- primary_use: e.g., "Pendant (Finished Jewelry)", "Ring / Bezel Setting", "Cabochon", "Loose Stone". Keep current nonblank value unless explicitly corrected.
+- primary_medium: Must match stone mineral name.
+- secondary_medium: The setting or finding.
+- setting_ready: "Bezel Setting - Ready to Wear", "Wire Wrapped - Ready to Wear", "None".
+- bail_included: e.g., "Silver Plated Pinch Bail", "None".
+- chain_material: Identify the visible chain or cord. INVENTORY OPTIONS: "Silver Plated Snake Chain", "Gold Plated Snake Chain". Do not mislabel a visible cord as a snake chain (use "Black Cord", etc.). Do not infer plating from color alone. Distinguish clearly absent hardware from hardware out of view. Do not silently leave blank if clearly supported by image.
+- jewelry_finding_type: Identify the finding or setting. INVENTORY OPTIONS: "Silver Plated Pinch Bail", "Glue-On Bail", "Assorted Glue-In Setting". Do not describe them as "cheap". Do not infer hidden drilling, pinning, or glue from generic metal shapes alone. Use explicitly provided construction details if available. Compatible with bail_included. Do not invent details if unknown. Do not silently leave blank if clearly supported by image.
+- alt_text: Descriptive alt text (max 125 chars). Use mineral name. No visual guessing.
+- google_product_category: Taxonomy path.
+- authenticity: Authentic, Lab-Created.
+- rarity: Common, Uncommon, Rare, One-of-a-Kind.
+
+FULL ORIGIN STORY (CRITICAL LORE FIREWALL - READ CAREFULLY):
+${originStory}
+`;
+}
+
+export const action = async ({ request }) => {
+  try {
+    const { admin } = await authenticate.admin(request);
+    const body = await request.formData();
+    const intent = body.get("intent");
+
+    if (intent === "geoLookup") {
+      const stoneFamily = body.get("stoneFamily") || "";
+      const geoFields = await getGeoData(admin, stoneFamily); 
+      return Response.json({ success: true, intent: "geoLookup", geoFields: sanitizeObject(geoFields) }); 
+    }
+
+    if (intent === "titleParse") {
+      const pieceNameInput = (body.get("pieceName") || "").replace(/Ã¢â‚¬â€/g, "—").replace(/â€”/g, "—");
+      const segments = pieceNameInput.split(/\s+[—–-]\s+/);
+      const segment1 = cleanStoneFamilyShape(segments[0]?.trim() || "");
+      const segment2 = enforceOriginOverrides(segments[1]?.trim() || "");
+      const segment3 = segments.length >= 3 ? segments[2].trim() : "";
+
+      const { pagesList, collectionsList } = await getLiveStoreDirectory(admin);
+      const resolvedHandle = resolveOriginHandle(segment2, pagesList);
+      const collectionData = resolveCollectionData(segment2, resolvedHandle, collectionsList);
+
+      const matchedPage = pagesList.find(p => p.url.includes(resolvedHandle));
+      const extractedStory = matchedPage ? matchedPage.excerpt : "";
+
+      const promptText = `Analyze: Family: "${segment1}", Origin: "${segment2}", Title: "${segment3}". Return JSON: stone_family, piece_name, origin_handle, origin_location, collection_name, collection_location, seo_title.`;
+
+      const geminiRes = await fetchWithRetry("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contents: [{ parts: [{ text: promptText }] }], generationConfig: { responseMimeType: "application/json", temperature: 0.1 } })
+      });
+
+      if (geminiRes.ok) {
+        const data = await geminiRes.json();
+        let cleanJson = (data.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
+        const parsed = JSON.parse(cleanJson.slice(cleanJson.indexOf("{"), cleanJson.lastIndexOf("}") + 1));
+        
+        const dbGeoData = await getGeoData(admin, parsed.stone_family || segment1);
+        const correctedOriginLoc = enforceOriginOverrides(parsed.origin_location || segment2);
+
+        const finalParse = sanitizeObject({
+          ...parsed,
+          piece_name: segment3,
+          origin_handle: resolvedHandle,
+          origin_story: extractedStory,
+          origin_location: correctedOriginLoc,
+          collection_name: parsed.collection_name || collectionData.name,
+          collection_location: mapCollectionLocation(parsed.collection_location || collectionData.name),
+          canonical_title: parsed.stone_family + " — " + correctedOriginLoc + " — " + segment3,
+          seo_title: parsed.seo_title || `${parsed.stone_family} — Found at ${correctedOriginLoc} — Rockhound Studio`,
+          ...dbGeoData,
+          is_ooak: "Yes",
+          age_group: "adult",
+          target_gender: "Unisex",
+          condition: "new",
+          google_product_category: "Apparel & Accessories > Jewelry"
+        });
+        return Response.json({ success: true, intent: "titleParse", titleParse: finalParse });
+      }
+      return Response.json({ success: false, intent: "titleParse", error: `Title parse error: ${geminiRes.status}` }, { status: 500 });
+    }
+
+    if (intent === "visionScan" || intent === "fullRescan" || intent === "tab2AutoFill") {
+      const pieceId = body.get("pieceId") || body.get("productId") || "NEW";
+      const rawTitleInput = body.get("productTitle") || body.get("pieceName") || body.get("piece_name") || "";
+      const segments = rawTitleInput.split(/\s+[—–-]\s+/);
+      const derivedFamily = cleanStoneFamilyShape(segments[0]?.trim() || body.get("stone_family") || "Unknown Stone");
+      const derivedShape = extractShapeFromString(segments[0]?.trim() || "");
+      const originSegment = enforceOriginOverrides(segments[1]?.trim() || "Unknown Origin");
+
+      const geoFields = await getGeoData(admin, derivedFamily);
+      const { pagesList, collectionsList } = await getLiveStoreDirectory(admin);
+      const defaultOriginSlug = resolveOriginHandle(originSegment, pagesList);
+      const defaultCollection = resolveCollectionData(originSegment, defaultOriginSlug, collectionsList);
+
+      const matchedPage = pagesList.find(p => p.url.includes(defaultOriginSlug));
+      
+      let extractedStory = matchedPage && matchedPage.excerpt ? matchedPage.excerpt : "";
+      if (!extractedStory) {
+        extractedStory = body.get("origin_story") || "";
+      }
+      
+      const pagesMenu = pagesList.map(p => `- Title: "${p.title}" | URL: ${p.url} | Excerpt: "${p.excerpt}"`).join("\n");
+      const collectionsMenu = collectionsList.map(c => `- Title: "${c.title}" | URL: ${c.url} | Excerpt: "${c.excerpt}"`).join("\n");
+
+      let imageBase64 = body.get("imageBase64") || "";
+      let imageMimeType = body.get("imageMimeType") || "image/jpeg";
+      if (!imageBase64 && body.get("imageUrl")) {
+        const imageRes = await fetch(body.get("imageUrl"));
+        imageBase64 = Buffer.from(await imageRes.arrayBuffer()).toString("base64");
+      }
+
+      const promptText = buildMasterVisionPrompt({
+        pagesMenu: pagesList.map(p => `- Title: "${p.title}"`).join("\n"),
+        collectionsMenu: collectionsList.map(c => `- Title: "${c.title}"`).join("\n"),
+        stoneFamily: derivedFamily, derivedShape, originStory: extractedStory,
+        originSegment, targetUrlPath: defaultOriginSlug ? `/pages/${defaultOriginSlug}` : "",
+        fullCollectionTitle: defaultCollection.name, collectionUrlPath: defaultCollection.slug ? `/collections/${defaultCollection.slug}` : ""
+      });
+
+      const geminiRes = await fetchWithRetry("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contents: [{ parts: [{ text: promptText }, { inlineData: { mimeType: imageMimeType, data: imageBase64 } }] }], generationConfig: { responseMimeType: "application/json", temperature: 0.2 } })
+      });
+
+      if (geminiRes.ok) {
+        const data = await geminiRes.json();
+        let cleanJson = (data.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
+        const parsedVision = JSON.parse(cleanJson.slice(cleanJson.indexOf("{"), cleanJson.lastIndexOf("}") + 1));
+        
+        parsedVision.generated_description = formatDyslexiaText(parsedVision.generated_description);
+        
+        const payload = sanitizeObject({
+          pieceId,
+          ...parsedVision,
+          stone_family: derivedFamily,
+          origin_location: originSegment,
+          origin_handle: defaultOriginSlug,
+          collection_name: defaultCollection.name,
+          collection_location: mapCollectionLocation(defaultCollection.name),
+          material: getDerivedMaterial(derivedFamily),
+          ...geoFields,
+          is_ooak: "Yes", age_group: "adult", target_gender: "Unisex", condition: "new",
+          google_product_category: "Apparel & Accessories > Jewelry"
+        });
+        return Response.json({ success: true, intent, tab2Data: payload });
+      }
+      return Response.json({ success: false, intent, error: "Vision API Failure" });
+    }
+
+    if (intent === "tab3FullRescan") {
+      const pieceId = body.get("pieceId") || body.get("productId") || "NEW";
+      const rawTitleInput = body.get("productTitle") || body.get("pieceName") || body.get("piece_name") || "";
+      const segments = rawTitleInput.split(/\s+[—–-]\s+/);
+      const derivedFamily = cleanStoneFamilyShape(segments[0]?.trim() || body.get("stone_family") || "Unknown Stone");
+      const derivedShape = extractShapeFromString(segments[0]?.trim() || "");
+      const originSegment = enforceOriginOverrides(segments[1]?.trim() || "Unknown Origin");
+      const pieceNameInput = segments.length >= 3 ? segments[2].trim() : "";
+
+      const geoFields = await getGeoData(admin, derivedFamily);
+      const { pagesList, collectionsList } = await getLiveStoreDirectory(admin);
+      const defaultOriginSlug = resolveOriginHandle(originSegment, pagesList);
+      const defaultCollection = resolveCollectionData(originSegment, defaultOriginSlug, collectionsList);
+
+      const matchedPage = pagesList.find(p => p.url.includes(defaultOriginSlug));
+      
+      let extractedStory = matchedPage && matchedPage.excerpt ? matchedPage.excerpt : "";
+      if (!extractedStory) {
+        extractedStory = body.get("origin_story") || "";
+      }
+      
+      let imageBase64 = body.get("imageBase64") || "";
+      let imageMimeType = body.get("imageMimeType") || "image/jpeg";
+      if (!imageBase64 && body.get("imageUrl")) {
+        const imageRes = await fetch(body.get("imageUrl"));
+        imageBase64 = Buffer.from(await imageRes.arrayBuffer()).toString("base64");
+      }
+
+      // Collect all passed current values to protect them during Gemini generation
+      const currentData = {};
+      for (const [key, value] of body.entries()) {
+        // [Integration Note]: If operator-confirmed construction details (e.g., jewelry_finding_type) 
+        // are still arriving blank for specific items like The Catalyst, the frontend matrix state or 
+        // save payload builder is failing to pass the newly confirmed values into this FormData request. 
+        // The AI engine can only preserve the explicit inputs it receives.
+        if (value && typeof value === 'string' && value.trim() !== "" && !["intent", "pieceId", "productId", "productTitle", "imageBase64", "imageMimeType", "imageUrl"].includes(key)) {
+            currentData[key] = value.trim();
+        }
+      }
+
+      const promptText = buildTab3VisionPrompt({
+        pagesMenu: pagesList.map(p => `- Title: "${p.title}"`).join("\n"),
+        collectionsMenu: collectionsList.map(c => `- Title: "${c.title}"`).join("\n"),
+        stoneFamily: derivedFamily, derivedShape, originStory: extractedStory,
+        originSegment, targetUrlPath: defaultOriginSlug ? `/pages/${defaultOriginSlug}` : "",
+        fullCollectionTitle: defaultCollection.name, collectionUrlPath: defaultCollection.slug ? `/collections/${defaultCollection.slug}` : "",
+        currentData
+      });
+
+      const geminiRes = await fetchWithRetry("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contents: [{ parts: [{ text: promptText }, { inlineData: { mimeType: imageMimeType, data: imageBase64 } }] }], generationConfig: { responseMimeType: "application/json", temperature: 0.2 } })
+      });
+
+      if (geminiRes.ok) {
+        const data = await geminiRes.json();
+        let cleanJson = (data.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
+        const parsedVision = JSON.parse(cleanJson.slice(cleanJson.indexOf("{"), cleanJson.lastIndexOf("}") + 1));
+        
+        // Final sanity check merging logic ensuring currentData overrides when not manually altered
+        if (currentData.product_format && (currentData.jewelry_type === "Pendant" || currentData.primary_use?.includes("Pendant") || currentData.jewelry_finding_type)) {
+            parsedVision.product_format = currentData.product_format;
+        }
+
+        if (currentData.jewelry_finding_type) {
+             parsedVision.jewelry_finding_type = currentData.jewelry_finding_type;
+        }
+
+        if (currentData.bail_included) {
+            parsedVision.bail_included = currentData.bail_included;
+        }
+
+        if (currentData.chain_material) {
+            parsedVision.chain_material = currentData.chain_material;
+        }
+
+        if (currentData.secondary_medium) {
+            parsedVision.secondary_medium = currentData.secondary_medium;
+        }
+
+        if (currentData.primary_use) {
+            parsedVision.primary_use = currentData.primary_use;
+        }
+        
+        if (currentData.cut_and_shape) {
+            parsedVision.cut_and_shape = currentData.cut_and_shape;
+        }
+
+        // Establish strictly verified values before they are potentially overwritten by parsedVision
+        const verifiedGeoValues = {};
+        if (geoFields.geoSource === "library") {
+            const geoKeys = [
+                "mohs_hardness", "luster", "fracture_pattern", "cleavage", 
+                "specific_gravity", "diaphaneity", "crystal_system", 
+                "geological_era", "mineral_class", "rock_formation", "geological_age"
+            ];
+            geoKeys.forEach(key => {
+                if (geoFields[key] !== undefined && geoFields[key] !== null && geoFields[key] !== "") {
+                    verifiedGeoValues[key] = geoFields[key];
+                    // Ensure the vision parser cannot override a verified library value
+                    parsedVision[key] = geoFields[key];
+                }
+            });
+        }
+
+        delete parsedVision.jewelry_type; // Explicitly ensure this is scrubbed
+        delete parsedVision.origin_story; // CRITICAL: Prevent AI hallucination from overwriting the raw context
+        delete parsedVision.price; // CRITICAL: Never propose a price
+        delete parsedVision.shopify_title; // CRITICAL: Never propose a shopify_title
+        delete parsedVision.weight_grams;
+        delete parsedVision.shipping_weight_oz;
+
+        const payload = sanitizeObject({
+          pieceId,
+          shopify_title: rawTitleInput,
+          piece_name: parsedVision.piece_name || pieceNameInput,
+          stone_family: derivedFamily,
+          origin_location: parsedVision.origin_location || originSegment,
+          origin_handle: defaultOriginSlug,
+          collection_name: defaultCollection.name,
+          collection_location: mapCollectionLocation(defaultCollection.name),
+          origin_story: extractedStory,
+          is_ooak: "Yes", 
+          ...geoFields,
+          ...parsedVision
+        });
+
+        // Strip undefined, null, or empty string values to leave them unset in the caller
+        const finalPayload = {};
+        for (const [k, v] of Object.entries(payload)) {
+          if (v !== undefined && v !== null && v !== "") {
+            finalPayload[k] = v;
+          }
+        }
+        
+        return Response.json({ success: true, intent, tab3Data: finalPayload, verifiedGeoValues });
+      }
+      return Response.json({ success: false, intent, error: "Vision API Failure (Tab 3)" });
+    }
+
+    if (intent === "generateDescription") {
+      const sharedFields = JSON.parse(body.get("sharedFields") || "{}");
+      const pieceDataStr = body.get("pieceData");
+      let promptText = "";
+
+      if (pieceDataStr) {
+        // Tab 3 / Matrix Pipeline Flow
+        try {
+          const pieceData = JSON.parse(pieceDataStr);
+          const derivedFamily = sharedFields.stone_family || pieceData.stone_family || "";
+          const originSegment = sharedFields.origin_location || pieceData.origin_location || "";
+          const extractedStory = pieceData.origin_story || "";
+          const fullCollectionTitle = pieceData.collection_name || "";
+          const targetUrlPath = pieceData.origin_handle ? `/pages/${pieceData.origin_handle}` : "";
+          const collectionUrlPath = pieceData.collection_location ? `/collections/${pieceData.collection_location}` : "";
+          
+          promptText = buildDescriptionPrompt(
+            derivedFamily,
+            originSegment,
+            extractedStory,
+            fullCollectionTitle,
+            pieceData,
+            targetUrlPath,
+            collectionUrlPath
+          ) + "\n\nCRITICAL RULE: The generated product description may contain a short origin hook and link to the origin page. Do not duplicate the full origin story in the description. Omit missing bench or artist notes. Never write 'None' as filler in the description.";
+        } catch (e) {
+          promptText = `Write a description for Rockhound Studio. Focus on: ${sharedFields.stone_family}.`;
+        }
+      } else {
+        // Shared/Legacy Fallback Flow
+        promptText = `Write a description for Rockhound Studio. Focus on: ${sharedFields.stone_family}.`;
+      }
+
+      const geminiRes = await fetchWithRetry("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contents: [{ parts: [{ text: promptText }] }], generationConfig: { responseMimeType: "application/json", temperature: 0.2 } })
+      });
+
+      if (geminiRes.ok) {
+        const data = await geminiRes.json();
+        let rawText = (data.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
+        
+        let generatedDescription = "";
+        if (pieceDataStr) {
+            // Tab 3 Flow outputs raw HTML — strip markdown codeblocks if Gemini added them
+            generatedDescription = rawText.replace(/^```html\n?/, "").replace(/\n?পদে?$/, "").trim();
+        } else {
+            // Legacy flow expects JSON
+            try {
+                const parsed = JSON.parse(rawText.slice(rawText.indexOf("{"), rawText.lastIndexOf("}") + 1));
+                generatedDescription = parsed.generated_description;
+            } catch (e) {
+                generatedDescription = rawText;
+            }
+        }
+
+        return Response.json({ success: true, intent, generated_description: formatDyslexiaText(generatedDescription) });
+      }
+      return Response.json({ success: false, intent, error: "Description failed" });
+    }
+
+    return Response.json({ success: false, intent, error: "Unhandled Autofiil Intent" });
+  } catch (error) {
+    return Response.json({ success: false, intent: "unknown", error: error.message }, { status: 500 });
+  }
+};
