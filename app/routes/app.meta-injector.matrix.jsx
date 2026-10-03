@@ -683,6 +683,12 @@ export function OperationsMatrixTab({ products }) {
                 }
             });
 
+            // Restore Enriched Vision SEO
+            const enrichedSeo = visionData.seo_title || visionData["custom.seo_title"] || "";
+            if (enrichedSeo.trim() !== "") {
+              newPlan["custom.seo_title"] = enrichedSeo.trim();
+            }
+
             if (descData) newPlan["custom.generated_description"] = descData;
 
             return { ...prev, [currentId]: { ...existing, repairPlan: newPlan, diagnostics, verifiedGeoValues: verifiedGeo } };
