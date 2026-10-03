@@ -148,6 +148,7 @@ export function OperationsMatrixTab({ products }) {
   const [productStates, setProductStates] = useState({}); 
   const [manifestData, setManifestData] = useState({}); 
   const [lastProcessedData, setLastProcessedData] = useState(null);
+  const [approvals, setApprovals] = useState({}); // Stores exact text approvals by pieceId and key
   
   const [selectedBenchId, setSelectedBenchId] = useState(null);
   const [safetyMessage, setSafetyMessage] = useState("");
@@ -215,6 +216,7 @@ export function OperationsMatrixTab({ products }) {
     setQueueIds([]);
     setProductStates({});
     setManifestData({});
+    setApprovals({});
     setSelectedBenchId(null);
     setIsLoadingData(false);
     setIsExecuting(false);
@@ -233,11 +235,25 @@ export function OperationsMatrixTab({ products }) {
        setSafetyError("Cannot generate plan: No inventory selected. Please check items in the left column first.");
        return;
     }
+    setApprovals({}); // Clear approvals on new overall run
     setIsLoadingData(true);
     setLoadIndex(0);
     setSafetyMessage("Fetching live product data and building manifests by GID...");
     setSafetyError("");
   }, [queueIds]);
+
+  const handleToggleApproval = useCallback((pieceId, key, propVal, isChecked) => {
+    setApprovals(prev => {
+      const next = { ...prev };
+      if (!next[pieceId]) next[pieceId] = {};
+      if (isChecked) {
+        next[pieceId][key] = propVal;
+      } else {
+        delete next[pieceId][key];
+      }
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     if (!isLoadingData) return;
@@ -310,6 +326,7 @@ export function OperationsMatrixTab({ products }) {
         }
     }
     
+    setApprovals({}); // Switching to new AI run globally clears approvals
     setSafetyError("");
     setSafetyMessage("Industrial AI Batch Pipeline engaged. Firing up the Gemini cores...");
     setExecutionMode("AI_BATCH_PIPELINE");
@@ -319,11 +336,10 @@ export function OperationsMatrixTab({ products }) {
     setTempAiData({});
   }, [queueIds, manifestData]);
 
-  const getFieldMetadata = (key, data) => {
+  const getFieldMetadata = (key, data, productId, currentApprovals) => {
     const hasCurrent = data.currentMetafields?.hasOwnProperty(key);
     let currentVal = hasCurrent ? String(data.currentMetafields[key] || "") : "";
 
-    // Strictly separate Product Title from SEO Title to prevent conflict false-positives
     if (key === "shopify_title") {
         currentVal = String(data.canonicalFields?.["shopify_title"] || currentVal || ""); 
     }
@@ -348,34 +364,55 @@ export function OperationsMatrixTab({ products }) {
     const currentCount = currentVal.length;
     const propCount = propVal.length;
     const limit = FIELD_LIMITS[key] || null;
-    const isOverLimit = limit !== null && (currentCount > limit || (isProposed && propCount > limit));
-
-    if (isOverLimit) reasons.push("Over limit");
-    if (isIntegration) reasons.push("Integration owned");
-
+    
     const currentExists = currentVal.trim() !== "";
     const proposalExists = isProposed && propVal.trim() !== "";
 
-    // Do not trigger warnings or statuses for hidden source-context keys
+    const isManualOnly = (key === "price" || key === "shopify_title");
+    const exactApprovalVal = currentApprovals?.[productId]?.[key];
+    const isApproved = exactApprovalVal !== undefined && exactApprovalVal === propVal && propVal.trim() !== "";
+
     if (HIDDEN_CONTEXT_FIELDS.includes(key)) {
-        return { currentVal, propVal, isProposed, fieldStatus: "Hidden Source", proposalStatus, source, stage, isBlockedAction: true, reasons: ["Hidden Context"], currentExists, proposalExists };
+        return { currentVal, propVal, isProposed, fieldStatus: "Hidden Source", proposalStatus, source, stage, isBlockedAction: true, reasons: ["Hidden Context"], currentExists, proposalExists, isApproved: false, hasTechnicalBlock: true, contentNeedsReview: false };
     }
 
+    let hasTechnicalBlock = false;
+    let contentNeedsReview = false;
+
+    // Technical Verification Layer
+    const isOverLimit = limit !== null && (currentCount > limit || (isProposed && propCount > limit));
+    if (isOverLimit) {
+        hasTechnicalBlock = true;
+        reasons.push("Over limit");
+    }
+    
+    if (isIntegration) reasons.push("Integration owned");
+
+    if (BLOCKED_UNVERIFIED_PINS.includes(key) && proposalExists) {
+        hasTechnicalBlock = true;
+        reasons.push("Type/destination unverified");
+    }
+
+    if (isHardware && GENERIC_VALUES.includes(propVal.trim()) && proposalExists) {
+        hasTechnicalBlock = true;
+        reasons.push("Generic hardware fill into blank");
+    }
+
+    // Content Review Status Evaluation
     if (currentExists) {
         if (!proposalExists) {
             fieldStatus = "Unchanged";
-            proposalStatus = "Not provided";
         } else if (currentVal === propVal) {
             fieldStatus = "Unchanged";
         } else {
             if (isProtected) {
+                contentNeedsReview = true;
                 fieldStatus = "Degrade";
                 reasons.push("Degrade");
-                isBlockedAction = true;
             } else {
+                contentNeedsReview = true;
                 fieldStatus = "Conflict";
                 reasons.push("Conflict");
-                isBlockedAction = true;
             }
         }
     } else {
@@ -384,13 +421,9 @@ export function OperationsMatrixTab({ products }) {
             if (isRequired) reasons.push("Required missing");
         } else {
             if (source === "Not reported") {
+                contentNeedsReview = true;
                 fieldStatus = "Unverified proposal";
                 reasons.push("Unverified proposal");
-                isBlockedAction = true;
-            } else if (isHardware && GENERIC_VALUES.includes(propVal.trim())) {
-                fieldStatus = "Blocked";
-                reasons.push("Generic hardware fill into blank");
-                isBlockedAction = true;
             } else {
                 fieldStatus = "Proposed";
                 reasons.push("Proposed");
@@ -398,20 +431,55 @@ export function OperationsMatrixTab({ products }) {
         }
     }
 
-    if (isOverLimit && !isBlockedAction) {
-        fieldStatus = "Over limit";
-        isBlockedAction = true;
-    }
-
-    if (BLOCKED_UNVERIFIED_PINS.includes(key)) {
-        if (isProposed && propVal.trim() !== "") {
+    // Apply baseline technical overrides
+    if (hasTechnicalBlock && fieldStatus !== "Unchanged" && fieldStatus !== "Optional blank" && fieldStatus !== "Required missing") {
+        if (isOverLimit) {
+            fieldStatus = "Over limit";
+        } else if (reasons.includes("Type/destination unverified") || reasons.includes("Generic hardware fill into blank")) {
             fieldStatus = "Blocked";
-            reasons.push("Type/destination unverified");
         }
-        isBlockedAction = true;
     }
 
-    return { currentVal, propVal, isProposed, fieldStatus, proposalStatus, source, stage, isBlockedAction, reasons, currentExists, proposalExists };
+    // React to Approvals
+    if (proposalExists && currentVal !== propVal && !isManualOnly) {
+        if (isApproved) {
+            if (hasTechnicalBlock) {
+                fieldStatus = "Approved, blocked";
+                isBlockedAction = true;
+            } else {
+                fieldStatus = "Approved, not saved";
+                isBlockedAction = false;
+            }
+        } else {
+            // If not manually approved, content blocks stop saves
+            if (contentNeedsReview || hasTechnicalBlock) {
+                isBlockedAction = true;
+            } else {
+                // "Proposed" fields are inherently safe when not blocked technically
+                isBlockedAction = false; 
+            }
+        }
+    } else {
+        // Enforce blocks on Unchanged, Blanks, Missing
+        if (hasTechnicalBlock || fieldStatus === "Optional blank" || fieldStatus === "Required missing") {
+            isBlockedAction = true;
+        }
+    }
+
+    // Absolute enforcements for manual only (prices and shopify titles)
+    if (isManualOnly) {
+        isBlockedAction = true;
+        hasTechnicalBlock = true;
+        if (proposalExists && currentVal !== propVal) {
+            fieldStatus = "Manual only";
+            if (!reasons.includes("Manual only")) reasons.push("Manual only");
+        }
+    }
+
+    return { 
+      currentVal, propVal, isProposed, fieldStatus, proposalStatus, source, stage, 
+      isBlockedAction, reasons, currentExists, proposalExists, isApproved, hasTechnicalBlock, contentNeedsReview 
+    };
   };
 
   useEffect(() => {
@@ -445,10 +513,10 @@ export function OperationsMatrixTab({ products }) {
         fd.append("intent", "executeRepairPlan");
         fd.append("pieceId", currentId);
         
-        // Filter out Blocked, Degraded, Conflict, Unverified, Generic Hardware writes, and Hidden Context
+        // Save execution utilizes the derived metadata to determine safety
         const safePlan = {};
         Object.keys(manifest.repairPlan).forEach(key => {
-            const meta = getFieldMetadata(key, manifest);
+            const meta = getFieldMetadata(key, manifest, currentId, approvals);
             if (!meta.isBlockedAction && !HIDDEN_CONTEXT_FIELDS.includes(key)) {
                 safePlan[key] = manifest.repairPlan[key];
             }
@@ -484,14 +552,12 @@ export function OperationsMatrixTab({ products }) {
         fd.append("imageUrl", imageUrl);
         fd.append("stone_family", tempAiData.titleParse?.stone_family || "");
         
-        // origin_story must be passed strictly as context to autofill tools, never displayed or overwritten
         fd.append("origin_story", tempAiData.titleParse?.origin_story || "");
         
         fd.append("honest_flaws_and_character", manifest.currentMetafields["custom.honest_flaws_and_character"] || "");
         fd.append("weight_grams", manifest.currentMetafields["custom.weight_grams"] || "");
         fd.append("dimensions_mm", manifest.currentMetafields["custom.dimensions_mm"] || "");
         
-        // INJECTION FIX: Starved Vision API needs shape data to accurately identify cuts
         fd.append("stone_shape", manifest.currentMetafields["custom.stone_shape"] || manifest.canonicalFields["custom.stone_shape"] || "");
         fd.append("cut_and_shape", manifest.currentMetafields["custom.cut_and_shape"] || manifest.canonicalFields["custom.cut_and_shape"] || "");
 
@@ -568,7 +634,7 @@ export function OperationsMatrixTab({ products }) {
         setTimeout(() => setExecuteIndex(i => i + 1), 500);
       }
     }
-  }, [isExecuting, executionMode, executeIndex, queueIds, manifestData, batchFetcher.state, updateProductState, aiStep, tempAiData, safeProducts]);
+  }, [isExecuting, executionMode, executeIndex, queueIds, manifestData, batchFetcher.state, updateProductState, aiStep, tempAiData, safeProducts, approvals]);
 
   useEffect(() => {
     if (batchFetcher.state === "idle" && batchFetcher.data && batchFetcher.data !== lastProcessedData) {
@@ -663,7 +729,6 @@ export function OperationsMatrixTab({ products }) {
         const successLogs = logs || [message || "Operation applied successfully."];
         
         let statusToSet = STATUS.COMPLETE;
-        // Zero-change repairs must be skipped, specifically checking fieldsUpdated
         if (status === "NO_CHANGES_REQUIRED" || message === "No changes required." || fieldsUpdated === 0) {
             statusToSet = STATUS.SKIPPED;
             successLogs.push("No changes required.");
@@ -722,6 +787,17 @@ export function OperationsMatrixTab({ products }) {
 
   const handleRepairPlanChange = (key, value) => {
     if (!selectedBenchId) return;
+    
+    // Clear previously approved value if the proposal text is modified manually
+    setApprovals(prev => {
+        if (prev[selectedBenchId] && prev[selectedBenchId][key] !== undefined) {
+            const next = { ...prev };
+            delete next[selectedBenchId][key];
+            return next;
+        }
+        return prev;
+    });
+
     setManifestData(prev => ({
        ...prev,
        [selectedBenchId]: {
@@ -748,7 +824,7 @@ export function OperationsMatrixTab({ products }) {
     
     const safePlan = {};
     Object.keys(manifest.repairPlan).forEach(key => {
-        const meta = getFieldMetadata(key, manifest);
+        const meta = getFieldMetadata(key, manifest, selectedBenchId, approvals);
         if (!meta.isBlockedAction && !HIDDEN_CONTEXT_FIELDS.includes(key)) {
             safePlan[key] = manifest.repairPlan[key];
         }
@@ -759,10 +835,16 @@ export function OperationsMatrixTab({ products }) {
 
     updateProductState(selectedBenchId, STATUS.SCANNING, ["Executing single structural repair..."]);
     batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-api" });
-  }, [selectedBenchId, manifestData, batchFetcher, updateProductState]);
+  }, [selectedBenchId, manifestData, approvals, batchFetcher, updateProductState]);
 
   const handleExecuteSingleAI = useCallback(() => {
     if (!selectedBenchId) return;
+    
+    setApprovals(prev => {
+        const next = { ...prev };
+        delete next[selectedBenchId];
+        return next;
+    });
     
     const fd = new FormData();
     fd.append("intent", "batchAuditItem");
@@ -869,19 +951,19 @@ export function OperationsMatrixTab({ products }) {
     SECTIONS.forEach(sec => {
         sec.keys.forEach(k => {
             stats.total++;
-            const meta = getFieldMetadata(k, data);
+            const meta = getFieldMetadata(k, data, selectedBenchId, approvals);
             
             if (meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing") stats.blank++;
             else stats.filled++;
 
-            if (meta.fieldStatus === "Proposed") stats.proposed++;
+            if (meta.fieldStatus === "Proposed" || meta.fieldStatus === "Approved, not saved" || meta.fieldStatus === "Approved, blocked") stats.proposed++;
             if (meta.isBlockedAction && !HIDDEN_CONTEXT_FIELDS.includes(k)) stats.blocked++;
             if (meta.fieldStatus === "Degrade") stats.degraded++;
             if (meta.fieldStatus === "Conflict") stats.conflicts++;
             if (meta.fieldStatus === "Unverified proposal") stats.unverified++;
             if (meta.fieldStatus === "Optional blank") stats.optionalBlanks++;
             if (meta.fieldStatus === "Required missing") stats.requiredMissing++;
-            if (meta.fieldStatus === "Proposed" && !meta.isBlockedAction && !HIDDEN_CONTEXT_FIELDS.includes(k)) stats.approvedWrite++;
+            if ((meta.fieldStatus === "Proposed" || meta.fieldStatus === "Approved, not saved") && !meta.isBlockedAction && !HIDDEN_CONTEXT_FIELDS.includes(k)) stats.approvedWrite++;
         });
     });
 
@@ -916,21 +998,19 @@ export function OperationsMatrixTab({ products }) {
       // Process all 45 pins in SECTIONS
       SECTIONS.forEach(sec => {
           sec.keys.forEach(key => {
-              const meta = getFieldMetadata(key, data);
+              const meta = getFieldMetadata(key, data, selectedBenchId, approvals);
               
               if (meta.currentExists) stats.loaded++;
               if (meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing") stats.blank++;
-              if (meta.fieldStatus === "Proposed") stats.proposed++;
+              if (meta.fieldStatus === "Proposed" || meta.fieldStatus === "Approved, not saved" || meta.fieldStatus === "Approved, blocked") stats.proposed++;
               if (meta.isBlockedAction && !HIDDEN_CONTEXT_FIELDS.includes(key)) stats.blocked++;
               if (PROTECTED_FIELDS.includes(key)) stats.protected++;
               if (meta.fieldStatus === "Conflict" || meta.fieldStatus === "Degrade") stats.conflicting++;
 
-              // Determine if there are blockers preventing a write
-              if (["Conflict", "Degrade", "Blocked", "Unverified proposal", "Required missing"].includes(meta.fieldStatus) && !HIDDEN_CONTEXT_FIELDS.includes(key)) {
+              if (meta.isBlockedAction && !HIDDEN_CONTEXT_FIELDS.includes(key)) {
                   hasBlockersForWrite = true;
               }
 
-              // Format row
               if (key === "custom.origin_story") {
                   const sourceAvailable = (meta.currentExists || meta.proposalExists) ? "Yes" : "No";
                   pinRows.push(`- ${key}: [Hidden Context] Source Available: ${sourceAvailable}`);
@@ -952,26 +1032,22 @@ export function OperationsMatrixTab({ products }) {
           });
       });
 
-      // Generated Description (Separate from 45 pins)
       const genDescVal = data.repairPlan?.["custom.generated_description"] || data.currentMetafields?.["custom.generated_description"] || "";
       const descExists = !!genDescVal;
       const descPreview = descExists ? String(genDescVal).substring(0, 80).replace(/\n/g, " ") + "..." : "None";
 
-      // AI Stages Evaluation based on actual telemetry
       const titleParseStatus = (diag.stage === "titleParse" || diag.stage === "tab3FullRescan" || diag.stage === "generateDescription" || diag.stage === "batchAuditItem") ? (diag.gemini || "Unknown") : "Not called";
       const visionStatus = diag.vision || "Not called";
       const geoStatus = diag.geoLibrary || "Not called";
       const descStatus = descExists && data.repairPlan?.["custom.generated_description"] ? "Success" : (diag.stage === "generateDescription" ? (diag.gemini || "Unknown") : "Not called");
 
-      // Shopify Write/Read Status
       const shopifyRead = statusObj.shopifyReadStatus;
       const shopifyWrite = data.fieldsUpdated !== undefined ? (data.fieldsUpdated > 0 ? "Success" : "Success (0 changes)") : "Not called";
       const readBack = statusObj.readBackStatus;
 
-      // Recommendations Logic
       const recommendations = [];
       if (hasBlockersForWrite) {
-          recommendations.push("1. DO NOT WRITE. Review and manually resolve blocked, conflicting, or unverified pins listed above.");
+          recommendations.push("1. DO NOT WRITE. Review and manually resolve blocked, conflicting, or unverified pins listed above. Approve suggestions where applicable.");
           recommendations.push("2. Verify Shopify Metafield definitions for any 'Unverified proposal' pins before approving.");
       } else if (stats.proposed > 0 && shopifyWrite === "Not called") {
           recommendations.push("1. Data is staged and validated. Proceed with 'Execute Single Repair'.");
@@ -1031,7 +1107,7 @@ ${recommendations.join("\n")}
               console.error("Clipboard error", err);
               setSafetyError("Failed to copy telemetry to clipboard.");
           });
-  }, [selectedBenchId, manifestData, productStates, safeProducts, batchFetcher.state, isLoadingData, safetyError, aiStep, executionMode]);
+  }, [selectedBenchId, manifestData, safeProducts, approvals, batchFetcher.state, isLoadingData, safetyError, aiStep, executionMode, getSystemStatus]);
 
   const renderDiagnosticHeader = () => {
     const data = manifestData[selectedBenchId];
@@ -1100,15 +1176,15 @@ ${recommendations.join("\n")}
     if (!data) return null;
 
     const filteredKeys = section.keys.filter(k => {
-      // Never render hidden context fields
       if (HIDDEN_CONTEXT_FIELDS.includes(k)) return false;
       
       if (activeFilter === "All") return true;
-      const meta = getFieldMetadata(k, data);
+      const meta = getFieldMetadata(k, data, selectedBenchId, approvals);
+      
       if (activeFilter === "Blank" && (meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing")) return true;
-      if (activeFilter === "Proposed changes" && meta.fieldStatus === "Proposed") return true;
+      if (activeFilter === "Proposed changes" && (meta.fieldStatus === "Proposed" || meta.fieldStatus === "Approved, not saved" || meta.fieldStatus === "Approved, blocked")) return true;
       if (activeFilter === "Conflicts" && (meta.fieldStatus === "Conflict" || meta.fieldStatus === "Degrade")) return true;
-      if (activeFilter === "Needs review" && (meta.fieldStatus === "Required missing" || meta.fieldStatus === "Unverified proposal")) return true;
+      if (activeFilter === "Needs review" && (meta.fieldStatus === "Required missing" || meta.fieldStatus === "Unverified proposal" || (meta.contentNeedsReview && !meta.isApproved))) return true;
       if (activeFilter === meta.source) return true;
       return false;
     });
@@ -1129,14 +1205,40 @@ ${recommendations.join("\n")}
         {isExpanded && (
           <div style={{ padding: "16px", display: "flex", flexDirection: "column", gap: "24px" }}>
             {filteredKeys.map((key) => {
-              const meta = getFieldMetadata(key, data);
+              const meta = getFieldMetadata(key, data, selectedBenchId, approvals);
               const isBlank = meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing";
               
               let statusTone = undefined;
               if (meta.fieldStatus === "Optional blank") statusTone = "attention";
-              if (["Required missing", "Conflict", "Degrade", "Blocked", "Over limit", "Failed", "Unverified proposal"].includes(meta.fieldStatus)) statusTone = "critical";
-              if (meta.fieldStatus === "Proposed") statusTone = "success";
+              if (["Required missing", "Conflict", "Degrade", "Blocked", "Over limit", "Failed", "Unverified proposal", "Manual only"].includes(meta.fieldStatus)) statusTone = "critical";
+              if (meta.fieldStatus === "Proposed" || meta.fieldStatus === "Approved, not saved") statusTone = "success";
               if (meta.fieldStatus === "Unchanged") statusTone = "new";
+              if (meta.fieldStatus === "Approved, blocked") statusTone = "warning";
+
+              const isManualOnly = key === "price" || key === "shopify_title";
+              const canApprove = meta.proposalExists && meta.currentVal !== meta.propVal && !isManualOnly;
+              
+              let boxBg = "#f8f9fa";
+              let boxBorder = "#dee2e6";
+              let textColor = "#212529";
+              let statusText = "Ready for review";
+
+              if (meta.isApproved && !meta.hasTechnicalBlock) {
+                  boxBg = "#d1e7dd"; boxBorder = "#badbcc"; textColor = "#0f5132";
+                  statusText = "Approved and technically eligible.";
+              } else if (meta.isApproved && meta.hasTechnicalBlock) {
+                  boxBg = "#fff3cd"; boxBorder = "#ffecb5"; textColor = "#664d03";
+                  statusText = "Suggestion approved. Cannot save until field destination/type is verified or limits resolved.";
+              } else if (!meta.isApproved && meta.hasTechnicalBlock) {
+                  boxBg = "#f8d7da"; boxBorder = "#f5c2c7"; textColor = "#842029";
+                  statusText = "Blocked by technical error. Review needed.";
+              } else if (!meta.isApproved && meta.contentNeedsReview) {
+                  boxBg = "#fff3cd"; boxBorder = "#ffecb5"; textColor = "#664d03";
+                  statusText = "Review needed to verify content explicitly before write can occur.";
+              } else if (!meta.isApproved && meta.fieldStatus === "Proposed") {
+                  boxBg = "#e2e3e5"; boxBorder = "#d3d6d8"; textColor = "#41464c";
+                  statusText = "Safe suggestion. Approval optional but recorded if checked.";
+              }
 
               return (
                 <Box key={key} padding="300" background={isBlank ? "bg-surface-warning" : "bg-surface"} borderColor="border" borderWidth="1" borderRadius="200">
@@ -1173,6 +1275,30 @@ ${recommendations.join("\n")}
                                 placeholder={meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing" ? "Blank" : (meta.fieldStatus === "Proposal not provided" ? "Not provided" : "")}
                             />
                         </div>
+
+                        {canApprove && (
+                            <div style={{ marginTop: "12px", backgroundColor: boxBg, border: `1px solid ${boxBorder}`, borderRadius: "8px", padding: "12px" }}>
+                                <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                                    <input
+                                        type="checkbox"
+                                        id={`approve-${key}`}
+                                        checked={meta.isApproved || false}
+                                        onChange={(e) => handleToggleApproval(selectedBenchId, key, meta.propVal, e.target.checked)}
+                                        style={{ width: "24px", height: "24px", cursor: "pointer", accentColor: textColor }}
+                                        aria-label={`Approve suggestion for ${formatLabel(key)}: ${meta.propVal}`}
+                                    />
+                                    <label htmlFor={`approve-${key}`} style={{ fontWeight: "bold", fontSize: "16px", cursor: "pointer", color: textColor, display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px", flex: 1 }}>
+                                        Approve this suggestion: <span style={{ fontWeight: "normal", wordBreak: "break-word" }}>"{meta.propVal}"</span>
+                                    </label>
+                                </div>
+                                <div style={{ marginTop: "8px", marginLeft: "36px" }}>
+                                    <Text as="p" tone={(!meta.isApproved && meta.hasTechnicalBlock) || (meta.isApproved && meta.hasTechnicalBlock) ? "critical" : "subdued"} fontWeight="medium" style={{ color: textColor }}>
+                                        {statusText}
+                                    </Text>
+                                </div>
+                            </div>
+                        )}
+
                     </div>
                   </div>
                 </Box>
@@ -1189,7 +1315,7 @@ ${recommendations.join("\n")}
   const filterOptions = [
     {label: 'All', value: 'All'},
     {label: 'Needs review', value: 'Needs review'},
-    {label: 'Proposed changes', value: 'Proposed'},
+    {label: 'Proposed changes', value: 'Proposed changes'},
     {label: 'Conflicts', value: 'Conflicts'},
     {label: 'Blank', value: 'Blank'},
     {label: 'Shopify', value: 'Shopify'},
