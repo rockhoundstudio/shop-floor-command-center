@@ -316,7 +316,7 @@ RETURN THESE EXACT JSON KEYS ONLY. DO NOT GENERATE A PRODUCT DESCRIPTION.
 - setting_ready: Look closely at the mounting. "Bezel Setting - Ready to Wear", "Wire Wrapped - Ready to Wear", or "None" for loose stones.
 - wire_material: "Antiqued Copper Wire" etc. "None" if no wire.
 - bail_included: e.g. "Silver Plated Pinch Bail", "Integrated Bezel Bail", or "None".
-- jewelry_finding_type: CRITICAL EXCLUSIVITY LAW. If bail_included has any value other than "None", this field MUST be exactly "None". 
+- jewelry_finding_type: Describes the construction or attachment. This is compatible with bail_included (e.g., bail_included: "Silver Plated Pinch Bail" and jewelry_finding_type: "Drilled stone with a pinned pinch bail"). Use this example to explain compatibility, not as a default for every product. Do not infer drilling or pinning from bail material or bail name alone. Use explicit operator-confirmed construction details when present in existing inputs. If those details are unavailable, do not invent them.
 - chain_material: e.g. "Silver Plated Snake Chain", "Cord", or "None".
 - alt_text: Descriptive alt text (max 125 chars). Use mineral name. No visual guessing.
 - found_object: "Yes" if field-collected, "No" if shopped/imported.
@@ -440,7 +440,7 @@ function buildMasterVisionPrompt({ pagesMenu, collectionsMenu, stoneFamily, deri
 - setting_ready: "Bezel Setting - Ready to Wear", "None".
 - wire_material
 - bail_included: "Silver Plated Pinch Bail", "Integrated Bezel Bail", "None".
-- jewelry_finding_type: MUST BE "None" if bail_included is not "None".
+- jewelry_finding_type: Describes construction or attachment. Compatible with bail_included. Do not infer drilling or pinning from bail name alone. Do not invent details if unknown.
 - alt_text: Descriptive, max 125 chars.
 - found_object: Yes/No
 - chain_material: "Silver Plated Snake Chain", "None".
@@ -697,6 +697,10 @@ export const action = async ({ request }) => {
       // Collect all passed current values to protect them during Gemini generation
       const currentData = {};
       for (const [key, value] of body.entries()) {
+        // [Integration Note]: If operator-confirmed construction details (e.g., jewelry_finding_type) 
+        // are still arriving blank for specific items like The Catalyst, the frontend matrix state or 
+        // save payload builder is failing to pass the newly confirmed values into this FormData request. 
+        // The AI engine can only preserve the explicit inputs it receives.
         if (value && typeof value === 'string' && value.trim() !== "" && !["intent", "pieceId", "productId", "productTitle", "imageBase64", "imageMimeType", "imageUrl"].includes(key)) {
             currentData[key] = value.trim();
         }
@@ -728,6 +732,14 @@ export const action = async ({ request }) => {
 
         if (currentData.jewelry_finding_type) {
              parsedVision.jewelry_finding_type = currentData.jewelry_finding_type;
+        }
+
+        if (currentData.bail_included) {
+            parsedVision.bail_included = currentData.bail_included;
+        }
+
+        if (currentData.secondary_medium) {
+            parsedVision.secondary_medium = currentData.secondary_medium;
         }
 
         if (currentData.primary_use) {
