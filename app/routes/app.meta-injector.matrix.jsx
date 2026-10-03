@@ -561,6 +561,33 @@ export function OperationsMatrixTab({ products }) {
         fd.append("stone_shape", manifest.currentMetafields["custom.stone_shape"] || manifest.canonicalFields["custom.stone_shape"] || "");
         fd.append("cut_and_shape", manifest.currentMetafields["custom.cut_and_shape"] || manifest.canonicalFields["custom.cut_and_shape"] || "");
 
+        // [Integration Note]: The operator may have confirmed construction details like 'jewelry_finding_type'
+        // (e.g., "Drilled stone with a pinned pinch bail"). However, starting an AI batch run clears the 
+        // explicit 'approvals' state. To prevent sending unapproved 'repairPlan' AI proposals as facts, 
+        // we strictly fall back to current saved values in 'currentMetafields'. 
+        // A mechanism to persist unsaved operator-confirmed inputs across AI runs is required.
+        const hardwareKeys = [
+            "bail_included",
+            "secondary_medium",
+            "jewelry_finding_type",
+            "primary_use",
+            "product_format",
+            "jewelry_type"
+        ];
+        
+        hardwareKeys.forEach(k => {
+            const fullKey = `custom.${k}`;
+            let val = "";
+            if (approvals[currentId] && approvals[currentId][fullKey] !== undefined) {
+                val = approvals[currentId][fullKey];
+            } else if (manifest.currentMetafields && manifest.currentMetafields[fullKey]) {
+                val = manifest.currentMetafields[fullKey];
+            }
+            if (val) {
+                fd.append(k, val);
+            }
+        });
+
         batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-autofill" });
       }
       else if (aiStep === 3 && !tempAiData.generateDescRequested) {
