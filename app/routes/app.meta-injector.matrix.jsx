@@ -362,16 +362,23 @@ export function OperationsMatrixTab({ products }) {
     const currentExists = currentVal.trim() !== "";
     const proposalExists = isProposed && propVal.trim() !== "";
 
+    const unprefixedKey = key.replace(/^custom\./, '');
+
     if (key === "custom.google_product_category" && proposalExists) {
         isContentPreApproved = true;
         preApprovalReason = "Category pre-approved";
+    } else if (
+        data.verifiedGeoValues && 
+        data.verifiedGeoValues[unprefixedKey] !== undefined && 
+        String(data.verifiedGeoValues[unprefixedKey]) === propVal && 
+        proposalExists
+    ) {
+        isContentPreApproved = true;
+        preApprovalReason = "Verified Geo Library";
     }
 
-    // [Integration Limitation]: Provenance for verified Geo Library values is lost before reaching this matrix.
-    // The autofill backend merges geoFields and parsedVision (Gemini output) together, with parsedVision potentially
-    // overwriting the verified library values. Because of this, we cannot safely establish that the current proposal
-    // is exactly the verified library value. We must not falsely pre-approve them here until the backend is updated
-    // to preserve strict field-level provenance.
+    // [Integration Connection]: The backend preserves verified Geo Library values and returns them in the verifiedGeoValues map. 
+    // This matrix checks that map to grant trusted pre-approval when the exact library value survives the AI merge.
 
     const isRequired = REQUIRED_FIELDS.includes(key);
     const isProtected = PROTECTED_FIELDS.includes(key);
@@ -637,6 +644,7 @@ export function OperationsMatrixTab({ products }) {
             const titleData = tempAiData.titleParse || {};
             const visionData = tempAiData.tab3Data || {};
             const descData = tempAiData.generated_description || "";
+            const verifiedGeo = tempAiData.verifiedGeoValues || {};
 
             // Record stage success
             if (tempAiData.titleParseRequested) {
@@ -676,7 +684,7 @@ export function OperationsMatrixTab({ products }) {
 
             if (descData) newPlan["custom.generated_description"] = descData;
 
-            return { ...prev, [currentId]: { ...existing, repairPlan: newPlan, diagnostics } };
+            return { ...prev, [currentId]: { ...existing, repairPlan: newPlan, diagnostics, verifiedGeoValues: verifiedGeo } };
         });
         
         setTempAiData({});
@@ -689,7 +697,7 @@ export function OperationsMatrixTab({ products }) {
   useEffect(() => {
     if (batchFetcher.state === "idle" && batchFetcher.data && batchFetcher.data !== lastProcessedData) {
       setLastProcessedData(batchFetcher.data);
-      const { intent, success, pieceId, productId, message, error, errors, logs, status, finalStatus, titleParse, tab3Data, generated_description, fieldsUpdated } = batchFetcher.data;
+      const { intent, success, pieceId, productId, message, error, errors, logs, status, finalStatus, titleParse, tab3Data, generated_description, fieldsUpdated, verifiedGeoValues } = batchFetcher.data;
       
       const targetId = pieceId || productId;
       
@@ -823,7 +831,7 @@ export function OperationsMatrixTab({ products }) {
                 setAiStep(2); 
             } 
             else if (intent === "tab3FullRescan") {
-                setTempAiData(prev => ({ ...prev, tab3Data: tab3Data }));
+                setTempAiData(prev => ({ ...prev, tab3Data: tab3Data, verifiedGeoValues: verifiedGeoValues }));
                 setAiStep(3); 
             } 
             else if (intent === "generateDescription") {
@@ -1097,7 +1105,7 @@ export function OperationsMatrixTab({ products }) {
 
       const recommendations = [];
       if (hasBlockersForWrite) {
-          recommendations.push("1. DO NOT WRITE. Review and manually resolve blocked, conflicting, or unverified pins listed above. Approve unverified suggestions where applicable (Verified Geo Library and Category values are pre-approved).");
+          recommendations.push("1. DO NOT WRITE. Review and manually resolve blocked, conflicting, or unverified pins listed above. Approve suggestions where applicable (Verified Geo Library and Category values are pre-approved).");
           recommendations.push("2. Verify Shopify Metafield definitions for any 'Unverified proposal' pins before approving.");
       } else if (stats.proposed > 0 && shopifyWrite === "Not called") {
           recommendations.push("1. Data is staged and validated. Proceed with 'Execute Single Repair'.");
@@ -1287,7 +1295,7 @@ ${recommendations.join("\n")}
                   statusText = "Pre-approved, not saved.";
               } else if (meta.isContentPreApproved && meta.hasTechnicalBlock) {
                   boxBg = "#fff3cd"; boxBorder = "#ffecb5"; textColor = "#664d03";
-                  const technicalBlockers = meta.reasons.filter(r => !["Proposed", "Category pre-approved", "Historical: Conflict (Pre-approved)", "Historical: Degrade (Pre-approved)", "Historical: Unverified proposal (Pre-approved)"].includes(r)).join(", ");
+                  const technicalBlockers = meta.reasons.filter(r => !["Proposed", "Category pre-approved", "Verified Geo Library", "Historical: Conflict (Pre-approved)", "Historical: Degrade (Pre-approved)", "Historical: Unverified proposal (Pre-approved)"].includes(r)).join(", ");
                   statusText = `Pre-approved. Cannot save until field destination/type is verified. (${technicalBlockers})`;
               } else if (meta.isApproved && !meta.hasTechnicalBlock) {
                   boxBg = "#d1e7dd"; boxBorder = "#badbcc"; textColor = "#0f5132";
