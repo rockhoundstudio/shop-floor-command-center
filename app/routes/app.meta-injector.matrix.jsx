@@ -327,16 +327,6 @@ export function OperationsMatrixTab({ products }) {
        return;
     }
     
-    if (readyItems.length < queueIds.length) {
-        if (!window.confirm(`WARNING: AI MULTI-STAGE PIPELINE.\n\nOnly ${readyItems.length} of ${queueIds.length} queued items have loaded manifests. The others will be skipped.\n\nProceed?`)) {
-            return;
-        }
-    } else {
-        if (!window.confirm("WARNING: AI MULTI-STAGE PIPELINE.\n\nThis will trigger title parsing, vision scanning, and description generation sequentially for all queued items. The results will be staged locally on the bench for review. Proceed?")) {
-            return;
-        }
-    }
-    
     setApprovals({}); // Switching to new AI run globally clears approvals
     setSafetyError("");
     setSafetyMessage("Industrial AI Batch Pipeline engaged. Firing up the Gemini cores...");
