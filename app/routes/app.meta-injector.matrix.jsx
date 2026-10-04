@@ -84,7 +84,8 @@ const SECTIONS = [
       "custom.alt_text",
       "custom.google_product_category",
       "custom.authenticity",
-      "custom.rarity"
+      "custom.rarity",
+      "custom.generated_description"
     ]
   }
 ];
@@ -352,8 +353,8 @@ export function OperationsMatrixTab({ products }) {
     const hasCurrent = data.currentMetafields?.hasOwnProperty(key);
     let currentVal = hasCurrent ? String(data.currentMetafields[key] || "") : "";
 
-    if (key === "shopify_title") {
-        currentVal = String(data.canonicalFields?.["shopify_title"] || currentVal || ""); 
+    if (key === "shopify_title" || key === "price") {
+        currentVal = String(data.canonicalFields?.[key] || currentVal || ""); 
     }
 
     const isProposed = data.repairPlan !== undefined && data.repairPlan.hasOwnProperty(key);
@@ -431,15 +432,15 @@ export function OperationsMatrixTab({ products }) {
         reasons.push("Generic hardware fill into blank");
     }
 
-    // New Backend Technical Blockers (Logged as historical, not automatic future blocks until tested)
+    // New Backend Technical Blockers (Logged as historical, separated from preflight future blocks)
     const apiBlockReason = data.blockedFields?.[key] || data.blockedFields?.[unprefixedKey];
     if (apiBlockReason) {
-        reasons.push(`Last Attempt Blocked: ${apiBlockReason}`);
+        reasons.push(`Backend Blocked: ${apiBlockReason}`);
     }
 
     const conflictData = data.conflicts?.[key] || data.conflicts?.[unprefixedKey];
     if (conflictData) {
-        reasons.push(`Last Attempt Mismatch: ${conflictData.expected} != ${conflictData.actual}`);
+        reasons.push(`Read-back Mismatch: ${conflictData.expected} != ${conflictData.actual}`);
     }
 
     // Content Review Status Evaluation
@@ -483,9 +484,16 @@ export function OperationsMatrixTab({ products }) {
             fieldStatus = "Blocked";
         }
     }
+    
+    // Apply read-back and block overrides strictly for UI display so users know previous saves failed
+    if (apiBlockReason && fieldStatus !== "Unchanged" && fieldStatus !== "Optional blank" && fieldStatus !== "Required missing") {
+        fieldStatus = "API Error / Blocked";
+    } else if (conflictData && fieldStatus !== "Unchanged" && fieldStatus !== "Optional blank" && fieldStatus !== "Required missing") {
+        fieldStatus = "Save Conflict";
+    }
 
     // React to Approvals & Pre-Approvals
-    if (proposalExists && currentVal !== propVal && !isManualOnly) {
+    if (proposalExists && currentVal !== propVal && !isManualOnly && !apiBlockReason && !conflictData) {
         if (isContentPreApproved) {
             if (hasTechnicalBlock) {
                 fieldStatus = "Pre-approved, blocked";
@@ -512,8 +520,8 @@ export function OperationsMatrixTab({ products }) {
             }
         }
     } else {
-        // Enforce blocks on Unchanged, Blanks, Missing
-        if (hasTechnicalBlock || fieldStatus === "Optional blank" || fieldStatus === "Required missing") {
+        // Enforce blocks on Unchanged, Blanks, Missing, API Errors, Conflicts
+        if (hasTechnicalBlock || apiBlockReason || conflictData || fieldStatus === "Optional blank" || fieldStatus === "Required missing") {
             isBlockedAction = true;
         }
     }
@@ -611,7 +619,8 @@ export function OperationsMatrixTab({ products }) {
         fd.append("imageUrl", imageUrl);
         fd.append("stone_family", tempAiData.titleParse?.stone_family || "");
         
-        fd.append("origin_story", tempAiData.titleParse?.origin_story || "");
+        const currentOriginStory = manifest.currentMetafields["custom.origin_story"] || manifest.canonicalFields["custom.origin_story"] || "";
+        fd.append("origin_story", currentOriginStory || tempAiData.titleParse?.origin_story || "");
         
         fd.append("honest_flaws_and_character", manifest.currentMetafields["custom.honest_flaws_and_character"] || "");
         fd.append("weight_grams", manifest.currentMetafields["custom.weight_grams"] || "");
@@ -620,11 +629,6 @@ export function OperationsMatrixTab({ products }) {
         fd.append("stone_shape", manifest.currentMetafields["custom.stone_shape"] || manifest.canonicalFields["custom.stone_shape"] || "");
         fd.append("cut_and_shape", manifest.currentMetafields["custom.cut_and_shape"] || manifest.canonicalFields["custom.cut_and_shape"] || "");
 
-        // [Integration Note]: The operator may have confirmed construction details like 'jewelry_finding_type'
-        // (e.g., "Drilled stone with a pinned pinch bail"). However, starting an AI batch run clears the 
-        // explicit 'approvals' state. To prevent sending unapproved 'repairPlan' AI proposals as facts, 
-        // we strictly fall back to current saved values in 'currentMetafields'. 
-        // A mechanism to persist unsaved operator-confirmed inputs across AI runs is required.
         const hardwareKeys = [
             "bail_included",
             "secondary_medium",
@@ -692,7 +696,7 @@ export function OperationsMatrixTab({ products }) {
             }
 
             Object.keys(visionData).forEach(k => {
-                if (k !== "generated_description" && k !== "pieceId" && k !== "debug_origin" && k !== "intent" && k !== "success") {
+                if (k !== "generated_description" && k !== "pieceId" && k !== "debug_origin" && k !== "intent" && k !== "success" && k !== "origin_story") {
                     if (NATIVE_FIELDS.includes(k) || k.includes('.')) {
                         newPlan[k] = visionData[k];
                     } else {
@@ -702,7 +706,7 @@ export function OperationsMatrixTab({ products }) {
             });
             
             Object.keys(titleData).forEach(k => {
-                if (k !== "pieceId" && k !== "intent" && k !== "success" && k !== "geoSource") {
+                if (k !== "pieceId" && k !== "intent" && k !== "success" && k !== "geoSource" && k !== "origin_story") {
                     if (NATIVE_FIELDS.includes(k) || k.includes('.')) {
                         newPlan[k] = titleData[k];
                     } else {
@@ -853,6 +857,13 @@ export function OperationsMatrixTab({ products }) {
             successLogs.push("No changes required.");
         } else if (finalStatus === "Needs Review" || status === "REPAIR_FAILED" || readBackVerified === false) {
             statusToSet = STATUS.FAILED;
+        }
+        
+        if (blockedFields && Object.keys(blockedFields).length > 0) {
+            successLogs.push(`Partial API block: ${Object.keys(blockedFields).length} fields rejected by Shopify.`);
+        }
+        if (conflicts && Object.keys(conflicts).length > 0) {
+            successLogs.push(`Read-back error: ${Object.keys(conflicts).length} fields failed to save properly.`);
         }
 
         updateProductState(targetId, statusToSet, successLogs);
@@ -1088,7 +1099,7 @@ export function OperationsMatrixTab({ products }) {
             }
 
             if (meta.fieldStatus === "Degrade") stats.degraded++;
-            if (meta.fieldStatus === "Conflict") stats.conflicts++;
+            if (meta.fieldStatus === "Conflict" || meta.fieldStatus === "Save Conflict") stats.conflicts++;
             if (meta.fieldStatus === "Unverified proposal") stats.unverified++;
             if (meta.fieldStatus === "Optional blank") stats.optionalBlanks++;
             if (meta.fieldStatus === "Required missing") stats.requiredMissing++;
@@ -1137,7 +1148,7 @@ export function OperationsMatrixTab({ products }) {
               if (meta.fieldStatus === "Proposed" || meta.fieldStatus === "Approved, not saved" || meta.fieldStatus === "Approved, blocked" || meta.fieldStatus === "Pre-approved, not saved" || meta.fieldStatus === "Pre-approved, blocked") stats.proposed++;
               if (meta.isBlockedAction && !HIDDEN_CONTEXT_FIELDS.includes(key)) stats.blocked++;
               if (PROTECTED_FIELDS.includes(key)) stats.protected++;
-              if (meta.fieldStatus === "Conflict" || meta.fieldStatus === "Degrade") stats.conflicting++;
+              if (meta.fieldStatus === "Conflict" || meta.fieldStatus === "Degrade" || meta.fieldStatus === "Save Conflict") stats.conflicting++;
 
               if (meta.isActualBlockedProposal) {
                   hasBlockersForWrite = true;
@@ -1374,8 +1385,8 @@ ${recommendations.join("\n")}
       
       if (activeFilter === "Blank" && (meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing")) return true;
       if (activeFilter === "Proposed changes" && (meta.fieldStatus === "Proposed" || meta.fieldStatus === "Approved, not saved" || meta.fieldStatus === "Approved, blocked" || meta.fieldStatus === "Pre-approved, not saved" || meta.fieldStatus === "Pre-approved, blocked")) return true;
-      if (activeFilter === "Conflicts" && (meta.fieldStatus === "Conflict" || meta.fieldStatus === "Degrade")) return true;
-      if (activeFilter === "Needs review" && (meta.fieldStatus === "Required missing" || meta.fieldStatus === "Unverified proposal" || (meta.contentNeedsReview && !meta.isApproved && !meta.isContentPreApproved))) return true;
+      if (activeFilter === "Conflicts" && (meta.fieldStatus === "Conflict" || meta.fieldStatus === "Degrade" || meta.fieldStatus === "Save Conflict")) return true;
+      if (activeFilter === "Needs review" && (meta.fieldStatus === "Required missing" || meta.fieldStatus === "Unverified proposal" || (meta.contentNeedsReview && !meta.isApproved && !meta.isContentPreApproved) || meta.fieldStatus === "API Error / Blocked")) return true;
       if (activeFilter === meta.source) return true;
       return false;
     });
@@ -1403,13 +1414,13 @@ ${recommendations.join("\n")}
               
               let statusTone = undefined;
               if (meta.fieldStatus === "Optional blank") statusTone = "attention";
-              if (["Required missing", "Conflict", "Degrade", "Blocked", "API Error / Blocked", "Over limit", "Failed", "Unverified proposal"].includes(meta.fieldStatus)) statusTone = "critical";
+              if (["Required missing", "Conflict", "Degrade", "Blocked", "API Error / Blocked", "Over limit", "Failed", "Unverified proposal", "Save Conflict"].includes(meta.fieldStatus)) statusTone = "critical";
               if (meta.fieldStatus === "Manual only") statusTone = "info";
               if (meta.fieldStatus === "Proposed" || meta.fieldStatus === "Approved, not saved" || meta.fieldStatus === "Pre-approved, not saved") statusTone = "success";
               if (meta.fieldStatus === "Unchanged") statusTone = "new";
               if (meta.fieldStatus === "Approved, blocked" || meta.fieldStatus === "Pre-approved, blocked") statusTone = "warning";
 
-              const canApprove = meta.proposalExists && meta.currentVal !== meta.propVal && !meta.isManualOnly && !meta.isContentPreApproved;
+              const canApprove = meta.proposalExists && meta.currentVal !== meta.propVal && !meta.isManualOnly && !meta.isContentPreApproved && meta.fieldStatus !== "API Error / Blocked" && meta.fieldStatus !== "Save Conflict";
               const isPreApprovedDisplay = meta.isContentPreApproved && meta.proposalExists && meta.currentVal !== meta.propVal;
               
               let boxBg = "#f8f9fa";
@@ -1420,6 +1431,9 @@ ${recommendations.join("\n")}
               if (meta.isManualOnly) {
                   boxBg = "#f8f9fa"; boxBorder = "#dee2e6"; textColor = "#41464c";
                   statusText = "Manual only field. Excluded from automated writes.";
+              } else if (meta.fieldStatus === "API Error / Blocked" || meta.fieldStatus === "Save Conflict") {
+                  boxBg = "#f8d7da"; boxBorder = "#f5c2c7"; textColor = "#842029";
+                  statusText = "Previous save attempt failed API validation or read-back. Review specific error.";
               } else if (meta.isContentPreApproved && !meta.hasTechnicalBlock) {
                   boxBg = "#d1e7dd"; boxBorder = "#badbcc"; textColor = "#0f5132";
                   statusText = "Pre-approved, not saved.";
