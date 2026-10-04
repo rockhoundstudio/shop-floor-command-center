@@ -488,7 +488,7 @@ HARD RULES:
 - Do NOT generate any URLs or href links of your own. Use the exact DWELL BUTTONS block provided above.
 - Do NOT use the words: unique, handmade, artisan, special, curated, stunning, beautiful, gorgeous, perfect, love, passion.
 - Do NOT hallucinate stone properties not provided.
-- Output HTML only. Use <p> tags for paragraphs. No <h> tags. No <ul> or <li>.
+- Output a strict JSON object with EXACTLY one key: "generated_description". The value MUST be the full HTML string of the description. Use <p> tags for paragraphs. No <h> tags. No <ul> or <li>. Do not wrap the JSON in markdown code blocks.
 
 ORIGIN PAGE DATE RULE:
 If the provided origin-page story contains an explicit collection date, trip date, month, year, or date range, use it only when it is factually present and relevant to the story. Never invent or infer a date. If no explicit date is present, do not mention one.`;
@@ -590,7 +590,7 @@ CRITICAL RULES FOR TAB 3:
 7. Do not invent details. Leave unknown fields entirely unset.
 8. If the current data establishes the piece is a pendant or finished jewelry (e.g., jewelry_type is "Pendant" or finding details are present), the product_format MUST be "Pendant" or similar finished form, even if the cut_and_shape is "Cabochon". The cut and shape of the stone does not override the finished format of the piece.
 
-Return ONLY a JSON object. OMIT any keys if you cannot determine the value supported by evidence (do not send null or empty strings). DO NOT include "jewelry_type", "origin_story", "price", "shopify_title", "weight_grams", or "shipping_weight_oz".
+Return ONLY a JSON object. OMIT any keys if you cannot determine the value supported by evidence (do not send null or empty strings). DO NOT include "jewelry_type", "origin_story", "price", "shopify_title", "weight_grams", "shipping_weight_oz", or "generated_description".
 
 Potential JSON Keys to evaluate and propose if blank:
 - piece_name: The name of the piece.
@@ -801,10 +801,6 @@ export const action = async ({ request }) => {
       // Collect all passed current values to protect them during Gemini generation
       const currentData = {};
       for (const [key, value] of body.entries()) {
-        // [Integration Note]: If operator-confirmed construction details (e.g., jewelry_finding_type) 
-        // are still arriving blank for specific items like The Catalyst, the frontend matrix state or 
-        // save payload builder is failing to pass the newly confirmed values into this FormData request. 
-        // The AI engine can only preserve the explicit inputs it receives.
         if (value && typeof value === 'string' && value.trim() !== "" && !["intent", "pieceId", "productId", "productTitle", "imageBase64", "imageMimeType", "imageUrl"].includes(key)) {
             currentData[key] = value.trim();
         }
@@ -829,33 +825,23 @@ export const action = async ({ request }) => {
         let cleanJson = (data.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
         const parsedVision = JSON.parse(cleanJson.slice(cleanJson.indexOf("{"), cleanJson.lastIndexOf("}") + 1));
         
-        // Final sanity check merging logic ensuring currentData overrides when not manually altered
+        // --- VERIFIED FACT PROTECTION (Post-Generation Overrides) ---
+        // Restore specific valid inputs exactly as they arrived, regardless of AI interpretation.
+        const protectedKeys = [
+          "color_pattern", "dimensions_mm", "honest_flaws_and_character", "surface_finish", 
+          "bench_notes", "jewelry_finding_type", "bail_included", "chain_material", 
+          "secondary_medium", "primary_use", "cut_and_shape"
+        ];
+
+        protectedKeys.forEach(k => {
+          if (currentData[k] !== undefined) {
+             parsedVision[k] = currentData[k];
+          }
+        });
+
+        // Smart Format Override
         if (currentData.product_format && (currentData.jewelry_type === "Pendant" || currentData.primary_use?.includes("Pendant") || currentData.jewelry_finding_type)) {
             parsedVision.product_format = currentData.product_format;
-        }
-
-        if (currentData.jewelry_finding_type) {
-             parsedVision.jewelry_finding_type = currentData.jewelry_finding_type;
-        }
-
-        if (currentData.bail_included) {
-            parsedVision.bail_included = currentData.bail_included;
-        }
-
-        if (currentData.chain_material) {
-            parsedVision.chain_material = currentData.chain_material;
-        }
-
-        if (currentData.secondary_medium) {
-            parsedVision.secondary_medium = currentData.secondary_medium;
-        }
-
-        if (currentData.primary_use) {
-            parsedVision.primary_use = currentData.primary_use;
-        }
-        
-        if (currentData.cut_and_shape) {
-            parsedVision.cut_and_shape = currentData.cut_and_shape;
         }
 
         // Establish strictly verified values before they are potentially overwritten by parsedVision
@@ -867,9 +853,12 @@ export const action = async ({ request }) => {
                 "geological_era", "mineral_class", "rock_formation", "geological_age"
             ];
             geoKeys.forEach(key => {
-                if (geoFields[key] !== undefined && geoFields[key] !== null && geoFields[key] !== "") {
+                // If it came in as currentData, trust currentData. Else, trust library.
+                if (currentData[key] !== undefined) {
+                    verifiedGeoValues[key] = currentData[key];
+                    parsedVision[key] = currentData[key];
+                } else if (geoFields[key] !== undefined && geoFields[key] !== null && geoFields[key] !== "") {
                     verifiedGeoValues[key] = geoFields[key];
-                    // Ensure the vision parser cannot override a verified library value
                     parsedVision[key] = geoFields[key];
                 }
             });
@@ -881,6 +870,7 @@ export const action = async ({ request }) => {
         delete parsedVision.shopify_title; // CRITICAL: Never propose a shopify_title
         delete parsedVision.weight_grams;
         delete parsedVision.shipping_weight_oz;
+        delete parsedVision.generated_description; // Must only be generated by the Description Intent
 
         const payload = sanitizeObject({
           pieceId,
@@ -896,6 +886,11 @@ export const action = async ({ request }) => {
           ...geoFields,
           ...parsedVision
         });
+
+        // Final safety lock for explicitly passed current metrics not covered by arrays above
+        if (currentData.price) payload.price = currentData.price;
+        if (currentData.weight_grams) payload.weight_grams = currentData.weight_grams;
+        if (currentData.shipping_weight_oz) payload.shipping_weight_oz = currentData.shipping_weight_oz;
 
         // Strip undefined, null, or empty string values to leave them unset in the caller
         const finalPayload = {};
@@ -953,20 +948,20 @@ export const action = async ({ request }) => {
 
       if (geminiRes.ok) {
         const data = await geminiRes.json();
-        let rawText = (data.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
+        let cleanJson = (data.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
         
         let generatedDescription = "";
-        if (pieceDataStr) {
-            // Tab 3 Flow outputs raw HTML — strip markdown codeblocks if Gemini added them
-            generatedDescription = rawText.replace(/^```html\n?/, "").replace(/\n?```?$/, "").trim();
-        } else {
-            // Legacy flow expects JSON
-            try {
-                const parsed = JSON.parse(rawText.slice(rawText.indexOf("{"), rawText.lastIndexOf("}") + 1));
-                generatedDescription = parsed.generated_description;
-            } catch (e) {
-                generatedDescription = rawText;
+        
+        try {
+            const parsed = JSON.parse(cleanJson.slice(cleanJson.indexOf("{"), cleanJson.lastIndexOf("}") + 1));
+            
+            if (!parsed.generated_description || typeof parsed.generated_description !== "string" || parsed.generated_description.trim() === "") {
+               return Response.json({ success: false, intent, error: "AI failed to return the expected generated_description string property." });
             }
+            
+            generatedDescription = parsed.generated_description;
+        } catch (e) {
+             return Response.json({ success: false, intent, error: "AI response failed strict JSON parsing or wrapper validation." });
         }
 
         return Response.json({ success: true, intent, generated_description: formatDyslexiaText(generatedDescription) });
