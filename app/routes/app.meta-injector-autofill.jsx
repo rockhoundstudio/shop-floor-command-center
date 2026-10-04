@@ -65,27 +65,62 @@ async function getLiveStoreDirectory(admin) {
   let pagesList = [];
   let collectionsList = [];
   try {
-    const res = await admin.graphql(`
-      query {
-        pages(first: 100) { edges { node { title handle body } } }
-        collections(first: 100) { edges { node { title handle description } } }
+    let hasNextPage = true;
+    let endCursor = null;
+
+    // Fetch Published Pages Only
+    while (hasNextPage) {
+      const pagesQuery = `
+        query getPublishedPages($cursor: String) {
+          pages(first: 250, query: "published_status:published", after: $cursor) {
+            edges { node { title handle body } }
+            pageInfo { hasNextPage endCursor }
+          }
+        }
+      `;
+      const pagesRes = await admin.graphql(pagesQuery, endCursor ? { variables: { cursor: endCursor } } : {});
+      const pagesData = await pagesRes.json();
+      
+      if (pagesData.data?.pages?.edges) {
+        pagesList = pagesList.concat(pagesData.data.pages.edges.map(e => ({
+          title: e.node.title,
+          url: `/pages/${e.node.handle}`,
+          handle: e.node.handle,
+          excerpt: (e.node.body || "").replace(/<[^>]*>?/gm, "").replace(/\s+/g, " ").trim().slice(0, 10000)
+        })));
       }
-    `);
-    const data = await res.json();
-    if (data.data?.pages?.edges) {
-      pagesList = data.data.pages.edges.map(e => ({
-        title: e.node.title,
-        url: `/pages/${e.node.handle}`,
-        excerpt: (e.node.body || "").replace(/<[^>]*>?/gm, "").replace(/\s+/g, " ").trim().slice(0, 10000)
-      }));
+      hasNextPage = pagesData.data?.pages?.pageInfo?.hasNextPage;
+      endCursor = pagesData.data?.pages?.pageInfo?.endCursor;
     }
-    if (data.data?.collections?.edges) {
-      collectionsList = data.data.collections.edges.map(e => ({
-        title: e.node.title,
-        url: `/collections/${e.node.handle}`,
-        excerpt: (e.node.description || "").replace(/<[^>]*>?/gm, "").replace(/\s+/g, " ").trim().slice(0, 5000)
-      }));
+
+    hasNextPage = true;
+    endCursor = null;
+
+    // Fetch Published Collections Only
+    while (hasNextPage) {
+      const collectionsQuery = `
+        query getPublishedCollections($cursor: String) {
+          collections(first: 250, query: "published_status:published", after: $cursor) {
+            edges { node { title handle description } }
+            pageInfo { hasNextPage endCursor }
+          }
+        }
+      `;
+      const colRes = await admin.graphql(collectionsQuery, endCursor ? { variables: { cursor: endCursor } } : {});
+      const colData = await colRes.json();
+
+      if (colData.data?.collections?.edges) {
+        collectionsList = collectionsList.concat(colData.data.collections.edges.map(e => ({
+          title: e.node.title,
+          url: `/collections/${e.node.handle}`,
+          handle: e.node.handle,
+          excerpt: (e.node.description || "").replace(/<[^>]*>?/gm, "").replace(/\s+/g, " ").trim().slice(0, 5000)
+        })));
+      }
+      hasNextPage = colData.data?.collections?.pageInfo?.hasNextPage;
+      endCursor = colData.data?.collections?.pageInfo?.endCursor;
     }
+
   } catch (err) {
     console.error("Failed to fetch store inventory:", err);
   }
@@ -108,27 +143,52 @@ function extractStoneName(title) {
 function resolveOriginHandle(locationSegment, pagesList) {
   const cleanLoc = (locationSegment || "").toLowerCase().trim();
   if (!cleanLoc) return "";
-  if (cleanLoc.includes("richardson")) return "the-richardson-strike";
-  if (cleanLoc.includes("irv")) return ""; 
-  if (cleanLoc.includes("spokane")) return ""; 
-  if (cleanLoc.includes("north fork") || cleanLoc.includes("cda")) return "the-north-fork-strike";
-  if (cleanLoc.includes("yakima") || cleanLoc.includes("chert")) return "the-shop-lore-chert-road-detour-yakima-river-jasper";
-  const match = pagesList.find(p => p.title.toLowerCase().includes(cleanLoc) || p.url.includes(cleanLoc));
-  return match ? match.url.replace("/pages/", "") : cleanLoc.replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, "-");
+  
+  let targetHandle = "";
+  if (cleanLoc.includes("richardson")) targetHandle = "the-richardson-strike";
+  else if (cleanLoc.includes("irv")) targetHandle = ""; 
+  else if (cleanLoc.includes("spokane")) targetHandle = ""; 
+  else if (cleanLoc.includes("north fork") || cleanLoc.includes("cda")) targetHandle = "the-north-fork-strike";
+  else if (cleanLoc.includes("yakima") || cleanLoc.includes("chert")) targetHandle = "the-shop-lore-chert-road-detour-yakima-river-jasper";
+  else {
+    const match = pagesList.find(p => p.title.toLowerCase().includes(cleanLoc) || p.url.includes(cleanLoc));
+    targetHandle = match ? match.handle : cleanLoc.replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, "-");
+  }
+
+  // Publication Verification: Only return a handle if it explicitly exists in the published pagesList
+  if (targetHandle && pagesList.some(p => p.handle === targetHandle)) {
+      return targetHandle;
+  }
+  return "";
 }
 
 function resolveCollectionData(locationSegment, defaultOriginSlug, collectionsList = []) {
   const cleanLoc = (locationSegment || "").toLowerCase().trim();
-  if (cleanLoc.includes("yakima") || cleanLoc.includes("chert")) return { slug: "chert-road-detour", name: "Chert Road Detour — Yakima River Jasper Collection" };
-  if (cleanLoc.includes("richardson")) return { slug: "richardsons-rock-ranch", name: "Richardson's Rock Ranch Collection" };
-  if (cleanLoc.includes("spokane")) return { slug: "the-spokane-river-collection", name: "Spokane River Stones and Stories" };
-  if (cleanLoc.includes("irv")) return { slug: "", name: "" }; 
-  if (cleanLoc.includes("north fork") || cleanLoc.includes("cda")) return { slug: "north-fork-cda-collection", name: "North Fork CdA Collection" };
-  const matchedCol = collectionsList.find(c => c.url.includes(defaultOriginSlug) || c.title.toLowerCase().includes(cleanLoc));
-  if (matchedCol) {
-    return { slug: matchedCol.url.replace("/collections/", ""), name: matchedCol.title.endsWith("Collection") ? matchedCol.title : `${matchedCol.title} Collection` };
+  
+  let targetSlug = "";
+  let targetName = "";
+
+  if (cleanLoc.includes("yakima") || cleanLoc.includes("chert")) { targetSlug = "chert-road-detour"; targetName = "Chert Road Detour — Yakima River Jasper Collection"; }
+  else if (cleanLoc.includes("richardson")) { targetSlug = "richardsons-rock-ranch"; targetName = "Richardson's Rock Ranch Collection"; }
+  else if (cleanLoc.includes("spokane")) { targetSlug = "the-spokane-river-collection"; targetName = "Spokane River Stones and Stories"; }
+  else if (cleanLoc.includes("irv")) { targetSlug = ""; targetName = ""; } 
+  else if (cleanLoc.includes("north fork") || cleanLoc.includes("cda")) { targetSlug = "north-fork-cda-collection"; targetName = "North Fork CdA Collection"; }
+  else {
+    const matchedCol = collectionsList.find(c => c.url.includes(defaultOriginSlug) || c.title.toLowerCase().includes(cleanLoc));
+    if (matchedCol) {
+      targetSlug = matchedCol.handle;
+      targetName = matchedCol.title.endsWith("Collection") ? matchedCol.title : `${matchedCol.title} Collection`;
+    } else {
+      targetSlug = defaultOriginSlug;
+      targetName = `${locationSegment.trim()} Collection`;
+    }
   }
-  return { slug: defaultOriginSlug, name: `${locationSegment.trim()} Collection` };
+
+  // Publication Verification: Only return slug/name if explicitly published in collectionsList
+  if (targetSlug && collectionsList.some(c => c.handle === targetSlug)) {
+      return { slug: targetSlug, name: targetName };
+  }
+  return { slug: "", name: targetName }; // Return name for context, but suppress unpublished slug
 }
 
 async function getGeoData(admin, stoneFamily) {
@@ -328,15 +388,35 @@ DO NOT output "generated_description". Your job is purely factual physical extra
 // ==========================================
 // PROMPT 3: DESCRIPTION GENERATOR
 // ==========================================
-function buildDescriptionPrompt(derivedFamily, originSegment, extractedStory, fullCollectionTitle, pieceData, targetUrlPath, collectionUrlPath) {
-  let dwellButtonsHTML = `<br><br><a href="${targetUrlPath}">${fullCollectionTitle} Story</a>\n<br><a href="${collectionUrlPath}">${fullCollectionTitle} Collection</a>`;
+function buildDescriptionPrompt(derivedFamily, originSegment, extractedStory, fullCollectionTitle, pieceData, targetUrlPath, collectionUrlPath, pagesList = []) {
+  let dwellButtonsHTML = `<br><br>`;
   
-  if (originSegment === "Richardson's Rock Ranch" || targetUrlPath.includes("the-richardson-strike")) {
-    dwellButtonsHTML = `<br><br><a href="/pages/the-richardson-strike">Richardson's Rock Ranch Story</a>
-<br><a href="/collections/richardsons-rock-ranch">Richardson's Rock Ranch Collection</a>
-<br><a href="/pages/the-3-000-mile-run">The 3,000-Mile Run Story</a>
-<br><a href="/collections/the-3-000-mile-run-1">The 3,000-Mile Run Collection</a>`;
+  if (targetUrlPath && targetUrlPath !== "/pages/") {
+      dwellButtonsHTML += `<a href="${targetUrlPath}">${fullCollectionTitle || originSegment} Story</a>\n`;
   }
+  
+  if (collectionUrlPath && collectionUrlPath !== "/collections/") {
+      if (targetUrlPath && targetUrlPath !== "/pages/") dwellButtonsHTML += `<br>`;
+      dwellButtonsHTML += `<a href="${collectionUrlPath}">${fullCollectionTitle || originSegment} Collection</a>`;
+  }
+
+  // Preserve specific 4-link rule for Richardson's ONLY if target URLs are published
+  if (originSegment === "Richardson's Rock Ranch" || targetUrlPath.includes("the-richardson-strike")) {
+    dwellButtonsHTML = `<br><br>`;
+    if (pagesList.some(p => p.handle === "the-richardson-strike")) {
+        dwellButtonsHTML += `<a href="/pages/the-richardson-strike">Richardson's Rock Ranch Story</a>\n`;
+    }
+    // Hardcoded collections assume publication, but can be skipped if empty strings passed
+    dwellButtonsHTML += `<br><a href="/collections/richardsons-rock-ranch">Richardson's Rock Ranch Collection</a>`;
+    
+    if (pagesList.some(p => p.handle === "the-3-000-mile-run")) {
+        dwellButtonsHTML += `\n<br><a href="/pages/the-3-000-mile-run">The 3,000-Mile Run Story</a>`;
+    }
+    dwellButtonsHTML += `\n<br><a href="/collections/the-3-000-mile-run-1">The 3,000-Mile Run Collection</a>`;
+  }
+
+  // Failsafe: if buttons are totally empty, remove the break tags
+  if (dwellButtonsHTML === `<br><br>`) dwellButtonsHTML = "";
 
   return `You are writing a product description for Rockhound Studio, a lapidary art studio run by Bob and Janyce, married 34 years, both artists, both rockhounds. They cut and polish every stone themselves in Spokane Valley WA.
 
@@ -414,10 +494,33 @@ ORIGIN PAGE DATE RULE:
 If the provided origin-page story contains an explicit collection date, trip date, month, year, or date range, use it only when it is factually present and relevant to the story. Never invent or infer a date. If no explicit date is present, do not mention one.`;
 }
 
-function buildMasterVisionPrompt({ pagesMenu, collectionsMenu, stoneFamily, derivedShape, originStory, originSegment, targetUrlPath, fullCollectionTitle, collectionUrlPath }) {
+function buildMasterVisionPrompt({ pagesMenu, collectionsMenu, stoneFamily, derivedShape, originStory, originSegment, targetUrlPath, fullCollectionTitle, collectionUrlPath, pagesList = [] }) {
   let dwellButtonsHTML = `<br><br>`;
-  if (targetUrlPath && targetUrlPath !== "/pages/") dwellButtonsHTML = `<br><br><a href="${targetUrlPath}">${fullCollectionTitle} Story</a>\n`;
-  if (collectionUrlPath && collectionUrlPath !== "/collections/") dwellButtonsHTML += `<br><a href="${collectionUrlPath}">${fullCollectionTitle} Collection</a>`;
+  
+  if (targetUrlPath && targetUrlPath !== "/pages/") {
+      dwellButtonsHTML += `<a href="${targetUrlPath}">${fullCollectionTitle || originSegment} Story</a>\n`;
+  }
+  
+  if (collectionUrlPath && collectionUrlPath !== "/collections/") {
+      if (targetUrlPath && targetUrlPath !== "/pages/") dwellButtonsHTML += `<br>`;
+      dwellButtonsHTML += `<a href="${collectionUrlPath}">${fullCollectionTitle || originSegment} Collection</a>`;
+  }
+
+  // Preserve specific 4-link rule for Richardson's ONLY if target URLs are published
+  if (originSegment === "Richardson's Rock Ranch" || targetUrlPath.includes("the-richardson-strike")) {
+    dwellButtonsHTML = `<br><br>`;
+    if (pagesList.some(p => p.handle === "the-richardson-strike")) {
+        dwellButtonsHTML += `<a href="/pages/the-richardson-strike">Richardson's Rock Ranch Story</a>\n`;
+    }
+    dwellButtonsHTML += `<br><a href="/collections/richardsons-rock-ranch">Richardson's Rock Ranch Collection</a>`;
+    
+    if (pagesList.some(p => p.handle === "the-3-000-mile-run")) {
+        dwellButtonsHTML += `\n<br><a href="/pages/the-3-000-mile-run">The 3,000-Mile Run Story</a>`;
+    }
+    dwellButtonsHTML += `\n<br><a href="/collections/the-3-000-mile-run-1">The 3,000-Mile Run Collection</a>`;
+  }
+
+  if (dwellButtonsHTML === `<br><br>`) dwellButtonsHTML = "";
   
   return `You are a lapidary artist for Rockhound Studio. Analyze this photo and return a JSON object.
 - LIVE STORE DIRECTORY:
@@ -633,7 +736,8 @@ export const action = async ({ request }) => {
         collectionsMenu: collectionsList.map(c => `- Title: "${c.title}"`).join("\n"),
         stoneFamily: derivedFamily, derivedShape, originStory: extractedStory,
         originSegment, targetUrlPath: defaultOriginSlug ? `/pages/${defaultOriginSlug}` : "",
-        fullCollectionTitle: defaultCollection.name, collectionUrlPath: defaultCollection.slug ? `/collections/${defaultCollection.slug}` : ""
+        fullCollectionTitle: defaultCollection.name, collectionUrlPath: defaultCollection.slug ? `/collections/${defaultCollection.slug}` : "",
+        pagesList // Pass the pagesList down for Richardson link verification
       });
 
       const geminiRes = await fetchWithRetry("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY, {
@@ -822,6 +926,8 @@ export const action = async ({ request }) => {
           const targetUrlPath = pieceData.origin_handle ? `/pages/${pieceData.origin_handle}` : "";
           const collectionUrlPath = pieceData.collection_location ? `/collections/${pieceData.collection_location}` : "";
           
+          const { pagesList } = await getLiveStoreDirectory(admin);
+
           promptText = buildDescriptionPrompt(
             derivedFamily,
             originSegment,
@@ -829,7 +935,8 @@ export const action = async ({ request }) => {
             fullCollectionTitle,
             pieceData,
             targetUrlPath,
-            collectionUrlPath
+            collectionUrlPath,
+            pagesList
           ) + "\n\nCRITICAL RULE: The generated product description may contain a short origin hook and link to the origin page. Do not duplicate the full origin story in the description. Omit missing bench or artist notes. Never write 'None' as filler in the description.";
         } catch (e) {
           promptText = `Write a description for Rockhound Studio. Focus on: ${sharedFields.stone_family}.`;
@@ -851,7 +958,7 @@ export const action = async ({ request }) => {
         let generatedDescription = "";
         if (pieceDataStr) {
             // Tab 3 Flow outputs raw HTML — strip markdown codeblocks if Gemini added them
-            generatedDescription = rawText.replace(/^```html\n?/, "").replace(/\n?পদে?$/, "").trim();
+            generatedDescription = rawText.replace(/^```html\n?/, "").replace(/\n?```?$/, "").trim();
         } else {
             // Legacy flow expects JSON
             try {
