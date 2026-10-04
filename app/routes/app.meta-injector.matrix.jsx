@@ -168,6 +168,9 @@ export function OperationsMatrixTab({ products }) {
   const [lastProcessedData, setLastProcessedData] = useState(null);
   const [approvals, setApprovals] = useState({}); // Stores exact text approvals by pieceId and key
   
+  // Repair Results History
+  const [repairHistory, setRepairHistory] = useState({});
+
   const [selectedBenchId, setSelectedBenchId] = useState(null);
   const [safetyMessage, setSafetyMessage] = useState("");
   const [safetyError, setSafetyError] = useState("");
@@ -235,6 +238,7 @@ export function OperationsMatrixTab({ products }) {
     setProductStates({});
     setManifestData({});
     setApprovals({});
+    setRepairHistory({});
     setSelectedBenchId(null);
     setIsLoadingData(false);
     setIsExecuting(false);
@@ -244,7 +248,7 @@ export function OperationsMatrixTab({ products }) {
     setTempAiData({});
     setLoadIndex(0);
     setLastProcessedData(null);
-    setSafetyMessage("Rack and Bench cleared.");
+    setSafetyMessage("Rack and Bench cleared. Repair history reset.");
     setSafetyError("");
   }, []);
 
@@ -726,7 +730,7 @@ export function OperationsMatrixTab({ products }) {
   useEffect(() => {
     if (batchFetcher.state === "idle" && batchFetcher.data && batchFetcher.data !== lastProcessedData) {
       setLastProcessedData(batchFetcher.data);
-      const { intent, success, pieceId, productId, message, error, errors, logs, status, finalStatus, titleParse, tab3Data, generated_description, fieldsUpdated, legacyKeysRemoved, verifiedGeoValues, blockedFields, conflicts, readBackVerified } = batchFetcher.data;
+      const { intent, success, pieceId, productId, message, error, errors, logs, status, finalStatus, titleParse, tab3Data, generated_description, fieldsUpdated, legacyKeysRemoved, verifiedGeoValues, blockedFields, conflicts, readBackVerified, proposedChanges } = batchFetcher.data;
       
       const targetId = pieceId || productId;
       
@@ -759,27 +763,47 @@ export function OperationsMatrixTab({ products }) {
       if ((intent === "executeRepairPlan" || intent === "batchAuditItem" || intent === "saveMetafields") && targetId && executionMode !== "AI_BATCH_PIPELINE") {
         
         if (intent === "executeRepairPlan") {
-            setManifestData(prev => {
-                const existing = prev[targetId];
-                if (!existing) return prev;
-                return {
-                    ...prev,
-                    [targetId]: {
-                        ...existing,
-                        currentMetafields: batchFetcher.data.currentMetafields || existing.currentMetafields,
-                        fieldsUpdated: batchFetcher.data.fieldsUpdated !== undefined ? batchFetcher.data.fieldsUpdated : existing.fieldsUpdated,
-                        legacyKeysRemoved: batchFetcher.data.legacyKeysRemoved !== undefined ? batchFetcher.data.legacyKeysRemoved : existing.legacyKeysRemoved,
-                        blockedFields: batchFetcher.data.blockedFields || {},
-                        conflicts: batchFetcher.data.conflicts || {},
-                        diagnostics: {
-                            ...existing.diagnostics,
-                            shopifyRead: "Success",
-                            readBack: batchFetcher.data.readBackVerified === true ? "Success" : (batchFetcher.data.readBackVerified === false ? "Failed" : "Not called"),
-                            stage: "executeRepairPlan"
+            const ts = new Date().toISOString();
+            setRepairHistory(prev => ({
+                ...prev,
+                [targetId]: {
+                    status,
+                    success,
+                    message,
+                    fieldsUpdated,
+                    legacyKeysRemoved,
+                    blockedFields: blockedFields || {},
+                    conflicts: conflicts || {},
+                    readBackVerified,
+                    proposedChanges,
+                    completedAt: ts
+                }
+            }));
+            
+            // Only update current fields if the readback from save confirmed the data
+            if (batchFetcher.data.currentMetafields) {
+                 setManifestData(prev => {
+                    const existing = prev[targetId];
+                    if (!existing) return prev;
+                    return {
+                        ...prev,
+                        [targetId]: {
+                            ...existing,
+                            currentMetafields: batchFetcher.data.currentMetafields,
+                            fieldsUpdated: batchFetcher.data.fieldsUpdated !== undefined ? batchFetcher.data.fieldsUpdated : existing.fieldsUpdated,
+                            legacyKeysRemoved: batchFetcher.data.legacyKeysRemoved !== undefined ? batchFetcher.data.legacyKeysRemoved : existing.legacyKeysRemoved,
+                            blockedFields: batchFetcher.data.blockedFields || {},
+                            conflicts: batchFetcher.data.conflicts || {},
+                            diagnostics: {
+                                ...existing.diagnostics,
+                                shopifyRead: "Success",
+                                readBack: batchFetcher.data.readBackVerified === true ? "Success" : (batchFetcher.data.readBackVerified === false ? "Failed" : "Not called"),
+                                stage: "executeRepairPlan"
+                            }
                         }
-                    }
-                };
-            });
+                    };
+                });
+            }
         }
 
         if (!success) {
@@ -1070,6 +1094,7 @@ export function OperationsMatrixTab({ products }) {
       }
 
       const data = manifestData[selectedBenchId];
+      const history = repairHistory[selectedBenchId];
       const product = safeProducts.find(p => p.id === selectedBenchId) || {};
       const statusObj = getSystemStatus();
       const diag = data.diagnostics || {};
@@ -1081,7 +1106,7 @@ export function OperationsMatrixTab({ products }) {
           blocked: 0,
           protected: 0,
           conflicting: 0,
-          updated: data.fieldsUpdated !== undefined ? data.fieldsUpdated : "Not recorded",
+          updated: history && history.fieldsUpdated !== undefined ? history.fieldsUpdated : "Not recorded",
           errored: "Not recorded"
       };
 
@@ -1136,15 +1161,15 @@ export function OperationsMatrixTab({ products }) {
 
       const shopifyRead = statusObj.shopifyReadStatus;
       let shopifyWrite = "Not called";
-      if (diag.stage === "executeRepairPlan") {
-          if (data.fieldsUpdated !== undefined) {
-              if (data.fieldsUpdated > 0) {
-                  shopifyWrite = `Success (${data.fieldsUpdated} updated${data.legacyKeysRemoved ? `, ${data.legacyKeysRemoved} deleted` : ""})`;
-                  if (data.blockedFields && Object.keys(data.blockedFields).length > 0) {
-                      shopifyWrite = `Partial Success (${data.fieldsUpdated} updated, ${Object.keys(data.blockedFields).length} blocked)`;
+      if (history) {
+          if (history.fieldsUpdated !== undefined) {
+              if (history.fieldsUpdated > 0) {
+                  shopifyWrite = `Success (${history.fieldsUpdated} updated${history.legacyKeysRemoved ? `, ${history.legacyKeysRemoved} deleted` : ""})`;
+                  if (history.blockedFields && Object.keys(history.blockedFields).length > 0) {
+                      shopifyWrite = `Partial Success (${history.fieldsUpdated} updated, ${Object.keys(history.blockedFields).length} blocked)`;
                   }
-              } else if (data.blockedFields && Object.keys(data.blockedFields).length > 0) {
-                  shopifyWrite = `Blocked (${Object.keys(data.blockedFields).length} fields)`;
+              } else if (history.blockedFields && Object.keys(history.blockedFields).length > 0) {
+                  shopifyWrite = `Blocked (${Object.keys(history.blockedFields).length} fields)`;
               } else {
                   shopifyWrite = "Success (No changes required)";
               }
@@ -1152,7 +1177,7 @@ export function OperationsMatrixTab({ products }) {
               shopifyWrite = "Failed / Unknown";
           }
       }
-      const readBack = statusObj.readBackStatus;
+      const readBack = history && history.readBackVerified !== undefined ? (history.readBackVerified ? "Success" : "Failed") : statusObj.readBackStatus;
 
       const recommendations = [];
       if (hasBlockersForWrite) {
@@ -1197,6 +1222,13 @@ Errored: ${stats.errored}
 Status: ${descStatus}
 Preview: ${descPreview}
 
+--- LAST REPAIR HISTORY ---
+${history ? `Time: ${history.completedAt}
+Status: ${history.status}
+Message: ${history.message}
+Blocked: ${history.blockedFields ? Object.keys(history.blockedFields).length : 0}
+Conflicts: ${history.conflicts ? Object.keys(history.conflicts).length : 0}` : "No repair history for this session."}
+
 --- PIN DETAILS ---
 ${pinRows.join("\n")}
 
@@ -1216,7 +1248,7 @@ ${recommendations.join("\n")}
               console.error("Clipboard error", err);
               setSafetyError("Failed to copy telemetry to clipboard.");
           });
-  }, [selectedBenchId, manifestData, safeProducts, approvals, batchFetcher.state, isLoadingData, safetyError, aiStep, executionMode, getSystemStatus]);
+  }, [selectedBenchId, manifestData, repairHistory, safeProducts, approvals, batchFetcher.state, isLoadingData, safetyError, aiStep, executionMode, getSystemStatus]);
 
   const renderDiagnosticHeader = () => {
     const data = manifestData[selectedBenchId];
@@ -1224,6 +1256,7 @@ ${recommendations.join("\n")}
 
     const stats = getDiagnosticsStats(data);
     const statusObj = getSystemStatus();
+    const history = repairHistory[selectedBenchId];
 
     return (
       <Card padding="400">
@@ -1271,12 +1304,33 @@ ${recommendations.join("\n")}
                   <Text as="p" fontWeight="bold">Filled: <span style={{ color: "#22c55e" }}>{stats.filled}</span></Text>
                   <Text as="p" fontWeight="bold">Optional blanks: <span style={{ color: "#eab308" }}>{stats.optionalBlanks}</span></Text>
                   <Text as="p" fontWeight="bold" color="critical">Required missing fields: {stats.requiredMissing}</Text>
-                  <Text as="p" fontWeight="bold">Fields Updated (Last Run): {data.fieldsUpdated !== undefined ? data.fieldsUpdated : "Not reported"}</Text>
+                  <Text as="p" fontWeight="bold">Fields Updated (Current Run): {data.fieldsUpdated !== undefined ? data.fieldsUpdated : "Not reported"}</Text>
                 </BlockStack>
               </div>
             </Box>
 
           </div>
+
+          {history && (
+            <Card padding="300" background="bg-surface-secondary">
+              <BlockStack gap="200">
+                 <Text as="h4" variant="headingSm" tone="subdued">Last Repair Results</Text>
+                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+                   <BlockStack gap="100">
+                     <Text as="p" variant="bodySm"><strong>Time:</strong> {new Date(history.completedAt).toLocaleTimeString()}</Text>
+                     <Text as="p" variant="bodySm"><strong>Status:</strong> {history.status}</Text>
+                     <Text as="p" variant="bodySm"><strong>Message:</strong> {history.message}</Text>
+                   </BlockStack>
+                   <BlockStack gap="100">
+                     <Text as="p" variant="bodySm"><strong>Updated:</strong> {history.fieldsUpdated !== undefined ? history.fieldsUpdated : "Not reported"}</Text>
+                     <Text as="p" variant="bodySm"><strong>Blocked:</strong> {history.blockedFields ? Object.keys(history.blockedFields).length : 0}</Text>
+                     <Text as="p" variant="bodySm"><strong>Conflicts:</strong> {history.conflicts ? Object.keys(history.conflicts).length : 0}</Text>
+                     <Text as="p" variant="bodySm"><strong>Read-Back:</strong> {history.readBackVerified !== undefined ? (history.readBackVerified ? "Verified" : "Failed") : "Not reported"}</Text>
+                   </BlockStack>
+                 </div>
+              </BlockStack>
+            </Card>
+          )}
         </BlockStack>
       </Card>
     );
