@@ -388,36 +388,7 @@ DO NOT output "generated_description". Your job is purely factual physical extra
 // ==========================================
 // PROMPT 3: DESCRIPTION GENERATOR
 // ==========================================
-function buildDescriptionPrompt(derivedFamily, originSegment, extractedStory, fullCollectionTitle, pieceData, targetUrlPath, collectionUrlPath, pagesList = []) {
-  let dwellButtonsHTML = `<br><br>`;
-  
-  if (targetUrlPath && targetUrlPath !== "/pages/") {
-      dwellButtonsHTML += `<a href="${targetUrlPath}">${fullCollectionTitle || originSegment} Story</a>\n`;
-  }
-  
-  if (collectionUrlPath && collectionUrlPath !== "/collections/") {
-      if (targetUrlPath && targetUrlPath !== "/pages/") dwellButtonsHTML += `<br>`;
-      dwellButtonsHTML += `<a href="${collectionUrlPath}">${fullCollectionTitle || originSegment} Collection</a>`;
-  }
-
-  // Preserve specific 4-link rule for Richardson's ONLY if target URLs are published
-  if (originSegment === "Richardson's Rock Ranch" || targetUrlPath.includes("the-richardson-strike")) {
-    dwellButtonsHTML = `<br><br>`;
-    if (pagesList.some(p => p.handle === "the-richardson-strike")) {
-        dwellButtonsHTML += `<a href="/pages/the-richardson-strike">Richardson's Rock Ranch Story</a>\n`;
-    }
-    // Hardcoded collections assume publication, but can be skipped if empty strings passed
-    dwellButtonsHTML += `<br><a href="/collections/richardsons-rock-ranch">Richardson's Rock Ranch Collection</a>`;
-    
-    if (pagesList.some(p => p.handle === "the-3-000-mile-run")) {
-        dwellButtonsHTML += `\n<br><a href="/pages/the-3-000-mile-run">The 3,000-Mile Run Story</a>`;
-    }
-    dwellButtonsHTML += `\n<br><a href="/collections/the-3-000-mile-run-1">The 3,000-Mile Run Collection</a>`;
-  }
-
-  // Failsafe: if buttons are totally empty, remove the break tags
-  if (dwellButtonsHTML === `<br><br>`) dwellButtonsHTML = "";
-
+function buildDescriptionPrompt(derivedFamily, originSegment, extractedStory, fullCollectionTitle, pieceData) {
   return `You are writing a product description for Rockhound Studio, a lapidary art studio run by Bob and Janyce, married 34 years, both artists, both rockhounds. They cut and polish every stone themselves in Spokane Valley WA.
 
 DETAILS:
@@ -425,11 +396,17 @@ DETAILS:
 - Origin / Location: ${originSegment}
 - Origin Hook (first 300 chars only): ${extractedStory.slice(0, 300)}
 - Collection Name: ${fullCollectionTitle}
+- Product Format: ${pieceData.product_format || "Loose Stone"}
+- Primary Use: ${pieceData.primary_use || "N/A"}
+- Jewelry Type: ${pieceData.jewelry_type || "N/A"}
+- Finding/Setting Type: ${pieceData.jewelry_finding_type || "N/A"}
+- Setting Ready: ${pieceData.setting_ready || "N/A"}
+- Bail Included: ${pieceData.bail_included || "N/A"}
+- Chain/Cord: ${pieceData.chain_material || "N/A"}
+- Secondary Medium (Metal): ${pieceData.secondary_medium || "N/A"}
 - Cut & Shape: ${pieceData.cut_and_shape || "Freeform"}
 - Surface Finish: ${pieceData.surface_finish || "Natural/Polished"}
 - Dimensions: ${pieceData.dimensions_mm || "N/A"}
-- Mounting/Medium: ${pieceData.primary_medium || "Loose Stone"}
-- Setting Ready: ${pieceData.setting_ready || "None"}
 - Mohs Hardness: ${pieceData.mohs_hardness || "N/A"}
 - Geological Age: ${pieceData.geological_age || "N/A"}
 - Rarity: ${pieceData.rarity || "One-of-a-Kind"}
@@ -465,8 +442,8 @@ Lead with bench_notes and artist_notes (${pieceData.bench_notes || "N/A"}, ${pie
 Stone: [stone_family]
 Dimensions: [dimensions_mm]
 Finish: [surface_finish]
-Setting: [primary_medium]
-Includes: [bail/chain/cord or "Loose stone, undrilled"]
+Setting/Format: [List product_format and any relevant finding/setting data. DO NOT write "Loose stone, undrilled" if finding/bail/chain/pendant data is present.]
+Includes: [List bail/chain/cord. If none exist AND it is confirmed loose, state "Loose stone, undrilled".]
 
 5. COLLECTOR DATA
 Mohs: [mohs_hardness]
@@ -480,21 +457,18 @@ One plain sentence for jewelers and makers. Dimensions, drill status, setting su
 7. SIGNATURE
 — Bob & Janyce, Rockhound Studio, Spokane Valley WA
 
-8. DWELL BUTTONS
-Include EXACTLY these clickable HTML hyperlinks on their own lines (DO NOT ALTER THEM):
-${dwellButtonsHTML}
-
 HARD RULES:
-- Do NOT generate any URLs or href links of your own. Use the exact DWELL BUTTONS block provided above.
+- Do NOT generate any URLs, href links, or Dwell Buttons. The system will append them automatically.
 - Do NOT use the words: unique, handmade, artisan, special, curated, stunning, beautiful, gorgeous, perfect, love, passion.
-- Do NOT hallucinate stone properties not provided.
-- Output a strict JSON object with EXACTLY one key: "generated_description". The value MUST be the full HTML string of the description. Use <p> tags for paragraphs. No <h> tags. No <ul> or <li>. Do not wrap the JSON in markdown code blocks.
+- Do NOT hallucinate stone properties or hardware not provided in the DETAILS block.
+- Output a strict JSON object with EXACTLY one key: "generated_description". The value MUST be the HTML string of the description. Use <p> tags for paragraphs. No <h> tags. No <ul> or <li>. Do not wrap the JSON in markdown code blocks.
 
 ORIGIN PAGE DATE RULE:
 If the provided origin-page story contains an explicit collection date, trip date, month, year, or date range, use it only when it is factually present and relevant to the story. Never invent or infer a date. If no explicit date is present, do not mention one.`;
 }
 
 function buildMasterVisionPrompt({ pagesMenu, collectionsMenu, stoneFamily, derivedShape, originStory, originSegment, targetUrlPath, fullCollectionTitle, collectionUrlPath, pagesList = [] }) {
+  // Master vision prompt remains unchanged for backward compatibility on other intents
   let dwellButtonsHTML = `<br><br>`;
   
   if (targetUrlPath && targetUrlPath !== "/pages/") {
@@ -686,7 +660,7 @@ export const action = async ({ request }) => {
           origin_story: extractedStory,
           origin_location: correctedOriginLoc,
           collection_name: parsed.collection_name || collectionData.name,
-          collection_location: mapCollectionLocation(parsed.collection_location || collectionData.name),
+          collection_location: collectionData.slug || mapCollectionLocation(collectionData.name),
           canonical_title: parsed.stone_family + " — " + correctedOriginLoc + " — " + segment3,
           seo_title: parsed.seo_title || `${parsed.stone_family} — Found at ${correctedOriginLoc} — Rockhound Studio`,
           ...dbGeoData,
@@ -737,7 +711,7 @@ export const action = async ({ request }) => {
         stoneFamily: derivedFamily, derivedShape, originStory: extractedStory,
         originSegment, targetUrlPath: defaultOriginSlug ? `/pages/${defaultOriginSlug}` : "",
         fullCollectionTitle: defaultCollection.name, collectionUrlPath: defaultCollection.slug ? `/collections/${defaultCollection.slug}` : "",
-        pagesList // Pass the pagesList down for Richardson link verification
+        pagesList 
       });
 
       const geminiRes = await fetchWithRetry("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY, {
@@ -759,7 +733,7 @@ export const action = async ({ request }) => {
           origin_location: originSegment,
           origin_handle: defaultOriginSlug,
           collection_name: defaultCollection.name,
-          collection_location: mapCollectionLocation(defaultCollection.name),
+          collection_location: defaultCollection.slug || mapCollectionLocation(defaultCollection.name),
           material: getDerivedMaterial(derivedFamily),
           ...geoFields,
           is_ooak: "Yes", age_group: "adult", target_gender: "Unisex", condition: "new",
@@ -826,11 +800,10 @@ export const action = async ({ request }) => {
         const parsedVision = JSON.parse(cleanJson.slice(cleanJson.indexOf("{"), cleanJson.lastIndexOf("}") + 1));
         
         // --- VERIFIED FACT PROTECTION (Post-Generation Overrides) ---
-        // Restore specific valid inputs exactly as they arrived, regardless of AI interpretation.
         const protectedKeys = [
           "color_pattern", "dimensions_mm", "honest_flaws_and_character", "surface_finish", 
           "bench_notes", "jewelry_finding_type", "bail_included", "chain_material", 
-          "secondary_medium", "primary_use", "cut_and_shape"
+          "secondary_medium", "primary_use", "cut_and_shape", "product_format", "jewelry_type"
         ];
 
         protectedKeys.forEach(k => {
@@ -838,11 +811,6 @@ export const action = async ({ request }) => {
              parsedVision[k] = currentData[k];
           }
         });
-
-        // Smart Format Override
-        if (currentData.product_format && (currentData.jewelry_type === "Pendant" || currentData.primary_use?.includes("Pendant") || currentData.jewelry_finding_type)) {
-            parsedVision.product_format = currentData.product_format;
-        }
 
         // Establish strictly verified values before they are potentially overwritten by parsedVision
         const verifiedGeoValues = {};
@@ -864,7 +832,6 @@ export const action = async ({ request }) => {
             });
         }
 
-        delete parsedVision.jewelry_type; // Explicitly ensure this is scrubbed
         delete parsedVision.origin_story; // CRITICAL: Prevent AI hallucination from overwriting the raw context
         delete parsedVision.price; // CRITICAL: Never propose a price
         delete parsedVision.shopify_title; // CRITICAL: Never propose a shopify_title
@@ -880,7 +847,7 @@ export const action = async ({ request }) => {
           origin_location: parsedVision.origin_location || originSegment,
           origin_handle: defaultOriginSlug,
           collection_name: defaultCollection.name,
-          collection_location: mapCollectionLocation(defaultCollection.name),
+          collection_location: defaultCollection.slug || mapCollectionLocation(defaultCollection.name),
           origin_story: extractedStory,
           is_ooak: "Yes", 
           ...geoFields,
@@ -909,6 +876,8 @@ export const action = async ({ request }) => {
       const sharedFields = JSON.parse(body.get("sharedFields") || "{}");
       const pieceDataStr = body.get("pieceData");
       let promptText = "";
+      
+      const { pagesList, collectionsList } = await getLiveStoreDirectory(admin);
 
       if (pieceDataStr) {
         // Tab 3 / Matrix Pipeline Flow
@@ -918,21 +887,14 @@ export const action = async ({ request }) => {
           const originSegment = sharedFields.origin_location || pieceData.origin_location || "";
           const extractedStory = pieceData.origin_story || "";
           const fullCollectionTitle = pieceData.collection_name || "";
-          const targetUrlPath = pieceData.origin_handle ? `/pages/${pieceData.origin_handle}` : "";
-          const collectionUrlPath = pieceData.collection_location ? `/collections/${pieceData.collection_location}` : "";
           
-          const { pagesList } = await getLiveStoreDirectory(admin);
-
           promptText = buildDescriptionPrompt(
             derivedFamily,
             originSegment,
             extractedStory,
             fullCollectionTitle,
-            pieceData,
-            targetUrlPath,
-            collectionUrlPath,
-            pagesList
-          ) + "\n\nCRITICAL RULE: The generated product description may contain a short origin hook and link to the origin page. Do not duplicate the full origin story in the description. Omit missing bench or artist notes. Never write 'None' as filler in the description.";
+            pieceData
+          );
         } catch (e) {
           promptText = `Write a description for Rockhound Studio. Focus on: ${sharedFields.stone_family}.`;
         }
@@ -962,6 +924,54 @@ export const action = async ({ request }) => {
             generatedDescription = parsed.generated_description;
         } catch (e) {
              return Response.json({ success: false, intent, error: "AI response failed strict JSON parsing or wrapper validation." });
+        }
+        
+        // --- DETERMINISTIC DWELL BUTTON APPENDING ---
+        // Construct links purely on the server using verified publication lists, never relying on AI strings.
+        if (pieceDataStr) {
+            const pieceData = JSON.parse(pieceDataStr);
+            const originSegment = sharedFields.origin_location || pieceData.origin_location || "";
+            const fullCollectionTitle = pieceData.collection_name || "";
+            
+            // Resolve using verified lists
+            const targetOriginHandle = resolveOriginHandle(originSegment, pagesList);
+            const collectionData = resolveCollectionData(originSegment, targetOriginHandle, collectionsList);
+            
+            let dwellButtonsHTML = `<br><br>`;
+            
+            // Only append links if the resolved handle is not empty (which means it passed publication checks)
+            if (targetOriginHandle) {
+                dwellButtonsHTML += `<a href="/pages/${targetOriginHandle}">${fullCollectionTitle || originSegment} Story</a>\n`;
+            }
+            
+            if (collectionData.slug) {
+                if (targetOriginHandle) dwellButtonsHTML += `<br>`;
+                dwellButtonsHTML += `<a href="/collections/${collectionData.slug}">${fullCollectionTitle || originSegment} Collection</a>`;
+            }
+            
+            // Specialized Richardson Logic
+            if (originSegment === "Richardson's Rock Ranch" || targetOriginHandle === "the-richardson-strike") {
+                dwellButtonsHTML = `<br><br>`;
+                if (pagesList.some(p => p.handle === "the-richardson-strike")) {
+                    dwellButtonsHTML += `<a href="/pages/the-richardson-strike">Richardson's Rock Ranch Story</a>\n`;
+                }
+                
+                if (collectionsList.some(c => c.handle === "richardsons-rock-ranch")) {
+                    dwellButtonsHTML += `<br><a href="/collections/richardsons-rock-ranch">Richardson's Rock Ranch Collection</a>`;
+                }
+                
+                if (pagesList.some(p => p.handle === "the-3-000-mile-run")) {
+                    dwellButtonsHTML += `\n<br><a href="/pages/the-3-000-mile-run">The 3,000-Mile Run Story</a>`;
+                }
+                
+                if (collectionsList.some(c => c.handle === "the-3-000-mile-run-1")) {
+                    dwellButtonsHTML += `\n<br><a href="/collections/the-3-000-mile-run-1">The 3,000-Mile Run Collection</a>`;
+                }
+            }
+
+            if (dwellButtonsHTML !== `<br><br>`) {
+                generatedDescription += `\n${dwellButtonsHTML}`;
+            }
         }
 
         return Response.json({ success: true, intent, generated_description: formatDyslexiaText(generatedDescription) });
