@@ -406,7 +406,7 @@ export function OperationsMatrixTab({ products }) {
     const isApproved = exactApprovalVal !== undefined && exactApprovalVal === propVal && propVal.trim() !== "";
 
     if (HIDDEN_CONTEXT_FIELDS.includes(key)) {
-        return { currentVal, propVal, isProposed, fieldStatus: "Hidden Source", proposalStatus, source, stage, isBlockedAction: true, reasons: ["Hidden Context"], currentExists, proposalExists, isApproved: false, hasTechnicalBlock: true, contentNeedsReview: false, isContentPreApproved: false, preApprovalReason: "" };
+        return { currentVal, propVal, isProposed, fieldStatus: "Hidden Source", proposalStatus, source, stage, isBlockedAction: true, reasons: ["Hidden Context"], currentExists, proposalExists, isApproved: false, hasTechnicalBlock: true, contentNeedsReview: false, isContentPreApproved: false, preApprovalReason: "", isManualOnly: false, isActualBlockedProposal: false };
     }
 
     let hasTechnicalBlock = false;
@@ -431,17 +431,15 @@ export function OperationsMatrixTab({ products }) {
         reasons.push("Generic hardware fill into blank");
     }
 
-    // New Backend Technical Blockers
+    // New Backend Technical Blockers (Logged as historical, not automatic future blocks until tested)
     const apiBlockReason = data.blockedFields?.[key] || data.blockedFields?.[unprefixedKey];
     if (apiBlockReason) {
-        hasTechnicalBlock = true;
-        reasons.push(`Backend Block: ${apiBlockReason}`);
+        reasons.push(`Last Attempt Blocked: ${apiBlockReason}`);
     }
 
     const conflictData = data.conflicts?.[key] || data.conflicts?.[unprefixedKey];
     if (conflictData) {
-        hasTechnicalBlock = true;
-        reasons.push(`Read-back Mismatch: ${conflictData.expected} != ${conflictData.actual}`);
+        reasons.push(`Last Attempt Mismatch: ${conflictData.expected} != ${conflictData.actual}`);
     }
 
     // Content Review Status Evaluation
@@ -481,8 +479,6 @@ export function OperationsMatrixTab({ products }) {
     if (hasTechnicalBlock && fieldStatus !== "Unchanged" && fieldStatus !== "Optional blank" && fieldStatus !== "Required missing") {
         if (isOverLimit) {
             fieldStatus = "Over limit";
-        } else if (apiBlockReason || conflictData) {
-            fieldStatus = "API Error / Blocked";
         } else if (reasons.includes("Type/destination unverified") || reasons.includes("Generic hardware fill into blank")) {
             fieldStatus = "Blocked";
         }
@@ -525,17 +521,23 @@ export function OperationsMatrixTab({ products }) {
     // Absolute enforcements for manual only (prices and shopify titles)
     if (isManualOnly) {
         isBlockedAction = true;
-        hasTechnicalBlock = true;
         if (proposalExists && currentVal !== propVal) {
             fieldStatus = "Manual only";
             if (!reasons.includes("Manual only")) reasons.push("Manual only");
         }
     }
 
+    // Establish true blocked proposals specifically to prevent misleading UI counts
+    const isActualBlockedProposal = isBlockedAction && 
+                                    !isManualOnly && 
+                                    !HIDDEN_CONTEXT_FIELDS.includes(key) && 
+                                    proposalExists && 
+                                    currentVal !== propVal;
+
     return { 
       currentVal, propVal, isProposed, fieldStatus, proposalStatus, source, stage, 
       isBlockedAction, reasons, currentExists, proposalExists, isApproved, hasTechnicalBlock, contentNeedsReview,
-      isContentPreApproved, preApprovalReason
+      isContentPreApproved, preApprovalReason, isManualOnly, isActualBlockedProposal
     };
   };
 
@@ -1062,7 +1064,9 @@ export function OperationsMatrixTab({ products }) {
         approvedWrite: 0,
         total: 0,
         filled: 0,
-        blank: 0
+        blank: 0,
+        manualOnly: 0,
+        unchangedFlagged: 0
     };
 
     SECTIONS.forEach(sec => {
@@ -1073,8 +1077,16 @@ export function OperationsMatrixTab({ products }) {
             if (meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing") stats.blank++;
             else stats.filled++;
 
+            if (meta.isManualOnly) stats.manualOnly++;
+
             if (meta.fieldStatus === "Proposed" || meta.fieldStatus === "Approved, not saved" || meta.fieldStatus === "Approved, blocked" || meta.fieldStatus === "Pre-approved, not saved" || meta.fieldStatus === "Pre-approved, blocked") stats.proposed++;
-            if (meta.isBlockedAction && !HIDDEN_CONTEXT_FIELDS.includes(k)) stats.blocked++;
+            
+            if (meta.isActualBlockedProposal) {
+                stats.blocked++;
+            } else if (meta.isBlockedAction && !HIDDEN_CONTEXT_FIELDS.includes(k) && !meta.isManualOnly && meta.proposalExists && meta.currentVal === meta.propVal) {
+                stats.unchangedFlagged++;
+            }
+
             if (meta.fieldStatus === "Degrade") stats.degraded++;
             if (meta.fieldStatus === "Conflict") stats.conflicts++;
             if (meta.fieldStatus === "Unverified proposal") stats.unverified++;
@@ -1112,6 +1124,8 @@ export function OperationsMatrixTab({ products }) {
 
       const pinRows = [];
       let hasBlockersForWrite = false;
+      let hasRequiredMissing = false;
+      let specificBlockers = [];
 
       // Process all 45 pins in SECTIONS
       SECTIONS.forEach(sec => {
@@ -1125,8 +1139,13 @@ export function OperationsMatrixTab({ products }) {
               if (PROTECTED_FIELDS.includes(key)) stats.protected++;
               if (meta.fieldStatus === "Conflict" || meta.fieldStatus === "Degrade") stats.conflicting++;
 
-              if (meta.isBlockedAction && !HIDDEN_CONTEXT_FIELDS.includes(key)) {
+              if (meta.isActualBlockedProposal) {
                   hasBlockersForWrite = true;
+                  specificBlockers.push(`${key}: ${meta.reasons.join(", ") || meta.fieldStatus}`);
+              }
+              if (meta.fieldStatus === "Required missing") {
+                  hasRequiredMissing = true;
+                  specificBlockers.push(`${key}: Required field is missing`);
               }
 
               if (key === "custom.origin_story") {
@@ -1180,11 +1199,12 @@ export function OperationsMatrixTab({ products }) {
       const readBack = history && history.readBackVerified !== undefined ? (history.readBackVerified ? "Success" : "Failed") : statusObj.readBackStatus;
 
       const recommendations = [];
-      if (hasBlockersForWrite) {
-          recommendations.push("1. DO NOT WRITE. Review and manually resolve blocked, conflicting, or unverified pins listed above. Approve suggestions where applicable (Verified Geo Library, Category, and policy-designated values are pre-approved).");
+      if (hasBlockersForWrite || hasRequiredMissing) {
+          recommendations.push("1. DO NOT WRITE. Review and manually resolve the following blocked or required fields:");
+          specificBlockers.forEach(b => recommendations.push(`   - ${b}`));
           recommendations.push("2. Verify Shopify Metafield definitions for any 'Unverified proposal' pins before approving.");
       } else if (stats.proposed > 0 && shopifyWrite === "Not called") {
-          recommendations.push("1. Data is staged and validated. Proceed with 'Execute Single Repair'.");
+          recommendations.push("1. Content review complete. Technically eligible proposals are staged. Proceed with 'Execute Single Repair'.");
       } else if (shopifyWrite.includes("Success")) {
           recommendations.push("1. Write successful. Verify live changes in Shopify admin if necessary.");
       } else {
@@ -1291,6 +1311,8 @@ ${recommendations.join("\n")}
                   <Text as="p" fontWeight="bold" color="critical">Degraded fields: {stats.degraded}</Text>
                   <Text as="p" fontWeight="bold" color="critical">Conflicts: {stats.conflicts}</Text>
                   <Text as="p" fontWeight="bold" color="attention">Unverified proposals: {stats.unverified}</Text>
+                  <Text as="p" fontWeight="bold" tone="subdued">Manual exclusions: {stats.manualOnly}</Text>
+                  <Text as="p" fontWeight="bold" tone="subdued">Unchanged w/ flags: {stats.unchangedFlagged}</Text>
                   <Text as="p" fontWeight="bold" color="success">Fields approved for write: {stats.approvedWrite}</Text>
                 </BlockStack>
               </div>
@@ -1381,13 +1403,13 @@ ${recommendations.join("\n")}
               
               let statusTone = undefined;
               if (meta.fieldStatus === "Optional blank") statusTone = "attention";
-              if (["Required missing", "Conflict", "Degrade", "Blocked", "API Error / Blocked", "Over limit", "Failed", "Unverified proposal", "Manual only"].includes(meta.fieldStatus)) statusTone = "critical";
+              if (["Required missing", "Conflict", "Degrade", "Blocked", "API Error / Blocked", "Over limit", "Failed", "Unverified proposal"].includes(meta.fieldStatus)) statusTone = "critical";
+              if (meta.fieldStatus === "Manual only") statusTone = "info";
               if (meta.fieldStatus === "Proposed" || meta.fieldStatus === "Approved, not saved" || meta.fieldStatus === "Pre-approved, not saved") statusTone = "success";
               if (meta.fieldStatus === "Unchanged") statusTone = "new";
               if (meta.fieldStatus === "Approved, blocked" || meta.fieldStatus === "Pre-approved, blocked") statusTone = "warning";
 
-              const isManualOnly = key === "price" || key === "shopify_title";
-              const canApprove = meta.proposalExists && meta.currentVal !== meta.propVal && !isManualOnly && !meta.isContentPreApproved;
+              const canApprove = meta.proposalExists && meta.currentVal !== meta.propVal && !meta.isManualOnly && !meta.isContentPreApproved;
               const isPreApprovedDisplay = meta.isContentPreApproved && meta.proposalExists && meta.currentVal !== meta.propVal;
               
               let boxBg = "#f8f9fa";
@@ -1395,7 +1417,10 @@ ${recommendations.join("\n")}
               let textColor = "#212529";
               let statusText = "Ready for review";
 
-              if (meta.isContentPreApproved && !meta.hasTechnicalBlock) {
+              if (meta.isManualOnly) {
+                  boxBg = "#f8f9fa"; boxBorder = "#dee2e6"; textColor = "#41464c";
+                  statusText = "Manual only field. Excluded from automated writes.";
+              } else if (meta.isContentPreApproved && !meta.hasTechnicalBlock) {
                   boxBg = "#d1e7dd"; boxBorder = "#badbcc"; textColor = "#0f5132";
                   statusText = "Pre-approved, not saved.";
               } else if (meta.isContentPreApproved && meta.hasTechnicalBlock) {
