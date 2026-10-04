@@ -14,7 +14,7 @@ const ALLOWED_TAB3_KEYS = [
   "mineral_class", "geological_era", "rock_formation", "origin_location", 
   "origin_handle", "collection_name", "collection_location", "origin_story", 
   "craftsmanship", "poetic_hook", "seo_title", "alt_text", 
-  "google_product_category", "authenticity", "rarity"
+  "google_product_category", "authenticity", "rarity", "generated_description"
 ];
 
 const MASTER_TYPE_MAP = {
@@ -67,7 +67,7 @@ function chunkArray(arr, size) {
 
 function normalizeMetafieldValue(key, value) {
   let val = String(value).replace(/^⚠️\s*/, "");
-  const booleanKeys = ["is_ooak", "found_object", "custom_product", "treated"]; // Removed hardware descriptors
+  const booleanKeys = ["is_ooak", "found_object", "custom_product", "treated"]; 
   if (booleanKeys.includes(key)) {
     if (val.toLowerCase() === "true") val = "Yes";
     else if (val.toLowerCase() === "false") val = "No";
@@ -183,13 +183,22 @@ export const action = async ({ request }) => {
       const productGid = pieceId.startsWith("gid://") ? pieceId : `gid://shopify/Product/${pieceId.split("/").pop()}`;
 
       const lookupResponse = await admin.graphql(`
-        query getMetafields($id: ID!) {
-          product(id: $id) { metafields(first: 250) { edges { node { namespace key value type id } } } }
+        query getProductAndMetafields($id: ID!) {
+          product(id: $id) { 
+            title 
+            descriptionHtml 
+            seo { title description }
+            metafields(first: 250) { edges { node { namespace key value type id } } } 
+          }
         }
       `, { variables: { id: productGid } });
       
       const lookupData = await lookupResponse.json();
+      const currentNativeTitle = lookupData?.data?.product?.title || "";
+      const currentNativeBodyHtml = lookupData?.data?.product?.descriptionHtml || "";
+      const currentNativeSeoTitle = lookupData?.data?.product?.seo?.title || "";
       const currentMetaList = lookupData?.data?.product?.metafields?.edges || [];
+      
       const currentMetafields = {};
       const currentMetafieldsTypes = {};
       currentMetaList.forEach(e => { 
@@ -234,9 +243,18 @@ export const action = async ({ request }) => {
       const setToShopify = [];
       const deleteFromShopify = [];
       const blockedFields = {};
+      const skippedKeys = [];
+      const unsupportedKeys = [];
+
+      const nativeInput = { id: productGid };
+      let doNativeUpdate = false;
       
       Object.entries(repairPlan).forEach(([fullKey, val]) => {
-        if (fullKey === "shopify_title" || fullKey === "price") return;
+        // Explicitly bypass manual-only UI keys from metafield array loops
+        if (fullKey === "shopify_title" || fullKey === "price") {
+           skippedKeys.push(fullKey);
+           return;
+        }
 
         let ns = "custom";
         let key = fullKey;
@@ -246,17 +264,22 @@ export const action = async ({ request }) => {
             key = parts.slice(1).join(".");
         }
 
-        // 🟢 STRICT 45-PIN ALLOWLIST ENFORCEMENT
-        if (!ALLOWED_TAB3_KEYS.includes(key)) return;
+        // 🟢 STRICT ALLOWLIST ENFORCEMENT
+        if (!ALLOWED_TAB3_KEYS.includes(key)) {
+            unsupportedKeys.push(fullKey);
+            return;
+        }
 
         // 🟢 BLOCKED KEYS UNTIL VERIFIED
-        if (key === "jewelry_type") return;
+        if (key === "jewelry_type") {
+            blockedFields[fullKey] = "Safety block active on jewelry_type taxonomy destination.";
+            return;
+        }
 
         const currentVal = currentMetafields[fullKey] || null;
         const valStr = String(val !== null && val !== undefined ? val : "").trim();
         
         // Blank strings must not implicitly delete. 
-        // Deletions must arrive via explicit instructions in legacyKeysToRemove.
         if (valStr === "") return; 
 
         // Resolve exact type from definition or stored type
@@ -272,7 +295,22 @@ export const action = async ({ request }) => {
         }
 
         let resolvedValue = normalizeMetafieldValue(key, valStr);
-        if (key === "generated_description") resolvedValue = sanitizeDescription(resolvedValue);
+        if (key === "generated_description") {
+            resolvedValue = sanitizeDescription(resolvedValue);
+            // Staged description automatically pushes to native product display
+            if (currentNativeBodyHtml !== resolvedValue) {
+                nativeInput.descriptionHtml = resolvedValue;
+                doNativeUpdate = true;
+                proposedChanges["native_description"] = { from: currentNativeBodyHtml, to: resolvedValue };
+            }
+        }
+        
+        if (key === "seo_title" && currentNativeSeoTitle !== resolvedValue) {
+            nativeInput.seo = nativeInput.seo || {};
+            nativeInput.seo.title = resolvedValue;
+            doNativeUpdate = true;
+            proposedChanges["native_seo_title"] = { from: currentNativeSeoTitle, to: resolvedValue };
+        }
 
         if (resolvedType === "number_decimal" || resolvedType === "number_integer") {
           const parsedNum = parseFloat(String(resolvedValue).replace(/[^0-9.-]/g, ""));
@@ -321,8 +359,11 @@ export const action = async ({ request }) => {
             key = parts.slice(1).join(".");
         }
 
-        // 🟢 STRICT 45-PIN ALLOWLIST ENFORCEMENT FOR DELETES
-        if (!ALLOWED_TAB3_KEYS.includes(key)) return;
+        // 🟢 STRICT ALLOWLIST ENFORCEMENT FOR DELETES
+        if (!ALLOWED_TAB3_KEYS.includes(key)) {
+            unsupportedKeys.push(fullKey);
+            return;
+        }
 
         if (currentMetafields[fullKey] !== undefined) {
            deleteFromShopify.push({ ownerId: productGid, namespace: ns, key: key });
@@ -330,19 +371,19 @@ export const action = async ({ request }) => {
         }
       });
 
-      if (setToShopify.length === 0 && deleteFromShopify.length === 0) {
+      if (setToShopify.length === 0 && deleteFromShopify.length === 0 && !doNativeUpdate) {
           if (Object.keys(blockedFields).length > 0) {
               return Response.json({
                   intent: "executeRepairPlan", pieceId, success: false, status: "REPAIR_BLOCKED",
                   message: "All requested changes were blocked due to validation or type errors.",
                   fieldsUpdated: 0, legacyKeysRemoved: 0,
-                  currentMetafields, repairPlan, proposedChanges, conflicts: {}, blockedFields, missingFields: [], unknownFields: [], readBackVerified: true
+                  currentMetafields, repairPlan, proposedChanges, conflicts: {}, blockedFields, skippedKeys, unsupportedKeys, missingFields: [], unknownFields: [], readBackVerified: true
               });
           }
           return Response.json({
               intent: "executeRepairPlan", pieceId, success: true, status: "NO_CHANGES_REQUIRED",
               fieldsUpdated: 0, legacyKeysRemoved: 0, message: "No changes required.",
-              currentMetafields, repairPlan, proposedChanges, conflicts: {}, blockedFields, missingFields: [], unknownFields: [], readBackVerified: true
+              currentMetafields, repairPlan, proposedChanges, conflicts: {}, blockedFields, skippedKeys, unsupportedKeys, missingFields: [], unknownFields: [], readBackVerified: true
           });
       }
 
@@ -386,29 +427,71 @@ export const action = async ({ request }) => {
         }
       }
 
+      if (doNativeUpdate) {
+        try {
+          const nativeResponse = await admin.graphql(
+            `#graphql
+            mutation productUpdate($input: ProductInput!) {
+              productUpdate(input: $input) {
+                product { id }
+                userErrors { field message }
+              }
+            }`,
+            { variables: { input: nativeInput } }
+          );
+          const nativeJson = await nativeResponse.json();
+          if (nativeJson?.data?.productUpdate?.userErrors?.length) {
+            allErrors.push(...nativeJson.data.productUpdate.userErrors);
+          }
+        } catch (nativeErr) {
+          allErrors.push({ message: `API Error on Native Update: ${nativeErr.message}` });
+        }
+      }
+
       if (allErrors.length > 0) {
          return Response.json({ 
              intent: "executeRepairPlan", pieceId, success: false, status: "REPAIR_FAILED",
              errors: allErrors, currentMetafields, repairPlan, proposedChanges, fieldsUpdated: 0, legacyKeysRemoved: 0,
-             conflicts: {}, blockedFields, missingFields: [], unknownFields: [], readBackVerified: false, message: "Shopify write produced errors."
+             conflicts: {}, blockedFields, skippedKeys, unsupportedKeys, missingFields: [], unknownFields: [], readBackVerified: false, message: "Shopify write produced errors."
          });
       }
 
       await new Promise(r => setTimeout(r, 600)); 
       
       const readBackResponse = await admin.graphql(`
-        query getMetafields($id: ID!) {
-          product(id: $id) { metafields(first: 250) { edges { node { namespace key value } } } }
+        query getProductAndMetafields($id: ID!) {
+          product(id: $id) { 
+            title 
+            descriptionHtml 
+            seo { title description }
+            metafields(first: 250) { edges { node { namespace key value } } } 
+          }
         }
       `, { variables: { id: productGid } });
       
       const readBackData = await readBackResponse.json();
-      const newMetaList = readBackData?.data?.product?.metafields?.edges || [];
+      const readBackProduct = readBackData?.data?.product || {};
+      const actualTitle = readBackProduct.title || "";
+      const actualBodyHtml = readBackProduct.descriptionHtml || "";
+      const actualSeoTitle = readBackProduct.seo?.title || "";
+
+      const newMetaList = readBackProduct.metafields?.edges || [];
       const newMetafields = {};
       newMetaList.forEach(e => { newMetafields[`${e.node.namespace}.${e.node.key}`] = e.node.value; });
 
       let readBackVerified = true;
       const conflicts = {};
+
+      if (doNativeUpdate) {
+          if (nativeInput.descriptionHtml !== undefined && nativeInput.descriptionHtml !== actualBodyHtml) {
+              readBackVerified = false;
+              conflicts["native_description"] = { expected: nativeInput.descriptionHtml, actual: actualBodyHtml };
+          }
+          if (nativeInput.seo?.title !== undefined && nativeInput.seo.title !== actualSeoTitle) {
+              readBackVerified = false;
+              conflicts["native_seo_title"] = { expected: nativeInput.seo.title, actual: actualSeoTitle };
+          }
+      }
 
       setToShopify.forEach(m => {
          const dotKey = `${m.namespace}.${m.key}`;
@@ -430,23 +513,23 @@ export const action = async ({ request }) => {
       });
 
       if (!readBackVerified) {
-           return Response.json({
+            return Response.json({
              intent: "executeRepairPlan", pieceId, success: false, status: "REPAIR_FAILED",
              fieldsUpdated: setToShopify.length, legacyKeysRemoved: deleteFromShopify.length,
              message: "Repair failed: Read-back verification detected conflicts.",
-             currentMetafields, repairPlan, proposedChanges, conflicts, blockedFields, missingFields: [], unknownFields: [], readBackVerified: false
-          });
+             currentMetafields, repairPlan, proposedChanges, conflicts, blockedFields, skippedKeys, unsupportedKeys, missingFields: [], unknownFields: [], readBackVerified: false
+         });
       }
 
       const successMsg = Object.keys(blockedFields).length > 0 
-          ? `Partial success: ${setToShopify.length} fields updated, ${deleteFromShopify.length} keys cleared. ${Object.keys(blockedFields).length} blocked.`
-          : `Repair successful: ${setToShopify.length} fields updated, ${deleteFromShopify.length} legacy keys cleared.`;
+          ? `Partial success: ${setToShopify.length} metafields updated, ${deleteFromShopify.length} keys cleared. ${doNativeUpdate ? 'Native fields updated. ' : ''}${Object.keys(blockedFields).length} blocked.`
+          : `Repair successful: ${setToShopify.length} metafields updated, ${deleteFromShopify.length} legacy keys cleared.${doNativeUpdate ? ' Native fields updated.' : ''}`;
 
       return Response.json({ 
         intent: "executeRepairPlan", pieceId, success: true, status: "REPAIRED",
         fieldsUpdated: setToShopify.length, legacyKeysRemoved: deleteFromShopify.length,
         message: successMsg,
-        currentMetafields, repairPlan, proposedChanges, conflicts: {}, blockedFields, missingFields: [], unknownFields: [], readBackVerified: true
+        currentMetafields, repairPlan, proposedChanges, conflicts: {}, blockedFields, skippedKeys, unsupportedKeys, missingFields: [], unknownFields: [], readBackVerified: true
       });
     }
 
