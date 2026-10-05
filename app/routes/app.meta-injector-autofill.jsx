@@ -388,14 +388,18 @@ DO NOT output "generated_description". Your job is purely factual physical extra
 // ==========================================
 // PROMPT 3: DESCRIPTION GENERATOR
 // ==========================================
-function buildDescriptionPrompt(derivedFamily, originSegment, extractedStory, fullCollectionTitle, pieceData) {
+function buildDescriptionPrompt(derivedFamily, originSegment, extractedStory, fullCollectionTitle, pieceData, collectionStory = "") {
+  const benchNotesLine = pieceData.bench_notes ? `- Bench Notes: ${pieceData.bench_notes}` : "";
+  const artistNotesLine = pieceData.artist_notes ? `- Artist Notes: ${pieceData.artist_notes}` : "";
+
   return `You are writing a product description for Rockhound Studio, a lapidary art studio run by Bob and Janyce, married 34 years, both artists, both rockhounds. They cut and polish every stone themselves in Spokane Valley WA.
 
 DETAILS:
 - Stone Family: ${derivedFamily}
 - Origin / Location: ${originSegment}
-- Origin Hook (first 300 chars only): ${extractedStory.slice(0, 300)}
+- Origin Lore: ${extractedStory}
 - Collection Name: ${fullCollectionTitle}
+- Collection Lore: ${collectionStory}
 - Product Format: ${pieceData.product_format || "Loose Stone"}
 - Primary Use: ${pieceData.primary_use || "N/A"}
 - Jewelry Type: ${pieceData.jewelry_type || "N/A"}
@@ -412,8 +416,8 @@ DETAILS:
 - Rarity: ${pieceData.rarity || "One-of-a-Kind"}
 - Character Marks: ${pieceData.honest_flaws_and_character || "None"}
 - Piece Name: ${pieceData.piece_name || "None"}
-- Bench Notes: ${pieceData.bench_notes || "None"}
-- Artist Notes: ${pieceData.artist_notes || "None"}
+${benchNotesLine}
+${artistNotesLine}
 
 VOICE RULES (CRITICAL):
 - Past tense for the find. "I picked it up." Not "pick it up."
@@ -425,18 +429,20 @@ VOICE RULES (CRITICAL):
 - Freeform cuts are valid and should not be normalized into generic jewelry shapes.
 - The OOAK nature is self-evident. Never use the phrase "one of a kind" as a cheap selling point.
 - Honest flaws and character must be stated plainly. Honesty over perfection.
+- Do not output labels like "Bench Notes:" or "Specs:". Weave the facts natively into the prose.
+- If the provided origin or collection text is blank, do NOT invent mining, tracking, or sourcing activities.
 - Signature always: — Bob & Janyce, Rockhound Studio, Spokane Valley WA
 
 DESCRIPTION STRUCTURE — follow this order exactly:
 
 1. PHYSICAL DESCRIPTION
-Lead with bench_notes and artist_notes (${pieceData.bench_notes || "N/A"}, ${pieceData.artist_notes || "N/A"}). These are Bob's direct observations from the wheel. If bench_notes describes something unexpected like a pine tree in the flash or a dendritic inclusion — that is your lead sentence. Do not bury it. Do not skip it. Then describe shape, color, and finish. Specific and honest.
+Lead with Bob's direct observations from the wheel if bench or artist notes are provided. If they describe something unexpected like a pine tree in the flash or a dendritic inclusion — that is your lead sentence. Do not bury it. Do not skip it. Then describe shape, color, and finish. Specific and honest.
 
 2. ORIGIN HOOK
-1-2 sentences only. Pull from the origin_story field. Enough to make them want to read the full story.
+1-2 sentences only. Pull directly from the provided Origin Lore. Enough to make them want to read the full story.
 
 3. COLLECTION HOOK
-1-2 sentences connecting the stone to its collection.
+1-2 sentences connecting the stone to its collection based on the Collection Lore.
 
 4. QUICK-REFERENCE SPECS
 Stone: [stone_family]
@@ -888,12 +894,18 @@ export const action = async ({ request }) => {
           const extractedStory = pieceData.origin_story || "";
           const fullCollectionTitle = pieceData.collection_name || "";
           
+          const targetOriginHandle = resolveOriginHandle(originSegment, pagesList);
+          const collectionData = resolveCollectionData(originSegment, targetOriginHandle, collectionsList);
+          const matchedCollection = collectionsList.find(c => c.handle === collectionData.slug);
+          const collectionStory = matchedCollection ? matchedCollection.excerpt : "";
+
           promptText = buildDescriptionPrompt(
             derivedFamily,
             originSegment,
             extractedStory,
             fullCollectionTitle,
-            pieceData
+            pieceData,
+            collectionStory
           );
         } catch (e) {
           promptText = `Write a description for Rockhound Studio. Focus on: ${sharedFields.stone_family}.`;
@@ -927,19 +939,16 @@ export const action = async ({ request }) => {
         }
         
         // --- DETERMINISTIC DWELL BUTTON APPENDING ---
-        // Construct links purely on the server using verified publication lists, never relying on AI strings.
         if (pieceDataStr) {
             const pieceData = JSON.parse(pieceDataStr);
             const originSegment = sharedFields.origin_location || pieceData.origin_location || "";
             const fullCollectionTitle = pieceData.collection_name || "";
             
-            // Resolve using verified lists
             const targetOriginHandle = resolveOriginHandle(originSegment, pagesList);
             const collectionData = resolveCollectionData(originSegment, targetOriginHandle, collectionsList);
             
             let dwellButtonsHTML = `<br><br>`;
             
-            // Only append links if the resolved handle is not empty (which means it passed publication checks)
             if (targetOriginHandle) {
                 dwellButtonsHTML += `<a href="/pages/${targetOriginHandle}">${fullCollectionTitle || originSegment} Story</a>\n`;
             }
