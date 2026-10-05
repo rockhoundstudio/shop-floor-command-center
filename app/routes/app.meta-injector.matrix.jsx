@@ -553,7 +553,7 @@ export function OperationsMatrixTab({ products }) {
     if (!isExecuting) return;
     if (batchFetcher.state !== "idle") return;
 
-    if (executeIndex >= queueIds.length) {
+    if (executionMode === "REPAIR" && executeIndex >= queueIds.length) {
       setIsExecuting(false);
       setExecutionMode(null);
       setAiStep(0);
@@ -561,13 +561,37 @@ export function OperationsMatrixTab({ products }) {
       return;
     }
 
-    const currentId = queueIds[executeIndex];
+    // Single AI mode processes exactly one designated item and halts.
+    if (executionMode === "AI_SINGLE_PIPELINE" && aiStep > 4) {
+      setIsExecuting(false);
+      setExecutionMode(null);
+      setAiStep(0);
+      setSafetyMessage(`Single AI Run Complete. Data staged for review.`);
+      return;
+    }
+
+    // Bulk AI mode processes the full queue array.
+    if (executionMode === "AI_BATCH_PIPELINE" && executeIndex >= queueIds.length) {
+      setIsExecuting(false);
+      setExecutionMode(null);
+      setAiStep(0);
+      setSafetyMessage(`Execution Complete. Processed ${queueIds.length} items. Note: AI Autofill only populates fields where visual or titled data is evident.`);
+      return;
+    }
+
+    const currentId = executionMode === "AI_SINGLE_PIPELINE" ? selectedBenchId : queueIds[executeIndex];
+    if (!currentId) return;
+
     const manifest = manifestData[currentId];
     const product = safeProducts.find(p => p.id === currentId);
 
     if (!manifest || !product) {
       updateProductState(currentId, STATUS.SKIPPED, ["No manifest or product data built."]);
-      setTimeout(() => setExecuteIndex(i => i + 1), 500);
+      if (executionMode === "AI_SINGLE_PIPELINE") {
+         setAiStep(5); // Force halt for single run
+      } else {
+         setTimeout(() => setExecuteIndex(i => i + 1), 500);
+      }
       return;
     }
 
@@ -594,7 +618,7 @@ export function OperationsMatrixTab({ products }) {
         batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-api" });
       }
     } 
-    else if (executionMode === "AI_BATCH_PIPELINE") {
+    else if (executionMode === "AI_BATCH_PIPELINE" || executionMode === "AI_SINGLE_PIPELINE") {
       if (aiStep === 1 && !tempAiData.titleParseRequested) {
         setTempAiData(prev => ({ ...prev, titleParseRequested: true }));
         updateProductState(currentId, STATUS.SCANNING, ["Stage 1: Parsing Title & Origin (Gemini + Render DB)..."]);
@@ -727,11 +751,16 @@ export function OperationsMatrixTab({ products }) {
         });
         
         setTempAiData({});
-        setAiStep(1); 
-        setTimeout(() => setExecuteIndex(i => i + 1), 500);
+        
+        if (executionMode === "AI_SINGLE_PIPELINE") {
+            setAiStep(5); // Proceed to terminal single state
+        } else {
+            setAiStep(1); // Loop to next bulk item
+            setTimeout(() => setExecuteIndex(i => i + 1), 500);
+        }
       }
     }
-  }, [isExecuting, executionMode, executeIndex, queueIds, manifestData, batchFetcher.state, updateProductState, aiStep, tempAiData, safeProducts, approvals]);
+  }, [isExecuting, executionMode, executeIndex, queueIds, manifestData, batchFetcher.state, updateProductState, aiStep, tempAiData, safeProducts, approvals, selectedBenchId]);
 
   useEffect(() => {
     if (batchFetcher.state === "idle" && batchFetcher.data && batchFetcher.data !== lastProcessedData) {
@@ -766,7 +795,7 @@ export function OperationsMatrixTab({ products }) {
          if (isLoadingData) setTimeout(() => setLoadIndex(i => i + 1), 100);
       }
 
-      if ((intent === "executeRepairPlan" || intent === "batchAuditItem" || intent === "saveMetafields") && targetId && executionMode !== "AI_BATCH_PIPELINE") {
+      if ((intent === "executeRepairPlan" || intent === "batchAuditItem" || intent === "saveMetafields") && targetId && executionMode !== "AI_BATCH_PIPELINE" && executionMode !== "AI_SINGLE_PIPELINE") {
         
         if (intent === "executeRepairPlan") {
             const ts = new Date().toISOString();
@@ -821,6 +850,7 @@ export function OperationsMatrixTab({ products }) {
            return;
         }
         
+        // This legacy block catches older external triggers. 
         if (intent === "batchAuditItem" && success) {
             updateProductState(targetId, STATUS.SCANNING, ["AI Run complete. Fetching fresh data..."]);
             setSafetyMessage("Single AI Run complete. Reloading manifest to display new data...");
@@ -874,9 +904,10 @@ export function OperationsMatrixTab({ products }) {
         }
       }
 
-      if (executionMode === "AI_BATCH_PIPELINE") {
-        const currentId = queueIds[executeIndex];
-        
+      if (executionMode === "AI_BATCH_PIPELINE" || executionMode === "AI_SINGLE_PIPELINE") {
+        const currentId = executionMode === "AI_SINGLE_PIPELINE" ? selectedBenchId : queueIds[executeIndex];
+        if (!currentId) return;
+
         const isExpectedResponse = 
             (aiStep === 1 && intent === "titleParse") ||
             (aiStep === 2 && intent === "tab3FullRescan") ||
@@ -886,7 +917,7 @@ export function OperationsMatrixTab({ products }) {
             if (!success) {
                 updateProductState(currentId, STATUS.FAILED, [error || `Gemini failed at ${intent}`]);
                 setIsExecuting(false);
-                setSafetyError(`Engine halted on item ${executeIndex + 1}. Error: ${error || "Unknown Gemini API Error"}`);
+                setSafetyError(`Engine halted on piece ${currentId}. Error: ${error || "Unknown Gemini API Error"}`);
                 setManifestData(prev => {
                     const existing = prev[currentId];
                     if (!existing) return prev;
@@ -913,7 +944,7 @@ export function OperationsMatrixTab({ products }) {
         }
       }
     }
-  }, [batchFetcher.state, batchFetcher.data, lastProcessedData, executionMode, aiStep, executeIndex, queueIds, updateProductState, isLoadingData, isExecuting]);
+  }, [batchFetcher.state, batchFetcher.data, lastProcessedData, executionMode, aiStep, executeIndex, queueIds, updateProductState, isLoadingData, isExecuting, selectedBenchId]);
 
   const handleRepairPlanChange = (key, value) => {
     if (!selectedBenchId) return;
@@ -969,22 +1000,25 @@ export function OperationsMatrixTab({ products }) {
 
   const handleExecuteSingleAI = useCallback(() => {
     if (!selectedBenchId) return;
-    
+    const manifest = manifestData[selectedBenchId];
+    if (!manifest) {
+       setSafetyError("Cannot run AI: Generate Repair Plan for this item first to load live data.");
+       return;
+    }
+
     setApprovals(prev => {
         const next = { ...prev };
         delete next[selectedBenchId];
         return next;
     });
     
-    const fd = new FormData();
-    fd.append("intent", "batchAuditItem");
-    fd.append("pieceId", selectedBenchId);
-    fd.append("runMode", "LIVE_RUN");
-    fd.append("explicitConfirm", "true");
-
-    updateProductState(selectedBenchId, STATUS.SCANNING, ["Spinning up single Gemini AI run..."]);
-    batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-autofill" });
-  }, [selectedBenchId, batchFetcher, updateProductState]);
+    setSafetyError("");
+    setSafetyMessage(`Single-Pass AI Pipeline engaged for ${selectedBenchId}...`);
+    setExecutionMode("AI_SINGLE_PIPELINE");
+    setIsExecuting(true);
+    setAiStep(1);
+    setTempAiData({});
+  }, [selectedBenchId, manifestData]);
 
   const getStatusTone = (status) => {
     switch(status) {
@@ -1023,7 +1057,8 @@ export function OperationsMatrixTab({ products }) {
       let currentStage = diag.stage || "Not reported";
 
       const isCurrentlyProcessing = (isLoadingData && queueIds[loadIndex] === selectedBenchId) ||
-                                    (isExecuting && queueIds[executeIndex] === selectedBenchId);
+                                    (isExecuting && executionMode === "AI_BATCH_PIPELINE" && queueIds[executeIndex] === selectedBenchId) ||
+                                    (isExecuting && executionMode === "AI_SINGLE_PIPELINE");
       
       let finalStageDisplay = executionMode || "Not reported";
       let fetcherStateDisplay = batchFetcher.state;
@@ -1033,7 +1068,7 @@ export function OperationsMatrixTab({ products }) {
       if (isCurrentlyProcessing) {
           if (isLoadingData) {
               shopifyReadStatus = "Running";
-          } else if (executionMode === "AI_BATCH_PIPELINE") {
+          } else if (executionMode === "AI_BATCH_PIPELINE" || executionMode === "AI_SINGLE_PIPELINE") {
               if (aiStep === 1) { geminiStatus = "Running"; currentStage = "titleParse"; }
               if (aiStep === 2) { geminiStatus = "Running"; visionStatus = "Running"; currentStage = "tab3FullRescan"; }
               if (aiStep === 3) { geminiStatus = "Running"; currentStage = "generateDescription"; }
@@ -1045,11 +1080,6 @@ export function OperationsMatrixTab({ products }) {
 
       if (batchFetcher.state !== "idle" && batchFetcher.formData?.get("pieceId") === selectedBenchId) {
           const intent = batchFetcher.formData?.get("intent");
-          if (intent === "batchAuditItem") {
-              geminiStatus = "Running";
-              visionStatus = "Running";
-              currentStage = "batchAuditItem";
-          }
           if (intent === "executeRepairPlan") {
               shopifyReadStatus = "Running";
               currentStage = "executeRepairPlan";
