@@ -80,12 +80,12 @@ const SECTIONS = [
   {
     title: "5. Search, Sales, and Media",
     keys: [
+      "custom.generated_description",
       "price",
       "custom.alt_text",
       "custom.google_product_category",
       "custom.authenticity",
-      "custom.rarity",
-      "custom.generated_description"
+      "custom.rarity"
     ]
   }
 ];
