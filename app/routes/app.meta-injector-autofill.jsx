@@ -430,8 +430,11 @@ ${benchNotesLine}
 ${artistNotesLine}
 
 VOICE RULES (CRITICAL):
-- Use Bob's plain voice: short sentences, one idea at a time.
+- Use Bob's plain, honest voice: short sentences, one idea at a time.
+- No poetic geology, personification, or grand claims such as "the earth remembering itself".
+- Do not repeat physical details between paragraphs.
 - Use "I" for Bob's personal actions and "we" for shared actions.
+- Janyce does the final shine on all stones. Retain appropriate credit without forcing it into every paragraph.
 - Past tense for the find or purchase. "I picked it up." Not "pick it up."
 - No sales language, flourish, or invented activity.
 - Use only source-supported physical observations.
@@ -448,10 +451,10 @@ DESCRIPTION STRUCTURE — follow this order exactly:
 Lead with Bob's direct observations from the wheel if bench or artist notes are provided. Describe shape, color, and finish. Specific and honest. Do not output labels like "Bench Notes:".
 
 2. ORIGIN HOOK
-Select the source episode relevant to the current product from the Origin Lore. Complete its meaningful outcome, not just its setup. Allow enough sentences to complete that connection; do not force a 1-2 sentence limit when it cuts the event in half.
+Select the source episode relevant to the current product from the Origin Lore. Aim for 2-4 short sentences containing the relevant setup and outcome. Tease the story; do not retell the whole page.
 
 3. COLLECTION HOOK
-Connect the product to the actual collection narrative based on the Collection Lore. Preserve the referent of counts: stone types, pieces, people, stops, or trips must not be conflated (e.g., "three finds" refers to three stone types, not three pieces of this stone).
+1-2 short, source-supported sentences connecting this piece to the actual collection narrative based on the Collection Lore. Preserve the referent of counts: stone types, pieces, people, stops, or trips must not be conflated (e.g., "three finds" refers to three stone types, not three pieces of this stone).
 
 4. QUICK-REFERENCE SPECS
 Use a compact block instead of a paragraph for every pin. Do not print filler such as "Formation: Variable". Avoid repeating facts already stated in the prose. Include verified dimensions, stone weight, finish, and hardware when present.
@@ -539,10 +542,10 @@ function buildMasterVisionPrompt({ pagesMenu, collectionsMenu, stoneFamily, deri
 - found_object: Yes/No
 - chain_material: Identify the visible chain or cord. INVENTORY OPTIONS: "Silver Plated Snake Chain", "Gold Plated Snake Chain". Do not mislabel a visible cord as a snake chain (use "Black Cord", etc.). Do not infer plating from color alone. Distinguish clearly absent hardware ("None") from hardware out of view. Do not silently leave blank if clearly supported by image.
 - seo_title: Max 70 chars. Natural, descriptive wording based on supported facts: Piece name, stone description/family, finished product format, craftsmanship, and clean origin (e.g., use "Yakima Canyon" not "Yakima River Canyon"). Example: "The Catalyst | Handcrafted Green Jasper Pendant from Yakima Canyon". Include "Handcrafted" only when supported. Do not use generic "OOAK Lapidary Art" if specific details are available. No prices, quotes, HTML, or keyword stuffing. Shorten intelligently if necessary.
-- generated_description: Write in Bob's voice (plain, honest, past tense). No salesy language. Short sentences. 7-BLOCK FORMAT:
+- generated_description: Write in Bob's plain, honest voice (past tense). No salesy language, poetic geology, or grand claims. Do not repeat details. Short sentences. 7-BLOCK FORMAT:
   1. Stone Description: Honest flaws, finish, flash.
-  2. Origin Hook: Extract ONLY the narrative matching "${stoneFamily}". Complete the meaningful outcome, do not artificially truncate to 1-2 sentences.
-  3. Collection Hook: Connect the product to the actual collection narrative based on ${fullCollectionTitle}.
+  2. Origin Hook: Extract ONLY the narrative matching "${stoneFamily}". Aim for 2-4 short sentences containing the setup and meaningful outcome. Tease the story; do not retell the whole page.
+  3. Collection Hook: 1-2 short sentences connecting the product to the actual collection narrative based on ${fullCollectionTitle}.
   4. Signature: — Bob & Janyce, Rockhound Studio, Spokane Valley WA
   5. Stone Data: Specs, cut.
   6. Ready to Wear: State if set or loose.
