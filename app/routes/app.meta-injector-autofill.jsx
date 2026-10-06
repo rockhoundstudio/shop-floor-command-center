@@ -411,6 +411,8 @@ DETAILS:
 - Cut & Shape: ${pieceData.cut_and_shape || "Freeform"}
 - Surface Finish: ${pieceData.surface_finish || "Natural/Polished"}
 - Dimensions: ${pieceData.dimensions_mm || "N/A"}
+- Stone Weight: ${pieceData.weight_grams ? pieceData.weight_grams + " g" : "N/A"}
+- Shipping Weight: ${pieceData.shipping_weight_oz ? pieceData.shipping_weight_oz + " oz" : "N/A"}
 - Mohs Hardness: ${pieceData.mohs_hardness || "N/A"}
 - Geological Age: ${pieceData.geological_age || "N/A"}
 - Rarity: ${pieceData.rarity || "One-of-a-Kind"}
@@ -420,40 +422,41 @@ ${benchNotesLine}
 ${artistNotesLine}
 
 VOICE RULES (CRITICAL):
-- Past tense for the find. "I picked it up." Not "pick it up."
-- Plain and honest. Say what happened. Stop.
-- No Etsy, jewelry-counter, corporate, or sales language. We are NOT a jewelry store. We are lapidary artists.
-- Short sentences. One idea at a time.
-- "We" for the partnership. "I" for Bob's personal moment with the stone.
-- The stone earns its own sale. Never push it.
-- Freeform cuts are valid and should not be normalized into generic jewelry shapes.
+- Use Bob's plain voice: short sentences, one idea at a time.
+- Use "I" for Bob's personal actions and "we" for shared actions.
+- Past tense for the find or purchase. "I picked it up." Not "pick it up."
+- No sales language, flourish, or invented activity.
+- Use only source-supported physical observations.
+- Do not transfer another stone's events or details to this piece.
+- Counts, dates, and trip details require source support.
+- If context is insufficient, flag it for review rather than invent.
+- Bench/artist notes are internal context, never labeled paragraphs. Weave the facts natively into the prose.
 - The OOAK nature is self-evident. Never use the phrase "one of a kind" as a cheap selling point.
-- Honest flaws and character must be stated plainly. Honesty over perfection.
-- Do not output labels like "Bench Notes:" or "Specs:". Weave the facts natively into the prose.
-- If the provided origin or collection text is blank, do NOT invent mining, tracking, or sourcing activities.
 - Signature always: — Bob & Janyce, Rockhound Studio, Spokane Valley WA
 
 DESCRIPTION STRUCTURE — follow this order exactly:
 
 1. PHYSICAL DESCRIPTION
-Lead with Bob's direct observations from the wheel if bench or artist notes are provided. If they describe something unexpected like a pine tree in the flash or a dendritic inclusion — that is your lead sentence. Do not bury it. Do not skip it. Then describe shape, color, and finish. Specific and honest.
+Lead with Bob's direct observations from the wheel if bench or artist notes are provided. Describe shape, color, and finish. Specific and honest. Do not output labels like "Bench Notes:".
 
 2. ORIGIN HOOK
-1-2 sentences only. Pull directly from the provided Origin Lore. Enough to make them want to read the full story.
+1-2 sentences. Pull directly from the provided Origin Lore. Finish the product-specific origin hook: explain the relevant decision, connection, or compromise when the source provides it.
 
 3. COLLECTION HOOK
-1-2 sentences connecting the stone to its collection based on the Collection Lore.
+1-2 sentences connecting the stone to its collection based on the Collection Lore. Write a meaningful collection hook from actual collection text, not merely "This belongs to the collection."
 
 4. QUICK-REFERENCE SPECS
+Use a compact block instead of a paragraph for every pin. Do not print filler such as "Formation: Variable". Avoid repeating facts already stated in the prose. Include verified dimensions, stone weight, finish, and hardware when present.
 Stone: [stone_family]
 Dimensions: [dimensions_mm]
+Weight: [Stone Weight - do not use Shipping Weight. Omit if N/A]
 Finish: [surface_finish]
 Setting/Format: [List product_format and any relevant finding/setting data. DO NOT write "Loose stone, undrilled" if finding/bail/chain/pendant data is present.]
 Includes: [List bail/chain/cord. If none exist AND it is confirmed loose, state "Loose stone, undrilled".]
 
 5. COLLECTOR DATA
 Mohs: [mohs_hardness]
-Formation: [geological_age]
+Formation: [geological_age] (Omit if empty or 'Variable')
 Rarity: [rarity]
 Character: [honest_flaws_and_character]
 
@@ -467,7 +470,7 @@ HARD RULES:
 - Do NOT generate any URLs, href links, or Dwell Buttons. The system will append them automatically.
 - Do NOT use the words: unique, handmade, artisan, special, curated, stunning, beautiful, gorgeous, perfect, love, passion.
 - Do NOT hallucinate stone properties or hardware not provided in the DETAILS block.
-- Output a strict JSON object with EXACTLY one key: "generated_description". The value MUST be the HTML string of the description. Use <p> tags for paragraphs. No <h> tags. No <ul> or <li>. Do not wrap the JSON in markdown code blocks.
+- Output a strict JSON object with EXACTLY one key: "generated_description". The value MUST be the HTML string of the description. Use <p> tags for paragraphs. Use <br> for compact block line breaks. No <h> tags. No <ul> or <li>. Do not wrap the JSON in markdown code blocks.
 
 ORIGIN PAGE DATE RULE:
 If the provided origin-page story contains an explicit collection date, trip date, month, year, or date range, use it only when it is factually present and relevant to the story. Never invent or infer a date. If no explicit date is present, do not mention one.`;
