@@ -1192,6 +1192,12 @@ export function OperationsMatrixTab({ products }) {
               if (key === "custom.origin_story") {
                   const sourceAvailable = (meta.currentExists || meta.proposalExists) ? "Yes" : "No";
                   pinRows.push(`- ${key}: [Hidden Context] Source Available: ${sourceAvailable}`);
+              } else if (key === "custom.generated_description") {
+                  let row = `- ${key}: Status: [${meta.fieldStatus}]`;
+                  if (meta.reasons.length > 0) {
+                      row += `, Reason: [${meta.reasons.join(", ")}]`;
+                  }
+                  pinRows.push(row);
               } else {
                   const cleanText = (str) => {
                       if (!str) return "";
@@ -1212,7 +1218,7 @@ export function OperationsMatrixTab({ products }) {
 
       const genDescVal = data.repairPlan?.["custom.generated_description"] || data.currentMetafields?.["custom.generated_description"] || "";
       const descExists = !!genDescVal;
-      const descPreview = descExists ? String(genDescVal).substring(0, 80).replace(/\n/g, " ") + "..." : "None";
+      let descPreview = descExists ? String(genDescVal) : "None";
 
       const titleParseStatus = (diag.stage === "titleParse" || diag.stage === "tab3FullRescan" || diag.stage === "generateDescription" || diag.stage === "batchAuditItem") ? (diag.gemini || "Unknown") : "Not called";
       const visionStatus = diag.vision || "Not called";
@@ -1252,7 +1258,7 @@ export function OperationsMatrixTab({ products }) {
           recommendations.push("1. Load data or generate a repair plan to begin.");
       }
 
-      const report = `=== ROCKHOUND STUDIO TELEMETRY REPORT ===
+      let report = `=== ROCKHOUND STUDIO TELEMETRY REPORT ===
 Product: ${product.title || "Unknown"}
 GID: ${selectedBenchId}
 Run Time: ${new Date().toISOString()}
@@ -1281,7 +1287,8 @@ Errored: ${stats.errored}
 
 --- GENERATED DESCRIPTION ---
 Status: ${descStatus}
-Preview: ${descPreview}
+
+${descPreview}
 
 --- LAST REPAIR HISTORY ---
 ${history ? `Time: ${history.completedAt}
@@ -1296,6 +1303,11 @@ ${pinRows.join("\n")}
 --- RECOMMENDATIONS ---
 ${recommendations.join("\n")}
 =========================================`;
+
+      if (report.length > 10000) {
+        const excess = report.length - 10000;
+        report += `\n\n[WARNING: Report length (${report.length} chars) exceeds 10k budget by ${excess} chars. Content is not truncated but may fail to paste in some systems.]`;
+      }
 
       navigator.clipboard.writeText(report)
           .then(() => {
