@@ -82,12 +82,16 @@ async function getLiveStoreDirectory(admin) {
       const pagesData = await pagesRes.json();
       
       if (pagesData.data?.pages?.edges) {
-        pagesList = pagesList.concat(pagesData.data.pages.edges.map(e => ({
-          title: e.node.title,
-          url: `/pages/${e.node.handle}`,
-          handle: e.node.handle,
-          excerpt: (e.node.body || "").replace(/<[^>]*>?/gm, "").replace(/\s+/g, " ").trim().slice(0, 10000)
-        })));
+        pagesList = pagesList.concat(pagesData.data.pages.edges.map(e => {
+          const rawBody = (e.node.body || "").replace(/<[^>]*>?/gm, "").replace(/\s+/g, " ").trim();
+          return {
+            title: e.node.title,
+            url: `/pages/${e.node.handle}`,
+            handle: e.node.handle,
+            excerpt: rawBody.slice(0, 10000),
+            rawExcerptLength: rawBody.length
+          };
+        }));
       }
       hasNextPage = pagesData.data?.pages?.pageInfo?.hasNextPage;
       endCursor = pagesData.data?.pages?.pageInfo?.endCursor;
@@ -110,12 +114,16 @@ async function getLiveStoreDirectory(admin) {
       const colData = await colRes.json();
 
       if (colData.data?.collections?.edges) {
-        collectionsList = collectionsList.concat(colData.data.collections.edges.map(e => ({
-          title: e.node.title,
-          url: `/collections/${e.node.handle}`,
-          handle: e.node.handle,
-          excerpt: (e.node.description || "").replace(/<[^>]*>?/gm, "").replace(/\s+/g, " ").trim().slice(0, 5000)
-        })));
+        collectionsList = collectionsList.concat(colData.data.collections.edges.map(e => {
+          const rawDesc = (e.node.description || "").replace(/<[^>]*>?/gm, "").replace(/\s+/g, " ").trim();
+          return {
+            title: e.node.title,
+            url: `/collections/${e.node.handle}`,
+            handle: e.node.handle,
+            excerpt: rawDesc.slice(0, 5000),
+            rawExcerptLength: rawDesc.length
+          };
+        }));
       }
       hasNextPage = colData.data?.collections?.pageInfo?.hasNextPage;
       endCursor = colData.data?.collections?.pageInfo?.endCursor;
@@ -888,19 +896,53 @@ export const action = async ({ request }) => {
       
       const { pagesList, collectionsList } = await getLiveStoreDirectory(admin);
 
+      let diagPieceId = "Unknown_GID";
+      let diagPieceName = "Unknown_Name";
+      let diagTargetOriginHandle = "None";
+      let diagCollectionSlug = "None";
+      let diagOriginSource = "None";
+      let diagOriginRawLength = 0;
+      let diagOriginExtractedLength = 0;
+      let diagOriginTruncated = false;
+      let diagCollectionRawLength = 0;
+      let diagCollectionExtractedLength = 0;
+      let diagCollectionTruncated = false;
+      let diagExtractedStory = "";
+      let diagCollectionStory = "";
+
       if (pieceDataStr) {
         // Tab 3 / Matrix Pipeline Flow
         try {
           const pieceData = JSON.parse(pieceDataStr);
+          diagPieceId = pieceData.pieceId || pieceData.id || "Unknown_GID";
+          diagPieceName = pieceData.piece_name || pieceData.shopify_title || "Unknown_Name";
+
           const derivedFamily = sharedFields.stone_family || pieceData.stone_family || "";
           const originSegment = sharedFields.origin_location || pieceData.origin_location || "";
+          
           const extractedStory = pieceData.origin_story || "";
+          diagExtractedStory = extractedStory;
+          diagOriginExtractedLength = extractedStory.length;
+          diagOriginSource = pieceData.origin_story ? "Carried pieceData" : "Fresh or Empty";
+
           const fullCollectionTitle = pieceData.collection_name || "";
           
           const targetOriginHandle = resolveOriginHandle(originSegment, pagesList);
+          diagTargetOriginHandle = targetOriginHandle;
+
           const collectionData = resolveCollectionData(originSegment, targetOriginHandle, collectionsList);
+          diagCollectionSlug = collectionData.slug;
+
+          const matchedPage = pagesList.find(p => p.handle === targetOriginHandle);
+          diagOriginRawLength = matchedPage ? matchedPage.rawExcerptLength : diagOriginExtractedLength;
+          diagOriginTruncated = diagOriginRawLength > 10000;
+
           const matchedCollection = collectionsList.find(c => c.handle === collectionData.slug);
           const collectionStory = matchedCollection ? matchedCollection.excerpt : "";
+          diagCollectionStory = collectionStory;
+          diagCollectionExtractedLength = collectionStory.length;
+          diagCollectionRawLength = matchedCollection ? matchedCollection.rawExcerptLength : 0;
+          diagCollectionTruncated = diagCollectionRawLength > 5000;
 
           promptText = buildDescriptionPrompt(
             derivedFamily,
@@ -917,6 +959,24 @@ export const action = async ({ request }) => {
         // Shared/Legacy Fallback Flow
         promptText = `Write a description for Rockhound Studio. Focus on: ${sharedFields.stone_family}.`;
       }
+
+      // --- TEMPORARY READ-ONLY DIAGNOSTIC BLOCK ---
+      console.log(`\n========== [DIAGNOSTIC RUN START - Piece: ${diagPieceName}] ==========`);
+      console.log(`Piece GID: ${diagPieceId}`);
+      console.log(`Origin Handle Selected: ${diagTargetOriginHandle}`);
+      console.log(`Collection Handle Selected: ${diagCollectionSlug}`);
+      console.log(`Origin Context Source: ${diagOriginSource}`);
+      console.log(`Origin Text Length (Before Truncation): ${diagOriginRawLength}`);
+      console.log(`Origin Text Length (After Truncation): ${diagOriginExtractedLength}`);
+      console.log(`Origin Truncated? ${diagOriginTruncated}`);
+      console.log(`Collection Text Length (Before Truncation): ${diagCollectionRawLength}`);
+      console.log(`Collection Text Length (After Truncation): ${diagCollectionExtractedLength}`);
+      console.log(`Collection Truncated? ${diagCollectionTruncated}`);
+      console.log(`\n--- EXACT ORIGIN TEXT SENT ---\n${diagExtractedStory}\n------------------------------`);
+      console.log(`\n--- EXACT COLLECTION TEXT SENT ---\n${diagCollectionStory}\n----------------------------------`);
+      console.log(`\n--- EXACT FINAL PROMPT SENT TO GEMINI ---\n${promptText}\n-----------------------------------------`);
+      console.log(`========== [DIAGNOSTIC RUN END - Piece: ${diagPieceName}] ==========\n`);
+      // --------------------------------------------
 
       const geminiRes = await fetchWithRetry("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY, {
         method: "POST", headers: { "Content-Type": "application/json" },
