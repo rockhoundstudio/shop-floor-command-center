@@ -397,8 +397,8 @@ DO NOT output "generated_description". Your job is purely factual physical extra
 // PROMPT 3: DESCRIPTION GENERATOR
 // ==========================================
 function buildDescriptionPrompt(derivedFamily, originSegment, extractedStory, fullCollectionTitle, pieceData, collectionStory = "") {
-  const benchNotesLine = pieceData.bench_notes ? `- Bench Notes: ${pieceData.bench_notes}` : "";
-  const artistNotesLine = pieceData.artist_notes ? `- Artist Notes: ${pieceData.artist_notes}` : "";
+  const benchNotesLine = pieceData.bench_notes ? `- Internal Bench Notes: ${pieceData.bench_notes}` : "";
+  const artistNotesLine = pieceData.artist_notes ? `- Internal Artist Notes: ${pieceData.artist_notes}` : "";
 
   return `You are writing a product description for Rockhound Studio, a lapidary art studio run by Bob and Janyce, married 34 years, both artists, both rockhounds. They cut and polish every stone themselves in Spokane Valley WA.
 
@@ -438,7 +438,7 @@ VOICE RULES (CRITICAL):
 - Do not transfer another stone's events or details to this piece.
 - Counts, dates, and trip details require source support.
 - If context is insufficient, flag it for review rather than invent.
-- Bench/artist notes are internal context, never labeled paragraphs. Weave the facts natively into the prose.
+- Internal bench and artist notes provide physical facts. Weave their facts natively into the physical description. Never output their labels or missing-value placeholders.
 - The OOAK nature is self-evident. Never use the phrase "one of a kind" as a cheap selling point.
 - Signature always: — Bob & Janyce, Rockhound Studio, Spokane Valley WA
 
@@ -448,10 +448,10 @@ DESCRIPTION STRUCTURE — follow this order exactly:
 Lead with Bob's direct observations from the wheel if bench or artist notes are provided. Describe shape, color, and finish. Specific and honest. Do not output labels like "Bench Notes:".
 
 2. ORIGIN HOOK
-1-2 sentences. Pull directly from the provided Origin Lore. Finish the product-specific origin hook: explain the relevant decision, connection, or compromise when the source provides it.
+Select the source episode relevant to the current product from the Origin Lore. Complete its meaningful outcome, not just its setup. Allow enough sentences to complete that connection; do not force a 1-2 sentence limit when it cuts the event in half.
 
 3. COLLECTION HOOK
-1-2 sentences connecting the stone to its collection based on the Collection Lore. Write a meaningful collection hook from actual collection text, not merely "This belongs to the collection."
+Connect the product to the actual collection narrative based on the Collection Lore. Preserve the referent of counts: stone types, pieces, people, stops, or trips must not be conflated (e.g., "three finds" refers to three stone types, not three pieces of this stone).
 
 4. QUICK-REFERENCE SPECS
 Use a compact block instead of a paragraph for every pin. Do not print filler such as "Formation: Variable". Avoid repeating facts already stated in the prose. Include verified dimensions, stone weight, finish, and hardware when present.
@@ -541,8 +541,8 @@ function buildMasterVisionPrompt({ pagesMenu, collectionsMenu, stoneFamily, deri
 - seo_title: Max 70 chars. Natural, descriptive wording based on supported facts: Piece name, stone description/family, finished product format, craftsmanship, and clean origin (e.g., use "Yakima Canyon" not "Yakima River Canyon"). Example: "The Catalyst | Handcrafted Green Jasper Pendant from Yakima Canyon". Include "Handcrafted" only when supported. Do not use generic "OOAK Lapidary Art" if specific details are available. No prices, quotes, HTML, or keyword stuffing. Shorten intelligently if necessary.
 - generated_description: Write in Bob's voice (plain, honest, past tense). No salesy language. Short sentences. 7-BLOCK FORMAT:
   1. Stone Description: Honest flaws, finish, flash.
-  2. Origin Hook: 1-2 sentences from ORIGIN STORY.
-  3. Collection Hook: 1-2 sentences about ${fullCollectionTitle}.
+  2. Origin Hook: Extract ONLY the narrative matching "${stoneFamily}". Complete the meaningful outcome, do not artificially truncate to 1-2 sentences.
+  3. Collection Hook: Connect the product to the actual collection narrative based on ${fullCollectionTitle}.
   4. Signature: — Bob & Janyce, Rockhound Studio, Spokane Valley WA
   5. Stone Data: Specs, cut.
   6. Ready to Wear: State if set or loose.
@@ -551,7 +551,7 @@ ${dwellButtonsHTML}
 
 FULL ORIGIN STORY (CRITICAL LORE FIREWALL - READ CAREFULLY):
 ${originStory}
-WARNING: Extract ONLY the 1-2 sentence narrative matching "${stoneFamily}".`;
+`;
 }
 
 // ==========================================
@@ -919,6 +919,10 @@ export const action = async ({ request }) => {
 
           const derivedFamily = sharedFields.stone_family || pieceData.stone_family || "";
           const originSegment = sharedFields.origin_location || pieceData.origin_location || "";
+          
+          // Ensure notes from the active form state reach the prompt, falling back to db state
+          pieceData.bench_notes = sharedFields.bench_notes || pieceData.bench_notes || "";
+          pieceData.artist_notes = sharedFields.artist_notes || pieceData.artist_notes || "";
           
           const extractedStory = pieceData.origin_story || "";
           diagExtractedStory = extractedStory;
