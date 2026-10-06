@@ -150,7 +150,7 @@ function extractStoneName(title) {
 
 function resolveOriginHandle(locationSegment, pagesList) {
   const cleanLoc = (locationSegment || "").toLowerCase().trim();
-  if (!cleanLoc) return "";
+  if (!cleanLoc || cleanLoc === "unknown origin") return "";
   
   let targetHandle = "";
   if (cleanLoc.includes("richardson")) targetHandle = "the-richardson-strike";
@@ -176,13 +176,21 @@ function resolveCollectionData(locationSegment, defaultOriginSlug, collectionsLi
   let targetSlug = "";
   let targetName = "";
 
+  // Guard against blank names generating " Collection" placeholders
+  if (!cleanLoc || cleanLoc === "unknown origin") {
+    return { slug: "", name: "" };
+  }
+
   if (cleanLoc.includes("yakima") || cleanLoc.includes("chert")) { targetSlug = "chert-road-detour"; targetName = "Chert Road Detour — Yakima River Jasper Collection"; }
   else if (cleanLoc.includes("richardson")) { targetSlug = "richardsons-rock-ranch"; targetName = "Richardson's Rock Ranch Collection"; }
   else if (cleanLoc.includes("spokane")) { targetSlug = "the-spokane-river-collection"; targetName = "Spokane River Stones and Stories"; }
   else if (cleanLoc.includes("irv")) { targetSlug = ""; targetName = ""; } 
   else if (cleanLoc.includes("north fork") || cleanLoc.includes("cda")) { targetSlug = "north-fork-cda-collection"; targetName = "North Fork CdA Collection"; }
   else {
-    const matchedCol = collectionsList.find(c => c.url.includes(defaultOriginSlug) || c.title.toLowerCase().includes(cleanLoc));
+    const matchedCol = collectionsList.find(c => 
+      (defaultOriginSlug && c.url.includes(defaultOriginSlug)) || 
+      (cleanLoc && c.title.toLowerCase().includes(cleanLoc))
+    );
     if (matchedCol) {
       targetSlug = matchedCol.handle;
       targetName = matchedCol.title.endsWith("Collection") ? matchedCol.title : `${matchedCol.title} Collection`;
@@ -921,7 +929,12 @@ export const action = async ({ request }) => {
           diagPieceName = pieceData.piece_name || pieceData.shopify_title || "Unknown_Name";
 
           const derivedFamily = sharedFields.stone_family || pieceData.stone_family || "";
-          const originSegment = sharedFields.origin_location || pieceData.origin_location || "";
+          
+          // Protect valid pieceData origin from blank or derived "Unknown Origin" coming from sharedFields
+          const validPieceOrigin = pieceData.origin_location && pieceData.origin_location !== "Unknown Origin" && pieceData.origin_location.trim() !== "";
+          const isSharedOriginDerived = !sharedFields.origin_location || sharedFields.origin_location === "Unknown Origin" || sharedFields.origin_location.trim() === "";
+          
+          const originSegment = (isSharedOriginDerived && validPieceOrigin) ? pieceData.origin_location : (sharedFields.origin_location || pieceData.origin_location || "");
           
           // Ensure notes from the active form state reach the prompt, falling back to db state
           pieceData.bench_notes = sharedFields.bench_notes || pieceData.bench_notes || "";
@@ -939,6 +952,14 @@ export const action = async ({ request }) => {
 
           const collectionData = resolveCollectionData(originSegment, targetOriginHandle, collectionsList);
           diagCollectionSlug = collectionData.slug;
+          
+          // Log warning if we cannot resolve routing correctly
+          if (!targetOriginHandle && originSegment !== "Unknown Origin" && originSegment !== "") {
+              console.warn(`[ROUTING WARNING] Piece ${diagPieceName}: Could not resolve Origin Handle for location "${originSegment}"`);
+          }
+          if (!collectionData.slug && originSegment !== "Unknown Origin" && originSegment !== "") {
+              console.warn(`[ROUTING WARNING] Piece ${diagPieceName}: Could not resolve Collection Slug for location "${originSegment}" and default handle "${targetOriginHandle}"`);
+          }
 
           const matchedPage = pagesList.find(p => p.handle === targetOriginHandle);
           diagOriginRawLength = matchedPage ? matchedPage.rawExcerptLength : diagOriginExtractedLength;
@@ -1011,7 +1032,11 @@ export const action = async ({ request }) => {
         // --- DETERMINISTIC DWELL BUTTON APPENDING ---
         if (pieceDataStr) {
             const pieceData = JSON.parse(pieceDataStr);
-            const originSegment = sharedFields.origin_location || pieceData.origin_location || "";
+            const validPieceOrigin = pieceData.origin_location && pieceData.origin_location !== "Unknown Origin" && pieceData.origin_location.trim() !== "";
+            const isSharedOriginDerived = !sharedFields.origin_location || sharedFields.origin_location === "Unknown Origin" || sharedFields.origin_location.trim() === "";
+            
+            const originSegment = (isSharedOriginDerived && validPieceOrigin) ? pieceData.origin_location : (sharedFields.origin_location || pieceData.origin_location || "");
+            
             const fullCollectionTitle = pieceData.collection_name || "";
             
             const targetOriginHandle = resolveOriginHandle(originSegment, pagesList);
