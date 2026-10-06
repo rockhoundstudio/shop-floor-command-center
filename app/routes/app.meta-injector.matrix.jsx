@@ -20,6 +20,7 @@ const SECTIONS = [
   {
     title: "1. Identity and Merchandising",
     keys: [
+      "custom.generated_description",
       "shopify_title",
       "custom.piece_name",
       "custom.is_ooak",
@@ -80,7 +81,6 @@ const SECTIONS = [
   {
     title: "5. Search, Sales, and Media",
     keys: [
-      "custom.generated_description",
       "price",
       "custom.alt_text",
       "custom.google_product_category",
