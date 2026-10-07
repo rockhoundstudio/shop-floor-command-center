@@ -181,7 +181,7 @@ function resolveCollectionData(locationSegment, defaultOriginSlug, collectionsLi
     return { slug: "", name: "" };
   }
 
-  if (cleanLoc.includes("yakima") || cleanLoc.includes("chert")) { targetSlug = "chert-road-detour"; targetName = "Chert Road Detour — Yakima River Jasper Collection"; }
+  if (cleanLoc.includes("yakima") || cleanLoc.includes("chert")) { targetSlug = "yakima-canyon"; targetName = "Yakima River Canyon"; }
   else if (cleanLoc.includes("richardson")) { targetSlug = "richardsons-rock-ranch"; targetName = "Richardson's Rock Ranch Collection"; }
   else if (cleanLoc.includes("spokane")) { targetSlug = "the-spokane-river-collection"; targetName = "Spokane River Stones and Stories"; }
   else if (cleanLoc.includes("irv")) { targetSlug = ""; targetName = ""; } 
@@ -311,7 +311,7 @@ function extractShapeFromString(str) {
 function enforceOriginOverrides(loc) {
   if (!loc) return loc;
   const lower = loc.toLowerCase();
-  if (lower.includes("yakima") || lower.includes("chert")) return "Yakima Canyon";
+  if (lower.includes("yakima") || lower.includes("chert")) return "Yakima River Canyon";
   if (lower.includes("spokane")) return "Spokane River";
   if (lower.includes("richardson")) return "Richardson's Rock Ranch";
   return loc;
@@ -325,7 +325,7 @@ function cleanStoneFamilyShape(familyStr) {
 function mapCollectionLocation(rawLocation) {
   const loc = (rawLocation || "").toLowerCase();
   if (loc.includes("spokane river")) return "Spokane River";
-  if (loc.includes("yakima") || loc.includes("chert")) return "Yakima Canyon";
+  if (loc.includes("yakima") || loc.includes("chert")) return "Yakima River Canyon";
   if (loc.includes("richardson")) return "Richardson's Rock Ranch";
   return rawLocation.replace(/\s*Collection$/i, "").trim();
 }
@@ -353,7 +353,7 @@ VALID COLLECTIONS IN STORE:
 ${collectionsMenu || "No live collections found."}
 
 INSTRUCTIONS:
-1. The Origin segment ("${segment2}") is the AUTHORITY. Do NOT reclassify or override it. Set 'origin_location' to the clean geographic name derived from "${segment2}" — strip prefixes like "Shop Lore:", "The", or "Collection". Expand abbreviations (e.g. "cda" -> "North Fork Coeur d'Alene", "yakima" -> "Yakima Canyon"). Match 'collection_name' and 'collection_location' to the live store entry that corresponds to "${segment2}". Never substitute a vendor name or "The Shopped Rock" unless "${segment2}" explicitly contains a vendor name.
+1. The Origin segment ("${segment2}") is the AUTHORITY. Do NOT reclassify or override it. Set 'origin_location' to the clean geographic name derived from "${segment2}" — strip prefixes like "Shop Lore:", "The", or "Collection". Expand abbreviations (e.g. "cda" -> "North Fork Coeur d'Alene", "yakima" -> "Yakima River Canyon"). Match 'collection_name' and 'collection_location' to the live store entry that corresponds to "${segment2}". Never substitute a vendor name or "The Shopped Rock" unless "${segment2}" explicitly contains a vendor name.
 2. Resolve 'origin_handle' directly from the Live Store Directory based on the origin. 
 3. 'stone_family' must be exactly one of: ${stonePicklist} - match only the mineral/stone type word from the title. Ignore all color, pattern, cut, and modifier words. Pick the closest entry from the list. If the input is 'Botswana Agate Round', output 'Botswana Agate'.
 
@@ -396,7 +396,7 @@ RETURN THESE EXACT JSON KEYS ONLY. DO NOT GENERATE A PRODUCT DESCRIPTION.
 - chain_material: Identify the visible chain or cord. INVENTORY OPTIONS: "Silver Plated Snake Chain", "Gold Plated Snake Chain". Do not mislabel a visible cord as a snake chain (use "Black Cord", etc.). Do not infer plating from color alone. Distinguish clearly absent hardware ("None") from hardware out of view. Do not silently leave blank if clearly supported by image.
 - alt_text: Descriptive alt text (max 125 chars). Use mineral name. No visual guessing.
 - found_object: "Yes" if field-collected, "No" if shopped/imported.
-- seo_title: Max 70 chars. Natural, descriptive wording based on supported facts: Piece name, stone description/family, finished product format, craftsmanship, and clean origin (e.g., use "Yakima Canyon" not "Yakima River Canyon"). Example: "The Catalyst | Handcrafted Green Jasper Pendant from Yakima Canyon". Include "Handcrafted" only when supported. Do not use generic "OOAK Lapidary Art" if specific details are available. No prices, quotes, HTML, or keyword stuffing. Shorten intelligently if necessary.
+- seo_title: Max 70 chars. Natural, descriptive wording based on supported facts: Piece name, stone description/family, finished product format, craftsmanship, and clean origin (e.g., use "Yakima River Canyon" not "Yakima Canyon" or "Yakima River"). Example: "The Catalyst | Handcrafted Green Jasper Pendant from Yakima River Canyon". Include "Handcrafted" only when supported. Do not use generic "OOAK Lapidary Art" if specific details are available. No prices, quotes, HTML, or keyword stuffing. Shorten intelligently if necessary.
 
 DO NOT output "generated_description". Your job is purely factual physical extraction.`;
 }
@@ -549,7 +549,7 @@ function buildMasterVisionPrompt({ pagesMenu, collectionsMenu, stoneFamily, deri
 - alt_text: Descriptive, max 125 chars.
 - found_object: Yes/No
 - chain_material: Identify the visible chain or cord. INVENTORY OPTIONS: "Silver Plated Snake Chain", "Gold Plated Snake Chain". Do not mislabel a visible cord as a snake chain (use "Black Cord", etc.). Do not infer plating from color alone. Distinguish clearly absent hardware ("None") from hardware out of view. Do not silently leave blank if clearly supported by image.
-- seo_title: Max 70 chars. Natural, descriptive wording based on supported facts: Piece name, stone description/family, finished product format, craftsmanship, and clean origin (e.g., use "Yakima Canyon" not "Yakima River Canyon"). Example: "The Catalyst | Handcrafted Green Jasper Pendant from Yakima Canyon". Include "Handcrafted" only when supported. Do not use generic "OOAK Lapidary Art" if specific details are available. No prices, quotes, HTML, or keyword stuffing. Shorten intelligently if necessary.
+- seo_title: Max 70 chars. Natural, descriptive wording based on supported facts: Piece name, stone description/family, finished product format, craftsmanship, and clean origin (e.g., use "Yakima River Canyon" not "Yakima Canyon" or "Yakima River"). Example: "The Catalyst | Handcrafted Green Jasper Pendant from Yakima River Canyon". Include "Handcrafted" only when supported. Do not use generic "OOAK Lapidary Art" if specific details are available. No prices, quotes, HTML, or keyword stuffing. Shorten intelligently if necessary.
 - generated_description: Write in Bob's plain, honest voice (past tense). No salesy language, poetic geology, or grand claims such as "the earth remembering itself". Do not repeat physical details between paragraphs. Janyce does the final shine on ALL stones; retain appropriate credit. Short sentences. 7-BLOCK FORMAT:
   1. Stone Description: Honest flaws, finish, flash. Lead with specific observations.
   2. Origin Hook: Select the source episode matching "${stoneFamily}". Aim for 2-4 short sentences containing the relevant setup and outcome. Tease the story; do not retell the whole page.
@@ -600,7 +600,7 @@ Potential JSON Keys to evaluate and propose if blank:
 - product_format: Describe the evidenced physical form (e.g., Cabochon, Pendant, Specimen, Loose Stone). Do not guess when unclear. If existing data indicates a Pendant/Finished Jewelry, use that over the stone shape.
 - craftsmanship: When the supplied product facts identify the work as handcrafted by Bob & Janyce, propose exactly "Handcrafted". Do not describe it as "Hand-polished cabochon." Do not add tool or polishing-method wording. If the supplied facts do not support "Handcrafted", omit this proposal.
 - poetic_hook: Write one short, plain, factual hook based on the origin page (under 160 characters). Do not recreate the origin story.
-- seo_title: Max 70 chars. Natural, descriptive wording based on supported facts: Piece name, stone description/family, finished product format, craftsmanship, and clean origin (e.g., use "Yakima Canyon" not "Yakima River Canyon"). Example: "The Catalyst | Handcrafted Green Jasper Pendant from Yakima Canyon". Include "Handcrafted" only when supported. Do not use generic "OOAK Lapidary Art" if specific details are available. No prices, quotes, HTML, or keyword stuffing. Shorten intelligently if necessary.
+- seo_title: Max 70 chars. Natural, descriptive wording based on supported facts: Piece name, stone description/family, finished product format, craftsmanship, and clean origin (e.g., use "Yakima River Canyon" not "Yakima Canyon" or "Yakima River"). Example: "The Catalyst | Handcrafted Green Jasper Pendant from Yakima River Canyon". Include "Handcrafted" only when supported. Do not use generic "OOAK Lapidary Art" if specific details are available. No prices, quotes, HTML, or keyword stuffing. Shorten intelligently if necessary.
 - dimensions_mm: Leave unchanged if provided.
 - cut_and_shape: Respect freeform cuts. Keep exactly as provided in current data if present.
 - surface_finish: High Polish, Matte, Satin, Natural/Raw, Tumbled.
