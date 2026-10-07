@@ -345,8 +345,8 @@ export const action = async ({ request }) => {
         }
 
         if (currentVal !== resolvedValue) {
-           setToShopify.push({ ownerId: productGid, namespace: ns, key: key, type: resolvedType, value: resolvedValue });
-           proposedChanges[fullKey] = { from: currentVal, to: resolvedValue };
+            setToShopify.push({ ownerId: productGid, namespace: ns, key: key, type: resolvedType, value: resolvedValue });
+            proposedChanges[fullKey] = { from: currentVal, to: resolvedValue };
         }
       });
 
@@ -517,7 +517,7 @@ export const action = async ({ request }) => {
              intent: "executeRepairPlan", pieceId, success: false, status: "REPAIR_FAILED",
              fieldsUpdated: setToShopify.length, legacyKeysRemoved: deleteFromShopify.length,
              message: "Repair failed: Read-back verification detected conflicts.",
-             currentMetafields, repairPlan, proposedChanges, conflicts, blockedFields, skippedKeys, unsupportedKeys, missingFields: [], unknownFields: [], readBackVerified: false
+             currentMetafields: newMetafields, repairPlan, proposedChanges, conflicts, blockedFields, skippedKeys, unsupportedKeys, missingFields: [], unknownFields: [], readBackVerified: false
          });
       }
 
@@ -529,7 +529,7 @@ export const action = async ({ request }) => {
         intent: "executeRepairPlan", pieceId, success: true, status: "REPAIRED",
         fieldsUpdated: setToShopify.length, legacyKeysRemoved: deleteFromShopify.length,
         message: successMsg,
-        currentMetafields, repairPlan, proposedChanges, conflicts: {}, blockedFields, skippedKeys, unsupportedKeys, missingFields: [], unknownFields: [], readBackVerified: true
+        currentMetafields: newMetafields, repairPlan, proposedChanges, conflicts: {}, blockedFields, skippedKeys, unsupportedKeys, missingFields: [], unknownFields: [], readBackVerified: true
       });
     }
 
