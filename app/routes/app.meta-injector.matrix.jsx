@@ -1,7 +1,3 @@
-// ==========================================================================
-// ROCKHOUND STUDIO — TAB 3: OPERATIONS MATRIX
-// File: app/routes/app.meta-injector.matrix.jsx
-// ==========================================================================
 import React, { useState, useCallback, useEffect } from "react";
 import { BlockStack, Card, Text, Banner, TextField, Button, InlineStack, Box, Badge, ProgressBar, Select } from "@shopify/polaris";
 import { MagicIcon, ClipboardIcon, SaveIcon, ChevronDownIcon, ChevronUpIcon } from "@shopify/polaris-icons";
@@ -438,9 +434,17 @@ export function OperationsMatrixTab({ products }) {
         reasons.push(`Backend Blocked: ${apiBlockReason}`);
     }
 
-    const conflictData = data.conflicts?.[key] || data.conflicts?.[unprefixedKey];
+    let conflictData = data.conflicts?.[key] || data.conflicts?.[unprefixedKey];
+    let nativeDescConflictData = null;
+    
+    // Explicit injection for Native Description conflict on the Generated Description card
+    if (key === "custom.generated_description" && data.conflicts?.["native_description"]) {
+        nativeDescConflictData = data.conflicts["native_description"];
+        reasons.push(`Read-back Mismatch [Native descriptionHtml]: ${nativeDescConflictData.expected} != ${nativeDescConflictData.actual}`);
+    }
+
     if (conflictData) {
-        reasons.push(`Read-back Mismatch: ${conflictData.expected} != ${conflictData.actual}`);
+        reasons.push(`Read-back Mismatch [Metafield]: ${conflictData.expected} != ${conflictData.actual}`);
     }
 
     // Content Review Status Evaluation
@@ -488,12 +492,12 @@ export function OperationsMatrixTab({ products }) {
     // Apply read-back and block overrides strictly for UI display so users know previous saves failed
     if (apiBlockReason && fieldStatus !== "Unchanged" && fieldStatus !== "Optional blank" && fieldStatus !== "Required missing") {
         fieldStatus = "API Error / Blocked";
-    } else if (conflictData && fieldStatus !== "Unchanged" && fieldStatus !== "Optional blank" && fieldStatus !== "Required missing") {
+    } else if ((conflictData || nativeDescConflictData) && fieldStatus !== "Unchanged" && fieldStatus !== "Optional blank" && fieldStatus !== "Required missing") {
         fieldStatus = "Save Conflict";
     }
 
     // React to Approvals & Pre-Approvals
-    if (proposalExists && currentVal !== propVal && !isManualOnly && !apiBlockReason && !conflictData) {
+    if (proposalExists && currentVal !== propVal && !isManualOnly && !apiBlockReason && !conflictData && !nativeDescConflictData) {
         if (isContentPreApproved) {
             if (hasTechnicalBlock) {
                 fieldStatus = "Pre-approved, blocked";
@@ -521,7 +525,7 @@ export function OperationsMatrixTab({ products }) {
         }
     } else {
         // Enforce blocks on Unchanged, Blanks, Missing, API Errors, Conflicts
-        if (hasTechnicalBlock || apiBlockReason || conflictData || fieldStatus === "Optional blank" || fieldStatus === "Required missing") {
+        if (hasTechnicalBlock || apiBlockReason || conflictData || nativeDescConflictData || fieldStatus === "Optional blank" || fieldStatus === "Required missing") {
             isBlockedAction = true;
         }
     }
@@ -545,7 +549,8 @@ export function OperationsMatrixTab({ products }) {
     return { 
       currentVal, propVal, isProposed, fieldStatus, proposalStatus, source, stage, 
       isBlockedAction, reasons, currentExists, proposalExists, isApproved, hasTechnicalBlock, contentNeedsReview,
-      isContentPreApproved, preApprovalReason, isManualOnly, isActualBlockedProposal
+      isContentPreApproved, preApprovalReason, isManualOnly, isActualBlockedProposal,
+      conflictData, nativeDescConflictData
     };
   };
 
@@ -1129,6 +1134,7 @@ export function OperationsMatrixTab({ products }) {
             }
 
             if (meta.fieldStatus === "Degrade") stats.degraded++;
+            // We explicitly count "Save Conflict" from the UI evaluation which includes native_description injections
             if (meta.fieldStatus === "Conflict" || meta.fieldStatus === "Save Conflict") stats.conflicts++;
             if (meta.fieldStatus === "Unverified proposal") stats.unverified++;
             if (meta.fieldStatus === "Optional blank") stats.optionalBlanks++;
@@ -1197,6 +1203,14 @@ export function OperationsMatrixTab({ products }) {
                   if (meta.reasons.length > 0) {
                       row += `, Reason: [${meta.reasons.join(", ")}]`;
                   }
+                  
+                  // Ensure both potential actual values are exposed in telemetry
+                  if (meta.nativeDescConflictData || meta.conflictData) {
+                      row += `\n    -> Expected: ${meta.propVal.substring(0, 100)}...`;
+                      if (meta.conflictData) row += `\n    -> Actual Metafield: ${meta.conflictData.actual.substring(0, 100)}...`;
+                      if (meta.nativeDescConflictData) row += `\n    -> Actual Native: ${meta.nativeDescConflictData.actual.substring(0, 100)}...`;
+                  }
+                  
                   pinRows.push(row);
               } else {
                   const cleanText = (str) => {
@@ -1539,6 +1553,28 @@ ${recommendations.join("\n")}
                                 placeholder={meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing" ? "Blank" : (meta.fieldStatus === "Proposal not provided" ? "Not provided" : "")}
                             />
                         </div>
+
+                        {/* Separate display block for Native Description Conflict specifically on generated_description card */}
+                        {key === "custom.generated_description" && meta.nativeDescConflictData && (
+                            <div style={{ marginTop: "12px", backgroundColor: "#f8d7da", border: "1px solid #f5c2c7", borderRadius: "8px", padding: "12px", minWidth: 0, boxSizing: "border-box" }}>
+                                <Text as="p" variant="headingSm" tone="critical" fontWeight="bold" style={{ marginBottom: "6px" }}>Read-Back Mismatch: Native product descriptionHtml</Text>
+                                <div style={{ display: "flex", flexDirection: "column", gap: "8px", whiteSpace: "pre-wrap", minWidth: 0, wordBreak: "break-word", overflowWrap: "anywhere", fontSize: "13px", color: "#842029" }}>
+                                    <div><strong>Expected:</strong><br/>{meta.nativeDescConflictData.expected}</div>
+                                    <div style={{ borderTop: "1px dashed #f5c2c7", paddingTop: "8px" }}><strong>Actual (Shopify Normalized):</strong><br/>{meta.nativeDescConflictData.actual}</div>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Standard Metafield Conflict Display */}
+                        {meta.conflictData && (
+                            <div style={{ marginTop: "12px", backgroundColor: "#f8d7da", border: "1px solid #f5c2c7", borderRadius: "8px", padding: "12px", minWidth: 0, boxSizing: "border-box" }}>
+                                <Text as="p" variant="headingSm" tone="critical" fontWeight="bold" style={{ marginBottom: "6px" }}>Read-Back Mismatch: Metafield Value</Text>
+                                <div style={{ display: "flex", flexDirection: "column", gap: "8px", whiteSpace: "pre-wrap", minWidth: 0, wordBreak: "break-word", overflowWrap: "anywhere", fontSize: "13px", color: "#842029" }}>
+                                    <div><strong>Expected:</strong><br/>{meta.conflictData.expected}</div>
+                                    <div style={{ borderTop: "1px dashed #f5c2c7", paddingTop: "8px" }}><strong>Actual:</strong><br/>{meta.conflictData.actual}</div>
+                                </div>
+                            </div>
+                        )}
 
                         {canApprove && (
                             <div style={{ marginTop: "12px", backgroundColor: boxBg, border: `1px solid ${boxBorder}`, borderRadius: "8px", padding: "12px", minWidth: 0, boxSizing: "border-box" }}>
