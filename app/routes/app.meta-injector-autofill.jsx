@@ -414,7 +414,7 @@ DETAILS:
 - Stone Family: ${derivedFamily}
 - Origin / Location: ${originSegment}
 - Origin Lore: ${extractedStory}
-- Collection Name: ${fullCollectionTitle}
+- Collection Name: ${fullCollectionTitle} (Canonical Name: Use this exact name in prose instead of legacy titles found in the lore text)
 - Collection Lore: ${collectionStory}
 - Product Format: ${pieceData.product_format || "Loose Stone"}
 - Primary Use: ${pieceData.primary_use || "N/A"}
@@ -462,7 +462,7 @@ Lead with Bob's direct observations from the wheel if bench or artist notes are 
 Select the source episode relevant to the current product from the Origin Lore. Aim for 2-4 short sentences containing the relevant setup and outcome. Tease the story; do not retell the whole page.
 
 3. COLLECTION HOOK
-1-2 short, source-supported sentences connecting this piece to the collection based on the Collection Lore. Preserve the referent of counts: stone types, pieces, people, stops, or trips must not be conflated (e.g., "three finds" refers to three stone types, not three pieces of this stone).
+1-2 short, source-supported sentences connecting this piece to the collection based on the Collection Lore. Use the exact Canonical Name provided above rather than any legacy title found in the lore text. Preserve the referent of counts: stone types, pieces, people, stops, or trips must not be conflated (e.g., "three finds" refers to three stone types, not three pieces of this stone).
 
 4. QUICK-REFERENCE SPECS
 Use a compact block instead of a paragraph for every pin. Do not print filler such as "Formation: Variable". Avoid repeating facts already stated in the prose. Include verified dimensions, stone weight, finish, and hardware when present.
@@ -499,17 +499,27 @@ function buildMasterVisionPrompt({ pagesMenu, collectionsMenu, stoneFamily, deri
   // Master vision prompt remains unchanged for backward compatibility on other intents
   let dwellButtonsHTML = `<br><br>`;
   
+  let displayOriginName = fullCollectionTitle || originSegment;
+  let displayColName = fullCollectionTitle || originSegment;
+  
+  if (originSegment === "Yakima River Canyon" || (targetUrlPath && targetUrlPath.includes("chert-road-detour-yakima-river-jasper"))) {
+      displayOriginName = "Chert Road Detour";
+      displayColName = "Yakima River Canyon";
+  }
+  
   if (targetUrlPath && targetUrlPath !== "/pages/") {
-      dwellButtonsHTML += `<a href="${targetUrlPath}">${fullCollectionTitle || originSegment} Story</a>\n`;
+      dwellButtonsHTML += `<a href="${targetUrlPath}">${displayOriginName} Story</a>\n`;
   }
   
   if (collectionUrlPath && collectionUrlPath !== "/collections/") {
       if (targetUrlPath && targetUrlPath !== "/pages/") dwellButtonsHTML += `<br>`;
-      dwellButtonsHTML += `<a href="${collectionUrlPath}">${fullCollectionTitle || originSegment} Collection</a>`;
+      let colLabel = displayColName;
+      if (!/collection/i.test(colLabel)) colLabel += " Collection";
+      dwellButtonsHTML += `<a href="${collectionUrlPath}">${colLabel}</a>`;
   }
 
   // Preserve specific 4-link rule for Richardson's ONLY if target URLs are published
-  if (originSegment === "Richardson's Rock Ranch" || targetUrlPath.includes("the-richardson-strike")) {
+  if (originSegment === "Richardson's Rock Ranch" || (targetUrlPath && targetUrlPath.includes("the-richardson-strike"))) {
     dwellButtonsHTML = `<br><br>`;
     if (pagesList.some(p => p.handle === "the-richardson-strike")) {
         dwellButtonsHTML += `<a href="/pages/the-richardson-strike">Richardson's Rock Ranch Story</a>\n`;
@@ -553,7 +563,7 @@ function buildMasterVisionPrompt({ pagesMenu, collectionsMenu, stoneFamily, deri
 - generated_description: Write in Bob's plain, honest voice (past tense). No salesy language, poetic geology, or grand claims such as "the earth remembering itself". Do not repeat physical details between paragraphs. Janyce does the final shine on ALL stones; retain appropriate credit. Short sentences. 7-BLOCK FORMAT:
   1. Stone Description: Honest flaws, finish, flash. Lead with specific observations.
   2. Origin Hook: Select the source episode matching "${stoneFamily}". Aim for 2-4 short sentences containing the relevant setup and outcome. Tease the story; do not retell the whole page.
-  3. Collection Hook: 1-2 short, source-supported sentences connecting the product to the actual collection narrative based on ${fullCollectionTitle}. Do not conflate counts (e.g., "three finds" means three stone types).
+  3. Collection Hook: 1-2 short, source-supported sentences connecting the product to the actual collection narrative based on "${fullCollectionTitle}". Use this canonical name rather than legacy titles in the lore. Do not conflate counts (e.g., "three finds" means three stone types).
   4. Signature: — Bob & Janyce, Rockhound Studio, Spokane Valley WA
   5. Stone Data: Specs, cut.
   6. Ready to Wear: State if set or loose.
@@ -600,7 +610,7 @@ Potential JSON Keys to evaluate and propose if blank:
 - product_format: Describe the evidenced physical form (e.g., Cabochon, Pendant, Specimen, Loose Stone). Do not guess when unclear. If existing data indicates a Pendant/Finished Jewelry, use that over the stone shape.
 - craftsmanship: When the supplied product facts identify the work as handcrafted by Bob & Janyce, propose exactly "Handcrafted". Do not describe it as "Hand-polished cabochon." Do not add tool or polishing-method wording. If the supplied facts do not support "Handcrafted", omit this proposal.
 - poetic_hook: Write one short, plain, factual hook based on the origin page (under 160 characters). Do not recreate the origin story.
-- seo_title: Max 70 chars. Natural, descriptive wording based on supported facts: Piece name, stone description/family, finished product format, craftsmanship, and clean origin (e.g., use "Yakima River Canyon" not "Yakima Canyon" or "Yakima River"). Example: "The Catalyst | Handcrafted Green Jasper Pendant from Yakima River Canyon". Include "Handcrafted" only when supported. Do not use generic "OOAK Lapidary Art" if specific details are available. No prices, quotes, HTML, or keyword stuffing. Shorten intelligently if necessary.
+- seo_title: Max 70 chars. Natural, descriptive wording based on supported facts: Piece name, stone description/family, finished product format, craftsmanship, and clean origin (e.g., use "Yak River Canyon" not "Yakima Canyon" or "Yakima River"). Example: "The Catalyst | Handcrafted Green Jasper Pendant from Yakima River Canyon". Include "Handcrafted" only when supported. Do not use generic "OOAK Lapidary Art" if specific details are available. No prices, quotes, HTML, or keyword stuffing. Shorten intelligently if necessary.
 - dimensions_mm: Leave unchanged if provided.
 - cut_and_shape: Respect freeform cuts. Keep exactly as provided in current data if present.
 - surface_finish: High Polish, Matte, Satin, Natural/Raw, Tumbled.
@@ -945,7 +955,10 @@ export const action = async ({ request }) => {
           diagOriginExtractedLength = extractedStory.length;
           diagOriginSource = pieceData.origin_story ? "Carried pieceData" : "Fresh or Empty";
 
-          const fullCollectionTitle = pieceData.collection_name || "";
+          let canonicalCollectionName = pieceData.collection_name || "";
+          if (originSegment === "Yakima River Canyon" || canonicalCollectionName === "The Yakima Canyon Collection") {
+              canonicalCollectionName = "Yakima River Canyon";
+          }
           
           const targetOriginHandle = resolveOriginHandle(originSegment, pagesList);
           diagTargetOriginHandle = targetOriginHandle;
@@ -976,7 +989,7 @@ export const action = async ({ request }) => {
             derivedFamily,
             originSegment,
             extractedStory,
-            fullCollectionTitle,
+            canonicalCollectionName,
             pieceData,
             collectionStory
           );
@@ -1037,20 +1050,33 @@ export const action = async ({ request }) => {
             
             const originSegment = (isSharedOriginDerived && validPieceOrigin) ? pieceData.origin_location : (sharedFields.origin_location || pieceData.origin_location || "");
             
-            const fullCollectionTitle = pieceData.collection_name || "";
+            let fullCollectionTitle = pieceData.collection_name || "";
+            if (originSegment === "Yakima River Canyon" || fullCollectionTitle === "The Yakima Canyon Collection") {
+                fullCollectionTitle = "Yakima River Canyon";
+            }
             
             const targetOriginHandle = resolveOriginHandle(originSegment, pagesList);
             const collectionData = resolveCollectionData(originSegment, targetOriginHandle, collectionsList);
             
             let dwellButtonsHTML = `<br><br>`;
             
+            let displayOriginName = fullCollectionTitle || originSegment;
+            let displayColName = fullCollectionTitle || originSegment;
+            
+            if (originSegment === "Yakima River Canyon" || targetOriginHandle === "the-shop-lore-chert-road-detour-yakima-river-jasper") {
+                displayOriginName = "Chert Road Detour";
+                displayColName = "Yakima River Canyon";
+            }
+            
             if (targetOriginHandle) {
-                dwellButtonsHTML += `<a href="/pages/${targetOriginHandle}">${fullCollectionTitle || originSegment} Story</a>\n`;
+                dwellButtonsHTML += `<a href="/pages/${targetOriginHandle}">${displayOriginName} Story</a>\n`;
             }
             
             if (collectionData.slug) {
                 if (targetOriginHandle) dwellButtonsHTML += `<br>`;
-                dwellButtonsHTML += `<a href="/collections/${collectionData.slug}">${fullCollectionTitle || originSegment} Collection</a>`;
+                let colLabel = displayColName;
+                if (!/collection/i.test(colLabel)) colLabel += " Collection";
+                dwellButtonsHTML += `<a href="/collections/${collectionData.slug}">${colLabel}</a>`;
             }
             
             // Specialized Richardson Logic
