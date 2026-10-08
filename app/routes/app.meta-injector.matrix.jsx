@@ -490,9 +490,10 @@ export function OperationsMatrixTab({ products }) {
     }
     
     // Apply read-back and block overrides strictly for UI display so users know previous saves failed
-    if (apiBlockReason && fieldStatus !== "Unchanged" && fieldStatus !== "Optional blank" && fieldStatus !== "Required missing") {
+    // A read-back conflict or API block must take precedence over baseline field statuses.
+    if (apiBlockReason) {
         fieldStatus = "API Error / Blocked";
-    } else if ((conflictData || nativeDescConflictData) && fieldStatus !== "Unchanged" && fieldStatus !== "Optional blank" && fieldStatus !== "Required missing") {
+    } else if (conflictData || nativeDescConflictData) {
         fieldStatus = "Save Conflict";
     }
 
@@ -1134,8 +1135,24 @@ export function OperationsMatrixTab({ products }) {
             }
 
             if (meta.fieldStatus === "Degrade") stats.degraded++;
-            // We explicitly count "Save Conflict" from the UI evaluation which includes native_description injections
-            if (meta.fieldStatus === "Conflict" || meta.fieldStatus === "Save Conflict") stats.conflicts++;
+            
+            if (meta.fieldStatus === "Conflict") {
+                stats.conflicts++;
+            } else if (meta.fieldStatus === "Save Conflict") {
+                let conflictCounted = false;
+                if (meta.conflictData) {
+                    stats.conflicts++;
+                    conflictCounted = true;
+                }
+                if (meta.nativeDescConflictData) {
+                    stats.conflicts++;
+                    conflictCounted = true;
+                }
+                if (!conflictCounted) {
+                    stats.conflicts++;
+                }
+            }
+
             if (meta.fieldStatus === "Unverified proposal") stats.unverified++;
             if (meta.fieldStatus === "Optional blank") stats.optionalBlanks++;
             if (meta.fieldStatus === "Required missing") stats.requiredMissing++;
@@ -1174,6 +1191,14 @@ export function OperationsMatrixTab({ products }) {
       let hasRequiredMissing = false;
       let specificBlockers = [];
 
+      const truncateForTelemetry = (text, limit = 100) => {
+          if (!text) return "";
+          const str = String(text);
+          if (str.length <= limit) return str;
+          const omitted = str.length - limit;
+          return `${str.substring(0, limit)} (...${omitted} characters omitted for telemetry)`;
+      };
+
       // Process all 45 pins in SECTIONS
       SECTIONS.forEach(sec => {
           sec.keys.forEach(key => {
@@ -1204,11 +1229,13 @@ export function OperationsMatrixTab({ products }) {
                       row += `, Reason: [${meta.reasons.join(", ")}]`;
                   }
                   
-                  // Ensure both potential actual values are exposed in telemetry
-                  if (meta.nativeDescConflictData || meta.conflictData) {
-                      row += `\n    -> Expected: ${meta.propVal.substring(0, 100)}...`;
-                      if (meta.conflictData) row += `\n    -> Actual Metafield: ${meta.conflictData.actual.substring(0, 100)}...`;
-                      if (meta.nativeDescConflictData) row += `\n    -> Actual Native: ${meta.nativeDescConflictData.actual.substring(0, 100)}...`;
+                  if (meta.conflictData) {
+                      row += `\n    -> [custom.generated_description] Expected: ${truncateForTelemetry(meta.conflictData.expected, 100)}`;
+                      row += `\n    -> [custom.generated_description] Actual: ${truncateForTelemetry(meta.conflictData.actual, 100)}`;
+                  }
+                  if (meta.nativeDescConflictData) {
+                      row += `\n    -> [Native product descriptionHtml] Expected: ${truncateForTelemetry(meta.nativeDescConflictData.expected, 100)}`;
+                      row += `\n    -> [Native product descriptionHtml] Actual: ${truncateForTelemetry(meta.nativeDescConflictData.actual, 100)}`;
                   }
                   
                   pinRows.push(row);
@@ -1560,7 +1587,7 @@ ${recommendations.join("\n")}
                                 <Text as="p" variant="headingSm" tone="critical" fontWeight="bold" style={{ marginBottom: "6px" }}>Read-Back Mismatch: Native product descriptionHtml</Text>
                                 <div style={{ display: "flex", flexDirection: "column", gap: "8px", whiteSpace: "pre-wrap", minWidth: 0, wordBreak: "break-word", overflowWrap: "anywhere", fontSize: "13px", color: "#842029" }}>
                                     <div><strong>Expected:</strong><br/>{meta.nativeDescConflictData.expected}</div>
-                                    <div style={{ borderTop: "1px dashed #f5c2c7", paddingTop: "8px" }}><strong>Actual (Shopify Normalized):</strong><br/>{meta.nativeDescConflictData.actual}</div>
+                                    <div style={{ borderTop: "1px dashed #f5c2c7", paddingTop: "8px" }}><strong>Actual:</strong><br/>{meta.nativeDescConflictData.actual}</div>
                                 </div>
                             </div>
                         )}
