@@ -451,7 +451,7 @@ VOICE RULES (CRITICAL):
 - If context is insufficient, flag it for review rather than invent.
 - Internal bench and artist notes provide physical facts. Weave their facts natively into the physical description. Never output their labels or missing-value placeholders.
 - The OOAK nature is self-evident. Never use the phrase "one of a kind" as a cheap selling point.
-- Signature always: — Bob & Janyce, Rockhound Studio, Spokane Valley WA
+- Signature always: — Bob and Janyce, Rockhound Studio, Spokane Valley WA
 
 DESCRIPTION STRUCTURE — follow this order exactly:
 
@@ -483,7 +483,7 @@ Character: [honest_flaws_and_character]
 One plain sentence for jewelers and makers. Dimensions, drill status, setting suitability.
 
 7. SIGNATURE
-— Bob & Janyce, Rockhound Studio, Spokane Valley WA
+— Bob and Janyce, Rockhound Studio, Spokane Valley WA
 
 HARD RULES:
 - Do NOT generate any URLs, href links, or Dwell Buttons. The system will append them automatically.
@@ -564,7 +564,7 @@ function buildMasterVisionPrompt({ pagesMenu, collectionsMenu, stoneFamily, deri
   1. Stone Description: Honest flaws, finish, flash. Lead with specific observations.
   2. Origin Hook: Select the source episode matching "${stoneFamily}". Aim for 2-4 short sentences containing the relevant setup and outcome. Tease the story; do not retell the whole page.
   3. Collection Hook: 1-2 short, source-supported sentences connecting the product to the actual collection narrative based on "${fullCollectionTitle}". Use this canonical name rather than legacy titles in the lore. Do not conflate counts (e.g., "three finds" means three stone types).
-  4. Signature: — Bob & Janyce, Rockhound Studio, Spokane Valley WA
+  4. Signature: — Bob and Janyce, Rockhound Studio, Spokane Valley WA
   5. Stone Data: Specs, cut.
   6. Ready to Wear: State if set or loose.
   7. Dwell Buttons:
