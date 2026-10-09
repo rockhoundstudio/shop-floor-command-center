@@ -1279,6 +1279,12 @@ export function OperationsMatrixTab({ products }) {
                   }
                   pinRows.push(row);
               }
+
+              if (["custom.generated_description", "custom.origin_location", "custom.collection_name", "custom.collection_location"].includes(key)) {
+                  const canApproveDiag = meta.proposalExists && meta.currentVal !== meta.propVal && !meta.isManualOnly && !meta.isContentPreApproved && meta.fieldStatus !== "API Error / Blocked" && meta.fieldStatus !== "Save Conflict";
+                  const blockReason = !meta.proposalExists ? "No proposal" : (meta.currentVal === meta.propVal) ? "Values match" : meta.isManualOnly ? "Manual only" : meta.isContentPreApproved ? "Pre-approved" : (meta.fieldStatus === "API Error / Blocked") ? "API Blocked" : (meta.fieldStatus === "Save Conflict") ? "Save Conflict" : "None";
+                  pinRows.push(`    -> [DIAGNOSTIC] status=${meta.fieldStatus} | propExists=${meta.proposalExists} | isDiff=${meta.currentVal !== meta.propVal} | manual=${meta.isManualOnly} | preApp=${meta.isContentPreApproved} | appr=${meta.isApproved} | techBlock=${meta.hasTechnicalBlock} | apiBlock=${meta.reasons.some(r => r.includes("Backend Blocked"))} | conf=${!!meta.conflictData} | natConf=${!!meta.nativeDescConflictData} | canApprove=${canApproveDiag} | blocker=${blockReason} | chars=${meta.currentVal.length}/${meta.propVal.length}`);
+              }
           });
       });
 
@@ -1664,6 +1670,24 @@ ${recommendations.join("\n")}
                                 </div>
                             </div>
                         )}
+
+                        {/* APPROVAL DIAGNOSTIC BLOCK */}
+                        {["custom.generated_description", "custom.origin_location", "custom.collection_name", "custom.collection_location"].includes(key) && (() => {
+                            const blockReason = !meta.proposalExists ? "No proposal" : (meta.currentVal === meta.propVal) ? "Values match" : meta.isManualOnly ? "Manual only" : meta.isContentPreApproved ? "Pre-approved" : (meta.fieldStatus === "API Error / Blocked") ? "API Blocked" : (meta.fieldStatus === "Save Conflict") ? "Save Conflict" : "None";
+                            return (
+                                <div style={{ marginTop: "12px", backgroundColor: "#000", border: "2px solid #0f0", borderRadius: "4px", padding: "10px", color: "#0f0", fontFamily: "monospace", fontSize: "11px", wordBreak: "break-all", userSelect: "all" }}>
+                                    <strong style={{fontSize:"13px", color:"#fff"}}>APPROVAL DIAGNOSTIC</strong><br/>
+                                    Key: {key} | ID: {selectedBenchId}<br/>
+                                    fieldStatus: {meta.fieldStatus}<br/>
+                                    proposalExists: {String(meta.proposalExists)} | isDiff: {String(meta.currentVal !== meta.propVal)}<br/>
+                                    isManualOnly: {String(meta.isManualOnly)} | isContentPreApproved: {String(meta.isContentPreApproved)} | isApproved: {String(meta.isApproved)}<br/>
+                                    hasTechnicalBlock: {String(meta.hasTechnicalBlock)} | apiBlockReason: {String(meta.reasons.some(r => r.includes("Backend Blocked")))}<br/>
+                                    conflictData: {String(!!meta.conflictData)} | nativeDescConflictData: {String(!!meta.nativeDescConflictData)}<br/>
+                                    canApprove: {String(canApprove)} | Blocker: {blockReason}<br/>
+                                    Chars: Current({meta.currentVal.length}) / Proposed({meta.propVal.length})
+                                </div>
+                            );
+                        })()}
 
                     </div>
                   </div>
