@@ -188,6 +188,10 @@ export const action = async ({ request }) => {
             title 
             descriptionHtml 
             seo { title description }
+            variants(first: 2) {
+              pageInfo { hasNextPage }
+              edges { node { id price } }
+            }
             metafields(first: 250) { edges { node { namespace key value type id } } } 
           }
         }
@@ -248,11 +252,67 @@ export const action = async ({ request }) => {
 
       const nativeInput = { id: productGid };
       let doNativeUpdate = false;
+
+      let doPriceUpdate = false;
+      let priceVariantGid = null;
+      let newPriceString = null;
+      let priceReadBackVerified = false;
       
       Object.entries(repairPlan).forEach(([fullKey, val]) => {
-        // Explicitly bypass manual-only UI keys from metafield array loops
-        if (fullKey === "shopify_title" || fullKey === "price") {
+        if (fullKey === "shopify_title") {
            skippedKeys.push(fullKey);
+           return;
+        }
+
+        if (fullKey === "price") {
+           const valStr = String(val !== null && val !== undefined ? val : "").trim();
+           if (valStr === "") return;
+
+           const validPrice = /^(0|[1-9]\d*)(\.\d{1,2})?$/;
+           if (!validPrice.test(valStr)) {
+               blockedFields["price"] = "Malformed price: must be a non-negative number with up to two decimals.";
+               return;
+           }
+
+           const variantsConn = lookupData?.data?.product?.variants;
+           if (!variantsConn || !variantsConn.edges || typeof variantsConn.pageInfo?.hasNextPage !== "boolean") {
+               blockedFields["price"] = "Missing variant or pagination data from Shopify.";
+               return;
+           }
+           if (variantsConn.edges.length === 0) {
+               blockedFields["price"] = "Ambiguous destination: Product has zero variants.";
+               return;
+           }
+           if (variantsConn.edges.length > 1 || variantsConn.pageInfo.hasNextPage === true) {
+               blockedFields["price"] = "Ambiguous destination: Product has multiple variants. Edit price manually.";
+               return;
+           }
+
+           const targetVariantId = variantsConn.edges[0].node.id;
+           const currentPriceStr = variantsConn.edges[0].node.price;
+
+           if (!targetVariantId || !/^gid:\/\/shopify\/ProductVariant\/\d+$/.test(targetVariantId)) {
+               blockedFields["price"] = "Invalid variant ID retrieved.";
+               return;
+           }
+           if (typeof currentPriceStr !== "string") {
+               blockedFields["price"] = "Missing current price data from Shopify.";
+               return;
+           }
+
+           const getCents = (str) => {
+               const parts = (str || "0").split(".");
+               const dollars = parts[0];
+               const cents = (parts[1] || "00").padEnd(2, "0").slice(0, 2);
+               return BigInt(dollars + cents);
+           };
+
+           if (getCents(valStr) !== getCents(currentPriceStr)) {
+               doPriceUpdate = true;
+               priceVariantGid = targetVariantId;
+               newPriceString = valStr;
+               proposedChanges["price"] = { from: currentPriceStr, to: valStr };
+           }
            return;
         }
 
@@ -371,19 +431,21 @@ export const action = async ({ request }) => {
         }
       });
 
-      if (setToShopify.length === 0 && deleteFromShopify.length === 0 && !doNativeUpdate) {
+      if (setToShopify.length === 0 && deleteFromShopify.length === 0 && !doNativeUpdate && !doPriceUpdate) {
           if (Object.keys(blockedFields).length > 0) {
               return Response.json({
                   intent: "executeRepairPlan", pieceId, success: false, status: "REPAIR_BLOCKED",
                   message: "All requested changes were blocked due to validation or type errors.",
                   fieldsUpdated: 0, legacyKeysRemoved: 0,
-                  currentMetafields, repairPlan, proposedChanges, conflicts: {}, blockedFields, skippedKeys, unsupportedKeys, missingFields: [], unknownFields: [], readBackVerified: true
+                  currentMetafields, repairPlan, proposedChanges, conflicts: {}, blockedFields, skippedKeys, unsupportedKeys, missingFields: [], unknownFields: [], readBackVerified: true,
+                  variantTarget: priceVariantGid || null
               });
           }
           return Response.json({
               intent: "executeRepairPlan", pieceId, success: true, status: "NO_CHANGES_REQUIRED",
               fieldsUpdated: 0, legacyKeysRemoved: 0, message: "No changes required.",
-              currentMetafields, repairPlan, proposedChanges, conflicts: {}, blockedFields, skippedKeys, unsupportedKeys, missingFields: [], unknownFields: [], readBackVerified: true
+              currentMetafields, repairPlan, proposedChanges, conflicts: {}, blockedFields, skippedKeys, unsupportedKeys, missingFields: [], unknownFields: [], readBackVerified: true,
+              variantTarget: priceVariantGid || null
           });
       }
 
@@ -448,26 +510,64 @@ export const action = async ({ request }) => {
         }
       }
 
+      let priceWriteSucceeded = false;
+      if (doPriceUpdate) {
+        try {
+          const priceResponse = await admin.graphql(
+            `#graphql
+            mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+              productVariantsBulkUpdate(productId: $productId, variants: $variants) {
+                product { id }
+                productVariants { id price }
+                userErrors { field message }
+              }
+            }`,
+            { variables: { productId: productGid, variants: [{ id: priceVariantGid, price: newPriceString }] } }
+          );
+          const priceJson = await priceResponse.json();
+          const bulkData = priceJson?.data?.productVariantsBulkUpdate;
+          if (bulkData?.userErrors?.length) {
+            allErrors.push(...bulkData.userErrors);
+          } else if (!bulkData?.productVariants || !bulkData.productVariants.some(v => v.id === priceVariantGid)) {
+            allErrors.push({ message: "Price update accepted by API but variant was not returned in success payload." });
+          } else {
+            priceWriteSucceeded = true;
+          }
+        } catch (priceErr) {
+          allErrors.push({ message: `API Error on Price Update: ${priceErr.message}` });
+        }
+      }
+
       if (allErrors.length > 0) {
          return Response.json({ 
              intent: "executeRepairPlan", pieceId, success: false, status: "REPAIR_FAILED",
              errors: allErrors, currentMetafields, repairPlan, proposedChanges, fieldsUpdated: 0, legacyKeysRemoved: 0,
-             conflicts: {}, blockedFields, skippedKeys, unsupportedKeys, missingFields: [], unknownFields: [], readBackVerified: false, message: "Shopify write produced errors."
+             conflicts: {}, blockedFields, skippedKeys, unsupportedKeys, missingFields: [], unknownFields: [], readBackVerified: false, message: "Shopify write produced errors.",
+             variantTarget: priceVariantGid || null
          });
       }
 
       await new Promise(r => setTimeout(r, 600)); 
       
-      const readBackResponse = await admin.graphql(`
-        query getProductAndMetafields($id: ID!) {
+      const readBackQuery = `
+        query getProductAndVariant($id: ID!${doPriceUpdate ? ', $variantId: ID!' : ''}) {
           product(id: $id) { 
             title 
             descriptionHtml 
             seo { title description }
             metafields(first: 250) { edges { node { namespace key value } } } 
           }
+          ${doPriceUpdate ? `
+          node(id: $variantId) {
+            ... on ProductVariant { id price product { id } }
+          }
+          ` : ''}
         }
-      `, { variables: { id: productGid } });
+      `;
+      const readBackVars = { id: productGid };
+      if (doPriceUpdate) readBackVars.variantId = priceVariantGid;
+      
+      const readBackResponse = await admin.graphql(readBackQuery, { variables: readBackVars });
       
       const readBackData = await readBackResponse.json();
       const readBackProduct = readBackData?.data?.product || {};
@@ -481,6 +581,27 @@ export const action = async ({ request }) => {
 
       let readBackVerified = true;
       const conflicts = {};
+
+      if (doPriceUpdate && priceWriteSucceeded) {
+          const variantNode = readBackData?.data?.node;
+          if (!variantNode || variantNode.id !== priceVariantGid || variantNode.product?.id !== productGid || typeof variantNode.price !== "string") {
+              readBackVerified = false;
+              conflicts["price"] = { expected: newPriceString, actual: "Missing, detached, or malformed variant node" };
+          } else {
+              const getCents = (str) => {
+                  const parts = (str || "0").split(".");
+                  const dollars = parts[0];
+                  const cents = (parts[1] || "00").padEnd(2, "0").slice(0, 2);
+                  return BigInt(dollars + cents);
+              };
+              if (getCents(variantNode.price) !== getCents(newPriceString)) {
+                  readBackVerified = false;
+                  conflicts["price"] = { expected: newPriceString, actual: variantNode.price };
+              } else {
+                  priceReadBackVerified = true;
+              }
+          }
+      }
 
       if (doNativeUpdate) {
           if (nativeInput.descriptionHtml !== undefined && nativeInput.descriptionHtml !== actualBodyHtml) {
@@ -512,24 +633,28 @@ export const action = async ({ request }) => {
          }
       });
 
+      const totalFieldsUpdated = setToShopify.length + (priceReadBackVerified ? 1 : 0);
+
       if (!readBackVerified) {
             return Response.json({
              intent: "executeRepairPlan", pieceId, success: false, status: "REPAIR_FAILED",
-             fieldsUpdated: setToShopify.length, legacyKeysRemoved: deleteFromShopify.length,
+             fieldsUpdated: totalFieldsUpdated, legacyKeysRemoved: deleteFromShopify.length,
              message: "Repair failed: Read-back verification detected conflicts.",
-             currentMetafields: newMetafields, repairPlan, proposedChanges, conflicts, blockedFields, skippedKeys, unsupportedKeys, missingFields: [], unknownFields: [], readBackVerified: false
+             currentMetafields: newMetafields, repairPlan, proposedChanges, conflicts, blockedFields, skippedKeys, unsupportedKeys, missingFields: [], unknownFields: [], readBackVerified: false,
+             variantTarget: priceVariantGid || null
          });
       }
 
       const successMsg = Object.keys(blockedFields).length > 0 
-          ? `Partial success: ${setToShopify.length} metafields updated, ${deleteFromShopify.length} keys cleared. ${doNativeUpdate ? 'Native fields updated. ' : ''}${Object.keys(blockedFields).length} blocked.`
-          : `Repair successful: ${setToShopify.length} metafields updated, ${deleteFromShopify.length} legacy keys cleared.${doNativeUpdate ? ' Native fields updated.' : ''}`;
+          ? `Partial success: ${totalFieldsUpdated} fields updated, ${deleteFromShopify.length} keys cleared. ${doNativeUpdate ? 'Native fields updated. ' : ''}${doPriceUpdate ? 'Variant price updated. ' : ''}${Object.keys(blockedFields).length} blocked.`
+          : `Repair successful: ${totalFieldsUpdated} fields updated, ${deleteFromShopify.length} legacy keys cleared.${doNativeUpdate ? ' Native fields updated.' : ''}${doPriceUpdate ? ' Variant price updated.' : ''}`;
 
       return Response.json({ 
         intent: "executeRepairPlan", pieceId, success: true, status: "REPAIRED",
-        fieldsUpdated: setToShopify.length, legacyKeysRemoved: deleteFromShopify.length,
+        fieldsUpdated: totalFieldsUpdated, legacyKeysRemoved: deleteFromShopify.length,
         message: successMsg,
-        currentMetafields: newMetafields, repairPlan, proposedChanges, conflicts: {}, blockedFields, skippedKeys, unsupportedKeys, missingFields: [], unknownFields: [], readBackVerified: true
+        currentMetafields: newMetafields, repairPlan, proposedChanges, conflicts: {}, blockedFields, skippedKeys, unsupportedKeys, missingFields: [], unknownFields: [], readBackVerified: true,
+        variantTarget: priceVariantGid || null
       });
     }
 

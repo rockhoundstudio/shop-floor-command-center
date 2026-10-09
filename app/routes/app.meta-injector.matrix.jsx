@@ -163,7 +163,9 @@ export function OperationsMatrixTab({ products }) {
   const [productStates, setProductStates] = useState({}); 
   const [manifestData, setManifestData] = useState({}); 
   const [lastProcessedData, setLastProcessedData] = useState(null);
+  
   const [approvals, setApprovals] = useState({}); // Stores exact text approvals by pieceId and key
+  const [manualEdits, setManualEdits] = useState({}); // Tracks explicit human ownership to shield from async AI overwrites
   
   // Repair Results History
   const [repairHistory, setRepairHistory] = useState({});
@@ -235,6 +237,7 @@ export function OperationsMatrixTab({ products }) {
     setProductStates({});
     setManifestData({});
     setApprovals({});
+    setManualEdits({});
     setRepairHistory({});
     setSelectedBenchId(null);
     setIsLoadingData(false);
@@ -254,7 +257,8 @@ export function OperationsMatrixTab({ products }) {
        setSafetyError("Cannot generate plan: No inventory selected. Please check items in the left column first.");
        return;
     }
-    setApprovals({}); // Clear approvals on new overall run
+    setApprovals({}); 
+    setManualEdits({}); 
     setIsLoadingData(true);
     setLoadIndex(0);
     setSafetyMessage("Fetching live product data and building manifests by GID...");
@@ -335,7 +339,8 @@ export function OperationsMatrixTab({ products }) {
        return;
     }
     
-    setApprovals({}); // Switching to new AI run globally clears approvals
+    setApprovals({}); 
+    // manualEdits purposefully NOT cleared here, to preserve explicit operator edits across AI runs.
     setSafetyError("");
     setSafetyMessage("Industrial AI Batch Pipeline engaged. Firing up the Gemini cores...");
     setExecutionMode("AI_BATCH_PIPELINE");
@@ -398,12 +403,14 @@ export function OperationsMatrixTab({ products }) {
     const propCount = propVal.length;
     const limit = FIELD_LIMITS[key] || null;
 
-    const isManualOnly = (key === "price" || key === "shopify_title");
+    const isManualOnly = (key === "shopify_title");
+    const isOperatorOwned = (key === "price" || key === "custom.weight_grams" || key === "custom.dimensions_mm");
+    
     const exactApprovalVal = currentApprovals?.[productId]?.[key];
     const isApproved = exactApprovalVal !== undefined && exactApprovalVal === propVal && propVal.trim() !== "";
 
     if (HIDDEN_CONTEXT_FIELDS.includes(key)) {
-        return { currentVal, propVal, isProposed, fieldStatus: "Hidden Source", proposalStatus, source, stage, isBlockedAction: true, reasons: ["Hidden Context"], currentExists, proposalExists, isApproved: false, hasTechnicalBlock: true, contentNeedsReview: false, isContentPreApproved: false, preApprovalReason: "", isManualOnly: false, isActualBlockedProposal: false };
+        return { currentVal, propVal, isProposed, fieldStatus: "Hidden Source", proposalStatus, source, stage, isBlockedAction: true, reasons: ["Hidden Context"], currentExists, proposalExists, isApproved: false, hasTechnicalBlock: true, contentNeedsReview: false, isContentPreApproved: false, preApprovalReason: "", isManualOnly: false, isActualBlockedProposal: false, isOperatorOwned: false };
     }
 
     let hasTechnicalBlock = false;
@@ -444,7 +451,7 @@ export function OperationsMatrixTab({ products }) {
     }
 
     if (conflictData) {
-        reasons.push(`Read-back Mismatch [Metafield]: ${conflictData.expected} != ${conflictData.actual}`);
+        reasons.push(`Read-back Mismatch [Metafield / Native Field]: ${conflictData.expected} != ${conflictData.actual}`);
     }
 
     // Content Review Status Evaluation
@@ -454,7 +461,7 @@ export function OperationsMatrixTab({ products }) {
         } else if (currentVal === propVal) {
             fieldStatus = "Unchanged";
         } else {
-            if (isProtected) {
+            if (isProtected || isOperatorOwned) {
                 contentNeedsReview = true;
                 if (!isContentPreApproved) fieldStatus = "Degrade";
                 reasons.push(isContentPreApproved ? "Historical: Degrade (Pre-approved)" : "Degrade");
@@ -490,7 +497,6 @@ export function OperationsMatrixTab({ products }) {
     }
     
     // Apply read-back and block overrides strictly for UI display so users know previous saves failed
-    // A read-back conflict or API block must take precedence over baseline field statuses.
     if (apiBlockReason) {
         fieldStatus = "API Error / Blocked";
     } else if (conflictData || nativeDescConflictData) {
@@ -531,7 +537,7 @@ export function OperationsMatrixTab({ products }) {
         }
     }
 
-    // Absolute enforcements for manual only (prices and shopify titles)
+    // Absolute enforcements for strictly un-writable manual fields
     if (isManualOnly) {
         isBlockedAction = true;
         if (proposalExists && currentVal !== propVal) {
@@ -550,7 +556,7 @@ export function OperationsMatrixTab({ products }) {
     return { 
       currentVal, propVal, isProposed, fieldStatus, proposalStatus, source, stage, 
       isBlockedAction, reasons, currentExists, proposalExists, isApproved, hasTechnicalBlock, contentNeedsReview,
-      isContentPreApproved, preApprovalReason, isManualOnly, isActualBlockedProposal,
+      isContentPreApproved, preApprovalReason, isManualOnly, isOperatorOwned, isActualBlockedProposal,
       conflictData, nativeDescConflictData
     };
   };
@@ -653,6 +659,8 @@ export function OperationsMatrixTab({ products }) {
         fd.append("origin_story", currentOriginStory || tempAiData.titleParse?.origin_story || "");
         
         fd.append("honest_flaws_and_character", manifest.currentMetafields["custom.honest_flaws_and_character"] || "");
+        
+        // Feed existing operator-owned facts to Gemini so it has context, but AI overwrite shield protects changes
         fd.append("weight_grams", manifest.currentMetafields["custom.weight_grams"] || "");
         fd.append("dimensions_mm", manifest.currentMetafields["custom.dimensions_mm"] || "");
         
@@ -725,12 +733,20 @@ export function OperationsMatrixTab({ products }) {
                 diagnostics.stage = "generateDescription";
             }
 
+            // AI Overwrite Shield evaluates current operator edits synchronously
+            const safeApply = (keyName, aiValue) => {
+                if (manualEdits[currentId] && manualEdits[currentId][keyName] === true) {
+                    return; // Preserve explicit operator edit
+                }
+                newPlan[keyName] = aiValue;
+            };
+
             Object.keys(visionData).forEach(k => {
                 if (k !== "generated_description" && k !== "pieceId" && k !== "debug_origin" && k !== "intent" && k !== "success" && k !== "origin_story") {
                     if (NATIVE_FIELDS.includes(k) || k.includes('.')) {
-                        newPlan[k] = visionData[k];
+                        safeApply(k, visionData[k]);
                     } else {
-                        newPlan[`custom.${k}`] = visionData[k];
+                        safeApply(`custom.${k}`, visionData[k]);
                     }
                 }
             });
@@ -738,9 +754,9 @@ export function OperationsMatrixTab({ products }) {
             Object.keys(titleData).forEach(k => {
                 if (k !== "pieceId" && k !== "intent" && k !== "success" && k !== "geoSource" && k !== "origin_story") {
                     if (NATIVE_FIELDS.includes(k) || k.includes('.')) {
-                        newPlan[k] = titleData[k];
+                        safeApply(k, titleData[k]);
                     } else {
-                        newPlan[`custom.${k}`] = titleData[k];
+                        safeApply(`custom.${k}`, titleData[k]);
                     }
                 }
             });
@@ -748,10 +764,10 @@ export function OperationsMatrixTab({ products }) {
             // Restore Enriched Vision SEO
             const enrichedSeo = visionData.seo_title || visionData["custom.seo_title"] || "";
             if (enrichedSeo.trim() !== "") {
-              newPlan["custom.seo_title"] = enrichedSeo.trim();
+              safeApply("custom.seo_title", enrichedSeo.trim());
             }
 
-            if (descData) newPlan["custom.generated_description"] = descData;
+            if (descData) safeApply("custom.generated_description", descData);
 
             return { ...prev, [currentId]: { ...existing, repairPlan: newPlan, diagnostics, verifiedGeoValues: verifiedGeo } };
         });
@@ -766,12 +782,12 @@ export function OperationsMatrixTab({ products }) {
         }
       }
     }
-  }, [isExecuting, executionMode, executeIndex, queueIds, manifestData, batchFetcher.state, updateProductState, aiStep, tempAiData, safeProducts, approvals, selectedBenchId]);
+  }, [isExecuting, executionMode, executeIndex, queueIds, manifestData, batchFetcher.state, updateProductState, aiStep, tempAiData, safeProducts, approvals, selectedBenchId, manualEdits]);
 
   useEffect(() => {
     if (batchFetcher.state === "idle" && batchFetcher.data && batchFetcher.data !== lastProcessedData) {
       setLastProcessedData(batchFetcher.data);
-      const { intent, success, pieceId, productId, message, error, errors, logs, status, finalStatus, titleParse, tab3Data, generated_description, fieldsUpdated, legacyKeysRemoved, verifiedGeoValues, blockedFields, conflicts, readBackVerified, proposedChanges } = batchFetcher.data;
+      const { intent, success, pieceId, productId, message, error, errors, logs, status, finalStatus, titleParse, tab3Data, generated_description, fieldsUpdated, legacyKeysRemoved, verifiedGeoValues, blockedFields, conflicts, readBackVerified, proposedChanges, variantTarget } = batchFetcher.data;
       
       const targetId = pieceId || productId;
       
@@ -817,7 +833,8 @@ export function OperationsMatrixTab({ products }) {
                     conflicts: conflicts || {},
                     readBackVerified,
                     proposedChanges,
-                    completedAt: ts
+                    completedAt: ts,
+                    variantTarget: variantTarget || null
                 }
             }));
             
@@ -954,6 +971,14 @@ export function OperationsMatrixTab({ products }) {
 
   const handleRepairPlanChange = (key, value) => {
     if (!selectedBenchId) return;
+    
+    // Explicitly track human intervention
+    setManualEdits(prev => {
+        const next = { ...prev };
+        if (!next[selectedBenchId]) next[selectedBenchId] = {};
+        next[selectedBenchId][key] = true;
+        return next;
+    });
     
     // Clear previously approved value if the proposal text is modified manually
     setApprovals(prev => {
@@ -1208,7 +1233,7 @@ export function OperationsMatrixTab({ products }) {
               if (meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing") stats.blank++;
               if (meta.fieldStatus === "Proposed" || meta.fieldStatus === "Approved, not saved" || meta.fieldStatus === "Approved, blocked" || meta.fieldStatus === "Pre-approved, not saved" || meta.fieldStatus === "Pre-approved, blocked") stats.proposed++;
               if (meta.isBlockedAction && !HIDDEN_CONTEXT_FIELDS.includes(key)) stats.blocked++;
-              if (PROTECTED_FIELDS.includes(key)) stats.protected++;
+              if (PROTECTED_FIELDS.includes(key) || meta.isOperatorOwned) stats.protected++;
               if (meta.fieldStatus === "Conflict" || meta.fieldStatus === "Degrade" || meta.fieldStatus === "Save Conflict") stats.conflicting++;
 
               if (meta.isActualBlockedProposal) {
@@ -1336,7 +1361,8 @@ ${history ? `Time: ${history.completedAt}
 Status: ${history.status}
 Message: ${history.message}
 Blocked: ${history.blockedFields ? Object.keys(history.blockedFields).length : 0}
-Conflicts: ${history.conflicts ? Object.keys(history.conflicts).length : 0}` : "No repair history for this session."}
+Conflicts: ${history.conflicts ? Object.keys(history.conflicts).length : 0}
+Variant Target: ${history.variantTarget || 'None'}` : "No repair history for this session."}
 
 --- PIN DETAILS ---
 ${pinRows.join("\n")}
