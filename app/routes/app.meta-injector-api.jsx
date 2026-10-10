@@ -7,13 +7,13 @@ const ALLOWED_TAB3_KEYS = [
   "shopify_title", "piece_name", "stone_family", "price", "weight_grams", 
   "shipping_weight_oz", "is_ooak", "dimensions_mm", "cut_and_shape", 
   "surface_finish", "primary_color", "color_pattern", "honest_flaws_and_character", 
-  "bench_notes", "product_format", "primary_use", "jewelry_type", 
+  "bench_notes", "primary_use", "jewelry_type", 
   "primary_medium", "secondary_medium", "setting_ready", "bail_included", 
   "chain_material", "jewelry_finding_type", "mohs_hardness", "specific_gravity", 
   "crystal_system", "fracture_pattern", "cleavage", "luster", "diaphaneity", 
   "mineral_class", "geological_era", "rock_formation", "origin_location", 
   "origin_handle", "collection_name", "collection_location", "origin_story", 
-  "craftsmanship", "poetic_hook", "seo_title", "alt_text", 
+  "seo_title", "alt_text", 
   "google_product_category", "authenticity", "rarity", "generated_description"
 ];
 
@@ -45,8 +45,7 @@ const MASTER_TYPE_MAP = {
   geological_era: "metaobject_reference", "geological-era": "metaobject_reference", rock_composition: "metaobject_reference",
   "rock-composition": "metaobject_reference", rock_formation: "metaobject_reference", "rock-formation": "metaobject_reference",
   chain_link_type: "metaobject_reference", "chain-link-type": "metaobject_reference", jewelry_finding_type: "metaobject_reference",
-  "jewelry-finding-type": "metaobject_reference", product_format: "single_line_text_field", craftsmanship: "single_line_text_field",
-  poetic_hook: "single_line_text_field", google_product_category: "single_line_text_field"
+  "jewelry-finding-type": "metaobject_reference", google_product_category: "single_line_text_field"
 };
 
 const EXPLICIT_METAOBJECT_KEYS = [

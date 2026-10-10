@@ -20,9 +20,6 @@ const SECTIONS = [
       "shopify_title",
       "custom.piece_name",
       "custom.is_ooak",
-      "custom.product_format",
-      "custom.craftsmanship",
-      "custom.poetic_hook",
       "custom.seo_title"
     ]
   },
@@ -96,8 +93,7 @@ const FIELD_LIMITS = {
   "custom.piece_name": 255,
   "custom.bench_notes": 100000,
   "custom.alt_text": 100000,
-  "custom.honest_flaws_and_character": 255,
-  "custom.poetic_hook": 160
+  "custom.honest_flaws_and_character": 255
 };
 
 const PROTECTED_FIELDS = [
@@ -118,9 +114,6 @@ const POLICY_PRE_APPROVED_FIELDS = [
   "custom.alt_text",
   "custom.stone_family",
   "custom.surface_finish",
-  "custom.poetic_hook",
-  "custom.craftsmanship",
-  "custom.product_format",
   "custom.primary_color",
   "custom.color_pattern",
   "custom.honest_flaws_and_character",
@@ -137,6 +130,12 @@ const NATIVE_FIELDS = ["price", "shopify_title"];
 
 // Used strictly for global telemetry tracking to preserve 45-count. Do not render.
 const HIDDEN_CONTEXT_FIELDS = ["custom.origin_story"]; 
+
+const RETIRED_KEYS = [
+  "product_format", "custom.product_format", 
+  "craftsmanship", "custom.craftsmanship", 
+  "poetic_hook", "custom.poetic_hook"
+];
 
 const formatLabel = (key) => {
   const parts = key.split('.');
@@ -620,7 +619,7 @@ export function OperationsMatrixTab({ products }) {
         const safePlan = {};
         Object.keys(manifest.repairPlan).forEach(key => {
             const meta = getFieldMetadata(key, manifest, currentId, approvals);
-            if (!meta.isBlockedAction && !HIDDEN_CONTEXT_FIELDS.includes(key)) {
+            if (!meta.isBlockedAction && !HIDDEN_CONTEXT_FIELDS.includes(key) && !RETIRED_KEYS.includes(key)) {
                 safePlan[key] = manifest.repairPlan[key];
             }
         });
@@ -672,7 +671,6 @@ export function OperationsMatrixTab({ products }) {
             "secondary_medium",
             "jewelry_finding_type",
             "primary_use",
-            "product_format",
             "jewelry_type"
         ];
         
@@ -735,6 +733,7 @@ export function OperationsMatrixTab({ products }) {
 
             // AI Overwrite Shield evaluates current operator edits synchronously
             const safeApply = (keyName, aiValue) => {
+                if (RETIRED_KEYS.includes(keyName)) return; // Shield against retired keys staging
                 if (manualEdits[currentId] && manualEdits[currentId][keyName] === true) {
                     return; // Preserve explicit operator edit
                 }
@@ -1017,7 +1016,7 @@ export function OperationsMatrixTab({ products }) {
     const safePlan = {};
     Object.keys(manifest.repairPlan).forEach(key => {
         const meta = getFieldMetadata(key, manifest, selectedBenchId, approvals);
-        if (!meta.isBlockedAction && !HIDDEN_CONTEXT_FIELDS.includes(key)) {
+        if (!meta.isBlockedAction && !HIDDEN_CONTEXT_FIELDS.includes(key) && !RETIRED_KEYS.includes(key)) {
             safePlan[key] = manifest.repairPlan[key];
         }
     });
