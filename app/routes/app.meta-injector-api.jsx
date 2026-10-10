@@ -392,6 +392,9 @@ export const action = async ({ request }) => {
              blockedFields[fullKey] = `Requires metaobject reference ID, got text: ${resolvedValue}`;
              return;
           }
+          if (resolvedType === "list.metaobject_reference" && !String(resolvedValue).startsWith("[")) {
+             resolvedValue = JSON.stringify([resolvedValue]);
+          }
         } else if (resolvedType === "multi_line_text_field") {
           if (resolvedValue.length > 10000) {
              blockedFields[fullKey] = `Value exceeds 10,000 characters limit`;
