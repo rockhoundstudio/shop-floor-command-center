@@ -354,7 +354,7 @@ ${collectionsMenu || "No live collections found."}
 
 INSTRUCTIONS:
 1. The Origin segment ("${segment2}") is the AUTHORITY. Do NOT reclassify or override it. Set 'origin_location' to the clean geographic name derived from "${segment2}" — strip prefixes like "Shop Lore:", "The", or "Collection". Expand abbreviations (e.g. "cda" -> "North Fork Coeur d'Alene", "yakima" -> "Yakima River Canyon"). Match 'collection_name' and 'collection_location' to the live store entry that corresponds to "${segment2}". Never substitute a vendor name or "The Shopped Rock" unless "${segment2}" explicitly contains a vendor name.
-2. Resolve 'origin_handle' directly from the Live Store Directory based on the origin. 
+​2. Resolve 'origin_handle' directly from the Live Store Directory based on the origin. 
 3. 'stone_family' must be exactly one of: ${stonePicklist} - match only the mineral/stone type word from the title. Ignore all color, pattern, cut, and modifier words. Pick the closest entry from the list. If the input is 'Botswana Agate Round', output 'Botswana Agate'.
 
 Return valid JSON with these exact keys: stone_family, piece_name, origin_handle, origin_location, collection_name, collection_location, seo_title. Generate a keyword-rich seo_title for Google using the family and keywords like "Handcrafted" or "OOAK Lapidary Art". No markup. No extra keys.`;
@@ -390,7 +390,7 @@ RETURN THESE EXACT JSON KEYS ONLY. DO NOT GENERATE A PRODUCT DESCRIPTION.
 - setting_ready: Look closely at the mounting. "Bezel Setting - Ready to Wear", "Wire Wrapped - Ready to Wear", or "None" for loose stones.
 - bail_included: e.g. "Silver Plated Pinch Bail", "Integrated Bezel Bail", or "None".
 - jewelry_finding_type: Identify the finding or setting. INVENTORY OPTIONS: "Silver Plated Pinch Bail", "Glue-On Bail", "Assorted Glue-In Setting". Do not describe them as "cheap". Do not infer hidden drilling, pinning, or glue from generic metal shapes alone. Preserve explicitly supplied construction descriptions. Compatible with bail_included (never force to None merely because a bail is included). Do not invent details if unknown. Do not silently leave blank if clearly supported by image.
-- chain_material: Identify the visible chain or cord. INVENTORY OPTIONS: "Silver Plated Snake Chain", "Gold Plated Snake Chain". Do not mislabel a visible cord as a snake chain (use "Black Cord", etc.). Do not infer plating from color alone. Distinguish clearly absent hardware ("None") from hardware out of view. Do not silently leave blank if clearly supported by image.
+- chain_material: Identify the visible chain or cord. INVENTORY OPTIONS: "Cord", "Silver Plated Snake Chain", "Gold Plated Snake Chain". Do not mislabel a visible cord as a snake chain (use "Black Cord", etc.). Do not infer plating from color alone. Distinguish clearly absent hardware ("None") from hardware out of view. Do not silently leave blank if clearly supported by image.
 - alt_text: Descriptive alt text (max 125 chars). Use mineral name. No visual guessing.
 - found_object: "Yes" if field-collected, "No" if shopped/imported.
 - seo_title: Max 70 chars. Natural, descriptive wording based on supported facts: Piece name, stone description/family, finished product format, craftsmanship, and clean origin (e.g., use "Yakima River Canyon" not "Yakima Canyon" or "Yakima River"). Example: "The Catalyst | Handcrafted Green Jasper Pendant from Yakima River Canyon". Include "Handcrafted" only when supported. Do not use generic "OOAK Lapidary Art" if specific details are available. No prices, quotes, HTML, or keyword stuffing. Shorten intelligently if necessary.
@@ -547,7 +547,7 @@ function buildMasterVisionPrompt({ pagesMenu, collectionsMenu, stoneFamily, deri
 - jewelry_finding_type: Identify the finding or setting. INVENTORY OPTIONS: "Silver Plated Pinch Bail", "Glue-On Bail", "Assorted Glue-In Setting". Do not describe them as "cheap". Do not infer hidden drilling, pinning, or glue from generic metal shapes alone. Preserve explicitly supplied construction descriptions. Compatible with bail_included (never force to None merely because a bail is included). Do not invent details if unknown. Do not silently leave blank if clearly supported by image.
 - alt_text: Descriptive, max 125 chars.
 - found_object: Yes/No
-- chain_material: Identify the visible chain or cord. INVENTORY OPTIONS: "Silver Plated Snake Chain", "Gold Plated Snake Chain". Do not mislabel a visible cord as a snake chain (use "Black Cord", etc.). Do not infer plating from color alone. Distinguish clearly absent hardware ("None") from hardware out of view. Do not silently leave blank if clearly supported by image.
+- chain_material: Identify the visible chain or cord. INVENTORY OPTIONS: "Cord", "Silver Plated Snake Chain", "Gold Plated Snake Chain". Do not mislabel a visible cord as a snake chain (use "Black Cord", etc.). Do not infer plating from color alone. Distinguish clearly absent hardware ("None") from hardware out of view. Do not silently leave blank if clearly supported by image.
 - seo_title: Max 70 chars. Natural, descriptive wording based on supported facts: Piece name, stone description/family, finished product format, craftsmanship, and clean origin (e.g., use "Yakima River Canyon" not "Yakima Canyon" or "Yakima River"). Example: "The Catalyst | Handcrafted Green Jasper Pendant from Yakima River Canyon". Include "Handcrafted" only when supported. Do not use generic "OOAK Lapidary Art" if specific details are available. No prices, quotes, HTML, or keyword stuffing. Shorten intelligently if necessary.
 - generated_description: Write in Bob's plain, honest voice (past tense). No salesy language, poetic geology, or grand claims such as "the earth remembering itself". Do not repeat physical details between paragraphs. Janyce does the final shine on ALL stones; retain appropriate credit. Short sentences. 7-BLOCK FORMAT:
   1. Stone Description: Honest flaws, finish, flash. Lead with specific observations.
@@ -559,7 +559,7 @@ function buildMasterVisionPrompt({ pagesMenu, collectionsMenu, stoneFamily, deri
   7. Dwell Buttons:
 ${dwellButtonsHTML}
 
-FULL ORIGIN STORY (CRITICAL LORE FIREWALL - READ CAREFULLY):
+FULL ORIGIN STORY (CRITICAL LORE FIREWALL - READ carefully):
 ${originStory}
 `;
 }
@@ -587,7 +587,7 @@ ${currentDataStr || "- No explicit data provided."}
 
 CRITICAL RULES FOR TAB 3:
 1. Explicit operator-provided corrections take priority over image inference and stale product data.
-2. If no explicit correction is supplied, preserve a nonblank current value exactly. Preserve finding details exactly (e.g., keep "Drilled stone with a pinned pinch bail").
+​2. If no explicit correction is supplied, preserve a nonblank current value exactly. Preserve finding details exactly (e.g., keep "Drilled stone with a pinned pinch bail").
 3. Never generate or propose a shopify_title or price. These are manual.
 4. Do not infer jewelry, chain material, cord, bail, wire wrapping, or readiness from an image when the source data doesn't explicitly establish it. Leave uncertain values unresolved using the existing omit convention.
 5. Treat origin_story as hidden, read-only context from the existing origin page. Do not generate or save an origin story. Use the page only for supported metadata.
@@ -595,7 +595,7 @@ CRITICAL RULES FOR TAB 3:
 7. Do not invent details. Leave unknown fields entirely unset.
 8. If the current data establishes the piece is a pendant or finished jewelry (e.g., jewelry_type is "Pendant" or finding details are present), the product_format MUST be "Pendant" or similar finished form.
 
-Return ONLY a JSON object. OMIT any keys if you cannot determine the value supported by evidence (do not send null or empty strings). DO NOT include "jewelry_type", "origin_story", "price", "shopify_title", "weight_grams", "shipping_weight_oz", or "generated_description".
+Return ONLY a JSON object. OMIT any keys if you cannot determine the value supported by evidence (do not send null or empty strings). DO NOT include "jewelry_type", "origin_story", "price", "shopify_title", "weight_grams", "shipping_weight_oz", "generated_description", or "necklace_design".
 
 Potential JSON Keys to evaluate and propose if blank:
 - piece_name: The name of the piece.
@@ -629,7 +629,7 @@ Potential JSON Keys to evaluate and propose if blank:
 - secondary_medium: The setting or finding.
 - setting_ready: "Bezel Setting - Ready to Wear", "Wire Wrapped - Ready to Wear", "None".
 - bail_included: e.g., "Silver Plated Pinch Bail", "None".
-- chain_material: Identify the visible chain or cord. INVENTORY OPTIONS: "Silver Plated Snake Chain", "Gold Plated Snake Chain". Do not mislabel a visible cord as a snake chain (use "Black Cord", etc.). Do not infer plating from color alone. Distinguish clearly absent hardware from hardware out of view. Do not silently leave blank if clearly supported by image.
+- chain_material: Identify the visible chain or cord. INVENTORY OPTIONS: "Cord", "Silver Plated Snake Chain", "Gold Plated Snake Chain". Do not mislabel a visible cord as a snake chain (use "Black Cord", etc.). Do not infer plating from color alone. Distinguish clearly absent hardware from hardware out of view. Do not silently leave blank if clearly supported by image.
 - jewelry_finding_type: Identify the finding or setting. INVENTORY OPTIONS: "Silver Plated Pinch Bail", "Glue-On Bail", "Assorted Glue-In Setting". Do not describe them as "cheap". Do not infer hidden drilling, pinning, or glue from generic metal shapes alone. Use explicitly provided construction details if available. Compatible with bail_included. Do not invent details if unknown. Do not silently leave blank if clearly supported by image.
 - google_product_category: Taxonomy path.
 - authenticity: Authentic, Lab-Created.
@@ -699,9 +699,9 @@ export const action = async ({ request }) => {
           condition: "new",
           google_product_category: "Apparel & Accessories > Jewelry"
         });
-        return Response.json({ success: true, intent: "titleParse", titleParse: finalParse });
+        return Response.json({ success: true, intent: "titleParse", pieceId: body.get("pieceId"), titleParse: finalParse });
       }
-      return Response.json({ success: false, intent: "titleParse", error: `Title parse error: ${geminiRes.status}` }, { status: 500 });
+      return Response.json({ success: false, intent: "titleParse", pieceId: body.get("pieceId"), error: `Title parse error: ${geminiRes.status}` }, { status: 500 });
     }
 
     if (intent === "visionScan" || intent === "fullRescan" || intent === "tab2AutoFill") {
@@ -768,9 +768,9 @@ export const action = async ({ request }) => {
           is_ooak: "Yes", age_group: "adult", target_gender: "Unisex", condition: "new",
           google_product_category: "Apparel & Accessories > Jewelry"
         });
-        return Response.json({ success: true, intent, tab2Data: payload });
+        return Response.json({ success: true, intent, pieceId, tab2Data: payload });
       }
-      return Response.json({ success: false, intent, error: "Vision API Failure" });
+      return Response.json({ success: false, intent, pieceId, error: "Vision API Failure" });
     }
 
     if (intent === "tab3FullRescan") {
@@ -904,7 +904,7 @@ export const action = async ({ request }) => {
         const protectedKeys = [
           "color_pattern", "dimensions_mm", "honest_flaws_and_character", "surface_finish", 
           "jewelry_finding_type", "bail_included", "chain_material", 
-          "secondary_medium", "primary_use", "product_format", "jewelry_type"
+          "secondary_medium", "primary_use", "product_format", "jewelry_type", "necklace_design"
         ];
 
         const currentData = Object.fromEntries(
@@ -977,16 +977,18 @@ export const action = async ({ request }) => {
         return Response.json({ 
             success: true, 
             intent, 
+            pieceId,
             tab3Data: finalPayload, 
             verifiedGeoValues,
             imageAlts: validatedImageAlts,
             altValidationErrors: altValidationErrors.length > 0 ? altValidationErrors : undefined
         });
       }
-      return Response.json({ success: false, intent, error: "Vision API Failure (Tab 3)" });
+      return Response.json({ success: false, intent, pieceId, error: "Vision API Failure (Tab 3)" });
     }
 
     if (intent === "generateDescription") {
+      const pieceId = body.get("pieceId");
       const sharedFields = JSON.parse(body.get("sharedFields") || "{}");
       const pieceDataStr = body.get("pieceData");
       let promptText = "";
@@ -1106,12 +1108,12 @@ export const action = async ({ request }) => {
             const parsed = JSON.parse(cleanJson.slice(cleanJson.indexOf("{"), cleanJson.lastIndexOf("}") + 1));
             
             if (!parsed.generated_description || typeof parsed.generated_description !== "string" || parsed.generated_description.trim() === "") {
-               return Response.json({ success: false, intent, error: "AI failed to return the expected generated_description string property." });
+               return Response.json({ success: false, intent, pieceId, error: "AI failed to return the expected generated_description string property." });
             }
             
             generatedDescription = parsed.generated_description;
         } catch (e) {
-             return Response.json({ success: false, intent, error: "AI response failed strict JSON parsing or wrapper validation." });
+             return Response.json({ success: false, intent, pieceId, error: "AI response failed strict JSON parsing or wrapper validation." });
         }
         
         // --- DETERMINISTIC DWELL BUTTON APPENDING ---
@@ -1176,9 +1178,9 @@ export const action = async ({ request }) => {
             }
         }
 
-        return Response.json({ success: true, intent, generated_description: formatDyslexiaText(generatedDescription) });
+        return Response.json({ success: true, intent, pieceId, generated_description: formatDyslexiaText(generatedDescription) });
       }
-      return Response.json({ success: false, intent, error: "Description failed" });
+      return Response.json({ success: false, intent, pieceId, error: "Description failed" });
     }
 
     return Response.json({ success: false, intent, error: "Unhandled Autofiil Intent" });
