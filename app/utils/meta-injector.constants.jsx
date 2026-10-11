@@ -1,32 +1,32 @@
 // ==========================================================================
 // ROCKHOUND STUDIO — BENCH CONSTANTS & DROPDOWNS
 // File: app/utils/meta-injector.constants.jsx
-// (100% Original Architecture Preserved + 62-Field Standard Centralized)
+// (100% Original Architecture Preserved + Standard Centralized)
 // ==========================================================================
 
-// 🟢 MASTER 62-FIELD TARGET ARRAY (Centralized Source of Truth)
+// 🟢 MASTER TARGET ARRAY (Centralized Source of Truth for Metafield Saves)
+// Note: primary_use is excluded here because it handles local UI routing, not metafield saves.
 export const TARGET_KEYS = [
-  "official_name", "stone_story", "cut_type", "stone_shape", "surface_finish",
-  "treatment_status", "primary_color", "secondary_colors", "bench_notes",
+  "official_name", "stone_story", "cut_type", "surface_finish",
+  "treatment_status", "primary_color", "secondary_colors",
   "rock_composition", "character_marks", "dimensions_mm", "mohs_hardness",
   "specific_gravity", "crystal_system", "luster", "cleavage", "fracture_pattern",
   "diaphaneity", "tenacity", "origin_story", "stone_family", "piece_name",
   "origin_handle", "origin_page_handle", "origin_location", "shopify_title",
   "collection_name", "collection_location", "seo_title", "authenticity",
-  "rarity", "secondary_medium", "cut_and_shape", "jewelry_type", "necklace_design",
+  "rarity", "secondary_medium", "jewelry_type", "necklace_design",
   "jewelry_finding_type", "color_pattern", "material", "generated_description",
-  "color", "primary_use", "primary_medium", "wire_material", "setting_ready",
+  "primary_medium", "setting_ready",
   "bail_included", "chain_material", "geological_era", "mineral_class",
   "rock_formation", "geological_age", "treated", "is_ooak", "age_group",
   "target_gender", "condition", "google_product_category", "alt_text",
-  "weight_grams", "shipping_weight_oz", "price", "handcrafted_by", "rescued_by",
-  "honest_flaws_and_character", "artist_notes", "custom_product", "found_object",
+  "weight_grams", "shipping_weight_oz", "price", "rescued_by",
+  "honest_flaws_and_character", "custom_product", "found_object",
   "chain_link_type"
 ];
 
 // NEW: Added safely for Tab 1 Auto-Pilot (Does not break existing tabs)
 export const STUDIO_DEFAULTS = {
-  handcrafted_by: "Bob & Janyce, Rockhound Studio",
   rescued_by: "Bob and Janyce",
   is_ooak: "true",
   treated: "Untreated — Natural",
@@ -40,14 +40,10 @@ export const ROCKHOUND_FIELDS = [
   { key: "official_name", label: "Official Name", type: "single_line_text_field" },
   { key: "primary_medium", label: "Primary Medium", type: "single_line_text_field" },
   { key: "secondary_medium", label: "Secondary Medium", type: "single_line_text_field" },
-  { key: "handcrafted_by", label: "Handcrafted By", type: "single_line_text_field" },
   { key: "material", label: "Material", type: "single_line_text_field" },
   { key: "stone_family", label: "Stone Family", type: "select" },
-  { key: "color", label: "Color", type: "single_line_text_field" },
   { key: "primary_color", label: "Primary Color", type: "single_line_text_field" },
   { key: "secondary_colors", label: "Secondary Colors", type: "single_line_text_field" },
-  { key: "cut_and_shape", label: "Cut and Shape", type: "single_line_text_field" },
-  { key: "stone_shape", label: "Stone Shape", type: "single_line_text_field" },
   { key: "cut_type", label: "Cut Type", type: "single_line_text_field" },
   { key: "surface_finish", label: "Surface Finish", isDropdown: true },
   { key: "dimensions_mm", label: "Dimensions (mm)", type: "single_line_text_field" },
@@ -64,10 +60,7 @@ export const ROCKHOUND_FIELDS = [
   { key: "treated", label: "Treated", isDropdown: true },
   { key: "treatment_status", label: "Treatment Status", type: "single_line_text_field" },
   { key: "found_object", label: "Found Object", isDropdown: true },
-  { key: "wire_material", label: "Wire Material", isDropdown: true },
   { key: "chain_material", label: "Chain Material", type: "single_line_text_field" },
-  { key: "artist_notes", label: "Artist Notes", type: "single_line_text_field", multiline: true },
-  { key: "bench_notes", label: "Bench Notes", type: "single_line_text_field", multiline: true },
   { key: "character_marks", label: "Character Marks", type: "single_line_text_field", multiline: true },
   { key: "honest_flaws_and_character", label: "Honest Flaws & Character", type: "single_line_text_field", multiline: true },
   { key: "origin_handle", label: "Origin Handle", type: "single_line_text_field" },
@@ -80,34 +73,34 @@ export const ROCKHOUND_FIELDS = [
 
 export const CHANNEL_REQUIREMENTS = {
   online_store: [
-    "piece_name", "primary_medium", "handcrafted_by", "is_ooak",
-    "treated", "material", "stone_family", "color", "cut_and_shape",
+    "piece_name", "primary_medium", "is_ooak",
+    "treated", "material", "stone_family",
     "surface_finish", "dimensions_mm", "weight_grams", "origin_story",
     "collection_name", "origin_handle", "primary_use"
   ],
   point_of_sale: [
-    "piece_name", "primary_medium", "material", "color", "price",
+    "piece_name", "primary_medium", "material", "price",
     "weight_grams", "dimensions_mm"
   ],
   shop_app: [
-    "piece_name", "primary_medium", "material", "stone_family", "color",
-    "surface_finish", "origin_story", "primary_use", "handcrafted_by",
+    "piece_name", "primary_medium", "material", "stone_family",
+    "surface_finish", "origin_story", "primary_use",
     "is_ooak", "treated"
   ],
   facebook_instagram: [
-    "piece_name", "primary_medium", "material", "color", "price",
-    "primary_use", "handcrafted_by", "is_ooak", "treated",
+    "piece_name", "primary_medium", "material", "price",
+    "primary_use", "is_ooak", "treated",
     "surface_finish", "dimensions_mm", "weight_grams"
   ],
   google_youtube: [
-    "piece_name", "primary_medium", "material", "color", "price",
-    "primary_use", "setting_ready", "bail_included", "wire_material",
-    "handcrafted_by", "is_ooak", "treated", "surface_finish",
+    "piece_name", "primary_medium", "material", "price",
+    "primary_use", "setting_ready", "bail_included",
+    "is_ooak", "treated", "surface_finish",
     "dimensions_mm", "weight_grams", "found_object", "condition",
     "age_group", "target_gender", "authenticity", "rarity", "color_pattern"
   ],
   inbox: [
-    "piece_name", "primary_medium", "material", "color", "price"
+    "piece_name", "primary_medium", "material", "price"
   ]
 };
 
@@ -120,12 +113,12 @@ export function getFieldStatus(key, value, context = {}) {
 
   const JEWELRY_ONLY_FIELDS = [
     "jewelry_type", "necklace_design", "chain_link_type", "chain_material",
-    "jewelry_finding_type", "wire_material", "bail_included", "setting_ready"
+    "jewelry_finding_type", "bail_included", "setting_ready"
   ];
 
   const ALWAYS_OPTIONAL_FIELDS = [
-    "honest_flaws_and_character", "character_marks", "artist_notes", "bench_notes",
-    "stone_shape", "secondary_medium", "collection_date",
+    "honest_flaws_and_character", "character_marks",
+    "secondary_medium", "collection_date",
     "stone_story", "custom_product", "trip_or_series", "alt_text"
   ];
 
@@ -304,28 +297,6 @@ DROPDOWN_OPTIONS.surface_finish = [
   { label: "Tumbled", value: "Tumbled" }
 ];
 
-DROPDOWN_OPTIONS.cut_and_shape = [
-  { label: "Freeform", value: "Freeform" },
-  { label: "Heart", value: "Heart" },
-  { label: "Marquise", value: "Marquise" },
-  { label: "Oval Cabochon", value: "Oval Cabochon" },
-  { label: "Pear", value: "Pear" },
-  { label: "Round Cabochon", value: "Round Cabochon" },
-  { label: "Cabochon", value: "Cabochon" },
-  { label: "Standard Cabochon", value: "Standard Cabochon" },
-  { label: "Surfboard", value: "Surfboard" },
-  { label: "Teardrop", value: "Teardrop" },
-  { label: "Trillion", value: "Trillion" },
-  { label: "Slab", value: "Slab" },
-  { label: "Rough", value: "Rough" }
-];
-
-DROPDOWN_OPTIONS.handcrafted_by = [
-  { label: "Bob & Janyce, Rockhound Studio", value: "Bob & Janyce, Rockhound Studio" },
-  { label: "Robert", value: "Robert" },
-  { label: "Janyce", value: "Janyce" }
-];
-
 DROPDOWN_OPTIONS.is_ooak = [
   { label: "Yes — one of a kind", value: "true" },
   { label: "No", value: "No" }
@@ -408,7 +379,7 @@ export function normalizeDropdownValue(key, rawValue) {
   return match ? match.value : String(rawValue);
 }
 
-// 🟢 MAPPED ALL 62 FIELDS TO UI GROUPS
+// 🟢 MAPPED FIELDS TO UI GROUPS
 export const FULL_META_GROUPS = [
   {
     heading: "Core Ignition & Lore",
@@ -425,7 +396,6 @@ export const FULL_META_GROUPS = [
       { key: "collection_name", label: "Collection Name", type: "text" },
       { key: "collection_location", label: "Collection Location", type: "text" },
       { key: "is_ooak", label: "Is One of a Kind", type: "text" },
-      { key: "handcrafted_by", label: "Handcrafted By", type: "text" },
       { key: "rescued_by", label: "Rescued By", type: "text" },
       { key: "origin_story", label: "Origin Story", type: "text", multiline: true },
       { key: "stone_story", label: "Stone Story", type: "text", multiline: true },
@@ -440,11 +410,8 @@ export const FULL_META_GROUPS = [
       { key: "weight_grams", label: "Weight (grams)", type: "text" },
       { key: "shipping_weight_oz", label: "Shipping Weight (oz)", type: "text" },
       { key: "price", label: "Price", type: "text" },
-      { key: "stone_shape", label: "Stone Shape", type: "text" },
       { key: "cut_type", label: "Cut Type", type: "text" },
-      { key: "cut_and_shape", label: "Cut and Shape", type: "text" },
       { key: "surface_finish", label: "Surface Finish", type: "text" },
-      { key: "color", label: "Color", type: "text" },
       { key: "primary_color", label: "Primary Color", type: "text" },
       { key: "secondary_colors", label: "Secondary Colors", type: "text" },
       { key: "color_pattern", label: "Color Pattern", type: "text" },
@@ -452,8 +419,6 @@ export const FULL_META_GROUPS = [
       { key: "treated", label: "Treated", type: "text" },
       { key: "character_marks", label: "Character Marks", type: "text", multiline: true },
       { key: "honest_flaws_and_character", label: "Honest Flaws and Character", type: "text", multiline: true },
-      { key: "bench_notes", label: "Bench Notes", type: "text", multiline: true },
-      { key: "artist_notes", label: "Artist Notes", type: "text", multiline: true },
       { key: "alt_text", label: "Alt Text", type: "text" }
     ]
   },
@@ -487,7 +452,6 @@ export const FULL_META_GROUPS = [
       { key: "jewelry_type", label: "Jewelry Type", type: "text" },
       { key: "necklace_design", label: "Necklace Design", type: "text" },
       { key: "setting_ready", label: "Setting Ready", type: "text" },
-      { key: "wire_material", label: "Wire Material", type: "text" },
       { key: "bail_included", label: "Bail Included", type: "text" },
       { key: "chain_material", label: "Chain Material", type: "text" },
       { key: "chain_link_type", label: "Chain Link Type", type: "text" },
@@ -523,7 +487,6 @@ export const METAFIELD_CONFIG = [
   { namespace: "custom", key: "collection_name", type: "single_line_text_field", label: "Collection Name", colorGroup: "green", options: [] },
   { namespace: "custom", key: "collection_location", type: "single_line_text_field", label: "Collection Location", colorGroup: "green", options: [] },
   { namespace: "custom", key: "is_ooak", type: "single_line_text_field", label: "Is One of a Kind", colorGroup: "green", options: DROPDOWN_OPTIONS.is_ooak },
-  { namespace: "custom", key: "handcrafted_by", type: "single_line_text_field", label: "Handcrafted By", colorGroup: "green", options: DROPDOWN_OPTIONS.handcrafted_by },
   { namespace: "custom", key: "rescued_by", type: "single_line_text_field", label: "Rescued By", colorGroup: "green", options: [] },
   { namespace: "custom", key: "origin_story", type: "multi_line_text_field", label: "Origin Story", colorGroup: "green", options: [] },
   { namespace: "custom", key: "stone_story", type: "multi_line_text_field", label: "Stone Story", colorGroup: "green", options: [] },
@@ -534,11 +497,8 @@ export const METAFIELD_CONFIG = [
   { namespace: "custom", key: "weight_grams", type: "single_line_text_field", label: "Weight (grams)", colorGroup: "blue", options: [] },
   { namespace: "custom", key: "shipping_weight_oz", type: "single_line_text_field", label: "Shipping Weight (oz)", colorGroup: "blue", options: [] },
   { namespace: "custom", key: "price", type: "single_line_text_field", label: "Price", colorGroup: "blue", options: [] },
-  { namespace: "custom", key: "stone_shape", type: "single_line_text_field", label: "Stone Shape", colorGroup: "blue", options: [] },
   { namespace: "custom", key: "cut_type", type: "single_line_text_field", label: "Cut Type", colorGroup: "blue", options: [] },
-  { namespace: "custom", key: "cut_and_shape", type: "single_line_text_field", label: "Cut and Shape", colorGroup: "blue", options: DROPDOWN_OPTIONS.cut_and_shape },
   { namespace: "custom", key: "surface_finish", type: "single_line_text_field", label: "Surface Finish", colorGroup: "blue", options: DROPDOWN_OPTIONS.surface_finish },
-  { namespace: "custom", key: "color", type: "text", label: "Color", colorGroup: "blue", options: [] },
   { namespace: "custom", key: "primary_color", type: "single_line_text_field", label: "Primary Color", colorGroup: "blue", options: [] },
   { namespace: "custom", key: "secondary_colors", type: "single_line_text_field", label: "Secondary Colors", colorGroup: "blue", options: [] },
   { namespace: "custom", key: "color_pattern", type: "single_line_text_field", label: "Color Pattern", colorGroup: "blue", options: [] },
@@ -546,8 +506,6 @@ export const METAFIELD_CONFIG = [
   { namespace: "custom", key: "treated", type: "single_line_text_field", label: "Treated", colorGroup: "blue", options: DROPDOWN_OPTIONS.treated },
   { namespace: "custom", key: "character_marks", type: "multi_line_text_field", label: "Character Marks", colorGroup: "blue", options: [] },
   { namespace: "custom", key: "honest_flaws_and_character", type: "multi_line_text_field", label: "Honest Flaws and Character", colorGroup: "blue", options: [] },
-  { namespace: "custom", key: "bench_notes", type: "multi_line_text_field", label: "Bench Notes", colorGroup: "blue", options: [] },
-  { namespace: "custom", key: "artist_notes", type: "multi_line_text_field", label: "Artist Notes", colorGroup: "blue", options: [] },
   { namespace: "custom", key: "alt_text", type: "single_line_text_field", label: "Alt Text", colorGroup: "blue", options: [] },
 
   // 🧪 GEO-VAULT (Teal)
@@ -566,14 +524,12 @@ export const METAFIELD_CONFIG = [
   { namespace: "custom", key: "geological_age", type: "single_line_text_field", label: "Geological Age", colorGroup: "teal", options: [] },
 
   // 🟣 JEWELRY & HARDWARE
-  { namespace: "custom", key: "primary_use", type: "single_line_text_field", label: "Primary Use", colorGroup: "purple", options: DROPDOWN_OPTIONS.primary_use },
   { namespace: "custom", key: "primary_medium", type: "single_line_text_field", label: "Primary Medium", colorGroup: "purple", options: [] },
   { namespace: "custom", key: "secondary_medium", type: "single_line_text_field", label: "Secondary Medium", colorGroup: "purple", options: [] },
   { namespace: "custom", key: "material", type: "single_line_text_field", label: "Material", colorGroup: "purple", options: [] },
   { namespace: "custom", key: "jewelry_type", type: "single_line_text_field", label: "Jewelry Type", colorGroup: "purple", options: [] },
   { namespace: "custom", key: "necklace_design", type: "single_line_text_field", label: "Necklace Design", colorGroup: "purple", options: [] },
   { namespace: "custom", key: "setting_ready", type: "single_line_text_field", label: "Setting Ready", colorGroup: "purple", options: DROPDOWN_OPTIONS.setting_ready },
-  { namespace: "custom", key: "wire_material", type: "single_line_text_field", label: "Wire Material", colorGroup: "purple", options: [] },
   { namespace: "custom", key: "bail_included", type: "single_line_text_field", label: "Bail Included", colorGroup: "purple", options: DROPDOWN_OPTIONS.bail_included },
   { namespace: "custom", key: "chain_material", type: "single_line_text_field", label: "Chain Material", colorGroup: "purple", options: DROPDOWN_OPTIONS.chain_material },
   { namespace: "custom", key: "chain_link_type", type: "single_line_text_field", label: "Chain Link Type", colorGroup: "purple", options: [] },
@@ -612,9 +568,6 @@ export function getLabelForValue(value, metaobjectHandles = {}) {
 export const DEFAULT_DROPDOWNS = {
   stone_family: "",
   surface_finish: "",
-  color: "",
-  cut_and_shape: "",
-  handcrafted_by: "",
   is_ooak: "",
   treated: "",
   found_object: "",
@@ -622,7 +575,6 @@ export const DEFAULT_DROPDOWNS = {
   setting_ready: "",
   bail_included: "",
   chain_material: "",
-  wire_material: "",
   collection_location: "",
   product_type: ""
 };

@@ -5,9 +5,9 @@ import { executeAutofill } from "../utils/meta-injector.autofill.server.jsx";
 
 const ALLOWED_TAB3_KEYS = [
   "shopify_title", "piece_name", "stone_family", "price", "weight_grams", 
-  "shipping_weight_oz", "is_ooak", "dimensions_mm", "cut_and_shape", 
+  "shipping_weight_oz", "is_ooak", "dimensions_mm", 
   "surface_finish", "primary_color", "color_pattern", "honest_flaws_and_character", 
-  "bench_notes", "primary_use", "jewelry_type", 
+  "jewelry_type", 
   "primary_medium", "secondary_medium", "setting_ready", "bail_included", 
   "chain_material", "jewelry_finding_type", "mohs_hardness", "specific_gravity", 
   "crystal_system", "fracture_pattern", "cleavage", "luster", "diaphaneity", 
@@ -17,25 +17,27 @@ const ALLOWED_TAB3_KEYS = [
   "google_product_category", "authenticity", "rarity", "generated_description"
 ];
 
+const RETIRED_KEYS = [
+  "artist_notes", "bench_notes", "handcrafted_by", "color",
+  "cut_and_shape", "stone_shape", "wire_material", "primary_use"
+];
+
 const MASTER_TYPE_MAP = {
   rescued_by: "single_line_text_field", origin_location: "single_line_text_field", geological_age: "single_line_text_field",
   mohs_hardness: "single_line_text_field", official_name: "single_line_text_field", luster: "single_line_text_field",
   specific_gravity: "single_line_text_field", fracture_pattern: "single_line_text_field", cleavage: "single_line_text_field",
   tenacity: "single_line_text_field", primary_color: "single_line_text_field", diaphaneity: "single_line_text_field",
   character_marks: "single_line_text_field", dimensions_mm: "single_line_text_field", cut_type: "single_line_text_field",
-  bench_notes: "multi_line_text_field", stone_shape: "single_line_text_field", surface_finish: "single_line_text_field",
-  treatment_status: "single_line_text_field", secondary_colors: "single_line_text_field", base_stone_type: "single_line_text_field",
-  hardness: "single_line_text_field", primary_medium: "single_line_text_field", piece_name: "single_line_text_field",
-  stone_family: "single_line_text_field", collection_name: "single_line_text_field", collection_location: "single_line_text_field",
-  origin_handle: "single_line_text_field", origin_page_handle: "single_line_text_field", cut_and_shape: "single_line_text_field",
-  primary_use: "single_line_text_field", handcrafted_by: "single_line_text_field", alt_text: "single_line_text_field",
-  is_ooak: "single_line_text_field", found_object: "single_line_text_field", custom_product: "single_line_text_field",
-  color: "single_line_text_field", setting_ready: "single_line_text_field", bail_included: "single_line_text_field",
-  wire_material: "single_line_text_field", chain_material: "single_line_text_field", seo_title: "single_line_text_field",
-  secondary_medium: "single_line_text_field", treated: "single_line_text_field", weight_grams: "number_decimal",
-  shipping_weight_oz: "number_decimal", price: "number_decimal", origin_story: "multi_line_text_field",
-  honest_flaws: "single_line_text_field", honest_flaws_and_character: "multi_line_text_field", generated_description: "multi_line_text_field",
-  artist_notes: "multi_line_text_field", color_pattern: "list.metaobject_reference", "color-pattern": "list.metaobject_reference",
+  surface_finish: "single_line_text_field", treatment_status: "single_line_text_field", secondary_colors: "single_line_text_field",
+  base_stone_type: "single_line_text_field", hardness: "single_line_text_field", primary_medium: "single_line_text_field",
+  piece_name: "single_line_text_field", stone_family: "single_line_text_field", collection_name: "single_line_text_field",
+  collection_location: "single_line_text_field", origin_handle: "single_line_text_field", origin_page_handle: "single_line_text_field",
+  alt_text: "single_line_text_field", is_ooak: "single_line_text_field", found_object: "single_line_text_field",
+  custom_product: "single_line_text_field", setting_ready: "single_line_text_field", bail_included: "single_line_text_field",
+  chain_material: "single_line_text_field", seo_title: "single_line_text_field", secondary_medium: "single_line_text_field",
+  treated: "single_line_text_field", weight_grams: "number_decimal", shipping_weight_oz: "number_decimal", price: "number_decimal",
+  origin_story: "multi_line_text_field", honest_flaws: "single_line_text_field", honest_flaws_and_character: "multi_line_text_field",
+  generated_description: "multi_line_text_field", color_pattern: "list.metaobject_reference", "color-pattern": "list.metaobject_reference",
   material: "metaobject_reference", jewelry_material: "metaobject_reference", "jewelry-material": "metaobject_reference",
   age_group: "metaobject_reference", "age-group": "metaobject_reference", jewelry_type: "metaobject_reference",
   "jewelry-type": "metaobject_reference", target_gender: "metaobject_reference", "target-gender": "metaobject_reference",
@@ -323,6 +325,12 @@ export const action = async ({ request }) => {
             key = parts.slice(1).join(".");
         }
 
+        // 🟢 RETIREMENT GUARD
+        if (RETIRED_KEYS.includes(key) || RETIRED_KEYS.includes(fullKey)) {
+            skippedKeys.push(fullKey);
+            return;
+        }
+
         // 🟢 STRICT ALLOWLIST ENFORCEMENT
         if (!ALLOWED_TAB3_KEYS.includes(key)) {
             unsupportedKeys.push(fullKey);
@@ -419,6 +427,12 @@ export const action = async ({ request }) => {
             const parts = fullKey.split(".");
             ns = parts[0];
             key = parts.slice(1).join(".");
+        }
+
+        // 🟢 RETIREMENT GUARD
+        if (RETIRED_KEYS.includes(key) || RETIRED_KEYS.includes(fullKey)) {
+            skippedKeys.push(fullKey);
+            return;
         }
 
         // 🟢 STRICT ALLOWLIST ENFORCEMENT FOR DELETES
