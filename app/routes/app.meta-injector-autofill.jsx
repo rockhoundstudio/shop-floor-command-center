@@ -373,8 +373,8 @@ DETAILS:
 - Dimensions: ${pieceData.dimensions_mm || "N/A"}
 - Stone Weight: ${pieceData.weight_grams ? pieceData.weight_grams + " g" : "N/A"}
 - Shipping Weight: ${pieceData.shipping_weight_oz ? pieceData.shipping_weight_oz + " oz" : "N/A"}
-- Mohs Hardness: ${pieceData.mohs_hardness || "N/A"}
-- Geological Age: ${pieceData.geological_age || "N/A"}
+- Geology display: Geological facts are already presented in the product-page geology drawer table. Do not repeat geology in this description.
+- Preserve geological data unchanged outside this description; this output does not replace the geology table.
 - Rarity: ${pieceData.rarity || ""}
 - Primary Color: ${pieceData.primary_color || ""}
 - Color Pattern: ${pieceData.color_pattern || ""}
@@ -396,7 +396,7 @@ VOICE RULES (CRITICAL):
 - Counts, dates, and trip details require source support.
 - If context is insufficient, flag it for review rather than invent.
 - Weave physical facts naturally into the physical description. Never output labels or missing-value placeholders.
-- The OOAK nature is self-evident. Never use the phrase "one of a kind" as a cheap selling point.
+- Preserve explicitly supplied rarity or one-of-a-kind wording once as a plain factual spec, without sales language. Never invent rarity, default it from a blank field, or equate individual uniqueness with mineral rarity.
 - Signature always: — Bob and Janyce, Rockhound Studio, Spokane Valley WA
 
 DESCRIPTION STRUCTURE — follow this order exactly:
@@ -419,10 +419,10 @@ Finish: [surface_finish]
 Setting/Format: [List product_format and any relevant finding/setting data. DO NOT write "Loose stone, undrilled" if finding/bail/chain/pendant data is present.]
 Includes: [List bail/chain/cord. If none exist AND it is confirmed loose, state "Loose stone, undrilled".]
 
-5. COLLECTOR DATA
-Mohs: [mohs_hardness]
-Geological Age: [geological_age] (Omit if empty or 'Variable')
-Rarity: [rarity]
+5. CHARACTER AND SUPPLIED RARITY
+Geology: Do not output a geology row or geological properties; these belong in the existing product-page geology table.
+Do not repeat hardness, age, era, composition, formation, crystal system, mineral class, specific gravity, luster, cleavage, fracture or diaphaneity in the description.
+Rarity: [Include the exact supplied rarity when nonblank, once as a factual spec. Omit when missing; do not invent a replacement.]
 Character: [Include supported character_marks and honest_flaws_and_character distinctly; omit missing facts.]
 
 6. ARTIST CALLOUT — only if loose stone or setting ready
