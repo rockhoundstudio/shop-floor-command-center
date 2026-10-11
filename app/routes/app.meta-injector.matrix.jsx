@@ -709,16 +709,27 @@ export function OperationsMatrixTab({ products }) {
         fd.append("weight_grams", manifest.currentMetafields["custom.weight_grams"] || "");
         fd.append("dimensions_mm", manifest.currentMetafields["custom.dimensions_mm"] || "");
 
-        const hardwareKeys = ["bail_included", "secondary_medium", "jewelry_finding_type", "primary_use", "jewelry_type"];
+        const hardwareKeys = [
+            "bail_included", "secondary_medium", "jewelry_finding_type",
+            "primary_use", "jewelry_type", "setting_ready",
+            "chain_material", "chain_link_type", "character_marks",
+            "primary_color", "color_pattern", "surface_finish",
+            "treatment_status", "treated", "necklace_design"
+        ];
         hardwareKeys.forEach(k => {
             const fullKey = `custom.${k}`;
             let val = "";
-            if (approvals[currentId] && approvals[currentId][fullKey] !== undefined) {
+            if (manualEdits[currentId]?.[fullKey] === true &&
+                manifest.repairPlan?.[fullKey] !== undefined) {
+                val = manifest.repairPlan[fullKey];
+            } else if (approvals[currentId]?.[fullKey] !== undefined) {
                 val = approvals[currentId][fullKey];
-            } else if (manifest.currentMetafields && manifest.currentMetafields[fullKey]) {
+            } else if (manifest.currentMetafields?.[fullKey] !== undefined) {
                 val = manifest.currentMetafields[fullKey];
             }
-            if (val) fd.append(k, val);
+            if (val !== undefined && val !== null && String(val).trim() !== "") {
+                fd.set(k, String(val));
+            }
         });
 
         batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-autofill" });
@@ -731,11 +742,41 @@ export function OperationsMatrixTab({ products }) {
         const fd = new FormData();
         fd.append("intent", "generateDescription");
         fd.append("pieceId", currentId);
+        const descriptionFacts = {};
+        const mergeDescriptionFacts = (source) => {
+            Object.entries(source || {}).forEach(([key, value]) => {
+                if (key.includes(".") && !key.startsWith("custom.")) return;
+                const factKey = key.startsWith("custom.") ? key.slice(7) : key;
+                if (["intent", "success", "error", "errors", "logs", "debug_origin"].includes(factKey)) return;
+                if (value !== undefined && value !== null && String(value).trim() !== "") {
+                    descriptionFacts[factKey] = value;
+                }
+            });
+        };
+
+        mergeDescriptionFacts(manifest.currentMetafields);
+        mergeDescriptionFacts(pieceAi.titleParse);
+        mergeDescriptionFacts(pieceAi.tab3Data);
+
+        Object.entries(manualEdits[currentId] || {}).forEach(([key, edited]) => {
+            if (edited === true && key.startsWith("custom.") &&
+                manifest.repairPlan?.[key] !== undefined) {
+                descriptionFacts[key.slice(7)] = manifest.repairPlan[key];
+            }
+        });
+
+        Object.entries(approvals[currentId] || {}).forEach(([key, value]) => {
+            if (key.startsWith("custom.") && manualEdits[currentId]?.[key] !== true) {
+                descriptionFacts[key.slice(7)] = value;
+            }
+        });
+
+        descriptionFacts.pieceId = currentId;
         fd.append("sharedFields", JSON.stringify({
-            stone_family: pieceAi.tab3Data?.stone_family || pieceAi.titleParse?.stone_family,
-            origin_location: pieceAi.tab3Data?.origin_location || pieceAi.titleParse?.origin_location
+            stone_family: descriptionFacts.stone_family || descriptionFacts.material || "",
+            origin_location: descriptionFacts.origin_location || ""
         }));
-        fd.append("pieceData", JSON.stringify(pieceAi.tab3Data || {}));
+        fd.append("pieceData", JSON.stringify(descriptionFacts));
         batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-autofill" });
       }
     }
@@ -1020,7 +1061,15 @@ export function OperationsMatrixTab({ products }) {
                           
                           Object.keys(titleData).forEach(k => {
                               if (k !== "pieceId" && k !== "intent" && k !== "success" && k !== "geoSource" && k !== "origin_story") {
-                                  safeApply(NATIVE_FIELDS.includes(k) || k.includes('.') ? k : `custom.${k}`, titleData[k]);
+                                  const targetKey = NATIVE_FIELDS.includes(k) || k.includes('.') ? k : `custom.${k}`;
+                                  const bareKey = targetKey.startsWith("custom.") ? targetKey.slice(7) : k;
+                                  const visionHasValue = [k, targetKey, bareKey].some(candidate =>
+                                      Object.prototype.hasOwnProperty.call(visionData, candidate) &&
+                                      visionData[candidate] !== undefined &&
+                                      visionData[candidate] !== null &&
+                                      String(visionData[candidate]).trim() !== ""
+                                  );
+                                  if (!visionHasValue) safeApply(targetKey, titleData[k]);
                               }
                           });
 
