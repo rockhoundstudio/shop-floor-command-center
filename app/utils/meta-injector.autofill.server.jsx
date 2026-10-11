@@ -80,20 +80,17 @@ function buildMasterVisionPrompt({
   ${collectionsMenu || "No live collections found — use default URL."}
 
 - primary_color
-- stone_shape: Select EXACTLY one: Round, Oval, Freeform, Teardrop, Pear, Cushion, Marquise, Rectangle, Square, Heart, Slab, Rough, N/A. (CRITICAL SHAPE LOCK: The title explicitly states "${derivedShape || 'None'}". If not 'None', you MUST output this exact shape and ignore any visual confusion).
 - jewelry_type: Select EXACTLY one: Pendant, Necklace, Artisan jewelry, Fine jewelry, Accessories, N/A. (Pendant = stone set in bezel/bail that hangs. Necklace = chain/strand is primary design. If stone on cord/chain, it is a Pendant).
 - rarity: Select EXACTLY one: Common, Uncommon, Rare, One-of-a-Kind
 - authenticity: Select EXACTLY one: Authentic, Lab-Created, Unknown
 - color_pattern: Select EXACTLY one: Green, Black, Blue flash, Red, White, Multicolor, Gold, Pink, Yellow, Silver, Purple, Striped, Clear, Yellow veins, None
 - google_product_category: "Apparel & Accessories > Jewelry > Charms & Pendants", "Arts & Entertainment > Hobbies & Creative Arts > Collectibles > Rocks & Fossils", "Arts & Entertainment > Hobbies & Creative Arts > Arts & Crafts > Crafting Materials", "Apparel & Accessories > Jewelry"
-- cut_and_shape
 - surface_finish
 - honest_flaws_and_character
 - origin_location: Cross-reference "${originSegment}" with LIVE STORE DIRECTORY. Return geographic name ONLY. No prefixes like "Collection" or "The". (e.g., "Yakima Canyon" or "Richardson's Rock Ranch").
 - primary_use: "Pendant (Finished Jewelry)", "Necklace", "Ring / Bezel Setting", "Cabochon", "Wire Wrap (Finished Jewelry)", "Loose Stone".
 - primary_medium: Must match stone mineral name from title.
 - setting_ready: "Bezel Setting - Ready to Wear", "Prong Setting - Ready to Wear", "Wire Wrapped - Ready to Wear", "None".
-- wire_material
 - bail_included: "Silver Plated Pinch Bail", "Integrated Bezel Bail", "None".
 - jewelry_finding_type: MUST BE "None" if bail_included is not "None".
 - alt_text: Descriptive, max 125 chars. Use exact stone name.
@@ -105,7 +102,7 @@ function buildMasterVisionPrompt({
   2. Origin Hook: 1-2 sentences from ORIGIN STORY.
   3. Collection Hook: 1-2 sentences about ${fullCollectionTitle}.
   4. Signature: — Bob & Janyce, Rockhound Studio, Spokane Valley WA
-  5. Stone Data: Specs, cut. (DO NOT GUESS DIMENSIONS HERE).
+  5. Stone Data: Specs, dimensions. (DO NOT GUESS DIMENSIONS HERE).
   6. Ready to Wear: State if set or loose.
   7. Dwell Buttons:
 ${dwellButtonsHTML}
@@ -116,7 +113,7 @@ WARNING: The story above is a master document covering multiple distinct stones.
 
 MANDATORY LAWS:
 - HARDWARE PHYSICS LAW: bail_included and jewelry_finding_type are STRICTLY MUTUALLY EXCLUSIVE.
-- LOOSE STONE OVERRIDE: If bare loose stone with no metal, you MUST return strictly "None" for setting_ready, wire_material, secondary_medium, chain_material, and bail_included.
+- LOOSE STONE OVERRIDE: If bare loose stone with no metal, you MUST return strictly "None" for setting_ready, secondary_medium, chain_material, and bail_included.
 - PRIMARY/SECONDARY MEDIUM RULE: primary_medium is the stone. secondary_medium is the hardware/setting.`;
 }
 
@@ -531,15 +528,12 @@ export async function executeAutofill(intent, body, admin) {
                       seo_title: { type: "STRING" },
                       origin_location: { type: "STRING" },
                       primary_color: { type: "STRING" },
-                      cut_and_shape: { type: "STRING" },
                       surface_finish: { type: "STRING" },
-                      stone_shape: { type: "STRING" },
                       color_pattern: { type: "STRING" },
                       pattern: { type: "STRING" },
                       primary_use: { type: "STRING" },
                       primary_medium: { type: "STRING" },
                       secondary_medium: { type: "STRING" },
-                      wire_material: { type: "STRING" },
                       setting_ready: { type: "STRING" },
                       bail_included: { type: "STRING" },
                       chain_material: { type: "STRING" },
@@ -573,10 +567,6 @@ export async function executeAutofill(intent, body, admin) {
                 visionFields = { generated_description: `[JSON PARSE ERROR] ${parseErr.message}` };
               }
               
-              if (visionFields.primary_color) {
-                 visionFields.color = visionFields.primary_color;
-              }
-              
               if (visionFields.generated_description) {
                  let desc = formatDyslexiaText(visionFields.generated_description);
                  const lowerDesc = desc.toLowerCase();
@@ -594,15 +584,6 @@ export async function executeAutofill(intent, body, admin) {
             console.error("[tab2AutoFill] Vision scan failed:", visionErr);
             visionFields = { generated_description: `[API CRASH] ${visionErr.message}` };
           }
-        }
-
-        if (derivedShape) {
-            visionFields.stone_shape = derivedShape;
-            if (visionFields.cut_and_shape && !visionFields.cut_and_shape.toLowerCase().includes(derivedShape.toLowerCase())) {
-                visionFields.cut_and_shape = `${derivedShape} Cabochon`;
-            } else if (!visionFields.cut_and_shape) {
-                visionFields.cut_and_shape = `${derivedShape} Cabochon`;
-            }
         }
 
         const correctedOrigin = enforceOriginOverrides(visionFields.origin_location || derivedOrigin);
@@ -643,19 +624,16 @@ export async function executeAutofill(intent, body, admin) {
           authenticity: visionFields.authenticity || "Authentic",
           rarity: visionFields.rarity || "Common",
           secondary_medium: visionFields.secondary_medium || "None",
-          cut_and_shape: visionFields.cut_and_shape || "",
           jewelry_type: jewelry_type,
           necklace_design: jewelry_type === "Pendant" ? "Pendant" : (visionFields.necklace_design || ""),
           jewelry_finding_type: finalFindingType,
           color_pattern: visionFields.color_pattern || visionFields.pattern || "",
           material: finalMaterial,
           generated_description: visionFields.generated_description || "",
-          color: visionFields.color || "",
+          primary_color: visionFields.primary_color || "",
           surface_finish: visionFields.surface_finish || "",
-          stone_shape: visionFields.stone_shape || parsedVision.stone_shape || "",
           primary_use: visionFields.primary_use || "",
           primary_medium: derivedFamily,
-          wire_material: visionFields.wire_material || "None",
           setting_ready: visionFields.setting_ready || "None",
           bail_included: activeBail,
           chain_material: visionFields.chain_material || "None",
@@ -732,7 +710,7 @@ ${collectionsMenu || "No live collections found."}
 
 INSTRUCTIONS:
 1. The Origin segment ("${segment2}") is the AUTHORITY. Set 'origin_location' to the clean geographic name derived from "${segment2}" — strip prefixes like "Collection". Match 'collection_name' and 'collection_location' to the live store entry that corresponds to "${segment2}".
-2. Set origin_handle strictly to: "${resolvedHandle}". 
+​2. Set origin_handle strictly to: "${resolvedHandle}". 
 3. stone_family must be exactly one of: ${stonePicklist} - match only the mineral/stone type word from the title. Ignore all color, pattern, cut, and modifier words. Pick the closest entry from the list.
 
 Return valid JSON with these exact keys: stone_family, piece_name, origin_handle, origin_location, collection_name, collection_location, seo_title. Generate a keyword-rich seo_title for Google using the family and keywords like "Handcrafted" or "OOAK Lapidary Art". No markup. No extra keys.`;
@@ -925,15 +903,12 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
                 seo_title: { type: "STRING" },
                 origin_location: { type: "STRING" },
                 primary_color: { type: "STRING" },
-                cut_and_shape: { type: "STRING" },
                 surface_finish: { type: "STRING" },
-                stone_shape: { type: "STRING" },
                 color_pattern: { type: "STRING" },
                 pattern: { type: "STRING" },
                 primary_use: { type: "STRING" },
                 primary_medium: { type: "STRING" },
                 secondary_medium: { type: "STRING" },
-                wire_material: { type: "STRING" },
                 setting_ready: { type: "STRING" },
                 bail_included: { type: "STRING" },
                 chain_material: { type: "STRING" },
@@ -943,7 +918,8 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
                 rarity: { type: "STRING" },
                 authenticity: { type: "STRING" },
                 google_product_category: { type: "STRING" },
-                alt_text: { type: "STRING" }
+                alt_text: { type: "STRING" },
+                honest_flaws_and_character: { type: "STRING" }
               }
             }
           }
@@ -973,7 +949,6 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
         
         const resolved_primary_use = parsedVision.primary_use || parsedVision.use || parsedVision.product_type || "";
         const resolved_secondary_medium = parsedVision.secondary_medium || "None";
-        const resolved_wire_material = parsedVision.wire_material || "None";
         const resolved_setting_ready = parsedVision.setting_ready || "None";
 
         let activeBail = String(parsedVision.bail_included || "None").trim();
@@ -990,15 +965,6 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
         
         if (final_desc.startsWith("[VISION API CRASH]") || final_desc.startsWith("[API CRASH]") || final_desc.startsWith("[JSON PARSE ERROR]") || lowerDesc.includes("timed out")) {
             final_desc = "";
-        }
-
-        if (derivedShape) {
-            parsedVision.stone_shape = derivedShape;
-            if (parsedVision.cut_and_shape && !parsedVision.cut_and_shape.toLowerCase().includes(derivedShape.toLowerCase())) {
-                parsedVision.cut_and_shape = `${derivedShape} Cabochon`;
-            } else if (!parsedVision.cut_and_shape) {
-                parsedVision.cut_and_shape = `${derivedShape} Cabochon`;
-            }
         }
 
         const finalOriginLocation = enforceOriginOverrides(parsedVision.origin_location || originSegment);
@@ -1020,9 +986,7 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
           debug_origin: `seg=${originSegment}|slug=${finalOriginHandle}|matched=${matchedPage ? matchedPage.url : "NULL"}|storyLen=${extractedStory.length}`,
           seo_title: parsedVision.seo_title || "",
           primary_color: parsedVision.primary_color || "",
-          cut_and_shape: parsedVision.cut_and_shape || "",
           surface_finish: parsedVision.surface_finish || "",
-          stone_shape: visionFields.stone_shape || parsedVision.stone_shape || "",
           jewelry_type: jewelry_type,
           necklace_design: jewelry_type === "Pendant" ? "Pendant" : (parsedVision.necklace_design || ""),
           jewelry_finding_type: finalFindingType,
@@ -1033,7 +997,6 @@ Return valid JSON with these exact keys: stone_family, piece_name, origin_handle
           primary_use: resolved_primary_use,
           primary_medium: derivedFamily,
           secondary_medium: resolved_secondary_medium,
-          wire_material: resolved_wire_material,
           setting_ready: resolved_setting_ready,
           bail_included: activeBail,
           origin_story: extractedStory,
@@ -1122,7 +1085,6 @@ DETAILS:
 - Origin / Location: ${originSegment}
 - Full Origin Story: ${extractedStory}
 - Collection Name: ${fullCollectionTitle}
-- Cut & Shape: ${pieceData.cut_and_shape || "Freeform"}
 - Surface Finish: ${pieceData.surface_finish || "Natural/Polished"}
 - Dimensions: ${pieceData.dimensions_mm || "N/A"}
 - Mounting/Medium: ${pieceData.primary_medium || "Loose Stone"}
@@ -1132,8 +1094,6 @@ DETAILS:
 - Rarity: ${pieceData.rarity || "Common"}
 - Character: ${pieceData.honest_flaws_and_character || "None"}
 - Piece Name: ${pieceData.piece_name || "None"}
-- Bench Notes: ${pieceData.bench_notes || "None"}
-- Artist Notes: ${pieceData.artist_notes || "None"}
 - Chain/Cord Database Status: ${pieceData.chain_link_type || "None"}
 
 VOICE RULES:
@@ -1149,7 +1109,7 @@ VOICE RULES:
 DESCRIPTION STRUCTURE — follow this order exactly:
 
 1. PHYSICAL DESCRIPTION
-Start with the piece_name. What makes this stone different from every other stone of its type. Lead with bench_notes and artist_notes — these are Bob's direct observations from the wheel. Then describe shape, color, flash, finish. Specific and honest.
+Start with the piece_name. What makes this stone different from every other stone of its type. Describe color, flash, and finish. Natural form and physical characteristics are encouraged. Specific and honest.
 
 2. ORIGIN HOOK
 1-2 sentences only. Scan the Full Origin Story and ONLY pull the specific part that talks about ${derivedFamily}. Ignore stories about other stones. End with the placeholder: {{ORIGIN_LINK}}

@@ -7,45 +7,40 @@ import { useFetcher } from "react-router";
 const CUSTOM_FIELDS = [
   { key: "shopify_title", label: "MASTER SHOPIFY TITLE (Edit Here)", type: "single_line_text_field", isShared: false },
   { key: "stone_family", label: "Stone Family", type: "single_line_text_field", isShared: true },
-  { key: "color", label: "Color", type: "single_line_text_field", isShared: true }, 
   { key: "surface_finish", label: "Surface Finish", type: "single_line_text_field", isShared: true }, 
   { key: "source_location", label: "Source / Discovery Location", type: "single_line_text_field", isShared: true },
   { key: "primary_use", label: "Primary Use", type: "single_line_text_field", isShared: true }, 
-  { key: "handcrafted_by", label: "Handcrafted By", type: "single_line_text_field", isShared: true },
   { key: "origin_story", label: "The Origin Story", type: "multi_line_text_field", multiline: true, isShared: true },
   { key: "stone_story", label: "Stone Story", type: "multi_line_text_field", multiline: true, isShared: true },
   { key: "piece_name", label: "Piece Name", type: "single_line_text_field", isPerPiece: true },
   { key: "official_name", label: "Official Name", type: "single_line_text_field", isPerPiece: true },
   { key: "cut_type", label: "Cut Type", type: "single_line_text_field", isPerPiece: true },
-  { key: "cut_and_shape", label: "Cut / Shape", type: "single_line_text_field", isPerPiece: true }, 
   { key: "dimensions_mm", label: "Dimensions (mm)", type: "single_line_text_field", isPerPiece: true },
   { key: "weight_grams", label: "Weight (grams)", type: "single_line_text_field", isPerPiece: true },
   { key: "shipping_weight_oz", label: "Shipping Weight (oz)", type: "single_line_text_field", isPerPiece: true },
-  { key: "honest_flaws_and_character", label: "Character Marks (Honest Flaws)", type: "multi_line_text_field", multiline: true, isPerPiece: true },
+  { key: "honest_flaws_and_character", label: "Honest Flaws & Character", type: "multi_line_text_field", multiline: true, isPerPiece: true },
   { key: "character_marks", label: "Character Marks", type: "multi_line_text_field", multiline: true, isPerPiece: true },
-  { key: "bench_notes", label: "Bench Notes", type: "multi_line_text_field", multiline: true, isPerPiece: true },
-  { key: "artist_notes", label: "Artist Notes", type: "multi_line_text_field", multiline: true, isPerPiece: true },
   { key: "price", label: "Price", type: "single_line_text_field", isPerPiece: true },
   { key: "generated_description", label: "Generated Description", type: "multi_line_text_field", multiline: true, isPerPiece: true }
 ];
 
 const NAMESPACE_MAP = {
   custom: [
-    "official_name", "stone_story", "cut_type", "stone_shape", "surface_finish",
-    "treatment_status", "primary_color", "secondary_colors", "bench_notes",
-    "rock_composition", "character_marks", "dimensions_mm", "moh_hardness",
+    "official_name", "stone_story", "cut_type", "surface_finish",
+    "treatment_status", "primary_color", "secondary_colors",
+    "rock_composition", "character_marks", "dimensions_mm", "mohs_hardness",
     "specific_gravity", "crystal_system", "luster", "cleavage", "fracture_pattern",
     "diaphaneity", "tenacity", "origin_story", "stone_family", "piece_name",
     "origin_handle", "origin_page_handle", "origin_location", "shopify_title",
     "collection_name", "collection_location", "seo_title", "authenticity",
-    "rarity", "secondary_medium", "cut_and_shape", "jewelry_type", "necklace_design",
+    "rarity", "secondary_medium", "jewelry_type", "necklace_design",
     "jewelry_finding_type", "color_pattern", "material", "generated_description",
-    "color", "primary_use", "primary_medium", "wire_material", "setting_ready",
-    "bail_included", "chain_material", "mohs_hardness", "geological_era",
+    "primary_medium", "setting_ready",
+    "bail_included", "chain_material", "geological_era",
     "mineral_class", "rock_formation", "geological_age", "treated", "is_ooak",
     "age_group", "target_gender", "condition", "google_product_category",
     "alt_text", "weight_grams", "shipping_weight_oz", "price",
-    "handcrafted_by", "rescued_by", "honest_flaws_and_character", "artist_notes",
+    "rescued_by", "honest_flaws_and_character",
     "custom_product", "found_object", "chain_link_type"
   ]
 };
@@ -139,6 +134,11 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
       allEdges.forEach(({ node }) => {
         const hasValue = node && node.value !== null && node.value !== undefined;
         if (hasValue && (node.namespace === "custom" || node.namespace === "geo" || node.namespace === "rockhound")) {
+          // Do not load retired legacy values into the state mapping
+          if (["artist_notes", "bench_notes", "handcrafted_by", "color", "cut_and_shape", "stone_shape", "wire_material"].includes(node.key)) {
+            return;
+          }
+
           let parsedValue = String(node.value);
           if (parsedValue.includes("gid://")) parsedValue = "See Shopify metaobject";
           if (parsedValue.startsWith("[")) {
@@ -186,7 +186,6 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
     if (!newFullForm.age_group) newFullForm.age_group = "adult";
     if (!newFullForm.condition) newFullForm.condition = "new";
     if (!newFullForm.google_product_category) newFullForm.google_product_category = "Apparel & Accessories > Jewelry";
-    if (!newFullForm.handcrafted_by) newFullForm.handcrafted_by = "Bob & Janyce, Rockhound Studio";
     
     if (!newFullForm.shipping_weight_oz && newFullForm.weight_grams) {
       const grams = parseFloat(newFullForm.weight_grams);
@@ -226,7 +225,6 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
     if (bestPM === "Stone") bestPM = ""; 
     
     newFullForm.primary_medium = bestPM;
-    if (newForm.color) newFullForm.color = newForm.color;
 
     if (product && product.title) {
       newForm.piece_name = product.title.includes(" — ") ? product.title.split(" — ").pop().trim() : product.title;
@@ -324,12 +322,10 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
     formData.append("productId", selectedProductId);
     formData.append("stone_family", stoneFamily);
     formData.append("origin_handle", originHandle);
-    formData.append("cut_and_shape", fullMetaState.cut_and_shape || "");
     formData.append("collection_location", fullMetaState.collection_location || "");
     formData.append("piece_name", fullMetaState.piece_name || "");
     formData.append("productTitle", titleToUse);
     formData.append("origin_story", fullMetaState.origin_story || formState.origin_story || "");
-    formData.append("artist_notes", fullMetaState.artist_notes || formState.artist_notes || "");
 
     if (overridePhoto) {
       formData.append("imageBase64", overridePhoto.base64);
@@ -355,12 +351,12 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
     const RESCAN_PRESERVE_KEYS = [
       "shopify_title",
       "origin_handle", "origin_page_handle", "collection_location",
-      "stone_family", "color", "surface_finish", "source_location",
-      "primary_use", "handcrafted_by", "piece_name", "cut_and_shape", "dimensions_mm",
-      "weight_grams", "shipping_weight_oz", "price", "bench_notes", "character_marks", "primary_medium",
+      "stone_family", "surface_finish", "source_location",
+      "primary_use", "piece_name", "dimensions_mm",
+      "weight_grams", "shipping_weight_oz", "price", "character_marks", "primary_medium",
       "secondary_medium", "treatment_status", "is_ooak", "treated",
-      "material", "stone_shape", "rescued_by", "alt_text",
-      "found_object", "wire_material", "bail_included", "setting_ready",
+      "material", "rescued_by", "alt_text",
+      "found_object", "bail_included", "setting_ready",
       "jewelry_type", "necklace_design", "jewelry_finding_type",
       "chain_link_type", "target_gender"
     ];
@@ -375,14 +371,12 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
     formData.append("productId", selectedProductId);
     formData.append("stone_family", stoneFamily);
     formData.append("origin_handle", originHandle);
-    formData.append("cut_and_shape", fullMetaState.cut_and_shape || "");
     formData.append("collection_location", fullMetaState.collection_location || "");
     formData.append("piece_name", fullMetaState.piece_name || "");
     formData.append("productTitle", titleToUse);
     formData.append("honest_flaws_and_character", fullMetaState.honest_flaws_and_character || formState.honest_flaws_and_character || "");
     formData.append("price", fullMetaState.price || "");
     formData.append("origin_story", fullMetaState.origin_story || formState.origin_story || "");
-    formData.append("artist_notes", fullMetaState.artist_notes || formState.artist_notes || "");
 
     if (overridePhoto) {
       formData.append("imageBase64", overridePhoto.base64);
@@ -458,6 +452,11 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
       if (key === "shopify_title") return; 
       if (!allowedKeys.includes(key)) return;
 
+      // EXPLICITLY PREVENT RETIRED FIELDS AND PRIMARY_USE FROM SAVING
+      if (["artist_notes", "bench_notes", "handcrafted_by", "color", "cut_and_shape", "stone_shape", "wire_material", "primary_use"].includes(key)) {
+        return;
+      }
+
       let injectValue = String(value !== null && value !== undefined ? value : "");
       if (key === "piece_name") injectValue = resolvedPieceName;
 
@@ -466,7 +465,7 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
       const config = CUSTOM_FIELDS.find(f => f.key === key);
       let fieldType = config && config.type ? config.type : "single_line_text_field";
       
-      if (["honest_flaws_and_character", "origin_story", "stone_story", "generated_description", "artist_notes", "bench_notes", "character_marks"].includes(key)) {
+      if (["honest_flaws_and_character", "origin_story", "stone_story", "generated_description", "character_marks"].includes(key)) {
         fieldType = "multi_line_text_field";
       }
 
@@ -565,8 +564,8 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
             "diaphaneity", "mineral_class", "crystal_system", "rock_composition", 
             "rock_formation", "geological_era", "geological_age", "generated_description", 
             "seo_title", "origin_story", "stone_story", "primary_use", "bail_included", 
-            "setting_ready", "primary_medium", "alt_text", "found_object", "wire_material", 
-            "secondary_medium", "color", "surface_finish", "material", "treated", 
+            "setting_ready", "primary_medium", "alt_text", "found_object", 
+            "secondary_medium", "surface_finish", "material", "treated", 
             "jewelry_type", "jewelry_finding_type"
           ];
 
@@ -584,7 +583,15 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
                 if (lowerVal === "true" || lowerVal === "yes") normalizedVal = "Yes";
                 else if (lowerVal === "false" || lowerVal === "no") normalizedVal = "No";
               }
-              updatedState[key] = normalizedVal;
+              
+              // Protect previously corrected primary_color from legacy custom.color payloads
+              if (key === "color") {
+                 if (!updatedState.primary_color || updatedState.primary_color.trim() === "") {
+                     updatedState.primary_color = normalizedVal;
+                 }
+              } else {
+                 updatedState[key] = normalizedVal;
+              }
             }
           });
 
@@ -673,13 +680,12 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
       val = val[0]; 
     }
 
-    if ((field.key === "handcrafted_by" || field.key === "rescued_by") && typeof val === 'string') {
-      if (val.includes("Bob & Janyce") || val.includes("Rockhound Studio")) val = "Bob & Janyce, Rockhound Studio";
+    if (field.key === "rescued_by" && typeof val === 'string') {
+      if (val.includes("Bob & Janyce") || val.includes("Rockhound Studio")) val = "Bob and Janyce";
     }
     if (field.key === "primary_medium" && val === "Stone") val = "";
-    if (field.key === "color" && formState.color) val = formState.color;
 
-    const reqKeys = ["shopify_title", "piece_name", "price", "weight_grams", "shipping_weight_oz", "material", "stone_family", "collection_name", "origin_handle", "rescued_by", "treatment_status", "origin_story", "primary_use", "seo_title"];
+    const reqKeys = ["shopify_title", "piece_name", "price", "weight_grams", "shipping_weight_oz", "material", "stone_family", "collection_name", "origin_handle", "rescued_by", "treatment_status", "origin_story", "seo_title"];
     const isFilled = val !== undefined && val !== null && String(val).trim() !== "" && String(val).trim() !== "false";
     const isRequiredEmpty = !isFilled && reqKeys.includes(field.key);
     const isEmpty = !isFilled;
@@ -848,7 +854,7 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
                   {[
                     "shopify_title", "piece_name", "official_name", "seo_title", "stone_family",
                     "origin_location", "origin_handle", "origin_page_handle", "collection_name", "collection_location",
-                    "is_ooak", "handcrafted_by", "rescued_by", "origin_story", "stone_story", "generated_description"
+                    "is_ooak", "rescued_by", "origin_story", "stone_story", "generated_description"
                   ].map(renderFullMetaField)}
                 </div>
               </BlockStack>
@@ -858,10 +864,10 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
                 <Text as="h4" variant="headingMd">Bay 2 — Physical Specs & Lapidary Bench</Text>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
                   {[
-                    "dimensions_mm", "weight_grams", "shipping_weight_oz", "price", "stone_shape",
-                    "cut_type", "cut_and_shape", "surface_finish", "color", "primary_color",
+                    "dimensions_mm", "weight_grams", "shipping_weight_oz", "price", 
+                    "cut_type", "surface_finish", "primary_color",
                     "secondary_colors", "color_pattern", "treatment_status", "treated",
-                    "character_marks", "honest_flaws_and_character", "bench_notes", "artist_notes", "alt_text"
+                    "character_marks", "honest_flaws_and_character", "alt_text"
                   ].map(renderFullMetaField)}
                 </div>
               </BlockStack>
@@ -871,7 +877,7 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
                 <Text as="h4" variant="headingMd">Bay 3 — Geo-Vault Science</Text>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
                   {[
-                    "mohs_hardness", "moh_hardness", "specific_gravity", "crystal_system", "luster",
+                    "mohs_hardness", "specific_gravity", "crystal_system", "luster",
                     "cleavage", "fracture_pattern", "diaphaneity", "tenacity", "mineral_class",
                     "rock_composition", "rock_formation", "geological_era", "geological_age"
                   ].map(renderFullMetaField)}
@@ -884,7 +890,7 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
                   {[
                     "primary_use", "primary_medium", "secondary_medium", "material", "jewelry_type",
-                    "necklace_design", "setting_ready", "wire_material", "bail_included",
+                    "necklace_design", "setting_ready", "bail_included",
                     "chain_material", "chain_link_type", "jewelry_finding_type"
                   ].map(renderFullMetaField)}
                 </div>

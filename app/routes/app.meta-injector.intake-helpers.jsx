@@ -79,7 +79,6 @@ const METAFIELD_SCHEMA = {
   "origin_story": { namespace: "custom", type: "multi_line_text_field" },
   "honest_flaws_and_character": { namespace: "custom", type: "multi_line_text_field" },
   "honest_flaws": { namespace: "custom", type: "multi_line_text_field" },
-  "artist_notes": { namespace: "custom", type: "multi_line_text_field" },
 
   "character_marks": { namespace: "custom", type: "list.single_line_text_field" },
   
@@ -87,6 +86,13 @@ const METAFIELD_SCHEMA = {
   "origin_page_handle": { namespace: "custom", type: "single_line_text_field" },
   "origin_handle": { namespace: "custom", type: "single_line_text_field" }
 };
+
+const RETIRED_KEYS = [
+  "artist_notes", "bench_notes", "handcrafted_by", "color",
+  "cut_and_shape", "stone_shape", "wire_material", "primary_use",
+  "custom.artist_notes", "custom.bench_notes", "custom.handcrafted_by", "custom.color",
+  "custom.cut_and_shape", "custom.stone_shape", "custom.wire_material", "custom.primary_use"
+];
 
 export function buildMetafieldsJson(sharedFields, piece) {
   const allFields = { ...sharedFields, ...piece };
@@ -109,7 +115,7 @@ export function buildMetafieldsJson(sharedFields, piece) {
   const metaArr = [];
   
   Object.keys(allFields).forEach(key => {
-    if (omitKeys.includes(key) || allFields[key] === undefined || allFields[key] === null || allFields[key] === "") {
+    if (omitKeys.includes(key) || RETIRED_KEYS.includes(key) || allFields[key] === undefined || allFields[key] === null || allFields[key] === "") {
       return;
     }
 

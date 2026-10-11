@@ -34,7 +34,6 @@ export function NewProductIntakeTab({ fetcher }) {
     origin_story: "",
     stone_story: "",
     primary_use: "",
-    handcrafted_by: "Bob & Janyce, Rockhound Studio",
     is_ooak: "Yes",
     treated: "Untreated — Natural",
     found_object: "true",
@@ -44,7 +43,6 @@ export function NewProductIntakeTab({ fetcher }) {
     google_product_category: "Apparel & Accessories > Jewelry",
     primary_medium: "",
     secondary_medium: "",
-    wire_material: "",
     setting_ready: "",
     bail_included: "",
     jewelry_finding_type: "",
@@ -74,11 +72,8 @@ export function NewProductIntakeTab({ fetcher }) {
     piece_name: "",
     official_name: "",
     dimensions_mm: "",
-    stone_shape: "",
     cut_type: "",
-    cut_and_shape: "",
     surface_finish: "",
-    color: "",
     primary_color: "",
     secondary_colors: "",
     price: "",
@@ -93,13 +88,11 @@ export function NewProductIntakeTab({ fetcher }) {
     stagedUploadIndex: 0,
     generated_description: "",
     seo_title: "",
-    artist_notes: "",
     scanError: "",
     scanToken: "",
     isUploading: false,
     character_marks: "",
     honest_flaws_and_character: "",
-    bench_notes: "",
     alt_text: "",
     color_pattern: "",
     productId: null,
@@ -352,15 +345,11 @@ piece_name: ${p.piece_name || "EMPTY"}
 generated_description: ${p.generated_description || "EMPTY"}
 debug_origin: ${p.debug_origin || "EMPTY"}
 seo_title: ${p.seo_title || "EMPTY"}
-artist_notes: ${p.artist_notes || "EMPTY"}
 price: ${p.price || "EMPTY"}
 weight_grams: ${p.weight_grams || "EMPTY"}
 shipping_weight_oz: ${p.shipping_weight_oz || "EMPTY"}
 dimensions_mm: ${p.dimensions_mm || "EMPTY"}
-cut_and_shape: ${p.cut_and_shape || "EMPTY"}
 surface_finish: ${p.surface_finish || "EMPTY"}
-color: ${p.color || "EMPTY"}
-stone_shape: ${p.stone_shape || "EMPTY"}
 jewelry_type: ${p.jewelry_type || "EMPTY"}
 rarity: ${p.rarity || "EMPTY"}
 authenticity: ${p.authenticity || "EMPTY"}
@@ -386,18 +375,18 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
     (currentShared.primary_use && currentShared.primary_use !== "") && (productType = currentShared.primary_use);
 
     const derivedMaterial = getDerivedMaterial(currentShared.stone_family || "");
+    
+    // Explicitly exclude primary_use from the JSON payload injected into custom metafields
+    const { primary_use, ...sharedForPayload } = currentShared;
 
     const payload = {
       intent: "createProduct",
-      ...currentShared,
+      ...sharedForPayload,
       ...currentPiece,
       material: derivedMaterial,
       piece_name: currentPiece.piece_name,
       dimensions_mm: currentPiece.dimensions_mm,
-      cut_and_shape: currentPiece.cut_and_shape,
-      stone_shape: currentPiece.stone_shape,
       surface_finish: currentPiece.surface_finish,
-      color: currentPiece.color,
       price: currentPiece.price,
       weight_grams: currentPiece.weight_grams,
       seo_title: currentPiece.seo_title,
@@ -405,7 +394,7 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
       descriptionHtml: currentPiece.generated_description,
       productType: productType,
       status: "DRAFT",
-      metafieldsJson: buildMetafieldsJson(currentShared, currentPiece),
+      metafieldsJson: buildMetafieldsJson(sharedForPayload, currentPiece),
       mediaUrlsJson: JSON.stringify(currentPiece.stagedResourceUrls.filter(u => u !== undefined && u !== ""))
     };
 
@@ -568,7 +557,6 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
             primary_use: data.tab2Data?.primary_use || data.primary_use || prev.primary_use,
             primary_medium: data.tab2Data?.primary_medium || data.primary_medium || prev.primary_medium,
             secondary_medium: data.tab2Data?.secondary_medium || data.secondary_medium || prev.secondary_medium,
-            wire_material: data.tab2Data?.wire_material || data.wire_material || prev.wire_material,
             setting_ready: data.tab2Data?.setting_ready || data.setting_ready || prev.setting_ready,
             bail_included: data.tab2Data?.bail_included || data.bail_included || prev.bail_included,
             jewelry_finding_type: data.tab2Data?.jewelry_finding_type || data.jewelry_finding_type || prev.jewelry_finding_type,
@@ -583,20 +571,21 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
           const pId = data.tab2Data?.pieceId || data.pieceId;
           (p.id === pId) && (() => {
             const desc = data.tab2Data?.generated_description || data.generated_description || data.description;
-            const tColor = data.tab2Data?.primary_color || data.color;
-            const tShape = data.tab2Data?.cut_and_shape || data.cut_and_shape;
+            const tColor = data.tab2Data?.primary_color || data.primary_color || updated.primary_color;
             const tFinish = data.tab2Data?.surface_finish || data.surface_finish;
             const tDims = data.tab2Data?.dimensions_mm || data.dimensions_mm;
             const tSeo = data.tab2Data?.seo_title || data.seo_title;
-            const tStoneShape = data.tab2Data?.stone_shape || data.stone_shape;
+            const tPattern = data.tab2Data?.color_pattern || data.color_pattern;
+            const tFlaws = data.tab2Data?.honest_flaws_and_character || data.honest_flaws_and_character;
 
             (desc !== undefined && desc !== "") && (updated.generated_description = desc);
-            (tColor !== undefined && tColor !== "") && (updated.color = tColor);
-            (tShape !== undefined && tShape !== "") && (updated.cut_and_shape = tShape);
-            (tStoneShape !== undefined && tStoneShape !== "") && (updated.stone_shape = tStoneShape);
+            (tColor !== undefined && tColor !== "") && (updated.primary_color = tColor);
             (tFinish !== undefined && tFinish !== "") && (updated.surface_finish = tFinish);
             (tDims !== undefined && tDims !== "") && (updated.dimensions_mm = tDims);
             (tSeo !== undefined && tSeo !== "") && (updated.seo_title = tSeo);
+            (tPattern !== undefined && tPattern !== "") && (updated.color_pattern = tPattern);
+            (tFlaws !== undefined && tFlaws !== "") && (updated.honest_flaws_and_character = tFlaws);
+            
             updated.scanError = "";
             updated.debug_origin = data.tab2Data?.debug_origin || data.debug_origin || "";
             updated.rarity = data.tab2Data?.rarity || "";
@@ -864,7 +853,7 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
         <Banner title="Machine Auto-Pilot Active — No Typing Required for Studio Constants:" tone="success">
           <BlockStack gap="100">
             <Text as="p" variant="bodyMd">
-              ✔ Handcrafted & Rescued by: <strong>Bob and Janyce</strong> | ✔ OOAK: <strong>True</strong> | ✔ Treatment: <strong>100% Natural/Untreated</strong>
+              ✔ Rescued by: <strong>Bob and Janyce</strong> | ✔ OOAK: <strong>True</strong> | ✔ Treatment: <strong>100% Natural/Untreated</strong>
             </Text>
             <Text as="p" variant="bodyMd">
               ✔ Google Feed: <strong>Active (Adult/Unisex/New)</strong> | ✔ Geo-Vault: <strong>Auto-Fills 12 Minerals Specs from Title Delimiters</strong>
@@ -1095,17 +1084,6 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
                       />
                     </div>
 
-                    <div style={{ minHeight: "48px", marginTop: "8px" }}>
-                      <TextField
-                        label={renderLabel("Artist Notes", "artist_notes", piece.artist_notes)}
-                        value={piece.artist_notes}
-                        onChange={(v) => handlePieceChange(piece.id, "artist_notes", v)}
-                        multiline={3}
-                        autoComplete="off"
-                        placeholder="Internal shop notes about this stone's character..."
-                      />
-                    </div>
-
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px", marginTop: "16px" }}>
                       <div style={{ minHeight: "54px" }}>
                         <TextField
@@ -1144,23 +1122,6 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
                         />
                       </div>
                       <div style={{ minHeight: "54px" }}>
-                        <TextField
-                          label={renderLabel("Cut & Shape", "cut_and_shape", piece.cut_and_shape)}
-                          value={piece.cut_and_shape}
-                          onChange={(v) => handlePieceChange(piece.id, "cut_and_shape", v)}
-                          autoComplete="off"
-                        />
-                      </div>
-                      <div style={{ minHeight: "54px" }}>
-                        <TextField
-                          label={renderLabel("Stone Shape", "stone_shape", piece.stone_shape)}
-                          value={piece.stone_shape}
-                          onChange={(v) => handlePieceChange(piece.id, "stone_shape", v)}
-                          autoComplete="off"
-                          placeholder="e.g. Teardrop Cabochon"
-                        />
-                      </div>
-                      <div style={{ minHeight: "54px" }}>
                         <Select
                           label={renderLabel("Surface Finish", "surface_finish", piece.surface_finish)}
                           options={[...DROPDOWN_OPTIONS.surface_finish]}
@@ -1170,11 +1131,11 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
                       </div>
                       <div style={{ minHeight: "54px" }}>
                         <TextField
-                          label={renderLabel("Color", "color", piece.color)}
-                          value={piece.color}
-                          onChange={(v) => handlePieceChange(piece.id, "color", v)}
+                          label={renderLabel("Primary Color", "primary_color", piece.primary_color)}
+                          value={piece.primary_color}
+                          onChange={(v) => handlePieceChange(piece.id, "primary_color", v)}
                           autoComplete="off"
-                          placeholder="Primary color"
+                          placeholder="Dominant hue"
                         />
                       </div>
                       <div style={{ minHeight: "54px" }}>
@@ -1199,15 +1160,6 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
                           label={renderLabel("Honest Flaws & Character", "honest_flaws_and_character", piece.honest_flaws_and_character)}
                           value={piece.honest_flaws_and_character}
                           onChange={(v) => handlePieceChange(piece.id, "honest_flaws_and_character", v)}
-                          multiline={2}
-                          autoComplete="off"
-                        />
-                      </div>
-                      <div style={{ minHeight: "54px", gridColumn: "span 3" }}>
-                        <TextField
-                          label={renderLabel("Bench Notes", "bench_notes", piece.bench_notes)}
-                          value={piece.bench_notes}
-                          onChange={(v) => handlePieceChange(piece.id, "bench_notes", v)}
                           multiline={2}
                           autoComplete="off"
                         />
@@ -1347,14 +1299,6 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
                   options={[{ label: "Bob and Janyce", value: "Bob and Janyce" }, { label: "Bob", value: "Bob" }, { label: "Janyce", value: "Janyce" }]}
                   value={sharedFields.rescued_by}
                   onChange={(v) => handleSharedFieldChange("rescued_by", v)}
-                />
-              </div>
-              <div style={{ minHeight: "54px" }}>
-                <TextField
-                  label={renderLabel("Handcrafted By", "handcrafted_by", sharedFields.handcrafted_by)}
-                  value={sharedFields.handcrafted_by}
-                  onChange={(v) => handleSharedFieldChange("handcrafted_by", v)}
-                  autoComplete="off"
                 />
               </div>
               <div style={{ minHeight: "54px" }}>
@@ -1525,15 +1469,6 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
                     onChange={(v) => handleSharedFieldChange("secondary_medium", v)}
                     autoComplete="off"
                     placeholder="e.g. 14k Gold Accents"
-                  />
-                </div>
-                <div style={{ minHeight: "54px" }}>
-                  <TextField
-                    label={renderLabel("Wire Material", "wire_material", sharedFields.wire_material)}
-                    value={sharedFields.wire_material}
-                    onChange={(v) => handleSharedFieldChange("wire_material", v)}
-                    autoComplete="off"
-                    placeholder="e.g. Antiqued Copper Wire"
                   />
                 </div>
                 <div style={{ minHeight: "54px" }}>

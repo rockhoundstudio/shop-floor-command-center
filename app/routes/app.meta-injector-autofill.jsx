@@ -354,7 +354,7 @@ ${collectionsMenu || "No live collections found."}
 
 INSTRUCTIONS:
 1. The Origin segment ("${segment2}") is the AUTHORITY. Do NOT reclassify or override it. Set 'origin_location' to the clean geographic name derived from "${segment2}" — strip prefixes like "Shop Lore:", "The", or "Collection". Expand abbreviations (e.g. "cda" -> "North Fork Coeur d'Alene", "yakima" -> "Yakima River Canyon"). Match 'collection_name' and 'collection_location' to the live store entry that corresponds to "${segment2}". Never substitute a vendor name or "The Shopped Rock" unless "${segment2}" explicitly contains a vendor name.
-2. Resolve 'origin_handle' directly from the Live Store Directory based on the origin. 
+​2. Resolve 'origin_handle' directly from the Live Store Directory based on the origin. 
 3. 'stone_family' must be exactly one of: ${stonePicklist} - match only the mineral/stone type word from the title. Ignore all color, pattern, cut, and modifier words. Pick the closest entry from the list. If the input is 'Botswana Agate Round', output 'Botswana Agate'.
 
 Return valid JSON with these exact keys: stone_family, piece_name, origin_handle, origin_location, collection_name, collection_location, seo_title. Generate a keyword-rich seo_title for Google using the family and keywords like "Handcrafted" or "OOAK Lapidary Art". No markup. No extra keys.`;
@@ -376,13 +376,11 @@ CRITICAL ANTI-HALLUCINATION RULE: NEVER use the word "shocked" or "Shocked Rock"
 
 RETURN THESE EXACT JSON KEYS ONLY. DO NOT GENERATE A PRODUCT DESCRIPTION.
 - primary_color
-- stone_shape: Select EXACTLY one from this list: Round, Oval, Freeform, Teardrop, Pear, Cushion, Marquise, Rectangle, Square, Heart, Slab, Rough, N/A. FREEFORM REVOLUTION RULE: We are not a jewelry store. We cut freeform. If the stone is asymmetrical or follows its natural boundary, it is "Freeform". Do not force it into "Oval" or "Teardrop".
 - jewelry_type: Select EXACTLY one from this list: Pendant, Necklace, Artisan jewelry, Fine jewelry, Accessories, N/A. PENDANT vs NECKLACE RULE: A Pendant is a stone set in a bezel, bail, or wire wrap that hangs from a cord or chain. The stone is the focal point. A Necklace is a chain or strand where the chain itself is the primary design.
 - rarity: Select EXACTLY one: Common, Uncommon, Rare, One-of-a-Kind (default: One-of-a-Kind for our freeform stones)
 - authenticity: Select EXACTLY one: Authentic, Lab-Created, Unknown (default: Authentic)
 - color_pattern: Select EXACTLY one: Green, Black, Blue flash, Red, White, Multicolor, Gold, Pink, Yellow, Silver, Purple, Striped, Clear, Yellow veins, None
 - google_product_category: Select the taxonomy path that best matches the item. "Apparel & Accessories > Jewelry > Charms & Pendants" (for Pendants), "Arts & Entertainment > Hobbies & Creative Arts > Collectibles > Rocks & Fossils" (for raw/display specimens).
-- cut_and_shape: Maintain freeform classifications. If the input cut is "${cutAndShapeInput}", respect it.
 - surface_finish: High Polish, Matte, Satin, Natural/Raw, Tumbled.
 - honest_flaws_and_character: Plainly state any pits, vugs, healed fractures, or asymmetry. Honesty over perfection.
 - origin_location: CRITICAL! Look at the Origin Segment ("${originSegment}"). Cross-reference with the LIVE STORE DIRECTORY and return the fully expanded geographic name. NEVER include prefixes like "Shop Lore:".
@@ -390,7 +388,6 @@ RETURN THESE EXACT JSON KEYS ONLY. DO NOT GENERATE A PRODUCT DESCRIPTION.
 - primary_medium: The stone material itself (e.g. Labradorite) — NEVER the setting. Must match title.
 - secondary_medium: The setting or finding (e.g. Silver Plated Metal).
 - setting_ready: Look closely at the mounting. "Bezel Setting - Ready to Wear", "Wire Wrapped - Ready to Wear", or "None" for loose stones.
-- wire_material: "Antiqued Copper Wire" etc. "None" if no wire.
 - bail_included: e.g. "Silver Plated Pinch Bail", "Integrated Bezel Bail", or "None".
 - jewelry_finding_type: Identify the finding or setting. INVENTORY OPTIONS: "Silver Plated Pinch Bail", "Glue-On Bail", "Assorted Glue-In Setting". Do not describe them as "cheap". Do not infer hidden drilling, pinning, or glue from generic metal shapes alone. Preserve explicitly supplied construction descriptions. Compatible with bail_included (never force to None merely because a bail is included). Do not invent details if unknown. Do not silently leave blank if clearly supported by image.
 - chain_material: Identify the visible chain or cord. INVENTORY OPTIONS: "Silver Plated Snake Chain", "Gold Plated Snake Chain". Do not mislabel a visible cord as a snake chain (use "Black Cord", etc.). Do not infer plating from color alone. Distinguish clearly absent hardware ("None") from hardware out of view. Do not silently leave blank if clearly supported by image.
@@ -405,8 +402,6 @@ DO NOT output "generated_description". Your job is purely factual physical extra
 // PROMPT 3: DESCRIPTION GENERATOR
 // ==========================================
 function buildDescriptionPrompt(derivedFamily, originSegment, extractedStory, fullCollectionTitle, pieceData, collectionStory = "") {
-  const benchNotesLine = pieceData.bench_notes ? `- Internal Bench Notes: ${pieceData.bench_notes}` : "";
-  const artistNotesLine = pieceData.artist_notes ? `- Internal Artist Notes: ${pieceData.artist_notes}` : "";
 
   return `You are writing a product description for Rockhound Studio, a lapidary art studio run by Bob and Janyce, married 34 years, both artists, both rockhounds. They cut and polish every stone themselves in Spokane Valley WA.
 
@@ -424,7 +419,6 @@ DETAILS:
 - Bail Included: ${pieceData.bail_included || "N/A"}
 - Chain/Cord: ${pieceData.chain_material || "N/A"}
 - Secondary Medium (Metal): ${pieceData.secondary_medium || "N/A"}
-- Cut & Shape: ${pieceData.cut_and_shape || "Freeform"}
 - Surface Finish: ${pieceData.surface_finish || "Natural/Polished"}
 - Dimensions: ${pieceData.dimensions_mm || "N/A"}
 - Stone Weight: ${pieceData.weight_grams ? pieceData.weight_grams + " g" : "N/A"}
@@ -434,8 +428,6 @@ DETAILS:
 - Rarity: ${pieceData.rarity || "One-of-a-Kind"}
 - Character Marks: ${pieceData.honest_flaws_and_character || "None"}
 - Piece Name: ${pieceData.piece_name || "None"}
-${benchNotesLine}
-${artistNotesLine}
 
 VOICE RULES (CRITICAL):
 - Use Bob's plain, honest voice: short sentences, one idea at a time.
@@ -449,14 +441,14 @@ VOICE RULES (CRITICAL):
 - Do not transfer another stone's events or details to this piece.
 - Counts, dates, and trip details require source support.
 - If context is insufficient, flag it for review rather than invent.
-- Internal bench and artist notes provide physical facts. Weave their facts natively into the physical description. Never output their labels or missing-value placeholders.
+- Weave physical facts naturally into the physical description. Never output labels or missing-value placeholders.
 - The OOAK nature is self-evident. Never use the phrase "one of a kind" as a cheap selling point.
 - Signature always: — Bob and Janyce, Rockhound Studio, Spokane Valley WA
 
 DESCRIPTION STRUCTURE — follow this order exactly:
 
 1. PHYSICAL DESCRIPTION
-Lead with Bob's direct observations from the wheel if bench or artist notes are provided. Describe shape, color, and finish. Specific and honest. Do not output labels like "Bench Notes:".
+Lead with specific, honest observations. Describe color, natural form, and finish. Do not output labels like "Bench Notes:".
 
 2. ORIGIN HOOK
 Select the source episode relevant to the current product from the Origin Lore. Aim for 2-4 short sentences containing the relevant setup and outcome. Tease the story; do not retell the whole page.
@@ -540,20 +532,17 @@ function buildMasterVisionPrompt({ pagesMenu, collectionsMenu, stoneFamily, deri
   VALID COLLECTIONS: ${collectionsMenu || "No live collections"}
 
 - primary_color
-- stone_shape: Select EXACTLY one: Round, Oval, Freeform, Teardrop, Pear, Cushion, Marquise, Rectangle, Square, Heart, Slab, Rough, N/A. (Title states: "${derivedShape || 'None'}").
 - jewelry_type: Select EXACTLY one: Pendant, Necklace, Artisan jewelry, Fine jewelry, Accessories, N/A.
 - rarity: Select EXACTLY one: Common, Uncommon, Rare, One-of-a-Kind
 - authenticity: Select EXACTLY one: Authentic, Lab-Created, Unknown
 - color_pattern: Select EXACTLY one: Green, Black, Blue flash, Red, White, Multicolor, Gold, Pink, Yellow, Silver, Purple, Striped, Clear, Yellow veins, None
 - google_product_category: "Apparel & Accessories > Jewelry"
-- cut_and_shape
 - surface_finish
 - honest_flaws_and_character
 - origin_location: Cross-reference "${originSegment}" with LIVE STORE DIRECTORY. Return geographic name ONLY.
 - primary_use: "Pendant (Finished Jewelry)", "Necklace", "Ring / Bezel Setting", "Cabochon", "Wire Wrap (Finished Jewelry)", "Loose Stone".
 - primary_medium: Must match stone mineral name.
 - setting_ready: "Bezel Setting - Ready to Wear", "None".
-- wire_material
 - bail_included: "Silver Plated Pinch Bail", "Integrated Bezel Bail", "None".
 - jewelry_finding_type: Identify the finding or setting. INVENTORY OPTIONS: "Silver Plated Pinch Bail", "Glue-On Bail", "Assorted Glue-In Setting". Do not describe them as "cheap". Do not infer hidden drilling, pinning, or glue from generic metal shapes alone. Preserve explicitly supplied construction descriptions. Compatible with bail_included (never force to None merely because a bail is included). Do not invent details if unknown. Do not silently leave blank if clearly supported by image.
 - alt_text: Descriptive, max 125 chars.
@@ -565,7 +554,7 @@ function buildMasterVisionPrompt({ pagesMenu, collectionsMenu, stoneFamily, deri
   2. Origin Hook: Select the source episode matching "${stoneFamily}". Aim for 2-4 short sentences containing the relevant setup and outcome. Tease the story; do not retell the whole page.
   3. Collection Hook: 1-2 short, source-supported sentences connecting the product to the actual collection narrative based on "${fullCollectionTitle}". Use this canonical name rather than legacy titles in the lore. Do not conflate counts (e.g., "three finds" means three stone types).
   4. Signature: — Bob and Janyce, Rockhound Studio, Spokane Valley WA
-  5. Stone Data: Specs, cut.
+  5. Stone Data: Specs.
   6. Ready to Wear: State if set or loose.
   7. Dwell Buttons:
 ${dwellButtonsHTML}
@@ -594,13 +583,13 @@ ${currentDataStr || "- No explicit data provided."}
 
 CRITICAL RULES FOR TAB 3:
 1. Explicit operator-provided corrections take priority over image inference and stale product data.
-2. If no explicit correction is supplied, preserve a nonblank current value exactly. Do not replace a specific value with a broader or less precise one (e.g., keep "Freeform Teardrop Cabochon", do not degrade to "Freeform Teardrop"). Preserve finding details exactly (e.g., keep "Drilled stone with a pinned pinch bail").
+​2. If no explicit correction is supplied, preserve a nonblank current value exactly. Preserve finding details exactly (e.g., keep "Drilled stone with a pinned pinch bail").
 3. Never generate or propose a shopify_title or price. These are manual.
 4. Do not infer jewelry, chain material, cord, bail, wire wrapping, or readiness from an image when the source data doesn't explicitly establish it. Leave uncertain values unresolved using the existing omit convention.
 5. Treat origin_story as hidden, read-only context from the existing origin page. Do not generate or save an origin story. Use the page only for supported metadata.
-6. Omit missing bench or artist notes. Never write "None" or "Unknown" as filler.
+6. Never write "None" or "Unknown" as filler.
 7. Do not invent details. Leave unknown fields entirely unset.
-8. If the current data establishes the piece is a pendant or finished jewelry (e.g., jewelry_type is "Pendant" or finding details are present), the product_format MUST be "Pendant" or similar finished form, even if the cut_and_shape is "Cabochon". The cut and shape of the stone does not override the finished format of the piece.
+8. If the current data establishes the piece is a pendant or finished jewelry (e.g., jewelry_type is "Pendant" or finding details are present), the product_format MUST be "Pendant" or similar finished form.
 
 Return ONLY a JSON object. OMIT any keys if you cannot determine the value supported by evidence (do not send null or empty strings). DO NOT include "jewelry_type", "origin_story", "price", "shopify_title", "weight_grams", "shipping_weight_oz", or "generated_description".
 
@@ -612,12 +601,10 @@ Potential JSON Keys to evaluate and propose if blank:
 - poetic_hook: Write one short, plain, factual hook based on the origin page (under 160 characters). Do not recreate the origin story.
 - seo_title: Max 70 chars. Natural, descriptive wording based on supported facts: Piece name, stone description/family, finished product format, craftsmanship, and clean origin (e.g., use "Yak River Canyon" not "Yakima Canyon" or "Yakima River"). Example: "The Catalyst | Handcrafted Green Jasper Pendant from Yakima River Canyon". Include "Handcrafted" only when supported. Do not use generic "OOAK Lapidary Art" if specific details are available. No prices, quotes, HTML, or keyword stuffing. Shorten intelligently if necessary.
 - dimensions_mm: Leave unchanged if provided.
-- cut_and_shape: Respect freeform cuts. Keep exactly as provided in current data if present.
 - surface_finish: High Polish, Matte, Satin, Natural/Raw, Tumbled.
 - primary_color
 - color_pattern
 - honest_flaws_and_character: Plainly state any pits, vugs, healed fractures, or asymmetry. Honesty over perfection.
-- bench_notes: Bob's direct observations from the wheel.
 - mohs_hardness
 - specific_gravity
 - crystal_system
@@ -840,8 +827,8 @@ export const action = async ({ request }) => {
         // --- VERIFIED FACT PROTECTION (Post-Generation Overrides) ---
         const protectedKeys = [
           "color_pattern", "dimensions_mm", "honest_flaws_and_character", "surface_finish", 
-          "bench_notes", "jewelry_finding_type", "bail_included", "chain_material", 
-          "secondary_medium", "primary_use", "cut_and_shape", "product_format", "jewelry_type"
+          "jewelry_finding_type", "bail_included", "chain_material", 
+          "secondary_medium", "primary_use", "product_format", "jewelry_type"
         ];
 
         protectedKeys.forEach(k => {
@@ -945,10 +932,6 @@ export const action = async ({ request }) => {
           const isSharedOriginDerived = !sharedFields.origin_location || sharedFields.origin_location === "Unknown Origin" || sharedFields.origin_location.trim() === "";
           
           const originSegment = (isSharedOriginDerived && validPieceOrigin) ? pieceData.origin_location : (sharedFields.origin_location || pieceData.origin_location || "");
-          
-          // Ensure notes from the active form state reach the prompt, falling back to db state
-          pieceData.bench_notes = sharedFields.bench_notes || pieceData.bench_notes || "";
-          pieceData.artist_notes = sharedFields.artist_notes || pieceData.artist_notes || "";
           
           const extractedStory = pieceData.origin_story || "";
           diagExtractedStory = extractedStory;

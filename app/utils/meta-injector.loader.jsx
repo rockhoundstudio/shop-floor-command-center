@@ -1,4 +1,4 @@
-﻿import { authenticate } from "../shopify.server";
+import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { ROCKHOUND_FIELDS } from "./meta-injector.constants.jsx";
 import { data as json } from "react-router";
@@ -216,15 +216,22 @@ export async function action({ request }) {
   if (intent === "saveProduct" || intent === "saveMetafields") {
     try {
       const payloadStr = formData.get("payload") || formData.get("metafields");
-      let metafields = [];
+      let rawMetafields = [];
       if (payloadStr) {
-        metafields = JSON.parse(payloadStr);
+        rawMetafields = JSON.parse(payloadStr);
       }
       
-      metafields = metafields.map(mf => ({
-        ...mf,
-        namespace: "custom"
-      }));
+      const RETIRED_KEYS = [
+        "artist_notes", "bench_notes", "handcrafted_by", "color",
+        "cut_and_shape", "stone_shape", "wire_material", "primary_use"
+      ];
+
+      let metafields = rawMetafields
+        .filter(mf => !RETIRED_KEYS.includes(mf.key))
+        .map(mf => ({
+          ...mf,
+          namespace: "custom"
+        }));
 
       const hasPieceName = metafields.some(mf => mf.key === "piece_name" && mf.value && String(mf.value).trim() !== "");
       if (!hasPieceName && metafields.length > 0) {
@@ -416,7 +423,6 @@ export async function action({ request }) {
       const custTreat = getCustom("treatment_status");
       const custStory = getCustom("stone_story");
       const custChar = getCustom("character_marks");
-      const custBench = getCustom("bench_notes");
 
       const rhDim = getRockhound("dimensions_mm");
       const rhTreat = getRockhound("treated");
@@ -445,19 +451,8 @@ export async function action({ request }) {
         pushUpdate("origin_story", custStory, "multi_line_text_field");
       }
 
-      if (!rhFlaws) {
-        let combinedFlaws = null;
-        if (custChar && custBench) {
-          combinedFlaws = `${custChar}\n${custBench}`;
-        } else if (custChar) {
-          combinedFlaws = custChar;
-        } else if (custBench) {
-          combinedFlaws = custBench;
-        }
-
-        if (combinedFlaws) {
-          pushUpdate("honest_flaws_and_character", combinedFlaws, "multi_line_text_field");
-        }
+      if (!rhFlaws && custChar) {
+        pushUpdate("honest_flaws_and_character", custChar, "multi_line_text_field");
       }
 
       if (addedToThisProduct) {
