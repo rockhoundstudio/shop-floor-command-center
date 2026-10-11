@@ -2,6 +2,7 @@ import React, { useState, useCallback, useEffect } from "react";
 import { BlockStack, Card, Text, Banner, TextField, Button, InlineStack, Box, Badge, ProgressBar, Select } from "@shopify/polaris";
 import { MagicIcon, ClipboardIcon, SaveIcon, ChevronDownIcon, ChevronUpIcon } from "@shopify/polaris-icons";
 import { useFetcher } from "react-router";
+import { PRODUCT_TEMPLATE_GROUPS } from "../utils/meta-injector.constants.jsx";
 
 const STATUS = {
   QUEUED: "Queued",
@@ -11,74 +12,6 @@ const STATUS = {
   FAILED: "Failed",
   SKIPPED: "Skipped"
 };
-
-const SECTIONS = [
-  {
-    title: "1. Identity and Merchandising",
-    keys: [
-      "custom.generated_description",
-      "shopify_title",
-      "custom.piece_name",
-      "custom.is_ooak",
-      "custom.seo_title"
-    ]
-  },
-  {
-    title: "2. Stone Facts and Physical Details",
-    keys: [
-      "custom.weight_grams",
-      "custom.shipping_weight_oz",
-      "custom.dimensions_mm",
-      "custom.surface_finish",
-      "custom.primary_color",
-      "custom.color_pattern",
-      "custom.honest_flaws_and_character",
-      "custom.mohs_hardness",
-      "custom.specific_gravity",
-      "custom.crystal_system",
-      "custom.fracture_pattern",
-      "custom.cleavage",
-      "custom.luster",
-      "custom.diaphaneity",
-      "custom.mineral_class",
-      "custom.geological_era",
-      "custom.rock_formation"
-    ]
-  },
-  {
-    title: "3. Origin, Story, and Collection",
-    keys: [
-      "custom.stone_family",
-      "custom.origin_location",
-      "custom.origin_handle",
-      "custom.collection_name",
-      "custom.collection_location",
-      "custom.origin_story" // Hidden context field, maintained for 45-pin count
-    ]
-  },
-  {
-    title: "4. Jewelry and Setting",
-    keys: [
-      "custom.jewelry_type",
-      "custom.primary_medium",
-      "custom.secondary_medium",
-      "custom.setting_ready",
-      "custom.bail_included",
-      "custom.chain_material",
-      "custom.jewelry_finding_type"
-    ]
-  },
-  {
-    title: "5. Search, Sales, and Media",
-    keys: [
-      "price",
-      "custom.alt_text",
-      "custom.google_product_category",
-      "custom.authenticity",
-      "custom.rarity"
-    ]
-  }
-];
 
 const BLOCKED_UNVERIFIED_PINS = [
   "custom.jewelry_type"
@@ -141,12 +74,29 @@ const formatLabel = (key) => {
 };
 
 const getDynamicSections = (manifest) => {
-  return SECTIONS.map(sec => {
-      if (sec.title === "5. Search, Sales, and Media" && manifest?.nativeTargets?.media?.edges) {
-          const mediaKeys = manifest.nativeTargets.media.edges.map(e => `native_image_alts_${e.node.id}`);
-          return { ...sec, keys: [...sec.keys, ...mediaKeys] };
+  return PRODUCT_TEMPLATE_GROUPS.map(group => {
+    let keys = [];
+    group.fields.forEach(f => {
+      if (RETIRED_KEYS.includes(f.key) || RETIRED_KEYS.includes(`custom.${f.key}`)) return;
+      
+      if (NATIVE_FIELDS.includes(f.key) || f.key.includes('.')) {
+        keys.push(f.key);
+      } else {
+        keys.push(`custom.${f.key}`);
       }
-      return sec;
+    });
+
+    if (group.heading === "5. Search, Sales, and Media" && manifest?.nativeTargets?.media?.edges) {
+      const mediaKeys = manifest.nativeTargets.media.edges.map(e => `native_image_alts_${e.node.id}`);
+      keys = [...keys, ...mediaKeys];
+    }
+    
+    // Add hidden context fields for backward compatibility in display logic, if needed by this specific row
+    if (group.heading === "3. Origin, Story, and Collection") {
+        if (!keys.includes("custom.origin_story")) keys.push("custom.origin_story");
+    }
+
+    return { title: group.heading, keys: keys, configFields: group.fields };
   });
 };
 
@@ -304,7 +254,7 @@ export function OperationsMatrixTab({ products }) {
     batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-api" });
   }, [isLoadingData, loadIndex, queueIds, batchFetcher.state, updateProductState]);
 
-  const getFieldMetadata = (key, data, productId, currentApprovals) => {
+  const getFieldMetadata = (key, data, productId, currentApprovals, configFields = []) => {
     const isNativeImageAlt = key.startsWith("native_image_alts_");
     
     let currentVal = "";
@@ -341,6 +291,9 @@ export function OperationsMatrixTab({ products }) {
     const proposalExists = isProposed && propVal.trim() !== "";
 
     const unprefixedKey = key.replace(/^custom\./, '');
+    const templateConfig = configFields.find(f => f.key === unprefixedKey || f.key === key);
+
+    const isKnownKey = templateConfig !== undefined || NATIVE_FIELDS.includes(key) || isNativeImageAlt || HIDDEN_CONTEXT_FIELDS.includes(key);
 
     if (key === "custom.google_product_category" && proposalExists) {
         isContentPreApproved = true;
@@ -377,7 +330,7 @@ export function OperationsMatrixTab({ products }) {
     const isApproved = exactApprovalVal !== undefined && exactApprovalVal === propVal && propVal.trim() !== "";
 
     if (HIDDEN_CONTEXT_FIELDS.includes(key)) {
-        return { currentVal, propVal, isProposed, fieldStatus: "Hidden Source", proposalStatus, source, stage, isBlockedAction: true, reasons: ["Hidden Context"], currentExists, proposalExists, isApproved: false, hasTechnicalBlock: true, contentNeedsReview: false, isContentPreApproved: false, preApprovalReason: "", isManualOnly: false, isActualBlockedProposal: false, isOperatorOwned: false };
+        return { currentVal, propVal, isProposed, fieldStatus: "Hidden Source", proposalStatus, source, stage, isBlockedAction: true, reasons: ["Hidden Context"], currentExists, proposalExists, isApproved: false, hasTechnicalBlock: true, contentNeedsReview: false, isContentPreApproved: false, preApprovalReason: "", isManualOnly: false, isActualBlockedProposal: false, isOperatorOwned: false, isSupported: true };
     }
 
     let hasTechnicalBlock = false;
@@ -533,7 +486,10 @@ export function OperationsMatrixTab({ products }) {
       currentVal, propVal, isProposed, fieldStatus, proposalStatus, source, stage, 
       isBlockedAction, reasons, currentExists, proposalExists, isApproved, hasTechnicalBlock, contentNeedsReview,
       isContentPreApproved, preApprovalReason, isManualOnly, isOperatorOwned, isActualBlockedProposal,
-      conflictData, nativeDescConflictData
+      conflictData, nativeDescConflictData,
+      isSupported: isKnownKey,
+      label: templateConfig?.label || formatLabel(key),
+      control: templateConfig?.control
     };
   };
 
@@ -541,10 +497,14 @@ export function OperationsMatrixTab({ products }) {
     const safePlan = {};
     const nativeChanges = {};
     
+    // Fetch dynamic config fields to pass down to getFieldMetadata for resolving template settings
+    const dynamicSections = getDynamicSections(manifest);
+    const allConfigFields = dynamicSections.flatMap(sec => sec.configFields || []);
+
     Object.keys(manifest.repairPlan).forEach(key => {
         if (key.startsWith("native_image_alts_")) return; // Handled separately
         
-        const meta = getFieldMetadata(key, manifest, currentId, currentApprovals);
+        const meta = getFieldMetadata(key, manifest, currentId, currentApprovals, allConfigFields);
         if (!meta.isBlockedAction && !HIDDEN_CONTEXT_FIELDS.includes(key) && !RETIRED_KEYS.includes(key)) {
             if (key === "shopify_title") {
                 nativeChanges.title = manifest.repairPlan[key];
@@ -575,7 +535,7 @@ export function OperationsMatrixTab({ products }) {
             if (node?.id) {
                 const key = `native_image_alts_${node.id}`;
                 if (manifest.repairPlan[key] !== undefined) {
-                    const meta = getFieldMetadata(key, manifest, currentId, currentApprovals);
+                    const meta = getFieldMetadata(key, manifest, currentId, currentApprovals, allConfigFields);
                     if (!meta.isBlockedAction && meta.proposalExists && meta.propVal !== meta.currentVal) {
                         imageAlts.push({ imageId: node.id, altText: meta.propVal });
                     }
@@ -1195,10 +1155,10 @@ export function OperationsMatrixTab({ products }) {
     }
   };
 
-  const isMultilineKey = (k) => [
+  const isMultilineKey = (k, control) => control === "multiline" || [
     "custom.generated_description", "custom.stone_story", 
     "custom.bench_notes", "custom.character_marks", "custom.honest_flaws_and_character", 
-    "custom.artist_notes"
+    "custom.artist_notes", "custom.origin_story"
   ].includes(k);
 
   const getSystemStatus = () => {
@@ -1275,11 +1235,12 @@ export function OperationsMatrixTab({ products }) {
     };
 
     const dynamicSections = getDynamicSections(data);
+    const allConfigFields = dynamicSections.flatMap(sec => sec.configFields || []);
 
     dynamicSections.forEach(sec => {
         sec.keys.forEach(k => {
             stats.total++;
-            const meta = getFieldMetadata(k, data, selectedBenchId, approvals);
+            const meta = getFieldMetadata(k, data, selectedBenchId, approvals, allConfigFields);
             
             if (meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing") stats.blank++;
             else stats.filled++;
@@ -1335,6 +1296,7 @@ export function OperationsMatrixTab({ products }) {
       const statusObj = getSystemStatus();
       const diag = data.diagnostics || {};
       const dynamicSections = getDynamicSections(data);
+      const allConfigFields = dynamicSections.flatMap(sec => sec.configFields || []);
 
       let stats = {
           loaded: 0,
@@ -1362,7 +1324,7 @@ export function OperationsMatrixTab({ products }) {
 
       dynamicSections.forEach(sec => {
           sec.keys.forEach(key => {
-              const meta = getFieldMetadata(key, data, selectedBenchId, approvals);
+              const meta = getFieldMetadata(key, data, selectedBenchId, approvals, allConfigFields);
               
               if (meta.currentExists) stats.loaded++;
               if (meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing") stats.blank++;
@@ -1482,7 +1444,7 @@ Vision Scan: ${visionStatus}
 Geo Library: ${geoStatus}
 Story Gen: ${descStatus}
 
---- 45-PIN SUMMARY ---
+--- FIELD SUMMARY ---
 Loaded: ${stats.loaded}
 Blank: ${stats.blank}
 Proposed: ${stats.proposed}
@@ -1642,7 +1604,7 @@ ${recommendations.join("\n")}
       if (HIDDEN_CONTEXT_FIELDS.includes(k)) return false;
       
       if (activeFilter === "All") return true;
-      const meta = getFieldMetadata(k, data, selectedBenchId, approvals);
+      const meta = getFieldMetadata(k, data, selectedBenchId, approvals, section.configFields);
       
       if (activeFilter === "Blank" && (meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing")) return true;
       if (activeFilter === "Proposed changes" && (meta.fieldStatus === "Proposed" || meta.fieldStatus === "Approved, not saved" || meta.fieldStatus === "Approved, blocked" || meta.fieldStatus === "Pre-approved, not saved" || meta.fieldStatus === "Pre-approved, blocked")) return true;
@@ -1654,6 +1616,7 @@ ${recommendations.join("\n")}
 
     if (filteredKeys.length === 0) return null;
     const isExpanded = expandedBays[section.title];
+    const groupColorTone = section.configFields?.[0]?.color === "success" ? "success" : undefined;
 
     return (
       <Card padding="0" key={section.title}>
@@ -1662,7 +1625,7 @@ ${recommendations.join("\n")}
             style={{ padding: "16px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center", backgroundColor: "#f9fafb", borderBottom: isExpanded ? "1px solid #e1e3e5" : "none", minWidth: 0, boxSizing: "border-box" }}
         >
           <div style={{ minWidth: 0 }}>
-            <Text as="h3" variant="headingLg" fontWeight="bold">{section.title} ({filteredKeys.length} fields)</Text>
+            <Text as="h3" variant="headingLg" fontWeight="bold" tone={groupColorTone}>{section.title} ({filteredKeys.length} fields)</Text>
           </div>
           <Button variant="plain" icon={isExpanded ? ChevronUpIcon : ChevronDownIcon} />
         </div>
@@ -1670,7 +1633,7 @@ ${recommendations.join("\n")}
         {isExpanded && (
           <div style={{ padding: "16px", display: "flex", flexDirection: "column", gap: "24px", minWidth: 0, boxSizing: "border-box" }}>
             {filteredKeys.map((key) => {
-              const meta = getFieldMetadata(key, data, selectedBenchId, approvals);
+              const meta = getFieldMetadata(key, data, selectedBenchId, approvals, section.configFields);
               const isBlank = meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing";
               
               let statusTone = undefined;
@@ -1681,7 +1644,7 @@ ${recommendations.join("\n")}
               if (meta.fieldStatus === "Unchanged") statusTone = "new";
               if (meta.fieldStatus === "Approved, blocked" || meta.fieldStatus === "Pre-approved, blocked") statusTone = "warning";
 
-              const canApprove = meta.proposalExists && meta.currentVal !== meta.propVal && !meta.isManualOnly && !meta.isContentPreApproved && meta.fieldStatus !== "API Error / Blocked" && meta.fieldStatus !== "Save Conflict";
+              const canApprove = meta.proposalExists && meta.currentVal !== meta.propVal && !meta.isManualOnly && !meta.isContentPreApproved && meta.fieldStatus !== "API Error / Blocked" && meta.fieldStatus !== "Save Conflict" && meta.isSupported;
               const isPreApprovedDisplay = meta.isContentPreApproved && meta.proposalExists && meta.currentVal !== meta.propVal;
               
               let boxBg = "#f8f9fa";
@@ -1689,7 +1652,10 @@ ${recommendations.join("\n")}
               let textColor = "#212529";
               let statusText = "Ready for review";
 
-              if (meta.isManualOnly) {
+              if (!meta.isSupported) {
+                  boxBg = "#f8f9fa"; boxBorder = "#dee2e6"; textColor = "#41464c";
+                  statusText = "Connection pending.";
+              } else if (meta.isManualOnly) {
                   boxBg = "#f8f9fa"; boxBorder = "#dee2e6"; textColor = "#41464c";
                   statusText = "Manual only field. Excluded from automated writes.";
               } else if (meta.fieldStatus === "API Error / Blocked" || meta.fieldStatus === "Save Conflict") {
@@ -1719,7 +1685,7 @@ ${recommendations.join("\n")}
                   statusText = "Safe suggestion. Approval optional but recorded if checked.";
               }
 
-              let customLabel = formatLabel(key);
+              let customLabel = meta.label;
               let thumbnailUrl = null;
               if (key.startsWith("native_image_alts_")) {
                   const id = key.replace("native_image_alts_", "");
@@ -1727,8 +1693,42 @@ ${recommendations.join("\n")}
                   thumbnailUrl = data.nativeTargets?.media?.edges?.find(e => e.node?.id === id)?.node?.preview?.image?.url;
               }
 
+              let displayCurrentVal = meta.currentVal;
+              if (typeof displayCurrentVal === 'string' && displayCurrentVal.startsWith('[')) {
+                try {
+                  const arr = JSON.parse(displayCurrentVal);
+                  displayCurrentVal = Array.isArray(arr) ? arr[0] : displayCurrentVal;
+                } catch(e) {}
+              } else if (typeof displayCurrentVal === 'string' && displayCurrentVal.startsWith('{')) {
+                try {
+                  const obj = JSON.parse(displayCurrentVal);
+                  displayCurrentVal = JSON.stringify(obj);
+                } catch(e) {}
+              } else if (Array.isArray(displayCurrentVal)) {
+                displayCurrentVal = displayCurrentVal[0];
+              } else if (typeof displayCurrentVal === 'object' && displayCurrentVal !== null) {
+                displayCurrentVal = JSON.stringify(displayCurrentVal);
+              }
+              
+              let displayPropVal = meta.propVal;
+              if (typeof displayPropVal === 'string' && displayPropVal.startsWith('[')) {
+                try {
+                  const arr = JSON.parse(displayPropVal);
+                  displayPropVal = Array.isArray(arr) ? arr[0] : displayPropVal;
+                } catch(e) {}
+              } else if (typeof displayPropVal === 'string' && displayPropVal.startsWith('{')) {
+                try {
+                  const obj = JSON.parse(displayPropVal);
+                  displayPropVal = JSON.stringify(obj);
+                } catch(e) {}
+              } else if (Array.isArray(displayPropVal)) {
+                displayPropVal = displayPropVal[0];
+              } else if (typeof displayPropVal === 'object' && displayPropVal !== null) {
+                displayPropVal = JSON.stringify(displayPropVal);
+              }
+
               return (
-                <Box key={key} padding="300" background={isBlank ? "bg-surface-warning" : "bg-surface"} borderColor="border" borderWidth="1" borderRadius="200">
+                <Box key={key} padding="300" background={isBlank && meta.isSupported ? "bg-surface-warning" : "bg-surface"} borderColor="border" borderWidth="1" borderRadius="200">
                   <div style={{ display: "flex", flexWrap: "wrap", gap: "20px", boxSizing: "border-box", minWidth: 0 }}>
                     
                     {/* Left Panel: Labels & Metadata */}
@@ -1747,9 +1747,15 @@ ${recommendations.join("\n")}
                         </div>
                         
                         <div style={{ marginTop: "12px", display: "flex", flexDirection: "column", gap: "6px", wordBreak: "break-word", overflowWrap: "anywhere" }}>
-                            <Text as="p" variant="bodyMd" fontWeight="bold">Status: <Badge tone={statusTone}>{meta.fieldStatus}</Badge></Text>
-                            <Text as="p" variant="bodyMd" fontWeight="bold">Source: <Text as="span" fontWeight="regular">{meta.source}</Text></Text>
-                            <Text as="p" variant="bodyMd" fontWeight="bold">Stage: <Text as="span" fontWeight="regular">{meta.stage}</Text></Text>
+                            {meta.isSupported ? (
+                              <>
+                                <Text as="p" variant="bodyMd" fontWeight="bold">Status: <Badge tone={statusTone}>{meta.fieldStatus}</Badge></Text>
+                                <Text as="p" variant="bodyMd" fontWeight="bold">Source: <Text as="span" fontWeight="regular">{meta.source}</Text></Text>
+                                <Text as="p" variant="bodyMd" fontWeight="bold">Stage: <Text as="span" fontWeight="regular">{meta.stage}</Text></Text>
+                              </>
+                            ) : (
+                              <Text as="p" variant="bodyMd" fontWeight="bold">Status: <Badge tone="info">Connection pending.</Badge></Text>
+                            )}
                         </div>
                       </BlockStack>
                     </div>
@@ -1759,18 +1765,20 @@ ${recommendations.join("\n")}
                         <div style={{ padding: "12px", backgroundColor: "#f4f6f8", borderRadius: "8px", border: "1px solid #d2d5d8", minWidth: 0, wordBreak: "break-word", overflowWrap: "anywhere", boxSizing: "border-box" }}>
                             <Text as="p" variant="headingSm" tone="subdued" fontWeight="bold" style={{ marginBottom: "6px" }}>Current Shopify Value</Text>
                             <div style={{ whiteSpace: "pre-wrap", minWidth: 0 }}>
-                                <Text as="p" variant="bodyLg">{meta.currentVal || <span style={{ color: "#8c9196", fontStyle: "italic" }}>Blank</span>}</Text>
+                                <Text as="p" variant="bodyLg">{displayCurrentVal || <span style={{ color: "#8c9196", fontStyle: "italic" }}>Blank</span>}</Text>
                             </div>
                         </div>
                         
                         <div style={{ minWidth: 0, width: "100%", boxSizing: "border-box" }}>
                             <Text as="p" variant="headingSm" tone="subdued" fontWeight="bold" style={{ marginBottom: "6px" }}>Bench Proposal Value</Text>
                             <TextField
-                                value={meta.propVal}
-                                onChange={(val) => handleRepairPlanChange(key, val)}
+                                value={meta.isSupported ? displayPropVal : "Connection pending."}
+                                onChange={(val) => { if (meta.isSupported) handleRepairPlanChange(key, val) }}
                                 autoComplete="off"
-                                multiline={isMultilineKey(key) ? 3 : undefined}
+                                multiline={isMultilineKey(key, meta.control) ? 3 : undefined}
                                 placeholder={meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing" ? "Blank" : (meta.fieldStatus === "Proposal not provided" ? "Not provided" : "")}
+                                disabled={!meta.isSupported}
+                                readOnly={!meta.isSupported}
                             />
                         </div>
 
@@ -1805,7 +1813,7 @@ ${recommendations.join("\n")}
                                         checked={meta.isApproved || false}
                                         onChange={(e) => handleToggleApproval(selectedBenchId, key, meta.propVal, e.target.checked)}
                                         style={{ width: "24px", height: "24px", flexShrink: 0, cursor: "pointer", accentColor: textColor, marginTop: "2px" }}
-                                        aria-label={`Approve suggestion for ${formatLabel(key)}: ${meta.propVal}`}
+                                        aria-label={`Approve suggestion for ${customLabel}: ${meta.propVal}`}
                                     />
                                     <label htmlFor={`approve-${key}`} style={{ fontWeight: "bold", fontSize: "16px", cursor: "pointer", color: textColor, display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px", flex: 1, minWidth: 0, wordBreak: "break-word", overflowWrap: "anywhere" }}>
                                         Approve this suggestion: <span style={{ fontWeight: "normal", whiteSpace: "pre-wrap" }}>"{meta.propVal}"</span>
@@ -1862,7 +1870,7 @@ ${recommendations.join("\n")}
   };
 
   const progressPercentage = queueIds.length > 0 ? Math.round(((isLoadingData ? loadIndex : executeIndex) / queueIds.length) * 100) : 0;
-  const dynamicSections = manifestData[selectedBenchId] ? getDynamicSections(manifestData[selectedBenchId]) : SECTIONS;
+  const dynamicSections = manifestData[selectedBenchId] ? getDynamicSections(manifestData[selectedBenchId]) : getDynamicSections();
 
   const filterOptions = [
     {label: 'All', value: 'All'},

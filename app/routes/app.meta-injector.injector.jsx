@@ -7,7 +7,7 @@ import React, { useState, useEffect, useCallback, useRef } from "react";
 import { BlockStack, Card, Text, TextField, Select, Button, Banner, DropZone, Spinner, Frame, Toast, InlineGrid, Divider } from "@shopify/polaris";
 import { PlusIcon, MagicIcon } from "@shopify/polaris-icons";
 import { useFetcher } from "react-router";
-import { ROCKHOUND_FIELDS, DEFAULT_DROPDOWNS, CHANNEL_REQUIREMENTS, getFieldStatus, productTypeOptions, collectionLocationOptions, normalizeDropdownValue, DROPDOWN_OPTIONS, FULL_META_GROUPS, TARGET_KEYS } from "../utils/meta-injector.constants.jsx";
+import { ROCKHOUND_FIELDS, DEFAULT_DROPDOWNS, CHANNEL_REQUIREMENTS, getFieldStatus, productTypeOptions, collectionLocationOptions, normalizeDropdownValue, DROPDOWN_OPTIONS, TARGET_KEYS, PRODUCT_TEMPLATE_GROUPS, FIELD_CATALOG } from "../utils/meta-injector.constants.jsx";
 import { handleScanPhoto, handleGenerateDescription, buildMetafieldsJson, buildTitle } from "./app.meta-injector.intake-helpers.jsx";
 
 // 🟢 NEW HELPER: Replaces the strict-breaking IIFE used for material generation
@@ -752,9 +752,6 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
 
   const isJewelry = ["Pendant (Finished Jewelry)", "Wire Wrap (Finished Jewelry)", "Ring / Bezel Setting", "Pendant", "Wire Wrap", "Ring", "Necklace", "Earrings", "Bracelet", "Jewelry", "Wearable Art"].some(type => (sharedFields.primary_use || "").includes(type));
 
-  const combinedData = { ...sharedFields, ...(pieces[0] || {}) };
-  const scanKeys = TARGET_KEYS;
-
   const actionData = fetcher.data;
   let useSaved = false;
   (actionData?.success === true) && (useSaved = true);
@@ -791,57 +788,96 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
   const currentWordCount = (pieces[0]?.generated_description || "").trim().split(/\s+/).filter(Boolean).length;
   const wordCountTone = currentWordCount > 100 ? "critical" : "subdued";
 
-  const requiredPanelFields = [
-    "piece_name", "price", "weight_grams", "material", "stone_family",
-    "collection_name", "origin_handle", "rescued_by", "treatment_status",
-    "origin_story", "primary_use", "seo_title"
-  ];
-
-  const getVal = (key, defaultSource) => {
-    return (useSaved && savedMap[key] !== undefined) ? savedMap[key] : defaultSource;
-  };
-
-  const getPanelFieldStatus = (key, val) => {
-    const isFilled = val !== undefined && val !== null && String(val).trim() !== "" && String(val).trim() !== "false";
-    const isReq = requiredPanelFields.includes(key);
-    if (isFilled) return { dotColor: "#22c55e", text: "Filled", isFilled: true };
-    if (isReq) return { dotColor: "#ef4444", text: "Required — Empty", isFilled: false };
-    return { dotColor: "#eab308", text: "Optional — Empty", isFilled: false };
-  };
-
-  const dot = (color) => (
-    <span style={{ display: "inline-block", width: 10, height: 10, borderRadius: "50%", backgroundColor: color, marginRight: 6, verticalAlign: "middle" }} />
-  );
-
-  const renderPanelRow = (label, key, val) => {
-    const status = getPanelFieldStatus(key, val);
-    let displayVal = "";
-    if (status.isFilled) {
-      displayVal = String(val);
-      if (displayVal.length > 60) displayVal = displayVal.substring(0, 60) + "...";
-    }
-
-    return (
-      <div key={key} style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "12px", color: "#f4f6f8", minWidth: 0 }}>
-        {dot(status.dotColor)}
-        <span style={{ fontWeight: "600", whiteSpace: "nowrap" }}>{label}:</span>
-        <span style={{ color: status.dotColor, whiteSpace: "nowrap" }}>{status.text}</span>
-        {status.isFilled && <span style={{ color: "#a6a6a6", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>— {displayVal}</span>}
-      </div>
-    );
-  };
-
   const showJewelrySpecsPanel = (sharedFields.primary_use || "").toLowerCase().includes("jewelry") || (sharedFields.primary_use || "").toLowerCase().includes("wearable") || (sharedFields.primary_use || "").toLowerCase().includes("pendant");
 
-  // 🟢 DYNAMICALLY RENDER BAYS FROM CONSTANTS
-  const renderDiagnosticBay = (group) => {
-    return (
-      <div key={group.heading} style={{ marginBottom: "16px" }}>
-        <div style={{ background: "#333333", padding: "6px 12px", borderRadius: "4px", width: "100%", fontWeight: "bold", color: group.color, fontSize: "12px", marginBottom: "8px" }}>
-          {group.heading.toUpperCase()}
+  // 🟢 DYNAMIC PRODUCT TEMPLATE GROUP RENDERING (REPLACES OLD DIAGNOSTIC BAY)
+  
+  const formatValue = (val) => {
+    if (val === null || val === undefined) return "";
+    if (typeof val === "object") {
+      try { return JSON.stringify(val); } catch(e) { return String(val); }
+    }
+    return String(val);
+  };
+
+  const renderTemplateField = (field) => {
+    const isShared = sharedFields.hasOwnProperty(field.key);
+    const isPiece = pieces[0]?.hasOwnProperty(field.key);
+    const isConnected = isShared || isPiece;
+
+    // Isolate native, standardized, and protected fields from generic inputs
+    const isProtected = field.namespace === "native" || 
+                        field.namespace === "shopify" || 
+                        field.mappingStatus === "draft" || 
+                        field.mappingStatus === "compatibility" || 
+                        field.mappingStatus === "staging" || 
+                        field.mappingStatus === "pending_read_only";
+
+    const val = isShared ? sharedFields[field.key] : (isPiece ? pieces[0][field.key] : undefined);
+    const displayVal = formatValue(val);
+
+    const fieldDef = FIELD_CATALOG.find(f => f.key === field.key);
+    const optionsKey = fieldDef?.optionsKey;
+    const isDropdown = !!optionsKey && DROPDOWN_OPTIONS[optionsKey];
+    const isMultiline = fieldDef?.uiConfig?.multiline;
+
+    if (isConnected && !isProtected) {
+      if (isDropdown) {
+        return (
+          <div key={field.key} style={{ minHeight: "54px" }}>
+            <Select
+              label={renderLabel(field.label, field.key, displayVal)}
+              options={[{ label: "Select...", value: "" }, ...DROPDOWN_OPTIONS[optionsKey]]}
+              value={displayVal}
+              onChange={(v) => isShared ? handleSharedFieldChange(field.key, v) : handlePieceChange(pieces[0].id, field.key, v)}
+            />
+          </div>
+        );
+      }
+      return (
+        <div key={field.key} style={{ minHeight: "54px" }}>
+          <TextField
+            label={renderLabel(field.label, field.key, displayVal)}
+            value={displayVal}
+            onChange={(v) => isShared ? handleSharedFieldChange(field.key, v) : handlePieceChange(pieces[0].id, field.key, v)}
+            multiline={isMultiline ? 2 : false}
+            autoComplete="off"
+          />
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
-          {group.fields.map(field => renderPanelRow(field.label, field.key, getVal(field.key, combinedData[field.key])))}
+      );
+    } else {
+      let statusText = "Connection pending";
+      let textColor = "#8c9196";
+      if (isConnected) {
+         statusText = displayVal || "Empty";
+         textColor = displayVal ? "#e1e3e5" : "#8c9196";
+      } else if (isProtected) {
+        statusText = "Connection pending"; 
+      }
+
+      return (
+        <div key={field.key} style={{ padding: "8px 12px", background: "#2a2b2d", borderRadius: "6px", border: "1px dashed #444", minHeight: "54px", display: "flex", flexDirection: "column", justifyContent: "center" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span style={{ fontSize: "14px", fontWeight: "600", color: "#a6a6a6" }}>{field.label}</span>
+            <span style={{ fontSize: "10px", color: "#666", textTransform: "uppercase" }}>{field.role}</span>
+          </div>
+          <span style={{ color: textColor, fontSize: "14px", marginTop: "4px", wordBreak: "break-word", fontFamily: "monospace" }}>{statusText}</span>
+          <div style={{ fontSize: "11px", color: "#5c5f62", marginTop: "4px" }}>
+            [{field.namespace}.{field.metaKey || field.key}]
+          </div>
+        </div>
+      );
+    }
+  };
+
+  const renderTemplateGroup = (group) => {
+    return (
+      <div key={group.heading} style={{ marginBottom: "24px", padding: "16px", background: "#202123", borderRadius: "8px", borderLeft: `4px solid ${group.color || "#444"}` }}>
+        <div style={{ fontWeight: "bold", color: group.color || "#ffffff", fontSize: "16px", marginBottom: "16px", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+          {group.heading}
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
+          {group.fields.map(field => renderTemplateField(field))}
         </div>
       </div>
     );
@@ -1617,8 +1653,8 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
 
         <div style={{ background: "#1a1a1a", padding: "20px", borderRadius: "8px", marginTop: "16px" }}>
           <BlockStack gap="400">
-            <Text variant="headingMd" as="h2" style={{ fontSize: "16px", fontWeight: "bold", color: "#ffffff" }}>Metafield Status Panel — All Fields</Text>
-            {FULL_META_GROUPS.map(group => renderDiagnosticBay(group))}
+            <Text variant="headingMd" as="h2" style={{ fontSize: "20px", fontWeight: "bold", color: "#ffffff" }}>Product Template Layout</Text>
+            {PRODUCT_TEMPLATE_GROUPS.map(group => renderTemplateGroup(group))}
           </BlockStack>
         </div>
       </BlockStack>

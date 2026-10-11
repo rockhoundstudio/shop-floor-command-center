@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { BlockStack, Card, Text, Banner, TextField, Select, Button, InlineStack, DropZone } from "@shopify/polaris";
 import { MagicIcon, SaveIcon, ClipboardIcon } from "@shopify/polaris-icons";
-import { DROPDOWN_OPTIONS, FULL_META_GROUPS, getFieldStatus, ROCKHOUND_FIELDS } from "../utils/meta-injector.constants.jsx";
+import { DROPDOWN_OPTIONS, FULL_META_GROUPS, getFieldStatus, ROCKHOUND_FIELDS, PRODUCT_TEMPLATE_GROUPS } from "../utils/meta-injector.constants.jsx";
 import { useFetcher } from "react-router";
 
 const CUSTOM_FIELDS = [
@@ -651,33 +651,27 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
     }
   }, [pendingFixFields, currentFixIndex]);
 
-  const renderFullMetaField = (key) => {
-    let field = null;
-    for (const group of FULL_META_GROUPS) {
-      const found = group.fields.find(f => f.key === key);
-      if (found) { field = found; break; }
-    }
-    if (!field) {
-      const rf = CUSTOM_FIELDS.find(f => f.key === key);
-      if (rf) field = rf; 
-    }
-    if (!field) {
-      field = { 
-        key: key, 
-        label: key.split(/[-_]/).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' '), 
-        type: 'text', 
-        multiline: key.includes("story") || key.includes("notes") || key.includes("flaws") || key.includes("character") || key === "generated_description" 
-      };
-    }
+  const renderTemplateField = (field) => {
+    const retiredFields = ["artist_notes", "bench_notes", "handcrafted_by", "color", "cut_and_shape", "stone_shape", "wire_material", "primary_use"];
+    const isKnownKey = NAMESPACE_MAP.custom.includes(field.key) || ["shopify_title", "price", "weight_grams", "shipping_weight_oz"].includes(field.key);
+    const isSupported = isKnownKey && !retiredFields.includes(field.key);
 
     let val = fullMetaState[field.key] !== undefined && fullMetaState[field.key] !== null ? fullMetaState[field.key] : "";
-    if (typeof val === 'string' && val.startsWith('[')) { 
-      try { 
-        const arr = JSON.parse(val); 
-        val = Array.isArray(arr) ? arr[0] : val; 
-      } catch(e) {} 
-    } else if (Array.isArray(val)) { 
-      val = val[0]; 
+    
+    if (typeof val === 'string' && val.startsWith('[')) {
+      try {
+        const arr = JSON.parse(val);
+        val = Array.isArray(arr) ? arr[0] : val;
+      } catch(e) {}
+    } else if (typeof val === 'string' && val.startsWith('{')) {
+      try {
+        const obj = JSON.parse(val);
+        val = JSON.stringify(obj);
+      } catch(e) {}
+    } else if (Array.isArray(val)) {
+      val = val[0];
+    } else if (typeof val === 'object' && val !== null) {
+      val = JSON.stringify(val);
     }
 
     if (field.key === "rescued_by" && typeof val === 'string') {
@@ -699,17 +693,37 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
         <svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg" style={{ minWidth: '18px', marginRight: '8px' }}>
           <circle cx="9" cy="9" r="9" fill={dotFillColor} />
         </svg>
-        <span style={{ fontSize: '14px', fontWeight: '500' }}>{field.label}</span>
+        <span style={{ fontSize: '14px', fontWeight: '500' }}>
+          {field.label}
+        </span>
       </div>
     );
 
+    const displayVal = isSupported ? val : "Connection pending.";
+    const isDisabled = !isSupported || (!isEmpty && val === "See Shopify metaobject" && field.key !== "shopify_title");
+    const isMultiline = field.control === "multiline" || field.key.includes("story") || field.key.includes("notes") || field.key.includes("flaws") || field.key.includes("character") || field.key === "generated_description";
+
     return (
       <div key={field.key}>
-        <div style={{ backgroundColor: isEmpty ? "#FFF5F5" : "transparent", minHeight: "48px", padding: "8px", borderRadius: "4px" }}>
-          {field.type !== "text" && DROPDOWN_OPTIONS && DROPDOWN_OPTIONS[field.key] && DROPDOWN_OPTIONS[field.key].length > 0 ? (
-            <Select label={labelNode} options={[{ label: "Select...", value: "" }, ...(DROPDOWN_OPTIONS[field.key] || [])]} value={val} onChange={(v) => updateFullMetaState(field.key, v)} accessibilityLabel={field.label} />
+        <div style={{ backgroundColor: isEmpty && isSupported ? "#FFF5F5" : "transparent", minHeight: "48px", padding: "8px", borderRadius: "4px" }}>
+          {isSupported && DROPDOWN_OPTIONS && DROPDOWN_OPTIONS[field.key] && DROPDOWN_OPTIONS[field.key].length > 0 ? (
+            <Select 
+              label={labelNode} 
+              options={[{ label: "Select...", value: "" }, ...(DROPDOWN_OPTIONS[field.key] || [])]} 
+              value={displayVal} 
+              onChange={(v) => updateFullMetaState(field.key, v)} 
+              disabled={isDisabled} 
+            />
           ) : (
-            <TextField label={labelNode} value={val} onChange={(v) => updateFullMetaState(field.key, v)} accessibilityLabel={field.label} multiline={field.multiline ? true : false} autoComplete="off" disabled={!isEmpty && val === "See Shopify metaobject" && field.key !== "shopify_title"} />
+            <TextField 
+              label={labelNode} 
+              value={displayVal} 
+              onChange={(v) => { if (isSupported) updateFullMetaState(field.key, v) }} 
+              multiline={isMultiline ? true : false} 
+              autoComplete="off" 
+              disabled={isDisabled} 
+              readOnly={!isSupported} 
+            />
           )}
         </div>
       </div>
@@ -847,65 +861,16 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
 
               <Text as="h3" variant="headingLg">Full Meta Report — Standard 60+ Fields</Text>
 
-              {/* Bay 1: Core Ignition & Lore */}
-              <BlockStack gap="300">
-                <Text as="h4" variant="headingMd" tone="success">Bay 1 — Core Ignition & Lore</Text>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
-                  {[
-                    "shopify_title", "piece_name", "official_name", "seo_title", "stone_family",
-                    "origin_location", "origin_handle", "origin_page_handle", "collection_name", "collection_location",
-                    "is_ooak", "rescued_by", "origin_story", "stone_story", "generated_description"
-                  ].map(renderFullMetaField)}
-                </div>
-              </BlockStack>
-
-              {/* Bay 2: Physical Specs & Lapidary Bench */}
-              <BlockStack gap="300">
-                <Text as="h4" variant="headingMd">Bay 2 — Physical Specs & Lapidary Bench</Text>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
-                  {[
-                    "dimensions_mm", "weight_grams", "shipping_weight_oz", "price", 
-                    "cut_type", "surface_finish", "primary_color",
-                    "secondary_colors", "color_pattern", "treatment_status", "treated",
-                    "character_marks", "honest_flaws_and_character", "alt_text"
-                  ].map(renderFullMetaField)}
-                </div>
-              </BlockStack>
-
-              {/* Bay 3: Geo-Vault Science */}
-              <BlockStack gap="300">
-                <Text as="h4" variant="headingMd">Bay 3 — Geo-Vault Science</Text>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
-                  {[
-                    "mohs_hardness", "specific_gravity", "crystal_system", "luster",
-                    "cleavage", "fracture_pattern", "diaphaneity", "tenacity", "mineral_class",
-                    "rock_composition", "rock_formation", "geological_era", "geological_age"
-                  ].map(renderFullMetaField)}
-                </div>
-              </BlockStack>
-
-              {/* Bay 4: Jewelry & Hardware Settings */}
-              <BlockStack gap="300">
-                <Text as="h4" variant="headingMd">Bay 4 — Jewelry & Hardware Settings</Text>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
-                  {[
-                    "primary_use", "primary_medium", "secondary_medium", "material", "jewelry_type",
-                    "necklace_design", "setting_ready", "bail_included",
-                    "chain_material", "chain_link_type", "jewelry_finding_type"
-                  ].map(renderFullMetaField)}
-                </div>
-              </BlockStack>
-
-              {/* Bay 5: Google Channels & Attributes */}
-              <BlockStack gap="300">
-                <Text as="h4" variant="headingMd">Bay 5 — Google Channels & Attributes</Text>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
-                  {[
-                    "google_product_category", "age_group", "target_gender", "condition",
-                    "authenticity", "rarity", "custom_product", "found_object"
-                  ].map(renderFullMetaField)}
-                </div>
-              </BlockStack>
+              {PRODUCT_TEMPLATE_GROUPS.map((group, groupIdx) => (
+                <BlockStack gap="300" key={groupIdx}>
+                  <Text as="h4" variant="headingMd" tone={group.color === "success" ? "success" : undefined}>
+                    {group.heading}
+                  </Text>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
+                    {group.fields.map(renderTemplateField)}
+                  </div>
+                </BlockStack>
+              ))}
 
             </BlockStack>
           </Card>
