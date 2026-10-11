@@ -431,7 +431,7 @@ DETAILS:
 - Origin Lore: ${extractedStory}
 - Collection Name: ${fullCollectionTitle} (Canonical Name: Use this exact name in prose instead of legacy titles found in the lore text)
 - Collection Lore: ${collectionStory}
-- Product Format: ${pieceData.product_format || "Loose Stone"}
+- Product Format: ${pieceData.product_format || ""}
 - Primary Use: ${pieceData.primary_use || "N/A"}
 - Jewelry Type: ${pieceData.jewelry_type || "N/A"}
 - Finding/Setting Type: ${pieceData.jewelry_finding_type || "N/A"}
@@ -439,14 +439,18 @@ DETAILS:
 - Bail Included: ${pieceData.bail_included || "N/A"}
 - Chain/Cord: ${pieceData.chain_material || "N/A"}
 - Secondary Medium (Metal): ${pieceData.secondary_medium || "N/A"}
-- Surface Finish: ${pieceData.surface_finish || "Natural/Polished"}
+- Surface Finish: ${pieceData.surface_finish || ""}
 - Dimensions: ${pieceData.dimensions_mm || "N/A"}
 - Stone Weight: ${pieceData.weight_grams ? pieceData.weight_grams + " g" : "N/A"}
 - Shipping Weight: ${pieceData.shipping_weight_oz ? pieceData.shipping_weight_oz + " oz" : "N/A"}
 - Mohs Hardness: ${pieceData.mohs_hardness || "N/A"}
 - Geological Age: ${pieceData.geological_age || "N/A"}
-- Rarity: ${pieceData.rarity || "One-of-a-Kind"}
-- Character Marks: ${pieceData.honest_flaws_and_character || pieceData.character_marks || "None"}
+- Rarity: ${pieceData.rarity || ""}
+- Primary Color: ${pieceData.primary_color || ""}
+- Color Pattern: ${pieceData.color_pattern || ""}
+- Character Marks: ${pieceData.character_marks || ""}
+- Honest Flaws and Character: ${pieceData.honest_flaws_and_character || ""}
+- Chain Type: ${pieceData.chain_link_type || ""}
 - Piece Name: ${pieceData.piece_name || "None"}
 
 VOICE RULES (CRITICAL):
@@ -487,9 +491,9 @@ Includes: [List bail/chain/cord. If none exist AND it is confirmed loose, state 
 
 5. COLLECTOR DATA
 Mohs: [mohs_hardness]
-Formation: [geological_age] (Omit if empty or 'Variable')
+Geological Age: [geological_age] (Omit if empty or 'Variable')
 Rarity: [rarity]
-Character: [honest_flaws_and_character or character_marks]
+Character: [Include supported character_marks and honest_flaws_and_character distinctly; omit missing facts.]
 
 6. ARTIST CALLOUT — only if loose stone or setting ready
 One plain sentence for jewelers and makers. Dimensions, drill status, setting suitability.
@@ -948,7 +952,8 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
         const protectedKeys = [
           "color_pattern", "dimensions_mm", "honest_flaws_and_character", "surface_finish", 
           "jewelry_finding_type", "bail_included", "chain_material", 
-          "secondary_medium", "primary_use", "product_format", "jewelry_type", "necklace_design"
+          "secondary_medium", "primary_use", "product_format", "jewelry_type", "necklace_design",
+          "chain_link_type", "character_marks"
         ];
 
         const currentData = Object.fromEntries(
