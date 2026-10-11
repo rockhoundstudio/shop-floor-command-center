@@ -91,7 +91,6 @@ const getDynamicSections = (manifest) => {
       keys = [...keys, ...mediaKeys];
     }
     
-    // Add hidden context fields for backward compatibility in display logic, if needed by this specific row
     if (group.heading === "3. Origin, Story, and Collection") {
         if (!keys.includes("custom.origin_story")) keys.push("custom.origin_story");
     }
@@ -99,6 +98,9 @@ const getDynamicSections = (manifest) => {
     return { title: group.heading, keys: keys, configFields: group.fields };
   });
 };
+
+const validArray = (arr) => Array.isArray(arr) ? arr : [];
+const validObj = (obj) => (typeof obj === 'object' && obj !== null && !Array.isArray(obj)) ? obj : {};
 
 export function OperationsMatrixTab({ products }) {
   const safeProducts = products || [];
@@ -113,25 +115,25 @@ export function OperationsMatrixTab({ products }) {
   const [executionMode, setExecutionMode] = useState(null);
   const [executeIndex, setExecuteIndex] = useState(0);
   const [aiStep, setAiStep] = useState(0);
-  const [tempAiData, setTempAiData] = useState({});
+  
+  const [pendingOperation, setPendingOperation] = useState(null); // { id, intent, token }
+  const [aiData, setAiData] = useState({}); // Indexed by pieceId to isolate cross-contamination
 
   const [queueIds, setQueueIds] = useState([]);
   const [productStates, setProductStates] = useState({}); 
   const [manifestData, setManifestData] = useState({}); 
   const [lastProcessedData, setLastProcessedData] = useState(null);
   
-  const [approvals, setApprovals] = useState({}); // Stores exact text approvals by pieceId and key
-  const [manualEdits, setManualEdits] = useState({}); // Tracks explicit human ownership to shield from async AI overwrites
-  const [submittedPayloads, setSubmittedPayloads] = useState({}); // Exact payload snapshot taken at execution purely for telemetry tracking
+  const [approvals, setApprovals] = useState({});
+  const [manualEdits, setManualEdits] = useState({}); 
+  const [submittedPayloads, setSubmittedPayloads] = useState({}); 
   
-  // Repair Results History
   const [repairHistory, setRepairHistory] = useState({});
 
   const [selectedBenchId, setSelectedBenchId] = useState(null);
   const [safetyMessage, setSafetyMessage] = useState("");
   const [safetyError, setSafetyError] = useState("");
 
-  // UI States for Accessibility & Review
   const [activeFilter, setActiveFilter] = useState("All");
   const [expandedBays, setExpandedBays] = useState({
     "1. Identity and Merchandising": true,
@@ -203,9 +205,10 @@ export function OperationsMatrixTab({ products }) {
     setExecutionMode(null);
     setExecuteIndex(0);
     setAiStep(0);
-    setTempAiData({});
+    setAiData({});
     setLoadIndex(0);
     setLastProcessedData(null);
+    setPendingOperation(null);
     setSafetyMessage("Rack and Bench cleared. Repair history reset.");
     setSafetyError("");
   }, []);
@@ -215,7 +218,6 @@ export function OperationsMatrixTab({ products }) {
        setSafetyError("Cannot generate plan: No inventory selected. Please check items in the left column first.");
        return;
     }
-    // Only explicitly requested global loads clear previously saved states
     setApprovals({}); 
     setManualEdits({}); 
     setIsLoadingData(true);
@@ -236,25 +238,6 @@ export function OperationsMatrixTab({ products }) {
       return next;
     });
   }, []);
-
-  useEffect(() => {
-    if (!isLoadingData) return;
-    if (batchFetcher.state !== "idle") return;
-
-    if (loadIndex >= queueIds.length) {
-      setIsLoadingData(false);
-      setSafetyMessage(`Data loaded and manifests built for ${queueIds.length} items.`);
-      return;
-    }
-
-    const currentId = queueIds[loadIndex];
-    updateProductState(currentId, STATUS.SCANNING, ["Fetching live metafields by GID..."]);
-
-    const fd = new FormData();
-    fd.append("intent", "loadProductData");
-    fd.append("pieceId", currentId);
-    batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-api" });
-  }, [isLoadingData, loadIndex, queueIds, batchFetcher.state, updateProductState]);
 
   const getFieldMetadata = (key, data, productId, currentApprovals, configFields = []) => {
     const isNativeImageAlt = key.startsWith("native_image_alts_");
@@ -364,7 +347,7 @@ export function OperationsMatrixTab({ products }) {
         }
     }
 
-    // New Backend Technical Blockers (Logged as historical, separated from preflight future blocks)
+    // New Backend Technical Blockers
     const apiBlockReason = data.blockedFields?.[key] || data.blockedFields?.[unprefixedKey];
     if (apiBlockReason) {
         reasons.push(`Backend Blocked: ${apiBlockReason}`);
@@ -373,7 +356,6 @@ export function OperationsMatrixTab({ products }) {
     let conflictData = data.conflicts?.[key] || data.conflicts?.[unprefixedKey];
     let nativeDescConflictData = null;
     
-    // Explicit injection for Native Description conflict on the Generated Description card
     if (key === "custom.generated_description" && data.conflicts?.["native_description"]) {
         nativeDescConflictData = data.conflicts["native_description"];
         reasons.push(`Read-back Mismatch [Native descriptionHtml]: ${nativeDescConflictData.expected} != ${nativeDescConflictData.actual}`);
@@ -427,7 +409,7 @@ export function OperationsMatrixTab({ products }) {
         }
     }
     
-    // Apply read-back and block overrides strictly for UI display so users know previous saves failed
+    // Apply read-back and block overrides strictly for UI display
     if (apiBlockReason) {
         fieldStatus = "API Error / Blocked";
     } else if (conflictData || nativeDescConflictData) {
@@ -453,22 +435,18 @@ export function OperationsMatrixTab({ products }) {
                 isBlockedAction = false;
             }
         } else {
-            // If not manually approved and not pre-approved, content blocks stop saves
             if (contentNeedsReview || hasTechnicalBlock) {
                 isBlockedAction = true;
             } else {
-                // "Proposed" fields are inherently safe when not blocked technically
                 isBlockedAction = false; 
             }
         }
     } else {
-        // Enforce blocks on Unchanged, Blanks, Missing, API Errors, Conflicts
         if (hasTechnicalBlock || apiBlockReason || conflictData || nativeDescConflictData || fieldStatus === "Optional blank" || fieldStatus === "Required missing") {
             isBlockedAction = true;
         }
     }
 
-    // Absolute enforcements for strictly un-writable manual fields
     if (isManualOnly) {
         isBlockedAction = true;
         if (proposalExists && currentVal !== propVal) {
@@ -477,7 +455,6 @@ export function OperationsMatrixTab({ products }) {
         }
     }
 
-    // Establish true blocked proposals specifically to prevent misleading UI counts
     const isActualBlockedProposal = isBlockedAction && 
                                     !isManualOnly && 
                                     !HIDDEN_CONTEXT_FIELDS.includes(key) && 
@@ -499,12 +476,11 @@ export function OperationsMatrixTab({ products }) {
     const safePlan = {};
     const nativeChanges = {};
     
-    // Fetch dynamic config fields to pass down to getFieldMetadata for resolving template settings
     const dynamicSections = getDynamicSections(manifest);
     const allConfigFields = dynamicSections.flatMap(sec => sec.configFields || []);
 
     Object.keys(manifest.repairPlan).forEach(key => {
-        if (key.startsWith("native_image_alts_")) return; // Handled separately
+        if (key.startsWith("native_image_alts_")) return; 
         
         const meta = getFieldMetadata(key, manifest, currentId, currentApprovals, allConfigFields);
         if (!meta.isBlockedAction && !HIDDEN_CONTEXT_FIELDS.includes(key) && !RETIRED_KEYS.includes(key)) {
@@ -579,7 +555,6 @@ export function OperationsMatrixTab({ products }) {
     setExecutionMode("REPAIR");
     setIsExecuting(true);
     setExecuteIndex(0);
-    setTempAiData({});
   }, [queueIds, manifestData]);
 
   const executeAIFill = useCallback(() => {
@@ -595,65 +570,78 @@ export function OperationsMatrixTab({ products }) {
     }
     
     setApprovals({}); 
-    // manualEdits purposefully NOT cleared here, to preserve explicit operator edits across AI runs.
     setSafetyError("");
     setSafetyMessage("Industrial AI Batch Pipeline engaged. Firing up the Gemini cores...");
     setExecutionMode("AI_BATCH_PIPELINE");
     setIsExecuting(true);
     setExecuteIndex(0);
     setAiStep(1);
-    setTempAiData({});
   }, [queueIds, manifestData]);
 
+  // Unified Dispatch Loop Driver
   useEffect(() => {
-    if (!isExecuting) return;
-    if (batchFetcher.state !== "idle") return;
+    const isProcessing = isLoadingData || isExecuting;
+    if (!isProcessing) return;
+    if (batchFetcher.state !== "idle" || pendingOperation !== null) return;
 
-    if (executionMode === "REPAIR" && executeIndex >= queueIds.length) {
-      setIsExecuting(false);
-      setExecutionMode(null);
-      setAiStep(0);
-      setSafetyMessage(`Execution Complete. Processed ${queueIds.length} items. Note: AI Autofill only populates fields where visual or titled data is evident.`);
+    if (isLoadingData && loadIndex >= queueIds.length) {
+      setIsLoadingData(false);
+      setSafetyMessage(`Data loaded and manifests built for ${queueIds.length} items.`);
       return;
     }
 
-    // Single AI mode processes exactly one designated item and halts.
-    if (executionMode === "AI_SINGLE_PIPELINE" && aiStep > 4) {
-      setIsExecuting(false);
-      setExecutionMode(null);
-      setAiStep(0);
-      setSafetyMessage(`Single AI Run Complete. Data staged for review.`);
-      return;
+    if (isExecuting) {
+      if (executionMode === "REPAIR" && executeIndex >= queueIds.length) {
+        setIsExecuting(false);
+        setExecutionMode(null);
+        setAiStep(0);
+        setSafetyMessage(`Execution Complete. Processed ${queueIds.length} items. Note: AI Autofill only populates fields where visual or titled data is evident.`);
+        return;
+      }
+      if (executionMode === "AI_SINGLE_PIPELINE" && aiStep > 4) {
+        setIsExecuting(false);
+        setExecutionMode(null);
+        setAiStep(0);
+        setSafetyMessage(`Single AI Run Complete. Data staged for review.`);
+        return;
+      }
+      if (executionMode === "AI_BATCH_PIPELINE" && executeIndex >= queueIds.length) {
+        setIsExecuting(false);
+        setExecutionMode(null);
+        setAiStep(0);
+        setSafetyMessage(`Execution Complete. Processed ${queueIds.length} items. Note: AI Autofill only populates fields where visual or titled data is evident.`);
+        return;
+      }
     }
 
-    // Bulk AI mode processes the full queue array.
-    if (executionMode === "AI_BATCH_PIPELINE" && executeIndex >= queueIds.length) {
-      setIsExecuting(false);
-      setExecutionMode(null);
-      setAiStep(0);
-      setSafetyMessage(`Execution Complete. Processed ${queueIds.length} items. Note: AI Autofill only populates fields where visual or titled data is evident.`);
-      return;
-    }
-
-    const currentId = executionMode === "AI_SINGLE_PIPELINE" ? selectedBenchId : queueIds[executeIndex];
+    const currentId = isLoadingData ? queueIds[loadIndex] : (executionMode === "AI_SINGLE_PIPELINE" ? selectedBenchId : queueIds[executeIndex]);
     if (!currentId) return;
 
     const manifest = manifestData[currentId];
     const product = safeProducts.find(p => p.id === currentId);
 
-    if (!manifest || !product) {
+    if (!isLoadingData && (!manifest || !product)) {
       updateProductState(currentId, STATUS.SKIPPED, ["No manifest or product data built."]);
-      if (executionMode === "AI_SINGLE_PIPELINE") {
-         setAiStep(5); // Force halt for single run
-      } else {
-         setTimeout(() => setExecuteIndex(i => i + 1), 500);
-      }
+      if (executionMode === "AI_SINGLE_PIPELINE") setAiStep(5);
+      else setExecuteIndex(i => i + 1);
       return;
     }
 
-    if (executionMode === "REPAIR") {
-      if (!tempAiData.repairRequested) {
-        setTempAiData({ repairRequested: true });
+    const token = Date.now().toString() + Math.random().toString(36).substring(2, 7);
+
+    if (isLoadingData) {
+      setPendingOperation({ id: currentId, intent: "loadProductData", token });
+      updateProductState(currentId, STATUS.SCANNING, ["Fetching live metafields by GID..."]);
+      const fd = new FormData();
+      fd.append("intent", "loadProductData");
+      fd.append("pieceId", currentId);
+      batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-api" });
+    }
+    else if (executionMode === "REPAIR") {
+      const pieceAi = aiData[currentId] || {};
+      if (!pieceAi.repairRequested) {
+        setAiData(prev => ({ ...prev, [currentId]: { ...pieceAi, repairRequested: true } }));
+        setPendingOperation({ id: currentId, intent: "executeRepairPlan", token });
         updateProductState(currentId, STATUS.SCANNING, ["Executing structural repairs..."]);
         
         const fd = new FormData();
@@ -662,14 +650,12 @@ export function OperationsMatrixTab({ products }) {
         
         const { safePlan, nativeChanges } = buildRepairPayload(manifest, product, currentId, approvals);
 
-        // --- EXECUTION SNAPSHOT ---
         const snapshot = { ...safePlan };
         if (nativeChanges.title) snapshot.shopify_title = nativeChanges.title;
         (nativeChanges.imageAlts || []).forEach(alt => {
             snapshot[`native_image_alts_${alt.imageId}`] = alt.altText;
         });
         setSubmittedPayloads(prev => ({ ...prev, [currentId]: snapshot }));
-        // --------------------------
 
         fd.append("repairPlan", JSON.stringify(safePlan));
         fd.append("nativeChanges", JSON.stringify(nativeChanges));
@@ -678,18 +664,23 @@ export function OperationsMatrixTab({ products }) {
       }
     } 
     else if (executionMode === "AI_BATCH_PIPELINE" || executionMode === "AI_SINGLE_PIPELINE") {
-      if (aiStep === 1 && !tempAiData.titleParseRequested) {
-        setTempAiData(prev => ({ ...prev, titleParseRequested: true }));
+      const pieceAi = aiData[currentId] || {};
+
+      if (aiStep === 1 && !pieceAi.titleParseRequested) {
+        setAiData(prev => ({ ...prev, [currentId]: { ...pieceAi, titleParseRequested: true } }));
+        setPendingOperation({ id: currentId, intent: "titleParse", token });
         updateProductState(currentId, STATUS.SCANNING, ["Stage 1: Parsing Title & Origin (Gemini + Render DB)..."]);
         
         const titleToParse = manifest.canonicalFields?.shopify_title || product.title;
         const fd = new FormData();
         fd.append("intent", "titleParse");
         fd.append("pieceName", titleToParse);
+        fd.append("pieceId", currentId);
         batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-autofill" });
       }
-      else if (aiStep === 2 && !tempAiData.fullRescanRequested) {
-        setTempAiData(prev => ({ ...prev, fullRescanRequested: true }));
+      else if (aiStep === 2 && !pieceAi.fullRescanRequested) {
+        setAiData(prev => ({ ...prev, [currentId]: { ...pieceAi, fullRescanRequested: true } }));
+        setPendingOperation({ id: currentId, intent: "tab3FullRescan", token });
         updateProductState(currentId, STATUS.SCANNING, ["Stage 2: Vision API Deep Scan (Gemini)..."]);
         
         const titleToParse = manifest.canonicalFields?.shopify_title || product.title;
@@ -707,30 +698,18 @@ export function OperationsMatrixTab({ products }) {
             })).filter(m => m.imageId && m.url);
             fd.append("mediaInputs", JSON.stringify(mediaInputs));
         } else {
-            // Fallback for isolated legacy execution behavior
             const imageUrl = product.images?.edges?.[0]?.node?.url || product.featuredImage?.url || product.media?.edges?.[0]?.node?.image?.url || "";
             fd.append("imageUrl", imageUrl);
         }
 
-        fd.append("stone_family", tempAiData.titleParse?.stone_family || "");
-        
+        fd.append("stone_family", pieceAi.titleParse?.stone_family || "");
         const currentOriginStory = manifest.currentMetafields["custom.origin_story"] || manifest.canonicalFields["custom.origin_story"] || "";
-        fd.append("origin_story", currentOriginStory || tempAiData.titleParse?.origin_story || "");
-        
+        fd.append("origin_story", currentOriginStory || pieceAi.titleParse?.origin_story || "");
         fd.append("honest_flaws_and_character", manifest.currentMetafields["custom.honest_flaws_and_character"] || "");
-        
-        // Feed existing operator-owned facts to Gemini so it has context, but AI overwrite shield protects changes
         fd.append("weight_grams", manifest.currentMetafields["custom.weight_grams"] || "");
         fd.append("dimensions_mm", manifest.currentMetafields["custom.dimensions_mm"] || "");
 
-        const hardwareKeys = [
-            "bail_included",
-            "secondary_medium",
-            "jewelry_finding_type",
-            "primary_use",
-            "jewelry_type"
-        ];
-        
+        const hardwareKeys = ["bail_included", "secondary_medium", "jewelry_finding_type", "primary_use", "jewelry_type"];
         hardwareKeys.forEach(k => {
             const fullKey = `custom.${k}`;
             let val = "";
@@ -739,142 +718,82 @@ export function OperationsMatrixTab({ products }) {
             } else if (manifest.currentMetafields && manifest.currentMetafields[fullKey]) {
                 val = manifest.currentMetafields[fullKey];
             }
-            if (val) {
-                fd.append(k, val);
-            }
+            if (val) fd.append(k, val);
         });
 
         batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-autofill" });
       }
-      else if (aiStep === 3 && !tempAiData.generateDescRequested) {
-        setTempAiData(prev => ({ ...prev, generateDescRequested: true }));
+      else if (aiStep === 3 && !pieceAi.generateDescRequested) {
+        setAiData(prev => ({ ...prev, [currentId]: { ...pieceAi, generateDescRequested: true } }));
+        setPendingOperation({ id: currentId, intent: "generateDescription", token });
         updateProductState(currentId, STATUS.SCANNING, ["Stage 3: Generating Story Narrative (Gemini)..."]);
         
         const fd = new FormData();
         fd.append("intent", "generateDescription");
+        fd.append("pieceId", currentId);
         fd.append("sharedFields", JSON.stringify({
-            stone_family: tempAiData.tab3Data?.stone_family || tempAiData.titleParse?.stone_family,
-            origin_location: tempAiData.tab3Data?.origin_location || tempAiData.titleParse?.origin_location
+            stone_family: pieceAi.tab3Data?.stone_family || pieceAi.titleParse?.stone_family,
+            origin_location: pieceAi.tab3Data?.origin_location || pieceAi.titleParse?.origin_location
         }));
-        fd.append("pieceData", JSON.stringify(tempAiData.tab3Data || {}));
+        fd.append("pieceData", JSON.stringify(pieceAi.tab3Data || {}));
         batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-autofill" });
       }
-      else if (aiStep === 4) {
-        updateProductState(currentId, STATUS.VALIDATED, ["AI Pipeline Complete. Data staged."]);
-        
-        setManifestData(prev => {
-            const existing = prev[currentId];
-            const newPlan = { ...existing.repairPlan };
-            const diagnostics = { ...(existing.diagnostics || {}) };
-            
-            const titleData = tempAiData.titleParse || {};
-            const visionData = tempAiData.tab3Data || {};
-            const descData = tempAiData.generated_description || "";
-            const verifiedGeo = tempAiData.verifiedGeoValues || {};
-
-            // Record stage success
-            if (tempAiData.titleParseRequested) {
-                diagnostics.gemini = "Success";
-                diagnostics.geoLibrary = titleData?.geoSource === "library" ? "Success" : (titleData?.geoSource || "Not reported");
-                diagnostics.stage = "titleParse";
-            }
-            if (tempAiData.fullRescanRequested) {
-                diagnostics.vision = "Success";
-                diagnostics.gemini = "Success";
-                diagnostics.stage = "tab3FullRescan";
-            }
-            if (tempAiData.generateDescRequested) {
-                diagnostics.gemini = "Success";
-                diagnostics.stage = "generateDescription";
-            }
-
-            // AI Overwrite Shield evaluates current operator edits synchronously
-            const safeApply = (keyName, aiValue) => {
-                if (RETIRED_KEYS.includes(keyName)) return; // Shield against retired keys staging
-                if (manualEdits[currentId] && manualEdits[currentId][keyName] === true) {
-                    return; // Preserve explicit operator edit
-                }
-                newPlan[keyName] = aiValue;
-            };
-
-            Object.keys(visionData).forEach(k => {
-                if (k !== "generated_description" && k !== "pieceId" && k !== "debug_origin" && k !== "intent" && k !== "success" && k !== "origin_story") {
-                    if (NATIVE_FIELDS.includes(k) || k.includes('.')) {
-                        safeApply(k, visionData[k]);
-                    } else {
-                        safeApply(`custom.${k}`, visionData[k]);
-                    }
-                }
-            });
-            
-            Object.keys(titleData).forEach(k => {
-                if (k !== "pieceId" && k !== "intent" && k !== "success" && k !== "geoSource" && k !== "origin_story") {
-                    if (NATIVE_FIELDS.includes(k) || k.includes('.')) {
-                        safeApply(k, titleData[k]);
-                    } else {
-                        safeApply(`custom.${k}`, titleData[k]);
-                    }
-                }
-            });
-
-            // Restore Enriched Vision SEO
-            const enrichedSeo = visionData.seo_title || visionData["custom.seo_title"] || "";
-            if (enrichedSeo.trim() !== "") {
-              safeApply("custom.seo_title", enrichedSeo.trim());
-            }
-
-            if (descData) safeApply("custom.generated_description", descData);
-
-            if (tempAiData.imageAlts) {
-                tempAiData.imageAlts.forEach(altObj => {
-                    if (altObj.imageId && altObj.altText) {
-                        safeApply(`native_image_alts_${altObj.imageId}`, altObj.altText);
-                    }
-                });
-            }
-            
-            if (tempAiData.altValidationErrors) {
-                diagnostics.altValidationErrors = tempAiData.altValidationErrors;
-            }
-
-            return { ...prev, [currentId]: { ...existing, repairPlan: newPlan, diagnostics, verifiedGeoValues: verifiedGeo } };
-        });
-        
-        setTempAiData({});
-        
-        if (executionMode === "AI_SINGLE_PIPELINE") {
-            setAiStep(5); // Proceed to terminal single state
-        } else {
-            setAiStep(1); // Loop to next bulk item
-            setTimeout(() => setExecuteIndex(i => i + 1), 500);
-        }
-      }
     }
-  }, [isExecuting, executionMode, executeIndex, queueIds, manifestData, batchFetcher.state, updateProductState, aiStep, tempAiData, safeProducts, approvals, selectedBenchId, manualEdits]);
+  }, [isLoadingData, isExecuting, batchFetcher.state, pendingOperation, executionMode, loadIndex, executeIndex, aiStep, queueIds, selectedBenchId, manifestData, safeProducts, aiData, approvals]);
 
+  // Unified Response Receiver
   useEffect(() => {
     if (batchFetcher.state === "idle" && batchFetcher.data && batchFetcher.data !== lastProcessedData) {
-      setLastProcessedData(batchFetcher.data);
-      const { intent, success, pieceId, productId, message, error, errors, logs, status, finalStatus, titleParse, tab3Data, generated_description, fieldsUpdated, legacyKeysRemoved, verifiedGeoValues, blockedFields, conflicts, readBackVerified, proposedChanges, variantTarget, imageAlts, altValidationErrors } = batchFetcher.data;
-      
-      const targetId = pieceId || productId;
+      const data = batchFetcher.data;
+      setLastProcessedData(data);
+
+      const targetId = data.pieceId || data.productId;
+      const intent = data.intent;
+      const success = data.success;
+
+      if (pendingOperation) {
+          const productIntents = ["loadProductData", "executeRepairPlan", "batchAuditItem", "saveMetafields", "titleParse", "tab3FullRescan", "generateDescription"];
+          if (productIntents.includes(intent)) {
+              if (!targetId || targetId !== pendingOperation.id) {
+                  setSafetyError("We could not confirm which product this result belongs to. No result was applied. Refresh Tab 3 and rebuild the manifest.");
+                  setIsExecuting(false);
+                  setIsLoadingData(false);
+                  setPendingOperation(null);
+                  return;
+              }
+          }
+          if (intent !== pendingOperation.intent) return; // Stale crossover
+      }
+
+      const {
+          message, error, errors, logs, status, finalStatus, titleParse, tab3Data, generated_description, fieldsUpdated, legacyKeysRemoved, verifiedGeoValues, readBackVerified, proposedChanges, variantTarget, imageAlts, altValidationErrors,
+          unsupportedKeys: rawUnsupportedKeys,
+          attemptedDestinations: rawAttemptedDestinations,
+          verifiedDestinations: rawVerifiedDestinations,
+          unresolvedChanges: rawUnresolvedChanges,
+          blockedFields: rawBlockedFields,
+          conflicts: rawConflicts
+      } = data;
+
+      const unsupportedKeys = validArray(rawUnsupportedKeys);
+      const attemptedDestinations = validArray(rawAttemptedDestinations);
+      const verifiedDestinations = validArray(rawVerifiedDestinations);
+      const unresolvedChanges = validObj(rawUnresolvedChanges);
+      const blockedFields = validObj(rawBlockedFields);
+      const conflicts = validObj(rawConflicts);
       
       if (intent === "loadProductData" && targetId) {
          if (!success) {
             updateProductState(targetId, STATUS.FAILED, [error || message || "Failed to load data"]);
-            // Clear invalid state on failure
             setApprovals(prev => { const n = {...prev}; delete n[targetId]; return n; });
             setManualEdits(prev => { const n = {...prev}; delete n[targetId]; return n; });
          } else {
-            // Verify if existing manual edits still apply to the loaded nativeTargets
             setManualEdits(prev => {
                 const n = {...prev};
                 if (n[targetId]) {
-                    const validIds = new Set(batchFetcher.data.nativeTargets?.media?.edges?.map(e => `native_image_alts_${e.node.id}`) || []);
+                    const validIds = new Set(data.nativeTargets?.media?.edges?.map(e => `native_image_alts_${e.node.id}`) || []);
                     Object.keys(n[targetId]).forEach(k => {
-                        if (k.startsWith("native_image_alts_") && !validIds.has(k)) {
-                            delete n[targetId][k];
-                        }
+                        if (k.startsWith("native_image_alts_") && !validIds.has(k)) delete n[targetId][k];
                     });
                 }
                 return n;
@@ -882,11 +801,9 @@ export function OperationsMatrixTab({ products }) {
             setApprovals(prev => {
                 const n = {...prev};
                 if (n[targetId]) {
-                    const validIds = new Set(batchFetcher.data.nativeTargets?.media?.edges?.map(e => `native_image_alts_${e.node.id}`) || []);
+                    const validIds = new Set(data.nativeTargets?.media?.edges?.map(e => `native_image_alts_${e.node.id}`) || []);
                     Object.keys(n[targetId]).forEach(k => {
-                        if (k.startsWith("native_image_alts_") && !validIds.has(k)) {
-                            delete n[targetId][k];
-                        }
+                        if (k.startsWith("native_image_alts_") && !validIds.has(k)) delete n[targetId][k];
                     });
                 }
                 return n;
@@ -897,9 +814,9 @@ export function OperationsMatrixTab({ products }) {
                 return {
                     ...prev,
                     [targetId]: {
-                        ...batchFetcher.data,
+                        ...data,
                         diagnostics: {
-                            shopifyRead: batchFetcher.data.success ? "Success" : "Failed",
+                            shopifyRead: success ? "Success" : "Failed",
                             gemini: prevDiag.gemini === "Success" ? "Success" : "Not called",
                             vision: prevDiag.vision === "Success" ? "Success" : "Not called",
                             geoLibrary: prevDiag.geoLibrary === "Success" ? "Success" : "Not called",
@@ -911,10 +828,9 @@ export function OperationsMatrixTab({ products }) {
             });
             updateProductState(targetId, STATUS.VALIDATED, ["Data Loaded. Manifest Built."]);
          }
-         if (isLoadingData) setTimeout(() => setLoadIndex(i => i + 1), 100);
       }
 
-      if ((intent === "executeRepairPlan" || intent === "batchAuditItem" || intent === "saveMetafields") && targetId && executionMode !== "AI_BATCH_PIPELINE" && executionMode !== "AI_SINGLE_PIPELINE") {
+      if ((intent === "executeRepairPlan" || intent === "batchAuditItem" || intent === "saveMetafields") && targetId && (!pendingOperation || pendingOperation.intent === intent)) {
         
         if (intent === "executeRepairPlan") {
             const ts = new Date().toISOString();
@@ -926,8 +842,12 @@ export function OperationsMatrixTab({ products }) {
                     message,
                     fieldsUpdated,
                     legacyKeysRemoved,
-                    blockedFields: blockedFields || {},
-                    conflicts: conflicts || {},
+                    unsupportedKeys,
+                    attemptedDestinations,
+                    verifiedDestinations,
+                    unresolvedChanges,
+                    blockedFields,
+                    conflicts,
                     readBackVerified,
                     proposedChanges,
                     completedAt: ts,
@@ -935,8 +855,7 @@ export function OperationsMatrixTab({ products }) {
                 }
             }));
             
-            // Only update current fields if the readback from save confirmed the data
-            if (batchFetcher.data.currentMetafields) {
+            if (data.currentMetafields) {
                  setManifestData(prev => {
                     const existing = prev[targetId];
                     if (!existing) return prev;
@@ -944,15 +863,15 @@ export function OperationsMatrixTab({ products }) {
                         ...prev,
                         [targetId]: {
                             ...existing,
-                            currentMetafields: batchFetcher.data.currentMetafields,
-                            fieldsUpdated: batchFetcher.data.fieldsUpdated !== undefined ? batchFetcher.data.fieldsUpdated : existing.fieldsUpdated,
-                            legacyKeysRemoved: batchFetcher.data.legacyKeysRemoved !== undefined ? batchFetcher.data.legacyKeysRemoved : existing.legacyKeysRemoved,
-                            blockedFields: batchFetcher.data.blockedFields || {},
-                            conflicts: batchFetcher.data.conflicts || {},
+                            currentMetafields: data.currentMetafields,
+                            fieldsUpdated: data.fieldsUpdated !== undefined ? data.fieldsUpdated : existing.fieldsUpdated,
+                            legacyKeysRemoved: data.legacyKeysRemoved !== undefined ? data.legacyKeysRemoved : existing.legacyKeysRemoved,
+                            blockedFields: blockedFields,
+                            conflicts: conflicts,
                             diagnostics: {
                                 ...existing.diagnostics,
                                 shopifyRead: "Success",
-                                readBack: batchFetcher.data.readBackVerified === true ? "Success" : (batchFetcher.data.readBackVerified === false ? "Failed" : "Not called"),
+                                readBack: data.readBackVerified === true ? "Success" : (data.readBackVerified === false ? "Failed" : "Not called"),
                                 stage: "executeRepairPlan"
                             }
                         }
@@ -962,120 +881,176 @@ export function OperationsMatrixTab({ products }) {
         }
 
         if (!success) {
-           console.error("Execute Error from Backend:", batchFetcher.data);
-           setIsExecuting(false);
+           console.error("Execute Error from Backend:", data);
            const errMsg = message || error || (errors ? errors[0]?.message : "Unknown Error");
            setSafetyError(`Engine halted on ${targetId}. Error: ${errMsg}`);
            updateProductState(targetId, STATUS.FAILED, errors ? errors.map(e => e.message) : (logs || [errMsg]));
-           return;
-        }
-        
-        // This legacy block catches older external triggers. 
-        if (intent === "batchAuditItem" && success) {
-            updateProductState(targetId, STATUS.SCANNING, ["AI Run complete. Fetching fresh data..."]);
-            setSafetyMessage("Single AI Run complete. Reloading manifest to display new data...");
-            setManifestData(prev => {
-                const existing = prev[targetId];
-                if (!existing) return prev;
-                return {
-                    ...prev,
-                    [targetId]: {
-                        ...existing,
-                        diagnostics: {
-                            ...existing.diagnostics,
-                            gemini: "Success",
-                            vision: "Success",
-                            stage: "batchAuditItem"
-                        }
-                    }
-                };
-            });
-            setTimeout(() => {
-                const fd = new FormData();
-                fd.append("intent", "loadProductData");
-                fd.append("pieceId", targetId);
-                batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-api" });
-            }, 500);
-            return;
-        }
+        } else {
+           if (intent === "batchAuditItem") {
+               updateProductState(targetId, STATUS.SCANNING, ["AI Run complete. Fetching fresh data..."]);
+               setSafetyMessage("Single AI Run complete. Reloading manifest to display new data...");
+               setManifestData(prev => {
+                   const existing = prev[targetId];
+                   if (!existing) return prev;
+                   return {
+                       ...prev,
+                       [targetId]: {
+                           ...existing,
+                           diagnostics: {
+                               ...existing.diagnostics, gemini: "Success", vision: "Success", stage: "batchAuditItem"
+                           }
+                       }
+                   };
+               });
+               setTimeout(() => {
+                   const fd = new FormData();
+                   fd.append("intent", "loadProductData");
+                   fd.append("pieceId", targetId);
+                   batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-api" });
+               }, 500);
+           }
 
-        const successLogs = logs || [message || "Operation applied successfully."];
-        
-        let statusToSet = STATUS.COMPLETE;
-        if (status === "NO_CHANGES_REQUIRED" || message === "No changes required." || (fieldsUpdated === 0 && (!blockedFields || Object.keys(blockedFields).length === 0))) {
-            statusToSet = STATUS.SKIPPED;
-            successLogs.push("No changes required.");
-        } else if (finalStatus === "Needs Review" || status === "REPAIR_FAILED" || readBackVerified === false) {
-            statusToSet = STATUS.FAILED;
-        }
-        
-        if (blockedFields && Object.keys(blockedFields).length > 0) {
-            successLogs.push(`Partial API block: ${Object.keys(blockedFields).length} fields rejected by Shopify.`);
-        }
-        if (conflicts && Object.keys(conflicts).length > 0) {
-            successLogs.push(`Read-back error: ${Object.keys(conflicts).length} fields failed to save properly.`);
-        }
+           const successLogs = logs || [message || "Operation applied successfully."];
+           let statusToSet = STATUS.COMPLETE;
+           if (status === "NO_CHANGES_REQUIRED" || message === "No changes required." || (fieldsUpdated === 0 && Object.keys(blockedFields).length === 0)) {
+               statusToSet = STATUS.SKIPPED;
+               successLogs.push("No changes required.");
+           } else if (finalStatus === "Needs Review" || status === "REPAIR_FAILED" || readBackVerified === false) {
+               statusToSet = STATUS.FAILED;
+           }
+           
+           if (Object.keys(blockedFields).length > 0) successLogs.push(`Partial API block: ${Object.keys(blockedFields).length} fields rejected by Shopify.`);
+           if (Object.keys(conflicts).length > 0) successLogs.push(`Read-back error: ${Object.keys(conflicts).length} fields failed to save properly.`);
 
-        updateProductState(targetId, statusToSet, successLogs);
-        
-        if (isExecuting) {
-           setTempAiData({});
-           setTimeout(() => setExecuteIndex(i => i + 1), 500);
+           updateProductState(targetId, statusToSet, successLogs);
         }
       }
 
-      if (executionMode === "AI_BATCH_PIPELINE" || executionMode === "AI_SINGLE_PIPELINE") {
-        const currentId = executionMode === "AI_SINGLE_PIPELINE" ? selectedBenchId : queueIds[executeIndex];
-        if (!currentId) return;
+      if (["titleParse", "tab3FullRescan", "generateDescription"].includes(intent) && (!pendingOperation || pendingOperation.intent === intent)) {
+          if (!success) {
+              updateProductState(targetId, STATUS.FAILED, [error || `Gemini failed at ${intent}`]);
+              setSafetyError(`Engine halted on piece ${targetId}. Error: ${error || "Unknown Gemini API Error"}`);
+              setManifestData(prev => {
+                  const existing = prev[targetId];
+                  if (!existing) return prev;
+                  const diagnostics = { ...existing.diagnostics, error: error || `Gemini failed at ${intent}` };
+                  if (intent === "titleParse" || intent === "generateDescription") diagnostics.gemini = "Failed";
+                  if (intent === "tab3FullRescan") { diagnostics.vision = "Failed"; diagnostics.gemini = "Failed"; }
+                  return { ...prev, [targetId]: { ...existing, diagnostics } };
+              });
+          } else {
+              if (intent === "titleParse") {
+                  setAiData(prev => ({ ...prev, [targetId]: { ...prev[targetId], titleParse } }));
+              } 
+              else if (intent === "tab3FullRescan") {
+                  setAiData(prev => ({ 
+                      ...prev, 
+                      [targetId]: { 
+                          ...prev[targetId], 
+                          tab3Data, 
+                          verifiedGeoValues,
+                          imageAlts,
+                          altValidationErrors 
+                      } 
+                  }));
+              } 
+              else if (intent === "generateDescription") {
+                  setAiData(prevAi => {
+                      const updatedPieceAi = { ...prevAi[targetId], generated_description };
+                      setManifestData(prevMan => {
+                          const existing = prevMan[targetId];
+                          if (!existing) return prevMan;
+                          const newPlan = { ...existing.repairPlan };
+                          const diagnostics = { ...(existing.diagnostics || {}) };
+                          
+                          const titleData = updatedPieceAi.titleParse || {};
+                          const visionData = updatedPieceAi.tab3Data || {};
+                          const descData = updatedPieceAi.generated_description || "";
+                          const verifiedGeo = updatedPieceAi.verifiedGeoValues || {};
 
-        const isExpectedResponse = 
-            (aiStep === 1 && intent === "titleParse") ||
-            (aiStep === 2 && intent === "tab3FullRescan") ||
-            (aiStep === 3 && intent === "generateDescription");
-        
-        if (isExpectedResponse) {
-            if (!success) {
-                updateProductState(currentId, STATUS.FAILED, [error || `Gemini failed at ${intent}`]);
-                setIsExecuting(false);
-                setSafetyError(`Engine halted on piece ${currentId}. Error: ${error || "Unknown Gemini API Error"}`);
-                setManifestData(prev => {
-                    const existing = prev[currentId];
-                    if (!existing) return prev;
-                    const diagnostics = { ...existing.diagnostics, error: error || `Gemini failed at ${intent}` };
-                    if (intent === "titleParse" || intent === "generateDescription") diagnostics.gemini = "Failed";
-                    if (intent === "tab3FullRescan") { diagnostics.vision = "Failed"; diagnostics.gemini = "Failed"; }
-                    return { ...prev, [currentId]: { ...existing, diagnostics } };
-                });
-                return;
-            }
+                          if (updatedPieceAi.titleParseRequested) {
+                              diagnostics.gemini = "Success";
+                              diagnostics.geoLibrary = titleData?.geoSource === "library" ? "Success" : (titleData?.geoSource || "Not reported");
+                              diagnostics.stage = "titleParse";
+                          }
+                          if (updatedPieceAi.fullRescanRequested) {
+                              diagnostics.vision = "Success"; diagnostics.gemini = "Success"; diagnostics.stage = "tab3FullRescan";
+                          }
+                          if (updatedPieceAi.generateDescRequested) {
+                              diagnostics.gemini = "Success"; diagnostics.stage = "generateDescription";
+                          }
 
-            if (intent === "titleParse") {
-                setTempAiData(prev => ({ ...prev, titleParse: titleParse }));
-                setAiStep(2); 
-            } 
-            else if (intent === "tab3FullRescan") {
-                setTempAiData(prev => ({ 
-                    ...prev, 
-                    tab3Data: tab3Data, 
-                    verifiedGeoValues: verifiedGeoValues,
-                    imageAlts: imageAlts,
-                    altValidationErrors: altValidationErrors 
-                }));
-                setAiStep(3); 
-            } 
-            else if (intent === "generateDescription") {
-                setTempAiData(prev => ({ ...prev, generated_description: generated_description }));
-                setAiStep(4); 
-            }
-        }
+                          const safeApply = (keyName, aiValue) => {
+                              if (RETIRED_KEYS.includes(keyName)) return; 
+                              if (manualEdits[targetId] && manualEdits[targetId][keyName] === true) return; 
+                              newPlan[keyName] = aiValue;
+                          };
+
+                          Object.keys(visionData).forEach(k => {
+                              if (k !== "generated_description" && k !== "pieceId" && k !== "debug_origin" && k !== "intent" && k !== "success" && k !== "origin_story") {
+                                  safeApply(NATIVE_FIELDS.includes(k) || k.includes('.') ? k : `custom.${k}`, visionData[k]);
+                              }
+                          });
+                          
+                          Object.keys(titleData).forEach(k => {
+                              if (k !== "pieceId" && k !== "intent" && k !== "success" && k !== "geoSource" && k !== "origin_story") {
+                                  safeApply(NATIVE_FIELDS.includes(k) || k.includes('.') ? k : `custom.${k}`, titleData[k]);
+                              }
+                          });
+
+                          const enrichedSeo = visionData.seo_title || visionData["custom.seo_title"] || "";
+                          if (enrichedSeo.trim() !== "") safeApply("custom.seo_title", enrichedSeo.trim());
+                          if (descData) safeApply("custom.generated_description", descData);
+
+                          if (updatedPieceAi.imageAlts) {
+                              updatedPieceAi.imageAlts.forEach(altObj => {
+                                  if (altObj.imageId && altObj.altText) safeApply(`native_image_alts_${altObj.imageId}`, altObj.altText);
+                              });
+                          }
+                          if (updatedPieceAi.altValidationErrors) diagnostics.altValidationErrors = updatedPieceAi.altValidationErrors;
+
+                          return { ...prevMan, [targetId]: { ...existing, repairPlan: newPlan, diagnostics, verifiedGeoValues: verifiedGeo } };
+                      });
+                      return { ...prevAi, [targetId]: updatedPieceAi };
+                  });
+                  updateProductState(targetId, STATUS.VALIDATED, ["AI Pipeline Complete. Data staged."]);
+              }
+          }
+      }
+
+      if (pendingOperation) {
+          const op = pendingOperation;
+          setPendingOperation(null);
+          
+          if (!success) {
+              setIsExecuting(false);
+              setIsLoadingData(false);
+              return;
+          }
+
+          if (isLoadingData) {
+              setLoadIndex(i => i + 1);
+          } else if (isExecuting) {
+              if (executionMode === "REPAIR") {
+                  setExecuteIndex(i => i + 1);
+              } else if (executionMode === "AI_BATCH_PIPELINE" || executionMode === "AI_SINGLE_PIPELINE") {
+                  if (op.intent === "titleParse") {
+                      setAiStep(2);
+                  } else if (op.intent === "tab3FullRescan") {
+                      setAiStep(3);
+                  } else if (op.intent === "generateDescription") {
+                      if (executionMode === "AI_SINGLE_PIPELINE") setAiStep(5);
+                      else { setAiStep(1); setExecuteIndex(i => i + 1); }
+                  }
+              }
+          }
       }
     }
-  }, [batchFetcher.state, batchFetcher.data, lastProcessedData, executionMode, aiStep, executeIndex, queueIds, updateProductState, isLoadingData, isExecuting, selectedBenchId]);
+  }, [batchFetcher.state, batchFetcher.data, lastProcessedData, pendingOperation, executionMode, isLoadingData, isExecuting, manualEdits, updateProductState]);
 
   const handleRepairPlanChange = (key, value) => {
     if (!selectedBenchId) return;
     
-    // Explicitly track human intervention
     setManualEdits(prev => {
         const next = { ...prev };
         if (!next[selectedBenchId]) next[selectedBenchId] = {};
@@ -1083,7 +1058,6 @@ export function OperationsMatrixTab({ products }) {
         return next;
     });
     
-    // Clear previously approved value if the proposal text is modified manually
     setApprovals(prev => {
         if (prev[selectedBenchId] && prev[selectedBenchId][key] !== undefined) {
             const next = { ...prev };
@@ -1125,19 +1099,19 @@ export function OperationsMatrixTab({ products }) {
     
     const { safePlan, nativeChanges } = buildRepairPayload(manifest, product, selectedBenchId, approvals);
 
-    // --- EXECUTION SNAPSHOT ---
     const snapshot = { ...safePlan };
     if (nativeChanges.title) snapshot.shopify_title = nativeChanges.title;
     (nativeChanges.imageAlts || []).forEach(alt => {
         snapshot[`native_image_alts_${alt.imageId}`] = alt.altText;
     });
     setSubmittedPayloads(prev => ({ ...prev, [selectedBenchId]: snapshot }));
-    // --------------------------
 
     fd.append("repairPlan", JSON.stringify(safePlan));
     fd.append("nativeChanges", JSON.stringify(nativeChanges));
     fd.append("legacyKeysToRemove", JSON.stringify([]));
 
+    const token = Date.now().toString() + Math.random().toString(36).substring(2, 7);
+    setPendingOperation({ id: selectedBenchId, intent: "executeRepairPlan", token });
     updateProductState(selectedBenchId, STATUS.SCANNING, ["Executing single structural repair..."]);
     batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-api" });
   }, [selectedBenchId, manifestData, approvals, batchFetcher, updateProductState, safeProducts]);
@@ -1161,7 +1135,7 @@ export function OperationsMatrixTab({ products }) {
     setExecutionMode("AI_SINGLE_PIPELINE");
     setIsExecuting(true);
     setAiStep(1);
-    setTempAiData({});
+    setAiData({});
   }, [selectedBenchId, manifestData]);
 
   const getStatusTone = (status) => {
@@ -1202,7 +1176,7 @@ export function OperationsMatrixTab({ products }) {
 
       const isCurrentlyProcessing = (isLoadingData && queueIds[loadIndex] === selectedBenchId) ||
                                     (isExecuting && executionMode === "AI_BATCH_PIPELINE" && queueIds[executeIndex] === selectedBenchId) ||
-                                    (isExecuting && executionMode === "AI_SINGLE_PIPELINE");
+                                    (isExecuting && executionMode === "AI_SINGLE_PIPELINE" && selectedBenchId);
       
       let finalStageDisplay = executionMode || "Not reported";
       let fetcherStateDisplay = batchFetcher.state;
@@ -1319,6 +1293,12 @@ export function OperationsMatrixTab({ products }) {
       const allConfigFields = dynamicSections.flatMap(sec => sec.configFields || []);
       const lastSubmitted = submittedPayloads[selectedBenchId];
 
+      const unsupportedKeys = validArray(history?.unsupportedKeys);
+      const verifiedDestinations = validArray(history?.verifiedDestinations);
+      const blockedFields = validObj(history?.blockedFields);
+      const conflicts = validObj(history?.conflicts);
+      const unresolvedChanges = validObj(history?.unresolvedChanges);
+
       let stats = {
           loaded: 0,
           blank: 0,
@@ -1329,11 +1309,6 @@ export function OperationsMatrixTab({ products }) {
           updated: history && history.fieldsUpdated !== undefined ? history.fieldsUpdated : "Not recorded",
           errored: "Not recorded"
       };
-
-      const pinRows = [];
-      let hasBlockersForWrite = false;
-      let hasRequiredMissing = false;
-      let specificBlockers = [];
 
       const isGeologyField = (key) => {
           const normalized = key.replace(/^custom\./, '').replace(/-/g, '_').toLowerCase();
@@ -1374,15 +1349,6 @@ export function OperationsMatrixTab({ products }) {
               if (PROTECTED_FIELDS.includes(key) || meta.isOperatorOwned) stats.protected++;
               if (meta.fieldStatus === "Conflict" || meta.fieldStatus === "Degrade" || meta.fieldStatus === "Save Conflict") stats.conflicting++;
 
-              if (meta.isActualBlockedProposal) {
-                  hasBlockersForWrite = true;
-                  specificBlockers.push(`${key}: ${meta.reasons.join(", ") || meta.fieldStatus}`);
-              }
-              if (meta.fieldStatus === "Required missing") {
-                  hasRequiredMissing = true;
-                  specificBlockers.push(`${key}: Required field is missing`);
-              }
-
               const isGeo = isGeologyField(key);
               const isNarrative = isNarrativeBlock(key);
               const isProtectedInt = isProtectedIntegration(key);
@@ -1390,7 +1356,6 @@ export function OperationsMatrixTab({ products }) {
               if (mode === 'review') {
                   let isUnapprovedProblem = false;
                   let isOptionalConditional = false;
-                  let isUnresolvedSubmit = false;
                   
                   if (!meta.isApproved && meta.proposalExists && meta.currentVal !== meta.propVal) isUnapprovedProblem = true;
                   if (!meta.isApproved && meta.contentNeedsReview) isUnapprovedProblem = true;
@@ -1401,85 +1366,21 @@ export function OperationsMatrixTab({ products }) {
                       isOptionalConditional = true;
                   }
 
-                  if (lastSubmitted && lastSubmitted[key] !== undefined) {
-                      const intended = String(lastSubmitted[key] || "");
-                      if (meta.currentVal !== intended) {
-                          isUnresolvedSubmit = true;
-                      }
-                  }
-
                   const isRoutineMandatory = REQUIRED_FIELDS.includes(key) && (meta.isApproved || meta.currentVal === meta.propVal);
 
-                  if ((isUnapprovedProblem || isOptionalConditional || isUnresolvedSubmit) && !isRoutineMandatory) {
+                  if ((isUnapprovedProblem || isOptionalConditional) && !isRoutineMandatory) {
                       reviewCandidates.push({
-                          key,
-                          meta,
-                          priority: isUnresolvedSubmit ? 0 : (isUnapprovedProblem ? 1 : 2),
-                          isGeo,
-                          isNarrative,
-                          isProtectedInt
+                          key, meta, isGeo, isNarrative, isProtectedInt, priority: isUnapprovedProblem ? 1 : 2
                       });
-                  }
-              } else {
-                  if (key === "custom.origin_story") {
-                      const sourceAvailable = (meta.currentExists || meta.proposalExists) ? "Yes" : "No";
-                      pinRows.push(`- ${key}: [Hidden Context] Source Available: ${sourceAvailable}`);
-                  } else if (isGeo || isNarrative || isProtectedInt) {
-                      pinRows.push(`- ${key}: [Detail Excluded] Status: ${meta.fieldStatus}`);
-                  } else {
-                      const curr = truncateForTelemetry(meta.currentVal, 100);
-                      const prop = truncateForTelemetry(meta.propVal, 100);
-                      let row = `- ${key}: Current: [${curr}], Proposed: [${prop}], Status: [${meta.fieldStatus}]`;
-                      if (meta.reasons.length > 0) row += `, Reason: [${meta.reasons.join(", ")}]`;
-                      pinRows.push(row);
-                      
-                      if (["custom.generated_description", "custom.origin_location", "custom.collection_name", "custom.collection_location"].includes(key)) {
-                          const canApproveDiag = meta.proposalExists && meta.currentVal !== meta.propVal && !meta.isManualOnly && !meta.isContentPreApproved && meta.fieldStatus !== "API Error / Blocked" && meta.fieldStatus !== "Save Conflict";
-                          const blockReason = !meta.proposalExists ? "No proposal" : (meta.currentVal === meta.propVal) ? "Values match" : meta.isManualOnly ? "Manual only" : meta.isContentPreApproved ? "Pre-approved" : (meta.fieldStatus === "API Error / Blocked") ? "API Blocked" : (meta.fieldStatus === "Save Conflict") ? "Save Conflict" : "None";
-                          pinRows.push(`    -> [DIAGNOSTIC] status=${meta.fieldStatus} | propExists=${meta.proposalExists} | isDiff=${meta.currentVal !== meta.propVal} | manual=${meta.isManualOnly} | preApp=${meta.isContentPreApproved} | appr=${meta.isApproved} | techBlock=${meta.hasTechnicalBlock} | apiBlock=${meta.reasons.some(r => r.includes("Backend Blocked"))} | conf=${!!meta.conflictData} | natConf=${!!meta.nativeDescConflictData} | canApprove=${canApproveDiag} | blocker=${blockReason}`);
-                      }
                   }
               }
           });
       });
 
-      if (mode === 'review') {
-          reviewCandidates.sort((a, b) => a.priority - b.priority);
-          
-          const seenKeys = new Set();
-          const uniqueCandidates = reviewCandidates.filter(c => {
-              if (seenKeys.has(c.key)) return false;
-              seenKeys.add(c.key);
-              return true;
-          });
-          
-          const totalRows = uniqueCandidates.length;
-          const limitRows = 15;
-          const displayed = uniqueCandidates.slice(0, limitRows);
-          const remaining = totalRows - displayed.length;
+      let reportBlocks = [];
+      let reportType = mode === 'review' ? 'REVIEW TELEMETRY' : 'FULL TELEMETRY DUMP';
 
-          displayed.forEach(c => {
-              const { key, meta, isGeo, isNarrative, isProtectedInt } = c;
-              if (key === "custom.origin_story") {
-                  const sourceAvailable = (meta.currentExists || meta.proposalExists) ? "Yes" : "No";
-                  pinRows.push(`- ${key} | Status: ${meta.fieldStatus} | Source Available: ${sourceAvailable}`);
-              } else if (isGeo || isNarrative || isProtectedInt) {
-                  const shortReason = meta.reasons[0] || "None";
-                  pinRows.push(`- ${key} | Stat: ${meta.fieldStatus} | Rsn: ${shortReason} | [Excluded Data]`);
-              } else {
-                  const shortReason = meta.reasons[0] || "None";
-                  const curr = truncateForTelemetry(meta.currentVal, 60);
-                  const prop = truncateForTelemetry(meta.propVal, 60);
-                  pinRows.push(`- ${key} | Stat: ${meta.fieldStatus} | Rsn: ${shortReason} | Curr: [${curr}] | Prop: [${prop}]`);
-              }
-          });
-          
-          if (remaining > 0) {
-              pinRows.push(`\n[Showing ${limitRows} of ${totalRows} flagged rows. ${remaining} omitted.]`);
-          } else {
-              pinRows.push(`\n[Showing all ${totalRows} flagged rows.]`);
-          }
-      }
+      reportBlocks.push(`=== ROCKHOUND STUDIO ${reportType} ===\nProduct: ${product.title || "Not recorded"}\nGID: ${selectedBenchId || "Not recorded"}\nRun Time: ${new Date().toISOString()}`);
 
       const titleParseStatus = (diag.stage === "titleParse" || diag.stage === "tab3FullRescan" || diag.stage === "generateDescription" || diag.stage === "batchAuditItem") ? (diag.gemini || "Unknown") : "Not called";
       const visionStatus = diag.vision || "Not called";
@@ -1487,118 +1388,136 @@ export function OperationsMatrixTab({ products }) {
       const descStatus = (data.repairPlan?.["custom.generated_description"] || data.currentMetafields?.["custom.generated_description"]) ? "Success" : (diag.stage === "generateDescription" ? (diag.gemini || "Unknown") : "Not called");
 
       const shopifyRead = statusObj.shopifyReadStatus;
-      
       const readBack = history && history.readBackVerified !== undefined ? (history.readBackVerified ? "Success" : "Failed") : statusObj.readBackStatus;
 
-      let executionVerificationBlock = "";
-      let unresolvedCount = 0;
-      
+      reportBlocks.push(`--- PIPELINE STATUS ---\n[Shopify IO]\nRead: ${shopifyRead}\nBackend-reported updates: ${history && history.fieldsUpdated !== undefined ? history.fieldsUpdated : "Not recorded"}\nRead-Back: ${readBack}\n\n[AI Stages]\nTitle Parse: ${titleParseStatus}\nVision Scan: ${visionStatus}\nGeo Library: ${geoStatus}\nStory Gen: ${descStatus}`);
+
+      reportBlocks.push(`--- FIELD SUMMARY ---\nLoaded: ${stats.loaded}\nBlank: ${stats.blank}\nProposed: ${stats.proposed}\nBlocked: ${stats.blocked}\nProtected: ${stats.protected}\nConflicting: ${stats.conflicting}\nUpdated: ${stats.updated}\nErrored: ${stats.errored}`);
+
+      if (history) {
+          reportBlocks.push(`--- LAST REPAIR HISTORY ---\nTime: ${history.completedAt}\nStatus: ${history.status}\nMessage: ${history.message}\nBlocked: ${Object.keys(blockedFields).length}\nConflicts: ${Object.keys(conflicts).length}\nVariant Target: ${history.variantTarget || 'Not recorded'}`);
+      } else {
+          reportBlocks.push(`--- LAST REPAIR HISTORY ---\nNot recorded`);
+      }
+
+      let telemetryBody = "--- EXECUTION & REVIEW DETAILS ---\n";
+      let detailExcludedCount = 0;
+      let omissionsCount = 0;
+      let unchangedCount = 0;
+      let optionalBlankCount = 0;
+      let verifiedMatchesCount = 0;
+
+      let failures = [];
+      if (unsupportedKeys.length > 0) failures.push(`Unsupported Keys: ${unsupportedKeys.join(", ")}`);
+
+      Object.keys(blockedFields).forEach(k => failures.push(`Blocked [${k}]: ${blockedFields[k]}`));
+      Object.keys(conflicts).forEach(k => {
+          const expected = typeof conflicts[k] === 'object' ? conflicts[k].expected : 'unknown';
+          const actual = typeof conflicts[k] === 'object' ? conflicts[k].actual : conflicts[k];
+          failures.push(`Conflict [${k}]: Expected [${truncateForTelemetry(expected, 60)}] -> Actual [${truncateForTelemetry(actual, 60)}]`);
+      });
+      Object.keys(unresolvedChanges).forEach(k => {
+          failures.push(`Unresolved [${k}]: ${truncateForTelemetry(unresolvedChanges[k], 60)}`);
+      });
+
       if (lastSubmitted) {
-          let verifRows = [];
-          verifRows.push("Updated destinations: Not recorded by backend");
           Object.keys(lastSubmitted).forEach(submitKey => {
+              const meta = getFieldMetadata(submitKey, data, selectedBenchId, approvals, allConfigFields);
+              const intendedVal = String(lastSubmitted[submitKey] || "");
+              const returnVal = String(meta.currentVal || "");
+
               const isGeo = isGeologyField(submitKey);
               const isNarrative = isNarrativeBlock(submitKey);
               const isProtectedInt = isProtectedIntegration(submitKey);
-              
-              if (isGeo || isNarrative || isProtectedInt) {
-                  verifRows.push(`- ${submitKey}: [Detail Excluded]`);
-              } else {
-                  const meta = getFieldMetadata(submitKey, data, selectedBenchId, approvals, allConfigFields);
-                  const intendedVal = String(lastSubmitted[submitKey] || "");
-                  const returnVal = String(meta.currentVal || "");
-                  
-                  let outcome = "Not verified (verification unavailable)";
-                  if (returnVal === intendedVal && returnVal !== "") {
-                      outcome = "Verified match";
-                  } else if (returnVal !== intendedVal && returnVal !== "") {
-                      outcome = "Returned mismatch";
-                      unresolvedCount++;
-                  } else if (returnVal === "") {
-                      outcome = "Not verified (verification unavailable)";
-                      unresolvedCount++;
+
+              if (returnVal === intendedVal && returnVal !== "") {
+                  verifiedMatchesCount++;
+              } else if (returnVal !== intendedVal && returnVal !== "") {
+                  if (isGeo || isNarrative || isProtectedInt) {
+                      failures.push(`Execution Mismatch [${submitKey}]: [Detail Excluded]`);
+                      detailExcludedCount++;
+                  } else {
+                      failures.push(`Execution Mismatch [${submitKey}]:\n  Intended: [${truncateForTelemetry(intendedVal, 100)}]\n  Returned: [${truncateForTelemetry(returnVal, 100)}]\n  Outcome: Returned mismatch`);
                   }
-                  
-                  verifRows.push(`- ${submitKey}:`);
-                  verifRows.push(`  Intended: [${truncateForTelemetry(intendedVal, 100)}]`);
-                  verifRows.push(`  Returned: [${truncateForTelemetry(returnVal, 100)}]`);
-                  verifRows.push(`  Outcome:  ${outcome}`);
+              } else if (returnVal === "") {
+                  failures.push(`Execution Mismatch [${submitKey}]: Not verified (verification unavailable)`);
               }
           });
-          executionVerificationBlock = `\n--- EXECUTION VERIFICATION ---\n${verifRows.join("\n")}`;
-      } else if (history) {
-          executionVerificationBlock = `\n--- EXECUTION VERIFICATION ---\nExact execution association is unavailable for this repair run.\nUpdated destinations: Not recorded by backend`;
       }
 
+      const reviewKeys = new Set(reviewCandidates.map(c => c.key));
+      reviewCandidates.forEach(c => {
+           const { key, meta, isGeo, isNarrative, isProtectedInt } = c;
+           if (key === "custom.origin_story") {
+                failures.push(`- ${key}: [Hidden Context] Status: ${meta.fieldStatus}`);
+                detailExcludedCount++;
+           } else if (isGeo || isNarrative || isProtectedInt) {
+                failures.push(`- ${key}: [Detail Excluded] Status: ${meta.fieldStatus} | Rsn: ${meta.reasons[0] || "None"}`);
+                detailExcludedCount++;
+           } else {
+                failures.push(`- ${key}: Stat: ${meta.fieldStatus} | Rsn: ${meta.reasons[0] || "None"} | Curr: [${truncateForTelemetry(meta.currentVal, 60)}] | Prop: [${truncateForTelemetry(meta.propVal, 60)}]`);
+           }
+      });
+
+      if (failures.length > 0) {
+           telemetryBody += "[FAILURES & ATTENTION NEEDED]\n" + failures.join("\n") + "\n";
+      }
+
+      if (verifiedDestinations.length > 0) {
+           telemetryBody += `\n[VERIFIED DESTINATIONS]\nBackend Confirmed: ${verifiedDestinations.join(", ")}\n`;
+      } else if (history) {
+           telemetryBody += `\n[VERIFIED DESTINATIONS]\nNot recorded\n`;
+      }
+
+      dynamicSections.forEach(sec => {
+           sec.keys.forEach(key => {
+               const meta = getFieldMetadata(key, data, selectedBenchId, approvals, allConfigFields);
+               if (!reviewKeys.has(key) && !blockedFields[key] && !conflicts[key] && !unresolvedChanges[key] && !unsupportedKeys.includes(key)) {
+                    if (meta.fieldStatus === "Unchanged" && meta.currentVal !== "") unchangedCount++;
+                    else if (meta.fieldStatus === "Optional blank") optionalBlankCount++;
+                    else omissionsCount++; 
+               }
+           });
+      });
+
+      telemetryBody += `\n[SUMMARY STATS]\n`;
+      if (lastSubmitted) telemetryBody += `Verified Matches (Submitted vs Read-Back): ${verifiedMatchesCount} fields\n`;
+      telemetryBody += `Unchanged Comparisons: ${unchangedCount} fields intact\n`;
+      telemetryBody += `Optional Blanks: ${optionalBlankCount} fields\n`;
+      telemetryBody += `Other Omissions: ${omissionsCount} fields\n`;
+      telemetryBody += `Detail Excluded (Geo/Narrative/Protected): ${detailExcludedCount} fields`;
+
+      reportBlocks.push(telemetryBody);
+
       const recommendations = [];
-      if (hasBlockersForWrite || hasRequiredMissing) {
-          recommendations.push("1. DO NOT WRITE. Review and manually resolve the following blocked or required fields:");
-          specificBlockers.forEach(b => recommendations.push(`   - ${b}`));
-          recommendations.push("2. Verify Shopify Metafield definitions for any 'Unverified proposal' pins before approving.");
-      } else if (lastSubmitted && unresolvedCount > 0) {
-          recommendations.push(`1. WARNING: ${unresolvedCount} submitted change(s) remain unresolved or unverified after execution. Review the execution verification block.`);
+      if (Object.keys(blockedFields).length > 0 || failures.some(f => f.includes("Required missing"))) {
+          recommendations.push("1. DO NOT WRITE. Review and manually resolve blocked or required fields.");
+      } else if (lastSubmitted && (failures.some(f => f.includes("Execution Mismatch")))) {
+          recommendations.push(`1. WARNING: Submitted change(s) remain unresolved or unverified after execution. Review the execution mismatch block.`);
       } else if (!lastSubmitted && history && stats.proposed > 0) {
           recommendations.push("1. Exact execution payload unavailable. Some fields appear proposed post-save, but cannot be proven as failed writes. Review manually.");
       } else if (stats.proposed > 0 && !history) {
           recommendations.push("1. Content review complete. Technically eligible proposals are staged. Proceed with 'Execute Single Repair'.");
       } else if (history && history.fieldsUpdated !== undefined) {
-          recommendations.push("1. Backend request successful. Check execution verification or live Shopify admin to confirm field updates.");
+          recommendations.push("1. Backend request successful. Check live Shopify admin to confirm field updates.");
       } else {
           recommendations.push("1. Load data or generate a repair plan to begin.");
       }
 
-      let reportType = mode === 'review' ? 'REVIEW TELEMETRY' : 'FULL TELEMETRY DUMP';
+      reportBlocks.push(`--- RECOMMENDATIONS ---\n${recommendations.join("\n")}\n=========================================`);
 
-      let report = `=== ROCKHOUND STUDIO ${reportType} ===
-Product: ${product.title || "Not recorded"}
-GID: ${selectedBenchId || "Not recorded"}
-Run Time: ${new Date().toISOString()}
-
---- PIPELINE STATUS ---
-[Shopify IO]
-Read: ${shopifyRead}
-Backend-reported updates: ${history && history.fieldsUpdated !== undefined ? history.fieldsUpdated : "Not called"}
-Read-Back: ${readBack}
-
-[AI Stages]
-Title Parse: ${titleParseStatus}
-Vision Scan: ${visionStatus}
-Geo Library: ${geoStatus}
-Story Gen: ${descStatus}
-
---- FIELD SUMMARY ---
-Loaded: ${stats.loaded}
-Blank: ${stats.blank}
-Proposed: ${stats.proposed}
-Blocked: ${stats.blocked}
-Protected: ${stats.protected}
-Conflicting: ${stats.conflicting}
-Updated: ${stats.updated}
-Errored: ${stats.errored}
-
---- LAST REPAIR HISTORY ---
-${history ? `Time: ${history.completedAt}
-Status: ${history.status}
-Message: ${history.message}
-Blocked: ${history.blockedFields ? Object.keys(history.blockedFields).length : 0}
-Conflicts: ${history.conflicts ? Object.keys(history.conflicts).length : 0}
-Variant Target: ${history.variantTarget || 'Not recorded'}` : "Not recorded"}
-
---- PIN DETAILS ---
-${pinRows.join("\n")}
-${executionVerificationBlock}
-
---- RECOMMENDATIONS ---
-${recommendations.join("\n")}
-=========================================`;
-
+      let finalReport = "";
       let maxLimit = mode === 'review' ? 6000 : 10000;
-      if (report.length > maxLimit) {
-          const excess = report.length - maxLimit;
-          report = report.substring(0, maxLimit) + `\n\n[WARNING: Cutoff reached. Exceeded limit by ${excess} characters.]`;
+
+      for (let i = 0; i < reportBlocks.length; i++) {
+          if (finalReport.length + reportBlocks[i].length + 2 > maxLimit) {
+              finalReport += `\n\n[WARNING: Cutoff reached. Exceeded limit by ${finalReport.length + reportBlocks[i].length + 2 - maxLimit} characters.]`;
+              break;
+          }
+          finalReport += (i > 0 ? "\n\n" : "") + reportBlocks[i];
       }
 
-      navigator.clipboard.writeText(report)
+      navigator.clipboard.writeText(finalReport)
           .then(() => {
               if (window.shopify && window.shopify.toast) {
                   window.shopify.toast.show(`${mode === 'review' ? 'Review telemetry' : 'Full report'} copied`);
@@ -1684,7 +1603,7 @@ ${recommendations.join("\n")}
                   <Text as="p" fontWeight="bold">Filled: <span style={{ color: "#22c55e" }}>{stats.filled}</span></Text>
                   <Text as="p" fontWeight="bold">Optional blanks: <span style={{ color: "#eab308" }}>{stats.optionalBlanks}</span></Text>
                   <Text as="p" fontWeight="bold" color="critical">Required missing fields: {stats.requiredMissing}</Text>
-                  <Text as="p" fontWeight="bold">Fields Updated (Current Run): {data.fieldsUpdated !== undefined ? data.fieldsUpdated : "Not reported"}</Text>
+                  <Text as="p" fontWeight="bold">Fields Updated: {data.fieldsUpdated !== undefined ? data.fieldsUpdated : "Not reported"}</Text>
                 </BlockStack>
               </div>
             </Box>
@@ -1695,7 +1614,7 @@ ${recommendations.join("\n")}
             <Card padding="300" background="bg-surface-secondary">
               <BlockStack gap="200">
                  <Text as="h4" variant="headingSm" tone="subdued">Last Repair Results</Text>
-                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "12px" }}>
                    <BlockStack gap="100">
                      <Text as="p" variant="bodySm"><strong>Time:</strong> {new Date(history.completedAt).toLocaleTimeString()}</Text>
                      <Text as="p" variant="bodySm"><strong>Status:</strong> {history.status}</Text>
@@ -1703,8 +1622,13 @@ ${recommendations.join("\n")}
                    </BlockStack>
                    <BlockStack gap="100">
                      <Text as="p" variant="bodySm"><strong>Updated:</strong> {history.fieldsUpdated !== undefined ? history.fieldsUpdated : "Not reported"}</Text>
-                     <Text as="p" variant="bodySm"><strong>Blocked:</strong> {history.blockedFields ? Object.keys(history.blockedFields).length : 0}</Text>
-                     <Text as="p" variant="bodySm"><strong>Conflicts:</strong> {history.conflicts ? Object.keys(history.conflicts).length : 0}</Text>
+                     <Text as="p" variant="bodySm"><strong>Verified Destinations:</strong> {validArray(history.verifiedDestinations).length}</Text>
+                     <Text as="p" variant="bodySm"><strong>Blocked:</strong> {Object.keys(validObj(history.blockedFields)).length}</Text>
+                   </BlockStack>
+                   <BlockStack gap="100">
+                     <Text as="p" variant="bodySm"><strong>Conflicts:</strong> {Object.keys(validObj(history.conflicts)).length}</Text>
+                     <Text as="p" variant="bodySm"><strong>Unresolved:</strong> {Object.keys(validObj(history.unresolvedChanges)).length}</Text>
+                     <Text as="p" variant="bodySm"><strong>Unsupported:</strong> {validArray(history.unsupportedKeys).length}</Text>
                      <Text as="p" variant="bodySm"><strong>Read-Back:</strong> {history.readBackVerified !== undefined ? (history.readBackVerified ? "Verified" : "Failed") : "Not reported"}</Text>
                    </BlockStack>
                  </div>
