@@ -755,14 +755,30 @@ export function OperationsMatrixTab({ products }) {
           const productIntents = ["loadProductData", "executeRepairPlan", "batchAuditItem", "saveMetafields", "titleParse", "tab3FullRescan", "generateDescription"];
           if (productIntents.includes(intent)) {
               if (!targetId || targetId !== pendingOperation.id) {
-                  setSafetyError("We could not confirm which product this result belongs to. No result was applied. Refresh Tab 3 and rebuild the manifest.");
+                  setSafetyError(`Identity Guard Failed. Response intent: [${intent}], returned ID: [${targetId || 'None'}], expected ID: [${pendingOperation.id}], pending stage: [${isLoadingData ? 'Manifest Load' : 'AI/Repair'}], processed state: [${success ? 'Success' : 'Failed'}]. Result discarded.`);
                   setIsExecuting(false);
                   setIsLoadingData(false);
                   setPendingOperation(null);
                   return;
               }
           }
-          if (intent !== pendingOperation.intent) return; // Stale crossover
+          if (intent !== pendingOperation.intent) {
+             if (!productIntents.includes(intent)) {
+                 setPendingOperation(null);
+             } else {
+                 return; 
+             }
+          }
+      }
+
+      if (!intent) {
+          if (pendingOperation) {
+              setSafetyError(`Unrecognized Response. No intent provided by backend. Expected ID: [${pendingOperation.id}], pending stage: [${isLoadingData ? 'Manifest Load' : 'AI/Repair'}]. Result discarded.`);
+              setIsExecuting(false);
+              setIsLoadingData(false);
+              setPendingOperation(null);
+          }
+          return;
       }
 
       const {
@@ -902,11 +918,21 @@ export function OperationsMatrixTab({ products }) {
                        }
                    };
                });
+               
+               let loadLockActive = true;
+               if (!pendingOperation) {
+                  setPendingOperation({ id: targetId, intent: "loadProductData", token: "audit-reload" });
+               } else {
+                  loadLockActive = false; 
+               }
+
                setTimeout(() => {
-                   const fd = new FormData();
-                   fd.append("intent", "loadProductData");
-                   fd.append("pieceId", targetId);
-                   batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-api" });
+                   if (loadLockActive) {
+                       const fd = new FormData();
+                       fd.append("intent", "loadProductData");
+                       fd.append("pieceId", targetId);
+                       batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-api" });
+                   }
                }, 500);
            }
 
