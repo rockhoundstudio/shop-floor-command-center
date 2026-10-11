@@ -1,4 +1,5 @@
 import { authenticate } from "../shopify.server";
+import { DROPDOWN_OPTIONS } from "../utils/meta-injector.constants.jsx";
 
 // 🟢 AI Engine — No Prisma Import Here
 
@@ -163,7 +164,6 @@ function resolveOriginHandle(locationSegment, pagesList) {
     targetHandle = match ? match.handle : cleanLoc.replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, "-");
   }
 
-  // Publication Verification: Only return a handle if it explicitly exists in the published pagesList
   if (targetHandle && pagesList.some(p => p.handle === targetHandle)) {
       return targetHandle;
   }
@@ -176,7 +176,6 @@ function resolveCollectionData(locationSegment, defaultOriginSlug, collectionsLi
   let targetSlug = "";
   let targetName = "";
 
-  // Guard against blank names generating " Collection" placeholders
   if (!cleanLoc || cleanLoc === "unknown origin") {
     return { slug: "", name: "" };
   }
@@ -200,11 +199,10 @@ function resolveCollectionData(locationSegment, defaultOriginSlug, collectionsLi
     }
   }
 
-  // Publication Verification: Only return slug/name if explicitly published in collectionsList
   if (targetSlug && collectionsList.some(c => c.handle === targetSlug)) {
       return { slug: targetSlug, name: targetName };
   }
-  return { slug: "", name: targetName }; // Return name for context, but suppress unpublished slug
+  return { slug: "", name: targetName };
 }
 
 async function getGeoData(admin, stoneFamily) {
@@ -336,11 +334,27 @@ function getDerivedMaterial(stoneFam) {
 }
 
 // ==========================================
+// SHARED FACTUAL CONTRACT
+// ==========================================
+const getSharedFactualContract = () => `
+--- SHARED FACTUAL CONTRACT ---
+1. PRIORITY: Explicit operator corrections > established product facts > resolved origin/collection source context > supported visible observations.
+2. UNKNOWN FACTS: Unknown facts MUST remain omitted. Do NOT invent defaults.
+3. NO VISUAL INFERENCE: Do not infer treatment, provenance, authenticity, plating, or mineral rarity from appearance alone.
+4. SUPPORTED VOCABULARY: Do not force an unsupported title into a guessed "closest" mineral. Ensure chosen facts match the supported definitions.
+5. HARDWARE & CONSTRUCTION: Preserve existing hardware inventory choices and supplied construction details. Do not replace them with a newly invented dictionary.
+-------------------------------
+`;
+
+// ==========================================
 // PROMPT 1: TITLE PARSE
 // ==========================================
+// Kept for legacy reference/potential use; active logic is built inline in the action block.
 function buildTitleParsePrompt(segment1, segment2, segment3, pagesMenu, collectionsMenu, stonePicklist) {
   return `You are an expert lapidary assistant for Rockhound Studio. Analyze these segments:
 CRITICAL ANTI-HALLUCINATION RULE: NEVER use the word "shocked" or "Shocked Rock". The correct term is "Shopped Rock". Do NOT let your geological training autocorrect this.
+${getSharedFactualContract()}
+
 - Family: "${segment1}"
 - Origin: "${segment2}"
 - Title: "${segment3}"
@@ -353,47 +367,52 @@ VALID COLLECTIONS IN STORE:
 ${collectionsMenu || "No live collections found."}
 
 INSTRUCTIONS:
-1. The Origin segment ("${segment2}") is the AUTHORITY. Do NOT reclassify or override it. Set 'origin_location' to the clean geographic name derived from "${segment2}" — strip prefixes like "Shop Lore:", "The", or "Collection". Expand abbreviations (e.g. "cda" -> "North Fork Coeur d'Alene", "yakima" -> "Yakima River Canyon"). Match 'collection_name' and 'collection_location' to the live store entry that corresponds to "${segment2}". Never substitute a vendor name or "The Shopped Rock" unless "${segment2}" explicitly contains a vendor name.
-​2. Resolve 'origin_handle' directly from the Live Store Directory based on the origin. 
-3. 'stone_family' must be exactly one of: ${stonePicklist} - match only the mineral/stone type word from the title. Ignore all color, pattern, cut, and modifier words. Pick the closest entry from the list. If the input is 'Botswana Agate Round', output 'Botswana Agate'.
+1. The Origin segment ("${segment2}") is the AUTHORITY. Do NOT reclassify or override it. Set 'origin_location' to the clean geographic name derived from "${segment2}". Match 'collection_name' and 'collection_location' to the live store entry that corresponds to "${segment2}".
+2. Resolve 'origin_handle' directly from the Live Store Directory based on the origin. 
+3. Keep title parsing focused on identity; SEO must use supported facts and must not compete with later factual SEO generation.
+4. 'stone_family' must be exactly one of: ${stonePicklist} - match only the mineral/stone type word from the title. Pick the closest entry from the list without forcing unsupported guesses.
 
-Return valid JSON with these exact keys: stone_family, piece_name, origin_handle, origin_location, collection_name, collection_location, seo_title. Generate a keyword-rich seo_title for Google using the family and keywords like "Handcrafted" or "OOAK Lapidary Art". No markup. No extra keys.`;
+Return valid JSON with these exact keys: stone_family, piece_name, origin_handle, origin_location, collection_name, collection_location, seo_title. Generate a keyword-rich seo_title for Google based strictly on supported facts. No markup. No extra keys.`;
 }
 
 // ==========================================
-// PROMPT 2: VISION SCAN / FULL RESCAN
+// PROMPT 2: VISION SCAN / FULL RESCAN (LEGACY FALLBACK)
 // ==========================================
 function buildVisionPrompt(pagesMenu, collectionsMenu, stoneFamily, originSegment, cutAndShapeInput) {
+  // Maintained structure for any fallback, but tab logic uses Master and Tab3 builders
   return `You are a lapidary artist and master jeweler for Rockhound Studio. Analyze this photo and return a JSON object.
 CRITICAL ANTI-HALLUCINATION RULE: NEVER use the word "shocked" or "Shocked Rock". The correct term is "Shopped Rock". Do NOT let your geological training autocorrect this.
+${getSharedFactualContract()}
 
-- LIVE STORE DIRECTORY (Your Dyslexia Safeguard — Read this menu!):
+- LIVE STORE DIRECTORY:
   VALID PAGES IN STORE:
   ${pagesMenu || "No live pages found — use default URL."}
   
   VALID COLLECTIONS IN STORE:
   ${collectionsMenu || "No live collections found — use default URL."}
 
-RETURN THESE EXACT JSON KEYS ONLY. DO NOT GENERATE A PRODUCT DESCRIPTION.
+RETURN THESE EXACT JSON KEYS ONLY:
 - primary_color
-- jewelry_type: Select EXACTLY one from this list: Pendant, Necklace, Artisan jewelry, Fine jewelry, Accessories, N/A. PENDANT vs NECKLACE RULE: A Pendant is a stone set in a bezel, bail, or wire wrap that hangs from a cord or chain. The stone is the focal point. A Necklace is a chain or strand where the chain itself is the primary design.
-- rarity: Select EXACTLY one: Common, Uncommon, Rare, One-of-a-Kind (default: One-of-a-Kind for our freeform stones)
-- authenticity: Select EXACTLY one: Authentic, Lab-Created, Unknown (default: Authentic)
 - color_pattern: Select EXACTLY one: Green, Black, Blue flash, Red, White, Multicolor, Gold, Pink, Yellow, Silver, Purple, Striped, Clear, Yellow veins, None
-- google_product_category: Select the taxonomy path that best matches the item. "Apparel & Accessories > Jewelry > Charms & Pendants" (for Pendants), "Arts & Entertainment > Hobbies & Creative Arts > Collectibles > Rocks & Fossils" (for raw/display specimens).
 - surface_finish: High Polish, Matte, Satin, Natural/Raw, Tumbled.
-- honest_flaws_and_character: Plainly state any pits, vugs, healed fractures, or asymmetry. Honesty over perfection.
-- origin_location: CRITICAL! Look at the Origin Segment ("${originSegment}"). Cross-reference with the LIVE STORE DIRECTORY and return the fully expanded geographic name. NEVER include prefixes like "Shop Lore:".
-- primary_use: Smart Switch! e.g., "Pendant (Finished Jewelry)", "Necklace", "Ring / Bezel Setting", "Cabochon", "Wire Wrap (Finished Jewelry)", "Loose Stone".
-- primary_medium: The stone material itself (e.g. Labradorite) — NEVER the setting. Must match title.
-- secondary_medium: The setting or finding (e.g. Silver Plated Metal).
-- setting_ready: Look closely at the mounting. "Bezel Setting - Ready to Wear", "Wire Wrapped - Ready to Wear", or "None" for loose stones.
-- bail_included: e.g. "Silver Plated Pinch Bail", "Integrated Bezel Bail", or "None".
-- jewelry_finding_type: Identify the finding or setting. INVENTORY OPTIONS: "Silver Plated Pinch Bail", "Glue-On Bail", "Assorted Glue-In Setting". Do not describe them as "cheap". Do not infer hidden drilling, pinning, or glue from generic metal shapes alone. Preserve explicitly supplied construction descriptions. Compatible with bail_included (never force to None merely because a bail is included). Do not invent details if unknown. Do not silently leave blank if clearly supported by image.
-- chain_material: Identify the visible chain or cord. INVENTORY OPTIONS: "Cord", "Silver Plated Snake Chain", "Gold Plated Snake Chain". Do not mislabel a visible cord as a snake chain (use "Black Cord", etc.). Do not infer plating from color alone. Distinguish clearly absent hardware ("None") from hardware out of view. Do not silently leave blank if clearly supported by image.
-- alt_text: Descriptive alt text (max 125 chars). Use mineral name. No visual guessing.
-- found_object: "Yes" if field-collected, "No" if shopped/imported.
-- seo_title: Max 70 chars. Natural, descriptive wording based on supported facts: Piece name, stone description/family, finished product format, craftsmanship, and clean origin (e.g., use "Yakima River Canyon" not "Yakima Canyon" or "Yakima River"). Example: "The Catalyst | Handcrafted Green Jasper Pendant from Yakima River Canyon". Include "Handcrafted" only when supported. Do not use generic "OOAK Lapidary Art" if specific details are available. No prices, quotes, HTML, or keyword stuffing. Shorten intelligently if necessary.
+- honest_flaws_and_character
+- character_marks
+- secondary_medium
+- setting_ready
+- bail_included
+- chain_material
+- chain_link_type: Cord or Snake Chain
+- jewelry_finding_type
+- jewelry_type
+- rarity
+- authenticity
+- google_product_category
+- origin_location
+- primary_use
+- primary_medium
+- alt_text
+- found_object
+- seo_title
 
 DO NOT output "generated_description". Your job is purely factual physical extraction.`;
 }
@@ -404,6 +423,7 @@ DO NOT output "generated_description". Your job is purely factual physical extra
 function buildDescriptionPrompt(derivedFamily, originSegment, extractedStory, fullCollectionTitle, pieceData, collectionStory = "") {
 
   return `You are writing a product description for Rockhound Studio, a lapidary art studio run by Bob and Janyce, married 34 years, both artists, both rockhounds. They cut and polish every stone themselves in Spokane Valley WA.
+${getSharedFactualContract()}
 
 DETAILS:
 - Stone Family: ${derivedFamily}
@@ -426,7 +446,7 @@ DETAILS:
 - Mohs Hardness: ${pieceData.mohs_hardness || "N/A"}
 - Geological Age: ${pieceData.geological_age || "N/A"}
 - Rarity: ${pieceData.rarity || "One-of-a-Kind"}
-- Character Marks: ${pieceData.honest_flaws_and_character || "None"}
+- Character Marks: ${pieceData.honest_flaws_and_character || pieceData.character_marks || "None"}
 - Piece Name: ${pieceData.piece_name || "None"}
 
 VOICE RULES (CRITICAL):
@@ -469,7 +489,7 @@ Includes: [List bail/chain/cord. If none exist AND it is confirmed loose, state 
 Mohs: [mohs_hardness]
 Formation: [geological_age] (Omit if empty or 'Variable')
 Rarity: [rarity]
-Character: [honest_flaws_and_character]
+Character: [honest_flaws_and_character or character_marks]
 
 6. ARTIST CALLOUT — only if loose stone or setting ready
 One plain sentence for jewelers and makers. Dimensions, drill status, setting suitability.
@@ -488,7 +508,6 @@ If the provided origin-page story contains an explicit collection date, trip dat
 }
 
 function buildMasterVisionPrompt({ pagesMenu, collectionsMenu, stoneFamily, derivedShape, originStory, originSegment, targetUrlPath, fullCollectionTitle, collectionUrlPath, pagesList = [] }) {
-  // Master vision prompt remains unchanged for backward compatibility on other intents
   let dwellButtonsHTML = `<br><br>`;
   
   let displayOriginName = fullCollectionTitle || originSegment;
@@ -510,7 +529,6 @@ function buildMasterVisionPrompt({ pagesMenu, collectionsMenu, stoneFamily, deri
       dwellButtonsHTML += `<a href="${collectionUrlPath}">${colLabel}</a>`;
   }
 
-  // Preserve specific 4-link rule for Richardson's ONLY if target URLs are published
   if (originSegment === "Richardson's Rock Ranch" || (targetUrlPath && targetUrlPath.includes("the-richardson-strike"))) {
     dwellButtonsHTML = `<br><br>`;
     if (pagesList.some(p => p.handle === "the-richardson-strike")) {
@@ -527,32 +545,38 @@ function buildMasterVisionPrompt({ pagesMenu, collectionsMenu, stoneFamily, deri
   if (dwellButtonsHTML === `<br><br>`) dwellButtonsHTML = "";
   
   return `You are a lapidary artist for Rockhound Studio. Analyze this photo and return a JSON object.
+${getSharedFactualContract()}
+
 - LIVE STORE DIRECTORY:
   VALID PAGES IN STORE: ${pagesMenu || "No live pages"}
   VALID COLLECTIONS: ${collectionsMenu || "No live collections"}
 
+REQUIRED JSON KEYS:
 - primary_color
+- color_pattern: Select EXACTLY one: Green, Black, Blue flash, Red, White, Multicolor, Gold, Pink, Yellow, Silver, Purple, Striped, Clear, Yellow veins, None
+- surface_finish
+- honest_flaws_and_character
+- character_marks
+- secondary_medium
+- setting_ready: "Bezel Setting - Ready to Wear", "Wire Wrapped - Ready to Wear", "None".
+- bail_included: e.g., "Silver Plated Pinch Bail", "Integrated Bezel Bail", "None".
+- chain_material: Identify the visible chain or cord. INVENTORY OPTIONS: "Cord", "Silver Plated Snake Chain", "Gold Plated Snake Chain". Distinguish clearly absent hardware from hardware out of view.
+- chain_link_type: Cord or Snake Chain (when applicable).
+- jewelry_finding_type: INVENTORY OPTIONS: "Silver Plated Pinch Bail", "Glue-On Bail", "Assorted Glue-In Setting". Preserve explicitly supplied construction descriptions. Compatible with bail_included. Do not invent details if unknown.
 - jewelry_type: Select EXACTLY one: Pendant, Necklace, Artisan jewelry, Fine jewelry, Accessories, N/A.
 - rarity: Select EXACTLY one: Common, Uncommon, Rare, One-of-a-Kind
 - authenticity: Select EXACTLY one: Authentic, Lab-Created, Unknown
-- color_pattern: Select EXACTLY one: Green, Black, Blue flash, Red, White, Multicolor, Gold, Pink, Yellow, Silver, Purple, Striped, Clear, Yellow veins, None
 - google_product_category: "Apparel & Accessories > Jewelry"
-- surface_finish
-- honest_flaws_and_character
 - origin_location: Cross-reference "${originSegment}" with LIVE STORE DIRECTORY. Return geographic name ONLY.
 - primary_use: "Pendant (Finished Jewelry)", "Necklace", "Ring / Bezel Setting", "Cabochon", "Wire Wrap (Finished Jewelry)", "Loose Stone".
 - primary_medium: Must match stone mineral name.
-- setting_ready: "Bezel Setting - Ready to Wear", "None".
-- bail_included: "Silver Plated Pinch Bail", "Integrated Bezel Bail", "None".
-- jewelry_finding_type: Identify the finding or setting. INVENTORY OPTIONS: "Silver Plated Pinch Bail", "Glue-On Bail", "Assorted Glue-In Setting". Do not describe them as "cheap". Do not infer hidden drilling, pinning, or glue from generic metal shapes alone. Preserve explicitly supplied construction descriptions. Compatible with bail_included (never force to None merely because a bail is included). Do not invent details if unknown. Do not silently leave blank if clearly supported by image.
 - alt_text: Descriptive, max 125 chars.
 - found_object: Yes/No
-- chain_material: Identify the visible chain or cord. INVENTORY OPTIONS: "Cord", "Silver Plated Snake Chain", "Gold Plated Snake Chain". Do not mislabel a visible cord as a snake chain (use "Black Cord", etc.). Do not infer plating from color alone. Distinguish clearly absent hardware ("None") from hardware out of view. Do not silently leave blank if clearly supported by image.
-- seo_title: Max 70 chars. Natural, descriptive wording based on supported facts: Piece name, stone description/family, finished product format, craftsmanship, and clean origin (e.g., use "Yakima River Canyon" not "Yakima Canyon" or "Yakima River"). Example: "The Catalyst | Handcrafted Green Jasper Pendant from Yakima River Canyon". Include "Handcrafted" only when supported. Do not use generic "OOAK Lapidary Art" if specific details are available. No prices, quotes, HTML, or keyword stuffing. Shorten intelligently if necessary.
-- generated_description: Write in Bob's plain, honest voice (past tense). No salesy language, poetic geology, or grand claims such as "the earth remembering itself". Do not repeat physical details between paragraphs. Janyce does the final shine on ALL stones; retain appropriate credit. Short sentences. 7-BLOCK FORMAT:
+- seo_title: Max 70 chars. Natural, descriptive wording based on supported facts. No generic guessing. Include "Handcrafted" only when supported.
+- generated_description: Write in Bob's plain, honest voice (past tense). No salesy language, poetic geology, or grand claims. Short sentences. 7-BLOCK FORMAT:
   1. Stone Description: Honest flaws, finish, flash. Lead with specific observations.
   2. Origin Hook: Select the source episode matching "${stoneFamily}". Aim for 2-4 short sentences containing the relevant setup and outcome. Tease the story; do not retell the whole page.
-  3. Collection Hook: 1-2 short, source-supported sentences connecting the product to the actual collection narrative based on "${fullCollectionTitle}". Use this canonical name rather than legacy titles in the lore. Do not conflate counts (e.g., "three finds" means three stone types).
+  3. Collection Hook: 1-2 short, source-supported sentences connecting the product to the actual collection narrative based on "${fullCollectionTitle}". Do not conflate counts (e.g., "three finds" means three stone types).
   4. Signature: — Bob and Janyce, Rockhound Studio, Spokane Valley WA
   5. Stone Data: Specs.
   6. Ready to Wear: State if set or loose.
@@ -565,7 +589,7 @@ ${originStory}
 }
 
 // ==========================================
-// PROMPT 4: TAB 3 VISION RESCAN (NO JEWELRY_TYPE)
+// PROMPT 4: TAB 3 VISION RESCAN
 // ==========================================
 function buildTab3VisionPrompt({ pagesMenu, collectionsMenu, stoneFamily, derivedShape, originStory, originSegment, targetUrlPath, fullCollectionTitle, collectionUrlPath, currentData, hasMultipleImages }) {
   const currentDataStr = Object.entries(currentData || {})
@@ -578,6 +602,8 @@ function buildTab3VisionPrompt({ pagesMenu, collectionsMenu, stoneFamily, derive
   `- alt_text: Descriptive alt text (max 125 chars). Use mineral name. No visual guessing.`;
 
   return `You are a lapidary artist for Rockhound Studio. Analyze the provided photo(s) and return a JSON object.
+${getSharedFactualContract()}
+
 - LIVE STORE DIRECTORY:
   VALID PAGES IN STORE: ${pagesMenu || "No live pages"}
   VALID COLLECTIONS: ${collectionsMenu || "No live collections"}
@@ -587,28 +613,29 @@ ${currentDataStr || "- No explicit data provided."}
 
 CRITICAL RULES FOR TAB 3:
 1. Explicit operator-provided corrections take priority over image inference and stale product data.
-​2. If no explicit correction is supplied, preserve a nonblank current value exactly. Preserve finding details exactly (e.g., keep "Drilled stone with a pinned pinch bail").
+2. If no explicit correction is supplied, preserve a nonblank current value exactly. Preserve finding details exactly.
 3. Never generate or propose a shopify_title or price. These are manual.
-4. Do not infer jewelry, chain material, cord, bail, wire wrapping, or readiness from an image when the source data doesn't explicitly establish it. Leave uncertain values unresolved using the existing omit convention.
+4. Do not infer jewelry, chain material, cord, bail, wire wrapping, or readiness from an image when the source data doesn't explicitly establish it. Leave uncertain values unresolved.
 5. Treat origin_story as hidden, read-only context from the existing origin page. Do not generate or save an origin story. Use the page only for supported metadata.
 6. Never write "None" or "Unknown" as filler.
 7. Do not invent details. Leave unknown fields entirely unset.
-8. If the current data establishes the piece is a pendant or finished jewelry (e.g., jewelry_type is "Pendant" or finding details are present), the product_format MUST be "Pendant" or similar finished form.
+8. If the current data establishes the piece is a pendant or finished jewelry, the product_format MUST be "Pendant" or similar finished form.
 
-Return ONLY a JSON object. OMIT any keys if you cannot determine the value supported by evidence (do not send null or empty strings). DO NOT include "jewelry_type", "origin_story", "price", "shopify_title", "weight_grams", "shipping_weight_oz", "generated_description", or "necklace_design".
+Return ONLY a JSON object. OMIT any keys if you cannot determine the value supported by evidence. DO NOT include "jewelry_type", "origin_story", "price", "shopify_title", "weight_grams", "shipping_weight_oz", "generated_description", or "necklace_design".
 
 Potential JSON Keys to evaluate and propose if blank:
-- piece_name: The name of the piece.
+- piece_name
 - is_ooak: "Yes"
-- product_format: Describe the evidenced physical form (e.g., Cabochon, Pendant, Specimen, Loose Stone). Do not guess when unclear. If existing data indicates a Pendant/Finished Jewelry, use that over the stone shape.
-- craftsmanship: When the supplied product facts identify the work as handcrafted by Bob & Janyce, propose exactly "Handcrafted". Do not describe it as "Hand-polished cabochon." Do not add tool or polishing-method wording. If the supplied facts do not support "Handcrafted", omit this proposal.
-- poetic_hook: Write one short, plain, factual hook based on the origin page (under 160 characters). Do not recreate the origin story.
-- seo_title: Max 70 chars. Natural, descriptive wording based on supported facts: Piece name, stone description/family, finished product format, craftsmanship, and clean origin (e.g., use "Yak River Canyon" not "Yakima Canyon" or "Yakima River"). Example: "The Catalyst | Handcrafted Green Jasper Pendant from Yakima River Canyon". Include "Handcrafted" only when supported. Do not use generic "OOAK Lapidary Art" if specific details are available. No prices, quotes, HTML, or keyword stuffing. Shorten intelligently if necessary.
+- product_format: Describe the evidenced physical form (e.g., Cabochon, Pendant, Specimen, Loose Stone).
+- craftsmanship: Propose exactly "Handcrafted" only when supplied product facts identify the work as handcrafted by Bob & Janyce.
+- poetic_hook: Write one short, plain, factual hook based on the origin page (under 160 characters).
+- seo_title: Max 70 chars. Natural, descriptive wording based on supported facts.
 - dimensions_mm: Leave unchanged if provided.
 - surface_finish: High Polish, Matte, Satin, Natural/Raw, Tumbled.
 - primary_color
 - color_pattern
-- honest_flaws_and_character: Plainly state any pits, vugs, healed fractures, or asymmetry. Honesty over perfection.
+- honest_flaws_and_character
+- character_marks
 - mohs_hardness
 - specific_gravity
 - crystal_system
@@ -621,19 +648,20 @@ Potential JSON Keys to evaluate and propose if blank:
 - rock_formation
 - stone_family: Derived family.
 - origin_location: Geographic name ONLY based on "${originSegment}".
-- origin_handle: Resolved handle.
-- collection_name: Resolved collection.
-- collection_location: Resolved collection location.
-- primary_use: e.g., "Pendant (Finished Jewelry)", "Ring / Bezel Setting", "Cabochon", "Loose Stone". Keep current nonblank value unless explicitly corrected.
-- primary_medium: Must match stone mineral name.
-- secondary_medium: The setting or finding.
-- setting_ready: "Bezel Setting - Ready to Wear", "Wire Wrapped - Ready to Wear", "None".
-- bail_included: e.g., "Silver Plated Pinch Bail", "None".
-- chain_material: Identify the visible chain or cord. INVENTORY OPTIONS: "Cord", "Silver Plated Snake Chain", "Gold Plated Snake Chain". Do not mislabel a visible cord as a snake chain (use "Black Cord", etc.). Do not infer plating from color alone. Distinguish clearly absent hardware from hardware out of view. Do not silently leave blank if clearly supported by image.
-- jewelry_finding_type: Identify the finding or setting. INVENTORY OPTIONS: "Silver Plated Pinch Bail", "Glue-On Bail", "Assorted Glue-In Setting". Do not describe them as "cheap". Do not infer hidden drilling, pinning, or glue from generic metal shapes alone. Use explicitly provided construction details if available. Compatible with bail_included. Do not invent details if unknown. Do not silently leave blank if clearly supported by image.
-- google_product_category: Taxonomy path.
-- authenticity: Authentic, Lab-Created.
-- rarity: Common, Uncommon, Rare, One-of-a-Kind.
+- origin_handle
+- collection_name
+- collection_location
+- primary_use: Keep current nonblank value unless explicitly corrected.
+- primary_medium
+- secondary_medium
+- setting_ready
+- bail_included
+- chain_material
+- chain_link_type: Cord or Snake Chain (when applicable)
+- jewelry_finding_type: Preserve explicitly provided construction details if available. Do not silently leave blank if clearly supported by image.
+- google_product_category
+- authenticity
+- rarity
 ${imageAltInstructions}
 
 FULL ORIGIN STORY (CRITICAL LORE FIREWALL - READ CAREFULLY):
@@ -667,7 +695,26 @@ export const action = async ({ request }) => {
       const matchedPage = pagesList.find(p => p.url.includes(resolvedHandle));
       const extractedStory = matchedPage ? matchedPage.excerpt : "";
 
-      const promptText = `Analyze: Family: "${segment1}", Origin: "${segment2}", Title: "${segment3}". Return JSON: stone_family, piece_name, origin_handle, origin_location, collection_name, collection_location, seo_title.`;
+      const validFamilies = DROPDOWN_OPTIONS?.stone_family || [];
+      const promptText = `
+${getSharedFactualContract()}
+
+Analyze these segments:
+- Family: "${segment1}"
+- Origin: "${segment2}"
+- Title: "${segment3}"
+
+LIVE STORE DIRECTORY:
+PAGES: ${pagesList.map(p => p.handle).join(", ")}
+COLLECTIONS: ${collectionsList.map(c => c.handle).join(", ")}
+
+INSTRUCTIONS:
+1. Keep title parsing focused on identity. SEO must use supported facts and must not compete with later factual SEO generation.
+2. Origin ("${segment2}") is the AUTHORITY. Set 'origin_location' to the clean geographic name. Match 'collection_name' and 'collection_location' to the live store entry.
+3. 'stone_family' must match an entry exactly from the supported list: ${validFamilies.join(", ")}. Do not force unsupported titles into guessed minerals.
+
+Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_location, collection_name, collection_location, seo_title.
+      `.trim();
 
       const geminiRes = await fetchWithRetry("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY, {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -821,7 +868,6 @@ export const action = async ({ request }) => {
       contents.push({ text: promptText });
 
       if (hasMultipleImages) {
-        // Enforce hard limit to avoid Gemini payload size restrictions
         const MAX_IMAGES = 15;
         if (mediaInputs.length > MAX_IMAGES) {
           console.warn(`[WARNING] Limiting Vision processing to ${MAX_IMAGES} images (received ${mediaInputs.length}).`);
@@ -834,7 +880,6 @@ export const action = async ({ request }) => {
               if (imageRes.ok) {
                  const buffer = await imageRes.arrayBuffer();
                  const base64Data = Buffer.from(buffer).toString("base64");
-                 // Use imageId as text block context right before its inlineData
                  contents.push({ text: `Image ID: ${input.imageId}` });
                  contents.push({ inlineData: { mimeType: "image/jpeg", data: base64Data } });
               }
@@ -897,10 +942,9 @@ export const action = async ({ request }) => {
                     altValidationErrors.push(`Missing target image ID: ${inputId}`);
                 }
             }
-            delete parsedVision.imageAlts; // Clean up so it doesn't accidentally become a custom metafield
+            delete parsedVision.imageAlts; 
         }
 
-        // --- VERIFIED FACT PROTECTION (Post-Generation Overrides) ---
         const protectedKeys = [
           "color_pattern", "dimensions_mm", "honest_flaws_and_character", "surface_finish", 
           "jewelry_finding_type", "bail_included", "chain_material", 
@@ -919,7 +963,6 @@ export const action = async ({ request }) => {
           }
         });
 
-        // Establish strictly verified values before they are potentially overwritten by parsedVision
         const verifiedGeoValues = {};
         if (geoFields.geoSource === "library") {
             const geoKeys = [
@@ -928,7 +971,6 @@ export const action = async ({ request }) => {
                 "geological_era", "mineral_class", "rock_formation", "geological_age"
             ];
             geoKeys.forEach(key => {
-                // If it came in as currentData, trust currentData. Else, trust library.
                 if (currentData[key] !== undefined) {
                     verifiedGeoValues[key] = currentData[key];
                     parsedVision[key] = currentData[key];
@@ -939,12 +981,12 @@ export const action = async ({ request }) => {
             });
         }
 
-        delete parsedVision.origin_story; // CRITICAL: Prevent AI hallucination from overwriting the raw context
-        delete parsedVision.price; // CRITICAL: Never propose a price
-        delete parsedVision.shopify_title; // CRITICAL: Never propose a shopify_title
+        delete parsedVision.origin_story;
+        delete parsedVision.price;
+        delete parsedVision.shopify_title;
         delete parsedVision.weight_grams;
         delete parsedVision.shipping_weight_oz;
-        delete parsedVision.generated_description; // Must only be generated by the Description Intent
+        delete parsedVision.generated_description;
 
         const payload = sanitizeObject({
           pieceId,
@@ -961,12 +1003,10 @@ export const action = async ({ request }) => {
           ...parsedVision
         });
 
-        // Final safety lock for explicitly passed current metrics not covered by arrays above
         if (currentData.price) payload.price = currentData.price;
         if (currentData.weight_grams) payload.weight_grams = currentData.weight_grams;
         if (currentData.shipping_weight_oz) payload.shipping_weight_oz = currentData.shipping_weight_oz;
 
-        // Strip undefined, null, or empty string values to leave them unset in the caller
         const finalPayload = {};
         for (const [k, v] of Object.entries(payload)) {
           if (v !== undefined && v !== null && v !== "") {
@@ -1010,7 +1050,6 @@ export const action = async ({ request }) => {
       let diagCollectionStory = "";
 
       if (pieceDataStr) {
-        // Tab 3 / Matrix Pipeline Flow
         try {
           const pieceData = JSON.parse(pieceDataStr);
           diagPieceId = pieceData.pieceId || pieceData.id || "Unknown_GID";
@@ -1018,7 +1057,6 @@ export const action = async ({ request }) => {
 
           const derivedFamily = sharedFields.stone_family || pieceData.stone_family || "";
           
-          // Protect valid pieceData origin from blank or derived "Unknown Origin" coming from sharedFields
           const validPieceOrigin = pieceData.origin_location && pieceData.origin_location !== "Unknown Origin" && pieceData.origin_location.trim() !== "";
           const isSharedOriginDerived = !sharedFields.origin_location || sharedFields.origin_location === "Unknown Origin" || sharedFields.origin_location.trim() === "";
           
@@ -1040,7 +1078,6 @@ export const action = async ({ request }) => {
           const collectionData = resolveCollectionData(originSegment, targetOriginHandle, collectionsList);
           diagCollectionSlug = collectionData.slug;
           
-          // Log warning if we cannot resolve routing correctly
           if (!targetOriginHandle && originSegment !== "Unknown Origin" && originSegment !== "") {
               console.warn(`[ROUTING WARNING] Piece ${diagPieceName}: Could not resolve Origin Handle for location "${originSegment}"`);
           }
@@ -1071,11 +1108,9 @@ export const action = async ({ request }) => {
           promptText = `Write a description for Rockhound Studio. Focus on: ${sharedFields.stone_family}.`;
         }
       } else {
-        // Shared/Legacy Fallback Flow
         promptText = `Write a description for Rockhound Studio. Focus on: ${sharedFields.stone_family}.`;
       }
 
-      // --- TEMPORARY READ-ONLY DIAGNOSTIC BLOCK ---
       console.log(`\n========== [DIAGNOSTIC RUN START - Piece: ${diagPieceName}] ==========`);
       console.log(`Piece GID: ${diagPieceId}`);
       console.log(`Origin Handle Selected: ${diagTargetOriginHandle}`);
@@ -1091,7 +1126,6 @@ export const action = async ({ request }) => {
       console.log(`\n--- EXACT COLLECTION TEXT SENT ---\n${diagCollectionStory}\n----------------------------------`);
       console.log(`\n--- EXACT FINAL PROMPT SENT TO GEMINI ---\n${promptText}\n-----------------------------------------`);
       console.log(`========== [DIAGNOSTIC RUN END - Piece: ${diagPieceName}] ==========\n`);
-      // --------------------------------------------
 
       const geminiRes = await fetchWithRetry("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY, {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -1116,7 +1150,6 @@ export const action = async ({ request }) => {
              return Response.json({ success: false, intent, pieceId, error: "AI response failed strict JSON parsing or wrapper validation." });
         }
         
-        // --- DETERMINISTIC DWELL BUTTON APPENDING ---
         if (pieceDataStr) {
             const pieceData = JSON.parse(pieceDataStr);
             const validPieceOrigin = pieceData.origin_location && pieceData.origin_location !== "Unknown Origin" && pieceData.origin_location.trim() !== "";
@@ -1153,7 +1186,6 @@ export const action = async ({ request }) => {
                 dwellButtonsHTML += `<a href="/collections/${collectionData.slug}">${colLabel}</a>`;
             }
             
-            // Specialized Richardson Logic
             if (originSegment === "Richardson's Rock Ranch" || targetOriginHandle === "the-richardson-strike") {
                 dwellButtonsHTML = `<br><br>`;
                 if (pagesList.some(p => p.handle === "the-richardson-strike")) {
