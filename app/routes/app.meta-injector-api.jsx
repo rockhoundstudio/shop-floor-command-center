@@ -14,7 +14,17 @@ const ALLOWED_TAB3_KEYS = [
   "mineral_class", "geological_era", "rock_formation", "origin_location", 
   "origin_handle", "collection_name", "collection_location", "origin_story", 
   "seo_title", "alt_text", 
-  "google_product_category", "authenticity", "rarity", "generated_description"
+  "google_product_category", "authenticity", "rarity", "generated_description",
+  
+  // NATIVE CONTRACT TARGETS (ACCEPTED FOR ROUTING, EXCLUDED FROM CUSTOM NAMESPACE)
+  "native_title", "native_shipping_weight", "native_image_alts",
+
+  // STANDARDIZED TAXONOMY LIST
+  "age-group", "chain-link-type", "condition", "construction", "crystal-system", 
+  "geological-era", "jewelry-finding-type", "jewelry-material", "jewelry-type", 
+  "material", "material-origin", "mineral-class", "necklace-design", 
+  "product-classification", "product-use", "rock-composition", "rock-formation", 
+  "target-gender"
 ];
 
 const RETIRED_KEYS = [
@@ -47,7 +57,13 @@ const MASTER_TYPE_MAP = {
   geological_era: "metaobject_reference", "geological-era": "metaobject_reference", rock_composition: "metaobject_reference",
   "rock-composition": "metaobject_reference", rock_formation: "metaobject_reference", "rock-formation": "metaobject_reference",
   chain_link_type: "metaobject_reference", "chain-link-type": "metaobject_reference", jewelry_finding_type: "metaobject_reference",
-  "jewelry-finding-type": "metaobject_reference", google_product_category: "single_line_text_field"
+  "jewelry-finding-type": "metaobject_reference", google_product_category: "single_line_text_field",
+  
+  // Standardized taxonomy explicit mappings to avoid fallback to single_line_text_field
+  "construction": "metaobject_reference",
+  "material-origin": "metaobject_reference",
+  "product-classification": "metaobject_reference",
+  "product-use": "metaobject_reference"
 };
 
 const EXPLICIT_METAOBJECT_KEYS = [
@@ -57,7 +73,8 @@ const EXPLICIT_METAOBJECT_KEYS = [
   "crystal-system", "geological-era", "geological_era", 
   "mineral-class", "mineral_class", "rock-composition", "rock_composition", 
   "rock-formation", "rock_formation", "chain-link-type", "chain_link_type",
-  "jewelry-finding-type", "jewelry_finding_type"
+  "jewelry-finding-type", "jewelry_finding_type", "construction", "material-origin",
+  "product-classification", "product-use"
 ];
 
 function chunkArray(arr, size) {
@@ -99,17 +116,35 @@ export const action = async ({ request }) => {
       const pieceId = body.get("pieceId");
       const productGid = pieceId.startsWith("gid://") ? pieceId : `gid://shopify/Product/${pieceId.split("/").pop()}`;
 
-      const productQuery = await admin.graphql(`
-        query getProduct($id: ID!) {
-          product(id: $id) {
-            id title
-            variants(first: 1) { edges { node { price } } }
-            metafields(first: 250) { edges { node { namespace key value } } }
+      let productQueryRes;
+      try {
+        productQueryRes = await admin.graphql(`
+          query getProduct($id: ID!) {
+            product(id: $id) {
+              id title
+              metafields(first: 250) { edges { node { namespace key value } } }
+              variants(first: 250) {
+                pageInfo { hasNextPage endCursor }
+                edges { node { id title price } }
+              }
+              media(first: 250) {
+                pageInfo { hasNextPage endCursor }
+                edges {
+                  node {
+                    ... on MediaImage {
+                      id alt preview { image { url } }
+                    }
+                  }
+                }
+              }
+            }
           }
-        }
-      `, { variables: { id: productGid } });
+        `, { variables: { id: productGid } });
+      } catch (e) {
+        return Response.json({ intent: "loadProductData", success: false, message: "Failed to query product data: " + e.message });
+      }
 
-      const productData = await productQuery.json();
+      const productData = await productQueryRes.json();
       const product = productData?.data?.product;
       if (!product) return Response.json({ intent: "loadProductData", success: false, message: "Product not found" });
 
@@ -120,11 +155,98 @@ export const action = async ({ request }) => {
         });
       }
 
+      const allVariants = [];
+      const allMedia = [];
+      let vPageInfo = product.variants?.pageInfo || { hasNextPage: false, endCursor: null };
+      let mPageInfo = product.media?.pageInfo || { hasNextPage: false, endCursor: null };
+      
+      if (product.variants?.edges) allVariants.push(...product.variants.edges);
+      if (product.media?.edges) {
+          allMedia.push(...product.media.edges.filter(e => e.node && e.node.id));
+      }
+
+      let isComplete = true;
+      let loadError = null;
+
+      try {
+          while (vPageInfo.hasNextPage) {
+              const vRes = await admin.graphql(`
+                  query getVariants($id: ID!, $cursor: String!) {
+                      product(id: $id) {
+                          variants(first: 250, after: $cursor) {
+                              pageInfo { hasNextPage endCursor }
+                              edges { node { id title price } }
+                          }
+                      }
+                  }
+              `, { variables: { id: productGid, cursor: vPageInfo.endCursor } });
+              const vJson = await vRes.json();
+              if (vJson.errors) throw new Error(vJson.errors[0].message);
+              const newVariants = vJson?.data?.product?.variants;
+              if (newVariants?.edges) allVariants.push(...newVariants.edges);
+              vPageInfo = newVariants?.pageInfo || { hasNextPage: false, endCursor: null };
+          }
+      } catch (err) {
+          isComplete = false;
+          loadError = `Variants pagination failed: ${err.message}`;
+          vPageInfo.hasNextPage = true;
+      }
+
+      try {
+          while (mPageInfo.hasNextPage) {
+              const mRes = await admin.graphql(`
+                  query getMedia($id: ID!, $cursor: String!) {
+                      product(id: $id) {
+                          media(first: 250, after: $cursor) {
+                              pageInfo { hasNextPage endCursor }
+                              edges {
+                                  node {
+                                      ... on MediaImage { id alt preview { image { url } } }
+                                  }
+                              }
+                          }
+                      }
+                  }
+              `, { variables: { id: productGid, cursor: mPageInfo.endCursor } });
+              const mJson = await mRes.json();
+              if (mJson.errors) throw new Error(mJson.errors[0].message);
+              const newMedia = mJson?.data?.product?.media;
+              if (newMedia?.edges) {
+                  allMedia.push(...newMedia.edges.filter(e => e.node && e.node.id));
+              }
+              mPageInfo = newMedia?.pageInfo || { hasNextPage: false, endCursor: null };
+          }
+      } catch (err) {
+          isComplete = false;
+          loadError = loadError ? `${loadError} | Media pagination failed: ${err.message}` : `Media pagination failed: ${err.message}`;
+          mPageInfo.hasNextPage = true;
+      }
+
+      const uniqueVariants = Array.from(new Map(allVariants.map(e => [e.node.id, e])).values());
+      const uniqueMedia = Array.from(new Map(allMedia.map(e => [e.node.id, e])).values());
+
+      const nativeTargets = {
+          productId: product.id,
+          isComplete,
+          loadError,
+          variants: {
+              edges: uniqueVariants,
+              pageInfo: vPageInfo
+          },
+          media: {
+              edges: uniqueMedia,
+              pageInfo: mPageInfo
+          }
+      };
+
       const canonicalFields = {};
       const repairPlan = {};
       const legacyFields = {};
 
-      const CANONICAL_KEYS = Object.keys(MASTER_TYPE_MAP).map(k => `custom.${k}`);
+      const CANONICAL_KEYS = Object.keys(MASTER_TYPE_MAP).map(k => {
+          if (k.includes("-")) return `shopify.${k}`;
+          return `custom.${k}`;
+      });
       CANONICAL_KEYS.push("global.title_tag", "global.description_tag");
 
       CANONICAL_KEYS.forEach(k => {
@@ -135,16 +257,16 @@ export const action = async ({ request }) => {
 
       canonicalFields["shopify_title"] = product.title;
       repairPlan["shopify_title"] = product.title;
-      canonicalFields["price"] = product.variants?.edges?.[0]?.node?.price || "0.00";
+      canonicalFields["price"] = uniqueVariants[0]?.node?.price || "0.00";
       repairPlan["price"] = canonicalFields["price"];
 
       const LEGACY_MAP_LOCAL = {
-        "custom.crystal-system": "custom.crystal_system",
-        "custom.mineral-class": "custom.mineral_class",
-        "custom.rock-composition": "custom.rock_composition",
-        "custom.geological-era": "custom.geological_era",
-        "custom.rock-formation": "custom.rock_formation",
-        "custom.necklace-design": "custom.necklace_design",
+        "custom.crystal-system": "shopify.crystal-system",
+        "custom.mineral-class": "shopify.mineral-class",
+        "custom.rock-composition": "shopify.rock-composition",
+        "custom.geological-era": "shopify.geological-era",
+        "custom.rock-formation": "shopify.rock-formation",
+        "custom.necklace-design": "shopify.necklace-design",
         "custom.is_one_of_a_kind": "custom.is_ooak"
       };
 
@@ -166,7 +288,8 @@ export const action = async ({ request }) => {
          currentMetafields,
          canonicalFields,
          legacyFields,
-         repairPlan
+         repairPlan,
+         nativeTargets
       });
     }
 
@@ -174,6 +297,7 @@ export const action = async ({ request }) => {
       const pieceId = body.get("pieceId");
       const rawPlan = body.get("repairPlan");
       const rawLegacy = body.get("legacyKeysToRemove");
+      const rawNativeChanges = body.get("nativeChanges");
       
       if (!pieceId || !rawPlan) {
         return Response.json({ intent: "executeRepairPlan", success: false, status: "REPAIR_FAILED", message: "Missing pieceId or repairPlan payload." });
@@ -181,6 +305,8 @@ export const action = async ({ request }) => {
 
       const repairPlan = JSON.parse(rawPlan);
       const legacyKeysToRemove = rawLegacy ? JSON.parse(rawLegacy) : [];
+      const nativeChanges = rawNativeChanges ? JSON.parse(rawNativeChanges) : {};
+      
       const productGid = pieceId.startsWith("gid://") ? pieceId : `gid://shopify/Product/${pieceId.split("/").pop()}`;
 
       const lookupResponse = await admin.graphql(`
@@ -192,6 +318,13 @@ export const action = async ({ request }) => {
             variants(first: 2) {
               pageInfo { hasNextPage }
               edges { node { id price } }
+            }
+            media(first: 50) {
+              edges {
+                node {
+                  ... on MediaImage { id alt }
+                }
+              }
             }
             metafields(first: 250) { edges { node { namespace key value type id } } } 
           }
@@ -223,7 +356,7 @@ export const action = async ({ request }) => {
                 query getDefs($cursor: String) {
                   metafieldDefinitions(first: 250, ownerType: PRODUCT, after: $cursor) {
                     pageInfo { hasNextPage endCursor }
-                    edges { node { namespace key type { name } } }
+                    edges { node { id namespace key type { name } validations { name value } } }
                   }
                 }
               `;
@@ -234,7 +367,11 @@ export const action = async ({ request }) => {
               defData?.edges?.forEach(e => {
                   const t = e.node.type;
                   const fullKey = `${e.node.namespace}.${e.node.key}`;
-                  defs[fullKey] = (t && typeof t === 'object' && t.name) ? t.name : t;
+                  const validation = e.node.validations?.find(v => v.name === "metaobject_definition_id");
+                  defs[fullKey] = {
+                      type: (t && typeof t === 'object' && t.name) ? t.name : t,
+                      requiredDefinitionId: validation ? validation.value : null
+                  };
               });
               
               hasNextPage = defData?.pageInfo?.hasNextPage;
@@ -259,34 +396,141 @@ export const action = async ({ request }) => {
       let newPriceString = null;
       let priceReadBackVerified = false;
       
-      Object.entries(repairPlan).forEach(([fullKey, val]) => {
+      // Native Changes Integration
+      let nativeTitleUpdated = false;
+      if (nativeChanges.title !== undefined) {
+         if (nativeChanges.title !== currentNativeTitle) {
+             nativeInput.title = nativeChanges.title;
+             doNativeUpdate = true;
+             nativeTitleUpdated = true;
+             proposedChanges["native_title"] = { from: currentNativeTitle, to: nativeChanges.title };
+         } else {
+             skippedKeys.push("native_title");
+         }
+      }
+      
+      // We must handle shipping weight via inventoryItem mutation, not productUpdate
+      let doShippingWeightUpdate = false;
+      let shippingWeightInput = null;
+      
+      if (nativeChanges.shippingWeight) {
+         const sw = nativeChanges.shippingWeight;
+         const valStr = String(sw.value !== null && sw.value !== undefined ? sw.value : "").trim();
+         
+         if (valStr !== "") {
+            const parsedNum = parseFloat(valStr);
+            if (isNaN(parsedNum) || parsedNum < 0) {
+               blockedFields["native_shipping_weight"] = "Shipping weight must be a positive number.";
+            } else if (!sw.variantId || !/^gid:\/\/shopify\/ProductVariant\/\d+$/.test(sw.variantId)) {
+               blockedFields["native_shipping_weight"] = "Missing or invalid variant ID for shipping weight.";
+            } else if (sw.unit !== "OUNCES") {
+               blockedFields["native_shipping_weight"] = "Shipping weight unit must be exactly 'OUNCES'.";
+            } else {
+               // We must fetch the inventory item ID to update it
+               try {
+                  const invRes = await admin.graphql(`
+                     query getInventoryItem($id: ID!) {
+                       productVariant(id: $id) {
+                         inventoryItem { id measurement { weight { value unit } } }
+                       }
+                     }
+                  `, { variables: { id: sw.variantId }});
+                  const invJson = await invRes.json();
+                  const invItem = invJson.data?.productVariant?.inventoryItem;
+                  
+                  if (!invItem) {
+                     blockedFields["native_shipping_weight"] = "Failed to resolve inventory item for variant.";
+                  } else {
+                     const currentWeight = invItem.measurement?.weight?.value;
+                     const currentUnit = invItem.measurement?.weight?.unit;
+                     
+                     if (parseFloat(currentWeight) !== parsedNum || currentUnit !== sw.unit) {
+                         doShippingWeightUpdate = true;
+                         shippingWeightInput = {
+                            id: invItem.id,
+                            measurement: { weight: { value: parsedNum, unit: sw.unit } }
+                         };
+                         proposedChanges["native_shipping_weight"] = { 
+                            from: `${currentWeight} ${currentUnit}`, 
+                            to: `${parsedNum} ${sw.unit}` 
+                         };
+                     } else {
+                         skippedKeys.push("native_shipping_weight");
+                     }
+                  }
+               } catch (e) {
+                  blockedFields["native_shipping_weight"] = "Failed to fetch inventory item details.";
+               }
+            }
+         }
+      }
+      
+      // Image Alt Text Native Updates
+      let doImageAltUpdates = false;
+      const imageAltInputs = [];
+      
+      if (nativeChanges.imageAlts && Array.isArray(nativeChanges.imageAlts)) {
+         const currentMedia = lookupData?.data?.product?.media?.edges || [];
+         
+         for (const imgReq of nativeChanges.imageAlts) {
+            if (!imgReq.imageId || !/^gid:\/\/shopify\/MediaImage\/\d+$/.test(imgReq.imageId)) {
+               blockedFields[`native_image_alts_${imgReq.imageId || 'unknown'}`] = "Invalid image ID.";
+               continue;
+            }
+            
+            const match = currentMedia.find(m => m.node.id === imgReq.imageId);
+            if (!match) {
+               blockedFields[`native_image_alts_${imgReq.imageId}`] = "Image ID not found on this product.";
+               continue;
+            }
+            
+            if (match.node.alt !== imgReq.altText) {
+               doImageAltUpdates = true;
+               imageAltInputs.push({
+                  id: imgReq.imageId,
+                  alt: imgReq.altText || ""
+               });
+               proposedChanges[`native_image_alts_${imgReq.imageId}`] = { from: match.node.alt, to: imgReq.altText };
+            } else {
+               skippedKeys.push(`native_image_alts_${imgReq.imageId}`);
+            }
+         }
+      }
+
+      // Shared Metaobject Validation Cache
+      const moValidationCache = new Map();
+      
+      for (const [fullKey, val] of Object.entries(repairPlan)) {
         if (fullKey === "shopify_title") {
-           skippedKeys.push(fullKey);
-           return;
+           // Only log it as skipped if we didn't process it natively
+           if (!nativeTitleUpdated && nativeChanges.title === undefined) {
+               skippedKeys.push(fullKey);
+           }
+           continue;
         }
 
         if (fullKey === "price") {
            const valStr = String(val !== null && val !== undefined ? val : "").trim();
-           if (valStr === "") return;
+           if (valStr === "") continue;
 
            const validPrice = /^(0|[1-9]\d*)(\.\d{1,2})?$/;
            if (!validPrice.test(valStr)) {
                blockedFields["price"] = "Malformed price: must be a non-negative number with up to two decimals.";
-               return;
+               continue;
            }
 
            const variantsConn = lookupData?.data?.product?.variants;
            if (!variantsConn || !variantsConn.edges || typeof variantsConn.pageInfo?.hasNextPage !== "boolean") {
                blockedFields["price"] = "Missing variant or pagination data from Shopify.";
-               return;
+               continue;
            }
            if (variantsConn.edges.length === 0) {
                blockedFields["price"] = "Ambiguous destination: Product has zero variants.";
-               return;
+               continue;
            }
            if (variantsConn.edges.length > 1 || variantsConn.pageInfo.hasNextPage === true) {
                blockedFields["price"] = "Ambiguous destination: Product has multiple variants. Edit price manually.";
-               return;
+               continue;
            }
 
            const targetVariantId = variantsConn.edges[0].node.id;
@@ -294,11 +538,11 @@ export const action = async ({ request }) => {
 
            if (!targetVariantId || !/^gid:\/\/shopify\/ProductVariant\/\d+$/.test(targetVariantId)) {
                blockedFields["price"] = "Invalid variant ID retrieved.";
-               return;
+               continue;
            }
            if (typeof currentPriceStr !== "string") {
                blockedFields["price"] = "Missing current price data from Shopify.";
-               return;
+               continue;
            }
 
            const getCents = (str) => {
@@ -314,7 +558,7 @@ export const action = async ({ request }) => {
                newPriceString = valStr;
                proposedChanges["price"] = { from: currentPriceStr, to: valStr };
            }
-           return;
+           continue;
         }
 
         let ns = "custom";
@@ -328,37 +572,39 @@ export const action = async ({ request }) => {
         // 🟢 RETIREMENT GUARD
         if (RETIRED_KEYS.includes(key) || RETIRED_KEYS.includes(fullKey)) {
             skippedKeys.push(fullKey);
-            return;
+            continue;
         }
 
         // 🟢 STRICT ALLOWLIST ENFORCEMENT
         if (!ALLOWED_TAB3_KEYS.includes(key)) {
             unsupportedKeys.push(fullKey);
-            return;
+            continue;
         }
 
         // 🟢 BLOCKED KEYS UNTIL VERIFIED
         if (key === "jewelry_type") {
             blockedFields[fullKey] = "Safety block active on jewelry_type taxonomy destination.";
-            return;
+            continue;
         }
 
         const currentVal = currentMetafields[fullKey] || null;
         const valStr = String(val !== null && val !== undefined ? val : "").trim();
         
         // Blank strings must not implicitly delete. 
-        if (valStr === "") return; 
+        if (valStr === "") continue; 
 
         // Resolve exact type from definition or stored type
-        let resolvedType = defs[fullKey] || currentMetafieldsTypes[fullKey];
+        const def = defs[fullKey];
+        const storedType = currentMetafieldsTypes[fullKey];
+        let resolvedType = def ? def.type : storedType;
 
-        if (defs[fullKey] && currentMetafieldsTypes[fullKey] && defs[fullKey] !== currentMetafieldsTypes[fullKey]) {
-            blockedFields[fullKey] = `Type conflict: Definition is ${defs[fullKey]} but stored is ${currentMetafieldsTypes[fullKey]}`;
-            return;
+        if (def && storedType && def.type !== storedType) {
+            blockedFields[fullKey] = `Type conflict: Definition is ${def.type} but stored is ${storedType}`;
+            continue;
         }
         if (!resolvedType) {
             blockedFields[fullKey] = "No type definition found";
-            return;
+            continue;
         }
 
         let resolvedValue = normalizeMetafieldValue(key, valStr);
@@ -383,9 +629,93 @@ export const action = async ({ request }) => {
           const parsedNum = parseFloat(String(resolvedValue).replace(/[^0-9.-]/g, ""));
           if (isNaN(parsedNum)) {
              blockedFields[fullKey] = `Invalid numeric value: ${resolvedValue}`;
-             return;
+             continue;
           }
           resolvedValue = resolvedType === "number_integer" ? String(Math.round(parsedNum)) : String(parsedNum);
+        } else if (resolvedType.includes("metaobject_reference")) {
+          
+          let idsToVerify = [];
+          
+          if (resolvedType.includes("list.")) {
+             try {
+                const parsed = JSON.parse(resolvedValue);
+                if (!Array.isArray(parsed)) throw new Error();
+                
+                for (const item of parsed) {
+                    if (!String(item).startsWith("gid://shopify/Metaobject/")) {
+                        throw new Error(`Invalid item: ${item}`);
+                    }
+                    idsToVerify.push(String(item));
+                }
+                resolvedValue = JSON.stringify(parsed);
+             } catch (e) {
+                if (resolvedValue.startsWith("gid://shopify/Metaobject/")) {
+                    idsToVerify.push(resolvedValue);
+                    resolvedValue = JSON.stringify([resolvedValue]);
+                } else {
+                    blockedFields[fullKey] = `Requires valid JSON array of metaobject reference IDs, got: ${resolvedValue}`;
+                    continue;
+                }
+             }
+          } else {
+             if (!String(resolvedValue).startsWith("gid://shopify/Metaobject/")) {
+                blockedFields[fullKey] = `Requires metaobject reference ID, got text: ${resolvedValue}`;
+                continue;
+             }
+             idsToVerify.push(String(resolvedValue));
+          }
+
+          // Strict Structural Metaobject Validation
+          const requiredDefId = def?.requiredDefinitionId;
+          if (!requiredDefId) {
+             blockedFields[fullKey] = "Destination field lacks a required metaobject definition ID restriction.";
+             continue;
+          }
+
+          let allValid = true;
+          for (const moId of idsToVerify) {
+              if (moValidationCache.has(moId)) {
+                 const cachedDefId = moValidationCache.get(moId);
+                 if (cachedDefId !== requiredDefId) {
+                     blockedFields[fullKey] = `Reference ${moId} belongs to def ${cachedDefId}, but field requires ${requiredDefId}`;
+                     allValid = false;
+                     break;
+                 }
+              } else {
+                 try {
+                     const moRes = await admin.graphql(`
+                        query getMetaobject($id: ID!) {
+                           metaobject(id: $id) {
+                              definition { id }
+                           }
+                        }
+                     `, { variables: { id: moId } });
+                     const moJson = await moRes.json();
+                     const actualDefId = moJson?.data?.metaobject?.definition?.id;
+                     
+                     if (!actualDefId) {
+                         blockedFields[fullKey] = `Metaobject ${moId} not found or missing definition.`;
+                         allValid = false;
+                         break;
+                     }
+                     
+                     moValidationCache.set(moId, actualDefId);
+                     
+                     if (actualDefId !== requiredDefId) {
+                         blockedFields[fullKey] = `Reference ${moId} belongs to def ${actualDefId}, but field requires ${requiredDefId}`;
+                         allValid = false;
+                         break;
+                     }
+                 } catch (e) {
+                     blockedFields[fullKey] = `Validation lookup failed for ${moId}: ${e.message}`;
+                     allValid = false;
+                     break;
+                 }
+              }
+          }
+          
+          if (!allValid) continue;
+
         } else if (resolvedType === "list.single_line_text_field") {
           try {
              const parsed = JSON.parse(resolvedValue);
@@ -394,23 +724,15 @@ export const action = async ({ request }) => {
           } catch {
              if (!resolvedValue.startsWith("[")) resolvedValue = JSON.stringify([resolvedValue]);
           }
-        } else if (resolvedType.includes("metaobject_reference")) {
-          if (!String(resolvedValue).startsWith("gid://") && !String(resolvedValue).includes('["gid://')) {
-             blockedFields[fullKey] = `Requires metaobject reference ID, got text: ${resolvedValue}`;
-             return;
-          }
-          if (resolvedType === "list.metaobject_reference" && !String(resolvedValue).startsWith("[")) {
-             resolvedValue = JSON.stringify([resolvedValue]);
-          }
         } else if (resolvedType === "multi_line_text_field") {
           if (resolvedValue.length > 10000) {
              blockedFields[fullKey] = `Value exceeds 10,000 characters limit`;
-             return;
+             continue;
           }
         } else {
           if (resolvedValue.length > 255) {
              blockedFields[fullKey] = `Value exceeds 255 characters limit`;
-             return;
+             continue;
           }
         }
 
@@ -418,7 +740,7 @@ export const action = async ({ request }) => {
             setToShopify.push({ ownerId: productGid, namespace: ns, key: key, type: resolvedType, value: resolvedValue });
             proposedChanges[fullKey] = { from: currentVal, to: resolvedValue };
         }
-      });
+      }
 
       legacyKeysToRemove.forEach(fullKey => {
         let ns = "custom";
@@ -447,7 +769,7 @@ export const action = async ({ request }) => {
         }
       });
 
-      if (setToShopify.length === 0 && deleteFromShopify.length === 0 && !doNativeUpdate && !doPriceUpdate) {
+      if (setToShopify.length === 0 && deleteFromShopify.length === 0 && !doNativeUpdate && !doPriceUpdate && !doShippingWeightUpdate && !doImageAltUpdates) {
           if (Object.keys(blockedFields).length > 0) {
               return Response.json({
                   intent: "executeRepairPlan", pieceId, success: false, status: "REPAIR_BLOCKED",
@@ -553,6 +875,59 @@ export const action = async ({ request }) => {
           allErrors.push({ message: `API Error on Price Update: ${priceErr.message}` });
         }
       }
+      
+      let shippingWeightSucceeded = false;
+      if (doShippingWeightUpdate) {
+         try {
+            const swResponse = await admin.graphql(`
+               #graphql
+               mutation inventoryItemUpdate($id: ID!, $input: InventoryItemInput!) {
+                  inventoryItemUpdate(id: $id, input: $input) {
+                     inventoryItem { id measurement { weight { value unit } } }
+                     userErrors { field message }
+                  }
+               }
+            `, { variables: { id: shippingWeightInput.id, input: { measurement: shippingWeightInput.measurement } } });
+            
+            const swJson = await swResponse.json();
+            const swData = swJson?.data?.inventoryItemUpdate;
+            if (swData?.userErrors?.length) {
+               allErrors.push(...swData.userErrors);
+            } else {
+               shippingWeightSucceeded = true;
+            }
+         } catch (swErr) {
+            allErrors.push({ message: `API Error on Shipping Weight Update: ${swErr.message}` });
+         }
+      }
+
+      let imageAltUpdatesSucceeded = 0;
+      if (doImageAltUpdates) {
+         for (const imgInput of imageAltInputs) {
+            try {
+               const imgResponse = await admin.graphql(`
+                  #graphql
+                  mutation productUpdateMedia($media: [UpdateMediaInput!]!, $productId: ID!) {
+                     productUpdateMedia(media: $media, productId: $productId) {
+                        media { ... on MediaImage { id alt } }
+                        userErrors { field message }
+                     }
+                  }
+               `, { variables: { productId: productGid, media: [{ id: imgInput.id, alt: imgInput.alt }] } });
+               
+               const imgJson = await imgResponse.json();
+               const imgData = imgJson?.data?.productUpdateMedia;
+               
+               if (imgData?.userErrors?.length) {
+                  allErrors.push(...imgData.userErrors);
+               } else {
+                  imageAltUpdatesSucceeded++;
+               }
+            } catch (imgErr) {
+               allErrors.push({ message: `API Error on Image Alt Update for ${imgInput.id}: ${imgErr.message}` });
+            }
+         }
+      }
 
       if (allErrors.length > 0) {
          return Response.json({ 
@@ -565,23 +940,33 @@ export const action = async ({ request }) => {
 
       await new Promise(r => setTimeout(r, 600)); 
       
+      let readBackVariantId = null;
+      if (doPriceUpdate) readBackVariantId = priceVariantGid;
+      if (doShippingWeightUpdate && nativeChanges.shippingWeight?.variantId) readBackVariantId = nativeChanges.shippingWeight.variantId;
+      
       const readBackQuery = `
-        query getProductAndVariant($id: ID!${doPriceUpdate ? ', $variantId: ID!' : ''}) {
+        query getProductAndVariant($id: ID!${readBackVariantId ? ', $variantId: ID!' : ''}) {
           product(id: $id) { 
             title 
             descriptionHtml 
             seo { title description }
+            media(first: 50) { edges { node { ... on MediaImage { id alt } } } }
             metafields(first: 250) { edges { node { namespace key value } } } 
           }
-          ${doPriceUpdate ? `
+          ${readBackVariantId ? `
           node(id: $variantId) {
-            ... on ProductVariant { id price product { id } }
+            ... on ProductVariant { 
+               id 
+               price 
+               product { id } 
+               inventoryItem { measurement { weight { value unit } } }
+            }
           }
           ` : ''}
         }
       `;
       const readBackVars = { id: productGid };
-      if (doPriceUpdate) readBackVars.variantId = priceVariantGid;
+      if (readBackVariantId) readBackVars.variantId = readBackVariantId;
       
       const readBackResponse = await admin.graphql(readBackQuery, { variables: readBackVars });
       
@@ -590,6 +975,7 @@ export const action = async ({ request }) => {
       const actualTitle = readBackProduct.title || "";
       const actualBodyHtml = readBackProduct.descriptionHtml || "";
       const actualSeoTitle = readBackProduct.seo?.title || "";
+      const actualMedia = readBackProduct.media?.edges || [];
 
       const newMetaList = readBackProduct.metafields?.edges || [];
       const newMetafields = {};
@@ -600,7 +986,7 @@ export const action = async ({ request }) => {
 
       if (doPriceUpdate && priceWriteSucceeded) {
           const variantNode = readBackData?.data?.node;
-          if (!variantNode || variantNode.id !== priceVariantGid || variantNode.product?.id !== productGid || typeof variantNode.price !== "string") {
+          if (!variantNode || variantNode.id !== priceVariantGid || typeof variantNode.price !== "string") {
               readBackVerified = false;
               conflicts["price"] = { expected: newPriceString, actual: "Missing, detached, or malformed variant node" };
           } else {
@@ -628,6 +1014,38 @@ export const action = async ({ request }) => {
               readBackVerified = false;
               conflicts["native_seo_title"] = { expected: nativeInput.seo.title, actual: actualSeoTitle };
           }
+          if (nativeInput.title !== undefined && nativeInput.title !== actualTitle) {
+              readBackVerified = false;
+              conflicts["native_title"] = { expected: nativeInput.title, actual: actualTitle };
+          }
+      }
+      
+      if (doShippingWeightUpdate && shippingWeightSucceeded) {
+          const variantNode = readBackData?.data?.node;
+          if (!variantNode || variantNode.id !== nativeChanges.shippingWeight.variantId) {
+             readBackVerified = false;
+             conflicts["native_shipping_weight"] = { expected: nativeChanges.shippingWeight.value, actual: "Missing variant node" };
+          } else {
+             const actualWeight = variantNode.inventoryItem?.measurement?.weight?.value;
+             const actualUnit = variantNode.inventoryItem?.measurement?.weight?.unit;
+             const expectedWeight = shippingWeightInput.measurement.weight.value;
+             const expectedUnit = shippingWeightInput.measurement.weight.unit;
+             
+             if (parseFloat(actualWeight) !== parseFloat(expectedWeight) || actualUnit !== expectedUnit) {
+                readBackVerified = false;
+                conflicts["native_shipping_weight"] = { expected: `${expectedWeight} ${expectedUnit}`, actual: `${actualWeight} ${actualUnit}` };
+             }
+          }
+      }
+
+      if (doImageAltUpdates) {
+         for (const imgInput of imageAltInputs) {
+            const match = actualMedia.find(m => m.node.id === imgInput.id);
+            if (!match || match.node.alt !== imgInput.alt) {
+               readBackVerified = false;
+               conflicts[`native_image_alts_${imgInput.id}`] = { expected: imgInput.alt, actual: match?.node?.alt || "Missing node" };
+            }
+         }
       }
 
       setToShopify.forEach(m => {
@@ -649,7 +1067,7 @@ export const action = async ({ request }) => {
          }
       });
 
-      const totalFieldsUpdated = setToShopify.length + (priceReadBackVerified ? 1 : 0);
+      const totalFieldsUpdated = setToShopify.length + (priceReadBackVerified ? 1 : 0) + (nativeTitleUpdated ? 1 : 0) + (doShippingWeightUpdate && shippingWeightSucceeded ? 1 : 0) + imageAltUpdatesSucceeded;
 
       if (!readBackVerified) {
             return Response.json({
@@ -662,8 +1080,8 @@ export const action = async ({ request }) => {
       }
 
       const successMsg = Object.keys(blockedFields).length > 0 
-          ? `Partial success: ${totalFieldsUpdated} fields updated, ${deleteFromShopify.length} keys cleared. ${doNativeUpdate ? 'Native fields updated. ' : ''}${doPriceUpdate ? 'Variant price updated. ' : ''}${Object.keys(blockedFields).length} blocked.`
-          : `Repair successful: ${totalFieldsUpdated} fields updated, ${deleteFromShopify.length} legacy keys cleared.${doNativeUpdate ? ' Native fields updated.' : ''}${doPriceUpdate ? ' Variant price updated.' : ''}`;
+          ? `Partial success: ${totalFieldsUpdated} fields updated, ${deleteFromShopify.length} keys cleared. ${doNativeUpdate ? 'Native fields updated. ' : ''}${doPriceUpdate ? 'Variant price updated. ' : ''}${doShippingWeightUpdate ? 'Shipping weight updated. ' : ''}${doImageAltUpdates ? 'Image alts updated. ' : ''}${Object.keys(blockedFields).length} blocked.`
+          : `Repair successful: ${totalFieldsUpdated} fields updated, ${deleteFromShopify.length} legacy keys cleared.${doNativeUpdate ? ' Native fields updated.' : ''}${doPriceUpdate ? ' Variant price updated.' : ''}${doShippingWeightUpdate ? ' Shipping weight updated.' : ''}${doImageAltUpdates ? ' Image alts updated.' : ''}`;
 
       return Response.json({ 
         intent: "executeRepairPlan", pieceId, success: true, status: "REPAIRED",

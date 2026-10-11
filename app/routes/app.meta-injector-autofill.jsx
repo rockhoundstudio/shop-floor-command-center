@@ -354,7 +354,7 @@ ${collectionsMenu || "No live collections found."}
 
 INSTRUCTIONS:
 1. The Origin segment ("${segment2}") is the AUTHORITY. Do NOT reclassify or override it. Set 'origin_location' to the clean geographic name derived from "${segment2}" — strip prefixes like "Shop Lore:", "The", or "Collection". Expand abbreviations (e.g. "cda" -> "North Fork Coeur d'Alene", "yakima" -> "Yakima River Canyon"). Match 'collection_name' and 'collection_location' to the live store entry that corresponds to "${segment2}". Never substitute a vendor name or "The Shopped Rock" unless "${segment2}" explicitly contains a vendor name.
-​2. Resolve 'origin_handle' directly from the Live Store Directory based on the origin. 
+2. Resolve 'origin_handle' directly from the Live Store Directory based on the origin. 
 3. 'stone_family' must be exactly one of: ${stonePicklist} - match only the mineral/stone type word from the title. Ignore all color, pattern, cut, and modifier words. Pick the closest entry from the list. If the input is 'Botswana Agate Round', output 'Botswana Agate'.
 
 Return valid JSON with these exact keys: stone_family, piece_name, origin_handle, origin_location, collection_name, collection_location, seo_title. Generate a keyword-rich seo_title for Google using the family and keywords like "Handcrafted" or "OOAK Lapidary Art". No markup. No extra keys.`;
@@ -567,13 +567,17 @@ ${originStory}
 // ==========================================
 // PROMPT 4: TAB 3 VISION RESCAN (NO JEWELRY_TYPE)
 // ==========================================
-function buildTab3VisionPrompt({ pagesMenu, collectionsMenu, stoneFamily, derivedShape, originStory, originSegment, targetUrlPath, fullCollectionTitle, collectionUrlPath, currentData }) {
+function buildTab3VisionPrompt({ pagesMenu, collectionsMenu, stoneFamily, derivedShape, originStory, originSegment, targetUrlPath, fullCollectionTitle, collectionUrlPath, currentData, hasMultipleImages }) {
   const currentDataStr = Object.entries(currentData || {})
     .filter(([k, v]) => v !== undefined && v !== null && v !== "")
     .map(([k, v]) => `- ${k}: ${v}`)
     .join("\n");
 
-  return `You are a lapidary artist for Rockhound Studio. Analyze this photo and return a JSON object.
+  const imageAltInstructions = hasMultipleImages ? 
+  `- imageAlts: Array of objects [{ "imageId": "exact-id-from-input", "altText": "description" }]. Describe EACH supplied image individually. Use only visible, truthful detail. Max 125 chars per alt text. Use mineral name. Do not reuse generic captions across images. You MUST copy the exact imageId from the input. Reject unknown or duplicate IDs.` : 
+  `- alt_text: Descriptive alt text (max 125 chars). Use mineral name. No visual guessing.`;
+
+  return `You are a lapidary artist for Rockhound Studio. Analyze the provided photo(s) and return a JSON object.
 - LIVE STORE DIRECTORY:
   VALID PAGES IN STORE: ${pagesMenu || "No live pages"}
   VALID COLLECTIONS: ${collectionsMenu || "No live collections"}
@@ -583,7 +587,7 @@ ${currentDataStr || "- No explicit data provided."}
 
 CRITICAL RULES FOR TAB 3:
 1. Explicit operator-provided corrections take priority over image inference and stale product data.
-​2. If no explicit correction is supplied, preserve a nonblank current value exactly. Preserve finding details exactly (e.g., keep "Drilled stone with a pinned pinch bail").
+2. If no explicit correction is supplied, preserve a nonblank current value exactly. Preserve finding details exactly (e.g., keep "Drilled stone with a pinned pinch bail").
 3. Never generate or propose a shopify_title or price. These are manual.
 4. Do not infer jewelry, chain material, cord, bail, wire wrapping, or readiness from an image when the source data doesn't explicitly establish it. Leave uncertain values unresolved using the existing omit convention.
 5. Treat origin_story as hidden, read-only context from the existing origin page. Do not generate or save an origin story. Use the page only for supported metadata.
@@ -627,10 +631,10 @@ Potential JSON Keys to evaluate and propose if blank:
 - bail_included: e.g., "Silver Plated Pinch Bail", "None".
 - chain_material: Identify the visible chain or cord. INVENTORY OPTIONS: "Silver Plated Snake Chain", "Gold Plated Snake Chain". Do not mislabel a visible cord as a snake chain (use "Black Cord", etc.). Do not infer plating from color alone. Distinguish clearly absent hardware from hardware out of view. Do not silently leave blank if clearly supported by image.
 - jewelry_finding_type: Identify the finding or setting. INVENTORY OPTIONS: "Silver Plated Pinch Bail", "Glue-On Bail", "Assorted Glue-In Setting". Do not describe them as "cheap". Do not infer hidden drilling, pinning, or glue from generic metal shapes alone. Use explicitly provided construction details if available. Compatible with bail_included. Do not invent details if unknown. Do not silently leave blank if clearly supported by image.
-- alt_text: Descriptive alt text (max 125 chars). Use mineral name. No visual guessing.
 - google_product_category: Taxonomy path.
 - authenticity: Authentic, Lab-Created.
 - rarity: Common, Uncommon, Rare, One-of-a-Kind.
+${imageAltInstructions}
 
 FULL ORIGIN STORY (CRITICAL LORE FIREWALL - READ CAREFULLY):
 ${originStory}
@@ -790,33 +794,70 @@ export const action = async ({ request }) => {
         extractedStory = body.get("origin_story") || "";
       }
       
-      let imageBase64 = body.get("imageBase64") || "";
-      let imageMimeType = body.get("imageMimeType") || "image/jpeg";
-      if (!imageBase64 && body.get("imageUrl")) {
-        const imageRes = await fetch(body.get("imageUrl"));
-        imageBase64 = Buffer.from(await imageRes.arrayBuffer()).toString("base64");
+      let mediaInputs = [];
+      try {
+        const rawMedia = body.get("mediaInputs");
+        if (rawMedia) mediaInputs = JSON.parse(rawMedia);
+      } catch(e) {
+        console.error("Failed to parse mediaInputs:", e);
       }
 
-      // Collect all passed current values to protect them during Gemini generation
-      const currentData = {};
-      for (const [key, value] of body.entries()) {
-        if (value && typeof value === 'string' && value.trim() !== "" && !["intent", "pieceId", "productId", "productTitle", "imageBase64", "imageMimeType", "imageUrl"].includes(key)) {
-            currentData[key] = value.trim();
-        }
-      }
-
+      const contents = [];
+      const hasMultipleImages = mediaInputs && mediaInputs.length > 0;
+      
       const promptText = buildTab3VisionPrompt({
         pagesMenu: pagesList.map(p => `- Title: "${p.title}"`).join("\n"),
         collectionsMenu: collectionsList.map(c => `- Title: "${c.title}"`).join("\n"),
         stoneFamily: derivedFamily, derivedShape, originStory: extractedStory,
         originSegment, targetUrlPath: defaultOriginSlug ? `/pages/${defaultOriginSlug}` : "",
         fullCollectionTitle: defaultCollection.name, collectionUrlPath: defaultCollection.slug ? `/collections/${defaultCollection.slug}` : "",
-        currentData
+        currentData: Object.fromEntries(
+            Array.from(body.entries())
+            .filter(([key, value]) => value && typeof value === 'string' && value.trim() !== "" && !["intent", "pieceId", "productId", "productTitle", "imageBase64", "imageMimeType", "imageUrl", "mediaInputs"].includes(key))
+            .map(([k, v]) => [k, v.trim()])
+        ),
+        hasMultipleImages
       });
+      contents.push({ text: promptText });
+
+      if (hasMultipleImages) {
+        // Enforce hard limit to avoid Gemini payload size restrictions
+        const MAX_IMAGES = 15;
+        if (mediaInputs.length > MAX_IMAGES) {
+          console.warn(`[WARNING] Limiting Vision processing to ${MAX_IMAGES} images (received ${mediaInputs.length}).`);
+          mediaInputs = mediaInputs.slice(0, MAX_IMAGES);
+        }
+        for (const input of mediaInputs) {
+          if (input.url && input.imageId) {
+            try {
+              const imageRes = await fetch(input.url);
+              if (imageRes.ok) {
+                 const buffer = await imageRes.arrayBuffer();
+                 const base64Data = Buffer.from(buffer).toString("base64");
+                 // Use imageId as text block context right before its inlineData
+                 contents.push({ text: `Image ID: ${input.imageId}` });
+                 contents.push({ inlineData: { mimeType: "image/jpeg", data: base64Data } });
+              }
+            } catch(err) {
+              console.error(`Failed to fetch image ${input.imageId} from ${input.url}`, err);
+            }
+          }
+        }
+      } else {
+        let imageBase64 = body.get("imageBase64") || "";
+        let imageMimeType = body.get("imageMimeType") || "image/jpeg";
+        if (!imageBase64 && body.get("imageUrl")) {
+          const imageRes = await fetch(body.get("imageUrl"));
+          imageBase64 = Buffer.from(await imageRes.arrayBuffer()).toString("base64");
+        }
+        if (imageBase64) {
+             contents.push({ inlineData: { mimeType: imageMimeType, data: imageBase64 } });
+        }
+      }
 
       const geminiRes = await fetchWithRetry("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ contents: [{ parts: [{ text: promptText }, { inlineData: { mimeType: imageMimeType, data: imageBase64 } }] }], generationConfig: { responseMimeType: "application/json", temperature: 0.2 } })
+        body: JSON.stringify({ contents: [{ parts: contents }], generationConfig: { responseMimeType: "application/json", temperature: 0.2 } })
       });
 
       if (geminiRes.ok) {
@@ -824,12 +865,53 @@ export const action = async ({ request }) => {
         let cleanJson = (data.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
         const parsedVision = JSON.parse(cleanJson.slice(cleanJson.indexOf("{"), cleanJson.lastIndexOf("}") + 1));
         
+        let validatedImageAlts = [];
+        let altValidationErrors = [];
+
+        if (hasMultipleImages && Array.isArray(parsedVision.imageAlts)) {
+            const inputIdSet = new Set(mediaInputs.map(m => m.imageId));
+            const processedIdSet = new Set();
+            
+            for (const altObj of parsedVision.imageAlts) {
+                if (!altObj.imageId || !altObj.altText) {
+                    altValidationErrors.push(`Malformed alt object: missing ID or text.`);
+                    continue;
+                }
+                if (!inputIdSet.has(altObj.imageId)) {
+                    altValidationErrors.push(`Unknown image ID returned: ${altObj.imageId}`);
+                    continue;
+                }
+                if (processedIdSet.has(altObj.imageId)) {
+                    altValidationErrors.push(`Duplicate image ID returned: ${altObj.imageId}`);
+                    continue;
+                }
+                validatedImageAlts.push({
+                    imageId: altObj.imageId,
+                    altText: altObj.altText
+                });
+                processedIdSet.add(altObj.imageId);
+            }
+            
+            for (const inputId of inputIdSet) {
+                if (!processedIdSet.has(inputId)) {
+                    altValidationErrors.push(`Missing target image ID: ${inputId}`);
+                }
+            }
+            delete parsedVision.imageAlts; // Clean up so it doesn't accidentally become a custom metafield
+        }
+
         // --- VERIFIED FACT PROTECTION (Post-Generation Overrides) ---
         const protectedKeys = [
           "color_pattern", "dimensions_mm", "honest_flaws_and_character", "surface_finish", 
           "jewelry_finding_type", "bail_included", "chain_material", 
           "secondary_medium", "primary_use", "product_format", "jewelry_type"
         ];
+
+        const currentData = Object.fromEntries(
+            Array.from(body.entries())
+            .filter(([key, value]) => value && typeof value === 'string' && value.trim() !== "" && !["intent", "pieceId", "productId", "productTitle", "imageBase64", "imageMimeType", "imageUrl", "mediaInputs"].includes(key))
+            .map(([k, v]) => [k, v.trim()])
+        );
 
         protectedKeys.forEach(k => {
           if (currentData[k] !== undefined) {
@@ -892,7 +974,14 @@ export const action = async ({ request }) => {
           }
         }
         
-        return Response.json({ success: true, intent, tab3Data: finalPayload, verifiedGeoValues });
+        return Response.json({ 
+            success: true, 
+            intent, 
+            tab3Data: finalPayload, 
+            verifiedGeoValues,
+            imageAlts: validatedImageAlts,
+            altValidationErrors: altValidationErrors.length > 0 ? altValidationErrors : undefined
+        });
       }
       return Response.json({ success: false, intent, error: "Vision API Failure (Tab 3)" });
     }

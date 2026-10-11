@@ -29,12 +29,10 @@ const SECTIONS = [
       "custom.weight_grams",
       "custom.shipping_weight_oz",
       "custom.dimensions_mm",
-      "custom.cut_and_shape",
       "custom.surface_finish",
       "custom.primary_color",
       "custom.color_pattern",
       "custom.honest_flaws_and_character",
-      "custom.bench_notes",
       "custom.mohs_hardness",
       "custom.specific_gravity",
       "custom.crystal_system",
@@ -61,7 +59,6 @@ const SECTIONS = [
   {
     title: "4. Jewelry and Setting",
     keys: [
-      "custom.primary_use",
       "custom.jewelry_type",
       "custom.primary_medium",
       "custom.secondary_medium",
@@ -91,16 +88,15 @@ const FIELD_LIMITS = {
   "custom.seo_title": 70,
   "shopify_title": 255,
   "custom.piece_name": 255,
-  "custom.bench_notes": 100000,
   "custom.alt_text": 100000,
   "custom.honest_flaws_and_character": 255
 };
 
 const PROTECTED_FIELDS = [
-  "custom.stone_family", "custom.cut_and_shape", "custom.surface_finish",
+  "custom.stone_family", "custom.surface_finish",
   "custom.color_pattern", "custom.google_product_category", "custom.setting_ready",
   "custom.bail_included", "custom.chain_material", "custom.jewelry_finding_type",
-  "shopify_title", "custom.bench_notes"
+  "shopify_title"
 ];
 
 const HARDWARE_FIELDS = [
@@ -132,15 +128,26 @@ const NATIVE_FIELDS = ["price", "shopify_title"];
 const HIDDEN_CONTEXT_FIELDS = ["custom.origin_story"]; 
 
 const RETIRED_KEYS = [
-  "product_format", "custom.product_format", 
-  "craftsmanship", "custom.craftsmanship", 
-  "poetic_hook", "custom.poetic_hook"
+  "artist_notes", "bench_notes", "handcrafted_by", "color",
+  "cut_and_shape", "stone_shape", "wire_material", "primary_use",
+  "custom.artist_notes", "custom.bench_notes", "custom.handcrafted_by", "custom.color",
+  "custom.cut_and_shape", "custom.stone_shape", "custom.wire_material", "custom.primary_use"
 ];
 
 const formatLabel = (key) => {
   const parts = key.split('.');
   const name = parts[parts.length - 1];
   return name.replace(/[_-]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+};
+
+const getDynamicSections = (manifest) => {
+  return SECTIONS.map(sec => {
+      if (sec.title === "5. Search, Sales, and Media" && manifest?.nativeTargets?.media?.edges) {
+          const mediaKeys = manifest.nativeTargets.media.edges.map(e => `native_image_alts_${e.node.id}`);
+          return { ...sec, keys: [...sec.keys, ...mediaKeys] };
+      }
+      return sec;
+  });
 };
 
 export function OperationsMatrixTab({ products }) {
@@ -256,6 +263,7 @@ export function OperationsMatrixTab({ products }) {
        setSafetyError("Cannot generate plan: No inventory selected. Please check items in the left column first.");
        return;
     }
+    // Only explicitly requested global loads clear previously saved states
     setApprovals({}); 
     setManualEdits({}); 
     setIsLoadingData(true);
@@ -296,62 +304,19 @@ export function OperationsMatrixTab({ products }) {
     batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-api" });
   }, [isLoadingData, loadIndex, queueIds, batchFetcher.state, updateProductState]);
 
-  const executeRepairs = useCallback(() => {
-    if (queueIds.length === 0) {
-       setSafetyError("Cannot execute: No items loaded on the bench.");
-       return;
-    }
-    
-    const readyItems = queueIds.filter(id => manifestData[id]);
-    if (readyItems.length === 0) {
-       setSafetyError("Cannot execute: You must click 'GENERATE REPAIR PLAN' first to load data.");
-       return;
-    }
-    
-    if (readyItems.length < queueIds.length) {
-        if (!window.confirm(`WARNING: LIVE RUN.\n\nOnly ${readyItems.length} of ${queueIds.length} queued items have loaded manifests. The others will be skipped.\n\nProceed?`)) {
-            return;
-        }
-    } else {
-        if (!window.confirm("WARNING: LIVE RUN.\n\nThis will execute structural repairs (edits and deletions) on the live Shopify database for all queued items. Proceed?")) {
-            return;
-        }
-    }
-    
-    setSafetyError("");
-    setSafetyMessage("Structural Repair Engine engaged. Mutating live data...");
-    setExecutionMode("REPAIR");
-    setIsExecuting(true);
-    setExecuteIndex(0);
-    setTempAiData({});
-  }, [queueIds, manifestData]);
-
-  const executeAIFill = useCallback(() => {
-    if (queueIds.length === 0) {
-       setSafetyError("Cannot run AI: No items loaded on the bench.");
-       return;
-    }
-    
-    const readyItems = queueIds.filter(id => manifestData[id]);
-    if (readyItems.length === 0) {
-       setSafetyError("Cannot run AI: You must click 'GENERATE REPAIR PLAN' first to load data.");
-       return;
-    }
-    
-    setApprovals({}); 
-    // manualEdits purposefully NOT cleared here, to preserve explicit operator edits across AI runs.
-    setSafetyError("");
-    setSafetyMessage("Industrial AI Batch Pipeline engaged. Firing up the Gemini cores...");
-    setExecutionMode("AI_BATCH_PIPELINE");
-    setIsExecuting(true);
-    setExecuteIndex(0);
-    setAiStep(1);
-    setTempAiData({});
-  }, [queueIds, manifestData]);
-
   const getFieldMetadata = (key, data, productId, currentApprovals) => {
-    const hasCurrent = data.currentMetafields?.hasOwnProperty(key);
-    let currentVal = hasCurrent ? String(data.currentMetafields[key] || "") : "";
+    const isNativeImageAlt = key.startsWith("native_image_alts_");
+    
+    let currentVal = "";
+    if (isNativeImageAlt) {
+        const imageId = key.replace("native_image_alts_", "");
+        const edges = data.nativeTargets?.media?.edges || [];
+        const match = edges.find(e => e.node?.id === imageId);
+        currentVal = match?.node?.alt || "";
+    } else {
+        const hasCurrent = data.currentMetafields?.hasOwnProperty(key);
+        currentVal = hasCurrent ? String(data.currentMetafields[key] || "") : "";
+    }
 
     if (key === "shopify_title" || key === "price") {
         currentVal = String(data.canonicalFields?.[key] || currentVal || ""); 
@@ -391,6 +356,9 @@ export function OperationsMatrixTab({ products }) {
     } else if (POLICY_PRE_APPROVED_FIELDS.includes(key) && proposalExists) {
         isContentPreApproved = true;
         preApprovalReason = "Pre-approved by operator policy";
+    } else if (isNativeImageAlt && proposalExists) {
+        isContentPreApproved = true;
+        preApprovalReason = "Native Image Alt pre-approved by policy";
     }
 
     const isRequired = REQUIRED_FIELDS.includes(key);
@@ -402,7 +370,7 @@ export function OperationsMatrixTab({ products }) {
     const propCount = propVal.length;
     const limit = FIELD_LIMITS[key] || null;
 
-    const isManualOnly = (key === "shopify_title");
+    const isManualOnly = false;
     const isOperatorOwned = (key === "price" || key === "custom.weight_grams" || key === "custom.dimensions_mm");
     
     const exactApprovalVal = currentApprovals?.[productId]?.[key];
@@ -416,7 +384,7 @@ export function OperationsMatrixTab({ products }) {
     let contentNeedsReview = false;
 
     // Technical Verification Layer
-    const isOverLimit = limit !== null && (currentCount > limit || (isProposed && propCount > limit));
+    const isOverLimit = limit !== null && !isNativeImageAlt && (currentCount > limit || (isProposed && propCount > limit));
     if (isOverLimit) {
         hasTechnicalBlock = true;
         reasons.push("Over limit");
@@ -432,6 +400,13 @@ export function OperationsMatrixTab({ products }) {
     if (isHardware && GENERIC_VALUES.includes(propVal.trim()) && proposalExists) {
         hasTechnicalBlock = true;
         reasons.push("Generic hardware fill into blank");
+    }
+
+    if (isNativeImageAlt) {
+        if (data.nativeTargets?.isComplete === false || data.nativeTargets?.loadError) {
+            hasTechnicalBlock = true;
+            reasons.push(`Media targets incomplete/failed. Retry load. Error: ${data.nativeTargets?.loadError || 'Pagination failed'}`);
+        }
     }
 
     // New Backend Technical Blockers (Logged as historical, separated from preflight future blocks)
@@ -491,6 +466,8 @@ export function OperationsMatrixTab({ products }) {
         if (isOverLimit) {
             fieldStatus = "Over limit";
         } else if (reasons.includes("Type/destination unverified") || reasons.includes("Generic hardware fill into blank")) {
+            fieldStatus = "Blocked";
+        } else if (isNativeImageAlt) {
             fieldStatus = "Blocked";
         }
     }
@@ -560,6 +537,112 @@ export function OperationsMatrixTab({ products }) {
     };
   };
 
+  const buildRepairPayload = (manifest, product, currentId, currentApprovals) => {
+    const safePlan = {};
+    const nativeChanges = {};
+    
+    Object.keys(manifest.repairPlan).forEach(key => {
+        if (key.startsWith("native_image_alts_")) return; // Handled separately
+        
+        const meta = getFieldMetadata(key, manifest, currentId, currentApprovals);
+        if (!meta.isBlockedAction && !HIDDEN_CONTEXT_FIELDS.includes(key) && !RETIRED_KEYS.includes(key)) {
+            if (key === "shopify_title") {
+                nativeChanges.title = manifest.repairPlan[key];
+            } else if (key === "custom.shipping_weight_oz") {
+                const variantsConn = product?.variants;
+                if (variantsConn?.edges?.length === 1 && variantsConn?.pageInfo?.hasNextPage === false) {
+                    const variantId = variantsConn.edges[0].node?.id;
+                    if (variantId) {
+                        nativeChanges.shippingWeight = {
+                            variantId: variantId,
+                            value: manifest.repairPlan[key],
+                            unit: "OUNCES"
+                        };
+                    }
+                }
+            } else {
+                safePlan[key] = manifest.repairPlan[key];
+            }
+        }
+    });
+
+    const isMediaComplete = manifest.nativeTargets?.isComplete !== false;
+    const mediaLoadError = manifest.nativeTargets?.loadError;
+
+    if (isMediaComplete && !mediaLoadError) {
+        const imageAlts = [];
+        (manifest.nativeTargets?.media?.edges || []).forEach(({ node }) => {
+            if (node?.id) {
+                const key = `native_image_alts_${node.id}`;
+                if (manifest.repairPlan[key] !== undefined) {
+                    const meta = getFieldMetadata(key, manifest, currentId, currentApprovals);
+                    if (!meta.isBlockedAction && meta.proposalExists && meta.propVal !== meta.currentVal) {
+                        imageAlts.push({ imageId: node.id, altText: meta.propVal });
+                    }
+                }
+            }
+        });
+        if (imageAlts.length > 0) {
+            nativeChanges.imageAlts = imageAlts;
+        }
+    }
+    
+    return { safePlan, nativeChanges };
+  };
+
+  const executeRepairs = useCallback(() => {
+    if (queueIds.length === 0) {
+       setSafetyError("Cannot execute: No items loaded on the bench.");
+       return;
+    }
+    
+    const readyItems = queueIds.filter(id => manifestData[id]);
+    if (readyItems.length === 0) {
+       setSafetyError("Cannot execute: You must click 'GENERATE REPAIR PLAN' first to load data.");
+       return;
+    }
+    
+    if (readyItems.length < queueIds.length) {
+        if (!window.confirm(`WARNING: LIVE RUN.\n\nOnly ${readyItems.length} of ${queueIds.length} queued items have loaded manifests. The others will be skipped.\n\nProceed?`)) {
+            return;
+        }
+    } else {
+        if (!window.confirm("WARNING: LIVE RUN.\n\nThis will execute structural repairs (edits and deletions) on the live Shopify database for all queued items. Proceed?")) {
+            return;
+        }
+    }
+    
+    setSafetyError("");
+    setSafetyMessage("Structural Repair Engine engaged. Mutating live data...");
+    setExecutionMode("REPAIR");
+    setIsExecuting(true);
+    setExecuteIndex(0);
+    setTempAiData({});
+  }, [queueIds, manifestData]);
+
+  const executeAIFill = useCallback(() => {
+    if (queueIds.length === 0) {
+       setSafetyError("Cannot run AI: No items loaded on the bench.");
+       return;
+    }
+    
+    const readyItems = queueIds.filter(id => manifestData[id]);
+    if (readyItems.length === 0) {
+       setSafetyError("Cannot run AI: You must click 'GENERATE REPAIR PLAN' first to load data.");
+       return;
+    }
+    
+    setApprovals({}); 
+    // manualEdits purposefully NOT cleared here, to preserve explicit operator edits across AI runs.
+    setSafetyError("");
+    setSafetyMessage("Industrial AI Batch Pipeline engaged. Firing up the Gemini cores...");
+    setExecutionMode("AI_BATCH_PIPELINE");
+    setIsExecuting(true);
+    setExecuteIndex(0);
+    setAiStep(1);
+    setTempAiData({});
+  }, [queueIds, manifestData]);
+
   useEffect(() => {
     if (!isExecuting) return;
     if (batchFetcher.state !== "idle") return;
@@ -615,16 +698,10 @@ export function OperationsMatrixTab({ products }) {
         fd.append("intent", "executeRepairPlan");
         fd.append("pieceId", currentId);
         
-        // Save execution utilizes the derived metadata to determine safety
-        const safePlan = {};
-        Object.keys(manifest.repairPlan).forEach(key => {
-            const meta = getFieldMetadata(key, manifest, currentId, approvals);
-            if (!meta.isBlockedAction && !HIDDEN_CONTEXT_FIELDS.includes(key) && !RETIRED_KEYS.includes(key)) {
-                safePlan[key] = manifest.repairPlan[key];
-            }
-        });
+        const { safePlan, nativeChanges } = buildRepairPayload(manifest, product, currentId, approvals);
 
         fd.append("repairPlan", JSON.stringify(safePlan));
+        fd.append("nativeChanges", JSON.stringify(nativeChanges));
         fd.append("legacyKeysToRemove", JSON.stringify([]));
         batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-api" });
       }
@@ -645,13 +722,25 @@ export function OperationsMatrixTab({ products }) {
         updateProductState(currentId, STATUS.SCANNING, ["Stage 2: Vision API Deep Scan (Gemini)..."]);
         
         const titleToParse = manifest.canonicalFields?.shopify_title || product.title;
-        const imageUrl = product.images?.edges?.[0]?.node?.url || product.featuredImage?.url || product.media?.edges?.[0]?.node?.image?.url || "";
-        
         const fd = new FormData();
         fd.append("intent", "tab3FullRescan");
         fd.append("pieceId", currentId);
         fd.append("productTitle", titleToParse);
-        fd.append("imageUrl", imageUrl);
+        
+        const mediaEdges = manifest.nativeTargets?.media?.edges || [];
+        if (mediaEdges.length > 0) {
+            const mediaInputs = mediaEdges.map(e => ({
+                imageId: e.node.id,
+                url: e.node.preview?.image?.url,
+                currentAltText: e.node.alt || ""
+            })).filter(m => m.imageId && m.url);
+            fd.append("mediaInputs", JSON.stringify(mediaInputs));
+        } else {
+            // Fallback for isolated legacy execution behavior
+            const imageUrl = product.images?.edges?.[0]?.node?.url || product.featuredImage?.url || product.media?.edges?.[0]?.node?.image?.url || "";
+            fd.append("imageUrl", imageUrl);
+        }
+
         fd.append("stone_family", tempAiData.titleParse?.stone_family || "");
         
         const currentOriginStory = manifest.currentMetafields["custom.origin_story"] || manifest.canonicalFields["custom.origin_story"] || "";
@@ -662,9 +751,6 @@ export function OperationsMatrixTab({ products }) {
         // Feed existing operator-owned facts to Gemini so it has context, but AI overwrite shield protects changes
         fd.append("weight_grams", manifest.currentMetafields["custom.weight_grams"] || "");
         fd.append("dimensions_mm", manifest.currentMetafields["custom.dimensions_mm"] || "");
-        
-        fd.append("stone_shape", manifest.currentMetafields["custom.stone_shape"] || manifest.canonicalFields["custom.stone_shape"] || "");
-        fd.append("cut_and_shape", manifest.currentMetafields["custom.cut_and_shape"] || manifest.canonicalFields["custom.cut_and_shape"] || "");
 
         const hardwareKeys = [
             "bail_included",
@@ -768,6 +854,18 @@ export function OperationsMatrixTab({ products }) {
 
             if (descData) safeApply("custom.generated_description", descData);
 
+            if (tempAiData.imageAlts) {
+                tempAiData.imageAlts.forEach(altObj => {
+                    if (altObj.imageId && altObj.altText) {
+                        safeApply(`native_image_alts_${altObj.imageId}`, altObj.altText);
+                    }
+                });
+            }
+            
+            if (tempAiData.altValidationErrors) {
+                diagnostics.altValidationErrors = tempAiData.altValidationErrors;
+            }
+
             return { ...prev, [currentId]: { ...existing, repairPlan: newPlan, diagnostics, verifiedGeoValues: verifiedGeo } };
         });
         
@@ -786,14 +884,43 @@ export function OperationsMatrixTab({ products }) {
   useEffect(() => {
     if (batchFetcher.state === "idle" && batchFetcher.data && batchFetcher.data !== lastProcessedData) {
       setLastProcessedData(batchFetcher.data);
-      const { intent, success, pieceId, productId, message, error, errors, logs, status, finalStatus, titleParse, tab3Data, generated_description, fieldsUpdated, legacyKeysRemoved, verifiedGeoValues, blockedFields, conflicts, readBackVerified, proposedChanges, variantTarget } = batchFetcher.data;
+      const { intent, success, pieceId, productId, message, error, errors, logs, status, finalStatus, titleParse, tab3Data, generated_description, fieldsUpdated, legacyKeysRemoved, verifiedGeoValues, blockedFields, conflicts, readBackVerified, proposedChanges, variantTarget, imageAlts, altValidationErrors } = batchFetcher.data;
       
       const targetId = pieceId || productId;
       
       if (intent === "loadProductData" && targetId) {
          if (!success) {
             updateProductState(targetId, STATUS.FAILED, [error || message || "Failed to load data"]);
+            // Clear invalid state on failure
+            setApprovals(prev => { const n = {...prev}; delete n[targetId]; return n; });
+            setManualEdits(prev => { const n = {...prev}; delete n[targetId]; return n; });
          } else {
+            // Verify if existing manual edits still apply to the loaded nativeTargets
+            setManualEdits(prev => {
+                const n = {...prev};
+                if (n[targetId]) {
+                    const validIds = new Set(batchFetcher.data.nativeTargets?.media?.edges?.map(e => `native_image_alts_${e.node.id}`) || []);
+                    Object.keys(n[targetId]).forEach(k => {
+                        if (k.startsWith("native_image_alts_") && !validIds.has(k)) {
+                            delete n[targetId][k];
+                        }
+                    });
+                }
+                return n;
+            });
+            setApprovals(prev => {
+                const n = {...prev};
+                if (n[targetId]) {
+                    const validIds = new Set(batchFetcher.data.nativeTargets?.media?.edges?.map(e => `native_image_alts_${e.node.id}`) || []);
+                    Object.keys(n[targetId]).forEach(k => {
+                        if (k.startsWith("native_image_alts_") && !validIds.has(k)) {
+                            delete n[targetId][k];
+                        }
+                    });
+                }
+                return n;
+            });
+
             setManifestData(prev => {
                 const prevDiag = prev[targetId]?.diagnostics || {};
                 return {
@@ -956,7 +1083,13 @@ export function OperationsMatrixTab({ products }) {
                 setAiStep(2); 
             } 
             else if (intent === "tab3FullRescan") {
-                setTempAiData(prev => ({ ...prev, tab3Data: tab3Data, verifiedGeoValues: verifiedGeoValues }));
+                setTempAiData(prev => ({ 
+                    ...prev, 
+                    tab3Data: tab3Data, 
+                    verifiedGeoValues: verifiedGeoValues,
+                    imageAlts: imageAlts,
+                    altValidationErrors: altValidationErrors 
+                }));
                 setAiStep(3); 
             } 
             else if (intent === "generateDescription") {
@@ -1009,24 +1142,25 @@ export function OperationsMatrixTab({ products }) {
        return;
     }
     
+    const product = safeProducts.find(p => p.id === selectedBenchId);
+    if (!product) {
+       setSafetyError("Product data not found in inventory.");
+       return;
+    }
+
     const fd = new FormData();
     fd.append("intent", "executeRepairPlan");
     fd.append("pieceId", selectedBenchId);
     
-    const safePlan = {};
-    Object.keys(manifest.repairPlan).forEach(key => {
-        const meta = getFieldMetadata(key, manifest, selectedBenchId, approvals);
-        if (!meta.isBlockedAction && !HIDDEN_CONTEXT_FIELDS.includes(key) && !RETIRED_KEYS.includes(key)) {
-            safePlan[key] = manifest.repairPlan[key];
-        }
-    });
+    const { safePlan, nativeChanges } = buildRepairPayload(manifest, product, selectedBenchId, approvals);
 
     fd.append("repairPlan", JSON.stringify(safePlan));
+    fd.append("nativeChanges", JSON.stringify(nativeChanges));
     fd.append("legacyKeysToRemove", JSON.stringify([]));
 
     updateProductState(selectedBenchId, STATUS.SCANNING, ["Executing single structural repair..."]);
     batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-api" });
-  }, [selectedBenchId, manifestData, approvals, batchFetcher, updateProductState]);
+  }, [selectedBenchId, manifestData, approvals, batchFetcher, updateProductState, safeProducts]);
 
   const handleExecuteSingleAI = useCallback(() => {
     if (!selectedBenchId) return;
@@ -1140,7 +1274,9 @@ export function OperationsMatrixTab({ products }) {
         unchangedFlagged: 0
     };
 
-    SECTIONS.forEach(sec => {
+    const dynamicSections = getDynamicSections(data);
+
+    dynamicSections.forEach(sec => {
         sec.keys.forEach(k => {
             stats.total++;
             const meta = getFieldMetadata(k, data, selectedBenchId, approvals);
@@ -1198,6 +1334,7 @@ export function OperationsMatrixTab({ products }) {
       const product = safeProducts.find(p => p.id === selectedBenchId) || {};
       const statusObj = getSystemStatus();
       const diag = data.diagnostics || {};
+      const dynamicSections = getDynamicSections(data);
 
       let stats = {
           loaded: 0,
@@ -1223,8 +1360,7 @@ export function OperationsMatrixTab({ products }) {
           return `${str.substring(0, limit)} (...${omitted} characters omitted for telemetry)`;
       };
 
-      // Process all 45 pins in SECTIONS
-      SECTIONS.forEach(sec => {
+      dynamicSections.forEach(sec => {
           sec.keys.forEach(key => {
               const meta = getFieldMetadata(key, data, selectedBenchId, approvals);
               
@@ -1412,6 +1548,17 @@ ${recommendations.join("\n")}
               Collect Telemetry
             </Button>
           </InlineStack>
+          
+          {data.diagnostics?.altValidationErrors && data.diagnostics.altValidationErrors.length > 0 && (
+              <Banner tone="warning" title="Vision Alt Validation Errors">
+                  <BlockStack gap="100">
+                      {data.diagnostics.altValidationErrors.map((err, i) => (
+                          <Text key={i} as="p" variant="bodyMd">{err}</Text>
+                      ))}
+                  </BlockStack>
+              </Banner>
+          )}
+
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "16px" }}>
             
             <Box padding="300" background="bg-surface-secondary" borderRadius="100" borderColor="border" borderWidth="1">
@@ -1553,7 +1700,7 @@ ${recommendations.join("\n")}
                   statusText = "Pre-approved, not saved.";
               } else if (meta.isContentPreApproved && meta.hasTechnicalBlock) {
                   boxBg = "#fff3cd"; boxBorder = "#ffecb5"; textColor = "#664d03";
-                  const technicalBlockers = meta.reasons.filter(r => !["Proposed", "Category pre-approved", "Verified Geo Library", "Pre-approved by operator policy", "Historical: Conflict (Pre-approved)", "Historical: Degrade (Pre-approved)", "Historical: Unverified proposal (Pre-approved)"].includes(r)).join(", ");
+                  const technicalBlockers = meta.reasons.filter(r => !["Proposed", "Category pre-approved", "Verified Geo Library", "Pre-approved by operator policy", "Native Image Alt pre-approved by policy", "Historical: Conflict (Pre-approved)", "Historical: Degrade (Pre-approved)", "Historical: Unverified proposal (Pre-approved)"].includes(r)).join(", ");
                   statusText = `Pre-approved. Cannot save until field destination/type is verified or limits resolved. (${technicalBlockers})`;
               } else if (meta.isApproved && !meta.hasTechnicalBlock) {
                   boxBg = "#d1e7dd"; boxBorder = "#badbcc"; textColor = "#0f5132";
@@ -1572,6 +1719,14 @@ ${recommendations.join("\n")}
                   statusText = "Safe suggestion. Approval optional but recorded if checked.";
               }
 
+              let customLabel = formatLabel(key);
+              let thumbnailUrl = null;
+              if (key.startsWith("native_image_alts_")) {
+                  const id = key.replace("native_image_alts_", "");
+                  customLabel = `Native Image Alt (${id.split('/').pop()})`;
+                  thumbnailUrl = data.nativeTargets?.media?.edges?.find(e => e.node?.id === id)?.node?.preview?.image?.url;
+              }
+
               return (
                 <Box key={key} padding="300" background={isBlank ? "bg-surface-warning" : "bg-surface"} borderColor="border" borderWidth="1" borderRadius="200">
                   <div style={{ display: "flex", flexWrap: "wrap", gap: "20px", boxSizing: "border-box", minWidth: 0 }}>
@@ -1579,9 +1734,16 @@ ${recommendations.join("\n")}
                     {/* Left Panel: Labels & Metadata */}
                     <div style={{ flex: "1 1 250px", minWidth: 0, maxWidth: "100%", boxSizing: "border-box" }}>
                       <BlockStack gap="100">
-                        <div style={{ wordBreak: "break-word", overflowWrap: "anywhere" }}>
-                            <Text as="h4" variant="headingMd" fontWeight="bold">{formatLabel(key)}</Text>
-                            <Text as="p" variant="bodySm" tone="subdued" fontWeight="medium">{key}</Text>
+                        <div style={{ display: "flex", alignItems: "center", gap: "12px", minWidth: 0 }}>
+                            {thumbnailUrl && (
+                                <div style={{ width: "48px", height: "48px", borderRadius: "6px", overflow: "hidden", flexShrink: 0, border: "1px solid #d2d5d8" }}>
+                                    <img src={thumbnailUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                                </div>
+                            )}
+                            <div style={{ wordBreak: "break-word", overflowWrap: "anywhere", minWidth: 0 }}>
+                                <Text as="h4" variant="headingMd" fontWeight="bold">{customLabel}</Text>
+                                <Text as="p" variant="bodySm" tone="subdued" fontWeight="medium">{key}</Text>
+                            </div>
                         </div>
                         
                         <div style={{ marginTop: "12px", display: "flex", flexDirection: "column", gap: "6px", wordBreak: "break-word", overflowWrap: "anywhere" }}>
@@ -1626,7 +1788,7 @@ ${recommendations.join("\n")}
                         {/* Standard Metafield Conflict Display */}
                         {meta.conflictData && (
                             <div style={{ marginTop: "12px", backgroundColor: "#f8d7da", border: "1px solid #f5c2c7", borderRadius: "8px", padding: "12px", minWidth: 0, boxSizing: "border-box" }}>
-                                <Text as="p" variant="headingSm" tone="critical" fontWeight="bold" style={{ marginBottom: "6px" }}>Read-Back Mismatch: Metafield Value</Text>
+                                <Text as="p" variant="headingSm" tone="critical" fontWeight="bold" style={{ marginBottom: "6px" }}>Read-Back Mismatch: Field Value</Text>
                                 <div style={{ display: "flex", flexDirection: "column", gap: "8px", whiteSpace: "pre-wrap", minWidth: 0, wordBreak: "break-word", overflowWrap: "anywhere", fontSize: "13px", color: "#842029" }}>
                                     <div><strong>Expected:</strong><br/>{meta.conflictData.expected}</div>
                                     <div style={{ borderTop: "1px dashed #f5c2c7", paddingTop: "8px" }}><strong>Actual:</strong><br/>{meta.conflictData.actual}</div>
@@ -1700,6 +1862,7 @@ ${recommendations.join("\n")}
   };
 
   const progressPercentage = queueIds.length > 0 ? Math.round(((isLoadingData ? loadIndex : executeIndex) / queueIds.length) * 100) : 0;
+  const dynamicSections = manifestData[selectedBenchId] ? getDynamicSections(manifestData[selectedBenchId]) : SECTIONS;
 
   const filterOptions = [
     {label: 'All', value: 'All'},
@@ -1937,7 +2100,7 @@ ${recommendations.join("\n")}
                     </InlineStack>
                 </Card>
 
-                {SECTIONS.map(sec => renderManifestTable(sec))}
+                {dynamicSections.map(sec => renderManifestTable(sec))}
                 
               </BlockStack>
             )}
