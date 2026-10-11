@@ -122,6 +122,7 @@ export function OperationsMatrixTab({ products }) {
   
   const [approvals, setApprovals] = useState({}); // Stores exact text approvals by pieceId and key
   const [manualEdits, setManualEdits] = useState({}); // Tracks explicit human ownership to shield from async AI overwrites
+  const [submittedPayloads, setSubmittedPayloads] = useState({}); // Exact payload snapshot taken at execution purely for telemetry tracking
   
   // Repair Results History
   const [repairHistory, setRepairHistory] = useState({});
@@ -194,6 +195,7 @@ export function OperationsMatrixTab({ products }) {
     setManifestData({});
     setApprovals({});
     setManualEdits({});
+    setSubmittedPayloads({});
     setRepairHistory({});
     setSelectedBenchId(null);
     setIsLoadingData(false);
@@ -660,6 +662,15 @@ export function OperationsMatrixTab({ products }) {
         
         const { safePlan, nativeChanges } = buildRepairPayload(manifest, product, currentId, approvals);
 
+        // --- EXECUTION SNAPSHOT ---
+        const snapshot = { ...safePlan };
+        if (nativeChanges.title) snapshot.shopify_title = nativeChanges.title;
+        (nativeChanges.imageAlts || []).forEach(alt => {
+            snapshot[`native_image_alts_${alt.imageId}`] = alt.altText;
+        });
+        setSubmittedPayloads(prev => ({ ...prev, [currentId]: snapshot }));
+        // --------------------------
+
         fd.append("repairPlan", JSON.stringify(safePlan));
         fd.append("nativeChanges", JSON.stringify(nativeChanges));
         fd.append("legacyKeysToRemove", JSON.stringify([]));
@@ -1114,6 +1125,15 @@ export function OperationsMatrixTab({ products }) {
     
     const { safePlan, nativeChanges } = buildRepairPayload(manifest, product, selectedBenchId, approvals);
 
+    // --- EXECUTION SNAPSHOT ---
+    const snapshot = { ...safePlan };
+    if (nativeChanges.title) snapshot.shopify_title = nativeChanges.title;
+    (nativeChanges.imageAlts || []).forEach(alt => {
+        snapshot[`native_image_alts_${alt.imageId}`] = alt.altText;
+    });
+    setSubmittedPayloads(prev => ({ ...prev, [selectedBenchId]: snapshot }));
+    // --------------------------
+
     fd.append("repairPlan", JSON.stringify(safePlan));
     fd.append("nativeChanges", JSON.stringify(nativeChanges));
     fd.append("legacyKeysToRemove", JSON.stringify([]));
@@ -1297,6 +1317,7 @@ export function OperationsMatrixTab({ products }) {
       const diag = data.diagnostics || {};
       const dynamicSections = getDynamicSections(data);
       const allConfigFields = dynamicSections.flatMap(sec => sec.configFields || []);
+      const lastSubmitted = submittedPayloads[selectedBenchId];
 
       let stats = {
           loaded: 0,
@@ -1369,6 +1390,7 @@ export function OperationsMatrixTab({ products }) {
               if (mode === 'review') {
                   let isUnapprovedProblem = false;
                   let isOptionalConditional = false;
+                  let isUnresolvedSubmit = false;
                   
                   if (!meta.isApproved && meta.proposalExists && meta.currentVal !== meta.propVal) isUnapprovedProblem = true;
                   if (!meta.isApproved && meta.contentNeedsReview) isUnapprovedProblem = true;
@@ -1379,13 +1401,20 @@ export function OperationsMatrixTab({ products }) {
                       isOptionalConditional = true;
                   }
 
+                  if (lastSubmitted && lastSubmitted[key] !== undefined) {
+                      const intended = String(lastSubmitted[key] || "");
+                      if (meta.currentVal !== intended) {
+                          isUnresolvedSubmit = true;
+                      }
+                  }
+
                   const isRoutineMandatory = REQUIRED_FIELDS.includes(key) && (meta.isApproved || meta.currentVal === meta.propVal);
 
-                  if ((isUnapprovedProblem || isOptionalConditional) && !isRoutineMandatory) {
+                  if ((isUnapprovedProblem || isOptionalConditional || isUnresolvedSubmit) && !isRoutineMandatory) {
                       reviewCandidates.push({
                           key,
                           meta,
-                          priority: isUnapprovedProblem ? 1 : 2,
+                          priority: isUnresolvedSubmit ? 0 : (isUnapprovedProblem ? 1 : 2),
                           isGeo,
                           isNarrative,
                           isProtectedInt
@@ -1458,34 +1487,62 @@ export function OperationsMatrixTab({ products }) {
       const descStatus = (data.repairPlan?.["custom.generated_description"] || data.currentMetafields?.["custom.generated_description"]) ? "Success" : (diag.stage === "generateDescription" ? (diag.gemini || "Unknown") : "Not called");
 
       const shopifyRead = statusObj.shopifyReadStatus;
-      let shopifyWrite = "Not called";
-      if (history) {
-          if (history.fieldsUpdated !== undefined) {
-              if (history.fieldsUpdated > 0) {
-                  shopifyWrite = `Success (${history.fieldsUpdated} updated${history.legacyKeysRemoved ? `, ${history.legacyKeysRemoved} deleted` : ""})`;
-                  if (history.blockedFields && Object.keys(history.blockedFields).length > 0) {
-                      shopifyWrite = `Partial Success (${history.fieldsUpdated} updated, ${Object.keys(history.blockedFields).length} blocked)`;
-                  }
-              } else if (history.blockedFields && Object.keys(history.blockedFields).length > 0) {
-                  shopifyWrite = `Blocked (${Object.keys(history.blockedFields).length} fields)`;
-              } else {
-                  shopifyWrite = "Success (No changes required)";
-              }
-          } else {
-              shopifyWrite = "Failed / Unknown";
-          }
-      }
+      
       const readBack = history && history.readBackVerified !== undefined ? (history.readBackVerified ? "Success" : "Failed") : statusObj.readBackStatus;
+
+      let executionVerificationBlock = "";
+      let unresolvedCount = 0;
+      
+      if (lastSubmitted) {
+          let verifRows = [];
+          verifRows.push("Updated destinations: Not recorded by backend");
+          Object.keys(lastSubmitted).forEach(submitKey => {
+              const isGeo = isGeologyField(submitKey);
+              const isNarrative = isNarrativeBlock(submitKey);
+              const isProtectedInt = isProtectedIntegration(submitKey);
+              
+              if (isGeo || isNarrative || isProtectedInt) {
+                  verifRows.push(`- ${submitKey}: [Detail Excluded]`);
+              } else {
+                  const meta = getFieldMetadata(submitKey, data, selectedBenchId, approvals, allConfigFields);
+                  const intendedVal = String(lastSubmitted[submitKey] || "");
+                  const returnVal = String(meta.currentVal || "");
+                  
+                  let outcome = "Not verified (verification unavailable)";
+                  if (returnVal === intendedVal && returnVal !== "") {
+                      outcome = "Verified match";
+                  } else if (returnVal !== intendedVal && returnVal !== "") {
+                      outcome = "Returned mismatch";
+                      unresolvedCount++;
+                  } else if (returnVal === "") {
+                      outcome = "Not verified (verification unavailable)";
+                      unresolvedCount++;
+                  }
+                  
+                  verifRows.push(`- ${submitKey}:`);
+                  verifRows.push(`  Intended: [${truncateForTelemetry(intendedVal, 100)}]`);
+                  verifRows.push(`  Returned: [${truncateForTelemetry(returnVal, 100)}]`);
+                  verifRows.push(`  Outcome:  ${outcome}`);
+              }
+          });
+          executionVerificationBlock = `\n--- EXECUTION VERIFICATION ---\n${verifRows.join("\n")}`;
+      } else if (history) {
+          executionVerificationBlock = `\n--- EXECUTION VERIFICATION ---\nExact execution association is unavailable for this repair run.\nUpdated destinations: Not recorded by backend`;
+      }
 
       const recommendations = [];
       if (hasBlockersForWrite || hasRequiredMissing) {
           recommendations.push("1. DO NOT WRITE. Review and manually resolve the following blocked or required fields:");
           specificBlockers.forEach(b => recommendations.push(`   - ${b}`));
           recommendations.push("2. Verify Shopify Metafield definitions for any 'Unverified proposal' pins before approving.");
-      } else if (stats.proposed > 0 && shopifyWrite === "Not called") {
+      } else if (lastSubmitted && unresolvedCount > 0) {
+          recommendations.push(`1. WARNING: ${unresolvedCount} submitted change(s) remain unresolved or unverified after execution. Review the execution verification block.`);
+      } else if (!lastSubmitted && history && stats.proposed > 0) {
+          recommendations.push("1. Exact execution payload unavailable. Some fields appear proposed post-save, but cannot be proven as failed writes. Review manually.");
+      } else if (stats.proposed > 0 && !history) {
           recommendations.push("1. Content review complete. Technically eligible proposals are staged. Proceed with 'Execute Single Repair'.");
-      } else if (shopifyWrite.includes("Success")) {
-          recommendations.push("1. Write successful. Verify live changes in Shopify admin if necessary.");
+      } else if (history && history.fieldsUpdated !== undefined) {
+          recommendations.push("1. Backend request successful. Check execution verification or live Shopify admin to confirm field updates.");
       } else {
           recommendations.push("1. Load data or generate a repair plan to begin.");
       }
@@ -1500,7 +1557,7 @@ Run Time: ${new Date().toISOString()}
 --- PIPELINE STATUS ---
 [Shopify IO]
 Read: ${shopifyRead}
-Write: ${shopifyWrite}
+Backend-reported updates: ${history && history.fieldsUpdated !== undefined ? history.fieldsUpdated : "Not called"}
 Read-Back: ${readBack}
 
 [AI Stages]
@@ -1529,6 +1586,7 @@ Variant Target: ${history.variantTarget || 'Not recorded'}` : "Not recorded"}
 
 --- PIN DETAILS ---
 ${pinRows.join("\n")}
+${executionVerificationBlock}
 
 --- RECOMMENDATIONS ---
 ${recommendations.join("\n")}
@@ -1552,7 +1610,7 @@ ${recommendations.join("\n")}
               console.error("Clipboard error", err);
               setSafetyError("Failed to copy telemetry to clipboard.");
           });
-  }, [selectedBenchId, manifestData, repairHistory, safeProducts, approvals, batchFetcher.state, isLoadingData, safetyError, aiStep, executionMode, getSystemStatus]);
+  }, [selectedBenchId, manifestData, repairHistory, safeProducts, approvals, batchFetcher.state, isLoadingData, safetyError, aiStep, executionMode, getSystemStatus, submittedPayloads]);
 
   const renderDiagnosticHeader = () => {
     const data = manifestData[selectedBenchId];
