@@ -1284,9 +1284,9 @@ export function OperationsMatrixTab({ products }) {
     return stats;
   };
 
-  const handleCollectTelemetry = useCallback(() => {
+  const handleCollectTelemetry = useCallback((mode = 'full') => {
       if (!selectedBenchId || !manifestData[selectedBenchId]) {
-          setSafetyError("Cannot collect telemetry: No active bench item.");
+          setSafetyError(`Cannot collect telemetry: No active bench item.`);
           return;
       }
 
@@ -1314,13 +1314,33 @@ export function OperationsMatrixTab({ products }) {
       let hasRequiredMissing = false;
       let specificBlockers = [];
 
+      const isGeologyField = (key) => {
+          const normalized = key.replace(/^custom\./, '').replace(/-/g, '_').toLowerCase();
+          const geoKeys = [
+              "mohs_hardness", "specific_gravity", "crystal_system", "fracture_pattern",
+              "cleavage", "luster", "diaphaneity", "mineral_class", "geological_age",
+              "geological_era", "rock_formation", "rock_composition"
+          ];
+          return geoKeys.includes(normalized);
+      };
+
+      const isNarrativeBlock = (key) => {
+          const normalized = key.replace(/^custom\./, '').replace(/-/g, '_').toLowerCase();
+          return ["generated_description", "stone_story", "origin_story", "native_description", "native_descriptionhtml"].includes(normalized);
+      };
+
+      const isProtectedIntegration = (key) => {
+          return INTEGRATION_PREFIXES.some(prefix => key.startsWith(prefix));
+      };
+
       const truncateForTelemetry = (text, limit = 100) => {
           if (!text) return "";
-          const str = String(text);
+          const str = String(text).replace(/\n/g, " ").trim();
           if (str.length <= limit) return str;
-          const omitted = str.length - limit;
-          return `${str.substring(0, limit)} (...${omitted} characters omitted for telemetry)`;
+          return `${str.substring(0, limit)}...`;
       };
+
+      let reviewCandidates = [];
 
       dynamicSections.forEach(sec => {
           sec.keys.forEach(key => {
@@ -1342,57 +1362,100 @@ export function OperationsMatrixTab({ products }) {
                   specificBlockers.push(`${key}: Required field is missing`);
               }
 
-              if (key === "custom.origin_story") {
-                  const sourceAvailable = (meta.currentExists || meta.proposalExists) ? "Yes" : "No";
-                  pinRows.push(`- ${key}: [Hidden Context] Source Available: ${sourceAvailable}`);
-              } else if (key === "custom.generated_description") {
-                  let row = `- ${key}: Status: [${meta.fieldStatus}]`;
-                  if (meta.reasons.length > 0) {
-                      row += `, Reason: [${meta.reasons.join(", ")}]`;
-                  }
-                  
-                  if (meta.conflictData) {
-                      row += `\n    -> [custom.generated_description] Expected: ${truncateForTelemetry(meta.conflictData.expected, 100)}`;
-                      row += `\n    -> [custom.generated_description] Actual: ${truncateForTelemetry(meta.conflictData.actual, 100)}`;
-                  }
-                  if (meta.nativeDescConflictData) {
-                      row += `\n    -> [Native product descriptionHtml] Expected: ${truncateForTelemetry(meta.nativeDescConflictData.expected, 100)}`;
-                      row += `\n    -> [Native product descriptionHtml] Actual: ${truncateForTelemetry(meta.nativeDescConflictData.actual, 100)}`;
-                  }
-                  
-                  pinRows.push(row);
-              } else {
-                  const cleanText = (str) => {
-                      if (!str) return "";
-                      const cleaned = String(str).replace(/\n/g, " ").trim();
-                      return cleaned.length > 40 ? cleaned.substring(0, 37) + "..." : cleaned;
-                  };
-                  
-                  const curr = cleanText(meta.currentVal);
-                  const prop = cleanText(meta.propVal);
-                  let row = `- ${key}: Current: [${curr}], Proposed: [${prop}], Status: [${meta.fieldStatus}]`;
-                  if (meta.reasons.length > 0) {
-                      row += `, Reason: [${meta.reasons.join(", ")}]`;
-                  }
-                  pinRows.push(row);
-              }
+              const isGeo = isGeologyField(key);
+              const isNarrative = isNarrativeBlock(key);
+              const isProtectedInt = isProtectedIntegration(key);
 
-              if (["custom.generated_description", "custom.origin_location", "custom.collection_name", "custom.collection_location"].includes(key)) {
-                  const canApproveDiag = meta.proposalExists && meta.currentVal !== meta.propVal && !meta.isManualOnly && !meta.isContentPreApproved && meta.fieldStatus !== "API Error / Blocked" && meta.fieldStatus !== "Save Conflict";
-                  const blockReason = !meta.proposalExists ? "No proposal" : (meta.currentVal === meta.propVal) ? "Values match" : meta.isManualOnly ? "Manual only" : meta.isContentPreApproved ? "Pre-approved" : (meta.fieldStatus === "API Error / Blocked") ? "API Blocked" : (meta.fieldStatus === "Save Conflict") ? "Save Conflict" : "None";
-                  pinRows.push(`    -> [DIAGNOSTIC] status=${meta.fieldStatus} | propExists=${meta.proposalExists} | isDiff=${meta.currentVal !== meta.propVal} | manual=${meta.isManualOnly} | preApp=${meta.isContentPreApproved} | appr=${meta.isApproved} | techBlock=${meta.hasTechnicalBlock} | apiBlock=${meta.reasons.some(r => r.includes("Backend Blocked"))} | conf=${!!meta.conflictData} | natConf=${!!meta.nativeDescConflictData} | canApprove=${canApproveDiag} | blocker=${blockReason} | chars=${meta.currentVal.length}/${meta.propVal.length}`);
+              if (mode === 'review') {
+                  let isUnapprovedProblem = false;
+                  let isOptionalConditional = false;
+                  
+                  if (!meta.isApproved && meta.proposalExists && meta.currentVal !== meta.propVal) isUnapprovedProblem = true;
+                  if (!meta.isApproved && meta.contentNeedsReview) isUnapprovedProblem = true;
+                  if (["Required missing", "Unverified proposal", "Conflict", "Degrade", "API Error / Blocked", "Save Conflict"].includes(meta.fieldStatus) || meta.fieldStatus.includes("Blocked")) {
+                      isUnapprovedProblem = true;
+                  }
+                  if (meta.fieldStatus === "Optional blank" || meta.proposalStatus === "Empty" || meta.fieldStatus === "Manual only") {
+                      isOptionalConditional = true;
+                  }
+
+                  const isRoutineMandatory = REQUIRED_FIELDS.includes(key) && (meta.isApproved || meta.currentVal === meta.propVal);
+
+                  if ((isUnapprovedProblem || isOptionalConditional) && !isRoutineMandatory) {
+                      reviewCandidates.push({
+                          key,
+                          meta,
+                          priority: isUnapprovedProblem ? 1 : 2,
+                          isGeo,
+                          isNarrative,
+                          isProtectedInt
+                      });
+                  }
+              } else {
+                  if (key === "custom.origin_story") {
+                      const sourceAvailable = (meta.currentExists || meta.proposalExists) ? "Yes" : "No";
+                      pinRows.push(`- ${key}: [Hidden Context] Source Available: ${sourceAvailable}`);
+                  } else if (isGeo || isNarrative || isProtectedInt) {
+                      pinRows.push(`- ${key}: [Detail Excluded] Status: ${meta.fieldStatus}`);
+                  } else {
+                      const curr = truncateForTelemetry(meta.currentVal, 100);
+                      const prop = truncateForTelemetry(meta.propVal, 100);
+                      let row = `- ${key}: Current: [${curr}], Proposed: [${prop}], Status: [${meta.fieldStatus}]`;
+                      if (meta.reasons.length > 0) row += `, Reason: [${meta.reasons.join(", ")}]`;
+                      pinRows.push(row);
+                      
+                      if (["custom.generated_description", "custom.origin_location", "custom.collection_name", "custom.collection_location"].includes(key)) {
+                          const canApproveDiag = meta.proposalExists && meta.currentVal !== meta.propVal && !meta.isManualOnly && !meta.isContentPreApproved && meta.fieldStatus !== "API Error / Blocked" && meta.fieldStatus !== "Save Conflict";
+                          const blockReason = !meta.proposalExists ? "No proposal" : (meta.currentVal === meta.propVal) ? "Values match" : meta.isManualOnly ? "Manual only" : meta.isContentPreApproved ? "Pre-approved" : (meta.fieldStatus === "API Error / Blocked") ? "API Blocked" : (meta.fieldStatus === "Save Conflict") ? "Save Conflict" : "None";
+                          pinRows.push(`    -> [DIAGNOSTIC] status=${meta.fieldStatus} | propExists=${meta.proposalExists} | isDiff=${meta.currentVal !== meta.propVal} | manual=${meta.isManualOnly} | preApp=${meta.isContentPreApproved} | appr=${meta.isApproved} | techBlock=${meta.hasTechnicalBlock} | apiBlock=${meta.reasons.some(r => r.includes("Backend Blocked"))} | conf=${!!meta.conflictData} | natConf=${!!meta.nativeDescConflictData} | canApprove=${canApproveDiag} | blocker=${blockReason}`);
+                      }
+                  }
               }
           });
       });
 
-      const genDescVal = data.repairPlan?.["custom.generated_description"] || data.currentMetafields?.["custom.generated_description"] || "";
-      const descExists = !!genDescVal;
-      let descPreview = descExists ? String(genDescVal) : "None";
+      if (mode === 'review') {
+          reviewCandidates.sort((a, b) => a.priority - b.priority);
+          
+          const seenKeys = new Set();
+          const uniqueCandidates = reviewCandidates.filter(c => {
+              if (seenKeys.has(c.key)) return false;
+              seenKeys.add(c.key);
+              return true;
+          });
+          
+          const totalRows = uniqueCandidates.length;
+          const limitRows = 15;
+          const displayed = uniqueCandidates.slice(0, limitRows);
+          const remaining = totalRows - displayed.length;
+
+          displayed.forEach(c => {
+              const { key, meta, isGeo, isNarrative, isProtectedInt } = c;
+              if (key === "custom.origin_story") {
+                  const sourceAvailable = (meta.currentExists || meta.proposalExists) ? "Yes" : "No";
+                  pinRows.push(`- ${key} | Status: ${meta.fieldStatus} | Source Available: ${sourceAvailable}`);
+              } else if (isGeo || isNarrative || isProtectedInt) {
+                  const shortReason = meta.reasons[0] || "None";
+                  pinRows.push(`- ${key} | Stat: ${meta.fieldStatus} | Rsn: ${shortReason} | [Excluded Data]`);
+              } else {
+                  const shortReason = meta.reasons[0] || "None";
+                  const curr = truncateForTelemetry(meta.currentVal, 60);
+                  const prop = truncateForTelemetry(meta.propVal, 60);
+                  pinRows.push(`- ${key} | Stat: ${meta.fieldStatus} | Rsn: ${shortReason} | Curr: [${curr}] | Prop: [${prop}]`);
+              }
+          });
+          
+          if (remaining > 0) {
+              pinRows.push(`\n[Showing ${limitRows} of ${totalRows} flagged rows. ${remaining} omitted.]`);
+          } else {
+              pinRows.push(`\n[Showing all ${totalRows} flagged rows.]`);
+          }
+      }
 
       const titleParseStatus = (diag.stage === "titleParse" || diag.stage === "tab3FullRescan" || diag.stage === "generateDescription" || diag.stage === "batchAuditItem") ? (diag.gemini || "Unknown") : "Not called";
       const visionStatus = diag.vision || "Not called";
       const geoStatus = diag.geoLibrary || "Not called";
-      const descStatus = descExists && data.repairPlan?.["custom.generated_description"] ? "Success" : (diag.stage === "generateDescription" ? (diag.gemini || "Unknown") : "Not called");
+      const descStatus = (data.repairPlan?.["custom.generated_description"] || data.currentMetafields?.["custom.generated_description"]) ? "Success" : (diag.stage === "generateDescription" ? (diag.gemini || "Unknown") : "Not called");
 
       const shopifyRead = statusObj.shopifyReadStatus;
       let shopifyWrite = "Not called";
@@ -1427,9 +1490,11 @@ export function OperationsMatrixTab({ products }) {
           recommendations.push("1. Load data or generate a repair plan to begin.");
       }
 
-      let report = `=== ROCKHOUND STUDIO TELEMETRY REPORT ===
-Product: ${product.title || "Unknown"}
-GID: ${selectedBenchId}
+      let reportType = mode === 'review' ? 'REVIEW TELEMETRY' : 'FULL TELEMETRY DUMP';
+
+      let report = `=== ROCKHOUND STUDIO ${reportType} ===
+Product: ${product.title || "Not recorded"}
+GID: ${selectedBenchId || "Not recorded"}
 Run Time: ${new Date().toISOString()}
 
 --- PIPELINE STATUS ---
@@ -1454,18 +1519,13 @@ Conflicting: ${stats.conflicting}
 Updated: ${stats.updated}
 Errored: ${stats.errored}
 
---- GENERATED DESCRIPTION ---
-Status: ${descStatus}
-
-${descPreview}
-
 --- LAST REPAIR HISTORY ---
 ${history ? `Time: ${history.completedAt}
 Status: ${history.status}
 Message: ${history.message}
 Blocked: ${history.blockedFields ? Object.keys(history.blockedFields).length : 0}
 Conflicts: ${history.conflicts ? Object.keys(history.conflicts).length : 0}
-Variant Target: ${history.variantTarget || 'None'}` : "No repair history for this session."}
+Variant Target: ${history.variantTarget || 'Not recorded'}` : "Not recorded"}
 
 --- PIN DETAILS ---
 ${pinRows.join("\n")}
@@ -1474,17 +1534,18 @@ ${pinRows.join("\n")}
 ${recommendations.join("\n")}
 =========================================`;
 
-      if (report.length > 10000) {
-        const excess = report.length - 10000;
-        report += `\n\n[WARNING: Report length (${report.length} chars) exceeds 10k budget by ${excess} chars. Content is not truncated but may fail to paste in some systems.]`;
+      let maxLimit = mode === 'review' ? 6000 : 10000;
+      if (report.length > maxLimit) {
+          const excess = report.length - maxLimit;
+          report = report.substring(0, maxLimit) + `\n\n[WARNING: Cutoff reached. Exceeded limit by ${excess} characters.]`;
       }
 
       navigator.clipboard.writeText(report)
           .then(() => {
               if (window.shopify && window.shopify.toast) {
-                  window.shopify.toast.show("Telemetry report copied");
+                  window.shopify.toast.show(`${mode === 'review' ? 'Review telemetry' : 'Full report'} copied`);
               } else {
-                  setSafetyMessage("Telemetry report copied to clipboard.");
+                  setSafetyMessage(`${mode === 'review' ? 'Review telemetry' : 'Full report'} copied to clipboard.`);
               }
           })
           .catch(err => {
@@ -1506,9 +1567,14 @@ ${recommendations.join("\n")}
         <BlockStack gap="400">
           <InlineStack align="space-between" blockAlign="center">
             <Text variant="headingLg" as="h3">Diagnostic Header</Text>
-            <Button size="large" variant="primary" icon={ClipboardIcon} onClick={handleCollectTelemetry}>
-              Collect Telemetry
-            </Button>
+            <InlineStack gap="300">
+              <Button size="large" onClick={() => handleCollectTelemetry('review')}>
+                Copy review telemetry
+              </Button>
+              <Button size="large" variant="primary" icon={ClipboardIcon} onClick={() => handleCollectTelemetry('full')}>
+                Copy full report
+              </Button>
+            </InlineStack>
           </InlineStack>
           
           {data.diagnostics?.altValidationErrors && data.diagnostics.altValidationErrors.length > 0 && (
@@ -2051,7 +2117,7 @@ ${recommendations.join("\n")}
                 <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", marginTop: "12px", minWidth: 0 }}>
                   <Button size="large" tone="critical" onClick={clearBench} disabled={isExecuting || isLoadingData}>Clear Rack & Reset Bench</Button>
                   
-                  <Button size="large" icon={ClipboardIcon} onClick={handleCollectTelemetry}>
+                  <Button size="large" icon={ClipboardIcon} onClick={() => handleCollectTelemetry('full')}>
                     Global Telemetry Dump
                   </Button>
                 </div>
