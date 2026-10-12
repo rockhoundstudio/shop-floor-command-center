@@ -133,11 +133,11 @@ export const action = async ({ request }) => {
         productQueryRes = await admin.graphql(`
           query getProduct($id: ID!) {
             product(id: $id) {
-              id title
+              id title descriptionHtml seo { title description }
               metafields(first: 250) { edges { node { namespace key value } } }
               variants(first: 250) {
                 pageInfo { hasNextPage endCursor }
-                edges { node { id title price } }
+                edges { node { id title price inventoryItem { measurement { weight { value unit } } } } }
               }
               media(first: 250) {
                 pageInfo { hasNextPage endCursor }
@@ -187,7 +187,7 @@ export const action = async ({ request }) => {
                       product(id: $id) {
                           variants(first: 250, after: $cursor) {
                               pageInfo { hasNextPage endCursor }
-                              edges { node { id title price } }
+                              edges { node { id title price inventoryItem { measurement { weight { value unit } } } } }
                           }
                       }
                   }
@@ -238,7 +238,7 @@ export const action = async ({ request }) => {
       const uniqueMedia = Array.from(new Map(allMedia.map(e => [e.node.id, e])).values());
 
       const nativeTargets = {
-          productId: product.id,
+          productId: product.id, productTitle: product.title, descriptionHtml: product.descriptionHtml, seo: product.seo,
           isComplete,
           loadError,
           variants: {
@@ -295,7 +295,7 @@ export const action = async ({ request }) => {
       return Response.json({
          intent: "loadProductData",
          success: true,
-         productId: product.id,
+         productId: product.id, productTitle: product.title, descriptionHtml: product.descriptionHtml, seo: product.seo,
          productTitle: product.title,
          currentMetafields,
          canonicalFields,

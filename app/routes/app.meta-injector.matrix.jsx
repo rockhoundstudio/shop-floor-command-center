@@ -57,6 +57,14 @@ const REQUIRED_FIELDS = ["shopify_title", "price"];
 const INTEGRATION_PREFIXES = ["google.", "shopify.", "mm-google", "mc-facebook"];
 const NATIVE_FIELDS = ["price", "shopify_title"];
 
+const NATIVE_ALIAS_MAP = {
+  "native_title": "shopify_title",
+  "native_description": "custom.generated_description",
+  "native_seo_title": "custom.seo_title",
+  "native_shipping_weight": "custom.shipping_weight_oz",
+  "native_price": "price"
+};
+
 // Used strictly for global telemetry tracking to preserve 45-count. Do not render.
 const HIDDEN_CONTEXT_FIELDS = ["custom.origin_story"]; 
 
@@ -79,17 +87,20 @@ const getDynamicSections = (manifest) => {
     group.fields.forEach(f => {
       if (RETIRED_KEYS.includes(f.key) || RETIRED_KEYS.includes(`custom.${f.key}`)) return;
       
-      if (NATIVE_FIELDS.includes(f.key) || f.key.includes('.')) {
+      if (f.key === "native_image_alt") {
+        if (manifest?.nativeTargets?.media?.edges) {
+          const mediaKeys = manifest.nativeTargets.media.edges.map(e => `native_image_alts_${e.node.id}`);
+          keys.push(...mediaKeys);
+        }
+        return;
+      }
+      
+      if (NATIVE_FIELDS.includes(f.key) || f.key.includes('.') || f.key.startsWith('native_')) {
         keys.push(f.key);
       } else {
         keys.push(`custom.${f.key}`);
       }
     });
-
-    if (group.heading === "5. Search, Sales, and Media" && manifest?.nativeTargets?.media?.edges) {
-      const mediaKeys = manifest.nativeTargets.media.edges.map(e => `native_image_alts_${e.node.id}`);
-      keys = [...keys, ...mediaKeys];
-    }
     
     if (group.heading === "3. Origin, Story, and Collection") {
         if (!keys.includes("custom.origin_story")) keys.push("custom.origin_story");
@@ -227,38 +238,86 @@ export function OperationsMatrixTab({ products }) {
   }, [queueIds]);
 
   const handleToggleApproval = useCallback((pieceId, key, propVal, isChecked) => {
+    const targetKey = NATIVE_ALIAS_MAP[key] || key;
     setApprovals(prev => {
       const next = { ...prev };
       if (!next[pieceId]) next[pieceId] = {};
       if (isChecked) {
-        next[pieceId][key] = propVal;
+        next[pieceId][targetKey] = propVal;
       } else {
-        delete next[pieceId][key];
+        delete next[pieceId][targetKey];
       }
       return next;
     });
   }, []);
 
   const getFieldMetadata = (key, data, productId, currentApprovals, configFields = []) => {
+    const targetKeyForProposal = NATIVE_ALIAS_MAP[key] || key;
     const isNativeImageAlt = key.startsWith("native_image_alts_");
     
     let currentVal = "";
+    const variants = data.nativeTargets?.variants?.edges || [];
+    const isSingleVariant = variants.length === 1 && 
+                            data.nativeTargets?.variants?.pageInfo?.hasNextPage === false && 
+                            data.nativeTargets?.isComplete === true && 
+                            !data.nativeTargets?.loadError;
+
     if (isNativeImageAlt) {
         const imageId = key.replace("native_image_alts_", "");
-        const edges = data.nativeTargets?.media?.edges || [];
-        const match = edges.find(e => e.node?.id === imageId);
+        const match = data.nativeTargets?.media?.edges?.find(e => e.node?.id === imageId);
         currentVal = match?.node?.alt || "";
+    } else if (key === "native_title" || key === "shopify_title") {
+        currentVal = data.nativeTargets?.productTitle || data.canonicalFields?.shopify_title || "";
+    } else if (key === "native_description" || key === "custom.generated_description") {
+        currentVal = key === "native_description" 
+          ? (data.nativeTargets?.descriptionHtml || "")
+          : (data.currentMetafields?.["custom.generated_description"] || "");
+    } else if (key === "native_seo_title" || key === "custom.seo_title") {
+        currentVal = key === "native_seo_title"
+          ? (data.nativeTargets?.seo?.title || "")
+          : (data.currentMetafields?.["custom.seo_title"] || "");
+    } else if (key === "native_seo_description") {
+        currentVal = data.nativeTargets?.seo?.description || "";
+    } else if (key === "native_price" || key === "price") {
+        if (isSingleVariant) {
+            currentVal = variants[0].node?.price || "";
+        } else if (variants.length !== 1 || data.nativeTargets?.variants?.pageInfo?.hasNextPage !== false || !data.nativeTargets?.isComplete || data.nativeTargets?.loadError) {
+            currentVal = "Multiple variants / Incomplete data - review manually";
+        }
+    } else if (key === "native_shipping_weight" || key === "custom.shipping_weight_oz") {
+        if (key === "native_shipping_weight") {
+            if (isSingleVariant) {
+                const w = variants[0].node?.inventoryItem?.measurement?.weight;
+                currentVal = w?.value ? `${w.value} ${w.unit}` : "";
+            } else if (variants.length !== 1 || data.nativeTargets?.variants?.pageInfo?.hasNextPage !== false || !data.nativeTargets?.isComplete || data.nativeTargets?.loadError) {
+                currentVal = "Multiple variants / Incomplete data - review manually";
+            }
+        } else {
+            currentVal = data.currentMetafields?.["custom.shipping_weight_oz"] || "";
+        }
     } else {
         const hasCurrent = data.currentMetafields?.hasOwnProperty(key);
         currentVal = hasCurrent ? String(data.currentMetafields[key] || "") : "";
     }
 
-    if (key === "shopify_title" || key === "price") {
-        currentVal = String(data.canonicalFields?.[key] || currentVal || ""); 
-    }
+    let isProposed = false;
+    let propVal = "";
 
-    const isProposed = data.repairPlan !== undefined && data.repairPlan.hasOwnProperty(key);
-    const propVal = isProposed ? String(data.repairPlan[key] ?? "") : "";
+    if (data.repairPlan !== undefined) {
+        if (data.repairPlan.hasOwnProperty(targetKeyForProposal)) {
+            isProposed = true;
+            propVal = String(data.repairPlan[targetKeyForProposal] ?? "");
+        } else if (key === "native_shipping_weight" || key === "custom.shipping_weight_oz") {
+            const stoneGrams = parseFloat(data.currentMetafields?.["custom.weight_grams"] || data.repairPlan?.["custom.weight_grams"]) || 0;
+            if (stoneGrams > 0) {
+                isProposed = true;
+                propVal = String(Math.ceil((stoneGrams / 28.3495) + 0.5));
+            }
+        } else if (key === "native_seo_description" && data.repairPlan.hasOwnProperty("native_seo_description")) {
+            isProposed = true;
+            propVal = String(data.repairPlan["native_seo_description"]);
+        }
+    }
 
     let fieldMeta = data.metadata?.[key] || {};
     let source = fieldMeta.source || "Not reported";
@@ -275,12 +334,12 @@ export function OperationsMatrixTab({ products }) {
     const currentExists = currentVal.trim() !== "";
     const proposalExists = isProposed && propVal.trim() !== "";
 
-    const unprefixedKey = key.replace(/^custom\./, '');
-    const templateConfig = configFields.find(f => f.key === unprefixedKey || f.key === key);
+    const unprefixedKey = targetKeyForProposal.replace(/^custom\./, '');
+    const templateConfig = configFields.find(f => f.key === unprefixedKey || f.key === targetKeyForProposal || f.key === key);
 
-    const isKnownKey = templateConfig !== undefined || NATIVE_FIELDS.includes(key) || isNativeImageAlt || HIDDEN_CONTEXT_FIELDS.includes(key);
+    const isKnownKey = templateConfig !== undefined || NATIVE_FIELDS.includes(key) || isNativeImageAlt || HIDDEN_CONTEXT_FIELDS.includes(key) || key.startsWith('native_');
 
-    if (key === "custom.google_product_category" && proposalExists) {
+    if (targetKeyForProposal === "custom.google_product_category" && proposalExists) {
         isContentPreApproved = true;
         preApprovalReason = "Category pre-approved";
     } else if (
@@ -291,7 +350,7 @@ export function OperationsMatrixTab({ products }) {
     ) {
         isContentPreApproved = true;
         preApprovalReason = "Verified Geo Library";
-    } else if (POLICY_PRE_APPROVED_FIELDS.includes(key) && proposalExists) {
+    } else if (POLICY_PRE_APPROVED_FIELDS.includes(targetKeyForProposal) && proposalExists) {
         isContentPreApproved = true;
         preApprovalReason = "Pre-approved by operator policy";
     } else if (isNativeImageAlt && proposalExists) {
@@ -299,19 +358,19 @@ export function OperationsMatrixTab({ products }) {
         preApprovalReason = "Native Image Alt pre-approved by policy";
     }
 
-    const isRequired = REQUIRED_FIELDS.includes(key);
-    const isProtected = PROTECTED_FIELDS.includes(key);
-    const isHardware = HARDWARE_FIELDS.includes(key);
-    const isIntegration = INTEGRATION_PREFIXES.some(prefix => key.startsWith(prefix));
+    const isRequired = REQUIRED_FIELDS.includes(targetKeyForProposal);
+    const isProtected = PROTECTED_FIELDS.includes(targetKeyForProposal);
+    const isHardware = HARDWARE_FIELDS.includes(targetKeyForProposal);
+    const isIntegration = INTEGRATION_PREFIXES.some(prefix => targetKeyForProposal.startsWith(prefix));
 
     const currentCount = currentVal.length;
     const propCount = propVal.length;
-    const limit = FIELD_LIMITS[key] || null;
+    const limit = FIELD_LIMITS[targetKeyForProposal] || null;
 
     const isManualOnly = false;
-    const isOperatorOwned = (key === "price" || key === "custom.weight_grams" || key === "custom.dimensions_mm");
+    const isOperatorOwned = (targetKeyForProposal === "price" || targetKeyForProposal === "custom.weight_grams" || targetKeyForProposal === "custom.dimensions_mm");
     
-    const exactApprovalVal = currentApprovals?.[productId]?.[key];
+    const exactApprovalVal = currentApprovals?.[productId]?.[targetKeyForProposal];
     const isApproved = exactApprovalVal !== undefined && exactApprovalVal === propVal && propVal.trim() !== "";
 
     if (HIDDEN_CONTEXT_FIELDS.includes(key)) {
@@ -330,7 +389,7 @@ export function OperationsMatrixTab({ products }) {
     
     if (isIntegration) reasons.push("Integration owned");
 
-    if (BLOCKED_UNVERIFIED_PINS.includes(key) && proposalExists) {
+    if (BLOCKED_UNVERIFIED_PINS.includes(targetKeyForProposal) && proposalExists) {
         hasTechnicalBlock = true;
         reasons.push("Type/destination unverified");
     }
@@ -346,17 +405,22 @@ export function OperationsMatrixTab({ products }) {
             reasons.push(`Media targets incomplete/failed. Retry load. Error: ${data.nativeTargets?.loadError || 'Pagination failed'}`);
         }
     }
+    
+    if (key === "native_seo_description") {
+        hasTechnicalBlock = true;
+        reasons.push("SEO description save connection pending.");
+    }
 
     // New Backend Technical Blockers
-    const apiBlockReason = data.blockedFields?.[key] || data.blockedFields?.[unprefixedKey];
+    const apiBlockReason = data.blockedFields?.[targetKeyForProposal] || data.blockedFields?.[unprefixedKey];
     if (apiBlockReason) {
         reasons.push(`Backend Blocked: ${apiBlockReason}`);
     }
 
-    let conflictData = data.conflicts?.[key] || data.conflicts?.[unprefixedKey];
+    let conflictData = data.conflicts?.[targetKeyForProposal] || data.conflicts?.[unprefixedKey];
     let nativeDescConflictData = null;
     
-    if (key === "custom.generated_description" && data.conflicts?.["native_description"]) {
+    if (targetKeyForProposal === "custom.generated_description" && data.conflicts?.["native_description"]) {
         nativeDescConflictData = data.conflicts["native_description"];
         reasons.push(`Read-back Mismatch [Native descriptionHtml]: ${nativeDescConflictData.expected} != ${nativeDescConflictData.actual}`);
     }
@@ -481,14 +545,18 @@ export function OperationsMatrixTab({ products }) {
 
     Object.keys(manifest.repairPlan).forEach(key => {
         if (key.startsWith("native_image_alts_")) return; 
+        if (key === "native_seo_description") return;
         
         const meta = getFieldMetadata(key, manifest, currentId, currentApprovals, allConfigFields);
         if (!meta.isBlockedAction && !HIDDEN_CONTEXT_FIELDS.includes(key) && !RETIRED_KEYS.includes(key)) {
             if (key === "shopify_title") {
                 nativeChanges.title = manifest.repairPlan[key];
             } else if (key === "custom.shipping_weight_oz") {
-                const variantsConn = product?.variants;
-                if (variantsConn?.edges?.length === 1 && variantsConn?.pageInfo?.hasNextPage === false) {
+                const variantsConn = manifest.nativeTargets?.variants;
+                if (variantsConn?.edges?.length === 1 && 
+                    variantsConn?.pageInfo?.hasNextPage === false && 
+                    manifest.nativeTargets?.isComplete === true &&
+                    !manifest.nativeTargets?.loadError) {
                     const variantId = variantsConn.edges[0].node?.id;
                     if (variantId) {
                         nativeChanges.shippingWeight = {
@@ -504,7 +572,7 @@ export function OperationsMatrixTab({ products }) {
         }
     });
 
-    const isMediaComplete = manifest.nativeTargets?.isComplete !== false;
+    const isMediaComplete = manifest.nativeTargets?.isComplete === true;
     const mediaLoadError = manifest.nativeTargets?.loadError;
 
     if (isMediaComplete && !mediaLoadError) {
@@ -1048,20 +1116,21 @@ export function OperationsMatrixTab({ products }) {
                           }
 
                           const safeApply = (keyName, aiValue) => {
-                              if (RETIRED_KEYS.includes(keyName)) return; 
-                              if (manualEdits[targetId] && manualEdits[targetId][keyName] === true) return; 
-                              newPlan[keyName] = aiValue;
+                              const targetKey = NATIVE_ALIAS_MAP[keyName] || keyName;
+                              if (RETIRED_KEYS.includes(targetKey)) return; 
+                              if (manualEdits[targetId] && manualEdits[targetId][targetKey] === true) return; 
+                              newPlan[targetKey] = aiValue;
                           };
 
                           Object.keys(visionData).forEach(k => {
                               if (k !== "generated_description" && k !== "pieceId" && k !== "debug_origin" && k !== "intent" && k !== "success" && k !== "origin_story") {
-                                  safeApply(NATIVE_FIELDS.includes(k) || k.includes('.') ? k : `custom.${k}`, visionData[k]);
+                                  safeApply(NATIVE_FIELDS.includes(k) || k.includes('.') || k.startsWith('native_') ? k : `custom.${k}`, visionData[k]);
                               }
                           });
                           
                           Object.keys(titleData).forEach(k => {
                               if (k !== "pieceId" && k !== "intent" && k !== "success" && k !== "geoSource" && k !== "origin_story") {
-                                  const targetKey = NATIVE_FIELDS.includes(k) || k.includes('.') ? k : `custom.${k}`;
+                                  const targetKey = NATIVE_FIELDS.includes(k) || k.includes('.') || k.startsWith('native_') ? k : `custom.${k}`;
                                   const bareKey = targetKey.startsWith("custom.") ? targetKey.slice(7) : k;
                                   const visionHasValue = [k, targetKey, bareKey].some(candidate =>
                                       Object.prototype.hasOwnProperty.call(visionData, candidate) &&
@@ -1073,9 +1142,18 @@ export function OperationsMatrixTab({ products }) {
                               }
                           });
 
-                          const enrichedSeo = visionData.seo_title || visionData["custom.seo_title"] || "";
+                          const enrichedSeo = visionData.seo_title || visionData["custom.seo_title"] || titleData.seo_title || "";
                           if (enrichedSeo.trim() !== "") safeApply("custom.seo_title", enrichedSeo.trim());
                           if (descData) safeApply("custom.generated_description", descData);
+
+                          const stoneGrams = parseFloat(existing.currentMetafields?.["custom.weight_grams"]) || 0;
+                          if (stoneGrams > 0) {
+                              safeApply("custom.shipping_weight_oz", String(Math.ceil((stoneGrams / 28.3495) + 0.5)));
+                          }
+                          
+                          if (visionData.poetic_hook) {
+                              safeApply("native_seo_description", visionData.poetic_hook);
+                          }
 
                           if (updatedPieceAi.imageAlts) {
                               updatedPieceAi.imageAlts.forEach(altObj => {
@@ -1125,18 +1203,19 @@ export function OperationsMatrixTab({ products }) {
 
   const handleRepairPlanChange = (key, value) => {
     if (!selectedBenchId) return;
+    const targetKey = NATIVE_ALIAS_MAP[key] || key;
     
     setManualEdits(prev => {
         const next = { ...prev };
         if (!next[selectedBenchId]) next[selectedBenchId] = {};
-        next[selectedBenchId][key] = true;
+        next[selectedBenchId][targetKey] = true;
         return next;
     });
     
     setApprovals(prev => {
-        if (prev[selectedBenchId] && prev[selectedBenchId][key] !== undefined) {
+        if (prev[selectedBenchId] && prev[selectedBenchId][targetKey] !== undefined) {
             const next = { ...prev };
-            delete next[selectedBenchId][key];
+            delete next[selectedBenchId][targetKey];
             return next;
         }
         return prev;
@@ -1148,7 +1227,7 @@ export function OperationsMatrixTab({ products }) {
           ...prev[selectedBenchId],
           repairPlan: {
              ...prev[selectedBenchId].repairPlan,
-             [key]: value
+             [targetKey]: value
           }
        }
     }));
@@ -1778,6 +1857,9 @@ export function OperationsMatrixTab({ products }) {
               if (!meta.isSupported) {
                   boxBg = "#f8f9fa"; boxBorder = "#dee2e6"; textColor = "#41464c";
                   statusText = "Connection pending.";
+              } else if (meta.reasons.includes("SEO description save connection pending.")) {
+                  boxBg = "#fff3cd"; boxBorder = "#ffecb5"; textColor = "#664d03";
+                  statusText = "SEO description save connection pending. Draft is staged but write is disabled.";
               } else if (meta.isManualOnly) {
                   boxBg = "#f8f9fa"; boxBorder = "#dee2e6"; textColor = "#41464c";
                   statusText = "Manual only field. Excluded from automated writes.";
