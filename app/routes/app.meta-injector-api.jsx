@@ -89,6 +89,84 @@ const EXPLICIT_METAOBJECT_KEYS = [
   "product-classification", "product-use"
 ];
 
+const ALLOWED_STANDARDIZED_CANDIDATE_KEYS = [
+  "chain-link-type",
+  "construction",
+  "jewelry-finding-type",
+  "material-origin",
+  "product-classification",
+  "product-use"
+];
+
+function isGeneratedIdLabel(str) {
+  if (typeof str !== "string") return true;
+  const trimmed = str.trim();
+  if (!trimmed) return true;
+  if (/^gid:\/\//i.test(trimmed)) return true;
+  if (/metaobject/i.test(trimmed) && /\d/.test(trimmed)) return true;
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(trimmed)) return true;
+  if (/^\d+$/.test(trimmed)) return true;
+  return false;
+}
+
+function normalizeCandidateMatchKey(str) {
+  return String(str || "").trim().toLowerCase();
+}
+
+function extractEntryMatchingLabels(node) {
+  const rawSet = new Set();
+  if (typeof node?.displayName === "string" && node.displayName.trim() !== "") {
+    rawSet.add(node.displayName.trim());
+  }
+  if (Array.isArray(node?.fields)) {
+    for (const f of node.fields) {
+      if (!f || typeof f.key !== "string" || typeof f.value !== "string") continue;
+      const k = f.key.trim().toLowerCase();
+      const v = f.value.trim();
+      if (!v) continue;
+      if (k === "label" || k === "name" || k === "title" || k === "display_name") {
+        if (!/^gid:\/\//i.test(v)) {
+          rawSet.add(v);
+        }
+      }
+    }
+  }
+  return Array.from(rawSet);
+}
+
+function extractTaxonomyReference(node) {
+  if (!Array.isArray(node?.fields)) return null;
+  for (const f of node.fields) {
+    if (!f || typeof f.key !== "string") continue;
+    if (f.key.trim().toLowerCase() === "taxonomy_reference") {
+      return f.value ?? null;
+    }
+  }
+  return null;
+}
+
+function parseStoredReferenceList(rawVal) {
+  if (rawVal === undefined || rawVal === null) return { valid: true, ids: [] };
+  const trimmed = String(rawVal).trim();
+  if (trimmed === "") return { valid: true, ids: [] };
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (Array.isArray(parsed)) {
+      const allValid = parsed.every(item => typeof item === "string" && /^gid:\/\/shopify\/Metaobject\/\d+$/.test(item.trim()));
+      if (!allValid) {
+        return { valid: false, ids: [], error: "Stored value contains non-Metaobject GID items." };
+      }
+      return { valid: true, ids: parsed.map(item => item.trim()) };
+    }
+  } catch (e) {
+    // Fallback check for single GID
+  }
+  if (/^gid:\/\/shopify\/Metaobject\/\d+$/.test(trimmed)) {
+    return { valid: true, ids: [trimmed] };
+  }
+  return { valid: false, ids: [], error: "Stored value is not a valid Metaobject GID list." };
+}
+
 function chunkArray(arr, size) {
   const chunks = [];
   for (let i = 0; i < arr.length; i += size) chunks.push(arr.slice(i, i + size));
@@ -302,6 +380,624 @@ export const action = async ({ request }) => {
          legacyFields,
          repairPlan,
          nativeTargets
+      });
+    }
+
+    if (intent === "resolveStandardizedCandidates") {
+      const rawPieceId = body.get("pieceId");
+      const rawCandidates = body.get("standardized_candidates");
+      const pieceId = typeof rawPieceId === "string" ? rawPieceId.trim() : "";
+
+      if (!pieceId || !/^gid:\/\/shopify\/Product\/\d+$/.test(pieceId)) {
+        return Response.json({
+          intent: "resolveStandardizedCandidates",
+          success: false,
+          pieceId: pieceId || null,
+          isComplete: false,
+          errors: ["Invalid or missing pieceId: exact product GID (gid://shopify/Product/...) is required."],
+          resolutions: {},
+          currentReferenceLists: {}
+        });
+      }
+
+      if (rawCandidates === null || rawCandidates === undefined || String(rawCandidates).trim() === "") {
+        return Response.json({
+          intent: "resolveStandardizedCandidates",
+          success: false,
+          pieceId,
+          isComplete: false,
+          errors: ["Missing standardized_candidates JSON payload."],
+          resolutions: {},
+          currentReferenceLists: {}
+        });
+      }
+
+      let parsedCandidates;
+      try {
+        parsedCandidates = typeof rawCandidates === "string" ? JSON.parse(rawCandidates) : rawCandidates;
+      } catch (err) {
+        return Response.json({
+          intent: "resolveStandardizedCandidates",
+          success: false,
+          pieceId,
+          isComplete: false,
+          errors: [`Malformed standardized_candidates JSON: ${err.message}`],
+          resolutions: {},
+          currentReferenceLists: {}
+        });
+      }
+
+      if (!parsedCandidates || typeof parsedCandidates !== "object" || Array.isArray(parsedCandidates)) {
+        return Response.json({
+          intent: "resolveStandardizedCandidates",
+          success: false,
+          pieceId,
+          isComplete: false,
+          errors: ["standardized_candidates must be a non-null JSON object."],
+          resolutions: {},
+          currentReferenceLists: {}
+        });
+      }
+
+      const inputValidationErrors = [];
+      const validatedCandidateEntries = {};
+
+      for (const [key, val] of Object.entries(parsedCandidates)) {
+        if (!ALLOWED_STANDARDIZED_CANDIDATE_KEYS.includes(key)) {
+          inputValidationErrors.push(`Disallowed candidate key "${key}". Allowed keys: ${ALLOWED_STANDARDIZED_CANDIDATE_KEYS.join(", ")}.`);
+          continue;
+        }
+        if (!val || typeof val !== "object" || Array.isArray(val)) {
+          inputValidationErrors.push(`Candidate "${key}" must be an object containing labels and evidence.`);
+          continue;
+        }
+        if (!Array.isArray(val.labels) || val.labels.length === 0) {
+          inputValidationErrors.push(`Candidate "${key}" requires a non-empty string array for "labels".`);
+          continue;
+        }
+        if (typeof val.evidence !== "string" || val.evidence.trim() === "") {
+          inputValidationErrors.push(`Candidate "${key}" requires a non-empty string for "evidence".`);
+          continue;
+        }
+
+        const cleanLabels = [];
+        for (const rawLabel of val.labels) {
+          if (typeof rawLabel !== "string" || rawLabel.trim() === "") {
+            inputValidationErrors.push(`Candidate "${key}" contains an empty or non-string label.`);
+            continue;
+          }
+          if (isGeneratedIdLabel(rawLabel)) {
+            inputValidationErrors.push(`Candidate "${key}" contains a generated ID or invalid identifier as label: "${rawLabel}".`);
+            continue;
+          }
+          cleanLabels.push(rawLabel.trim());
+        }
+
+        validatedCandidateEntries[key] = {
+          labels: cleanLabels,
+          evidence: val.evidence.trim()
+        };
+      }
+
+      if (inputValidationErrors.length > 0) {
+        return Response.json({
+          intent: "resolveStandardizedCandidates",
+          success: false,
+          pieceId,
+          isComplete: false,
+          errors: inputValidationErrors,
+          resolutions: {},
+          currentReferenceLists: {}
+        });
+      }
+
+      const topErrors = [];
+      let overallComplete = true;
+
+      // 1. Read exact product's current assignments (paginated metafield read)
+      const productShopifyMetafields = {};
+      let productMetafieldsReadComplete = false;
+      let mfPageInfo = { hasNextPage: true, endCursor: null };
+      let mfPagesFetched = 0;
+      const MAX_MF_PAGES = 10;
+
+      try {
+        while (mfPageInfo.hasNextPage && mfPagesFetched < MAX_MF_PAGES) {
+          mfPagesFetched++;
+          const prodRes = await admin.graphql(`
+            query getProductStandardizedMetafields($id: ID!, $cursor: String) {
+              product(id: $id) {
+                id
+                metafields(first: 250, after: $cursor) {
+                  pageInfo { hasNextPage endCursor }
+                  edges {
+                    node {
+                      id
+                      namespace
+                      key
+                      value
+                      type
+                    }
+                  }
+                }
+              }
+            }
+          `, { variables: { id: pieceId, cursor: mfPageInfo.endCursor } });
+
+          const prodJson = await prodRes.json();
+          if (prodJson.errors?.length) {
+            throw new Error(prodJson.errors.map(e => e.message).join("; "));
+          }
+          const productNode = prodJson?.data?.product;
+          if (!productNode || productNode.id !== pieceId) {
+            return Response.json({
+              intent: "resolveStandardizedCandidates",
+              success: false,
+              pieceId,
+              isComplete: false,
+              errors: [`Product not found or ID mismatch for ${pieceId}.`],
+              resolutions: {},
+              currentReferenceLists: {}
+            });
+          }
+
+          const mfConn = productNode.metafields;
+          if (!mfConn || !Array.isArray(mfConn.edges) || typeof mfConn.pageInfo?.hasNextPage !== "boolean") {
+            throw new Error("Malformed product metafields connection response.");
+          }
+
+          for (const edge of mfConn.edges) {
+            const node = edge?.node;
+            if (!node) continue;
+            const fullKey = `${node.namespace}.${node.key}`;
+            if (node.namespace === "shopify" && ALLOWED_STANDARDIZED_CANDIDATE_KEYS.includes(node.key)) {
+              productShopifyMetafields[fullKey] = {
+                id: node.id,
+                namespace: node.namespace,
+                key: node.key,
+                value: node.value,
+                type: node.type
+              };
+            }
+          }
+
+          mfPageInfo = mfConn.pageInfo;
+        }
+
+        if (mfPageInfo.hasNextPage) {
+          overallComplete = false;
+          topErrors.push(`Product metafields pagination exceeded bounded limit (${MAX_MF_PAGES} pages). endCursor: ${mfPageInfo.endCursor}`);
+        } else {
+          productMetafieldsReadComplete = true;
+        }
+      } catch (err) {
+        overallComplete = false;
+        topErrors.push(`Failed reading product metafields: ${err.message}`);
+      }
+
+      // 2. Read live PRODUCT metafield definitions for the six shopify destinations
+      const liveShopifyDefs = {};
+      let defsReadComplete = false;
+      let defPageInfo = { hasNextPage: true, endCursor: null };
+      let defPagesFetched = 0;
+      const MAX_DEF_PAGES = 10;
+
+      try {
+        while (defPageInfo.hasNextPage && defPagesFetched < MAX_DEF_PAGES) {
+          defPagesFetched++;
+          const defRes = await admin.graphql(`
+            query getProductMetafieldDefs($cursor: String) {
+              metafieldDefinitions(first: 250, ownerType: PRODUCT, after: $cursor) {
+                pageInfo { hasNextPage endCursor }
+                edges {
+                  node {
+                    id
+                    name
+                    namespace
+                    key
+                    type { name }
+                    validations { name value }
+                  }
+                }
+              }
+            }
+          `, { variables: { cursor: defPageInfo.endCursor } });
+
+          const defJson = await defRes.json();
+          if (defJson.errors?.length) {
+            throw new Error(defJson.errors.map(e => e.message).join("; "));
+          }
+          const defConn = defJson?.data?.metafieldDefinitions;
+          if (!defConn || !Array.isArray(defConn.edges) || typeof defConn.pageInfo?.hasNextPage !== "boolean") {
+            throw new Error("Malformed metafieldDefinitions connection response.");
+          }
+
+          for (const edge of defConn.edges) {
+            const node = edge?.node;
+            if (!node) continue;
+            if (node.namespace === "shopify" && ALLOWED_STANDARDIZED_CANDIDATE_KEYS.includes(node.key)) {
+              const fullKey = `shopify.${node.key}`;
+              const validation = Array.isArray(node.validations)
+                ? node.validations.find(v => v.name === "metaobject_definition_id")
+                : null;
+              liveShopifyDefs[fullKey] = {
+                id: node.id,
+                name: node.name || null,
+                namespace: node.namespace,
+                key: node.key,
+                type: node.type?.name || null,
+                restrictedMetaobjectDefinitionId: validation?.value || null,
+                validations: node.validations || []
+              };
+            }
+          }
+
+          defPageInfo = defConn.pageInfo;
+        }
+
+        if (defPageInfo.hasNextPage) {
+          overallComplete = false;
+          topErrors.push(`Metafield definitions pagination exceeded bounded limit (${MAX_DEF_PAGES} pages). endCursor: ${defPageInfo.endCursor}`);
+        } else {
+          defsReadComplete = true;
+        }
+      } catch (err) {
+        overallComplete = false;
+        topErrors.push(`Failed reading live PRODUCT metafield definitions: ${err.message}`);
+      }
+
+      // Cache for resolved metaobject definitions and their enumerated entries
+      const metaobjectDefCache = new Map();
+      const MAX_ENTRY_PAGES = 20;
+
+      async function resolveAndEnumerateMetaobjectDef(moDefId) {
+        if (metaobjectDefCache.has(moDefId)) {
+          return metaobjectDefCache.get(moDefId);
+        }
+
+        const state = {
+          definition: null,
+          entries: [],
+          isComplete: false,
+          error: null,
+          continuation: null
+        };
+
+        try {
+          const moDefRes = await admin.graphql(`
+            query getMetaobjectDefinition($id: ID!) {
+              metaobjectDefinition(id: $id) {
+                id
+                type
+                name
+                displayNameKey
+                fieldDefinitions {
+                  key
+                  name
+                  type { name }
+                }
+              }
+            }
+          `, { variables: { id: moDefId } });
+
+          const moDefJson = await moDefRes.json();
+          if (moDefJson.errors?.length) {
+            throw new Error(moDefJson.errors.map(e => e.message).join("; "));
+          }
+
+          const defNode = moDefJson?.data?.metaobjectDefinition;
+          if (!defNode || !defNode.id || !defNode.type) {
+            state.error = `Restricted metaobjectDefinition ${moDefId} not found or missing required type.`;
+            metaobjectDefCache.set(moDefId, state);
+            return state;
+          }
+
+          state.definition = {
+            id: defNode.id,
+            type: defNode.type,
+            name: defNode.name || null,
+            displayNameKey: defNode.displayNameKey || null
+          };
+
+          let entryPageInfo = { hasNextPage: true, endCursor: null };
+          let pagesFetched = 0;
+
+          while (entryPageInfo.hasNextPage && pagesFetched < MAX_ENTRY_PAGES) {
+            pagesFetched++;
+            const entriesRes = await admin.graphql(`
+              query listMetaobjectsByType($type: String!, $cursor: String) {
+                metaobjects(type: $type, first: 250, after: $cursor) {
+                  pageInfo { hasNextPage endCursor }
+                  edges {
+                    node {
+                      id
+                      handle
+                      type
+                      displayName
+                      definition { id type name }
+                      fields { key value }
+                    }
+                  }
+                }
+              }
+            `, { variables: { type: defNode.type, cursor: entryPageInfo.endCursor } });
+
+            const entriesJson = await entriesRes.json();
+            if (entriesJson.errors?.length) {
+              throw new Error(entriesJson.errors.map(e => e.message).join("; "));
+            }
+
+            const moConn = entriesJson?.data?.metaobjects;
+            if (!moConn || !Array.isArray(moConn.edges) || typeof moConn.pageInfo?.hasNextPage !== "boolean") {
+              throw new Error(`Malformed metaobjects connection response for type "${defNode.type}".`);
+            }
+
+            for (const edge of moConn.edges) {
+              const node = edge?.node;
+              if (!node || !node.id) continue;
+              if (!/^gid:\/\/shopify\/Metaobject\/\d+$/.test(node.id)) continue;
+              if (node.definition?.id && node.definition.id !== defNode.id) continue;
+
+              const candidateLabels = extractEntryMatchingLabels(node);
+              const taxonomyRef = extractTaxonomyReference(node);
+
+              state.entries.push({
+                id: node.id,
+                handle: node.handle || null,
+                displayName: node.displayName || (candidateLabels[0] ?? null),
+                matchingLabels: candidateLabels,
+                definition: {
+                  id: node.definition?.id || defNode.id,
+                  type: node.definition?.type || defNode.type,
+                  name: node.definition?.name || defNode.name || null
+                },
+                taxonomy_reference: taxonomyRef
+              });
+            }
+
+            entryPageInfo = moConn.pageInfo;
+          }
+
+          if (entryPageInfo.hasNextPage) {
+            state.isComplete = false;
+            state.continuation = {
+              hasNextPage: true,
+              endCursor: entryPageInfo.endCursor,
+              pagesFetched
+            };
+            state.error = `Enumeration for "${defNode.type}" reached bounded page limit (${MAX_ENTRY_PAGES} pages).`;
+          } else {
+            state.isComplete = true;
+          }
+        } catch (err) {
+          state.isComplete = false;
+          state.error = err.message;
+        }
+
+        metaobjectDefCache.set(moDefId, state);
+        return state;
+      }
+
+      const resolutions = {};
+      const currentReferenceLists = {};
+
+      for (const attrKey of ALLOWED_STANDARDIZED_CANDIDATE_KEYS) {
+        const destination = `shopify.${attrKey}`;
+        const storedMf = productShopifyMetafields[destination] || null;
+        const parsedStored = parseStoredReferenceList(storedMf?.value);
+        const liveDef = liveShopifyDefs[destination] || null;
+
+        currentReferenceLists[destination] = {
+          destination,
+          readComplete: productMetafieldsReadComplete,
+          metafieldId: storedMf?.id || null,
+          storedType: storedMf?.type || null,
+          rawValue: storedMf?.value ?? null,
+          referenceIds: parsedStored.ids,
+          parseValid: parsedStored.valid,
+          parseError: parsedStored.error || null
+        };
+
+        const candidateInput = validatedCandidateEntries[attrKey] || null;
+        if (!candidateInput) {
+          continue;
+        }
+
+        const fieldErrors = [];
+        let fieldStatus = "incomplete";
+        let fieldComplete = false;
+        let resolvedMetaobjectDefinition = null;
+        let enumeratedEntries = [];
+        let continuation = null;
+        const labelResults = [];
+
+        if (!defsReadComplete || !productMetafieldsReadComplete) {
+          fieldStatus = "incomplete";
+          fieldComplete = false;
+          fieldErrors.push("Initial product metafields or PRODUCT metafieldDefinitions read did not complete.");
+          for (const lbl of candidateInput.labels) {
+            labelResults.push({
+              label: lbl,
+              status: "incomplete",
+              matches: [],
+              error: "Prerequisite product or definition read was incomplete."
+            });
+          }
+        } else if (!liveDef) {
+          fieldStatus = "blocked";
+          fieldComplete = true;
+          fieldErrors.push(`Missing live PRODUCT metafield definition for ${destination}.`);
+          for (const lbl of candidateInput.labels) {
+            labelResults.push({
+              label: lbl,
+              status: "blocked",
+              matches: [],
+              error: `Missing live PRODUCT metafield definition for ${destination}.`
+            });
+          }
+        } else if (liveDef.type !== "list.metaobject_reference") {
+          fieldStatus = "blocked";
+          fieldComplete = true;
+          fieldErrors.push(`Wrong live type for ${destination}: expected "list.metaobject_reference", got "${liveDef.type || "none"}".`);
+          for (const lbl of candidateInput.labels) {
+            labelResults.push({
+              label: lbl,
+              status: "blocked",
+              matches: [],
+              error: `Wrong live type: "${liveDef.type || "none"}" (requires "list.metaobject_reference").`
+            });
+          }
+        } else if (
+          !liveDef.restrictedMetaobjectDefinitionId ||
+          !/^gid:\/\/shopify\/MetaobjectDefinition\/\d+$/.test(liveDef.restrictedMetaobjectDefinitionId)
+        ) {
+          fieldStatus = "blocked";
+          fieldComplete = true;
+          fieldErrors.push(`Missing or invalid metaobject_definition_id restriction on ${destination}.`);
+          for (const lbl of candidateInput.labels) {
+            labelResults.push({
+              label: lbl,
+              status: "blocked",
+              matches: [],
+              error: `Missing or invalid metaobject_definition_id restriction on ${destination}.`
+            });
+          }
+        } else {
+          const enumState = await resolveAndEnumerateMetaobjectDef(liveDef.restrictedMetaobjectDefinitionId);
+          resolvedMetaobjectDefinition = enumState.definition;
+          enumeratedEntries = enumState.entries;
+          continuation = enumState.continuation;
+
+          if (!enumState.definition) {
+            fieldStatus = "blocked";
+            fieldComplete = true;
+            fieldErrors.push(enumState.error || `Restricted metaobject definition ${liveDef.restrictedMetaobjectDefinitionId} could not be resolved.`);
+            for (const lbl of candidateInput.labels) {
+              labelResults.push({
+                label: lbl,
+                status: "blocked",
+                matches: [],
+                error: enumState.error || "Restricted metaobject definition could not be resolved."
+              });
+            }
+          } else if (!enumState.isComplete) {
+            fieldStatus = "incomplete";
+            fieldComplete = false;
+            overallComplete = false;
+            if (enumState.error) fieldErrors.push(enumState.error);
+
+            for (const lbl of candidateInput.labels) {
+              const normTarget = normalizeCandidateMatchKey(lbl);
+              const partialMatches = enumeratedEntries.filter(entry =>
+                entry.matchingLabels.some(mLbl => normalizeCandidateMatchKey(mLbl) === normTarget)
+              ).map(entry => ({
+                id: entry.id,
+                displayName: entry.displayName,
+                definition: entry.definition,
+                taxonomy_reference: entry.taxonomy_reference
+              }));
+
+              labelResults.push({
+                label: lbl,
+                status: "incomplete",
+                matches: partialMatches,
+                error: enumState.error || "Metaobject enumeration was not completed; cannot assert missing_entry or final resolution."
+              });
+            }
+          } else {
+            fieldComplete = true;
+            for (const lbl of candidateInput.labels) {
+              const normTarget = normalizeCandidateMatchKey(lbl);
+              const exactMatches = enumeratedEntries.filter(entry =>
+                entry.matchingLabels.some(mLbl => normalizeCandidateMatchKey(mLbl) === normTarget)
+              ).map(entry => ({
+                id: entry.id,
+                displayName: entry.displayName,
+                definition: entry.definition,
+                taxonomy_reference: entry.taxonomy_reference
+              }));
+
+              if (exactMatches.length === 1) {
+                labelResults.push({
+                  label: lbl,
+                  status: "matched",
+                  matchedEntry: exactMatches[0],
+                  matches: exactMatches
+                });
+              } else if (exactMatches.length > 1) {
+                labelResults.push({
+                  label: lbl,
+                  status: "ambiguous",
+                  matches: exactMatches
+                });
+              } else {
+                labelResults.push({
+                  label: lbl,
+                  status: "missing_entry",
+                  matches: []
+                });
+              }
+            }
+
+            const statuses = labelResults.map(r => r.status);
+            if (statuses.every(s => s === "matched")) {
+              fieldStatus = "matched";
+            } else if (statuses.some(s => s === "ambiguous")) {
+              fieldStatus = "ambiguous";
+            } else if (statuses.some(s => s === "missing_entry")) {
+              fieldStatus = "missing_entry";
+            } else {
+              fieldStatus = "incomplete";
+            }
+          }
+        }
+
+        if (fieldErrors.length > 0) {
+          topErrors.push(...fieldErrors.map(e => `[${destination}] ${e}`));
+        }
+
+        resolutions[destination] = {
+          destination,
+          attributeKey: attrKey,
+          status: fieldStatus,
+          isComplete: fieldComplete,
+          candidate: {
+            labels: candidateInput.labels,
+            evidence: candidateInput.evidence
+          },
+          currentAssignment: currentReferenceLists[destination],
+          metafieldDefinition: liveDef
+            ? {
+                id: liveDef.id,
+                name: liveDef.name,
+                namespace: liveDef.namespace,
+                key: liveDef.key,
+                type: liveDef.type,
+                restrictedMetaobjectDefinitionId: liveDef.restrictedMetaobjectDefinitionId
+              }
+            : null,
+          restrictedMetaobjectDefinition: resolvedMetaobjectDefinition,
+          availableEntries: enumeratedEntries.map(e => ({
+            id: e.id,
+            displayName: e.displayName,
+            definition: e.definition,
+            taxonomy_reference: e.taxonomy_reference
+          })),
+          labelResolutions: labelResults,
+          continuation,
+          errors: fieldErrors
+        };
+      }
+
+      return Response.json({
+        intent: "resolveStandardizedCandidates",
+        success: overallComplete,
+        pieceId,
+        readOnly: true,
+        isComplete: overallComplete,
+        resolutions,
+        currentReferenceLists,
+        errors: topErrors
       });
     }
 
