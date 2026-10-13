@@ -83,6 +83,90 @@ const formatLabel = (key) => {
   return name.replace(/[_-]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 };
 
+const resolveConfigFieldDestination = (f) => {
+  if (!f) return "";
+  if (f.role === "standardized_attribute" && f.namespace && f.metaKey) {
+    return `${f.namespace}.${f.metaKey}`;
+  }
+  if (f.namespace && f.metaKey && !f.key?.startsWith("native_") && !NATIVE_FIELDS.includes(f.key)) {
+    return `${f.namespace}.${f.metaKey}`;
+  }
+  if (NATIVE_FIELDS.includes(f.key) || f.key.includes('.') || f.key.startsWith('native_')) {
+    return f.key;
+  }
+  return `custom.${f.key}`;
+};
+
+const formatDisplayFieldValue = (rawVal, isStandardized, data) => {
+  if (rawVal === undefined || rawVal === null || rawVal === "") return "";
+
+  const labelLookup =
+    data?.referenceLabels ||
+    data?.metaobjectLabels ||
+    data?.standardizedLabels ||
+    data?.resolvedReferenceLabels ||
+    null;
+
+  const resolveSingleItem = (item) => {
+    if (item === undefined || item === null) return "";
+    if (typeof item === "string") {
+      if (labelLookup && typeof labelLookup === "object" && labelLookup[item]) {
+        return `${labelLookup[item]} (${item})`;
+      }
+      return item;
+    }
+    if (typeof item === "object") {
+      const label = item.label || item.displayName || item.name || item.title || item.value;
+      const id = item.id || item.gid;
+      if (label && id) return `${label} (${id})`;
+      if (label) return String(label);
+      if (id) return String(id);
+      return JSON.stringify(item);
+    }
+    return String(item);
+  };
+
+  if (Array.isArray(rawVal)) {
+    if (rawVal.length === 0) return "";
+    if (isStandardized || rawVal.length > 1) {
+      return rawVal.map(resolveSingleItem).join(", ");
+    }
+    return resolveSingleItem(rawVal[0]);
+  }
+
+  if (typeof rawVal === "string") {
+    const trimmed = rawVal.trim();
+    if (trimmed.startsWith("[")) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) {
+          if (parsed.length === 0) return "";
+          if (isStandardized || parsed.length > 1) {
+            return parsed.map(resolveSingleItem).join(", ");
+          }
+          return resolveSingleItem(parsed[0]);
+        }
+      } catch (e) {
+        return rawVal;
+      }
+    } else if (trimmed.startsWith("{")) {
+      try {
+        const obj = JSON.parse(trimmed);
+        return JSON.stringify(obj);
+      } catch (e) {
+        return rawVal;
+      }
+    }
+    return resolveSingleItem(rawVal);
+  }
+
+  if (typeof rawVal === "object") {
+    return JSON.stringify(rawVal);
+  }
+
+  return String(rawVal);
+};
+
 const getDynamicSections = (manifest) => {
   return PRODUCT_TEMPLATE_GROUPS.map(group => {
     let keys = [];
@@ -97,10 +181,9 @@ const getDynamicSections = (manifest) => {
         return;
       }
       
-      if (NATIVE_FIELDS.includes(f.key) || f.key.includes('.') || f.key.startsWith('native_')) {
-        keys.push(f.key);
-      } else {
-        keys.push(`custom.${f.key}`);
+      const resolvedKey = resolveConfigFieldDestination(f);
+      if (resolvedKey && !RETIRED_KEYS.includes(resolvedKey)) {
+        keys.push(resolvedKey);
       }
     });
     
@@ -242,6 +325,10 @@ export function OperationsMatrixTab({ products }) {
 
   const handleToggleApproval = useCallback((pieceId, key, propVal, isChecked) => {
     const targetKey = NATIVE_ALIAS_MAP[key] || key;
+    const allConfigFields = PRODUCT_TEMPLATE_GROUPS.flatMap(g => g.fields || []);
+    const matchedConfig = allConfigFields.find(f => resolveConfigFieldDestination(f) === targetKey || resolveConfigFieldDestination(f) === key);
+    if (matchedConfig?.mappingStatus === "pending_read_only") return;
+
     setApprovals(prev => {
       const next = { ...prev };
       if (!next[pieceId]) next[pieceId] = {};
@@ -258,6 +345,21 @@ export function OperationsMatrixTab({ products }) {
     const targetKeyForProposal = NATIVE_ALIAS_MAP[key] || key;
     const isNativeImageAlt = key.startsWith("native_image_alts_");
     
+    const unprefixedKey = targetKeyForProposal.replace(/^custom\./, '');
+    const templateConfig = configFields.find(f => {
+      const resolvedDest = resolveConfigFieldDestination(f);
+      return (
+        resolvedDest === key ||
+        resolvedDest === targetKeyForProposal ||
+        f.key === key ||
+        f.key === targetKeyForProposal ||
+        (f.role !== "standardized_attribute" && f.key === unprefixedKey)
+      );
+    });
+
+    const isStandardizedAttribute = templateConfig?.role === "standardized_attribute" || key.startsWith("shopify.");
+    const isPendingReadOnly = templateConfig?.mappingStatus === "pending_read_only";
+
     let currentVal = "";
     const variants = data.nativeTargets?.variants?.edges || [];
     const isSingleVariant = variants.length === 1 && 
@@ -300,7 +402,14 @@ export function OperationsMatrixTab({ products }) {
         }
     } else {
         const hasCurrent = data.currentMetafields?.hasOwnProperty(key);
-        currentVal = hasCurrent ? String(data.currentMetafields[key] || "") : "";
+        const rawCurrent = hasCurrent ? data.currentMetafields[key] : "";
+        if (Array.isArray(rawCurrent)) {
+            currentVal = JSON.stringify(rawCurrent);
+        } else if (typeof rawCurrent === "object" && rawCurrent !== null) {
+            currentVal = JSON.stringify(rawCurrent);
+        } else {
+            currentVal = hasCurrent ? String(rawCurrent ?? "") : "";
+        }
     }
 
     let isProposed = false;
@@ -309,7 +418,14 @@ export function OperationsMatrixTab({ products }) {
     if (data.repairPlan !== undefined) {
         if (data.repairPlan.hasOwnProperty(targetKeyForProposal)) {
             isProposed = true;
-            propVal = String(data.repairPlan[targetKeyForProposal] ?? "");
+            const rawProp = data.repairPlan[targetKeyForProposal];
+            if (Array.isArray(rawProp)) {
+                propVal = JSON.stringify(rawProp);
+            } else if (typeof rawProp === "object" && rawProp !== null) {
+                propVal = JSON.stringify(rawProp);
+            } else {
+                propVal = String(rawProp ?? "");
+            }
         } else if (key === "native_shipping_weight" || key === "custom.shipping_weight_oz") {
             const stoneGrams = parseFloat(data.currentMetafields?.["custom.weight_grams"] || data.repairPlan?.["custom.weight_grams"]) || 0;
             if (stoneGrams > 0) {
@@ -322,7 +438,7 @@ export function OperationsMatrixTab({ products }) {
         }
     }
 
-    let fieldMeta = data.metadata?.[key] || {};
+    let fieldMeta = data.metadata?.[key] || data.metadata?.[targetKeyForProposal] || {};
     let source = fieldMeta.source || "Not reported";
     let stage = fieldMeta.stage || "Not reported";
 
@@ -334,31 +450,30 @@ export function OperationsMatrixTab({ products }) {
     let isContentPreApproved = false;
     let preApprovalReason = "";
 
-    const currentExists = currentVal.trim() !== "";
-    const proposalExists = isProposed && propVal.trim() !== "";
-
-    const unprefixedKey = targetKeyForProposal.replace(/^custom\./, '');
-    const templateConfig = configFields.find(f => f.key === unprefixedKey || f.key === targetKeyForProposal || f.key === key);
+    const currentExists = currentVal.trim() !== "" && currentVal.trim() !== "[]";
+    const proposalExists = isProposed && propVal.trim() !== "" && propVal.trim() !== "[]";
 
     const isKnownKey = templateConfig !== undefined || NATIVE_FIELDS.includes(key) || isNativeImageAlt || HIDDEN_CONTEXT_FIELDS.includes(key) || key.startsWith('native_');
 
-    if (targetKeyForProposal === "custom.google_product_category" && proposalExists) {
-        isContentPreApproved = true;
-        preApprovalReason = "Category pre-approved";
-    } else if (
-        data.verifiedGeoValues && 
-        data.verifiedGeoValues[unprefixedKey] !== undefined && 
-        String(data.verifiedGeoValues[unprefixedKey]) === propVal && 
-        proposalExists
-    ) {
-        isContentPreApproved = true;
-        preApprovalReason = "Verified Geo Library";
-    } else if (POLICY_PRE_APPROVED_FIELDS.includes(targetKeyForProposal) && proposalExists) {
-        isContentPreApproved = true;
-        preApprovalReason = "Pre-approved by operator policy";
-    } else if (isNativeImageAlt && proposalExists) {
-        isContentPreApproved = true;
-        preApprovalReason = "Native Image Alt pre-approved by policy";
+    if (!isPendingReadOnly) {
+        if (targetKeyForProposal === "custom.google_product_category" && proposalExists) {
+            isContentPreApproved = true;
+            preApprovalReason = "Category pre-approved";
+        } else if (
+            data.verifiedGeoValues && 
+            data.verifiedGeoValues[unprefixedKey] !== undefined && 
+            String(data.verifiedGeoValues[unprefixedKey]) === propVal && 
+            proposalExists
+        ) {
+            isContentPreApproved = true;
+            preApprovalReason = "Verified Geo Library";
+        } else if (POLICY_PRE_APPROVED_FIELDS.includes(targetKeyForProposal) && proposalExists) {
+            isContentPreApproved = true;
+            preApprovalReason = "Pre-approved by operator policy";
+        } else if (isNativeImageAlt && proposalExists) {
+            isContentPreApproved = true;
+            preApprovalReason = "Native Image Alt pre-approved by policy";
+        }
     }
 
     const isRequired = REQUIRED_FIELDS.includes(targetKeyForProposal);
@@ -374,10 +489,10 @@ export function OperationsMatrixTab({ products }) {
     const isOperatorOwned = (targetKeyForProposal === "price" || targetKeyForProposal === "custom.weight_grams" || targetKeyForProposal === "custom.dimensions_mm");
     
     const exactApprovalVal = currentApprovals?.[productId]?.[targetKeyForProposal];
-    const isApproved = exactApprovalVal !== undefined && exactApprovalVal === propVal && propVal.trim() !== "";
+    const isApproved = !isPendingReadOnly && exactApprovalVal !== undefined && exactApprovalVal === propVal && propVal.trim() !== "";
 
     if (HIDDEN_CONTEXT_FIELDS.includes(key)) {
-        return { currentVal, propVal, isProposed, fieldStatus: "Hidden Source", proposalStatus, source, stage, isBlockedAction: true, reasons: ["Hidden Context"], currentExists, proposalExists, isApproved: false, hasTechnicalBlock: true, contentNeedsReview: false, isContentPreApproved: false, preApprovalReason: "", isManualOnly: false, isActualBlockedProposal: false, isOperatorOwned: false, isSupported: true };
+        return { currentVal, propVal, isProposed, fieldStatus: "Hidden Source", proposalStatus, source, stage, isBlockedAction: true, reasons: ["Hidden Context"], currentExists, proposalExists, isApproved: false, hasTechnicalBlock: true, contentNeedsReview: false, isContentPreApproved: false, preApprovalReason: "", isManualOnly: false, isActualBlockedProposal: false, isOperatorOwned: false, isSupported: true, isPendingReadOnly: false, isStandardizedAttribute: false };
     }
 
     let hasTechnicalBlock = false;
@@ -391,6 +506,11 @@ export function OperationsMatrixTab({ products }) {
     }
     
     if (isIntegration) reasons.push("Integration owned");
+
+    if (isPendingReadOnly) {
+        hasTechnicalBlock = true;
+        reasons.push("Standardized attribute read-only (pending_read_only)");
+    }
 
     if (BLOCKED_UNVERIFIED_PINS.includes(targetKeyForProposal) && proposalExists) {
         hasTechnicalBlock = true;
@@ -477,7 +597,7 @@ export function OperationsMatrixTab({ products }) {
     if (hasTechnicalBlock && fieldStatus !== "Unchanged" && fieldStatus !== "Optional blank" && fieldStatus !== "Required missing") {
         if (isOverLimit) {
             fieldStatus = "Over limit";
-        } else if (reasons.includes("Type/destination unverified") || reasons.includes("Generic hardware fill into blank")) {
+        } else if (isPendingReadOnly || reasons.includes("Type/destination unverified") || reasons.includes("Generic hardware fill into blank")) {
             fieldStatus = "Blocked";
         } else if (isNativeImageAlt) {
             fieldStatus = "Blocked";
@@ -492,7 +612,7 @@ export function OperationsMatrixTab({ products }) {
     }
 
     // React to Approvals & Pre-Approvals
-    if (proposalExists && currentVal !== propVal && !isManualOnly && !apiBlockReason && !conflictData && !nativeDescConflictData) {
+    if (proposalExists && currentVal !== propVal && !isManualOnly && !isPendingReadOnly && !apiBlockReason && !conflictData && !nativeDescConflictData) {
         if (isContentPreApproved) {
             if (hasTechnicalBlock) {
                 fieldStatus = "Pre-approved, blocked";
@@ -517,7 +637,7 @@ export function OperationsMatrixTab({ products }) {
             }
         }
     } else {
-        if (hasTechnicalBlock || apiBlockReason || conflictData || nativeDescConflictData || fieldStatus === "Optional blank" || fieldStatus === "Required missing") {
+        if (hasTechnicalBlock || isPendingReadOnly || apiBlockReason || conflictData || nativeDescConflictData || fieldStatus === "Optional blank" || fieldStatus === "Required missing") {
             isBlockedAction = true;
         }
     }
@@ -528,6 +648,10 @@ export function OperationsMatrixTab({ products }) {
             fieldStatus = "Manual only";
             if (!reasons.includes("Manual only")) reasons.push("Manual only");
         }
+    }
+
+    if (isPendingReadOnly) {
+        isBlockedAction = true;
     }
 
     const isActualBlockedProposal = isBlockedAction && 
@@ -542,6 +666,8 @@ export function OperationsMatrixTab({ products }) {
       isContentPreApproved, preApprovalReason, isManualOnly, isOperatorOwned, isActualBlockedProposal,
       conflictData, nativeDescConflictData,
       isSupported: isKnownKey,
+      isPendingReadOnly,
+      isStandardizedAttribute,
       label: templateConfig?.label || formatLabel(key),
       control: templateConfig?.control
     };
@@ -557,8 +683,11 @@ export function OperationsMatrixTab({ products }) {
     Object.keys(manifest.repairPlan).forEach(key => {
         if (key.startsWith("native_image_alts_")) return; 
         if (key === "native_seo_description") return;
+        if (key.startsWith("custom.std_") || key.startsWith("std_")) return;
         
         const meta = getFieldMetadata(key, manifest, currentId, currentApprovals, allConfigFields);
+        if (meta.isPendingReadOnly || meta.isStandardizedAttribute) return;
+
         if (!meta.isBlockedAction && !HIDDEN_CONTEXT_FIELDS.includes(key) && !RETIRED_KEYS.includes(key)) {
             if (key === "shopify_title") {
                 nativeChanges.title = manifest.repairPlan[key];
@@ -1059,10 +1188,10 @@ export function OperationsMatrixTab({ products }) {
            const successLogs = logs || [message || "Operation applied successfully."];
            let statusToSet = STATUS.COMPLETE;
            if (status === "NO_CHANGES_REQUIRED" || message === "No changes required." || (fieldsUpdated === 0 && Object.keys(blockedFields).length === 0)) {
-               statusToSet = STATUS.SKIPPED;
-               successLogs.push("No changes required.");
+              statusToSet = STATUS.SKIPPED;
+              successLogs.push("No changes required.");
            } else if (finalStatus === "Needs Review" || status === "REPAIR_FAILED" || readBackVerified === false) {
-               statusToSet = STATUS.FAILED;
+              statusToSet = STATUS.FAILED;
            }
            
            if (Object.keys(blockedFields).length > 0) successLogs.push(`Partial API block: ${Object.keys(blockedFields).length} fields rejected by Shopify.`);
@@ -1126,21 +1255,28 @@ export function OperationsMatrixTab({ products }) {
                               diagnostics.gemini = "Success"; diagnostics.stage = "generateDescription";
                           }
 
+                          const allConfigFields = PRODUCT_TEMPLATE_GROUPS.flatMap(g => g.fields || []);
+
                           const safeApply = (keyName, aiValue) => {
                               const targetKey = NATIVE_ALIAS_MAP[keyName] || keyName;
                               if (RETIRED_KEYS.includes(targetKey)) return; 
+                              if (targetKey.startsWith("custom.std_") || targetKey.startsWith("std_") || targetKey.startsWith("shopify.")) return;
+                              const matchedConfig = allConfigFields.find(f => resolveConfigFieldDestination(f) === targetKey || f.key === targetKey);
+                              if (matchedConfig?.mappingStatus === "pending_read_only" || matchedConfig?.role === "standardized_attribute") return;
                               if (manualEdits[targetId] && manualEdits[targetId][targetKey] === true) return; 
                               newPlan[targetKey] = aiValue;
                           };
 
                           Object.keys(visionData).forEach(k => {
                               if (k !== "generated_description" && k !== "pieceId" && k !== "debug_origin" && k !== "intent" && k !== "success" && k !== "origin_story") {
+                                  if (k.startsWith("std_") || k.startsWith("custom.std_") || k.startsWith("shopify.")) return;
                                   safeApply(NATIVE_FIELDS.includes(k) || k.includes('.') || k.startsWith('native_') ? k : `custom.${k}`, visionData[k]);
                               }
                           });
                           
                           Object.keys(titleData).forEach(k => {
                               if (k !== "pieceId" && k !== "intent" && k !== "success" && k !== "geoSource" && k !== "origin_story") {
+                                  if (k.startsWith("std_") || k.startsWith("custom.std_") || k.startsWith("shopify.")) return;
                                   const targetKey = NATIVE_FIELDS.includes(k) || k.includes('.') || k.startsWith('native_') ? k : `custom.${k}`;
                                   const bareKey = targetKey.startsWith("custom.") ? targetKey.slice(7) : k;
                                   const visionHasValue = [k, targetKey, bareKey].some(candidate =>
@@ -1215,6 +1351,9 @@ export function OperationsMatrixTab({ products }) {
   const handleRepairPlanChange = (key, value) => {
     if (!selectedBenchId) return;
     const targetKey = NATIVE_ALIAS_MAP[key] || key;
+    const allConfigFields = PRODUCT_TEMPLATE_GROUPS.flatMap(g => g.fields || []);
+    const matchedConfig = allConfigFields.find(f => resolveConfigFieldDestination(f) === targetKey || resolveConfigFieldDestination(f) === key);
+    if (matchedConfig?.mappingStatus === "pending_read_only") return;
     
     setManualEdits(prev => {
         const next = { ...prev };
@@ -1436,7 +1575,7 @@ export function OperationsMatrixTab({ products }) {
             if (meta.fieldStatus === "Unverified proposal") stats.unverified++;
             if (meta.fieldStatus === "Optional blank") stats.optionalBlanks++;
             if (meta.fieldStatus === "Required missing") stats.requiredMissing++;
-            if ((meta.fieldStatus === "Proposed" || meta.fieldStatus === "Approved, not saved" || meta.fieldStatus === "Pre-approved, not saved") && !meta.isBlockedAction && !HIDDEN_CONTEXT_FIELDS.includes(k)) stats.approvedWrite++;
+            if ((meta.fieldStatus === "Proposed" || meta.fieldStatus === "Approved, not saved" || meta.fieldStatus === "Pre-approved, not saved") && !meta.isBlockedAction && !meta.isPendingReadOnly && !HIDDEN_CONTEXT_FIELDS.includes(k)) stats.approvedWrite++;
         });
     });
 
@@ -1861,7 +2000,7 @@ export function OperationsMatrixTab({ products }) {
     if (meta.fieldStatus === "Unchanged") statusTone = "new";
     if (meta.fieldStatus === "Approved, blocked" || meta.fieldStatus === "Pre-approved, blocked") statusTone = "warning";
 
-    const canApprove = meta.proposalExists && meta.currentVal !== meta.propVal && !meta.isManualOnly && !meta.isContentPreApproved && meta.fieldStatus !== "API Error / Blocked" && meta.fieldStatus !== "Save Conflict" && meta.isSupported;
+    const canApprove = meta.proposalExists && meta.currentVal !== meta.propVal && !meta.isManualOnly && !meta.isPendingReadOnly && !meta.isContentPreApproved && meta.fieldStatus !== "API Error / Blocked" && meta.fieldStatus !== "Save Conflict" && meta.isSupported;
     const isPreApprovedDisplay = meta.isContentPreApproved && meta.proposalExists && meta.currentVal !== meta.propVal;
 
     let boxBg = "#f8f9fa";
@@ -1872,6 +2011,9 @@ export function OperationsMatrixTab({ products }) {
     if (!meta.isSupported) {
         boxBg = "#f8f9fa"; boxBorder = "#dee2e6"; textColor = "#41464c";
         statusText = "Connection pending.";
+    } else if (meta.isPendingReadOnly) {
+        boxBg = "#f8f9fa"; boxBorder = "#dee2e6"; textColor = "#41464c";
+        statusText = "Standardized attribute (pending_read_only). Read-only display; writes disabled.";
     } else if (meta.reasons.includes("SEO description save connection pending.")) {
         boxBg = "#fff3cd"; boxBorder = "#ffecb5"; textColor = "#664d03";
         statusText = "SEO description save connection pending. Draft is staged but write is disabled.";
@@ -1905,39 +2047,8 @@ export function OperationsMatrixTab({ products }) {
         statusText = "Safe suggestion. Approval optional but recorded if checked.";
     }
 
-    let displayCurrentVal = meta.currentVal;
-    if (typeof displayCurrentVal === 'string' && displayCurrentVal.startsWith('[')) {
-      try {
-        const arr = JSON.parse(displayCurrentVal);
-        displayCurrentVal = Array.isArray(arr) ? arr[0] : displayCurrentVal;
-      } catch(e) {}
-    } else if (typeof displayCurrentVal === 'string' && displayCurrentVal.startsWith('{')) {
-      try {
-        const obj = JSON.parse(displayCurrentVal);
-        displayCurrentVal = JSON.stringify(obj);
-      } catch(e) {}
-    } else if (Array.isArray(displayCurrentVal)) {
-      displayCurrentVal = displayCurrentVal[0];
-    } else if (typeof displayCurrentVal === 'object' && displayCurrentVal !== null) {
-      displayCurrentVal = JSON.stringify(displayCurrentVal);
-    }
-
-    let displayPropVal = meta.propVal;
-    if (typeof displayPropVal === 'string' && displayPropVal.startsWith('[')) {
-      try {
-        const arr = JSON.parse(displayPropVal);
-        displayPropVal = Array.isArray(arr) ? arr[0] : displayPropVal;
-      } catch(e) {}
-    } else if (typeof displayPropVal === 'string' && displayPropVal.startsWith('{')) {
-      try {
-        const obj = JSON.parse(displayPropVal);
-        displayPropVal = JSON.stringify(obj);
-      } catch(e) {}
-    } else if (Array.isArray(displayPropVal)) {
-      displayPropVal = displayPropVal[0];
-    } else if (typeof displayPropVal === 'object' && displayPropVal !== null) {
-      displayPropVal = JSON.stringify(displayPropVal);
-    }
+    const displayCurrentVal = formatDisplayFieldValue(meta.currentVal, meta.isStandardizedAttribute, data);
+    const displayPropVal = formatDisplayFieldValue(meta.propVal, meta.isStandardizedAttribute, data);
 
     return (
       <Card padding="0" key={sectionTitle}>
@@ -1994,12 +2105,12 @@ export function OperationsMatrixTab({ products }) {
                         <Text as="p" variant="headingSm" tone="subdued" fontWeight="bold" style={{ marginBottom: "6px" }}>Bench Proposal Value</Text>
                         <TextField
                             value={meta.isSupported ? displayPropVal : "Connection pending."}
-                            onChange={(val) => { if (meta.isSupported) handleRepairPlanChange(key, val) }}
+                            onChange={(val) => { if (meta.isSupported && !meta.isPendingReadOnly) handleRepairPlanChange(key, val) }}
                             autoComplete="off"
                             multiline={isMultilineKey("custom.generated_description", meta.control) ? 6 : 3}
                             placeholder={meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing" ? "Blank" : (meta.fieldStatus === "Proposal not provided" ? "Not provided" : "")}
-                            disabled={!meta.isSupported}
-                            readOnly={!meta.isSupported}
+                            disabled={!meta.isSupported || meta.isPendingReadOnly}
+                            readOnly={!meta.isSupported || meta.isPendingReadOnly}
                         />
                     </div>
 
@@ -2135,7 +2246,7 @@ export function OperationsMatrixTab({ products }) {
               if (meta.fieldStatus === "Unchanged") statusTone = "new";
               if (meta.fieldStatus === "Approved, blocked" || meta.fieldStatus === "Pre-approved, blocked") statusTone = "warning";
 
-              const canApprove = meta.proposalExists && meta.currentVal !== meta.propVal && !meta.isManualOnly && !meta.isContentPreApproved && meta.fieldStatus !== "API Error / Blocked" && meta.fieldStatus !== "Save Conflict" && meta.isSupported;
+              const canApprove = meta.proposalExists && meta.currentVal !== meta.propVal && !meta.isManualOnly && !meta.isPendingReadOnly && !meta.isContentPreApproved && meta.fieldStatus !== "API Error / Blocked" && meta.fieldStatus !== "Save Conflict" && meta.isSupported;
               const isPreApprovedDisplay = meta.isContentPreApproved && meta.proposalExists && meta.currentVal !== meta.propVal;
               
               let boxBg = "#f8f9fa";
@@ -2146,6 +2257,9 @@ export function OperationsMatrixTab({ products }) {
               if (!meta.isSupported) {
                   boxBg = "#f8f9fa"; boxBorder = "#dee2e6"; textColor = "#41464c";
                   statusText = "Connection pending.";
+              } else if (meta.isPendingReadOnly) {
+                  boxBg = "#f8f9fa"; boxBorder = "#dee2e6"; textColor = "#41464c";
+                  statusText = "Standardized attribute (pending_read_only). Read-only display; writes disabled.";
               } else if (meta.reasons.includes("SEO description save connection pending.")) {
                   boxBg = "#fff3cd"; boxBorder = "#ffecb5"; textColor = "#664d03";
                   statusText = "SEO description save connection pending. Draft is staged but write is disabled.";
@@ -2187,39 +2301,8 @@ export function OperationsMatrixTab({ products }) {
                   thumbnailUrl = data.nativeTargets?.media?.edges?.find(e => e.node?.id === id)?.node?.preview?.image?.url;
               }
 
-              let displayCurrentVal = meta.currentVal;
-              if (typeof displayCurrentVal === 'string' && displayCurrentVal.startsWith('[')) {
-                try {
-                  const arr = JSON.parse(displayCurrentVal);
-                  displayCurrentVal = Array.isArray(arr) ? arr[0] : displayCurrentVal;
-                } catch(e) {}
-              } else if (typeof displayCurrentVal === 'string' && displayCurrentVal.startsWith('{')) {
-                try {
-                  const obj = JSON.parse(displayCurrentVal);
-                  displayCurrentVal = JSON.stringify(obj);
-                } catch(e) {}
-              } else if (Array.isArray(displayCurrentVal)) {
-                displayCurrentVal = displayCurrentVal[0];
-              } else if (typeof displayCurrentVal === 'object' && displayCurrentVal !== null) {
-                displayCurrentVal = JSON.stringify(displayCurrentVal);
-              }
-              
-              let displayPropVal = meta.propVal;
-              if (typeof displayPropVal === 'string' && displayPropVal.startsWith('[')) {
-                try {
-                  const arr = JSON.parse(displayPropVal);
-                  displayPropVal = Array.isArray(arr) ? arr[0] : displayPropVal;
-                } catch(e) {}
-              } else if (typeof displayPropVal === 'string' && displayPropVal.startsWith('{')) {
-                try {
-                  const obj = JSON.parse(displayPropVal);
-                  displayPropVal = JSON.stringify(obj);
-                } catch(e) {}
-              } else if (Array.isArray(displayPropVal)) {
-                displayPropVal = displayPropVal[0];
-              } else if (typeof displayPropVal === 'object' && displayPropVal !== null) {
-                displayPropVal = JSON.stringify(displayPropVal);
-              }
+              const displayCurrentVal = formatDisplayFieldValue(meta.currentVal, meta.isStandardizedAttribute, data);
+              const displayPropVal = formatDisplayFieldValue(meta.propVal, meta.isStandardizedAttribute, data);
 
               return (
                 <Box key={key} padding="300" background={isBlank && meta.isSupported ? "bg-surface-warning" : "bg-surface"} borderColor="border" borderWidth="1" borderRadius="200">
@@ -2244,6 +2327,9 @@ export function OperationsMatrixTab({ products }) {
                             {meta.isSupported ? (
                               <>
                                 <Text as="p" variant="bodyMd" fontWeight="bold">Status: <Badge tone={statusTone}>{meta.fieldStatus}</Badge></Text>
+                                {meta.isPendingReadOnly && (
+                                  <Text as="p" variant="bodySm" tone="subdued" fontWeight="bold">Mode: <Badge tone="info">Read-Only (Pending)</Badge></Text>
+                                )}
                                 <Text as="p" variant="bodyMd" fontWeight="bold">Source: <Text as="span" fontWeight="regular">{meta.source}</Text></Text>
                                 <Text as="p" variant="bodyMd" fontWeight="bold">Stage: <Text as="span" fontWeight="regular">{meta.stage}</Text></Text>
                               </>
@@ -2267,12 +2353,12 @@ export function OperationsMatrixTab({ products }) {
                             <Text as="p" variant="headingSm" tone="subdued" fontWeight="bold" style={{ marginBottom: "6px" }}>Bench Proposal Value</Text>
                             <TextField
                                 value={meta.isSupported ? displayPropVal : "Connection pending."}
-                                onChange={(val) => { if (meta.isSupported) handleRepairPlanChange(key, val) }}
+                                onChange={(val) => { if (meta.isSupported && !meta.isPendingReadOnly) handleRepairPlanChange(key, val) }}
                                 autoComplete="off"
                                 multiline={isMultilineKey(key, meta.control) ? 3 : undefined}
-                                placeholder={meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing" ? "Blank" : (meta.fieldStatus === "Proposal not provided" ? "Not provided" : "")}
-                                disabled={!meta.isSupported}
-                                readOnly={!meta.isSupported}
+                                placeholder={meta. isPendingReadOnly ? "Read-only standardized attribute (writes disabled)" : (meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing" ? "Blank" : (meta.fieldStatus === "Proposal not provided" ? "Not provided" : ""))}
+                                disabled={!meta.isSupported || meta.isPendingReadOnly}
+                                readOnly={!meta.isSupported || meta.isPendingReadOnly}
                             />
                         </div>
 
