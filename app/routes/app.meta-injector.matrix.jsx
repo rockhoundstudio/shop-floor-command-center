@@ -65,6 +65,8 @@ const NATIVE_ALIAS_MAP = {
   "native_price": "price"
 };
 
+const DESCRIPTION_REVIEW_EXCLUDED_KEYS = ["native_description", "custom.generated_description"];
+
 // Used strictly for global telemetry tracking to preserve 45-count. Do not render.
 const HIDDEN_CONTEXT_FIELDS = ["custom.origin_story"]; 
 
@@ -147,6 +149,7 @@ export function OperationsMatrixTab({ products }) {
 
   const [activeFilter, setActiveFilter] = useState("All");
   const [expandedBays, setExpandedBays] = useState({
+    "Description Review": true,
     "1. Identity and Merchandising": true,
     "2. Stone Facts and Physical Details": true,
     "3. Origin, Story, and Collection": true,
@@ -422,11 +425,19 @@ export function OperationsMatrixTab({ products }) {
     
     if (targetKeyForProposal === "custom.generated_description" && data.conflicts?.["native_description"]) {
         nativeDescConflictData = data.conflicts["native_description"];
-        reasons.push(`Read-back Mismatch [Native descriptionHtml]: ${nativeDescConflictData.expected} != ${nativeDescConflictData.actual}`);
+        const expLen = String(nativeDescConflictData.expected || "").length;
+        const actLen = String(nativeDescConflictData.actual || "").length;
+        reasons.push(`Read-back Mismatch [Native descriptionHtml]: Expected (${expLen} chars) != Actual (${actLen} chars)`);
     }
 
     if (conflictData) {
-        reasons.push(`Read-back Mismatch [Metafield / Native Field]: ${conflictData.expected} != ${conflictData.actual}`);
+        if (targetKeyForProposal === "custom.generated_description") {
+            const expLen = String(conflictData.expected || "").length;
+            const actLen = String(conflictData.actual || "").length;
+            reasons.push(`Read-back Mismatch [Metafield / Native Field]: Expected (${expLen} chars) != Actual (${actLen} chars)`);
+        } else {
+            reasons.push(`Read-back Mismatch [Metafield / Native Field]: ${conflictData.expected} != ${conflictData.actual}`);
+        }
     }
 
     // Content Review Status Evaluation
@@ -1568,10 +1579,23 @@ export function OperationsMatrixTab({ products }) {
       Object.keys(conflicts).forEach(k => {
           const expected = typeof conflicts[k] === 'object' ? conflicts[k].expected : 'unknown';
           const actual = typeof conflicts[k] === 'object' ? conflicts[k].actual : conflicts[k];
-          failures.push(`Conflict [${k}]: Expected [${truncateForTelemetry(expected, 60)}] -> Actual [${truncateForTelemetry(actual, 60)}]`);
+          if (isNarrativeBlock(k)) {
+              const metaForConflict = getFieldMetadata(k, data, selectedBenchId, approvals, allConfigFields);
+              const expLen = String(expected || "").length;
+              const actLen = String(actual || "").length;
+              failures.push(`Conflict [${k}]: Status: ${metaForConflict.fieldStatus} | Approved: ${String(metaForConflict.isApproved)} | Expected (${expLen} chars) -> Actual (${actLen} chars)`);
+          } else {
+              failures.push(`Conflict [${k}]: Expected [${truncateForTelemetry(expected, 60)}] -> Actual [${truncateForTelemetry(actual, 60)}]`);
+          }
       });
       Object.keys(unresolvedChanges).forEach(k => {
-          failures.push(`Unresolved [${k}]: ${truncateForTelemetry(unresolvedChanges[k], 60)}`);
+          if (isNarrativeBlock(k)) {
+              const metaForUnresolved = getFieldMetadata(k, data, selectedBenchId, approvals, allConfigFields);
+              const valLen = String(unresolvedChanges[k] || "").length;
+              failures.push(`Unresolved [${k}]: Status: ${metaForUnresolved.fieldStatus} | Approved: ${String(metaForUnresolved.isApproved)} | Chars: ${valLen}`);
+          } else {
+              failures.push(`Unresolved [${k}]: ${truncateForTelemetry(unresolvedChanges[k], 60)}`);
+          }
       });
 
       if (lastSubmitted) {
@@ -1587,7 +1611,10 @@ export function OperationsMatrixTab({ products }) {
               if (returnVal === intendedVal && returnVal !== "") {
                   verifiedMatchesCount++;
               } else if (returnVal !== intendedVal && returnVal !== "") {
-                  if (isGeo || isNarrative || isProtectedInt) {
+                  if (isNarrative) {
+                      failures.push(`Execution Mismatch [${submitKey}]: Status: ${meta.fieldStatus} | Approved: ${String(meta.isApproved)} | Intended (${intendedVal.length} chars) != Returned (${returnVal.length} chars)`);
+                      detailExcludedCount++;
+                  } else if (isGeo || isProtectedInt) {
                       failures.push(`Execution Mismatch [${submitKey}]: [Detail Excluded]`);
                       detailExcludedCount++;
                   } else {
@@ -1603,13 +1630,16 @@ export function OperationsMatrixTab({ products }) {
       reviewCandidates.forEach(c => {
            const { key, meta, isGeo, isNarrative, isProtectedInt } = c;
            if (key === "custom.origin_story") {
-                failures.push(`- ${key}: [Hidden Context] Status: ${meta.fieldStatus}`);
-                detailExcludedCount++;
-           } else if (isGeo || isNarrative || isProtectedInt) {
-                failures.push(`- ${key}: [Detail Excluded] Status: ${meta.fieldStatus} | Rsn: ${meta.reasons[0] || "None"}`);
-                detailExcludedCount++;
+               failures.push(`- ${key}: [Hidden Context] Status: ${meta.fieldStatus}`);
+               detailExcludedCount++;
+           } else if (isNarrative) {
+               failures.push(`- ${key}: Status: ${meta.fieldStatus} | Approved: ${String(meta.isApproved)} | Chars: Current(${meta.currentVal.length}) / Proposed(${meta.propVal.length}) | Rsn: ${meta.reasons[0] || "None"}`);
+               detailExcludedCount++;
+           } else if (isGeo || isProtectedInt) {
+               failures.push(`- ${key}: [Detail Excluded] Status: ${meta.fieldStatus} | Rsn: ${meta.reasons[0] || "None"}`);
+               detailExcludedCount++;
            } else {
-                failures.push(`- ${key}: Stat: ${meta.fieldStatus} | Rsn: ${meta.reasons[0] || "None"} | Curr: [${truncateForTelemetry(meta.currentVal, 60)}] | Prop: [${truncateForTelemetry(meta.propVal, 60)}]`);
+               failures.push(`- ${key}: Stat: ${meta.fieldStatus} | Rsn: ${meta.reasons[0] || "None"} | Curr: [${truncateForTelemetry(meta.currentVal, 60)}] | Prop: [${truncateForTelemetry(meta.propVal, 60)}]`);
            }
       });
 
@@ -1798,12 +1828,271 @@ export function OperationsMatrixTab({ products }) {
     setExpandedBays(prev => ({ ...prev, [title]: !prev[title] }));
   };
 
+  const renderDescriptionReviewSection = (allSections) => {
+    const data = manifestData[selectedBenchId];
+    if (!data) return null;
+
+    const allConfigFields = (allSections || []).flatMap(sec => sec.configFields || []);
+    const key = "native_description";
+    const meta = getFieldMetadata(key, data, selectedBenchId, approvals, allConfigFields);
+    const customDescMeta = getFieldMetadata("custom.generated_description", data, selectedBenchId, approvals, allConfigFields);
+
+    const matchesFilter = (m) => {
+      if (activeFilter === "All") return true;
+      if (activeFilter === "Blank" && (m.fieldStatus === "Optional blank" || m.fieldStatus === "Required missing")) return true;
+      if (activeFilter === "Proposed changes" && (m.fieldStatus === "Proposed" || m.fieldStatus === "Approved, not saved" || m.fieldStatus === "Approved, blocked" || m.fieldStatus === "Pre-approved, not saved" || m.fieldStatus === "Pre-approved, blocked")) return true;
+      if (activeFilter === "Conflicts" && (m.fieldStatus === "Conflict" || m.fieldStatus === "Degrade" || m.fieldStatus === "Save Conflict")) return true;
+      if (activeFilter === "Needs review" && (m.fieldStatus === "Required missing" || m.fieldStatus === "Unverified proposal" || (m.contentNeedsReview && !m.isApproved && !m.isContentPreApproved) || m.fieldStatus === "API Error / Blocked")) return true;
+      if (activeFilter === m.source) return true;
+      return false;
+    };
+
+    if (!matchesFilter(meta) && !matchesFilter(customDescMeta)) return null;
+
+    const sectionTitle = "Description Review";
+    const isExpanded = expandedBays[sectionTitle] ?? true;
+    const isBlank = meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing";
+
+    let statusTone = undefined;
+    if (meta.fieldStatus === "Optional blank") statusTone = "attention";
+    if (["Required missing", "Conflict", "Degrade", "Blocked", "API Error / Blocked", "Over limit", "Failed", "Unverified proposal", "Save Conflict"].includes(meta.fieldStatus)) statusTone = "critical";
+    if (meta.fieldStatus === "Manual only") statusTone = "info";
+    if (meta.fieldStatus === "Proposed" || meta.fieldStatus === "Approved, not saved" || meta.fieldStatus === "Pre-approved, not saved") statusTone = "success";
+    if (meta.fieldStatus === "Unchanged") statusTone = "new";
+    if (meta.fieldStatus === "Approved, blocked" || meta.fieldStatus === "Pre-approved, blocked") statusTone = "warning";
+
+    const canApprove = meta.proposalExists && meta.currentVal !== meta.propVal && !meta.isManualOnly && !meta.isContentPreApproved && meta.fieldStatus !== "API Error / Blocked" && meta.fieldStatus !== "Save Conflict" && meta.isSupported;
+    const isPreApprovedDisplay = meta.isContentPreApproved && meta.proposalExists && meta.currentVal !== meta.propVal;
+
+    let boxBg = "#f8f9fa";
+    let boxBorder = "#dee2e6";
+    let textColor = "#212529";
+    let statusText = "Ready for review";
+
+    if (!meta.isSupported) {
+        boxBg = "#f8f9fa"; boxBorder = "#dee2e6"; textColor = "#41464c";
+        statusText = "Connection pending.";
+    } else if (meta.reasons.includes("SEO description save connection pending.")) {
+        boxBg = "#fff3cd"; boxBorder = "#ffecb5"; textColor = "#664d03";
+        statusText = "SEO description save connection pending. Draft is staged but write is disabled.";
+    } else if (meta.isManualOnly) {
+        boxBg = "#f8f9fa"; boxBorder = "#dee2e6"; textColor = "#41464c";
+        statusText = "Manual only field. Excluded from automated writes.";
+    } else if (meta.fieldStatus === "API Error / Blocked" || meta.fieldStatus === "Save Conflict") {
+        boxBg = "#f8d7da"; boxBorder = "#f5c2c7"; textColor = "#842029";
+        statusText = "Previous save attempt failed API validation or read-back. Review specific error.";
+    } else if (meta.isContentPreApproved && !meta.hasTechnicalBlock) {
+        boxBg = "#d1e7dd"; boxBorder = "#badbcc"; textColor = "#0f5132";
+        statusText = "Pre-approved, not saved.";
+    } else if (meta.isContentPreApproved && meta.hasTechnicalBlock) {
+        boxBg = "#fff3cd"; boxBorder = "#ffecb5"; textColor = "#664d03";
+        const technicalBlockers = meta.reasons.filter(r => !["Proposed", "Category pre-approved", "Verified Geo Library", "Pre-approved by operator policy", "Native Image Alt pre-approved by policy", "Historical: Conflict (Pre-approved)", "Historical: Degrade (Pre-approved)", "Historical: Unverified proposal (Pre-approved)"].includes(r)).join(", ");
+        statusText = `Pre-approved. Cannot save until field destination/type is verified or limits resolved. (${technicalBlockers})`;
+    } else if (meta.isApproved && !meta.hasTechnicalBlock) {
+        boxBg = "#d1e7dd"; boxBorder = "#badbcc"; textColor = "#0f5132";
+        statusText = "Approved and technically eligible.";
+    } else if (meta.isApproved && meta.hasTechnicalBlock) {
+        boxBg = "#fff3cd"; boxBorder = "#ffecb5"; textColor = "#664d03";
+        statusText = "Suggestion approved. Cannot save until field destination/type is verified or limits resolved.";
+    } else if (!meta.isApproved && meta.hasTechnicalBlock) {
+        boxBg = "#f8d7da"; boxBorder = "#f5c2c7"; textColor = "#842029";
+        statusText = "Blocked by technical error. Review needed.";
+    } else if (!meta.isApproved && meta.contentNeedsReview) {
+        boxBg = "#fff3cd"; boxBorder = "#ffecb5"; textColor = "#664d03";
+        statusText = "Review needed to verify content explicitly before write can occur.";
+    } else if (!meta.isApproved && meta.fieldStatus === "Proposed") {
+        boxBg = "#e2e3e5"; boxBorder = "#d3d6d8"; textColor = "#41464c";
+        statusText = "Safe suggestion. Approval optional but recorded if checked.";
+    }
+
+    let displayCurrentVal = meta.currentVal;
+    if (typeof displayCurrentVal === 'string' && displayCurrentVal.startsWith('[')) {
+      try {
+        const arr = JSON.parse(displayCurrentVal);
+        displayCurrentVal = Array.isArray(arr) ? arr[0] : displayCurrentVal;
+      } catch(e) {}
+    } else if (typeof displayCurrentVal === 'string' && displayCurrentVal.startsWith('{')) {
+      try {
+        const obj = JSON.parse(displayCurrentVal);
+        displayCurrentVal = JSON.stringify(obj);
+      } catch(e) {}
+    } else if (Array.isArray(displayCurrentVal)) {
+      displayCurrentVal = displayCurrentVal[0];
+    } else if (typeof displayCurrentVal === 'object' && displayCurrentVal !== null) {
+      displayCurrentVal = JSON.stringify(displayCurrentVal);
+    }
+
+    let displayPropVal = meta.propVal;
+    if (typeof displayPropVal === 'string' && displayPropVal.startsWith('[')) {
+      try {
+        const arr = JSON.parse(displayPropVal);
+        displayPropVal = Array.isArray(arr) ? arr[0] : displayPropVal;
+      } catch(e) {}
+    } else if (typeof displayPropVal === 'string' && displayPropVal.startsWith('{')) {
+      try {
+        const obj = JSON.parse(displayPropVal);
+        displayPropVal = JSON.stringify(obj);
+      } catch(e) {}
+    } else if (Array.isArray(displayPropVal)) {
+      displayPropVal = displayPropVal[0];
+    } else if (typeof displayPropVal === 'object' && displayPropVal !== null) {
+      displayPropVal = JSON.stringify(displayPropVal);
+    }
+
+    return (
+      <Card padding="0" key={sectionTitle}>
+        <div 
+            onClick={() => toggleBay(sectionTitle)} 
+            style={{ padding: "16px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center", backgroundColor: "#f9fafb", borderBottom: isExpanded ? "1px solid #e1e3e5" : "none", minWidth: 0, boxSizing: "border-box" }}
+        >
+          <div style={{ minWidth: 0 }}>
+            <Text as="h3" variant="headingLg" fontWeight="bold">{sectionTitle}</Text>
+          </div>
+          <Button variant="plain" icon={isExpanded ? ChevronUpIcon : ChevronDownIcon} />
+        </div>
+
+        {isExpanded && (
+          <div style={{ padding: "16px", display: "flex", flexDirection: "column", gap: "24px", minWidth: 0, boxSizing: "border-box" }}>
+            <Box padding="300" background={isBlank && meta.isSupported ? "bg-surface-warning" : "bg-surface"} borderColor="border" borderWidth="1" borderRadius="200">
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "20px", boxSizing: "border-box", minWidth: 0 }}>
+                
+                {/* Left Panel: Labels & Metadata */}
+                <div style={{ flex: "1 1 250px", minWidth: 0, maxWidth: "100%", boxSizing: "border-box" }}>
+                  <BlockStack gap="100">
+                    <div style={{ display: "flex", alignItems: "center", gap: "12px", minWidth: 0 }}>
+                        <div style={{ wordBreak: "break-word", overflowWrap: "anywhere", minWidth: 0 }}>
+                            <Text as="h4" variant="headingMd" fontWeight="bold">{meta.label}</Text>
+                            <Text as="p" variant="bodySm" tone="subdued" fontWeight="medium">native_description → custom.generated_description</Text>
+                        </div>
+                    </div>
+                    
+                    <div style={{ marginTop: "12px", display: "flex", flexDirection: "column", gap: "6px", wordBreak: "break-word", overflowWrap: "anywhere" }}>
+                        {meta.isSupported ? (
+                          <>
+                            <Text as="p" variant="bodyMd" fontWeight="bold">Status: <Badge tone={statusTone}>{meta.fieldStatus}</Badge></Text>
+                            <Text as="p" variant="bodyMd" fontWeight="bold">Source: <Text as="span" fontWeight="regular">{meta.source}</Text></Text>
+                            <Text as="p" variant="bodyMd" fontWeight="bold">Stage: <Text as="span" fontWeight="regular">{meta.stage}</Text></Text>
+                            <Text as="p" variant="bodySm" tone="subdued">Metafield Status: {customDescMeta.fieldStatus} ({customDescMeta.currentVal.length} chars)</Text>
+                          </>
+                        ) : (
+                          <Text as="p" variant="bodyMd" fontWeight="bold">Status: <Badge tone="info">Connection pending.</Badge></Text>
+                        )}
+                    </div>
+                  </BlockStack>
+                </div>
+
+                {/* Right Panel: Current & Proposal Values */}
+                <div style={{ flex: "2 1 300px", display: "flex", flexDirection: "column", gap: "12px", minWidth: 0, maxWidth: "100%", boxSizing: "border-box" }}>
+                    <div style={{ padding: "12px", backgroundColor: "#f4f6f8", borderRadius: "8px", border: "1px solid #d2d5d8", minWidth: 0, wordBreak: "break-word", overflowWrap: "anywhere", boxSizing: "border-box" }}>
+                        <Text as="p" variant="headingSm" tone="subdued" fontWeight="bold" style={{ marginBottom: "6px" }}>Current Shopify Value (Native Description)</Text>
+                        <div style={{ whiteSpace: "pre-wrap", minWidth: 0 }}>
+                            <Text as="p" variant="bodyLg">{displayCurrentVal || <span style={{ color: "#8c9196", fontStyle: "italic" }}>Blank</span>}</Text>
+                        </div>
+                    </div>
+                    
+                    <div style={{ minWidth: 0, width: "100%", boxSizing: "border-box" }}>
+                        <Text as="p" variant="headingSm" tone="subdued" fontWeight="bold" style={{ marginBottom: "6px" }}>Bench Proposal Value</Text>
+                        <TextField
+                            value={meta.isSupported ? displayPropVal : "Connection pending."}
+                            onChange={(val) => { if (meta.isSupported) handleRepairPlanChange(key, val) }}
+                            autoComplete="off"
+                            multiline={isMultilineKey("custom.generated_description", meta.control) ? 6 : 3}
+                            placeholder={meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing" ? "Blank" : (meta.fieldStatus === "Proposal not provided" ? "Not provided" : "")}
+                            disabled={!meta.isSupported}
+                            readOnly={!meta.isSupported}
+                        />
+                    </div>
+
+                    {meta.nativeDescConflictData && (
+                        <div style={{ marginTop: "12px", backgroundColor: "#f8d7da", border: "1px solid #f5c2c7", borderRadius: "8px", padding: "12px", minWidth: 0, boxSizing: "border-box" }}>
+                            <Text as="p" variant="headingSm" tone="critical" fontWeight="bold" style={{ marginBottom: "6px" }}>Read-Back Mismatch: Native product descriptionHtml</Text>
+                            <div style={{ display: "flex", flexDirection: "column", gap: "4px", minWidth: 0, wordBreak: "break-word", overflowWrap: "anywhere", fontSize: "13px", color: "#842029" }}>
+                                <div><strong>Status:</strong> {meta.fieldStatus} | <strong>Approved:</strong> {meta.isApproved ? "Yes" : "No"}</div>
+                                <div><strong>Expected Length:</strong> {String(meta.nativeDescConflictData.expected || "").length} chars | <strong>Actual Read-Back Length:</strong> {String(meta.nativeDescConflictData.actual || "").length} chars</div>
+                            </div>
+                        </div>
+                    )}
+
+                    {meta.conflictData && (
+                        <div style={{ marginTop: "12px", backgroundColor: "#f8d7da", border: "1px solid #f5c2c7", borderRadius: "8px", padding: "12px", minWidth: 0, boxSizing: "border-box" }}>
+                            <Text as="p" variant="headingSm" tone="critical" fontWeight="bold" style={{ marginBottom: "6px" }}>Read-Back Mismatch: custom.generated_description Metafield</Text>
+                            <div style={{ display: "flex", flexDirection: "column", gap: "4px", minWidth: 0, wordBreak: "break-word", overflowWrap: "anywhere", fontSize: "13px", color: "#842029" }}>
+                                <div><strong>Status:</strong> {customDescMeta.fieldStatus} | <strong>Approved:</strong> {meta.isApproved ? "Yes" : "No"}</div>
+                                <div><strong>Expected Length:</strong> {String(meta.conflictData.expected || "").length} chars | <strong>Actual Read-Back Length:</strong> {String(meta.conflictData.actual || "").length} chars</div>
+                            </div>
+                        </div>
+                    )}
+
+                    {canApprove && (
+                        <div style={{ marginTop: "12px", backgroundColor: boxBg, border: `1px solid ${boxBorder}`, borderRadius: "8px", padding: "12px", minWidth: 0, boxSizing: "border-box" }}>
+                            <div style={{ display: "flex", alignItems: "flex-start", gap: "12px", minWidth: 0, boxSizing: "border-box" }}>
+                                <input
+                                    type="checkbox"
+                                    id="approve-custom.generated_description"
+                                    checked={meta.isApproved || false}
+                                    onChange={(e) => handleToggleApproval(selectedBenchId, key, meta.propVal, e.target.checked)}
+                                    style={{ width: "24px", height: "24px", flexShrink: 0, cursor: "pointer", accentColor: textColor, marginTop: "2px" }}
+                                    aria-label={`Approve description proposal (${meta.propVal.length} characters)`}
+                                />
+                                <label htmlFor="approve-custom.generated_description" style={{ fontWeight: "bold", fontSize: "16px", cursor: "pointer", color: textColor, display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px", flex: 1, minWidth: 0, wordBreak: "break-word", overflowWrap: "anywhere" }}>
+                                    Approve description proposal <span style={{ fontWeight: "normal" }}>(Status: {meta.fieldStatus} | Approval: {meta.isApproved ? "Approved" : "Pending"} | Current: {meta.currentVal.length} chars → Proposed: {meta.propVal.length} chars)</span>
+                                </label>
+                            </div>
+                            <div style={{ marginTop: "8px", marginLeft: "36px", minWidth: 0, wordBreak: "break-word", overflowWrap: "anywhere" }}>
+                                <Text as="p" tone={(!meta.isApproved && meta.hasTechnicalBlock) || (meta.isApproved && meta.hasTechnicalBlock) ? "critical" : "subdued"} fontWeight="medium" style={{ color: textColor }}>
+                                    {statusText}
+                                </Text>
+                            </div>
+                        </div>
+                    )}
+
+                    {isPreApprovedDisplay && (
+                        <div style={{ marginTop: "12px", backgroundColor: boxBg, border: `1px solid ${boxBorder}`, borderRadius: "8px", padding: "12px", minWidth: 0, boxSizing: "border-box" }}>
+                            <div style={{ minWidth: 0, wordBreak: "break-word", overflowWrap: "anywhere" }}>
+                                <Text as="p" fontWeight="bold" style={{ color: textColor }}>
+                                    {meta.preApprovalReason}
+                                </Text>
+                                <Text as="p" tone={meta.hasTechnicalBlock ? "critical" : "subdued"} fontWeight="medium" style={{ color: textColor, marginTop: "4px" }}>
+                                    {statusText}
+                                </Text>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* APPROVAL DIAGNOSTIC BLOCK */}
+                    {(() => {
+                        const blockReason = !meta.proposalExists ? "No proposal" : (meta.currentVal === meta.propVal) ? "Values match" : meta.isManualOnly ? "Manual only" : meta.isContentPreApproved ? "Pre-approved" : (meta.fieldStatus === "API Error / Blocked") ? "API Blocked" : (meta.fieldStatus === "Save Conflict") ? "Save Conflict" : "None";
+                        return (
+                            <div style={{ marginTop: "12px", backgroundColor: "#000", border: "2px solid #0f0", borderRadius: "4px", padding: "10px", color: "#0f0", fontFamily: "monospace", fontSize: "11px", wordBreak: "break-all", userSelect: "all" }}>
+                                <strong style={{fontSize:"13px", color:"#fff"}}>APPROVAL DIAGNOSTIC</strong><br/>
+                                Key: custom.generated_description (Native Baseline: native_description) | ID: {selectedBenchId}<br/>
+                                fieldStatus: {meta.fieldStatus} | metafieldStatus: {customDescMeta.fieldStatus}<br/>
+                                proposalExists: {String(meta.proposalExists)} | isDiff: {String(meta.currentVal !== meta.propVal)}<br/>
+                                isManualOnly: {String(meta.isManualOnly)} | isContentPreApproved: {String(meta.isContentPreApproved)} | isApproved: {String(meta.isApproved)}<br/>
+                                hasTechnicalBlock: {String(meta.hasTechnicalBlock)} | apiBlockReason: {String(meta.reasons.some(r => r.includes("Backend Blocked")))}<br/>
+                                conflictData: {String(!!meta.conflictData)} | nativeDescConflictData: {String(!!meta.nativeDescConflictData)}<br/>
+                                canApprove: {String(canApprove)} | Blocker: {blockReason}<br/>
+                                Chars: NativeCurrent({meta.currentVal.length}) / MetafieldCurrent({customDescMeta.currentVal.length}) / Proposed({meta.propVal.length})
+                            </div>
+                        );
+                    })()}
+
+                </div>
+              </div>
+            </Box>
+          </div>
+        )}
+      </Card>
+    );
+  };
+
   const renderManifestTable = (section) => {
     const data = manifestData[selectedBenchId];
     if (!data) return null;
 
     const filteredKeys = section.keys.filter(k => {
       if (HIDDEN_CONTEXT_FIELDS.includes(k)) return false;
+      if (DESCRIPTION_REVIEW_EXCLUDED_KEYS.includes(k)) return false;
       
       if (activeFilter === "All") return true;
       const meta = getFieldMetadata(k, data, selectedBenchId, approvals, section.configFields);
@@ -1987,17 +2276,6 @@ export function OperationsMatrixTab({ products }) {
                             />
                         </div>
 
-                        {/* Separate display block for Native Description Conflict specifically on generated_description card */}
-                        {key === "custom.generated_description" && meta.nativeDescConflictData && (
-                            <div style={{ marginTop: "12px", backgroundColor: "#f8d7da", border: "1px solid #f5c2c7", borderRadius: "8px", padding: "12px", minWidth: 0, boxSizing: "border-box" }}>
-                                <Text as="p" variant="headingSm" tone="critical" fontWeight="bold" style={{ marginBottom: "6px" }}>Read-Back Mismatch: Native product descriptionHtml</Text>
-                                <div style={{ display: "flex", flexDirection: "column", gap: "8px", whiteSpace: "pre-wrap", minWidth: 0, wordBreak: "break-word", overflowWrap: "anywhere", fontSize: "13px", color: "#842029" }}>
-                                    <div><strong>Expected:</strong><br/>{meta.nativeDescConflictData.expected}</div>
-                                    <div style={{ borderTop: "1px dashed #f5c2c7", paddingTop: "8px" }}><strong>Actual:</strong><br/>{meta.nativeDescConflictData.actual}</div>
-                                </div>
-                            </div>
-                        )}
-
                         {/* Standard Metafield Conflict Display */}
                         {meta.conflictData && (
                             <div style={{ marginTop: "12px", backgroundColor: "#f8d7da", border: "1px solid #f5c2c7", borderRadius: "8px", padding: "12px", minWidth: 0, boxSizing: "border-box" }}>
@@ -2046,7 +2324,7 @@ export function OperationsMatrixTab({ products }) {
                         )}
 
                         {/* APPROVAL DIAGNOSTIC BLOCK */}
-                        {["custom.generated_description", "custom.origin_location", "custom.collection_name", "custom.collection_location"].includes(key) && (() => {
+                        {["custom.origin_location", "custom.collection_name", "custom.collection_location"].includes(key) && (() => {
                             const blockReason = !meta.proposalExists ? "No proposal" : (meta.currentVal === meta.propVal) ? "Values match" : meta.isManualOnly ? "Manual only" : meta.isContentPreApproved ? "Pre-approved" : (meta.fieldStatus === "API Error / Blocked") ? "API Blocked" : (meta.fieldStatus === "Save Conflict") ? "Save Conflict" : "None";
                             return (
                                 <div style={{ marginTop: "12px", backgroundColor: "#000", border: "2px solid #0f0", borderRadius: "4px", padding: "10px", color: "#0f0", fontFamily: "monospace", fontSize: "11px", wordBreak: "break-all", userSelect: "all" }}>
@@ -2312,6 +2590,8 @@ export function OperationsMatrixTab({ products }) {
                         />
                     </InlineStack>
                 </Card>
+
+                {renderDescriptionReviewSection(dynamicSections)}
 
                 {dynamicSections.map(sec => renderManifestTable(sec))}
                 
