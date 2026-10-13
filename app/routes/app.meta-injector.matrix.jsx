@@ -77,6 +77,96 @@ const RETIRED_KEYS = [
   "custom.cut_and_shape", "custom.stone_shape", "custom.wire_material", "custom.primary_use"
 ];
 
+const ALLOWED_VISION_CANDIDATE_KEYS = [
+  "chain-link-type",
+  "construction",
+  "jewelry-finding-type",
+  "material-origin",
+  "product-classification",
+  "product-use"
+];
+
+const isGeneratedReferenceId = (val) => {
+  if (typeof val !== "string") return true;
+  const trimmed = val.trim();
+  if (!trimmed) return true;
+  if (/^gid:\/\/shopify\//i.test(trimmed)) return true;
+  if (/^shopify:\/\/metaobject/i.test(trimmed)) return true;
+  if (/^metaobject[:/]/i.test(trimmed)) return true;
+  if (/^[0-9]+$/.test(trimmed)) return true;
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(trimmed)) return true;
+  if (trimmed === "[object Object]") return true;
+  return false;
+};
+
+const sanitizeStandardizedCandidates = (rawContainer) => {
+  const sanitized = {};
+  if (!rawContainer || typeof rawContainer !== "object" || Array.isArray(rawContainer)) {
+    return sanitized;
+  }
+
+  ALLOWED_VISION_CANDIDATE_KEYS.forEach((allowedKey) => {
+    const entry = rawContainer[allowedKey] ?? rawContainer[`shopify.${allowedKey}`];
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return;
+
+    const rawLabels = Array.isArray(entry.labels) ? entry.labels : [];
+    const validLabels = rawLabels
+      .filter((lbl) => typeof lbl === "string")
+      .map((lbl) => lbl.trim())
+      .filter((lbl) => lbl.length > 0 && !isGeneratedReferenceId(lbl));
+
+    const validEvidence =
+      typeof entry.evidence === "string" && entry.evidence.trim() !== "[object Object]"
+        ? entry.evidence.trim()
+        : "";
+
+    if (validLabels.length > 0 && validEvidence.length > 0) {
+      sanitized[allowedKey] = {
+        labels: validLabels,
+        evidence: validEvidence
+      };
+    }
+  });
+
+  return sanitized;
+};
+
+const serializeStandardizedAssignmentForVision = (rawVal) => {
+  if (rawVal === undefined || rawVal === null) return "";
+  if (Array.isArray(rawVal)) {
+    const cleaned = rawVal
+      .map((item) => {
+        if (typeof item === "string") return item.trim();
+        if (item && typeof item === "object") {
+          const id = item.id || item.gid || item.value;
+          return typeof id === "string" ? id.trim() : "";
+        }
+        return "";
+      })
+      .filter(Boolean);
+    return cleaned.length > 0 ? JSON.stringify(cleaned) : "";
+  }
+  if (typeof rawVal === "string") {
+    const trimmed = rawVal.trim();
+    if (!trimmed || trimmed === "[]" || trimmed === "{}" || trimmed === "[object Object]") return "";
+    if (trimmed.startsWith("[")) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) {
+          const cleaned = parsed
+            .map((item) => (typeof item === "string" ? item.trim() : ""))
+            .filter(Boolean);
+          return cleaned.length > 0 ? JSON.stringify(cleaned) : "";
+        }
+      } catch (e) {
+        return trimmed;
+      }
+    }
+    return trimmed;
+  }
+  return "";
+};
+
 const formatLabel = (key) => {
   const parts = key.split('.');
   const name = parts[parts.length - 1];
@@ -214,6 +304,7 @@ export function OperationsMatrixTab({ products }) {
   
   const [pendingOperation, setPendingOperation] = useState(null); // { id, intent, token }
   const [aiData, setAiData] = useState({}); // Indexed by pieceId to isolate cross-contamination
+  const [standardizedCandidatesByProduct, setStandardizedCandidatesByProduct] = useState({});
 
   const [queueIds, setQueueIds] = useState([]);
   const [productStates, setProductStates] = useState({}); 
@@ -303,6 +394,7 @@ export function OperationsMatrixTab({ products }) {
     setExecuteIndex(0);
     setAiStep(0);
     setAiData({});
+    setStandardizedCandidatesByProduct({});
     setLoadIndex(0);
     setLastProcessedData(null);
     setPendingOperation(null);
@@ -325,6 +417,7 @@ export function OperationsMatrixTab({ products }) {
 
   const handleToggleApproval = useCallback((pieceId, key, propVal, isChecked) => {
     const targetKey = NATIVE_ALIAS_MAP[key] || key;
+    if (targetKey === "standardized_candidates" || targetKey === "custom.standardized_candidates") return;
     const allConfigFields = PRODUCT_TEMPLATE_GROUPS.flatMap(g => g.fields || []);
     const matchedConfig = allConfigFields.find(f => resolveConfigFieldDestination(f) === targetKey || resolveConfigFieldDestination(f) === key);
     if (matchedConfig?.mappingStatus === "pending_read_only") return;
@@ -415,7 +508,7 @@ export function OperationsMatrixTab({ products }) {
     let isProposed = false;
     let propVal = "";
 
-    if (data.repairPlan !== undefined) {
+    if (data.repairPlan !== undefined && !isPendingReadOnly && !isStandardizedAttribute) {
         if (data.repairPlan.hasOwnProperty(targetKeyForProposal)) {
             isProposed = true;
             const rawProp = data.repairPlan[targetKeyForProposal];
@@ -656,6 +749,8 @@ export function OperationsMatrixTab({ products }) {
 
     const isActualBlockedProposal = isBlockedAction && 
                                     !isManualOnly && 
+                                    !isPendingReadOnly &&
+                                    !isStandardizedAttribute &&
                                     !HIDDEN_CONTEXT_FIELDS.includes(key) && 
                                     proposalExists && 
                                     currentVal !== propVal;
@@ -668,6 +763,7 @@ export function OperationsMatrixTab({ products }) {
       isSupported: isKnownKey,
       isPendingReadOnly,
       isStandardizedAttribute,
+      metaKey: templateConfig?.metaKey || (key.startsWith("shopify.") ? key.slice(8) : ""),
       label: templateConfig?.label || formatLabel(key),
       control: templateConfig?.control
     };
@@ -683,7 +779,8 @@ export function OperationsMatrixTab({ products }) {
     Object.keys(manifest.repairPlan).forEach(key => {
         if (key.startsWith("native_image_alts_")) return; 
         if (key === "native_seo_description") return;
-        if (key.startsWith("custom.std_") || key.startsWith("std_")) return;
+        if (key === "standardized_candidates" || key === "custom.standardized_candidates") return;
+        if (key.startsWith("custom.std_") || key.startsWith("std_") || key.startsWith("shopify.")) return;
         
         const meta = getFieldMetadata(key, manifest, currentId, currentApprovals, allConfigFields);
         if (meta.isPendingReadOnly || meta.isStandardizedAttribute) return;
@@ -917,6 +1014,18 @@ export function OperationsMatrixTab({ products }) {
         fd.append("weight_grams", manifest.currentMetafields["custom.weight_grams"] || "");
         fd.append("dimensions_mm", manifest.currentMetafields["custom.dimensions_mm"] || "");
 
+        const allConfigFields = PRODUCT_TEMPLATE_GROUPS.flatMap(g => g.fields || []);
+        allConfigFields.forEach(f => {
+            if (f.role === "standardized_attribute" && f.namespace === "shopify" && f.metaKey) {
+                const stdKey = `shopify.${f.metaKey}`;
+                const rawStdVal = manifest.currentMetafields?.[stdKey];
+                const serializedStd = serializeStandardizedAssignmentForVision(rawStdVal);
+                if (serializedStd !== "") {
+                    fd.set(stdKey, serializedStd);
+                }
+            }
+        });
+
         const hardwareKeys = [
             "bail_included", "secondary_medium", "jewelry_finding_type",
             "primary_use", "jewelry_type", "setting_ready",
@@ -953,10 +1062,11 @@ export function OperationsMatrixTab({ products }) {
         const descriptionFacts = {};
         const mergeDescriptionFacts = (source) => {
             Object.entries(source || {}).forEach(([key, value]) => {
+                if (key === "standardized_candidates" || key === "custom.standardized_candidates") return;
                 if (key.includes(".") && !key.startsWith("custom.")) return;
                 const factKey = key.startsWith("custom.") ? key.slice(7) : key;
-                if (["intent", "success", "error", "errors", "logs", "debug_origin"].includes(factKey)) return;
-                if (value !== undefined && value !== null && String(value).trim() !== "") {
+                if (["intent", "success", "error", "errors", "logs", "debug_origin", "standardized_candidates"].includes(factKey)) return;
+                if (value !== undefined && value !== null && typeof value !== "object" && String(value).trim() !== "") {
                     descriptionFacts[factKey] = value;
                 }
             });
@@ -967,14 +1077,14 @@ export function OperationsMatrixTab({ products }) {
         mergeDescriptionFacts(pieceAi.tab3Data);
 
         Object.entries(manualEdits[currentId] || {}).forEach(([key, edited]) => {
-            if (edited === true && key.startsWith("custom.") &&
+            if (edited === true && key.startsWith("custom.") && key !== "custom.standardized_candidates" &&
                 manifest.repairPlan?.[key] !== undefined) {
                 descriptionFacts[key.slice(7)] = manifest.repairPlan[key];
             }
         });
 
         Object.entries(approvals[currentId] || {}).forEach(([key, value]) => {
-            if (key.startsWith("custom.") && manualEdits[currentId]?.[key] !== true) {
+            if (key.startsWith("custom.") && key !== "custom.standardized_candidates" && manualEdits[currentId]?.[key] !== true) {
                 descriptionFacts[key.slice(7)] = value;
             }
         });
@@ -1032,6 +1142,7 @@ export function OperationsMatrixTab({ products }) {
 
       const {
           message, error, errors, logs, status, finalStatus, titleParse, tab3Data, generated_description, fieldsUpdated, legacyKeysRemoved, verifiedGeoValues, readBackVerified, proposedChanges, variantTarget, imageAlts, altValidationErrors,
+          standardized_candidates: topLevelStdCandidates,
           unsupportedKeys: rawUnsupportedKeys,
           attemptedDestinations: rawAttemptedDestinations,
           verifiedDestinations: rawVerifiedDestinations,
@@ -1076,10 +1187,14 @@ export function OperationsMatrixTab({ products }) {
 
             setManifestData(prev => {
                 const prevDiag = prev[targetId]?.diagnostics || {};
+                const cleanedRepairPlan = { ...(data.repairPlan || {}) };
+                delete cleanedRepairPlan.standardized_candidates;
+                delete cleanedRepairPlan["custom.standardized_candidates"];
                 return {
                     ...prev,
                     [targetId]: {
                         ...data,
+                        repairPlan: cleanedRepairPlan,
                         diagnostics: {
                             shopifyRead: success ? "Success" : "Failed",
                             gemini: prevDiag.gemini === "Success" ? "Success" : "Not called",
@@ -1218,11 +1333,26 @@ export function OperationsMatrixTab({ products }) {
                   setAiData(prev => ({ ...prev, [targetId]: { ...prev[targetId], titleParse } }));
               } 
               else if (intent === "tab3FullRescan") {
+                  const rawCandidatesSource =
+                      (tab3Data && typeof tab3Data === "object" && tab3Data.standardized_candidates !== undefined)
+                          ? tab3Data.standardized_candidates
+                          : topLevelStdCandidates;
+                  const validatedCandidates = sanitizeStandardizedCandidates(rawCandidatesSource);
+
+                  setStandardizedCandidatesByProduct(prev => ({
+                      ...prev,
+                      [targetId]: validatedCandidates
+                  }));
+
+                  const cleanedTab3Data = validObj(tab3Data) ? { ...tab3Data } : {};
+                  delete cleanedTab3Data.standardized_candidates;
+                  delete cleanedTab3Data["custom.standardized_candidates"];
+
                   setAiData(prev => ({ 
                       ...prev, 
                       [targetId]: { 
                           ...prev[targetId], 
-                          tab3Data, 
+                          tab3Data: cleanedTab3Data, 
                           verifiedGeoValues,
                           imageAlts,
                           altValidationErrors 
@@ -1236,6 +1366,8 @@ export function OperationsMatrixTab({ products }) {
                           const existing = prevMan[targetId];
                           if (!existing) return prevMan;
                           const newPlan = { ...existing.repairPlan };
+                          delete newPlan.standardized_candidates;
+                          delete newPlan["custom.standardized_candidates"];
                           const diagnostics = { ...(existing.diagnostics || {}) };
                           
                           const titleData = updatedPieceAi.titleParse || {};
@@ -1259,6 +1391,7 @@ export function OperationsMatrixTab({ products }) {
 
                           const safeApply = (keyName, aiValue) => {
                               const targetKey = NATIVE_ALIAS_MAP[keyName] || keyName;
+                              if (targetKey === "standardized_candidates" || targetKey === "custom.standardized_candidates") return;
                               if (RETIRED_KEYS.includes(targetKey)) return; 
                               if (targetKey.startsWith("custom.std_") || targetKey.startsWith("std_") || targetKey.startsWith("shopify.")) return;
                               const matchedConfig = allConfigFields.find(f => resolveConfigFieldDestination(f) === targetKey || f.key === targetKey);
@@ -1268,14 +1401,14 @@ export function OperationsMatrixTab({ products }) {
                           };
 
                           Object.keys(visionData).forEach(k => {
-                              if (k !== "generated_description" && k !== "pieceId" && k !== "debug_origin" && k !== "intent" && k !== "success" && k !== "origin_story") {
+                              if (k !== "generated_description" && k !== "pieceId" && k !== "debug_origin" && k !== "intent" && k !== "success" && k !== "origin_story" && k !== "standardized_candidates" && k !== "custom.standardized_candidates") {
                                   if (k.startsWith("std_") || k.startsWith("custom.std_") || k.startsWith("shopify.")) return;
                                   safeApply(NATIVE_FIELDS.includes(k) || k.includes('.') || k.startsWith('native_') ? k : `custom.${k}`, visionData[k]);
                               }
                           });
                           
                           Object.keys(titleData).forEach(k => {
-                              if (k !== "pieceId" && k !== "intent" && k !== "success" && k !== "geoSource" && k !== "origin_story") {
+                              if (k !== "pieceId" && k !== "intent" && k !== "success" && k !== "geoSource" && k !== "origin_story" && k !== "standardized_candidates" && k !== "custom.standardized_candidates") {
                                   if (k.startsWith("std_") || k.startsWith("custom.std_") || k.startsWith("shopify.")) return;
                                   const targetKey = NATIVE_FIELDS.includes(k) || k.includes('.') || k.startsWith('native_') ? k : `custom.${k}`;
                                   const bareKey = targetKey.startsWith("custom.") ? targetKey.slice(7) : k;
@@ -1351,6 +1484,7 @@ export function OperationsMatrixTab({ products }) {
   const handleRepairPlanChange = (key, value) => {
     if (!selectedBenchId) return;
     const targetKey = NATIVE_ALIAS_MAP[key] || key;
+    if (targetKey === "standardized_candidates" || targetKey === "custom.standardized_candidates") return;
     const allConfigFields = PRODUCT_TEMPLATE_GROUPS.flatMap(g => g.fields || []);
     const matchedConfig = allConfigFields.find(f => resolveConfigFieldDestination(f) === targetKey || resolveConfigFieldDestination(f) === key);
     if (matchedConfig?.mappingStatus === "pending_read_only") return;
@@ -1545,11 +1679,11 @@ export function OperationsMatrixTab({ products }) {
 
             if (meta.isManualOnly) stats.manualOnly++;
 
-            if (meta.fieldStatus === "Proposed" || meta.fieldStatus === "Approved, not saved" || meta.fieldStatus === "Approved, blocked" || meta.fieldStatus === "Pre-approved, not saved" || meta.fieldStatus === "Pre-approved, blocked") stats.proposed++;
+            if (!meta.isPendingReadOnly && !meta.isStandardizedAttribute && (meta.fieldStatus === "Proposed" || meta.fieldStatus === "Approved, not saved" || meta.fieldStatus === "Approved, blocked" || meta.fieldStatus === "Pre-approved, not saved" || meta.fieldStatus === "Pre-approved, blocked")) stats.proposed++;
             
             if (meta.isActualBlockedProposal) {
                 stats.blocked++;
-            } else if (meta.isBlockedAction && !HIDDEN_CONTEXT_FIELDS.includes(k) && !meta.isManualOnly && meta.proposalExists && meta.currentVal === meta.propVal) {
+            } else if (meta.isBlockedAction && !HIDDEN_CONTEXT_FIELDS.includes(k) && !meta.isManualOnly && !meta.isPendingReadOnly && !meta.isStandardizedAttribute && meta.proposalExists && meta.currentVal === meta.propVal) {
                 stats.unchangedFlagged++;
             }
 
@@ -1575,7 +1709,7 @@ export function OperationsMatrixTab({ products }) {
             if (meta.fieldStatus === "Unverified proposal") stats.unverified++;
             if (meta.fieldStatus === "Optional blank") stats.optionalBlanks++;
             if (meta.fieldStatus === "Required missing") stats.requiredMissing++;
-            if ((meta.fieldStatus === "Proposed" || meta.fieldStatus === "Approved, not saved" || meta.fieldStatus === "Pre-approved, not saved") && !meta.isBlockedAction && !meta.isPendingReadOnly && !HIDDEN_CONTEXT_FIELDS.includes(k)) stats.approvedWrite++;
+            if ((meta.fieldStatus === "Proposed" || meta.fieldStatus === "Approved, not saved" || meta.fieldStatus === "Pre-approved, not saved") && !meta.isBlockedAction && !meta.isPendingReadOnly && !meta.isStandardizedAttribute && !HIDDEN_CONTEXT_FIELDS.includes(k)) stats.approvedWrite++;
         });
     });
 
@@ -1648,7 +1782,7 @@ export function OperationsMatrixTab({ products }) {
               
               if (meta.currentExists) stats.loaded++;
               if (meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing") stats.blank++;
-              if (meta.fieldStatus === "Proposed" || meta.fieldStatus === "Approved, not saved" || meta.fieldStatus === "Approved, blocked" || meta.fieldStatus === "Pre-approved, not saved" || meta.fieldStatus === "Pre-approved, blocked") stats.proposed++;
+              if (!meta.isPendingReadOnly && !meta.isStandardizedAttribute && (meta.fieldStatus === "Proposed" || meta.fieldStatus === "Approved, not saved" || meta.fieldStatus === "Approved, blocked" || meta.fieldStatus === "Pre-approved, not saved" || meta.fieldStatus === "Pre-approved, blocked")) stats.proposed++;
               if (meta.isBlockedAction && !HIDDEN_CONTEXT_FIELDS.includes(key)) stats.blocked++;
               if (PROTECTED_FIELDS.includes(key) || meta.isOperatorOwned) stats.protected++;
               if (meta.fieldStatus === "Conflict" || meta.fieldStatus === "Degrade" || meta.fieldStatus === "Save Conflict") stats.conflicting++;
@@ -2304,6 +2438,11 @@ export function OperationsMatrixTab({ products }) {
               const displayCurrentVal = formatDisplayFieldValue(meta.currentVal, meta.isStandardizedAttribute, data);
               const displayPropVal = formatDisplayFieldValue(meta.propVal, meta.isStandardizedAttribute, data);
 
+              const candidateMetaKey = meta.metaKey || (key.startsWith("shopify.") ? key.slice(8) : "");
+              const isVisionCandidateRow = meta.isStandardizedAttribute && ALLOWED_VISION_CANDIDATE_KEYS.includes(candidateMetaKey);
+              const productVisionCandidates = standardizedCandidatesByProduct[selectedBenchId] || {};
+              const visionCandidateEntry = isVisionCandidateRow ? productVisionCandidates[candidateMetaKey] : null;
+
               return (
                 <Box key={key} padding="300" background={isBlank && meta.isSupported ? "bg-surface-warning" : "bg-surface"} borderColor="border" borderWidth="1" borderRadius="200">
                   <div style={{ display: "flex", flexWrap: "wrap", gap: "20px", boxSizing: "border-box", minWidth: 0 }}>
@@ -2356,11 +2495,41 @@ export function OperationsMatrixTab({ products }) {
                                 onChange={(val) => { if (meta.isSupported && !meta.isPendingReadOnly) handleRepairPlanChange(key, val) }}
                                 autoComplete="off"
                                 multiline={isMultilineKey(key, meta.control) ? 3 : undefined}
-                                placeholder={meta. isPendingReadOnly ? "Read-only standardized attribute (writes disabled)" : (meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing" ? "Blank" : (meta.fieldStatus === "Proposal not provided" ? "Not provided" : ""))}
+                                placeholder={meta.isPendingReadOnly ? "Read-only standardized attribute (writes disabled)" : (meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing" ? "Blank" : (meta.fieldStatus === "Proposal not provided" ? "Not provided" : ""))}
                                 disabled={!meta.isSupported || meta.isPendingReadOnly}
                                 readOnly={!meta.isSupported || meta.isPendingReadOnly}
                             />
                         </div>
+
+                        {isVisionCandidateRow && (
+                            <div style={{ padding: "12px", backgroundColor: "#eef2ff", borderRadius: "8px", border: "1px solid #c7d2fe", minWidth: 0, wordBreak: "break-word", overflowWrap: "anywhere", boxSizing: "border-box" }}>
+                                <Text as="p" variant="headingSm" fontWeight="bold" style={{ marginBottom: "6px", color: "#1e3a8a" }}>
+                                    Vision Standardized Candidate ({candidateMetaKey})
+                                </Text>
+                                {visionCandidateEntry && Array.isArray(visionCandidateEntry.labels) && visionCandidateEntry.labels.length > 0 ? (
+                                    <BlockStack gap="100">
+                                        <Text as="p" variant="bodyMd">
+                                            <strong>Candidate Labels:</strong> {visionCandidateEntry.labels.join(", ")}
+                                        </Text>
+                                        <Text as="p" variant="bodySm">
+                                            <strong>Evidence:</strong> {visionCandidateEntry.evidence}
+                                        </Text>
+                                        <Text as="p" variant="bodySm" tone="subdued" fontWeight="medium">
+                                            Reference matching pending. Writes disabled.
+                                        </Text>
+                                    </BlockStack>
+                                ) : (
+                                    <BlockStack gap="100">
+                                        <Text as="p" variant="bodySm" tone="subdued">
+                                            No supported Vision candidate returned.
+                                        </Text>
+                                        <Text as="p" variant="bodySm" tone="subdued" fontWeight="medium">
+                                            Reference matching pending. Writes disabled.
+                                        </Text>
+                                    </BlockStack>
+                                )}
+                            </div>
+                        )}
 
                         {/* Standard Metafield Conflict Display */}
                         {meta.conflictData && (
