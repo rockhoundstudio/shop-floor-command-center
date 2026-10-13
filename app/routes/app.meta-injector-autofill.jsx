@@ -280,6 +280,123 @@ async function getGeoData(admin, stoneFamily) {
   return emptyGeo;
 }
 
+const ALLOWED_STANDARDIZED_CANDIDATE_KEYS = [
+  "chain-link-type",
+  "construction",
+  "jewelry-finding-type",
+  "material-origin",
+  "product-classification",
+  "product-use"
+];
+
+const INVALID_CANDIDATE_FILLERS = new Set(["none", "unknown", "n/a", "null", "undefined", "tbd", "not applicable"]);
+
+function sanitizeCandidateString(str) {
+  if (typeof str !== "string") return "";
+  if (str.includes("See Shopify")) return "";
+  return str.replace(/Ã¢â‚¬"/g, "—").replace(/â€”/g, "—").trim();
+}
+
+function isCleanCandidateLabel(label) {
+  if (typeof label !== "string") return false;
+  const cleaned = sanitizeCandidateString(label);
+  if (!cleaned) return false;
+  if (INVALID_CANDIDATE_FILLERS.has(cleaned.toLowerCase())) return false;
+  if (/^gid:\/\/shopify\//i.test(cleaned)) return false;
+  if (/metaobject/i.test(cleaned) && /\d/.test(cleaned)) return false;
+  return true;
+}
+
+function validateStandardizedCandidates(rawCandidates, currentData = {}) {
+  const result = {};
+
+  let sourceObj = rawCandidates;
+  if (typeof sourceObj === "string") {
+    try {
+      sourceObj = JSON.parse(sourceObj);
+    } catch (e) {
+      sourceObj = null;
+    }
+  }
+
+  let explicitCorrections = null;
+  if (currentData && currentData.standardized_candidates) {
+    if (typeof currentData.standardized_candidates === "string") {
+      try {
+        explicitCorrections = JSON.parse(currentData.standardized_candidates);
+      } catch (e) {
+        explicitCorrections = null;
+      }
+    } else if (typeof currentData.standardized_candidates === "object") {
+      explicitCorrections = currentData.standardized_candidates;
+    }
+  }
+
+  for (const attrKey of ALLOWED_STANDARDIZED_CANDIDATE_KEYS) {
+    const underscoreKey = attrKey.replace(/-/g, "_");
+    const existingStdVal =
+      currentData?.[`shopify.${attrKey}`] ??
+      currentData?.[`std_${underscoreKey}`];
+
+    let hasExistingAssignment = false;
+    if (existingStdVal !== undefined && existingStdVal !== null) {
+      const strVal = String(existingStdVal).trim();
+      if (strVal !== "" && strVal !== "[]" && !INVALID_CANDIDATE_FILLERS.has(strVal.toLowerCase())) {
+        hasExistingAssignment = true;
+      }
+    }
+
+    const explicitEntry =
+      explicitCorrections?.[attrKey] ??
+      currentData?.[`candidate_${attrKey}`] ??
+      currentData?.[`candidate_${underscoreKey}`];
+
+    if (hasExistingAssignment && !explicitEntry) {
+      continue;
+    }
+
+    const entryToValidate = explicitEntry !== undefined ? explicitEntry : sourceObj?.[attrKey];
+    if (!entryToValidate) continue;
+
+    let labels = [];
+    let evidence = "";
+
+    if (typeof entryToValidate === "string") {
+      const cleaned = sanitizeCandidateString(entryToValidate);
+      if (isCleanCandidateLabel(cleaned)) {
+        labels = [cleaned];
+        evidence = "Explicitly supplied operator candidate correction.";
+      }
+    } else if (typeof entryToValidate === "object" && !Array.isArray(entryToValidate)) {
+      if (Array.isArray(entryToValidate.labels)) {
+        labels = entryToValidate.labels
+          .map(sanitizeCandidateString)
+          .filter(isCleanCandidateLabel);
+      }
+      if (typeof entryToValidate.evidence === "string") {
+        evidence = sanitizeCandidateString(entryToValidate.evidence);
+      }
+    }
+
+    if (attrKey === "chain-link-type") {
+      const chainMat = String(currentData?.chain_material || "").toLowerCase();
+      const chainLink = String(currentData?.chain_link_type || "").toLowerCase();
+      if (chainMat === "cord" || chainLink === "cord") {
+        labels = labels.filter(l => !/snake\s*chain/i.test(l));
+      }
+    }
+
+    if (labels.length > 0 && evidence.length > 0 && !/^gid:\/\/shopify\//i.test(evidence)) {
+      result[attrKey] = {
+        labels: Array.from(new Set(labels)),
+        evidence
+      };
+    }
+  }
+
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
 function sanitizeObject(obj) {
   if (!obj) return obj;
   for (let key in obj) {
@@ -339,11 +456,37 @@ function getDerivedMaterial(stoneFam) {
 const getSharedFactualContract = () => `
 --- SHARED FACTUAL CONTRACT ---
 1. PRIORITY: Explicit operator corrections > established product facts > resolved origin/collection source context > supported visible observations.
-2. UNKNOWN FACTS: Unknown facts MUST remain omitted. Do NOT invent defaults.
+​2. UNKNOWN FACTS: Unknown facts MUST remain omitted. Do NOT invent defaults.
 3. NO VISUAL INFERENCE: Do not infer treatment, provenance, authenticity, plating, or mineral rarity from appearance alone.
 4. SUPPORTED VOCABULARY: Do not force an unsupported title into a guessed "closest" mineral. Ensure chosen facts match the supported definitions.
 5. HARDWARE & CONSTRUCTION: Preserve existing hardware inventory choices and supplied construction details. Do not replace them with a newly invented dictionary.
 -------------------------------
+`;
+
+const getStandardizedCandidatesInstructions = () => `
+STANDARDIZED ATTRIBUTE REVIEW CANDIDATES (standardized_candidates):
+Also return a separate top-level JSON object key named "standardized_candidates" evaluating ONLY these six hyphenated keys when supported by evidence:
+- "chain-link-type": Distinguish cord from linked metal chain. Never turn Cord into Snake Chain.
+- "construction": Describe supported assembly/lapidary/setting work only.
+- "jewelry-finding-type": Use supplied bail/setting facts. Do not infer hidden hardware.
+- "material-origin": Natural versus manufactured material evidence ONLY. Do NOT use geographic collecting location and do NOT equate geographic origin with material-origin.
+- "product-classification": Supported physical product form/classification only, NOT Google product category or an invented taxonomy ID.
+- "product-use": Derive ONLY from supplied intended-use facts.
+
+Format for each supported key inside "standardized_candidates":
+{
+  "labels": ["plain evidence-supported candidate"],
+  "evidence": "short explanation referencing supplied facts"
+}
+
+STRICT RULES FOR standardized_candidates:
+- Review candidates ONLY. Do NOT output shopify.* keys or custom.std_* keys. Do NOT claim candidates are accepted Shopify vocabulary.
+- Priority: Explicit operator facts > stored facts > permitted image observations.
+- Preserve existing nonblank standardized assignments: if current standardized data is already supplied for an attribute, omit that key unless an explicit correction requests a replacement.
+- Omit any of the six keys that lack clear factual/visual support.
+- Never output empty arrays, "None", "Unknown", "N/A", guessed GIDs, or definition IDs.
+- Do not infer hidden hardware or undisclosed treatment.
+- Preserve existing legacy keys (chain_link_type, jewelry_finding_type, primary_use, etc.) alongside standardized_candidates.
 `;
 
 // ==========================================
@@ -507,6 +650,7 @@ REQUIRED JSON KEYS:
 - alt_text: Descriptive, max 125 chars.
 - found_object: Yes/No
 - seo_title: Max 70 chars. Natural, descriptive wording based on supported facts. No generic guessing. Include "Handcrafted" only when supported.
+- standardized_candidates: Object containing supported review candidates among ["chain-link-type", "construction", "jewelry-finding-type", "material-origin", "product-classification", "product-use"].
 - generated_description: Write in Bob's plain, honest voice (past tense). No salesy language, poetic geology, or grand claims. Short sentences. 7-BLOCK FORMAT:
   1. Stone Description: Honest flaws, finish, flash. Lead with specific observations.
   2. Origin Hook: Select the source episode matching "${stoneFamily}". Aim for 2-4 short sentences containing the relevant setup and outcome. Tease the story; do not retell the whole page.
@@ -516,6 +660,8 @@ REQUIRED JSON KEYS:
   6. Ready to Wear: State if set or loose.
   7. Dwell Buttons:
 ${dwellButtonsHTML}
+
+${getStandardizedCandidatesInstructions()}
 
 FULL ORIGIN STORY (CRITICAL LORE FIREWALL - READ carefully):
 ${originStory}
@@ -550,7 +696,7 @@ ${currentDataStr || "- No explicit data provided."}
 
 CRITICAL RULES FOR TAB 3:
 1. Explicit operator-provided corrections take priority over image inference and stale product data.
-2. If no explicit correction is supplied, preserve a nonblank current value exactly. Preserve finding details exactly.
+​2. If no explicit correction is supplied, preserve a nonblank current value exactly. Preserve finding details exactly.
 3. Never generate or propose a shopify_title or price. These are manual.
 4. Do not infer jewelry, chain material, cord, bail, wire wrapping, or readiness from an image when the source data doesn't explicitly establish it. Leave uncertain values unresolved.
 5. Treat origin_story as hidden, read-only context from the existing origin page. Do not generate or save an origin story. Use the page only for supported metadata.
@@ -599,7 +745,10 @@ Potential JSON Keys to evaluate and propose if blank:
 - google_product_category
 - authenticity
 - rarity
+- standardized_candidates: Object containing supported review candidates among ["chain-link-type", "construction", "jewelry-finding-type", "material-origin", "product-classification", "product-use"].
 ${imageAltInstructions}
+
+${getStandardizedCandidatesInstructions()}
 
 FULL ORIGIN STORY (CRITICAL LORE FIREWALL - READ CAREFULLY):
 ${originStory}
@@ -650,7 +799,7 @@ COLLECTIONS: ${collectionsList.map(c => c.handle).join(", ")}
 
 INSTRUCTIONS:
 1. Keep title parsing focused on identity. SEO must use supported facts and must not compete with later factual SEO generation.
-2. Origin ("${segment2}") is the AUTHORITY. Set 'origin_location' to the clean geographic name. Match 'collection_name' and 'collection_location' to the live store entry.
+​2. Origin ("${segment2}") is the AUTHORITY. Set 'origin_location' to the clean geographic name. Match 'collection_name' and 'collection_location' to the live store entry.
 3. 'stone_family' must match an entry exactly from the supported list: ${validFamilies.join(", ")}. Do not force unsupported titles into guessed minerals.
 
 Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_location, collection_name, collection_location, seo_title.
@@ -740,6 +889,23 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
         let cleanJson = (data.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
         const parsedVision = JSON.parse(cleanJson.slice(cleanJson.indexOf("{"), cleanJson.lastIndexOf("}") + 1));
         
+        const currentInputFacts = Object.fromEntries(
+          Array.from(body.entries())
+            .filter(([key, value]) => value && typeof value === "string" && value.trim() !== "" && !["intent", "pieceId", "productId", "productTitle", "imageBase64", "imageMimeType", "imageUrl", "mediaInputs"].includes(key))
+            .map(([k, v]) => [k, v.trim()])
+        );
+        const validatedCandidates = validateStandardizedCandidates(parsedVision.standardized_candidates, {
+          ...parsedVision,
+          ...currentInputFacts
+        });
+        delete parsedVision.standardized_candidates;
+        ALLOWED_STANDARDIZED_CANDIDATE_KEYS.forEach(k => {
+          delete parsedVision[k];
+          delete parsedVision[`shopify.${k}`];
+          delete parsedVision[`std_${k.replace(/-/g, "_")}`];
+          delete parsedVision[`custom.std_${k.replace(/-/g, "_")}`];
+        });
+
         parsedVision.generated_description = formatDyslexiaText(parsedVision.generated_description);
         
         const payload = sanitizeObject({
@@ -755,7 +921,16 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
           is_ooak: "Yes", age_group: "adult", target_gender: "Unisex", condition: "new",
           google_product_category: "Apparel & Accessories > Jewelry"
         });
-        return Response.json({ success: true, intent, pieceId, tab2Data: payload });
+        if (validatedCandidates) {
+          payload.standardized_candidates = validatedCandidates;
+        }
+        return Response.json({
+          success: true,
+          intent,
+          pieceId,
+          tab2Data: payload,
+          ...(validatedCandidates ? { standardized_candidates: validatedCandidates } : {})
+        });
       }
       return Response.json({ success: false, intent, pieceId, error: "Vision API Failure" });
     }
@@ -904,6 +1079,18 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
           }
         });
 
+        const validatedCandidates = validateStandardizedCandidates(parsedVision.standardized_candidates, {
+          ...parsedVision,
+          ...currentData
+        });
+        delete parsedVision.standardized_candidates;
+        ALLOWED_STANDARDIZED_CANDIDATE_KEYS.forEach(k => {
+          delete parsedVision[k];
+          delete parsedVision[`shopify.${k}`];
+          delete parsedVision[`std_${k.replace(/-/g, "_")}`];
+          delete parsedVision[`custom.std_${k.replace(/-/g, "_")}`];
+        });
+
         const verifiedGeoValues = {};
         if (geoFields.geoSource === "library") {
             const geoKeys = [
@@ -963,12 +1150,16 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
             finalPayload[k] = v;
           }
         }
+        if (validatedCandidates) {
+          finalPayload.standardized_candidates = validatedCandidates;
+        }
         
         return Response.json({ 
             success: true, 
             intent, 
             pieceId,
             tab3Data: finalPayload, 
+            ...(validatedCandidates ? { standardized_candidates: validatedCandidates } : {}),
             verifiedGeoValues,
             imageAlts: validatedImageAlts,
             altValidationErrors: altValidationErrors.length > 0 ? altValidationErrors : undefined
