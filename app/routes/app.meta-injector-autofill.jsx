@@ -466,27 +466,32 @@ const getSharedFactualContract = () => `
 const getStandardizedCandidatesInstructions = () => `
 STANDARDIZED ATTRIBUTE REVIEW CANDIDATES (standardized_candidates):
 Also return a separate top-level JSON object key named "standardized_candidates" evaluating ONLY these six hyphenated keys when supported by evidence:
-- "chain-link-type": Distinguish cord from linked metal chain. Never turn Cord into Snake Chain.
-- "construction": Describe supported assembly/lapidary/setting work only.
-- "jewelry-finding-type": Use supplied bail/setting facts. Do not infer hidden hardware.
-- "material-origin": Natural versus manufactured material evidence ONLY. Do NOT use geographic collecting location and do NOT equate geographic origin with material-origin.
-- "product-classification": Supported physical product form/classification only, NOT Google product category or an invented taxonomy ID.
-- "product-use": Derive ONLY from supplied intended-use facts.
+- "chain-link-type": Preserve "Cord" as an evidence-supported REVIEW candidate where explicitly supplied, but do not claim it is a verified allowed reference choice. Do not turn "Cord" into "Snake Chain".
+- "construction": Metalwork construction, NOT craftsmanship or pendant assembly. Verified choices: "Clad", "Filled", "Other", "Plated", "Solid", "Toned", "Vermeil", "Whole". Propose only an evidence-supported choice. Explicit silver-plated or gold-plated hardware supports "Plated". Do not infer the construction of every component from one bail. Evidence must identify the component supporting the choice. Never default to "Solid" or "Other". Do NOT place "Handcrafted" in standardized "construction" candidates.
+- "jewelry-finding-type": Preserve supplied component facts such as "Silver Plated Pinch Bail". These remain review candidates until exact reference matching. Do not claim the detailed label is accepted reference vocabulary. Do not infer hidden hardware.
+- "material-origin": Supplied product form, NOT geography or natural/synthetic status. Relevant verified choices: "Finished product (jewelry/watch)", "Loose/unmounted". Explicit finished pendant facts support "Finished product (jewelry/watch)". Explicit loose/unmounted facts support "Loose/unmounted". "Natural/Untreated" does not establish either choice. Do NOT use geographic collecting location.
+- "product-classification": Precious-material/item classification, NOT "Pendant" product format. Verified relevant choices include: "Semi-precious stones", "Loose precious stones". Do not infer material grade from photos. Propose only when trusted supplied material facts support the choice; otherwise omit it pending verified classification evidence. "Pendant" alone is insufficient evidence.
+- "product-use": Relevant verified choice: "Jewelry/ornament". Use when supplied facts establish finished jewelry or ornament use. Do not output "Finished Jewelry" as though it were an accepted label. Do not default unrelated products to "Jewelry/ornament".
+
+HANDCRAFTED & CRAFTSMANSHIP RULES:
+- Retain "Handcrafted" for craftsmanship and SEO outputs only when supplied facts identify work by Bob and Janyce.
+- "Ground out the miles" describes travel, NOT stone grinding. Never cite that idiom as craftsmanship evidence.
+- Never place "Handcrafted" inside standardized "construction" candidates.
 
 Format for each supported key inside "standardized_candidates":
 {
   "labels": ["plain evidence-supported candidate"],
-  "evidence": "short explanation referencing supplied facts"
+  "evidence": "short explanation referencing supplied facts and identifying the specific component where applicable"
 }
 
 STRICT RULES FOR standardized_candidates:
-- Review candidates ONLY. Do NOT output shopify.* keys or custom.std_* keys. Do NOT claim candidates are accepted Shopify vocabulary.
+- Review candidates ONLY. Do NOT output shopify.* keys or custom.std_* keys.
 - Priority: Explicit operator facts > stored facts > permitted image observations.
 - Preserve existing nonblank standardized assignments: if current standardized data is already supplied for an attribute, omit that key unless an explicit correction requests a replacement.
 - Omit any of the six keys that lack clear factual/visual support.
-- Never output empty arrays, "None", "Unknown", "N/A", guessed GIDs, or definition IDs.
+- Never output empty arrays, "None", "Unknown", "N/A", guessed GIDs, taxonomy IDs, or definition IDs.
 - Do not infer hidden hardware or undisclosed treatment.
-- Preserve existing legacy keys (chain_link_type, jewelry_finding_type, primary_use, etc.) alongside standardized_candidates.
+- Preserve existing legacy keys (chain_link_type, jewelry_finding_type, primary_use, craftsmanship, seo_title, etc.) alongside standardized_candidates.
 `;
 
 // ==========================================
@@ -638,7 +643,7 @@ REQUIRED JSON KEYS:
 - setting_ready: "Bezel Setting - Ready to Wear", "Wire Wrapped - Ready to Wear", "None".
 - bail_included: e.g., "Silver Plated Pinch Bail", "Integrated Bezel Bail", "None".
 - chain_material: Identify the visible chain or cord. INVENTORY OPTIONS: "Cord", "Silver Plated Snake Chain", "Gold Plated Snake Chain". Distinguish clearly absent hardware from hardware out of view.
-- chain_link_type: Cord or Snake Chain (when applicable).
+- chain_link_type: Cord or Snake Chain (when applicable). Never turn Cord into Snake Chain.
 - jewelry_finding_type: INVENTORY OPTIONS: "Silver Plated Pinch Bail", "Glue-On Bail", "Assorted Glue-In Setting". Preserve explicitly supplied construction descriptions. Compatible with bail_included. Do not invent details if unknown.
 - jewelry_type: Select EXACTLY one: Pendant, Necklace, Artisan jewelry, Fine jewelry, Accessories, N/A.
 - rarity: Select EXACTLY one: Common, Uncommon, Rare, One-of-a-Kind
@@ -649,8 +654,8 @@ REQUIRED JSON KEYS:
 - primary_medium: Must match stone mineral name.
 - alt_text: Descriptive, max 125 chars.
 - found_object: Yes/No
-- seo_title: Max 70 chars. Natural, descriptive wording based on supported facts. No generic guessing. Include "Handcrafted" only when supported.
-- standardized_candidates: Object containing supported review candidates among ["chain-link-type", "construction", "jewelry-finding-type", "material-origin", "product-classification", "product-use"].
+- seo_title: Max 70 chars. Natural, descriptive wording based on supported facts. No generic guessing. Include "Handcrafted" only when supported by supplied facts identifying work by Bob and Janyce ("Ground out the miles" describes travel, not stone grinding; never cite it as craftsmanship evidence).
+- standardized_candidates: Object containing supported review candidates among ["chain-link-type", "construction", "jewelry-finding-type", "material-origin", "product-classification", "product-use"] following the exact verified field meanings below.
 - generated_description: Write in Bob's plain, honest voice (past tense). No salesy language, poetic geology, or grand claims. Short sentences. 7-BLOCK FORMAT:
   1. Stone Description: Honest flaws, finish, flash. Lead with specific observations.
   2. Origin Hook: Select the source episode matching "${stoneFamily}". Aim for 2-4 short sentences containing the relevant setup and outcome. Tease the story; do not retell the whole page.
@@ -710,9 +715,9 @@ Potential JSON Keys to evaluate and propose if blank:
 - piece_name
 - is_ooak: "Yes"
 - product_format: Describe the evidenced physical form (e.g., Cabochon, Pendant, Specimen, Loose Stone).
-- craftsmanship: Propose exactly "Handcrafted" only when supplied product facts identify the work as handcrafted by Bob & Janyce.
+- craftsmanship: Propose exactly "Handcrafted" only when supplied product facts identify the work as handcrafted by Bob & Janyce. ("Ground out the miles" describes travel, not stone grinding; never cite that idiom as craftsmanship evidence. Do not place "Handcrafted" in standardized construction candidates.)
 - poetic_hook: Write one short, plain, factual hook based on the origin page (under 160 characters).
-- seo_title: Max 70 chars. Natural, descriptive wording based on supported facts.
+- seo_title: Max 70 chars. Natural, descriptive wording based on supported facts. Include "Handcrafted" only when supported by supplied facts identifying work by Bob and Janyce.
 - dimensions_mm: Leave unchanged if provided.
 - surface_finish: High Polish, Matte, Satin, Natural/Raw, Tumbled.
 - primary_color
@@ -740,12 +745,12 @@ Potential JSON Keys to evaluate and propose if blank:
 - setting_ready
 - bail_included
 - chain_material
-- chain_link_type: Cord or Snake Chain (when applicable)
+- chain_link_type: Cord or Snake Chain (when applicable). Never turn Cord into Snake Chain.
 - jewelry_finding_type: Preserve explicitly provided construction details if available. Do not silently leave blank if clearly supported by image.
 - google_product_category
 - authenticity
 - rarity
-- standardized_candidates: Object containing supported review candidates among ["chain-link-type", "construction", "jewelry-finding-type", "material-origin", "product-classification", "product-use"].
+- standardized_candidates: Object containing supported review candidates among ["chain-link-type", "construction", "jewelry-finding-type", "material-origin", "product-classification", "product-use"] following the exact verified field meanings below.
 ${imageAltInstructions}
 
 ${getStandardizedCandidatesInstructions()}
