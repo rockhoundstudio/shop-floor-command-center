@@ -131,6 +131,58 @@ const sanitizeStandardizedCandidates = (rawContainer) => {
   return sanitized;
 };
 
+const buildCanonicalCandidateSnapshot = (rawContainer) => {
+  const sanitized = sanitizeStandardizedCandidates(rawContainer);
+  const ordered = {};
+  ALLOWED_VISION_CANDIDATE_KEYS.forEach((k) => {
+    if (sanitized[k]) {
+      ordered[k] = {
+        labels: [...sanitized[k].labels],
+        evidence: sanitized[k].evidence
+      };
+    }
+  });
+  return JSON.stringify(ordered);
+};
+
+const formatStructuredDiagValue = (val) => {
+  if (val === undefined || val === null) return "";
+  if (typeof val === "string") return val;
+  if (typeof val === "number" || typeof val === "boolean") return String(val);
+  try {
+    return JSON.stringify(val, null, 2);
+  } catch (e) {
+    return "";
+  }
+};
+
+const formatErrorsList = (rawErrors) => {
+  if (!rawErrors) return [];
+  if (typeof rawErrors === "string") {
+    return rawErrors.trim() && rawErrors.trim() !== "[object Object]" ? [rawErrors.trim()] : [];
+  }
+  if (Array.isArray(rawErrors)) {
+    return rawErrors
+      .map((item) => {
+        if (typeof item === "string") return item.trim() !== "[object Object]" ? item.trim() : "";
+        if (item && typeof item === "object") {
+          const msg = item.message || item.error || item.reason || item.code;
+          if (typeof msg === "string" && msg.trim() && msg.trim() !== "[object Object]") {
+            return item.field ? `${item.field}: ${msg.trim()}` : msg.trim();
+          }
+          return formatStructuredDiagValue(item);
+        }
+        return String(item ?? "");
+      })
+      .filter(Boolean);
+  }
+  if (typeof rawErrors === "object") {
+    const formatted = formatStructuredDiagValue(rawErrors);
+    return formatted && formatted !== "{}" ? [formatted] : [];
+  }
+  return [];
+};
+
 const serializeStandardizedAssignmentForVision = (rawVal) => {
   if (rawVal === undefined || rawVal === null) return "";
   if (Array.isArray(rawVal)) {
@@ -306,6 +358,11 @@ export function OperationsMatrixTab({ products }) {
   const [aiData, setAiData] = useState({}); // Indexed by pieceId to isolate cross-contamination
   const [standardizedCandidatesByProduct, setStandardizedCandidatesByProduct] = useState({});
 
+  // Dedicated Reference Matching State (Isolated per product GID)
+  const [referenceMatchResultsByProduct, setReferenceMatchResultsByProduct] = useState({});
+  const [pendingReferenceMatch, setPendingReferenceMatch] = useState(null);
+  const [lastProcessedRefMatchData, setLastProcessedRefMatchData] = useState(null);
+
   const [queueIds, setQueueIds] = useState([]);
   const [productStates, setProductStates] = useState({}); 
   const [manifestData, setManifestData] = useState({}); 
@@ -328,10 +385,12 @@ export function OperationsMatrixTab({ products }) {
     "2. Stone Facts and Physical Details": true,
     "3. Origin, Story, and Collection": true,
     "4. Jewelry and Setting": true,
-    "5. Search, Sales, and Media": true
+    "5. Search, Sales, and Media": true,
+    "6. Standardized Attributes (Read-Only)": true
   });
 
   const batchFetcher = useFetcher();
+  const referenceMatchFetcher = useFetcher();
 
   const handleSearchChange = useCallback((value) => setSearchQuery(value), []);
   const handleClearSearch = useCallback(() => setSearchQuery(""), []);
@@ -395,6 +454,9 @@ export function OperationsMatrixTab({ products }) {
     setAiStep(0);
     setAiData({});
     setStandardizedCandidatesByProduct({});
+    setReferenceMatchResultsByProduct({});
+    setPendingReferenceMatch(null);
+    setLastProcessedRefMatchData(null);
     setLoadIndex(0);
     setLastProcessedData(null);
     setPendingOperation(null);
@@ -433,6 +495,103 @@ export function OperationsMatrixTab({ products }) {
       return next;
     });
   }, []);
+
+  const handleMatchReferenceChoices = useCallback(() => {
+    if (!selectedBenchId) return;
+    if (referenceMatchFetcher.state !== "idle" || pendingReferenceMatch !== null) return;
+
+    const rawProductCandidates = standardizedCandidatesByProduct[selectedBenchId] || {};
+    const validatedPayload = sanitizeStandardizedCandidates(rawProductCandidates);
+    const orderedPayload = {};
+    ALLOWED_VISION_CANDIDATE_KEYS.forEach((key) => {
+      if (validatedPayload[key]) {
+        orderedPayload[key] = {
+          labels: [...validatedPayload[key].labels],
+          evidence: validatedPayload[key].evidence
+        };
+      }
+    });
+
+    if (Object.keys(orderedPayload).length === 0) return;
+
+    const snapshotJson = JSON.stringify(orderedPayload);
+    const token = Date.now().toString() + Math.random().toString(36).substring(2, 7);
+
+    setPendingReferenceMatch({
+      pieceId: selectedBenchId,
+      snapshot: snapshotJson,
+      token
+    });
+
+    const fd = new FormData();
+    fd.append("intent", "resolveStandardizedCandidates");
+    fd.append("pieceId", selectedBenchId);
+    fd.append("standardized_candidates", snapshotJson);
+
+    referenceMatchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-api" });
+  }, [selectedBenchId, referenceMatchFetcher, pendingReferenceMatch, standardizedCandidatesByProduct]);
+
+  useEffect(() => {
+    if (
+      referenceMatchFetcher.state === "idle" &&
+      referenceMatchFetcher.data &&
+      referenceMatchFetcher.data !== lastProcessedRefMatchData
+    ) {
+      const data = referenceMatchFetcher.data;
+      setLastProcessedRefMatchData(data);
+
+      const pending = pendingReferenceMatch;
+      setPendingReferenceMatch(null);
+
+      if (!pending) return;
+
+      if (
+        !data ||
+        typeof data !== "object" ||
+        data.intent !== "resolveStandardizedCandidates" ||
+        data.readOnly !== true ||
+        !data.pieceId ||
+        data.pieceId !== pending.pieceId
+      ) {
+        return;
+      }
+
+      const targetProductId = data.pieceId;
+      const latestCandidates = standardizedCandidatesByProduct[targetProductId] || {};
+      const currentSnapshot = buildCanonicalCandidateSnapshot(latestCandidates);
+
+      if (currentSnapshot !== pending.snapshot) {
+        return;
+      }
+
+      const rawResolutions = validObj(data.resolutions);
+      const sanitizedResolutions = {};
+      ALLOWED_VISION_CANDIDATE_KEYS.forEach((allowedKey) => {
+        const fullKey = `shopify.${allowedKey}`;
+        if (rawResolutions[fullKey] && typeof rawResolutions[fullKey] === "object") {
+          sanitizedResolutions[fullKey] = rawResolutions[fullKey];
+        } else if (rawResolutions[allowedKey] && typeof rawResolutions[allowedKey] === "object") {
+          sanitizedResolutions[fullKey] = rawResolutions[allowedKey];
+        }
+      });
+
+      setReferenceMatchResultsByProduct((prev) => ({
+        ...prev,
+        [targetProductId]: {
+          pieceId: targetProductId,
+          intent: data.intent,
+          readOnly: true,
+          success: Boolean(data.success),
+          isComplete: Boolean(data.isComplete),
+          resolutions: sanitizedResolutions,
+          currentReferenceLists: validObj(data.currentReferenceLists),
+          errors: formatErrorsList(data.errors || data.error),
+          snapshot: pending.snapshot,
+          matchedAt: new Date().toISOString()
+        }
+      }));
+    }
+  }, [referenceMatchFetcher.state, referenceMatchFetcher.data, lastProcessedRefMatchData, pendingReferenceMatch, standardizedCandidatesByProduct]);
 
   const getFieldMetadata = (key, data, productId, currentApprovals, configFields = []) => {
     const targetKeyForProposal = NATIVE_ALIAS_MAP[key] || key;
@@ -1110,6 +1269,10 @@ export function OperationsMatrixTab({ products }) {
       const intent = data.intent;
       const success = data.success;
 
+      if (intent === "resolveStandardizedCandidates") {
+        return;
+      }
+
       if (pendingOperation) {
           const productIntents = ["loadProductData", "executeRepairPlan", "batchAuditItem", "saveMetafields", "titleParse", "tab3FullRescan", "generateDescription"];
           if (productIntents.includes(intent)) {
@@ -1338,11 +1501,23 @@ export function OperationsMatrixTab({ products }) {
                           ? tab3Data.standardized_candidates
                           : topLevelStdCandidates;
                   const validatedCandidates = sanitizeStandardizedCandidates(rawCandidatesSource);
+                  const newSnapshot = buildCanonicalCandidateSnapshot(validatedCandidates);
 
-                  setStandardizedCandidatesByProduct(prev => ({
-                      ...prev,
-                      [targetId]: validatedCandidates
-                  }));
+                  setStandardizedCandidatesByProduct(prev => {
+                      const prevSnapshot = buildCanonicalCandidateSnapshot(prev[targetId]);
+                      if (prevSnapshot !== newSnapshot) {
+                          setReferenceMatchResultsByProduct(prevRes => {
+                              if (!prevRes[targetId]) return prevRes;
+                              const nextRes = { ...prevRes };
+                              delete nextRes[targetId];
+                              return nextRes;
+                          });
+                      }
+                      return {
+                          ...prev,
+                          [targetId]: validatedCandidates
+                      };
+                  });
 
                   const cleanedTab3Data = validObj(tab3Data) ? { ...tab3Data } : {};
                   delete cleanedTab3Data.standardized_candidates;
@@ -2351,8 +2526,32 @@ export function OperationsMatrixTab({ products }) {
     });
 
     if (filteredKeys.length === 0) return null;
-    const isExpanded = expandedBays[section.title];
+    const isExpanded = expandedBays[section.title] ?? true;
     const groupColorTone = section.configFields?.[0]?.color === "success" ? "success" : undefined;
+
+    const isStandardizedSection =
+      section.configFields?.some(f => f.role === "standardized_attribute") ||
+      section.keys.some(k => k.startsWith("shopify."));
+
+    const currentProductCandidates = sanitizeStandardizedCandidates(standardizedCandidatesByProduct[selectedBenchId] || {});
+    const currentSnapshot = buildCanonicalCandidateSnapshot(currentProductCandidates);
+    const hasSupportedCandidates = ALLOWED_VISION_CANDIDATE_KEYS.some(
+      (k) => currentProductCandidates[k] && Array.isArray(currentProductCandidates[k].labels) && currentProductCandidates[k].labels.length > 0
+    );
+
+    const isRefMatchPendingForCurrent =
+      referenceMatchFetcher.state !== "idle" &&
+      pendingReferenceMatch?.pieceId === selectedBenchId;
+
+    const storedRefMatchForProduct = referenceMatchResultsByProduct[selectedBenchId];
+    const validRefMatchResult =
+      storedRefMatchForProduct &&
+      storedRefMatchForProduct.pieceId === selectedBenchId &&
+      storedRefMatchForProduct.readOnly === true &&
+      storedRefMatchForProduct.intent === "resolveStandardizedCandidates" &&
+      storedRefMatchForProduct.snapshot === currentSnapshot
+        ? storedRefMatchForProduct
+        : null;
 
     return (
       <Card padding="0" key={section.title}>
@@ -2368,6 +2567,85 @@ export function OperationsMatrixTab({ products }) {
         
         {isExpanded && (
           <div style={{ padding: "16px", display: "flex", flexDirection: "column", gap: "24px", minWidth: 0, boxSizing: "border-box" }}>
+            {isStandardizedSection && (
+              <Box padding="300" background="bg-surface-secondary" borderColor="border" borderWidth="1" borderRadius="200">
+                <BlockStack gap="200">
+                  <InlineStack align="space-between" blockAlign="center" gap="300">
+                    <BlockStack gap="100">
+                      <Text as="h4" variant="headingSm" fontWeight="bold">
+                        Standardized Reference Matching (Read-Only Diagnostic)
+                      </Text>
+                      <Text as="p" variant="bodySm" tone="subdued">
+                        Read-only matching. Writes disabled. Supported candidate keys: {ALLOWED_VISION_CANDIDATE_KEYS.join(", ")}
+                      </Text>
+                    </BlockStack>
+                    <Button
+                      size="medium"
+                      variant="primary"
+                      onClick={handleMatchReferenceChoices}
+                      disabled={isRefMatchPendingForCurrent || referenceMatchFetcher.state !== "idle" || !hasSupportedCandidates}
+                      loading={isRefMatchPendingForCurrent}
+                    >
+                      Match Reference Choices
+                    </Button>
+                  </InlineStack>
+
+                  {isRefMatchPendingForCurrent && (
+                    <Banner tone="info">
+                      <Text as="p" variant="bodySm" fontWeight="medium">
+                        Matching standardized candidates against Shopify reference choices (read-only)...
+                      </Text>
+                    </Banner>
+                  )}
+
+                  {!isRefMatchPendingForCurrent && !hasSupportedCandidates && (
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      No validated Vision standardized candidates available for this product. Run AI scan to stage candidates before matching.
+                    </Text>
+                  )}
+
+                  {!isRefMatchPendingForCurrent && validRefMatchResult && (
+                    <Banner
+                      tone={validRefMatchResult.isComplete && validRefMatchResult.success && validRefMatchResult.errors.length === 0 ? "success" : "warning"}
+                      title={
+                        validRefMatchResult.isComplete && validRefMatchResult.success
+                          ? "Reference Matching Complete (Read-Only)"
+                          : "Reference Matching Incomplete / Partial Read Enumeration (Read-Only — Not Save-Ready)"
+                      }
+                    >
+                      <BlockStack gap="100">
+                        <Text as="p" variant="bodySm">
+                          <strong>Overall Status:</strong> {validRefMatchResult.success ? "Complete" : "Incomplete / Partial Diagnostics"} |{" "}
+                          <strong>isComplete:</strong> {String(validRefMatchResult.isComplete)} |{" "}
+                          <strong>readOnly:</strong> {String(validRefMatchResult.readOnly)}
+                        </Text>
+                        {!validRefMatchResult.isComplete && (
+                          <Text as="p" variant="bodySm" fontWeight="medium">
+                            Partial enumeration detected. Incomplete results are never treated as missing_entry or save-ready.
+                          </Text>
+                        )}
+                        {validRefMatchResult.errors.length > 0 && (
+                          <BlockStack gap="050">
+                            <Text as="p" variant="bodySm" tone="critical" fontWeight="bold">
+                              Top-Level Read Errors:
+                            </Text>
+                            {validRefMatchResult.errors.map((errText, idx) => (
+                              <Text key={idx} as="p" variant="bodySm" tone="critical">
+                                • {errText}
+                              </Text>
+                            ))}
+                          </BlockStack>
+                        )}
+                        <Text as="p" variant="bodySm" tone="subdued" fontWeight="medium">
+                          Read-only matching. Writes disabled.
+                        </Text>
+                      </BlockStack>
+                    </Banner>
+                  )}
+                </BlockStack>
+              </Box>
+            )}
+
             {filteredKeys.map((key) => {
               const meta = getFieldMetadata(key, data, selectedBenchId, approvals, section.configFields);
               const isBlank = meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing";
@@ -2442,6 +2720,20 @@ export function OperationsMatrixTab({ products }) {
               const isVisionCandidateRow = meta.isStandardizedAttribute && ALLOWED_VISION_CANDIDATE_KEYS.includes(candidateMetaKey);
               const productVisionCandidates = standardizedCandidatesByProduct[selectedBenchId] || {};
               const visionCandidateEntry = isVisionCandidateRow ? productVisionCandidates[candidateMetaKey] : null;
+              const fieldResolution =
+                isVisionCandidateRow && validRefMatchResult
+                  ? validRefMatchResult.resolutions?.[`shopify.${candidateMetaKey}`] || null
+                  : null;
+              const fieldResolutionErrors = fieldResolution ? formatErrorsList(fieldResolution.errors || fieldResolution.error) : [];
+              const availableEntriesList = Array.isArray(fieldResolution?.availableEntries) ? fieldResolution.availableEntries : [];
+              const formattedLabelResolutions =
+                fieldResolution && fieldResolution.labelResolutions !== undefined && fieldResolution.labelResolutions !== null
+                  ? formatStructuredDiagValue(fieldResolution.labelResolutions)
+                  : "";
+              const formattedContinuation =
+                fieldResolution && fieldResolution.continuation !== undefined && fieldResolution.continuation !== null
+                  ? formatStructuredDiagValue(fieldResolution.continuation)
+                  : "";
 
               return (
                 <Box key={key} padding="300" background={isBlank && meta.isSupported ? "bg-surface-warning" : "bg-surface"} borderColor="border" borderWidth="1" borderRadius="200">
@@ -2502,32 +2794,158 @@ export function OperationsMatrixTab({ products }) {
                         </div>
 
                         {isVisionCandidateRow && (
-                            <div style={{ padding: "12px", backgroundColor: "#eef2ff", borderRadius: "8px", border: "1px solid #c7d2fe", minWidth: 0, wordBreak: "break-word", overflowWrap: "anywhere", boxSizing: "border-box" }}>
-                                <Text as="p" variant="headingSm" fontWeight="bold" style={{ marginBottom: "6px", color: "#1e3a8a" }}>
-                                    Vision Standardized Candidate ({candidateMetaKey})
-                                </Text>
-                                {visionCandidateEntry && Array.isArray(visionCandidateEntry.labels) && visionCandidateEntry.labels.length > 0 ? (
-                                    <BlockStack gap="100">
-                                        <Text as="p" variant="bodyMd">
-                                            <strong>Candidate Labels:</strong> {visionCandidateEntry.labels.join(", ")}
-                                        </Text>
-                                        <Text as="p" variant="bodySm">
-                                            <strong>Evidence:</strong> {visionCandidateEntry.evidence}
-                                        </Text>
-                                        <Text as="p" variant="bodySm" tone="subdued" fontWeight="medium">
-                                            Reference matching pending. Writes disabled.
-                                        </Text>
-                                    </BlockStack>
-                                ) : (
-                                    <BlockStack gap="100">
-                                        <Text as="p" variant="bodySm" tone="subdued">
-                                            No supported Vision candidate returned.
-                                        </Text>
-                                        <Text as="p" variant="bodySm" tone="subdued" fontWeight="medium">
-                                            Reference matching pending. Writes disabled.
-                                        </Text>
-                                    </BlockStack>
-                                )}
+                            <div style={{ display: "flex", flexWrap: "wrap", gap: "12px", minWidth: 0, boxSizing: "border-box" }}>
+                                <div style={{ flex: "1 1 260px", padding: "12px", backgroundColor: "#eef2ff", borderRadius: "8px", border: "1px solid #c7d2fe", minWidth: 0, wordBreak: "break-word", overflowWrap: "anywhere", boxSizing: "border-box" }}>
+                                    <Text as="p" variant="headingSm" fontWeight="bold" style={{ marginBottom: "6px", color: "#1e3a8a" }}>
+                                        Vision Standardized Candidate ({candidateMetaKey})
+                                    </Text>
+                                    {visionCandidateEntry && Array.isArray(visionCandidateEntry.labels) && visionCandidateEntry.labels.length > 0 ? (
+                                        <BlockStack gap="100">
+                                            <Text as="p" variant="bodyMd">
+                                                <strong>Candidate Labels:</strong> {visionCandidateEntry.labels.join(", ")}
+                                            </Text>
+                                            <Text as="p" variant="bodySm">
+                                                <strong>Evidence:</strong> {visionCandidateEntry.evidence}
+                                            </Text>
+                                            <Text as="p" variant="bodySm" tone="subdued" fontWeight="medium">
+                                                Read-only matching. Writes disabled.
+                                            </Text>
+                                        </BlockStack>
+                                    ) : (
+                                        <BlockStack gap="100">
+                                            <Text as="p" variant="bodySm" tone="subdued">
+                                                No supported Vision candidate returned.
+                                            </Text>
+                                            <Text as="p" variant="bodySm" tone="subdued" fontWeight="medium">
+                                                Read-only matching. Writes disabled.
+                                            </Text>
+                                        </BlockStack>
+                                    )}
+                                </div>
+
+                                <div style={{ flex: "1 1 280px", padding: "12px", backgroundColor: "#f8fafc", borderRadius: "8px", border: "1px solid #cbd5e1", minWidth: 0, wordBreak: "break-word", overflowWrap: "anywhere", boxSizing: "border-box" }}>
+                                    <Text as="p" variant="headingSm" fontWeight="bold" style={{ marginBottom: "6px", color: "#0f172a" }}>
+                                        Reference Matching Diagnostics (shopify.{candidateMetaKey})
+                                    </Text>
+                                    {isRefMatchPendingForCurrent ? (
+                                        <BlockStack gap="100">
+                                            <Text as="p" variant="bodySm">
+                                                Matching reference choices (read-only)...
+                                            </Text>
+                                            <Text as="p" variant="bodySm" tone="subdued" fontWeight="medium">
+                                                Read-only matching. Writes disabled.
+                                            </Text>
+                                        </BlockStack>
+                                    ) : fieldResolution ? (
+                                        <BlockStack gap="150">
+                                            <Text as="p" variant="bodySm">
+                                                <strong>Backend Status:</strong>{" "}
+                                                <Badge tone={fieldResolution.isComplete === false ? "warning" : "info"}>
+                                                    {typeof fieldResolution.status === "string" && fieldResolution.status.trim() !== ""
+                                                        ? fieldResolution.status
+                                                        : "Reported"}
+                                                </Badge>{" "}
+                                                | <strong>Completeness:</strong>{" "}
+                                                <Badge tone={fieldResolution.isComplete === true ? "success" : "warning"}>
+                                                    {fieldResolution.isComplete === true
+                                                        ? "Complete"
+                                                        : "Incomplete (Not missing_entry / Not save-ready)"}
+                                                </Badge>
+                                            </Text>
+
+                                            {fieldResolution.destination && (
+                                                <Text as="p" variant="bodySm">
+                                                    <strong>Destination:</strong> {String(fieldResolution.destination)}
+                                                </Text>
+                                            )}
+
+                                            {formattedLabelResolutions && (
+                                                <div style={{ minWidth: 0 }}>
+                                                    <Text as="p" variant="bodySm" fontWeight="bold">
+                                                        Label Resolutions (All Returned Options — Unselected):
+                                                    </Text>
+                                                    <pre style={{ margin: "4px 0 0 0", padding: "8px", backgroundColor: "#f1f5f9", border: "1px solid #e2e8f0", borderRadius: "4px", fontSize: "11px", whiteSpace: "pre-wrap", wordBreak: "break-word", overflowWrap: "anywhere", maxHeight: "220px", overflowY: "auto" }}>
+                                                        {formattedLabelResolutions}
+                                                    </pre>
+                                                </div>
+                                            )}
+
+                                            <div style={{ minWidth: 0 }}>
+                                                <Text as="p" variant="bodySm" fontWeight="bold">
+                                                    Available Reference Entries ({availableEntriesList.length}):
+                                                </Text>
+                                                {availableEntriesList.length > 0 ? (
+                                                    <div style={{ marginTop: "4px", display: "flex", flexDirection: "column", gap: "4px", maxHeight: "180px", overflowY: "auto", padding: "6px", backgroundColor: "#f1f5f9", borderRadius: "4px", border: "1px solid #e2e8f0" }}>
+                                                        {availableEntriesList.map((entry, idx) => {
+                                                            if (!entry || typeof entry !== "object") {
+                                                                return (
+                                                                    <Text key={idx} as="p" variant="bodySm">
+                                                                        • {String(entry ?? "")}
+                                                                    </Text>
+                                                                );
+                                                            }
+                                                            const disp = typeof entry.displayName === "string" ? entry.displayName : "";
+                                                            const idStr = typeof entry.id === "string" ? entry.id : "";
+                                                            const defStr = typeof entry.definition === "string" ? entry.definition : formatStructuredDiagValue(entry.definition);
+                                                            const taxStr = typeof entry.taxonomy_reference === "string" ? entry.taxonomy_reference : formatStructuredDiagValue(entry.taxonomy_reference);
+                                                            return (
+                                                                <div key={idStr || idx} style={{ fontSize: "12px", borderBottom: idx < availableEntriesList.length - 1 ? "1px solid #e2e8f0" : "none", paddingBottom: "4px" }}>
+                                                                    <strong>{disp || "Unnamed Entry"}</strong>
+                                                                    {idStr ? ` | ID: ${idStr}` : ""}
+                                                                    {defStr ? ` | Def: ${defStr}` : ""}
+                                                                    {taxStr ? ` | Taxonomy: ${taxStr}` : ""}
+                                                                </div>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                ) : (
+                                                    <Text as="p" variant="bodySm" tone="subdued">
+                                                        No availableEntries returned in this read pass.
+                                                    </Text>
+                                                )}
+                                            </div>
+
+                                            {formattedContinuation && formattedContinuation !== "null" && formattedContinuation !== "{}" && (
+                                                <div style={{ minWidth: 0 }}>
+                                                    <Text as="p" variant="bodySm" fontWeight="bold" tone="caution">
+                                                        Pending Continuation:
+                                                    </Text>
+                                                    <pre style={{ margin: "4px 0 0 0", padding: "6px", backgroundColor: "#fffbeb", border: "1px solid #fde68a", borderRadius: "4px", fontSize: "11px", whiteSpace: "pre-wrap", wordBreak: "break-word", overflowWrap: "anywhere" }}>
+                                                        {formattedContinuation}
+                                                    </pre>
+                                                </div>
+                                            )}
+
+                                            {fieldResolutionErrors.length > 0 && (
+                                                <BlockStack gap="050">
+                                                    <Text as="p" variant="bodySm" tone="critical" fontWeight="bold">
+                                                        Read Errors:
+                                                    </Text>
+                                                    {fieldResolutionErrors.map((errItem, eIdx) => (
+                                                        <Text key={eIdx} as="p" variant="bodySm" tone="critical">
+                                                            • {errItem}
+                                                        </Text>
+                                                    ))}
+                                                </BlockStack>
+                                            )}
+
+                                            <Text as="p" variant="bodySm" tone="subdued" fontWeight="medium">
+                                                Read-only matching. Writes disabled.
+                                            </Text>
+                                        </BlockStack>
+                                    ) : (
+                                        <BlockStack gap="100">
+                                            <Text as="p" variant="bodySm" tone="subdued">
+                                                {validRefMatchResult
+                                                    ? "No resolution returned for this attribute key."
+                                                    : "Click 'Match Reference Choices' to inspect read-only reference resolutions."}
+                                            </Text>
+                                            <Text as="p" variant="bodySm" tone="subdued" fontWeight="medium">
+                                                Read-only matching. Writes disabled.
+                                            </Text>
+                                        </BlockStack>
+                                    )}
+                                </div>
                             </div>
                         )}
 
