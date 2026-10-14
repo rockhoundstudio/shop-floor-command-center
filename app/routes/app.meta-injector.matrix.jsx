@@ -86,6 +86,558 @@ const ALLOWED_VISION_CANDIDATE_KEYS = [
   "product-use"
 ];
 
+const VERIFIED_STANDARDIZED_DESTINATIONS = ALLOWED_VISION_CANDIDATE_KEYS.map(
+  (k) => `shopify.${k}`
+);
+
+const isVerifiedStandardizedDestination = (key) => {
+  return VERIFIED_STANDARDIZED_DESTINATIONS.includes(key);
+};
+
+const isExactMetaobjectGid = (val) => {
+  if (typeof val !== "string") return false;
+  return /^gid:\/\/shopify\/Metaobject\/[0-9]+$/.test(val.trim());
+};
+
+const extractNumericMetaobjectId = (gid) => {
+  if (!isExactMetaobjectGid(gid)) return null;
+  const match = gid.trim().match(/^gid:\/\/shopify\/Metaobject\/([0-9]+)$/);
+  if (!match) return null;
+  try {
+    return BigInt(match[1]);
+  } catch (e) {
+    return null;
+  }
+};
+
+const normalizeCandidateLabel = (str) => {
+  if (typeof str !== "string") return "";
+  return str.trim().replace(/\s+/g, " ").toLowerCase();
+};
+
+const extractEntryGid = (entry) => {
+  if (!entry || typeof entry !== "object") return "";
+  const raw = entry.id || entry.gid || "";
+  return typeof raw === "string" ? raw.trim() : "";
+};
+
+const extractEntryLabel = (entry) => {
+  if (!entry || typeof entry !== "object") return "";
+  const raw = entry.displayName ?? entry.label ?? entry.name ?? entry.title ?? entry.value ?? "";
+  return typeof raw === "string" ? raw.trim() : "";
+};
+
+const extractEntryDefinitionId = (entry) => {
+  if (!entry || typeof entry !== "object") return "";
+  const def = entry.definition ?? entry.definitionId ?? entry.metaobjectDefinitionId ?? "";
+  if (typeof def === "string" || typeof def === "number") return String(def).trim();
+  if (def && typeof def === "object") {
+    const nested = def.id || def.gid || "";
+    if (typeof nested === "string" || typeof nested === "number") return String(nested).trim();
+  }
+  return "";
+};
+
+const extractEntryTaxonomyRef = (entry) => {
+  if (!entry || typeof entry !== "object") return "";
+  const tax = entry.taxonomy_reference ?? entry.taxonomyReference ?? entry.taxonomyValueId ?? "";
+  if (typeof tax === "string" || typeof tax === "number") return String(tax).trim();
+  if (tax && typeof tax === "object") {
+    const nested = tax.id || tax.gid || tax.value || "";
+    if (typeof nested === "string" || typeof nested === "number") return String(nested).trim();
+  }
+  return "";
+};
+
+const parseMetaobjectGidArray = (rawVal) => {
+  if (rawVal === undefined || rawVal === null || rawVal === "") return [];
+  let arr = [];
+  if (Array.isArray(rawVal)) {
+    arr = rawVal;
+  } else if (typeof rawVal === "string") {
+    const trimmed = rawVal.trim();
+    if (!trimmed || trimmed === "[]") return [];
+    if (trimmed.startsWith("[")) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) arr = parsed;
+        else return [];
+      } catch (e) {
+        return [];
+      }
+    } else if (isExactMetaobjectGid(trimmed)) {
+      arr = [trimmed];
+    } else {
+      return [];
+    }
+  } else {
+    return [];
+  }
+
+  const result = [];
+  arr.forEach((item) => {
+    let gid = "";
+    if (typeof item === "string") gid = item.trim();
+    else if (item && typeof item === "object") {
+      const id = item.id || item.gid || item.value;
+      if (typeof id === "string") gid = id.trim();
+    }
+    if (isExactMetaobjectGid(gid) && !result.includes(gid)) {
+      result.push(gid);
+    }
+  });
+  return result;
+};
+
+const collectVerifiedEntriesForResolution = (fieldResolution) => {
+  const map = new Map();
+  if (!fieldResolution || typeof fieldResolution !== "object") return map;
+
+  const addEntry = (entry) => {
+    if (!entry || typeof entry !== "object") return;
+    const gid = extractEntryGid(entry);
+    if (!isExactMetaobjectGid(gid)) return;
+    const existing = map.get(gid) || {};
+    const label = extractEntryLabel(entry) || existing.label || "";
+    const definitionId = extractEntryDefinitionId(entry) || existing.definitionId || "";
+    const taxonomyRef = extractEntryTaxonomyRef(entry) || existing.taxonomyRef || "";
+    map.set(gid, {
+      id: gid,
+      label,
+      definitionId,
+      taxonomyRef
+    });
+  };
+
+  if (Array.isArray(fieldResolution.availableEntries)) {
+    fieldResolution.availableEntries.forEach(addEntry);
+  }
+
+  const lr = fieldResolution.labelResolutions;
+  if (Array.isArray(lr)) {
+    lr.forEach((item) => {
+      if (!item || typeof item !== "object") return;
+      if (Array.isArray(item.matches)) item.matches.forEach(addEntry);
+      if (Array.isArray(item.entries)) item.entries.forEach(addEntry);
+      if (Array.isArray(item.candidates)) item.candidates.forEach(addEntry);
+      if (item.matchedEntry) addEntry(item.matchedEntry);
+      if (item.entry) addEntry(item.entry);
+    });
+  } else if (lr && typeof lr === "object") {
+    Object.values(lr).forEach((val) => {
+      if (Array.isArray(val)) {
+        val.forEach(addEntry);
+      } else if (val && typeof val === "object") {
+        if (Array.isArray(val.matches)) val.matches.forEach(addEntry);
+        if (Array.isArray(val.entries)) val.entries.forEach(addEntry);
+        if (Array.isArray(val.candidates)) val.candidates.forEach(addEntry);
+        if (val.matchedEntry) addEntry(val.matchedEntry);
+        if (val.entry) addEntry(val.entry);
+        if (val.id || val.gid) addEntry(val);
+      }
+    });
+  }
+
+  return map;
+};
+
+const findLabelMatchEntries = (candLabel, fieldResolution, verifiedEntriesMap) => {
+  const normTarget = normalizeCandidateLabel(candLabel);
+  if (!normTarget) return [];
+
+  const matchedGids = new Set();
+
+  const lr = fieldResolution?.labelResolutions;
+  const inspectResolutionItem = (item) => {
+    if (!item || typeof item !== "object") return;
+    const list = item.matches || item.entries || item.candidates || [];
+    if (Array.isArray(list)) {
+      list.forEach((m) => {
+        const gid = typeof m === "string" ? m.trim() : extractEntryGid(m);
+        if (isExactMetaobjectGid(gid) && verifiedEntriesMap.has(gid)) {
+          const entryObj = verifiedEntriesMap.get(gid);
+          if (!entryObj.label || normalizeCandidateLabel(entryObj.label) === normTarget) {
+            matchedGids.add(gid);
+          }
+        }
+      });
+    }
+    const single = item.matchedEntry || item.entry;
+    if (single) {
+      const gid = typeof single === "string" ? single.trim() : extractEntryGid(single);
+      if (isExactMetaobjectGid(gid) && verifiedEntriesMap.has(gid)) {
+        const entryObj = verifiedEntriesMap.get(gid);
+        if (!entryObj.label || normalizeCandidateLabel(entryObj.label) === normTarget) {
+          matchedGids.add(gid);
+        }
+      }
+    }
+  };
+
+  if (Array.isArray(lr)) {
+    lr.forEach((item) => {
+      if (!item || typeof item !== "object") return;
+      const itemLbl = item.label ?? item.candidateLabel ?? item.candidate ?? item.name ?? "";
+      if (normalizeCandidateLabel(itemLbl) === normTarget) {
+        inspectResolutionItem(item);
+      }
+    });
+  } else if (lr && typeof lr === "object") {
+    Object.entries(lr).forEach(([k, val]) => {
+      if (normalizeCandidateLabel(k) === normTarget) {
+        if (Array.isArray(val)) {
+          val.forEach((m) => {
+            const gid = typeof m === "string" ? m.trim() : extractEntryGid(m);
+            if (isExactMetaobjectGid(gid) && verifiedEntriesMap.has(gid)) {
+              matchedGids.add(gid);
+            }
+          });
+        } else if (val && typeof val === "object") {
+          inspectResolutionItem(val);
+        }
+      }
+    });
+  }
+
+  verifiedEntriesMap.forEach((entry, gid) => {
+    if (normalizeCandidateLabel(entry.label) === normTarget) {
+      matchedGids.add(gid);
+    }
+  });
+
+  return Array.from(matchedGids)
+    .map((gid) => verifiedEntriesMap.get(gid))
+    .filter(Boolean);
+};
+
+const evaluateCandidateLabelResolution = (candLabel, fieldResolution, verifiedEntriesMap, existingAssignedGids) => {
+  const normTarget = normalizeCandidateLabel(candLabel);
+  if (!normTarget) {
+    return { status: "blocked", reason: "Blank candidate label.", selectedEntry: null, matchingEntries: [] };
+  }
+
+  const matchingEntries = findLabelMatchEntries(candLabel, fieldResolution, verifiedEntriesMap);
+
+  if (matchingEntries.length === 0) {
+    return {
+      status: "missing_entry",
+      reason: `No matching verified Metaobject entry found for "${candLabel}".`,
+      selectedEntry: null,
+      matchingEntries: []
+    };
+  }
+
+  if (matchingEntries.length === 1) {
+    const only = matchingEntries[0];
+    if (!isExactMetaobjectGid(only.id)) {
+      return {
+        status: "blocked",
+        reason: `Matched entry for "${candLabel}" does not have a valid Metaobject GID.`,
+        selectedEntry: null,
+        matchingEntries
+      };
+    }
+    return {
+      status: "unique",
+      reason: `Uniquely matched "${only.label || candLabel}" (${only.id}).`,
+      selectedEntry: only,
+      matchingEntries
+    };
+  }
+
+  // Multiple entries matched: verify strict equivalence rules
+  // Must share same normalized label, restricted definition ID, and nonblank taxonomy_reference
+  const firstNormLabel = normalizeCandidateLabel(matchingEntries[0].label || candLabel);
+  const firstDefId = matchingEntries[0].definitionId;
+  const firstTaxRef = matchingEntries[0].taxonomyRef;
+
+  const allHaveRequiredMetadata = matchingEntries.every((e) => {
+    const eNorm = normalizeCandidateLabel(e.label || candLabel);
+    const numId = extractNumericMetaobjectId(e.id);
+    return (
+      numId !== null &&
+      eNorm !== "" &&
+      eNorm === firstNormLabel &&
+      Boolean(e.definitionId) &&
+      e.definitionId === firstDefId &&
+      Boolean(e.taxonomyRef) &&
+      e.taxonomyRef === firstTaxRef
+    );
+  });
+
+  if (!allHaveRequiredMetadata) {
+    return {
+      status: "ambiguous_blocked",
+      reason: `Non-equivalent ambiguity for "${candLabel}": ${matchingEntries.length} entries do not share identical normalized label, restricted definition ID, and nonblank taxonomy_reference.`,
+      selectedEntry: null,
+      matchingEntries
+    };
+  }
+
+  const existingSet = new Set(existingAssignedGids || []);
+  const alreadyAssignedMatches = matchingEntries.filter((e) => existingSet.has(e.id));
+
+  const sortByLowestNumericId = (list) => {
+    return [...list].sort((a, b) => {
+      const numA = extractNumericMetaobjectId(a.id);
+      const numB = extractNumericMetaobjectId(b.id);
+      if (numA === null && numB === null) return a.id.localeCompare(b.id);
+      if (numA === null) return 1;
+      if (numB === null) return -1;
+      if (numA < numB) return -1;
+      if (numA > numB) return 1;
+      return 0;
+    });
+  };
+
+  if (alreadyAssignedMatches.length > 0) {
+    const sortedAssigned = sortByLowestNumericId(alreadyAssignedMatches);
+    const chosen = sortedAssigned[0];
+    return {
+      status: "equivalent_existing",
+      reason: `Equivalent duplicate entries for "${candLabel}" (Def: ${firstDefId}, Taxonomy: ${firstTaxRef}); preferred entry already assigned to product (${chosen.id}).`,
+      selectedEntry: chosen,
+      matchingEntries: sortByLowestNumericId(matchingEntries)
+    };
+  }
+
+  const sortedAll = sortByLowestNumericId(matchingEntries);
+  const chosenNew = sortedAll[0];
+  return {
+    status: "equivalent_lowest_new",
+    reason: `Equivalent duplicate entries for "${candLabel}" (Def: ${firstDefId}, Taxonomy: ${firstTaxRef}); selected lowest numeric Metaobject ID (${chosenNew.id}) for new assignment.`,
+    selectedEntry: chosenNew,
+    matchingEntries: sortedAll
+  };
+};
+
+const evaluateStandardizedDestinationTechnicalStatus = ({
+  destinationKey,
+  productId,
+  data,
+  candidateBundle,
+  refMatchResult,
+  refMatchStatus
+}) => {
+  if (!isVerifiedStandardizedDestination(destinationKey)) {
+    return {
+      isVerifiedDestination: false,
+      isTechnicallyEligible: false,
+      blockReason: "Standardized attribute read-only (pending_read_only)",
+      verifiedEntriesMap: new Map(),
+      existingGids: [],
+      autoProposedGids: [],
+      autoProposalSerialized: "",
+      labelEvaluations: []
+    };
+  }
+
+  const metaKey = destinationKey.slice(8);
+  const currentMetafieldRaw = data?.currentMetafields?.[destinationKey];
+  const refListRaw = refMatchResult?.currentReferenceLists?.[destinationKey] ?? refMatchResult?.currentReferenceLists?.[metaKey];
+  const existingFromManifest = parseMetaobjectGidArray(currentMetafieldRaw);
+  const existingFromRefMatch = parseMetaobjectGidArray(refListRaw);
+  const existingGids = [...existingFromManifest];
+  existingFromRefMatch.forEach((gid) => {
+    if (!existingGids.includes(gid)) existingGids.push(gid);
+  });
+
+  const candidateEntry = candidateBundle?.ordered?.[metaKey] || null;
+  const hasCandidateLabels = Boolean(candidateEntry && Array.isArray(candidateEntry.labels) && candidateEntry.labels.length > 0);
+
+  if (!hasCandidateLabels) {
+    return {
+      isVerifiedDestination: true,
+      isTechnicallyEligible: false,
+      blockReason: "No Vision standardized candidate staged for this attribute.",
+      verifiedEntriesMap: new Map(),
+      existingGids,
+      autoProposedGids: [],
+      autoProposalSerialized: "",
+      labelEvaluations: []
+    };
+  }
+
+  if (!refMatchResult) {
+    const stateHint = refMatchStatus?.state === "discarded_stale"
+      ? "Reference match result is stale for current candidates. Click 'Match Reference Choices' to re-validate."
+      : "Reference matching required. Click 'Match Reference Choices' to validate candidate entries.";
+    return {
+      isVerifiedDestination: true,
+      isTechnicallyEligible: false,
+      blockReason: stateHint,
+      verifiedEntriesMap: new Map(),
+      existingGids,
+      autoProposedGids: [],
+      autoProposalSerialized: "",
+      labelEvaluations: []
+    };
+  }
+
+  if (
+    refMatchResult.pieceId !== productId ||
+    refMatchResult.intent !== "resolveStandardizedCandidates" ||
+    refMatchResult.readOnly !== true
+  ) {
+    return {
+      isVerifiedDestination: true,
+      isTechnicallyEligible: false,
+      blockReason: "Reference match result failed product or contract identity verification.",
+      verifiedEntriesMap: new Map(),
+      existingGids,
+      autoProposedGids: [],
+      autoProposalSerialized: "",
+      labelEvaluations: []
+    };
+  }
+
+  if (refMatchResult.snapshot !== candidateBundle.snapshot) {
+    return {
+      isVerifiedDestination: true,
+      isTechnicallyEligible: false,
+      blockReason: "Stale reference match result: candidate snapshot changed. Re-run 'Match Reference Choices'.",
+      verifiedEntriesMap: new Map(),
+      existingGids,
+      autoProposedGids: [],
+      autoProposalSerialized: "",
+      labelEvaluations: []
+    };
+  }
+
+  if (!refMatchResult.success || !refMatchResult.isComplete || (Array.isArray(refMatchResult.errors) && refMatchResult.errors.length > 0)) {
+    return {
+      isVerifiedDestination: true,
+      isTechnicallyEligible: false,
+      blockReason: "Incomplete or errored top-level reference matching result. Re-run 'Match Reference Choices'.",
+      verifiedEntriesMap: new Map(),
+      existingGids,
+      autoProposedGids: [],
+      autoProposalSerialized: "",
+      labelEvaluations: []
+    };
+  }
+
+  const fieldResolution = refMatchResult.resolutions?.[destinationKey] || null;
+  if (!fieldResolution || typeof fieldResolution !== "object") {
+    return {
+      isVerifiedDestination: true,
+      isTechnicallyEligible: false,
+      blockReason: `Missing backend resolution entry for ${destinationKey}.`,
+      verifiedEntriesMap: new Map(),
+      existingGids,
+      autoProposedGids: [],
+      autoProposalSerialized: "",
+      labelEvaluations: []
+    };
+  }
+
+  const fieldErrors = formatErrorsList(fieldResolution.errors || fieldResolution.error);
+  const hasContinuation =
+    fieldResolution.continuation !== undefined &&
+    fieldResolution.continuation !== null &&
+    formatStructuredDiagValue(fieldResolution.continuation) !== "{}" &&
+    formatStructuredDiagValue(fieldResolution.continuation) !== "null";
+
+  if (fieldResolution.isComplete !== true || fieldErrors.length > 0 || hasContinuation) {
+    return {
+      isVerifiedDestination: true,
+      isTechnicallyEligible: false,
+      blockReason: `Incomplete reference enumeration for ${destinationKey} (${fieldErrors[0] || "continuation pending"}).`,
+      verifiedEntriesMap: collectVerifiedEntriesForResolution(fieldResolution),
+      existingGids,
+      autoProposedGids: [],
+      autoProposalSerialized: "",
+      labelEvaluations: []
+    };
+  }
+
+  const verifiedEntriesMap = collectVerifiedEntriesForResolution(fieldResolution);
+  const labelEvaluations = candidateEntry.labels.map((lbl) =>
+    evaluateCandidateLabelResolution(lbl, fieldResolution, verifiedEntriesMap, existingGids)
+  );
+
+  const failedEval = labelEvaluations.find(
+    (ev) => ev.status === "missing_entry" || ev.status === "ambiguous_blocked" || ev.status === "blocked" || !ev.selectedEntry
+  );
+
+  if (failedEval) {
+    return {
+      isVerifiedDestination: true,
+      isTechnicallyEligible: false,
+      blockReason: failedEval.reason,
+      verifiedEntriesMap,
+      existingGids,
+      autoProposedGids: [],
+      autoProposalSerialized: "",
+      labelEvaluations
+    };
+  }
+
+  // Merge existing assigned GIDs first so existing assignments are never deleted or replaced
+  const mergedGids = [...existingGids];
+  labelEvaluations.forEach((ev) => {
+    const gid = ev.selectedEntry?.id;
+    if (isExactMetaobjectGid(gid) && !mergedGids.includes(gid)) {
+      mergedGids.push(gid);
+    }
+  });
+
+  return {
+    isVerifiedDestination: true,
+    isTechnicallyEligible: true,
+    blockReason: "",
+    verifiedEntriesMap,
+    existingGids,
+    autoProposedGids: mergedGids,
+    autoProposalSerialized: mergedGids.length > 0 ? JSON.stringify(mergedGids) : "",
+    labelEvaluations
+  };
+};
+
+const validateProposedStandardizedGidList = (rawPropVal, evalResult) => {
+  if (!evalResult?.isTechnicallyEligible) {
+    return { valid: false, reason: evalResult?.blockReason || "Reference matching not complete." };
+  }
+  if (typeof rawPropVal !== "string" || !rawPropVal.trim().startsWith("[")) {
+    return { valid: false, reason: "Proposal must be a serialized JSON array of exact Metaobject GIDs." };
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(rawPropVal.trim());
+  } catch (e) {
+    return { valid: false, reason: "Proposal is not valid JSON array." };
+  }
+  if (!Array.isArray(parsed) || parsed.length === 0) {
+    return { valid: false, reason: "Proposal array cannot be empty." };
+  }
+
+  for (const item of parsed) {
+    if (!isExactMetaobjectGid(item)) {
+      return { valid: false, reason: `Invalid entry ID "${String(item)}": must be an exact Metaobject GID (never TaxonomyValue or Definition ID).` };
+    }
+  }
+
+  const uniqueCheck = new Set(parsed);
+  if (uniqueCheck.size !== parsed.length) {
+    return { valid: false, reason: "Proposal contains duplicate Metaobject GIDs." };
+  }
+
+  for (const existingGid of evalResult.existingGids) {
+    if (!uniqueCheck.has(existingGid)) {
+      return { valid: false, reason: `Proposal is missing existing assigned entry ${existingGid}. Existing assignments are never deleted or replaced.` };
+    }
+  }
+
+  const existingSet = new Set(evalResult.existingGids);
+  for (const gid of parsed) {
+    if (!existingSet.has(gid) && !evalResult.verifiedEntriesMap.has(gid)) {
+      return { valid: false, reason: `Selected entry ${gid} is not in the current verified reference entries for this attribute.` };
+    }
+  }
+
+  return { valid: true, reason: "", gids: parsed };
+};
+
 const isGeneratedReferenceId = (val) => {
   if (typeof val !== "string") return true;
   const trimmed = val.trim();
@@ -249,7 +801,7 @@ const resolveConfigFieldDestination = (f) => {
   return `custom.${f.key}`;
 };
 
-const formatDisplayFieldValue = (rawVal, isStandardized, data) => {
+const formatDisplayFieldValue = (rawVal, isStandardized, data, verifiedEntriesMap = null) => {
   if (rawVal === undefined || rawVal === null || rawVal === "") return "";
 
   const labelLookup =
@@ -262,6 +814,10 @@ const formatDisplayFieldValue = (rawVal, isStandardized, data) => {
   const resolveSingleItem = (item) => {
     if (item === undefined || item === null) return "";
     if (typeof item === "string") {
+      if (verifiedEntriesMap && verifiedEntriesMap.has(item)) {
+        const entry = verifiedEntriesMap.get(item);
+        if (entry?.label) return `${entry.label} (${item})`;
+      }
       if (labelLookup && typeof labelLookup === "object" && labelLookup[item]) {
         return `${labelLookup[item]} (${item})`;
       }
@@ -489,12 +1045,35 @@ export function OperationsMatrixTab({ products }) {
     setSafetyError("");
   }, [queueIds]);
 
+  const getStandardizedEvaluationForField = useCallback((productId, targetKey, dataOverride = null) => {
+    if (!isVerifiedStandardizedDestination(targetKey) || !productId) return null;
+    const data = dataOverride || manifestData[productId];
+    const candidateBundle = buildCanonicalCandidateBundle(standardizedCandidatesByProduct[productId] || {});
+    const refMatchResult = referenceMatchResultsByProduct[productId] || null;
+    const refMatchStatus = referenceMatchStatusByProduct[productId] || null;
+    return evaluateStandardizedDestinationTechnicalStatus({
+      destinationKey: targetKey,
+      productId,
+      data,
+      candidateBundle,
+      refMatchResult,
+      refMatchStatus
+    });
+  }, [manifestData, standardizedCandidatesByProduct, referenceMatchResultsByProduct, referenceMatchStatusByProduct]);
+
   const handleToggleApproval = useCallback((pieceId, key, propVal, isChecked) => {
     const targetKey = NATIVE_ALIAS_MAP[key] || key;
     if (targetKey === "standardized_candidates" || targetKey === "custom.standardized_candidates") return;
     const allConfigFields = PRODUCT_TEMPLATE_GROUPS.flatMap(g => g.fields || []);
     const matchedConfig = allConfigFields.find(f => resolveConfigFieldDestination(f) === targetKey || resolveConfigFieldDestination(f) === key);
-    if (matchedConfig?.mappingStatus === "pending_read_only") return;
+
+    if (isVerifiedStandardizedDestination(targetKey)) {
+      const stdEval = getStandardizedEvaluationForField(pieceId, targetKey);
+      const valCheck = validateProposedStandardizedGidList(propVal, stdEval);
+      if (!valCheck.valid) return;
+    } else if (matchedConfig?.mappingStatus === "pending_read_only") {
+      return;
+    }
 
     setApprovals(prev => {
       const next = { ...prev };
@@ -506,7 +1085,7 @@ export function OperationsMatrixTab({ products }) {
       }
       return next;
     });
-  }, []);
+  }, [getStandardizedEvaluationForField]);
 
   const handleReleasePendingReferenceMatch = useCallback(() => {
     if (!pendingReferenceMatch) {
@@ -741,7 +1320,8 @@ export function OperationsMatrixTab({ products }) {
 
     const targetProductId = data.pieceId;
     const latestCandidates = standardizedCandidatesByProduct[targetProductId] || {};
-    const currentSnapshot = buildCanonicalCandidateSnapshot(latestCandidates);
+    const currentBundle = buildCanonicalCandidateBundle(latestCandidates);
+    const currentSnapshot = currentBundle.snapshot;
 
     if (currentSnapshot !== activePending.snapshot) {
       setReferenceMatchStatusByProduct((prev) => ({
@@ -772,21 +1352,79 @@ export function OperationsMatrixTab({ products }) {
     const isComplete = Boolean(data.isComplete);
     const isSuccess = Boolean(data.success);
 
+    const matchRecord = {
+      pieceId: targetProductId,
+      intent: data.intent,
+      readOnly: true,
+      success: isSuccess,
+      isComplete: isComplete,
+      resolutions: sanitizedResolutions,
+      currentReferenceLists: validObj(data.currentReferenceLists),
+      errors: topErrors,
+      snapshot: activePending.snapshot,
+      matchedAt: new Date().toISOString()
+    };
+
     setReferenceMatchResultsByProduct((prev) => ({
       ...prev,
-      [targetProductId]: {
-        pieceId: targetProductId,
-        intent: data.intent,
-        readOnly: true,
-        success: isSuccess,
-        isComplete: isComplete,
-        resolutions: sanitizedResolutions,
-        currentReferenceLists: validObj(data.currentReferenceLists),
-        errors: topErrors,
-        snapshot: activePending.snapshot,
-        matchedAt: new Date().toISOString()
-      }
+      [targetProductId]: matchRecord
     }));
+
+    // Stage technically verified proposals into manifestData.repairPlan for the 6 standardized destinations
+    setManifestData((prevMan) => {
+      const existingMan = prevMan[targetProductId];
+      if (!existingMan) return prevMan;
+
+      const updatedRepairPlan = { ...(existingMan.repairPlan || {}) };
+      const updatedMetadata = { ...(existingMan.metadata || {}) };
+
+      VERIFIED_STANDARDIZED_DESTINATIONS.forEach((destKey) => {
+        if (manualEdits[targetProductId]?.[destKey] === true) return;
+
+        const evalRes = evaluateStandardizedDestinationTechnicalStatus({
+          destinationKey: destKey,
+          productId: targetProductId,
+          data: existingMan,
+          candidateBundle: currentBundle,
+          refMatchResult: matchRecord,
+          refMatchStatus: { state: isComplete && isSuccess ? "completed" : "incomplete" }
+        });
+
+        if (evalRes.isTechnicallyEligible && evalRes.autoProposalSerialized) {
+          updatedRepairPlan[destKey] = evalRes.autoProposalSerialized;
+          updatedMetadata[destKey] = {
+            source: "Vision",
+            stage: "resolveStandardizedCandidates"
+          };
+        } else {
+          delete updatedRepairPlan[destKey];
+        }
+      });
+
+      return {
+        ...prevMan,
+        [targetProductId]: {
+          ...existingMan,
+          repairPlan: updatedRepairPlan,
+          metadata: updatedMetadata
+        }
+      };
+    });
+
+    // Clear any prior approvals on standardized destinations that no longer match
+    setApprovals((prevApp) => {
+      if (!prevApp[targetProductId]) return prevApp;
+      const nextProdApp = { ...prevApp[targetProductId] };
+      let changed = false;
+      VERIFIED_STANDARDIZED_DESTINATIONS.forEach((destKey) => {
+        if (nextProdApp[destKey] !== undefined) {
+          delete nextProdApp[destKey];
+          changed = true;
+        }
+      });
+      if (!changed) return prevApp;
+      return { ...prevApp, [targetProductId]: nextProdApp };
+    });
 
     if (isComplete && isSuccess && topErrors.length === 0) {
       setReferenceMatchStatusByProduct((prev) => ({
@@ -794,7 +1432,7 @@ export function OperationsMatrixTab({ products }) {
         [targetProductId]: {
           state: "completed",
           tone: "success",
-          message: `Reference matching completed (read-only) for ${resolutionCount} attribute(s). Inspect the matched and ambiguous options beside each candidate row below. Writes remain disabled.`,
+          message: `Reference matching completed for ${resolutionCount} attribute(s). Technically verified proposals are staged for review and exact-value approval below.`,
           updatedAt: new Date().toISOString()
         }
       }));
@@ -804,7 +1442,7 @@ export function OperationsMatrixTab({ products }) {
         [targetProductId]: {
           state: "incomplete",
           tone: "warning",
-          message: `Reference matching returned partial/incomplete read diagnostics (success: ${String(isSuccess)}, isComplete: ${String(isComplete)}, ${resolutionCount} attribute resolution(s), ${topErrors.length} top-level error(s)). Partial results are displayed below. Incomplete enumeration is never treated as missing_entry or save-ready. Review read errors/continuation below or click 'Match Reference Choices' to retry.`,
+          message: `Reference matching returned partial/incomplete read diagnostics (success: ${String(isSuccess)}, isComplete: ${String(isComplete)}, ${resolutionCount} attribute resolution(s), ${topErrors.length} top-level error(s)). Incomplete enumeration remains blocked and is never treated as missing_entry or save-ready. Review read errors/continuation below or click 'Match Reference Choices' to retry.`,
           updatedAt: new Date().toISOString()
         }
       }));
@@ -814,7 +1452,8 @@ export function OperationsMatrixTab({ products }) {
     referenceMatchFetcher.data,
     pendingReferenceMatch,
     releasedReferenceMatchRequest,
-    standardizedCandidatesByProduct
+    standardizedCandidatesByProduct,
+    manualEdits
   ]);
 
   const getFieldMetadata = (key, data, productId, currentApprovals, configFields = []) => {
@@ -834,7 +1473,16 @@ export function OperationsMatrixTab({ products }) {
     });
 
     const isStandardizedAttribute = templateConfig?.role === "standardized_attribute" || key.startsWith("shopify.");
-    const isPendingReadOnly = templateConfig?.mappingStatus === "pending_read_only";
+    const isVerifiedStdDest = isVerifiedStandardizedDestination(targetKeyForProposal);
+
+    const stdEvaluation = isVerifiedStdDest
+      ? getStandardizedEvaluationForField(productId, targetKeyForProposal, data)
+      : null;
+
+    // Relax pending_read_only ONLY for the six verified destinations when all required matching checks pass
+    const isPendingReadOnly = isVerifiedStdDest
+      ? !Boolean(stdEvaluation?.isTechnicallyEligible)
+      : templateConfig?.mappingStatus === "pending_read_only";
 
     let currentVal = "";
     const variants = data.nativeTargets?.variants?.edges || [];
@@ -876,6 +1524,20 @@ export function OperationsMatrixTab({ products }) {
         } else {
             currentVal = data.currentMetafields?.["custom.shipping_weight_oz"] || "";
         }
+    } else if (isVerifiedStdDest && stdEvaluation) {
+        if (stdEvaluation.existingGids.length > 0) {
+            currentVal = JSON.stringify(stdEvaluation.existingGids);
+        } else {
+            const hasCurrent = data.currentMetafields?.hasOwnProperty(key);
+            const rawCurrent = hasCurrent ? data.currentMetafields[key] : "";
+            if (Array.isArray(rawCurrent)) {
+                currentVal = rawCurrent.length > 0 ? JSON.stringify(rawCurrent) : "";
+            } else if (typeof rawCurrent === "object" && rawCurrent !== null) {
+                currentVal = JSON.stringify(rawCurrent);
+            } else {
+                currentVal = hasCurrent ? String(rawCurrent ?? "") : "";
+            }
+        }
     } else {
         const hasCurrent = data.currentMetafields?.hasOwnProperty(key);
         const rawCurrent = hasCurrent ? data.currentMetafields[key] : "";
@@ -891,7 +1553,18 @@ export function OperationsMatrixTab({ products }) {
     let isProposed = false;
     let propVal = "";
 
-    if (data.repairPlan !== undefined && !isPendingReadOnly && !isStandardizedAttribute) {
+    if (isVerifiedStdDest) {
+        if (stdEvaluation?.isTechnicallyEligible) {
+            if (data.repairPlan !== undefined && data.repairPlan.hasOwnProperty(targetKeyForProposal)) {
+                isProposed = true;
+                const rawProp = data.repairPlan[targetKeyForProposal];
+                propVal = Array.isArray(rawProp) ? JSON.stringify(rawProp) : String(rawProp ?? "");
+            } else if (stdEvaluation.autoProposalSerialized) {
+                isProposed = true;
+                propVal = stdEvaluation.autoProposalSerialized;
+            }
+        }
+    } else if (data.repairPlan !== undefined && !isPendingReadOnly && !isStandardizedAttribute) {
         if (data.repairPlan.hasOwnProperty(targetKeyForProposal)) {
             isProposed = true;
             const rawProp = data.repairPlan[targetKeyForProposal];
@@ -915,8 +1588,8 @@ export function OperationsMatrixTab({ products }) {
     }
 
     let fieldMeta = data.metadata?.[key] || data.metadata?.[targetKeyForProposal] || {};
-    let source = fieldMeta.source || "Not reported";
-    let stage = fieldMeta.stage || "Not reported";
+    let source = fieldMeta.source || (isVerifiedStdDest && isProposed ? "Vision" : "Not reported");
+    let stage = fieldMeta.stage || (isVerifiedStdDest && isProposed ? "resolveStandardizedCandidates" : "Not reported");
 
     let fieldStatus = "Unchanged";
     let proposalStatus = isProposed ? (propVal.trim() !== "" ? "Provided" : "Empty") : "Not provided";
@@ -931,7 +1604,8 @@ export function OperationsMatrixTab({ products }) {
 
     const isKnownKey = templateConfig !== undefined || NATIVE_FIELDS.includes(key) || isNativeImageAlt || HIDDEN_CONTEXT_FIELDS.includes(key) || key.startsWith('native_');
 
-    if (!isPendingReadOnly) {
+    // Never auto-preapprove the six standardized reference proposals; Bob's meaning approval is not technical list approval
+    if (!isPendingReadOnly && !isVerifiedStdDest) {
         if (targetKeyForProposal === "custom.google_product_category" && proposalExists) {
             isContentPreApproved = true;
             preApprovalReason = "Category pre-approved";
@@ -983,7 +1657,21 @@ export function OperationsMatrixTab({ products }) {
     
     if (isIntegration) reasons.push("Integration owned");
 
-    if (isPendingReadOnly) {
+    if (isVerifiedStdDest) {
+        if (!stdEvaluation?.isTechnicallyEligible) {
+            hasTechnicalBlock = true;
+            reasons.push(stdEvaluation?.blockReason || "Standardized attribute awaiting valid reference match.");
+        } else if (proposalExists) {
+            const propValidation = validateProposedStandardizedGidList(propVal, stdEvaluation);
+            if (!propValidation.valid) {
+                hasTechnicalBlock = true;
+                reasons.push(propValidation.reason);
+            } else {
+                // Require explicit exact-value approval for all standardized reference proposals
+                contentNeedsReview = true;
+            }
+        }
+    } else if (isPendingReadOnly) {
         hasTechnicalBlock = true;
         reasons.push("Standardized attribute read-only (pending_read_only)");
     }
@@ -1043,7 +1731,11 @@ export function OperationsMatrixTab({ products }) {
         } else if (currentVal === propVal) {
             fieldStatus = "Unchanged";
         } else {
-            if (isProtected || isOperatorOwned) {
+            if (isVerifiedStdDest) {
+                contentNeedsReview = true;
+                fieldStatus = "Proposed";
+                reasons.push("Proposed (Preserves existing references + adds verified entry)");
+            } else if (isProtected || isOperatorOwned) {
                 contentNeedsReview = true;
                 if (!isContentPreApproved) fieldStatus = "Degrade";
                 reasons.push(isContentPreApproved ? "Historical: Degrade (Pre-approved)" : "Degrade");
@@ -1069,11 +1761,18 @@ export function OperationsMatrixTab({ products }) {
         }
     }
 
+    const candidateMetaKeyForCheck = templateConfig?.metaKey || (key.startsWith("shopify.") ? key.slice(8) : "");
+    const hasStagedCandidateForRow =
+      isVerifiedStdDest &&
+      Boolean(standardizedCandidatesByProduct[productId]?.[candidateMetaKeyForCheck]);
+
     // Apply baseline technical overrides
-    if (hasTechnicalBlock && fieldStatus !== "Unchanged" && fieldStatus !== "Optional blank" && fieldStatus !== "Required missing") {
+    if (isVerifiedStdDest && hasTechnicalBlock && hasStagedCandidateForRow) {
+        fieldStatus = "Blocked";
+    } else if (hasTechnicalBlock && fieldStatus !== "Unchanged" && fieldStatus !== "Optional blank" && fieldStatus !== "Required missing") {
         if (isOverLimit) {
             fieldStatus = "Over limit";
-        } else if (isPendingReadOnly || reasons.includes("Type/destination unverified") || reasons.includes("Generic hardware fill into blank")) {
+        } else if (isPendingReadOnly || hasTechnicalBlock || reasons.includes("Type/destination unverified") || reasons.includes("Generic hardware fill into blank")) {
             fieldStatus = "Blocked";
         } else if (isNativeImageAlt) {
             fieldStatus = "Blocked";
@@ -1132,11 +1831,10 @@ export function OperationsMatrixTab({ products }) {
 
     const isActualBlockedProposal = isBlockedAction && 
                                     !isManualOnly && 
-                                    !isPendingReadOnly &&
-                                    !isStandardizedAttribute &&
+                                    (!isPendingReadOnly || (isVerifiedStdDest && hasStagedCandidateForRow)) &&
+                                    (!isStandardizedAttribute || isVerifiedStdDest) &&
                                     !HIDDEN_CONTEXT_FIELDS.includes(key) && 
-                                    proposalExists && 
-                                    currentVal !== propVal;
+                                    ((proposalExists && currentVal !== propVal) || (isVerifiedStdDest && hasStagedCandidateForRow && hasTechnicalBlock));
 
     return { 
       currentVal, propVal, isProposed, fieldStatus, proposalStatus, source, stage, 
@@ -1146,6 +1844,8 @@ export function OperationsMatrixTab({ products }) {
       isSupported: isKnownKey,
       isPendingReadOnly,
       isStandardizedAttribute,
+      isVerifiedStdDest,
+      stdEvaluation,
       metaKey: templateConfig?.metaKey || (key.startsWith("shopify.") ? key.slice(8) : ""),
       label: templateConfig?.label || formatLabel(key),
       control: templateConfig?.control
@@ -1159,13 +1859,25 @@ export function OperationsMatrixTab({ products }) {
     const dynamicSections = getDynamicSections(manifest);
     const allConfigFields = dynamicSections.flatMap(sec => sec.configFields || []);
 
-    Object.keys(manifest.repairPlan).forEach(key => {
+    Object.keys(manifest.repairPlan || {}).forEach(key => {
         if (key.startsWith("native_image_alts_")) return; 
         if (key === "native_seo_description") return;
         if (key === "standardized_candidates" || key === "custom.standardized_candidates") return;
-        if (key.startsWith("custom.std_") || key.startsWith("std_") || key.startsWith("shopify.")) return;
+        if (key.startsWith("custom.std_") || key.startsWith("std_")) return;
+        if (key.startsWith("shopify.") && !isVerifiedStandardizedDestination(key)) return;
         
         const meta = getFieldMetadata(key, manifest, currentId, currentApprovals, allConfigFields);
+
+        if (isVerifiedStandardizedDestination(key)) {
+            if (meta.isPendingReadOnly || meta.isBlockedAction || !meta.isApproved || meta.hasTechnicalBlock) return;
+            const valCheck = validateProposedStandardizedGidList(meta.propVal, meta.stdEvaluation);
+            if (!valCheck.valid) return;
+            if (meta.propVal !== meta.currentVal) {
+                safePlan[key] = JSON.stringify(valCheck.gids);
+            }
+            return;
+        }
+
         if (meta.isPendingReadOnly || meta.isStandardizedAttribute) return;
 
         if (!meta.isBlockedAction && !HIDDEN_CONTEXT_FIELDS.includes(key) && !RETIRED_KEYS.includes(key)) {
@@ -1737,13 +2449,19 @@ export function OperationsMatrixTab({ products }) {
                               delete nextRes[targetId];
                               return nextRes;
                           });
+                          setApprovals(prevApp => {
+                              if (!prevApp[targetId]) return prevApp;
+                              const nextProdApp = { ...prevApp[targetId] };
+                              VERIFIED_STANDARDIZED_DESTINATIONS.forEach(dk => delete nextProdApp[dk]);
+                              return { ...prevApp, [targetId]: nextProdApp };
+                          });
                           setReferenceMatchStatusByProduct(prevStat => ({
                               ...prevStat,
                               [targetId]: {
                                   state: newBundle.hasSupported ? "ready" : "failed",
                                   tone: newBundle.hasSupported ? "info" : "warning",
                                   message: newBundle.hasSupported
-                                      ? `Vision staged ${newBundle.count} standardized candidate attribute(s) (${Object.keys(validatedCandidates).join(", ")}). Previous matching results (if any) were invalidated. Click 'Match Reference Choices' to run read-only matching.`
+                                      ? `Vision staged ${newBundle.count} standardized candidate attribute(s) (${Object.keys(validatedCandidates).join(", ")}). Previous matching results (if any) were invalidated. Click 'Match Reference Choices' to validate reference entries.`
                                       : "Vision scan completed, but no supported standardized attribute candidates were returned for the 6 allowed keys.",
                                   updatedAt: new Date().toISOString()
                               }
@@ -1755,7 +2473,7 @@ export function OperationsMatrixTab({ products }) {
                                   state: newBundle.hasSupported ? "ready" : "failed",
                                   tone: newBundle.hasSupported ? "info" : "warning",
                                   message: newBundle.hasSupported
-                                      ? `Vision staged ${newBundle.count} standardized candidate attribute(s). Click 'Match Reference Choices' to run read-only matching.`
+                                      ? `Vision staged ${newBundle.count} standardized candidate attribute(s). Click 'Match Reference Choices' to validate reference entries.`
                                       : "Vision scan completed, but no supported standardized attribute candidates were returned for the 6 allowed keys.",
                                   updatedAt: new Date().toISOString()
                               }
@@ -1816,8 +2534,19 @@ export function OperationsMatrixTab({ products }) {
                               const targetKey = NATIVE_ALIAS_MAP[keyName] || keyName;
                               if (targetKey === "standardized_candidates" || targetKey === "custom.standardized_candidates") return;
                               if (RETIRED_KEYS.includes(targetKey)) return; 
-                              if (targetKey.startsWith("custom.std_") || targetKey.startsWith("std_") || targetKey.startsWith("shopify.")) return;
+                              if (targetKey.startsWith("custom.std_") || targetKey.startsWith("std_")) return;
+                              if (targetKey.startsWith("shopify.") && !isVerifiedStandardizedDestination(targetKey)) return;
+
                               const matchedConfig = allConfigFields.find(f => resolveConfigFieldDestination(f) === targetKey || f.key === targetKey);
+                              if (isVerifiedStandardizedDestination(targetKey)) {
+                                  const stdEval = getStandardizedEvaluationForField(targetId, targetKey, existing);
+                                  const valCheck = validateProposedStandardizedGidList(aiValue, stdEval);
+                                  if (!valCheck.valid) return;
+                                  if (manualEdits[targetId] && manualEdits[targetId][targetKey] === true) return;
+                                  newPlan[targetKey] = JSON.stringify(valCheck.gids);
+                                  return;
+                              }
+
                               if (matchedConfig?.mappingStatus === "pending_read_only" || matchedConfig?.role === "standardized_attribute") return;
                               if (manualEdits[targetId] && manualEdits[targetId][targetKey] === true) return; 
                               newPlan[targetKey] = aiValue;
@@ -1902,7 +2631,7 @@ export function OperationsMatrixTab({ products }) {
           }
       }
     }
-  }, [batchFetcher.state, batchFetcher.data, lastProcessedData, pendingOperation, executionMode, isLoadingData, isExecuting, manualEdits, updateProductState]);
+  }, [batchFetcher.state, batchFetcher.data, lastProcessedData, pendingOperation, executionMode, isLoadingData, isExecuting, manualEdits, updateProductState, getStandardizedEvaluationForField]);
 
   const handleRepairPlanChange = (key, value) => {
     if (!selectedBenchId) return;
@@ -1910,7 +2639,14 @@ export function OperationsMatrixTab({ products }) {
     if (targetKey === "standardized_candidates" || targetKey === "custom.standardized_candidates") return;
     const allConfigFields = PRODUCT_TEMPLATE_GROUPS.flatMap(g => g.fields || []);
     const matchedConfig = allConfigFields.find(f => resolveConfigFieldDestination(f) === targetKey || resolveConfigFieldDestination(f) === key);
-    if (matchedConfig?.mappingStatus === "pending_read_only") return;
+
+    if (isVerifiedStandardizedDestination(targetKey)) {
+      const stdEval = getStandardizedEvaluationForField(selectedBenchId, targetKey);
+      const valCheck = validateProposedStandardizedGidList(value, stdEval);
+      if (!valCheck.valid) return;
+    } else if (matchedConfig?.mappingStatus === "pending_read_only") {
+      return;
+    }
     
     setManualEdits(prev => {
         const next = { ...prev };
@@ -1938,6 +2674,59 @@ export function OperationsMatrixTab({ products }) {
           }
        }
     }));
+  };
+
+  const handleStandardizedEntrySelectionChange = (destinationKey, currentPropVal, stdEval, replaceOrAddGid, previousSlotGid = null) => {
+    if (!selectedBenchId || !stdEval?.isTechnicallyEligible) return;
+    if (!isExactMetaobjectGid(replaceOrAddGid) || !stdEval.verifiedEntriesMap.has(replaceOrAddGid)) return;
+
+    const currentProposedList = parseMetaobjectGidArray(currentPropVal || stdEval.autoProposalSerialized);
+    const existingSet = new Set(stdEval.existingGids || []);
+
+    let updatedGids = [...stdEval.existingGids];
+    currentProposedList.forEach((gid) => {
+      if (existingSet.has(gid)) return;
+      if (previousSlotGid && gid === previousSlotGid) {
+        if (!updatedGids.includes(replaceOrAddGid)) {
+          updatedGids.push(replaceOrAddGid);
+        }
+      } else if (!updatedGids.includes(gid)) {
+        updatedGids.push(gid);
+      }
+    });
+
+    if (!updatedGids.includes(replaceOrAddGid)) {
+      updatedGids.push(replaceOrAddGid);
+    }
+
+    const serialized = JSON.stringify(updatedGids);
+    handleRepairPlanChange(destinationKey, serialized);
+  };
+
+  const handleToggleVerifiedStandardizedEntry = (destinationKey, currentPropVal, stdEval, targetGid, shouldInclude) => {
+    if (!selectedBenchId || !stdEval?.isTechnicallyEligible) return;
+    if (!isExactMetaobjectGid(targetGid) || !stdEval.verifiedEntriesMap.has(targetGid)) return;
+
+    const existingSet = new Set(stdEval.existingGids || []);
+    // Never allow removing an already-assigned entry
+    if (!shouldInclude && existingSet.has(targetGid)) return;
+
+    const currentProposedList = parseMetaobjectGidArray(currentPropVal || stdEval.autoProposalSerialized);
+    let nextGids = [...stdEval.existingGids];
+
+    currentProposedList.forEach((gid) => {
+      if (!shouldInclude && gid === targetGid) return;
+      if (!nextGids.includes(gid) && (existingSet.has(gid) || stdEval.verifiedEntriesMap.has(gid))) {
+        nextGids.push(gid);
+      }
+    });
+
+    if (shouldInclude && !nextGids.includes(targetGid)) {
+      nextGids.push(targetGid);
+    }
+
+    if (nextGids.length === 0) return;
+    handleRepairPlanChange(destinationKey, JSON.stringify(nextGids));
   };
 
   const handleExecuteSingleRepair = useCallback(() => {
@@ -2102,11 +2891,13 @@ export function OperationsMatrixTab({ products }) {
 
             if (meta.isManualOnly) stats.manualOnly++;
 
-            if (!meta.isPendingReadOnly && !meta.isStandardizedAttribute && (meta.fieldStatus === "Proposed" || meta.fieldStatus === "Approved, not saved" || meta.fieldStatus === "Approved, blocked" || meta.fieldStatus === "Pre-approved, not saved" || meta.fieldStatus === "Pre-approved, blocked")) stats.proposed++;
+            const eligibleForStats = !meta.isPendingReadOnly && (!meta.isStandardizedAttribute || meta.isVerifiedStdDest);
+
+            if (eligibleForStats && (meta.fieldStatus === "Proposed" || meta.fieldStatus === "Approved, not saved" || meta.fieldStatus === "Approved, blocked" || meta.fieldStatus === "Pre-approved, not saved" || meta.fieldStatus === "Pre-approved, blocked")) stats.proposed++;
             
             if (meta.isActualBlockedProposal) {
                 stats.blocked++;
-            } else if (meta.isBlockedAction && !HIDDEN_CONTEXT_FIELDS.includes(k) && !meta.isManualOnly && !meta.isPendingReadOnly && !meta.isStandardizedAttribute && meta.proposalExists && meta.currentVal === meta.propVal) {
+            } else if (meta.isBlockedAction && !HIDDEN_CONTEXT_FIELDS.includes(k) && !meta.isManualOnly && eligibleForStats && meta.proposalExists && meta.currentVal === meta.propVal) {
                 stats.unchangedFlagged++;
             }
 
@@ -2132,7 +2923,7 @@ export function OperationsMatrixTab({ products }) {
             if (meta.fieldStatus === "Unverified proposal") stats.unverified++;
             if (meta.fieldStatus === "Optional blank") stats.optionalBlanks++;
             if (meta.fieldStatus === "Required missing") stats.requiredMissing++;
-            if ((meta.fieldStatus === "Proposed" || meta.fieldStatus === "Approved, not saved" || meta.fieldStatus === "Pre-approved, not saved") && !meta.isBlockedAction && !meta.isPendingReadOnly && !meta.isStandardizedAttribute && !HIDDEN_CONTEXT_FIELDS.includes(k)) stats.approvedWrite++;
+            if ((meta.fieldStatus === "Proposed" || meta.fieldStatus === "Approved, not saved" || meta.fieldStatus === "Pre-approved, not saved") && !meta.isBlockedAction && eligibleForStats && !HIDDEN_CONTEXT_FIELDS.includes(k)) stats.approvedWrite++;
         });
     });
 
@@ -2187,6 +2978,7 @@ export function OperationsMatrixTab({ products }) {
       };
 
       const isProtectedIntegration = (key) => {
+          if (isVerifiedStandardizedDestination(key)) return false;
           return INTEGRATION_PREFIXES.some(prefix => key.startsWith(prefix));
       };
 
@@ -2202,10 +2994,11 @@ export function OperationsMatrixTab({ products }) {
       dynamicSections.forEach(sec => {
           sec.keys.forEach(key => {
               const meta = getFieldMetadata(key, data, selectedBenchId, approvals, allConfigFields);
+              const eligibleForStats = !meta.isPendingReadOnly && (!meta.isStandardizedAttribute || meta.isVerifiedStdDest);
               
               if (meta.currentExists) stats.loaded++;
               if (meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing") stats.blank++;
-              if (!meta.isPendingReadOnly && !meta.isStandardizedAttribute && (meta.fieldStatus === "Proposed" || meta.fieldStatus === "Approved, not saved" || meta.fieldStatus === "Approved, blocked" || meta.fieldStatus === "Pre-approved, not saved" || meta.fieldStatus === "Pre-approved, blocked")) stats.proposed++;
+              if (eligibleForStats && (meta.fieldStatus === "Proposed" || meta.fieldStatus === "Approved, not saved" || meta.fieldStatus === "Approved, blocked" || meta.fieldStatus === "Pre-approved, not saved" || meta.fieldStatus === "Pre-approved, blocked")) stats.proposed++;
               if (meta.isBlockedAction && !HIDDEN_CONTEXT_FIELDS.includes(key)) stats.blocked++;
               if (PROTECTED_FIELDS.includes(key) || meta.isOperatorOwned) stats.protected++;
               if (meta.fieldStatus === "Conflict" || meta.fieldStatus === "Degrade" || meta.fieldStatus === "Save Conflict") stats.conflicting++;
@@ -2842,12 +3635,12 @@ export function OperationsMatrixTab({ products }) {
       derivedLifecycleTone = validRefMatchResult.isComplete && validRefMatchResult.success ? "success" : "warning";
       derivedLifecycleMessage =
         validRefMatchResult.isComplete && validRefMatchResult.success
-          ? "Reference matching completed (read-only). Review the matched and ambiguous options beside each candidate row below."
+          ? "Reference matching completed. Review and approve verified proposals beside each candidate row below."
           : "Reference matching returned partial/incomplete read diagnostics. Review partial results and errors below, or click 'Match Reference Choices' to retry.";
     } else {
       derivedLifecycleState = "ready";
       derivedLifecycleTone = "info";
-      derivedLifecycleMessage = `Ready to match ${candidateBundle.count} validated Vision candidate attribute(s) (${Object.keys(candidateBundle.ordered).join(", ")}). Click 'Match Reference Choices' to query read-only Shopify reference resolutions.`;
+      derivedLifecycleMessage = `Ready to match ${candidateBundle.count} validated Vision candidate attribute(s) (${Object.keys(candidateBundle.ordered).join(", ")}). Click 'Match Reference Choices' to query Shopify reference resolutions.`;
     }
 
     const lifecycleBadgeLabelMap = {
@@ -2881,14 +3674,14 @@ export function OperationsMatrixTab({ products }) {
                     <BlockStack gap="100">
                       <InlineStack gap="200" blockAlign="center">
                         <Text as="h4" variant="headingSm" fontWeight="bold">
-                          Standardized Reference Matching (Read-Only Diagnostic)
+                          Standardized Reference Matching & Verified Proposal Connection
                         </Text>
                         <Badge tone={derivedLifecycleTone}>
                           {lifecycleBadgeLabelMap[derivedLifecycleState] || derivedLifecycleState}
                         </Badge>
                       </InlineStack>
                       <Text as="p" variant="bodySm" tone="subdued">
-                        Read-only matching. Writes disabled. Supported candidate keys: {ALLOWED_VISION_CANDIDATE_KEYS.join(", ")}
+                        Supported candidate destinations: {VERIFIED_STANDARDIZED_DESTINATIONS.join(", ")}. All other standardized rows remain read-only.
                       </Text>
                     </BlockStack>
                     <InlineStack gap="200" blockAlign="center">
@@ -2930,9 +3723,6 @@ export function OperationsMatrixTab({ products }) {
                         <strong>Dedicated Fetcher State:</strong> {referenceMatchFetcher.state}
                         {pendingReferenceMatch ? ` | Pending Lock: ${pendingReferenceMatch.pieceId}` : ""}
                       </Text>
-                      <Text as="p" variant="bodySm" tone="subdued" fontWeight="medium">
-                        Read-only matching. Writes disabled.
-                      </Text>
                     </BlockStack>
                   </Banner>
 
@@ -2941,20 +3731,19 @@ export function OperationsMatrixTab({ products }) {
                       tone={validRefMatchResult.isComplete && validRefMatchResult.success && validRefMatchResult.errors.length === 0 ? "success" : "warning"}
                       title={
                         validRefMatchResult.isComplete && validRefMatchResult.success
-                          ? "Reference Matching Read Summary (Read-Only)"
-                          : "Reference Matching Incomplete / Partial Read Enumeration (Read-Only — Not Save-Ready)"
+                          ? "Reference Matching Read Summary — Verified Candidates Ready for Exact-List Review & Approval"
+                          : "Reference Matching Incomplete / Partial Read Enumeration (Blocked — Not Save-Ready)"
                       }
                     >
                       <BlockStack gap="100">
                         <Text as="p" variant="bodySm">
                           <strong>Overall Status:</strong> {validRefMatchResult.success ? "Complete" : "Incomplete / Partial Diagnostics"} |{" "}
                           <strong>isComplete:</strong> {String(validRefMatchResult.isComplete)} |{" "}
-                          <strong>readOnly:</strong> {String(validRefMatchResult.readOnly)} |{" "}
                           <strong>Matched At:</strong> {new Date(validRefMatchResult.matchedAt).toLocaleTimeString()}
                         </Text>
                         {!validRefMatchResult.isComplete && (
                           <Text as="p" variant="bodySm" fontWeight="medium">
-                            Partial enumeration detected. Incomplete results are never treated as missing_entry or save-ready.
+                            Partial enumeration detected. Incomplete results remain blocked and are never treated as missing_entry or save-ready.
                           </Text>
                         )}
                         {validRefMatchResult.errors.length > 0 && (
@@ -2969,9 +3758,6 @@ export function OperationsMatrixTab({ products }) {
                             ))}
                           </BlockStack>
                         )}
-                        <Text as="p" variant="bodySm" tone="subdued" fontWeight="medium">
-                          Read-only matching. Writes disabled.
-                        </Text>
                       </BlockStack>
                     </Banner>
                   )}
@@ -3004,7 +3790,9 @@ export function OperationsMatrixTab({ products }) {
                   statusText = "Connection pending.";
               } else if (meta.isPendingReadOnly) {
                   boxBg = "#f8f9fa"; boxBorder = "#dee2e6"; textColor = "#41464c";
-                  statusText = "Standardized attribute (pending_read_only). Read-only display; writes disabled.";
+                  statusText = meta.isVerifiedStdDest
+                    ? (meta.stdEvaluation?.blockReason || "Awaiting complete reference matching before unlocking proposal.")
+                    : "Standardized attribute (pending_read_only). Read-only display; writes disabled.";
               } else if (meta.reasons.includes("SEO description save connection pending.")) {
                   boxBg = "#fff3cd"; boxBorder = "#ffecb5"; textColor = "#664d03";
                   statusText = "SEO description save connection pending. Draft is staged but write is disabled.";
@@ -3023,7 +3811,7 @@ export function OperationsMatrixTab({ products }) {
                   statusText = `Pre-approved. Cannot save until field destination/type is verified or limits resolved. (${technicalBlockers})`;
               } else if (meta.isApproved && !meta.hasTechnicalBlock) {
                   boxBg = "#d1e7dd"; boxBorder = "#badbcc"; textColor = "#0f5132";
-                  statusText = "Approved and technically eligible.";
+                  statusText = "Approved for exact serialized list and technically eligible. Not yet saved to Shopify.";
               } else if (meta.isApproved && meta.hasTechnicalBlock) {
                   boxBg = "#fff3cd"; boxBorder = "#ffecb5"; textColor = "#664d03";
                   statusText = "Suggestion approved. Cannot save until field destination/type is verified or limits resolved.";
@@ -3032,7 +3820,9 @@ export function OperationsMatrixTab({ products }) {
                   statusText = "Blocked by technical error. Review needed.";
               } else if (!meta.isApproved && meta.contentNeedsReview) {
                   boxBg = "#fff3cd"; boxBorder = "#ffecb5"; textColor = "#664d03";
-                  statusText = "Review needed to verify content explicitly before write can occur.";
+                  statusText = meta.isVerifiedStdDest
+                    ? "Exact serialized Metaobject GID list requires explicit approval before write can occur. Changing any selection invalidates approval."
+                    : "Review needed to verify content explicitly before write can occur.";
               } else if (!meta.isApproved && meta.fieldStatus === "Proposed") {
                   boxBg = "#e2e3e5"; boxBorder = "#d3d6d8"; textColor = "#41464c";
                   statusText = "Safe suggestion. Approval optional but recorded if checked.";
@@ -3046,8 +3836,9 @@ export function OperationsMatrixTab({ products }) {
                   thumbnailUrl = data.nativeTargets?.media?.edges?.find(e => e.node?.id === id)?.node?.preview?.image?.url;
               }
 
-              const displayCurrentVal = formatDisplayFieldValue(meta.currentVal, meta.isStandardizedAttribute, data);
-              const displayPropVal = formatDisplayFieldValue(meta.propVal, meta.isStandardizedAttribute, data);
+              const verifiedMapForDisplay = meta.stdEvaluation?.verifiedEntriesMap || null;
+              const displayCurrentVal = formatDisplayFieldValue(meta.currentVal, meta.isStandardizedAttribute, data, verifiedMapForDisplay);
+              const displayPropVal = formatDisplayFieldValue(meta.propVal, meta.isStandardizedAttribute, data, verifiedMapForDisplay);
 
               const candidateMetaKey = meta.metaKey || (key.startsWith("shopify.") ? key.slice(8) : "");
               const isVisionCandidateRow = meta.isStandardizedAttribute && ALLOWED_VISION_CANDIDATE_KEYS.includes(candidateMetaKey);
@@ -3067,6 +3858,12 @@ export function OperationsMatrixTab({ products }) {
                 fieldResolution && fieldResolution.continuation !== undefined && fieldResolution.continuation !== null
                   ? formatStructuredDiagValue(fieldResolution.continuation)
                   : "";
+
+              const currentProposedGids = isVisionCandidateRow
+                ? parseMetaobjectGidArray(meta.propVal)
+                : [];
+              const existingAssignedSet = new Set(meta.stdEvaluation?.existingGids || []);
+              const verifiedEntriesArray = verifiedMapForDisplay ? Array.from(verifiedMapForDisplay.values()) : [];
 
               return (
                 <Box key={key} padding="300" background={isBlank && meta.isSupported ? "bg-surface-warning" : "bg-surface"} borderColor="border" borderWidth="1" borderRadius="200">
@@ -3091,9 +3888,17 @@ export function OperationsMatrixTab({ products }) {
                             {meta.isSupported ? (
                               <>
                                 <Text as="p" variant="bodyMd" fontWeight="bold">Status: <Badge tone={statusTone}>{meta.fieldStatus}</Badge></Text>
-                                {meta.isPendingReadOnly && (
-                                  <Text as="p" variant="bodySm" tone="subdued" fontWeight="bold">Mode: <Badge tone="info">Read-Only (Pending)</Badge></Text>
-                                )}
+                                {meta.isPendingReadOnly ? (
+                                  <Text as="p" variant="bodySm" tone="subdued" fontWeight="bold">
+                                    Mode: <Badge tone={isVisionCandidateRow && visionCandidateEntry ? "warning" : "info"}>
+                                      {isVisionCandidateRow ? "Blocked (Awaiting Match / Ambiguous)" : "Read-Only (Pending)"}
+                                    </Badge>
+                                  </Text>
+                                ) : isVisionCandidateRow ? (
+                                  <Text as="p" variant="bodySm" tone="subdued" fontWeight="bold">
+                                    Mode: <Badge tone="success">Verified Reference Proposal Unlocked</Badge>
+                                  </Text>
+                                ) : null}
                                 <Text as="p" variant="bodyMd" fontWeight="bold">Source: <Text as="span" fontWeight="regular">{meta.source}</Text></Text>
                                 <Text as="p" variant="bodyMd" fontWeight="bold">Stage: <Text as="span" fontWeight="regular">{meta.stage}</Text></Text>
                               </>
@@ -3110,20 +3915,138 @@ export function OperationsMatrixTab({ products }) {
                             <Text as="p" variant="headingSm" tone="subdued" fontWeight="bold" style={{ marginBottom: "6px" }}>Current Shopify Value</Text>
                             <div style={{ whiteSpace: "pre-wrap", minWidth: 0 }}>
                                 <Text as="p" variant="bodyLg">{displayCurrentVal || <span style={{ color: "#8c9196", fontStyle: "italic" }}>Blank</span>}</Text>
+                                {isVisionCandidateRow && meta.currentExists && (
+                                  <Text as="p" variant="bodySm" tone="subdued" style={{ marginTop: "4px", fontFamily: "monospace" }}>
+                                    Serialized Current GIDs: {meta.currentVal}
+                                  </Text>
+                                )}
                             </div>
                         </div>
                         
                         <div style={{ minWidth: 0, width: "100%", boxSizing: "border-box" }}>
-                            <Text as="p" variant="headingSm" tone="subdued" fontWeight="bold" style={{ marginBottom: "6px" }}>Bench Proposal Value</Text>
-                            <TextField
-                                value={meta.isSupported ? displayPropVal : "Connection pending."}
-                                onChange={(val) => { if (meta.isSupported && !meta.isPendingReadOnly) handleRepairPlanChange(key, val) }}
-                                autoComplete="off"
-                                multiline={isMultilineKey(key, meta.control) ? 3 : undefined}
-                                placeholder={meta.isPendingReadOnly ? "Read-only standardized attribute (writes disabled)" : (meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing" ? "Blank" : (meta.fieldStatus === "Proposal not provided" ? "Not provided" : ""))}
-                                disabled={!meta.isSupported || meta.isPendingReadOnly}
-                                readOnly={!meta.isSupported || meta.isPendingReadOnly}
-                            />
+                            <Text as="p" variant="headingSm" tone="subdued" fontWeight="bold" style={{ marginBottom: "6px" }}>
+                              {isVisionCandidateRow ? "Bench Proposal Value (Readable Labels + Underlying Metaobject GIDs)" : "Bench Proposal Value"}
+                            </Text>
+                            {isVisionCandidateRow ? (
+                              <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                                <TextField
+                                    value={meta.isSupported ? (meta.propVal || "") : "Connection pending."}
+                                    onChange={() => {}}
+                                    autoComplete="off"
+                                    placeholder={
+                                      meta.isPendingReadOnly
+                                        ? (meta.stdEvaluation?.blockReason || "Blocked until reference matching succeeds")
+                                        : "No proposal staged"
+                                    }
+                                    disabled={true}
+                                    readOnly={true}
+                                    helpText={
+                                      meta.proposalExists
+                                        ? `Readable Selection: ${displayPropVal}`
+                                        : (meta.stdEvaluation?.blockReason || "Run 'Match Reference Choices' to resolve verified Metaobject GIDs.")
+                                    }
+                                />
+
+                                {/* Verified Entry Selector Controls (Strictly restricted to returned verified entries) */}
+                                {!meta.isPendingReadOnly && meta.stdEvaluation?.isTechnicallyEligible && verifiedEntriesArray.length > 0 && (
+                                  <div style={{ padding: "12px", backgroundColor: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: "8px", display: "flex", flexDirection: "column", gap: "10px" }}>
+                                    <Text as="p" variant="headingSm" fontWeight="bold" style={{ color: "#166534" }}>
+                                      Editable Verified Reference Selection (Returned Verified Metaobject Entries Only)
+                                    </Text>
+
+                                    {meta.stdEvaluation.labelEvaluations.map((ev, evIdx) => {
+                                      const candLbl = visionCandidateEntry?.labels?.[evIdx] || `Candidate ${evIdx + 1}`;
+                                      const selectedGidForSlot = ev.selectedEntry?.id || "";
+                                      const activeSlotGid =
+                                        currentProposedGids.find((g) => ev.matchingEntries.some((me) => me.id === g)) ||
+                                        selectedGidForSlot;
+
+                                      const selectOptions = verifiedEntriesArray.map((ve) => ({
+                                        label: `${ve.label || "Entry"} — ${ve.id}${existingAssignedSet.has(ve.id) ? " [Already Assigned]" : ""}`,
+                                        value: ve.id
+                                      }));
+
+                                      return (
+                                        <div key={evIdx} style={{ padding: "8px", backgroundColor: "#ffffff", borderRadius: "6px", border: "1px solid #dcfce7" }}>
+                                          <Select
+                                            label={`Candidate "${candLbl}" (${ev.status})`}
+                                            options={selectOptions}
+                                            value={activeSlotGid}
+                                            onChange={(newGid) =>
+                                              handleStandardizedEntrySelectionChange(
+                                                key,
+                                                meta.propVal,
+                                                meta.stdEvaluation,
+                                                newGid,
+                                                activeSlotGid
+                                              )
+                                            }
+                                          />
+                                          <Text as="p" variant="bodySm" tone="subdued" style={{ marginTop: "4px" }}>
+                                            {ev.reason}
+                                          </Text>
+                                        </div>
+                                      );
+                                    })}
+
+                                    <div style={{ borderTop: "1px solid #bbf7d0", paddingTop: "8px" }}>
+                                      <Text as="p" variant="bodySm" fontWeight="bold" style={{ marginBottom: "6px", color: "#166534" }}>
+                                        Complete Reference List Builder (Existing assignments are locked to prevent deletion):
+                                      </Text>
+                                      <div style={{ display: "flex", flexDirection: "column", gap: "6px", maxHeight: "160px", overflowY: "auto" }}>
+                                        {verifiedEntriesArray.map((ve) => {
+                                          const isChecked = currentProposedGids.includes(ve.id);
+                                          const isExistingLocked = existingAssignedSet.has(ve.id);
+                                          return (
+                                            <label
+                                              key={ve.id}
+                                              style={{
+                                                display: "flex",
+                                                alignItems: "center",
+                                                gap: "8px",
+                                                fontSize: "12px",
+                                                cursor: isExistingLocked ? "not-allowed" : "pointer"
+                                              }}
+                                            >
+                                              <input
+                                                type="checkbox"
+                                                checked={isChecked}
+                                                disabled={isExistingLocked}
+                                                onChange={(e) =>
+                                                  handleToggleVerifiedStandardizedEntry(
+                                                    key,
+                                                    meta.propVal,
+                                                    meta.stdEvaluation,
+                                                    ve.id,
+                                                    e.target.checked
+                                                  )
+                                                }
+                                              />
+                                              <span>
+                                                <strong>{ve.label || "Unnamed"}</strong> ({ve.id})
+                                                {ve.definitionId ? ` | Def: ${ve.definitionId}` : ""}
+                                                {ve.taxonomyRef ? ` | Tax: ${ve.taxonomyRef}` : ""}
+                                                {isExistingLocked ? " [Existing Assignment — Preserved]" : ""}
+                                              </span>
+                                            </label>
+                                          );
+                                        })}
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            ) : (
+                              <TextField
+                                  value={meta.isSupported ? displayPropVal : "Connection pending."}
+                                  onChange={(val) => { if (meta.isSupported && !meta.isPendingReadOnly) handleRepairPlanChange(key, val) }}
+                                  autoComplete="off"
+                                  multiline={isMultilineKey(key, meta.control) ? 3 : undefined}
+                                  placeholder={meta.isPendingReadOnly ? "Read-only standardized attribute (writes disabled)" : (meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing" ? "Blank" : (meta.fieldStatus === "Proposal not provided" ? "Not provided" : ""))}
+                                  disabled={!meta.isSupported || meta.isPendingReadOnly}
+                                  readOnly={!meta.isSupported || meta.isPendingReadOnly}
+                              />
+                            )}
                         </div>
 
                         {isVisionCandidateRow && (
@@ -3140,17 +4063,20 @@ export function OperationsMatrixTab({ products }) {
                                             <Text as="p" variant="bodySm">
                                                 <strong>Evidence:</strong> {visionCandidateEntry.evidence}
                                             </Text>
-                                            <Text as="p" variant="bodySm" tone="subdued" fontWeight="medium">
-                                                Read-only matching. Writes disabled.
-                                            </Text>
+                                            {meta.isPendingReadOnly ? (
+                                                <Text as="p" variant="bodySm" tone="critical" fontWeight="medium">
+                                                    <strong>Blocked:</strong> {meta.stdEvaluation?.blockReason || "Run 'Match Reference Choices' to validate."}
+                                                </Text>
+                                            ) : (
+                                                <Text as="p" variant="bodySm" tone="success" fontWeight="medium">
+                                                    <strong>Resolved Proposal:</strong> {displayPropVal}
+                                                </Text>
+                                            )}
                                         </BlockStack>
                                     ) : (
                                         <BlockStack gap="100">
                                             <Text as="p" variant="bodySm" tone="subdued">
                                                 No supported Vision candidate returned for this attribute.
-                                            </Text>
-                                            <Text as="p" variant="bodySm" tone="subdued" fontWeight="medium">
-                                                Read-only matching. Writes disabled.
                                             </Text>
                                         </BlockStack>
                                     )}
@@ -3169,10 +4095,7 @@ export function OperationsMatrixTab({ products }) {
                                                 </Badge>
                                             </Text>
                                             <Text as="p" variant="bodySm">
-                                                Matching reference choices against Shopify definitions (read-only)...
-                                            </Text>
-                                            <Text as="p" variant="bodySm" tone="subdued" fontWeight="medium">
-                                                Read-only matching. Writes disabled.
+                                                Matching reference choices against Shopify definitions...
                                             </Text>
                                         </BlockStack>
                                     ) : fieldResolution ? (
@@ -3188,7 +4111,7 @@ export function OperationsMatrixTab({ products }) {
                                                 <Badge tone={fieldResolution.isComplete === true ? "success" : "warning"}>
                                                     {fieldResolution.isComplete === true
                                                         ? "Complete"
-                                                        : "Incomplete (Not missing_entry / Not save-ready)"}
+                                                        : "Incomplete (Blocked / Not save-ready)"}
                                                 </Badge>
                                             </Text>
 
@@ -3198,10 +4121,28 @@ export function OperationsMatrixTab({ products }) {
                                                 </Text>
                                             )}
 
+                                            {meta.stdEvaluation?.labelEvaluations?.length > 0 && (
+                                                <BlockStack gap="050">
+                                                    <Text as="p" variant="bodySm" fontWeight="bold">
+                                                        Resolution Evaluation:
+                                                    </Text>
+                                                    {meta.stdEvaluation.labelEvaluations.map((ev, idx) => (
+                                                        <Text
+                                                            key={idx}
+                                                            as="p"
+                                                            variant="bodySm"
+                                                            tone={ev.selectedEntry ? "success" : "critical"}
+                                                        >
+                                                            • {ev.reason}
+                                                        </Text>
+                                                    ))}
+                                                </BlockStack>
+                                            )}
+
                                             {formattedLabelResolutions && (
                                                 <div style={{ minWidth: 0 }}>
                                                     <Text as="p" variant="bodySm" fontWeight="bold">
-                                                        Label Resolutions (All Returned Options — Unselected):
+                                                        Label Resolutions (Raw Backend Diagnostic):
                                                     </Text>
                                                     <pre style={{ margin: "4px 0 0 0", padding: "8px", backgroundColor: "#f1f5f9", border: "1px solid #e2e8f0", borderRadius: "4px", fontSize: "11px", whiteSpace: "pre-wrap", wordBreak: "break-word", overflowWrap: "anywhere", maxHeight: "220px", overflowY: "auto" }}>
                                                         {formattedLabelResolutions}
@@ -3267,10 +4208,6 @@ export function OperationsMatrixTab({ products }) {
                                                     ))}
                                                 </BlockStack>
                                             )}
-
-                                            <Text as="p" variant="bodySm" tone="subdued" fontWeight="medium">
-                                                Read-only matching. Writes disabled.
-                                            </Text>
                                         </BlockStack>
                                     ) : (
                                         <BlockStack gap="100">
@@ -3286,9 +4223,6 @@ export function OperationsMatrixTab({ products }) {
                                                         ? "Backend response did not include a resolution object for this candidate key. Check top-level read errors or click 'Match Reference Choices (Retry)'."
                                                         : "No candidate was submitted for this attribute key."
                                                     : derivedLifecycleMessage}
-                                            </Text>
-                                            <Text as="p" variant="bodySm" tone="subdued" fontWeight="medium">
-                                                Read-only matching. Writes disabled.
                                             </Text>
                                         </BlockStack>
                                     )}
@@ -3319,7 +4253,7 @@ export function OperationsMatrixTab({ products }) {
                                         aria-label={`Approve suggestion for ${customLabel}: ${meta.propVal}`}
                                     />
                                     <label htmlFor={`approve-${key}`} style={{ fontWeight: "bold", fontSize: "16px", cursor: "pointer", color: textColor, display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px", flex: 1, minWidth: 0, wordBreak: "break-word", overflowWrap: "anywhere" }}>
-                                        Approve this suggestion: <span style={{ fontWeight: "normal", whiteSpace: "pre-wrap" }}>"{meta.propVal}"</span>
+                                        Approve this suggestion: <span style={{ fontWeight: "normal", whiteSpace: "pre-wrap" }}>{isVisionCandidateRow ? `${displayPropVal} → ${meta.propVal}` : `"${meta.propVal}"`}</span>
                                     </label>
                                 </div>
                                 <div style={{ marginTop: "8px", marginLeft: "36px", minWidth: 0, wordBreak: "break-word", overflowWrap: "anywhere" }}>
