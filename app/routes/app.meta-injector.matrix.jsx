@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect } from "react";
-import { BlockStack, Card, Text, Banner, TextField, Button, InlineStack, Box, Badge, ProgressBar, Select } from "@shopify/polaris";
-import { MagicIcon, ClipboardIcon, SaveIcon, ChevronDownIcon, ChevronUpIcon } from "@shopify/polaris-icons";
+import { BlockStack, Card, Text, Banner, Button, InlineStack, Box, ProgressBar, Select } from "@shopify/polaris";
+import { MagicIcon, ClipboardIcon, SaveIcon } from "@shopify/polaris-icons";
 import { useFetcher } from "react-router";
 import { PRODUCT_TEMPLATE_GROUPS } from "../utils/meta-injector.constants.jsx";
 import {
@@ -15,141 +15,31 @@ import {
   buildCanonicalCandidateSnapshot,
   formatErrorsList,
   serializeStandardizedAssignmentForVision,
-  formatDisplayFieldValue,
   validArray,
   validObj
 } from "../utils/meta-injector.standardized.jsx";
 import {
-  StandardizedSectionBanner,
-  StandardizedProposalControl,
-  StandardizedRowDiagnostics
-} from "../components/meta-injector.standardized-review.jsx";
+  STATUS,
+  NATIVE_FIELDS,
+  NATIVE_ALIAS_MAP,
+  RETIRED_KEYS,
+  FILTER_OPTIONS,
+  resolveConfigFieldDestination,
+  getDynamicSections,
+  getStatusTone,
+  isMultilineKey,
+  evaluateFieldMetadata,
+  computeSystemStatus,
+  computeDiagnosticsStats,
+  buildRepairPayload
+} from "../utils/meta-injector.matrix-domain.jsx";
+import { buildAndCopyMatrixTelemetry } from "../utils/meta-injector.telemetry.jsx";
 import {
   InventorySelectionColumn,
   BenchDiagnosticHeader,
   DescriptionReviewSection
 } from "../components/meta-injector.bench-chrome.jsx";
-
-const STATUS = {
-  QUEUED: "Queued",
-  SCANNING: "Scanning",
-  VALIDATED: "Manifest Built",
-  COMPLETE: "Repaired",
-  FAILED: "Failed",
-  SKIPPED: "Skipped"
-};
-
-const BLOCKED_UNVERIFIED_PINS = [
-  "custom.jewelry_type"
-];
-
-const FIELD_LIMITS = {
-  "custom.seo_title": 70,
-  "shopify_title": 255,
-  "custom.piece_name": 255,
-  "custom.alt_text": 100000,
-  "custom.honest_flaws_and_character": 255
-};
-
-const PROTECTED_FIELDS = [
-  "custom.stone_family", "custom.surface_finish",
-  "custom.color_pattern", "custom.google_product_category", "custom.setting_ready",
-  "custom.bail_included", "custom.chain_material", "custom.jewelry_finding_type",
-  "shopify_title"
-];
-
-const HARDWARE_FIELDS = [
-  "custom.setting_ready", "custom.bail_included", "custom.chain_material",
-  "custom.jewelry_finding_type"
-];
-
-const POLICY_PRE_APPROVED_FIELDS = [
-  "custom.rarity",
-  "custom.authenticity",
-  "custom.alt_text",
-  "custom.stone_family",
-  "custom.surface_finish",
-  "custom.primary_color",
-  "custom.color_pattern",
-  "custom.honest_flaws_and_character",
-  "custom.setting_ready",
-  "custom.chain_material",
-  "custom.jewelry_finding_type",
-  "custom.seo_title"
-];
-
-const GENERIC_VALUES = ["None", "Unknown", "N/A", "N/a", "none", "unknown", "n/a"];
-const REQUIRED_FIELDS = ["shopify_title", "price"];
-const INTEGRATION_PREFIXES = ["google.", "shopify.", "mm-google", "mc-facebook"];
-const NATIVE_FIELDS = ["price", "shopify_title"];
-
-const NATIVE_ALIAS_MAP = {
-  "native_title": "shopify_title",
-  "native_description": "custom.generated_description",
-  "native_seo_title": "custom.seo_title",
-  "native_shipping_weight": "custom.shipping_weight_oz",
-  "native_price": "price"
-};
-
-const DESCRIPTION_REVIEW_EXCLUDED_KEYS = ["native_description", "custom.generated_description"];
-
-// Used strictly for global telemetry tracking to preserve 45-count. Do not render.
-const HIDDEN_CONTEXT_FIELDS = ["custom.origin_story"]; 
-
-const RETIRED_KEYS = [
-  "artist_notes", "bench_notes", "handcrafted_by", "color",
-  "cut_and_shape", "stone_shape", "wire_material", "primary_use",
-  "custom.artist_notes", "custom.bench_notes", "custom.handcrafted_by", "custom.color",
-  "custom.cut_and_shape", "custom.stone_shape", "custom.wire_material", "custom.primary_use"
-];
-
-const formatLabel = (key) => {
-  const parts = key.split('.');
-  const name = parts[parts.length - 1];
-  return name.replace(/[_-]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-};
-
-const resolveConfigFieldDestination = (f) => {
-  if (!f) return "";
-  if (f.role === "standardized_attribute" && f.namespace && f.metaKey) {
-    return `${f.namespace}.${f.metaKey}`;
-  }
-  if (f.namespace && f.metaKey && !f.key?.startsWith("native_") && !NATIVE_FIELDS.includes(f.key)) {
-    return `${f.namespace}.${f.metaKey}`;
-  }
-  if (NATIVE_FIELDS.includes(f.key) || f.key.includes('.') || f.key.startsWith('native_')) {
-    return f.key;
-  }
-  return `custom.${f.key}`;
-};
-
-const getDynamicSections = (manifest) => {
-  return PRODUCT_TEMPLATE_GROUPS.map(group => {
-    let keys = [];
-    group.fields.forEach(f => {
-      if (RETIRED_KEYS.includes(f.key) || RETIRED_KEYS.includes(`custom.${f.key}`)) return;
-      
-      if (f.key === "native_image_alt") {
-        if (manifest?.nativeTargets?.media?.edges) {
-          const mediaKeys = manifest.nativeTargets.media.edges.map(e => `native_image_alts_${e.node.id}`);
-          keys.push(...mediaKeys);
-        }
-        return;
-      }
-      
-      const resolvedKey = resolveConfigFieldDestination(f);
-      if (resolvedKey && !RETIRED_KEYS.includes(resolvedKey)) {
-        keys.push(resolvedKey);
-      }
-    });
-    
-    if (group.heading === "3. Origin, Story, and Collection") {
-        if (!keys.includes("custom.origin_story")) keys.push("custom.origin_story");
-    }
-
-    return { title: group.heading, keys: keys, configFields: group.fields };
-  });
-};
+import { ManifestSectionCard } from "../components/meta-injector.manifest-section.jsx";
 
 export function OperationsMatrixTab({ products }) {
   const safeProducts = products || [];
@@ -701,477 +591,16 @@ export function OperationsMatrixTab({ products }) {
     manualEdits
   ]);
 
-  const getFieldMetadata = (key, data, productId, currentApprovals, configFields = []) => {
-    const targetKeyForProposal = NATIVE_ALIAS_MAP[key] || key;
-    const isNativeImageAlt = key.startsWith("native_image_alts_");
-    
-    const unprefixedKey = targetKeyForProposal.replace(/^custom\./, '');
-    const templateConfig = configFields.find(f => {
-      const resolvedDest = resolveConfigFieldDestination(f);
-      return (
-        resolvedDest === key ||
-        resolvedDest === targetKeyForProposal ||
-        f.key === key ||
-        f.key === targetKeyForProposal ||
-        (f.role !== "standardized_attribute" && f.key === unprefixedKey)
-      );
+  const getFieldMetadata = (key, data, productId, currentApprovals, configFields = []) =>
+    evaluateFieldMetadata({
+      key,
+      data,
+      productId,
+      currentApprovals,
+      configFields,
+      standardizedCandidatesByProduct,
+      getStandardizedEvaluationForField
     });
-
-    const isStandardizedAttribute = templateConfig?.role === "standardized_attribute" || key.startsWith("shopify.");
-    const isVerifiedStdDest = isVerifiedStandardizedDestination(targetKeyForProposal);
-
-    const stdEvaluation = isVerifiedStdDest
-      ? getStandardizedEvaluationForField(productId, targetKeyForProposal, data)
-      : null;
-
-    // Relax pending_read_only ONLY for the six verified destinations when all required matching checks pass
-    const isPendingReadOnly = isVerifiedStdDest
-      ? !Boolean(stdEvaluation?.isTechnicallyEligible)
-      : templateConfig?.mappingStatus === "pending_read_only";
-
-    let currentVal = "";
-    const variants = data.nativeTargets?.variants?.edges || [];
-    const isSingleVariant = variants.length === 1 && 
-                            data.nativeTargets?.variants?.pageInfo?.hasNextPage === false && 
-                            data.nativeTargets?.isComplete === true && 
-                            !data.nativeTargets?.loadError;
-
-    if (isNativeImageAlt) {
-        const imageId = key.replace("native_image_alts_", "");
-        const match = data.nativeTargets?.media?.edges?.find(e => e.node?.id === imageId);
-        currentVal = match?.node?.alt || "";
-    } else if (key === "native_title" || key === "shopify_title") {
-        currentVal = data.nativeTargets?.productTitle || data.canonicalFields?.shopify_title || "";
-    } else if (key === "native_description" || key === "custom.generated_description") {
-        currentVal = key === "native_description" 
-          ? (data.nativeTargets?.descriptionHtml || "")
-          : (data.currentMetafields?.["custom.generated_description"] || "");
-    } else if (key === "native_seo_title" || key === "custom.seo_title") {
-        currentVal = key === "native_seo_title"
-          ? (data.nativeTargets?.seo?.title || "")
-          : (data.currentMetafields?.["custom.seo_title"] || "");
-    } else if (key === "native_seo_description") {
-        currentVal = data.nativeTargets?.seo?.description || "";
-    } else if (key === "native_price" || key === "price") {
-        if (isSingleVariant) {
-            currentVal = variants[0].node?.price || "";
-        } else if (variants.length !== 1 || data.nativeTargets?.variants?.pageInfo?.hasNextPage !== false || !data.nativeTargets?.isComplete || data.nativeTargets?.loadError) {
-            currentVal = "Multiple variants / Incomplete data - review manually";
-        }
-    } else if (key === "native_shipping_weight" || key === "custom.shipping_weight_oz") {
-        if (key === "native_shipping_weight") {
-            if (isSingleVariant) {
-                const w = variants[0].node?.inventoryItem?.measurement?.weight;
-                currentVal = w?.value ? `${w.value} ${w.unit}` : "";
-            } else if (variants.length !== 1 || data.nativeTargets?.variants?.pageInfo?.hasNextPage !== false || !data.nativeTargets?.isComplete || data.nativeTargets?.loadError) {
-                currentVal = "Multiple variants / Incomplete data - review manually";
-            }
-        } else {
-            currentVal = data.currentMetafields?.["custom.shipping_weight_oz"] || "";
-        }
-    } else if (isVerifiedStdDest && stdEvaluation) {
-        if (stdEvaluation.existingGids.length > 0) {
-            currentVal = JSON.stringify(stdEvaluation.existingGids);
-        } else {
-            const hasCurrent = data.currentMetafields?.hasOwnProperty(key);
-            const rawCurrent = hasCurrent ? data.currentMetafields[key] : "";
-            if (Array.isArray(rawCurrent)) {
-                currentVal = rawCurrent.length > 0 ? JSON.stringify(rawCurrent) : "";
-            } else if (typeof rawCurrent === "object" && rawCurrent !== null) {
-                currentVal = JSON.stringify(rawCurrent);
-            } else {
-                currentVal = hasCurrent ? String(rawCurrent ?? "") : "";
-            }
-        }
-    } else {
-        const hasCurrent = data.currentMetafields?.hasOwnProperty(key);
-        const rawCurrent = hasCurrent ? data.currentMetafields[key] : "";
-        if (Array.isArray(rawCurrent)) {
-            currentVal = JSON.stringify(rawCurrent);
-        } else if (typeof rawCurrent === "object" && rawCurrent !== null) {
-            currentVal = JSON.stringify(rawCurrent);
-        } else {
-            currentVal = hasCurrent ? String(rawCurrent ?? "") : "";
-        }
-    }
-
-    let isProposed = false;
-    let propVal = "";
-
-    if (isVerifiedStdDest) {
-        if (stdEvaluation?.isTechnicallyEligible) {
-            if (data.repairPlan !== undefined && data.repairPlan.hasOwnProperty(targetKeyForProposal)) {
-                isProposed = true;
-                const rawProp = data.repairPlan[targetKeyForProposal];
-                propVal = Array.isArray(rawProp) ? JSON.stringify(rawProp) : String(rawProp ?? "");
-            } else if (stdEvaluation.autoProposalSerialized) {
-                isProposed = true;
-                propVal = stdEvaluation.autoProposalSerialized;
-            }
-        }
-    } else if (data.repairPlan !== undefined && !isPendingReadOnly && !isStandardizedAttribute) {
-        if (data.repairPlan.hasOwnProperty(targetKeyForProposal)) {
-            isProposed = true;
-            const rawProp = data.repairPlan[targetKeyForProposal];
-            if (Array.isArray(rawProp)) {
-                propVal = JSON.stringify(rawProp);
-            } else if (typeof rawProp === "object" && rawProp !== null) {
-                propVal = JSON.stringify(rawProp);
-            } else {
-                propVal = String(rawProp ?? "");
-            }
-        } else if (key === "native_shipping_weight" || key === "custom.shipping_weight_oz") {
-            const stoneGrams = parseFloat(data.currentMetafields?.["custom.weight_grams"] || data.repairPlan?.["custom.weight_grams"]) || 0;
-            if (stoneGrams > 0) {
-                isProposed = true;
-                propVal = String(Math.ceil((stoneGrams / 28.3495) + 0.5));
-            }
-        } else if (key === "native_seo_description" && data.repairPlan.hasOwnProperty("native_seo_description")) {
-            isProposed = true;
-            propVal = String(data.repairPlan["native_seo_description"]);
-        }
-    }
-
-    let fieldMeta = data.metadata?.[key] || data.metadata?.[targetKeyForProposal] || {};
-    let source = fieldMeta.source || (isVerifiedStdDest && isProposed ? "Vision" : "Not reported");
-    let stage = fieldMeta.stage || (isVerifiedStdDest && isProposed ? "resolveStandardizedCandidates" : "Not reported");
-
-    let fieldStatus = "Unchanged";
-    let proposalStatus = isProposed ? (propVal.trim() !== "" ? "Provided" : "Empty") : "Not provided";
-    let isBlockedAction = false;
-    let reasons = [];
-    
-    let isContentPreApproved = false;
-    let preApprovalReason = "";
-
-    const currentExists = currentVal.trim() !== "" && currentVal.trim() !== "[]";
-    const proposalExists = isProposed && propVal.trim() !== "" && propVal.trim() !== "[]";
-
-    const isKnownKey = templateConfig !== undefined || NATIVE_FIELDS.includes(key) || isNativeImageAlt || HIDDEN_CONTEXT_FIELDS.includes(key) || key.startsWith('native_');
-
-    // Never auto-preapprove the six standardized reference proposals; Bob's meaning approval is not technical list approval
-    if (!isPendingReadOnly && !isVerifiedStdDest) {
-        if (targetKeyForProposal === "custom.google_product_category" && proposalExists) {
-            isContentPreApproved = true;
-            preApprovalReason = "Category pre-approved";
-        } else if (
-            data.verifiedGeoValues && 
-            data.verifiedGeoValues[unprefixedKey] !== undefined && 
-            String(data.verifiedGeoValues[unprefixedKey]) === propVal && 
-            proposalExists
-        ) {
-            isContentPreApproved = true;
-            preApprovalReason = "Verified Geo Library";
-        } else if (POLICY_PRE_APPROVED_FIELDS.includes(targetKeyForProposal) && proposalExists) {
-            isContentPreApproved = true;
-            preApprovalReason = "Pre-approved by operator policy";
-        } else if (isNativeImageAlt && proposalExists) {
-            isContentPreApproved = true;
-            preApprovalReason = "Native Image Alt pre-approved by policy";
-        }
-    }
-
-    const isRequired = REQUIRED_FIELDS.includes(targetKeyForProposal);
-    const isProtected = PROTECTED_FIELDS.includes(targetKeyForProposal);
-    const isHardware = HARDWARE_FIELDS.includes(targetKeyForProposal);
-    const isIntegration = INTEGRATION_PREFIXES.some(prefix => targetKeyForProposal.startsWith(prefix));
-
-    const currentCount = currentVal.length;
-    const propCount = propVal.length;
-    const limit = FIELD_LIMITS[targetKeyForProposal] || null;
-
-    const isManualOnly = false;
-    const isOperatorOwned = (targetKeyForProposal === "price" || targetKeyForProposal === "custom.weight_grams" || targetKeyForProposal === "custom.dimensions_mm");
-    
-    const exactApprovalVal = currentApprovals?.[productId]?.[targetKeyForProposal];
-    const isApproved = !isPendingReadOnly && exactApprovalVal !== undefined && exactApprovalVal === propVal && propVal.trim() !== "";
-
-    if (HIDDEN_CONTEXT_FIELDS.includes(key)) {
-        return { currentVal, propVal, isProposed, fieldStatus: "Hidden Source", proposalStatus, source, stage, isBlockedAction: true, reasons: ["Hidden Context"], currentExists, proposalExists, isApproved: false, hasTechnicalBlock: true, contentNeedsReview: false, isContentPreApproved: false, preApprovalReason: "", isManualOnly: false, isActualBlockedProposal: false, isOperatorOwned: false, isSupported: true, isPendingReadOnly: false, isStandardizedAttribute: false };
-    }
-
-    let hasTechnicalBlock = false;
-    let contentNeedsReview = false;
-
-    // Technical Verification Layer
-    const isOverLimit = limit !== null && !isNativeImageAlt && (currentCount > limit || (isProposed && propCount > limit));
-    if (isOverLimit) {
-        hasTechnicalBlock = true;
-        reasons.push("Over limit");
-    }
-    
-    if (isIntegration) reasons.push("Integration owned");
-
-    if (isVerifiedStdDest) {
-        if (!stdEvaluation?.isTechnicallyEligible) {
-            hasTechnicalBlock = true;
-            reasons.push(stdEvaluation?.blockReason || "Standardized attribute awaiting valid reference match.");
-        } else if (proposalExists) {
-            const propValidation = validateProposedStandardizedGidList(propVal, stdEvaluation);
-            if (!propValidation.valid) {
-                hasTechnicalBlock = true;
-                reasons.push(propValidation.reason);
-            } else {
-                // Require explicit exact-value approval for all standardized reference proposals
-                contentNeedsReview = true;
-            }
-        }
-    } else if (isPendingReadOnly) {
-        hasTechnicalBlock = true;
-        reasons.push("Standardized attribute read-only (pending_read_only)");
-    }
-
-    if (BLOCKED_UNVERIFIED_PINS.includes(targetKeyForProposal) && proposalExists) {
-        hasTechnicalBlock = true;
-        reasons.push("Type/destination unverified");
-    }
-
-    if (isHardware && GENERIC_VALUES.includes(propVal.trim()) && proposalExists) {
-        hasTechnicalBlock = true;
-        reasons.push("Generic hardware fill into blank");
-    }
-
-    if (isNativeImageAlt) {
-        if (data.nativeTargets?.isComplete === false || data.nativeTargets?.loadError) {
-            hasTechnicalBlock = true;
-            reasons.push(`Media targets incomplete/failed. Retry load. Error: ${data.nativeTargets?.loadError || 'Pagination failed'}`);
-        }
-    }
-    
-    if (key === "native_seo_description") {
-        hasTechnicalBlock = true;
-        reasons.push("SEO description save connection pending.");
-    }
-
-    // New Backend Technical Blockers
-    const apiBlockReason = data.blockedFields?.[targetKeyForProposal] || data.blockedFields?.[unprefixedKey];
-    if (apiBlockReason) {
-        reasons.push(`Backend Blocked: ${apiBlockReason}`);
-    }
-
-    let conflictData = data.conflicts?.[targetKeyForProposal] || data.conflicts?.[unprefixedKey];
-    let nativeDescConflictData = null;
-    
-    if (targetKeyForProposal === "custom.generated_description" && data.conflicts?.["native_description"]) {
-        nativeDescConflictData = data.conflicts["native_description"];
-        const expLen = String(nativeDescConflictData.expected || "").length;
-        const actLen = String(nativeDescConflictData.actual || "").length;
-        reasons.push(`Read-back Mismatch [Native descriptionHtml]: Expected (${expLen} chars) != Actual (${actLen} chars)`);
-    }
-
-    if (conflictData) {
-        if (targetKeyForProposal === "custom.generated_description") {
-            const expLen = String(conflictData.expected || "").length;
-            const actLen = String(conflictData.actual || "").length;
-            reasons.push(`Read-back Mismatch [Metafield / Native Field]: Expected (${expLen} chars) != Actual (${actLen} chars)`);
-        } else {
-            reasons.push(`Read-back Mismatch [Metafield / Native Field]: ${conflictData.expected} != ${conflictData.actual}`);
-        }
-    }
-
-    // Content Review Status Evaluation
-    if (currentExists) {
-        if (!proposalExists) {
-            fieldStatus = "Unchanged";
-        } else if (currentVal === propVal) {
-            fieldStatus = "Unchanged";
-        } else {
-            if (isVerifiedStdDest) {
-                contentNeedsReview = true;
-                fieldStatus = "Proposed";
-                reasons.push("Proposed (Preserves existing references + adds verified entry)");
-            } else if (isProtected || isOperatorOwned) {
-                contentNeedsReview = true;
-                if (!isContentPreApproved) fieldStatus = "Degrade";
-                reasons.push(isContentPreApproved ? "Historical: Degrade (Pre-approved)" : "Degrade");
-            } else {
-                contentNeedsReview = true;
-                if (!isContentPreApproved) fieldStatus = "Conflict";
-                reasons.push(isContentPreApproved ? "Historical: Conflict (Pre-approved)" : "Conflict");
-            }
-        }
-    } else {
-        if (!proposalExists) {
-            fieldStatus = isRequired ? "Required missing" : "Optional blank";
-            if (isRequired) reasons.push("Required missing");
-        } else {
-            if (source === "Not reported") {
-                contentNeedsReview = true;
-                if (!isContentPreApproved) fieldStatus = "Unverified proposal";
-                reasons.push(isContentPreApproved ? "Historical: Unverified proposal (Pre-approved)" : "Unverified proposal");
-            } else {
-                if (!isContentPreApproved) fieldStatus = "Proposed";
-                reasons.push("Proposed");
-            }
-        }
-    }
-
-    const candidateMetaKeyForCheck = templateConfig?.metaKey || (key.startsWith("shopify.") ? key.slice(8) : "");
-    const hasStagedCandidateForRow =
-      isVerifiedStdDest &&
-      Boolean(standardizedCandidatesByProduct[productId]?.[candidateMetaKeyForCheck]);
-
-    // Apply baseline technical overrides
-    if (isVerifiedStdDest && hasTechnicalBlock && hasStagedCandidateForRow) {
-        fieldStatus = "Blocked";
-    } else if (hasTechnicalBlock && fieldStatus !== "Unchanged" && fieldStatus !== "Optional blank" && fieldStatus !== "Required missing") {
-        if (isOverLimit) {
-            fieldStatus = "Over limit";
-        } else if (isPendingReadOnly || hasTechnicalBlock || reasons.includes("Type/destination unverified") || reasons.includes("Generic hardware fill into blank")) {
-            fieldStatus = "Blocked";
-        } else if (isNativeImageAlt) {
-            fieldStatus = "Blocked";
-        }
-    }
-    
-    // Apply read-back and block overrides strictly for UI display
-    if (apiBlockReason) {
-        fieldStatus = "API Error / Blocked";
-    } else if (conflictData || nativeDescConflictData) {
-        fieldStatus = "Save Conflict";
-    }
-
-    // React to Approvals & Pre-Approvals
-    if (proposalExists && currentVal !== propVal && !isManualOnly && !isPendingReadOnly && !apiBlockReason && !conflictData && !nativeDescConflictData) {
-        if (isContentPreApproved) {
-            if (hasTechnicalBlock) {
-                fieldStatus = "Pre-approved, blocked";
-                isBlockedAction = true;
-            } else {
-                fieldStatus = "Pre-approved, not saved";
-                isBlockedAction = false;
-            }
-        } else if (isApproved) {
-            if (hasTechnicalBlock) {
-                fieldStatus = "Approved, blocked";
-                isBlockedAction = true;
-            } else {
-                fieldStatus = "Approved, not saved";
-                isBlockedAction = false;
-            }
-        } else {
-            if (contentNeedsReview || hasTechnicalBlock) {
-                isBlockedAction = true;
-            } else {
-                isBlockedAction = false; 
-            }
-        }
-    } else {
-        if (hasTechnicalBlock || isPendingReadOnly || apiBlockReason || conflictData || nativeDescConflictData || fieldStatus === "Optional blank" || fieldStatus === "Required missing") {
-            isBlockedAction = true;
-        }
-    }
-
-    if (isManualOnly) {
-        isBlockedAction = true;
-        if (proposalExists && currentVal !== propVal) {
-            fieldStatus = "Manual only";
-            if (!reasons.includes("Manual only")) reasons.push("Manual only");
-        }
-    }
-
-    if (isPendingReadOnly) {
-        isBlockedAction = true;
-    }
-
-    const isActualBlockedProposal = isBlockedAction && 
-                                    !isManualOnly && 
-                                    (!isPendingReadOnly || (isVerifiedStdDest && hasStagedCandidateForRow)) &&
-                                    (!isStandardizedAttribute || isVerifiedStdDest) &&
-                                    !HIDDEN_CONTEXT_FIELDS.includes(key) && 
-                                    ((proposalExists && currentVal !== propVal) || (isVerifiedStdDest && hasStagedCandidateForRow && hasTechnicalBlock));
-
-    return { 
-      currentVal, propVal, isProposed, fieldStatus, proposalStatus, source, stage, 
-      isBlockedAction, reasons, currentExists, proposalExists, isApproved, hasTechnicalBlock, contentNeedsReview,
-      isContentPreApproved, preApprovalReason, isManualOnly, isOperatorOwned, isActualBlockedProposal,
-      conflictData, nativeDescConflictData,
-      isSupported: isKnownKey,
-      isPendingReadOnly,
-      isStandardizedAttribute,
-      isVerifiedStdDest,
-      stdEvaluation,
-      metaKey: templateConfig?.metaKey || (key.startsWith("shopify.") ? key.slice(8) : ""),
-      label: templateConfig?.label || formatLabel(key),
-      control: templateConfig?.control
-    };
-  };
-
-  const buildRepairPayload = (manifest, product, currentId, currentApprovals) => {
-    const safePlan = {};
-    const nativeChanges = {};
-    
-    const dynamicSections = getDynamicSections(manifest);
-    const allConfigFields = dynamicSections.flatMap(sec => sec.configFields || []);
-
-    Object.keys(manifest.repairPlan || {}).forEach(key => {
-        if (key.startsWith("native_image_alts_")) return; 
-        if (key === "native_seo_description") return;
-        if (key === "standardized_candidates" || key === "custom.standardized_candidates") return;
-        if (key.startsWith("custom.std_") || key.startsWith("std_")) return;
-        if (key.startsWith("shopify.") && !isVerifiedStandardizedDestination(key)) return;
-        
-        const meta = getFieldMetadata(key, manifest, currentId, currentApprovals, allConfigFields);
-
-        if (isVerifiedStandardizedDestination(key)) {
-            if (meta.isPendingReadOnly || meta.isBlockedAction || !meta.isApproved || meta.hasTechnicalBlock) return;
-            const valCheck = validateProposedStandardizedGidList(meta.propVal, meta.stdEvaluation);
-            if (!valCheck.valid) return;
-            if (meta.propVal !== meta.currentVal) {
-                safePlan[key] = JSON.stringify(valCheck.gids);
-            }
-            return;
-        }
-
-        if (meta.isPendingReadOnly || meta.isStandardizedAttribute) return;
-
-        if (!meta.isBlockedAction && !HIDDEN_CONTEXT_FIELDS.includes(key) && !RETIRED_KEYS.includes(key)) {
-            if (key === "shopify_title") {
-                nativeChanges.title = manifest.repairPlan[key];
-            } else if (key === "custom.shipping_weight_oz") {
-                const variantsConn = manifest.nativeTargets?.variants;
-                if (variantsConn?.edges?.length === 1 && 
-                    variantsConn?.pageInfo?.hasNextPage === false && 
-                    manifest.nativeTargets?.isComplete === true &&
-                    !manifest.nativeTargets?.loadError) {
-                    const variantId = variantsConn.edges[0].node?.id;
-                    if (variantId) {
-                        nativeChanges.shippingWeight = {
-                            variantId: variantId,
-                            value: manifest.repairPlan[key],
-                            unit: "OUNCES"
-                        };
-                    }
-                }
-            } else {
-                safePlan[key] = manifest.repairPlan[key];
-            }
-        }
-    });
-
-    const isMediaComplete = manifest.nativeTargets?.isComplete === true;
-    const mediaLoadError = manifest.nativeTargets?.loadError;
-
-    if (isMediaComplete && !mediaLoadError) {
-        const imageAlts = [];
-        (manifest.nativeTargets?.media?.edges || []).forEach(({ node }) => {
-            if (node?.id) {
-                const key = `native_image_alts_${node.id}`;
-                if (manifest.repairPlan[key] !== undefined) {
-                    const meta = getFieldMetadata(key, manifest, currentId, currentApprovals, allConfigFields);
-                    if (!meta.isBlockedAction && meta.proposalExists && meta.propVal !== meta.currentVal) {
-                        imageAlts.push({ imageId: node.id, altText: meta.propVal });
-                    }
-                }
-            }
-        });
-        if (imageAlts.length > 0) {
-            nativeChanges.imageAlts = imageAlts;
-        }
-    }
-    
-    return { safePlan, nativeChanges };
-  };
 
   const executeRepairs = useCallback(() => {
     if (queueIds.length === 0) {
@@ -1293,7 +722,7 @@ export function OperationsMatrixTab({ products }) {
         fd.append("intent", "executeRepairPlan");
         fd.append("pieceId", currentId);
         
-        const { safePlan, nativeChanges } = buildRepairPayload(manifest, product, currentId, approvals);
+        const { safePlan, nativeChanges } = buildRepairPayload(manifest, product, currentId, approvals, getFieldMetadata);
 
         const snapshot = { ...safePlan };
         if (nativeChanges.title) snapshot.shopify_title = nativeChanges.title;
@@ -1992,7 +1421,7 @@ export function OperationsMatrixTab({ products }) {
     fd.append("intent", "executeRepairPlan");
     fd.append("pieceId", selectedBenchId);
     
-    const { safePlan, nativeChanges } = buildRepairPayload(manifest, product, selectedBenchId, approvals);
+    const { safePlan, nativeChanges } = buildRepairPayload(manifest, product, selectedBenchId, approvals, getFieldMetadata);
 
     const snapshot = { ...safePlan };
     if (nativeChanges.title) snapshot.shopify_title = nativeChanges.title;
@@ -2009,7 +1438,7 @@ export function OperationsMatrixTab({ products }) {
     setPendingOperation({ id: selectedBenchId, intent: "executeRepairPlan", token });
     updateProductState(selectedBenchId, STATUS.SCANNING, ["Executing single structural repair..."]);
     batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-api" });
-  }, [selectedBenchId, manifestData, approvals, batchFetcher, updateProductState, safeProducts]);
+  }, [selectedBenchId, manifestData, approvals, batchFetcher, updateProductState, safeProducts, standardizedCandidatesByProduct, getStandardizedEvaluationForField]);
 
   const handleExecuteSingleAI = useCallback(() => {
     if (!selectedBenchId) return;
@@ -2033,23 +1462,6 @@ export function OperationsMatrixTab({ products }) {
     setAiData({});
   }, [selectedBenchId, manifestData]);
 
-  const getStatusTone = (status) => {
-    switch(status) {
-      case STATUS.VALIDATED: return "success";
-      case STATUS.COMPLETE: return "success";
-      case STATUS.SCANNING: return "magic";
-      case STATUS.FAILED: return "critical";
-      case STATUS.QUEUED: return "info";
-      default: return undefined;
-    }
-  };
-
-  const isMultilineKey = (k, control) => control === "multiline" || [
-    "custom.generated_description", "custom.stone_story", 
-    "custom.bench_notes", "custom.character_marks", "custom.honest_flaws_and_character", 
-    "custom.artist_notes", "custom.origin_story"
-  ].includes(k);
-
   const matchesFilter = useCallback((m) => {
     if (activeFilter === "All") return true;
     if (activeFilter === "Blank" && (m.fieldStatus === "Optional blank" || m.fieldStatus === "Required missing")) return true;
@@ -2060,725 +1472,48 @@ export function OperationsMatrixTab({ products }) {
     return false;
   }, [activeFilter]);
 
-  const getSystemStatus = () => {
-      const data = manifestData[selectedBenchId];
-      let diag = data?.diagnostics || {
-          shopifyRead: "Not reported",
-          gemini: "Not reported",
-          vision: "Not reported",
-          geoLibrary: "Not reported",
-          readBack: "Not called",
-          stage: "Not reported",
-          error: null
-      };
-
-      let shopifyReadStatus = diag.shopifyRead;
-      let geminiStatus = diag.gemini;
-      let visionStatus = diag.vision;
-      let geoLibraryStatus = diag.geoLibrary;
-      let readBackStatus = diag.readBack;
-      let currentStage = diag.stage || "Not reported";
-
-      const isCurrentlyProcessing = (isLoadingData && queueIds[loadIndex] === selectedBenchId) ||
-                                    (isExecuting && executionMode === "AI_BATCH_PIPELINE" && queueIds[executeIndex] === selectedBenchId) ||
-                                    (isExecuting && executionMode === "AI_SINGLE_PIPELINE" && selectedBenchId);
-      
-      let finalStageDisplay = executionMode || "Not reported";
-      let fetcherStateDisplay = batchFetcher.state;
-      let loadingStateDisplay = isLoadingData ? "Loading" : "Idle";
-      let errorMessageDisplay = safetyError || diag.error || "None";
-
-      if (isCurrentlyProcessing) {
-          if (isLoadingData) {
-              shopifyReadStatus = "Running";
-          } else if (executionMode === "AI_BATCH_PIPELINE" || executionMode === "AI_SINGLE_PIPELINE") {
-              if (aiStep === 1) { geminiStatus = "Running"; currentStage = "titleParse"; }
-              if (aiStep === 2) { geminiStatus = "Running"; visionStatus = "Running"; currentStage = "tab3FullRescan"; }
-              if (aiStep === 3) { geminiStatus = "Running"; currentStage = "generateDescription"; }
-          } else if (executionMode === "REPAIR") {
-              shopifyReadStatus = "Running"; 
-              currentStage = "executeRepairPlan";
-          }
-      }
-
-      if (batchFetcher.state !== "idle" && batchFetcher.formData?.get("pieceId") === selectedBenchId) {
-          const intent = batchFetcher.formData?.get("intent");
-          if (intent === "executeRepairPlan") {
-              shopifyReadStatus = "Running";
-              currentStage = "executeRepairPlan";
-          }
-      }
-
-      return {
-          shopifyReadStatus, geminiStatus, visionStatus, geoLibraryStatus, readBackStatus,
-          currentStage, finalStageDisplay, fetcherStateDisplay, loadingStateDisplay, errorMessageDisplay
-      };
-  };
-
-  const getDiagnosticsStats = (data) => {
-    if (!data) return null;
-    let stats = {
-        proposed: 0,
-        blocked: 0,
-        degraded: 0,
-        conflicts: 0,
-        unverified: 0,
-        optionalBlanks: 0,
-        requiredMissing: 0,
-        approvedWrite: 0,
-        total: 0,
-        filled: 0,
-        blank: 0,
-        manualOnly: 0,
-        unchangedFlagged: 0
-    };
-
-    const dynamicSections = getDynamicSections(data);
-    const allConfigFields = dynamicSections.flatMap(sec => sec.configFields || []);
-
-    dynamicSections.forEach(sec => {
-        sec.keys.forEach(k => {
-            stats.total++;
-            const meta = getFieldMetadata(k, data, selectedBenchId, approvals, allConfigFields);
-            
-            if (meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing") stats.blank++;
-            else stats.filled++;
-
-            if (meta.isManualOnly) stats.manualOnly++;
-
-            const eligibleForStats = !meta.isPendingReadOnly && (!meta.isStandardizedAttribute || meta.isVerifiedStdDest);
-
-            if (eligibleForStats && (meta.fieldStatus === "Proposed" || meta.fieldStatus === "Approved, not saved" || meta.fieldStatus === "Approved, blocked" || meta.fieldStatus === "Pre-approved, not saved" || meta.fieldStatus === "Pre-approved, blocked")) stats.proposed++;
-            
-            if (meta.isActualBlockedProposal) {
-                stats.blocked++;
-            } else if (meta.isBlockedAction && !HIDDEN_CONTEXT_FIELDS.includes(k) && !meta.isManualOnly && eligibleForStats && meta.proposalExists && meta.currentVal === meta.propVal) {
-                stats.unchangedFlagged++;
-            }
-
-            if (meta.fieldStatus === "Degrade") stats.degraded++;
-            
-            if (meta.fieldStatus === "Conflict") {
-                stats.conflicts++;
-            } else if (meta.fieldStatus === "Save Conflict") {
-                let conflictCounted = false;
-                if (meta.conflictData) {
-                    stats.conflicts++;
-                    conflictCounted = true;
-                }
-                if (meta.nativeDescConflictData) {
-                    stats.conflicts++;
-                    conflictCounted = true;
-                }
-                if (!conflictCounted) {
-                    stats.conflicts++;
-                }
-            }
-
-            if (meta.fieldStatus === "Unverified proposal") stats.unverified++;
-            if (meta.fieldStatus === "Optional blank") stats.optionalBlanks++;
-            if (meta.fieldStatus === "Required missing") stats.requiredMissing++;
-            if ((meta.fieldStatus === "Proposed" || meta.fieldStatus === "Approved, not saved" || meta.fieldStatus === "Pre-approved, not saved") && !meta.isBlockedAction && eligibleForStats && !HIDDEN_CONTEXT_FIELDS.includes(k)) stats.approvedWrite++;
-        });
+  const getSystemStatus = () =>
+    computeSystemStatus({
+      data: manifestData[selectedBenchId],
+      selectedBenchId,
+      isLoadingData,
+      isExecuting,
+      executionMode,
+      queueIds,
+      loadIndex,
+      executeIndex,
+      aiStep,
+      batchFetcherState: batchFetcher.state,
+      batchFetcherFormData: batchFetcher.formData,
+      safetyError
     });
 
-    return stats;
-  };
+  const getDiagnosticsStats = (data) =>
+    computeDiagnosticsStats({
+      data,
+      selectedBenchId,
+      approvals,
+      getFieldMetadata
+    });
 
   const handleCollectTelemetry = useCallback((mode = 'full') => {
-      if (!selectedBenchId || !manifestData[selectedBenchId]) {
-          setSafetyError(`Cannot collect telemetry: No active bench item.`);
-          return;
-      }
-
-      const data = manifestData[selectedBenchId];
-      const history = repairHistory[selectedBenchId];
-      const product = safeProducts.find(p => p.id === selectedBenchId) || {};
-      const statusObj = getSystemStatus();
-      const diag = data.diagnostics || {};
-      const dynamicSections = getDynamicSections(data);
-      const allConfigFields = dynamicSections.flatMap(sec => sec.configFields || []);
-      const lastSubmitted = submittedPayloads[selectedBenchId];
-
-      const unsupportedKeys = validArray(history?.unsupportedKeys);
-      const verifiedDestinations = validArray(history?.verifiedDestinations);
-      const blockedFields = validObj(history?.blockedFields);
-      const conflicts = validObj(history?.conflicts);
-      const unresolvedChanges = validObj(history?.unresolvedChanges);
-
-      let stats = {
-          loaded: 0,
-          blank: 0,
-          proposed: 0,
-          blocked: 0,
-          protected: 0,
-          conflicting: 0,
-          updated: history && history.fieldsUpdated !== undefined ? history.fieldsUpdated : "Not recorded",
-          errored: "Not recorded"
-      };
-
-      const isGeologyField = (key) => {
-          const normalized = key.replace(/^custom\./, '').replace(/-/g, '_').toLowerCase();
-          const geoKeys = [
-              "mohs_hardness", "specific_gravity", "crystal_system", "fracture_pattern",
-              "cleavage", "luster", "diaphaneity", "mineral_class", "geological_age",
-              "geological_era", "rock_formation", "rock_composition"
-          ];
-          return geoKeys.includes(normalized);
-      };
-
-      const isNarrativeBlock = (key) => {
-          const normalized = key.replace(/^custom\./, '').replace(/-/g, '_').toLowerCase();
-          return ["generated_description", "stone_story", "origin_story", "native_description", "native_descriptionhtml"].includes(normalized);
-      };
-
-      const isProtectedIntegration = (key) => {
-          if (isVerifiedStandardizedDestination(key)) return false;
-          return INTEGRATION_PREFIXES.some(prefix => key.startsWith(prefix));
-      };
-
-      const truncateForTelemetry = (text, limit = 100) => {
-          if (!text) return "";
-          const str = String(text).replace(/\n/g, " ").trim();
-          if (str.length <= limit) return str;
-          return `${str.substring(0, limit)}...`;
-      };
-
-      let reviewCandidates = [];
-
-      dynamicSections.forEach(sec => {
-          sec.keys.forEach(key => {
-              const meta = getFieldMetadata(key, data, selectedBenchId, approvals, allConfigFields);
-              const eligibleForStats = !meta.isPendingReadOnly && (!meta.isStandardizedAttribute || meta.isVerifiedStdDest);
-              
-              if (meta.currentExists) stats.loaded++;
-              if (meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing") stats.blank++;
-              if (eligibleForStats && (meta.fieldStatus === "Proposed" || meta.fieldStatus === "Approved, not saved" || meta.fieldStatus === "Approved, blocked" || meta.fieldStatus === "Pre-approved, not saved" || meta.fieldStatus === "Pre-approved, blocked")) stats.proposed++;
-              if (meta.isBlockedAction && !HIDDEN_CONTEXT_FIELDS.includes(key)) stats.blocked++;
-              if (PROTECTED_FIELDS.includes(key) || meta.isOperatorOwned) stats.protected++;
-              if (meta.fieldStatus === "Conflict" || meta.fieldStatus === "Degrade" || meta.fieldStatus === "Save Conflict") stats.conflicting++;
-
-              const isGeo = isGeologyField(key);
-              const isNarrative = isNarrativeBlock(key);
-              const isProtectedInt = isProtectedIntegration(key);
-
-              if (mode === 'review') {
-                  let isUnapprovedProblem = false;
-                  let isOptionalConditional = false;
-                  
-                  if (!meta.isApproved && meta.proposalExists && meta.currentVal !== meta.propVal) isUnapprovedProblem = true;
-                  if (!meta.isApproved && meta.contentNeedsReview) isUnapprovedProblem = true;
-                  if (["Required missing", "Unverified proposal", "Conflict", "Degrade", "API Error / Blocked", "Save Conflict"].includes(meta.fieldStatus) || meta.fieldStatus.includes("Blocked")) {
-                      isUnapprovedProblem = true;
-                  }
-                  if (meta.fieldStatus === "Optional blank" || meta.proposalStatus === "Empty" || meta.fieldStatus === "Manual only") {
-                      isOptionalConditional = true;
-                  }
-
-                  const isRoutineMandatory = REQUIRED_FIELDS.includes(key) && (meta.isApproved || meta.currentVal === meta.propVal);
-
-                  if ((isUnapprovedProblem || isOptionalConditional) && !isRoutineMandatory) {
-                      reviewCandidates.push({
-                          key, meta, isGeo, isNarrative, isProtectedInt, priority: isUnapprovedProblem ? 1 : 2
-                      });
-                  }
-              }
-          });
-      });
-
-      let reportBlocks = [];
-      let reportType = mode === 'review' ? 'REVIEW TELEMETRY' : 'FULL TELEMETRY DUMP';
-
-      reportBlocks.push(`=== ROCKHOUND STUDIO ${reportType} ===\nProduct: ${product.title || "Not recorded"}\nGID: ${selectedBenchId || "Not recorded"}\nRun Time: ${new Date().toISOString()}`);
-
-      const titleParseStatus = (diag.stage === "titleParse" || diag.stage === "tab3FullRescan" || diag.stage === "generateDescription" || diag.stage === "batchAuditItem") ? (diag.gemini || "Unknown") : "Not called";
-      const visionStatus = diag.vision || "Not called";
-      const geoStatus = diag.geoLibrary || "Not called";
-      const descStatus = (data.repairPlan?.["custom.generated_description"] || data.currentMetafields?.["custom.generated_description"]) ? "Success" : (diag.stage === "generateDescription" ? (diag.gemini || "Unknown") : "Not called");
-
-      const shopifyRead = statusObj.shopifyReadStatus;
-      const readBack = history && history.readBackVerified !== undefined ? (history.readBackVerified ? "Success" : "Failed") : statusObj.readBackStatus;
-
-      reportBlocks.push(`--- PIPELINE STATUS ---\n[Shopify IO]\nRead: ${shopifyRead}\nBackend-reported updates: ${history && history.fieldsUpdated !== undefined ? history.fieldsUpdated : "Not recorded"}\nRead-Back: ${readBack}\n\n[AI Stages]\nTitle Parse: ${titleParseStatus}\nVision Scan: ${visionStatus}\nGeo Library: ${geoStatus}\nStory Gen: ${descStatus}`);
-
-      reportBlocks.push(`--- FIELD SUMMARY ---\nLoaded: ${stats.loaded}\nBlank: ${stats.blank}\nProposed: ${stats.proposed}\nBlocked: ${stats.blocked}\nProtected: ${stats.protected}\nConflicting: ${stats.conflicting}\nUpdated: ${stats.updated}\nErrored: ${stats.errored}`);
-
-      if (history) {
-          reportBlocks.push(`--- LAST REPAIR HISTORY ---\nTime: ${history.completedAt}\nStatus: ${history.status}\nMessage: ${history.message}\nBlocked: ${Object.keys(blockedFields).length}\nConflicts: ${Object.keys(conflicts).length}\nVariant Target: ${history.variantTarget || 'Not recorded'}`);
-      } else {
-          reportBlocks.push(`--- LAST REPAIR HISTORY ---\nNot recorded`);
-      }
-
-      let telemetryBody = "--- EXECUTION & REVIEW DETAILS ---\n";
-      let detailExcludedCount = 0;
-      let omissionsCount = 0;
-      let unchangedCount = 0;
-      let optionalBlankCount = 0;
-      let verifiedMatchesCount = 0;
-
-      let failures = [];
-      if (unsupportedKeys.length > 0) failures.push(`Unsupported Keys: ${unsupportedKeys.join(", ")}`);
-
-      Object.keys(blockedFields).forEach(k => failures.push(`Blocked [${k}]: ${blockedFields[k]}`));
-      Object.keys(conflicts).forEach(k => {
-          const expected = typeof conflicts[k] === 'object' ? conflicts[k].expected : 'unknown';
-          const actual = typeof conflicts[k] === 'object' ? conflicts[k].actual : conflicts[k];
-          if (isNarrativeBlock(k)) {
-              const metaForConflict = getFieldMetadata(k, data, selectedBenchId, approvals, allConfigFields);
-              const expLen = String(expected || "").length;
-              const actLen = String(actual || "").length;
-              failures.push(`Conflict [${k}]: Status: ${metaForConflict.fieldStatus} | Approved: ${String(metaForConflict.isApproved)} | Expected (${expLen} chars) -> Actual (${actLen} chars)`);
-          } else {
-              failures.push(`Conflict [${k}]: Expected [${truncateForTelemetry(expected, 60)}] -> Actual [${truncateForTelemetry(actual, 60)}]`);
-          }
-      });
-      Object.keys(unresolvedChanges).forEach(k => {
-          if (isNarrativeBlock(k)) {
-              const metaForUnresolved = getFieldMetadata(k, data, selectedBenchId, approvals, allConfigFields);
-              const valLen = String(unresolvedChanges[k] || "").length;
-              failures.push(`Unresolved [${k}]: Status: ${metaForUnresolved.fieldStatus} | Approved: ${String(metaForUnresolved.isApproved)} | Chars: ${valLen}`);
-          } else {
-              failures.push(`Unresolved [${k}]: ${truncateForTelemetry(unresolvedChanges[k], 60)}`);
-          }
-      });
-
-      if (lastSubmitted) {
-          Object.keys(lastSubmitted).forEach(submitKey => {
-              const meta = getFieldMetadata(submitKey, data, selectedBenchId, approvals, allConfigFields);
-              const intendedVal = String(lastSubmitted[submitKey] || "");
-              const returnVal = String(meta.currentVal || "");
-
-              const isGeo = isGeologyField(submitKey);
-              const isNarrative = isNarrativeBlock(submitKey);
-              const isProtectedInt = isProtectedIntegration(submitKey);
-
-              if (returnVal === intendedVal && returnVal !== "") {
-                  verifiedMatchesCount++;
-              } else if (returnVal !== intendedVal && returnVal !== "") {
-                  if (isNarrative) {
-                      failures.push(`Execution Mismatch [${submitKey}]: Status: ${meta.fieldStatus} | Approved: ${String(meta.isApproved)} | Intended (${intendedVal.length} chars) != Returned (${returnVal.length} chars)`);
-                      detailExcludedCount++;
-                  } else if (isGeo || isProtectedInt) {
-                      failures.push(`Execution Mismatch [${submitKey}]: [Detail Excluded]`);
-                      detailExcludedCount++;
-                  } else {
-                      failures.push(`Execution Mismatch [${submitKey}]:\n  Intended: [${truncateForTelemetry(intendedVal, 100)}]\n  Returned: [${truncateForTelemetry(returnVal, 100)}]\n  Outcome: Returned mismatch`);
-                  }
-              } else if (returnVal === "") {
-                  failures.push(`Execution Mismatch [${submitKey}]: Not verified (verification unavailable)`);
-              }
-          });
-      }
-
-      const reviewKeys = new Set(reviewCandidates.map(c => c.key));
-      reviewCandidates.forEach(c => {
-           const { key, meta, isGeo, isNarrative, isProtectedInt } = c;
-           if (key === "custom.origin_story") {
-               failures.push(`- ${key}: [Hidden Context] Status: ${meta.fieldStatus}`);
-               detailExcludedCount++;
-           } else if (isNarrative) {
-               failures.push(`- ${key}: Status: ${meta.fieldStatus} | Approved: ${String(meta.isApproved)} | Chars: Current(${meta.currentVal.length}) / Proposed(${meta.propVal.length}) | Rsn: ${meta.reasons[0] || "None"}`);
-               detailExcludedCount++;
-           } else if (isGeo || isProtectedInt) {
-               failures.push(`- ${key}: [Detail Excluded] Status: ${meta.fieldStatus} | Rsn: ${meta.reasons[0] || "None"}`);
-               detailExcludedCount++;
-           } else {
-               failures.push(`- ${key}: Stat: ${meta.fieldStatus} | Rsn: ${meta.reasons[0] || "None"} | Curr: [${truncateForTelemetry(meta.currentVal, 60)}] | Prop: [${truncateForTelemetry(meta.propVal, 60)}]`);
-           }
-      });
-
-      if (failures.length > 0) {
-           telemetryBody += "[FAILURES & ATTENTION NEEDED]\n" + failures.join("\n") + "\n";
-      }
-
-      if (verifiedDestinations.length > 0) {
-           telemetryBody += `\n[VERIFIED DESTINATIONS]\nBackend Confirmed: ${verifiedDestinations.join(", ")}\n`;
-      } else if (history) {
-           telemetryBody += `\n[VERIFIED DESTINATIONS]\nNot recorded\n`;
-      }
-
-      dynamicSections.forEach(sec => {
-           sec.keys.forEach(key => {
-               const meta = getFieldMetadata(key, data, selectedBenchId, approvals, allConfigFields);
-               if (!reviewKeys.has(key) && !blockedFields[key] && !conflicts[key] && !unresolvedChanges[key] && !unsupportedKeys.includes(key)) {
-                    if (meta.fieldStatus === "Unchanged" && meta.currentVal !== "") unchangedCount++;
-                    else if (meta.fieldStatus === "Optional blank") optionalBlankCount++;
-                    else omissionsCount++; 
-               }
-           });
-      });
-
-      telemetryBody += `\n[SUMMARY STATS]\n`;
-      if (lastSubmitted) telemetryBody += `Verified Matches (Submitted vs Read-Back): ${verifiedMatchesCount} fields\n`;
-      telemetryBody += `Unchanged Comparisons: ${unchangedCount} fields intact\n`;
-      telemetryBody += `Optional Blanks: ${optionalBlankCount} fields\n`;
-      telemetryBody += `Other Omissions: ${omissionsCount} fields\n`;
-      telemetryBody += `Detail Excluded (Geo/Narrative/Protected): ${detailExcludedCount} fields`;
-
-      reportBlocks.push(telemetryBody);
-
-      const recommendations = [];
-      if (Object.keys(blockedFields).length > 0 || failures.some(f => f.includes("Required missing"))) {
-          recommendations.push("1. DO NOT WRITE. Review and manually resolve blocked or required fields.");
-      } else if (lastSubmitted && (failures.some(f => f.includes("Execution Mismatch")))) {
-          recommendations.push(`1. WARNING: Submitted change(s) remain unresolved or unverified after execution. Review the execution mismatch block.`);
-      } else if (!lastSubmitted && history && stats.proposed > 0) {
-          recommendations.push("1. Exact execution payload unavailable. Some fields appear proposed post-save, but cannot be proven as failed writes. Review manually.");
-      } else if (stats.proposed > 0 && !history) {
-          recommendations.push("1. Content review complete. Technically eligible proposals are staged. Proceed with 'Execute Single Repair'.");
-      } else if (history && history.fieldsUpdated !== undefined) {
-          recommendations.push("1. Backend request successful. Check live Shopify admin to confirm field updates.");
-      } else {
-          recommendations.push("1. Load data or generate a repair plan to begin.");
-      }
-
-      reportBlocks.push(`--- RECOMMENDATIONS ---\n${recommendations.join("\n")}\n=========================================`);
-
-      let finalReport = "";
-      let maxLimit = mode === 'review' ? 6000 : 10000;
-
-      for (let i = 0; i < reportBlocks.length; i++) {
-          if (finalReport.length + reportBlocks[i].length + 2 > maxLimit) {
-              finalReport += `\n\n[WARNING: Cutoff reached. Exceeded limit by ${finalReport.length + reportBlocks[i].length + 2 - maxLimit} characters.]`;
-              break;
-          }
-          finalReport += (i > 0 ? "\n\n" : "") + reportBlocks[i];
-      }
-
-      navigator.clipboard.writeText(finalReport)
-          .then(() => {
-              if (window.shopify && window.shopify.toast) {
-                  window.shopify.toast.show(`${mode === 'review' ? 'Review telemetry' : 'Full report'} copied`);
-              } else {
-                  setSafetyMessage(`${mode === 'review' ? 'Review telemetry' : 'Full report'} copied to clipboard.`);
-              }
-          })
-          .catch(err => {
-              console.error("Clipboard error", err);
-              setSafetyError("Failed to copy telemetry to clipboard.");
-          });
+    buildAndCopyMatrixTelemetry({
+      mode,
+      selectedBenchId,
+      manifestData,
+      repairHistory,
+      safeProducts,
+      approvals,
+      submittedPayloads,
+      getSystemStatus,
+      getFieldMetadata,
+      setSafetyError,
+      setSafetyMessage
+    });
   }, [selectedBenchId, manifestData, repairHistory, safeProducts, approvals, batchFetcher.state, isLoadingData, safetyError, aiStep, executionMode, getSystemStatus, submittedPayloads]);
 
   const toggleBay = (title) => {
     setExpandedBays(prev => ({ ...prev, [title]: !prev[title] }));
-  };
-
-  const renderManifestTable = (section) => {
-    const data = manifestData[selectedBenchId];
-    if (!data) return null;
-
-    const filteredKeys = section.keys.filter(k => {
-      if (HIDDEN_CONTEXT_FIELDS.includes(k)) return false;
-      if (DESCRIPTION_REVIEW_EXCLUDED_KEYS.includes(k)) return false;
-      
-      if (activeFilter === "All") return true;
-      const meta = getFieldMetadata(k, data, selectedBenchId, approvals, section.configFields);
-      return matchesFilter(meta);
-    });
-
-    if (filteredKeys.length === 0) return null;
-    const isExpanded = expandedBays[section.title] ?? true;
-    const groupColorTone = section.configFields?.[0]?.color === "success" ? "success" : undefined;
-
-    const isStandardizedSection =
-      section.configFields?.some(f => f.role === "standardized_attribute") ||
-      section.keys.some(k => k.startsWith("shopify."));
-
-    const candidateBundle = buildCanonicalCandidateBundle(standardizedCandidatesByProduct[selectedBenchId] || {});
-    const currentSnapshot = candidateBundle.snapshot;
-
-    const storedRefMatchForProduct = referenceMatchResultsByProduct[selectedBenchId];
-    const validRefMatchResult =
-      storedRefMatchForProduct &&
-      storedRefMatchForProduct.pieceId === selectedBenchId &&
-      storedRefMatchForProduct.readOnly === true &&
-      storedRefMatchForProduct.intent === "resolveStandardizedCandidates" &&
-      storedRefMatchForProduct.snapshot === currentSnapshot
-        ? storedRefMatchForProduct
-        : null;
-
-    const productMatchStatusRecord = referenceMatchStatusByProduct[selectedBenchId] || null;
-
-    return (
-      <Card padding="0" key={section.title}>
-        <div 
-            onClick={() => toggleBay(section.title)} 
-            style={{ padding: "16px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center", backgroundColor: "#f9fafb", borderBottom: isExpanded ? "1px solid #e1e3e5" : "none", minWidth: 0, boxSizing: "border-box" }}
-        >
-          <div style={{ minWidth: 0 }}>
-            <Text as="h3" variant="headingLg" fontWeight="bold" tone={groupColorTone}>{section.title} ({filteredKeys.length} fields)</Text>
-          </div>
-          <Button variant="plain" icon={isExpanded ? ChevronUpIcon : ChevronDownIcon} />
-        </div>
-        
-        {isExpanded && (
-          <div style={{ padding: "16px", display: "flex", flexDirection: "column", gap: "24px", minWidth: 0, boxSizing: "border-box" }}>
-            {isStandardizedSection && (
-              <StandardizedSectionBanner
-                selectedBenchId={selectedBenchId}
-                candidateBundle={candidateBundle}
-                referenceMatchFetcherState={referenceMatchFetcher.state}
-                pendingReferenceMatch={pendingReferenceMatch}
-                validRefMatchResult={validRefMatchResult}
-                productMatchStatusRecord={productMatchStatusRecord}
-                onReleasePendingMatch={handleReleasePendingReferenceMatch}
-                onMatchReferenceChoices={handleMatchReferenceChoices}
-              />
-            )}
-
-            {filteredKeys.map((key) => {
-              const meta = getFieldMetadata(key, data, selectedBenchId, approvals, section.configFields);
-              const isBlank = meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing";
-              
-              let statusTone = undefined;
-              if (meta.fieldStatus === "Optional blank") statusTone = "attention";
-              if (["Required missing", "Conflict", "Degrade", "Blocked", "API Error / Blocked", "Over limit", "Failed", "Unverified proposal", "Save Conflict"].includes(meta.fieldStatus)) statusTone = "critical";
-              if (meta.fieldStatus === "Manual only") statusTone = "info";
-              if (meta.fieldStatus === "Proposed" || meta.fieldStatus === "Approved, not saved" || meta.fieldStatus === "Pre-approved, not saved") statusTone = "success";
-              if (meta.fieldStatus === "Unchanged") statusTone = "new";
-              if (meta.fieldStatus === "Approved, blocked" || meta.fieldStatus === "Pre-approved, blocked") statusTone = "warning";
-
-              const canApprove = meta.proposalExists && meta.currentVal !== meta.propVal && !meta.isManualOnly && !meta.isPendingReadOnly && !meta.isContentPreApproved && meta.fieldStatus !== "API Error / Blocked" && meta.fieldStatus !== "Save Conflict" && meta.isSupported;
-              const isPreApprovedDisplay = meta.isContentPreApproved && meta.proposalExists && meta.currentVal !== meta.propVal;
-              
-              let boxBg = "#f8f9fa";
-              let boxBorder = "#dee2e6";
-              let textColor = "#212529";
-              let statusText = "Ready for review";
-
-              if (!meta.isSupported) {
-                  boxBg = "#f8f9fa"; boxBorder = "#dee2e6"; textColor = "#41464c";
-                  statusText = "Connection pending.";
-              } else if (meta.isPendingReadOnly) {
-                  boxBg = "#f8f9fa"; boxBorder = "#dee2e6"; textColor = "#41464c";
-                  statusText = meta.isVerifiedStdDest
-                    ? (meta.stdEvaluation?.blockReason || "Awaiting complete reference matching before unlocking proposal.")
-                    : "Standardized attribute (pending_read_only). Read-only display; writes disabled.";
-              } else if (meta.reasons.includes("SEO description save connection pending.")) {
-                  boxBg = "#fff3cd"; boxBorder = "#ffecb5"; textColor = "#664d03";
-                  statusText = "SEO description save connection pending. Draft is staged but write is disabled.";
-              } else if (meta.isManualOnly) {
-                  boxBg = "#f8f9fa"; boxBorder = "#dee2e6"; textColor = "#41464c";
-                  statusText = "Manual only field. Excluded from automated writes.";
-              } else if (meta.fieldStatus === "API Error / Blocked" || meta.fieldStatus === "Save Conflict") {
-                  boxBg = "#f8d7da"; boxBorder = "#f5c2c7"; textColor = "#842029";
-                  statusText = "Previous save attempt failed API validation or read-back. Review specific error.";
-              } else if (meta.isContentPreApproved && !meta.hasTechnicalBlock) {
-                  boxBg = "#d1e7dd"; boxBorder = "#badbcc"; textColor = "#0f5132";
-                  statusText = "Pre-approved, not saved.";
-              } else if (meta.isContentPreApproved && meta.hasTechnicalBlock) {
-                  boxBg = "#fff3cd"; boxBorder = "#ffecb5"; textColor = "#664d03";
-                  const technicalBlockers = meta.reasons.filter(r => !["Proposed", "Category pre-approved", "Verified Geo Library", "Pre-approved by operator policy", "Native Image Alt pre-approved by policy", "Historical: Conflict (Pre-approved)", "Historical: Degrade (Pre-approved)", "Historical: Unverified proposal (Pre-approved)"].includes(r)).join(", ");
-                  statusText = `Pre-approved. Cannot save until field destination/type is verified or limits resolved. (${technicalBlockers})`;
-              } else if (meta.isApproved && !meta.hasTechnicalBlock) {
-                  boxBg = "#d1e7dd"; boxBorder = "#badbcc"; textColor = "#0f5132";
-                  statusText = "Approved for exact serialized list and technically eligible. Not yet saved to Shopify.";
-              } else if (meta.isApproved && meta.hasTechnicalBlock) {
-                  boxBg = "#fff3cd"; boxBorder = "#ffecb5"; textColor = "#664d03";
-                  statusText = "Suggestion approved. Cannot save until field destination/type is verified or limits resolved.";
-              } else if (!meta.isApproved && meta.hasTechnicalBlock) {
-                  boxBg = "#f8d7da"; boxBorder = "#f5c2c7"; textColor = "#842029";
-                  statusText = "Blocked by technical error. Review needed.";
-              } else if (!meta.isApproved && meta.contentNeedsReview) {
-                  boxBg = "#fff3cd"; boxBorder = "#ffecb5"; textColor = "#664d03";
-                  statusText = meta.isVerifiedStdDest
-                    ? "Exact serialized Metaobject GID list requires explicit approval before write can occur. Changing any selection invalidates approval."
-                    : "Review needed to verify content explicitly before write can occur.";
-              } else if (!meta.isApproved && meta.fieldStatus === "Proposed") {
-                  boxBg = "#e2e3e5"; boxBorder = "#d3d6d8"; textColor = "#41464c";
-                  statusText = "Safe suggestion. Approval optional but recorded if checked.";
-              }
-
-              let customLabel = meta.label;
-              let thumbnailUrl = null;
-              if (key.startsWith("native_image_alts_")) {
-                  const id = key.replace("native_image_alts_", "");
-                  customLabel = `Native Image Alt (${id.split('/').pop()})`;
-                  thumbnailUrl = data.nativeTargets?.media?.edges?.find(e => e.node?.id === id)?.node?.preview?.image?.url;
-              }
-
-              const verifiedMapForDisplay = meta.stdEvaluation?.verifiedEntriesMap || null;
-              const displayCurrentVal = formatDisplayFieldValue(meta.currentVal, meta.isStandardizedAttribute, data, verifiedMapForDisplay);
-              const displayPropVal = formatDisplayFieldValue(meta.propVal, meta.isStandardizedAttribute, data, verifiedMapForDisplay);
-
-              const candidateMetaKey = meta.metaKey || (key.startsWith("shopify.") ? key.slice(8) : "");
-              const isVisionCandidateRow = meta.isStandardizedAttribute && ALLOWED_VISION_CANDIDATE_KEYS.includes(candidateMetaKey);
-              const productVisionCandidates = candidateBundle.ordered;
-              const visionCandidateEntry = isVisionCandidateRow ? productVisionCandidates[candidateMetaKey] : null;
-
-              return (
-                <Box key={key} padding="300" background={isBlank && meta.isSupported ? "bg-surface-warning" : "bg-surface"} borderColor="border" borderWidth="1" borderRadius="200">
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: "20px", boxSizing: "border-box", minWidth: 0 }}>
-                    
-                    {/* Left Panel: Labels & Metadata */}
-                    <div style={{ flex: "1 1 250px", minWidth: 0, maxWidth: "100%", boxSizing: "border-box" }}>
-                      <BlockStack gap="100">
-                        <div style={{ display: "flex", alignItems: "center", gap: "12px", minWidth: 0 }}>
-                            {thumbnailUrl && (
-                                <div style={{ width: "48px", height: "48px", borderRadius: "6px", overflow: "hidden", flexShrink: 0, border: "1px solid #d2d5d8" }}>
-                                    <img src={thumbnailUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                                </div>
-                            )}
-                            <div style={{ wordBreak: "break-word", overflowWrap: "anywhere", minWidth: 0 }}>
-                                <Text as="h4" variant="headingMd" fontWeight="bold">{customLabel}</Text>
-                                <Text as="p" variant="bodySm" tone="subdued" fontWeight="medium">{key}</Text>
-                            </div>
-                        </div>
-                        
-                        <div style={{ marginTop: "12px", display: "flex", flexDirection: "column", gap: "6px", wordBreak: "break-word", overflowWrap: "anywhere" }}>
-                            {meta.isSupported ? (
-                              <>
-                                <Text as="p" variant="bodyMd" fontWeight="bold">Status: <Badge tone={statusTone}>{meta.fieldStatus}</Badge></Text>
-                                {meta.isPendingReadOnly ? (
-                                  <Text as="p" variant="bodySm" tone="subdued" fontWeight="bold">
-                                    Mode: <Badge tone={isVisionCandidateRow && visionCandidateEntry ? "warning" : "info"}>
-                                      {isVisionCandidateRow ? "Blocked (Awaiting Match / Ambiguous)" : "Read-Only (Pending)"}
-                                    </Badge>
-                                  </Text>
-                                ) : isVisionCandidateRow ? (
-                                  <Text as="p" variant="bodySm" tone="subdued" fontWeight="bold">
-                                    Mode: <Badge tone="success">Verified Reference Proposal Unlocked</Badge>
-                                  </Text>
-                                ) : null}
-                                <Text as="p" variant="bodyMd" fontWeight="bold">Source: <Text as="span" fontWeight="regular">{meta.source}</Text></Text>
-                                <Text as="p" variant="bodyMd" fontWeight="bold">Stage: <Text as="span" fontWeight="regular">{meta.stage}</Text></Text>
-                              </>
-                            ) : (
-                              <Text as="p" variant="bodyMd" fontWeight="bold">Status: <Badge tone="info">Connection pending.</Badge></Text>
-                            )}
-                        </div>
-                      </BlockStack>
-                    </div>
-
-                    {/* Right Panel: Current & Proposal Values */}
-                    <div style={{ flex: "2 1 300px", display: "flex", flexDirection: "column", gap: "12px", minWidth: 0, maxWidth: "100%", boxSizing: "border-box" }}>
-                        <div style={{ padding: "12px", backgroundColor: "#f4f6f8", borderRadius: "8px", border: "1px solid #d2d5d8", minWidth: 0, wordBreak: "break-word", overflowWrap: "anywhere", boxSizing: "border-box" }}>
-                            <Text as="p" variant="headingSm" tone="subdued" fontWeight="bold" style={{ marginBottom: "6px" }}>Current Shopify Value</Text>
-                            <div style={{ whiteSpace: "pre-wrap", minWidth: 0 }}>
-                                <Text as="p" variant="bodyLg">{displayCurrentVal || <span style={{ color: "#8c9196", fontStyle: "italic" }}>Blank</span>}</Text>
-                                {isVisionCandidateRow && meta.currentExists && (
-                                  <Text as="p" variant="bodySm" tone="subdued" style={{ marginTop: "4px", fontFamily: "monospace" }}>
-                                    Serialized Current GIDs: {meta.currentVal}
-                                  </Text>
-                                )}
-                            </div>
-                        </div>
-                        
-                        <div style={{ minWidth: 0, width: "100%", boxSizing: "border-box" }}>
-                            <Text as="p" variant="headingSm" tone="subdued" fontWeight="bold" style={{ marginBottom: "6px" }}>
-                              {isVisionCandidateRow ? "Bench Proposal Value (Readable Labels + Underlying Metaobject GIDs)" : "Bench Proposal Value"}
-                            </Text>
-                            {isVisionCandidateRow ? (
-                              <StandardizedProposalControl
-                                keyName={key}
-                                meta={meta}
-                                displayPropVal={displayPropVal}
-                                visionCandidateEntry={visionCandidateEntry}
-                                onSelectEntry={handleStandardizedEntrySelectionChange}
-                                onToggleEntry={handleToggleVerifiedStandardizedEntry}
-                              />
-                            ) : (
-                              <TextField
-                                  value={meta.isSupported ? displayPropVal : "Connection pending."}
-                                  onChange={(val) => { if (meta.isSupported && !meta.isPendingReadOnly) handleRepairPlanChange(key, val) }}
-                                  autoComplete="off"
-                                  multiline={isMultilineKey(key, meta.control) ? 3 : undefined}
-                                  placeholder={meta.isPendingReadOnly ? "Read-only standardized attribute (writes disabled)" : (meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing" ? "Blank" : (meta.fieldStatus === "Proposal not provided" ? "Not provided" : ""))}
-                                  disabled={!meta.isSupported || meta.isPendingReadOnly}
-                                  readOnly={!meta.isSupported || meta.isPendingReadOnly}
-                              />
-                            )}
-                        </div>
-
-                        {isVisionCandidateRow && (
-                            <StandardizedRowDiagnostics
-                              selectedBenchId={selectedBenchId}
-                              candidateBundle={candidateBundle}
-                              referenceMatchFetcherState={referenceMatchFetcher.state}
-                              pendingReferenceMatch={pendingReferenceMatch}
-                              validRefMatchResult={validRefMatchResult}
-                              productMatchStatusRecord={productMatchStatusRecord}
-                              candidateMetaKey={candidateMetaKey}
-                              meta={meta}
-                              displayPropVal={displayPropVal}
-                              visionCandidateEntry={visionCandidateEntry}
-                            />
-                        )}
-
-                        {/* Standard Metafield Conflict Display */}
-                        {meta.conflictData && (
-                            <div style={{ marginTop: "12px", backgroundColor: "#f8d7da", border: "1px solid #f5c2c7", borderRadius: "8px", padding: "12px", minWidth: 0, boxSizing: "border-box" }}>
-                                <Text as="p" variant="headingSm" tone="critical" fontWeight="bold" style={{ marginBottom: "6px" }}>Read-Back Mismatch: Field Value</Text>
-                                <div style={{ display: "flex", flexDirection: "column", gap: "8px", whiteSpace: "pre-wrap", minWidth: 0, wordBreak: "break-word", overflowWrap: "anywhere", fontSize: "13px", color: "#842029" }}>
-                                    <div><strong>Expected:</strong><br/>{meta.conflictData.expected}</div>
-                                    <div style={{ borderTop: "1px dashed #f5c2c7", paddingTop: "8px" }}><strong>Actual:</strong><br/>{meta.conflictData.actual}</div>
-                                </div>
-                            </div>
-                        )}
-
-                        {canApprove && (
-                            <div style={{ marginTop: "12px", backgroundColor: boxBg, border: `1px solid ${boxBorder}`, borderRadius: "8px", padding: "12px", minWidth: 0, boxSizing: "border-box" }}>
-                                <div style={{ display: "flex", alignItems: "flex-start", gap: "12px", minWidth: 0, boxSizing: "border-box" }}>
-                                    <input
-                                        type="checkbox"
-                                        id={`approve-${key}`}
-                                        checked={meta.isApproved || false}
-                                        onChange={(e) => handleToggleApproval(selectedBenchId, key, meta.propVal, e.target.checked)}
-                                        style={{ width: "24px", height: "24px", flexShrink: 0, cursor: "pointer", accentColor: textColor, marginTop: "2px" }}
-                                        aria-label={`Approve suggestion for ${customLabel}: ${meta.propVal}`}
-                                    />
-                                    <label htmlFor={`approve-${key}`} style={{ fontWeight: "bold", fontSize: "16px", cursor: "pointer", color: textColor, display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px", flex: 1, minWidth: 0, wordBreak: "break-word", overflowWrap: "anywhere" }}>
-                                        Approve this suggestion: <span style={{ fontWeight: "normal", whiteSpace: "pre-wrap" }}>{isVisionCandidateRow ? `${displayPropVal} → ${meta.propVal}` : `"${meta.propVal}"`}</span>
-                                    </label>
-                                </div>
-                                <div style={{ marginTop: "8px", marginLeft: "36px", minWidth: 0, wordBreak: "break-word", overflowWrap: "anywhere" }}>
-                                    <Text as="p" tone={(!meta.isApproved && meta.hasTechnicalBlock) || (meta.isApproved && meta.hasTechnicalBlock) ? "critical" : "subdued"} fontWeight="medium" style={{ color: textColor }}>
-                                        {statusText}
-                                    </Text>
-                                </div>
-                            </div>
-                        )}
-
-                        {isPreApprovedDisplay && (
-                            <div style={{ marginTop: "12px", backgroundColor: boxBg, border: `1px solid ${boxBorder}`, borderRadius: "8px", padding: "12px", minWidth: 0, boxSizing: "border-box" }}>
-                                <div style={{ minWidth: 0, wordBreak: "break-word", overflowWrap: "anywhere" }}>
-                                    <Text as="p" fontWeight="bold" style={{ color: textColor }}>
-                                        {meta.preApprovalReason}
-                                    </Text>
-                                    <Text as="p" tone={meta.hasTechnicalBlock ? "critical" : "subdued"} fontWeight="medium" style={{ color: textColor, marginTop: "4px" }}>
-                                        {statusText}
-                                    </Text>
-                                </div>
-                            </div>
-                        )}
-
-                        {/* APPROVAL DIAGNOSTIC BLOCK */}
-                        {["custom.origin_location", "custom.collection_name", "custom.collection_location"].includes(key) && (() => {
-                            const blockReason = !meta.proposalExists ? "No proposal" : (meta.currentVal === meta.propVal) ? "Values match" : meta.isManualOnly ? "Manual only" : meta.isContentPreApproved ? "Pre-approved" : (meta.fieldStatus === "API Error / Blocked") ? "API Blocked" : (meta.fieldStatus === "Save Conflict") ? "Save Conflict" : "None";
-                            return (
-                                <div style={{ marginTop: "12px", backgroundColor: "#000", border: "2px solid #0f0", borderRadius: "4px", padding: "10px", color: "#0f0", fontFamily: "monospace", fontSize: "11px", wordBreak: "break-all", userSelect: "all" }}>
-                                    <strong style={{fontSize:"13px", color:"#fff"}}>APPROVAL DIAGNOSTIC</strong><br/>
-                                    Key: {key} | ID: {selectedBenchId}<br/>
-                                    fieldStatus: {meta.fieldStatus}<br/>
-                                    proposalExists: {String(meta.proposalExists)} | isDiff: {String(meta.currentVal !== meta.propVal)}<br/>
-                                    isManualOnly: {String(meta.isManualOnly)} | isContentPreApproved: {String(meta.isContentPreApproved)} | isApproved: {String(meta.isApproved)}<br/>
-                                    hasTechnicalBlock: {String(meta.hasTechnicalBlock)} | apiBlockReason: {String(meta.reasons.some(r => r.includes("Backend Blocked")))}<br/>
-                                    conflictData: {String(!!meta.conflictData)} | nativeDescConflictData: {String(!!meta.nativeDescConflictData)}<br/>
-                                    canApprove: {String(canApprove)} | Blocker: {blockReason}<br/>
-                                    Chars: Current({meta.currentVal.length}) / Proposed({meta.propVal.length})
-                                </div>
-                            );
-                        })()}
-
-                    </div>
-                  </div>
-                </Box>
-              );
-            })}
-          </div>
-        )}
-      </Card>
-    );
   };
 
   const progressPercentage = queueIds.length > 0 ? Math.round(((isLoadingData ? loadIndex : executeIndex) / queueIds.length) * 100) : 0;
@@ -2796,20 +1531,6 @@ export function OperationsMatrixTab({ products }) {
   const customDescriptionMeta = activeBenchData
     ? getFieldMetadata("custom.generated_description", activeBenchData, selectedBenchId, approvals, allDynamicConfigFields)
     : null;
-
-  const filterOptions = [
-    {label: 'All', value: 'All'},
-    {label: 'Needs review', value: 'Needs review'},
-    {label: 'Proposed changes', value: 'Proposed changes'},
-    {label: 'Conflicts', value: 'Conflicts'},
-    {label: 'Blank', value: 'Blank'},
-    {label: 'Shopify', value: 'Shopify'},
-    {label: 'Gemini', value: 'Gemini'},
-    {label: 'Vision', value: 'Vision'},
-    {label: 'Geo Library', value: 'Geo Library'},
-    {label: 'Derived', value: 'Derived'},
-    {label: 'Manual', value: 'Manual'}
-  ];
 
   return (
     <BlockStack gap="600">
@@ -2971,7 +1692,7 @@ export function OperationsMatrixTab({ products }) {
                         <Select
                             label="Filter Fields"
                             labelInline
-                            options={filterOptions}
+                            options={FILTER_OPTIONS}
                             onChange={(val) => setActiveFilter(val)}
                             value={activeFilter}
                         />
@@ -2991,7 +1712,31 @@ export function OperationsMatrixTab({ products }) {
                   onToggleApproval={handleToggleApproval}
                 />
 
-                {dynamicSections.map(sec => renderManifestTable(sec))}
+                {dynamicSections.map(sec => (
+                  <ManifestSectionCard
+                    key={sec.title}
+                    section={sec}
+                    selectedBenchId={selectedBenchId}
+                    data={activeBenchData}
+                    approvals={approvals}
+                    activeFilter={activeFilter}
+                    expandedBays={expandedBays}
+                    standardizedCandidatesByProduct={standardizedCandidatesByProduct}
+                    referenceMatchResultsByProduct={referenceMatchResultsByProduct}
+                    referenceMatchStatusByProduct={referenceMatchStatusByProduct}
+                    referenceMatchFetcherState={referenceMatchFetcher.state}
+                    pendingReferenceMatch={pendingReferenceMatch}
+                    getFieldMetadata={getFieldMetadata}
+                    matchesFilter={matchesFilter}
+                    onToggleBay={toggleBay}
+                    onReleasePendingReferenceMatch={handleReleasePendingReferenceMatch}
+                    onMatchReferenceChoices={handleMatchReferenceChoices}
+                    onStandardizedEntrySelectionChange={handleStandardizedEntrySelectionChange}
+                    onToggleVerifiedStandardizedEntry={handleToggleVerifiedStandardizedEntry}
+                    onRepairPlanChange={handleRepairPlanChange}
+                    onToggleApproval={handleToggleApproval}
+                  />
+                ))}
                 
               </BlockStack>
             )}
