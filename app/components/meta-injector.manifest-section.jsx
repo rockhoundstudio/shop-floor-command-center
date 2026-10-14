@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import { BlockStack, Card, Text, TextField, Button, Box, Badge } from "@shopify/polaris";
 import { ChevronDownIcon, ChevronUpIcon } from "@shopify/polaris-icons";
 import {
@@ -39,6 +39,8 @@ export function ManifestSectionCard({
   onRepairPlanChange,
   onToggleApproval
 }) {
+  const [openApprovalDiagnostics, setOpenApprovalDiagnostics] = useState({});
+
   if (!data || !section) return null;
 
   const filteredKeys = section.keys.filter(k => {
@@ -51,7 +53,7 @@ export function ManifestSectionCard({
   });
 
   if (filteredKeys.length === 0) return null;
-  const isExpanded = expandedBays[section.title] ?? true;
+  const isExpanded = expandedBays[section.title] ?? false;
   const groupColorTone = section.configFields?.[0]?.color === "success" ? "success" : undefined;
 
   const isStandardizedSection =
@@ -72,6 +74,13 @@ export function ManifestSectionCard({
       : null;
 
   const productMatchStatusRecord = referenceMatchStatusByProduct?.[selectedBenchId] || null;
+
+  const toggleApprovalDiagnostic = (key) => {
+    setOpenApprovalDiagnostics(prev => ({
+      ...prev,
+      [key]: !prev[key]
+    }));
+  };
 
   return (
     <Card padding="0">
@@ -326,20 +335,33 @@ export function ManifestSectionCard({
                           </div>
                       )}
 
-                      {/* APPROVAL DIAGNOSTIC BLOCK */}
+                      {/* APPROVAL DIAGNOSTIC BLOCK (Behind Keyboard-Accessible Disclosure, Closed by Default) */}
                       {["custom.origin_location", "custom.collection_name", "custom.collection_location"].includes(key) && (() => {
+                          const isDiagOpen = Boolean(openApprovalDiagnostics[key]);
                           const blockReason = !meta.proposalExists ? "No proposal" : (meta.currentVal === meta.propVal) ? "Values match" : meta.isManualOnly ? "Manual only" : meta.isContentPreApproved ? "Pre-approved" : (meta.fieldStatus === "API Error / Blocked") ? "API Blocked" : (meta.fieldStatus === "Save Conflict") ? "Save Conflict" : "None";
                           return (
-                              <div style={{ marginTop: "12px", backgroundColor: "#000", border: "2px solid #0f0", borderRadius: "4px", padding: "10px", color: "#0f0", fontFamily: "monospace", fontSize: "11px", wordBreak: "break-all", userSelect: "all" }}>
-                                  <strong style={{fontSize:"13px", color:"#fff"}}>APPROVAL DIAGNOSTIC</strong><br/>
-                                  Key: {key} | ID: {selectedBenchId}<br/>
-                                  fieldStatus: {meta.fieldStatus}<br/>
-                                  proposalExists: {String(meta.proposalExists)} | isDiff: {String(meta.currentVal !== meta.propVal)}<br/>
-                                  isManualOnly: {String(meta.isManualOnly)} | isContentPreApproved: {String(meta.isContentPreApproved)} | isApproved: {String(meta.isApproved)}<br/>
-                                  hasTechnicalBlock: {String(meta.hasTechnicalBlock)} | apiBlockReason: {String(meta.reasons.some(r => r.includes("Backend Blocked")))}<br/>
-                                  conflictData: {String(!!meta.conflictData)} | nativeDescConflictData: {String(!!meta.nativeDescConflictData)}<br/>
-                                  canApprove: {String(canApprove)} | Blocker: {blockReason}<br/>
-                                  Chars: Current({meta.currentVal.length}) / Proposed({meta.propVal.length})
+                              <div style={{ marginTop: "8px" }}>
+                                  <Button
+                                      size="slim"
+                                      variant="tertiary"
+                                      onClick={() => toggleApprovalDiagnostic(key)}
+                                      ariaExpanded={isDiagOpen}
+                                  >
+                                      {isDiagOpen ? "Hide Diagnostics" : "Diagnostics"}
+                                  </Button>
+                                  {isDiagOpen && (
+                                      <div style={{ marginTop: "8px", backgroundColor: "#000", border: "2px solid #0f0", borderRadius: "4px", padding: "10px", color: "#0f0", fontFamily: "monospace", fontSize: "11px", wordBreak: "break-all", userSelect: "all" }}>
+                                          <strong style={{fontSize:"13px", color:"#fff"}}>APPROVAL DIAGNOSTIC</strong><br/>
+                                          Key: {key} | ID: {selectedBenchId}<br/>
+                                          fieldStatus: {meta.fieldStatus}<br/>
+                                          proposalExists: {String(meta.proposalExists)} | isDiff: {String(meta.currentVal !== meta.propVal)}<br/>
+                                          isManualOnly: {String(meta.isManualOnly)} | isContentPreApproved: {String(meta.isContentPreApproved)} | isApproved: {String(meta.isApproved)}<br/>
+                                          hasTechnicalBlock: {String(meta.hasTechnicalBlock)} | apiBlockReason: {String(meta.reasons.some(r => r.includes("Backend Blocked")))}<br/>
+                                          conflictData: {String(!!meta.conflictData)} | nativeDescConflictData: {String(!!meta.nativeDescConflictData)}<br/>
+                                          canApprove: {String(canApprove)} | Blocker: {blockReason}<br/>
+                                          Chars: Current({meta.currentVal.length}) / Proposed({meta.propVal.length})
+                                      </div>
+                                  )}
                               </div>
                           );
                       })()}

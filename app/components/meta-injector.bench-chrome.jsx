@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import { BlockStack, Card, Text, Banner, TextField, Button, InlineStack, Box, Badge } from "@shopify/polaris";
 import { ClipboardIcon, ChevronDownIcon, ChevronUpIcon } from "@shopify/polaris-icons";
 import { formatDisplayFieldValue, validArray, validObj } from "../utils/meta-injector.standardized.jsx";
@@ -226,6 +226,8 @@ export function DescriptionReviewSection({
   onRepairPlanChange,
   onToggleApproval
 }) {
+  const [diagOpen, setDiagOpen] = useState(false);
+
   if (!data || !meta || !customDescMeta) return null;
 
   const key = "native_description";
@@ -233,7 +235,7 @@ export function DescriptionReviewSection({
   if (!matchesFilter(meta) && !matchesFilter(customDescMeta)) return null;
 
   const sectionTitle = "Description Review";
-  const isExpanded = expandedBays[sectionTitle] ?? true;
+  const isExpanded = expandedBays[sectionTitle] ?? false;
   const isBlank = meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing";
 
   let statusTone = undefined;
@@ -414,20 +416,32 @@ export function DescriptionReviewSection({
                       </div>
                   )}
 
-                  {/* APPROVAL DIAGNOSTIC BLOCK */}
+                  {/* APPROVAL DIAGNOSTIC BLOCK (Behind Keyboard-Accessible Disclosure, Closed by Default) */}
                   {(() => {
                       const blockReason = !meta.proposalExists ? "No proposal" : (meta.currentVal === meta.propVal) ? "Values match" : meta.isManualOnly ? "Manual only" : meta.isContentPreApproved ? "Pre-approved" : (meta.fieldStatus === "API Error / Blocked") ? "API Blocked" : (meta.fieldStatus === "Save Conflict") ? "Save Conflict" : "None";
                       return (
-                          <div style={{ marginTop: "12px", backgroundColor: "#000", border: "2px solid #0f0", borderRadius: "4px", padding: "10px", color: "#0f0", fontFamily: "monospace", fontSize: "11px", wordBreak: "break-all", userSelect: "all" }}>
-                              <strong style={{fontSize:"13px", color:"#fff"}}>APPROVAL DIAGNOSTIC</strong><br/>
-                              Key: custom.generated_description (Native Baseline: native_description) | ID: {selectedBenchId}<br/>
-                              fieldStatus: {meta.fieldStatus} | metafieldStatus: {customDescMeta.fieldStatus}<br/>
-                              proposalExists: {String(meta.proposalExists)} | isDiff: {String(meta.currentVal !== meta.propVal)}<br/>
-                              isManualOnly: {String(meta.isManualOnly)} | isContentPreApproved: {String(meta.isContentPreApproved)} | isApproved: {String(meta.isApproved)}<br/>
-                              hasTechnicalBlock: {String(meta.hasTechnicalBlock)} | apiBlockReason: {String(meta.reasons.some(r => r.includes("Backend Blocked")))}<br/>
-                              conflictData: {String(!!meta.conflictData)} | nativeDescConflictData: {String(!!meta.nativeDescConflictData)}<br/>
-                              canApprove: {String(canApprove)} | Blocker: {blockReason}<br/>
-                              Chars: NativeCurrent({meta.currentVal.length}) / MetafieldCurrent({customDescMeta.currentVal.length}) / Proposed({meta.propVal.length})
+                          <div style={{ marginTop: "8px" }}>
+                              <Button
+                                  size="slim"
+                                  variant="tertiary"
+                                  onClick={() => setDiagOpen(prev => !prev)}
+                                  ariaExpanded={diagOpen}
+                              >
+                                  {diagOpen ? "Hide Diagnostics" : "Diagnostics"}
+                              </Button>
+                              {diagOpen && (
+                                  <div style={{ marginTop: "8px", backgroundColor: "#000", border: "2px solid #0f0", borderRadius: "4px", padding: "10px", color: "#0f0", fontFamily: "monospace", fontSize: "11px", wordBreak: "break-all", userSelect: "all" }}>
+                                      <strong style={{fontSize:"13px", color:"#fff"}}>APPROVAL DIAGNOSTIC</strong><br/>
+                                      Key: custom.generated_description (Native Baseline: native_description) | ID: {selectedBenchId}<br/>
+                                      fieldStatus: {meta.fieldStatus} | metafieldStatus: {customDescMeta.fieldStatus}<br/>
+                                      proposalExists: {String(meta.proposalExists)} | isDiff: {String(meta.currentVal !== meta.propVal)}<br/>
+                                      isManualOnly: {String(meta.isManualOnly)} | isContentPreApproved: {String(meta.isContentPreApproved)} | isApproved: {String(meta.isApproved)}<br/>
+                                      hasTechnicalBlock: {String(meta.hasTechnicalBlock)} | apiBlockReason: {String(meta.reasons.some(r => r.includes("Backend Blocked")))}<br/>
+                                      conflictData: {String(!!meta.conflictData)} | nativeDescConflictData: {String(!!meta.nativeDescConflictData)}<br/>
+                                      canApprove: {String(canApprove)} | Blocker: {blockReason}<br/>
+                                      Chars: NativeCurrent({meta.currentVal.length}) / MetafieldCurrent({customDescMeta.currentVal.length}) / Proposed({meta.propVal.length})
+                                  </div>
+                              )}
                           </div>
                       );
                   })()}

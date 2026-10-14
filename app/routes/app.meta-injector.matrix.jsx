@@ -42,6 +42,16 @@ import {
 } from "../components/meta-injector.bench-chrome.jsx";
 import { ManifestSectionCard } from "../components/meta-injector.manifest-section.jsx";
 
+const INITIAL_EXPANDED_BAYS = {
+  "Description Review": false,
+  "1. Identity and Merchandising": false,
+  "2. Stone Facts and Physical Details": false,
+  "3. Origin, Story, and Collection": false,
+  "4. Jewelry and Setting": false,
+  "5. Search, Sales, and Media": false,
+  "6. Standardized Attributes (Read-Only)": false
+};
+
 export function OperationsMatrixTab({ products }) {
   const safeProducts = products || [];
   const [searchQuery, setSearchQuery] = useState("");
@@ -82,15 +92,7 @@ export function OperationsMatrixTab({ products }) {
   const [safetyError, setSafetyError] = useState("");
 
   const [activeFilter, setActiveFilter] = useState("All");
-  const [expandedBays, setExpandedBays] = useState({
-    "Description Review": true,
-    "1. Identity and Merchandising": true,
-    "2. Stone Facts and Physical Details": true,
-    "3. Origin, Story, and Collection": true,
-    "4. Jewelry and Setting": true,
-    "5. Search, Sales, and Media": true,
-    "6. Standardized Attributes (Read-Only)": true
-  });
+  const [expandedBays, setExpandedBays] = useState(INITIAL_EXPANDED_BAYS);
 
   const batchFetcher = useFetcher();
   const referenceMatchFetcher = useFetcher();
@@ -107,6 +109,15 @@ export function OperationsMatrixTab({ products }) {
       const existingLogs = updated[id]?.logs || [];
       updated[id] = { status: status, logs: [...existingLogs, ...newLogs] };
       return updated;
+    });
+  }, []);
+
+  const handleSelectBenchItem = useCallback((id) => {
+    setSelectedBenchId((prevId) => {
+      if (prevId !== id) {
+        setExpandedBays(INITIAL_EXPANDED_BAYS);
+      }
+      return id;
     });
   }, []);
 
@@ -150,6 +161,7 @@ export function OperationsMatrixTab({ products }) {
     setSubmittedPayloads({});
     setRepairHistory({});
     setSelectedBenchId(null);
+    setExpandedBays(INITIAL_EXPANDED_BAYS);
     setIsLoadingData(false);
     setIsExecuting(false);
     setExecutionMode(null);
@@ -830,7 +842,7 @@ export function OperationsMatrixTab({ products }) {
           onClearSearch={handleClearSearch}
           onToggleSelectAllFiltered={toggleSelectAllFiltered}
           onToggleProductSelection={handleToggleProductSelection}
-          onSelectBenchItem={setSelectedBenchId}
+          onSelectBenchItem={handleSelectBenchItem}
         />
 
         {/* RIGHT COLUMN: Repair Manifest Viewer */}
