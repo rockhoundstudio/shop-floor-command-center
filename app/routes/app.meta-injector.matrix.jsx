@@ -131,7 +131,7 @@ const sanitizeStandardizedCandidates = (rawContainer) => {
   return sanitized;
 };
 
-const buildCanonicalCandidateSnapshot = (rawContainer) => {
+const buildCanonicalCandidateBundle = (rawContainer) => {
   const sanitized = sanitizeStandardizedCandidates(rawContainer);
   const ordered = {};
   ALLOWED_VISION_CANDIDATE_KEYS.forEach((k) => {
@@ -142,7 +142,17 @@ const buildCanonicalCandidateSnapshot = (rawContainer) => {
       };
     }
   });
-  return JSON.stringify(ordered);
+  const count = Object.keys(ordered).length;
+  return {
+    ordered,
+    snapshot: JSON.stringify(ordered),
+    count,
+    hasSupported: count > 0
+  };
+};
+
+const buildCanonicalCandidateSnapshot = (rawContainer) => {
+  return buildCanonicalCandidateBundle(rawContainer).snapshot;
 };
 
 const formatStructuredDiagValue = (val) => {
@@ -360,8 +370,9 @@ export function OperationsMatrixTab({ products }) {
 
   // Dedicated Reference Matching State (Isolated per product GID)
   const [referenceMatchResultsByProduct, setReferenceMatchResultsByProduct] = useState({});
+  const [referenceMatchStatusByProduct, setReferenceMatchStatusByProduct] = useState({});
   const [pendingReferenceMatch, setPendingReferenceMatch] = useState(null);
-  const [lastProcessedRefMatchData, setLastProcessedRefMatchData] = useState(null);
+  const [releasedReferenceMatchRequest, setReleasedReferenceMatchRequest] = useState(null);
 
   const [queueIds, setQueueIds] = useState([]);
   const [productStates, setProductStates] = useState({}); 
@@ -455,8 +466,9 @@ export function OperationsMatrixTab({ products }) {
     setAiData({});
     setStandardizedCandidatesByProduct({});
     setReferenceMatchResultsByProduct({});
+    setReferenceMatchStatusByProduct({});
     setPendingReferenceMatch(null);
-    setLastProcessedRefMatchData(null);
+    setReleasedReferenceMatchRequest(null);
     setLoadIndex(0);
     setLastProcessedData(null);
     setPendingOperation(null);
@@ -496,102 +508,314 @@ export function OperationsMatrixTab({ products }) {
     });
   }, []);
 
-  const handleMatchReferenceChoices = useCallback(() => {
-    if (!selectedBenchId) return;
-    if (referenceMatchFetcher.state !== "idle" || pendingReferenceMatch !== null) return;
+  const handleReleasePendingReferenceMatch = useCallback(() => {
+    if (!pendingReferenceMatch) {
+      if (selectedBenchId) {
+        setReferenceMatchStatusByProduct((prev) => ({
+          ...prev,
+          [selectedBenchId]: {
+            state: "ready",
+            tone: "info",
+            message: "No active reference matching lock to release. Ready to match when supported Vision candidates exist.",
+            updatedAt: new Date().toISOString()
+          }
+        }));
+      }
+      return;
+    }
 
-    const rawProductCandidates = standardizedCandidatesByProduct[selectedBenchId] || {};
-    const validatedPayload = sanitizeStandardizedCandidates(rawProductCandidates);
-    const orderedPayload = {};
-    ALLOWED_VISION_CANDIDATE_KEYS.forEach((key) => {
-      if (validatedPayload[key]) {
-        orderedPayload[key] = {
-          labels: [...validatedPayload[key].labels],
-          evidence: validatedPayload[key].evidence
+    const released = pendingReferenceMatch;
+    setReleasedReferenceMatchRequest({
+      ...released,
+      releasedAt: new Date().toISOString(),
+      fetcherWasBusy: referenceMatchFetcher.state !== "idle"
+    });
+    setPendingReferenceMatch(null);
+
+    const releaseMsg =
+      referenceMatchFetcher.state !== "idle"
+        ? `Released local pending lock for ${released.pieceId} while fetcher is still [${referenceMatchFetcher.state}]. Any late response from that released request will be ignored. Note: Because the backend contract does not echo a request token, wait for the fetcher to return to idle before starting another request on the same product, or ask to add server token echo for strict overlapping request correlation.`
+        : `Released stalled reference matching lock for ${released.pieceId}. Click 'Match Reference Choices' to retry.`;
+
+    setReferenceMatchStatusByProduct((prev) => {
+      const next = {
+        ...prev,
+        [released.pieceId]: {
+          state: "failed",
+          tone: "warning",
+          message: releaseMsg,
+          updatedAt: new Date().toISOString()
+        }
+      };
+      if (selectedBenchId && selectedBenchId !== released.pieceId) {
+        next[selectedBenchId] = {
+          state: "ready",
+          tone: "info",
+          message: `Released lock that was held by ${released.pieceId}. You can now click 'Match Reference Choices' for ${selectedBenchId}.`,
+          updatedAt: new Date().toISOString()
         };
       }
+      return next;
     });
+  }, [pendingReferenceMatch, referenceMatchFetcher.state, selectedBenchId]);
 
-    if (Object.keys(orderedPayload).length === 0) return;
+  const handleMatchReferenceChoices = useCallback(() => {
+    if (!selectedBenchId) {
+      setSafetyError("Cannot match reference choices: No product is selected on the bench. Select a product first.");
+      return;
+    }
 
-    const snapshotJson = JSON.stringify(orderedPayload);
-    const token = Date.now().toString() + Math.random().toString(36).substring(2, 7);
+    const rawProductCandidates = standardizedCandidatesByProduct[selectedBenchId] || {};
+    const bundle = buildCanonicalCandidateBundle(rawProductCandidates);
 
-    setPendingReferenceMatch({
-      pieceId: selectedBenchId,
-      snapshot: snapshotJson,
-      token
-    });
-
-    const fd = new FormData();
-    fd.append("intent", "resolveStandardizedCandidates");
-    fd.append("pieceId", selectedBenchId);
-    fd.append("standardized_candidates", snapshotJson);
-
-    referenceMatchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-api" });
-  }, [selectedBenchId, referenceMatchFetcher, pendingReferenceMatch, standardizedCandidatesByProduct]);
-
-  useEffect(() => {
-    if (
-      referenceMatchFetcher.state === "idle" &&
-      referenceMatchFetcher.data &&
-      referenceMatchFetcher.data !== lastProcessedRefMatchData
-    ) {
-      const data = referenceMatchFetcher.data;
-      setLastProcessedRefMatchData(data);
-
-      const pending = pendingReferenceMatch;
-      setPendingReferenceMatch(null);
-
-      if (!pending) return;
-
-      if (
-        !data ||
-        typeof data !== "object" ||
-        data.intent !== "resolveStandardizedCandidates" ||
-        data.readOnly !== true ||
-        !data.pieceId ||
-        data.pieceId !== pending.pieceId
-      ) {
-        return;
-      }
-
-      const targetProductId = data.pieceId;
-      const latestCandidates = standardizedCandidatesByProduct[targetProductId] || {};
-      const currentSnapshot = buildCanonicalCandidateSnapshot(latestCandidates);
-
-      if (currentSnapshot !== pending.snapshot) {
-        return;
-      }
-
-      const rawResolutions = validObj(data.resolutions);
-      const sanitizedResolutions = {};
-      ALLOWED_VISION_CANDIDATE_KEYS.forEach((allowedKey) => {
-        const fullKey = `shopify.${allowedKey}`;
-        if (rawResolutions[fullKey] && typeof rawResolutions[fullKey] === "object") {
-          sanitizedResolutions[fullKey] = rawResolutions[fullKey];
-        } else if (rawResolutions[allowedKey] && typeof rawResolutions[allowedKey] === "object") {
-          sanitizedResolutions[fullKey] = rawResolutions[allowedKey];
-        }
-      });
-
-      setReferenceMatchResultsByProduct((prev) => ({
+    if (!bundle.hasSupported) {
+      setReferenceMatchStatusByProduct((prev) => ({
         ...prev,
-        [targetProductId]: {
-          pieceId: targetProductId,
-          intent: data.intent,
-          readOnly: true,
-          success: Boolean(data.success),
-          isComplete: Boolean(data.isComplete),
-          resolutions: sanitizedResolutions,
-          currentReferenceLists: validObj(data.currentReferenceLists),
-          errors: formatErrorsList(data.errors || data.error),
-          snapshot: pending.snapshot,
-          matchedAt: new Date().toISOString()
+        [selectedBenchId]: {
+          state: "failed",
+          tone: "warning",
+          message: "Cannot match reference choices: No validated Vision standardized candidates exist for this product. Run 'Run AI (Single)' or 'EXECUTE AI AUTO-FILL (STAGE)' first so Vision stages candidate labels and evidence.",
+          updatedAt: new Date().toISOString()
+        }
+      }));
+      return;
+    }
+
+    if (pendingReferenceMatch !== null || referenceMatchFetcher.state !== "idle") {
+      const lockedBy = pendingReferenceMatch?.pieceId || "an active fetcher request";
+      setReferenceMatchStatusByProduct((prev) => ({
+        ...prev,
+        [selectedBenchId]: {
+          state: pendingReferenceMatch?.pieceId === selectedBenchId ? "awaiting_response" : "failed",
+          tone: "warning",
+          message: `Reference matching cannot start: Fetcher is currently [${referenceMatchFetcher.state}] and locked by [${lockedBy}]. Wait for completion, or click 'Release Stalled Match Lock' if the request is genuinely stuck.`,
+          updatedAt: new Date().toISOString()
+        }
+      }));
+      return;
+    }
+
+    const requestRecord = {
+      pieceId: selectedBenchId,
+      snapshot: bundle.snapshot,
+      baselineData: referenceMatchFetcher.data,
+      sawNonIdle: false,
+      startedAt: new Date().toISOString()
+    };
+
+    setReleasedReferenceMatchRequest(null);
+    setPendingReferenceMatch(requestRecord);
+    setReferenceMatchStatusByProduct((prev) => ({
+      ...prev,
+      [selectedBenchId]: {
+        state: "submitting",
+        tone: "info",
+        message: `Submitting ${bundle.count} standardized candidate attribute(s) (${ Object.keys(bundle.ordered).join(", ") }) for read-only reference matching...`,
+        updatedAt: new Date().toISOString()
+      }
+    }));
+
+    try {
+      const fd = new FormData();
+      fd.append("intent", "resolveStandardizedCandidates");
+      fd.append("pieceId", selectedBenchId);
+      fd.append("standardized_candidates", bundle.snapshot);
+
+      referenceMatchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-api" });
+    } catch (err) {
+      const errMsg = err?.message || String(err || "Unknown submission error");
+      setPendingReferenceMatch((curr) => (curr === requestRecord ? null : curr));
+      setReferenceMatchStatusByProduct((prev) => ({
+        ...prev,
+        [selectedBenchId]: {
+          state: "failed",
+          tone: "critical",
+          message: `Failed to submit reference matching request: ${errMsg}. Check network/app connection and click 'Match Reference Choices' to retry.`,
+          updatedAt: new Date().toISOString()
         }
       }));
     }
-  }, [referenceMatchFetcher.state, referenceMatchFetcher.data, lastProcessedRefMatchData, pendingReferenceMatch, standardizedCandidatesByProduct]);
+  }, [selectedBenchId, referenceMatchFetcher, pendingReferenceMatch, standardizedCandidatesByProduct]);
+
+  useEffect(() => {
+    // 1. If a released request finishes in the background, consume & ignore its late response so it cannot overwrite a later request.
+    if (releasedReferenceMatchRequest) {
+      if (referenceMatchFetcher.state !== "idle") {
+        if (!releasedReferenceMatchRequest.sawNonIdle) {
+          setReleasedReferenceMatchRequest((prev) => (prev ? { ...prev, sawNonIdle: true } : null));
+        }
+      } else {
+        const dataChangedSinceReleaseStart = referenceMatchFetcher.data !== releasedReferenceMatchRequest.baselineData;
+        if (releasedReferenceMatchRequest.sawNonIdle || dataChangedSinceReleaseStart) {
+          const ignoredPieceId = releasedReferenceMatchRequest.pieceId;
+          setReleasedReferenceMatchRequest(null);
+          if (!pendingReferenceMatch) {
+            setReferenceMatchStatusByProduct((prev) => ({
+              ...prev,
+              [ignoredPieceId]: {
+                state: "discarded_stale",
+                tone: "warning",
+                message: `Late response from previously released request on ${ignoredPieceId} arrived and was safely ignored. Click 'Match Reference Choices' to run a fresh read-only match.`,
+                updatedAt: new Date().toISOString()
+              }
+            }));
+          }
+        }
+      }
+    }
+
+    if (!pendingReferenceMatch) return;
+
+    // 2. Track transition into non-idle ("submitting" / "loading")
+    if (referenceMatchFetcher.state !== "idle") {
+      if (!pendingReferenceMatch.sawNonIdle) {
+        setPendingReferenceMatch((prev) => (prev ? { ...prev, sawNonIdle: true } : null));
+        setReferenceMatchStatusByProduct((prev) => ({
+          ...prev,
+          [pendingReferenceMatch.pieceId]: {
+            state: "awaiting_response",
+            tone: "info",
+            message: `Awaiting read-only reference matching response from Shopify for ${pendingReferenceMatch.pieceId} (fetcher state: ${referenceMatchFetcher.state})...`,
+            updatedAt: new Date().toISOString()
+          }
+        }));
+      }
+      return;
+    }
+
+    // 3. Fetcher is idle. Ensure we do NOT consume old retained fetcher.data before the new submission actually completes.
+    const data = referenceMatchFetcher.data;
+    const hasCompletedCycle = pendingReferenceMatch.sawNonIdle || data !== pendingReferenceMatch.baselineData;
+    if (!hasCompletedCycle) {
+      return;
+    }
+
+    const activePending = pendingReferenceMatch;
+
+    // 4. Validate response structure before clearing or mutating state
+    if (!data || typeof data !== "object") {
+      setPendingReferenceMatch(null);
+      setReferenceMatchStatusByProduct((prev) => ({
+        ...prev,
+        [activePending.pieceId]: {
+          state: "failed",
+          tone: "critical",
+          message: `Malformed response received for ${activePending.pieceId}: Backend returned an empty or non-object payload. Existing diagnostics were preserved. Click 'Match Reference Choices' to retry.`,
+          updatedAt: new Date().toISOString()
+        }
+      }));
+      return;
+    }
+
+    if (data.intent !== "resolveStandardizedCandidates" || data.readOnly !== true) {
+      setPendingReferenceMatch(null);
+      const errDetail = data.error || data.message || `intent=${String(data.intent)}, readOnly=${String(data.readOnly)}`;
+      setReferenceMatchStatusByProduct((prev) => ({
+        ...prev,
+        [activePending.pieceId]: {
+          state: "failed",
+          tone: "critical",
+          message: `Malformed or unexpected response contract for ${activePending.pieceId} (${errDetail}). Expected intent 'resolveStandardizedCandidates' with readOnly: true. Click 'Match Reference Choices' to retry.`,
+          updatedAt: new Date().toISOString()
+        }
+      }));
+      return;
+    }
+
+    if (!data.pieceId || data.pieceId !== activePending.pieceId) {
+      setPendingReferenceMatch(null);
+      setReferenceMatchStatusByProduct((prev) => ({
+        ...prev,
+        [activePending.pieceId]: {
+          state: "failed",
+          tone: "critical",
+          message: `Product identity mismatch: Requested reference matching for [${activePending.pieceId}], but backend returned pieceId [${data.pieceId || "None"}]. Response discarded to preserve product isolation. Click 'Match Reference Choices' to retry.`,
+          updatedAt: new Date().toISOString()
+        }
+      }));
+      return;
+    }
+
+    // 5. Response is proven to belong to activePending's product & completed cycle. Clear pending lock.
+    setPendingReferenceMatch(null);
+
+    const targetProductId = data.pieceId;
+    const latestCandidates = standardizedCandidatesByProduct[targetProductId] || {};
+    const currentSnapshot = buildCanonicalCandidateSnapshot(latestCandidates);
+
+    if (currentSnapshot !== activePending.snapshot) {
+      setReferenceMatchStatusByProduct((prev) => ({
+        ...prev,
+        [targetProductId]: {
+          state: "discarded_stale",
+          tone: "warning",
+          message: `Discarded stale reference matching response for ${targetProductId}: The product's Vision standardized candidates changed while the request was in flight. Click 'Match Reference Choices' to match the latest candidates.`,
+          updatedAt: new Date().toISOString()
+        }
+      }));
+      return;
+    }
+
+    const rawResolutions = validObj(data.resolutions);
+    const sanitizedResolutions = {};
+    ALLOWED_VISION_CANDIDATE_KEYS.forEach((allowedKey) => {
+      const fullKey = `shopify.${allowedKey}`;
+      if (rawResolutions[fullKey] && typeof rawResolutions[fullKey] === "object") {
+        sanitizedResolutions[fullKey] = rawResolutions[fullKey];
+      } else if (rawResolutions[allowedKey] && typeof rawResolutions[allowedKey] === "object") {
+        sanitizedResolutions[fullKey] = rawResolutions[allowedKey];
+      }
+    });
+
+    const topErrors = formatErrorsList(data.errors || data.error);
+    const resolutionCount = Object.keys(sanitizedResolutions).length;
+    const isComplete = Boolean(data.isComplete);
+    const isSuccess = Boolean(data.success);
+
+    setReferenceMatchResultsByProduct((prev) => ({
+      ...prev,
+      [targetProductId]: {
+        pieceId: targetProductId,
+        intent: data.intent,
+        readOnly: true,
+        success: isSuccess,
+        isComplete: isComplete,
+        resolutions: sanitizedResolutions,
+        currentReferenceLists: validObj(data.currentReferenceLists),
+        errors: topErrors,
+        snapshot: activePending.snapshot,
+        matchedAt: new Date().toISOString()
+      }
+    }));
+
+    if (isComplete && isSuccess && topErrors.length === 0) {
+      setReferenceMatchStatusByProduct((prev) => ({
+        ...prev,
+        [targetProductId]: {
+          state: "completed",
+          tone: "success",
+          message: `Reference matching completed (read-only) for ${resolutionCount} attribute(s). Inspect the matched and ambiguous options beside each candidate row below. Writes remain disabled.`,
+          updatedAt: new Date().toISOString()
+        }
+      }));
+    } else {
+      setReferenceMatchStatusByProduct((prev) => ({
+        ...prev,
+        [targetProductId]: {
+          state: "incomplete",
+          tone: "warning",
+          message: `Reference matching returned partial/incomplete read diagnostics (success: ${String(isSuccess)}, isComplete: ${String(isComplete)}, ${resolutionCount} attribute resolution(s), ${topErrors.length} top-level error(s)). Partial results are displayed below. Incomplete enumeration is never treated as missing_entry or save-ready. Review read errors/continuation below or click 'Match Reference Choices' to retry.`,
+          updatedAt: new Date().toISOString()
+        }
+      }));
+    }
+  }, [
+    referenceMatchFetcher.state,
+    referenceMatchFetcher.data,
+    pendingReferenceMatch,
+    releasedReferenceMatchRequest,
+    standardizedCandidatesByProduct
+  ]);
 
   const getFieldMetadata = (key, data, productId, currentApprovals, configFields = []) => {
     const targetKeyForProposal = NATIVE_ALIAS_MAP[key] || key;
@@ -1500,8 +1724,9 @@ export function OperationsMatrixTab({ products }) {
                       (tab3Data && typeof tab3Data === "object" && tab3Data.standardized_candidates !== undefined)
                           ? tab3Data.standardized_candidates
                           : topLevelStdCandidates;
-                  const validatedCandidates = sanitizeStandardizedCandidates(rawCandidatesSource);
-                  const newSnapshot = buildCanonicalCandidateSnapshot(validatedCandidates);
+                  const newBundle = buildCanonicalCandidateBundle(rawCandidatesSource);
+                  const validatedCandidates = newBundle.ordered;
+                  const newSnapshot = newBundle.snapshot;
 
                   setStandardizedCandidatesByProduct(prev => {
                       const prevSnapshot = buildCanonicalCandidateSnapshot(prev[targetId]);
@@ -1512,6 +1737,29 @@ export function OperationsMatrixTab({ products }) {
                               delete nextRes[targetId];
                               return nextRes;
                           });
+                          setReferenceMatchStatusByProduct(prevStat => ({
+                              ...prevStat,
+                              [targetId]: {
+                                  state: newBundle.hasSupported ? "ready" : "failed",
+                                  tone: newBundle.hasSupported ? "info" : "warning",
+                                  message: newBundle.hasSupported
+                                      ? `Vision staged ${newBundle.count} standardized candidate attribute(s) (${Object.keys(validatedCandidates).join(", ")}). Previous matching results (if any) were invalidated. Click 'Match Reference Choices' to run read-only matching.`
+                                      : "Vision scan completed, but no supported standardized attribute candidates were returned for the 6 allowed keys.",
+                                  updatedAt: new Date().toISOString()
+                              }
+                          }));
+                      } else if (!prev[targetId]) {
+                          setReferenceMatchStatusByProduct(prevStat => ({
+                              ...prevStat,
+                              [targetId]: {
+                                  state: newBundle.hasSupported ? "ready" : "failed",
+                                  tone: newBundle.hasSupported ? "info" : "warning",
+                                  message: newBundle.hasSupported
+                                      ? `Vision staged ${newBundle.count} standardized candidate attribute(s). Click 'Match Reference Choices' to run read-only matching.`
+                                      : "Vision scan completed, but no supported standardized attribute candidates were returned for the 6 allowed keys.",
+                                  updatedAt: new Date().toISOString()
+                              }
+                          }));
                       }
                       return {
                           ...prev,
@@ -2533,15 +2781,21 @@ export function OperationsMatrixTab({ products }) {
       section.configFields?.some(f => f.role === "standardized_attribute") ||
       section.keys.some(k => k.startsWith("shopify."));
 
-    const currentProductCandidates = sanitizeStandardizedCandidates(standardizedCandidatesByProduct[selectedBenchId] || {});
-    const currentSnapshot = buildCanonicalCandidateSnapshot(currentProductCandidates);
-    const hasSupportedCandidates = ALLOWED_VISION_CANDIDATE_KEYS.some(
-      (k) => currentProductCandidates[k] && Array.isArray(currentProductCandidates[k].labels) && currentProductCandidates[k].labels.length > 0
-    );
+    const candidateBundle = buildCanonicalCandidateBundle(standardizedCandidatesByProduct[selectedBenchId] || {});
+    const currentSnapshot = candidateBundle.snapshot;
+    const hasSupportedCandidates = candidateBundle.hasSupported;
 
-    const isRefMatchPendingForCurrent =
-      referenceMatchFetcher.state !== "idle" &&
-      pendingReferenceMatch?.pieceId === selectedBenchId;
+    const isFetcherBusy = referenceMatchFetcher.state !== "idle";
+    const isPendingForCurrentProduct = pendingReferenceMatch?.pieceId === selectedBenchId;
+    const isPendingForOtherProduct = pendingReferenceMatch !== null && pendingReferenceMatch.pieceId !== selectedBenchId;
+
+    // Unified button disable & loading conditions matching handleMatchReferenceChoices exactly
+    const isMatchButtonDisabled =
+      !selectedBenchId ||
+      !hasSupportedCandidates ||
+      pendingReferenceMatch !== null ||
+      isFetcherBusy;
+    const isMatchButtonLoading = isPendingForCurrentProduct || (isFetcherBusy && !isPendingForOtherProduct);
 
     const storedRefMatchForProduct = referenceMatchResultsByProduct[selectedBenchId];
     const validRefMatchResult =
@@ -2552,6 +2806,59 @@ export function OperationsMatrixTab({ products }) {
       storedRefMatchForProduct.snapshot === currentSnapshot
         ? storedRefMatchForProduct
         : null;
+
+    const productMatchStatusRecord = referenceMatchStatusByProduct[selectedBenchId] || null;
+
+    let derivedLifecycleState = "ready";
+    let derivedLifecycleTone = "info";
+    let derivedLifecycleMessage = "";
+
+    if (isPendingForCurrentProduct) {
+      derivedLifecycleState = pendingReferenceMatch.sawNonIdle ? "awaiting_response" : "submitting";
+      derivedLifecycleTone = "info";
+      derivedLifecycleMessage =
+        productMatchStatusRecord?.message ||
+        `Reference matching in progress for ${selectedBenchId} (fetcher state: ${referenceMatchFetcher.state}). Please wait for the response...`;
+    } else if (isPendingForOtherProduct) {
+      derivedLifecycleState = "awaiting_response";
+      derivedLifecycleTone = "warning";
+      derivedLifecycleMessage = `Reference matching button is locked because a request for another product (${pendingReferenceMatch.pieceId}) is currently pending (fetcher state: ${referenceMatchFetcher.state}). Wait for it to finish, or click 'Release Stalled Match Lock' if that request is genuinely stuck.`;
+    } else if (isFetcherBusy) {
+      derivedLifecycleState = "awaiting_response";
+      derivedLifecycleTone = "warning";
+      derivedLifecycleMessage = `Reference matching fetcher is currently busy (${referenceMatchFetcher.state}). Wait for it to return to idle before starting a new request.`;
+    } else if (!hasSupportedCandidates) {
+      derivedLifecycleState = productMatchStatusRecord?.state === "failed" ? "failed" : "ready";
+      derivedLifecycleTone = "warning";
+      derivedLifecycleMessage =
+        productMatchStatusRecord?.message ||
+        "Match Reference Choices is disabled because no validated Vision standardized candidates exist for this product yet. Click 'Run AI (Single)' above (or 'EXECUTE AI AUTO-FILL (STAGE)') so Vision stages candidate labels and evidence first.";
+    } else if (productMatchStatusRecord) {
+      derivedLifecycleState = productMatchStatusRecord.state;
+      derivedLifecycleTone = productMatchStatusRecord.tone || "info";
+      derivedLifecycleMessage = productMatchStatusRecord.message;
+    } else if (validRefMatchResult) {
+      derivedLifecycleState = validRefMatchResult.isComplete && validRefMatchResult.success ? "completed" : "incomplete";
+      derivedLifecycleTone = validRefMatchResult.isComplete && validRefMatchResult.success ? "success" : "warning";
+      derivedLifecycleMessage =
+        validRefMatchResult.isComplete && validRefMatchResult.success
+          ? "Reference matching completed (read-only). Review the matched and ambiguous options beside each candidate row below."
+          : "Reference matching returned partial/incomplete read diagnostics. Review partial results and errors below, or click 'Match Reference Choices' to retry.";
+    } else {
+      derivedLifecycleState = "ready";
+      derivedLifecycleTone = "info";
+      derivedLifecycleMessage = `Ready to match ${candidateBundle.count} validated Vision candidate attribute(s) (${Object.keys(candidateBundle.ordered).join(", ")}). Click 'Match Reference Choices' to query read-only Shopify reference resolutions.`;
+    }
+
+    const lifecycleBadgeLabelMap = {
+      ready: "Ready",
+      submitting: "Submitting",
+      awaiting_response: "Awaiting Response",
+      completed: "Completed",
+      incomplete: "Incomplete (Partial)",
+      failed: "Failed",
+      discarded_stale: "Discarded Stale Response"
+    };
 
     return (
       <Card padding="0" key={section.title}>
@@ -2569,47 +2876,72 @@ export function OperationsMatrixTab({ products }) {
           <div style={{ padding: "16px", display: "flex", flexDirection: "column", gap: "24px", minWidth: 0, boxSizing: "border-box" }}>
             {isStandardizedSection && (
               <Box padding="300" background="bg-surface-secondary" borderColor="border" borderWidth="1" borderRadius="200">
-                <BlockStack gap="200">
+                <BlockStack gap="300">
                   <InlineStack align="space-between" blockAlign="center" gap="300">
                     <BlockStack gap="100">
-                      <Text as="h4" variant="headingSm" fontWeight="bold">
-                        Standardized Reference Matching (Read-Only Diagnostic)
-                      </Text>
+                      <InlineStack gap="200" blockAlign="center">
+                        <Text as="h4" variant="headingSm" fontWeight="bold">
+                          Standardized Reference Matching (Read-Only Diagnostic)
+                        </Text>
+                        <Badge tone={derivedLifecycleTone}>
+                          {lifecycleBadgeLabelMap[derivedLifecycleState] || derivedLifecycleState}
+                        </Badge>
+                      </InlineStack>
                       <Text as="p" variant="bodySm" tone="subdued">
                         Read-only matching. Writes disabled. Supported candidate keys: {ALLOWED_VISION_CANDIDATE_KEYS.join(", ")}
                       </Text>
                     </BlockStack>
-                    <Button
-                      size="medium"
-                      variant="primary"
-                      onClick={handleMatchReferenceChoices}
-                      disabled={isRefMatchPendingForCurrent || referenceMatchFetcher.state !== "idle" || !hasSupportedCandidates}
-                      loading={isRefMatchPendingForCurrent}
-                    >
-                      Match Reference Choices
-                    </Button>
+                    <InlineStack gap="200" blockAlign="center">
+                      {pendingReferenceMatch !== null && (
+                        <Button
+                          size="medium"
+                          variant="secondary"
+                          tone="critical"
+                          onClick={handleReleasePendingReferenceMatch}
+                        >
+                          Release Stalled Match Lock
+                        </Button>
+                      )}
+                      <Button
+                        size="medium"
+                        variant="primary"
+                        onClick={handleMatchReferenceChoices}
+                        disabled={isMatchButtonDisabled}
+                        loading={isMatchButtonLoading}
+                      >
+                        {validRefMatchResult || derivedLifecycleState === "failed" || derivedLifecycleState === "incomplete" || derivedLifecycleState === "discarded_stale"
+                          ? "Match Reference Choices (Retry)"
+                          : "Match Reference Choices"}
+                      </Button>
+                    </InlineStack>
                   </InlineStack>
 
-                  {isRefMatchPendingForCurrent && (
-                    <Banner tone="info">
+                  <Banner
+                    tone={derivedLifecycleTone}
+                    title={`Reference Matching Lifecycle: ${lifecycleBadgeLabelMap[derivedLifecycleState] || derivedLifecycleState}`}
+                  >
+                    <BlockStack gap="100">
                       <Text as="p" variant="bodySm" fontWeight="medium">
-                        Matching standardized candidates against Shopify reference choices (read-only)...
+                        {derivedLifecycleMessage}
                       </Text>
-                    </Banner>
-                  )}
+                      <Text as="p" variant="bodySm" tone="subdued">
+                        <strong>Product GID:</strong> {selectedBenchId} | <strong>Staged Candidate Keys:</strong>{" "}
+                        {hasSupportedCandidates ? Object.keys(candidateBundle.ordered).join(", ") : "None"} |{" "}
+                        <strong>Dedicated Fetcher State:</strong> {referenceMatchFetcher.state}
+                        {pendingReferenceMatch ? ` | Pending Lock: ${pendingReferenceMatch.pieceId}` : ""}
+                      </Text>
+                      <Text as="p" variant="bodySm" tone="subdued" fontWeight="medium">
+                        Read-only matching. Writes disabled.
+                      </Text>
+                    </BlockStack>
+                  </Banner>
 
-                  {!isRefMatchPendingForCurrent && !hasSupportedCandidates && (
-                    <Text as="p" variant="bodySm" tone="subdued">
-                      No validated Vision standardized candidates available for this product. Run AI scan to stage candidates before matching.
-                    </Text>
-                  )}
-
-                  {!isRefMatchPendingForCurrent && validRefMatchResult && (
+                  {validRefMatchResult && (
                     <Banner
                       tone={validRefMatchResult.isComplete && validRefMatchResult.success && validRefMatchResult.errors.length === 0 ? "success" : "warning"}
                       title={
                         validRefMatchResult.isComplete && validRefMatchResult.success
-                          ? "Reference Matching Complete (Read-Only)"
+                          ? "Reference Matching Read Summary (Read-Only)"
                           : "Reference Matching Incomplete / Partial Read Enumeration (Read-Only — Not Save-Ready)"
                       }
                     >
@@ -2617,7 +2949,8 @@ export function OperationsMatrixTab({ products }) {
                         <Text as="p" variant="bodySm">
                           <strong>Overall Status:</strong> {validRefMatchResult.success ? "Complete" : "Incomplete / Partial Diagnostics"} |{" "}
                           <strong>isComplete:</strong> {String(validRefMatchResult.isComplete)} |{" "}
-                          <strong>readOnly:</strong> {String(validRefMatchResult.readOnly)}
+                          <strong>readOnly:</strong> {String(validRefMatchResult.readOnly)} |{" "}
+                          <strong>Matched At:</strong> {new Date(validRefMatchResult.matchedAt).toLocaleTimeString()}
                         </Text>
                         {!validRefMatchResult.isComplete && (
                           <Text as="p" variant="bodySm" fontWeight="medium">
@@ -2718,7 +3051,7 @@ export function OperationsMatrixTab({ products }) {
 
               const candidateMetaKey = meta.metaKey || (key.startsWith("shopify.") ? key.slice(8) : "");
               const isVisionCandidateRow = meta.isStandardizedAttribute && ALLOWED_VISION_CANDIDATE_KEYS.includes(candidateMetaKey);
-              const productVisionCandidates = standardizedCandidatesByProduct[selectedBenchId] || {};
+              const productVisionCandidates = candidateBundle.ordered;
               const visionCandidateEntry = isVisionCandidateRow ? productVisionCandidates[candidateMetaKey] : null;
               const fieldResolution =
                 isVisionCandidateRow && validRefMatchResult
@@ -2814,7 +3147,7 @@ export function OperationsMatrixTab({ products }) {
                                     ) : (
                                         <BlockStack gap="100">
                                             <Text as="p" variant="bodySm" tone="subdued">
-                                                No supported Vision candidate returned.
+                                                No supported Vision candidate returned for this attribute.
                                             </Text>
                                             <Text as="p" variant="bodySm" tone="subdued" fontWeight="medium">
                                                 Read-only matching. Writes disabled.
@@ -2827,10 +3160,16 @@ export function OperationsMatrixTab({ products }) {
                                     <Text as="p" variant="headingSm" fontWeight="bold" style={{ marginBottom: "6px", color: "#0f172a" }}>
                                         Reference Matching Diagnostics (shopify.{candidateMetaKey})
                                     </Text>
-                                    {isRefMatchPendingForCurrent ? (
+                                    {isPendingForCurrentProduct ? (
                                         <BlockStack gap="100">
                                             <Text as="p" variant="bodySm">
-                                                Matching reference choices (read-only)...
+                                                <strong>Request State:</strong>{" "}
+                                                <Badge tone="info">
+                                                    {pendingReferenceMatch.sawNonIdle ? "Awaiting Response" : "Submitting"}
+                                                </Badge>
+                                            </Text>
+                                            <Text as="p" variant="bodySm">
+                                                Matching reference choices against Shopify definitions (read-only)...
                                             </Text>
                                             <Text as="p" variant="bodySm" tone="subdued" fontWeight="medium">
                                                 Read-only matching. Writes disabled.
@@ -2935,10 +3274,18 @@ export function OperationsMatrixTab({ products }) {
                                         </BlockStack>
                                     ) : (
                                         <BlockStack gap="100">
+                                            <Text as="p" variant="bodySm">
+                                                <strong>Lifecycle State:</strong>{" "}
+                                                <Badge tone={derivedLifecycleTone}>
+                                                    {lifecycleBadgeLabelMap[derivedLifecycleState] || derivedLifecycleState}
+                                                </Badge>
+                                            </Text>
                                             <Text as="p" variant="bodySm" tone="subdued">
                                                 {validRefMatchResult
-                                                    ? "No resolution returned for this attribute key."
-                                                    : "Click 'Match Reference Choices' to inspect read-only reference resolutions."}
+                                                    ? visionCandidateEntry
+                                                        ? "Backend response did not include a resolution object for this candidate key. Check top-level read errors or click 'Match Reference Choices (Retry)'."
+                                                        : "No candidate was submitted for this attribute key."
+                                                    : derivedLifecycleMessage}
                                             </Text>
                                             <Text as="p" variant="bodySm" tone="subdued" fontWeight="medium">
                                                 Read-only matching. Writes disabled.
