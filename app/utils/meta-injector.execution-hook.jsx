@@ -19,6 +19,135 @@ import {
   buildRepairPayload
 } from "./meta-injector.matrix-domain.jsx";
 
+const SENSITIVE_DIAG_KEY_REGEX = /token|secret|password|authorization|cookie|header|credential|api[_-]?key|session/i;
+
+const sanitizeDiagString = (val) => {
+  if (typeof val !== "string") return "";
+  const trimmed = val.trim();
+  if (!trimmed || trimmed === "[object Object]") return "";
+  return trimmed
+    .replace(/Bearer\s+[A-Za-z0-9\-._~+/]+=*/gi, "Bearer [REDACTED]")
+    .replace(/shpat_[A-Za-z0-9_]+/gi, "shpat_[REDACTED]")
+    .replace(/shpca_[A-Za-z0-9_]+/gi, "shpca_[REDACTED]")
+    .replace(/shpss_[A-Za-z0-9_]+/gi, "shpss_[REDACTED]");
+};
+
+const normalizeFieldOrPath = (rawField) => {
+  if (rawField === undefined || rawField === null) return "";
+  if (Array.isArray(rawField)) {
+    return rawField
+      .map((part) => (typeof part === "string" || typeof part === "number" ? sanitizeDiagString(String(part)) : ""))
+      .filter(Boolean)
+      .join(".");
+  }
+  if (typeof rawField === "string" || typeof rawField === "number") {
+    return sanitizeDiagString(String(rawField));
+  }
+  return "";
+};
+
+const normalizeReturnedErrorEntry = (rawItem) => {
+  if (rawItem === undefined || rawItem === null) return null;
+
+  if (typeof rawItem === "string" || typeof rawItem === "number" || typeof rawItem === "boolean") {
+    const cleanMsg = sanitizeDiagString(String(rawItem));
+    if (!cleanMsg) return null;
+    return {
+      message: cleanMsg,
+      field: null,
+      code: null,
+      destination: null,
+      formatted: cleanMsg
+    };
+  }
+
+  if (typeof rawItem === "object") {
+    const rawMsg =
+      typeof rawItem.message === "string"
+        ? rawItem.message
+        : typeof rawItem.error === "string"
+          ? rawItem.error
+          : typeof rawItem.reason === "string"
+            ? rawItem.reason
+            : "";
+    const message = sanitizeDiagString(rawMsg);
+    const field = normalizeFieldOrPath(rawItem.field ?? rawItem.path ?? null) || null;
+    const code =
+      typeof rawItem.code === "string" || typeof rawItem.code === "number"
+        ? sanitizeDiagString(String(rawItem.code)) || null
+        : null;
+    const destination =
+      typeof rawItem.destination === "string"
+        ? sanitizeDiagString(rawItem.destination) || null
+        : typeof rawItem.key === "string"
+          ? sanitizeDiagString(rawItem.key) || null
+          : null;
+
+    let fallbackSummary = "";
+    if (!message) {
+      const safePairs = [];
+      Object.entries(rawItem).forEach(([k, v]) => {
+        if (SENSITIVE_DIAG_KEY_REGEX.test(k)) return;
+        if (v === undefined || v === null) return;
+        if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") {
+          const sv = sanitizeDiagString(String(v));
+          if (sv) safePairs.push(`${k}=${sv}`);
+        } else if (Array.isArray(v)) {
+          const joined = normalizeFieldOrPath(v);
+          if (joined) safePairs.push(`${k}=${joined}`);
+        }
+      });
+      fallbackSummary = safePairs.join(", ");
+    }
+
+    const effectiveMessage = message || fallbackSummary;
+    if (!effectiveMessage && !field && !code && !destination) return null;
+
+    const metaParts = [];
+    if (destination) metaParts.push(`dest: ${destination}`);
+    if (field && field !== destination) metaParts.push(`field: ${field}`);
+    if (code) metaParts.push(`code: ${code}`);
+
+    const prefix = metaParts.length > 0 ? `[${metaParts.join(" | ")}] ` : "";
+    const formatted = `${prefix}${effectiveMessage || "Unspecified backend error"}`.trim();
+
+    return {
+      message: effectiveMessage || "Unspecified backend error",
+      field,
+      code,
+      destination,
+      formatted
+    };
+  }
+
+  return null;
+};
+
+const extractNormalizedErrors = (rawErrors, singleError) => {
+  const list = [];
+  const seen = new Set();
+
+  const pushCandidate = (item) => {
+    const norm = normalizeReturnedErrorEntry(item);
+    if (!norm || !norm.formatted) return;
+    if (seen.has(norm.formatted)) return;
+    seen.add(norm.formatted);
+    list.push(norm);
+  };
+
+  if (Array.isArray(rawErrors)) {
+    rawErrors.forEach(pushCandidate);
+  } else if (rawErrors !== undefined && rawErrors !== null) {
+    pushCandidate(rawErrors);
+  }
+
+  if (singleError !== undefined && singleError !== null) {
+    pushCandidate(singleError);
+  }
+
+  return list;
+};
+
 const mergeReadBackNativeTargets = (existingNativeTargets, rbNativeTargets) => {
   const prev = validObj(existingNativeTargets);
   if (!rbNativeTargets || typeof rbNativeTargets !== "object" || Array.isArray(rbNativeTargets)) {
@@ -490,9 +619,15 @@ export function useMetaInjectorExecution({
       const blockedFields = validObj(rawBlockedFields);
       const conflicts = validObj(rawConflicts);
 
+      const normalizedErrorObjects = extractNormalizedErrors(errors, error);
+      const formattedErrorStrings = normalizedErrorObjects.map(e => e.formatted);
+      const specificErrorSummary = formattedErrorStrings.join(" | ");
+      const safeGenericMessage = sanitizeDiagString(typeof message === "string" ? message : "");
+
       if (intent === "loadProductData" && targetId) {
         if (!success) {
-          updateProductState(targetId, STATUS.FAILED, [error || message || "Failed to load data"]);
+          const loadErrText = specificErrorSummary || safeGenericMessage || "Failed to load data";
+          updateProductState(targetId, STATUS.FAILED, formattedErrorStrings.length > 0 ? formattedErrorStrings : [loadErrText]);
           setApprovals(prev => { const n = {...prev}; delete n[targetId]; return n; });
           setManualEdits(prev => { const n = {...prev}; delete n[targetId]; return n; });
         } else {
@@ -533,7 +668,9 @@ export function useMetaInjectorExecution({
                   vision: prevDiag.vision === "Success" ? "Success" : "Not called",
                   geoLibrary: prevDiag.geoLibrary === "Success" ? "Success" : "Not called",
                   readBack: "Not called",
-                  stage: "loadProductData"
+                  stage: "loadProductData",
+                  error: prevDiag.error || null,
+                  errors: validArray(prevDiag.errors)
                 }
               }
             };
@@ -546,32 +683,53 @@ export function useMetaInjectorExecution({
 
         if (intent === "executeRepairPlan") {
           const ts = new Date().toISOString();
-          setRepairHistory(prev => ({
-            ...prev,
-            [targetId]: {
-              status,
-              success,
-              message,
-              fieldsUpdated,
-              legacyKeysRemoved,
-              unsupportedKeys,
-              attemptedDestinations,
-              verifiedDestinations,
-              unresolvedChanges,
-              blockedFields,
-              conflicts,
-              readBackVerified,
-              proposedChanges,
-              completedAt: ts,
-              variantTarget: variantTarget || null
-            }
-          }));
+          const isFailedOrPartial = !success || status === "REPAIR_FAILED" || status === "REPAIR_BLOCKED" || status === "PARTIAL_SUCCESS" || finalStatus === "PARTIAL_SUCCESS" || readBackVerified === false;
 
-          if (data.currentMetafields || returnedNativeTargets) {
+          setRepairHistory(prev => {
+            const priorHistory = prev[targetId] || {};
+            const preservedErrors = normalizedErrorObjects.length > 0
+              ? normalizedErrorObjects
+              : (isFailedOrPartial ? validArray(priorHistory.errors) : []);
+            const preservedErrorStrings = formattedErrorStrings.length > 0
+              ? formattedErrorStrings
+              : (isFailedOrPartial ? validArray(priorHistory.errorMessages) : []);
+            const effectiveMessage = specificErrorSummary
+              ? (safeGenericMessage && safeGenericMessage !== specificErrorSummary
+                  ? `${specificErrorSummary} (${safeGenericMessage})`
+                  : specificErrorSummary)
+              : (safeGenericMessage || priorHistory.message || null);
+
+            return {
+              ...prev,
+              [targetId]: {
+                status,
+                success,
+                message: effectiveMessage,
+                rawMessage: safeGenericMessage || null,
+                errors: preservedErrors,
+                errorMessages: preservedErrorStrings,
+                fieldsUpdated: !success ? (fieldsUpdated !== undefined ? fieldsUpdated : null) : fieldsUpdated,
+                legacyKeysRemoved: !success ? (legacyKeysRemoved !== undefined ? legacyKeysRemoved : null) : legacyKeysRemoved,
+                unsupportedKeys,
+                attemptedDestinations,
+                verifiedDestinations,
+                unresolvedChanges,
+                blockedFields,
+                conflicts,
+                readBackVerified: !success ? false : readBackVerified,
+                proposedChanges,
+                completedAt: ts,
+                variantTarget: variantTarget || null
+              }
+            };
+          });
+
+          if (data.currentMetafields || returnedNativeTargets || !success || isFailedOrPartial || normalizedErrorObjects.length > 0) {
             setManifestData(prev => {
               const existing = prev[targetId];
               if (!existing) return prev;
 
+              const existingDiag = existing.diagnostics || {};
               const updatedNativeTargets = returnedNativeTargets
                 ? mergeReadBackNativeTargets(existing.nativeTargets, returnedNativeTargets)
                 : existing.nativeTargets;
@@ -586,11 +744,21 @@ export function useMetaInjectorExecution({
                 }
               }
 
+              const preservedDiagErrors = normalizedErrorObjects.length > 0
+                ? normalizedErrorObjects
+                : (isFailedOrPartial ? validArray(existingDiag.errors) : []);
+              const preservedDiagErrorText = specificErrorSummary
+                || (isFailedOrPartial ? (safeGenericMessage || existingDiag.error || null) : null);
+
+              const readBackDiagStatus = !success
+                ? (returnedNativeTargets ? "Failed" : "Not called")
+                : (data.readBackVerified === true ? "Success" : (data.readBackVerified === false ? "Failed" : "Not called"));
+
               return {
                 ...prev,
                 [targetId]: {
                   ...existing,
-                  currentMetafields: data.currentMetafields || existing.currentMetafields,
+                  currentMetafields: (success && data.currentMetafields) ? data.currentMetafields : existing.currentMetafields,
                   nativeTargets: updatedNativeTargets,
                   canonicalFields: updatedCanonicalFields,
                   productTitle:
@@ -605,15 +773,17 @@ export function useMetaInjectorExecution({
                     returnedNativeTargets && returnedNativeTargets.seo && typeof returnedNativeTargets.seo === "object"
                       ? returnedNativeTargets.seo
                       : existing.seo,
-                  fieldsUpdated: data.fieldsUpdated !== undefined ? data.fieldsUpdated : existing.fieldsUpdated,
-                  legacyKeysRemoved: data.legacyKeysRemoved !== undefined ? data.legacyKeysRemoved : existing.legacyKeysRemoved,
+                  fieldsUpdated: success && data.fieldsUpdated !== undefined ? data.fieldsUpdated : existing.fieldsUpdated,
+                  legacyKeysRemoved: success && data.legacyKeysRemoved !== undefined ? data.legacyKeysRemoved : existing.legacyKeysRemoved,
                   blockedFields: blockedFields,
                   conflicts: conflicts,
                   diagnostics: {
-                    ...existing.diagnostics,
-                    shopifyRead: "Success",
-                    readBack: data.readBackVerified === true ? "Success" : (data.readBackVerified === false ? "Failed" : "Not called"),
-                    stage: "executeRepairPlan"
+                    ...existingDiag,
+                    shopifyRead: existingDiag.shopifyRead || "Success",
+                    readBack: readBackDiagStatus,
+                    stage: "executeRepairPlan",
+                    error: preservedDiagErrorText,
+                    errors: preservedDiagErrors
                   }
                 }
               };
@@ -623,9 +793,16 @@ export function useMetaInjectorExecution({
 
         if (!success) {
           console.error("Execute Error from Backend:", data);
-          const errMsg = message || error || (errors ? errors[0]?.message : "Unknown Error");
-          setSafetyError(`Engine halted on ${targetId}. Error: ${errMsg}`);
-          updateProductState(targetId, STATUS.FAILED, errors ? errors.map(e => e.message) : (logs || [errMsg]));
+          const primaryErrorDisplay = specificErrorSummary
+            ? (safeGenericMessage && safeGenericMessage !== specificErrorSummary
+                ? `${specificErrorSummary} (${safeGenericMessage})`
+                : specificErrorSummary)
+            : (safeGenericMessage || "Unknown Error");
+          setSafetyError(`Engine halted on ${targetId}. Error: ${primaryErrorDisplay}`);
+          const failureLogs = formattedErrorStrings.length > 0
+            ? formattedErrorStrings
+            : (Array.isArray(logs) && logs.length > 0 ? logs.map(l => sanitizeDiagString(String(l))).filter(Boolean) : [primaryErrorDisplay]);
+          updateProductState(targetId, STATUS.FAILED, failureLogs);
         } else {
           if (intent === "batchAuditItem") {
             updateProductState(targetId, STATUS.SCANNING, ["AI Run complete. Fetching fresh data..."]);
@@ -661,9 +838,17 @@ export function useMetaInjectorExecution({
             }, 500);
           }
 
-          const successLogs = logs || [message || "Operation applied successfully."];
+          const successLogs = Array.isArray(logs) && logs.length > 0
+            ? [...logs]
+            : [safeGenericMessage || "Operation applied successfully."];
+          if (formattedErrorStrings.length > 0) {
+            formattedErrorStrings.forEach(errLine => {
+              if (!successLogs.includes(errLine)) successLogs.push(errLine);
+            });
+          }
+
           let statusToSet = STATUS.COMPLETE;
-          if (status === "NO_CHANGES_REQUIRED" || message === "No changes required." || (fieldsUpdated === 0 && Object.keys(blockedFields).length === 0)) {
+          if (status === "NO_CHANGES_REQUIRED" || safeGenericMessage === "No changes required." || (fieldsUpdated === 0 && Object.keys(blockedFields).length === 0 && formattedErrorStrings.length === 0 && Object.keys(unresolvedChanges).length === 0)) {
             statusToSet = STATUS.SKIPPED;
             successLogs.push("No changes required.");
           } else if (finalStatus === "Needs Review" || status === "REPAIR_FAILED" || readBackVerified === false) {
@@ -679,12 +864,18 @@ export function useMetaInjectorExecution({
 
       if (["titleParse", "tab3FullRescan", "generateDescription"].includes(intent) && (!pendingOperation || pendingOperation.intent === intent)) {
         if (!success) {
-          updateProductState(targetId, STATUS.FAILED, [error || `Gemini failed at ${intent}`]);
-          setSafetyError(`Engine halted on piece ${targetId}. Error: ${error || "Unknown Gemini API Error"}`);
+          const aiErrDisplay = specificErrorSummary || safeGenericMessage || `Gemini failed at ${intent}`;
+          updateProductState(targetId, STATUS.FAILED, formattedErrorStrings.length > 0 ? formattedErrorStrings : [aiErrDisplay]);
+          setSafetyError(`Engine halted on piece ${targetId}. Error: ${aiErrDisplay}`);
           setManifestData(prev => {
             const existing = prev[targetId];
             if (!existing) return prev;
-            const diagnostics = { ...existing.diagnostics, error: error || `Gemini failed at ${intent}` };
+            const existingDiag = existing.diagnostics || {};
+            const diagnostics = {
+              ...existingDiag,
+              error: aiErrDisplay,
+              errors: normalizedErrorObjects.length > 0 ? normalizedErrorObjects : validArray(existingDiag.errors)
+            };
             if (intent === "titleParse" || intent === "generateDescription") diagnostics.gemini = "Failed";
             if (intent === "tab3FullRescan") { diagnostics.vision = "Failed"; diagnostics.gemini = "Failed"; }
             return { ...prev, [targetId]: { ...existing, diagnostics } };
