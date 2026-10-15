@@ -814,12 +814,32 @@ export function OperationsMatrixTab({ products }) {
       safeProducts,
       approvals,
       submittedPayloads,
+      standardizedCandidatesByProduct,
+      referenceMatchResultsByProduct,
+      referenceMatchStatusByProduct,
       getSystemStatus,
       getFieldMetadata,
       setSafetyError,
       setSafetyMessage
     });
-  }, [selectedBenchId, manifestData, repairHistory, safeProducts, approvals, batchFetcher.state, isLoadingData, safetyError, aiStep, executionMode, getSystemStatus, submittedPayloads]);
+  }, [
+    selectedBenchId,
+    manifestData,
+    repairHistory,
+    safeProducts,
+    approvals,
+    submittedPayloads,
+    standardizedCandidatesByProduct,
+    referenceMatchResultsByProduct,
+    referenceMatchStatusByProduct,
+    batchFetcher.state,
+    isLoadingData,
+    safetyError,
+    aiStep,
+    executionMode,
+    getSystemStatus,
+    getFieldMetadata
+  ]);
 
   const toggleBay = (title) => {
     setExpandedBays(prev => ({ ...prev, [title]: !prev[title] }));

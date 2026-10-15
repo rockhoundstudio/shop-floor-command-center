@@ -1,5 +1,8 @@
 import {
+  VERIFIED_STANDARDIZED_DESTINATIONS,
   isVerifiedStandardizedDestination,
+  buildCanonicalCandidateBundle,
+  formatErrorsList,
   validArray,
   validObj
 } from "./meta-injector.standardized.jsx";
@@ -100,6 +103,9 @@ export function buildAndCopyMatrixTelemetry({
   safeProducts,
   approvals,
   submittedPayloads,
+  standardizedCandidatesByProduct,
+  referenceMatchResultsByProduct,
+  referenceMatchStatusByProduct,
   getSystemStatus,
   getFieldMetadata,
   setSafetyError,
@@ -135,6 +141,129 @@ export function buildAndCopyMatrixTelemetry({
         history.readBackVerified === false)
   );
 
+  // Evaluate standardized candidate & reference matching state strictly for the selected product
+  const rawProductCandidates = standardizedCandidatesByProduct?.[selectedBenchId] || {};
+  const candidateBundle = buildCanonicalCandidateBundle(rawProductCandidates);
+  const stagedCandidateKeys = Object.keys(candidateBundle.ordered);
+  const hasStagedCandidates = candidateBundle.hasSupported;
+
+  const refMatchResult = referenceMatchResultsByProduct?.[selectedBenchId] || null;
+  const refMatchStatus = referenceMatchStatusByProduct?.[selectedBenchId] || null;
+
+  let refMatchStateSummary = "No candidates staged";
+  let hasUnresolvedReferenceMatching = false;
+  const refMatchReadErrors = [];
+  const categoryIneligibleCandidates = [];
+  const incompleteCandidateResolutions = [];
+  const entryBlockedCandidateResolutions = [];
+  const unapprovedEligibleStandardizedKeys = [];
+  const approvedEligibleStandardizedKeys = [];
+
+  if (hasStagedCandidates) {
+    if (!refMatchResult) {
+      hasUnresolvedReferenceMatching = true;
+      refMatchStateSummary =
+        refMatchStatus?.state === "discarded_stale"
+          ? `Stale / Discarded (${stagedCandidateKeys.length} candidate(s) awaiting fresh match)`
+          : refMatchStatus?.state === "submitting" || refMatchStatus?.state === "awaiting_response"
+            ? `In Progress (${refMatchStatus.state})`
+            : refMatchStatus?.state === "failed"
+              ? `Failed (${sanitizeTelemetryText(refMatchStatus.message || "Request failed")})`
+              : `Missing / Not Run (${stagedCandidateKeys.length} staged candidate(s): ${stagedCandidateKeys.join(", ")})`;
+    } else if (
+      refMatchResult.pieceId !== selectedBenchId ||
+      refMatchResult.intent !== "resolveStandardizedCandidates" ||
+      refMatchResult.readOnly !== true
+    ) {
+      hasUnresolvedReferenceMatching = true;
+      refMatchStateSummary = "Invalid contract / Product identity mismatch";
+    } else if (refMatchResult.snapshot !== candidateBundle.snapshot) {
+      hasUnresolvedReferenceMatching = true;
+      refMatchStateSummary = "Stale (Candidate snapshot changed since last match)";
+    } else {
+      const topLevelErrors = formatErrorsList(refMatchResult.errors);
+      topLevelErrors.forEach(errText => {
+        const cleanErr = sanitizeTelemetryText(errText);
+        if (cleanErr && !refMatchReadErrors.includes(cleanErr)) {
+          refMatchReadErrors.push(cleanErr);
+        }
+      });
+
+      if (!refMatchResult.success || !refMatchResult.isComplete || topLevelErrors.length > 0) {
+        hasUnresolvedReferenceMatching = true;
+        refMatchStateSummary = `Failed / Incomplete (success: ${String(Boolean(refMatchResult.success))}, isComplete: ${String(Boolean(refMatchResult.isComplete))}, topErrors: ${topLevelErrors.length})`;
+      } else {
+        refMatchStateSummary = "Completed";
+      }
+
+      stagedCandidateKeys.forEach(metaKey => {
+        const destKey = `shopify.${metaKey}`;
+        const res = refMatchResult.resolutions?.[destKey] || null;
+        if (!res || typeof res !== "object") {
+          hasUnresolvedReferenceMatching = true;
+          incompleteCandidateResolutions.push(`${destKey}: Missing backend resolution object.`);
+          return;
+        }
+
+        const catElig = res.categoryEligibility || refMatchResult.categoryEligibility?.[destKey] || null;
+        const isCatComplete = catElig ? catElig.isComplete === true : false;
+        const isConfirmedCatIneligible = Boolean(
+          (isCatComplete && catElig?.isEligible === false) ||
+            res.isCategoryEligible === false ||
+            res.status === "category_ineligible" ||
+            catElig?.status === "category_ineligible" ||
+            catElig?.status === "missing_product_category" ||
+            catElig?.status === "empty_constraint_values"
+        );
+
+        const fieldErrors = formatErrorsList(res.errors || res.error);
+        const catReasonText = sanitizeTelemetryText(catElig?.reason || "");
+
+        // Keep confirmed category-ineligible proposals distinct from read errors
+        const actualFieldReadErrors = fieldErrors.filter(eText => {
+          if (!isConfirmedCatIneligible) return true;
+          const trimmed = eText.trim();
+          if (catReasonText && trimmed === catReasonText) return false;
+          if (/^Category constraint mismatch on /i.test(trimmed)) return false;
+          if (/^Product has no assigned taxonomy category/i.test(trimmed)) return false;
+          return true;
+        });
+
+        actualFieldReadErrors.forEach(eText => {
+          const cleanFieldErr = `[${destKey}] ${sanitizeTelemetryText(eText)}`;
+          if (!refMatchReadErrors.includes(cleanFieldErr)) {
+            refMatchReadErrors.push(cleanFieldErr);
+          }
+        });
+
+        if (isConfirmedCatIneligible) {
+          categoryIneligibleCandidates.push(
+            `${destKey}: ${catReasonText || "Ineligible for this product's taxonomy category (candidate evidence preserved; write blocked)."}`
+          );
+          return;
+        }
+
+        if (res.isComplete !== true || !isCatComplete || actualFieldReadErrors.length > 0) {
+          hasUnresolvedReferenceMatching = true;
+          incompleteCandidateResolutions.push(
+            `${destKey}: ${actualFieldReadErrors[0] || catReasonText || "Incomplete reference or category constraint enumeration."}`
+          );
+          return;
+        }
+
+        const entryStatus = res.entryMatchStatus || res.status;
+        if (entryStatus === "missing_entry" || entryStatus === "ambiguous" || entryStatus === "blocked") {
+          entryBlockedCandidateResolutions.push(`${destKey}: Entry resolution status is "${entryStatus}".`);
+        }
+      });
+
+      if (incompleteCandidateResolutions.length > 0 && refMatchStateSummary === "Completed") {
+        hasUnresolvedReferenceMatching = true;
+        refMatchStateSummary = `Incomplete (${incompleteCandidateResolutions.length} candidate resolution(s) incomplete)`;
+      }
+    }
+  }
+
   let stats = {
     loaded: 0,
     blank: 0,
@@ -145,6 +274,11 @@ export function buildAndCopyMatrixTelemetry({
     updated: history && history.fieldsUpdated !== undefined && history.fieldsUpdated !== null ? history.fieldsUpdated : "Not recorded",
     errored: preservedBackendErrors.length > 0 ? preservedBackendErrors.length : (hasRepairAttempt ? (isFailedRepair ? "Unrecorded" : 0) : "Not recorded")
   };
+
+  let approvedOrPreApprovedEligibleCount = 0;
+  let approvedOrPreApprovedNonStdCount = 0;
+  let unapprovedReviewRequiredCount = 0;
+  let actualBlockedProposalCount = 0;
 
   const isGeologyField = (key) => {
     const normalized = key.replace(/^custom\./, '').replace(/-/g, '_').toLowerCase();
@@ -174,6 +308,7 @@ export function buildAndCopyMatrixTelemetry({
   };
 
   let reviewCandidates = [];
+  const evaluatedEligibleKeys = new Set();
 
   dynamicSections.forEach(sec => {
     sec.keys.forEach(key => {
@@ -186,6 +321,43 @@ export function buildAndCopyMatrixTelemetry({
       if (meta.isBlockedAction && !HIDDEN_CONTEXT_FIELDS.includes(key)) stats.blocked++;
       if (PROTECTED_FIELDS.includes(key) || meta.isOperatorOwned) stats.protected++;
       if (meta.fieldStatus === "Conflict" || meta.fieldStatus === "Degrade" || meta.fieldStatus === "Save Conflict") stats.conflicting++;
+
+      if (!HIDDEN_CONTEXT_FIELDS.includes(key)) {
+        const hasGenuineDelta = meta.proposalExists && meta.currentVal !== meta.propVal;
+        const isTechnicallyReadyToWrite =
+          hasGenuineDelta &&
+          !meta.isBlockedAction &&
+          !meta.hasTechnicalBlock &&
+          !meta.isPendingReadOnly &&
+          !meta.isManualOnly &&
+          meta.isSupported &&
+          (!meta.isStandardizedAttribute || (meta.isVerifiedStdDest && meta.isCategoryEligible === true));
+
+        const hasExplicitOrPolicyApproval = meta.isApproved === true || meta.isContentPreApproved === true;
+
+        if (isTechnicallyReadyToWrite && hasExplicitOrPolicyApproval) {
+          if (!evaluatedEligibleKeys.has(key)) {
+            evaluatedEligibleKeys.add(key);
+            approvedOrPreApprovedEligibleCount++;
+            if (meta.isVerifiedStdDest) {
+              approvedEligibleStandardizedKeys.push(key);
+            } else {
+              approvedOrPreApprovedNonStdCount++;
+            }
+          }
+        } else if (hasGenuineDelta && meta.isVerifiedStdDest && !meta.isPendingReadOnly && !meta.hasTechnicalBlock && !meta.isApproved) {
+          if (!unapprovedEligibleStandardizedKeys.includes(key)) {
+            unapprovedEligibleStandardizedKeys.push(key);
+          }
+          unapprovedReviewRequiredCount++;
+        } else if (hasGenuineDelta && !hasExplicitOrPolicyApproval && !meta.isPendingReadOnly && !meta.isManualOnly) {
+          unapprovedReviewRequiredCount++;
+        }
+
+        if (meta.isActualBlockedProposal) {
+          actualBlockedProposalCount++;
+        }
+      }
 
       const isGeo = isGeologyField(key);
       const isNarrative = isNarrativeBlock(key);
@@ -233,9 +405,9 @@ export function buildAndCopyMatrixTelemetry({
         ? (history.readBackVerified ? "Success" : "Failed")
         : statusObj.readBackStatus;
 
-  reportBlocks.push(`--- PIPELINE STATUS ---\n[Shopify IO]\nRead: ${shopifyRead}\nBackend-reported updates: ${history && history.fieldsUpdated !== undefined && history.fieldsUpdated !== null ? history.fieldsUpdated : "Not recorded"}\nRead-Back: ${readBack}\n\n[AI Stages]\nTitle Parse: ${titleParseStatus}\nVision Scan: ${visionStatus}\nGeo Library: ${geoStatus}\nStory Gen: ${descStatus}`);
+  reportBlocks.push(`--- PIPELINE STATUS ---\n[Shopify IO]\nRead: ${shopifyRead}\nBackend-reported updates: ${history && history.fieldsUpdated !== undefined && history.fieldsUpdated !== null ? history.fieldsUpdated : "Not recorded"}\nRead-Back: ${readBack}\n\n[AI Stages]\nTitle Parse: ${titleParseStatus}\nVision Scan: ${visionStatus}\nGeo Library: ${geoStatus}\nStory Gen: ${descStatus}\n\n[Standardized Reference Matching]\nStaged Candidates: ${hasStagedCandidates ? `${stagedCandidateKeys.length} (${stagedCandidateKeys.join(", ")})` : "None"}\nMatch State: ${refMatchStateSummary}\nApproved Eligible Standardized Writes: ${approvedEligibleStandardizedKeys.length}\nUnapproved Eligible Standardized Proposals: ${unapprovedEligibleStandardizedKeys.length}\nCategory-Ineligible Standardized Candidates: ${categoryIneligibleCandidates.length}`);
 
-  reportBlocks.push(`--- FIELD SUMMARY ---\nLoaded: ${stats.loaded}\nBlank: ${stats.blank}\nProposed: ${stats.proposed}\nBlocked: ${stats.blocked}\nProtected: ${stats.protected}\nConflicting: ${stats.conflicting}\nUpdated: ${stats.updated}\nErrored: ${stats.errored}`);
+  reportBlocks.push(`--- FIELD SUMMARY ---\nLoaded: ${stats.loaded}\nBlank: ${stats.blank}\nProposed: ${stats.proposed}\nApproved/Pre-Approved Eligible Writes: ${approvedOrPreApprovedEligibleCount}\nUnapproved Proposals Requiring Review: ${unapprovedReviewRequiredCount}\nBlocked: ${stats.blocked}\nProtected: ${stats.protected}\nConflicting: ${stats.conflicting}\nUpdated: ${stats.updated}\nErrored: ${stats.errored}`);
 
   if (history) {
     const genericHistoryMessage = sanitizeTelemetryText(history.rawMessage ?? history.message ?? "Not recorded") || "Not recorded";
@@ -254,7 +426,7 @@ export function buildAndCopyMatrixTelemetry({
 
   let failures = [];
 
-  // Put actual backend errors first before verbose comparison details so report limits cannot hide the root cause
+  // 1. Put actual backend repair errors first before verbose comparison details so report limits cannot hide the root cause
   if (preservedBackendErrors.length > 0) {
     preservedBackendErrors.forEach((errText, idx) => {
       failures.push(`Backend Repair Error [${idx + 1}]: ${errText}`);
@@ -271,6 +443,25 @@ export function buildAndCopyMatrixTelemetry({
       failures.push("Detailed backend errors were not recorded.");
     }
   }
+
+  // 2. Report missing, stale, failed, or incomplete standardized reference matching explicitly
+  if (hasStagedCandidates && hasUnresolvedReferenceMatching) {
+    failures.push(`Standardized Reference Matching Unresolved: ${refMatchStateSummary}`);
+  }
+  refMatchReadErrors.forEach((readErr, idx) => {
+    failures.push(`Reference Matching Read Error [${idx + 1}]: ${readErr}`);
+  });
+  incompleteCandidateResolutions.forEach((incMsg) => {
+    failures.push(`Incomplete Candidate Resolution: ${incMsg}`);
+  });
+  entryBlockedCandidateResolutions.forEach((blkMsg) => {
+    failures.push(`Blocked Candidate Resolution: ${blkMsg}`);
+  });
+
+  // 3. Report confirmed category-ineligible standardized candidates distinctly from read errors
+  categoryIneligibleCandidates.forEach((catMsg) => {
+    failures.push(`Category-Ineligible Standardized Candidate (Not a Read Error): ${catMsg}`);
+  });
 
   if (unsupportedKeys.length > 0) failures.push(`Unsupported Keys: ${unsupportedKeys.join(", ")}`);
 
@@ -391,17 +582,64 @@ export function buildAndCopyMatrixTelemetry({
 
   reportBlocks.push(telemetryBody);
 
+  const hasMissingRequiredField = failures.some(f => f.includes("Required missing"));
   const recommendations = [];
+
   if (preservedBackendErrors.length > 0 || isFailedRepair) {
     recommendations.push("1. DO NOT RETRY WRITE BLINDLY. Inspect the Backend Repair Error(s) above and perform an independent product read-back first.");
-  } else if (Object.keys(blockedFields).length > 0 || failures.some(f => f.includes("Required missing"))) {
-    recommendations.push("1. DO NOT WRITE. Review and manually resolve blocked or required fields.");
-  } else if (lastSubmitted && (failures.some(f => f.includes("Execution Mismatch")))) {
-    recommendations.push(`1. WARNING: Submitted change(s) remain unresolved or unverified after execution. Review the execution mismatch block.`);
+  } else if (Object.keys(blockedFields).length > 0 || hasMissingRequiredField) {
+    recommendations.push("1. DO NOT WRITE. Review and manually resolve backend-blocked or required missing fields.");
+  } else if (lastSubmitted && failures.some(f => f.includes("Execution Mismatch"))) {
+    recommendations.push("1. WARNING: Submitted change(s) remain unresolved or unverified after execution. Review the execution mismatch block.");
   } else if (!lastSubmitted && history && stats.proposed > 0) {
     recommendations.push("1. Exact execution payload unavailable. Some fields appear proposed post-save, but cannot be proven as failed writes. Review manually.");
-  } else if (stats.proposed > 0 && !history) {
-    recommendations.push("1. Content review complete. Technically eligible proposals are staged. Proceed with 'Execute Single Repair'.");
+  } else if (!history) {
+    if (hasStagedCandidates && hasUnresolvedReferenceMatching) {
+      const nonStdReadyNote = approvedOrPreApprovedNonStdCount > 0
+        ? ` Note: ${approvedOrPreApprovedNonStdCount} non-standardized field(s) are approved/pre-approved and technically eligible, but standardized candidate proposals remain excluded until reference matching completes.`
+        : " No approved standardized writes can be included until reference matching succeeds.";
+      recommendations.push(`1. DO NOT ASSUME FULL PRODUCT READINESS: Standardized reference matching is unresolved (${refMatchStateSummary}). Click 'Match Reference Choices' and resolve read/enumeration issues before expecting standardized attribute writes.${nonStdReadyNote}`);
+    } else if (approvedOrPreApprovedEligibleCount > 0) {
+      const pendingNotes = [];
+      if (unapprovedEligibleStandardizedKeys.length > 0) {
+        pendingNotes.push(`${unapprovedEligibleStandardizedKeys.length} category-eligible standardized proposal(s) (${unapprovedEligibleStandardizedKeys.join(", ")}) are not yet approved and will be excluded unless checked`);
+      }
+      if (categoryIneligibleCandidates.length > 0) {
+        pendingNotes.push(`${categoryIneligibleCandidates.length} category-ineligible standardized candidate(s) remain blocked by product category constraint`);
+      }
+      if (entryBlockedCandidateResolutions.length > 0) {
+        pendingNotes.push(`${entryBlockedCandidateResolutions.length} standardized candidate(s) remain blocked by missing/ambiguous entry resolution`);
+      }
+      const unapprovedNonStdCount = Math.max(0, unapprovedReviewRequiredCount - unapprovedEligibleStandardizedKeys.length);
+      if (unapprovedNonStdCount > 0) {
+        pendingNotes.push(`${unapprovedNonStdCount} other proposed change(s) still require explicit operator approval and will be excluded`);
+      }
+
+      if (pendingNotes.length > 0) {
+        recommendations.push(`1. PARTIAL WRITE READINESS: ${approvedOrPreApprovedEligibleCount} approved/pre-approved field delta(s) are technically eligible for 'Execute Single Repair'. However, ${pendingNotes.join("; ")}. Review remaining items if you intend to include them.`);
+      } else {
+        recommendations.push(`1. Content review complete: ${approvedOrPreApprovedEligibleCount} approved/pre-approved field delta(s) are technically eligible. Proceed with 'Execute Single Repair'.`);
+      }
+    } else if (stats.proposed > 0 || unapprovedReviewRequiredCount > 0 || actualBlockedProposalCount > 0 || hasStagedCandidates) {
+      const holdReasons = [];
+      if (unapprovedEligibleStandardizedKeys.length > 0) {
+        holdReasons.push(`approve exact GID list(s) for ${unapprovedEligibleStandardizedKeys.join(", ")}`);
+      }
+      const unapprovedNonStdCount = Math.max(0, unapprovedReviewRequiredCount - unapprovedEligibleStandardizedKeys.length);
+      if (unapprovedNonStdCount > 0) {
+        holdReasons.push(`approve ${unapprovedNonStdCount} pending field proposal(s) requiring review`);
+      }
+      if (categoryIneligibleCandidates.length > 0) {
+        holdReasons.push(`${categoryIneligibleCandidates.length} standardized candidate(s) are blocked by product category constraints`);
+      }
+      if (entryBlockedCandidateResolutions.length > 0) {
+        holdReasons.push(`${entryBlockedCandidateResolutions.length} standardized candidate(s) have missing/ambiguous reference entries`);
+      }
+      const suffix = holdReasons.length > 0 ? ` (${holdReasons.join("; ")})` : "";
+      recommendations.push(`1. DO NOT EXECUTE REPAIR YET: Zero approved or policy-pre-approved eligible field deltas are ready to write${suffix}. Review and approve eligible proposals first.`);
+    } else {
+      recommendations.push("1. Load data or run AI Auto-Fill to stage proposals.");
+    }
   } else if (history && history.fieldsUpdated !== undefined && history.fieldsUpdated !== null) {
     recommendations.push("1. Backend request successful. Check live Shopify admin to confirm field updates.");
   } else {
