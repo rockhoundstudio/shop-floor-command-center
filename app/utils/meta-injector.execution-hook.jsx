@@ -19,6 +19,93 @@ import {
   buildRepairPayload
 } from "./meta-injector.matrix-domain.jsx";
 
+const mergeReadBackNativeTargets = (existingNativeTargets, rbNativeTargets) => {
+  const prev = validObj(existingNativeTargets);
+  if (!rbNativeTargets || typeof rbNativeTargets !== "object" || Array.isArray(rbNativeTargets)) {
+    return prev;
+  }
+
+  const unverifiedFields = validArray(rbNativeTargets.unverifiedFields);
+  const next = {
+    ...prev,
+    productId: rbNativeTargets.productId || prev.productId,
+    isComplete: rbNativeTargets.isComplete === true,
+    loadError: rbNativeTargets.loadError ?? null,
+    unverifiedFields
+  };
+
+  if (unverifiedFields.includes("productTitle") || typeof rbNativeTargets.productTitle !== "string") {
+    next.productTitle = undefined;
+  } else {
+    next.productTitle = rbNativeTargets.productTitle;
+  }
+
+  if (unverifiedFields.includes("descriptionHtml") || typeof rbNativeTargets.descriptionHtml !== "string") {
+    next.descriptionHtml = undefined;
+  } else {
+    next.descriptionHtml = rbNativeTargets.descriptionHtml;
+  }
+
+  if (unverifiedFields.includes("seo") || !rbNativeTargets.seo || typeof rbNativeTargets.seo !== "object") {
+    next.seo = undefined;
+  } else {
+    next.seo = {
+      title: typeof rbNativeTargets.seo.title === "string" ? rbNativeTargets.seo.title : undefined,
+      description: typeof rbNativeTargets.seo.description === "string" ? rbNativeTargets.seo.description : undefined
+    };
+  }
+
+  if (unverifiedFields.includes("media") || !Array.isArray(rbNativeTargets.media?.edges)) {
+    if (prev.media && typeof prev.media === "object" && Array.isArray(prev.media.edges)) {
+      next.media = {
+        ...prev.media,
+        edges: prev.media.edges.map((e) =>
+          e && e.node
+            ? {
+                ...e,
+                node: {
+                  ...e.node,
+                  alt: undefined
+                }
+              }
+            : e
+        )
+      };
+    } else {
+      next.media = undefined;
+    }
+  } else {
+    const prevEdges = Array.isArray(prev.media?.edges) ? prev.media.edges : [];
+    const prevById = new Map();
+    prevEdges.forEach((edge) => {
+      if (edge?.node?.id) {
+        prevById.set(edge.node.id, edge.node);
+      }
+    });
+
+    const mergedEdges = rbNativeTargets.media.edges
+      .filter((edge) => edge && edge.node && edge.node.id)
+      .map((edge) => {
+        const rbNode = edge.node;
+        const priorNode = prevById.get(rbNode.id);
+        return {
+          node: {
+            ...(priorNode ? { preview: priorNode.preview } : {}),
+            id: rbNode.id,
+            alt: typeof rbNode.alt === "string" ? rbNode.alt : undefined
+          }
+        };
+      });
+
+    next.media = {
+      ...(prev.media && typeof prev.media === "object" ? prev.media : {}),
+      edges: mergedEdges
+    };
+  }
+
+  return next;
+};
+
 export function useMetaInjectorExecution({
   safeProducts,
   batchFetcher,
@@ -196,7 +283,7 @@ export function useMetaInjectorExecution({
         const { safePlan, nativeChanges } = buildRepairPayload(manifest, product, currentId, approvals, getFieldMetadata);
 
         const snapshot = { ...safePlan };
-        if (nativeChanges.title) snapshot.shopify_title = nativeChanges.title;
+        if (nativeChanges.title !== undefined) snapshot.shopify_title = nativeChanges.title;
         (nativeChanges.imageAlts || []).forEach(alt => {
           snapshot[`native_image_alts_${alt.imageId}`] = alt.altText;
         });
@@ -386,6 +473,7 @@ export function useMetaInjectorExecution({
 
       const {
         message, error, errors, logs, status, finalStatus, titleParse, tab3Data, generated_description, fieldsUpdated, legacyKeysRemoved, verifiedGeoValues, readBackVerified, proposedChanges, variantTarget, imageAlts, altValidationErrors,
+        nativeTargets: returnedNativeTargets,
         standardized_candidates: topLevelStdCandidates,
         unsupportedKeys: rawUnsupportedKeys,
         attemptedDestinations: rawAttemptedDestinations,
@@ -479,15 +567,44 @@ export function useMetaInjectorExecution({
             }
           }));
 
-          if (data.currentMetafields) {
+          if (data.currentMetafields || returnedNativeTargets) {
             setManifestData(prev => {
               const existing = prev[targetId];
               if (!existing) return prev;
+
+              const updatedNativeTargets = returnedNativeTargets
+                ? mergeReadBackNativeTargets(existing.nativeTargets, returnedNativeTargets)
+                : existing.nativeTargets;
+
+              const updatedCanonicalFields = { ...(existing.canonicalFields || {}) };
+              if (returnedNativeTargets) {
+                const unverifiedNative = validArray(returnedNativeTargets.unverifiedFields);
+                if (unverifiedNative.includes("productTitle") || typeof returnedNativeTargets.productTitle !== "string") {
+                  delete updatedCanonicalFields.shopify_title;
+                } else {
+                  updatedCanonicalFields.shopify_title = returnedNativeTargets.productTitle;
+                }
+              }
+
               return {
                 ...prev,
                 [targetId]: {
                   ...existing,
-                  currentMetafields: data.currentMetafields,
+                  currentMetafields: data.currentMetafields || existing.currentMetafields,
+                  nativeTargets: updatedNativeTargets,
+                  canonicalFields: updatedCanonicalFields,
+                  productTitle:
+                    returnedNativeTargets && typeof returnedNativeTargets.productTitle === "string"
+                      ? returnedNativeTargets.productTitle
+                      : existing.productTitle,
+                  descriptionHtml:
+                    returnedNativeTargets && typeof returnedNativeTargets.descriptionHtml === "string"
+                      ? returnedNativeTargets.descriptionHtml
+                      : existing.descriptionHtml,
+                  seo:
+                    returnedNativeTargets && returnedNativeTargets.seo && typeof returnedNativeTargets.seo === "object"
+                      ? returnedNativeTargets.seo
+                      : existing.seo,
                   fieldsUpdated: data.fieldsUpdated !== undefined ? data.fieldsUpdated : existing.fieldsUpdated,
                   legacyKeysRemoved: data.legacyKeysRemoved !== undefined ? data.legacyKeysRemoved : existing.legacyKeysRemoved,
                   blockedFields: blockedFields,
@@ -799,7 +916,7 @@ export function useMetaInjectorExecution({
     const { safePlan, nativeChanges } = buildRepairPayload(manifest, product, selectedBenchId, approvals, getFieldMetadata);
 
     const snapshot = { ...safePlan };
-    if (nativeChanges.title) snapshot.shopify_title = nativeChanges.title;
+    if (nativeChanges.title !== undefined) snapshot.shopify_title = nativeChanges.title;
     (nativeChanges.imageAlts || []).forEach(alt => {
       snapshot[`native_image_alts_${alt.imageId}`] = alt.altText;
     });

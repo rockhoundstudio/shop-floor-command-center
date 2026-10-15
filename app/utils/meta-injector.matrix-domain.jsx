@@ -202,22 +202,22 @@ export const evaluateFieldMetadata = ({
   if (isNativeImageAlt) {
       const imageId = key.replace("native_image_alts_", "");
       const match = data.nativeTargets?.media?.edges?.find(e => e.node?.id === imageId);
-      currentVal = match?.node?.alt || "";
+      currentVal = match?.node?.alt ?? "";
   } else if (key === "native_title" || key === "shopify_title") {
-      currentVal = data.nativeTargets?.productTitle || data.canonicalFields?.shopify_title || "";
+      currentVal = data.nativeTargets?.productTitle ?? data.canonicalFields?.shopify_title ?? "";
   } else if (key === "native_description" || key === "custom.generated_description") {
       currentVal = key === "native_description" 
-        ? (data.nativeTargets?.descriptionHtml || "")
-        : (data.currentMetafields?.["custom.generated_description"] || "");
+        ? (data.nativeTargets?.descriptionHtml ?? "")
+        : (data.currentMetafields?.["custom.generated_description"] ?? "");
   } else if (key === "native_seo_title" || key === "custom.seo_title") {
       currentVal = key === "native_seo_title"
-        ? (data.nativeTargets?.seo?.title || "")
-        : (data.currentMetafields?.["custom.seo_title"] || "");
+        ? (data.nativeTargets?.seo?.title ?? "")
+        : (data.currentMetafields?.["custom.seo_title"] ?? "");
   } else if (key === "native_seo_description") {
-      currentVal = data.nativeTargets?.seo?.description || "";
+      currentVal = data.nativeTargets?.seo?.description ?? "";
   } else if (key === "native_price" || key === "price") {
       if (isSingleVariant) {
-          currentVal = variants[0].node?.price || "";
+          currentVal = variants[0].node?.price ?? "";
       } else if (variants.length !== 1 || data.nativeTargets?.variants?.pageInfo?.hasNextPage !== false || !data.nativeTargets?.isComplete || data.nativeTargets?.loadError) {
           currentVal = "Multiple variants / Incomplete data - review manually";
       }
@@ -225,12 +225,12 @@ export const evaluateFieldMetadata = ({
       if (key === "native_shipping_weight") {
           if (isSingleVariant) {
               const w = variants[0].node?.inventoryItem?.measurement?.weight;
-              currentVal = w?.value ? `${w.value} ${w.unit}` : "";
+              currentVal = (w?.value !== undefined && w?.value !== null) ? `${w.value} ${w.unit}` : "";
           } else if (variants.length !== 1 || data.nativeTargets?.variants?.pageInfo?.hasNextPage !== false || !data.nativeTargets?.isComplete || data.nativeTargets?.loadError) {
               currentVal = "Multiple variants / Incomplete data - review manually";
           }
       } else {
-          currentVal = data.currentMetafields?.["custom.shipping_weight_oz"] || "";
+          currentVal = data.currentMetafields?.["custom.shipping_weight_oz"] ?? "";
       }
   } else if (isVerifiedStdDest && stdEvaluation) {
       if (stdEvaluation.existingGids.length > 0) {
@@ -722,35 +722,118 @@ export const buildRepairPayload = (manifest, product, currentId, currentApproval
           if (meta.isPendingReadOnly || meta.isBlockedAction || !meta.isApproved || meta.hasTechnicalBlock) return;
           const valCheck = validateProposedStandardizedGidList(meta.propVal, meta.stdEvaluation);
           if (!valCheck.valid) return;
-          if (meta.propVal !== meta.currentVal) {
+          if (meta.proposalExists && meta.propVal !== meta.currentVal) {
               safePlan[key] = JSON.stringify(valCheck.gids);
           }
           return;
       }
 
       if (meta.isPendingReadOnly || meta.isStandardizedAttribute) return;
+      if (!meta.isSupported || meta.isManualOnly || meta.hasTechnicalBlock || meta.isBlockedAction) return;
+      if (HIDDEN_CONTEXT_FIELDS.includes(key) || RETIRED_KEYS.includes(key)) return;
+      if (!meta.proposalExists) return;
 
-      if (!meta.isBlockedAction && !HIDDEN_CONTEXT_FIELDS.includes(key) && !RETIRED_KEYS.includes(key)) {
-          if (key === "shopify_title") {
+      if (key === "shopify_title" || key === "native_title") {
+          const titleMeta = getFieldMetadata("native_title", manifest, currentId, currentApprovals, allConfigFields);
+          const hasTitleBaseline = typeof manifest.nativeTargets?.productTitle === "string";
+          if (
+              !titleMeta.isBlockedAction &&
+              !titleMeta.hasTechnicalBlock &&
+              titleMeta.proposalExists &&
+              (!hasTitleBaseline || titleMeta.propVal !== titleMeta.currentVal)
+          ) {
               nativeChanges.title = manifest.repairPlan[key];
-          } else if (key === "custom.shipping_weight_oz") {
-              const variantsConn = manifest.nativeTargets?.variants;
-              if (variantsConn?.edges?.length === 1 && 
-                  variantsConn?.pageInfo?.hasNextPage === false && 
-                  manifest.nativeTargets?.isComplete === true &&
-                  !manifest.nativeTargets?.loadError) {
-                  const variantId = variantsConn.edges[0].node?.id;
-                  if (variantId) {
+          }
+          return;
+      }
+
+      if (key === "custom.shipping_weight_oz" || key === "native_shipping_weight") {
+          const variantsConn = manifest.nativeTargets?.variants;
+          if (
+              variantsConn?.edges?.length === 1 &&
+              variantsConn?.pageInfo?.hasNextPage === false &&
+              manifest.nativeTargets?.isComplete === true &&
+              !manifest.nativeTargets?.loadError
+          ) {
+              const variantNode = variantsConn.edges[0]?.node;
+              const variantId = variantNode?.id;
+              const nativeWeightMeta = getFieldMetadata("native_shipping_weight", manifest, currentId, currentApprovals, allConfigFields);
+              if (variantId && !nativeWeightMeta.isBlockedAction && !nativeWeightMeta.hasTechnicalBlock && nativeWeightMeta.proposalExists) {
+                  const rawProposedWeight = manifest.repairPlan[key] !== undefined ? manifest.repairPlan[key] : nativeWeightMeta.propVal;
+                  const proposedNum = Number(rawProposedWeight);
+                  const w = variantNode?.inventoryItem?.measurement?.weight;
+                  const hasWeightBaseline =
+                      w !== null &&
+                      w !== undefined &&
+                      typeof w === "object" &&
+                      w.value !== undefined &&
+                      w.value !== null &&
+                      typeof w.unit === "string";
+                  const isWeightEqual =
+                      hasWeightBaseline &&
+                      !Number.isNaN(proposedNum) &&
+                      Number(w.value) === proposedNum &&
+                      w.unit === "OUNCES";
+                  if (!isWeightEqual) {
                       nativeChanges.shippingWeight = {
                           variantId: variantId,
-                          value: manifest.repairPlan[key],
+                          value: rawProposedWeight,
                           unit: "OUNCES"
                       };
                   }
               }
-          } else {
+          }
+          return;
+      }
+
+      if (key === "custom.generated_description") {
+          const nativeDescMeta = getFieldMetadata("native_description", manifest, currentId, currentApprovals, allConfigFields);
+          const hasMetafieldBaseline = Object.prototype.hasOwnProperty.call(manifest.currentMetafields || {}, "custom.generated_description");
+          const hasNativeDescBaseline = typeof manifest.nativeTargets?.descriptionHtml === "string";
+          const metafieldDiffers = !hasMetafieldBaseline || meta.propVal !== meta.currentVal;
+          const nativeDescDiffers =
+              !nativeDescMeta.isBlockedAction &&
+              !nativeDescMeta.hasTechnicalBlock &&
+              (!hasNativeDescBaseline || nativeDescMeta.propVal !== nativeDescMeta.currentVal);
+          if (metafieldDiffers || nativeDescDiffers) {
               safePlan[key] = manifest.repairPlan[key];
           }
+          return;
+      }
+
+      if (key === "custom.seo_title") {
+          const nativeSeoMeta = getFieldMetadata("native_seo_title", manifest, currentId, currentApprovals, allConfigFields);
+          const hasMetafieldBaseline = Object.prototype.hasOwnProperty.call(manifest.currentMetafields || {}, "custom.seo_title");
+          const hasNativeSeoBaseline = typeof manifest.nativeTargets?.seo?.title === "string";
+          const metafieldDiffers = !hasMetafieldBaseline || meta.propVal !== meta.currentVal;
+          const nativeSeoDiffers =
+              !nativeSeoMeta.isBlockedAction &&
+              !nativeSeoMeta.hasTechnicalBlock &&
+              (!hasNativeSeoBaseline || nativeSeoMeta.propVal !== nativeSeoMeta.currentVal);
+          if (metafieldDiffers || nativeSeoDiffers) {
+              safePlan[key] = manifest.repairPlan[key];
+          }
+          return;
+      }
+
+      if (key === "price" || key === "native_price") {
+          const variantsConn = manifest.nativeTargets?.variants;
+          const hasSingleVariantBaseline =
+              variantsConn?.edges?.length === 1 &&
+              variantsConn?.pageInfo?.hasNextPage === false &&
+              manifest.nativeTargets?.isComplete === true &&
+              !manifest.nativeTargets?.loadError &&
+              typeof variantsConn.edges[0]?.node?.price === "string";
+          if (!hasSingleVariantBaseline) return;
+          if (meta.propVal !== meta.currentVal) {
+              safePlan["price"] = manifest.repairPlan[key];
+          }
+          return;
+      }
+
+      const hasMetafieldBaseline = Object.prototype.hasOwnProperty.call(manifest.currentMetafields || {}, key);
+      if (!hasMetafieldBaseline || meta.propVal !== meta.currentVal) {
+          safePlan[key] = manifest.repairPlan[key];
       }
   });
 
@@ -764,7 +847,13 @@ export const buildRepairPayload = (manifest, product, currentId, currentApproval
               const key = `native_image_alts_${node.id}`;
               if (manifest.repairPlan[key] !== undefined) {
                   const meta = getFieldMetadata(key, manifest, currentId, currentApprovals, allConfigFields);
-                  if (!meta.isBlockedAction && meta.proposalExists && meta.propVal !== meta.currentVal) {
+                  const hasMediaAltBaseline = typeof node.alt === "string";
+                  if (
+                      !meta.isBlockedAction &&
+                      !meta.hasTechnicalBlock &&
+                      meta.proposalExists &&
+                      (!hasMediaAltBaseline || meta.propVal !== meta.currentVal)
+                  ) {
                       imageAlts.push({ imageId: node.id, altText: meta.propVal });
                   }
               }

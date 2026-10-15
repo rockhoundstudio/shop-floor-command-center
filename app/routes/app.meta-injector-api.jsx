@@ -1,5 +1,6 @@
 import { authenticate } from "../shopify.server";
 import { executeAutofill } from "../utils/meta-injector.autofill.server.jsx";
+import { FIELD_CATALOG } from "../utils/meta-injector.constants.jsx";
 
 // 🟢 Structural Engine — No Prisma Import Here
 
@@ -20,12 +21,15 @@ const ALLOWED_TAB3_KEYS = [
   "is_one_of_a_kind", "origin_page_handle", "rescued_by", "character_marks",
   "treatment_status", "treated", "necklace_design", "chain_link_type",
   "rock_composition", "geological_age", "target_gender",
+  "custom.official_name", "custom.stone_story", "custom.cut_type", "custom.secondary_colors",
+  "custom.tenacity", "custom.age_group", "custom.condition", "custom.custom_product",
+  "custom.found_object", "custom.collection_date",
 
   // NATIVE CONTRACT TARGETS (ACCEPTED FOR ROUTING, EXCLUDED FROM CUSTOM NAMESPACE)
   "native_title", "native_shipping_weight", "native_image_alts",
 
   // STANDARDIZED TAXONOMY LIST
-  "age-group", "chain-link-type", "condition", "construction", "crystal-system", 
+  "age-group", "chain-link-type", "color-pattern", "condition", "construction", "crystal-system", 
   "geological-era", "jewelry-finding-type", "jewelry-material", "jewelry-type", 
   "material", "material-origin", "mineral-class", "necklace-design", 
   "product-classification", "product-use", "rock-composition", "rock-formation", 
@@ -36,7 +40,10 @@ const ALLOWED_TAB3_KEYS = [
 const STRICT_CUSTOM_KEYS = [
   "is_one_of_a_kind", "origin_page_handle", "rescued_by", "character_marks",
   "treatment_status", "treated", "necklace_design", "chain_link_type",
-  "rock_composition", "geological_age", "target_gender"
+  "rock_composition", "geological_age", "target_gender",
+  "official_name", "stone_story", "cut_type", "secondary_colors",
+  "tenacity", "age_group", "condition", "custom_product",
+  "found_object", "collection_date"
 ];
 
 const RETIRED_KEYS = [
@@ -97,6 +104,39 @@ const ALLOWED_STANDARDIZED_CANDIDATE_KEYS = [
   "product-classification",
   "product-use"
 ];
+
+const CATALOG_STANDARDIZED_META_KEYS = new Set(
+  FIELD_CATALOG
+    .filter(f => f.role === "standardized_attribute" || f.namespace === "shopify")
+    .map(f => f.metaKey || f.key)
+);
+
+const CATALOG_METAFIELD_DESTINATIONS = Array.from(
+  new Set(
+    FIELD_CATALOG
+      .filter(f => {
+        if (!f || f.owner === "native" || f.namespace === "native" || f.key.startsWith("native_")) return false;
+        if (f.key === "shopify_title" || f.key === "price") return false;
+        if (RETIRED_KEYS.includes(f.key)) return false;
+        return true;
+      })
+      .map(f => {
+        const ns = f.namespace || f.metaConfig?.namespace || "custom";
+        const mk = f.metaKey || f.key;
+        return `${ns}.${mk}`;
+      })
+  )
+);
+
+const CATALOG_READ_ONLY_DESTINATIONS = new Set(
+  FIELD_CATALOG
+    .filter(f => f.mappingStatus === "pending_read_only")
+    .map(f => {
+      const ns = f.namespace || f.metaConfig?.namespace || "custom";
+      const mk = f.metaKey || f.key;
+      return `${ns}.${mk}`;
+    })
+);
 
 function isGeneratedIdLabel(str) {
   if (typeof str !== "string") return true;
@@ -175,11 +215,6 @@ function chunkArray(arr, size) {
 
 function normalizeMetafieldValue(key, value) {
   let val = String(value).replace(/^⚠️\s*/, "");
-  const booleanKeys = ["is_ooak", "found_object", "custom_product", "treated"]; 
-  if (booleanKeys.includes(key)) {
-    if (val.toLowerCase() === "true") val = "Yes";
-    else if (val.toLowerCase() === "false") val = "No";
-  }
   return val;
 }
 
@@ -333,16 +368,27 @@ export const action = async ({ request }) => {
       const repairPlan = {};
       const legacyFields = {};
 
-      const CANONICAL_KEYS = Object.keys(MASTER_TYPE_MAP).map(k => {
-          if (k.includes("-")) return `shopify.${k}`;
-          return `custom.${k}`;
+      // Explicit namespace + metaKey routing from shared catalog (all 21 shopify.* and active custom.* kept distinct)
+      CATALOG_METAFIELD_DESTINATIONS.forEach(destKey => {
+          const val = currentMetafields[destKey] ?? "";
+          canonicalFields[destKey] = val;
+          if (!CATALOG_READ_ONLY_DESTINATIONS.has(destKey)) {
+              repairPlan[destKey] = val;
+          }
       });
-      CANONICAL_KEYS.push("global.title_tag", "global.description_tag");
 
-      CANONICAL_KEYS.forEach(k => {
-         let val = currentMetafields[k] ?? "";
-         canonicalFields[k] = val;
-         repairPlan[k] = val; 
+      // Preserve non-contract stored values in canonicalFields for inspection/compatibility without seeding executable proposals
+      const INSPECTION_ONLY_KEYS = [
+        "global.title_tag",
+        "global.description_tag",
+        "custom.base_stone_type",
+        "custom.hardness",
+        "custom.honest_flaws"
+      ];
+      INSPECTION_ONLY_KEYS.forEach(k => {
+          if (currentMetafields[k] !== undefined) {
+              canonicalFields[k] = currentMetafields[k];
+          }
       });
 
       canonicalFields["shopify_title"] = product.title;
@@ -1142,9 +1188,9 @@ export const action = async ({ request }) => {
                try {
                   const invRes = await admin.graphql(`
                      query getInventoryItem($id: ID!) {
-                       productVariant(id: $id) {
-                         inventoryItem { id measurement { weight { value unit } } }
-                       }
+                        productVariant(id: $id) {
+                           inventoryItem { id measurement { weight { value unit } } }
+                        }
                      }
                   `, { variables: { id: sw.variantId }});
                   const invJson = await invRes.json();
@@ -1291,8 +1337,18 @@ export const action = async ({ request }) => {
             continue;
         }
 
-        // 🟢 STRICT NAMESPACE ENFORCEMENT FOR THE 11 CUSTOM KEYS
+        // 🟢 STRICT NAMESPACE ENFORCEMENT FOR CUSTOM KEYS
         if (STRICT_CUSTOM_KEYS.includes(key) && ns !== "custom") {
+            unsupportedKeys.push(fullKey);
+            continue;
+        }
+
+        // 🟢 STRICT NAMESPACE & SIX-FIELD GATE FOR STANDARDIZED KEYS
+        if (ns === "shopify" && !CATALOG_STANDARDIZED_META_KEYS.has(key)) {
+            unsupportedKeys.push(fullKey);
+            continue;
+        }
+        if (key === "construction" && ns !== "shopify") {
             unsupportedKeys.push(fullKey);
             continue;
         }
@@ -1303,14 +1359,26 @@ export const action = async ({ request }) => {
             continue;
         }
 
+        const currentVal = currentMetafields[fullKey] || null;
+        const valStr = String(val !== null && val !== undefined ? val : "").trim();
+
+        // Preserve six-field standardized write gate: non-verified shopify.* attributes remain read-only
+        if (ns === "shopify" && !ALLOWED_STANDARDIZED_CANDIDATE_KEYS.includes(key)) {
+            if (!currentVal && valStr === "") {
+                unchanged.push(fullKey);
+            } else if (currentVal === valStr) {
+                unchanged.push(fullKey);
+            } else {
+                blockedFields[fullKey] = "Standardized attribute read-only (pending_read_only).";
+            }
+            continue;
+        }
+
         // 🟢 BLOCKED KEYS UNTIL VERIFIED
         if (key === "jewelry_type") {
             blockedFields[fullKey] = "Safety block active on jewelry_type taxonomy destination.";
             continue;
         }
-
-        const currentVal = currentMetafields[fullKey] || null;
-        const valStr = String(val !== null && val !== undefined ? val : "").trim();
         
         // Blank strings must not implicitly delete. 
         if (valStr === "") {
@@ -1365,6 +1433,14 @@ export const action = async ({ request }) => {
              continue;
           }
           resolvedValue = resolvedType === "number_integer" ? String(Math.round(parsedNum)) : String(parsedNum);
+        } else if (resolvedType === "boolean") {
+          const lower = String(resolvedValue).toLowerCase();
+          if (lower === "true" || lower === "false") {
+             resolvedValue = lower;
+          } else {
+             blockedFields[fullKey] = `Invalid boolean value: ${resolvedValue}`;
+             continue;
+          }
         } else if (resolvedType.includes("metaobject_reference")) {
           
           let idsToVerify = [];
@@ -1717,20 +1793,76 @@ export const action = async ({ request }) => {
       const readBackVars = { id: productGid };
       if (readBackVariantId) readBackVars.variantId = readBackVariantId;
       
-      const readBackResponse = await admin.graphql(readBackQuery, { variables: readBackVars });
-      
-      const readBackData = await readBackResponse.json();
-      const readBackProduct = readBackData?.data?.product || {};
-      const actualTitle = readBackProduct.title || "";
-      const actualBodyHtml = readBackProduct.descriptionHtml || "";
-      const actualSeoTitle = readBackProduct.seo?.title || "";
-      const actualMedia = readBackProduct.media?.edges || [];
+      let readBackData = null;
+      let readBackError = null;
+      try {
+        const readBackResponse = await admin.graphql(readBackQuery, { variables: readBackVars });
+        readBackData = await readBackResponse.json();
+        if (readBackData?.errors?.length) {
+          readBackError = readBackData.errors.map(e => e.message).join("; ");
+        }
+      } catch (rbErr) {
+        readBackError = rbErr.message || "Read-back query failed.";
+      }
 
-      const newMetaList = readBackProduct.metafields?.edges || [];
+      const readBackProductNode = readBackData?.data?.product || null;
+      const hasProductReadBack = Boolean(readBackProductNode && !readBackError);
+
+      const hasTitleReadBack = hasProductReadBack && typeof readBackProductNode.title === "string";
+      const hasBodyReadBack = hasProductReadBack && typeof readBackProductNode.descriptionHtml === "string";
+      const hasSeoReadBack = hasProductReadBack && readBackProductNode.seo !== null && typeof readBackProductNode.seo === "object";
+      const hasMediaReadBack = hasProductReadBack && Array.isArray(readBackProductNode.media?.edges);
+      const hasMetafieldsReadBack = hasProductReadBack && Array.isArray(readBackProductNode.metafields?.edges);
+
+      const actualTitle = hasTitleReadBack ? readBackProductNode.title : undefined;
+      const actualBodyHtml = hasBodyReadBack ? readBackProductNode.descriptionHtml : undefined;
+      const actualSeoTitle = hasSeoReadBack && typeof readBackProductNode.seo.title === "string" ? readBackProductNode.seo.title : undefined;
+      const actualSeoDescription = hasSeoReadBack && typeof readBackProductNode.seo.description === "string" ? readBackProductNode.seo.description : undefined;
+      const actualMedia = hasMediaReadBack
+        ? readBackProductNode.media.edges.filter(e => e && e.node && e.node.id)
+        : [];
+
+      const newMetaList = hasMetafieldsReadBack ? readBackProductNode.metafields.edges : [];
       const newMetafields = {};
-      newMetaList.forEach(e => { newMetafields[`${e.node.namespace}.${e.node.key}`] = e.node.value; });
+      newMetaList.forEach(e => {
+        if (e?.node?.namespace && e?.node?.key) {
+          newMetafields[`${e.node.namespace}.${e.node.key}`] = e.node.value;
+        }
+      });
 
-      let readBackVerified = true;
+      const unverifiedNativeFields = [];
+      if (!hasTitleReadBack) unverifiedNativeFields.push("productTitle");
+      if (!hasBodyReadBack) unverifiedNativeFields.push("descriptionHtml");
+      if (!hasSeoReadBack) unverifiedNativeFields.push("seo");
+      if (!hasMediaReadBack) unverifiedNativeFields.push("media");
+
+      const readBackNativeComplete = hasProductReadBack && unverifiedNativeFields.length === 0;
+      const readBackNativeTargets = {
+        productId: productGid,
+        productTitle: hasTitleReadBack ? actualTitle : undefined,
+        descriptionHtml: hasBodyReadBack ? actualBodyHtml : undefined,
+        seo: hasSeoReadBack
+          ? {
+              title: actualSeoTitle,
+              description: actualSeoDescription
+            }
+          : undefined,
+        media: hasMediaReadBack
+          ? {
+              edges: actualMedia.map(e => ({
+                node: {
+                  id: e.node.id,
+                  alt: typeof e.node.alt === "string" ? e.node.alt : ""
+                }
+              }))
+            }
+          : undefined,
+        isComplete: readBackNativeComplete,
+        loadError: readBackError || (unverifiedNativeFields.length > 0 ? `Unverified native read-back fields: ${unverifiedNativeFields.join(", ")}` : null),
+        unverifiedFields: unverifiedNativeFields
+      };
+
+      let readBackVerified = Boolean(hasProductReadBack && hasMetafieldsReadBack);
       const conflicts = {};
 
       if (doPriceUpdate) {
@@ -1770,7 +1902,11 @@ export const action = async ({ request }) => {
               if (nativeInput.title !== undefined) unresolvedChanges["native_title"] = { reason: "API mutation failed", expected: nativeInput.title, actual: "Unchanged" };
           } else {
               if (nativeInput.descriptionHtml !== undefined) {
-                 if (nativeInput.descriptionHtml !== actualBodyHtml) {
+                 if (!hasBodyReadBack) {
+                     readBackVerified = false;
+                     unresolvedChanges["native_description"] = { reason: "Unverified native read-back (descriptionHtml missing)", expected: nativeInput.descriptionHtml, actual: "Unverified" };
+                     conflicts["native_description"] = { expected: nativeInput.descriptionHtml, actual: "Unverified (missing from read-back)" };
+                 } else if (nativeInput.descriptionHtml !== actualBodyHtml) {
                      readBackVerified = false;
                      unresolvedChanges["native_description"] = { reason: "Read-back mismatch", expected: nativeInput.descriptionHtml, actual: actualBodyHtml };
                      conflicts["native_description"] = { expected: nativeInput.descriptionHtml, actual: actualBodyHtml };
@@ -1779,7 +1915,11 @@ export const action = async ({ request }) => {
                  }
               }
               if (nativeInput.seo?.title !== undefined) {
-                 if (nativeInput.seo.title !== actualSeoTitle) {
+                 if (actualSeoTitle === undefined) {
+                     readBackVerified = false;
+                     unresolvedChanges["native_seo_title"] = { reason: "Unverified native read-back (seo.title missing)", expected: nativeInput.seo.title, actual: "Unverified" };
+                     conflicts["native_seo_title"] = { expected: nativeInput.seo.title, actual: "Unverified (missing from read-back)" };
+                 } else if (nativeInput.seo.title !== actualSeoTitle) {
                      readBackVerified = false;
                      unresolvedChanges["native_seo_title"] = { reason: "Read-back mismatch", expected: nativeInput.seo.title, actual: actualSeoTitle };
                      conflicts["native_seo_title"] = { expected: nativeInput.seo.title, actual: actualSeoTitle };
@@ -1788,7 +1928,11 @@ export const action = async ({ request }) => {
                  }
               }
               if (nativeInput.title !== undefined) {
-                 if (nativeInput.title !== actualTitle) {
+                 if (!hasTitleReadBack) {
+                     readBackVerified = false;
+                     unresolvedChanges["native_title"] = { reason: "Unverified native read-back (title missing)", expected: nativeInput.title, actual: "Unverified" };
+                     conflicts["native_title"] = { expected: nativeInput.title, actual: "Unverified (missing from read-back)" };
+                 } else if (nativeInput.title !== actualTitle) {
                      readBackVerified = false;
                      unresolvedChanges["native_title"] = { reason: "Read-back mismatch", expected: nativeInput.title, actual: actualTitle };
                      conflicts["native_title"] = { expected: nativeInput.title, actual: actualTitle };
@@ -1828,11 +1972,17 @@ export const action = async ({ request }) => {
 
       if (doImageAltUpdates) {
          for (const imgInput of imageAltInputs) {
-            const match = actualMedia.find(m => m.node.id === imgInput.id);
-            if (!match || match.node.alt !== imgInput.alt) {
+            if (!hasMediaReadBack) {
                readBackVerified = false;
-               unresolvedChanges[`native_image_alts_${imgInput.id}`] = { reason: "Read-back mismatch", expected: imgInput.alt, actual: match?.node?.alt || "Missing node" };
-               conflicts[`native_image_alts_${imgInput.id}`] = { expected: imgInput.alt, actual: match?.node?.alt || "Missing node" };
+               unresolvedChanges[`native_image_alts_${imgInput.id}`] = { reason: "Unverified native read-back (media missing)", expected: imgInput.alt, actual: "Unverified" };
+               conflicts[`native_image_alts_${imgInput.id}`] = { expected: imgInput.alt, actual: "Unverified (missing from read-back)" };
+               continue;
+            }
+            const match = actualMedia.find(m => m.node.id === imgInput.id);
+            if (!match || typeof match.node.alt !== "string" || match.node.alt !== imgInput.alt) {
+               readBackVerified = false;
+               unresolvedChanges[`native_image_alts_${imgInput.id}`] = { reason: "Read-back mismatch", expected: imgInput.alt, actual: match?.node?.alt ?? "Missing node" };
+               conflicts[`native_image_alts_${imgInput.id}`] = { expected: imgInput.alt, actual: match?.node?.alt ?? "Missing node" };
             } else {
                verifiedDestinations.push(`native_image_alts_${imgInput.id}`);
             }
@@ -1841,6 +1991,12 @@ export const action = async ({ request }) => {
 
       setToShopify.forEach(m => {
          const dotKey = `${m.namespace}.${m.key}`;
+         if (!hasMetafieldsReadBack) {
+             readBackVerified = false;
+             unresolvedChanges[dotKey] = { reason: "Unverified metafield read-back", expected: String(m.value).trim(), actual: "Unverified" };
+             conflicts[dotKey] = { expected: String(m.value).trim(), actual: "Unverified (missing from read-back)" };
+             return;
+         }
          const actual = newMetafields[dotKey];
          let expStr = String(m.value).trim();
          let actStr = String(actual !== undefined && actual !== null ? actual : "").trim();
@@ -1866,6 +2022,11 @@ export const action = async ({ request }) => {
 
       deleteFromShopify.forEach(m => {
          const dotKey = `${m.namespace}.${m.key}`;
+         if (!hasMetafieldsReadBack) {
+             readBackVerified = false;
+             unresolvedChanges[dotKey] = { reason: "Unverified deletion read-back", expected: null, actual: "Unverified" };
+             return;
+         }
          if (newMetafields[dotKey] !== undefined) {
              readBackVerified = false;
              unresolvedChanges[dotKey] = { reason: "Deletion failed", expected: null, actual: newMetafields[dotKey] };
@@ -1874,7 +2035,11 @@ export const action = async ({ request }) => {
          }
       });
 
-      const totalFieldsUpdated = setToShopify.length + (priceReadBackVerified ? 1 : 0) + (nativeTitleUpdated ? 1 : 0) + (doShippingWeightUpdate && shippingWeightSucceeded ? 1 : 0) + imageAltUpdatesSucceeded;
+      const verifiedSetCount = setToShopify.filter(m => verifiedDestinations.includes(`${m.namespace}.${m.key}`)).length;
+      const verifiedImageAltCount = imageAltInputs.filter(img => verifiedDestinations.includes(`native_image_alts_${img.id}`)).length;
+      const verifiedNativeTitleCount = verifiedDestinations.includes("native_title") ? 1 : 0;
+      const verifiedShippingWeightCount = verifiedDestinations.includes("native_shipping_weight") ? 1 : 0;
+      const totalFieldsUpdated = verifiedSetCount + (priceReadBackVerified ? 1 : 0) + verifiedNativeTitleCount + verifiedShippingWeightCount + verifiedImageAltCount;
 
       const hasUnresolved = Object.keys(unresolvedChanges).length > 0;
       const hasExcluded = Object.keys(blockedFields).length > 0 || unsupportedKeys.length > 0;
@@ -1895,7 +2060,9 @@ export const action = async ({ request }) => {
         intent: "executeRepairPlan", pieceId, success: finalSuccess, status: finalStatus,
         fieldsUpdated: totalFieldsUpdated, legacyKeysRemoved: deleteFromShopify.length,
         message: diagnosticMsg,
-        currentMetafields: newMetafields, repairPlan, proposedChanges, conflicts, blockedFields, skippedKeys, unsupportedKeys, unchanged, attemptedDestinations, verifiedDestinations, unresolvedChanges, missingFields: [], unknownFields: [], readBackVerified,
+        currentMetafields: hasMetafieldsReadBack ? newMetafields : currentMetafields,
+        nativeTargets: readBackNativeTargets,
+        repairPlan, proposedChanges, conflicts, blockedFields, skippedKeys, unsupportedKeys, unchanged, attemptedDestinations, verifiedDestinations, unresolvedChanges, missingFields: [], unknownFields: [], readBackVerified,
         variantTarget: priceVariantGid || null
       });
     }

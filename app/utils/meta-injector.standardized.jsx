@@ -110,6 +110,150 @@ export const parseMetaobjectGidArray = (rawVal) => {
   return result;
 };
 
+const inspectAndExtractStoredReferenceSource = (sourceVal, sourceLabel) => {
+  if (sourceVal === undefined || sourceVal === null || sourceVal === "") {
+    return { valid: true, gids: [], reason: "" };
+  }
+
+  if (typeof sourceVal === "string") {
+    const trimmed = sourceVal.trim();
+    if (trimmed === "" || trimmed === "[]") {
+      return { valid: true, gids: [], reason: "" };
+    }
+    if (isExactMetaobjectGid(trimmed)) {
+      return { valid: true, gids: [trimmed], reason: "" };
+    }
+    if (trimmed.startsWith("[")) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (!Array.isArray(parsed)) {
+          return {
+            valid: false,
+            gids: [],
+            reason: `Existing assignment preservation cannot be established: ${sourceLabel} is not a JSON array.`
+          };
+        }
+        const extracted = [];
+        for (const item of parsed) {
+          let gid = "";
+          if (typeof item === "string") gid = item.trim();
+          else if (item && typeof item === "object") {
+            const id = item.id || item.gid || item.value;
+            if (typeof id === "string") gid = id.trim();
+          }
+          if (!isExactMetaobjectGid(gid)) {
+            return {
+              valid: false,
+              gids: [],
+              reason: `Existing assignment preservation cannot be established: ${sourceLabel} contains non-Metaobject GID item "${String(item)}".`
+            };
+          }
+          if (!extracted.includes(gid)) extracted.push(gid);
+        }
+        return { valid: true, gids: extracted, reason: "" };
+      } catch (e) {
+        return {
+          valid: false,
+          gids: [],
+          reason: `Existing assignment preservation cannot be established: ${sourceLabel} contains malformed JSON.`
+        };
+      }
+    }
+    return {
+      valid: false,
+      gids: [],
+      reason: `Existing assignment preservation cannot be established: ${sourceLabel} has unrecognized non-empty value.`
+    };
+  }
+
+  if (Array.isArray(sourceVal)) {
+    const extracted = [];
+    for (const item of sourceVal) {
+      let gid = "";
+      if (typeof item === "string") gid = item.trim();
+      else if (item && typeof item === "object") {
+        const id = item.id || item.gid || item.value;
+        if (typeof id === "string") gid = id.trim();
+      }
+      if (!isExactMetaobjectGid(gid)) {
+        return {
+          valid: false,
+          gids: [],
+          reason: `Existing assignment preservation cannot be established: ${sourceLabel} array contains invalid Metaobject GID "${String(item)}".`
+        };
+      }
+      if (!extracted.includes(gid)) extracted.push(gid);
+    }
+    return { valid: true, gids: extracted, reason: "" };
+  }
+
+  if (typeof sourceVal === "object") {
+    if (sourceVal.readComplete === false) {
+      return {
+        valid: false,
+        gids: parseMetaobjectGidArray(sourceVal.referenceIds ?? sourceVal.rawValue),
+        reason: `Existing assignment preservation cannot be established: ${sourceLabel} read did not complete (readComplete: false).`
+      };
+    }
+    if (sourceVal.parseValid === false || Boolean(sourceVal.parseError)) {
+      return {
+        valid: false,
+        gids: [],
+        reason: `Existing assignment preservation cannot be established: ${sourceLabel} reported parse error (${sourceVal.parseError || "parseValid: false"}).`
+      };
+    }
+
+    const hasRefIdsProp = Object.prototype.hasOwnProperty.call(sourceVal, "referenceIds");
+    const hasRawValProp = Object.prototype.hasOwnProperty.call(sourceVal, "rawValue");
+
+    if (!hasRefIdsProp && !hasRawValProp) {
+      return {
+        valid: false,
+        gids: [],
+        reason: `Existing assignment preservation cannot be established: ${sourceLabel} object is missing referenceIds and rawValue.`
+      };
+    }
+
+    const combined = [];
+    if (hasRefIdsProp) {
+      if (!Array.isArray(sourceVal.referenceIds)) {
+        return {
+          valid: false,
+          gids: [],
+          reason: `Existing assignment preservation cannot be established: ${sourceLabel}.referenceIds is not an array.`
+        };
+      }
+      const refIdsCheck = inspectAndExtractStoredReferenceSource(
+        sourceVal.referenceIds,
+        `${sourceLabel}.referenceIds`
+      );
+      if (!refIdsCheck.valid) return refIdsCheck;
+      refIdsCheck.gids.forEach((gid) => {
+        if (!combined.includes(gid)) combined.push(gid);
+      });
+    }
+
+    if (hasRawValProp && sourceVal.rawValue !== undefined && sourceVal.rawValue !== null && String(sourceVal.rawValue).trim() !== "") {
+      const rawValCheck = inspectAndExtractStoredReferenceSource(
+        sourceVal.rawValue,
+        `${sourceLabel}.rawValue`
+      );
+      if (!rawValCheck.valid) return rawValCheck;
+      rawValCheck.gids.forEach((gid) => {
+        if (!combined.includes(gid)) combined.push(gid);
+      });
+    }
+
+    return { valid: true, gids: combined, reason: "" };
+  }
+
+  return {
+    valid: false,
+    gids: [],
+    reason: `Existing assignment preservation cannot be established: ${sourceLabel} has unsupported data type.`
+  };
+};
+
 export const collectVerifiedEntriesForResolution = (fieldResolution) => {
   const map = new Map();
   if (!fieldResolution || typeof fieldResolution !== "object") return map;
@@ -355,11 +499,33 @@ export const evaluateStandardizedDestinationTechnicalStatus = ({
 
   const metaKey = destinationKey.slice(8);
   const currentMetafieldRaw = data?.currentMetafields?.[destinationKey];
-  const refListRaw = refMatchResult?.currentReferenceLists?.[destinationKey] ?? refMatchResult?.currentReferenceLists?.[metaKey];
-  const existingFromManifest = parseMetaobjectGidArray(currentMetafieldRaw);
-  const existingFromRefMatch = parseMetaobjectGidArray(refListRaw);
-  const existingGids = [...existingFromManifest];
-  existingFromRefMatch.forEach((gid) => {
+  const fieldResolution = refMatchResult?.resolutions?.[destinationKey] || null;
+  const refListRaw =
+    refMatchResult?.currentReferenceLists?.[destinationKey] ??
+    refMatchResult?.currentReferenceLists?.[metaKey] ??
+    fieldResolution?.currentAssignment;
+
+  const manifestCheck = inspectAndExtractStoredReferenceSource(
+    currentMetafieldRaw,
+    `manifest.currentMetafields["${destinationKey}"]`
+  );
+  const refListCheck = inspectAndExtractStoredReferenceSource(
+    refListRaw,
+    `currentReferenceLists["${destinationKey}"]`
+  );
+  const resolutionAssignmentCheck =
+    fieldResolution?.currentAssignment !== undefined && fieldResolution?.currentAssignment !== refListRaw
+      ? inspectAndExtractStoredReferenceSource(
+          fieldResolution.currentAssignment,
+          `resolutions["${destinationKey}"].currentAssignment`
+        )
+      : { valid: true, gids: [], reason: "" };
+
+  const existingGids = [...manifestCheck.gids];
+  refListCheck.gids.forEach((gid) => {
+    if (!existingGids.includes(gid)) existingGids.push(gid);
+  });
+  resolutionAssignmentCheck.gids.forEach((gid) => {
     if (!existingGids.includes(gid)) existingGids.push(gid);
   });
 
@@ -438,13 +604,46 @@ export const evaluateStandardizedDestinationTechnicalStatus = ({
     };
   }
 
-  const fieldResolution = refMatchResult.resolutions?.[destinationKey] || null;
   if (!fieldResolution || typeof fieldResolution !== "object") {
     return {
       isVerifiedDestination: true,
       isTechnicallyEligible: false,
       blockReason: `Missing backend resolution entry for ${destinationKey}.`,
       verifiedEntriesMap: new Map(),
+      existingGids,
+      autoProposedGids: [],
+      autoProposalSerialized: "",
+      labelEvaluations: []
+    };
+  }
+
+  const verifiedEntriesMap = collectVerifiedEntriesForResolution(fieldResolution);
+
+  // Do not interpret missing, malformed or incomplete reference data as proof that the product has no assignments
+  if (refListRaw === undefined || refListRaw === null) {
+    return {
+      isVerifiedDestination: true,
+      isTechnicallyEligible: false,
+      blockReason: `Existing assignment preservation cannot be established: missing currentReferenceLists entry for ${destinationKey}.`,
+      verifiedEntriesMap,
+      existingGids,
+      autoProposedGids: [],
+      autoProposalSerialized: "",
+      labelEvaluations: []
+    };
+  }
+
+  if (!manifestCheck.valid || !refListCheck.valid || !resolutionAssignmentCheck.valid) {
+    const preservationError =
+      manifestCheck.reason ||
+      refListCheck.reason ||
+      resolutionAssignmentCheck.reason ||
+      `Existing assignment preservation cannot be established for ${destinationKey}.`;
+    return {
+      isVerifiedDestination: true,
+      isTechnicallyEligible: false,
+      blockReason: preservationError,
+      verifiedEntriesMap,
       existingGids,
       autoProposedGids: [],
       autoProposalSerialized: "",
@@ -464,7 +663,7 @@ export const evaluateStandardizedDestinationTechnicalStatus = ({
       isVerifiedDestination: true,
       isTechnicallyEligible: false,
       blockReason: `Incomplete reference enumeration for ${destinationKey} (${fieldErrors[0] || "continuation pending"}).`,
-      verifiedEntriesMap: collectVerifiedEntriesForResolution(fieldResolution),
+      verifiedEntriesMap,
       existingGids,
       autoProposedGids: [],
       autoProposalSerialized: "",
@@ -472,7 +671,6 @@ export const evaluateStandardizedDestinationTechnicalStatus = ({
     };
   }
 
-  const verifiedEntriesMap = collectVerifiedEntriesForResolution(fieldResolution);
   const labelEvaluations = candidateEntry.labels.map((lbl) =>
     evaluateCandidateLabelResolution(lbl, fieldResolution, verifiedEntriesMap, existingGids)
   );
