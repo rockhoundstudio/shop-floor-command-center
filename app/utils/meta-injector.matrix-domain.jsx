@@ -183,14 +183,25 @@ export const evaluateFieldMetadata = ({
   const isStandardizedAttribute = templateConfig?.role === "standardized_attribute" || key.startsWith("shopify.");
   const isVerifiedStdDest = isVerifiedStandardizedDestination(targetKeyForProposal);
 
-  const stdEvaluation = isVerifiedStdDest && typeof getStandardizedEvaluationForField === "function"
-    ? getStandardizedEvaluationForField(productId, targetKeyForProposal, data)
+  const standardizedDestKey = isStandardizedAttribute
+    ? (targetKeyForProposal.startsWith("shopify.")
+        ? targetKeyForProposal
+        : (templateConfig?.metaKey ? `shopify.${templateConfig.metaKey}` : targetKeyForProposal))
+    : targetKeyForProposal;
+
+  // Evaluate technical and category eligibility for ALL 21 standardized attributes
+  const stdEvaluation = isStandardizedAttribute && typeof getStandardizedEvaluationForField === "function"
+    ? getStandardizedEvaluationForField(productId, standardizedDestKey, data)
     : null;
 
-  // Relax pending_read_only ONLY for the six verified destinations when all required matching checks pass
+  const isCategoryEligible = Boolean(stdEvaluation?.isCategoryEligible);
+  const categoryEligibility = stdEvaluation?.categoryEligibility || null;
+
+  // Relax pending_read_only ONLY for the six verified destinations when BOTH reference matching and category eligibility pass.
+  // The remaining 15 standardized destinations MUST stay read-only regardless of category eligibility.
   const isPendingReadOnly = isVerifiedStdDest
-    ? !Boolean(stdEvaluation?.isTechnicallyEligible)
-    : templateConfig?.mappingStatus === "pending_read_only";
+    ? !(Boolean(stdEvaluation?.isTechnicallyEligible) && isCategoryEligible)
+    : (isStandardizedAttribute ? true : templateConfig?.mappingStatus === "pending_read_only");
 
   let currentVal = "";
   const variants = data.nativeTargets?.variants?.edges || [];
@@ -232,7 +243,7 @@ export const evaluateFieldMetadata = ({
       } else {
           currentVal = data.currentMetafields?.["custom.shipping_weight_oz"] ?? "";
       }
-  } else if (isVerifiedStdDest && stdEvaluation) {
+  } else if (isStandardizedAttribute && stdEvaluation) {
       if (stdEvaluation.existingGids.length > 0) {
           currentVal = JSON.stringify(stdEvaluation.existingGids);
       } else {
@@ -262,7 +273,7 @@ export const evaluateFieldMetadata = ({
   let propVal = "";
 
   if (isVerifiedStdDest) {
-      if (stdEvaluation?.isTechnicallyEligible) {
+      if (stdEvaluation?.isTechnicallyEligible && isCategoryEligible) {
           if (data.repairPlan !== undefined && data.repairPlan.hasOwnProperty(targetKeyForProposal)) {
               isProposed = true;
               const rawProp = data.repairPlan[targetKeyForProposal];
@@ -347,7 +358,12 @@ export const evaluateFieldMetadata = ({
   const isOperatorOwned = (targetKeyForProposal === "price" || targetKeyForProposal === "custom.weight_grams" || targetKeyForProposal === "custom.dimensions_mm");
   
   const exactApprovalVal = currentApprovals?.[productId]?.[targetKeyForProposal];
-  const isApproved = !isPendingReadOnly && exactApprovalVal !== undefined && exactApprovalVal === propVal && propVal.trim() !== "";
+  const isApproved =
+    !isPendingReadOnly &&
+    (!isVerifiedStdDest || (Boolean(stdEvaluation?.isTechnicallyEligible) && isCategoryEligible)) &&
+    exactApprovalVal !== undefined &&
+    exactApprovalVal === propVal &&
+    propVal.trim() !== "";
 
   if (HIDDEN_CONTEXT_FIELDS.includes(key)) {
       return { currentVal, propVal, isProposed, fieldStatus: "Hidden Source", proposalStatus, source, stage, isBlockedAction: true, reasons: ["Hidden Context"], currentExists, proposalExists, isApproved: false, hasTechnicalBlock: true, contentNeedsReview: false, isContentPreApproved: false, preApprovalReason: "", isManualOnly: false, isActualBlockedProposal: false, isOperatorOwned: false, isSupported: true, isPendingReadOnly: false, isStandardizedAttribute: false };
@@ -366,9 +382,9 @@ export const evaluateFieldMetadata = ({
   if (isIntegration) reasons.push("Integration owned");
 
   if (isVerifiedStdDest) {
-      if (!stdEvaluation?.isTechnicallyEligible) {
+      if (!stdEvaluation?.isTechnicallyEligible || !isCategoryEligible) {
           hasTechnicalBlock = true;
-          reasons.push(stdEvaluation?.blockReason || "Standardized attribute awaiting valid reference match.");
+          reasons.push(stdEvaluation?.blockReason || "Standardized attribute awaiting valid reference match and category eligibility.");
       } else if (proposalExists) {
           const propValidation = validateProposedStandardizedGidList(propVal, stdEvaluation);
           if (!propValidation.valid) {
@@ -378,6 +394,22 @@ export const evaluateFieldMetadata = ({
               // Require explicit exact-value approval for all standardized reference proposals
               contentNeedsReview = true;
           }
+      }
+  } else if (isStandardizedAttribute) {
+      hasTechnicalBlock = true;
+      if (categoryEligibility) {
+          if (categoryEligibility.isComplete === true && categoryEligibility.isEligible === true) {
+              const catReason = typeof categoryEligibility.reason === "string" && categoryEligibility.reason.trim() !== ""
+                ? ` (${categoryEligibility.reason.trim()})`
+                : "";
+              reasons.push(`Standardized attribute read-only (pending_read_only) — Category-eligible for this product${catReason}`);
+          } else if (categoryEligibility.isComplete === true && categoryEligibility.isEligible === false) {
+              reasons.push(stdEvaluation?.blockReason || "Blocked by product category constraint (Standardized attribute also pending_read_only)");
+          } else {
+              reasons.push(stdEvaluation?.blockReason || "Standardized attribute read-only (pending_read_only) — Category eligibility check incomplete");
+          }
+      } else {
+          reasons.push("Standardized attribute read-only (pending_read_only)");
       }
   } else if (isPendingReadOnly) {
       hasTechnicalBlock = true;
@@ -553,6 +585,8 @@ export const evaluateFieldMetadata = ({
     isPendingReadOnly,
     isStandardizedAttribute,
     isVerifiedStdDest,
+    isCategoryEligible,
+    categoryEligibility,
     stdEvaluation,
     metaKey: templateConfig?.metaKey || (key.startsWith("shopify.") ? key.slice(8) : ""),
     label: templateConfig?.label || formatLabel(key),
@@ -719,7 +753,13 @@ export const buildRepairPayload = (manifest, product, currentId, currentApproval
       const meta = getFieldMetadata(key, manifest, currentId, currentApprovals, allConfigFields);
 
       if (isVerifiedStandardizedDestination(key)) {
-          if (meta.isPendingReadOnly || meta.isBlockedAction || !meta.isApproved || meta.hasTechnicalBlock) return;
+          if (
+              meta.isPendingReadOnly ||
+              meta.isBlockedAction ||
+              !meta.isApproved ||
+              meta.hasTechnicalBlock ||
+              meta.isCategoryEligible !== true
+          ) return;
           const valCheck = validateProposedStandardizedGidList(meta.propVal, meta.stdEvaluation);
           if (!valCheck.valid) return;
           if (meta.proposalExists && meta.propVal !== meta.currentVal) {

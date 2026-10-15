@@ -254,6 +254,100 @@ const inspectAndExtractStoredReferenceSource = (sourceVal, sourceLabel) => {
   };
 };
 
+const formatProductCategoryDisplay = (catObj) => {
+  if (!catObj || typeof catObj !== "object") return "Unassigned / Unknown Category";
+  const fullName = typeof catObj.fullName === "string" ? catObj.fullName.trim() : "";
+  const id = typeof catObj.id === "string" ? catObj.id.trim() : "";
+  if (fullName && id) return `"${fullName}" (${id})`;
+  if (fullName) return `"${fullName}"`;
+  if (id) return id;
+  return "Unassigned / Unknown Category";
+};
+
+export const inspectDestinationCategoryEligibility = (destinationKey, fieldResolution, refMatchResult, data) => {
+  const metaKey = destinationKey && destinationKey.startsWith("shopify.") ? destinationKey.slice(8) : destinationKey;
+  const rawElig =
+    fieldResolution?.categoryEligibility ??
+    refMatchResult?.categoryEligibility?.[destinationKey] ??
+    refMatchResult?.categoryEligibility?.[metaKey] ??
+    null;
+
+  const fallbackCategory =
+    rawElig?.productCategory ||
+    refMatchResult?.productCategory ||
+    data?.productCategory ||
+    data?.nativeTargets?.category ||
+    null;
+  const categoryLabel = formatProductCategoryDisplay(fallbackCategory);
+
+  if (!rawElig || typeof rawElig !== "object" || Array.isArray(rawElig)) {
+    return {
+      isComplete: false,
+      isEligible: false,
+      status: "missing_eligibility",
+      categoryEligibility: null,
+      productCategory: fallbackCategory,
+      reason: `Category eligibility verification is missing for ${destinationKey} (product category: ${categoryLabel}). Re-run 'Match Reference Choices' to verify live category constraints.`
+    };
+  }
+
+  const status = typeof rawElig.status === "string" ? rawElig.status : "unknown";
+  const permitted = Array.isArray(rawElig.permittedCategoryValues) ? rawElig.permittedCategoryValues : [];
+
+  if (rawElig.isComplete !== true || status === "incomplete" || status === "incomplete_constraints") {
+    const detail = typeof rawElig.reason === "string" && rawElig.reason.trim() !== ""
+      ? rawElig.reason.trim()
+      : `Incomplete live category constraint check for ${destinationKey} (product category: ${categoryLabel}).`;
+    return {
+      isComplete: false,
+      isEligible: false,
+      status,
+      categoryEligibility: rawElig,
+      productCategory: fallbackCategory,
+      reason: `Category eligibility check incomplete for ${destinationKey}: ${detail}`
+    };
+  }
+
+  const explicitlyEligible =
+    rawElig.isEligible === true &&
+    (fieldResolution?.isCategoryEligible === undefined || fieldResolution?.isCategoryEligible === true) &&
+    fieldResolution?.status !== "category_ineligible" &&
+    (status === "eligible" || status === "unconstrained_eligible");
+
+  if (!explicitlyEligible) {
+    let plainReason = "";
+    if (status === "category_ineligible" || fieldResolution?.status === "category_ineligible") {
+      const permittedText = permitted.length > 0 ? ` (permitted category constraints: ${permitted.join(", ")})` : "";
+      plainReason = `Blocked by product category constraint: ${destinationKey} is not eligible for product category ${categoryLabel}${permittedText}. Candidate evidence and matched entries are preserved for reference only.`;
+    } else if (status === "missing_product_category") {
+      const permittedText = permitted.length > 0 ? ` [${permitted.join(", ")}]` : "";
+      plainReason = `Blocked by product category constraint: product has no assigned taxonomy category (${categoryLabel}), which is required by ${destinationKey}${permittedText}.`;
+    } else if (typeof rawElig.reason === "string" && rawElig.reason.trim() !== "") {
+      plainReason = `Blocked by category eligibility check on ${destinationKey} (product category: ${categoryLabel}): ${rawElig.reason.trim()}`;
+    } else {
+      plainReason = `Blocked by category eligibility check: ${destinationKey} is not eligible for product category ${categoryLabel}.`;
+    }
+
+    return {
+      isComplete: true,
+      isEligible: false,
+      status,
+      categoryEligibility: rawElig,
+      productCategory: fallbackCategory,
+      reason: plainReason
+    };
+  }
+
+  return {
+    isComplete: true,
+    isEligible: true,
+    status,
+    categoryEligibility: rawElig,
+    productCategory: fallbackCategory,
+    reason: typeof rawElig.reason === "string" ? rawElig.reason : ""
+  };
+};
+
 export const collectVerifiedEntriesForResolution = (fieldResolution) => {
   const map = new Map();
   if (!fieldResolution || typeof fieldResolution !== "object") return map;
@@ -484,20 +578,7 @@ export const evaluateStandardizedDestinationTechnicalStatus = ({
   refMatchResult,
   refMatchStatus
 }) => {
-  if (!isVerifiedStandardizedDestination(destinationKey)) {
-    return {
-      isVerifiedDestination: false,
-      isTechnicallyEligible: false,
-      blockReason: "Standardized attribute read-only (pending_read_only)",
-      verifiedEntriesMap: new Map(),
-      existingGids: [],
-      autoProposedGids: [],
-      autoProposalSerialized: "",
-      labelEvaluations: []
-    };
-  }
-
-  const metaKey = destinationKey.slice(8);
+  const metaKey = destinationKey && destinationKey.startsWith("shopify.") ? destinationKey.slice(8) : destinationKey;
   const currentMetafieldRaw = data?.currentMetafields?.[destinationKey];
   const fieldResolution = refMatchResult?.resolutions?.[destinationKey] || null;
   const refListRaw =
@@ -529,6 +610,29 @@ export const evaluateStandardizedDestinationTechnicalStatus = ({
     if (!existingGids.includes(gid)) existingGids.push(gid);
   });
 
+  const categoryCheck = refMatchResult
+    ? inspectDestinationCategoryEligibility(destinationKey, fieldResolution, refMatchResult, data)
+    : null;
+
+  if (!isVerifiedStandardizedDestination(destinationKey)) {
+    const nonVerifiedReason =
+      categoryCheck && !categoryCheck.isEligible
+        ? `${categoryCheck.reason} (Standardized attribute also pending_read_only)`
+        : "Standardized attribute read-only (pending_read_only)";
+    return {
+      isVerifiedDestination: false,
+      isTechnicallyEligible: false,
+      isCategoryEligible: Boolean(categoryCheck?.isEligible),
+      categoryEligibility: categoryCheck?.categoryEligibility || null,
+      blockReason: nonVerifiedReason,
+      verifiedEntriesMap: new Map(),
+      existingGids,
+      autoProposedGids: [],
+      autoProposalSerialized: "",
+      labelEvaluations: []
+    };
+  }
+
   const candidateEntry = candidateBundle?.ordered?.[metaKey] || null;
   const hasCandidateLabels = Boolean(candidateEntry && Array.isArray(candidateEntry.labels) && candidateEntry.labels.length > 0);
 
@@ -536,6 +640,8 @@ export const evaluateStandardizedDestinationTechnicalStatus = ({
     return {
       isVerifiedDestination: true,
       isTechnicallyEligible: false,
+      isCategoryEligible: Boolean(categoryCheck?.isEligible),
+      categoryEligibility: categoryCheck?.categoryEligibility || null,
       blockReason: "No Vision standardized candidate staged for this attribute.",
       verifiedEntriesMap: new Map(),
       existingGids,
@@ -548,10 +654,12 @@ export const evaluateStandardizedDestinationTechnicalStatus = ({
   if (!refMatchResult) {
     const stateHint = refMatchStatus?.state === "discarded_stale"
       ? "Reference match result is stale for current candidates. Click 'Match Reference Choices' to re-validate."
-      : "Reference matching required. Click 'Match Reference Choices' to validate candidate entries.";
+      : "Reference matching required. Click 'Match Reference Choices' to validate candidate entries and category eligibility.";
     return {
       isVerifiedDestination: true,
       isTechnicallyEligible: false,
+      isCategoryEligible: false,
+      categoryEligibility: null,
       blockReason: stateHint,
       verifiedEntriesMap: new Map(),
       existingGids,
@@ -569,6 +677,8 @@ export const evaluateStandardizedDestinationTechnicalStatus = ({
     return {
       isVerifiedDestination: true,
       isTechnicallyEligible: false,
+      isCategoryEligible: false,
+      categoryEligibility: null,
       blockReason: "Reference match result failed product or contract identity verification.",
       verifiedEntriesMap: new Map(),
       existingGids,
@@ -582,6 +692,8 @@ export const evaluateStandardizedDestinationTechnicalStatus = ({
     return {
       isVerifiedDestination: true,
       isTechnicallyEligible: false,
+      isCategoryEligible: false,
+      categoryEligibility: null,
       blockReason: "Stale reference match result: candidate snapshot changed. Re-run 'Match Reference Choices'.",
       verifiedEntriesMap: new Map(),
       existingGids,
@@ -595,6 +707,8 @@ export const evaluateStandardizedDestinationTechnicalStatus = ({
     return {
       isVerifiedDestination: true,
       isTechnicallyEligible: false,
+      isCategoryEligible: false,
+      categoryEligibility: categoryCheck?.categoryEligibility || null,
       blockReason: "Incomplete or errored top-level reference matching result. Re-run 'Match Reference Choices'.",
       verifiedEntriesMap: new Map(),
       existingGids,
@@ -608,6 +722,8 @@ export const evaluateStandardizedDestinationTechnicalStatus = ({
     return {
       isVerifiedDestination: true,
       isTechnicallyEligible: false,
+      isCategoryEligible: false,
+      categoryEligibility: categoryCheck?.categoryEligibility || null,
       blockReason: `Missing backend resolution entry for ${destinationKey}.`,
       verifiedEntriesMap: new Map(),
       existingGids,
@@ -618,18 +734,23 @@ export const evaluateStandardizedDestinationTechnicalStatus = ({
   }
 
   const verifiedEntriesMap = collectVerifiedEntriesForResolution(fieldResolution);
+  const labelEvaluations = candidateEntry.labels.map((lbl) =>
+    evaluateCandidateLabelResolution(lbl, fieldResolution, verifiedEntriesMap, existingGids)
+  );
 
   // Do not interpret missing, malformed or incomplete reference data as proof that the product has no assignments
   if (refListRaw === undefined || refListRaw === null) {
     return {
       isVerifiedDestination: true,
       isTechnicallyEligible: false,
+      isCategoryEligible: Boolean(categoryCheck?.isEligible),
+      categoryEligibility: categoryCheck?.categoryEligibility || null,
       blockReason: `Existing assignment preservation cannot be established: missing currentReferenceLists entry for ${destinationKey}.`,
       verifiedEntriesMap,
       existingGids,
       autoProposedGids: [],
       autoProposalSerialized: "",
-      labelEvaluations: []
+      labelEvaluations
     };
   }
 
@@ -642,12 +763,33 @@ export const evaluateStandardizedDestinationTechnicalStatus = ({
     return {
       isVerifiedDestination: true,
       isTechnicallyEligible: false,
+      isCategoryEligible: Boolean(categoryCheck?.isEligible),
+      categoryEligibility: categoryCheck?.categoryEligibility || null,
       blockReason: preservationError,
       verifiedEntriesMap,
       existingGids,
       autoProposedGids: [],
       autoProposalSerialized: "",
-      labelEvaluations: []
+      labelEvaluations
+    };
+  }
+
+  // Enforce explicit, complete category eligibility before unlocking proposal or approval.
+  // Keep verifiedEntriesMap, existingGids, and labelEvaluations intact so matched entries & evidence remain visible.
+  if (!categoryCheck || !categoryCheck.isComplete || !categoryCheck.isEligible) {
+    return {
+      isVerifiedDestination: true,
+      isTechnicallyEligible: false,
+      isCategoryEligible: false,
+      categoryEligibility: categoryCheck?.categoryEligibility || null,
+      blockReason:
+        categoryCheck?.reason ||
+        `Category eligibility could not be verified for ${destinationKey}.`,
+      verifiedEntriesMap,
+      existingGids,
+      autoProposedGids: [],
+      autoProposalSerialized: "",
+      labelEvaluations
     };
   }
 
@@ -662,18 +804,16 @@ export const evaluateStandardizedDestinationTechnicalStatus = ({
     return {
       isVerifiedDestination: true,
       isTechnicallyEligible: false,
+      isCategoryEligible: true,
+      categoryEligibility: categoryCheck.categoryEligibility,
       blockReason: `Incomplete reference enumeration for ${destinationKey} (${fieldErrors[0] || "continuation pending"}).`,
       verifiedEntriesMap,
       existingGids,
       autoProposedGids: [],
       autoProposalSerialized: "",
-      labelEvaluations: []
+      labelEvaluations
     };
   }
-
-  const labelEvaluations = candidateEntry.labels.map((lbl) =>
-    evaluateCandidateLabelResolution(lbl, fieldResolution, verifiedEntriesMap, existingGids)
-  );
 
   const failedEval = labelEvaluations.find(
     (ev) => ev.status === "missing_entry" || ev.status === "ambiguous_blocked" || ev.status === "blocked" || !ev.selectedEntry
@@ -683,6 +823,8 @@ export const evaluateStandardizedDestinationTechnicalStatus = ({
     return {
       isVerifiedDestination: true,
       isTechnicallyEligible: false,
+      isCategoryEligible: true,
+      categoryEligibility: categoryCheck.categoryEligibility,
       blockReason: failedEval.reason,
       verifiedEntriesMap,
       existingGids,
@@ -704,6 +846,8 @@ export const evaluateStandardizedDestinationTechnicalStatus = ({
   return {
     isVerifiedDestination: true,
     isTechnicallyEligible: true,
+    isCategoryEligible: true,
+    categoryEligibility: categoryCheck.categoryEligibility,
     blockReason: "",
     verifiedEntriesMap,
     existingGids,
@@ -715,7 +859,13 @@ export const evaluateStandardizedDestinationTechnicalStatus = ({
 
 export const validateProposedStandardizedGidList = (rawPropVal, evalResult) => {
   if (!evalResult?.isTechnicallyEligible) {
-    return { valid: false, reason: evalResult?.blockReason || "Reference matching not complete." };
+    return { valid: false, reason: evalResult?.blockReason || "Reference matching and category eligibility not complete." };
+  }
+  if (evalResult.isCategoryEligible !== true) {
+    return {
+      valid: false,
+      reason: evalResult?.blockReason || "Destination is not category-eligible for this product."
+    };
   }
   if (typeof rawPropVal !== "string" || !rawPropVal.trim().startsWith("[")) {
     return { valid: false, reason: "Proposal must be a serialized JSON array of exact Metaobject GIDs." };

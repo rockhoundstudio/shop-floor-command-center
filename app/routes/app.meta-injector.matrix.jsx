@@ -181,7 +181,7 @@ export function OperationsMatrixTab({ products }) {
   }, []);
 
   const getStandardizedEvaluationForField = useCallback((productId, targetKey, dataOverride = null) => {
-    if (!isVerifiedStandardizedDestination(targetKey) || !productId) return null;
+    if (!productId || typeof targetKey !== "string" || !targetKey.startsWith("shopify.")) return null;
     const data = dataOverride || manifestData[productId];
     const candidateBundle = buildCanonicalCandidateBundle(standardizedCandidatesByProduct[productId] || {});
     const refMatchResult = referenceMatchResultsByProduct[productId] || null;
@@ -486,6 +486,11 @@ export function OperationsMatrixTab({ products }) {
     const resolutionCount = Object.keys(sanitizedResolutions).length;
     const isComplete = Boolean(data.isComplete);
     const isSuccess = Boolean(data.success);
+    const returnedProductCategory =
+      data.productCategory && typeof data.productCategory === "object"
+        ? data.productCategory
+        : null;
+    const returnedCategoryEligibility = validObj(data.categoryEligibility);
 
     const matchRecord = {
       pieceId: targetProductId,
@@ -493,6 +498,8 @@ export function OperationsMatrixTab({ products }) {
       readOnly: true,
       success: isSuccess,
       isComplete: isComplete,
+      productCategory: returnedProductCategory,
+      categoryEligibility: returnedCategoryEligibility,
       resolutions: sanitizedResolutions,
       currentReferenceLists: validObj(data.currentReferenceLists),
       errors: topErrors,
@@ -504,6 +511,19 @@ export function OperationsMatrixTab({ products }) {
       ...prev,
       [targetProductId]: matchRecord
     }));
+
+    let eligibleProposalCount = 0;
+    const categoryBlockedDestinations = [];
+
+    VERIFIED_STANDARDIZED_DESTINATIONS.forEach((destKey) => {
+      const resEntry = sanitizedResolutions[destKey];
+      if (!resEntry) return;
+      if (resEntry.isCategoryEligible === false || resEntry.status === "category_ineligible") {
+        categoryBlockedDestinations.push(destKey);
+      } else if (resEntry.isCategoryEligible === true && resEntry.isComplete === true) {
+        eligibleProposalCount++;
+      }
+    });
 
     // Stage technically verified proposals into manifestData.repairPlan for the 6 standardized destinations
     setManifestData((prevMan) => {
@@ -540,6 +560,7 @@ export function OperationsMatrixTab({ products }) {
         ...prevMan,
         [targetProductId]: {
           ...existingMan,
+          productCategory: returnedProductCategory || existingMan.productCategory || null,
           repairPlan: updatedRepairPlan,
           metadata: updatedMetadata
         }
@@ -562,12 +583,16 @@ export function OperationsMatrixTab({ products }) {
     });
 
     if (isComplete && isSuccess && topErrors.length === 0) {
+      const catSummary =
+        categoryBlockedDestinations.length > 0
+          ? ` ${eligibleProposalCount} category-eligible proposal(s) unlocked; ${categoryBlockedDestinations.length} blocked by product category constraint (${categoryBlockedDestinations.join(", ")} — candidate evidence and matched entries preserved).`
+          : " Technically verified and category-eligible proposals are staged for review and exact-value approval below.";
       setReferenceMatchStatusByProduct((prev) => ({
         ...prev,
         [targetProductId]: {
           state: "completed",
           tone: "success",
-          message: `Reference matching completed for ${resolutionCount} attribute(s). Technically verified proposals are staged for review and exact-value approval below.`,
+          message: `Reference matching completed for ${resolutionCount} attribute(s).${catSummary}`,
           updatedAt: new Date().toISOString()
         }
       }));

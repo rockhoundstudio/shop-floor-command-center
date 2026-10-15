@@ -105,11 +105,15 @@ const ALLOWED_STANDARDIZED_CANDIDATE_KEYS = [
   "product-use"
 ];
 
-const CATALOG_STANDARDIZED_META_KEYS = new Set(
-  FIELD_CATALOG
-    .filter(f => f.role === "standardized_attribute" || f.namespace === "shopify")
-    .map(f => f.metaKey || f.key)
+const ALL_STANDARDIZED_META_KEYS = Array.from(
+  new Set(
+    FIELD_CATALOG
+      .filter(f => f.role === "standardized_attribute" || f.namespace === "shopify")
+      .map(f => f.metaKey || f.key)
+  )
 );
+
+const CATALOG_STANDARDIZED_META_KEYS = new Set(ALL_STANDARDIZED_META_KEYS);
 
 const CATALOG_METAFIELD_DESTINATIONS = Array.from(
   new Set(
@@ -231,6 +235,390 @@ function sanitizeDescription(html) {
   return safeHtml;
 }
 
+function normalizeTaxonomyCategoryCode(rawVal) {
+  if (typeof rawVal !== "string") return "";
+  const trimmed = rawVal.trim();
+  if (!trimmed) return "";
+  const gidPrefix = "gid://shopify/TaxonomyCategory/";
+  if (trimmed.startsWith(gidPrefix)) {
+    return trimmed.slice(gidPrefix.length).trim();
+  }
+  return trimmed;
+}
+
+function doesCategoryMatchConstraintValue(productCategoryId, constraintValue) {
+  const prodCode = normalizeTaxonomyCategoryCode(productCategoryId);
+  const consCode = normalizeTaxonomyCategoryCode(constraintValue);
+  if (!prodCode || !consCode) return false;
+  if (prodCode === consCode) return true;
+  if (prodCode.startsWith(`${consCode}-`)) return true;
+  return false;
+}
+
+async function fetchProductMetafieldDefinitionsWithConstraints(admin) {
+  const defs = {};
+  let defsReadComplete = true;
+  const errors = [];
+  let defPageInfo = { hasNextPage: true, endCursor: null };
+  let defPagesFetched = 0;
+  const MAX_DEF_PAGES = 10;
+  const MAX_CONSTRAINT_PAGES = 20;
+
+  try {
+    while (defPageInfo.hasNextPage && defPagesFetched < MAX_DEF_PAGES) {
+      defPagesFetched++;
+      const defRes = await admin.graphql(`
+        query getProductMetafieldDefsWithConstraints($cursor: String) {
+          metafieldDefinitions(first: 250, ownerType: PRODUCT, after: $cursor) {
+            nodes {
+              id
+              name
+              namespace
+              key
+              type { name }
+              validations { name value }
+              constraints {
+                key
+                values(first: 250) {
+                  nodes { value }
+                  pageInfo { hasNextPage endCursor }
+                }
+              }
+            }
+            pageInfo { hasNextPage endCursor }
+          }
+        }
+      `, { variables: { cursor: defPageInfo.endCursor } });
+
+      const defJson = await defRes.json();
+      if (defJson.errors?.length) {
+        throw new Error(defJson.errors.map(e => e.message).join("; "));
+      }
+
+      const defConn = defJson?.data?.metafieldDefinitions;
+      if (!defConn || !Array.isArray(defConn.nodes) || typeof defConn.pageInfo?.hasNextPage !== "boolean") {
+        throw new Error("Malformed metafieldDefinitions connection response.");
+      }
+
+      for (const node of defConn.nodes) {
+        if (!node || !node.namespace || !node.key) continue;
+        const fullKey = `${node.namespace}.${node.key}`;
+        const validation = Array.isArray(node.validations)
+          ? node.validations.find(v => v.name === "metaobject_definition_id")
+          : null;
+
+        let constraintKey = null;
+        const constraintValues = [];
+        let constraintsComplete = true;
+        let constraintError = null;
+        let constraintContinuation = null;
+
+        const rawConstraints = node.constraints;
+        if (rawConstraints !== null && rawConstraints !== undefined) {
+          if (typeof rawConstraints !== "object" || Array.isArray(rawConstraints)) {
+            constraintsComplete = false;
+            defsReadComplete = false;
+            constraintError = `Malformed constraints object on ${fullKey}.`;
+            errors.push(constraintError);
+          } else {
+            constraintKey = typeof rawConstraints.key === "string" ? rawConstraints.key : null;
+            const valConn = rawConstraints.values;
+            if (!valConn || !Array.isArray(valConn.nodes) || typeof valConn.pageInfo?.hasNextPage !== "boolean") {
+              constraintsComplete = false;
+              defsReadComplete = false;
+              constraintError = `Malformed constraint values connection on ${fullKey}.`;
+              errors.push(constraintError);
+            } else {
+              for (const vNode of valConn.nodes) {
+                if (typeof vNode?.value === "string" && vNode.value.trim() !== "") {
+                  constraintValues.push(vNode.value.trim());
+                }
+              }
+
+              let cPageInfo = valConn.pageInfo;
+              let cPagesFetched = 1;
+
+              while (cPageInfo.hasNextPage && cPagesFetched < MAX_CONSTRAINT_PAGES) {
+                cPagesFetched++;
+                if (!node.id) {
+                  constraintsComplete = false;
+                  defsReadComplete = false;
+                  constraintError = `Cannot paginate constraint values for ${fullKey}: missing definition ID.`;
+                  errors.push(constraintError);
+                  break;
+                }
+
+                try {
+                  const moreRes = await admin.graphql(`
+                    query getMetafieldDefConstraintValues($id: ID!, $cursor: String!) {
+                      metafieldDefinition(id: $id) {
+                        id
+                        constraints {
+                          key
+                          values(first: 250, after: $cursor) {
+                            nodes { value }
+                            pageInfo { hasNextPage endCursor }
+                          }
+                        }
+                      }
+                    }
+                  `, { variables: { id: node.id, cursor: cPageInfo.endCursor } });
+
+                  const moreJson = await moreRes.json();
+                  if (moreJson.errors?.length) {
+                    throw new Error(moreJson.errors.map(e => e.message).join("; "));
+                  }
+
+                  const moreConn = moreJson?.data?.metafieldDefinition?.constraints?.values;
+                  if (!moreConn || !Array.isArray(moreConn.nodes) || typeof moreConn.pageInfo?.hasNextPage !== "boolean") {
+                    throw new Error(`Malformed paginated constraint values response for ${fullKey}.`);
+                  }
+
+                  for (const vNode of moreConn.nodes) {
+                    if (typeof vNode?.value === "string" && vNode.value.trim() !== "") {
+                      constraintValues.push(vNode.value.trim());
+                    }
+                  }
+
+                  cPageInfo = moreConn.pageInfo;
+                } catch (cErr) {
+                  constraintsComplete = false;
+                  defsReadComplete = false;
+                  constraintError = `Constraint value pagination failed for ${fullKey}: ${cErr.message}`;
+                  errors.push(constraintError);
+                  break;
+                }
+              }
+
+              if (cPageInfo.hasNextPage && !constraintError) {
+                constraintsComplete = false;
+                defsReadComplete = false;
+                constraintContinuation = {
+                  hasNextPage: true,
+                  endCursor: cPageInfo.endCursor,
+                  pagesFetched: cPagesFetched
+                };
+                constraintError = `Constraint values pagination for ${fullKey} exceeded bounded limit (${MAX_CONSTRAINT_PAGES} pages).`;
+                errors.push(constraintError);
+              }
+            }
+          }
+        }
+
+        const typeName = node.type && typeof node.type === "object" ? node.type.name : node.type;
+        defs[fullKey] = {
+          id: node.id || null,
+          name: node.name || null,
+          namespace: node.namespace,
+          key: node.key,
+          type: typeName || null,
+          requiredDefinitionId: validation?.value || null,
+          restrictedMetaobjectDefinitionId: validation?.value || null,
+          validations: node.validations || [],
+          constraints: {
+            hasConstraints: Boolean(constraintKey !== null || constraintValues.length > 0),
+            key: constraintKey,
+            values: constraintValues,
+            isComplete: constraintsComplete,
+            continuation: constraintContinuation,
+            error: constraintError
+          }
+        };
+      }
+
+      defPageInfo = defConn.pageInfo;
+    }
+
+    if (defPageInfo.hasNextPage) {
+      defsReadComplete = false;
+      errors.push(`Metafield definitions pagination exceeded bounded limit (${MAX_DEF_PAGES} pages). endCursor: ${defPageInfo.endCursor}`);
+    }
+  } catch (err) {
+    defsReadComplete = false;
+    errors.push(`Failed reading live PRODUCT metafield definitions: ${err.message}`);
+  }
+
+  return {
+    defs,
+    defsReadComplete,
+    errors
+  };
+}
+
+function evaluateStandardizedCategoryEligibility({
+  destination,
+  liveDef,
+  defsReadComplete,
+  productCategory,
+  productCategoryReadComplete
+}) {
+  const catId = productCategory?.id || null;
+  const catFullName = productCategory?.fullName || null;
+  const normalizedProductCategoryCode = normalizeTaxonomyCategoryCode(catId);
+
+  if (!defsReadComplete || !productCategoryReadComplete) {
+    return {
+      destination,
+      isComplete: false,
+      isEligible: false,
+      status: "incomplete",
+      productCategory: productCategory || null,
+      normalizedProductCategoryCode: normalizedProductCategoryCode || null,
+      constraintKey: liveDef?.constraints?.key || null,
+      permittedCategoryValues: liveDef?.constraints?.values || [],
+      reason: "Prerequisite product category or PRODUCT metafieldDefinition read did not complete."
+    };
+  }
+
+  if (!liveDef) {
+    return {
+      destination,
+      isComplete: true,
+      isEligible: false,
+      status: "missing_definition",
+      productCategory: productCategory || null,
+      normalizedProductCategoryCode: normalizedProductCategoryCode || null,
+      constraintKey: null,
+      permittedCategoryValues: [],
+      reason: `Missing live PRODUCT metafield definition for ${destination}.`
+    };
+  }
+
+  const constraintInfo = liveDef.constraints;
+  if (!constraintInfo || constraintInfo.isComplete !== true || constraintInfo.error) {
+    return {
+      destination,
+      isComplete: false,
+      isEligible: false,
+      status: "incomplete_constraints",
+      productCategory: productCategory || null,
+      normalizedProductCategoryCode: normalizedProductCategoryCode || null,
+      constraintKey: constraintInfo?.key || null,
+      permittedCategoryValues: constraintInfo?.values || [],
+      continuation: constraintInfo?.continuation || null,
+      reason: constraintInfo?.error || `Incomplete constraint enumeration on ${destination}.`
+    };
+  }
+
+  const permittedValues = Array.isArray(constraintInfo.values) ? constraintInfo.values : [];
+  const hasCategoryConstraint = Boolean(constraintInfo.hasConstraints || constraintInfo.key || permittedValues.length > 0);
+
+  if (!hasCategoryConstraint) {
+    return {
+      destination,
+      isComplete: true,
+      isEligible: true,
+      status: "unconstrained_eligible",
+      productCategory: productCategory || null,
+      normalizedProductCategoryCode: normalizedProductCategoryCode || null,
+      constraintKey: null,
+      permittedCategoryValues: [],
+      reason: `No owner-subtype/category constraints restricted on ${destination}.`
+    };
+  }
+
+  if (!catId || !normalizedProductCategoryCode) {
+    return {
+      destination,
+      isComplete: true,
+      isEligible: false,
+      status: "missing_product_category",
+      productCategory: productCategory || null,
+      normalizedProductCategoryCode: null,
+      constraintKey: constraintInfo.key || "category",
+      permittedCategoryValues: permittedValues,
+      reason: `Product has no assigned taxonomy category, but ${destination} requires category constraint (${constraintInfo.key || "category"}: [${permittedValues.join(", ")}]).`
+    };
+  }
+
+  if (permittedValues.length === 0) {
+    return {
+      destination,
+      isComplete: true,
+      isEligible: false,
+      status: "empty_constraint_values",
+      productCategory: productCategory || null,
+      normalizedProductCategoryCode,
+      constraintKey: constraintInfo.key || "category",
+      permittedCategoryValues: [],
+      reason: `Metafield definition ${destination} declares constraint key "${constraintInfo.key}" with zero permitted values.`
+    };
+  }
+
+  const matchedConstraintVal = permittedValues.find(val => doesCategoryMatchConstraintValue(catId, val)) || null;
+
+  if (!matchedConstraintVal) {
+    const catDesc = catFullName ? `${catFullName} (${catId})` : catId;
+    return {
+      destination,
+      isComplete: true,
+      isEligible: false,
+      status: "category_ineligible",
+      productCategory: productCategory || null,
+      normalizedProductCategoryCode,
+      constraintKey: constraintInfo.key || "category",
+      permittedCategoryValues: permittedValues,
+      matchedConstraintValue: null,
+      reason: `Category constraint mismatch on ${destination}: product category "${catDesc}" is not permitted by definition constraints [${permittedValues.join(", ")}].`
+    };
+  }
+
+  return {
+    destination,
+    isComplete: true,
+    isEligible: true,
+    status: "eligible",
+    productCategory: productCategory || null,
+    normalizedProductCategoryCode,
+    constraintKey: constraintInfo.key || "category",
+    permittedCategoryValues: permittedValues,
+    matchedConstraintValue: matchedConstraintVal,
+    reason: `Product category ${catFullName ? `"${catFullName}" (${catId})` : catId} satisfies ${destination} constraint (${matchedConstraintVal}).`
+  };
+}
+
+function parseIndexedMutationFieldIndex(fieldProp, rootFieldName) {
+  if (Array.isArray(fieldProp)) {
+    const rootIdx = fieldProp.findIndex(part => String(part) === rootFieldName);
+    if (rootIdx !== -1 && fieldProp.length > rootIdx + 1) {
+      const parsed = Number.parseInt(String(fieldProp[rootIdx + 1]), 10);
+      if (Number.isInteger(parsed) && parsed >= 0) return parsed;
+    }
+    if (fieldProp.length >= 2 && String(fieldProp[0]) === "input") {
+      const parsed = Number.parseInt(String(fieldProp[1]), 10);
+      if (Number.isInteger(parsed) && parsed >= 0) return parsed;
+    }
+  } else if (typeof fieldProp === "string") {
+    const trimmed = fieldProp.trim();
+    const regex = new RegExp(`(?:^|\\.|\\[)${rootFieldName}(?:\\.|\\[)(\\d+)(?:\\]|\\.|$)`);
+    const match = trimmed.match(regex);
+    if (match && match[1] !== undefined) {
+      const parsed = Number.parseInt(match[1], 10);
+      if (Number.isInteger(parsed) && parsed >= 0) return parsed;
+    }
+  }
+  return null;
+}
+
+function attachChunkDestinationToUserErrors(userErrors, chunkItems, rootFieldName = "metafields") {
+  if (!Array.isArray(userErrors)) return [];
+  return userErrors.map(err => {
+    if (!err || typeof err !== "object") return err;
+    const idx = parseIndexedMutationFieldIndex(err.field, rootFieldName);
+    const targetItem = idx !== null && Array.isArray(chunkItems) ? chunkItems[idx] : null;
+    if (targetItem && targetItem.namespace && targetItem.key) {
+      const destination = `${targetItem.namespace}.${targetItem.key}`;
+      return {
+        ...err,
+        destination,
+        namespace: targetItem.namespace,
+        key: targetItem.key
+      };
+    }
+    return { ...err };
+  });
+}
+
 export const action = async ({ request }) => {
   try {
     const { admin } = await authenticate.admin(request);
@@ -247,6 +635,7 @@ export const action = async ({ request }) => {
           query getProduct($id: ID!) {
             product(id: $id) {
               id title descriptionHtml seo { title description }
+              category { id fullName }
               metafields(first: 250) { edges { node { namespace key value } } }
               variants(first: 250) {
                 pageInfo { hasNextPage endCursor }
@@ -350,8 +739,13 @@ export const action = async ({ request }) => {
       const uniqueVariants = Array.from(new Map(allVariants.map(e => [e.node.id, e])).values());
       const uniqueMedia = Array.from(new Map(allMedia.map(e => [e.node.id, e])).values());
 
+      const productCategory = product.category
+        ? { id: product.category.id || null, fullName: product.category.fullName || null }
+        : null;
+
       const nativeTargets = {
           productId: product.id, productTitle: product.title, descriptionHtml: product.descriptionHtml, seo: product.seo,
+          category: productCategory,
           isComplete,
           loadError,
           variants: {
@@ -420,7 +814,7 @@ export const action = async ({ request }) => {
          intent: "loadProductData",
          success: true,
          productId: product.id, productTitle: product.title, descriptionHtml: product.descriptionHtml, seo: product.seo,
-         productTitle: product.title,
+         productCategory,
          currentMetafields,
          canonicalFields,
          legacyFields,
@@ -442,7 +836,8 @@ export const action = async ({ request }) => {
           isComplete: false,
           errors: ["Invalid or missing pieceId: exact product GID (gid://shopify/Product/...) is required."],
           resolutions: {},
-          currentReferenceLists: {}
+          currentReferenceLists: {},
+          categoryEligibility: {}
         });
       }
 
@@ -454,7 +849,8 @@ export const action = async ({ request }) => {
           isComplete: false,
           errors: ["Missing standardized_candidates JSON payload."],
           resolutions: {},
-          currentReferenceLists: {}
+          currentReferenceLists: {},
+          categoryEligibility: {}
         });
       }
 
@@ -469,7 +865,8 @@ export const action = async ({ request }) => {
           isComplete: false,
           errors: [`Malformed standardized_candidates JSON: ${err.message}`],
           resolutions: {},
-          currentReferenceLists: {}
+          currentReferenceLists: {},
+          categoryEligibility: {}
         });
       }
 
@@ -481,7 +878,8 @@ export const action = async ({ request }) => {
           isComplete: false,
           errors: ["standardized_candidates must be a non-null JSON object."],
           resolutions: {},
-          currentReferenceLists: {}
+          currentReferenceLists: {},
+          categoryEligibility: {}
         });
       }
 
@@ -533,15 +931,18 @@ export const action = async ({ request }) => {
           isComplete: false,
           errors: inputValidationErrors,
           resolutions: {},
-          currentReferenceLists: {}
+          currentReferenceLists: {},
+          categoryEligibility: {}
         });
       }
 
       const topErrors = [];
       let overallComplete = true;
 
-      // 1. Read exact product's current assignments (paginated metafield read)
+      // 1. Read exact product's category and current assignments (paginated metafield read)
       const productShopifyMetafields = {};
+      let productCategory = null;
+      let productCategoryReadComplete = false;
       let productMetafieldsReadComplete = false;
       let mfPageInfo = { hasNextPage: true, endCursor: null };
       let mfPagesFetched = 0;
@@ -554,6 +955,7 @@ export const action = async ({ request }) => {
             query getProductStandardizedMetafields($id: ID!, $cursor: String) {
               product(id: $id) {
                 id
+                category { id fullName }
                 metafields(first: 250, after: $cursor) {
                   pageInfo { hasNextPage endCursor }
                   edges {
@@ -583,8 +985,16 @@ export const action = async ({ request }) => {
               isComplete: false,
               errors: [`Product not found or ID mismatch for ${pieceId}.`],
               resolutions: {},
-              currentReferenceLists: {}
+              currentReferenceLists: {},
+              categoryEligibility: {}
             });
+          }
+
+          if (mfPagesFetched === 1) {
+            productCategory = productNode.category
+              ? { id: productNode.category.id || null, fullName: productNode.category.fullName || null }
+              : null;
+            productCategoryReadComplete = true;
           }
 
           const mfConn = productNode.metafields;
@@ -596,7 +1006,7 @@ export const action = async ({ request }) => {
             const node = edge?.node;
             if (!node) continue;
             const fullKey = `${node.namespace}.${node.key}`;
-            if (node.namespace === "shopify" && ALLOWED_STANDARDIZED_CANDIDATE_KEYS.includes(node.key)) {
+            if (node.namespace === "shopify" && CATALOG_STANDARDIZED_META_KEYS.has(node.key)) {
               productShopifyMetafields[fullKey] = {
                 id: node.id,
                 namespace: node.namespace,
@@ -618,78 +1028,36 @@ export const action = async ({ request }) => {
         }
       } catch (err) {
         overallComplete = false;
-        topErrors.push(`Failed reading product metafields: ${err.message}`);
+        topErrors.push(`Failed reading product metafields and category: ${err.message}`);
       }
 
-      // 2. Read live PRODUCT metafield definitions for the six shopify destinations
-      const liveShopifyDefs = {};
-      let defsReadComplete = false;
-      let defPageInfo = { hasNextPage: true, endCursor: null };
-      let defPagesFetched = 0;
-      const MAX_DEF_PAGES = 10;
-
-      try {
-        while (defPageInfo.hasNextPage && defPagesFetched < MAX_DEF_PAGES) {
-          defPagesFetched++;
-          const defRes = await admin.graphql(`
-            query getProductMetafieldDefs($cursor: String) {
-              metafieldDefinitions(first: 250, ownerType: PRODUCT, after: $cursor) {
-                pageInfo { hasNextPage endCursor }
-                edges {
-                  node {
-                    id
-                    name
-                    namespace
-                    key
-                    type { name }
-                    validations { name value }
-                  }
-                }
-              }
-            }
-          `, { variables: { cursor: defPageInfo.endCursor } });
-
-          const defJson = await defRes.json();
-          if (defJson.errors?.length) {
-            throw new Error(defJson.errors.map(e => e.message).join("; "));
-          }
-          const defConn = defJson?.data?.metafieldDefinitions;
-          if (!defConn || !Array.isArray(defConn.edges) || typeof defConn.pageInfo?.hasNextPage !== "boolean") {
-            throw new Error("Malformed metafieldDefinitions connection response.");
-          }
-
-          for (const edge of defConn.edges) {
-            const node = edge?.node;
-            if (!node) continue;
-            if (node.namespace === "shopify" && ALLOWED_STANDARDIZED_CANDIDATE_KEYS.includes(node.key)) {
-              const fullKey = `shopify.${node.key}`;
-              const validation = Array.isArray(node.validations)
-                ? node.validations.find(v => v.name === "metaobject_definition_id")
-                : null;
-              liveShopifyDefs[fullKey] = {
-                id: node.id,
-                name: node.name || null,
-                namespace: node.namespace,
-                key: node.key,
-                type: node.type?.name || null,
-                restrictedMetaobjectDefinitionId: validation?.value || null,
-                validations: node.validations || []
-              };
-            }
-          }
-
-          defPageInfo = defConn.pageInfo;
-        }
-
-        if (defPageInfo.hasNextPage) {
-          overallComplete = false;
-          topErrors.push(`Metafield definitions pagination exceeded bounded limit (${MAX_DEF_PAGES} pages). endCursor: ${defPageInfo.endCursor}`);
-        } else {
-          defsReadComplete = true;
-        }
-      } catch (err) {
+      // 2. Read live PRODUCT metafield definitions + paginated constraints
+      const defReadResult = await fetchProductMetafieldDefinitionsWithConstraints(admin);
+      const liveDefs = defReadResult.defs;
+      const defsReadComplete = defReadResult.defsReadComplete;
+      if (!defsReadComplete) {
         overallComplete = false;
-        topErrors.push(`Failed reading live PRODUCT metafield definitions: ${err.message}`);
+      }
+      if (defReadResult.errors.length > 0) {
+        topErrors.push(...defReadResult.errors);
+      }
+
+      // Evaluate category applicability for all 21 standardized destinations
+      const categoryEligibility = {};
+      for (const stdMetaKey of ALL_STANDARDIZED_META_KEYS) {
+        const dest = `shopify.${stdMetaKey}`;
+        const liveDef = liveDefs[dest] || null;
+        const elig = evaluateStandardizedCategoryEligibility({
+          destination: dest,
+          liveDef,
+          defsReadComplete,
+          productCategory,
+          productCategoryReadComplete
+        });
+        categoryEligibility[dest] = elig;
+        if (!elig.isComplete) {
+          overallComplete = false;
+        }
       }
 
       // Cache for resolved metaobject definitions and their enumerated entries
@@ -831,7 +1199,14 @@ export const action = async ({ request }) => {
         const destination = `shopify.${attrKey}`;
         const storedMf = productShopifyMetafields[destination] || null;
         const parsedStored = parseStoredReferenceList(storedMf?.value);
-        const liveDef = liveShopifyDefs[destination] || null;
+        const liveDef = liveDefs[destination] || null;
+        const catElig = categoryEligibility[destination] || evaluateStandardizedCategoryEligibility({
+          destination,
+          liveDef,
+          defsReadComplete,
+          productCategory,
+          productCategoryReadComplete
+        });
 
         currentReferenceLists[destination] = {
           destination,
@@ -851,16 +1226,18 @@ export const action = async ({ request }) => {
 
         const fieldErrors = [];
         let fieldStatus = "incomplete";
+        let entryMatchStatus = "incomplete";
         let fieldComplete = false;
         let resolvedMetaobjectDefinition = null;
         let enumeratedEntries = [];
         let continuation = null;
         const labelResults = [];
 
-        if (!defsReadComplete || !productMetafieldsReadComplete) {
+        if (!defsReadComplete || !productMetafieldsReadComplete || !productCategoryReadComplete) {
           fieldStatus = "incomplete";
+          entryMatchStatus = "incomplete";
           fieldComplete = false;
-          fieldErrors.push("Initial product metafields or PRODUCT metafieldDefinitions read did not complete.");
+          fieldErrors.push("Initial product metafields, product category, or PRODUCT metafieldDefinitions read did not complete.");
           for (const lbl of candidateInput.labels) {
             labelResults.push({
               label: lbl,
@@ -871,6 +1248,7 @@ export const action = async ({ request }) => {
           }
         } else if (!liveDef) {
           fieldStatus = "blocked";
+          entryMatchStatus = "blocked";
           fieldComplete = true;
           fieldErrors.push(`Missing live PRODUCT metafield definition for ${destination}.`);
           for (const lbl of candidateInput.labels) {
@@ -883,6 +1261,7 @@ export const action = async ({ request }) => {
           }
         } else if (liveDef.type !== "list.metaobject_reference") {
           fieldStatus = "blocked";
+          entryMatchStatus = "blocked";
           fieldComplete = true;
           fieldErrors.push(`Wrong live type for ${destination}: expected "list.metaobject_reference", got "${liveDef.type || "none"}".`);
           for (const lbl of candidateInput.labels) {
@@ -898,6 +1277,7 @@ export const action = async ({ request }) => {
           !/^gid:\/\/shopify\/MetaobjectDefinition\/\d+$/.test(liveDef.restrictedMetaobjectDefinitionId)
         ) {
           fieldStatus = "blocked";
+          entryMatchStatus = "blocked";
           fieldComplete = true;
           fieldErrors.push(`Missing or invalid metaobject_definition_id restriction on ${destination}.`);
           for (const lbl of candidateInput.labels) {
@@ -909,13 +1289,15 @@ export const action = async ({ request }) => {
             });
           }
         } else {
+          // Perform entry matching distinctly from category eligibility so candidate evidence and entry matches remain visible
           const enumState = await resolveAndEnumerateMetaobjectDef(liveDef.restrictedMetaobjectDefinitionId);
           resolvedMetaobjectDefinition = enumState.definition;
           enumeratedEntries = enumState.entries;
-          continuation = enumState.continuation;
+          continuation = enumState.continuation || catElig.continuation || null;
 
           if (!enumState.definition) {
             fieldStatus = "blocked";
+            entryMatchStatus = "blocked";
             fieldComplete = true;
             fieldErrors.push(enumState.error || `Restricted metaobject definition ${liveDef.restrictedMetaobjectDefinitionId} could not be resolved.`);
             for (const lbl of candidateInput.labels) {
@@ -928,6 +1310,7 @@ export const action = async ({ request }) => {
             }
           } else if (!enumState.isComplete) {
             fieldStatus = "incomplete";
+            entryMatchStatus = "incomplete";
             fieldComplete = false;
             overallComplete = false;
             if (enumState.error) fieldErrors.push(enumState.error);
@@ -951,7 +1334,6 @@ export const action = async ({ request }) => {
               });
             }
           } else {
-            fieldComplete = true;
             for (const lbl of candidateInput.labels) {
               const normTarget = normalizeCandidateMatchKey(lbl);
               const exactMatches = enumeratedEntries.filter(entry =>
@@ -987,18 +1369,35 @@ export const action = async ({ request }) => {
 
             const statuses = labelResults.map(r => r.status);
             if (statuses.every(s => s === "matched")) {
-              fieldStatus = "matched";
+              entryMatchStatus = "matched";
             } else if (statuses.some(s => s === "ambiguous")) {
-              fieldStatus = "ambiguous";
+              entryMatchStatus = "ambiguous";
             } else if (statuses.some(s => s === "missing_entry")) {
-              fieldStatus = "missing_entry";
+              entryMatchStatus = "missing_entry";
             } else {
+              entryMatchStatus = "incomplete";
+            }
+
+            // Category eligibility gate: an exact reference match is not sufficient to unlock saving
+            if (!catElig.isComplete) {
               fieldStatus = "incomplete";
+              fieldComplete = false;
+              overallComplete = false;
+              fieldErrors.push(catElig.reason);
+            } else if (!catElig.isEligible) {
+              fieldStatus = "category_ineligible";
+              fieldComplete = true;
+              fieldErrors.push(catElig.reason);
+            } else {
+              fieldStatus = entryMatchStatus;
+              fieldComplete = true;
             }
           }
         }
 
-        if (fieldErrors.length > 0) {
+        // Preserve per-field errors on resolutions[destination].errors so ineligible/errored fields remain blocked,
+        // while keeping topErrors strictly for read/enumeration failures so eligible fields on the same product can still unlock.
+        if (!fieldComplete && fieldErrors.length > 0) {
           topErrors.push(...fieldErrors.map(e => `[${destination}] ${e}`));
         }
 
@@ -1006,7 +1405,10 @@ export const action = async ({ request }) => {
           destination,
           attributeKey: attrKey,
           status: fieldStatus,
+          entryMatchStatus,
           isComplete: fieldComplete,
+          isCategoryEligible: catElig.isEligible === true,
+          categoryEligibility: catElig,
           candidate: {
             labels: candidateInput.labels,
             evidence: candidateInput.evidence
@@ -1019,7 +1421,8 @@ export const action = async ({ request }) => {
                 namespace: liveDef.namespace,
                 key: liveDef.key,
                 type: liveDef.type,
-                restrictedMetaobjectDefinitionId: liveDef.restrictedMetaobjectDefinitionId
+                restrictedMetaobjectDefinitionId: liveDef.restrictedMetaobjectDefinitionId,
+                constraints: liveDef.constraints
               }
             : null,
           restrictedMetaobjectDefinition: resolvedMetaobjectDefinition,
@@ -1041,6 +1444,8 @@ export const action = async ({ request }) => {
         pieceId,
         readOnly: true,
         isComplete: overallComplete,
+        productCategory,
+        categoryEligibility,
         resolutions,
         currentReferenceLists,
         errors: topErrors
@@ -1063,33 +1468,47 @@ export const action = async ({ request }) => {
       
       const productGid = pieceId.startsWith("gid://") ? pieceId : `gid://shopify/Product/${pieceId.split("/").pop()}`;
 
-      const lookupResponse = await admin.graphql(`
-        query getProductAndMetafields($id: ID!) {
-          product(id: $id) { 
-            title 
-            descriptionHtml 
-            seo { title description }
-            variants(first: 2) {
-              pageInfo { hasNextPage }
-              edges { node { id price } }
-            }
-            media(first: 50) {
-              edges {
-                node {
-                  ... on MediaImage { id alt }
+      let lookupData = null;
+      let productLookupComplete = false;
+      try {
+        const lookupResponse = await admin.graphql(`
+          query getProductAndMetafields($id: ID!) {
+            product(id: $id) { 
+              title 
+              descriptionHtml 
+              seo { title description }
+              category { id fullName }
+              variants(first: 2) {
+                pageInfo { hasNextPage }
+                edges { node { id price } }
+              }
+              media(first: 50) {
+                edges {
+                  node {
+                    ... on MediaImage { id alt }
+                  }
                 }
               }
+              metafields(first: 250) { edges { node { namespace key value type id } } } 
             }
-            metafields(first: 250) { edges { node { namespace key value type id } } } 
           }
+        `, { variables: { id: productGid } });
+        lookupData = await lookupResponse.json();
+        if (!lookupData?.errors?.length && lookupData?.data?.product) {
+          productLookupComplete = true;
         }
-      `, { variables: { id: productGid } });
-      
-      const lookupData = await lookupResponse.json();
-      const currentNativeTitle = lookupData?.data?.product?.title || "";
-      const currentNativeBodyHtml = lookupData?.data?.product?.descriptionHtml || "";
-      const currentNativeSeoTitle = lookupData?.data?.product?.seo?.title || "";
-      const currentMetaList = lookupData?.data?.product?.metafields?.edges || [];
+      } catch (lookupErr) {
+        productLookupComplete = false;
+      }
+
+      const productNode = lookupData?.data?.product || null;
+      const productCategory = productNode?.category
+        ? { id: productNode.category.id || null, fullName: productNode.category.fullName || null }
+        : null;
+      const currentNativeTitle = productNode?.title || "";
+      const currentNativeBodyHtml = productNode?.descriptionHtml || "";
+      const currentNativeSeoTitle = productNode?.seo?.title || "";
+      const currentMetaList = productNode?.metafields?.edges || [];
       
       const currentMetafields = {};
       const currentMetafieldsTypes = {};
@@ -1099,41 +1518,10 @@ export const action = async ({ request }) => {
         currentMetafieldsTypes[fullKey] = e.node.type; 
       });
 
-      // Fetch dynamic definitions for true types
-      let hasNextPage = true;
-      let cursor = null;
-      const defs = {};
-
-      try {
-          while (hasNextPage) {
-              const defQuery = `#graphql
-                query getDefs($cursor: String) {
-                  metafieldDefinitions(first: 250, ownerType: PRODUCT, after: $cursor) {
-                    pageInfo { hasNextPage endCursor }
-                    edges { node { id namespace key type { name } validations { name value } } }
-                  }
-                }
-              `;
-              const defRes = await admin.graphql(defQuery, cursor ? { variables: { cursor } } : {});
-              const defJson = await defRes.json();
-              const defData = defJson?.data?.metafieldDefinitions;
-              
-              defData?.edges?.forEach(e => {
-                  const t = e.node.type;
-                  const fullKey = `${e.node.namespace}.${e.node.key}`;
-                  const validation = e.node.validations?.find(v => v.name === "metaobject_definition_id");
-                  defs[fullKey] = {
-                      type: (t && typeof t === 'object' && t.name) ? t.name : t,
-                      requiredDefinitionId: validation ? validation.value : null
-                  };
-              });
-              
-              hasNextPage = defData?.pageInfo?.hasNextPage;
-              cursor = defData?.pageInfo?.endCursor;
-          }
-      } catch (e) {
-          console.error("Failed to load metafield definitions:", e);
-      }
+      // Fetch dynamic definitions + paginated constraints for true types and live category eligibility
+      const defReadResult = await fetchProductMetafieldDefinitionsWithConstraints(admin);
+      const defs = defReadResult.defs;
+      const defsReadComplete = defReadResult.defsReadComplete;
 
       const proposedChanges = {};
       const setToShopify = [];
@@ -1401,6 +1789,21 @@ export const action = async ({ request }) => {
             continue;
         }
 
+        // Live category / owner-subtype constraint preflight check for standardized destinations
+        if (ns === "shopify" || (def?.constraints && (def.constraints.hasConstraints || !def.constraints.isComplete))) {
+            const catElig = evaluateStandardizedCategoryEligibility({
+                destination: fullKey,
+                liveDef: def,
+                defsReadComplete,
+                productCategory,
+                productCategoryReadComplete: productLookupComplete
+            });
+            if (!catElig.isComplete || !catElig.isEligible) {
+                blockedFields[fullKey] = catElig.reason;
+                continue;
+            }
+        }
+
         let resolvedValue = normalizeMetafieldValue(key, valStr);
         if (key === "generated_description") {
             resolvedValue = sanitizeDescription(resolvedValue);
@@ -1625,7 +2028,9 @@ export const action = async ({ request }) => {
               { variables: { metafields: chunks[i] } }
             );
             const deleteJson = await deleteResponse.json();
-            if (deleteJson?.data?.metafieldsDelete?.userErrors?.length) allErrors.push(...deleteJson.data.metafieldsDelete.userErrors);
+            if (deleteJson?.data?.metafieldsDelete?.userErrors?.length) {
+              allErrors.push(...attachChunkDestinationToUserErrors(deleteJson.data.metafieldsDelete.userErrors, chunks[i], "metafields"));
+            }
           } catch (delErr) { allErrors.push({ message: `API Error on Delete: ${delErr.message}` }); }
         }
       }
@@ -1644,7 +2049,9 @@ export const action = async ({ request }) => {
               { variables: { metafields: chunks[i] } }
             );
             const setJson = await setResponse.json();
-            if (setJson?.data?.metafieldsSet?.userErrors?.length) allErrors.push(...setJson.data.metafieldsSet.userErrors);
+            if (setJson?.data?.metafieldsSet?.userErrors?.length) {
+              allErrors.push(...attachChunkDestinationToUserErrors(setJson.data.metafieldsSet.userErrors, chunks[i], "metafields"));
+            }
           } catch (setErr) { allErrors.push({ message: `API Error on Set: ${setErr.message}` }); }
         }
       }
@@ -1744,17 +2151,28 @@ export const action = async ({ request }) => {
                const imgData = imgJson?.data?.productUpdateMedia;
                
                if (imgData?.userErrors?.length) {
-                  allErrors.push(...imgData.userErrors);
+                  allErrors.push(...imgData.userErrors.map(uErr => ({
+                    ...uErr,
+                    destination: `native_image_alts_${imgInput.id}`
+                  })));
                } else {
                   imageAltUpdatesSucceeded++;
                }
             } catch (imgErr) {
-               allErrors.push({ message: `API Error on Image Alt Update for ${imgInput.id}: ${imgErr.message}` });
+               allErrors.push({
+                 destination: `native_image_alts_${imgInput.id}`,
+                 message: `API Error on Image Alt Update for ${imgInput.id}: ${imgErr.message}`
+               });
             }
          }
       }
 
       if (allErrors.length > 0) {
+         allErrors.forEach(errObj => {
+           if (errObj?.destination && !blockedFields[errObj.destination]) {
+             blockedFields[errObj.destination] = errObj.message || "Shopify write error.";
+           }
+         });
          return Response.json({ 
              intent: "executeRepairPlan", pieceId, success: false, status: "REPAIR_FAILED",
              errors: allErrors, currentMetafields, repairPlan, proposedChanges, fieldsUpdated: 0, legacyKeysRemoved: 0,
@@ -1775,6 +2193,7 @@ export const action = async ({ request }) => {
             title 
             descriptionHtml 
             seo { title description }
+            category { id fullName }
             media(first: 50) { edges { node { ... on MediaImage { id alt } } } }
             metafields(first: 250) { edges { node { namespace key value } } } 
           }
@@ -1847,6 +2266,12 @@ export const action = async ({ request }) => {
               description: actualSeoDescription
             }
           : undefined,
+        category: hasProductReadBack && readBackProductNode.category
+          ? {
+              id: readBackProductNode.category.id || null,
+              fullName: readBackProductNode.category.fullName || null
+            }
+          : productCategory,
         media: hasMediaReadBack
           ? {
               edges: actualMedia.map(e => ({
@@ -2062,6 +2487,7 @@ export const action = async ({ request }) => {
         message: diagnosticMsg,
         currentMetafields: hasMetafieldsReadBack ? newMetafields : currentMetafields,
         nativeTargets: readBackNativeTargets,
+        productCategory: readBackNativeTargets.category || productCategory,
         repairPlan, proposedChanges, conflicts, blockedFields, skippedKeys, unsupportedKeys, unchanged, attemptedDestinations, verifiedDestinations, unresolvedChanges, missingFields: [], unknownFields: [], readBackVerified,
         variantTarget: priceVariantGid || null
       });

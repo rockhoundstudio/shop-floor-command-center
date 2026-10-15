@@ -264,6 +264,14 @@ export function StandardizedSectionBanner({
                     <strong>isComplete:</strong> {String(validRefMatchResult.isComplete)} |{" "}
                     <strong>Matched At:</strong> {new Date(validRefMatchResult.matchedAt).toLocaleTimeString()}
                   </Text>
+                  {validRefMatchResult.productCategory && (
+                    <Text as="p" variant="bodySm">
+                      <strong>Product Taxonomy Category:</strong>{" "}
+                      {validRefMatchResult.productCategory.fullName
+                        ? `${validRefMatchResult.productCategory.fullName} (${validRefMatchResult.productCategory.id || "No ID"})`
+                        : (validRefMatchResult.productCategory.id || "Unassigned")}
+                    </Text>
+                  )}
                   {validRefMatchResult.errors.length > 0 && (
                     <BlockStack gap="050">
                       <Text as="p" variant="bodySm" tone="critical" fontWeight="bold">
@@ -329,8 +337,8 @@ export function StandardizedProposalControl({
         helpText={shortStatusHelp}
       />
 
-      {/* Verified Entry Selector Controls (Strictly restricted to returned verified entries) */}
-      {!meta.isPendingReadOnly && meta.stdEvaluation?.isTechnicallyEligible && verifiedEntriesArray.length > 0 && (
+      {/* Verified Entry Selector Controls (Strictly restricted to returned verified entries AND category-eligible destinations) */}
+      {!meta.isPendingReadOnly && meta.stdEvaluation?.isTechnicallyEligible && meta.stdEvaluation?.isCategoryEligible === true && verifiedEntriesArray.length > 0 && (
         <div
           style={{
             padding: "12px",
@@ -521,11 +529,74 @@ export function StandardizedRowDiagnostics({
     productMatchStatusRecord
   });
 
+  const fullDestinationKey = `shopify.${candidateMetaKey}`;
   const fieldResolution =
     validRefMatchResult
-      ? validRefMatchResult.resolutions?.[`shopify.${candidateMetaKey}`] || null
+      ? validRefMatchResult.resolutions?.[fullDestinationKey] || null
       : null;
-  const fieldResolutionErrors = fieldResolution ? formatErrorsList(fieldResolution.errors || fieldResolution.error) : [];
+
+  const catEligObj =
+    fieldResolution?.categoryEligibility ??
+    validRefMatchResult?.categoryEligibility?.[fullDestinationKey] ??
+    validRefMatchResult?.categoryEligibility?.[candidateMetaKey] ??
+    meta.stdEvaluation?.categoryEligibility ??
+    meta.categoryEligibility ??
+    null;
+
+  const isCatCheckComplete = catEligObj ? catEligObj.isComplete === true : false;
+  const isCatEligible = Boolean(
+    isCatCheckComplete &&
+      catEligObj?.isEligible === true &&
+      fieldResolution?.isCategoryEligible !== false &&
+      fieldResolution?.status !== "category_ineligible"
+  );
+  const isConfirmedCatIneligible = Boolean(
+    (isCatCheckComplete && catEligObj?.isEligible === false) ||
+      fieldResolution?.isCategoryEligible === false ||
+      fieldResolution?.status === "category_ineligible" ||
+      catEligObj?.status === "category_ineligible" ||
+      catEligObj?.status === "missing_product_category" ||
+      catEligObj?.status === "empty_constraint_values"
+  );
+
+  const rawFieldErrors = fieldResolution ? formatErrorsList(fieldResolution.errors || fieldResolution.error) : [];
+  const catReasonNormalized = typeof catEligObj?.reason === "string" ? catEligObj.reason.trim() : "";
+
+  // Separate actual read/backend errors from confirmed category-constraint mismatch notices
+  const actualReadErrors = rawFieldErrors.filter((errText) => {
+    if (!isConfirmedCatIneligible) return true;
+    const trimmed = errText.trim();
+    if (catReasonNormalized && trimmed === catReasonNormalized) return false;
+    if (/^Category constraint mismatch on /i.test(trimmed)) return false;
+    if (/^Product has no assigned taxonomy category/i.test(trimmed)) return false;
+    return true;
+  });
+
+  const entryMatchStatus =
+    typeof fieldResolution?.entryMatchStatus === "string" && fieldResolution.entryMatchStatus.trim() !== ""
+      ? fieldResolution.entryMatchStatus.trim()
+      : (typeof fieldResolution?.status === "string" && fieldResolution.status !== "category_ineligible"
+          ? fieldResolution.status
+          : "Not reported");
+
+  const labelEvaluationsList = Array.isArray(meta.stdEvaluation?.labelEvaluations)
+    ? meta.stdEvaluation.labelEvaluations
+    : [];
+  const allLabelsMatched =
+    labelEvaluationsList.length > 0 &&
+    labelEvaluationsList.every(
+      (ev) =>
+        Boolean(ev.selectedEntry) &&
+        (ev.status === "unique" || ev.status === "equivalent_existing" || ev.status === "equivalent_lowest_new")
+    );
+  const hasEntryMatchError =
+    entryMatchStatus === "missing_entry" ||
+    entryMatchStatus === "ambiguous" ||
+    entryMatchStatus === "blocked" ||
+    labelEvaluationsList.some(
+      (ev) => ev.status === "missing_entry" || ev.status === "ambiguous_blocked" || ev.status === "blocked"
+    );
+
   const availableEntriesList = Array.isArray(fieldResolution?.availableEntries) ? fieldResolution.availableEntries : [];
   const formattedLabelResolutions =
     fieldResolution && fieldResolution.labelResolutions !== undefined && fieldResolution.labelResolutions !== null
@@ -541,6 +612,34 @@ export function StandardizedRowDiagnostics({
     Array.isArray(visionCandidateEntry.labels) &&
     visionCandidateEntry.labels.length > 0;
 
+  // Derive distinct Header Badge state (Never show green "Matched" unless BOTH reference matched AND category eligible)
+  let headerBadgeTone = derivedLifecycleTone;
+  let headerBadgeLabel = LIFECYCLE_BADGE_LABEL_MAP[derivedLifecycleState] || derivedLifecycleState;
+
+  if (fieldResolution || catEligObj) {
+    if (isConfirmedCatIneligible) {
+      headerBadgeTone = "critical";
+      headerBadgeLabel = "Category Ineligible";
+    } else if (!fieldResolution || fieldResolution.isComplete !== true || !isCatCheckComplete) {
+      headerBadgeTone = "warning";
+      headerBadgeLabel = !isCatCheckComplete ? "Eligibility Incomplete" : "Incomplete";
+    } else if (actualReadErrors.length > 0 || hasEntryMatchError) {
+      headerBadgeTone = "critical";
+      headerBadgeLabel =
+        entryMatchStatus === "missing_entry"
+          ? "Missing Entry"
+          : entryMatchStatus === "ambiguous"
+            ? "Ambiguous Match"
+            : "Blocked";
+    } else if (isCatEligible && (entryMatchStatus === "matched" || allLabelsMatched)) {
+      headerBadgeTone = "success";
+      headerBadgeLabel = "Matched & Category Eligible";
+    } else {
+      headerBadgeTone = "warning";
+      headerBadgeLabel = "Needs Review";
+    }
+  }
+
   let shortRowStatus = "";
   let shortRowTone = "subdued";
 
@@ -549,27 +648,54 @@ export function StandardizedRowDiagnostics({
       ? "Awaiting reference match response..."
       : "Submitting candidate for reference matching...";
     shortRowTone = "subdued";
-  } else if (fieldResolutionErrors.length > 0) {
-    shortRowStatus = fieldResolutionErrors[0];
+  } else if (isConfirmedCatIneligible) {
+    shortRowStatus =
+      meta.stdEvaluation?.blockReason ||
+      catReasonNormalized ||
+      `Blocked by product category constraint: ${fullDestinationKey} is not eligible for this product's category.`;
     shortRowTone = "critical";
+  } else if (actualReadErrors.length > 0) {
+    shortRowStatus = actualReadErrors[0];
+    shortRowTone = "critical";
+  } else if (fieldResolution && (!isCatCheckComplete || fieldResolution.isComplete !== true)) {
+    shortRowStatus =
+      meta.stdEvaluation?.blockReason ||
+      catReasonNormalized ||
+      "Incomplete reference or category eligibility check (blocked — not save-ready).";
+    shortRowTone = "caution";
   } else if (meta.isPendingReadOnly) {
     shortRowStatus = meta.stdEvaluation?.blockReason || "Run 'Match Reference Choices' to validate.";
-    shortRowTone = hasCandidateLabels ? "critical" : "subdued";
-  } else if (meta.proposalExists) {
-    shortRowStatus = `Verified proposal ready: ${displayPropVal}`;
+    shortRowTone = hasCandidateLabels ? (hasEntryMatchError ? "critical" : "caution") : "subdued";
+  } else if (meta.proposalExists && isCatEligible) {
+    shortRowStatus = `Verified & category-eligible proposal ready: ${displayPropVal}`;
     shortRowTone = "success";
   } else if (fieldResolution) {
     shortRowStatus =
-      fieldResolution.isComplete === true
-        ? "Reference read complete."
-        : "Incomplete enumeration (blocked — not save-ready).";
-    shortRowTone = fieldResolution.isComplete === true ? "subdued" : "caution";
+      fieldResolution.isComplete === true && isCatEligible
+        ? "Reference read and category eligibility verified."
+        : "Incomplete enumeration or eligibility check (blocked — not save-ready).";
+    shortRowTone = fieldResolution.isComplete === true && isCatEligible ? "subdued" : "caution";
   } else {
     shortRowStatus = hasCandidateLabels
       ? "Staged by Vision — click 'Match Reference Choices' above to validate."
       : "No Vision candidate staged for this attribute.";
     shortRowTone = "subdued";
   }
+
+  const productCategoryDisplay =
+    catEligObj?.productCategory
+      ? (catEligObj.productCategory.fullName
+          ? `${catEligObj.productCategory.fullName} (${catEligObj.productCategory.id || "No ID"})`
+          : (catEligObj.productCategory.id || "Unassigned"))
+      : (validRefMatchResult?.productCategory
+          ? (validRefMatchResult.productCategory.fullName
+              ? `${validRefMatchResult.productCategory.fullName} (${validRefMatchResult.productCategory.id || "No ID"})`
+              : (validRefMatchResult.productCategory.id || "Unassigned"))
+          : "Not reported");
+
+  const permittedCategoriesList = Array.isArray(catEligObj?.permittedCategoryValues)
+    ? catEligObj.permittedCategoryValues
+    : [];
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "10px", minWidth: 0, boxSizing: "border-box" }}>
@@ -592,15 +718,9 @@ export function StandardizedRowDiagnostics({
               <Text as="p" variant="headingSm" fontWeight="bold" style={{ color: "#1e3a8a" }}>
                 Vision Candidate ({candidateMetaKey})
               </Text>
-              {fieldResolution ? (
-                <Badge tone={fieldResolution.isComplete === true ? "success" : "warning"}>
-                  {fieldResolution.isComplete === true ? "Matched" : "Incomplete"}
-                </Badge>
-              ) : (
-                <Badge tone={derivedLifecycleTone}>
-                  {LIFECYCLE_BADGE_LABEL_MAP[derivedLifecycleState] || derivedLifecycleState}
-                </Badge>
-              )}
+              <Badge tone={headerBadgeTone}>
+                {headerBadgeLabel}
+              </Badge>
             </InlineStack>
 
             <Button
@@ -651,7 +771,7 @@ export function StandardizedRowDiagnostics({
           }}
         >
           <Text as="p" variant="headingSm" fontWeight="bold" style={{ marginBottom: "6px", color: "#0f172a" }}>
-            Reference Matching Diagnostics (shopify.{candidateMetaKey})
+            Reference Matching & Category Eligibility Diagnostics (shopify.{candidateMetaKey})
           </Text>
 
           {isPendingForCurrentProduct ? (
@@ -663,38 +783,102 @@ export function StandardizedRowDiagnostics({
                 </Badge>
               </Text>
               <Text as="p" variant="bodySm">
-                Matching reference choices against Shopify definitions...
+                Matching reference choices and category constraints against Shopify definitions...
               </Text>
             </BlockStack>
-          ) : fieldResolution ? (
+          ) : (fieldResolution || catEligObj) ? (
             <BlockStack gap="150">
+              {/* 1. Distinct Three-Way Diagnostic Header: Entry Matching vs Category Eligibility vs Read Completeness */}
               <Text as="p" variant="bodySm">
-                <strong>Backend Status:</strong>{" "}
-                <Badge tone={fieldResolution.isComplete === false ? "warning" : "info"}>
-                  {typeof fieldResolution.status === "string" && fieldResolution.status.trim() !== ""
-                    ? fieldResolution.status
-                    : "Reported"}
+                <strong>Reference Entry Match:</strong>{" "}
+                <Badge
+                  tone={
+                    entryMatchStatus === "matched" || allLabelsMatched
+                      ? "success"
+                      : hasEntryMatchError
+                        ? "critical"
+                        : "warning"
+                  }
+                >
+                  {entryMatchStatus}
                 </Badge>{" "}
-                | <strong>Completeness:</strong>{" "}
-                <Badge tone={fieldResolution.isComplete === true ? "success" : "warning"}>
-                  {fieldResolution.isComplete === true
+                | <strong>Category Eligibility:</strong>{" "}
+                <Badge
+                  tone={
+                    isConfirmedCatIneligible
+                      ? "critical"
+                      : isCatEligible
+                        ? "success"
+                        : "warning"
+                  }
+                >
+                  {isConfirmedCatIneligible
+                    ? "Category Ineligible (Blocked)"
+                    : isCatEligible
+                      ? (catEligObj?.status === "unconstrained_eligible" ? "Eligible (Unconstrained)" : "Eligible")
+                      : "Incomplete / Unverified"}
+                </Badge>{" "}
+                | <strong>Read Completeness:</strong>{" "}
+                <Badge
+                  tone={
+                    fieldResolution?.isComplete === true && isCatCheckComplete
+                      ? "success"
+                      : "warning"
+                  }
+                >
+                  {fieldResolution?.isComplete === true && isCatCheckComplete
                     ? "Complete"
                     : "Incomplete (Blocked / Not save-ready)"}
                 </Badge>
               </Text>
 
-              {fieldResolution.destination && (
+              {fieldResolution?.destination && (
                 <Text as="p" variant="bodySm">
                   <strong>Destination:</strong> {String(fieldResolution.destination)}
                 </Text>
               )}
 
-              {meta.stdEvaluation?.labelEvaluations?.length > 0 && (
+              {/* 2. Explicit Category Constraint Diagnostic Block (Not treated as a read error) */}
+              <div
+                style={{
+                  padding: "8px",
+                  backgroundColor: isConfirmedCatIneligible ? "#fef2f2" : isCatEligible ? "#f0fdf4" : "#fffbeb",
+                  border: `1px solid ${isConfirmedCatIneligible ? "#fecaca" : isCatEligible ? "#bbf7d0" : "#fde68a"}`,
+                  borderRadius: "6px"
+                }}
+              >
                 <BlockStack gap="050">
                   <Text as="p" variant="bodySm" fontWeight="bold">
-                    Resolution Evaluation:
+                    Category Constraint Evaluation:
                   </Text>
-                  {meta.stdEvaluation.labelEvaluations.map((ev, idx) => (
+                  <Text as="p" variant="bodySm">
+                    <strong>Product Category:</strong> {productCategoryDisplay}
+                  </Text>
+                  <Text as="p" variant="bodySm">
+                    <strong>Permitted Category Constraints:</strong>{" "}
+                    {permittedCategoriesList.length > 0
+                      ? permittedCategoriesList.join(", ")
+                      : (catEligObj?.status === "unconstrained_eligible" ? "None (All categories permitted)" : "None reported")}
+                  </Text>
+                  {catReasonNormalized && (
+                    <Text
+                      as="p"
+                      variant="bodySm"
+                      tone={isConfirmedCatIneligible ? "critical" : isCatEligible ? "success" : "caution"}
+                    >
+                      <strong>Status Detail:</strong> {catReasonNormalized}
+                    </Text>
+                  )}
+                </BlockStack>
+              </div>
+
+              {/* 3. Reference Entry Resolution Evaluation (Preserved even when category-ineligible) */}
+              {labelEvaluationsList.length > 0 && (
+                <BlockStack gap="050">
+                  <Text as="p" variant="bodySm" fontWeight="bold">
+                    Reference Entry Resolution Evaluation:
+                  </Text>
+                  {labelEvaluationsList.map((ev, idx) => (
                     <Text
                       key={idx}
                       as="p"
@@ -816,12 +1000,13 @@ export function StandardizedRowDiagnostics({
                 </div>
               )}
 
-              {fieldResolutionErrors.length > 0 && (
+              {/* 4. Actual Read / Enumeration Errors (Separated from category mismatch notices) */}
+              {actualReadErrors.length > 0 && (
                 <BlockStack gap="050">
                   <Text as="p" variant="bodySm" tone="critical" fontWeight="bold">
-                    Read Errors:
+                    Read / Enumeration Errors:
                   </Text>
-                  {fieldResolutionErrors.map((errItem, eIdx) => (
+                  {actualReadErrors.map((errItem, eIdx) => (
                     <Text key={eIdx} as="p" variant="bodySm" tone="critical">
                       • {errItem}
                     </Text>
