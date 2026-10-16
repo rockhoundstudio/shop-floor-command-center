@@ -606,6 +606,10 @@ export const computeSystemStatus = ({
   aiStep,
   batchFetcherState,
   batchFetcherFormData,
+  referenceMatchFetcherState = "idle",
+  pendingReferenceMatch = null,
+  referenceMatchStatusByProduct = null,
+  safetyMessage = "",
   safetyError
 }) => {
   let diag = data?.diagnostics || {
@@ -627,12 +631,22 @@ export const computeSystemStatus = ({
 
   const isCurrentlyProcessing = (isLoadingData && queueIds[loadIndex] === selectedBenchId) ||
                                 (isExecuting && executionMode === "AI_BATCH_PIPELINE" && queueIds[executeIndex] === selectedBenchId) ||
-                                (isExecuting && executionMode === "AI_SINGLE_PIPELINE" && selectedBenchId);
+                                (isExecuting && executionMode === "AI_SINGLE_PIPELINE" && selectedBenchId) ||
+                                (isExecuting && executionMode === "REPAIR" && queueIds[executeIndex] === selectedBenchId);
   
   let finalStageDisplay = executionMode || "Not reported";
   let fetcherStateDisplay = batchFetcherState;
   let loadingStateDisplay = isLoadingData ? "Loading" : "Idle";
   let errorMessageDisplay = safetyError || diag.error || "None";
+
+  const isPendingRefMatchOnBench =
+    Boolean(selectedBenchId) &&
+    Boolean(pendingReferenceMatch && pendingReferenceMatch.pieceId === selectedBenchId);
+
+  const productRefStatus =
+    selectedBenchId && referenceMatchStatusByProduct && typeof referenceMatchStatusByProduct === "object"
+      ? (referenceMatchStatusByProduct[selectedBenchId] || null)
+      : null;
 
   if (isCurrentlyProcessing) {
       if (isLoadingData) {
@@ -641,9 +655,83 @@ export const computeSystemStatus = ({
           if (aiStep === 1) { geminiStatus = "Running"; currentStage = "titleParse"; }
           if (aiStep === 2) { geminiStatus = "Running"; visionStatus = "Running"; currentStage = "tab3FullRescan"; }
           if (aiStep === 3) { geminiStatus = "Running"; currentStage = "generateDescription"; }
+          if (aiStep === 4) {
+              shopifyReadStatus = "Running";
+              currentStage = "resolveStandardizedCandidates";
+              if (referenceMatchFetcherState && referenceMatchFetcherState !== "idle") {
+                  fetcherStateDisplay = referenceMatchFetcherState;
+              }
+          }
       } else if (executionMode === "REPAIR") {
-          shopifyReadStatus = "Running"; 
-          currentStage = "executeRepairPlan";
+          if (isPendingRefMatchOnBench || pendingReferenceMatch?.source === "repair_preflight") {
+              shopifyReadStatus = "Running";
+              currentStage = "resolveStandardizedCandidates";
+              finalStageDisplay = "REPAIR_PREFLIGHT (Read-Only Matching)";
+              if (referenceMatchFetcherState && referenceMatchFetcherState !== "idle") {
+                  fetcherStateDisplay = referenceMatchFetcherState;
+              }
+          } else {
+              shopifyReadStatus = "Running"; 
+              currentStage = "executeRepairPlan";
+          }
+      }
+  }
+
+  // Active reference matching on the selected bench item (manual, AI Stage 4, or single-repair preflight)
+  if (isPendingRefMatchOnBench) {
+      shopifyReadStatus = "Running";
+      currentStage = "resolveStandardizedCandidates";
+      if (referenceMatchFetcherState && referenceMatchFetcherState !== "idle") {
+          fetcherStateDisplay = referenceMatchFetcherState;
+      } else if (pendingReferenceMatch.sawNonIdle === false) {
+          fetcherStateDisplay = "submitting";
+      }
+      if (!isExecuting) {
+          if (pendingReferenceMatch.source === "repair_preflight") {
+              finalStageDisplay = "REPAIR_PREFLIGHT (Read-Only Matching)";
+          } else if (pendingReferenceMatch.source === "ai_stage_4") {
+              finalStageDisplay = "AI_STAGE_4 (Read-Only Matching)";
+          }
+      }
+  } else if (!isCurrentlyProcessing && currentStage === "resolveStandardizedCandidates") {
+      // Distinguish completed with blocks, paused-for-review preflight, cancelled, and failed/incomplete states
+      if (productRefStatus) {
+          const st = productRefStatus.state;
+          const msg = typeof productRefStatus.message === "string" ? productRefStatus.message : "";
+          const hasBlocksInMessage = /blocked by/i.test(msg);
+
+          if (st === "cancelled" || st === "discarded_stale") {
+              shopifyReadStatus = st === "cancelled" ? "Cancelled" : "Discarded (Stale)";
+              if (productRefStatus.source === "repair_preflight") {
+                  finalStageDisplay = "REPAIR_PREFLIGHT_STOPPED (Cancelled)";
+              }
+              if (errorMessageDisplay === "None" && msg) {
+                  errorMessageDisplay = msg;
+              }
+          } else if (st === "failed" || st === "incomplete") {
+              shopifyReadStatus = st === "incomplete" ? "Incomplete" : "Failed";
+              if (productRefStatus.source === "repair_preflight") {
+                  finalStageDisplay = "REPAIR_PREFLIGHT_HALTED (Failed / Incomplete)";
+              }
+              if (errorMessageDisplay === "None" && msg) {
+                  errorMessageDisplay = msg;
+              }
+          } else if (st === "completed") {
+              if (productRefStatus.source === "repair_preflight") {
+                  shopifyReadStatus = hasBlocksInMessage ? "Completed (With Blocks)" : "Completed (Review Required)";
+                  finalStageDisplay = "PAUSED_FOR_REVIEW (Repair Preflight Stopped)";
+              } else if (hasBlocksInMessage) {
+                  shopifyReadStatus = "Completed (With Blocks)";
+              } else {
+                  shopifyReadStatus = "Completed (Awaiting Approval)";
+              }
+          }
+      } else if (diag.error) {
+          shopifyReadStatus = "Failed";
+      } else if (typeof safetyMessage === "string" && safetyMessage.includes("Repair preflight matching completed")) {
+          const hasBlocksInSafety = /blocked by/i.test(safetyMessage);
+          shopifyReadStatus = hasBlocksInSafety ? "Completed (With Blocks)" : "Completed (Review Required)";
+          finalStageDisplay = "PAUSED_FOR_REVIEW (Repair Preflight Stopped)";
       }
   }
 

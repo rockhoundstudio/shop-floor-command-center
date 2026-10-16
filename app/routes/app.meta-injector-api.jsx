@@ -725,6 +725,7 @@ function attachChunkDestinationToUserErrors(userErrors, chunkItems, rootFieldNam
 }
 
 export const action = async ({ request }) => {
+  let matchingContext = null;
   try {
     const { admin } = await authenticate.admin(request);
     const body = await request.formData();
@@ -931,11 +932,22 @@ export const action = async ({ request }) => {
     if (intent === "resolveStandardizedCandidates") {
       const rawPieceId = body.get("pieceId");
       const rawCandidates = body.get("standardized_candidates");
+      const rawRequestId = body.get("requestId");
       const pieceId = typeof rawPieceId === "string" ? rawPieceId.trim() : "";
+      const requestId = typeof rawRequestId === "string" && rawRequestId.trim() !== "" ? rawRequestId.trim() : null;
+
+      matchingContext = {
+        intent: "resolveStandardizedCandidates",
+        pieceId: pieceId || null,
+        requestId,
+        readOnly: true
+      };
 
       if (!pieceId || !/^gid:\/\/shopify\/Product\/\d+$/.test(pieceId)) {
         return Response.json({
           intent: "resolveStandardizedCandidates",
+          readOnly: true,
+          requestId,
           success: false,
           pieceId: pieceId || null,
           isComplete: false,
@@ -949,6 +961,8 @@ export const action = async ({ request }) => {
       if (rawCandidates === null || rawCandidates === undefined || String(rawCandidates).trim() === "") {
         return Response.json({
           intent: "resolveStandardizedCandidates",
+          readOnly: true,
+          requestId,
           success: false,
           pieceId,
           isComplete: false,
@@ -965,6 +979,8 @@ export const action = async ({ request }) => {
       } catch (err) {
         return Response.json({
           intent: "resolveStandardizedCandidates",
+          readOnly: true,
+          requestId,
           success: false,
           pieceId,
           isComplete: false,
@@ -978,6 +994,8 @@ export const action = async ({ request }) => {
       if (!parsedCandidates || typeof parsedCandidates !== "object" || Array.isArray(parsedCandidates)) {
         return Response.json({
           intent: "resolveStandardizedCandidates",
+          readOnly: true,
+          requestId,
           success: false,
           pieceId,
           isComplete: false,
@@ -1031,6 +1049,8 @@ export const action = async ({ request }) => {
       if (inputValidationErrors.length > 0) {
         return Response.json({
           intent: "resolveStandardizedCandidates",
+          readOnly: true,
+          requestId,
           success: false,
           pieceId,
           isComplete: false,
@@ -1085,6 +1105,8 @@ export const action = async ({ request }) => {
           if (!productNode || productNode.id !== pieceId) {
             return Response.json({
               intent: "resolveStandardizedCandidates",
+              readOnly: true,
+              requestId,
               success: false,
               pieceId,
               isComplete: false,
@@ -1553,9 +1575,10 @@ export const action = async ({ request }) => {
 
       return Response.json({
         intent: "resolveStandardizedCandidates",
+        readOnly: true,
+        requestId,
         success: overallComplete,
         pieceId,
-        readOnly: true,
         isComplete: overallComplete,
         defsReadComplete,
         productCategory,
@@ -2614,6 +2637,21 @@ export const action = async ({ request }) => {
 
     return Response.json({ success: true, intent: intent || "unknown" });
   } catch (error) {
+    if (error instanceof Response) {
+      throw error;
+    }
+    if (matchingContext) {
+      return Response.json({
+        intent: matchingContext.intent,
+        readOnly: true,
+        requestId: matchingContext.requestId,
+        pieceId: matchingContext.pieceId,
+        success: false,
+        isComplete: false,
+        error: error.message,
+        errors: [error.message]
+      }, { status: 500 });
+    }
     return Response.json({ success: false, intent: "unknown", error: error.message }, { status: 500 });
   }
 };

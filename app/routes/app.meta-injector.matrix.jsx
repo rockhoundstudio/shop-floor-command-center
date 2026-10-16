@@ -13,6 +13,7 @@ import {
   validateProposedStandardizedGidList,
   buildCanonicalCandidateBundle,
   buildCanonicalCandidateSnapshot,
+  evaluateProductReferenceMatchReadiness,
   formatErrorsList,
   serializeStandardizedAssignmentForVision,
   validArray,
@@ -52,6 +53,9 @@ const INITIAL_EXPANDED_BAYS = {
   "6. Standardized Attributes (Read-Only)": false
 };
 
+const isExactProductGid = (val) =>
+  typeof val === "string" && /^gid:\/\/shopify\/Product\/[0-9]+$/.test(val.trim());
+
 export function OperationsMatrixTab({ products }) {
   const safeProducts = products || [];
   const [searchQuery, setSearchQuery] = useState("");
@@ -75,6 +79,7 @@ export function OperationsMatrixTab({ products }) {
   const [referenceMatchStatusByProduct, setReferenceMatchStatusByProduct] = useState({});
   const [pendingReferenceMatch, setPendingReferenceMatch] = useState(null);
   const [releasedReferenceMatchRequest, setReleasedReferenceMatchRequest] = useState(null);
+  const [releasedReferenceMatchIds, setReleasedReferenceMatchIds] = useState({});
 
   const [queueIds, setQueueIds] = useState([]);
   const [productStates, setProductStates] = useState({}); 
@@ -153,6 +158,28 @@ export function OperationsMatrixTab({ products }) {
   }, [allFilteredSelected, filteredProducts, isLoadingData, isExecuting]);
 
   const clearBench = useCallback(() => {
+    if (pendingReferenceMatch) {
+      const activeRel = pendingReferenceMatch;
+      setReleasedReferenceMatchRequest({
+        ...activeRel,
+        releasedAt: new Date().toISOString(),
+        clearedBench: true,
+        fetcherWasBusy: referenceMatchFetcher.state !== "idle"
+      });
+      if (activeRel.requestId) {
+        setReleasedReferenceMatchIds((prev) => ({
+          ...prev,
+          [activeRel.requestId]: {
+            pieceId: activeRel.pieceId,
+            snapshot: activeRel.snapshot,
+            releasedAt: new Date().toISOString(),
+            reason: "clear_bench"
+          }
+        }));
+      }
+    } else {
+      setReleasedReferenceMatchRequest(null);
+    }
     setQueueIds([]);
     setProductStates({});
     setManifestData({});
@@ -172,29 +199,58 @@ export function OperationsMatrixTab({ products }) {
     setReferenceMatchResultsByProduct({});
     setReferenceMatchStatusByProduct({});
     setPendingReferenceMatch(null);
-    setReleasedReferenceMatchRequest(null);
     setLoadIndex(0);
     setLastProcessedData(null);
     setPendingOperation(null);
     setSafetyMessage("Rack and Bench cleared. Repair history reset.");
     setSafetyError("");
-  }, []);
+  }, [pendingReferenceMatch, referenceMatchFetcher.state]);
 
   const getStandardizedEvaluationForField = useCallback((productId, targetKey, dataOverride = null) => {
     if (!productId || typeof targetKey !== "string" || !targetKey.startsWith("shopify.")) return null;
     const data = dataOverride || manifestData[productId];
     const candidateBundle = buildCanonicalCandidateBundle(standardizedCandidatesByProduct[productId] || {});
-    const refMatchResult = referenceMatchResultsByProduct[productId] || null;
+    const rawRefMatchResult = referenceMatchResultsByProduct[productId] || null;
     const refMatchStatus = referenceMatchStatusByProduct[productId] || null;
+
+    // Prevent an older completed match record from overriding a newer pending, failed, or cancelled attempt
+    const readiness = evaluateProductReferenceMatchReadiness({
+      productId,
+      data,
+      rawCandidates: standardizedCandidatesByProduct[productId] || {},
+      refMatchResult: rawRefMatchResult,
+      refMatchStatus,
+      pendingReferenceMatch
+    });
+    const effectiveRefMatchResult =
+      readiness.state === "pending" ||
+      (readiness.state === "failed_or_incomplete" &&
+        rawRefMatchResult &&
+        refMatchStatus &&
+        ((refMatchStatus.requestId &&
+          rawRefMatchResult.requestId &&
+          refMatchStatus.requestId !== rawRefMatchResult.requestId) ||
+          (refMatchStatus.updatedAt &&
+            rawRefMatchResult.matchedAt &&
+            refMatchStatus.updatedAt > rawRefMatchResult.matchedAt)))
+        ? null
+        : rawRefMatchResult;
+
     return evaluateStandardizedDestinationTechnicalStatus({
       destinationKey: targetKey,
       productId,
       data,
       candidateBundle,
-      refMatchResult,
+      refMatchResult: effectiveRefMatchResult,
       refMatchStatus
     });
-  }, [manifestData, standardizedCandidatesByProduct, referenceMatchResultsByProduct, referenceMatchStatusByProduct]);
+  }, [
+    manifestData,
+    standardizedCandidatesByProduct,
+    referenceMatchResultsByProduct,
+    referenceMatchStatusByProduct,
+    pendingReferenceMatch
+  ]);
 
   const handleToggleApproval = useCallback((pieceId, key, propVal, isChecked) => {
     const targetKey = NATIVE_ALIAS_MAP[key] || key;
@@ -239,26 +295,44 @@ export function OperationsMatrixTab({ products }) {
     }
 
     const released = pendingReferenceMatch;
+    const nowIso = new Date().toISOString();
     setReleasedReferenceMatchRequest({
       ...released,
-      releasedAt: new Date().toISOString(),
+      releasedAt: nowIso,
       fetcherWasBusy: referenceMatchFetcher.state !== "idle"
     });
+    if (released.requestId) {
+      setReleasedReferenceMatchIds((prev) => ({
+        ...prev,
+        [released.requestId]: {
+          pieceId: released.pieceId,
+          snapshot: released.snapshot,
+          source: released.source || "manual",
+          workflowRunId: released.workflowRunId || null,
+          releasedAt: nowIso,
+          reason: "manual_release"
+        }
+      }));
+    }
     setPendingReferenceMatch(null);
 
     const releaseMsg =
       referenceMatchFetcher.state !== "idle"
-        ? `Released local pending lock for ${released.pieceId} while fetcher is still [${referenceMatchFetcher.state}]. Any late response from that released request will be ignored. Note: Because the backend contract does not echo a request token, wait for the fetcher to return to idle before starting another request on the same product, or ask to add server token echo for strict overlapping request correlation.`
-        : `Released stalled reference matching lock for ${released.pieceId}. Click 'Match Reference Choices' to retry.`;
+        ? `Released local pending lock for ${released.pieceId} (request ${released.requestId || "unknown"}) while fetcher is still [${referenceMatchFetcher.state}]. Any late response from that released request will be ignored. Wait for the fetcher to return to idle before starting another request.`
+        : `Released stalled reference matching lock for ${released.pieceId} (request ${released.requestId || "unknown"}). Click 'Match Reference Choices' to retry.`;
 
     setReferenceMatchStatusByProduct((prev) => {
       const next = {
         ...prev,
         [released.pieceId]: {
-          state: "failed",
+          state: "cancelled",
           tone: "warning",
+          requestId: released.requestId || null,
+          snapshot: released.snapshot || null,
+          source: released.source || "manual",
+          workflowRunId: released.workflowRunId || null,
           message: releaseMsg,
-          updatedAt: new Date().toISOString()
+          updatedAt: nowIso
         }
       };
       if (selectedBenchId && selectedBenchId !== released.pieceId) {
@@ -266,92 +340,188 @@ export function OperationsMatrixTab({ products }) {
           state: "ready",
           tone: "info",
           message: `Released lock that was held by ${released.pieceId}. You can now click 'Match Reference Choices' for ${selectedBenchId}.`,
-          updatedAt: new Date().toISOString()
+          updatedAt: nowIso
         };
       }
       return next;
     });
   }, [pendingReferenceMatch, referenceMatchFetcher.state, selectedBenchId]);
 
-  const handleMatchReferenceChoices = useCallback(() => {
-    if (!selectedBenchId) {
-      setSafetyError("Cannot match reference choices: No product is selected on the bench. Select a product first.");
-      return;
+  const startReferenceMatchForProduct = useCallback((targetPieceId, options = {}) => {
+    const cleanPieceId = typeof targetPieceId === "string" ? targetPieceId.trim() : "";
+    const source = typeof options?.source === "string" && options.source.trim() !== "" ? options.source.trim() : "manual";
+    const workflowRunId = typeof options?.workflowRunId === "string" && options.workflowRunId.trim() !== "" ? options.workflowRunId.trim() : null;
+
+    if (!isExactProductGid(cleanPieceId)) {
+      const invalidMsg = "Cannot match reference choices: A valid Shopify Product GID (gid://shopify/Product/...) is required.";
+      if (source === "manual") {
+        setSafetyError(
+          !selectedBenchId
+            ? "Cannot match reference choices: No product is selected on the bench. Select a product first."
+            : invalidMsg
+        );
+      }
+      return {
+        started: false,
+        reason: "invalid_product_id",
+        requestId: null,
+        snapshot: null,
+        message: invalidMsg
+      };
     }
 
-    const rawProductCandidates = standardizedCandidatesByProduct[selectedBenchId] || {};
+    const rawProductCandidates =
+      options?.candidatesOverride !== undefined && options?.candidatesOverride !== null
+        ? options.candidatesOverride
+        : (standardizedCandidatesByProduct[cleanPieceId] || {});
     const bundle = buildCanonicalCandidateBundle(rawProductCandidates);
 
     if (!bundle.hasSupported) {
-      setReferenceMatchStatusByProduct((prev) => ({
-        ...prev,
-        [selectedBenchId]: {
-          state: "failed",
-          tone: "warning",
-          message: "Cannot match reference choices: No validated Vision standardized candidates exist for this product. Run 'Run AI (Single)' or 'EXECUTE AI AUTO-FILL (STAGE)' first so Vision stages candidate labels and evidence.",
-          updatedAt: new Date().toISOString()
-        }
-      }));
-      return;
+      const noCandMsg =
+        "Cannot match reference choices: No validated Vision standardized candidates exist for this product. Run 'Run AI (Single)' or 'EXECUTE AI AUTO-FILL (STAGE)' first so Vision stages candidate labels and evidence.";
+      if (source === "manual") {
+        setReferenceMatchStatusByProduct((prev) => ({
+          ...prev,
+          [cleanPieceId]: {
+            state: "failed",
+            tone: "warning",
+            requestId: null,
+            snapshot: bundle.snapshot,
+            source,
+            workflowRunId,
+            message: noCandMsg,
+            updatedAt: new Date().toISOString()
+          }
+        }));
+      }
+      return {
+        started: false,
+        reason: "no_candidates",
+        requestId: null,
+        snapshot: bundle.snapshot,
+        message: noCandMsg
+      };
     }
 
     if (pendingReferenceMatch !== null || referenceMatchFetcher.state !== "idle") {
       const lockedBy = pendingReferenceMatch?.pieceId || "an active fetcher request";
-      setReferenceMatchStatusByProduct((prev) => ({
-        ...prev,
-        [selectedBenchId]: {
-          state: pendingReferenceMatch?.pieceId === selectedBenchId ? "awaiting_response" : "failed",
-          tone: "warning",
-          message: `Reference matching cannot start: Fetcher is currently [${referenceMatchFetcher.state}] and locked by [${lockedBy}]. Wait for completion, or click 'Release Stalled Match Lock' if the request is genuinely stuck.`,
-          updatedAt: new Date().toISOString()
-        }
-      }));
-      return;
+      const busyMsg = `Reference matching cannot start: Fetcher is currently [${referenceMatchFetcher.state}] and locked by [${lockedBy}]. Wait for completion, or click 'Release Stalled Match Lock' if the request is genuinely stuck.`;
+      if (source === "manual") {
+        setReferenceMatchStatusByProduct((prev) => ({
+          ...prev,
+          [cleanPieceId]: {
+            state: pendingReferenceMatch?.pieceId === cleanPieceId ? "awaiting_response" : "failed",
+            tone: "warning",
+            requestId: pendingReferenceMatch?.pieceId === cleanPieceId ? (pendingReferenceMatch?.requestId || null) : null,
+            snapshot: bundle.snapshot,
+            source,
+            workflowRunId,
+            message: busyMsg,
+            updatedAt: new Date().toISOString()
+          }
+        }));
+      }
+      return {
+        started: false,
+        reason: "busy",
+        requestId: pendingReferenceMatch?.requestId || null,
+        snapshot: bundle.snapshot,
+        message: busyMsg
+      };
     }
 
+    const requestId =
+      typeof options?.requestId === "string" && options.requestId.trim() !== ""
+        ? options.requestId.trim()
+        : `refmatch_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+    const nowIso = new Date().toISOString();
+
     const requestRecord = {
-      pieceId: selectedBenchId,
+      requestId,
+      pieceId: cleanPieceId,
       snapshot: bundle.snapshot,
+      source,
+      workflowRunId,
       baselineData: referenceMatchFetcher.data,
       sawNonIdle: false,
-      startedAt: new Date().toISOString()
+      startedAt: nowIso
     };
 
     setReleasedReferenceMatchRequest(null);
     setPendingReferenceMatch(requestRecord);
     setReferenceMatchStatusByProduct((prev) => ({
       ...prev,
-      [selectedBenchId]: {
+      [cleanPieceId]: {
         state: "submitting",
         tone: "info",
-        message: `Submitting ${bundle.count} standardized candidate attribute(s) (${ Object.keys(bundle.ordered).join(", ") }) for read-only reference matching...`,
-        updatedAt: new Date().toISOString()
+        requestId,
+        snapshot: bundle.snapshot,
+        source,
+        workflowRunId,
+        message: `Submitting ${bundle.count} standardized candidate attribute(s) (${Object.keys(bundle.ordered).join(", ")}) for read-only reference matching (request ${requestId})...`,
+        updatedAt: nowIso
       }
     }));
 
     try {
       const fd = new FormData();
       fd.append("intent", "resolveStandardizedCandidates");
-      fd.append("pieceId", selectedBenchId);
+      fd.append("pieceId", cleanPieceId);
       fd.append("standardized_candidates", bundle.snapshot);
+      fd.append("requestId", requestId);
 
       referenceMatchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-api" });
+      return {
+        started: true,
+        reason: "submitted",
+        requestId,
+        snapshot: bundle.snapshot,
+        message: `Submitted reference matching request ${requestId} for ${cleanPieceId}.`
+      };
     } catch (err) {
       const errMsg = err?.message || String(err || "Unknown submission error");
+      const failNow = new Date().toISOString();
       setPendingReferenceMatch((curr) => (curr === requestRecord ? null : curr));
       setReferenceMatchStatusByProduct((prev) => ({
         ...prev,
-        [selectedBenchId]: {
+        [cleanPieceId]: {
           state: "failed",
           tone: "critical",
-          message: `Failed to submit reference matching request: ${errMsg}. Check network/app connection and click 'Match Reference Choices' to retry.`,
-          updatedAt: new Date().toISOString()
+          requestId,
+          snapshot: bundle.snapshot,
+          source,
+          workflowRunId,
+          message: `Failed to submit reference matching request (${requestId}): ${errMsg}. Check network/app connection and click 'Match Reference Choices' to retry.`,
+          updatedAt: failNow
         }
       }));
+      return {
+        started: false,
+        reason: "submit_error",
+        requestId,
+        snapshot: bundle.snapshot,
+        message: errMsg
+      };
     }
-  }, [selectedBenchId, referenceMatchFetcher, pendingReferenceMatch, standardizedCandidatesByProduct]);
+  }, [
+    selectedBenchId,
+    standardizedCandidatesByProduct,
+    pendingReferenceMatch,
+    referenceMatchFetcher
+  ]);
+
+  // Safe zero-argument adapter for the manual drawer button so a click event is never passed as targetPieceId
+  const handleMatchReferenceChoices = useCallback(() => {
+    if (!selectedBenchId) {
+      setSafetyError("Cannot match reference choices: No product is selected on the bench. Select a product first.");
+      return;
+    }
+    startReferenceMatchForProduct(selectedBenchId, { source: "manual", workflowRunId: null });
+  }, [selectedBenchId, startReferenceMatchForProduct]);
 
   useEffect(() => {
+    const data = referenceMatchFetcher.data;
+
     // 1. If a released request finishes in the background, consume & ignore its late response so it cannot overwrite a later request.
     if (releasedReferenceMatchRequest) {
       if (referenceMatchFetcher.state !== "idle") {
@@ -359,20 +529,33 @@ export function OperationsMatrixTab({ products }) {
           setReleasedReferenceMatchRequest((prev) => (prev ? { ...prev, sawNonIdle: true } : null));
         }
       } else {
-        const dataChangedSinceReleaseStart = referenceMatchFetcher.data !== releasedReferenceMatchRequest.baselineData;
-        if (releasedReferenceMatchRequest.sawNonIdle || dataChangedSinceReleaseStart) {
+        const dataChangedSinceReleaseStart = data !== releasedReferenceMatchRequest.baselineData;
+        const matchesReleasedId =
+          Boolean(data && typeof data === "object" && data.requestId && releasedReferenceMatchRequest.requestId) &&
+          data.requestId === releasedReferenceMatchRequest.requestId;
+
+        if (releasedReferenceMatchRequest.sawNonIdle || dataChangedSinceReleaseStart || matchesReleasedId) {
           const ignoredPieceId = releasedReferenceMatchRequest.pieceId;
+          const ignoredReqId = releasedReferenceMatchRequest.requestId || null;
+          const wasBenchCleared = Boolean(releasedReferenceMatchRequest.clearedBench);
           setReleasedReferenceMatchRequest(null);
-          if (!pendingReferenceMatch) {
+          if (!pendingReferenceMatch && !wasBenchCleared && ignoredPieceId) {
             setReferenceMatchStatusByProduct((prev) => ({
               ...prev,
               [ignoredPieceId]: {
                 state: "discarded_stale",
                 tone: "warning",
-                message: `Late response from previously released request on ${ignoredPieceId} arrived and was safely ignored. Click 'Match Reference Choices' to run a fresh read-only match.`,
+                requestId: ignoredReqId,
+                snapshot: releasedReferenceMatchRequest.snapshot || null,
+                source: releasedReferenceMatchRequest.source || "manual",
+                workflowRunId: releasedReferenceMatchRequest.workflowRunId || null,
+                message: `Late response from previously released request${ignoredReqId ? ` (${ignoredReqId})` : ""} on ${ignoredPieceId} arrived and was safely ignored. Click 'Match Reference Choices' to run a fresh read-only match.`,
                 updatedAt: new Date().toISOString()
               }
             }));
+          }
+          if (!pendingReferenceMatch) {
+            return;
           }
         }
       }
@@ -389,7 +572,11 @@ export function OperationsMatrixTab({ products }) {
           [pendingReferenceMatch.pieceId]: {
             state: "awaiting_response",
             tone: "info",
-            message: `Awaiting read-only reference matching response from Shopify for ${pendingReferenceMatch.pieceId} (fetcher state: ${referenceMatchFetcher.state})...`,
+            requestId: pendingReferenceMatch.requestId,
+            snapshot: pendingReferenceMatch.snapshot,
+            source: pendingReferenceMatch.source,
+            workflowRunId: pendingReferenceMatch.workflowRunId,
+            message: `Awaiting read-only reference matching response from Shopify for ${pendingReferenceMatch.pieceId} (request: ${pendingReferenceMatch.requestId}, fetcher state: ${referenceMatchFetcher.state})...`,
             updatedAt: new Date().toISOString()
           }
         }));
@@ -398,7 +585,6 @@ export function OperationsMatrixTab({ products }) {
     }
 
     // 3. Fetcher is idle. Ensure we do NOT consume old retained fetcher.data before the new submission actually completes.
-    const data = referenceMatchFetcher.data;
     const hasCompletedCycle = pendingReferenceMatch.sawNonIdle || data !== pendingReferenceMatch.baselineData;
     if (!hasCompletedCycle) {
       return;
@@ -406,7 +592,35 @@ export function OperationsMatrixTab({ products }) {
 
     const activePending = pendingReferenceMatch;
 
-    // 4. Validate response structure before clearing or mutating state
+    // 4. Guard against late responses belonging to a previously released/cancelled requestId
+    if (data && typeof data === "object" && typeof data.requestId === "string" && releasedReferenceMatchIds[data.requestId]) {
+      if (data.requestId !== activePending.requestId) {
+        return;
+      }
+      setPendingReferenceMatch(null);
+      return;
+    }
+
+    // 5. If fetcher completed a non-idle cycle without delivering a new payload, fail closed (do not infer success from idle)
+    if (activePending.sawNonIdle && data === activePending.baselineData) {
+      setPendingReferenceMatch(null);
+      setReferenceMatchStatusByProduct((prev) => ({
+        ...prev,
+        [activePending.pieceId]: {
+          state: "failed",
+          tone: "critical",
+          requestId: activePending.requestId,
+          snapshot: activePending.snapshot,
+          source: activePending.source,
+          workflowRunId: activePending.workflowRunId,
+          message: `Reference matching request (${activePending.requestId}) for ${activePending.pieceId} returned to idle without delivering a response payload. Click 'Match Reference Choices' to retry.`,
+          updatedAt: new Date().toISOString()
+        }
+      }));
+      return;
+    }
+
+    // 6. Validate response structure before clearing or mutating state
     if (!data || typeof data !== "object") {
       setPendingReferenceMatch(null);
       setReferenceMatchStatusByProduct((prev) => ({
@@ -414,7 +628,11 @@ export function OperationsMatrixTab({ products }) {
         [activePending.pieceId]: {
           state: "failed",
           tone: "critical",
-          message: `Malformed response received for ${activePending.pieceId}: Backend returned an empty or non-object payload. Existing diagnostics were preserved. Click 'Match Reference Choices' to retry.`,
+          requestId: activePending.requestId,
+          snapshot: activePending.snapshot,
+          source: activePending.source,
+          workflowRunId: activePending.workflowRunId,
+          message: `Malformed response received for ${activePending.pieceId} (request ${activePending.requestId}): Backend returned an empty or non-object payload. Existing diagnostics were preserved. Click 'Match Reference Choices' to retry.`,
           updatedAt: new Date().toISOString()
         }
       }));
@@ -429,7 +647,29 @@ export function OperationsMatrixTab({ products }) {
         [activePending.pieceId]: {
           state: "failed",
           tone: "critical",
+          requestId: activePending.requestId,
+          snapshot: activePending.snapshot,
+          source: activePending.source,
+          workflowRunId: activePending.workflowRunId,
           message: `Malformed or unexpected response contract for ${activePending.pieceId} (${errDetail}). Expected intent 'resolveStandardizedCandidates' with readOnly: true. Click 'Match Reference Choices' to retry.`,
+          updatedAt: new Date().toISOString()
+        }
+      }));
+      return;
+    }
+
+    if (!data.requestId || data.requestId !== activePending.requestId) {
+      setPendingReferenceMatch(null);
+      setReferenceMatchStatusByProduct((prev) => ({
+        ...prev,
+        [activePending.pieceId]: {
+          state: "failed",
+          tone: "critical",
+          requestId: activePending.requestId,
+          snapshot: activePending.snapshot,
+          source: activePending.source,
+          workflowRunId: activePending.workflowRunId,
+          message: `Request correlation mismatch for ${activePending.pieceId}: Expected requestId [${activePending.requestId}], but backend returned [${data.requestId || "None"}]. Response discarded to preserve strict request correlation. Click 'Match Reference Choices' to retry.`,
           updatedAt: new Date().toISOString()
         }
       }));
@@ -443,14 +683,18 @@ export function OperationsMatrixTab({ products }) {
         [activePending.pieceId]: {
           state: "failed",
           tone: "critical",
-          message: `Product identity mismatch: Requested reference matching for [${activePending.pieceId}], but backend returned pieceId [${data.pieceId || "None"}]. Response discarded to preserve product isolation. Click 'Match Reference Choices' to retry.`,
+          requestId: activePending.requestId,
+          snapshot: activePending.snapshot,
+          source: activePending.source,
+          workflowRunId: activePending.workflowRunId,
+          message: `Product identity mismatch: Requested reference matching for [${activePending.pieceId}] (${activePending.requestId}), but backend returned pieceId [${data.pieceId || "None"}]. Response discarded to preserve product isolation. Click 'Match Reference Choices' to retry.`,
           updatedAt: new Date().toISOString()
         }
       }));
       return;
     }
 
-    // 5. Response is proven to belong to activePending's product & completed cycle. Clear pending lock.
+    // 7. Response is proven to belong to activePending's exact requestId, product & completed cycle. Clear pending lock.
     setPendingReferenceMatch(null);
 
     const targetProductId = data.pieceId;
@@ -464,7 +708,11 @@ export function OperationsMatrixTab({ products }) {
         [targetProductId]: {
           state: "discarded_stale",
           tone: "warning",
-          message: `Discarded stale reference matching response for ${targetProductId}: The product's Vision standardized candidates changed while the request was in flight. Click 'Match Reference Choices' to match the latest candidates.`,
+          requestId: activePending.requestId,
+          snapshot: currentSnapshot,
+          source: activePending.source,
+          workflowRunId: activePending.workflowRunId,
+          message: `Discarded stale reference matching response (${activePending.requestId}) for ${targetProductId}: The product's Vision standardized candidates changed while the request was in flight. Click 'Match Reference Choices' to match the latest candidates.`,
           updatedAt: new Date().toISOString()
         }
       }));
@@ -491,8 +739,10 @@ export function OperationsMatrixTab({ products }) {
         ? data.productCategory
         : null;
     const returnedCategoryEligibility = validObj(data.categoryEligibility);
+    const matchedAtIso = new Date().toISOString();
 
     const matchRecord = {
+      requestId: activePending.requestId,
       pieceId: targetProductId,
       intent: data.intent,
       readOnly: true,
@@ -504,8 +754,23 @@ export function OperationsMatrixTab({ products }) {
       currentReferenceLists: validObj(data.currentReferenceLists),
       errors: topErrors,
       snapshot: activePending.snapshot,
-      matchedAt: new Date().toISOString()
+      source: activePending.source,
+      workflowRunId: activePending.workflowRunId,
+      matchedAt: matchedAtIso
     };
+
+    const readinessCheck = evaluateProductReferenceMatchReadiness({
+      productId: targetProductId,
+      data: manifestData[targetProductId] || null,
+      rawCandidates: latestCandidates,
+      refMatchResult: matchRecord,
+      refMatchStatus: null,
+      pendingReferenceMatch: null,
+      expectedRequestId: activePending.requestId
+    });
+
+    const isFullyCompleteMatch = readinessCheck.state === "matched_complete";
+    const isCleanCompleteOutcome = isFullyCompleteMatch && isComplete && isSuccess && topErrors.length === 0;
 
     setReferenceMatchResultsByProduct((prev) => ({
       ...prev,
@@ -526,12 +791,14 @@ export function OperationsMatrixTab({ products }) {
     });
 
     // Stage technically verified proposals into manifestData.repairPlan for the 6 standardized destinations
+    // and record diagnostics.stage = "resolveStandardizedCandidates" for accepted matching outcomes
     setManifestData((prevMan) => {
       const existingMan = prevMan[targetProductId];
       if (!existingMan) return prevMan;
 
       const updatedRepairPlan = { ...(existingMan.repairPlan || {}) };
       const updatedMetadata = { ...(existingMan.metadata || {}) };
+      const existingDiag = existingMan.diagnostics || {};
 
       VERIFIED_STANDARDIZED_DESTINATIONS.forEach((destKey) => {
         if (manualEdits[targetProductId]?.[destKey] === true) return;
@@ -542,7 +809,7 @@ export function OperationsMatrixTab({ products }) {
           data: existingMan,
           candidateBundle: currentBundle,
           refMatchResult: matchRecord,
-          refMatchStatus: { state: isComplete && isSuccess ? "completed" : "incomplete" }
+          refMatchStatus: { state: isFullyCompleteMatch ? "completed" : "incomplete" }
         });
 
         if (evalRes.isTechnicallyEligible && evalRes.autoProposalSerialized) {
@@ -556,13 +823,30 @@ export function OperationsMatrixTab({ products }) {
         }
       });
 
+      const outcomeDiagError = isCleanCompleteOutcome
+        ? null
+        : (topErrors[0] || readinessCheck.reason || existingDiag.error || null);
+
+      const updatedDiagnostics = {
+        ...existingDiag,
+        shopifyRead: isCleanCompleteOutcome
+          ? (existingDiag.shopifyRead || "Success")
+          : (existingDiag.shopifyRead || "Failed"),
+        stage: "resolveStandardizedCandidates",
+        error: outcomeDiagError,
+        errors: isCleanCompleteOutcome
+          ? validArray(existingDiag.errors)
+          : (topErrors.length > 0 ? topErrors : validArray(existingDiag.errors))
+      };
+
       return {
         ...prevMan,
         [targetProductId]: {
           ...existingMan,
           productCategory: returnedProductCategory || existingMan.productCategory || null,
           repairPlan: updatedRepairPlan,
-          metadata: updatedMetadata
+          metadata: updatedMetadata,
+          diagnostics: updatedDiagnostics
         }
       };
     });
@@ -582,28 +866,42 @@ export function OperationsMatrixTab({ products }) {
       return { ...prevApp, [targetProductId]: nextProdApp };
     });
 
-    if (isComplete && isSuccess && topErrors.length === 0) {
-      const catSummary =
-        categoryBlockedDestinations.length > 0
-          ? ` ${eligibleProposalCount} category-eligible proposal(s) unlocked; ${categoryBlockedDestinations.length} blocked by product category constraint (${categoryBlockedDestinations.join(", ")} — candidate evidence and matched entries preserved).`
-          : " Technically verified and category-eligible proposals are staged for review and exact-value approval below.";
+    if (isCleanCompleteOutcome) {
+      const blockedDestList = readinessCheck.blockedDestinationKeys || [];
+      let detailSummary = " Technically verified and category-eligible proposals are staged for review and exact-value approval below.";
+      if (categoryBlockedDestinations.length > 0 || blockedDestList.length > 0) {
+        const blockedDisplay = blockedDestList.length > 0 ? blockedDestList : categoryBlockedDestinations;
+        detailSummary = ` ${readinessCheck.eligibleDestinationKeys.length} proposal(s) unlocked; ${blockedDisplay.length} blocked by category or entry resolution (${blockedDisplay.join(", ")} — candidate evidence and matched entries preserved).`;
+      }
       setReferenceMatchStatusByProduct((prev) => ({
         ...prev,
         [targetProductId]: {
           state: "completed",
           tone: "success",
-          message: `Reference matching completed for ${resolutionCount} attribute(s).${catSummary}`,
-          updatedAt: new Date().toISOString()
+          requestId: activePending.requestId,
+          snapshot: activePending.snapshot,
+          source: activePending.source,
+          workflowRunId: activePending.workflowRunId,
+          message: `Reference matching completed for ${resolutionCount} attribute(s).${detailSummary}`,
+          updatedAt: matchedAtIso
         }
       }));
     } else {
+      const incReason =
+        !isFullyCompleteMatch && readinessCheck.reason
+          ? ` ${readinessCheck.reason}`
+          : "";
       setReferenceMatchStatusByProduct((prev) => ({
         ...prev,
         [targetProductId]: {
           state: "incomplete",
           tone: "warning",
-          message: `Reference matching returned partial/incomplete read diagnostics (success: ${String(isSuccess)}, isComplete: ${String(isComplete)}, ${resolutionCount} attribute resolution(s), ${topErrors.length} top-level error(s)). Incomplete enumeration remains blocked and is never treated as missing_entry or save-ready. Review read errors/continuation below or click 'Match Reference Choices' to retry.`,
-          updatedAt: new Date().toISOString()
+          requestId: activePending.requestId,
+          snapshot: activePending.snapshot,
+          source: activePending.source,
+          workflowRunId: activePending.workflowRunId,
+          message: `Reference matching returned partial/incomplete read diagnostics (success: ${String(isSuccess)}, isComplete: ${String(isComplete)}, ${resolutionCount} attribute resolution(s), ${topErrors.length} top-level error(s)).${incReason} Incomplete enumeration remains blocked and is never treated as missing_entry or save-ready. Review read errors/continuation below or click 'Match Reference Choices' to retry.`,
+          updatedAt: matchedAtIso
         }
       }));
     }
@@ -612,7 +910,9 @@ export function OperationsMatrixTab({ products }) {
     referenceMatchFetcher.data,
     pendingReferenceMatch,
     releasedReferenceMatchRequest,
+    releasedReferenceMatchIds,
     standardizedCandidatesByProduct,
+    manifestData,
     manualEdits
   ]);
 
@@ -636,6 +936,7 @@ export function OperationsMatrixTab({ products }) {
   } = useMetaInjectorExecution({
     safeProducts,
     batchFetcher,
+    referenceMatchFetcher,
     queueIds,
     selectedBenchId,
     isLoadingData,
@@ -656,8 +957,12 @@ export function OperationsMatrixTab({ products }) {
     setAiData,
     standardizedCandidatesByProduct,
     setStandardizedCandidatesByProduct,
+    referenceMatchResultsByProduct,
     setReferenceMatchResultsByProduct,
+    referenceMatchStatusByProduct,
     setReferenceMatchStatusByProduct,
+    pendingReferenceMatch,
+    startReferenceMatchForProduct,
     manifestData,
     setManifestData,
     lastProcessedData,
@@ -794,6 +1099,10 @@ export function OperationsMatrixTab({ products }) {
       aiStep,
       batchFetcherState: batchFetcher.state,
       batchFetcherFormData: batchFetcher.formData,
+      referenceMatchFetcherState: referenceMatchFetcher.state,
+      pendingReferenceMatch,
+      referenceMatchStatusByProduct,
+      safetyMessage,
       safetyError
     });
 
@@ -833,7 +1142,10 @@ export function OperationsMatrixTab({ products }) {
     referenceMatchResultsByProduct,
     referenceMatchStatusByProduct,
     batchFetcher.state,
+    referenceMatchFetcher.state,
+    pendingReferenceMatch,
     isLoadingData,
+    safetyMessage,
     safetyError,
     aiStep,
     executionMode,
@@ -990,7 +1302,7 @@ export function OperationsMatrixTab({ products }) {
                         variant="primary" 
                         icon={MagicIcon} 
                         onClick={handleExecuteSingleAI}
-                        loading={batchFetcher.state !== "idle" && !isExecuting}
+                        loading={(batchFetcher.state !== "idle" || referenceMatchFetcher.state !== "idle") && !isExecuting}
                       >
                         Run AI (Single)
                       </Button>
@@ -999,7 +1311,7 @@ export function OperationsMatrixTab({ products }) {
                         variant="primary" 
                         icon={SaveIcon} 
                         onClick={handleExecuteSingleRepair}
-                        loading={batchFetcher.state !== "idle" && !isExecuting}
+                        loading={(batchFetcher.state !== "idle" || referenceMatchFetcher.state !== "idle") && !isExecuting}
                         tone="success"
                       >
                         Execute Single Repair

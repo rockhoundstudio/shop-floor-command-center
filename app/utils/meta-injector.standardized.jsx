@@ -976,6 +976,324 @@ export const buildCanonicalCandidateSnapshot = (rawContainer) => {
   return buildCanonicalCandidateBundle(rawContainer).snapshot;
 };
 
+export const evaluateProductReferenceMatchReadiness = ({
+  productId,
+  data = null,
+  rawCandidates = null,
+  refMatchResult = null,
+  refMatchStatus = null,
+  pendingReferenceMatch = null,
+  expectedRequestId = null
+}) => {
+  const candidateBundle = buildCanonicalCandidateBundle(rawCandidates || {});
+  const currentSnapshot = candidateBundle.snapshot;
+
+  if (!candidateBundle.hasSupported) {
+    return {
+      state: "no_candidates",
+      requiresMatching: false,
+      isComplete: true,
+      hasTechnicalOrReadFailure: false,
+      hasLegitimateBlocks: false,
+      eligibleDestinationKeys: [],
+      blockedDestinationKeys: [],
+      incompleteDestinationKeys: [],
+      destinationEvaluations: {},
+      candidateBundle,
+      snapshot: currentSnapshot,
+      requestId: null,
+      reason: "No supported Vision standardized candidates staged for this product."
+    };
+  }
+
+  const isPendingForProduct =
+    Boolean(pendingReferenceMatch && pendingReferenceMatch.pieceId === productId) ||
+    ((refMatchStatus?.state === "submitting" || refMatchStatus?.state === "awaiting_response") &&
+      (!refMatchStatus?.snapshot || refMatchStatus.snapshot === currentSnapshot));
+
+  if (isPendingForProduct) {
+    const activeReqId = pendingReferenceMatch?.requestId || refMatchStatus?.requestId || null;
+    return {
+      state: "pending",
+      requiresMatching: false,
+      isComplete: false,
+      hasTechnicalOrReadFailure: false,
+      hasLegitimateBlocks: false,
+      eligibleDestinationKeys: [],
+      blockedDestinationKeys: [],
+      incompleteDestinationKeys: [],
+      destinationEvaluations: {},
+      candidateBundle,
+      snapshot: currentSnapshot,
+      requestId: activeReqId,
+      reason: refMatchStatus?.message || `Reference matching is currently in flight for ${productId}.`
+    };
+  }
+
+  const statusMatchesSnapshot =
+    !refMatchStatus?.snapshot || refMatchStatus.snapshot === currentSnapshot;
+  const statusMatchesExpectedRequest =
+    !expectedRequestId || refMatchStatus?.requestId === expectedRequestId;
+
+  const statusIndicatesTerminalFailure =
+    Boolean(refMatchStatus) &&
+    statusMatchesSnapshot &&
+    statusMatchesExpectedRequest &&
+    (refMatchStatus.state === "failed" ||
+      refMatchStatus.state === "incomplete" ||
+      refMatchStatus.state === "cancelled" ||
+      refMatchStatus.state === "discarded_stale");
+
+  const statusIsNewerThanResult =
+    statusIndicatesTerminalFailure &&
+    (!refMatchResult ||
+      (expectedRequestId && refMatchResult.requestId !== expectedRequestId) ||
+      (refMatchStatus.requestId &&
+        refMatchResult.requestId &&
+        refMatchStatus.requestId !== refMatchResult.requestId) ||
+      (refMatchStatus.updatedAt &&
+        refMatchResult.matchedAt &&
+        refMatchStatus.updatedAt > refMatchResult.matchedAt));
+
+  if (statusIsNewerThanResult) {
+    return {
+      state: "failed_or_incomplete",
+      requiresMatching: true,
+      isComplete: false,
+      hasTechnicalOrReadFailure: true,
+      hasLegitimateBlocks: false,
+      eligibleDestinationKeys: [],
+      blockedDestinationKeys: [],
+      incompleteDestinationKeys: [],
+      destinationEvaluations: {},
+      candidateBundle,
+      snapshot: currentSnapshot,
+      requestId: refMatchStatus?.requestId || null,
+      statusState: refMatchStatus?.state || "failed",
+      reason:
+        refMatchStatus?.message ||
+        `Reference matching ${refMatchStatus?.state || "failed"} for ${productId}.`
+    };
+  }
+
+  if (!refMatchResult || typeof refMatchResult !== "object") {
+    if (statusIndicatesTerminalFailure) {
+      return {
+        state: "failed_or_incomplete",
+        requiresMatching: true,
+        isComplete: false,
+        hasTechnicalOrReadFailure: true,
+        hasLegitimateBlocks: false,
+        eligibleDestinationKeys: [],
+        blockedDestinationKeys: [],
+        incompleteDestinationKeys: [],
+        destinationEvaluations: {},
+        candidateBundle,
+        snapshot: currentSnapshot,
+        requestId: refMatchStatus?.requestId || null,
+        statusState: refMatchStatus?.state || "failed",
+        reason:
+          refMatchStatus?.message ||
+          `Reference matching ${refMatchStatus?.state || "failed"} for ${productId}.`
+      };
+    }
+
+    return {
+      state: "missing_or_stale",
+      requiresMatching: true,
+      isComplete: false,
+      hasTechnicalOrReadFailure: false,
+      hasLegitimateBlocks: false,
+      eligibleDestinationKeys: [],
+      blockedDestinationKeys: [],
+      incompleteDestinationKeys: [],
+      destinationEvaluations: {},
+      candidateBundle,
+      snapshot: currentSnapshot,
+      requestId: null,
+      reason: "Supported Vision candidates exist, but reference matching has not been run for this product."
+    };
+  }
+
+  const identityValid =
+    Boolean(productId) &&
+    refMatchResult.pieceId === productId &&
+    refMatchResult.intent === "resolveStandardizedCandidates" &&
+    refMatchResult.readOnly === true;
+
+  if (!identityValid || refMatchResult.snapshot !== currentSnapshot) {
+    return {
+      state: "missing_or_stale",
+      requiresMatching: true,
+      isComplete: false,
+      hasTechnicalOrReadFailure: false,
+      hasLegitimateBlocks: false,
+      eligibleDestinationKeys: [],
+      blockedDestinationKeys: [],
+      incompleteDestinationKeys: [],
+      destinationEvaluations: {},
+      candidateBundle,
+      snapshot: currentSnapshot,
+      requestId: refMatchResult.requestId || null,
+      reason: !identityValid
+        ? "Stored reference match result failed product or contract identity verification."
+        : "Stored reference match result is stale because the candidate snapshot changed."
+    };
+  }
+
+  if (expectedRequestId && refMatchResult.requestId !== expectedRequestId) {
+    return {
+      state: "missing_or_stale",
+      requiresMatching: true,
+      isComplete: false,
+      hasTechnicalOrReadFailure: false,
+      hasLegitimateBlocks: false,
+      eligibleDestinationKeys: [],
+      blockedDestinationKeys: [],
+      incompleteDestinationKeys: [],
+      destinationEvaluations: {},
+      candidateBundle,
+      snapshot: currentSnapshot,
+      requestId: refMatchResult.requestId || null,
+      reason: `Stored reference match result (${refMatchResult.requestId || "no-id"}) does not match expected request ID (${expectedRequestId}).`
+    };
+  }
+
+  const topErrors = formatErrorsList(refMatchResult.errors || refMatchResult.error);
+  if (refMatchResult.success !== true || refMatchResult.isComplete !== true || topErrors.length > 0) {
+    return {
+      state: "failed_or_incomplete",
+      requiresMatching: true,
+      isComplete: false,
+      hasTechnicalOrReadFailure: true,
+      hasLegitimateBlocks: false,
+      eligibleDestinationKeys: [],
+      blockedDestinationKeys: [],
+      incompleteDestinationKeys: [],
+      destinationEvaluations: {},
+      candidateBundle,
+      snapshot: currentSnapshot,
+      requestId: refMatchResult.requestId || null,
+      statusState: refMatchStatus?.state || "incomplete",
+      reason:
+        topErrors[0] ||
+        refMatchStatus?.message ||
+        "Top-level reference matching response was incomplete or reported errors."
+    };
+  }
+
+  const eligibleDestinationKeys = [];
+  const blockedDestinationKeys = [];
+  const incompleteDestinationKeys = [];
+  const destinationEvaluations = {};
+
+  Object.keys(candidateBundle.ordered).forEach((metaKey) => {
+    const destKey = `shopify.${metaKey}`;
+    const fieldRes = refMatchResult.resolutions?.[destKey];
+    const refListRaw =
+      refMatchResult.currentReferenceLists?.[destKey] ??
+      refMatchResult.currentReferenceLists?.[metaKey] ??
+      fieldRes?.currentAssignment;
+
+    const evalRes = evaluateStandardizedDestinationTechnicalStatus({
+      destinationKey: destKey,
+      productId,
+      data,
+      candidateBundle,
+      refMatchResult,
+      refMatchStatus
+    });
+    destinationEvaluations[destKey] = evalRes;
+
+    const manifestCheck = inspectAndExtractStoredReferenceSource(
+      data?.currentMetafields?.[destKey],
+      `manifest.currentMetafields["${destKey}"]`
+    );
+    const refListCheck = inspectAndExtractStoredReferenceSource(
+      refListRaw,
+      `currentReferenceLists["${destKey}"]`
+    );
+    const resolutionAssignmentCheck =
+      fieldRes?.currentAssignment !== undefined && fieldRes?.currentAssignment !== refListRaw
+        ? inspectAndExtractStoredReferenceSource(
+            fieldRes.currentAssignment,
+            `resolutions["${destKey}"].currentAssignment`
+          )
+        : { valid: true, gids: [], reason: "" };
+
+    const catCheck = inspectDestinationCategoryEligibility(destKey, fieldRes, refMatchResult, data);
+    const fieldErrors = formatErrorsList(fieldRes?.errors || fieldRes?.error);
+    const hasContinuation =
+      fieldRes?.continuation !== undefined &&
+      fieldRes?.continuation !== null &&
+      formatStructuredDiagValue(fieldRes.continuation) !== "{}" &&
+      formatStructuredDiagValue(fieldRes.continuation) !== "null";
+
+    const isReadOrPreservationIncomplete =
+      !fieldRes ||
+      typeof fieldRes !== "object" ||
+      refListRaw === undefined ||
+      refListRaw === null ||
+      !manifestCheck.valid ||
+      !refListCheck.valid ||
+      !resolutionAssignmentCheck.valid ||
+      !catCheck.isComplete ||
+      fieldRes.isComplete !== true ||
+      hasContinuation ||
+      (catCheck.isEligible && fieldErrors.length > 0);
+
+    if (isReadOrPreservationIncomplete) {
+      incompleteDestinationKeys.push(destKey);
+    } else if (evalRes.isTechnicallyEligible) {
+      eligibleDestinationKeys.push(destKey);
+    } else {
+      blockedDestinationKeys.push(destKey);
+    }
+  });
+
+  if (incompleteDestinationKeys.length > 0) {
+    const firstIncKey = incompleteDestinationKeys[0];
+    const firstIncReason =
+      destinationEvaluations[firstIncKey]?.blockReason ||
+      `Incomplete per-destination read or reference preservation check on ${firstIncKey}.`;
+    return {
+      state: "failed_or_incomplete",
+      requiresMatching: true,
+      isComplete: false,
+      hasTechnicalOrReadFailure: true,
+      hasLegitimateBlocks: blockedDestinationKeys.length > 0,
+      eligibleDestinationKeys,
+      blockedDestinationKeys,
+      incompleteDestinationKeys,
+      destinationEvaluations,
+      candidateBundle,
+      snapshot: currentSnapshot,
+      requestId: refMatchResult.requestId || null,
+      statusState: "incomplete",
+      reason: firstIncReason
+    };
+  }
+
+  const hasLegitimateBlocks = blockedDestinationKeys.length > 0;
+  return {
+    state: "matched_complete",
+    requiresMatching: false,
+    isComplete: true,
+    hasTechnicalOrReadFailure: false,
+    hasLegitimateBlocks,
+    eligibleDestinationKeys,
+    blockedDestinationKeys,
+    incompleteDestinationKeys: [],
+    destinationEvaluations,
+    candidateBundle,
+    snapshot: currentSnapshot,
+    requestId: refMatchResult.requestId || null,
+    reason: hasLegitimateBlocks
+      ? `Reference matching completed for ${productId}: ${eligibleDestinationKeys.length} eligible proposal(s), ${blockedDestinationKeys.length} blocked by category or entry resolution (${blockedDestinationKeys.join(", ")}).`
+      : `Reference matching completed for ${productId}: ${eligibleDestinationKeys.length} eligible proposal(s) unlocked.`
+  };
+};
+
 export const formatStructuredDiagValue = (val) => {
   if (val === undefined || val === null) return "";
   if (typeof val === "string") return val;
@@ -1115,7 +1433,7 @@ export const formatDisplayFieldValue = (rawVal, isStandardized, data, verifiedEn
       }
     }
     return resolveSingleItem(rawVal);
-  }
+  };
 
   if (typeof rawVal === "object") {
     return JSON.stringify(rawVal);

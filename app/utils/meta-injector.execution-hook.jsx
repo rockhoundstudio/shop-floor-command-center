@@ -6,6 +6,7 @@ import {
   validateProposedStandardizedGidList,
   buildCanonicalCandidateBundle,
   buildCanonicalCandidateSnapshot,
+  evaluateProductReferenceMatchReadiness,
   serializeStandardizedAssignmentForVision,
   validArray,
   validObj
@@ -273,6 +274,7 @@ const prepareAndSubmitRepairPlan = ({
 export function useMetaInjectorExecution({
   safeProducts,
   batchFetcher,
+  referenceMatchFetcher,
   queueIds,
   selectedBenchId,
   isLoadingData,
@@ -293,8 +295,12 @@ export function useMetaInjectorExecution({
   setAiData,
   standardizedCandidatesByProduct,
   setStandardizedCandidatesByProduct,
+  referenceMatchResultsByProduct,
   setReferenceMatchResultsByProduct,
+  referenceMatchStatusByProduct,
   setReferenceMatchStatusByProduct,
+  pendingReferenceMatch,
+  startReferenceMatchForProduct,
   manifestData,
   setManifestData,
   lastProcessedData,
@@ -346,6 +352,22 @@ export function useMetaInjectorExecution({
       }
     }
 
+    const runId = `repair_batch_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    setAiData(prev => {
+      const next = { ...prev };
+      queueIds.forEach(id => {
+        next[id] = {
+          ...(next[id] || {}),
+          repairWorkflowRunId: runId,
+          repairRequested: false,
+          repairPreflightAttemptKey: null,
+          repairPreflightRequestId: null,
+          repairPreflightSnapshot: null
+        };
+      });
+      return next;
+    });
+
     setSafetyError("");
     setSafetyMessage("Structural Repair Engine engaged. Mutating live data...");
     setExecutionMode("REPAIR");
@@ -365,7 +387,24 @@ export function useMetaInjectorExecution({
       return;
     }
 
-    setApprovals({});
+    const runId = `ai_batch_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    setAiData(prev => {
+      const next = { ...prev };
+      queueIds.forEach(id => {
+        next[id] = {
+          ...(next[id] || {}),
+          workflowRunId: runId,
+          titleParseRequested: false,
+          fullRescanRequested: false,
+          generateDescRequested: false,
+          autoMatchAttemptKey: null,
+          autoMatchRequestId: null,
+          autoMatchSnapshot: null
+        };
+      });
+      return next;
+    });
+
     setSafetyError("");
     setSafetyMessage("Industrial AI Batch Pipeline engaged. Firing up the Gemini cores...");
     setExecutionMode("AI_BATCH_PIPELINE");
@@ -435,6 +474,88 @@ export function useMetaInjectorExecution({
     }
     else if (executionMode === "REPAIR") {
       const pieceAi = aiData[currentId] || {};
+      const repairRunId = pieceAi.repairWorkflowRunId || "repair_batch_default";
+      const rawCandidates = standardizedCandidatesByProduct[currentId] || {};
+      const candidateBundle = buildCanonicalCandidateBundle(rawCandidates);
+      const currentSnapshot = candidateBundle.snapshot;
+      const attemptKey = `${repairRunId}::${currentId}::${currentSnapshot}`;
+      const hasAttemptedPreflight = pieceAi.repairPreflightAttemptKey === attemptKey;
+
+      const readiness = evaluateProductReferenceMatchReadiness({
+        productId: currentId,
+        data: manifest,
+        rawCandidates,
+        refMatchResult: referenceMatchResultsByProduct?.[currentId] || null,
+        refMatchStatus: referenceMatchStatusByProduct?.[currentId] || null,
+        pendingReferenceMatch,
+        expectedRequestId: hasAttemptedPreflight ? (pieceAi.repairPreflightRequestId || null) : null
+      });
+
+      if (readiness.state === "pending") {
+        return;
+      }
+
+      if (readiness.requiresMatching) {
+        // Hard stop on repair preflight: if we already submitted preflight in this repair invocation, stop now and never fall through to writing
+        if (hasAttemptedPreflight) {
+          const terminalMsg =
+            readiness.state === "failed_or_incomplete"
+              ? `Repair preflight reference matching for ${currentId} did not complete cleanly (${readiness.reason}). Repair stopped without writing any fields. Resolve matching diagnostics and click Repair again.`
+              : `Repair preflight reference matching for ${currentId} did not complete. Repair stopped without writing any fields.`;
+          updateProductState(currentId, STATUS.FAILED, [terminalMsg]);
+          setSafetyError(terminalMsg);
+          setIsExecuting(false);
+          setExecutionMode(null);
+          return;
+        }
+
+        if (referenceMatchFetcher?.state !== "idle" || pendingReferenceMatch !== null) {
+          return;
+        }
+
+        const preflightReqId = `refmatch_preflight_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+        setAiData(prev => ({
+          ...prev,
+          [currentId]: {
+            ...(prev[currentId] || {}),
+            repairPreflightAttemptKey: attemptKey,
+            repairPreflightRequestId: preflightReqId,
+            repairPreflightSnapshot: currentSnapshot
+          }
+        }));
+        updateProductState(currentId, STATUS.SCANNING, [
+          "Repair preflight: Running read-only reference matching for staged Vision candidates (repair halted pending review)..."
+        ]);
+
+        const startRes = startReferenceMatchForProduct(currentId, {
+          source: "repair_preflight",
+          workflowRunId: repairRunId,
+          requestId: preflightReqId,
+          candidatesOverride: rawCandidates
+        });
+
+        if (!startRes.started) {
+          const startErr = `Repair halted on ${currentId}: Could not start required reference matching preflight (${startRes.message}). No writes were executed.`;
+          updateProductState(currentId, STATUS.FAILED, [startErr]);
+          setSafetyError(startErr);
+          setIsExecuting(false);
+          setExecutionMode(null);
+        }
+        return;
+      }
+
+      // If preflight matching was triggered during this repair invocation and just finished, STOP the repair invocation so the operator can review before any write occurs
+      if (hasAttemptedPreflight) {
+        const stopMsg = readiness.hasLegitimateBlocks
+          ? `Repair preflight matching completed for ${currentId} (${readiness.eligibleDestinationKeys.length} proposal(s) staged for review, ${readiness.blockedDestinationKeys.length} blocked by category/entry rules: ${readiness.blockedDestinationKeys.join(", ")}). Repair stopped before writing. Review and approve any desired standardized proposals, then click Repair again.`
+          : `Repair preflight matching completed for ${currentId} (${readiness.eligibleDestinationKeys.length} proposal(s) staged for review). Repair stopped before writing. Review and approve any desired standardized proposals, then click Repair again.`;
+        updateProductState(currentId, STATUS.VALIDATED, [stopMsg]);
+        setSafetyMessage(stopMsg);
+        setIsExecuting(false);
+        setExecutionMode(null);
+        return;
+      }
+
       if (!pieceAi.repairRequested) {
         setAiData(prev => ({ ...prev, [currentId]: { ...pieceAi, repairRequested: true } }));
         prepareAndSubmitRepairPlan({
@@ -581,8 +702,223 @@ export function useMetaInjectorExecution({
         fd.append("pieceData", JSON.stringify(descriptionFacts));
         batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-autofill" });
       }
+      else if (aiStep === 4) {
+        const workflowRunId = pieceAi.workflowRunId || "ai_pipeline_default";
+        const rawCandidates =
+          pieceAi.stagedStandardizedCandidates !== undefined
+            ? pieceAi.stagedStandardizedCandidates
+            : (standardizedCandidatesByProduct[currentId] || {});
+        const candidateBundle = buildCanonicalCandidateBundle(rawCandidates);
+        const currentSnapshot = candidateBundle.snapshot;
+        const attemptKey = `${workflowRunId}::${currentId}::${currentSnapshot}`;
+        const hasAttemptedInScope = pieceAi.autoMatchAttemptKey === attemptKey;
+
+        const readiness = evaluateProductReferenceMatchReadiness({
+          productId: currentId,
+          data: manifest,
+          rawCandidates,
+          refMatchResult: referenceMatchResultsByProduct?.[currentId] || null,
+          refMatchStatus: referenceMatchStatusByProduct?.[currentId] || null,
+          pendingReferenceMatch,
+          expectedRequestId: hasAttemptedInScope ? (pieceAi.autoMatchRequestId || null) : null
+        });
+
+        if (readiness.state === "pending") {
+          return;
+        }
+
+        const advanceAfterStage4 = () => {
+          if (executionMode === "AI_SINGLE_PIPELINE") {
+            setAiStep(5);
+          } else {
+            setAiStep(1);
+            setExecuteIndex(i => i + 1);
+          }
+        };
+
+        if (readiness.state === "no_candidates") {
+          setManifestData(prevMan => {
+            const existing = prevMan[currentId];
+            if (!existing) return prevMan;
+            return {
+              ...prevMan,
+              [currentId]: {
+                ...existing,
+                diagnostics: {
+                  ...(existing.diagnostics || {}),
+                  stage: "resolveStandardizedCandidates"
+                }
+              }
+            };
+          });
+          updateProductState(currentId, STATUS.VALIDATED, [
+            "Stage 4: No supported standardized Vision candidates staged; reference matching not required. AI Pipeline Complete."
+          ]);
+          advanceAfterStage4();
+          return;
+        }
+
+        if (readiness.state === "matched_complete") {
+          setManifestData(prevMan => {
+            const existing = prevMan[currentId];
+            if (!existing) return prevMan;
+            const updatedRepairPlan = { ...(existing.repairPlan || {}) };
+            const updatedMetadata = { ...(existing.metadata || {}) };
+
+            VERIFIED_STANDARDIZED_DESTINATIONS.forEach(destKey => {
+              if (manualEdits[currentId]?.[destKey] === true) return;
+              const evalRes = readiness.destinationEvaluations?.[destKey];
+              if (evalRes?.isTechnicallyEligible && evalRes.autoProposalSerialized) {
+                updatedRepairPlan[destKey] = evalRes.autoProposalSerialized;
+                updatedMetadata[destKey] = {
+                  source: "Vision",
+                  stage: "resolveStandardizedCandidates"
+                };
+              } else {
+                delete updatedRepairPlan[destKey];
+              }
+            });
+
+            return {
+              ...prevMan,
+              [currentId]: {
+                ...existing,
+                repairPlan: updatedRepairPlan,
+                metadata: updatedMetadata,
+                diagnostics: {
+                  ...(existing.diagnostics || {}),
+                  shopifyRead: "Success",
+                  stage: "resolveStandardizedCandidates"
+                }
+              }
+            };
+          });
+
+          const stage4CompleteMsg = readiness.hasLegitimateBlocks
+            ? `Stage 4: Reference matching completed with blocks (${readiness.eligibleDestinationKeys.length} proposal(s) staged for review; ${readiness.blockedDestinationKeys.length} blocked by category/entry rules: ${readiness.blockedDestinationKeys.join(", ")} — not save-ready).`
+            : `Stage 4: Reference matching completed (${readiness.eligibleDestinationKeys.length} proposal(s) staged for review; explicit approval required before saving).`;
+
+          updateProductState(currentId, STATUS.VALIDATED, [stage4CompleteMsg]);
+          advanceAfterStage4();
+          return;
+        }
+
+        // At most one automatic attempt per (workflowRunId, product, snapshot)
+        if (!hasAttemptedInScope) {
+          if (referenceMatchFetcher?.state !== "idle" || pendingReferenceMatch !== null) {
+            return;
+          }
+
+          const reqId = `refmatch_ai4_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+          setAiData(prev => ({
+            ...prev,
+            [currentId]: {
+              ...(prev[currentId] || {}),
+              autoMatchAttemptKey: attemptKey,
+              autoMatchRequestId: reqId,
+              autoMatchSnapshot: currentSnapshot
+            }
+          }));
+          updateProductState(currentId, STATUS.SCANNING, [
+            `Stage 4: Matching Standardized Reference Choices (request ${reqId})...`
+          ]);
+
+          const startRes = startReferenceMatchForProduct(currentId, {
+            source: "ai_stage_4",
+            workflowRunId,
+            requestId: reqId,
+            candidatesOverride: rawCandidates
+          });
+
+          if (!startRes.started) {
+            const failMsg = `Stage 4 reference matching failed to start for ${currentId}: ${startRes.message}`;
+            setManifestData(prevMan => {
+              const existing = prevMan[currentId];
+              if (!existing) return prevMan;
+              return {
+                ...prevMan,
+                [currentId]: {
+                  ...existing,
+                  diagnostics: {
+                    ...(existing.diagnostics || {}),
+                    stage: "resolveStandardizedCandidates",
+                    error: failMsg
+                  }
+                }
+              };
+            });
+            updateProductState(currentId, STATUS.FAILED, [failMsg]);
+            setSafetyError(failMsg);
+            advanceAfterStage4();
+          }
+          return;
+        }
+
+        // Attempt was already dispatched in this scope; wait if fetcher is still transitioning
+        if (referenceMatchFetcher?.state !== "idle") {
+          return;
+        }
+
+        const latestStatus = referenceMatchStatusByProduct?.[currentId] || null;
+        if (
+          latestStatus &&
+          latestStatus.requestId === pieceAi.autoMatchRequestId &&
+          (latestStatus.state === "submitting" || latestStatus.state === "awaiting_response")
+        ) {
+          return;
+        }
+
+        const failReason =
+          readiness.reason ||
+          latestStatus?.message ||
+          `Reference matching did not complete cleanly for ${currentId} (request ${pieceAi.autoMatchRequestId || "unknown"}).`;
+        const failDetail = `Stage 4 reference matching ${latestStatus?.state || "failed/incomplete"}: ${failReason}`;
+
+        setManifestData(prevMan => {
+          const existing = prevMan[currentId];
+          if (!existing) return prevMan;
+          return {
+            ...prevMan,
+            [currentId]: {
+              ...existing,
+              diagnostics: {
+                ...(existing.diagnostics || {}),
+                stage: "resolveStandardizedCandidates",
+                error: failDetail
+              }
+            }
+          };
+        });
+        updateProductState(currentId, STATUS.FAILED, [failDetail]);
+        setSafetyError(failDetail);
+        advanceAfterStage4();
+      }
     }
-  }, [isLoadingData, isExecuting, batchFetcher.state, pendingOperation, executionMode, loadIndex, executeIndex, aiStep, queueIds, selectedBenchId, manifestData, safeProducts, aiData, approvals]);
+  }, [
+    isLoadingData,
+    isExecuting,
+    batchFetcher.state,
+    referenceMatchFetcher?.state,
+    pendingOperation,
+    pendingReferenceMatch,
+    executionMode,
+    loadIndex,
+    executeIndex,
+    aiStep,
+    queueIds,
+    selectedBenchId,
+    manifestData,
+    safeProducts,
+    aiData,
+    approvals,
+    manualEdits,
+    standardizedCandidatesByProduct,
+    referenceMatchResultsByProduct,
+    referenceMatchStatusByProduct,
+    startReferenceMatchForProduct,
+    updateProductState,
+    getFieldMetadata
+  ]);
 
   // Unified Response Receiver
   useEffect(() => {
@@ -941,8 +1277,9 @@ export function useMetaInjectorExecution({
                   [targetId]: {
                     state: newBundle.hasSupported ? "ready" : "failed",
                     tone: newBundle.hasSupported ? "info" : "warning",
+                    snapshot: newSnapshot,
                     message: newBundle.hasSupported
-                      ? `Vision staged ${newBundle.count} standardized candidate attribute(s) (${Object.keys(validatedCandidates).join(", ")}). Previous matching results (if any) were invalidated. Click 'Match Reference Choices' to validate reference entries.`
+                      ? `Vision staged ${newBundle.count} standardized candidate attribute(s) (${Object.keys(validatedCandidates).join(", ")}). Previous matching results (if any) were invalidated. Automatic Stage 4 matching will validate reference entries.`
                       : "Vision scan completed, but no supported standardized attribute candidates were returned for the 6 allowed keys.",
                     updatedAt: new Date().toISOString()
                   }
@@ -953,8 +1290,9 @@ export function useMetaInjectorExecution({
                   [targetId]: {
                     state: newBundle.hasSupported ? "ready" : "failed",
                     tone: newBundle.hasSupported ? "info" : "warning",
+                    snapshot: newSnapshot,
                     message: newBundle.hasSupported
-                      ? `Vision staged ${newBundle.count} standardized candidate attribute(s). Click 'Match Reference Choices' to validate reference entries.`
+                      ? `Vision staged ${newBundle.count} standardized candidate attribute(s). Automatic Stage 4 matching will validate reference entries.`
                       : "Vision scan completed, but no supported standardized attribute candidates were returned for the 6 allowed keys.",
                     updatedAt: new Date().toISOString()
                   }
@@ -975,6 +1313,7 @@ export function useMetaInjectorExecution({
               [targetId]: {
                 ...prev[targetId],
                 tab3Data: cleanedTab3Data,
+                stagedStandardizedCandidates: validatedCandidates,
                 verifiedGeoValues,
                 imageAlts,
                 altValidationErrors
@@ -1079,7 +1418,9 @@ export function useMetaInjectorExecution({
               });
               return { ...prevAi, [targetId]: updatedPieceAi };
             });
-            updateProductState(targetId, STATUS.VALIDATED, ["AI Pipeline Complete. Data staged."]);
+            updateProductState(targetId, STATUS.SCANNING, [
+              "Stage 3 complete. Proceeding to Stage 4: Standardized Reference Matching..."
+            ]);
           }
         }
       }
@@ -1105,8 +1446,7 @@ export function useMetaInjectorExecution({
             } else if (op.intent === "tab3FullRescan") {
               setAiStep(3);
             } else if (op.intent === "generateDescription") {
-              if (executionMode === "AI_SINGLE_PIPELINE") setAiStep(5);
-              else { setAiStep(1); setExecuteIndex(i => i + 1); }
+              setAiStep(4);
             }
           }
         }
@@ -1128,6 +1468,57 @@ export function useMetaInjectorExecution({
       return;
     }
 
+    const rawCandidates = standardizedCandidatesByProduct[selectedBenchId] || {};
+    const readiness = evaluateProductReferenceMatchReadiness({
+      productId: selectedBenchId,
+      data: manifest,
+      rawCandidates,
+      refMatchResult: referenceMatchResultsByProduct?.[selectedBenchId] || null,
+      refMatchStatus: referenceMatchStatusByProduct?.[selectedBenchId] || null,
+      pendingReferenceMatch
+    });
+
+    if (readiness.state === "pending") {
+      setSafetyError(`Cannot execute repair for ${selectedBenchId}: Reference matching is currently in flight. Wait for matching to complete, review staged proposals, and click Execute Single Repair again.`);
+      return;
+    }
+
+    if (readiness.requiresMatching) {
+      const singleRepairRunId = `single_repair_preflight_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      const preflightReqId = `refmatch_single_preflight_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+
+      setAiData(prev => ({
+        ...prev,
+        [selectedBenchId]: {
+          ...(prev[selectedBenchId] || {}),
+          repairWorkflowRunId: singleRepairRunId,
+          repairRequested: false,
+          repairPreflightAttemptKey: `${singleRepairRunId}::${selectedBenchId}::${readiness.snapshot}`,
+          repairPreflightRequestId: preflightReqId,
+          repairPreflightSnapshot: readiness.snapshot
+        }
+      }));
+
+      const startRes = startReferenceMatchForProduct(selectedBenchId, {
+        source: "repair_preflight",
+        workflowRunId: singleRepairRunId,
+        requestId: preflightReqId,
+        candidatesOverride: rawCandidates
+      });
+
+      if (startRes.started) {
+        const haltMsg = `Repair preflight started read-only reference matching (${preflightReqId}) for ${selectedBenchId}. Repair stopped before writing any fields. Wait for matching to complete, review any staged proposals, and click 'Execute Single Repair' again.`;
+        updateProductState(selectedBenchId, STATUS.SCANNING, [haltMsg]);
+        setSafetyMessage(haltMsg);
+        setSafetyError("");
+      } else {
+        const errMsg = `Repair halted on ${selectedBenchId}: Required reference matching preflight could not start (${startRes.message}). No writes were executed.`;
+        updateProductState(selectedBenchId, STATUS.FAILED, [errMsg]);
+        setSafetyError(errMsg);
+      }
+      return;
+    }
+
     const token = Date.now().toString() + Math.random().toString(36).substring(2, 7);
     prepareAndSubmitRepairPlan({
       targetId: selectedBenchId,
@@ -1142,7 +1533,20 @@ export function useMetaInjectorExecution({
       setSubmittedPayloads,
       batchFetcher
     });
-  }, [selectedBenchId, manifestData, approvals, batchFetcher, updateProductState, safeProducts, standardizedCandidatesByProduct, getStandardizedEvaluationForField]);
+  }, [
+    selectedBenchId,
+    manifestData,
+    approvals,
+    batchFetcher,
+    updateProductState,
+    safeProducts,
+    standardizedCandidatesByProduct,
+    referenceMatchResultsByProduct,
+    referenceMatchStatusByProduct,
+    pendingReferenceMatch,
+    startReferenceMatchForProduct,
+    getFieldMetadata
+  ]);
 
   const handleExecuteSingleAI = useCallback(() => {
     if (!selectedBenchId) return;
@@ -1152,18 +1556,26 @@ export function useMetaInjectorExecution({
       return;
     }
 
-    setApprovals(prev => {
-      const next = { ...prev };
-      delete next[selectedBenchId];
-      return next;
-    });
+    const runId = `ai_single_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    setAiData(prev => ({
+      ...prev,
+      [selectedBenchId]: {
+        ...(prev[selectedBenchId] || {}),
+        workflowRunId: runId,
+        titleParseRequested: false,
+        fullRescanRequested: false,
+        generateDescRequested: false,
+        autoMatchAttemptKey: null,
+        autoMatchRequestId: null,
+        autoMatchSnapshot: null
+      }
+    }));
 
     setSafetyError("");
     setSafetyMessage(`Single-Pass AI Pipeline engaged for ${selectedBenchId}...`);
     setExecutionMode("AI_SINGLE_PIPELINE");
     setIsExecuting(true);
     setAiStep(1);
-    setAiData({});
   }, [selectedBenchId, manifestData]);
 
   return {
