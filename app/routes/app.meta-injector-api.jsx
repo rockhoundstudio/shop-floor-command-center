@@ -51,6 +51,11 @@ const RETIRED_KEYS = [
   "cut_and_shape", "stone_shape", "wire_material", "primary_use"
 ];
 
+// Narrow, explicit reviewed destination type contracts (never generic fallbacks or inferred mappings)
+const REVIEWED_EXACT_DESTINATION_TYPE_CONTRACTS = Object.freeze({
+  "custom.rock_composition": "single_line_text_field"
+});
+
 const MASTER_TYPE_MAP = {
   rescued_by: "single_line_text_field", origin_location: "single_line_text_field", geological_age: "single_line_text_field",
   mohs_hardness: "single_line_text_field", official_name: "single_line_text_field", luster: "single_line_text_field",
@@ -150,6 +155,26 @@ function isGeneratedIdLabel(str) {
   if (/metaobject/i.test(trimmed) && /\d/.test(trimmed)) return true;
   if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(trimmed)) return true;
   if (/^\d+$/.test(trimmed)) return true;
+  return false;
+}
+
+function isPlainTextProposalRejectedForContract(rawVal, normalizedStr) {
+  if (typeof rawVal !== "string") return true;
+  const trimmed = String(normalizedStr ?? "").trim();
+  if (!trimmed) return true;
+  if (trimmed === "[object Object]") return true;
+  if (/^gid:\/\//i.test(trimmed) || /gid:\/\/shopify\//i.test(trimmed)) return true;
+  if (/^shopify:\/\/metaobject/i.test(trimmed)) return true;
+  if (/^metaobject[:/]/i.test(trimmed)) return true;
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(trimmed)) return true;
+  if ((trimmed.startsWith("[") && trimmed.endsWith("]")) || (trimmed.startsWith("{") && trimmed.endsWith("}"))) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (typeof parsed === "object" && parsed !== null) return true;
+    } catch (e) {
+      return true;
+    }
+  }
   return false;
 }
 
@@ -1857,6 +1882,8 @@ export const action = async ({ request }) => {
             key = parts.slice(1).join(".");
         }
 
+        const canonicalDestinationKey = `${ns}.${key}`;
+
         // 🟢 RETIREMENT GUARD
         if (RETIRED_KEYS.includes(key) || RETIRED_KEYS.includes(fullKey)) {
             skippedKeys.push(fullKey);
@@ -1885,7 +1912,9 @@ export const action = async ({ request }) => {
             continue;
         }
 
-        const currentVal = currentMetafields[fullKey] || null;
+        const currentVal = currentMetafields[fullKey] !== undefined
+          ? currentMetafields[fullKey]
+          : (currentMetafields[canonicalDestinationKey] || null);
         const valStr = String(val !== null && val !== undefined ? val : "").trim();
 
         // Preserve six-field standardized write gate: non-verified shopify.* attributes remain read-only
@@ -1913,15 +1942,33 @@ export const action = async ({ request }) => {
             continue; 
         }
 
-        // Resolve exact type from definition or stored type
-        const def = defs[fullKey];
-        const storedType = currentMetafieldsTypes[fullKey];
-        let resolvedType = def ? def.type : storedType;
+        // Resolve exact type from definition, stored type, or reviewed exact destination contract
+        const def = defs[fullKey] || defs[canonicalDestinationKey];
+        const storedType = currentMetafieldsTypes[fullKey] || currentMetafieldsTypes[canonicalDestinationKey];
+        const reviewedContractType = Object.prototype.hasOwnProperty.call(
+          REVIEWED_EXACT_DESTINATION_TYPE_CONTRACTS,
+          canonicalDestinationKey
+        )
+          ? REVIEWED_EXACT_DESTINATION_TYPE_CONTRACTS[canonicalDestinationKey]
+          : null;
 
         if (def && storedType && def.type !== storedType) {
             blockedFields[fullKey] = `Type conflict: Definition is ${def.type} but stored is ${storedType}`;
             continue;
         }
+        if (reviewedContractType) {
+            if (def?.type && def.type !== reviewedContractType) {
+                blockedFields[fullKey] = `Type conflict on ${canonicalDestinationKey}: Live definition is ${def.type}, which conflicts with reviewed destination contract ${reviewedContractType}.`;
+                continue;
+            }
+            if (storedType && storedType !== reviewedContractType) {
+                blockedFields[fullKey] = `Type conflict on ${canonicalDestinationKey}: Stored metafield type is ${storedType}, which conflicts with reviewed destination contract ${reviewedContractType}.`;
+                continue;
+            }
+        }
+
+        let resolvedType = def?.type ? def.type : (storedType || reviewedContractType || null);
+
         if (!resolvedType) {
             blockedFields[fullKey] = "No exact live definition or stored type available; fallback mappings are strictly forbidden.";
             continue;
@@ -1943,6 +1990,14 @@ export const action = async ({ request }) => {
         }
 
         let resolvedValue = normalizeMetafieldValue(key, valStr);
+
+        if (reviewedContractType === "single_line_text_field") {
+            if (isPlainTextProposalRejectedForContract(val, resolvedValue)) {
+                blockedFields[fullKey] = `Rejected non-text or reference-shaped proposal for plain-text destination ${canonicalDestinationKey}.`;
+                continue;
+            }
+        }
+
         if (key === "generated_description") {
             resolvedValue = sanitizeDescription(resolvedValue);
             if (currentNativeBodyHtml !== resolvedValue) {
