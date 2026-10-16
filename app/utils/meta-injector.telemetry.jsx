@@ -1,6 +1,7 @@
 import {
   VERIFIED_STANDARDIZED_DESTINATIONS,
   isVerifiedStandardizedDestination,
+  validateProposedStandardizedGidList,
   buildCanonicalCandidateBundle,
   formatErrorsList,
   validArray,
@@ -141,6 +142,13 @@ export function buildAndCopyMatrixTelemetry({
         history.readBackVerified === false)
   );
 
+  const canVerifySubmittedAgainstReadBack = Boolean(
+    history &&
+      history.readBackVerified !== undefined &&
+      !(history.success === false && diag.readBack === "Not called")
+  );
+  const unverifiedNativeFields = validArray(data.nativeTargets?.unverifiedFields);
+
   // Evaluate standardized candidate & reference matching state strictly for the selected product
   const rawProductCandidates = standardizedCandidatesByProduct?.[selectedBenchId] || {};
   const candidateBundle = buildCanonicalCandidateBundle(rawProductCandidates);
@@ -156,6 +164,7 @@ export function buildAndCopyMatrixTelemetry({
   const categoryIneligibleCandidates = [];
   const incompleteCandidateResolutions = [];
   const entryBlockedCandidateResolutions = [];
+  const resolvedLookupDiagnosticNotes = [];
   const unapprovedEligibleStandardizedKeys = [];
   const approvedEligibleStandardizedKeys = [];
 
@@ -195,6 +204,13 @@ export function buildAndCopyMatrixTelemetry({
       } else {
         refMatchStateSummary = "Completed";
       }
+
+      const matchTimeMs = refMatchResult.matchedAt ? Date.parse(refMatchResult.matchedAt) : NaN;
+      const repairTimeMs = history?.completedAt ? Date.parse(history.completedAt) : NaN;
+      const wasRematchedAfterRepair =
+        !Number.isNaN(matchTimeMs) &&
+        !Number.isNaN(repairTimeMs) &&
+        matchTimeMs > repairTimeMs;
 
       stagedCandidateKeys.forEach(metaKey => {
         const destKey = `shopify.${metaKey}`;
@@ -251,9 +267,98 @@ export function buildAndCopyMatrixTelemetry({
           return;
         }
 
-        const entryStatus = res.entryMatchStatus || res.status;
-        if (entryStatus === "missing_entry" || entryStatus === "ambiguous" || entryStatus === "blocked") {
-          entryBlockedCandidateResolutions.push(`${destKey}: Entry resolution status is "${entryStatus}".`);
+        const entryStatus = sanitizeTelemetryText(res.entryMatchStatus || res.status || "");
+        const meta = getFieldMetadata(destKey, data, selectedBenchId, approvals, allConfigFields);
+        const stdEval = meta?.stdEvaluation || null;
+
+        const activeSelectedList =
+          typeof meta?.propVal === "string" && meta.propVal.trim() !== ""
+            ? meta.propVal.trim()
+            : typeof stdEval?.autoProposalSerialized === "string"
+              ? stdEval.autoProposalSerialized.trim()
+              : "";
+
+        const selectedListValidation = validateProposedStandardizedGidList(activeSelectedList, stdEval);
+        const isTechnicallyResolvedAndValid = Boolean(
+          stdEval?.isTechnicallyEligible === true &&
+          stdEval?.isCategoryEligible === true &&
+          selectedListValidation.valid === true
+        );
+
+        if (!isTechnicallyResolvedAndValid) {
+          const blockDetail = sanitizeTelemetryText(
+            stdEval?.blockReason ||
+            selectedListValidation.reason ||
+            (entryStatus ? `Entry resolution status is "${entryStatus}".` : "Unresolved reference entry match.")
+          );
+          const rawLookupPrefix =
+            entryStatus && !blockDetail.toLowerCase().includes(entryStatus.toLowerCase())
+              ? `Entry resolution status is "${entryStatus}" (${blockDetail})`
+              : blockDetail;
+          entryBlockedCandidateResolutions.push(`${destKey}: ${rawLookupPrefix}`);
+          return;
+        }
+
+        if (entryStatus === "ambiguous" || entryStatus === "missing_entry" || entryStatus === "blocked") {
+          const canonicalSelectedStr = JSON.stringify(selectedListValidation.gids);
+          const submittedStr =
+            lastSubmitted && Object.prototype.hasOwnProperty.call(lastSubmitted, destKey)
+              ? String(lastSubmitted[destKey] ?? "").trim()
+              : "";
+          const rawMetafieldObserved =
+            data.currentMetafields &&
+            Object.prototype.hasOwnProperty.call(data.currentMetafields, destKey) &&
+            data.currentMetafields[destKey] !== undefined &&
+            data.currentMetafields[destKey] !== null &&
+            String(data.currentMetafields[destKey]).trim() !== "" &&
+            String(data.currentMetafields[destKey]).trim() !== "[]";
+          const currentReadBackStr = String(meta.currentVal ?? "").trim();
+
+          const isDestinationSaveVerified = Boolean(
+            history &&
+            history.success === true &&
+            history.readBackVerified === true &&
+            canVerifySubmittedAgainstReadBack &&
+            submittedStr !== "" &&
+            submittedStr === canonicalSelectedStr &&
+            rawMetafieldObserved &&
+            currentReadBackStr === submittedStr &&
+            verifiedDestinations.includes(destKey) &&
+            !blockedFields[destKey] &&
+            !conflicts[destKey] &&
+            !unresolvedChanges[destKey]
+          );
+
+          const isPriorSaveSupersededBySelection = Boolean(
+            history &&
+            history.success === true &&
+            history.readBackVerified === true &&
+            submittedStr !== "" &&
+            submittedStr !== canonicalSelectedStr &&
+            verifiedDestinations.includes(destKey)
+          );
+
+          const evalReasons = Array.isArray(stdEval?.labelEvaluations)
+            ? stdEval.labelEvaluations.map(ev => sanitizeTelemetryText(ev?.reason || "")).filter(Boolean)
+            : [];
+          const resolutionBasis = evalReasons.length > 0 ? evalReasons.join("; ") : "Verified reference list validated";
+
+          let lifecycleStateNote = "";
+          if (isDestinationSaveVerified && !wasRematchedAfterRepair) {
+            lifecycleStateNote = "State: Verified saved in Shopify (readBackVerified=true, destination confirmed)";
+          } else if (isDestinationSaveVerified && wasRematchedAfterRepair) {
+            lifecycleStateNote = `State: Historical save verified (${submittedStr}); reference matching re-run after save cleared fresh approval (Current Approval: ${meta.isApproved ? "Approved" : "Unapproved"})`;
+          } else if (isPriorSaveSupersededBySelection) {
+            lifecycleStateNote = `State: Historical save (${submittedStr}) superseded by changed selection ${canonicalSelectedStr} (Current Approval: ${meta.isApproved ? "Approved, not saved" : "Unapproved, not saved"})`;
+          } else if (meta.isApproved) {
+            lifecycleStateNote = "State: Exact GID list approved (not yet saved/verified)";
+          } else {
+            lifecycleStateNote = "State: Technically resolved proposal (awaiting exact-value approval; not saved)";
+          }
+
+          resolvedLookupDiagnosticNotes.push(
+            `Historical Lookup Diagnostic [${destKey}]: Raw lookup status "${entryStatus}" technically resolved to ${canonicalSelectedStr} (${resolutionBasis}) | ${lifecycleStateNote}`
+          );
         }
       });
 
@@ -492,13 +597,6 @@ export function buildAndCopyMatrixTelemetry({
     }
   });
 
-  const canVerifySubmittedAgainstReadBack = Boolean(
-    history &&
-      history.readBackVerified !== undefined &&
-      !(history.success === false && diag.readBack === "Not called")
-  );
-  const unverifiedNativeFields = validArray(data.nativeTargets?.unverifiedFields);
-
   if (lastSubmitted) {
     Object.keys(lastSubmitted).forEach(submitKey => {
       const meta = getFieldMetadata(submitKey, data, selectedBenchId, approvals, allConfigFields);
@@ -554,6 +652,10 @@ export function buildAndCopyMatrixTelemetry({
 
   if (failures.length > 0) {
     telemetryBody += "[FAILURES & ATTENTION NEEDED]\n" + failures.join("\n") + "\n";
+  }
+
+  if (resolvedLookupDiagnosticNotes.length > 0) {
+    telemetryBody += (failures.length > 0 ? "\n" : "") + "[PRESERVED LOOKUP DIAGNOSTICS]\n" + resolvedLookupDiagnosticNotes.join("\n") + "\n";
   }
 
   if (verifiedDestinations.length > 0) {
