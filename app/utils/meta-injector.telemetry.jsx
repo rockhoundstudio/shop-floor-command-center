@@ -1,6 +1,7 @@
 import {
   VERIFIED_STANDARDIZED_DESTINATIONS,
   isVerifiedStandardizedDestination,
+  parseMetaobjectGidArray,
   validateProposedStandardizedGidList,
   buildCanonicalCandidateBundle,
   formatErrorsList,
@@ -305,13 +306,28 @@ export function buildAndCopyMatrixTelemetry({
             lastSubmitted && Object.prototype.hasOwnProperty.call(lastSubmitted, destKey)
               ? String(lastSubmitted[destKey] ?? "").trim()
               : "";
-          const rawMetafieldObserved =
-            data.currentMetafields &&
-            Object.prototype.hasOwnProperty.call(data.currentMetafields, destKey) &&
-            data.currentMetafields[destKey] !== undefined &&
-            data.currentMetafields[destKey] !== null &&
-            String(data.currentMetafields[destKey]).trim() !== "" &&
-            String(data.currentMetafields[destKey]).trim() !== "[]";
+          const rawLoadedMetafield =
+            data.currentMetafields && Object.prototype.hasOwnProperty.call(data.currentMetafields, destKey)
+              ? data.currentMetafields[destKey]
+              : undefined;
+          const isRawLoadedSourceCompleteAndValid = !(
+            rawLoadedMetafield &&
+            typeof rawLoadedMetafield === "object" &&
+            !Array.isArray(rawLoadedMetafield) &&
+            (rawLoadedMetafield.readComplete === false ||
+              rawLoadedMetafield.parseValid === false ||
+              Boolean(rawLoadedMetafield.parseError))
+          );
+          const parsedLoadedGids = isRawLoadedSourceCompleteAndValid
+            ? parseMetaobjectGidArray(
+                rawLoadedMetafield && typeof rawLoadedMetafield === "object" && !Array.isArray(rawLoadedMetafield)
+                  ? (rawLoadedMetafield.referenceIds ?? rawLoadedMetafield.rawValue)
+                  : rawLoadedMetafield
+              )
+            : [];
+          const canonicalLoadedAssignmentStr =
+            parsedLoadedGids.length > 0 ? JSON.stringify(parsedLoadedGids) : "";
+          const rawMetafieldObserved = canonicalLoadedAssignmentStr !== "";
           const currentReadBackStr = String(meta.currentVal ?? "").trim();
 
           const isDestinationSaveVerified = Boolean(
@@ -322,6 +338,7 @@ export function buildAndCopyMatrixTelemetry({
             submittedStr !== "" &&
             submittedStr === canonicalSelectedStr &&
             rawMetafieldObserved &&
+            canonicalLoadedAssignmentStr === submittedStr &&
             currentReadBackStr === submittedStr &&
             verifiedDestinations.includes(destKey) &&
             !blockedFields[destKey] &&
@@ -338,6 +355,10 @@ export function buildAndCopyMatrixTelemetry({
             verifiedDestinations.includes(destKey)
           );
 
+          const isAlreadyAssignedUnchanged = Boolean(
+            rawMetafieldObserved && canonicalLoadedAssignmentStr === canonicalSelectedStr
+          );
+
           const evalReasons = Array.isArray(stdEval?.labelEvaluations)
             ? stdEval.labelEvaluations.map(ev => sanitizeTelemetryText(ev?.reason || "")).filter(Boolean)
             : [];
@@ -350,6 +371,8 @@ export function buildAndCopyMatrixTelemetry({
             lifecycleStateNote = `State: Historical save verified (${submittedStr}); reference matching re-run after save cleared fresh approval (Current Approval: ${meta.isApproved ? "Approved" : "Unapproved"})`;
           } else if (isPriorSaveSupersededBySelection) {
             lifecycleStateNote = `State: Historical save (${submittedStr}) superseded by changed selection ${canonicalSelectedStr} (Current Approval: ${meta.isApproved ? "Approved, not saved" : "Unapproved, not saved"})`;
+          } else if (isAlreadyAssignedUnchanged) {
+            lifecycleStateNote = "State: Already assigned; unchanged. No new repair verification recorded.";
           } else if (meta.isApproved) {
             lifecycleStateNote = "State: Exact GID list approved (not yet saved/verified)";
           } else {
