@@ -235,6 +235,41 @@ const mergeReadBackNativeTargets = (existingNativeTargets, rbNativeTargets) => {
   return next;
 };
 
+const prepareAndSubmitRepairPlan = ({
+  targetId,
+  manifest,
+  product,
+  approvals,
+  getFieldMetadata,
+  token,
+  scanLogMessage,
+  setPendingOperation,
+  updateProductState,
+  setSubmittedPayloads,
+  batchFetcher
+}) => {
+  setPendingOperation({ id: targetId, intent: "executeRepairPlan", token });
+  updateProductState(targetId, STATUS.SCANNING, [scanLogMessage]);
+
+  const fd = new FormData();
+  fd.append("intent", "executeRepairPlan");
+  fd.append("pieceId", targetId);
+
+  const { safePlan, nativeChanges } = buildRepairPayload(manifest, product, targetId, approvals, getFieldMetadata);
+
+  const snapshot = { ...safePlan };
+  if (nativeChanges.title !== undefined) snapshot.shopify_title = nativeChanges.title;
+  (nativeChanges.imageAlts || []).forEach(alt => {
+    snapshot[`native_image_alts_${alt.imageId}`] = alt.altText;
+  });
+  setSubmittedPayloads(prev => ({ ...prev, [targetId]: snapshot }));
+
+  fd.append("repairPlan", JSON.stringify(safePlan));
+  fd.append("nativeChanges", JSON.stringify(nativeChanges));
+  fd.append("legacyKeysToRemove", JSON.stringify([]));
+  batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-api" });
+};
+
 export function useMetaInjectorExecution({
   safeProducts,
   batchFetcher,
@@ -402,26 +437,19 @@ export function useMetaInjectorExecution({
       const pieceAi = aiData[currentId] || {};
       if (!pieceAi.repairRequested) {
         setAiData(prev => ({ ...prev, [currentId]: { ...pieceAi, repairRequested: true } }));
-        setPendingOperation({ id: currentId, intent: "executeRepairPlan", token });
-        updateProductState(currentId, STATUS.SCANNING, ["Executing structural repairs..."]);
-
-        const fd = new FormData();
-        fd.append("intent", "executeRepairPlan");
-        fd.append("pieceId", currentId);
-
-        const { safePlan, nativeChanges } = buildRepairPayload(manifest, product, currentId, approvals, getFieldMetadata);
-
-        const snapshot = { ...safePlan };
-        if (nativeChanges.title !== undefined) snapshot.shopify_title = nativeChanges.title;
-        (nativeChanges.imageAlts || []).forEach(alt => {
-          snapshot[`native_image_alts_${alt.imageId}`] = alt.altText;
+        prepareAndSubmitRepairPlan({
+          targetId: currentId,
+          manifest,
+          product,
+          approvals,
+          getFieldMetadata,
+          token,
+          scanLogMessage: "Executing structural repairs...",
+          setPendingOperation,
+          updateProductState,
+          setSubmittedPayloads,
+          batchFetcher
         });
-        setSubmittedPayloads(prev => ({ ...prev, [currentId]: snapshot }));
-
-        fd.append("repairPlan", JSON.stringify(safePlan));
-        fd.append("nativeChanges", JSON.stringify(nativeChanges));
-        fd.append("legacyKeysToRemove", JSON.stringify([]));
-        batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-api" });
       }
     }
     else if (executionMode === "AI_BATCH_PIPELINE" || executionMode === "AI_SINGLE_PIPELINE") {
@@ -1100,27 +1128,20 @@ export function useMetaInjectorExecution({
       return;
     }
 
-    const fd = new FormData();
-    fd.append("intent", "executeRepairPlan");
-    fd.append("pieceId", selectedBenchId);
-
-    const { safePlan, nativeChanges } = buildRepairPayload(manifest, product, selectedBenchId, approvals, getFieldMetadata);
-
-    const snapshot = { ...safePlan };
-    if (nativeChanges.title !== undefined) snapshot.shopify_title = nativeChanges.title;
-    (nativeChanges.imageAlts || []).forEach(alt => {
-      snapshot[`native_image_alts_${alt.imageId}`] = alt.altText;
-    });
-    setSubmittedPayloads(prev => ({ ...prev, [selectedBenchId]: snapshot }));
-
-    fd.append("repairPlan", JSON.stringify(safePlan));
-    fd.append("nativeChanges", JSON.stringify(nativeChanges));
-    fd.append("legacyKeysToRemove", JSON.stringify([]));
-
     const token = Date.now().toString() + Math.random().toString(36).substring(2, 7);
-    setPendingOperation({ id: selectedBenchId, intent: "executeRepairPlan", token });
-    updateProductState(selectedBenchId, STATUS.SCANNING, ["Executing single structural repair..."]);
-    batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-api" });
+    prepareAndSubmitRepairPlan({
+      targetId: selectedBenchId,
+      manifest,
+      product,
+      approvals,
+      getFieldMetadata,
+      token,
+      scanLogMessage: "Executing single structural repair...",
+      setPendingOperation,
+      updateProductState,
+      setSubmittedPayloads,
+      batchFetcher
+    });
   }, [selectedBenchId, manifestData, approvals, batchFetcher, updateProductState, safeProducts, standardizedCandidatesByProduct, getStandardizedEvaluationForField]);
 
   const handleExecuteSingleAI = useCallback(() => {
