@@ -53,7 +53,11 @@ const RETIRED_KEYS = [
 
 // Narrow, explicit reviewed destination type contracts (never generic fallbacks or inferred mappings)
 const REVIEWED_EXACT_DESTINATION_TYPE_CONTRACTS = Object.freeze({
-  "custom.rock_composition": "single_line_text_field"
+  "custom.rock_composition": "single_line_text_field",
+  "custom.crystal_system": "single_line_text_field",
+  "custom.mineral_class": "single_line_text_field",
+  "custom.rock_formation": "single_line_text_field",
+  "custom.geological_era": "single_line_text_field"
 });
 
 const MASTER_TYPE_MAP = {
