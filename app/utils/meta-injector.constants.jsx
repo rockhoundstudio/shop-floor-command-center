@@ -194,7 +194,7 @@ export const FIELD_CATALOG = [
   { key: "shopify_title", label: "Shopify Title", colorGroup: "green", targetIndex: 24, rockhoundIndex: 30, rockhoundConfig: { type: "single_line_text_field" }, metaConfig: { type: "single_line_text_field" }, uiConfig: { type: "text" } },
   { key: "piece_name", label: "Piece Name", colorGroup: "green", targetIndex: 20, rockhoundIndex: 0, rockhoundConfig: { type: "single_line_text_field" }, metaConfig: { type: "single_line_text_field" }, uiConfig: { type: "text" }, templateGroup: "Identity", role: "identity", namespace: "custom", owner: "metafield", mappingStatus: "active" },
   { key: "official_name", label: "Official Name", colorGroup: "green", targetIndex: 0, rockhoundIndex: 1, rockhoundConfig: { type: "single_line_text_field" }, metaConfig: { type: "single_line_text_field" }, uiConfig: { type: "text" } },
-  { key: "seo_title", label: "SEO Title", colorGroup: "green", targetIndex: 27, rockhoundIndex: 31, rockhoundConfig: { type: "single_line_text_field" }, metaConfig: { type: "single_line_text_field" }, uiConfig: { type: "text" }, templateGroup: "Native and Staging Roles", role: "draft_compatibility", namespace: "custom", owner: "metafield", mappingStatus: "draft" },
+  { key: "seo_title", label: "SEO Title", colorGroup: "green", targetIndex: 27, rockhoundIndex: 31, rockhoundConfig: { type: "single_line_text_field" }, metaConfig: { type: "single_line_text_field" }, uiConfig: { type: "text" }, role: "draft_compatibility", namespace: "custom", owner: "metafield", mappingStatus: "draft" },
   { key: "stone_family", label: "Stone Family", colorGroup: "green", targetIndex: 19, rockhoundIndex: 5, rockhoundConfig: { type: "select" }, metaConfig: { type: "select" }, uiConfig: { type: "select" }, optionsKey: "stone_family" },
   { key: "origin_location", label: "Origin Location", colorGroup: "green", targetIndex: 23, rockhoundIndex: 29, rockhoundConfig: { type: "single_line_text_field" }, metaConfig: { type: "single_line_text_field" }, uiConfig: { type: "text" }, templateGroup: "Origin and collection", role: "origin", namespace: "custom", owner: "metafield", mappingStatus: "active" },
   { key: "origin_handle", label: "Origin Handle", colorGroup: "green", targetIndex: 21, rockhoundIndex: 27, rockhoundConfig: { type: "single_line_text_field" }, metaConfig: { type: "single_line_text_field" }, uiConfig: { type: "text" } },
@@ -203,14 +203,14 @@ export const FIELD_CATALOG = [
   { key: "collection_location", label: "Collection Location", colorGroup: "green", targetIndex: 26, rockhoundIndex: 15, rockhoundConfig: { type: "single_line_text_field" }, metaConfig: { type: "single_line_text_field" }, uiConfig: { type: "text" }, templateGroup: "Origin and collection", role: "origin", namespace: "custom", owner: "metafield", mappingStatus: "active" },
   { key: "is_ooak", label: "Is One of a Kind", colorGroup: "green", targetIndex: 46, rockhoundIndex: 20, rockhoundConfig: { isDropdown: true }, metaConfig: { type: "single_line_text_field" }, uiConfig: { type: "text" }, optionsKey: "is_ooak" },
   { key: "rescued_by", label: "Rescued By", colorGroup: "green", targetIndex: 55, metaConfig: { type: "single_line_text_field" }, uiConfig: { type: "text" }, templateGroup: "Origin and collection", role: "origin", namespace: "custom", owner: "metafield", mappingStatus: "active" },
-  { key: "origin_story", label: "Origin Story", colorGroup: "green", targetIndex: 18, metaConfig: { type: "multi_line_text_field" }, uiConfig: { type: "text", multiline: true }, templateGroup: "Origin and collection", role: "source_context", namespace: "custom", owner: "metafield", mappingStatus: "active" },
-  { key: "stone_story", label: "Stone Story", colorGroup: "green", targetIndex: 1, metaConfig: { type: "multi_line_text_field" }, uiConfig: { type: "text", multiline: true } },
-  { key: "generated_description", label: "Generated Description", colorGroup: "green", targetIndex: 36, rockhoundIndex: 32, rockhoundConfig: { type: "single_line_text_field", multiline: true }, metaConfig: { type: "multi_line_text_field" }, uiConfig: { type: "text", multiline: true }, templateGroup: "Native and Staging Roles", role: "draft_compatibility", namespace: "custom", owner: "metafield", mappingStatus: "draft" },
+  { key: "origin_story", label: "Origin Story", colorGroup: "green", targetIndex: 18, metaConfig: { type: "multi_line_text_field" }, uiConfig: { type: "text", multiline: true }, templateGroup: "Origin and collection", role: "source_context", namespace: "custom", owner: "metafield", mappingStatus: "active", control: "multiline" },
+  { key: "stone_story", label: "Stone Story", colorGroup: "green", targetIndex: 1, metaConfig: { type: "list.single_line_text_field" }, uiConfig: { type: "text", multiline: true } },
+  { key: "generated_description", label: "Generated Description", colorGroup: "green", targetIndex: 36, rockhoundIndex: 32, rockhoundConfig: { type: "single_line_text_field", multiline: true }, metaConfig: { type: "multi_line_text_field" }, uiConfig: { type: "text", multiline: true }, role: "draft_compatibility", namespace: "custom", owner: "metafield", mappingStatus: "draft" },
 
   // 🔵 PHYSICAL SPECS & LAPIDARY BENCH
   { key: "dimensions_mm", label: "Dimensions (mm)", colorGroup: "blue", targetIndex: 9, rockhoundIndex: 10, rockhoundConfig: { type: "single_line_text_field" }, metaConfig: { type: "single_line_text_field" }, uiConfig: { type: "text" }, templateGroup: "Manual measurements", role: "manual_measurement", namespace: "custom", owner: "metafield", mappingStatus: "active" },
-  { key: "weight_grams", label: "Weight (grams)", colorGroup: "blue", targetIndex: 52, rockhoundIndex: 11, rockhoundConfig: { type: "single_line_text_field" }, metaConfig: { type: "single_line_text_field" }, uiConfig: { type: "text" }, templateGroup: "Manual measurements", role: "manual_measurement", namespace: "custom", owner: "metafield", mappingStatus: "active" },
-  { key: "shipping_weight_oz", label: "Shipping Weight (oz)", colorGroup: "blue", targetIndex: 53, rockhoundIndex: 12, rockhoundConfig: { type: "single_line_text_field" }, metaConfig: { type: "single_line_text_field" }, uiConfig: { type: "text" }, templateGroup: "Native and Staging Roles", role: "calculation_context", namespace: "custom", owner: "metafield", mappingStatus: "compatibility" },
+  { key: "weight_grams", label: "Weight (grams)", colorGroup: "blue", targetIndex: 52, rockhoundIndex: 11, rockhoundConfig: { type: "single_line_text_field" }, metaConfig: { type: "number_decimal" }, uiConfig: { type: "text" }, templateGroup: "Manual measurements", role: "manual_measurement", namespace: "custom", owner: "metafield", mappingStatus: "active" },
+  { key: "shipping_weight_oz", label: "Shipping Weight (oz)", colorGroup: "blue", targetIndex: 53, rockhoundIndex: 12, rockhoundConfig: { type: "single_line_text_field" }, metaConfig: { type: "single_line_text_field" }, uiConfig: { type: "text" }, role: "calculation_context", namespace: "custom", owner: "metafield", mappingStatus: "compatibility" },
   { key: "price", label: "Price", colorGroup: "blue", targetIndex: 54, rockhoundIndex: 13, rockhoundConfig: { type: "single_line_text_field" }, metaConfig: { type: "single_line_text_field" }, uiConfig: { type: "text" } },
   { key: "cut_type", label: "Cut Type", colorGroup: "blue", targetIndex: 2, rockhoundIndex: 8, rockhoundConfig: { type: "single_line_text_field" }, metaConfig: { type: "single_line_text_field" }, uiConfig: { type: "text" } },
   { key: "surface_finish", label: "Surface Finish", colorGroup: "blue", targetIndex: 3, rockhoundIndex: 9, rockhoundConfig: { isDropdown: true }, metaConfig: { type: "single_line_text_field" }, uiConfig: { type: "text" }, optionsKey: "surface_finish", templateGroup: "Appearance and character", role: "appearance", namespace: "custom", owner: "metafield", mappingStatus: "active" },
@@ -219,9 +219,9 @@ export const FIELD_CATALOG = [
   { key: "color_pattern", label: "Color Pattern", colorGroup: "blue", targetIndex: 34, metaConfig: { type: "single_line_text_field" }, uiConfig: { type: "text" }, templateGroup: "Appearance and character", role: "appearance", namespace: "custom", owner: "metafield", mappingStatus: "active" },
   { key: "treatment_status", label: "Treatment Status", colorGroup: "blue", targetIndex: 4, rockhoundIndex: 22, rockhoundConfig: { type: "single_line_text_field" }, metaConfig: { type: "single_line_text_field" }, uiConfig: { type: "text" }, templateGroup: "Treatment", role: "treatment", namespace: "custom", owner: "metafield", mappingStatus: "active" },
   { key: "treated", label: "Treated", colorGroup: "blue", targetIndex: 45, rockhoundIndex: 21, rockhoundConfig: { isDropdown: true }, metaConfig: { type: "single_line_text_field" }, uiConfig: { type: "text" }, optionsKey: "treated", templateGroup: "Treatment", role: "treatment", namespace: "custom", owner: "metafield", mappingStatus: "active" },
-  { key: "character_marks", label: "Character Marks", colorGroup: "blue", targetIndex: 8, rockhoundIndex: 25, rockhoundConfig: { type: "single_line_text_field", multiline: true }, metaConfig: { type: "multi_line_text_field" }, uiConfig: { type: "text", multiline: true }, templateGroup: "Appearance and character", role: "appearance", namespace: "custom", owner: "metafield", mappingStatus: "active" },
-  { key: "honest_flaws_and_character", label: "Honest Flaws and Character", rockhoundLabel: "Honest Flaws & Character", colorGroup: "blue", targetIndex: 56, rockhoundIndex: 26, rockhoundConfig: { type: "single_line_text_field", multiline: true }, metaConfig: { type: "multi_line_text_field" }, uiConfig: { type: "text", multiline: true }, templateGroup: "Appearance and character", role: "appearance", namespace: "custom", owner: "metafield", mappingStatus: "active" },
-  { key: "alt_text", label: "Alt Text", colorGroup: "blue", targetIndex: 51, metaConfig: { type: "single_line_text_field" }, uiConfig: { type: "text" }, templateGroup: "Native and Staging Roles", role: "draft_compatibility", namespace: "custom", owner: "metafield", mappingStatus: "draft" },
+  { key: "character_marks", label: "Character Marks", colorGroup: "blue", targetIndex: 8, rockhoundIndex: 25, rockhoundConfig: { type: "single_line_text_field", multiline: true }, metaConfig: { type: "list.single_line_text_field" }, uiConfig: { type: "text", multiline: true }, templateGroup: "Appearance and character", role: "appearance", namespace: "custom", owner: "metafield", mappingStatus: "active" },
+  { key: "honest_flaws_and_character", label: "Honest Flaws and Character", rockhoundLabel: "Honest Flaws & Character", colorGroup: "blue", targetIndex: 56, rockhoundIndex: 26, rockhoundConfig: { type: "single_line_text_field", multiline: true }, metaConfig: { type: "multi_line_text_field" }, uiConfig: { type: "text", multiline: true }, templateGroup: "Appearance and character", role: "appearance", namespace: "custom", owner: "metafield", mappingStatus: "active", control: "multiline" },
+  { key: "alt_text", label: "Alt Text", colorGroup: "blue", targetIndex: 51, metaConfig: { type: "single_line_text_field" }, uiConfig: { type: "text" }, role: "draft_compatibility", namespace: "custom", owner: "metafield", mappingStatus: "draft" },
 
   // 🧪 GEO-VAULT SCIENCE
   { key: "mohs_hardness", label: "Mohs Hardness", colorGroup: "teal", targetIndex: 10, metaConfig: { type: "single_line_text_field" }, uiConfig: { type: "text" }, templateGroup: "Geology", role: "deterministic_lookup", namespace: "custom", owner: "metafield", mappingStatus: "active" },
@@ -231,7 +231,7 @@ export const FIELD_CATALOG = [
   { key: "cleavage", label: "Cleavage", colorGroup: "teal", targetIndex: 14, metaConfig: { type: "single_line_text_field" }, uiConfig: { type: "text" }, templateGroup: "Geology", role: "deterministic_lookup", namespace: "custom", owner: "metafield", mappingStatus: "active" },
   { key: "fracture_pattern", label: "Fracture Pattern", colorGroup: "teal", targetIndex: 15, metaConfig: { type: "single_line_text_field" }, uiConfig: { type: "text" }, templateGroup: "Geology", role: "deterministic_lookup", namespace: "custom", owner: "metafield", mappingStatus: "active" },
   { key: "diaphaneity", label: "Diaphaneity", colorGroup: "teal", targetIndex: 16, metaConfig: { type: "single_line_text_field" }, uiConfig: { type: "text" }, templateGroup: "Geology", role: "deterministic_lookup", namespace: "custom", owner: "metafield", mappingStatus: "active" },
-  { key: "tenacity", label: "Tenacity", colorGroup: "teal", targetIndex: 17, metaConfig: { type: "single_line_text_field" }, uiConfig: { type: "text" } },
+  { key: "tenacity", label: "Tenacity", colorGroup: "teal", targetIndex: 17, metaConfig: { type: "single_line_text_field" }, uiConfig: { type: "text" }, templateGroup: "Geology", role: "deterministic_lookup", namespace: "custom", owner: "metafield", mappingStatus: "active" },
   { key: "mineral_class", label: "Mineral Class", colorGroup: "teal", targetIndex: 42, metaConfig: { type: "single_line_text_field" }, uiConfig: { type: "text" }, templateGroup: "Geology", role: "deterministic_lookup", namespace: "custom", owner: "metafield", mappingStatus: "active" },
   { key: "rock_composition", label: "Rock Composition", colorGroup: "teal", targetIndex: 7, metaConfig: { type: "single_line_text_field" }, uiConfig: { type: "text" }, templateGroup: "Geology", role: "deterministic_lookup", namespace: "custom", owner: "metafield", mappingStatus: "active" },
   { key: "rock_formation", label: "Rock Formation", colorGroup: "teal", targetIndex: 43, metaConfig: { type: "single_line_text_field" }, uiConfig: { type: "text" }, templateGroup: "Geology", role: "deterministic_lookup", namespace: "custom", owner: "metafield", mappingStatus: "active" },
@@ -242,7 +242,7 @@ export const FIELD_CATALOG = [
   { key: "primary_use", label: "Primary Use", colorGroup: "purple", rockhoundIndex: 17, rockhoundConfig: { isDropdown: true }, uiConfig: { type: "text" }, optionsKey: "primary_use" },
   { key: "primary_medium", label: "Primary Medium", colorGroup: "purple", targetIndex: 37, rockhoundIndex: 2, rockhoundConfig: { type: "single_line_text_field" }, metaConfig: { type: "single_line_text_field" }, uiConfig: { type: "text" } },
   { key: "secondary_medium", label: "Secondary Medium", colorGroup: "purple", targetIndex: 30, rockhoundIndex: 3, rockhoundConfig: { type: "single_line_text_field" }, metaConfig: { type: "single_line_text_field" }, uiConfig: { type: "text" }, templateGroup: "Conditional setting/accessory facts", role: "conditional_fact", applicability: "optional_when_inapplicable", namespace: "custom", owner: "metafield", mappingStatus: "active" },
-  { key: "material", label: "Stone Family", colorGroup: "purple", targetIndex: 35, rockhoundIndex: 4, rockhoundConfig: { type: "single_line_text_field" }, metaConfig: { type: "single_line_text_field" }, uiConfig: { type: "text" }, templateGroup: "Identity", role: "identity", namespace: "custom", owner: "metafield", mappingStatus: "active" },
+  { key: "material", label: "Stone Family", colorGroup: "purple", targetIndex: 35, rockhoundIndex: 4, rockhoundConfig: { type: "single_line_text_field" }, metaConfig: { type: "single_line_text_field" }, uiConfig: { type: "text" }, optionsKey: "stone_family", templateGroup: "Identity", role: "identity", namespace: "custom", owner: "metafield", mappingStatus: "active" },
   { key: "jewelry_type", label: "Jewelry Type", colorGroup: "purple", targetIndex: 31, metaConfig: { type: "single_line_text_field" }, uiConfig: { type: "text" }, templateGroup: "Conditional setting/accessory facts", role: "conditional_fact", applicability: "optional_when_inapplicable", namespace: "custom", owner: "metafield", mappingStatus: "active" },
   { key: "necklace_design", label: "Necklace Design", colorGroup: "purple", targetIndex: 32, metaConfig: { type: "single_line_text_field" }, uiConfig: { type: "text" }, templateGroup: "Conditional setting/accessory facts", role: "conditional_fact", applicability: "optional_when_inapplicable", namespace: "custom", owner: "metafield", mappingStatus: "active" },
   { key: "setting_ready", label: "Setting Ready", colorGroup: "purple", targetIndex: 38, rockhoundIndex: 18, rockhoundConfig: { isDropdown: true }, metaConfig: { type: "single_line_text_field" }, uiConfig: { type: "text" }, optionsKey: "setting_ready", templateGroup: "Conditional setting/accessory facts", role: "conditional_fact", applicability: "optional_when_inapplicable", namespace: "custom", owner: "metafield", mappingStatus: "active" },
@@ -252,7 +252,7 @@ export const FIELD_CATALOG = [
   { key: "jewelry_finding_type", label: "Jewelry Finding Type", colorGroup: "purple", targetIndex: 33, metaConfig: { type: "single_line_text_field" }, uiConfig: { type: "text" }, templateGroup: "Conditional setting/accessory facts", role: "conditional_fact", applicability: "optional_when_inapplicable", namespace: "custom", owner: "metafield", mappingStatus: "active" },
 
   // 🟡 GOOGLE CHANNELS & ATTRIBUTES
-  { key: "google_product_category", label: "Google Product Category", colorGroup: "yellow", targetIndex: 50, metaConfig: { type: "single_line_text_field" }, uiConfig: { type: "text" }, templateGroup: "Native and Staging Roles", role: "category_mapping", namespace: "custom", owner: "metafield", mappingStatus: "staging" },
+  { key: "google_product_category", label: "Google Product Category", colorGroup: "yellow", targetIndex: 50, metaConfig: { type: "single_line_text_field" }, uiConfig: { type: "text" }, role: "category_mapping", namespace: "custom", owner: "metafield", mappingStatus: "staging" },
   { key: "age_group", label: "Age Group", colorGroup: "yellow", targetIndex: 47, metaConfig: { type: "single_line_text_field" }, uiConfig: { type: "text" } },
   { key: "target_gender", label: "Target Gender", colorGroup: "yellow", targetIndex: 48, metaConfig: { type: "single_line_text_field" }, uiConfig: { type: "text" }, templateGroup: "Other", role: "custom_fact", namespace: "custom", owner: "metafield", mappingStatus: "active" },
   { key: "condition", label: "Condition", colorGroup: "yellow", targetIndex: 49, metaConfig: { type: "single_line_text_field" }, uiConfig: { type: "text" } },
@@ -267,13 +267,13 @@ export const FIELD_CATALOG = [
   // 🟠 ALL-PRODUCT TEMPLATE ADDITIONS (Custom, Native & Standardized Attributes)
   { key: "is_one_of_a_kind", label: "Is One of a Kind", templateGroup: "Identity", role: "identity", namespace: "custom", owner: "metafield", mappingStatus: "active", metaConfig: { type: "single_line_text_field" }, uiConfig: { type: "text" } },
   
-  { key: "native_title", label: "Native Title", templateGroup: "Native and Staging Roles", role: "native_control", namespace: "native", owner: "native", mappingStatus: "active" },
-  { key: "native_description", label: "Native Description", templateGroup: "Native and Staging Roles", role: "native_control", namespace: "native", owner: "native", mappingStatus: "active" },
-  { key: "native_seo_title", label: "Native SEO Title", templateGroup: "Native and Staging Roles", role: "native_control", namespace: "native", owner: "native", mappingStatus: "active" },
-  { key: "native_seo_description", label: "Native SEO Description", templateGroup: "Native and Staging Roles", role: "native_control", namespace: "native", owner: "native", mappingStatus: "active" },
-  { key: "native_price", label: "Native Price", templateGroup: "Native and Staging Roles", role: "native_control", namespace: "native", owner: "native", mappingStatus: "active" },
-  { key: "native_shipping_weight", label: "Native Shipping Weight", templateGroup: "Native and Staging Roles", role: "native_control", namespace: "native", owner: "native", mappingStatus: "active" },
-  { key: "native_image_alt", label: "Native Image Alt Text", templateGroup: "Native and Staging Roles", role: "native_control", namespace: "native", owner: "native", mappingStatus: "active" },
+  { key: "native_title", label: "Native Title", templateGroup: "Native and Staging Roles", role: "native_control", namespace: "native", owner: "native", mappingStatus: "active", type: "native" },
+  { key: "native_description", label: "Native Description", templateGroup: "Native and Staging Roles", role: "native_control", namespace: "native", owner: "native", mappingStatus: "active", type: "native", control: "multiline" },
+  { key: "native_seo_title", label: "Native SEO Title", templateGroup: "Native and Staging Roles", role: "native_control", namespace: "native", owner: "native", mappingStatus: "active", type: "native" },
+  { key: "native_seo_description", label: "Native SEO Description", templateGroup: "Native and Staging Roles", role: "native_control", namespace: "native", owner: "native", mappingStatus: "active", type: "native", control: "multiline" },
+  { key: "native_price", label: "Native Price", templateGroup: "Native and Staging Roles", role: "native_control", namespace: "native", owner: "native", mappingStatus: "active", type: "native" },
+  { key: "native_shipping_weight", label: "Native Shipping Weight", templateGroup: "Native and Staging Roles", role: "native_control", namespace: "native", owner: "native", mappingStatus: "active", type: "native" },
+  { key: "native_image_alt", label: "Native Image Alt Text", templateGroup: "Native and Staging Roles", role: "native_control", namespace: "native", owner: "native", mappingStatus: "active", type: "native" },
 
   ...['age-group', 'authenticity', 'chain-link-type', 'color-pattern', 'condition', 'construction', 'crystal-system', 'geological-era', 'jewelry-finding-type', 'jewelry-material', 'jewelry-type', 'material', 'material-origin', 'mineral-class', 'necklace-design', 'product-classification', 'product-use', 'rarity', 'rock-composition', 'rock-formation', 'target-gender'].map(k => ({
     key: `std_${k.replace(/-/g, '_')}`,
@@ -359,16 +359,26 @@ const TEMPLATE_GROUP_DEFINITIONS = [
 ];
 
 export const PRODUCT_TEMPLATE_GROUPS = TEMPLATE_GROUP_DEFINITIONS.map(groupDef => {
-  const groupFields = FIELD_CATALOG.filter(f => f.templateGroup === groupDef.heading).map(f => ({
-    key: f.key,
-    label: f.label,
-    namespace: f.namespace || "custom",
-    owner: f.owner || "metafield",
-    role: f.role || "custom_fact",
-    applicability: f.applicability || "all",
-    mappingStatus: f.mappingStatus || "active",
-    metaKey: f.metaKey || f.key
-  }));
+  const groupFields = FIELD_CATALOG.filter(f => f.templateGroup === groupDef.heading).map(f => {
+    const resolvedType =
+      f.owner === "native" || f.namespace === "native"
+        ? (f.type || "native")
+        : (f.metaConfig?.type || f.type || "single_line_text_field");
+
+    return {
+      key: f.key,
+      label: f.label,
+      namespace: f.namespace || "custom",
+      owner: f.owner || "metafield",
+      role: f.role || "custom_fact",
+      applicability: f.applicability || "all",
+      mappingStatus: f.mappingStatus || "active",
+      metaKey: f.metaKey || f.key,
+      type: resolvedType,
+      ...(f.control ? { control: f.control } : {}),
+      ...(f.optionsKey ? { optionsKey: f.optionsKey } : {})
+    };
+  });
   return {
     heading: groupDef.heading,
     color: groupDef.color,
