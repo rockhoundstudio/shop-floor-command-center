@@ -1,6 +1,10 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { BlockStack, Card, Text, TextField, Button, Box, Badge } from "@shopify/polaris";
 import { ChevronDownIcon, ChevronUpIcon } from "@shopify/polaris-icons";
+import {
+  DEV_SHOW_ALL_TEMPLATE_FIELDS,
+  computeTemplateAuditCounts
+} from "../utils/meta-injector.constants.jsx";
 import {
   ALLOWED_VISION_CANDIDATE_KEYS,
   buildCanonicalCandidateBundle,
@@ -9,6 +13,8 @@ import {
 import {
   DESCRIPTION_REVIEW_EXCLUDED_KEYS,
   HIDDEN_CONTEXT_FIELDS,
+  NATIVE_ALIAS_MAP,
+  resolveConfigFieldDestination,
   isMultilineKey
 } from "../utils/meta-injector.matrix-domain.jsx";
 import {
@@ -16,6 +22,15 @@ import {
   StandardizedProposalControl,
   StandardizedRowDiagnostics
 } from "./meta-injector.standardized-review.jsx";
+
+const formatCompactDiagPreview = (val, maxLen = 140) => {
+  if (val === undefined || val === null) return "Blank (not recorded)";
+  const str = String(val);
+  if (str.trim() === "") return "Blank";
+  const singleLine = str.replace(/\s+/g, " ").trim();
+  if (singleLine.length <= maxLen) return singleLine;
+  return `${singleLine.slice(0, maxLen)}… (${str.length} chars total)`;
+};
 
 export function ManifestSectionCard({
   section,
@@ -37,28 +52,142 @@ export function ManifestSectionCard({
   onToggleVerifiedStandardizedEntry,
   onRepairPlanChange,
   onToggleApproval,
-  onToggleBay
+  onToggleBay,
+  onSectionRenderedCountChange
 }) {
   const [openApprovalDiagnostics, setOpenApprovalDiagnostics] = useState({});
+  const lastReportedSignatureRef = useRef("");
 
-  if (!data || !section) return null;
+  const hasValidSection = Boolean(data && section && Array.isArray(section.keys));
+  const rawSectionKeys = hasValidSection ? section.keys : [];
+  const sectionConfigFields = hasValidSection && Array.isArray(section.configFields) ? section.configFields : [];
 
-  const filteredKeys = section.keys.filter(k => {
-    if (HIDDEN_CONTEXT_FIELDS.includes(k)) return false;
-    if (DESCRIPTION_REVIEW_EXCLUDED_KEYS.includes(k)) return false;
-    
-    if (activeFilter === "All") return true;
-    const meta = getFieldMetadata(k, data, selectedBenchId, approvals, section.configFields);
-    return matchesFilter(meta);
-  });
+  // Build the exact rendered row descriptor list first so UI rendering and subtotal measurements use the identical array
+  const renderedRowDescriptors = hasValidSection
+    ? rawSectionKeys
+        .filter((k) => {
+          // Always keep noncanonical hidden source context (custom.origin_story) and compatibility custom.generated_description out of normal template rows
+          if (HIDDEN_CONTEXT_FIELDS.includes(k)) return false;
+          if (k === "custom.generated_description") return false;
 
-  if (filteredKeys.length === 0) return null;
-  const isExpanded = expandedBays[section.title] ?? false;
-  const groupColorTone = section.configFields?.[0]?.color === "success" ? "success" : undefined;
+          if (DEV_SHOW_ALL_TEMPLATE_FIELDS) {
+            // In DEV Show-All mode, keep native_description and all approved canonical rows visible regardless of activeFilter
+            return true;
+          }
+
+          if (DESCRIPTION_REVIEW_EXCLUDED_KEYS.includes(k)) return false;
+          if (activeFilter === "All") return true;
+          const meta = getFieldMetadata(k, data, selectedBenchId, approvals, sectionConfigFields);
+          return matchesFilter(meta);
+        })
+        .map((key) => {
+          const meta = getFieldMetadata(key, data, selectedBenchId, approvals, sectionConfigFields);
+          const isPerImageMediaRow = key.startsWith("native_image_alts_");
+          const isZeroImagePlaceholderRow = key === "native_image_alt" || Boolean(meta.isImageAltCapabilityPlaceholder);
+          const isDedicatedDescriptionMirrorRow = key === "native_description";
+          const targetKeyForLookup = NATIVE_ALIAS_MAP[key] || key;
+          const unprefixedLookup = targetKeyForLookup.replace(/^custom\./, "");
+
+          const matchedFieldConfig =
+            sectionConfigFields.find((f) => {
+              if (!f) return false;
+              if (isPerImageMediaRow || isZeroImagePlaceholderRow) {
+                return f.key === "native_image_alt" || f.registryIdentity === "native_image_alt";
+              }
+              const resolvedDest = resolveConfigFieldDestination(f);
+              return (
+                resolvedDest === key ||
+                resolvedDest === targetKeyForLookup ||
+                f.key === key ||
+                f.key === targetKeyForLookup ||
+                f.key === unprefixedLookup
+              );
+            }) || null;
+
+          return {
+            key,
+            meta,
+            matchedFieldConfig,
+            isPerImageMediaRow,
+            isZeroImagePlaceholderRow,
+            isDedicatedDescriptionMirrorRow
+          };
+        })
+    : [];
+
+  const renderedKeysList = renderedRowDescriptors.map((r) => r.key);
+  const renderedMediaControlCount = renderedRowDescriptors.filter((r) => r.isPerImageMediaRow).length;
+  const renderedHasZeroImagePlaceholder = renderedRowDescriptors.some((r) => r.isZeroImagePlaceholderRow);
+
+  const sectionAuditSummary = hasValidSection
+    ? computeTemplateAuditCounts(
+        [{ heading: section.title, fields: sectionConfigFields }],
+        {
+          renderedKeysByGroup: { [section.title]: renderedKeysList },
+          mediaControlCount: renderedMediaControlCount,
+          hasZeroImagePlaceholder: renderedHasZeroImagePlaceholder
+        }
+      )
+    : null;
+
+  const groupSubtotalRecord = sectionAuditSummary?.groupSubtotals?.[0] || null;
+  const logicalCapabilityCount = groupSubtotalRecord ? groupSubtotalRecord.logicalCount : sectionConfigFields.length;
+  const actualRenderedRowCount = renderedRowDescriptors.length;
+
+  useEffect(() => {
+    if (!hasValidSection || typeof onSectionRenderedCountChange !== "function") return;
+    const signature = JSON.stringify({
+      productId: selectedBenchId || "",
+      sectionTitle: section.title,
+      logicalCount: logicalCapabilityCount,
+      renderedCount: actualRenderedRowCount,
+      renderedKeys: renderedKeysList,
+      mediaControlCount: renderedMediaControlCount,
+      hasZeroImagePlaceholder: renderedHasZeroImagePlaceholder
+    });
+
+    if (lastReportedSignatureRef.current === signature) return;
+    lastReportedSignatureRef.current = signature;
+
+    onSectionRenderedCountChange({
+      productId: selectedBenchId || null,
+      sectionTitle: section.title,
+      logicalCount: logicalCapabilityCount,
+      renderedCount: actualRenderedRowCount,
+      renderedKeys: renderedKeysList,
+      mediaControlCount: renderedMediaControlCount,
+      hasZeroImagePlaceholder: renderedHasZeroImagePlaceholder
+    });
+  }, [
+    hasValidSection,
+    onSectionRenderedCountChange,
+    selectedBenchId,
+    section?.title,
+    logicalCapabilityCount,
+    actualRenderedRowCount,
+    renderedKeysList,
+    renderedMediaControlCount,
+    renderedHasZeroImagePlaceholder
+  ]);
+
+  if (!hasValidSection) return null;
+
+  // In normal mode, hide sections when filtered keys are empty.
+  // In DEV mode, never hide a canonical template section; only skip genuinely empty non-template sections.
+  if (renderedRowDescriptors.length === 0 && (!DEV_SHOW_ALL_TEMPLATE_FIELDS || sectionConfigFields.length === 0)) {
+    return null;
+  }
+
+  // In DEV_SHOW_ALL_TEMPLATE_FIELDS mode, keep groups expanded unless the operator explicitly toggled the bay closed
+  const isExpanded = DEV_SHOW_ALL_TEMPLATE_FIELDS
+    ? (expandedBays?.[section.title] !== undefined ? Boolean(expandedBays[section.title]) : true)
+    : (expandedBays?.[section.title] ?? false);
+
+  const groupColorTone = sectionConfigFields?.[0]?.color === "success" ? "success" : undefined;
 
   const isStandardizedSection =
-    section.configFields?.some(f => f.role === "standardized_attribute") ||
-    section.keys.some(k => k.startsWith("shopify."));
+    sectionConfigFields.some((f) => f.role === "standardized_attribute") ||
+    rawSectionKeys.some((k) => k.startsWith("shopify."));
 
   const candidateBundle = buildCanonicalCandidateBundle(standardizedCandidatesByProduct?.[selectedBenchId] || {});
   const currentSnapshot = candidateBundle.snapshot;
@@ -76,11 +205,20 @@ export function ManifestSectionCard({
   const productMatchStatusRecord = referenceMatchStatusByProduct?.[selectedBenchId] || null;
 
   const toggleApprovalDiagnostic = (key) => {
-    setOpenApprovalDiagnostics(prev => ({
+    setOpenApprovalDiagnostics((prev) => ({
       ...prev,
       [key]: !prev[key]
     }));
   };
+
+  let mediaExpansionDetailText = "";
+  if (groupSubtotalRecord?.logicalImageAltCount > 0) {
+    if (renderedMediaControlCount > 0) {
+      mediaExpansionDetailText = ` | Image Alt: 1 logical capability → ${renderedMediaControlCount} per-image media ${renderedMediaControlCount === 1 ? "row" : "rows"}`;
+    } else if (renderedHasZeroImagePlaceholder) {
+      mediaExpansionDetailText = " | Image Alt: 1 logical capability → 1 zero-image placeholder row (non-writable)";
+    }
+  }
 
   return (
     <Card padding="0">
@@ -88,8 +226,22 @@ export function ManifestSectionCard({
           onClick={() => onToggleBay(section.title)} 
           style={{ padding: "16px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center", backgroundColor: "#f9fafb", borderBottom: isExpanded ? "1px solid #e1e3e5" : "none", minWidth: 0, boxSizing: "border-box" }}
       >
-        <div style={{ minWidth: 0 }}>
-          <Text as="h3" variant="headingLg" fontWeight="bold" tone={groupColorTone}>{section.title} ({filteredKeys.length} fields)</Text>
+        <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: "4px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+            <Text as="h3" variant="headingLg" fontWeight="bold" tone={groupColorTone}>
+              {DEV_SHOW_ALL_TEMPLATE_FIELDS
+                ? `${section.title} (${logicalCapabilityCount} logical / ${actualRenderedRowCount} rendered template ${actualRenderedRowCount === 1 ? "row" : "rows"})`
+                : `${section.title} (${actualRenderedRowCount} fields)`}
+            </Text>
+            {DEV_SHOW_ALL_TEMPLATE_FIELDS && (
+              <Badge tone="info">DEV: Show All Template Fields</Badge>
+            )}
+          </div>
+          {DEV_SHOW_ALL_TEMPLATE_FIELDS && (
+            <Text as="p" variant="bodySm" tone="subdued">
+              {`Scope: Template rows rendered in this group (${actualRenderedRowCount}) vs. logical capabilities (${logicalCapabilityCount})${mediaExpansionDetailText}.`}
+            </Text>
+          )}
         </div>
         <Button variant="plain" icon={isExpanded ? ChevronUpIcon : ChevronDownIcon} />
       </div>
@@ -109,11 +261,15 @@ export function ManifestSectionCard({
             />
           )}
 
-          {filteredKeys.map((key) => {
-            const meta = getFieldMetadata(key, data, selectedBenchId, approvals, section.configFields);
+          {renderedRowDescriptors.map(({ key, meta, matchedFieldConfig, isPerImageMediaRow, isZeroImagePlaceholderRow, isDedicatedDescriptionMirrorRow }) => {
             const isBlank = meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing";
 
+            // In DEV mode, native_description is displayed here as an identifiable read-only audit row
+            // pointing to the dedicated Description Review editor above so it does not create a competing save path.
             const isHeldReadOnly = Boolean(
+              isZeroImagePlaceholderRow ||
+              isDedicatedDescriptionMirrorRow ||
+              meta.isImageAltCapabilityPlaceholder ||
               meta.isPendingReadOnly ||
               meta.hasContractOrOwnerHold ||
               meta.hasExplicitStorageHold ||
@@ -136,6 +292,9 @@ export function ManifestSectionCard({
             const visionCandidateEntry = isVisionCandidateRow ? productVisionCandidates[candidateMetaKey] : null;
 
             const canApprove =
+              !isZeroImagePlaceholderRow &&
+              !isDedicatedDescriptionMirrorRow &&
+              !meta.isImageAltCapabilityPlaceholder &&
               meta.proposalExists &&
               meta.currentVal !== meta.propVal &&
               !meta.isManualOnly &&
@@ -144,14 +303,32 @@ export function ManifestSectionCard({
               meta.fieldStatus !== "API Error / Blocked" &&
               meta.fieldStatus !== "Save Conflict" &&
               meta.isSupported;
-            const isPreApprovedDisplay = meta.isContentPreApproved && meta.proposalExists && meta.currentVal !== meta.propVal;
+            const isPreApprovedDisplay =
+              !isZeroImagePlaceholderRow &&
+              !isDedicatedDescriptionMirrorRow &&
+              meta.isContentPreApproved &&
+              meta.proposalExists &&
+              meta.currentVal !== meta.propVal;
 
             let holdModeBadgeTone = "info";
             let holdModeBadgeLabel = "Read-Only (Pending)";
             let holdPlaceholderText = "Read-only field (writes disabled)";
             let holdStatusText = "Field contract read-only (pending_read_only). Read-only display; writes disabled.";
 
-            if (meta.isStandardizedAttribute) {
+            if (isZeroImagePlaceholderRow || meta.isImageAltCapabilityPlaceholder) {
+              const placeholderMsg =
+                meta.imageAltPlaceholderReason ||
+                "Display placeholder for native_image_alt capability (placeholder is never a writable media target).";
+              holdModeBadgeTone = "warning";
+              holdModeBadgeLabel = "Read-Only (No Media Target)";
+              holdPlaceholderText = placeholderMsg;
+              holdStatusText = placeholderMsg;
+            } else if (isDedicatedDescriptionMirrorRow) {
+              holdModeBadgeTone = "info";
+              holdModeBadgeLabel = "Edited in Description Review Bay";
+              holdPlaceholderText = "Edited in the dedicated Description Review section above (read-only audit mirror here)";
+              holdStatusText = "Visible in DEV Show-All mode to account for capability #132 (PRODUCT:native_description). Edit and approve proposals in the dedicated Description Review section above.";
+            } else if (meta.isStandardizedAttribute) {
               holdModeBadgeTone = isVisionCandidateRow && visionCandidateEntry ? "warning" : "info";
               holdModeBadgeLabel = isVisionCandidateRow ? "Blocked (Awaiting Match / Ambiguous)" : "Read-Only (Pending)";
               holdPlaceholderText = "Read-only standardized attribute (writes disabled)";
@@ -228,15 +405,91 @@ export function ManifestSectionCard({
 
             let customLabel = meta.label;
             let thumbnailUrl = null;
-            if (key.startsWith("native_image_alts_")) {
+            if (isPerImageMediaRow) {
                 const id = key.replace("native_image_alts_", "");
                 customLabel = `Native Image Alt (${id.split('/').pop()})`;
                 thumbnailUrl = data.nativeTargets?.media?.edges?.find(e => e.node?.id === id)?.node?.preview?.image?.url;
+            } else if (isZeroImagePlaceholderRow) {
+                customLabel = "Native Image Alt Text (Zero-Image Capability Placeholder)";
+            } else if (isDedicatedDescriptionMirrorRow) {
+                customLabel = "Native Description (Audit Row — Edited in Description Review Section)";
             }
 
             const verifiedMapForDisplay = meta.stdEvaluation?.verifiedEntriesMap || null;
             const displayCurrentVal = formatDisplayFieldValue(meta.currentVal, meta.isStandardizedAttribute, data, verifiedMapForDisplay);
             const displayPropVal = formatDisplayFieldValue(meta.propVal, meta.isStandardizedAttribute, data, verifiedMapForDisplay);
+
+            const applicabilityObj = meta.applicabilityState || {
+              status: "Not evaluated",
+              tone: "info",
+              reason: "Applicability not evaluated"
+            };
+
+            // Diagnostic strip metadata derived strictly from existing field metadata, config, and manifest state
+            const targetKeyForDiag = NATIVE_ALIAS_MAP[key] || key;
+            const explicitMetaRecord = data?.metadata?.[key] || data?.metadata?.[targetKeyForDiag] || null;
+            const explicitSourceStr =
+              explicitMetaRecord && typeof explicitMetaRecord.source === "string" && explicitMetaRecord.source.trim() !== "" && explicitMetaRecord.source !== "Not reported"
+                ? explicitMetaRecord.source.trim()
+                : (typeof meta.source === "string" && meta.source.trim() !== "" && meta.source !== "Not reported"
+                    ? meta.source.trim()
+                    : "Source not recorded");
+            const explicitStageStr =
+              explicitMetaRecord && typeof explicitMetaRecord.stage === "string" && explicitMetaRecord.stage.trim() !== "" && explicitMetaRecord.stage !== "Not reported"
+                ? explicitMetaRecord.stage.trim()
+                : (typeof meta.stage === "string" && meta.stage.trim() !== "" && meta.stage !== "Not reported"
+                    ? meta.stage.trim()
+                    : "Stage not recorded");
+
+            const destNamespace = matchedFieldConfig?.namespace || meta.namespace || "Not recorded";
+            const destMetaKey = isPerImageMediaRow
+              ? key
+              : (matchedFieldConfig?.metaKey || meta.metaKey || key);
+            const destIdentity = isPerImageMediaRow
+              ? `MEDIAIMAGE:${key.replace("native_image_alts_", "")} (alt)`
+              : (matchedFieldConfig?.registryIdentity || (destNamespace === "native" ? destMetaKey : `${destNamespace}.${destMetaKey}`));
+            const destOwner = matchedFieldConfig?.registryOwner || matchedFieldConfig?.owner || meta.owner || "Not recorded";
+            const destDataType = matchedFieldConfig?.type || meta.type || "Not recorded";
+
+            const isEditableControl = Boolean(
+              meta.isSupported &&
+              !isHeldReadOnly &&
+              !meta.isManualOnly &&
+              !isZeroImagePlaceholderRow &&
+              !isDedicatedDescriptionMirrorRow
+            );
+
+            const editabilitySummary = isEditableControl
+              ? "Editable (Proposal input active)"
+              : `Read-only (${isDedicatedDescriptionMirrorRow ? "Edited in Description Review section above" : (isZeroImagePlaceholderRow ? holdModeBadgeLabel : (meta.isManualOnly ? "Manual only" : (!meta.isSupported ? "Connection pending" : holdModeBadgeLabel)))})`;
+
+            const holdOrBlockReasonText =
+              Array.isArray(meta.reasons) && meta.reasons.length > 0
+                ? meta.reasons.join(" | ")
+                : (isHeldReadOnly ? holdStatusText : "None recorded");
+
+            const evaluationEligibilitySummary = !meta.isSupported
+              ? "Evaluation only: Connection pending (not eligible)"
+              : isHeldReadOnly
+                ? `Evaluation only: Held / Read-only (${holdModeBadgeLabel})`
+                : meta.hasTechnicalBlock
+                  ? "Evaluation only: Blocked by technical/contract check"
+                  : !meta.proposalExists
+                    ? "Evaluation only: No proposal staged"
+                    : meta.currentVal === meta.propVal
+                      ? "Evaluation only: Proposed value matches current value (no delta)"
+                      : (meta.isApproved || meta.isContentPreApproved)
+                        ? `Evaluation only: Eligible in domain evaluation (${meta.isApproved ? "Explicitly approved" : meta.preApprovalReason}) — Not yet saved or read-back verified`
+                        : meta.contentNeedsReview
+                          ? "Evaluation only: Awaiting explicit operator approval before write eligibility"
+                          : "Evaluation only: Proposal staged (unapproved)";
+
+            const saveReadBackEvidenceSummary =
+              meta.conflictData || meta.nativeDescConflictData
+                ? "Read-back mismatch recorded on previous save attempt (see conflict block above)"
+                : (Array.isArray(meta.reasons) && meta.reasons.some((r) => r.includes("Backend Blocked"))
+                    ? "Backend block recorded on previous save attempt"
+                    : "Save / read-back verification: Not recorded in this section component");
 
             return (
               <Box key={key} padding="300" background={isBlank && meta.isSupported ? "bg-surface-warning" : "bg-surface"} borderColor="border" borderWidth="1" borderRadius="200">
@@ -261,6 +514,9 @@ export function ManifestSectionCard({
                           {meta.isSupported ? (
                             <>
                               <Text as="p" variant="bodyMd" fontWeight="bold">Status: <Badge tone={statusTone}>{meta.fieldStatus}</Badge></Text>
+                              <Text as="p" variant="bodySm" tone="subdued" fontWeight="bold">
+                                Applicability: <Badge tone={applicabilityObj.tone}>{applicabilityObj.status}</Badge>
+                              </Text>
                               {isHeldReadOnly ? (
                                 <Text as="p" variant="bodySm" tone="subdued" fontWeight="bold">
                                   Mode: <Badge tone={holdModeBadgeTone}>
@@ -272,8 +528,13 @@ export function ManifestSectionCard({
                                   Mode: <Badge tone="success">Verified Reference Proposal Unlocked</Badge>
                                 </Text>
                               ) : null}
-                              <Text as="p" variant="bodyMd" fontWeight="bold">Source: <Text as="span" fontWeight="regular">{meta.source}</Text></Text>
-                              <Text as="p" variant="bodyMd" fontWeight="bold">Stage: <Text as="span" fontWeight="regular">{meta.stage}</Text></Text>
+                              <Text as="p" variant="bodyMd" fontWeight="bold">Source: <Text as="span" fontWeight="regular">{explicitSourceStr}</Text></Text>
+                              <Text as="p" variant="bodyMd" fontWeight="bold">Stage: <Text as="span" fontWeight="regular">{explicitStageStr}</Text></Text>
+                              {Array.isArray(meta.reasons) && meta.reasons.length > 0 && (
+                                <Text as="p" variant="bodySm" tone="subdued">
+                                  <strong>Reason:</strong> {meta.reasons.join(" | ")}
+                                </Text>
+                              )}
                             </>
                           ) : (
                             <Text as="p" variant="bodyMd" fontWeight="bold">Status: <Badge tone="info">Connection pending.</Badge></Text>
@@ -287,7 +548,11 @@ export function ManifestSectionCard({
                       <div style={{ padding: "12px", backgroundColor: "#f4f6f8", borderRadius: "8px", border: "1px solid #d2d5d8", minWidth: 0, wordBreak: "break-word", overflowWrap: "anywhere", boxSizing: "border-box" }}>
                           <Text as="p" variant="headingSm" tone="subdued" fontWeight="bold" style={{ marginBottom: "6px" }}>Current Shopify Value</Text>
                           <div style={{ whiteSpace: "pre-wrap", minWidth: 0 }}>
-                              <Text as="p" variant="bodyLg">{displayCurrentVal || <span style={{ color: "#8c9196", fontStyle: "italic" }}>Blank</span>}</Text>
+                              <Text as="p" variant="bodyLg">
+                                {isZeroImagePlaceholderRow
+                                  ? <span style={{ color: "#6d7175", fontStyle: "italic" }}>{holdStatusText}</span>
+                                  : (displayCurrentVal || <span style={{ color: "#8c9196", fontStyle: "italic" }}>Blank</span>)}
+                              </Text>
                               {isVisionCandidateRow && meta.currentExists && (
                                 <Text as="p" variant="bodySm" tone="subdued" style={{ marginTop: "4px", fontFamily: "monospace" }}>
                                   Serialized Current GIDs: {meta.currentVal}
@@ -323,7 +588,7 @@ export function ManifestSectionCard({
                             <TextField
                                 value={meta.isSupported ? displayPropVal : "Connection pending."}
                                 onChange={(val) => {
-                                  if (meta.isSupported && !isHeldReadOnly && !meta.isManualOnly) {
+                                  if (meta.isSupported && !isHeldReadOnly && !meta.isManualOnly && !isZeroImagePlaceholderRow && !isDedicatedDescriptionMirrorRow) {
                                     onRepairPlanChange(key, val);
                                   }
                                 }}
@@ -335,6 +600,13 @@ export function ManifestSectionCard({
                                     : (meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing"
                                         ? "Blank"
                                         : (meta.fieldStatus === "Proposal not provided" ? "Not provided" : ""))
+                                }
+                                helpText={
+                                  isDedicatedDescriptionMirrorRow
+                                    ? holdStatusText
+                                    : isZeroImagePlaceholderRow
+                                      ? holdStatusText
+                                      : undefined
                                 }
                                 disabled={!meta.isSupported || isHeldReadOnly || meta.isManualOnly}
                                 readOnly={!meta.isSupported || isHeldReadOnly || meta.isManualOnly}
@@ -406,6 +678,64 @@ export function ManifestSectionCard({
                                   </Text>
                               </div>
                           </div>
+                      )}
+
+                      {/* COMPACT DEV FIELD-LEVEL DIAGNOSTIC STRIP */}
+                      {DEV_SHOW_ALL_TEMPLATE_FIELDS && (
+                        <div
+                          style={{
+                            marginTop: "6px",
+                            padding: "10px 12px",
+                            backgroundColor: "#f1f5f9",
+                            border: "1px solid #cbd5e1",
+                            borderRadius: "6px",
+                            fontSize: "12px",
+                            lineHeight: "1.45",
+                            color: "#1e293b",
+                            wordBreak: "break-word",
+                            overflowWrap: "anywhere",
+                            boxSizing: "border-box"
+                          }}
+                        >
+                          <div style={{ fontWeight: "700", marginBottom: "4px", color: "#0f172a" }}>
+                            DEV FIELD DIAGNOSTIC STRIP (Evaluation Only — Not Save or Read-Back Proof)
+                          </div>
+                          <div>
+                            <strong>Destination:</strong> <code>{destIdentity}</code> | <strong>Namespace/Key:</strong> <code>{destNamespace}.{destMetaKey}</code> | <strong>Owner:</strong> <code>{destOwner}</code> | <strong>Type:</strong> <code>{destDataType}</code>
+                          </div>
+                          <div>
+                            <strong>Current Stored Value:</strong>{" "}
+                            <code>
+                              {isZeroImagePlaceholderRow
+                                ? "None (zero-image capability placeholder)"
+                                : (meta.currentExists ? formatCompactDiagPreview(meta.currentVal) : "Blank (not recorded)")}
+                            </code>
+                          </div>
+                          <div>
+                            <strong>Proposed / Staged Plan Value:</strong>{" "}
+                            <code>
+                              {isZeroImagePlaceholderRow
+                                ? "Not applicable (placeholder is non-writable)"
+                                : (meta.isProposed
+                                    ? (meta.proposalExists ? formatCompactDiagPreview(meta.propVal) : "Empty proposal staged")
+                                    : "Not recorded in repairPlan")}
+                            </code>
+                            {" | "}
+                            <strong>Separate Manual/Draft State in Component:</strong> <code>Not tracked separately in ManifestSectionCard (edits update repairPlan directly)</code>
+                          </div>
+                          <div>
+                            <strong>Recorded Value Source:</strong> <code>{explicitSourceStr}</code> | <strong>Recorded Stage:</strong> <code>{explicitStageStr}</code>
+                          </div>
+                          <div>
+                            <strong>Control Mode:</strong> <code>{editabilitySummary}</code> | <strong>Hold / Block Reason:</strong> <code>{holdOrBlockReasonText}</code>
+                          </div>
+                          <div>
+                            <strong>Evaluation Status:</strong> <code>{evaluationEligibilitySummary}</code>
+                          </div>
+                          <div>
+                            <strong>Save / Read-Back Evidence:</strong> <code>{saveReadBackEvidenceSummary}</code>
+                          </div>
+                        </div>
                       )}
 
                       {/* APPROVAL DIAGNOSTIC BLOCK (Behind Keyboard-Accessible Disclosure, Closed by Default) */}

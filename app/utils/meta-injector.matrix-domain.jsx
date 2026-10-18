@@ -1,4 +1,5 @@
 import {
+  DEV_SHOW_ALL_TEMPLATE_FIELDS,
   PRODUCT_TEMPLATE_GROUPS,
   COMPATIBILITY_ADAPTER_FIELDS,
   EXCLUDED_CATALOG_FIELDS,
@@ -337,11 +338,17 @@ export const getDynamicSections = (manifest) => {
       if (f.key === "is_ooak" || f.key === "custom.is_ooak" || f.key === "cut_type" || f.key === "custom.cut_type") return;
       
       if (f.key === "native_image_alt") {
-        if (manifest?.nativeTargets?.media?.edges) {
-          const mediaKeys = manifest.nativeTargets.media.edges
-            .filter(e => e?.node?.id)
-            .map(e => `native_image_alts_${e.node.id}`);
+        const mediaEdges = manifest?.nativeTargets?.media?.edges;
+        const mediaKeys = Array.isArray(mediaEdges)
+          ? mediaEdges
+              .filter(e => e?.node?.id && /^gid:\/\/shopify\/MediaImage\/\d+$/.test(String(e.node.id)))
+              .map(e => `native_image_alts_${e.node.id}`)
+          : [];
+        if (mediaKeys.length > 0) {
           keys.push(...mediaKeys);
+        } else if (DEV_SHOW_ALL_TEMPLATE_FIELDS) {
+          // Retain one identifiable display placeholder when no eligible image rows are available in DEV Show-All mode
+          keys.push("native_image_alt");
         }
         return;
       }
@@ -393,6 +400,7 @@ export const evaluateFieldMetadata = ({
   const safeData = data || {};
   const targetKeyForProposal = NATIVE_ALIAS_MAP[key] || key;
   const isNativeImageAlt = key.startsWith("native_image_alts_");
+  const isImageAltCapabilityPlaceholder = key === "native_image_alt";
   const isShippingWeightField = key === "native_shipping_weight" || key === "custom.shipping_weight_oz";
   const isCollectionDateField = key === "custom.collection_date" || key === "collection_date";
   
@@ -422,7 +430,7 @@ export const evaluateFieldMetadata = ({
 
   const expectedType =
     templateConfig?.type ||
-    (isNativeImageAlt || key.startsWith("native_") || NATIVE_FIELDS.includes(key)
+    (isNativeImageAlt || isImageAltCapabilityPlaceholder || key.startsWith("native_") || NATIVE_FIELDS.includes(key)
       ? "native"
       : key.startsWith("shopify.")
         ? "list.metaobject_reference"
@@ -454,6 +462,26 @@ export const evaluateFieldMetadata = ({
   const isCategoryEligible = Boolean(stdEvaluation?.isCategoryEligible);
   const categoryEligibility = stdEvaluation?.categoryEligibility || null;
 
+  // Distinguish actual zero-image placeholder state from per-image media targets only when state establishes it
+  const mediaTargetsObj = safeData.nativeTargets?.media;
+  const mediaEdgesList = Array.isArray(mediaTargetsObj?.edges)
+    ? mediaTargetsObj.edges.filter(e => e?.node?.id && /^gid:\/\/shopify\/MediaImage\/\d+$/.test(String(e.node.id)))
+    : null;
+  let imageAltPlaceholderReason = "";
+  if (isImageAltCapabilityPlaceholder) {
+    if (!safeData.nativeTargets || !mediaTargetsObj || !Array.isArray(mediaTargetsObj.edges)) {
+      imageAltPlaceholderReason = "Media is not available (placeholder is read-only; writes require an exact MediaImage GID)";
+    } else if (safeData.nativeTargets.loadError) {
+      imageAltPlaceholderReason = `Media failed to load (${safeData.nativeTargets.loadError}); placeholder is read-only`;
+    } else if (safeData.nativeTargets.isComplete === false || mediaTargetsObj.pageInfo?.hasNextPage === true) {
+      imageAltPlaceholderReason = "Media is still loading or incomplete; placeholder is read-only";
+    } else if (mediaEdgesList && mediaEdgesList.length === 0) {
+      imageAltPlaceholderReason = "No product images present on this product (0 MediaImage targets; placeholder is read-only)";
+    } else {
+      imageAltPlaceholderReason = "Display placeholder for native_image_alt capability (placeholder is never a writable media target)";
+    }
+  }
+
   // Explicit contract/verification hold flags from constants.jsx (only when explicitly false/true; absent optional flags do NOT trigger holds)
   const hasExplicitStorageHold =
     templateConfig?.storageVerified === false ||
@@ -472,13 +500,17 @@ export const evaluateFieldMetadata = ({
       !NATIVE_FIELDS.includes(key));
 
   // Relax pending_read_only ONLY for the six verified standardized destinations when BOTH reference matching and category eligibility pass.
-  const isPendingReadOnly = isVerifiedStdDest
-    ? !(Boolean(stdEvaluation?.isTechnicallyEligible) && isCategoryEligible)
-    : (isStandardizedAttribute
-        ? true
-        : (templateConfig?.mappingStatus === "pending_read_only" || hasExplicitStorageHold || isChannelFlagReadOnly));
+  // A native_image_alt placeholder (without an exact MediaImage ID) is always held read-only and never writable.
+  const isPendingReadOnly = isImageAltCapabilityPlaceholder
+    ? true
+    : isVerifiedStdDest
+      ? !(Boolean(stdEvaluation?.isTechnicallyEligible) && isCategoryEligible)
+      : (isStandardizedAttribute
+          ? true
+          : (templateConfig?.mappingStatus === "pending_read_only" || hasExplicitStorageHold || isChannelFlagReadOnly));
 
   const hasContractOrOwnerHold =
+    isImageAltCapabilityPlaceholder ||
     isPendingReadOnly ||
     hasExplicitStorageHold ||
     hasExplicitProducerHold ||
@@ -492,7 +524,9 @@ export const evaluateFieldMetadata = ({
                           safeData.nativeTargets?.isComplete === true && 
                           !safeData.nativeTargets?.loadError;
 
-  if (isNativeImageAlt) {
+  if (isImageAltCapabilityPlaceholder) {
+      currentVal = "";
+  } else if (isNativeImageAlt) {
       const imageId = key.replace("native_image_alts_", "");
       const match = safeData.nativeTargets?.media?.edges?.find(e => e.node?.id === imageId);
       currentVal = match?.node?.alt ?? "";
@@ -560,7 +594,10 @@ export const evaluateFieldMetadata = ({
   let propVal = "";
   let shippingProposalState = null;
 
-  if (isVerifiedStdDest) {
+  if (isImageAltCapabilityPlaceholder) {
+      isProposed = false;
+      propVal = "";
+  } else if (isVerifiedStdDest) {
       if (stdEvaluation?.isTechnicallyEligible && isCategoryEligible) {
           if (safeData.repairPlan !== undefined && safeData.repairPlan.hasOwnProperty(targetKeyForProposal)) {
               isProposed = true;
@@ -650,11 +687,12 @@ export const evaluateFieldMetadata = ({
     templateConfig !== undefined ||
     NATIVE_FIELDS.includes(key) ||
     isNativeImageAlt ||
+    isImageAltCapabilityPlaceholder ||
     HIDDEN_CONTEXT_FIELDS.includes(key) ||
     key.startsWith("native_");
 
-  // Never auto-preapprove standardized reference proposals or fields under contract/owner hold
-  if (!hasContractOrOwnerHold && !isVerifiedStdDest) {
+  // Never auto-preapprove standardized reference proposals, image-alt placeholders, or fields under contract/owner hold
+  if (!hasContractOrOwnerHold && !isVerifiedStdDest && !isImageAltCapabilityPlaceholder) {
       if (targetKeyForProposal === "custom.google_product_category" && proposalExists) {
           isContentPreApproved = true;
           preApprovalReason = "Category pre-approved";
@@ -697,6 +735,7 @@ export const evaluateFieldMetadata = ({
       ? currentApprovals[productId][key]
       : currentApprovals?.[productId]?.[targetKeyForProposal];
   const isApproved =
+    !isImageAltCapabilityPlaceholder &&
     !hasContractOrOwnerHold &&
     (!isVerifiedStdDest || (Boolean(stdEvaluation?.isTechnicallyEligible) && isCategoryEligible)) &&
     exactApprovalVal !== undefined &&
@@ -730,7 +769,7 @@ export const evaluateFieldMetadata = ({
   }
 
   // Technical Verification Layer
-  const isOverLimit = limit !== null && !isNativeImageAlt && (currentCount > limit || (isProposed && propCount > limit));
+  const isOverLimit = limit !== null && !isNativeImageAlt && !isImageAltCapabilityPlaceholder && (currentCount > limit || (isProposed && propCount > limit));
   if (isOverLimit) {
       hasTechnicalBlock = true;
       reasons.push("Over limit");
@@ -738,7 +777,10 @@ export const evaluateFieldMetadata = ({
   
   if (isIntegration) reasons.push("Integration owned");
 
-  if (isVerifiedStdDest) {
+  if (isImageAltCapabilityPlaceholder) {
+      hasTechnicalBlock = true;
+      reasons.push(imageAltPlaceholderReason);
+  } else if (isVerifiedStdDest) {
       if (!stdEvaluation?.isTechnicallyEligible || !isCategoryEligible) {
           hasTechnicalBlock = true;
           reasons.push(stdEvaluation?.blockReason || "Standardized attribute awaiting valid reference match and category eligibility.");
@@ -956,10 +998,31 @@ export const evaluateFieldMetadata = ({
 
   const isActualBlockedProposal = isBlockedAction && 
                                   !isManualOnly && 
+                                  !isImageAltCapabilityPlaceholder &&
                                   (!isPendingReadOnly || (isVerifiedStdDest && hasStagedCandidateForRow)) &&
                                   (!isStandardizedAttribute || isVerifiedStdDest) &&
                                   !HIDDEN_CONTEXT_FIELDS.includes(key) && 
                                   ((proposalExists && !isEqualToCurrent) || (isVerifiedStdDest && hasStagedCandidateForRow && hasTechnicalBlock));
+
+  // Only report Applicable/Inapplicable when explicit existing evidence (e.g. category eligibility) proves it; never infer from blank/false/zero
+  const applicabilityState =
+    categoryEligibility && categoryEligibility.isComplete === true
+      ? (categoryEligibility.isEligible === false
+          ? {
+              status: "Inapplicable",
+              tone: "warning",
+              reason: categoryEligibility.reason || "Confirmed ineligible for this product's taxonomy category"
+            }
+          : {
+              status: "Applicable",
+              tone: "success",
+              reason: categoryEligibility.reason || "Confirmed eligible for this product's taxonomy category"
+            })
+      : {
+          status: "Not evaluated",
+          tone: "info",
+          reason: "Applicability not evaluated"
+        };
 
   return { 
     currentVal, propVal, isProposed, fieldStatus, proposalStatus, source, stage, 
@@ -977,9 +1040,13 @@ export const evaluateFieldMetadata = ({
     hasExplicitProducerHold,
     isChannelFlagReadOnly,
     isVariantMetafieldHold,
+    hasContractOrOwnerHold,
+    isImageAltCapabilityPlaceholder,
+    imageAltPlaceholderReason,
+    applicabilityState,
     type: expectedType,
-    owner: templateConfig?.owner || (isNativeImageAlt || key.startsWith("native_") || NATIVE_FIELDS.includes(key) ? "native" : "metafield"),
-    namespace: templateConfig?.namespace || (key.startsWith("shopify.") ? "shopify" : (isNativeImageAlt || key.startsWith("native_") ? "native" : "custom")),
+    owner: templateConfig?.owner || (isNativeImageAlt || isImageAltCapabilityPlaceholder || key.startsWith("native_") || NATIVE_FIELDS.includes(key) ? "native" : "metafield"),
+    namespace: templateConfig?.namespace || (key.startsWith("shopify.") ? "shopify" : (isNativeImageAlt || isImageAltCapabilityPlaceholder || key.startsWith("native_") ? "native" : "custom")),
     metaKey: templateConfig?.metaKey || (key.startsWith("shopify.") ? key.slice(8) : unprefixedKey),
     label: templateConfig?.label || formatLabel(key),
     control: templateConfig?.control
@@ -1178,6 +1245,7 @@ export const computeDiagnosticsStats = ({
           if (meta.isManualOnly) stats.manualOnly++;
 
           const eligibleForStats =
+            !meta.isImageAltCapabilityPlaceholder &&
             !meta.isPendingReadOnly &&
             !meta.hasExplicitStorageHold &&
             !meta.hasExplicitProducerHold &&
@@ -1248,6 +1316,7 @@ export const buildRepairPayload = (manifest, product, currentId, currentApproval
   let handledPrice = false;
 
   candidateKeys.forEach(key => {
+      // Never serialize a zero-image native_image_alt placeholder or handle per-image alts in the metafield loop
       if (key.startsWith("native_image_alts_") || key === "native_image_alt") return; 
       if (key === "standardized_candidates" || key === "custom.standardized_candidates") return;
       if (key.startsWith("custom.std_") || key.startsWith("std_")) return;
@@ -1257,6 +1326,8 @@ export const buildRepairPayload = (manifest, product, currentId, currentApproval
       }
       
       const meta = getFieldMetadata(key, manifest, currentId, currentApprovals, allConfigFields);
+
+      if (meta.isImageAltCapabilityPlaceholder) return;
 
       if (isVerifiedStandardizedDestination(key)) {
           if (
@@ -1454,7 +1525,7 @@ export const buildRepairPayload = (manifest, product, currentId, currentApproval
   if (isMediaComplete && !mediaLoadError) {
       const imageAlts = [];
       (manifest.nativeTargets?.media?.edges || []).forEach(({ node }) => {
-          if (node?.id) {
+          if (node?.id && /^gid:\/\/shopify\/MediaImage\/\d+$/.test(node.id)) {
               const key = `native_image_alts_${node.id}`;
               if (manifest.repairPlan && manifest.repairPlan[key] !== undefined) {
                   const meta = getFieldMetadata(key, manifest, currentId, currentApprovals, allConfigFields);

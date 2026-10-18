@@ -4,6 +4,11 @@
 // (Consolidated Field Catalog Architecture — Universal All-Product Contract)
 // ==========================================================================
 
+// 🟢 TEMPORARY DEVELOPMENT AUDIT OVERRIDE
+// Ensures every approved canonical template capability remains visible in UI audit views
+// without unlocking writes, fabricating applicability, or exposing hidden compatibility adapters.
+export const DEV_SHOW_ALL_TEMPLATE_FIELDS = true;
+
 export const STUDIO_DEFAULTS = {
   rescued_by: "Bob and Janyce",
   is_ooak: "true",
@@ -2120,6 +2125,229 @@ export const PRODUCT_TEMPLATE_GROUPS = TEMPLATE_GROUP_DEFINITIONS.map(groupDef =
     fields: groupFields
   };
 });
+
+// ==========================================================================
+// PURE TEMPLATE AUDIT COUNT & EXPLICIT APPLICABILITY HELPERS
+// ==========================================================================
+
+/**
+ * Pure helper that computes logical capability counts, group subtotals, actual rendered-row
+ * counts, and explicit media-expansion vs. non-media row discrepancies without hardcoding 62
+ * or substituting group.fields.length for missing rendered measurements.
+ *
+ * @param {Array} templateGroups - Array of template group objects (defaults to PRODUCT_TEMPLATE_GROUPS).
+ * @param {Object|null} renderedMeasurements - Optional consumer-supplied measurements:
+ *   - renderedCountByGroup: { [groupHeading]: number }
+ *   - renderedKeysByGroup: { [groupHeading]: string[] }
+ *   - mediaControlCount: number (actual rendered per-image native_image_alts_* controls)
+ *   - hasZeroImagePlaceholder: boolean (whether 1 zero-image native_image_alt placeholder row is rendered)
+ */
+export function computeTemplateAuditCounts(
+  templateGroups = PRODUCT_TEMPLATE_GROUPS,
+  renderedMeasurements = null
+) {
+  const safeGroups = Array.isArray(templateGroups) ? templateGroups : [];
+  const hasMeasurementsObj =
+    renderedMeasurements !== null &&
+    renderedMeasurements !== undefined &&
+    typeof renderedMeasurements === "object";
+
+  const renderedCountByGroup =
+    hasMeasurementsObj &&
+    renderedMeasurements.renderedCountByGroup &&
+    typeof renderedMeasurements.renderedCountByGroup === "object"
+      ? renderedMeasurements.renderedCountByGroup
+      : null;
+
+  const renderedKeysByGroup =
+    hasMeasurementsObj &&
+    renderedMeasurements.renderedKeysByGroup &&
+    typeof renderedMeasurements.renderedKeysByGroup === "object"
+      ? renderedMeasurements.renderedKeysByGroup
+      : null;
+
+  let totalLogicalCapabilities = 0;
+  let totalLogicalImageAltCapabilities = 0;
+  let totalRenderedRows = 0;
+  let measuredGroupCount = 0;
+  let unmeasuredGroupCount = 0;
+  let observedMediaControlCount =
+    hasMeasurementsObj && typeof renderedMeasurements.mediaControlCount === "number" && Number.isFinite(renderedMeasurements.mediaControlCount)
+      ? Math.max(0, Math.floor(renderedMeasurements.mediaControlCount))
+      : null;
+  let observedZeroImagePlaceholder =
+    hasMeasurementsObj && typeof renderedMeasurements.hasZeroImagePlaceholder === "boolean"
+      ? renderedMeasurements.hasZeroImagePlaceholder
+      : null;
+
+  let derivedMediaControlsFromKeys = 0;
+  let derivedPlaceholderFromKeys = false;
+  let sawAnyKeysList = false;
+
+  const groupSubtotals = safeGroups.map((group) => {
+    const heading = group?.heading || "Unnamed Group";
+    const fields = Array.isArray(group?.fields) ? group.fields : [];
+    const logicalCount = fields.length;
+    const logicalImageAltCount = fields.filter(
+      (f) => f && (f.key === "native_image_alt" || f.registryIdentity === "native_image_alt" || f.expandsToMediaControls === true)
+    ).length;
+
+    totalLogicalCapabilities += logicalCount;
+    totalLogicalImageAltCapabilities += logicalImageAltCount;
+
+    let groupRenderedCount = null;
+    let groupRenderedKeys = null;
+
+    if (renderedKeysByGroup && Array.isArray(renderedKeysByGroup[heading])) {
+      sawAnyKeysList = true;
+      groupRenderedKeys = renderedKeysByGroup[heading];
+      groupRenderedCount = groupRenderedKeys.length;
+      groupRenderedKeys.forEach((k) => {
+        if (typeof k === "string") {
+          if (k.startsWith("native_image_alts_")) {
+            derivedMediaControlsFromKeys += 1;
+          } else if (k === "native_image_alt") {
+            derivedPlaceholderFromKeys = true;
+          }
+        }
+      });
+    } else if (
+      renderedCountByGroup &&
+      typeof renderedCountByGroup[heading] === "number" &&
+      Number.isFinite(renderedCountByGroup[heading])
+    ) {
+      groupRenderedCount = Math.max(0, Math.floor(renderedCountByGroup[heading]));
+    }
+
+    const isMeasured = groupRenderedCount !== null;
+    if (isMeasured) {
+      measuredGroupCount += 1;
+      totalRenderedRows += groupRenderedCount;
+    } else {
+      unmeasuredGroupCount += 1;
+    }
+
+    // For groups without native_image_alt, any difference between rendered and logical is a non-media discrepancy.
+    // For the group containing native_image_alt, separate media expansion from other fields in that group when keys are provided.
+    let nonMediaLogicalCount = logicalCount - logicalImageAltCount;
+    let nonMediaRenderedCount = null;
+    if (groupRenderedKeys) {
+      nonMediaRenderedCount = groupRenderedKeys.filter(
+        (k) => typeof k === "string" && k !== "native_image_alt" && !k.startsWith("native_image_alts_")
+      ).length;
+    } else if (isMeasured && logicalImageAltCount === 0) {
+      nonMediaRenderedCount = groupRenderedCount;
+    }
+
+    const nonMediaDiscrepancy =
+      nonMediaRenderedCount !== null ? nonMediaRenderedCount - nonMediaLogicalCount : null;
+
+    return {
+      heading,
+      logicalCount,
+      logicalImageAltCount,
+      renderedCount: groupRenderedCount,
+      measurementStatus: isMeasured ? "measured" : "unmeasured",
+      delta: isMeasured ? groupRenderedCount - logicalCount : null,
+      nonMediaLogicalCount,
+      nonMediaRenderedCount,
+      nonMediaDiscrepancy
+    };
+  });
+
+  if (observedMediaControlCount === null && sawAnyKeysList) {
+    observedMediaControlCount = derivedMediaControlsFromKeys;
+  }
+  if (observedZeroImagePlaceholder === null && sawAnyKeysList) {
+    observedZeroImagePlaceholder = derivedPlaceholderFromKeys;
+  }
+
+  const allGroupsMeasured = safeGroups.length > 0 && unmeasuredGroupCount === 0;
+  const anyGroupMeasured = measuredGroupCount > 0;
+  const measurementStatus = allGroupsMeasured
+    ? "complete"
+    : anyGroupMeasured
+      ? "partial_incomplete"
+      : "unmeasured";
+
+  const imageAltRenderedRows =
+    observedMediaControlCount !== null
+      ? observedMediaControlCount + (observedZeroImagePlaceholder ? 1 : 0)
+      : null;
+
+  const mediaExpansionDelta =
+    imageAltRenderedRows !== null
+      ? imageAltRenderedRows - totalLogicalImageAltCapabilities
+      : null;
+
+  const totalLogicalMinusRenderedDelta = allGroupsMeasured
+    ? totalRenderedRows - totalLogicalCapabilities
+    : null;
+
+  const nonMediaRowDiscrepancy =
+    allGroupsMeasured && mediaExpansionDelta !== null
+      ? totalLogicalMinusRenderedDelta - mediaExpansionDelta
+      : null;
+
+  return {
+    totalLogicalCapabilities,
+    totalLogicalImageAltCapabilities,
+    totalRenderedRows: allGroupsMeasured ? totalRenderedRows : null,
+    partialRenderedRowsSum: anyGroupMeasured ? totalRenderedRows : null,
+    measuredGroupCount,
+    unmeasuredGroupCount,
+    totalGroupCount: safeGroups.length,
+    measurementStatus,
+    mediaControlCount: observedMediaControlCount,
+    hasZeroImagePlaceholder: observedZeroImagePlaceholder,
+    imageAltRenderedRows,
+    mediaExpansionDelta,
+    totalDelta: totalLogicalMinusRenderedDelta,
+    nonMediaRowDiscrepancy,
+    groupSubtotals
+  };
+}
+
+/**
+ * Pure helper that reports Applicable / Inapplicable ONLY when explicit existing evidence
+ * supports it (e.g., confirmed category eligibility on standardized attributes).
+ * Never infers Inapplicable from blank, false, or zero values.
+ */
+export function resolveExplicitApplicabilityState(fieldConfig, evaluationMeta = null) {
+  const catElig = evaluationMeta?.categoryEligibility || null;
+  if (catElig && catElig.isComplete === true) {
+    if (catElig.isEligible === false) {
+      return {
+        status: "Inapplicable",
+        tone: "warning",
+        reason: catElig.reason || "Confirmed ineligible for this product's taxonomy category"
+      };
+    }
+    if (catElig.isEligible === true) {
+      return {
+        status: "Applicable",
+        tone: "success",
+        reason: catElig.reason || "Confirmed eligible for this product's taxonomy category"
+      };
+    }
+  }
+
+  if (fieldConfig?.applicability === "all_products") {
+    return {
+      status: "Applicable",
+      tone: "success",
+      reason: "Universal all-product capability"
+    };
+  }
+
+  return {
+    status: "Not evaluated",
+    tone: "info",
+    reason: fieldConfig?.applicability
+      ? `Scope: ${fieldConfig.applicability} (not evaluated against product instance)`
+      : "Applicability not evaluated"
+  };
+}
 
 export const CHANNEL_REQUIREMENTS = {
   online_store: [

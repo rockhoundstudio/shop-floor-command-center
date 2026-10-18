@@ -9,6 +9,7 @@ import { BlockStack, Card, Text, TextField, Select, Button, Banner, DropZone, Sp
 import { PlusIcon, MagicIcon } from "@shopify/polaris-icons";
 import { useFetcher } from "react-router";
 import {
+  DEV_SHOW_ALL_TEMPLATE_FIELDS,
   ROCKHOUND_FIELDS,
   DEFAULT_DROPDOWNS,
   CHANNEL_REQUIREMENTS,
@@ -20,8 +21,10 @@ import {
   TARGET_KEYS,
   PRODUCT_TEMPLATE_GROUPS,
   FIELD_CATALOG,
-  CANONICAL_CAPABILITY_FIELDS
+  CANONICAL_CAPABILITY_FIELDS,
+  computeTemplateAuditCounts
 } from "../utils/meta-injector.constants.jsx";
+import { resolveConfigFieldDestination } from "../utils/meta-injector.matrix-domain.jsx";
 import { handleScanPhoto, handleGenerateDescription, buildMetafieldsJson, buildTitle } from "./app.meta-injector.intake-helpers.jsx";
 
 function getDerivedMaterial(stoneFam) {
@@ -95,6 +98,69 @@ const PER_PIECE_CANONICAL_KEYS = new Set([
   "secondary_colors",
   "color_pattern"
 ]);
+
+const RETIRED_TAB1_KEYS = new Set([
+  "artist_notes", "bench_notes", "handcrafted_by", "primary_use"
+]);
+
+const EMPTY_DEV_PREVIEW_PIECE = Object.freeze({
+  id: "",
+  piece_name: "",
+  canonical_title: "",
+  native_title: "",
+  official_name: "",
+  dimensions_mm: "",
+  overall_solid_length_in: "",
+  whole_product_weight_grams: "",
+  chain_cord_length_in: "",
+  accessory_dimensions_mm: "",
+  fitting_opening_mm: "",
+  cut_type: "",
+  cut_and_shape: "",
+  stone_shape: "",
+  surface_finish: "",
+  color: "",
+  primary_color: "",
+  secondary_colors: "",
+  color_pattern: "",
+  price: "",
+  native_price: "",
+  weight_grams: "",
+  shipping_weight_oz: "",
+  native_shipping_weight: "",
+  photoFiles: [],
+  photoPreviewUrls: [],
+  photos: [],
+  imageBase64: "",
+  imageMimeType: "",
+  stagedResourceUrls: [],
+  stagedUploadIndex: 0,
+  generated_description: "",
+  native_description: "",
+  seo_title: "",
+  native_seo_title: "",
+  native_seo_description: "",
+  native_image_alt: "",
+  scanError: "",
+  scanToken: "",
+  isUploading: false,
+  character_marks: "",
+  honest_flaws_and_character: "",
+  alt_text: "",
+  productId: null,
+  status: "DRAFT",
+  manualPieceEdits: {},
+  recordedSources: {}
+});
+
+const formatCompactDiagPreview = (val, maxLen = 110) => {
+  if (val === undefined || val === null) return "Not recorded";
+  const str = String(val);
+  if (str.trim() === "") return "Blank";
+  const singleLine = str.replace(/\s+/g, " ").trim();
+  if (singleLine.length <= maxLen) return singleLine;
+  return `${singleLine.slice(0, maxLen)}… (${str.length} chars)`;
+};
 
 export function NewProductIntakeTab({ fetcher }) {
   const stageFetcher = useFetcher();
@@ -206,13 +272,15 @@ export function NewProductIntakeTab({ fetcher }) {
     alt_text: "",
     productId: null,
     status: "DRAFT",
-    manualPieceEdits: {}
+    manualPieceEdits: {},
+    recordedSources: {}
   });
 
   const [sharedFields, setSharedFields] = useState(initialSharedState);
   const [pieces, setPieces] = useState(() => [makeInitialPieceState()]);
   const [activePieceId, setActivePieceId] = useState("");
 
+  const sharedRecordedSourcesRef = useRef({});
   const latestPieces = useRef(pieces);
   const latestShared = useRef(sharedFields);
   const lastAutofilledTitle = useRef("");
@@ -244,6 +312,33 @@ export function NewProductIntakeTab({ fetcher }) {
 
   const statusFetcher = useFetcher();
 
+  const recordSharedSource = useCallback((key, sourceLabel, stageLabel) => {
+    if (!key) return;
+    const entry = {
+      source: sourceLabel || "Not recorded",
+      stage: stageLabel || "Not recorded"
+    };
+    sharedRecordedSourcesRef.current[key] = entry;
+    const bare = key.replace(/^custom\./, "");
+    sharedRecordedSourcesRef.current[bare] = entry;
+    sharedRecordedSourcesRef.current[`custom.${bare}`] = entry;
+    if (key === "is_ooak" || key === "is_one_of_a_kind") {
+      sharedRecordedSourcesRef.current.is_ooak = entry;
+      sharedRecordedSourcesRef.current.is_one_of_a_kind = entry;
+      sharedRecordedSourcesRef.current["custom.is_one_of_a_kind"] = entry;
+    }
+    if (key === "origin_handle" || key === "origin_page_handle") {
+      sharedRecordedSourcesRef.current.origin_handle = entry;
+      sharedRecordedSourcesRef.current.origin_page_handle = entry;
+      sharedRecordedSourcesRef.current["custom.origin_page_handle"] = entry;
+    }
+    if (key === "stone_family" || key === "material") {
+      sharedRecordedSourcesRef.current.stone_family = entry;
+      sharedRecordedSourcesRef.current.material = entry;
+      sharedRecordedSourcesRef.current["custom.material"] = entry;
+    }
+  }, []);
+
   const isCapabilityHeldReadOnly = useCallback((fieldDef) => {
     if (!fieldDef) return true;
     const identity = fieldDef.registryIdentity || `${fieldDef.namespace || "custom"}.${fieldDef.metaKey || fieldDef.key}`;
@@ -260,47 +355,70 @@ export function NewProductIntakeTab({ fetcher }) {
     );
   }, []);
 
-  const getHoldExplanation = useCallback((fieldDef) => {
-    if (!fieldDef) return { badge: "Read-Only", reason: "Connection pending." };
+  const getHoldExplanation = useCallback((fieldDef, isZeroImagePlaceholder = false, isUnselectedPreview = false) => {
+    if (isUnselectedPreview) {
+      return {
+        badge: "Read-Only (Unselected Preview)",
+        tone: "warning",
+        reason: isZeroImagePlaceholder
+          ? "DEV Unselected Preview: Zero-image placeholder for native_image_alt (read-only; no active piece selected)."
+          : "DEV Unselected Preview: No valid active piece is selected; template controls are read-only."
+      };
+    }
+    if (!fieldDef) return { badge: "Read-Only", tone: "info", reason: "Connection pending." };
     const identity = fieldDef.registryIdentity || `${fieldDef.namespace || "custom"}.${fieldDef.metaKey || fieldDef.key}`;
+    if (isZeroImagePlaceholder) {
+      return {
+        badge: "Read-Only (Zero-Image Placeholder)",
+        tone: "warning",
+        reason: "Zero-image capability placeholder for native_image_alt: upload at least 1 photo for the active piece in Section A to unlock per-piece image alt editing (or use Section A directly)."
+      };
+    }
     if (fieldDef.key === "native_image_alt") {
       return {
-        badge: "Per-Image Alt",
-        reason: "Editable per-piece image alt text; sent with uploaded media."
+        badge: "Per-Piece Image Alt",
+        tone: "success",
+        reason: "Editable per-piece image alt text; sent as alt_text with uploaded media during product creation."
       };
     }
     if (fieldDef.namespace === "shopify" || fieldDef.role === "standardized_attribute") {
       return {
         badge: "Read-Only (Standardized)",
+        tone: "info",
         reason: "Standardized attribute (pending_read_only). Reference matching occurs in Tab 3 after product creation."
       };
     }
     if (fieldDef.storageVerified === false || fieldDef.writerVerified === false || fieldDef.registryRole === "APPROVED_MEASUREMENT_ADDITION") {
       return {
         badge: "Read-Only (Storage Unverified)",
+        tone: "info",
         reason: "Proposed measurement capability (#58–62): storage/writer contract unverified (writes disabled)."
       };
     }
     if (fieldDef.producerAlignmentPending === true) {
       return {
         badge: "Read-Only (Producer Alignment Pending)",
+        tone: "warning",
         reason: "Producer/writer definition alignment pending verification (writes disabled)."
       };
     }
     if (identity === "mm-google-shopping.custom_product") {
       return {
         badge: "Read-Only (Channel Rule Pending)",
+        tone: "info",
         reason: "Google custom_product boolean rules pending verification (writes disabled)."
       };
     }
     if (fieldDef.owner === "variant_metafield") {
       return {
         badge: "Read-Only (Variant Owner Hold)",
+        tone: "warning",
         reason: "Variant-owned metafield (PRODUCTVARIANT) held: product-level writer route not applicable."
       };
     }
     return {
       badge: "Read-Only (Held)",
+      tone: "info",
       reason: "Field contract held read-only (writes disabled)."
     };
   }, []);
@@ -339,11 +457,15 @@ export function NewProductIntakeTab({ fetcher }) {
     }
   }, [statusFetcher.state, statusFetcher.data]);
 
-  const handlePieceChange = useCallback((id, key, value, isManual = true) => {
+  const handlePieceChange = useCallback((id, key, value, isManual = true, sourceOverride = null, stageOverride = null) => {
+    if (!id || !latestPieces.current.some(p => p.id === id)) return;
     const fieldDef = FIELD_CATALOG.find(f => f.key === key || f.registryIdentity === key);
     if (fieldDef && isCapabilityHeldReadOnly(fieldDef) && key !== "native_image_alt" && key !== "alt_text") {
       return;
     }
+
+    const sourceLabel = sourceOverride || (isManual ? "Manual" : "System");
+    const stageLabel = stageOverride || (isManual ? "Tab1BenchEdit" : "Tab1Intake");
 
     setPieces(prev => prev.map(p => {
       if (p.id !== id) return p;
@@ -351,80 +473,113 @@ export function NewProductIntakeTab({ fetcher }) {
         ? { ...(p.manualPieceEdits || {}), [key]: true }
         : (p.manualPieceEdits || {});
 
-      const updated = { ...p, [key]: value, manualPieceEdits: nextManualEdits };
+      const nextRecordedSources = {
+        ...(p.recordedSources || {}),
+        [key]: { source: sourceLabel, stage: stageLabel }
+      };
+
+      const updated = {
+        ...p,
+        [key]: value,
+        manualPieceEdits: nextManualEdits,
+        recordedSources: nextRecordedSources
+      };
 
       if (key === "is_ooak" || key === "is_one_of_a_kind") {
         updated.is_ooak = value;
         updated.is_one_of_a_kind = value;
+        updated.recordedSources.is_ooak = { source: sourceLabel, stage: stageLabel };
+        updated.recordedSources.is_one_of_a_kind = { source: sourceLabel, stage: stageLabel };
       } else if (key === "canonical_title" || key === "native_title") {
         updated.canonical_title = value;
         updated.native_title = value;
+        updated.recordedSources.canonical_title = { source: sourceLabel, stage: stageLabel };
+        updated.recordedSources.native_title = { source: sourceLabel, stage: stageLabel };
         if (isManual) {
           updated.manualPieceEdits = { ...nextManualEdits, canonical_title: true, native_title: true };
         }
       } else if (key === "generated_description" || key === "native_description") {
         updated.generated_description = value;
         updated.native_description = value;
+        updated.recordedSources.generated_description = { source: sourceLabel, stage: stageLabel };
+        updated.recordedSources.native_description = { source: sourceLabel, stage: stageLabel };
         if (isManual) {
           updated.manualPieceEdits = { ...nextManualEdits, generated_description: true, native_description: true };
         }
       } else if (key === "seo_title" || key === "native_seo_title") {
         updated.seo_title = value;
         updated.native_seo_title = value;
+        updated.recordedSources.seo_title = { source: sourceLabel, stage: stageLabel };
+        updated.recordedSources.native_seo_title = { source: sourceLabel, stage: stageLabel };
         if (isManual) {
           updated.manualPieceEdits = { ...nextManualEdits, seo_title: true, native_seo_title: true };
         }
       } else if (key === "price" || key === "native_price") {
         updated.price = value;
         updated.native_price = value;
+        updated.recordedSources.price = { source: sourceLabel, stage: stageLabel };
+        updated.recordedSources.native_price = { source: sourceLabel, stage: stageLabel };
         if (isManual) {
           updated.manualPieceEdits = { ...nextManualEdits, price: true, native_price: true };
         }
       } else if (key === "shipping_weight_oz" || key === "native_shipping_weight") {
         updated.shipping_weight_oz = value;
         updated.native_shipping_weight = value;
+        updated.recordedSources.shipping_weight_oz = { source: sourceLabel, stage: stageLabel };
+        updated.recordedSources.native_shipping_weight = { source: sourceLabel, stage: stageLabel };
         if (isManual) {
           updated.manualPieceEdits = { ...nextManualEdits, shipping_weight_oz: true, native_shipping_weight: true };
         }
       } else if (key === "alt_text" || key === "native_image_alt") {
         updated.alt_text = value;
         updated.native_image_alt = value;
+        updated.recordedSources.alt_text = { source: sourceLabel, stage: stageLabel };
+        updated.recordedSources.native_image_alt = { source: sourceLabel, stage: stageLabel };
         if (isManual) {
           updated.manualPieceEdits = { ...nextManualEdits, alt_text: true, native_image_alt: true };
         }
       } else if (key === "cut_and_shape") {
         updated.cut_and_shape = value;
         updated.cut_type = value;
+        updated.recordedSources.cut_and_shape = { source: sourceLabel, stage: stageLabel };
+        updated.recordedSources.cut_type = { source: sourceLabel, stage: stageLabel };
         if (isManual) {
           updated.manualPieceEdits = { ...nextManualEdits, cut_and_shape: true };
         }
       } else if (key === "cut_type") {
         updated.cut_type = value;
+        updated.recordedSources.cut_type = { source: sourceLabel, stage: stageLabel };
         if (!hasMeaningfulValue(updated.cut_and_shape)) {
           updated.cut_and_shape = value;
+          updated.recordedSources.cut_and_shape = { source: sourceLabel, stage: stageLabel };
         }
       } else if (key === "material") {
         updated.material = value;
         updated.stone_family = value;
+        updated.recordedSources.material = { source: sourceLabel, stage: stageLabel };
       } else if (key === "stone_family") {
         updated.stone_family = value;
         if (!hasMeaningfulValue(updated.material)) {
           updated.material = getDerivedMaterial(value) || value;
+          updated.recordedSources.material = { source: sourceLabel, stage: stageLabel };
         }
       } else if (key === "origin_page_handle" || key === "origin_handle") {
         updated.origin_page_handle = value;
         updated.origin_handle = value;
+        updated.recordedSources.origin_page_handle = { source: sourceLabel, stage: stageLabel };
       }
       // Stone-only weight (weight_grams) must never populate or overwrite shipping_weight_oz
       return updated;
     }));
   }, [isCapabilityHeldReadOnly]);
 
-  const handleSharedFieldChange = useCallback((key, value) => {
+  const handleSharedFieldChange = useCallback((key, value, sourceOverride = "Manual", stageOverride = "Tab1SharedBatchEdit") => {
     const fieldDef = FIELD_CATALOG.find(f => f.key === key || f.registryIdentity === key);
     if (fieldDef && isCapabilityHeldReadOnly(fieldDef)) {
       return;
     }
+
+    recordSharedSource(key, sourceOverride, stageOverride);
 
     setSharedFields(prev => {
       const next = { ...prev, [key]: value };
@@ -446,21 +601,22 @@ export function NewProductIntakeTab({ fetcher }) {
       // Never copy primary_medium (metal/hardware) into material
       return next;
     });
-  }, [isCapabilityHeldReadOnly]);
+  }, [isCapabilityHeldReadOnly, recordSharedSource]);
 
   const handleStoneFamilyChange = useCallback((value) => {
+    recordSharedSource("material", "Manual", "QuickStoneFamilySelector");
     setSharedFields(prev => ({
       ...prev,
       stone_family: value,
       material: value || prev.material
     }));
-  }, []);
+  }, [recordSharedSource]);
 
   const handleScanGeminiPhotos = useCallback((piece) => {
     if (piece?.imageBase64) {
       handleScanPhoto({
         piece,
-        updatePiece: (pid, k, v) => handlePieceChange(pid, k, v, false),
+        updatePiece: (pid, k, v) => handlePieceChange(pid, k, v, false, "Gemini / Vision", "visionScan"),
         visionFetcher,
         setErrorMessage,
         sharedFields: latestShared.current
@@ -548,7 +704,13 @@ export function NewProductIntakeTab({ fetcher }) {
               ...p,
               canonical_title: value.trim(),
               native_title: value.trim(),
-              piece_name: extractedIdentifier || p.piece_name
+              piece_name: extractedIdentifier || p.piece_name,
+              recordedSources: {
+                ...(p.recordedSources || {}),
+                canonical_title: { source: "Derived (3-Part Seed)", stage: "handlePieceNameBlur" },
+                native_title: { source: "Derived (3-Part Seed)", stage: "handlePieceNameBlur" },
+                piece_name: { source: "Derived (3-Part Seed)", stage: "handlePieceNameBlur" }
+              }
             }
           : p
       ));
@@ -655,8 +817,13 @@ export function NewProductIntakeTab({ fetcher }) {
     setPieces(prev => prev.filter(p => p.id !== id));
   }, []);
 
-  const selectedPieceForTemplate =
-    pieces.find(p => p.id === activePieceId) || pieces[0] || makeInitialPieceState();
+  const validSelectedPiece =
+    pieces.find(p => p.id === activePieceId) ||
+    pieces[0] ||
+    null;
+  const hasValidSelectedPieceContext = Boolean(validSelectedPiece && validSelectedPiece.id);
+  const selectedPieceForTemplate = validSelectedPiece || EMPTY_DEV_PREVIEW_PIECE;
+  const isDevUnselectedPreview = Boolean(DEV_SHOW_ALL_TEMPLATE_FIELDS && !hasValidSelectedPieceContext);
 
   const handleCopyFieldReportTab1 = useCallback(() => {
     const p = selectedPieceForTemplate || {};
@@ -961,6 +1128,7 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
       const isSuccess = data.success === true;
       const isError = data.success === false;
       const pId = data.tab2Data?.pieceId || data.pieceId || visionFetcher.formData?.get("pieceId");
+      const scanStageLabel = data.intent || "visionScan";
 
       (isScan && isSuccess) && (() => {
         setSharedFields(prev => {
@@ -968,6 +1136,21 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
           // Prefer canonical material or derived stone_family; never overwrite existing manual shared material or copy primary_medium into material
           const candidateMaterial = data.tab2Data?.material || data.material || getDerivedMaterial(nextStoneFamily);
           const nextMaterial = hasMeaningfulValue(prev.material) ? prev.material : (candidateMaterial || "");
+
+          if (!hasMeaningfulValue(prev.material) && nextMaterial) {
+            recordSharedSource("material", "Vision / Gemini", scanStageLabel);
+          }
+          const sharedAutoKeys = [
+            "primary_use", "primary_medium", "secondary_medium", "setting_ready",
+            "bail_included", "jewelry_finding_type", "wire_material",
+            "chain_material", "chain_link_type", "necklace_design", "jewelry_type"
+          ];
+          sharedAutoKeys.forEach((sk) => {
+            const incoming = data.tab2Data?.[sk] || data[sk];
+            if (!hasMeaningfulValue(prev[sk]) && hasMeaningfulValue(incoming)) {
+              recordSharedSource(sk, "Vision / Gemini", scanStageLabel);
+            }
+          });
 
           return {
             ...prev,
@@ -991,7 +1174,7 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
 
         setPieces(prev => prev.map(p => {
           if (p.id !== pId) return p;
-          const updated = { ...p };
+          const updated = { ...p, recordedSources: { ...(p.recordedSources || {}) } };
           const manualEdits = updated.manualPieceEdits || {};
           const isProtectedStory = isManualStoryProtectedPiece(
             updated.canonical_title || updated.native_title,
@@ -1019,47 +1202,63 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
           if (desc !== undefined && desc !== "" && !manualEdits.generated_description && !(isProtectedStory && hasMeaningfulValue(updated.generated_description))) {
             updated.generated_description = desc;
             updated.native_description = desc;
+            updated.recordedSources.generated_description = { source: "Gemini", stage: scanStageLabel };
+            updated.recordedSources.native_description = { source: "Gemini", stage: scanStageLabel };
           }
           if (tColor !== undefined && tColor !== "" && !manualEdits.color) {
             updated.color = tColor;
+            updated.recordedSources.color = { source: "Vision", stage: scanStageLabel };
           }
           if (tPrimaryColor !== undefined && tPrimaryColor !== "" && !manualEdits.primary_color) {
             updated.primary_color = tPrimaryColor;
+            updated.recordedSources.primary_color = { source: "Vision", stage: scanStageLabel };
           }
           // Do not populate held secondary_colors from scan
           if (tCutAndShape !== undefined && tCutAndShape !== "" && !manualEdits.cut_and_shape) {
             updated.cut_and_shape = tCutAndShape;
             updated.cut_type = tCutAndShape;
+            updated.recordedSources.cut_and_shape = { source: "Vision", stage: scanStageLabel };
           }
           if (tStoneShape !== undefined && tStoneShape !== "" && !manualEdits.stone_shape) {
             updated.stone_shape = tStoneShape;
+            updated.recordedSources.stone_shape = { source: "Vision", stage: scanStageLabel };
           }
           if (tFinish !== undefined && tFinish !== "" && !manualEdits.surface_finish) {
             updated.surface_finish = tFinish;
+            updated.recordedSources.surface_finish = { source: "Vision", stage: scanStageLabel };
           }
           // Never overwrite operator-entered physical dimensions_mm
           if (tDims !== undefined && tDims !== "" && !manualEdits.dimensions_mm && !hasMeaningfulValue(updated.dimensions_mm)) {
             updated.dimensions_mm = tDims;
+            updated.recordedSources.dimensions_mm = { source: "Vision", stage: scanStageLabel };
           }
           if (tSeo !== undefined && tSeo !== "" && !manualEdits.seo_title) {
             updated.seo_title = tSeo;
             updated.native_seo_title = tSeo;
+            updated.recordedSources.seo_title = { source: "Gemini", stage: scanStageLabel };
+            updated.recordedSources.native_seo_title = { source: "Gemini", stage: scanStageLabel };
           }
           if (tSeoDesc !== undefined && tSeoDesc !== "" && !manualEdits.native_seo_description && !hasMeaningfulValue(updated.native_seo_description)) {
             updated.native_seo_description = String(tSeoDesc).trim();
+            updated.recordedSources.native_seo_description = { source: "Gemini", stage: scanStageLabel };
           }
           if (tPattern !== undefined && tPattern !== "" && !manualEdits.color_pattern) {
             updated.color_pattern = tPattern;
+            updated.recordedSources.color_pattern = { source: "Vision", stage: scanStageLabel };
           }
           if (tFlaws !== undefined && tFlaws !== "" && !manualEdits.honest_flaws_and_character) {
             updated.honest_flaws_and_character = tFlaws;
+            updated.recordedSources.honest_flaws_and_character = { source: "Vision", stage: scanStageLabel };
           }
           if (tCharMarks !== undefined && tCharMarks !== "" && !manualEdits.character_marks) {
             updated.character_marks = tCharMarks;
+            updated.recordedSources.character_marks = { source: "Vision", stage: scanStageLabel };
           }
           if (tAltText !== undefined && tAltText !== "" && !manualEdits.alt_text && !manualEdits.native_image_alt) {
             updated.alt_text = tAltText;
             updated.native_image_alt = tAltText;
+            updated.recordedSources.alt_text = { source: "Vision", stage: scanStageLabel };
+            updated.recordedSources.native_image_alt = { source: "Vision", stage: scanStageLabel };
           }
           
           // Never overwrite or rename the human piece_name identifier on visionScan / fullRescan
@@ -1082,7 +1281,7 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
         }));
       })();
     })();
-  }, [visionFetcher.state, visionFetcher.data]);
+  }, [visionFetcher.state, visionFetcher.data, recordSharedSource]);
 
   useEffect(() => {
     const isIdle = autoFillFetcher.state === "idle";
@@ -1095,24 +1294,32 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
         if (geo.geoSource === "none") { window.shopify?.toast?.show("Not in geo database — enter manually", { duration: 3000 }); return; }
         setSharedFields(prev => {
           const updated = { ...prev };
-          updated.mohs_hardness = geo.mohs_hardness ?? geo.hardness ?? prev.mohs_hardness;
-          updated.luster = geo.luster ?? prev.luster;
-          updated.fracture_pattern = geo.fracture_pattern ?? geo.fracture ?? prev.fracture_pattern;
-          updated.cleavage = geo.cleavage ?? prev.cleavage;
-          updated.specific_gravity = geo.specific_gravity ?? prev.specific_gravity;
-          updated.diaphaneity = geo.diaphaneity ?? prev.diaphaneity;
-          updated.crystal_system = geo.crystal_system ?? prev.crystal_system;
-          updated.geological_era = geo.geological_era ?? prev.geological_era;
-          updated.geological_age = geo.geological_age ?? prev.geological_age;
-          updated.mineral_class = geo.mineral_class ?? prev.mineral_class;
-          updated.rock_composition = geo.rock_composition ?? prev.rock_composition;
-          updated.rock_formation = geo.rock_formation ?? prev.rock_formation;
+          const geoMap = {
+            mohs_hardness: geo.mohs_hardness ?? geo.hardness,
+            luster: geo.luster,
+            fracture_pattern: geo.fracture_pattern ?? geo.fracture,
+            cleavage: geo.cleavage,
+            specific_gravity: geo.specific_gravity,
+            diaphaneity: geo.diaphaneity,
+            crystal_system: geo.crystal_system,
+            geological_era: geo.geological_era,
+            geological_age: geo.geological_age,
+            mineral_class: geo.mineral_class,
+            rock_composition: geo.rock_composition,
+            rock_formation: geo.rock_formation
+          };
+          Object.entries(geoMap).forEach(([gk, gv]) => {
+            if (gv !== undefined && gv !== null && String(gv).trim() !== "") {
+              updated[gk] = gv;
+              recordSharedSource(gk, "Geo Library", "geoLookup");
+            }
+          });
           return updated;
         });
         setGeoToast(true);
       })();
     })();
-  }, [autoFillFetcher.state, autoFillFetcher.data]);
+  }, [autoFillFetcher.state, autoFillFetcher.data, recordSharedSource]);
 
   useEffect(() => {
     if (!autoFillFetcher.data?.titleParse) return;
@@ -1123,6 +1330,24 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
       const resolvedCollectionLoc = parsed.collection_location || prev.collection_location;
       const nextStoneFamily = normalizeDropdownValue("stone_family", parsed.stone_family?.trim()) || prev.stone_family || "";
       const derivedMaterial = prev.material || parsed.material || getDerivedMaterial(nextStoneFamily);
+
+      if (!prev.material && derivedMaterial) recordSharedSource("material", "Gemini / Geo Library", "titleParse");
+      if (parsed.collection_name && !prev.collection_name) recordSharedSource("collection_name", "Gemini / Dwell Web", "titleParse");
+      if (parsed.collection_location && !prev.collection_location) recordSharedSource("collection_location", "Gemini / Dwell Web", "titleParse");
+      if (parsed.origin_location && !prev.origin_location) recordSharedSource("origin_location", "Gemini / Dwell Web", "titleParse");
+      if ((parsed.origin_page_handle || parsed.origin_handle) && !prev.origin_page_handle) recordSharedSource("origin_page_handle", "Gemini / Dwell Web", "titleParse");
+
+      const geoKeysFromParse = [
+        "specific_gravity", "diaphaneity", "crystal_system", "geological_era",
+        "mineral_class", "rock_composition", "rock_formation", "geological_age",
+        "fracture_pattern", "mohs_hardness", "luster", "cleavage"
+      ];
+      geoKeysFromParse.forEach((gk) => {
+        const incoming = gk === "fracture_pattern" ? (parsed.fracture_pattern || parsed.fracture) : parsed[gk];
+        if (incoming && !prev[gk]) {
+          recordSharedSource(gk, "Geo Library", "titleParse");
+        }
+      });
 
       return {
         ...prev,
@@ -1159,6 +1384,15 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
         // Keep human internal identifier (e.g. BQH-1, BQH-2, bob) separate from canonical_title
         const preservedIdentifier = resolveIdentifierToPreserve(p.piece_name, parsed.piece_name);
         const resolvedTitle = fullCustomerTitle || p.canonical_title || p.native_title;
+        const nextSources = { ...(p.recordedSources || {}) };
+        if (fullCustomerTitle) {
+          nextSources.canonical_title = { source: "Gemini", stage: "titleParse" };
+          nextSources.native_title = { source: "Gemini", stage: "titleParse" };
+        }
+        if (parsed.seo_title) {
+          nextSources.seo_title = { source: "Gemini", stage: "titleParse" };
+          nextSources.native_seo_title = { source: "Gemini", stage: "titleParse" };
+        }
 
         return {
           ...p,
@@ -1167,7 +1401,8 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
           native_title: resolvedTitle,
           seo_title: parsed.seo_title || p.seo_title,
           native_seo_title: parsed.seo_title || p.native_seo_title || p.seo_title,
-          handle: parsed.handle || p.handle
+          handle: parsed.handle || p.handle,
+          recordedSources: nextSources
         };
       }));
     }
@@ -1182,7 +1417,7 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
       setTitleToastActive(true); setTimeout(() => setTitleToastActive(false), 3000);
     }
 
-  }, [autoFillFetcher, autoFillFetcher.data, lastScannedPieceId]);
+  }, [autoFillFetcher, autoFillFetcher.data, lastScannedPieceId, recordSharedSource]);
 
   useEffect(() => {
     const isIdle = descriptionFetcher.state === "idle";
@@ -1201,12 +1436,22 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
           const isMatch = targetId ? p.id === targetId : i === 0;
           if (!isMatch) return p;
           const nextSeoTitle = data.seo_title || p.seo_title;
+          const nextSources = { ...(p.recordedSources || {}) };
+          if (descStr) {
+            nextSources.generated_description = { source: "Gemini", stage: "generateDescription" };
+            nextSources.native_description = { source: "Gemini", stage: "generateDescription" };
+          }
+          if (data.seo_title) {
+            nextSources.seo_title = { source: "Gemini", stage: "generateDescription" };
+            nextSources.native_seo_title = { source: "Gemini", stage: "generateDescription" };
+          }
           return {
             ...p,
             generated_description: descStr,
             native_description: descStr,
             seo_title: nextSeoTitle,
-            native_seo_title: nextSeoTitle
+            native_seo_title: nextSeoTitle,
+            recordedSources: nextSources
           };
         }));
       })();
@@ -1259,16 +1504,128 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
     return String(val);
   };
 
-  // 🟢 UNIVERSAL 62-CAPABILITY TEMPLATE RENDERER (Connected to Active Piece + Shared Batch State)
-  const renderTemplateField = (field) => {
+  // ============================================================================
+  // UNIFIED TAB 1 TEMPLATE ROW-DESCRIPTOR & AUDIT COUNT PIPELINE
+  // Builds the exact rendered row descriptors for all 10 PRODUCT_TEMPLATE_GROUPS
+  // on the active piece so UI rendering and computeTemplateAuditCounts share the
+  // identical array.
+  //
+  // Image-Alt Accounting for Tab 1 (Pre-Creation Intake):
+  // - Local/staged uploads do not have Shopify MediaImage GIDs prior to product creation;
+  //   we never fabricate MediaImage GIDs.
+  // - When the active piece has at least 1 uploaded/staged photo, Tab 1 supports a single
+  //   per-piece image alt control (sent as payload.alt_text on createProduct), which is
+  //   counted as 1 active media control (`native_image_alts_active_piece_media_1`).
+  // - When the active piece has 0 photos (or no valid piece is selected), Tab 1 renders
+  //   1 explicit non-writable zero-image placeholder (`native_image_alt`).
+  // ============================================================================
+  const activePiecePhotoCount = hasValidSelectedPieceContext
+    ? Math.max(
+        Array.isArray(selectedPieceForTemplate.photoFiles) ? selectedPieceForTemplate.photoFiles.length : 0,
+        Array.isArray(selectedPieceForTemplate.stagedResourceUrls)
+          ? selectedPieceForTemplate.stagedResourceUrls.filter(Boolean).length
+          : 0
+      )
+    : 0;
+  const hasUsableActivePieceMediaControl = Boolean(hasValidSelectedPieceContext && activePiecePhotoCount > 0);
+
+  const renderedKeysByGroupForAudit = {};
+  let observedMediaControlCount = 0;
+  let observedZeroImagePlaceholder = false;
+
+  const templateGroupRenderModels = PRODUCT_TEMPLATE_GROUPS.map((group) => {
+    const groupFields = Array.isArray(group.fields) ? group.fields : [];
+    const rowDescriptors = [];
+
+    groupFields.forEach((field) => {
+      if (!field) return;
+      if (RETIRED_TAB1_KEYS.has(field.key)) return;
+      if (
+        field.registryRole &&
+        field.registryRole !== "PRIMARY_CANDIDATE_DESTINATION" &&
+        field.registryRole !== "APPROVED_MEASUREMENT_ADDITION"
+      ) {
+        return;
+      }
+
+      if (field.key === "native_image_alt") {
+        if (hasUsableActivePieceMediaControl) {
+          observedMediaControlCount += 1;
+          rowDescriptors.push({
+            descriptorKey: "native_image_alts_active_piece_media_1",
+            field,
+            isPerPieceMediaControl: true,
+            isZeroImagePlaceholder: false,
+            activePhotoCount: activePiecePhotoCount
+          });
+        } else {
+          observedZeroImagePlaceholder = true;
+          rowDescriptors.push({
+            descriptorKey: "native_image_alt",
+            field,
+            isPerPieceMediaControl: false,
+            isZeroImagePlaceholder: true,
+            activePhotoCount: 0
+          });
+        }
+        return;
+      }
+
+      const resolvedDest = resolveConfigFieldDestination(field);
+      rowDescriptors.push({
+        descriptorKey: resolvedDest || field.key,
+        field,
+        isPerPieceMediaControl: false,
+        isZeroImagePlaceholder: false,
+        activePhotoCount: activePiecePhotoCount
+      });
+    });
+
+    renderedKeysByGroupForAudit[group.heading] = rowDescriptors.map(r => r.descriptorKey);
+
+    return {
+      heading: group.heading,
+      color: group.color,
+      logicalFields: groupFields,
+      rowDescriptors
+    };
+  });
+
+  const templateAuditSummary = computeTemplateAuditCounts(
+    PRODUCT_TEMPLATE_GROUPS,
+    {
+      renderedKeysByGroup: renderedKeysByGroupForAudit,
+      mediaControlCount: observedMediaControlCount,
+      hasZeroImagePlaceholder: observedZeroImagePlaceholder
+    }
+  );
+
+  // 🟢 UNIVERSAL 62-CAPABILITY TEMPLATE RENDERER (Driven by Unified Row Descriptors)
+  const renderTemplateFieldFromDescriptor = (descriptor) => {
+    const {
+      descriptorKey,
+      field,
+      isPerPieceMediaControl,
+      isZeroImagePlaceholder,
+      activePhotoCount
+    } = descriptor;
+
     const targetPiece = selectedPieceForTemplate;
     const fieldDef = FIELD_CATALOG.find(f => f.key === field.key) || field;
-    const isHeld = isCapabilityHeldReadOnly(fieldDef);
-    const holdInfo = isHeld ? getHoldExplanation(fieldDef) : null;
+    const isContractHeld = isCapabilityHeldReadOnly(fieldDef);
+    const isHeldOrReadOnly = Boolean(
+      !hasValidSelectedPieceContext ||
+      isContractHeld ||
+      (isZeroImagePlaceholder && DEV_SHOW_ALL_TEMPLATE_FIELDS)
+    );
+    const holdInfo = getHoldExplanation(fieldDef, isZeroImagePlaceholder && DEV_SHOW_ALL_TEMPLATE_FIELDS, !hasValidSelectedPieceContext);
 
     const isPerPieceField = PER_PIECE_CANONICAL_KEYS.has(field.key);
+    const scopeTag = isPerPieceField ? "Per-Piece (Active Piece)" : "Shared Batch";
 
     const resolveFieldDisplayValue = () => {
+      if (!hasValidSelectedPieceContext) return "";
+      if (isZeroImagePlaceholder && DEV_SHOW_ALL_TEMPLATE_FIELDS) return "";
       if (field.key === "native_title") {
         return targetPiece.native_title || targetPiece.canonical_title || "";
       }
@@ -1321,68 +1678,178 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
     const isDropdown = Boolean(optionsKey && DROPDOWN_OPTIONS[optionsKey]);
     const isMultiline = Boolean(fieldDef?.uiConfig?.multiline || field.control === "multiline");
 
-    if (isHeld) {
+    // Compact DEV diagnostic strip metadata from existing recorded state only (never inferred from blank/populated values)
+    const destNamespace = field.namespace || fieldDef?.namespace || "custom";
+    const destMetaKey = field.metaKey || fieldDef?.metaKey || field.key;
+    const destIdentity = isPerPieceMediaControl
+      ? `MEDIAIMAGE:native_image_alt (Active Piece Pre-Creation Media Alt — ${activePhotoCount} photo${activePhotoCount === 1 ? "" : "s"} attached)`
+      : (field.registryIdentity || fieldDef?.registryIdentity || (destNamespace === "native" ? destMetaKey : `${destNamespace}.${destMetaKey}`));
+    const destOwner = field.registryOwner || fieldDef?.registryOwner || field.owner || "PRODUCT";
+    const destDataType = field.type || fieldDef?.metaConfig?.type || "single_line_text_field";
+
+    const recordedSourceEntry = !hasValidSelectedPieceContext
+      ? null
+      : isPerPieceField
+        ? (targetPiece.recordedSources?.[field.key] ||
+           (field.key === "native_title" ? targetPiece.recordedSources?.canonical_title : null) ||
+           (field.key === "native_description" ? targetPiece.recordedSources?.generated_description : null) ||
+           (field.key === "native_seo_title" ? targetPiece.recordedSources?.seo_title : null) ||
+           (field.key === "native_price" ? targetPiece.recordedSources?.price : null) ||
+           (field.key === "native_shipping_weight" ? targetPiece.recordedSources?.shipping_weight_oz : null) ||
+           (field.key === "native_image_alt" ? targetPiece.recordedSources?.alt_text : null) ||
+           null)
+        : (targetPiece.recordedSources?.[field.key] ||
+           sharedRecordedSourcesRef.current[field.key] ||
+           sharedRecordedSourcesRef.current[destIdentity] ||
+           null);
+
+    const wasManuallyEdited = Boolean(
+      hasValidSelectedPieceContext &&
+      (targetPiece.manualPieceEdits?.[field.key] ||
+       (recordedSourceEntry && recordedSourceEntry.source === "Manual"))
+    );
+
+    const renderDevDiagStrip = (modeSummaryText, reasonSummaryText) => {
+      if (!DEV_SHOW_ALL_TEMPLATE_FIELDS) return null;
       return (
-        <div key={field.key} style={{ padding: "10px 12px", background: "#2a2b2d", borderRadius: "6px", border: "1px dashed #555", minHeight: "64px", display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
+        <div
+          style={{
+            marginTop: "8px",
+            padding: "8px 10px",
+            backgroundColor: "#111827",
+            border: "1px solid #374151",
+            borderRadius: "4px",
+            fontSize: "11px",
+            lineHeight: "1.4",
+            color: "#e5e7eb",
+            wordBreak: "break-word",
+            overflowWrap: "anywhere"
+          }}
+        >
+          <div style={{ fontWeight: "700", color: "#93c5fd", marginBottom: "2px" }}>
+            DEV DIAGNOSTIC STRIP (Pre-Creation Evaluation Only — Not Save or Read-Back Proof)
+          </div>
+          <div>
+            <strong>Destination:</strong> <code>{destIdentity}</code> | <strong>Owner:</strong> <code>{destOwner}</code> | <strong>Type:</strong> <code>{destDataType}</code>
+          </div>
+          <div>
+            <strong>Scope:</strong> <code>{scopeTag}</code> | <strong>Current Staged Value:</strong>{" "}
+            <code>
+              {!hasValidSelectedPieceContext
+                ? "Not recorded (no active piece)"
+                : (isZeroImagePlaceholder && DEV_SHOW_ALL_TEMPLATE_FIELDS)
+                  ? "Non-writable zero-image placeholder"
+                  : formatCompactDiagPreview(displayVal)}
+            </code>
+          </div>
+          <div>
+            <strong>Recorded Source:</strong> <code>{recordedSourceEntry?.source || "Not recorded"}</code>
+            {" | "}
+            <strong>Stage:</strong> <code>{recordedSourceEntry?.stage || "Not recorded"}</code>
+            {" | "}
+            <strong>Manual Edit Recorded:</strong> <code>{wasManuallyEdited ? "Yes" : "No"}</code>
+          </div>
+          <div>
+            <strong>Applicability:</strong> <code>Not evaluated</code>
+            {" | "}
+            <strong>Control Mode:</strong> <code>{modeSummaryText}</code>
+          </div>
+          {reasonSummaryText && (
+            <div>
+              <strong>Hold / Status Reason:</strong> <code>{reasonSummaryText}</code>
+            </div>
+          )}
+        </div>
+      );
+    };
+
+    if (isHeldOrReadOnly) {
+      return (
+        <div key={descriptorKey} style={{ padding: "10px 12px", background: "#2a2b2d", borderRadius: "6px", border: "1px dashed #555", minHeight: "64px", display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
-            <span style={{ fontSize: "14px", fontWeight: "600", color: "#d2d5d8" }}>{field.label}</span>
-            <Badge tone="info">{holdInfo.badge}</Badge>
+            <span style={{ fontSize: "14px", fontWeight: "600", color: "#d2d5d8" }}>
+              {isZeroImagePlaceholder && DEV_SHOW_ALL_TEMPLATE_FIELDS
+                ? "Native Image Alt Text (Zero-Image Capability Placeholder)"
+                : `${field.label} (${scopeTag})`}
+            </span>
+            <Badge tone={holdInfo.tone || "info"}>{holdInfo.badge}</Badge>
           </div>
           <div style={{ color: displayVal ? "#ffffff" : "#999fa4", fontSize: "13px", marginTop: "6px", wordBreak: "break-word", fontFamily: "monospace" }}>
-            {displayVal || "Blank (Read-Only Hold)"}
+            {isZeroImagePlaceholder && DEV_SHOW_ALL_TEMPLATE_FIELDS
+              ? "No uploaded photos on active piece (0 usable image controls — placeholder is non-writable)"
+              : (displayVal || "Blank (Read-Only Hold)")}
           </div>
           <div style={{ fontSize: "11px", color: "#b5b9be", marginTop: "4px" }}>
             {holdInfo.reason} [{field.registryIdentity || `${field.namespace}.${field.metaKey || field.key}`}]
           </div>
+          {renderDevDiagStrip(`Read-Only (${holdInfo.badge})`, holdInfo.reason)}
         </div>
       );
     }
 
     const onFieldChange = (v) => {
+      if (!hasValidSelectedPieceContext) return;
+      if (isZeroImagePlaceholder && DEV_SHOW_ALL_TEMPLATE_FIELDS) return;
       if (isPerPieceField) {
         handlePieceChange(targetPiece.id, field.key, v, true);
       } else {
-        handleSharedFieldChange(field.key, v);
+        handleSharedFieldChange(field.key, v, "Manual", "Tab1SharedBatchEdit");
       }
     };
 
-    const scopeTag = isPerPieceField ? "Per-Piece" : "Shared Batch";
+    const effectiveEditableLabel = isPerPieceMediaControl
+      ? `Native Image Alt Text (Active Piece Media — ${activePhotoCount} photo${activePhotoCount === 1 ? "" : "s"})`
+      : `${field.label} (${scopeTag})`;
 
     if (isDropdown) {
       return (
-        <div key={field.key} style={{ minHeight: "54px", background: "#ffffff", padding: "10px", borderRadius: "6px" }}>
+        <div key={descriptorKey} style={{ minHeight: "54px", background: "#ffffff", padding: "10px", borderRadius: "6px" }}>
           <Select
-            label={renderLabel(`${field.label} (${scopeTag})`, field.key, displayVal)}
+            label={renderLabel(effectiveEditableLabel, field.key, displayVal)}
             options={[{ label: "Select...", value: "" }, ...DROPDOWN_OPTIONS[optionsKey]]}
             value={displayVal}
             onChange={onFieldChange}
           />
+          {renderDevDiagStrip("Editable (Dropdown)", field.capabilityNote || "Writable canonical capability")}
         </div>
       );
     }
 
     return (
-      <div key={field.key} style={{ minHeight: "54px", background: "#ffffff", padding: "10px", borderRadius: "6px" }}>
+      <div key={descriptorKey} style={{ minHeight: "54px", background: "#ffffff", padding: "10px", borderRadius: "6px" }}>
         <TextField
-          label={renderLabel(`${field.label} (${scopeTag})`, field.key, displayVal)}
+          label={renderLabel(effectiveEditableLabel, field.key, displayVal)}
           value={displayVal}
           onChange={onFieldChange}
           multiline={isMultiline ? 2 : false}
           autoComplete="off"
           helpText={field.capabilityNote || undefined}
         />
+        {renderDevDiagStrip(
+          isPerPieceMediaControl ? "Editable (Active Piece Media Alt Control)" : "Editable (Text Input)",
+          field.capabilityNote || "Writable canonical capability"
+        )}
       </div>
     );
   };
 
-  const renderTemplateGroup = (group) => {
+  const renderTemplateGroup = (groupModel) => {
+    const logicalCount = groupModel.logicalFields.length;
+    const renderedCount = groupModel.rowDescriptors.length;
     return (
-      <div key={group.heading} style={{ marginBottom: "24px", padding: "16px", background: "#202123", borderRadius: "8px", borderLeft: `4px solid ${group.color || "#444"}` }}>
-        <div style={{ fontWeight: "bold", color: "#ffffff", fontSize: "16px", marginBottom: "16px", textTransform: "uppercase", letterSpacing: "0.5px" }}>
-          {group.heading} ({group.fields.length})
+      <div key={groupModel.heading} style={{ marginBottom: "24px", padding: "16px", background: "#202123", borderRadius: "8px", borderLeft: `4px solid ${groupModel.color || "#444"}` }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px", marginBottom: "16px" }}>
+          <div style={{ fontWeight: "bold", color: "#ffffff", fontSize: "16px", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+            {DEV_SHOW_ALL_TEMPLATE_FIELDS
+              ? `${groupModel.heading} (${logicalCount} logical / ${renderedCount} rendered template ${renderedCount === 1 ? "row" : "rows"})`
+              : `${groupModel.heading} (${logicalCount})`}
+          </div>
+          {DEV_SHOW_ALL_TEMPLATE_FIELDS && (
+            <Badge tone="info">DEV: Open & Unfiltered</Badge>
+          )}
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
-          {group.fields.map(field => renderTemplateField(field))}
+          {groupModel.rowDescriptors.map(descriptor => renderTemplateFieldFromDescriptor(descriptor))}
         </div>
       </div>
     );
@@ -1804,7 +2271,11 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
                 <TextField
                   label="Bench Flaws / Character Context for Active Piece (AI Context Only — Not Written as a Metafield)"
                   value={selectedPieceForTemplate.honest_flaws_and_character || ""}
-                  onChange={(v) => handlePieceChange(selectedPieceForTemplate.id, "honest_flaws_and_character", v, true)}
+                  onChange={(v) => {
+                    if (!hasValidSelectedPieceContext) return;
+                    handlePieceChange(selectedPieceForTemplate.id, "honest_flaws_and_character", v, true);
+                  }}
+                  disabled={!hasValidSelectedPieceContext}
                   autoComplete="off"
                   multiline={2}
                 />
@@ -1821,11 +2292,15 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
                 size="large"
                 variant="primary"
                 icon={MagicIcon}
-                onClick={() => handleGenerateDescription({
-                  sharedFields,
-                  pieces: [selectedPieceForTemplate],
-                  descFetcher: descriptionFetcher
-                })}
+                disabled={!hasValidSelectedPieceContext}
+                onClick={() => {
+                  if (!hasValidSelectedPieceContext) return;
+                  handleGenerateDescription({
+                    sharedFields,
+                    pieces: [selectedPieceForTemplate],
+                    descFetcher: descriptionFetcher
+                  });
+                }}
                 loading={isDescLoading}
               >
                 Write Description with Gemini (Active Piece)
@@ -1842,7 +2317,10 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
                   </div>
                 }
                 value={selectedPieceForTemplate?.generated_description || ""}
-                onChange={(v) => handlePieceChange(selectedPieceForTemplate.id, "generated_description", v, true)}
+                onChange={(v) => {
+                  if (!hasValidSelectedPieceContext) return;
+                  handlePieceChange(selectedPieceForTemplate.id, "generated_description", v, true);
+                }}
                 multiline={10}
                 autoComplete="off"
               />
@@ -1895,24 +2373,143 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
               fullWidth
               onClick={handleCreateAll}
               loading={isSubmitting}
-              disabled={isSubmitting}
+              disabled={isSubmitting || !hasValidSelectedPieceContext}
             >
               Create All Pieces
             </Button>
           )}
         </div>
 
+        {DEV_SHOW_ALL_TEMPLATE_FIELDS && (
+          <Card padding="400">
+            <BlockStack gap="300">
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                  <Badge tone="warning">DEV: Show All Template Fields</Badge>
+                  <Text as="h3" variant="headingMd" fontWeight="bold">
+                    Tab 1 Template Capability & Rendered Row Audit (Selected Piece Scope:{" "}
+                    {isDevUnselectedPreview
+                      ? "Unselected Read-Only Preview"
+                      : `${selectedPieceForTemplate.piece_name || selectedPieceForTemplate.id} — Piece ${pieces.findIndex(p => p.id === selectedPieceForTemplate.id) + 1} of ${pieces.length}`}
+                    )
+                  </Text>
+                </div>
+                <Badge tone={templateAuditSummary.measurementStatus === "complete" ? "success" : "attention"}>
+                  {templateAuditSummary.measurementStatus === "complete"
+                    ? `Measured (${templateAuditSummary.measuredGroupCount}/${templateAuditSummary.totalGroupCount} groups)`
+                    : `Not measured (${templateAuditSummary.measuredGroupCount}/${templateAuditSummary.totalGroupCount} groups reported)`}
+                </Badge>
+              </div>
+
+              <Text as="p" variant="bodySm" tone="subdued">
+                <strong>Scope:</strong> Counts below measure only the canonical template rows rendered for the single active piece inside the 10 <code>PRODUCT_TEMPLATE_GROUPS</code> sections below using <code>computeTemplateAuditCounts</code> and the exact rendered row descriptor list (combining per-piece values on the active piece with shared batch values). They do not sum across multiple pieces in Section A and do not count Section A/B/C convenience controls as extra logical capabilities. Because pre-creation photos have no Shopify <code>MediaImage</code> GIDs yet, <code>native_image_alt</code> renders 1 active per-piece media alt control when photos are attached to the active piece, or 1 non-writable zero-image placeholder when 0 photos are attached.
+              </Text>
+
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
+                  <thead>
+                    <tr style={{ backgroundColor: "#f1f5f9", borderBottom: "2px solid #cbd5e1", textAlign: "left" }}>
+                      <th style={{ padding: "8px 10px" }}>Template Group</th>
+                      <th style={{ padding: "8px 10px" }}>Logical Capabilities</th>
+                      <th style={{ padding: "8px 10px" }}>Running Logical Subtotal</th>
+                      <th style={{ padding: "8px 10px" }}>Measured Rendered Template Rows</th>
+                      <th style={{ padding: "8px 10px" }}>Running Rendered Subtotal</th>
+                      <th style={{ padding: "8px 10px" }}>Notes / Media Expansion</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(() => {
+                      let runningLogical = 0;
+                      let runningRendered = 0;
+                      let allMeasuredSoFar = true;
+
+                      return templateAuditSummary.groupSubtotals.map((grp) => {
+                        runningLogical += grp.logicalCount;
+                        const isGrpMeasured = grp.measurementStatus === "measured" && typeof grp.renderedCount === "number";
+                        if (isGrpMeasured) {
+                          runningRendered += grp.renderedCount;
+                        } else {
+                          allMeasuredSoFar = false;
+                        }
+
+                        let rowNote = "1:1 canonical rows";
+                        if (!isGrpMeasured) {
+                          rowNote = "Not measured";
+                        } else if (grp.logicalImageAltCount > 0) {
+                          if (templateAuditSummary.mediaControlCount > 0) {
+                            rowNote = `Includes ${templateAuditSummary.mediaControlCount} active per-piece media alt control (${activePiecePhotoCount} photo${activePiecePhotoCount === 1 ? "" : "s"} attached; no fabricated Shopify MediaImage GID)`;
+                          } else if (templateAuditSummary.hasZeroImagePlaceholder) {
+                            rowNote = "Includes 1 read-only zero-image placeholder row for native_image_alt (0 photos attached on active piece)";
+                          }
+                        } else if (grp.nonMediaDiscrepancy !== null && grp.nonMediaDiscrepancy !== 0) {
+                          rowNote = `Non-media row delta: ${grp.nonMediaDiscrepancy > 0 ? `+${grp.nonMediaDiscrepancy}` : grp.nonMediaDiscrepancy}`;
+                        }
+
+                        return (
+                          <tr key={grp.heading} style={{ borderBottom: "1px solid #e2e8f0" }}>
+                            <td style={{ padding: "6px 10px", fontWeight: "600" }}>{grp.heading}</td>
+                            <td style={{ padding: "6px 10px", fontFamily: "monospace" }}>{grp.logicalCount}</td>
+                            <td style={{ padding: "6px 10px", fontFamily: "monospace", color: "#475569" }}>{runningLogical}</td>
+                            <td style={{ padding: "6px 10px", fontFamily: "monospace", fontWeight: "600" }}>
+                              {isGrpMeasured ? grp.renderedCount : "Not measured"}
+                            </td>
+                            <td style={{ padding: "6px 10px", fontFamily: "monospace", color: "#475569" }}>
+                              {allMeasuredSoFar ? runningRendered : "Not measured"}
+                            </td>
+                            <td style={{ padding: "6px 10px", color: "#475569" }}>{rowNote}</td>
+                          </tr>
+                        );
+                      });
+                    })()}
+                  </tbody>
+                  <tfoot>
+                    <tr style={{ backgroundColor: "#e2e8f0", fontWeight: "700", borderTop: "2px solid #94a3b8" }}>
+                      <td style={{ padding: "8px 10px" }}>GRAND TOTAL ({templateAuditSummary.totalGroupCount} Groups)</td>
+                      <td style={{ padding: "8px 10px", fontFamily: "monospace" }}>{templateAuditSummary.totalLogicalCapabilities}</td>
+                      <td style={{ padding: "8px 10px", fontFamily: "monospace" }}>{templateAuditSummary.totalLogicalCapabilities}</td>
+                      <td style={{ padding: "8px 10px", fontFamily: "monospace" }}>
+                        {templateAuditSummary.totalRenderedRows !== null
+                          ? templateAuditSummary.totalRenderedRows
+                          : "Not measured"}
+                      </td>
+                      <td style={{ padding: "8px 10px", fontFamily: "monospace" }}>
+                        {templateAuditSummary.totalRenderedRows !== null
+                          ? templateAuditSummary.totalRenderedRows
+                          : "Not measured"}
+                      </td>
+                      <td style={{ padding: "8px 10px" }}>
+                        {templateAuditSummary.mediaControlCount !== null
+                          ? `Active-Piece Media Controls: ${templateAuditSummary.mediaControlCount} | Zero-Image Placeholder: ${templateAuditSummary.hasZeroImagePlaceholder ? "1 (Active)" : "0"}`
+                          : "Media breakdown: Not measured"}
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </BlockStack>
+          </Card>
+        )}
+
         <div style={{ background: "#1a1a1a", padding: "20px", borderRadius: "8px", marginTop: "16px" }}>
           <BlockStack gap="400">
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px" }}>
               <Text variant="headingMd" as="h2" style={{ fontSize: "20px", fontWeight: "bold", color: "#ffffff" }}>
-                Universal Product Capability Template (62 Canonical Capabilities)
+                Universal Product Capability Template ({templateAuditSummary.totalLogicalCapabilities} Logical Capabilities{templateAuditSummary.totalRenderedRows !== null ? ` / ${templateAuditSummary.totalRenderedRows} Rendered Template Rows` : ""})
               </Text>
-              <Badge tone="success">
-                Active Piece: {selectedPieceForTemplate.piece_name || selectedPieceForTemplate.id}
-              </Badge>
+              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                {DEV_SHOW_ALL_TEMPLATE_FIELDS && (
+                  <Badge tone={isDevUnselectedPreview ? "warning" : "info"}>
+                    {isDevUnselectedPreview ? "DEV Read-Only Unselected Preview" : "DEV: All Canonical Groups Open"}
+                  </Badge>
+                )}
+                <Badge tone="success">
+                  {hasValidSelectedPieceContext
+                    ? `Active Piece: ${selectedPieceForTemplate.piece_name || selectedPieceForTemplate.id}`
+                    : "No Active Piece Selected (Read-Only Preview)"}
+                </Badge>
+              </div>
             </div>
-            {PRODUCT_TEMPLATE_GROUPS.map(group => renderTemplateGroup(group))}
+            {templateGroupRenderModels.map(groupModel => renderTemplateGroup(groupModel))}
           </BlockStack>
         </div>
       </BlockStack>

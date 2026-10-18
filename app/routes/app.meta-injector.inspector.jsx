@@ -1,7 +1,15 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { BlockStack, Card, Text, Banner, TextField, Select, Button, InlineStack, DropZone, Badge } from "@shopify/polaris";
 import { MagicIcon, SaveIcon, ClipboardIcon } from "@shopify/polaris-icons";
-import { DROPDOWN_OPTIONS, FULL_META_GROUPS, getFieldStatus, ROCKHOUND_FIELDS, PRODUCT_TEMPLATE_GROUPS } from "../utils/meta-injector.constants.jsx";
+import {
+  DEV_SHOW_ALL_TEMPLATE_FIELDS,
+  DROPDOWN_OPTIONS,
+  FULL_META_GROUPS,
+  getFieldStatus,
+  ROCKHOUND_FIELDS,
+  PRODUCT_TEMPLATE_GROUPS,
+  computeTemplateAuditCounts
+} from "../utils/meta-injector.constants.jsx";
 import { evaluateFieldMetadata, buildRepairPayload, resolveConfigFieldDestination } from "../utils/meta-injector.matrix-domain.jsx";
 import { useFetcher } from "react-router";
 
@@ -58,6 +66,29 @@ const PROTECTED_MANUAL_STORY_TITLES = [
   "the statement"
 ];
 
+const EMPTY_DEV_PREVIEW_MANIFEST = Object.freeze({
+  currentMetafields: {},
+  nativeTargets: null,
+  repairPlan: {},
+  metadata: {},
+  verifiedGeoValues: {}
+});
+
+const isExactProductGid = (val) =>
+  typeof val === "string" && /^gid:\/\/shopify\/Product\/[0-9]+$/.test(val.trim());
+
+const isExactMediaImageGid = (val) =>
+  typeof val === "string" && /^gid:\/\/shopify\/MediaImage\/[0-9]+$/.test(val.trim());
+
+const formatCompactDiagPreview = (val, maxLen = 110) => {
+  if (val === undefined || val === null) return "Not recorded";
+  const str = String(val);
+  if (str.trim() === "") return "Blank";
+  const singleLine = str.replace(/\s+/g, " ").trim();
+  if (singleLine.length <= maxLen) return singleLine;
+  return `${singleLine.slice(0, maxLen)}… (${str.length} chars)`;
+};
+
 const isManualStoryProtectedPiece = (title, pieceName) => {
   const combined = `${title || ""} ${pieceName || ""}`.toLowerCase();
   return PROTECTED_MANUAL_STORY_TITLES.some(protectedName => combined.includes(protectedName));
@@ -82,6 +113,7 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
   const originalMetaRef = useRef({});
   const fullMetaStateRef = useRef({});
   const editedKeysRef = useRef(new Set());
+  const keySourcesRef = useRef({});
   const lastProcessedAiData = useRef(null);
   const lastProcessedInjectData = useRef(null);
   const lastProcessedLoadData = useRef(null);
@@ -104,7 +136,77 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
   const statusFetcher = useFetcher();
   const productLoadFetcher = useFetcher();
 
+  const safeProducts = products || [];
+  const selectedProductObj = isExactProductGid(selectedProductId)
+    ? (safeProducts.find(p => p.id === selectedProductId) || null)
+    : null;
+  const hasValidSelectedProductContext = Boolean(selectedProductObj && isExactProductGid(selectedProductId));
+  const isDevUnselectedPreview = Boolean(DEV_SHOW_ALL_TEMPLATE_FIELDS && !hasValidSelectedProductContext);
+
+  const selectedProductContextRef = useRef({
+    id: "",
+    isValid: false
+  });
+  selectedProductContextRef.current = {
+    id: selectedProductId,
+    isValid: hasValidSelectedProductContext
+  };
+
   const allTemplateFields = PRODUCT_TEMPLATE_GROUPS.flatMap(g => g.fields || []);
+
+  const recordKeySource = useCallback((key, sourceLabel, stageLabel) => {
+    if (!key) return;
+    const entry = {
+      source: sourceLabel || "Not recorded",
+      stage: stageLabel || "Not recorded"
+    };
+    keySourcesRef.current[key] = entry;
+    const bare = key.replace(/^custom\./, "");
+    keySourcesRef.current[bare] = entry;
+    if (!key.includes(".") && NAMESPACE_MAP.custom.includes(bare)) {
+      keySourcesRef.current[`custom.${bare}`] = entry;
+    }
+    if (key === "shopify_title" || key === "native_title") {
+      keySourcesRef.current.shopify_title = entry;
+      keySourcesRef.current.native_title = entry;
+    }
+    if (key === "generated_description" || key === "native_description") {
+      keySourcesRef.current.generated_description = entry;
+      keySourcesRef.current.native_description = entry;
+      keySourcesRef.current["custom.generated_description"] = entry;
+    }
+    if (key === "seo_title" || key === "native_seo_title") {
+      keySourcesRef.current.seo_title = entry;
+      keySourcesRef.current.native_seo_title = entry;
+      keySourcesRef.current["custom.seo_title"] = entry;
+    }
+    if (key === "shipping_weight_oz" || key === "native_shipping_weight") {
+      keySourcesRef.current.shipping_weight_oz = entry;
+      keySourcesRef.current.native_shipping_weight = entry;
+      keySourcesRef.current["custom.shipping_weight_oz"] = entry;
+    }
+    if (key === "price" || key === "native_price") {
+      keySourcesRef.current.price = entry;
+      keySourcesRef.current.native_price = entry;
+    }
+    if (key === "is_ooak" || key === "is_one_of_a_kind") {
+      keySourcesRef.current.is_ooak = entry;
+      keySourcesRef.current.is_one_of_a_kind = entry;
+      keySourcesRef.current["custom.is_one_of_a_kind"] = entry;
+    }
+    if (key === "stone_family" || key === "primary_medium" || key === "material") {
+      keySourcesRef.current.material = entry;
+      keySourcesRef.current["custom.material"] = entry;
+    }
+    if (key === "origin_handle" || key === "origin_page_handle") {
+      keySourcesRef.current.origin_page_handle = entry;
+      keySourcesRef.current["custom.origin_page_handle"] = entry;
+    }
+    if (key === "cut_type" || key === "cut_and_shape") {
+      keySourcesRef.current.cut_and_shape = entry;
+      keySourcesRef.current["custom.cut_and_shape"] = entry;
+    }
+  }, []);
 
   useEffect(() => {
     if (tab2Fetcher && tab2Fetcher.data) {
@@ -113,6 +215,7 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
   }, [selectedProductId, tab2Fetcher]);
 
   const handleDropOverridePhoto = useCallback((_dropFiles, acceptedFiles) => {
+    if (!selectedProductContextRef.current.isValid) return;
     if (acceptedFiles.length > 0) {
       const file = acceptedFiles[0];
       const reader = new FileReader();
@@ -129,6 +232,10 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
   }, []);
 
   const handleSelectProduct = useCallback((id) => {
+    if (!isExactProductGid(id)) return;
+    const product = (products || []).find(p => p.id === id);
+    if (!product) return;
+
     setSelectedProductId(id);
     setStatusMessage("");
     setWarningMessage("");
@@ -143,6 +250,7 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
     fullMetaStateRef.current = {};
     originalMetaRef.current = {};
     editedKeysRef.current = new Set();
+    keySourcesRef.current = {};
     setPendingFixFields([]);
     setCurrentFixIndex(0);
     setShowFixPopup(false);
@@ -150,24 +258,25 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
     lastProcessedAiData.current = null;
     lastAutofilledTitle.current = "";
 
-    const product = products.find(p => p.id === id);
-    if (product) {
-      setProductStatus(product.status || "DRAFT");
-    }
+    setProductStatus(product.status || "DRAFT");
     
     const newForm = {};
     const newFullForm = {};
     
-    if (product && product.title) {
+    if (product.title) {
       newForm.shopify_title = product.title;
       newFullForm.shopify_title = product.title;
       newForm.native_title = product.title;
       newFullForm.native_title = product.title;
+      recordKeySource("native_title", "Shopify", "Product Loader Snapshot");
     }
 
-    if (product && typeof product.descriptionHtml === "string") {
+    if (typeof product.descriptionHtml === "string") {
       newForm.native_description = product.descriptionHtml;
       newFullForm.native_description = product.descriptionHtml;
+      if (product.descriptionHtml.trim() !== "") {
+        recordKeySource("native_description", "Shopify", "Product Loader Snapshot");
+      }
       if (!newFullForm.generated_description) {
         newForm.generated_description = product.descriptionHtml;
         newFullForm.generated_description = product.descriptionHtml;
@@ -209,10 +318,16 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
 
           newForm[node.key] = parsedValue;
           newFullForm[node.key] = parsedValue;
+          if (String(parsedValue).trim() !== "") {
+            recordKeySource(`custom.${node.key}`, "Shopify", "Product Loader Snapshot");
+          }
         } else if (node.namespace === "google" || node.namespace === "mm-google-shopping" || node.namespace === "shopify") {
           const qualifiedKey = `${node.namespace}.${node.key}`;
           newForm[qualifiedKey] = String(node.value);
           newFullForm[qualifiedKey] = String(node.value);
+          if (String(node.value).trim() !== "") {
+            recordKeySource(qualifiedKey, "Shopify", "Product Loader Snapshot");
+          }
         }
       });
     }
@@ -229,7 +344,10 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
     
     Object.entries(CAMEL_TO_SNAKE).forEach(([camel, snake]) => {
       if (newFullForm[camel] !== undefined) { 
-        if (!newFullForm[snake]) newFullForm[snake] = newFullForm[camel]; 
+        if (!newFullForm[snake]) {
+          newFullForm[snake] = newFullForm[camel];
+          recordKeySource(`custom.${snake}`, "Shopify", "Product Loader Snapshot");
+        }
         delete newFullForm[camel]; 
       }
       if (newForm[camel] !== undefined) { 
@@ -242,19 +360,23 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
     if (!newFullForm.is_one_of_a_kind && newFullForm.is_ooak) {
       newFullForm.is_one_of_a_kind = newFullForm.is_ooak;
       newForm.is_one_of_a_kind = newFullForm.is_ooak;
+      recordKeySource("custom.is_one_of_a_kind", "Shopify (Companion custom.is_ooak)", "Product Loader Snapshot");
     }
     if (!newFullForm.material && (newFullForm.stone_family || newFullForm.primary_medium)) {
       const fallbackMat = newFullForm.stone_family || newFullForm.primary_medium;
       newFullForm.material = fallbackMat;
       newForm.material = fallbackMat;
+      recordKeySource("custom.material", "Shopify (Companion stone_family/primary_medium)", "Product Loader Snapshot");
     }
     if (!newFullForm.origin_page_handle && newFullForm.origin_handle) {
       newFullForm.origin_page_handle = newFullForm.origin_handle;
       newForm.origin_page_handle = newFullForm.origin_handle;
+      recordKeySource("custom.origin_page_handle", "Shopify (Companion custom.origin_handle)", "Product Loader Snapshot");
     }
     if (!newFullForm.cut_and_shape && newFullForm.cut_type) {
       newFullForm.cut_and_shape = newFullForm.cut_type;
       newForm.cut_and_shape = newFullForm.cut_type;
+      recordKeySource("custom.cut_and_shape", "Shopify (Companion custom.cut_type)", "Product Loader Snapshot");
     }
 
     // Read actual variant shipping weight in OUNCES when present; never derive shipping weight from stone-only weight_grams
@@ -269,6 +391,7 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
       newForm.shipping_weight_oz = ozStr;
       newFullForm.native_shipping_weight = ozStr;
       newForm.native_shipping_weight = ozStr;
+      recordKeySource("native_shipping_weight", "Shopify", "Product Loader Snapshot");
     } else if (newFullForm.shipping_weight_oz) {
       newFullForm.native_shipping_weight = newFullForm.shipping_weight_oz;
       newForm.native_shipping_weight = newFullForm.shipping_weight_oz;
@@ -314,6 +437,7 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
       if (legacyExtracted) {
         newForm.piece_name = legacyExtracted;
         newFullForm.piece_name = legacyExtracted;
+        recordKeySource("custom.piece_name", "Derived (Legacy 3-Segment Title)", "Product Selection");
       }
     }
 
@@ -322,12 +446,14 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
       newFullForm.price = vNode.price; 
       newForm.native_price = vNode.price;
       newFullForm.native_price = vNode.price;
+      recordKeySource("native_price", "Shopify", "Product Loader Snapshot");
     }
 
     const seoTitleNode = allEdges.find(e => e.node.key === "seo_title" || e.node.key === "title_tag")?.node;
     if (seoTitleNode && seoTitleNode.value) {
       newFullForm.seo_title = seoTitleNode.value;
       newFullForm.native_seo_title = seoTitleNode.value;
+      recordKeySource("native_seo_title", "Shopify", "Product Loader Snapshot");
     }
     
     setFormState(newForm);
@@ -335,12 +461,12 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
     fullMetaStateRef.current = newFullForm;
     originalMetaRef.current = { ...newFullForm };
 
-    // Load live product manifest from backend so executeRepairPlan has exact baselines and variant/SEO targets
+    // Load live product manifest from backend when a user explicitly selects a product
     const fd = new FormData();
     fd.append("intent", "loadProductData");
     fd.append("pieceId", id);
     productLoadFetcher.submit(fd, { method: "post", action: "/app/meta-injector-api" });
-  }, [products]);
+  }, [products, productLoadFetcher, recordKeySource]);
 
   useEffect(() => {
     if (
@@ -363,6 +489,10 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
             ? String(wObj.value)
             : "";
 
+        const liveMediaEdges = Array.isArray(lData.nativeTargets?.media?.edges)
+          ? lData.nativeTargets.media.edges
+          : [];
+
         setFullMetaState(prev => {
           const next = { ...prev };
           const liveMfs = lData.currentMetafields || {};
@@ -373,12 +503,26 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
             if (!next[qualifiedKey]) {
               next[qualifiedKey] = strVal;
               originalMetaRef.current[qualifiedKey] = strVal;
+              recordKeySource(qualifiedKey, "Shopify", "loadProductData");
             }
             if (qualifiedKey.startsWith("custom.")) {
               const bare = qualifiedKey.slice(7);
               if (!RETIRED_TAB2_KEYS.has(bare) && !editedKeysRef.current.has(bare) && (next[bare] === undefined || next[bare] === "")) {
                 next[bare] = strVal;
                 originalMetaRef.current[bare] = strVal;
+                recordKeySource(qualifiedKey, "Shopify", "loadProductData");
+              }
+            }
+          });
+
+          liveMediaEdges.forEach(({ node }) => {
+            if (!node?.id || !isExactMediaImageGid(node.id)) return;
+            const mediaAltKey = `native_image_alts_${node.id}`;
+            if (typeof node.alt === "string" && node.alt.trim() !== "") {
+              originalMetaRef.current[mediaAltKey] = node.alt;
+              if (!editedKeysRef.current.has(mediaAltKey) && (next[mediaAltKey] === undefined || next[mediaAltKey] === "")) {
+                next[mediaAltKey] = node.alt;
+                recordKeySource(mediaAltKey, "Shopify", "loadProductData");
               }
             }
           });
@@ -386,39 +530,46 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
           if (!next.cut_and_shape && next.cut_type) {
             next.cut_and_shape = next.cut_type;
             originalMetaRef.current.cut_and_shape = next.cut_type;
+            recordKeySource("custom.cut_and_shape", "Shopify (Companion custom.cut_type)", "loadProductData");
           }
 
           if (!editedKeysRef.current.has("native_seo_description") && seoDesc) {
             next.native_seo_description = seoDesc;
             originalMetaRef.current.native_seo_description = seoDesc;
+            recordKeySource("native_seo_description", "Shopify", "loadProductData");
           }
           if (!editedKeysRef.current.has("seo_title") && !next.seo_title && seoTitle) {
             next.seo_title = seoTitle;
             next.native_seo_title = seoTitle;
             originalMetaRef.current.seo_title = seoTitle;
             originalMetaRef.current.native_seo_title = seoTitle;
+            recordKeySource("native_seo_title", "Shopify", "loadProductData");
           }
           if (!editedKeysRef.current.has("generated_description") && !editedKeysRef.current.has("native_description") && !next.generated_description && liveDescHtml) {
             next.generated_description = liveDescHtml;
             next.native_description = liveDescHtml;
             originalMetaRef.current.generated_description = liveDescHtml;
             originalMetaRef.current.native_description = liveDescHtml;
+            recordKeySource("native_description", "Shopify", "loadProductData");
           }
           if (!editedKeysRef.current.has("shipping_weight_oz") && !next.shipping_weight_oz && liveShipOz) {
             next.shipping_weight_oz = liveShipOz;
             next.native_shipping_weight = liveShipOz;
             originalMetaRef.current.shipping_weight_oz = liveShipOz;
             originalMetaRef.current.native_shipping_weight = liveShipOz;
+            recordKeySource("native_shipping_weight", "Shopify", "loadProductData");
           }
           fullMetaStateRef.current = next;
           return next;
         });
       }
     }
-  }, [productLoadFetcher.state, productLoadFetcher.data, selectedProductId]);
+  }, [productLoadFetcher.state, productLoadFetcher.data, selectedProductId, recordKeySource]);
 
-  const markKeyEdited = useCallback((key) => {
+  const markKeyEdited = useCallback((key, sourceLabel = "Manual", stageLabel = "Tab2Review") => {
+    if (!key || key === "native_image_alt") return;
     editedKeysRef.current.add(key);
+    recordKeySource(key, sourceLabel, stageLabel);
     if (key === "shopify_title" || key === "native_title") {
       editedKeysRef.current.add("shopify_title");
       editedKeysRef.current.add("native_title");
@@ -448,9 +599,10 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
     if (key === "origin_handle" || key === "origin_page_handle") {
       editedKeysRef.current.add("origin_page_handle");
     }
-  }, []);
+  }, [recordKeySource]);
 
   const handleTitleBlur = useCallback((value) => {
+    if (!selectedProductContextRef.current.isValid) return;
     if (!value) return;
     const segments = value.split(/\s+[-—–]\s+/);
     if (segments.length >= 3 && value !== lastAutofilledTitle.current) {
@@ -463,7 +615,8 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
   }, [tab2Fetcher]);
 
   const updateWeightFields = useCallback((key, value) => {
-    markKeyEdited(key);
+    if (!selectedProductContextRef.current.isValid) return;
+    markKeyEdited(key, "Manual", "Tab2Review");
     // Stone-only weight (weight_grams) must never populate or overwrite shipping_weight_oz
     const companionUpdates = {};
     if (key === "shipping_weight_oz" || key === "native_shipping_weight") {
@@ -479,11 +632,17 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
   }, [markKeyEdited]);
 
   const updateFullMetaState = useCallback((key, value) => {
+    if (!selectedProductContextRef.current.isValid) return;
+    if (!key || key === "native_image_alt") return;
+    if (key.startsWith("native_image_alts_")) {
+      const mediaId = key.replace("native_image_alts_", "");
+      if (!isExactMediaImageGid(mediaId)) return;
+    }
     if (key === "weight_grams" || key === "shipping_weight_oz" || key === "native_shipping_weight") {
       updateWeightFields(key, value);
       return;
     }
-    markKeyEdited(key);
+    markKeyEdited(key, "Manual", "Tab2Review");
 
     const updates = { [key]: value };
     if (key === "shopify_title" || key === "native_title") {
@@ -515,13 +674,15 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
   }, [updateWeightFields, markKeyEdited]);
 
   const handleTab2AutoFill = useCallback(() => {
-    if (!selectedProductId) return;
+    if (!selectedProductContextRef.current.isValid || !isExactProductGid(selectedProductId)) return;
+    const product = (products || []).find(p => p.id === selectedProductId);
+    if (!product) return;
+
     setTab2StatusMessage("");
     setTab2ErrorMessage("");
 
     const stoneFamily = fullMetaState.material || fullMetaState.stone_family || "";
     const originHandle = fullMetaState.origin_page_handle || fullMetaState.origin_handle || "";
-    const product = products.find(p => p.id === selectedProductId);
     const titleToUse = fullMetaState.shopify_title || formState.shopify_title || product?.title || "";
     const imageUrl = product?.images?.edges?.[0]?.node?.url || "";
 
@@ -546,13 +707,15 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
   }, [selectedProductId, tab2Fetcher, fullMetaState, products, formState, overridePhoto]);
 
   const handleFullRescan = useCallback(() => {
-    if (!selectedProductId) return;
+    if (!selectedProductContextRef.current.isValid || !isExactProductGid(selectedProductId)) return;
+    const product = (products || []).find(p => p.id === selectedProductId);
+    if (!product) return;
+
     setTab2StatusMessage("");
     setTab2ErrorMessage("");
 
     const stoneFamily = fullMetaState.material || fullMetaState.stone_family || "";
     const originHandle = fullMetaState.origin_page_handle || fullMetaState.origin_handle || "";
-    const product = products.find(p => p.id === selectedProductId);
     const titleToUse = fullMetaState.shopify_title || formState.shopify_title || product?.title || "";
     const imageUrl = product?.images?.edges?.[0]?.node?.url || "";
 
@@ -583,6 +746,11 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
       });
       editedKeysRef.current.forEach(k => {
         if (prev[k] !== undefined && prev[k] !== "") {
+          next[k] = prev[k];
+        }
+      });
+      Object.keys(prev).forEach(k => {
+        if (k.startsWith("native_image_alts_") && prev[k] !== undefined && prev[k] !== "") {
           next[k] = prev[k];
         }
       });
@@ -623,6 +791,7 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
   }, [selectedProductId, tab2Fetcher, fullMetaState, products, formState, overridePhoto]);
 
   const handleCopyTelemetry = useCallback(() => {
+    if (!selectedProductContextRef.current.isValid) return;
     navigator.clipboard.writeText(JSON.stringify(fullMetaState, null, 2))
       .then(() => {
         if (window.shopify && window.shopify.toast) {
@@ -633,7 +802,7 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
   }, [fullMetaState]);
 
   const handleToggleStatus = useCallback(() => {
-    if (!selectedProductId) return;
+    if (!selectedProductContextRef.current.isValid || !isExactProductGid(selectedProductId)) return;
     const newStatus = productStatus === "ACTIVE" ? "DRAFT" : "ACTIVE";
     
     const formData = new FormData();
@@ -664,12 +833,12 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
   }, [statusFetcher.state, statusFetcher.data]);
 
   const handleInject = useCallback(() => {
-    if (!selectedProductId) return;
+    if (!selectedProductContextRef.current.isValid || !isExactProductGid(selectedProductId)) return;
     setStatusMessage("");
     setWarningMessage("");
     setErrorMessage("");
 
-    const selectedProduct = products.find(p => p.id === selectedProductId);
+    const selectedProduct = (products || []).find(p => p.id === selectedProductId);
     if (!selectedProduct) {
       setErrorMessage("Selected product not found in inventory. Reselect the product and try again.");
       return;
@@ -694,27 +863,29 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
       });
     }
 
-    // Build baseline nativeTargets from live manifest if loaded, else from product object
-    const fallbackVariantsEdges = (selectedProduct.variants?.edges || []).map((e, idx) => {
-      const vNode = e?.node || {};
-      const wObj = vNode.inventoryItem?.measurement?.weight;
-      return {
-        node: {
-          id: vNode.id || `gid://shopify/ProductVariant/${idx}`,
-          title: vNode.title || "Default Title",
-          price: vNode.price ?? "",
-          inventoryItem: {
-            measurement: {
-              weight: wObj || (vNode.weight !== undefined ? { value: vNode.weight, unit: vNode.weightUnit || "OUNCES" } : null)
+    // Build baseline nativeTargets from live manifest if loaded, else from product object (never fabricate Variant GIDs)
+    const fallbackVariantsEdges = (selectedProduct.variants?.edges || [])
+      .filter(e => e?.node?.id && /^gid:\/\/shopify\/ProductVariant\/[0-9]+$/.test(String(e.node.id)))
+      .map((e) => {
+        const vNode = e.node;
+        const wObj = vNode.inventoryItem?.measurement?.weight;
+        return {
+          node: {
+            id: vNode.id,
+            title: vNode.title || "Default Title",
+            price: vNode.price ?? "",
+            inventoryItem: {
+              measurement: {
+                weight: wObj || (vNode.weight !== undefined ? { value: vNode.weight, unit: vNode.weightUnit || "OUNCES" } : null)
+              }
             }
           }
-        }
-      };
-    });
+        };
+      });
 
     const hasValidFallbackVariantId =
       fallbackVariantsEdges.length === 1 &&
-      /^gid:\/\/shopify\/ProductVariant\/\d+$/.test(fallbackVariantsEdges[0]?.node?.id || "");
+      /^gid:\/\/shopify\/ProductVariant\/[0-9]+$/.test(fallbackVariantsEdges[0]?.node?.id || "");
 
     const nativeTargets = liveProductManifest?.nativeTargets || {
       productId: selectedProduct.id,
@@ -741,6 +912,7 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
     const approvalsForProduct = {};
 
     const stageProposalIfIntended = (canonicalKey, rawProposedValue, baselineCompareValue) => {
+      if (!canonicalKey || canonicalKey === "native_image_alt") return;
       if (rawProposedValue === undefined || rawProposedValue === null) return;
       const cleanVal = String(rawProposedValue).trim();
       if (!cleanVal || cleanVal === "See Shopify metaobject") return;
@@ -755,8 +927,12 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
 
       if (!wasExplicitlyEditedOrFilled) return;
 
+      const recordedMeta = keySourcesRef.current[canonicalKey] || keySourcesRef.current[bareKey] || null;
       repairPlan[canonicalKey] = cleanVal;
-      metadata[canonicalKey] = { source: "Manual", stage: "Tab2Review" };
+      metadata[canonicalKey] = {
+        source: recordedMeta?.source || "Manual",
+        stage: recordedMeta?.stage || "Tab2Review"
+      };
       approvalsForProduct[canonicalKey] = cleanVal;
     };
 
@@ -806,8 +982,12 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
     const proposedSeoDesc = String(currentState.native_seo_description ?? "").trim();
     const baselineSeoDesc = String(nativeTargets.seo?.description ?? baselineState.native_seo_description ?? "").trim();
     if (proposedSeoDesc && (editedKeysRef.current.has("native_seo_description") || proposedSeoDesc !== baselineSeoDesc)) {
+      const seoMeta = keySourcesRef.current["native_seo_description"];
       repairPlan["native_seo_description"] = proposedSeoDesc;
-      metadata["native_seo_description"] = { source: "Manual", stage: "Tab2Review" };
+      metadata["native_seo_description"] = {
+        source: seoMeta?.source || "Manual",
+        stage: seoMeta?.stage || "Tab2Review"
+      };
       approvalsForProduct["native_seo_description"] = proposedSeoDesc;
     }
 
@@ -868,7 +1048,8 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
       "stone_family", "primary_medium", "material",
       "origin_handle", "origin_page_handle",
       "cut_type", "cut_and_shape",
-      "origin_story", "stone_story", "custom_product"
+      "origin_story", "stone_story", "custom_product",
+      "native_image_alt"
     ]);
 
     Object.entries(currentState).forEach(([rawKey, rawVal]) => {
@@ -889,16 +1070,20 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
       }
     });
 
-    // Preserve native_image_alt media repairs if present in live manifest
+    // Preserve native_image_alt media repairs ONLY for valid exact MediaImage GIDs present in live manifest (never placeholder)
     if (liveProductManifest?.nativeTargets?.media?.edges) {
       liveProductManifest.nativeTargets.media.edges.forEach(({ node }) => {
-        if (!node?.id) return;
+        if (!node?.id || !isExactMediaImageGid(node.id)) return;
         const mediaAltKey = `native_image_alts_${node.id}`;
         if (currentState[mediaAltKey] !== undefined && editedKeysRef.current.has(mediaAltKey)) {
           const cleanAlt = String(currentState[mediaAltKey]).trim();
           if (cleanAlt && cleanAlt !== String(node.alt ?? "").trim()) {
+            const mediaMeta = keySourcesRef.current[mediaAltKey];
             repairPlan[mediaAltKey] = cleanAlt;
-            metadata[mediaAltKey] = { source: "Manual", stage: "Tab2Review" };
+            metadata[mediaAltKey] = {
+              source: mediaMeta?.source || "Manual",
+              stage: mediaMeta?.stage || "Tab2Review"
+            };
             approvalsForProduct[mediaAltKey] = cleanAlt;
           }
         }
@@ -1078,16 +1263,16 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
             if (k === "origin_story" && editedKeysRef.current.has("origin_story") && updated.origin_story) return;
             if (v !== undefined && v !== null && String(v).trim() !== "") {
               updated[k] = v;
-              markKeyEdited(k);
+              markKeyEdited(k, "Gemini / Geo Library", "titleParse");
             }
           });
           if (parsed.stone_family && !updated.material) {
             updated.material = parsed.stone_family;
-            markKeyEdited("material");
+            markKeyEdited("material", "Gemini / Geo Library", "titleParse");
           }
           if (parsed.origin_handle && !updated.origin_page_handle) {
             updated.origin_page_handle = parsed.origin_handle;
-            markKeyEdited("origin_page_handle");
+            markKeyEdited("origin_page_handle", "Gemini / Geo Library", "titleParse");
           }
           // Preserve operator-entered piece_name; only populate from parsed piece_name if currently blank
           if (!updated.piece_name || String(updated.piece_name).trim() === "") {
@@ -1096,7 +1281,7 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
               extractLegacyPieceNameIfSegmented(parsed.canonical_title || "");
             if (candidatePieceName) {
               updated.piece_name = candidatePieceName;
-              markKeyEdited("piece_name");
+              markKeyEdited("piece_name", "Gemini / Geo Library", "titleParse");
             }
           }
           fullMetaStateRef.current = updated;
@@ -1109,6 +1294,8 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
 
       const tab2Data = tab2Fetcher.data.tab2Data || {};
       if (tab2Fetcher.data.generated_description) tab2Data.generated_description = tab2Fetcher.data.generated_description;
+
+      const aiIntentName = tab2Fetcher.data.intent || "tab2AutoFill";
 
       if (Object.keys(tab2Data).length > 0) {
         const applyAiUpdates = (prev) => {
@@ -1158,30 +1345,30 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
                 updatedState.cut_type = normalizedVal;
                 if (!updatedState.cut_and_shape || String(updatedState.cut_and_shape).trim() === "") {
                   updatedState.cut_and_shape = normalizedVal;
-                  markKeyEdited("cut_and_shape");
+                  markKeyEdited("cut_and_shape", "Gemini / Vision", aiIntentName);
                 }
               } else if (key === "is_ooak" || key === "is_one_of_a_kind") {
                 updatedState.is_one_of_a_kind = normalizedVal;
                 updatedState.is_ooak = normalizedVal;
-                markKeyEdited("is_one_of_a_kind");
+                markKeyEdited("is_one_of_a_kind", "Gemini / Vision", aiIntentName);
               } else if (key === "stone_family" || key === "material") {
                 updatedState.material = normalizedVal;
                 updatedState.stone_family = normalizedVal;
-                markKeyEdited("material");
+                markKeyEdited("material", "Gemini / Vision", aiIntentName);
               } else if (key === "origin_handle" || key === "origin_page_handle") {
                 updatedState.origin_page_handle = normalizedVal;
                 updatedState.origin_handle = normalizedVal;
-                markKeyEdited("origin_page_handle");
+                markKeyEdited("origin_page_handle", "Gemini / Vision", aiIntentName);
               } else if (key === "generated_description") {
                 updatedState.generated_description = normalizedVal;
                 updatedState.native_description = normalizedVal;
-                markKeyEdited("generated_description");
+                markKeyEdited("generated_description", "Gemini", aiIntentName);
               } else if (key === "poetic_hook") {
                 updatedState.native_seo_description = String(normalizedVal).trim();
-                markKeyEdited("native_seo_description");
+                markKeyEdited("native_seo_description", "Gemini", aiIntentName);
               } else {
                 updatedState[key] = normalizedVal;
-                markKeyEdited(key);
+                markKeyEdited(key, "Gemini / Vision", aiIntentName);
               }
             }
           });
@@ -1227,6 +1414,7 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
   }, [tab2Fetcher.state, tab2Fetcher.data, selectedProductId, products, markKeyEdited]);
 
   const handleFixPopupConfirm = useCallback(() => {
+    if (!selectedProductContextRef.current.isValid) return;
     const field = pendingFixFields[currentFixIndex];
     if (field && fixPopupValue.trim() !== "") {
       updateFullMetaState(field.key, fixPopupValue.trim());
@@ -1250,14 +1438,125 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
     }
   }, [pendingFixFields, currentFixIndex]);
 
-  const renderSingleCapabilityControl = (field, overrideKey = null, overrideLabel = null) => {
+  // ============================================================================
+  // UNIFIED TEMPLATE ROW-DESCRIPTOR & AUDIT COUNT PIPELINE
+  // Builds the exact rendered row descriptors for all 10 PRODUCT_TEMPLATE_GROUPS
+  // so UI rendering and computeTemplateAuditCounts share the identical array.
+  // ============================================================================
+  const rawMediaEdges = hasValidSelectedProductContext && Array.isArray(liveProductManifest?.nativeTargets?.media?.edges)
+    ? liveProductManifest.nativeTargets.media.edges
+    : [];
+  const validMediaNodes = rawMediaEdges
+    .filter(e => e?.node?.id && isExactMediaImageGid(e.node.id))
+    .map(e => e.node);
+
+  const shouldRenderTemplateCard = Boolean(hasValidSelectedProductContext || DEV_SHOW_ALL_TEMPLATE_FIELDS);
+  const renderedKeysByGroupForAudit = {};
+  let observedMediaControlCount = 0;
+  let observedZeroImagePlaceholder = false;
+
+  const templateGroupRenderModels = shouldRenderTemplateCard
+    ? PRODUCT_TEMPLATE_GROUPS.map((group) => {
+        const groupFields = Array.isArray(group.fields) ? group.fields : [];
+        const rowDescriptors = [];
+
+        groupFields.forEach((field) => {
+          if (!field) return;
+          if (RETIRED_TAB2_KEYS.has(field.key)) return;
+          if (
+            field.registryRole &&
+            field.registryRole !== "PRIMARY_CANDIDATE_DESTINATION" &&
+            field.registryRole !== "APPROVED_MEASUREMENT_ADDITION"
+          ) {
+            return;
+          }
+
+          if (field.key === "native_image_alt") {
+            if (validMediaNodes.length > 0) {
+              validMediaNodes.forEach((mediaNode) => {
+                const mediaId = mediaNode.id;
+                const shortId = mediaId.split("/").pop();
+                const mediaKey = `native_image_alts_${mediaId}`;
+                observedMediaControlCount += 1;
+                rowDescriptors.push({
+                  descriptorKey: mediaKey,
+                  field,
+                  overrideKey: mediaKey,
+                  overrideLabel: `Native Image Alt (${shortId})`,
+                  mediaNode,
+                  isPerImageMediaRow: true,
+                  isZeroImagePlaceholderRow: false
+                });
+              });
+            } else {
+              observedZeroImagePlaceholder = true;
+              rowDescriptors.push({
+                descriptorKey: "native_image_alt",
+                field,
+                overrideKey: null,
+                overrideLabel: "Native Image Alt Text (Zero-Image Capability Placeholder)",
+                mediaNode: null,
+                isPerImageMediaRow: false,
+                isZeroImagePlaceholderRow: true
+              });
+            }
+            return;
+          }
+
+          const resolvedDest = resolveConfigFieldDestination(field);
+          rowDescriptors.push({
+            descriptorKey: resolvedDest || field.key,
+            field,
+            overrideKey: null,
+            overrideLabel: null,
+            mediaNode: null,
+            isPerImageMediaRow: false,
+            isZeroImagePlaceholderRow: false
+          });
+        });
+
+        renderedKeysByGroupForAudit[group.heading] = rowDescriptors.map(r => r.descriptorKey);
+
+        return {
+          heading: group.heading,
+          color: group.color,
+          logicalFields: groupFields,
+          rowDescriptors
+        };
+      })
+    : [];
+
+  const templateAuditSummary = computeTemplateAuditCounts(
+    PRODUCT_TEMPLATE_GROUPS,
+    shouldRenderTemplateCard
+      ? {
+          renderedKeysByGroup: renderedKeysByGroupForAudit,
+          mediaControlCount: observedMediaControlCount,
+          hasZeroImagePlaceholder: observedZeroImagePlaceholder
+        }
+      : null
+  );
+
+  const renderCapabilityRowFromDescriptor = (descriptor) => {
+    const {
+      descriptorKey,
+      field,
+      overrideKey,
+      overrideLabel,
+      mediaNode,
+      isPerImageMediaRow,
+      isZeroImagePlaceholderRow
+    } = descriptor;
+
     const resolvedDest = overrideKey || resolveConfigFieldDestination(field);
     const bareKey = (field.metaKey || field.key || "").replace(/^custom\./, "");
 
     const evalMeta = evaluateFieldMetadata({
-      key: resolvedDest,
-      data: liveProductManifest || { currentMetafields: {}, nativeTargets: {} },
-      productId: selectedProductId,
+      key: isZeroImagePlaceholderRow ? "native_image_alt" : resolvedDest,
+      data: hasValidSelectedProductContext
+        ? (liveProductManifest || EMPTY_DEV_PREVIEW_MANIFEST)
+        : EMPTY_DEV_PREVIEW_MANIFEST,
+      productId: hasValidSelectedProductContext ? selectedProductId : null,
       currentApprovals: {},
       configFields: allTemplateFields,
       standardizedCandidatesByProduct: {},
@@ -1265,6 +1564,9 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
     });
 
     const isHeldReadOnly = Boolean(
+      !hasValidSelectedProductContext ||
+      isZeroImagePlaceholderRow ||
+      evalMeta.isImageAltCapabilityPlaceholder ||
       evalMeta.isPendingReadOnly ||
       evalMeta.hasExplicitStorageHold ||
       evalMeta.hasExplicitProducerHold ||
@@ -1291,13 +1593,20 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
       Boolean(evalMeta.isSupported) ||
       NAMESPACE_MAP.custom.includes(bareKey) ||
       nativeEditableKeys.includes(field.key) ||
-      resolvedDest.startsWith("native_image_alts_");
+      isPerImageMediaRow;
 
     const isSupported = isKnownKey && !RETIRED_TAB2_KEYS.has(bareKey);
-    const canEdit = isSupported && !isHeldReadOnly && !evalMeta.isManualOnly && field.key !== "native_image_alt";
+    const canEdit = Boolean(
+      hasValidSelectedProductContext &&
+      isSupported &&
+      !isHeldReadOnly &&
+      !evalMeta.isManualOnly &&
+      !isZeroImagePlaceholderRow &&
+      field.key !== "native_image_alt"
+    );
 
     const stateKey =
-      resolvedDest.startsWith("native_image_alts_") ? resolvedDest :
+      isPerImageMediaRow ? resolvedDest :
       field.key === "native_title" ? "shopify_title" :
       field.key === "native_description" ? "generated_description" :
       field.key === "native_seo_title" ? "seo_title" :
@@ -1307,21 +1616,24 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
         ? resolvedDest
         : bareKey);
 
-    let val = fullMetaState[stateKey] !== undefined && fullMetaState[stateKey] !== null
-      ? fullMetaState[stateKey]
-      : (fullMetaState[resolvedDest] ?? fullMetaState[field.key] ?? evalMeta.currentVal ?? "");
-    
-    if (bareKey === "is_one_of_a_kind" && (val === "" || val === undefined) && fullMetaState.is_ooak) {
-      val = fullMetaState.is_ooak;
-    }
-    if (bareKey === "material" && (val === "" || val === undefined) && (fullMetaState.stone_family || fullMetaState.primary_medium)) {
-      val = fullMetaState.stone_family || fullMetaState.primary_medium;
-    }
-    if (bareKey === "origin_page_handle" && (val === "" || val === undefined) && fullMetaState.origin_handle) {
-      val = fullMetaState.origin_handle;
-    }
-    if (bareKey === "cut_and_shape" && (val === "" || val === undefined) && fullMetaState.cut_type) {
-      val = fullMetaState.cut_type;
+    let val = "";
+    if (hasValidSelectedProductContext && !isZeroImagePlaceholderRow) {
+      val = fullMetaState[stateKey] !== undefined && fullMetaState[stateKey] !== null
+        ? fullMetaState[stateKey]
+        : (fullMetaState[resolvedDest] ?? fullMetaState[field.key] ?? evalMeta.currentVal ?? "");
+
+      if (bareKey === "is_one_of_a_kind" && (val === "" || val === undefined) && fullMetaState.is_ooak) {
+        val = fullMetaState.is_ooak;
+      }
+      if (bareKey === "material" && (val === "" || val === undefined) && (fullMetaState.stone_family || fullMetaState.primary_medium)) {
+        val = fullMetaState.stone_family || fullMetaState.primary_medium;
+      }
+      if (bareKey === "origin_page_handle" && (val === "" || val === undefined) && fullMetaState.origin_handle) {
+        val = fullMetaState.origin_handle;
+      }
+      if (bareKey === "cut_and_shape" && (val === "" || val === undefined) && fullMetaState.cut_type) {
+        val = fullMetaState.cut_type;
+      }
     }
 
     if (typeof val === "string" && val.startsWith("[")) {
@@ -1342,11 +1654,21 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
 
     let holdReasonText = "";
     let holdBadgeLabel = "";
-    if (!isSupported) {
+    let holdBadgeTone = "info";
+
+    if (!hasValidSelectedProductContext) {
+      holdBadgeLabel = "Read-Only (Unselected DEV Preview)";
+      holdBadgeTone = "warning";
+      holdReasonText = isZeroImagePlaceholderRow
+        ? "DEV Unselected Preview: Zero-image placeholder for native_image_alt (read-only; requires a selected product and exact MediaImage GID)."
+        : "DEV Unselected Preview: Select a product in Column 1 to load values and unlock supported editing.";
+    } else if (!isSupported) {
+      holdBadgeLabel = "Connection Pending";
       holdReasonText = "Connection pending.";
-    } else if (field.key === "native_image_alt" && !overrideKey) {
-      holdBadgeLabel = "Media Expansion";
-      holdReasonText = "Read-only summary: individual media alt controls appear once live product media finishes loading.";
+    } else if (isZeroImagePlaceholderRow || (field.key === "native_image_alt" && !overrideKey)) {
+      holdBadgeLabel = "Read-Only (No Media Target)";
+      holdBadgeTone = "warning";
+      holdReasonText = evalMeta.imageAltPlaceholderReason || "Read-only zero-image placeholder: individual media alt controls appear only when valid MediaImage GIDs exist on the product.";
     } else if (evalMeta.isStandardizedAttribute || field.namespace === "shopify") {
       holdBadgeLabel = "Read-Only (Standardized)";
       holdReasonText = "Standardized attribute (pending_read_only). Use Tab 3 for reference-matched writes.";
@@ -1355,12 +1677,14 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
       holdReasonText = "Proposed measurement capability: storage/writer contract unverified (writes disabled).";
     } else if (evalMeta.hasExplicitProducerHold || field.producerAlignmentPending === true) {
       holdBadgeLabel = "Read-Only (Producer Alignment Pending)";
+      holdBadgeTone = "warning";
       holdReasonText = "Producer/writer definition alignment pending verification (writes disabled).";
     } else if (evalMeta.isChannelFlagReadOnly || resolvedDest === "mm-google-shopping.custom_product") {
       holdBadgeLabel = "Read-Only (Channel Rule Pending)";
       holdReasonText = "Channel boolean flag read-only pending verified rules (writes disabled).";
     } else if (evalMeta.isVariantMetafieldHold || field.owner === "variant_metafield") {
       holdBadgeLabel = "Read-Only (Variant Owner Hold)";
+      holdBadgeTone = "warning";
       holdReasonText = "Variant-owned metafield (PRODUCTVARIANT) held: product-level writer route not applicable.";
     } else if (isHeldReadOnly) {
       holdBadgeLabel = "Read-Only (Held)";
@@ -1373,6 +1697,8 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
       "material", "collection_name", "origin_page_handle", "treatment_status", "seo_title", "native_seo_title"
     ];
     const isFilled =
+      hasValidSelectedProductContext &&
+      !isZeroImagePlaceholderRow &&
       val !== undefined &&
       val !== null &&
       String(val).trim() !== "" &&
@@ -1386,23 +1712,31 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
     if (isRequiredEmpty) dotFillColor = "#ef4444"; 
 
     const effectiveLabel = overrideLabel || field.label;
+    const thumbnailUrl = isPerImageMediaRow ? (mediaNode?.preview?.image?.url || null) : null;
 
     const labelNode = (
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px", flexWrap: "wrap" }}>
-        <div style={{ display: "flex", alignItems: "center" }}>
-          <svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg" style={{ minWidth: "18px", marginRight: "8px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+          {thumbnailUrl && (
+            <img
+              src={thumbnailUrl}
+              alt=""
+              style={{ width: "28px", height: "28px", borderRadius: "4px", objectFit: "cover", border: "1px solid #d2d5d8", flexShrink: 0 }}
+            />
+          )}
+          <svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg" style={{ minWidth: "18px" }}>
             <circle cx="9" cy="9" r="9" fill={dotFillColor} />
           </svg>
           <span style={{ fontSize: "14px", fontWeight: "500" }}>
             {effectiveLabel}
           </span>
         </div>
-        {holdBadgeLabel && <Badge tone="info">{holdBadgeLabel}</Badge>}
+        {holdBadgeLabel && <Badge tone={holdBadgeTone}>{holdBadgeLabel}</Badge>}
       </div>
     );
 
     const displayVal = isSupported
-      ? (bareKey === "collection_date" && !isFilled ? "" : String(val ?? ""))
+      ? (isZeroImagePlaceholderRow || (bareKey === "collection_date" && !isFilled) ? "" : String(val ?? ""))
       : "Connection pending.";
     const isDisabled = !canEdit || (!isEmpty && val === "See Shopify metaobject" && field.key !== "shopify_title");
     const isMultiline =
@@ -1416,8 +1750,41 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
       field.key === "native_seo_description";
     const optionsKey = field.optionsKey || bareKey;
 
+    // Compact DEV field diagnostic strip values derived strictly from existing metadata and recorded state
+    const destNamespace = field.namespace || evalMeta.namespace || "Not recorded";
+    const destMetaKey = isPerImageMediaRow ? resolvedDest : (field.metaKey || evalMeta.metaKey || field.key);
+    const destIdentity = isPerImageMediaRow
+      ? `MEDIAIMAGE:${mediaNode?.id} (alt)`
+      : (field.registryIdentity || (destNamespace === "native" ? destMetaKey : `${destNamespace}.${destMetaKey}`));
+    const destOwner = field.registryOwner || field.owner || evalMeta.owner || "Not recorded";
+    const destDataType = field.type || evalMeta.type || "Not recorded";
+
+    const baselineStoredVal = !hasValidSelectedProductContext
+      ? null
+      : isZeroImagePlaceholderRow
+        ? null
+        : (originalMetaRef.current[stateKey] ??
+           originalMetaRef.current[resolvedDest] ??
+           (evalMeta.currentExists ? evalMeta.currentVal : ""));
+
+    const hasEditedState = hasValidSelectedProductContext && !isZeroImagePlaceholderRow && (
+      editedKeysRef.current.has(stateKey) ||
+      editedKeysRef.current.has(resolvedDest) ||
+      editedKeysRef.current.has(bareKey)
+    );
+
+    const recordedSourceEntry = hasValidSelectedProductContext && !isZeroImagePlaceholderRow
+      ? (keySourcesRef.current[resolvedDest] || keySourcesRef.current[stateKey] || keySourcesRef.current[bareKey] || null)
+      : null;
+
+    const applicabilityObj = evalMeta.applicabilityState || {
+      status: "Not evaluated",
+      tone: "info",
+      reason: "Applicability not evaluated"
+    };
+
     return (
-      <div key={overrideKey || field.key}>
+      <div key={descriptorKey}>
         <div style={{ backgroundColor: isEmpty && canEdit ? "#FFF5F5" : (isHeldReadOnly ? "#f8f9fa" : "transparent"), minHeight: "48px", padding: "8px", borderRadius: "4px", border: isHeldReadOnly ? "1px dashed #d2d5d8" : "none" }}>
           {canEdit && DROPDOWN_OPTIONS && DROPDOWN_OPTIONS[optionsKey] && DROPDOWN_OPTIONS[optionsKey].length > 0 ? (
             <Select 
@@ -1425,7 +1792,7 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
               options={[{ label: "Select...", value: "" }, ...(DROPDOWN_OPTIONS[optionsKey] || [])]} 
               value={displayVal} 
               onChange={(v) => {
-                if (!canEdit) return;
+                if (!canEdit || !selectedProductContextRef.current.isValid) return;
                 updateFullMetaState(stateKey, v);
               }} 
               disabled={isDisabled} 
@@ -1435,7 +1802,7 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
               label={labelNode} 
               value={displayVal} 
               onChange={(v) => {
-                if (!canEdit) return;
+                if (!canEdit || !selectedProductContextRef.current.isValid) return;
                 updateFullMetaState(stateKey, v);
               }} 
               multiline={isMultiline ? true : false} 
@@ -1446,33 +1813,71 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
               readOnly={!canEdit} 
             />
           )}
+
+          {DEV_SHOW_ALL_TEMPLATE_FIELDS && (
+            <div
+              style={{
+                marginTop: "8px",
+                padding: "8px 10px",
+                backgroundColor: "#f1f5f9",
+                border: "1px solid #cbd5e1",
+                borderRadius: "4px",
+                fontSize: "11px",
+                lineHeight: "1.4",
+                color: "#1e293b",
+                wordBreak: "break-word",
+                overflowWrap: "anywhere"
+              }}
+            >
+              <div style={{ fontWeight: "700", color: "#0f172a", marginBottom: "2px" }}>
+                DEV DIAGNOSTIC STRIP (Evaluation Only — Not Save / Read-Back Proof)
+              </div>
+              <div>
+                <strong>Destination:</strong> <code>{destIdentity}</code> | <strong>Owner:</strong> <code>{destOwner}</code> | <strong>Type:</strong> <code>{destDataType}</code>
+              </div>
+              <div>
+                <strong>Stored Baseline:</strong>{" "}
+                <code>
+                  {!hasValidSelectedProductContext
+                    ? "Not recorded (no product selected)"
+                    : isZeroImagePlaceholderRow
+                      ? "None (zero-image placeholder)"
+                      : formatCompactDiagPreview(baselineStoredVal)}
+                </code>
+                {" | "}
+                <strong>Current Form State:</strong>{" "}
+                <code>
+                  {!hasValidSelectedProductContext
+                    ? "Not recorded (unselected preview)"
+                    : isZeroImagePlaceholderRow
+                      ? "Non-writable placeholder"
+                      : formatCompactDiagPreview(displayVal)}
+                </code>
+              </div>
+              <div>
+                <strong>Recorded Source:</strong> <code>{recordedSourceEntry?.source || "Not recorded"}</code>
+                {" | "}
+                <strong>Stage:</strong> <code>{recordedSourceEntry?.stage || "Not recorded"}</code>
+                {" | "}
+                <strong>Edited in Session:</strong> <code>{hasEditedState ? "Yes" : "No"}</code>
+              </div>
+              <div>
+                <strong>Applicability:</strong> <code>{applicabilityObj.status}</code>
+                {" | "}
+                <strong>Mode:</strong> <code>{canEdit ? "Editable" : (holdBadgeLabel || "Read-Only")}</code>
+              </div>
+              {holdReasonText && (
+                <div>
+                  <strong>Hold / Reason:</strong> <code>{holdReasonText}</code>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
     );
   };
 
-  const renderTemplateField = (field) => {
-    if (field.key === "native_image_alt") {
-      const mediaEdges = liveProductManifest?.nativeTargets?.media?.edges || [];
-      if (mediaEdges.length > 0) {
-        return mediaEdges
-          .filter(e => e?.node?.id)
-          .map(e => {
-            const mediaId = e.node.id;
-            const shortId = mediaId.split("/").pop();
-            const mediaKey = `native_image_alts_${mediaId}`;
-            return renderSingleCapabilityControl(
-              field,
-              mediaKey,
-              `Native Image Alt (${shortId})`
-            );
-          });
-      }
-    }
-    return renderSingleCapabilityControl(field);
-  };
-
-  const safeProducts = products || [];
   const filteredProducts = safeProducts.filter(p => p.title.toLowerCase().includes(searchQuery.toLowerCase()));
   const isSaving =
     injectFetcher.state !== "idle" &&
@@ -1526,7 +1931,7 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
             <BlockStack gap="400">
               <InlineStack align="space-between" blockAlign="center">
                 <Text as="h2" variant="headingMd">2. Data Sieve & Injection</Text>
-                {selectedProductId && (
+                {hasValidSelectedProductContext && (
                   <Button 
                     size="micro" 
                     tone={productStatus === "ACTIVE" ? "success" : "critical"}
@@ -1542,10 +1947,10 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
               {warningMessage !== "" && <Banner title="Partial or Unresolved Changes" tone="warning"><Text as="p">{warningMessage}</Text></Banner>}
               {errorMessage !== "" && <Banner title="Operation Failed" tone="critical"><Text as="p">{errorMessage}</Text></Banner>}
               
-              <TextField label="Gemini Presentation Style" placeholder="e.g. Write with OOAK grit — raw, earthy, one-of-a-kind stone energy." value={promptStyle} onChange={setPromptStyle} multiline={3} autoComplete="off" disabled={!selectedProductId} />
+              <TextField label="Gemini Presentation Style" placeholder="e.g. Write with OOAK grit — raw, earthy, one-of-a-kind stone energy." value={promptStyle} onChange={setPromptStyle} multiline={3} autoComplete="off" disabled={!hasValidSelectedProductContext} />
 
-              {selectedProductId && (() => {
-                const product = products.find(p => p.id === selectedProductId);
+              {hasValidSelectedProductContext && (() => {
+                const product = selectedProductObj;
                 return (
                   <BlockStack gap="200">
                     <Text as="p" variant="bodyMd" tone="subdued">Review before running — edit if legacy data is incorrect:</Text>
@@ -1590,27 +1995,39 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
               })()}
 
               <InlineStack align="space-between" gap="300">
-                <Button icon={MagicIcon} onClick={handleTab2AutoFill} size="large" fullWidth disabled={!selectedProductId} loading={tab2Fetcher.state !== "idle"}>RUN</Button>
-                <Button icon={MagicIcon} onClick={handleFullRescan} size="large" fullWidth disabled={!selectedProductId} loading={tab2Fetcher.state !== "idle"} tone="success">Full Rescan</Button>
-                <Button tone="critical" onClick={() => injectFetcher.submit({ intent: "cleanGhostNamespaces", productId: selectedProductId }, { method: "post", action: "/app/meta-injector-api" })} size="large" fullWidth disabled={!selectedProductId} loading={injectFetcher.state !== "idle" && injectFetcher.formData?.get("intent") === "cleanGhostNamespaces"}>Wipe Ghosts</Button>
-                <Button icon={ClipboardIcon} onClick={handleCopyTelemetry} size="large" fullWidth disabled={!selectedProductId}>Copy Telemetry</Button>
-                <Button icon={SaveIcon} tone="success" variant="primary" onClick={handleInject} size="large" fullWidth disabled={!selectedProductId} loading={isSaving}>Inject Metafields</Button>
+                <Button icon={MagicIcon} onClick={handleTab2AutoFill} size="large" fullWidth disabled={!hasValidSelectedProductContext} loading={tab2Fetcher.state !== "idle"}>RUN</Button>
+                <Button icon={MagicIcon} onClick={handleFullRescan} size="large" fullWidth disabled={!hasValidSelectedProductContext} loading={tab2Fetcher.state !== "idle"} tone="success">Full Rescan</Button>
+                <Button
+                  tone="critical"
+                  onClick={() => {
+                    if (!selectedProductContextRef.current.isValid || !isExactProductGid(selectedProductId)) return;
+                    injectFetcher.submit({ intent: "cleanGhostNamespaces", productId: selectedProductId }, { method: "post", action: "/app/meta-injector-api" });
+                  }}
+                  size="large"
+                  fullWidth
+                  disabled={!hasValidSelectedProductContext}
+                  loading={injectFetcher.state !== "idle" && injectFetcher.formData?.get("intent") === "cleanGhostNamespaces"}
+                >
+                  Wipe Ghosts
+                </Button>
+                <Button icon={ClipboardIcon} onClick={handleCopyTelemetry} size="large" fullWidth disabled={!hasValidSelectedProductContext}>Copy Telemetry</Button>
+                <Button icon={SaveIcon} tone="success" variant="primary" onClick={handleInject} size="large" fullWidth disabled={!hasValidSelectedProductContext} loading={isSaving}>Inject Metafields</Button>
               </InlineStack>
             </BlockStack>
           </Card>
         </div>
       </div>
 
-      {selectedProductId !== "" && (
+      {hasValidSelectedProductContext && (
         <div style={{ marginTop: "32px" }}>
           <Card padding="400">
             <BlockStack gap="400">
               <InlineStack align="space-between" blockAlign="center">
                 <Text as="h3" variant="headingLg">Origin Story & Long-Text Repair Workbench</Text>
-                <Badge tone="info">Source Context + Canonical Long-Text</Badge>
+                <Badge tone="info">Dedicated Workbench Panel (Not Extra Logical Capabilities)</Badge>
               </InlineStack>
               <Text as="p" variant="bodySm" tone="subdued">
-                Origin Story Draft provides protected source context for RUN / Full Rescan generation and is preserved across rescans. Direct metafield writes to custom.origin_story are held by domain policy (source context is not a saved canonical metafield). Native Description and Native SEO Description save directly via verified native/staging routes when Inject Metafields is clicked.
+                Origin Story Draft provides protected source context for RUN / Full Rescan generation and is preserved across rescans. Direct metafield writes to custom.origin_story are held by domain policy (source context is not a saved canonical metafield). Native Description and Native SEO Description save directly via verified native/staging routes when Inject Metafields is clicked, and are shared with their corresponding canonical rows in the 62-capability template below.
               </Text>
               <TextField
                 label="Origin Story Source Context (Used by RUN / Full Rescan — Not Written as a Metafield)"
@@ -1641,7 +2058,115 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
         </div>
       )}
 
-      {selectedProductId !== "" && (
+      {DEV_SHOW_ALL_TEMPLATE_FIELDS && (
+        <div style={{ marginTop: "32px" }}>
+          <Card padding="400">
+            <BlockStack gap="300">
+              <InlineStack align="space-between" blockAlign="center">
+                <InlineStack gap="200" blockAlign="center">
+                  <Badge tone="warning">DEV: Show All Template Fields</Badge>
+                  <Text as="h3" variant="headingMd" fontWeight="bold">
+                    Tab 2 Template Capability & Rendered Row Audit ({isDevUnselectedPreview ? "Unselected Read-Only Preview" : `Active Product: ${selectedProductId}`})
+                  </Text>
+                </InlineStack>
+                <Badge tone={templateAuditSummary.measurementStatus === "complete" ? "success" : "attention"}>
+                  {templateAuditSummary.measurementStatus === "complete"
+                    ? `Measured (${templateAuditSummary.measuredGroupCount}/${templateAuditSummary.totalGroupCount} groups)`
+                    : `Not measured (${templateAuditSummary.measuredGroupCount}/${templateAuditSummary.totalGroupCount} groups reported)`}
+                </Badge>
+              </InlineStack>
+
+              <Text as="p" variant="bodySm" tone="subdued">
+                <strong>Scope:</strong> Counts below measure only the canonical template rows rendered inside the 10 <code>PRODUCT_TEMPLATE_GROUPS</code> sections in Tab 2 using the shared <code>computeTemplateAuditCounts</code> helper and the exact rendered row descriptor list. Dedicated top-level convenience panels (Product Title / Origin Page Handle override / Origin Story & Long-Text Repair Workbench) are not counted as extra logical capabilities. Compatibility adapters, excluded inputs, duplicate aliases, and protected records remain hidden.
+              </Text>
+
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
+                  <thead>
+                    <tr style={{ backgroundColor: "#f1f5f9", borderBottom: "2px solid #cbd5e1", textAlign: "left" }}>
+                      <th style={{ padding: "8px 10px" }}>Template Group</th>
+                      <th style={{ padding: "8px 10px" }}>Logical Capabilities</th>
+                      <th style={{ padding: "8px 10px" }}>Running Logical Subtotal</th>
+                      <th style={{ padding: "8px 10px" }}>Measured Rendered Template Rows</th>
+                      <th style={{ padding: "8px 10px" }}>Running Rendered Subtotal</th>
+                      <th style={{ padding: "8px 10px" }}>Notes / Media Expansion</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(() => {
+                      let runningLogical = 0;
+                      let runningRendered = 0;
+                      let allMeasuredSoFar = true;
+
+                      return templateAuditSummary.groupSubtotals.map((grp) => {
+                        runningLogical += grp.logicalCount;
+                        const isGrpMeasured = grp.measurementStatus === "measured" && typeof grp.renderedCount === "number";
+                        if (isGrpMeasured) {
+                          runningRendered += grp.renderedCount;
+                        } else {
+                          allMeasuredSoFar = false;
+                        }
+
+                        let rowNote = "1:1 canonical rows";
+                        if (!isGrpMeasured) {
+                          rowNote = "Not measured";
+                        } else if (grp.logicalImageAltCount > 0) {
+                          if (templateAuditSummary.mediaControlCount > 0) {
+                            rowNote = `Includes ${templateAuditSummary.mediaControlCount} per-image media alt control(s) from 1 logical native_image_alt capability`;
+                          } else if (templateAuditSummary.hasZeroImagePlaceholder) {
+                            rowNote = "Includes 1 read-only zero-image placeholder row for native_image_alt (non-writable)";
+                          }
+                        } else if (grp.nonMediaDiscrepancy !== null && grp.nonMediaDiscrepancy !== 0) {
+                          rowNote = `Non-media row delta: ${grp.nonMediaDiscrepancy > 0 ? `+${grp.nonMediaDiscrepancy}` : grp.nonMediaDiscrepancy}`;
+                        }
+
+                        return (
+                          <tr key={grp.heading} style={{ borderBottom: "1px solid #e2e8f0" }}>
+                            <td style={{ padding: "6px 10px", fontWeight: "600" }}>{grp.heading}</td>
+                            <td style={{ padding: "6px 10px", fontFamily: "monospace" }}>{grp.logicalCount}</td>
+                            <td style={{ padding: "6px 10px", fontFamily: "monospace", color: "#475569" }}>{runningLogical}</td>
+                            <td style={{ padding: "6px 10px", fontFamily: "monospace", fontWeight: "600" }}>
+                              {isGrpMeasured ? grp.renderedCount : "Not measured"}
+                            </td>
+                            <td style={{ padding: "6px 10px", fontFamily: "monospace", color: "#475569" }}>
+                              {allMeasuredSoFar ? runningRendered : "Not measured"}
+                            </td>
+                            <td style={{ padding: "6px 10px", color: "#475569" }}>{rowNote}</td>
+                          </tr>
+                        );
+                      });
+                    })()}
+                  </tbody>
+                  <tfoot>
+                    <tr style={{ backgroundColor: "#e2e8f0", fontWeight: "700", borderTop: "2px solid #94a3b8" }}>
+                      <td style={{ padding: "8px 10px" }}>GRAND TOTAL ({templateAuditSummary.totalGroupCount} Groups)</td>
+                      <td style={{ padding: "8px 10px", fontFamily: "monospace" }}>{templateAuditSummary.totalLogicalCapabilities}</td>
+                      <td style={{ padding: "8px 10px", fontFamily: "monospace" }}>{templateAuditSummary.totalLogicalCapabilities}</td>
+                      <td style={{ padding: "8px 10px", fontFamily: "monospace" }}>
+                        {templateAuditSummary.totalRenderedRows !== null
+                          ? templateAuditSummary.totalRenderedRows
+                          : "Not measured"}
+                      </td>
+                      <td style={{ padding: "8px 10px", fontFamily: "monospace" }}>
+                        {templateAuditSummary.totalRenderedRows !== null
+                          ? templateAuditSummary.totalRenderedRows
+                          : "Not measured"}
+                      </td>
+                      <td style={{ padding: "8px 10px" }}>
+                        {templateAuditSummary.mediaControlCount !== null
+                          ? `Per-Image Media Controls: ${templateAuditSummary.mediaControlCount} | Zero-Image Placeholder: ${templateAuditSummary.hasZeroImagePlaceholder ? "1 (Active)" : "0"}`
+                          : "Media breakdown: Not measured"}
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </BlockStack>
+          </Card>
+        </div>
+      )}
+
+      {shouldRenderTemplateCard && (
         <div style={{ marginTop: "32px" }}>
           <Card padding="400">
             <BlockStack gap="400">
@@ -1649,18 +2174,46 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
               {tab2ErrorMessage !== "" && <Banner title="Operation Failed" tone="critical"><Text as="p">{tab2ErrorMessage}</Text></Banner>}
               {injectFetcher.state === "idle" && injectFetcher.data?.message?.includes("Cleaned") && <Banner title="Ghosts Cleaned" tone="success"><Text as="p">{injectFetcher.data.message}</Text></Banner>}
 
-              <Text as="h3" variant="headingLg">Universal Product Capability Template (62 Canonical Capabilities)</Text>
+              <InlineStack align="space-between" blockAlign="center">
+                <Text as="h3" variant="headingLg">
+                  Universal Product Capability Template ({templateAuditSummary.totalLogicalCapabilities} Logical Capabilities{templateAuditSummary.totalRenderedRows !== null ? ` / ${templateAuditSummary.totalRenderedRows} Rendered Template Rows` : ""})
+                </Text>
+                {DEV_SHOW_ALL_TEMPLATE_FIELDS && (
+                  <Badge tone={isDevUnselectedPreview ? "warning" : "info"}>
+                    {isDevUnselectedPreview ? "DEV Read-Only Unselected Preview" : "DEV: All Canonical Groups Open"}
+                  </Badge>
+                )}
+              </InlineStack>
 
-              {PRODUCT_TEMPLATE_GROUPS.map((group, groupIdx) => (
-                <BlockStack gap="300" key={groupIdx}>
-                  <Text as="h4" variant="headingMd" tone={group.color === "success" ? "success" : undefined}>
-                    {group.heading}
+              {isDevUnselectedPreview && (
+                <Banner tone="info" title="DEV Show-All Read-Only Preview (No Product Selected)">
+                  <Text as="p">
+                    All approved canonical template groups and rows are displayed below in read-only mode (including the non-writable zero-image <code>native_image_alt</code> placeholder) so the visible UI can be audited before selecting a product. Select a product in Column 1 to load live product data and enable supported editing.
                   </Text>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
-                    {group.fields.map(renderTemplateField)}
-                  </div>
-                </BlockStack>
-              ))}
+                </Banner>
+              )}
+
+              {templateGroupRenderModels.map((groupModel, groupIdx) => {
+                const logicalCount = groupModel.logicalFields.length;
+                const renderedCount = groupModel.rowDescriptors.length;
+                return (
+                  <BlockStack gap="300" key={groupModel.heading || groupIdx}>
+                    <InlineStack align="space-between" blockAlign="center">
+                      <Text as="h4" variant="headingMd" tone={groupModel.color === "success" ? "success" : undefined}>
+                        {DEV_SHOW_ALL_TEMPLATE_FIELDS
+                          ? `${groupModel.heading} (${logicalCount} logical / ${renderedCount} rendered template ${renderedCount === 1 ? "row" : "rows"})`
+                          : groupModel.heading}
+                      </Text>
+                      {DEV_SHOW_ALL_TEMPLATE_FIELDS && (
+                        <Badge tone="info">DEV: Open</Badge>
+                      )}
+                    </InlineStack>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
+                      {groupModel.rowDescriptors.map(renderCapabilityRowFromDescriptor)}
+                    </div>
+                  </BlockStack>
+                );
+              })}
 
             </BlockStack>
           </Card>

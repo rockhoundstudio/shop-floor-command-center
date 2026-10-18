@@ -1,9 +1,13 @@
 // FILE: app/routes/app.meta-injector.matrix.jsx
 import React, { useState, useCallback, useEffect, useRef } from "react";
-import { BlockStack, Card, Text, Banner, Button, InlineStack, Box, ProgressBar, Select } from "@shopify/polaris";
+import { BlockStack, Card, Text, Banner, Button, InlineStack, Box, ProgressBar, Select, Badge } from "@shopify/polaris";
 import { MagicIcon, ClipboardIcon, SaveIcon } from "@shopify/polaris-icons";
 import { useFetcher } from "react-router";
-import { PRODUCT_TEMPLATE_GROUPS } from "../utils/meta-injector.constants.jsx";
+import {
+  DEV_SHOW_ALL_TEMPLATE_FIELDS,
+  PRODUCT_TEMPLATE_GROUPS,
+  computeTemplateAuditCounts
+} from "../utils/meta-injector.constants.jsx";
 import {
   ALLOWED_VISION_CANDIDATE_KEYS,
   VERIFIED_STANDARDIZED_DESTINATIONS,
@@ -49,8 +53,18 @@ import {
 import { ManifestSectionCard } from "../components/meta-injector.manifest-section.jsx";
 
 const INITIAL_EXPANDED_BAYS = Object.freeze({
-  "Description Review": false,
-  ...Object.fromEntries(PRODUCT_TEMPLATE_GROUPS.map((g) => [g.heading, false]))
+  "Description Review": Boolean(DEV_SHOW_ALL_TEMPLATE_FIELDS),
+  ...Object.fromEntries(
+    PRODUCT_TEMPLATE_GROUPS.map((g) => [g.heading, Boolean(DEV_SHOW_ALL_TEMPLATE_FIELDS)])
+  )
+});
+
+const EMPTY_DEV_PREVIEW_MANIFEST = Object.freeze({
+  currentMetafields: {},
+  nativeTargets: null,
+  repairPlan: {},
+  metadata: {},
+  verifiedGeoValues: {}
 });
 
 const isExactProductGid = (val) =>
@@ -106,6 +120,10 @@ export function OperationsMatrixTab({ products }) {
 
   const [selectedBenchId, setSelectedBenchId] = useState(null);
   const [telemetryPacket, setTelemetryPacket] = useState(null);
+  const [sectionAuditMeasurements, setSectionAuditMeasurements] = useState({
+    productId: null,
+    bySection: {}
+  });
   const [safetyMessage, setSafetyMessage] = useState("");
   const [safetyError, setSafetyError] = useState("");
 
@@ -140,6 +158,7 @@ export function OperationsMatrixTab({ products }) {
       if (prevId !== id) {
         setExpandedBays(INITIAL_EXPANDED_BAYS);
         setTelemetryPacket(null);
+        setSectionAuditMeasurements({ productId: id || null, bySection: {} });
       }
       return id;
     });
@@ -166,6 +185,46 @@ export function OperationsMatrixTab({ products }) {
       return null;
     });
   }, [selectedBenchId, activeProductHistoryRef, activeProductMatchTimeRef]);
+
+  const handleSectionRenderedCountChange = useCallback((payload) => {
+    if (!payload || typeof payload.sectionTitle !== "string") return;
+    const incomingProdId = payload.productId || null;
+    const currentTargetProdId = activeBenchIdRef.current || null;
+    if (incomingProdId !== currentTargetProdId) return;
+
+    setSectionAuditMeasurements((prev) => {
+      const baseBySection = prev.productId === incomingProdId ? prev.bySection : {};
+      const existing = baseBySection[payload.sectionTitle];
+      const nextKeys = Array.isArray(payload.renderedKeys) ? payload.renderedKeys : [];
+
+      if (
+        existing &&
+        existing.logicalCount === payload.logicalCount &&
+        existing.renderedCount === payload.renderedCount &&
+        existing.mediaControlCount === payload.mediaControlCount &&
+        existing.hasZeroImagePlaceholder === payload.hasZeroImagePlaceholder &&
+        Array.isArray(existing.renderedKeys) &&
+        existing.renderedKeys.length === nextKeys.length &&
+        existing.renderedKeys.every((k, idx) => k === nextKeys[idx])
+      ) {
+        return prev;
+      }
+
+      return {
+        productId: incomingProdId,
+        bySection: {
+          ...baseBySection,
+          [payload.sectionTitle]: {
+            logicalCount: payload.logicalCount,
+            renderedCount: payload.renderedCount,
+            renderedKeys: nextKeys,
+            mediaControlCount: payload.mediaControlCount,
+            hasZeroImagePlaceholder: payload.hasZeroImagePlaceholder
+          }
+        }
+      };
+    });
+  }, []);
 
   const handleToggleProductSelection = useCallback((id) => {
     if (isLoadingData || isExecuting) return; 
@@ -230,6 +289,7 @@ export function OperationsMatrixTab({ products }) {
     setRepairHistory({});
     setSelectedBenchId(null);
     setTelemetryPacket(null);
+    setSectionAuditMeasurements({ productId: null, bySection: {} });
     setExpandedBays(INITIAL_EXPANDED_BAYS);
     setIsLoadingData(false);
     setIsExecuting(false);
@@ -295,8 +355,9 @@ export function OperationsMatrixTab({ products }) {
   ]);
 
   const handleToggleApproval = useCallback((pieceId, key, propVal, isChecked) => {
+    if (!pieceId || !isExactProductGid(pieceId) || !manifestData[pieceId]) return;
     const targetKey = NATIVE_ALIAS_MAP[key] || key;
-    if (targetKey === "standardized_candidates" || targetKey === "custom.standardized_candidates") return;
+    if (targetKey === "standardized_candidates" || targetKey === "custom.standardized_candidates" || targetKey === "native_image_alt") return;
     const allConfigFields = PRODUCT_TEMPLATE_GROUPS.flatMap(g => g.fields || []);
     const matchedConfig = allConfigFields.find(f => resolveConfigFieldDestination(f) === targetKey || resolveConfigFieldDestination(f) === key);
 
@@ -325,7 +386,7 @@ export function OperationsMatrixTab({ products }) {
       }
       return next;
     });
-  }, [getStandardizedEvaluationForField]);
+  }, [getStandardizedEvaluationForField, manifestData]);
 
   const handleReleasePendingReferenceMatch = useCallback(() => {
     if (!pendingReferenceMatch) {
@@ -561,12 +622,12 @@ export function OperationsMatrixTab({ products }) {
 
   // Safe zero-argument adapter for the manual drawer button so a click event is never passed as targetPieceId
   const handleMatchReferenceChoices = useCallback(() => {
-    if (!selectedBenchId) {
-      setSafetyError("Cannot match reference choices: No product is selected on the bench. Select a product first.");
+    if (!selectedBenchId || !manifestData[selectedBenchId]) {
+      setSafetyError("Cannot match reference choices: No loaded product is selected on the bench. Load and select a product first.");
       return;
     }
     startReferenceMatchForProduct(selectedBenchId, { source: "manual", workflowRunId: null });
-  }, [selectedBenchId, startReferenceMatchForProduct]);
+  }, [selectedBenchId, manifestData, startReferenceMatchForProduct]);
 
   useEffect(() => {
     const data = referenceMatchFetcher.data;
@@ -1030,9 +1091,9 @@ export function OperationsMatrixTab({ products }) {
   });
 
   const handleRepairPlanChange = (key, value) => {
-    if (!selectedBenchId) return;
+    if (!selectedBenchId || !isExactProductGid(selectedBenchId) || !manifestData[selectedBenchId]) return;
     const targetKey = NATIVE_ALIAS_MAP[key] || key;
-    if (targetKey === "standardized_candidates" || targetKey === "custom.standardized_candidates") return;
+    if (targetKey === "standardized_candidates" || targetKey === "custom.standardized_candidates" || targetKey === "native_image_alt") return;
     const allConfigFields = PRODUCT_TEMPLATE_GROUPS.flatMap(g => g.fields || []);
     const matchedConfig = allConfigFields.find(f => resolveConfigFieldDestination(f) === targetKey || resolveConfigFieldDestination(f) === key);
 
@@ -1080,7 +1141,7 @@ export function OperationsMatrixTab({ products }) {
   };
 
   const handleStandardizedEntrySelectionChange = (destinationKey, currentPropVal, stdEval, replaceOrAddGid, previousSlotGid = null) => {
-    if (!selectedBenchId || !stdEval?.isTechnicallyEligible) return;
+    if (!selectedBenchId || !manifestData[selectedBenchId] || !stdEval?.isTechnicallyEligible) return;
     if (!isExactMetaobjectGid(replaceOrAddGid) || !stdEval.verifiedEntriesMap.has(replaceOrAddGid)) return;
 
     const currentProposedList = parseMetaobjectGidArray(currentPropVal || stdEval.autoProposalSerialized);
@@ -1107,7 +1168,7 @@ export function OperationsMatrixTab({ products }) {
   };
 
   const handleToggleVerifiedStandardizedEntry = (destinationKey, currentPropVal, stdEval, targetGid, shouldInclude) => {
-    if (!selectedBenchId || !stdEval?.isTechnicallyEligible) return;
+    if (!selectedBenchId || !manifestData[selectedBenchId] || !stdEval?.isTechnicallyEligible) return;
     if (!isExactMetaobjectGid(targetGid) || !stdEval.verifiedEntriesMap.has(targetGid)) return;
 
     const existingSet = new Set(stdEval.existingGids || []);
@@ -1133,6 +1194,7 @@ export function OperationsMatrixTab({ products }) {
   };
 
   const matchesFilter = useCallback((m) => {
+    if (DEV_SHOW_ALL_TEMPLATE_FIELDS) return true;
     if (activeFilter === "All") return true;
     if (activeFilter === "Blank" && (m.fieldStatus === "Optional blank" || m.fieldStatus === "Required missing")) return true;
     if (activeFilter === "Proposed changes" && (m.fieldStatus === "Proposed" || m.fieldStatus === "Approved, not saved" || m.fieldStatus === "Approved, blocked" || m.fieldStatus === "Pre-approved, not saved" || m.fieldStatus === "Pre-approved, blocked")) return true;
@@ -1313,7 +1375,12 @@ export function OperationsMatrixTab({ products }) {
 
   const progressPercentage = queueIds.length > 0 ? Math.round(((isLoadingData ? loadIndex : executeIndex) / queueIds.length) * 100) : 0;
   const activeBenchData = selectedBenchId ? manifestData[selectedBenchId] : null;
-  const dynamicSections = activeBenchData ? getDynamicSections(activeBenchData) : getDynamicSections();
+  const isDevUnselectedPreview = Boolean(DEV_SHOW_ALL_TEMPLATE_FIELDS && (!selectedBenchId || !activeBenchData));
+  const effectiveManifestForSections = activeBenchData || (DEV_SHOW_ALL_TEMPLATE_FIELDS ? EMPTY_DEV_PREVIEW_MANIFEST : null);
+
+  const dynamicSections = effectiveManifestForSections
+    ? getDynamicSections(effectiveManifestForSections)
+    : getDynamicSections();
   const allDynamicConfigFields = dynamicSections.flatMap(sec => sec.configFields || []);
 
   const activeBenchStats = activeBenchData ? getDiagnosticsStats(activeBenchData) : null;
@@ -1326,6 +1393,54 @@ export function OperationsMatrixTab({ products }) {
   const customDescriptionMeta = activeBenchData
     ? getFieldMetadata("custom.generated_description", activeBenchData, selectedBenchId, approvals, allDynamicConfigFields)
     : null;
+
+  // Guarded no-op callbacks for unselected DEV preview mode so preview controls can never mutate state or trigger requests
+  const noopPreviewCallback = useCallback(() => {}, []);
+
+  const getPreviewFieldMetadata = useCallback((key, data, productId, currentApprovals, configFields = []) => {
+    const baseMeta = evaluateFieldMetadata({
+      key,
+      data: data || EMPTY_DEV_PREVIEW_MANIFEST,
+      productId: null,
+      currentApprovals: {},
+      configFields,
+      standardizedCandidatesByProduct: {},
+      getStandardizedEvaluationForField: null
+    });
+    return {
+      ...baseMeta,
+      isPendingReadOnly: true,
+      hasContractOrOwnerHold: true,
+      isBlockedAction: true,
+      isApproved: false,
+      isContentPreApproved: false,
+      reasons: [
+        "DEV Preview Mode (No product loaded/selected on bench — read-only template audit view)",
+        ...(Array.isArray(baseMeta.reasons) ? baseMeta.reasons : [])
+      ]
+    };
+  }, []);
+
+  // Build audit count summary strictly from reported section measurements for the current product (or null in preview)
+  const currentAuditOwnerId = isDevUnselectedPreview ? null : (selectedBenchId || null);
+  const activeSectionMeasurementsMap =
+    sectionAuditMeasurements.productId === currentAuditOwnerId
+      ? sectionAuditMeasurements.bySection
+      : {};
+
+  const renderedKeysByGroupForAudit = {};
+  Object.entries(activeSectionMeasurementsMap).forEach(([secTitle, rec]) => {
+    if (rec && Array.isArray(rec.renderedKeys)) {
+      renderedKeysByGroupForAudit[secTitle] = rec.renderedKeys;
+    }
+  });
+
+  const templateAuditSummary = computeTemplateAuditCounts(
+    PRODUCT_TEMPLATE_GROUPS,
+    Object.keys(renderedKeysByGroupForAudit).length > 0
+      ? { renderedKeysByGroup: renderedKeysByGroupForAudit }
+      : null
+  );
 
   return (
     <BlockStack gap="600">
@@ -1435,6 +1550,7 @@ export function OperationsMatrixTab({ products }) {
                     size="large"
                     icon={ClipboardIcon}
                     onClick={() => handleCollectTelemetry("full")}
+                    disabled={!selectedBenchId || !activeBenchData}
                     aria-label="Capture Full Report snapshot and copy Part 1 to clipboard"
                   >
                     Capture Full Report
@@ -1443,10 +1559,154 @@ export function OperationsMatrixTab({ products }) {
               </BlockStack>
             </Card>
 
+            {DEV_SHOW_ALL_TEMPLATE_FIELDS && (
+              <Card padding="400">
+                <BlockStack gap="300">
+                  <InlineStack align="space-between" blockAlign="center">
+                    <InlineStack gap="200" blockAlign="center">
+                      <Badge tone="warning">DEV: Show All Template Fields</Badge>
+                      <Text as="h3" variant="headingMd" fontWeight="bold">
+                        Template Capability & Rendered Row Audit ({isDevUnselectedPreview ? "Unselected Read-Only Preview" : `Active Product: ${selectedBenchId}`})
+                      </Text>
+                    </InlineStack>
+                    <Badge tone={templateAuditSummary.measurementStatus === "complete" ? "success" : "attention"}>
+                      {templateAuditSummary.measurementStatus === "complete"
+                        ? `Measured (${templateAuditSummary.measuredGroupCount}/${templateAuditSummary.totalGroupCount} groups)`
+                        : `Measuring (${templateAuditSummary.measuredGroupCount}/${templateAuditSummary.totalGroupCount} groups reported)`}
+                    </Badge>
+                  </InlineStack>
+
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    <strong>Scope:</strong> Counts below measure only canonical template rows rendered inside the 10 <code>ManifestSectionCard</code> groups (excluding hidden <code>custom.origin_story</code> diagnostic context, compatibility adapters, and separate top-level cards/buttons). In DEV mode, all groups default open and status/applicability filters are bypassed so zero canonical capabilities can disappear.
+                  </Text>
+
+                  <div style={{ overflowX: "auto" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
+                      <thead>
+                        <tr style={{ backgroundColor: "#f1f5f9", borderBottom: "2px solid #cbd5e1", textAlign: "left" }}>
+                          <th style={{ padding: "8px 10px" }}>Template Group</th>
+                          <th style={{ padding: "8px 10px" }}>Logical Capabilities</th>
+                          <th style={{ padding: "8px 10px" }}>Running Logical Subtotal</th>
+                          <th style={{ padding: "8px 10px" }}>Measured Rendered Template Rows</th>
+                          <th style={{ padding: "8px 10px" }}>Running Rendered Subtotal</th>
+                          <th style={{ padding: "8px 10px" }}>Notes / Media Expansion</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(() => {
+                          let runningLogical = 0;
+                          let runningRendered = 0;
+                          let allMeasuredSoFar = true;
+
+                          return templateAuditSummary.groupSubtotals.map((grp) => {
+                            runningLogical += grp.logicalCount;
+                            const isGrpMeasured = grp.measurementStatus === "measured" && typeof grp.renderedCount === "number";
+                            if (isGrpMeasured) {
+                              runningRendered += grp.renderedCount;
+                            } else {
+                              allMeasuredSoFar = false;
+                            }
+
+                            let rowNote = "1:1 canonical rows";
+                            if (!isGrpMeasured) {
+                              rowNote = "Not measured";
+                            } else if (grp.logicalImageAltCount > 0) {
+                              if (templateAuditSummary.mediaControlCount > 0) {
+                                rowNote = `Includes ${templateAuditSummary.mediaControlCount} per-image media alt control(s) from 1 logical native_image_alt capability`;
+                              } else if (templateAuditSummary.hasZeroImagePlaceholder) {
+                                rowNote = "Includes 1 read-only zero-image placeholder row for native_image_alt";
+                              }
+                            } else if (grp.nonMediaDiscrepancy !== null && grp.nonMediaDiscrepancy !== 0) {
+                              rowNote = `Non-media row delta: ${grp.nonMediaDiscrepancy > 0 ? `+${grp.nonMediaDiscrepancy}` : grp.nonMediaDiscrepancy}`;
+                            }
+
+                            return (
+                              <tr key={grp.heading} style={{ borderBottom: "1px solid #e2e8f0" }}>
+                                <td style={{ padding: "6px 10px", fontWeight: "600" }}>{grp.heading}</td>
+                                <td style={{ padding: "6px 10px", fontFamily: "monospace" }}>{grp.logicalCount}</td>
+                                <td style={{ padding: "6px 10px", fontFamily: "monospace", color: "#475569" }}>{runningLogical}</td>
+                                <td style={{ padding: "6px 10px", fontFamily: "monospace", fontWeight: "600" }}>
+                                  {isGrpMeasured ? grp.renderedCount : "Not measured"}
+                                </td>
+                                <td style={{ padding: "6px 10px", fontFamily: "monospace", color: "#475569" }}>
+                                  {allMeasuredSoFar ? runningRendered : "Not measured (incomplete)"}
+                                </td>
+                                <td style={{ padding: "6px 10px", color: "#475569" }}>{rowNote}</td>
+                              </tr>
+                            );
+                          });
+                        })()}
+                      </tbody>
+                      <tfoot>
+                        <tr style={{ backgroundColor: "#e2e8f0", fontWeight: "700", borderTop: "2px solid #94a3b8" }}>
+                          <td style={{ padding: "8px 10px" }}>GRAND TOTAL ({templateAuditSummary.totalGroupCount} Groups)</td>
+                          <td style={{ padding: "8px 10px", fontFamily: "monospace" }}>{templateAuditSummary.totalLogicalCapabilities}</td>
+                          <td style={{ padding: "8px 10px", fontFamily: "monospace" }}>{templateAuditSummary.totalLogicalCapabilities}</td>
+                          <td style={{ padding: "8px 10px", fontFamily: "monospace" }}>
+                            {templateAuditSummary.totalRenderedRows !== null
+                              ? templateAuditSummary.totalRenderedRows
+                              : `Not measured (${templateAuditSummary.measuredGroupCount}/${templateAuditSummary.totalGroupCount} groups reported)`}
+                          </td>
+                          <td style={{ padding: "8px 10px", fontFamily: "monospace" }}>
+                            {templateAuditSummary.totalRenderedRows !== null
+                              ? templateAuditSummary.totalRenderedRows
+                              : "Not measured"}
+                          </td>
+                          <td style={{ padding: "8px 10px" }}>
+                            {templateAuditSummary.mediaControlCount !== null
+                              ? `Per-Image Media Controls: ${templateAuditSummary.mediaControlCount} | Zero-Image Placeholder: ${templateAuditSummary.hasZeroImagePlaceholder ? "1 (Active)" : "0"}`
+                              : "Media breakdown: Not measured"}
+                          </td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                </BlockStack>
+              </Card>
+            )}
+
             {!selectedBenchId || !activeBenchData ? (
-              <Box padding="800" background="bg-surface-secondary" borderRadius="200" borderColor="border" borderWidth="1">
-                <Text as="p" variant="headingLg" alignment="center" tone="subdued">Load inventory, hit GENERATE REPAIR PLAN, then drop a piece on the bench to view its diagnostic readout.</Text>
-              </Box>
+              <BlockStack gap="600">
+                <Box padding="600" background="bg-surface-secondary" borderRadius="200" borderColor="border" borderWidth="1">
+                  <BlockStack gap="200">
+                    <Text as="p" variant="headingLg" alignment="center" tone="subdued">
+                      Load inventory, hit GENERATE REPAIR PLAN, then click "View Manifest on Bench" to unlock product diagnostics and editing.
+                    </Text>
+                    {DEV_SHOW_ALL_TEMPLATE_FIELDS && (
+                      <Text as="p" variant="bodyMd" alignment="center" tone="subdued">
+                        <strong>DEV Show-All Unselected Preview:</strong> All approved template groups and rows are rendered below in read-only preview mode (with the zero-image <code>native_image_alt</code> placeholder) so the complete UI template can be inspected before selecting a product.
+                      </Text>
+                    )}
+                  </BlockStack>
+                </Box>
+
+                {DEV_SHOW_ALL_TEMPLATE_FIELDS && dynamicSections.map(sec => (
+                  <ManifestSectionCard
+                    key={sec.title}
+                    section={sec}
+                    selectedBenchId={null}
+                    data={EMPTY_DEV_PREVIEW_MANIFEST}
+                    approvals={{}}
+                    activeFilter="All"
+                    expandedBays={expandedBays}
+                    standardizedCandidatesByProduct={{}}
+                    referenceMatchResultsByProduct={{}}
+                    referenceMatchStatusByProduct={{}}
+                    referenceMatchFetcherState="idle"
+                    pendingReferenceMatch={null}
+                    getFieldMetadata={getPreviewFieldMetadata}
+                    matchesFilter={matchesFilter}
+                    onToggleBay={toggleBay}
+                    onReleasePendingReferenceMatch={noopPreviewCallback}
+                    onMatchReferenceChoices={noopPreviewCallback}
+                    onStandardizedEntrySelectionChange={noopPreviewCallback}
+                    onToggleVerifiedStandardizedEntry={noopPreviewCallback}
+                    onRepairPlanChange={noopPreviewCallback}
+                    onToggleApproval={noopPreviewCallback}
+                    onSectionRenderedCountChange={handleSectionRenderedCountChange}
+                  />
+                ))}
+              </BlockStack>
             ) : (
               <BlockStack gap="600">
                 <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", alignItems: "center", backgroundColor: "#f0fdf4", padding: "16px", borderRadius: "8px", border: "2px solid #22c55e", gap: "16px", minWidth: 0, boxSizing: "border-box" }}>
@@ -1491,6 +1751,7 @@ export function OperationsMatrixTab({ products }) {
                 />
 
                 <Card padding="400">
+                  <BlockStack gap="200">
                     <InlineStack align="space-between" blockAlign="center">
                         <Text variant="headingLg" as="h3">Review Board Controls</Text>
                         <Select
@@ -1501,6 +1762,12 @@ export function OperationsMatrixTab({ products }) {
                             value={activeFilter}
                         />
                     </InlineStack>
+                    {DEV_SHOW_ALL_TEMPLATE_FIELDS && activeFilter !== "All" && (
+                      <Text as="p" variant="bodySm" tone="caution">
+                        DEV: Show All Template Fields override is active — filter selection (<code>{activeFilter}</code>) is bypassed so no canonical template rows or sections are hidden during audit.
+                      </Text>
+                    )}
+                  </BlockStack>
                 </Card>
 
                 <DescriptionReviewSection
@@ -1523,7 +1790,7 @@ export function OperationsMatrixTab({ products }) {
                     selectedBenchId={selectedBenchId}
                     data={activeBenchData}
                     approvals={approvals}
-                    activeFilter={activeFilter}
+                    activeFilter={DEV_SHOW_ALL_TEMPLATE_FIELDS ? "All" : activeFilter}
                     expandedBays={expandedBays}
                     standardizedCandidatesByProduct={standardizedCandidatesByProduct}
                     referenceMatchResultsByProduct={referenceMatchResultsByProduct}
@@ -1539,6 +1806,7 @@ export function OperationsMatrixTab({ products }) {
                     onToggleVerifiedStandardizedEntry={handleToggleVerifiedStandardizedEntry}
                     onRepairPlanChange={handleRepairPlanChange}
                     onToggleApproval={handleToggleApproval}
+                    onSectionRenderedCountChange={handleSectionRenderedCountChange}
                   />
                 ))}
                 
