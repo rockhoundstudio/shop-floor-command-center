@@ -1,4 +1,10 @@
-import { PRODUCT_TEMPLATE_GROUPS } from "./meta-injector.constants.jsx";
+import {
+  PRODUCT_TEMPLATE_GROUPS,
+  COMPATIBILITY_ADAPTER_FIELDS,
+  EXCLUDED_CATALOG_FIELDS,
+  DUPLICATE_ALIAS_CATALOG_FIELDS,
+  PROTECTED_DATA_ENTRIES
+} from "./meta-injector.constants.jsx";
 import {
   isVerifiedStandardizedDestination,
   validateProposedStandardizedGidList
@@ -68,20 +74,67 @@ export const NATIVE_ALIAS_MAP = {
 const CANONICAL_READ_COMPANIONS = Object.freeze({
   "custom.material": ["custom.stone_family", "stone_family", "custom.primary_medium", "primary_medium"],
   "custom.is_one_of_a_kind": ["custom.is_ooak", "is_ooak"],
-  "custom.origin_page_handle": ["custom.origin_handle", "origin_handle"]
+  "custom.origin_page_handle": ["custom.origin_handle", "origin_handle"],
+  "custom.cut_and_shape": ["custom.cut_type", "cut_type"]
 });
 
 export const DESCRIPTION_REVIEW_EXCLUDED_KEYS = ["native_description", "custom.generated_description"];
 
-// Used strictly for global telemetry tracking to preserve 45-count. Do not render.
+// Used strictly for global telemetry tracking and source-context preservation. Do not render as a normal editor field.
 export const HIDDEN_CONTEXT_FIELDS = ["custom.origin_story"];
 
 export const RETIRED_KEYS = [
-  "artist_notes", "bench_notes", "handcrafted_by", "color",
-  "cut_and_shape", "stone_shape", "primary_use",
-  "custom.artist_notes", "custom.bench_notes", "custom.handcrafted_by", "custom.color",
-  "custom.cut_and_shape", "custom.stone_shape", "custom.primary_use"
+  "artist_notes", "bench_notes", "handcrafted_by", "primary_use",
+  "custom.artist_notes", "custom.bench_notes", "custom.handcrafted_by", "custom.primary_use"
 ];
+
+const NON_ORDINARY_COMPAT_AND_EXCLUDED_SET = (() => {
+  const s = new Set([
+    "is_ooak",
+    "custom.is_ooak",
+    "stone_family",
+    "custom.stone_family",
+    "primary_medium",
+    "custom.primary_medium",
+    "origin_handle",
+    "custom.origin_handle",
+    "cut_type",
+    "custom.cut_type",
+    "target_gender",
+    "custom.target_gender",
+    "alt_text",
+    "custom.alt_text"
+  ]);
+
+  const addCatalogEntryKeys = (entry) => {
+    if (!entry) return;
+    if (entry.key) {
+      s.add(entry.key);
+      if (!entry.key.includes(".") && (!entry.namespace || entry.namespace === "custom")) {
+        s.add(`custom.${entry.key}`);
+      }
+    }
+    if (entry.registryIdentity) {
+      s.add(entry.registryIdentity);
+    }
+  };
+
+  (COMPATIBILITY_ADAPTER_FIELDS || []).forEach(addCatalogEntryKeys);
+  (EXCLUDED_CATALOG_FIELDS || []).forEach(addCatalogEntryKeys);
+  (DUPLICATE_ALIAS_CATALOG_FIELDS || []).forEach(addCatalogEntryKeys);
+  (PROTECTED_DATA_ENTRIES || []).forEach(entry => {
+    if (entry?.identity) s.add(entry.identity);
+  });
+
+  // Preserve explicit typed staging/native-companion routes handled by dedicated branches in buildRepairPayload
+  s.delete("shopify_title");
+  s.delete("custom.generated_description");
+  s.delete("custom.seo_title");
+  s.delete("custom.shipping_weight_oz");
+  s.delete("price");
+
+  return s;
+})();
 
 export const FILTER_OPTIONS = [
   {label: 'All', value: 'All'},
@@ -245,8 +298,12 @@ const resolveShippingProposalState = (data) => {
   const completeGramsRaw =
     (repairPlan &&
       typeof repairPlan === "object" &&
-      (repairPlan["complete_product_weight_grams"] ?? repairPlan["custom.complete_product_weight_grams"])) ??
-    data?.currentMetafields?.["custom.complete_product_weight_grams"];
+      (repairPlan["complete_product_weight_grams"] ??
+        repairPlan["custom.complete_product_weight_grams"] ??
+        repairPlan["whole_product_weight_grams"] ??
+        repairPlan["custom.whole_product_weight_grams"])) ??
+    data?.currentMetafields?.["custom.complete_product_weight_grams"] ??
+    data?.currentMetafields?.["custom.whole_product_weight_grams"];
 
   if (completeGramsRaw !== undefined && completeGramsRaw !== null && String(completeGramsRaw).trim() !== "") {
     const completeGrams = Number(String(completeGramsRaw).trim());
@@ -276,7 +333,8 @@ export const getDynamicSections = (manifest) => {
     let keys = [];
     group.fields.forEach(f => {
       if (RETIRED_KEYS.includes(f.key) || RETIRED_KEYS.includes(`custom.${f.key}`)) return;
-      if (f.key === "is_ooak" || f.key === "custom.is_ooak") return;
+      if (f.registryRole && f.registryRole !== "PRIMARY_CANDIDATE_DESTINATION" && f.registryRole !== "APPROVED_MEASUREMENT_ADDITION") return;
+      if (f.key === "is_ooak" || f.key === "custom.is_ooak" || f.key === "cut_type" || f.key === "custom.cut_type") return;
       
       if (f.key === "native_image_alt") {
         if (manifest?.nativeTargets?.media?.edges) {
@@ -289,7 +347,11 @@ export const getDynamicSections = (manifest) => {
       }
       
       const resolvedKey = resolveConfigFieldDestination(f);
-      if (resolvedKey && !RETIRED_KEYS.includes(resolvedKey) && resolvedKey !== "custom.is_ooak") {
+      if (
+        resolvedKey &&
+        !RETIRED_KEYS.includes(resolvedKey) &&
+        !NON_ORDINARY_COMPAT_AND_EXCLUDED_SET.has(resolvedKey)
+      ) {
         keys.push(resolvedKey);
       }
     });
@@ -366,7 +428,7 @@ export const evaluateFieldMetadata = ({
         ? "list.metaobject_reference"
         : key === "custom.character_marks" || key === "custom.stone_story"
           ? "list.single_line_text_field"
-          : key === "custom.weight_grams" || key === "custom.shipping_weight_oz"
+          : key === "custom.weight_grams" || key === "custom.shipping_weight_oz" || key === "custom.overall_solid_length_in" || key === "custom.whole_product_weight_grams"
             ? "number_decimal"
             : key === "custom.honest_flaws_and_character" || key === "custom.origin_story" || key === "custom.generated_description"
               ? "multi_line_text_field"
@@ -384,7 +446,7 @@ export const evaluateFieldMetadata = ({
         : (templateConfig?.metaKey ? `shopify.${templateConfig.metaKey}` : targetKeyForProposal))
     : targetKeyForProposal;
 
-  // Evaluate technical and category eligibility for ALL 21 standardized attributes
+  // Evaluate technical and category eligibility for ALL standardized attributes
   const stdEvaluation = isStandardizedAttribute && typeof getStandardizedEvaluationForField === "function"
     ? getStandardizedEvaluationForField(productId, standardizedDestKey, safeData)
     : null;
@@ -392,11 +454,36 @@ export const evaluateFieldMetadata = ({
   const isCategoryEligible = Boolean(stdEvaluation?.isCategoryEligible);
   const categoryEligibility = stdEvaluation?.categoryEligibility || null;
 
-  // Relax pending_read_only ONLY for the six verified destinations when BOTH reference matching and category eligibility pass.
-  // The remaining 15 standardized destinations MUST stay read-only regardless of category eligibility.
+  // Explicit contract/verification hold flags from constants.jsx (only when explicitly false/true; absent optional flags do NOT trigger holds)
+  const hasExplicitStorageHold =
+    templateConfig?.storageVerified === false ||
+    templateConfig?.writerVerified === false ||
+    templateConfig?.registryRole === "APPROVED_MEASUREMENT_ADDITION";
+  const hasExplicitProducerHold = templateConfig?.producerAlignmentPending === true;
+  const isChannelFlagReadOnly =
+    targetKeyForProposal === "mm-google-shopping.custom_product" ||
+    key === "mm-google-shopping.custom_product";
+  const isVariantMetafieldHold =
+    templateConfig?.owner === "variant_metafield" ||
+    (templateConfig?.registryOwner === "PRODUCTVARIANT" &&
+      templateConfig?.owner !== "native" &&
+      templateConfig?.namespace !== "native" &&
+      !key.startsWith("native_") &&
+      !NATIVE_FIELDS.includes(key));
+
+  // Relax pending_read_only ONLY for the six verified standardized destinations when BOTH reference matching and category eligibility pass.
   const isPendingReadOnly = isVerifiedStdDest
     ? !(Boolean(stdEvaluation?.isTechnicallyEligible) && isCategoryEligible)
-    : (isStandardizedAttribute ? true : templateConfig?.mappingStatus === "pending_read_only");
+    : (isStandardizedAttribute
+        ? true
+        : (templateConfig?.mappingStatus === "pending_read_only" || hasExplicitStorageHold || isChannelFlagReadOnly));
+
+  const hasContractOrOwnerHold =
+    isPendingReadOnly ||
+    hasExplicitStorageHold ||
+    hasExplicitProducerHold ||
+    isChannelFlagReadOnly ||
+    isVariantMetafieldHold;
 
   let currentVal = "";
   const variants = safeData.nativeTargets?.variants?.edges || [];
@@ -566,8 +653,8 @@ export const evaluateFieldMetadata = ({
     HIDDEN_CONTEXT_FIELDS.includes(key) ||
     key.startsWith("native_");
 
-  // Never auto-preapprove the six standardized reference proposals; Bob's meaning approval is not technical list approval
-  if (!isPendingReadOnly && !isVerifiedStdDest) {
+  // Never auto-preapprove standardized reference proposals or fields under contract/owner hold
+  if (!hasContractOrOwnerHold && !isVerifiedStdDest) {
       if (targetKeyForProposal === "custom.google_product_category" && proposalExists) {
           isContentPreApproved = true;
           preApprovalReason = "Category pre-approved";
@@ -598,14 +685,19 @@ export const evaluateFieldMetadata = ({
   const limit = FIELD_LIMITS[targetKeyForProposal] || FIELD_LIMITS[key] || null;
 
   const isManualOnly = false;
-  const isOperatorOwned = (targetKeyForProposal === "price" || targetKeyForProposal === "custom.weight_grams" || targetKeyForProposal === "custom.dimensions_mm");
+  const isOperatorOwned = (
+    targetKeyForProposal === "price" ||
+    targetKeyForProposal === "custom.weight_grams" ||
+    targetKeyForProposal === "custom.dimensions_mm" ||
+    hasExplicitStorageHold
+  );
   
   const exactApprovalVal =
     currentApprovals?.[productId]?.[key] !== undefined
       ? currentApprovals[productId][key]
       : currentApprovals?.[productId]?.[targetKeyForProposal];
   const isApproved =
-    !isPendingReadOnly &&
+    !hasContractOrOwnerHold &&
     (!isVerifiedStdDest || (Boolean(stdEvaluation?.isTechnicallyEligible) && isCategoryEligible)) &&
     exactApprovalVal !== undefined &&
     String(exactApprovalVal) === propVal &&
@@ -676,9 +768,25 @@ export const evaluateFieldMetadata = ({
       } else {
           reasons.push("Standardized attribute read-only (pending_read_only)");
       }
+  } else if (hasExplicitStorageHold) {
+      hasTechnicalBlock = true;
+      reasons.push("Measurement storage/writer contract unverified (read-only hold)");
+  } else if (isChannelFlagReadOnly) {
+      hasTechnicalBlock = true;
+      reasons.push("Channel boolean flag read-only pending verified rules (mm-google-shopping.custom_product)");
   } else if (isPendingReadOnly) {
       hasTechnicalBlock = true;
-      reasons.push("Standardized attribute read-only (pending_read_only)");
+      reasons.push("Field contract read-only (pending_read_only)");
+  }
+
+  if (hasExplicitProducerHold) {
+      hasTechnicalBlock = true;
+      reasons.push("Producer/writer definition alignment pending verification");
+  }
+
+  if (isVariantMetafieldHold) {
+      hasTechnicalBlock = true;
+      reasons.push("Variant-owned metafield (PRODUCTVARIANT) held: product-level writer route not applicable");
   }
 
   if ((BLOCKED_UNVERIFIED_PINS.includes(targetKeyForProposal) || BLOCKED_UNVERIFIED_PINS.includes(key)) && proposalExists) {
@@ -804,7 +912,7 @@ export const evaluateFieldMetadata = ({
   }
 
   // React to Approvals & Pre-Approvals
-  if (proposalExists && !isEqualToCurrent && !isManualOnly && !isPendingReadOnly && !apiBlockReason && !conflictData && !nativeDescConflictData) {
+  if (proposalExists && !isEqualToCurrent && !isManualOnly && !hasContractOrOwnerHold && !apiBlockReason && !conflictData && !nativeDescConflictData) {
       if (isContentPreApproved) {
           if (hasTechnicalBlock) {
               fieldStatus = "Pre-approved, blocked";
@@ -829,7 +937,7 @@ export const evaluateFieldMetadata = ({
           }
       }
   } else {
-      if (hasTechnicalBlock || isPendingReadOnly || apiBlockReason || conflictData || nativeDescConflictData || fieldStatus === "Optional blank" || fieldStatus === "Required missing") {
+      if (hasTechnicalBlock || hasContractOrOwnerHold || apiBlockReason || conflictData || nativeDescConflictData || fieldStatus === "Optional blank" || fieldStatus === "Required missing") {
           isBlockedAction = true;
       }
   }
@@ -842,7 +950,7 @@ export const evaluateFieldMetadata = ({
       }
   }
 
-  if (isPendingReadOnly) {
+  if (hasContractOrOwnerHold) {
       isBlockedAction = true;
   }
 
@@ -865,6 +973,10 @@ export const evaluateFieldMetadata = ({
     isCategoryEligible,
     categoryEligibility,
     stdEvaluation,
+    hasExplicitStorageHold,
+    hasExplicitProducerHold,
+    isChannelFlagReadOnly,
+    isVariantMetafieldHold,
     type: expectedType,
     owner: templateConfig?.owner || (isNativeImageAlt || key.startsWith("native_") || NATIVE_FIELDS.includes(key) ? "native" : "metafield"),
     namespace: templateConfig?.namespace || (key.startsWith("shopify.") ? "shopify" : (isNativeImageAlt || key.startsWith("native_") ? "native" : "custom")),
@@ -1065,7 +1177,13 @@ export const computeDiagnosticsStats = ({
 
           if (meta.isManualOnly) stats.manualOnly++;
 
-          const eligibleForStats = !meta.isPendingReadOnly && (!meta.isStandardizedAttribute || meta.isVerifiedStdDest);
+          const eligibleForStats =
+            !meta.isPendingReadOnly &&
+            !meta.hasExplicitStorageHold &&
+            !meta.hasExplicitProducerHold &&
+            !meta.isChannelFlagReadOnly &&
+            !meta.isVariantMetafieldHold &&
+            (!meta.isStandardizedAttribute || meta.isVerifiedStdDest);
 
           if (eligibleForStats && (meta.fieldStatus === "Proposed" || meta.fieldStatus === "Approved, not saved" || meta.fieldStatus === "Approved, blocked" || meta.fieldStatus === "Pre-approved, not saved" || meta.fieldStatus === "Pre-approved, blocked")) stats.proposed++;
           
@@ -1134,16 +1252,7 @@ export const buildRepairPayload = (manifest, product, currentId, currentApproval
       if (key === "standardized_candidates" || key === "custom.standardized_candidates") return;
       if (key.startsWith("custom.std_") || key.startsWith("std_")) return;
       if (key.startsWith("shopify.") && !isVerifiedStandardizedDestination(key)) return;
-      if (
-        key === "is_ooak" ||
-        key === "custom.is_ooak" ||
-        key === "stone_family" ||
-        key === "custom.stone_family" ||
-        key === "primary_medium" ||
-        key === "custom.primary_medium" ||
-        key === "origin_handle" ||
-        key === "custom.origin_handle"
-      ) {
+      if (NON_ORDINARY_COMPAT_AND_EXCLUDED_SET.has(key)) {
           return;
       }
       
@@ -1310,13 +1419,25 @@ export const buildRepairPayload = (manifest, product, currentId, currentApproval
       }
 
       if (key.startsWith("native_") || meta.owner === "native" || meta.namespace === "native") return;
-      if (meta.isPendingReadOnly || meta.isStandardizedAttribute) return;
+      if (
+          meta.isPendingReadOnly ||
+          meta.isStandardizedAttribute ||
+          meta.hasExplicitStorageHold ||
+          meta.hasExplicitProducerHold ||
+          meta.isChannelFlagReadOnly ||
+          meta.isVariantMetafieldHold ||
+          meta.owner === "variant_metafield"
+      ) return;
       if (!meta.isSupported || meta.isManualOnly || meta.hasTechnicalBlock || meta.isBlockedAction) return;
-      if (HIDDEN_CONTEXT_FIELDS.includes(key) || RETIRED_KEYS.includes(key)) return;
+      if (HIDDEN_CONTEXT_FIELDS.includes(key) || RETIRED_KEYS.includes(key) || NON_ORDINARY_COMPAT_AND_EXCLUDED_SET.has(key)) return;
       if (!meta.proposalExists) return;
 
       const canonicalKey = key.includes(".") ? key : `custom.${key}`;
-      if (HIDDEN_CONTEXT_FIELDS.includes(canonicalKey) || RETIRED_KEYS.includes(canonicalKey)) return;
+      if (
+          HIDDEN_CONTEXT_FIELDS.includes(canonicalKey) ||
+          RETIRED_KEYS.includes(canonicalKey) ||
+          NON_ORDINARY_COMPAT_AND_EXCLUDED_SET.has(canonicalKey)
+      ) return;
       if (canonicalKey === "custom.collection_date" && GENERIC_VALUES.includes(String(meta.propVal ?? "").trim())) {
           return;
       }

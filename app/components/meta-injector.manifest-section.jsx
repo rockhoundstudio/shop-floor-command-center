@@ -31,13 +31,13 @@ export function ManifestSectionCard({
   pendingReferenceMatch,
   getFieldMetadata,
   matchesFilter,
-  onToggleBay,
   onReleasePendingReferenceMatch,
   onMatchReferenceChoices,
   onStandardizedEntrySelectionChange,
   onToggleVerifiedStandardizedEntry,
   onRepairPlanChange,
-  onToggleApproval
+  onToggleApproval,
+  onToggleBay
 }) {
   const [openApprovalDiagnostics, setOpenApprovalDiagnostics] = useState({});
 
@@ -112,6 +112,15 @@ export function ManifestSectionCard({
           {filteredKeys.map((key) => {
             const meta = getFieldMetadata(key, data, selectedBenchId, approvals, section.configFields);
             const isBlank = meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing";
+
+            const isHeldReadOnly = Boolean(
+              meta.isPendingReadOnly ||
+              meta.hasContractOrOwnerHold ||
+              meta.hasExplicitStorageHold ||
+              meta.hasExplicitProducerHold ||
+              meta.isChannelFlagReadOnly ||
+              meta.isVariantMetafieldHold
+            );
             
             let statusTone = undefined;
             if (meta.fieldStatus === "Optional blank") statusTone = "attention";
@@ -121,8 +130,55 @@ export function ManifestSectionCard({
             if (meta.fieldStatus === "Unchanged") statusTone = "new";
             if (meta.fieldStatus === "Approved, blocked" || meta.fieldStatus === "Pre-approved, blocked") statusTone = "warning";
 
-            const canApprove = meta.proposalExists && meta.currentVal !== meta.propVal && !meta.isManualOnly && !meta.isPendingReadOnly && !meta.isContentPreApproved && meta.fieldStatus !== "API Error / Blocked" && meta.fieldStatus !== "Save Conflict" && meta.isSupported;
+            const candidateMetaKey = meta.metaKey || (key.startsWith("shopify.") ? key.slice(8) : "");
+            const isVisionCandidateRow = meta.isStandardizedAttribute && ALLOWED_VISION_CANDIDATE_KEYS.includes(candidateMetaKey);
+            const productVisionCandidates = candidateBundle.ordered;
+            const visionCandidateEntry = isVisionCandidateRow ? productVisionCandidates[candidateMetaKey] : null;
+
+            const canApprove =
+              meta.proposalExists &&
+              meta.currentVal !== meta.propVal &&
+              !meta.isManualOnly &&
+              !isHeldReadOnly &&
+              !meta.isContentPreApproved &&
+              meta.fieldStatus !== "API Error / Blocked" &&
+              meta.fieldStatus !== "Save Conflict" &&
+              meta.isSupported;
             const isPreApprovedDisplay = meta.isContentPreApproved && meta.proposalExists && meta.currentVal !== meta.propVal;
+
+            let holdModeBadgeTone = "info";
+            let holdModeBadgeLabel = "Read-Only (Pending)";
+            let holdPlaceholderText = "Read-only field (writes disabled)";
+            let holdStatusText = "Field contract read-only (pending_read_only). Read-only display; writes disabled.";
+
+            if (meta.isStandardizedAttribute) {
+              holdModeBadgeTone = isVisionCandidateRow && visionCandidateEntry ? "warning" : "info";
+              holdModeBadgeLabel = isVisionCandidateRow ? "Blocked (Awaiting Match / Ambiguous)" : "Read-Only (Pending)";
+              holdPlaceholderText = "Read-only standardized attribute (writes disabled)";
+              holdStatusText = meta.isVerifiedStdDest
+                ? (meta.stdEvaluation?.blockReason || "Awaiting complete reference matching before unlocking proposal.")
+                : "Standardized attribute (pending_read_only). Read-only display; writes disabled.";
+            } else if (meta.hasExplicitStorageHold) {
+              holdModeBadgeTone = "info";
+              holdModeBadgeLabel = "Read-Only (Storage Unverified)";
+              holdPlaceholderText = "Read-only: measurement storage/writer contract unverified (writes disabled)";
+              holdStatusText = "Measurement storage/writer contract unverified. Read-only display; writes disabled.";
+            } else if (meta.hasExplicitProducerHold) {
+              holdModeBadgeTone = "warning";
+              holdModeBadgeLabel = "Read-Only (Producer Alignment Pending)";
+              holdPlaceholderText = "Read-only: producer/writer definition alignment pending (writes disabled)";
+              holdStatusText = "Producer/writer definition alignment pending verification. Read-only display; writes disabled.";
+            } else if (meta.isChannelFlagReadOnly) {
+              holdModeBadgeTone = "info";
+              holdModeBadgeLabel = "Read-Only (Channel Rule Pending)";
+              holdPlaceholderText = "Read-only: channel boolean rules pending verification (writes disabled)";
+              holdStatusText = "Channel boolean flag read-only pending verified rules (mm-google-shopping.custom_product). Writes disabled.";
+            } else if (meta.isVariantMetafieldHold) {
+              holdModeBadgeTone = "warning";
+              holdModeBadgeLabel = "Read-Only (Variant Owner Hold)";
+              holdPlaceholderText = "Read-only: variant-owned metafield (PRODUCTVARIANT) held from product writer";
+              holdStatusText = "Variant-owned metafield (PRODUCTVARIANT) held: product-level writer route not applicable. Writes disabled.";
+            }
             
             let boxBg = "#f8f9fa";
             let boxBorder = "#dee2e6";
@@ -132,11 +188,9 @@ export function ManifestSectionCard({
             if (!meta.isSupported) {
                 boxBg = "#f8f9fa"; boxBorder = "#dee2e6"; textColor = "#41464c";
                 statusText = "Connection pending.";
-            } else if (meta.isPendingReadOnly) {
+            } else if (isHeldReadOnly) {
                 boxBg = "#f8f9fa"; boxBorder = "#dee2e6"; textColor = "#41464c";
-                statusText = meta.isVerifiedStdDest
-                  ? (meta.stdEvaluation?.blockReason || "Awaiting complete reference matching before unlocking proposal.")
-                  : "Standardized attribute (pending_read_only). Read-only display; writes disabled.";
+                statusText = holdStatusText;
             } else if (meta.reasons.includes("SEO description save connection pending.")) {
                 boxBg = "#fff3cd"; boxBorder = "#ffecb5"; textColor = "#664d03";
                 statusText = "SEO description save connection pending. Draft is staged but write is disabled.";
@@ -184,11 +238,6 @@ export function ManifestSectionCard({
             const displayCurrentVal = formatDisplayFieldValue(meta.currentVal, meta.isStandardizedAttribute, data, verifiedMapForDisplay);
             const displayPropVal = formatDisplayFieldValue(meta.propVal, meta.isStandardizedAttribute, data, verifiedMapForDisplay);
 
-            const candidateMetaKey = meta.metaKey || (key.startsWith("shopify.") ? key.slice(8) : "");
-            const isVisionCandidateRow = meta.isStandardizedAttribute && ALLOWED_VISION_CANDIDATE_KEYS.includes(candidateMetaKey);
-            const productVisionCandidates = candidateBundle.ordered;
-            const visionCandidateEntry = isVisionCandidateRow ? productVisionCandidates[candidateMetaKey] : null;
-
             return (
               <Box key={key} padding="300" background={isBlank && meta.isSupported ? "bg-surface-warning" : "bg-surface"} borderColor="border" borderWidth="1" borderRadius="200">
                 <div style={{ display: "flex", flexWrap: "wrap", gap: "20px", boxSizing: "border-box", minWidth: 0 }}>
@@ -212,10 +261,10 @@ export function ManifestSectionCard({
                           {meta.isSupported ? (
                             <>
                               <Text as="p" variant="bodyMd" fontWeight="bold">Status: <Badge tone={statusTone}>{meta.fieldStatus}</Badge></Text>
-                              {meta.isPendingReadOnly ? (
+                              {isHeldReadOnly ? (
                                 <Text as="p" variant="bodySm" tone="subdued" fontWeight="bold">
-                                  Mode: <Badge tone={isVisionCandidateRow && visionCandidateEntry ? "warning" : "info"}>
-                                    {isVisionCandidateRow ? "Blocked (Awaiting Match / Ambiguous)" : "Read-Only (Pending)"}
+                                  Mode: <Badge tone={holdModeBadgeTone}>
+                                    {holdModeBadgeLabel}
                                   </Badge>
                                 </Text>
                               ) : isVisionCandidateRow ? (
@@ -257,18 +306,38 @@ export function ManifestSectionCard({
                               meta={meta}
                               displayPropVal={displayPropVal}
                               visionCandidateEntry={visionCandidateEntry}
-                              onSelectEntry={onStandardizedEntrySelectionChange}
-                              onToggleEntry={onToggleVerifiedStandardizedEntry}
+                              onSelectEntry={(...args) => {
+                                if (!meta.isSupported || isHeldReadOnly || meta.isManualOnly) return;
+                                if (typeof onStandardizedEntrySelectionChange === "function") {
+                                  onStandardizedEntrySelectionChange(...args);
+                                }
+                              }}
+                              onToggleEntry={(...args) => {
+                                if (!meta.isSupported || isHeldReadOnly || meta.isManualOnly) return;
+                                if (typeof onToggleVerifiedStandardizedEntry === "function") {
+                                  onToggleVerifiedStandardizedEntry(...args);
+                                }
+                              }}
                             />
                           ) : (
                             <TextField
                                 value={meta.isSupported ? displayPropVal : "Connection pending."}
-                                onChange={(val) => { if (meta.isSupported && !meta.isPendingReadOnly) onRepairPlanChange(key, val) }}
+                                onChange={(val) => {
+                                  if (meta.isSupported && !isHeldReadOnly && !meta.isManualOnly) {
+                                    onRepairPlanChange(key, val);
+                                  }
+                                }}
                                 autoComplete="off"
                                 multiline={isMultilineKey(key, meta.control) ? 3 : undefined}
-                                placeholder={meta.isPendingReadOnly ? "Read-only standardized attribute (writes disabled)" : (meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing" ? "Blank" : (meta.fieldStatus === "Proposal not provided" ? "Not provided" : ""))}
-                                disabled={!meta.isSupported || meta.isPendingReadOnly}
-                                readOnly={!meta.isSupported || meta.isPendingReadOnly}
+                                placeholder={
+                                  isHeldReadOnly
+                                    ? holdPlaceholderText
+                                    : (meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing"
+                                        ? "Blank"
+                                        : (meta.fieldStatus === "Proposal not provided" ? "Not provided" : ""))
+                                }
+                                disabled={!meta.isSupported || isHeldReadOnly || meta.isManualOnly}
+                                readOnly={!meta.isSupported || isHeldReadOnly || meta.isManualOnly}
                             />
                           )}
                       </div>
@@ -306,7 +375,11 @@ export function ManifestSectionCard({
                                       type="checkbox"
                                       id={`approve-${key}`}
                                       checked={meta.isApproved || false}
-                                      onChange={(e) => onToggleApproval(selectedBenchId, key, meta.propVal, e.target.checked)}
+                                      disabled={!canApprove || isHeldReadOnly || meta.isManualOnly}
+                                      onChange={(e) => {
+                                        if (!canApprove || isHeldReadOnly || meta.isManualOnly || !meta.isSupported) return;
+                                        onToggleApproval(selectedBenchId, key, meta.propVal, e.target.checked);
+                                      }}
                                       style={{ width: "24px", height: "24px", flexShrink: 0, cursor: "pointer", accentColor: textColor, marginTop: "2px" }}
                                       aria-label={`Approve suggestion for ${customLabel}: ${meta.propVal}`}
                                   />
@@ -338,7 +411,21 @@ export function ManifestSectionCard({
                       {/* APPROVAL DIAGNOSTIC BLOCK (Behind Keyboard-Accessible Disclosure, Closed by Default) */}
                       {["custom.origin_location", "custom.collection_name", "custom.collection_location"].includes(key) && (() => {
                           const isDiagOpen = Boolean(openApprovalDiagnostics[key]);
-                          const blockReason = !meta.proposalExists ? "No proposal" : (meta.currentVal === meta.propVal) ? "Values match" : meta.isManualOnly ? "Manual only" : meta.isContentPreApproved ? "Pre-approved" : (meta.fieldStatus === "API Error / Blocked") ? "API Blocked" : (meta.fieldStatus === "Save Conflict") ? "Save Conflict" : "None";
+                          const blockReason = !meta.proposalExists
+                            ? "No proposal"
+                            : (meta.currentVal === meta.propVal)
+                              ? "Values match"
+                              : meta.isManualOnly
+                                ? "Manual only"
+                                : isHeldReadOnly
+                                  ? "Held read-only"
+                                  : meta.isContentPreApproved
+                                    ? "Pre-approved"
+                                    : (meta.fieldStatus === "API Error / Blocked")
+                                      ? "API Blocked"
+                                      : (meta.fieldStatus === "Save Conflict")
+                                        ? "Save Conflict"
+                                        : "None";
                           return (
                               <div style={{ marginTop: "8px" }}>
                                   <Button
@@ -355,7 +442,7 @@ export function ManifestSectionCard({
                                           Key: {key} | ID: {selectedBenchId}<br/>
                                           fieldStatus: {meta.fieldStatus}<br/>
                                           proposalExists: {String(meta.proposalExists)} | isDiff: {String(meta.currentVal !== meta.propVal)}<br/>
-                                          isManualOnly: {String(meta.isManualOnly)} | isContentPreApproved: {String(meta.isContentPreApproved)} | isApproved: {String(meta.isApproved)}<br/>
+                                          isManualOnly: {String(meta.isManualOnly)} | isHeldReadOnly: {String(isHeldReadOnly)} | isContentPreApproved: {String(meta.isContentPreApproved)} | isApproved: {String(meta.isApproved)}<br/>
                                           hasTechnicalBlock: {String(meta.hasTechnicalBlock)} | apiBlockReason: {String(meta.reasons.some(r => r.includes("Backend Blocked")))}<br/>
                                           conflictData: {String(!!meta.conflictData)} | nativeDescConflictData: {String(!!meta.nativeDescConflictData)}<br/>
                                           canApprove: {String(canApprove)} | Blocker: {blockReason}<br/>

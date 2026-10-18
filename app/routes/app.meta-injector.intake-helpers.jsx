@@ -1,21 +1,27 @@
 // ==========================================================================
 // ROCKHOUND STUDIO — INTAKE HELPER FUNCTIONS
 // File: app/routes/app.meta-injector.intake-helpers.jsx
-// (100% Original Logic & Dash Delimiters Preserved + Strict Schema Map Added)
+// (Universal 62-Capability Registry Contract & Explicit Field Guards)
 // ==========================================================================
 //
 // CALLER ARGUMENT LIMITATION NOTE:
 // In app/routes/app.meta-injector.injector.jsx (L181), handleScanGeminiPhotos
-// calls handleScanPhoto({ piece, updatePiece: handlePieceChange, visionFetcher, setErrorMessage })
-// without passing sharedFields. Therefore, when piece holds only a 1-segment human
-// identifier (e.g. "BQH-1") and no piece.canonical_title / piece.stone_family /
-// piece.origin_location, handleScanPhoto cannot read Section B sharedFields
-// unless the caller passes sharedFields or stores those values on piece.
-// Secondly,app/routes/app.meta-injector-autofill.jsx (visionScan, L562) splits
-// productTitle/pieceName on dashes and uses segments[0] as derivedFamily whenever
-// productTitle/pieceName is non-empty; therefore handleScanPhoto only sends a
-// 3-segment title as productTitle when available, and sends a 1-segment human ID
-// under humanPieceId so segments[0] does not misclassify the human ID as stone_family.
+// calls handleScanPhoto({ piece, updatePiece: handlePieceChange, visionFetcher, setErrorMessage, sharedFields })
+// passing latestShared.current. When piece holds only a 1-segment human
+// identifier (e.g. "BQH-1", "BQH-2", "bob") and no piece.canonical_title,
+// handleScanPhoto only sends a 3-segment title as productTitle when available,
+// and sends a 1-segment human ID under humanPieceId so segments[0] does not
+// misclassify the human ID as stone_family.
+
+import {
+  CANONICAL_CAPABILITY_FIELDS,
+  COMPATIBILITY_ADAPTER_FIELDS,
+  EXCLUDED_CATALOG_FIELDS,
+  DUPLICATE_ALIAS_CATALOG_FIELDS,
+  PROTECTED_DATA_ENTRIES,
+  UNVERIFIED_PROPOSED_MEASUREMENT_KEYS,
+  PRODUCER_ALIGNMENT_PENDING_KEYS
+} from "../utils/meta-injector.constants.jsx";
 
 function splitSegmentedTitle(val) {
   if (typeof val !== "string") return [];
@@ -24,7 +30,17 @@ function splitSegmentedTitle(val) {
     .replace(/Ã¢â‚¬â€/g, "—")
     .trim();
   if (!normalized) return [];
+  // Require whitespace around dash delimiters so internal hyphens in human IDs (e.g. BQH-1, BQH-2) are never split
   return normalized.split(/\s+[—–-]\s+/).map(s => s.trim()).filter(Boolean);
+}
+
+function hasMeaningfulValue(val) {
+  if (val === undefined || val === null) return false;
+  if (typeof val === "boolean") return true;
+  if (typeof val === "number") return !Number.isNaN(val);
+  if (Array.isArray(val)) return val.length > 0;
+  if (typeof val === "object") return false;
+  return String(val).trim() !== "";
 }
 
 function normalizeOoakToken(val) {
@@ -33,7 +49,16 @@ function normalizeOoakToken(val) {
   const str = String(val).trim();
   if (!str) return "";
   const lower = str.toLowerCase();
-  if (lower === "yes" || lower === "true" || lower === "1" || lower === "ooak" || lower === "one-of-a-kind") {
+  if (
+    lower === "yes" ||
+    lower === "true" ||
+    lower === "1" ||
+    lower === "ooak" ||
+    lower === "one-of-a-kind" ||
+    lower === "one of a kind" ||
+    lower.startsWith("yes —") ||
+    lower.startsWith("yes -")
+  ) {
     return "Yes";
   }
   if (lower === "no" || lower === "false" || lower === "0") {
@@ -62,6 +87,27 @@ function resolveCanonicalOoak(sharedFields = {}, piece = {}) {
   return { value: sharedCanonical || sharedLegacy || "", conflict: false };
 }
 
+function isLikelyStoneBearingContext(sharedFields = {}, piece = {}) {
+  const materialVal = String(
+    piece?.material ?? sharedFields?.material ?? piece?.stone_family ?? sharedFields?.stone_family ?? ""
+  ).trim();
+  if (materialVal) return true;
+
+  const useText = String(
+    piece?.primary_use ?? sharedFields?.primary_use ?? piece?.product_type ?? sharedFields?.product_type ?? ""
+  ).toLowerCase();
+  if (
+    useText.includes("chain") ||
+    useText.includes("cord") ||
+    useText.includes("bail") ||
+    useText.includes("finding") ||
+    useText.includes("accessory")
+  ) {
+    return false;
+  }
+  return false;
+}
+
 export async function handleScanPhoto({ piece, updatePiece, visionFetcher, setErrorMessage, sharedFields }) {
   const file = piece?.photoFiles?.[0];
   const existingBase64 = typeof piece?.imageBase64 === "string" ? piece.imageBase64.trim() : "";
@@ -81,44 +127,59 @@ export async function handleScanPhoto({ piece, updatePiece, visionFetcher, setEr
     ? nameSegments[nameSegments.length - 1]
     : rawPieceName;
 
-  const resolvedStoneFamily =
-    piece?.stone_family ||
-    sharedFields?.stone_family ||
+  // Prefer canonical material first, then legacy stone_family companion, then 3-part title segment.
+  // Never use primary_medium (metal/hardware) as a fallback for stone identity.
+  const resolvedStoneIdentity =
+    (hasMeaningfulValue(piece?.material) ? String(piece.material).trim() : "") ||
+    (hasMeaningfulValue(sharedFields?.material) ? String(sharedFields.material).trim() : "") ||
+    (hasMeaningfulValue(piece?.stone_family) ? String(piece.stone_family).trim() : "") ||
+    (hasMeaningfulValue(sharedFields?.stone_family) ? String(sharedFields.stone_family).trim() : "") ||
     (hasThreePartCanonical ? canonicalSegments[0] : "") ||
     (hasThreePartName ? nameSegments[0] : "");
 
   const resolvedOriginLocation =
-    piece?.origin_location ||
-    sharedFields?.origin_location ||
+    (hasMeaningfulValue(piece?.origin_location) ? String(piece.origin_location).trim() : "") ||
+    (hasMeaningfulValue(sharedFields?.origin_location) ? String(sharedFields.origin_location).trim() : "") ||
     (hasThreePartCanonical ? canonicalSegments[1] : "") ||
     (hasThreePartName ? nameSegments[1] : "");
 
   const resolvedCollectionName =
-    piece?.collection_name ||
-    sharedFields?.collection_name ||
-    "";
+    (hasMeaningfulValue(piece?.collection_name) ? String(piece.collection_name).trim() : "") ||
+    (hasMeaningfulValue(sharedFields?.collection_name) ? String(sharedFields.collection_name).trim() : "");
 
-  const resolvedOriginHandle =
-    piece?.origin_handle ||
-    piece?.origin_page_handle ||
-    sharedFields?.origin_handle ||
-    sharedFields?.origin_page_handle ||
-    "";
+  const resolvedOriginPageHandle =
+    (hasMeaningfulValue(piece?.origin_page_handle) ? String(piece.origin_page_handle).trim() : "") ||
+    (hasMeaningfulValue(sharedFields?.origin_page_handle) ? String(sharedFields.origin_page_handle).trim() : "") ||
+    (hasMeaningfulValue(piece?.origin_handle) ? String(piece.origin_handle).trim() : "") ||
+    (hasMeaningfulValue(sharedFields?.origin_handle) ? String(sharedFields.origin_handle).trim() : "");
 
   const resolvedOriginStory =
-    piece?.origin_story ||
-    sharedFields?.origin_story ||
-    "";
+    (hasMeaningfulValue(piece?.origin_story) ? String(piece.origin_story).trim() : "") ||
+    (hasMeaningfulValue(sharedFields?.origin_story) ? String(sharedFields.origin_story).trim() : "");
+
+  const resolvedCutAndShape =
+    (hasMeaningfulValue(piece?.cut_and_shape) ? String(piece.cut_and_shape).trim() : "") ||
+    (hasMeaningfulValue(sharedFields?.cut_and_shape) ? String(sharedFields.cut_and_shape).trim() : "") ||
+    (hasMeaningfulValue(piece?.cut_type) ? String(piece.cut_type).trim() : "") ||
+    (hasMeaningfulValue(sharedFields?.cut_type) ? String(sharedFields.cut_type).trim() : "");
+
+  const resolvedStoneShape =
+    (hasMeaningfulValue(piece?.stone_shape) ? String(piece.stone_shape).trim() : "") ||
+    (hasMeaningfulValue(sharedFields?.stone_shape) ? String(sharedFields.stone_shape).trim() : "");
+
+  const resolvedColor =
+    (hasMeaningfulValue(piece?.color) ? String(piece.color).trim() : "") ||
+    (hasMeaningfulValue(sharedFields?.color) ? String(sharedFields.color).trim() : "");
 
   // Only supply a 3-segment title in pieceName/productTitle so autofill.jsx does not
-  // split a 1-segment human ID into segments[0] (stone_family) + "Unknown Origin".
+  // split a 1-segment human ID (e.g. BQH-1, BQH-2, bob) into segments[0] (stone_family) + "Unknown Origin".
   let segmentedTitleForRoute = "";
   if (hasThreePartCanonical) {
     segmentedTitleForRoute = rawCanonical;
   } else if (hasThreePartName) {
     segmentedTitleForRoute = rawPieceName;
-  } else if (resolvedStoneFamily && resolvedOriginLocation && humanIdentifier) {
-    segmentedTitleForRoute = `${resolvedStoneFamily} — ${resolvedOriginLocation} — ${humanIdentifier}`;
+  } else if (resolvedStoneIdentity && resolvedOriginLocation && humanIdentifier) {
+    segmentedTitleForRoute = `${resolvedStoneIdentity} - ${resolvedOriginLocation} - ${humanIdentifier}`;
   }
 
   const submitScan = (base64Data, mimeType) => {
@@ -128,17 +189,20 @@ export async function handleScanPhoto({ piece, updatePiece, visionFetcher, setEr
       pieceName: segmentedTitleForRoute,
       ...(segmentedTitleForRoute ? { productTitle: segmentedTitleForRoute } : {}),
       ...(humanIdentifier ? { humanPieceId: humanIdentifier } : {}),
-      ...(resolvedStoneFamily ? { stone_family: resolvedStoneFamily } : {}),
+      ...(resolvedStoneIdentity ? { material: resolvedStoneIdentity, stone_family: resolvedStoneIdentity } : {}),
       ...(resolvedOriginLocation ? { origin_location: resolvedOriginLocation } : {}),
       ...(resolvedCollectionName ? { collection_name: resolvedCollectionName } : {}),
-      ...(resolvedOriginHandle ? { origin_handle: resolvedOriginHandle } : {}),
+      ...(resolvedOriginPageHandle ? { origin_page_handle: resolvedOriginPageHandle, origin_handle: resolvedOriginPageHandle } : {}),
       ...(resolvedOriginStory ? { origin_story: resolvedOriginStory } : {}),
-      ...(piece?.dimensions_mm ? { dimensions_mm: piece.dimensions_mm } : {}),
-      ...(piece?.weight_grams ? { weight_grams: piece.weight_grams } : {}),
-      ...(piece?.shipping_weight_oz ? { shipping_weight_oz: piece.shipping_weight_oz } : {}),
-      ...(piece?.honest_flaws_and_character ? { honest_flaws_and_character: piece.honest_flaws_and_character } : {}),
-      ...(piece?.character_marks ? { character_marks: piece.character_marks } : {}),
-      ...(piece?.wire_material || sharedFields?.wire_material
+      ...(resolvedCutAndShape ? { cut_and_shape: resolvedCutAndShape } : {}),
+      ...(resolvedStoneShape ? { stone_shape: resolvedStoneShape } : {}),
+      ...(resolvedColor ? { color: resolvedColor } : {}),
+      ...(hasMeaningfulValue(piece?.dimensions_mm) ? { dimensions_mm: piece.dimensions_mm } : {}),
+      ...(hasMeaningfulValue(piece?.weight_grams) ? { weight_grams: piece.weight_grams } : {}),
+      ...(hasMeaningfulValue(piece?.shipping_weight_oz) ? { shipping_weight_oz: piece.shipping_weight_oz } : {}),
+      ...(hasMeaningfulValue(piece?.honest_flaws_and_character) ? { honest_flaws_and_character: piece.honest_flaws_and_character } : {}),
+      ...(hasMeaningfulValue(piece?.character_marks) ? { character_marks: piece.character_marks } : {}),
+      ...(hasMeaningfulValue(piece?.wire_material) || hasMeaningfulValue(sharedFields?.wire_material)
         ? { wire_material: piece?.wire_material || sharedFields?.wire_material }
         : {}),
       imageBase64: base64Data,
@@ -188,6 +252,40 @@ export async function handleGenerateDescription({ sharedFields, pieces, descFetc
     piece_name: cleanIdentifier
   };
 
+  // Provide transient legacy companions for the AI route only when needed, without overwriting canonical values
+  // and never copying primary_medium (metal/hardware) into material or stone_family.
+  const canonicalMaterial =
+    (hasMeaningfulValue(sanitizedPiece.material) ? String(sanitizedPiece.material).trim() : "") ||
+    (hasMeaningfulValue(sanitizedShared.material) ? String(sanitizedShared.material).trim() : "") ||
+    (hasMeaningfulValue(sanitizedPiece.stone_family) ? String(sanitizedPiece.stone_family).trim() : "") ||
+    (hasMeaningfulValue(sanitizedShared.stone_family) ? String(sanitizedShared.stone_family).trim() : "");
+
+  if (canonicalMaterial) {
+    if (!hasMeaningfulValue(sanitizedShared.material)) sanitizedShared.material = canonicalMaterial;
+    if (!hasMeaningfulValue(sanitizedShared.stone_family)) sanitizedShared.stone_family = canonicalMaterial;
+  }
+
+  const canonicalOriginHandle =
+    (hasMeaningfulValue(sanitizedPiece.origin_page_handle) ? String(sanitizedPiece.origin_page_handle).trim() : "") ||
+    (hasMeaningfulValue(sanitizedShared.origin_page_handle) ? String(sanitizedShared.origin_page_handle).trim() : "") ||
+    (hasMeaningfulValue(sanitizedPiece.origin_handle) ? String(sanitizedPiece.origin_handle).trim() : "") ||
+    (hasMeaningfulValue(sanitizedShared.origin_handle) ? String(sanitizedShared.origin_handle).trim() : "");
+
+  if (canonicalOriginHandle) {
+    if (!hasMeaningfulValue(sanitizedShared.origin_page_handle)) sanitizedShared.origin_page_handle = canonicalOriginHandle;
+    if (!hasMeaningfulValue(sanitizedShared.origin_handle)) sanitizedShared.origin_handle = canonicalOriginHandle;
+  }
+
+  const canonicalCutAndShape =
+    (hasMeaningfulValue(sanitizedPiece.cut_and_shape) ? String(sanitizedPiece.cut_and_shape).trim() : "") ||
+    (hasMeaningfulValue(sanitizedShared.cut_and_shape) ? String(sanitizedShared.cut_and_shape).trim() : "") ||
+    (hasMeaningfulValue(sanitizedPiece.cut_type) ? String(sanitizedPiece.cut_type).trim() : "") ||
+    (hasMeaningfulValue(sanitizedShared.cut_type) ? String(sanitizedShared.cut_type).trim() : "");
+
+  if (canonicalCutAndShape) {
+    if (!hasMeaningfulValue(sanitizedPiece.cut_and_shape)) sanitizedPiece.cut_and_shape = canonicalCutAndShape;
+  }
+
   delete sanitizedShared.is_ooak;
   delete sanitizedPiece.is_ooak;
 
@@ -211,84 +309,12 @@ export async function handleGenerateDescription({ sharedFields, pieces, descFetc
   );
 }
 
-// ==========================================
-// STRICT METAFIELD SCHEMA MAP (Aligned with API)
-// ==========================================
-const METAFIELD_SCHEMA = {
-  // SHOPIFY TAXONOMY (Requires metaobject_reference)
-  "color-pattern": { namespace: "shopify", type: "list.metaobject_reference" },
-  "age-group": { namespace: "shopify", type: "metaobject_reference" },
-  "jewelry-type": { namespace: "shopify", type: "metaobject_reference" },
-  "target-gender": { namespace: "shopify", type: "metaobject_reference" },
-  "jewelry-material": { namespace: "shopify", type: "metaobject_reference" },
-  "necklace-design": { namespace: "shopify", type: "metaobject_reference" },
-  "condition": { namespace: "shopify", type: "metaobject_reference" },
-  "crystal-system": { namespace: "shopify", type: "metaobject_reference" },
-  "mineral-class": { namespace: "shopify", type: "metaobject_reference" },
-  "geological-era": { namespace: "shopify", type: "metaobject_reference" },
-  "rock-composition": { namespace: "shopify", type: "metaobject_reference" },
-  "rock-formation": { namespace: "shopify", type: "metaobject_reference" },
-  "chain-link-type": { namespace: "shopify", type: "metaobject_reference" },
-  "jewelry-finding-type": { namespace: "shopify", type: "metaobject_reference" },
+// ==========================================================================
+// EXPLICIT CANONICAL CAPABILITY REGISTRY MAP (Derived from constants.jsx)
+// ==========================================================================
 
-  // CUSTOM NAMESPACE (Strict Types)
-  // 🟢 FIX: Aligned material to custom / single_line_text_field
-  "material": { namespace: "custom", type: "single_line_text_field" },
-  "is_one_of_a_kind": { namespace: "custom", type: "single_line_text_field" },
-  "wire_material": { namespace: "custom", type: "single_line_text_field" },
-  "weight_grams": { namespace: "custom", type: "number_decimal" },
-  "shipping_weight_oz": { namespace: "custom", type: "number_decimal" },
-  "price": { namespace: "custom", type: "number_decimal" },
-  
-  // HEAVY TEXT BLOCKS (Multi-line)
-  "origin_story": { namespace: "custom", type: "multi_line_text_field" },
-  "honest_flaws_and_character": { namespace: "custom", type: "multi_line_text_field" },
-  "honest_flaws": { namespace: "custom", type: "multi_line_text_field" },
-
-  "character_marks": { namespace: "custom", type: "list.single_line_text_field" },
-  
-  // 🟢 ORIGIN HANDLE MAPPED CORRECTLY 
-  "origin_page_handle": { namespace: "custom", type: "single_line_text_field" },
-  "origin_handle": { namespace: "custom", type: "single_line_text_field" }
-};
-
-const RETIRED_KEYS = [
-  "artist_notes", "bench_notes", "handcrafted_by", "color",
-  "cut_and_shape", "stone_shape", "primary_use",
-  "is_ooak", "rarity", "authenticity",
-  "custom.artist_notes", "custom.bench_notes", "custom.handcrafted_by", "custom.color",
-  "custom.cut_and_shape", "custom.stone_shape", "custom.primary_use",
-  "custom.is_ooak", "custom.rarity", "custom.authenticity",
-  "shopify.rarity", "shopify.authenticity"
-];
-
-export function buildMetafieldsJson(sharedFields, piece) {
-  const allFields = { ...(sharedFields || {}), ...(piece || {}) };
-
-  // Resolve single canonical OOAK destination: custom.is_one_of_a_kind
-  // Preserve explicit answers; omit on conflict rather than guessing or assuming Yes.
-  const { value: resolvedOoak, conflict: ooakConflict } = resolveCanonicalOoak(sharedFields, piece);
-  delete allFields.is_ooak;
-  delete allFields["custom.is_ooak"];
-  if (ooakConflict) {
-    console.warn("[buildMetafieldsJson] Conflicting OOAK values detected between is_ooak and is_one_of_a_kind; omitting to prevent unverified write.");
-    delete allFields.is_one_of_a_kind;
-  } else if (resolvedOoak) {
-    allFields.is_one_of_a_kind = resolvedOoak;
-  } else {
-    delete allFields.is_one_of_a_kind;
-  }
-
-  // Ensure piece_name remains the exact human identifier, never the full 3-part customer title
-  if (typeof allFields.piece_name === "string") {
-    const segs = splitSegmentedTitle(allFields.piece_name);
-    if (segs.length >= 3) {
-      allFields.piece_name = segs[segs.length - 1];
-    }
-  }
-
-  // Omit internal UI state, transient scan payloads, and native product fields from custom metafields
-  const omitKeys = [
+const BLOCKED_COMPAT_EXCLUDED_ALIAS_PROTECTED_KEYS = (() => {
+  const blocked = new Set([
     "id",
     "pieceId",
     "productId",
@@ -298,14 +324,20 @@ export function buildMetafieldsJson(sharedFields, piece) {
     "shopify_title",
     "product_title",
     "official_name",
+    "custom.official_name",
     "handle",
     "seo_title",
+    "custom.seo_title",
     "title_tag",
+    "global.title_tag",
     "description_tag",
+    "global.description_tag",
     "alt_text",
+    "custom.alt_text",
     "imageAlts",
     "altValidationErrors",
     "standardized_candidates",
+    "custom.standardized_candidates",
     "review_proposals",
     "verifiedGeoValues",
     "geoSource",
@@ -323,41 +355,261 @@ export function buildMetafieldsJson(sharedFields, piece) {
     "photos",
     "imageBase64",
     "imageMimeType",
-    "generated_description" // This belongs in body_html, not a metafield
-  ];
+    "generated_description",
+    "custom.generated_description",
+    "native_title",
+    "native_description",
+    "native_seo_title",
+    "native_seo_description",
+    "native_price",
+    "native_shipping_weight",
+    "native_image_alt",
+    "price",
+    "custom.price",
+    "shipping_weight_oz",
+    "custom.shipping_weight_oz",
+    "is_ooak",
+    "custom.is_ooak",
+    "stone_family",
+    "custom.stone_family",
+    "primary_medium",
+    "custom.primary_medium",
+    "origin_handle",
+    "custom.origin_handle",
+    "cut_type",
+    "custom.cut_type",
+    "target_gender",
+    "custom.target_gender",
+    "age_group",
+    "custom.age_group",
+    "condition",
+    "custom.condition",
+    "custom_product",
+    "custom.custom_product",
+    "origin_story",
+    "custom.origin_story",
+    "stone_story",
+    "custom.stone_story",
+    "collection_story",
+    "custom.collection_story",
+    "rescued_by",
+    "custom.rescued_by",
+    "character_marks",
+    "custom.character_marks",
+    "honest_flaws_and_character",
+    "custom.honest_flaws_and_character",
+    "honest_flaws",
+    "custom.honest_flaws",
+    "necklace_design",
+    "custom.necklace_design",
+    "primary_use",
+    "custom.primary_use",
+    "rarity",
+    "custom.rarity",
+    "authenticity",
+    "custom.authenticity",
+    "artist_notes",
+    "custom.artist_notes",
+    "bench_notes",
+    "custom.bench_notes",
+    "handcrafted_by",
+    "custom.handcrafted_by"
+  ]);
+
+  const registerBlockedField = (f) => {
+    if (!f) return;
+    if (f.key) {
+      blocked.add(f.key);
+      if (!f.key.includes(".") && (!f.namespace || f.namespace === "custom")) {
+        blocked.add(`custom.${f.key}`);
+      }
+    }
+    if (f.metaKey && f.namespace) {
+      blocked.add(`${f.namespace}.${f.metaKey}`);
+    }
+    if (f.registryIdentity) {
+      blocked.add(f.registryIdentity);
+    }
+  };
+
+  (COMPATIBILITY_ADAPTER_FIELDS || []).forEach(registerBlockedField);
+  (EXCLUDED_CATALOG_FIELDS || []).forEach(registerBlockedField);
+  (DUPLICATE_ALIAS_CATALOG_FIELDS || []).forEach(registerBlockedField);
+  (PROTECTED_DATA_ENTRIES || []).forEach(entry => {
+    if (entry?.identity) blocked.add(entry.identity);
+  });
+  (UNVERIFIED_PROPOSED_MEASUREMENT_KEYS || []).forEach(k => blocked.add(k));
+  (PRODUCER_ALIGNMENT_PENDING_KEYS || []).forEach(k => blocked.add(k));
+
+  return blocked;
+})();
+
+const CANONICAL_METAFIELD_CONTRACTS_BY_KEY = (() => {
+  const map = new Map();
+
+  (CANONICAL_CAPABILITY_FIELDS || []).forEach(field => {
+    if (!field) return;
+    // Native capabilities are transported via dedicated top-level product/variant/media fields, not metafieldsJson
+    if (field.owner === "native" || field.namespace === "native" || field.type === "native") {
+      return;
+    }
+
+    const ns = field.metaConfig?.namespace || field.namespace || "custom";
+    const metaKey = field.metaKey || field.key.replace(/^(custom|shopify|google|mm-google-shopping)\./, "");
+    const resolvedType = field.metaConfig?.type || field.type;
+    if (!ns || !metaKey || !resolvedType) return;
+
+    const isHeldOrUnverified =
+      field.mappingStatus === "pending_read_only" ||
+      field.storageVerified === false ||
+      field.writerVerified === false ||
+      field.metaConfig?.definitionVerified === false ||
+      field.producerAlignmentPending === true ||
+      field.registryRole === "APPROVED_MEASUREMENT_ADDITION" ||
+      field.owner === "variant_metafield" ||
+      (field.registryOwner && field.registryOwner !== "PRODUCT") ||
+      `${ns}.${metaKey}` === "mm-google-shopping.custom_product";
+
+    const contract = {
+      namespace: ns,
+      key: metaKey,
+      type: resolvedType,
+      owner: field.owner || "metafield",
+      registryOwner: field.registryOwner || "PRODUCT",
+      registryIdentity: field.registryIdentity || `${ns}.${metaKey}`,
+      isHeldOrUnverified
+    };
+
+    map.set(field.key, contract);
+    map.set(metaKey, contract);
+    map.set(`${ns}.${metaKey}`, contract);
+    if (field.registryIdentity) {
+      map.set(field.registryIdentity, contract);
+    }
+  });
+
+  return map;
+})();
+
+export function buildMetafieldsJson(sharedFields, piece) {
+  const safeShared = sharedFields || {};
+  const safePiece = piece || {};
+  const allFields = { ...safeShared, ...safePiece };
+
+  // 1. Resolve single canonical OOAK destination: custom.is_one_of_a_kind
+  // Preserve explicit answers; omit on conflict rather than guessing or assuming Yes.
+  const { value: resolvedOoak, conflict: ooakConflict } = resolveCanonicalOoak(safeShared, safePiece);
+  delete allFields.is_ooak;
+  delete allFields["custom.is_ooak"];
+  if (ooakConflict) {
+    console.warn("[buildMetafieldsJson] Conflicting OOAK values detected between is_ooak and is_one_of_a_kind; omitting to prevent unverified write.");
+    delete allFields.is_one_of_a_kind;
+    delete allFields["custom.is_one_of_a_kind"];
+  } else if (hasMeaningfulValue(resolvedOoak)) {
+    allFields.is_one_of_a_kind = resolvedOoak;
+  } else {
+    delete allFields.is_one_of_a_kind;
+    delete allFields["custom.is_one_of_a_kind"];
+  }
+
+  // 2. Canonical stone identity: custom.material
+  // Prefer canonical material. Only fall back to legacy stone_family when material is blank.
+  // NEVER fall back to primary_medium (which can hold metal/setting hardware).
+  const explicitMaterial = hasMeaningfulValue(safePiece.material)
+    ? safePiece.material
+    : (hasMeaningfulValue(safeShared.material) ? safeShared.material : "");
+  const fallbackStoneFamily = hasMeaningfulValue(safePiece.stone_family)
+    ? safePiece.stone_family
+    : (hasMeaningfulValue(safeShared.stone_family) ? safeShared.stone_family : "");
+
+  if (hasMeaningfulValue(explicitMaterial)) {
+    allFields.material = explicitMaterial;
+  } else if (hasMeaningfulValue(fallbackStoneFamily)) {
+    allFields.material = fallbackStoneFamily;
+  }
+  delete allFields.stone_family;
+  delete allFields["custom.stone_family"];
+  delete allFields.primary_medium;
+  delete allFields["custom.primary_medium"];
+
+  // 3. Canonical origin page handle: custom.origin_page_handle (companion: origin_handle)
+  const explicitOriginPageHandle = hasMeaningfulValue(safePiece.origin_page_handle)
+    ? safePiece.origin_page_handle
+    : (hasMeaningfulValue(safeShared.origin_page_handle) ? safeShared.origin_page_handle : "");
+  const fallbackOriginHandle = hasMeaningfulValue(safePiece.origin_handle)
+    ? safePiece.origin_handle
+    : (hasMeaningfulValue(safeShared.origin_handle) ? safeShared.origin_handle : "");
+
+  if (hasMeaningfulValue(explicitOriginPageHandle)) {
+    allFields.origin_page_handle = explicitOriginPageHandle;
+  } else if (hasMeaningfulValue(fallbackOriginHandle)) {
+    allFields.origin_page_handle = fallbackOriginHandle;
+  }
+  delete allFields.origin_handle;
+  delete allFields["custom.origin_handle"];
+
+  // 4. Canonical cut and shape: custom.cut_and_shape (companion: cut_type)
+  const explicitCutAndShape = hasMeaningfulValue(safePiece.cut_and_shape)
+    ? safePiece.cut_and_shape
+    : (hasMeaningfulValue(safeShared.cut_and_shape) ? safeShared.cut_and_shape : "");
+  const fallbackCutType = hasMeaningfulValue(safePiece.cut_type)
+    ? safePiece.cut_type
+    : (hasMeaningfulValue(safeShared.cut_type) ? safeShared.cut_type : "");
+
+  if (hasMeaningfulValue(explicitCutAndShape)) {
+    allFields.cut_and_shape = explicitCutAndShape;
+  } else if (hasMeaningfulValue(fallbackCutType)) {
+    allFields.cut_and_shape = fallbackCutType;
+  }
+  delete allFields.cut_type;
+  delete allFields["custom.cut_type"];
+
+  // 5. Ensure piece_name remains the exact human identifier (e.g. bob, BQH-1, BQH-2), never the full 3-part customer title
+  if (typeof allFields.piece_name === "string") {
+    const segs = splitSegmentedTitle(allFields.piece_name);
+    if (segs.length >= 3) {
+      allFields.piece_name = segs[segs.length - 1];
+    }
+  }
 
   const metaArr = [];
   const emittedTargets = new Set();
 
   Object.keys(allFields).forEach(rawKey => {
+    const val = allFields[rawKey];
+    if (!hasMeaningfulValue(val)) {
+      return;
+    }
+
+    if (BLOCKED_COMPAT_EXCLUDED_ALIAS_PROTECTED_KEYS.has(rawKey)) {
+      return;
+    }
+
+    const contract = CANONICAL_METAFIELD_CONTRACTS_BY_KEY.get(rawKey);
+    // Strict registry contract: never catch-all unknown/unmapped keys into custom.single_line_text_field
+    if (!contract) {
+      return;
+    }
+
+    // Fail closed on all explicit storage, writer, producer-alignment, pending_read_only, channel-flag, and variant-owner holds
     if (
-      omitKeys.includes(rawKey) ||
-      RETIRED_KEYS.includes(rawKey) ||
-      allFields[rawKey] === undefined ||
-      allFields[rawKey] === null ||
-      allFields[rawKey] === ""
+      contract.isHeldOrUnverified ||
+      BLOCKED_COMPAT_EXCLUDED_ALIAS_PROTECTED_KEYS.has(contract.registryIdentity) ||
+      BLOCKED_COMPAT_EXCLUDED_ALIAS_PROTECTED_KEYS.has(`${contract.namespace}.${contract.key}`)
     ) {
       return;
     }
 
-    const val = allFields[rawKey];
-    if (typeof val === "object" && !Array.isArray(val)) {
+    if (contract.key === "collection_date" && /^(n\/a|none|unknown)$/i.test(String(val).trim())) {
       return;
     }
 
-    const cleanKey = rawKey.replace(/^(custom|shopify)\./, "");
-    if (omitKeys.includes(cleanKey) || RETIRED_KEYS.includes(cleanKey)) {
-      return;
-    }
-
-    // 2. LOOKUP SCHEMA (Default to custom string if not mapped above)
-    const schema = METAFIELD_SCHEMA[cleanKey] || METAFIELD_SCHEMA[rawKey] || { namespace: "custom", type: "single_line_text_field" };
     let finalValue = Array.isArray(val) ? JSON.stringify(val) : String(val).trim();
     if (!finalValue) return;
 
-    // Prevent invalid non-GID strings from being written to shopify.* metaobject_reference fields
-    if (schema.namespace === "shopify" && schema.type.includes("metaobject_reference")) {
-      if (schema.type.startsWith("list.")) {
+    // Validate shopify.* list.metaobject_reference / metaobject_reference values without flattening reference lists
+    if (contract.namespace === "shopify" && contract.type.includes("metaobject_reference")) {
+      if (contract.type.startsWith("list.")) {
         try {
           const parsedArr = finalValue.startsWith("[") ? JSON.parse(finalValue) : [finalValue];
           const validGids = Array.isArray(parsedArr)
@@ -371,35 +623,44 @@ export function buildMetafieldsJson(sharedFields, piece) {
       } else {
         if (!/^gid:\/\/shopify\/Metaobject\//i.test(finalValue)) return;
       }
-    }
-    // 3. FORMAT VALUE BASED ON SHOPIFY DATA TYPE
-    else if (schema.type.startsWith("list.")) {
-      // Shopify requires list fields to be stringified JSON arrays
+    } else if (contract.type.startsWith("list.")) {
       try {
         if (finalValue.startsWith("[") && finalValue.endsWith("]")) {
-          JSON.parse(finalValue); // Verify it is a valid array
+          const parsed = JSON.parse(finalValue);
+          if (!Array.isArray(parsed) || parsed.length === 0) return;
+          finalValue = JSON.stringify(parsed.map(item => String(item).trim()).filter(Boolean));
+          if (finalValue === "[]") return;
         } else {
-          finalValue = JSON.stringify([finalValue]); // Wrap plain string into JSON array
+          finalValue = JSON.stringify([finalValue]);
         }
       } catch (e) {
         finalValue = JSON.stringify([finalValue]);
       }
-    } else if (schema.type === "number_decimal") {
-      // Strip out words like "grams", leaving only numbers and decimals
-      // Never derive shipping_weight_oz from weight_grams
-      const num = finalValue.replace(/[^\d.-]/g, "");
-      if (!num || isNaN(parseFloat(num))) return;
-      finalValue = num;
+    } else if (contract.type === "number_decimal") {
+      // Preserve numeric 0 or positive decimals; never derive shipping_weight_oz from weight_grams
+      const numStr = finalValue.replace(/[^\d.-]/g, "");
+      const parsedNum = Number(numStr);
+      if (numStr === "" || Number.isNaN(parsedNum)) return;
+      finalValue = String(parsedNum);
+    } else if (contract.type === "boolean") {
+      const lower = finalValue.toLowerCase();
+      if (lower === "true" || lower === "yes" || lower === "1") {
+        finalValue = "true";
+      } else if (lower === "false" || lower === "no" || lower === "0") {
+        finalValue = "false";
+      } else {
+        return;
+      }
     }
 
-    const targetId = `${schema.namespace}.${cleanKey}`;
+    const targetId = `${contract.namespace}.${contract.key}`;
     if (emittedTargets.has(targetId)) return;
     emittedTargets.add(targetId);
 
     metaArr.push({
-      namespace: schema.namespace,
-      key: cleanKey,
-      type: schema.type,
+      namespace: contract.namespace,
+      key: contract.key,
+      type: contract.type,
       value: finalValue
     });
   });
@@ -408,28 +669,49 @@ export function buildMetafieldsJson(sharedFields, piece) {
 }
 
 export function buildTitle(sharedFields, piece) {
-  const canonicalSegments = splitSegmentedTitle(piece?.canonical_title);
-  if (canonicalSegments.length >= 3) {
-    return `${canonicalSegments[0]} — ${canonicalSegments[1]} — ${canonicalSegments[canonicalSegments.length - 1]}`;
+  // 1. Preserve an existing explicit canonical_title unchanged
+  const rawCanonical = typeof piece?.canonical_title === "string" ? piece.canonical_title.trim() : "";
+  if (rawCanonical) {
+    return rawCanonical;
   }
 
+  // 2. If piece_name itself was entered as a 3-segment title, assemble with approved " - " separators
   const rawName = typeof piece?.piece_name === "string" ? piece.piece_name.trim() : "";
   const nameSegments = splitSegmentedTitle(rawName);
+
+  // Prefer canonical material first, then legacy stone_family companion (never primary_medium)
+  const stoneIdentity =
+    (hasMeaningfulValue(piece?.material) ? String(piece.material).trim() : "") ||
+    (hasMeaningfulValue(sharedFields?.material) ? String(sharedFields.material).trim() : "") ||
+    (hasMeaningfulValue(piece?.stone_family) ? String(piece.stone_family).trim() : "") ||
+    (hasMeaningfulValue(sharedFields?.stone_family) ? String(sharedFields.stone_family).trim() : "");
+
+  const originSegment =
+    (hasMeaningfulValue(sharedFields?.collection_name)
+      ? String(sharedFields.collection_name).replace(/\s+Collection$/i, "").trim()
+      : "") ||
+    (hasMeaningfulValue(piece?.collection_name)
+      ? String(piece.collection_name).replace(/\s+Collection$/i, "").trim()
+      : "") ||
+    (hasMeaningfulValue(piece?.origin_location) ? String(piece.origin_location).trim() : "") ||
+    (hasMeaningfulValue(sharedFields?.origin_location) ? String(sharedFields.origin_location).trim() : "");
+
   if (nameSegments.length >= 3) {
-    const familyFromTitle = sharedFields?.stone_family || nameSegments[0] || "Unknown Stone";
-    const originFromTitle = sharedFields?.collection_name
-      ? sharedFields.collection_name.replace(/\s+Collection$/i, "").trim()
-      : (sharedFields?.origin_location || nameSegments[1] || "Unknown Origin");
-    const tailIdentifier = nameSegments[nameSegments.length - 1] || "New Piece";
-    return `${familyFromTitle} — ${originFromTitle} — ${tailIdentifier}`;
+    const segFamily = stoneIdentity || nameSegments[0];
+    const segOrigin = originSegment || nameSegments[1];
+    const tailIdentifier = nameSegments[nameSegments.length - 1];
+    return [segFamily, segOrigin, tailIdentifier].filter(Boolean).join(" - ");
   }
 
-  const family = sharedFields?.stone_family || piece?.stone_family || "Unknown Stone";
-  const origin = sharedFields?.collection_name
-    ? sharedFields.collection_name.replace(/\s+Collection$/i, "").trim()
-    : (sharedFields?.origin_location || piece?.origin_location || "Unknown Origin");
-  const name = rawName || "New Piece";
+  // 3. Do not force 3-segment stone-title formatting onto non-stone accessories or when stone identity is absent
+  if (!isLikelyStoneBearingContext(sharedFields, piece) && !stoneIdentity) {
+    if (rawName && originSegment) {
+      return `${originSegment} - ${rawName}`;
+    }
+    return rawName || originSegment || "";
+  }
 
-  // EXACT ORIGINAL DASHES PRESERVED — DO NOT TOUCH
-  return `${family} — ${origin} — ${name}`;
+  // 4. Assemble stone product title from available verified segments using " - " without inventing "Unknown Stone" / "Unknown Origin"
+  const assembledSegments = [stoneIdentity, originSegment, rawName].filter(Boolean);
+  return assembledSegments.join(" - ");
 }

@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { BlockStack, Card, Text, Banner, TextField, Select, Button, InlineStack, DropZone } from "@shopify/polaris";
+import { BlockStack, Card, Text, Banner, TextField, Select, Button, InlineStack, DropZone, Badge } from "@shopify/polaris";
 import { MagicIcon, SaveIcon, ClipboardIcon } from "@shopify/polaris-icons";
 import { DROPDOWN_OPTIONS, FULL_META_GROUPS, getFieldStatus, ROCKHOUND_FIELDS, PRODUCT_TEMPLATE_GROUPS } from "../utils/meta-injector.constants.jsx";
-import { evaluateFieldMetadata, buildRepairPayload } from "../utils/meta-injector.matrix-domain.jsx";
+import { evaluateFieldMetadata, buildRepairPayload, resolveConfigFieldDestination } from "../utils/meta-injector.matrix-domain.jsx";
 import { useFetcher } from "react-router";
 
 const CUSTOM_FIELDS = [
@@ -27,8 +27,8 @@ const CUSTOM_FIELDS = [
 
 const NAMESPACE_MAP = {
   custom: [
-    "official_name", "stone_story", "cut_type", "surface_finish",
-    "treatment_status", "primary_color", "secondary_colors",
+    "official_name", "stone_story", "cut_type", "cut_and_shape", "stone_shape", "surface_finish",
+    "treatment_status", "color", "primary_color", "secondary_colors",
     "rock_composition", "character_marks", "dimensions_mm", "mohs_hardness",
     "specific_gravity", "crystal_system", "luster", "cleavage", "fracture_pattern",
     "diaphaneity", "tenacity", "origin_story", "stone_family", "piece_name",
@@ -42,14 +42,26 @@ const NAMESPACE_MAP = {
     "age_group", "target_gender", "condition", "google_product_category",
     "alt_text", "weight_grams", "shipping_weight_oz", "price",
     "rescued_by", "honest_flaws_and_character",
-    "custom_product", "found_object", "chain_link_type"
+    "custom_product", "found_object", "chain_link_type",
+    "overall_solid_length_in", "whole_product_weight_grams",
+    "chain_cord_length_in", "accessory_dimensions_mm", "fitting_opening_mm"
   ]
 };
 
 const RETIRED_TAB2_KEYS = new Set([
-  "artist_notes", "bench_notes", "handcrafted_by", "color",
-  "cut_and_shape", "stone_shape", "primary_use"
+  "artist_notes", "bench_notes", "handcrafted_by", "primary_use"
 ]);
+
+const PROTECTED_MANUAL_STORY_TITLES = [
+  "the creek find",
+  "the violet hour",
+  "the statement"
+];
+
+const isManualStoryProtectedPiece = (title, pieceName) => {
+  const combined = `${title || ""} ${pieceName || ""}`.toLowerCase();
+  return PROTECTED_MANUAL_STORY_TITLES.some(protectedName => combined.includes(protectedName));
+};
 
 const extractLegacyPieceNameIfSegmented = (rawTitle) => {
   if (typeof rawTitle !== "string") return "";
@@ -91,6 +103,8 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
   
   const statusFetcher = useFetcher();
   const productLoadFetcher = useFetcher();
+
+  const allTemplateFields = PRODUCT_TEMPLATE_GROUPS.flatMap(g => g.fields || []);
 
   useEffect(() => {
     if (tab2Fetcher && tab2Fetcher.data) {
@@ -154,6 +168,10 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
     if (product && typeof product.descriptionHtml === "string") {
       newForm.native_description = product.descriptionHtml;
       newFullForm.native_description = product.descriptionHtml;
+      if (!newFullForm.generated_description) {
+        newForm.generated_description = product.descriptionHtml;
+        newFullForm.generated_description = product.descriptionHtml;
+      }
     }
 
     const allEdges = [
@@ -166,7 +184,9 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
     if (allEdges.length > 0) {
       allEdges.forEach(({ node }) => {
         const hasValue = node && node.value !== null && node.value !== undefined;
-        if (hasValue && (node.namespace === "custom" || node.namespace === "geo" || node.namespace === "rockhound")) {
+        if (!hasValue) return;
+
+        if (node.namespace === "custom" || node.namespace === "geo" || node.namespace === "rockhound") {
           if (RETIRED_TAB2_KEYS.has(node.key)) {
             return;
           }
@@ -189,6 +209,10 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
 
           newForm[node.key] = parsedValue;
           newFullForm[node.key] = parsedValue;
+        } else if (node.namespace === "google" || node.namespace === "mm-google-shopping" || node.namespace === "shopify") {
+          const qualifiedKey = `${node.namespace}.${node.key}`;
+          newForm[qualifiedKey] = String(node.value);
+          newFullForm[qualifiedKey] = String(node.value);
         }
       });
     }
@@ -214,7 +238,7 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
       }
     });
 
-    // Safe legacy read companions without automatic overwrite
+    // Safe legacy read companions without automatic overwrite of populated canonical values
     if (!newFullForm.is_one_of_a_kind && newFullForm.is_ooak) {
       newFullForm.is_one_of_a_kind = newFullForm.is_ooak;
       newForm.is_one_of_a_kind = newFullForm.is_ooak;
@@ -227,6 +251,10 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
     if (!newFullForm.origin_page_handle && newFullForm.origin_handle) {
       newFullForm.origin_page_handle = newFullForm.origin_handle;
       newForm.origin_page_handle = newFullForm.origin_handle;
+    }
+    if (!newFullForm.cut_and_shape && newFullForm.cut_type) {
+      newFullForm.cut_and_shape = newFullForm.cut_type;
+      newForm.cut_and_shape = newFullForm.cut_type;
     }
 
     // Read actual variant shipping weight in OUNCES when present; never derive shipping weight from stone-only weight_grams
@@ -327,6 +355,7 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
 
         const seoDesc = lData.nativeTargets?.seo?.description ?? lData.seo?.description ?? "";
         const seoTitle = lData.nativeTargets?.seo?.title ?? lData.seo?.title ?? "";
+        const liveDescHtml = lData.nativeTargets?.descriptionHtml ?? "";
         const vEdge = lData.nativeTargets?.variants?.edges?.[0]?.node;
         const wObj = vEdge?.inventoryItem?.measurement?.weight;
         const liveShipOz =
@@ -336,6 +365,29 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
 
         setFullMetaState(prev => {
           const next = { ...prev };
+          const liveMfs = lData.currentMetafields || {};
+
+          Object.entries(liveMfs).forEach(([qualifiedKey, mfVal]) => {
+            if (mfVal === undefined || mfVal === null || String(mfVal).trim() === "") return;
+            const strVal = String(mfVal);
+            if (!next[qualifiedKey]) {
+              next[qualifiedKey] = strVal;
+              originalMetaRef.current[qualifiedKey] = strVal;
+            }
+            if (qualifiedKey.startsWith("custom.")) {
+              const bare = qualifiedKey.slice(7);
+              if (!RETIRED_TAB2_KEYS.has(bare) && !editedKeysRef.current.has(bare) && (next[bare] === undefined || next[bare] === "")) {
+                next[bare] = strVal;
+                originalMetaRef.current[bare] = strVal;
+              }
+            }
+          });
+
+          if (!next.cut_and_shape && next.cut_type) {
+            next.cut_and_shape = next.cut_type;
+            originalMetaRef.current.cut_and_shape = next.cut_type;
+          }
+
           if (!editedKeysRef.current.has("native_seo_description") && seoDesc) {
             next.native_seo_description = seoDesc;
             originalMetaRef.current.native_seo_description = seoDesc;
@@ -345,6 +397,12 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
             next.native_seo_title = seoTitle;
             originalMetaRef.current.seo_title = seoTitle;
             originalMetaRef.current.native_seo_title = seoTitle;
+          }
+          if (!editedKeysRef.current.has("generated_description") && !editedKeysRef.current.has("native_description") && !next.generated_description && liveDescHtml) {
+            next.generated_description = liveDescHtml;
+            next.native_description = liveDescHtml;
+            originalMetaRef.current.generated_description = liveDescHtml;
+            originalMetaRef.current.native_description = liveDescHtml;
           }
           if (!editedKeysRef.current.has("shipping_weight_oz") && !next.shipping_weight_oz && liveShipOz) {
             next.shipping_weight_oz = liveShipOz;
@@ -500,22 +558,47 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
 
     const RESCAN_PRESERVE_KEYS = [
       "shopify_title", "native_title",
-      "origin_handle", "origin_page_handle", "collection_location", "collection_date",
+      "origin_handle", "origin_page_handle", "origin_location", "collection_name", "collection_location", "collection_date",
       "stone_family", "surface_finish", "source_location",
+      "color", "cut_and_shape", "stone_shape", "cut_type",
       "piece_name", "dimensions_mm",
       "weight_grams", "shipping_weight_oz", "native_shipping_weight", "price", "native_price",
-      "character_marks", "primary_medium",
+      "overall_solid_length_in", "whole_product_weight_grams", "chain_cord_length_in", "accessory_dimensions_mm", "fitting_opening_mm",
+      "character_marks", "honest_flaws_and_character", "primary_medium",
       "secondary_medium", "treatment_status", "is_ooak", "is_one_of_a_kind", "treated",
       "material", "rescued_by", "alt_text",
       "found_object", "bail_included", "setting_ready",
       "jewelry_type", "necklace_design", "jewelry_finding_type", "wire_material",
-      "chain_link_type", "target_gender"
+      "chain_material", "chain_link_type", "target_gender",
+      "origin_story", "stone_story", "custom_product",
+      "google.age_group", "google.condition", "google.target_gender", "mm-google-shopping.custom_product"
     ];
+
+    const preserveSnapshot = (prev) => {
+      const next = {};
+      RESCAN_PRESERVE_KEYS.forEach(k => {
+        if (prev[k] !== undefined && prev[k] !== "") {
+          next[k] = prev[k];
+        }
+      });
+      editedKeysRef.current.forEach(k => {
+        if (prev[k] !== undefined && prev[k] !== "") {
+          next[k] = prev[k];
+        }
+      });
+      if (isManualStoryProtectedPiece(titleToUse, prev.piece_name)) {
+        if (prev.generated_description) next.generated_description = prev.generated_description;
+        if (prev.native_description) next.native_description = prev.native_description;
+      }
+      return next;
+    };
     
-    setFullMetaState(prev => Object.fromEntries(RESCAN_PRESERVE_KEYS.map(k => [k, prev[k] || ""])));
-    setFormState(prev => Object.fromEntries(RESCAN_PRESERVE_KEYS.map(k => [k, prev[k] || ""])));
-    setFullMetaState(prev => ({ ...prev, custom_product: prev.custom_product || "Yes" }));
-    setFormState(prev => ({ ...prev, custom_product: prev.custom_product || "Yes" }));
+    setFullMetaState(prev => {
+      const preserved = preserveSnapshot(prev);
+      fullMetaStateRef.current = preserved;
+      return preserved;
+    });
+    setFormState(prev => preserveSnapshot(prev));
 
     const formData = new FormData();
     formData.append("intent", "fullRescan");
@@ -738,7 +821,7 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
       stageProposalIfIntended("custom.piece_name", effectivePieceName, storedPieceName);
     }
 
-    // 6. Canonical OOAK, Material, and Origin Page Handle
+    // 6. Canonical OOAK, Material, Origin Page Handle, and Cut & Shape
     const effectiveOoak = currentState.is_one_of_a_kind ?? currentState.is_ooak;
     if (effectiveOoak !== undefined) {
       stageProposalIfIntended(
@@ -766,6 +849,14 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
       );
     }
 
+    if (currentState.cut_and_shape !== undefined && (editedKeysRef.current.has("cut_and_shape") || editedKeysRef.current.has("custom.cut_and_shape") || String(currentState.cut_and_shape).trim() !== String(baselineState.cut_and_shape ?? "").trim())) {
+      stageProposalIfIntended(
+        "custom.cut_and_shape",
+        currentState.cut_and_shape,
+        currentMetafields["custom.cut_and_shape"] ?? currentMetafields["custom.cut_type"] ?? baselineState.cut_and_shape
+      );
+    }
+
     // 7. Remaining supported custom fields
     const SKIP_DIRECT_LOOP_KEYS = new Set([
       "shopify_title", "native_title",
@@ -776,14 +867,15 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
       "is_ooak", "is_one_of_a_kind",
       "stone_family", "primary_medium", "material",
       "origin_handle", "origin_page_handle",
-      "origin_story"
+      "cut_type", "cut_and_shape",
+      "origin_story", "stone_story", "custom_product"
     ]);
 
     Object.entries(currentState).forEach(([rawKey, rawVal]) => {
       const bareKey = rawKey.replace(/^custom\./, "");
       if (SKIP_DIRECT_LOOP_KEYS.has(bareKey) || SKIP_DIRECT_LOOP_KEYS.has(rawKey)) return;
       if (RETIRED_TAB2_KEYS.has(bareKey) || RETIRED_TAB2_KEYS.has(rawKey)) return;
-      if (rawKey.startsWith("std_") || rawKey.startsWith("shopify.") || rawKey.startsWith("native_")) return;
+      if (rawKey.startsWith("std_") || rawKey.startsWith("shopify.") || rawKey.startsWith("native_") || rawKey.startsWith("google.") || rawKey.startsWith("mm-google-shopping.")) return;
       if (!NAMESPACE_MAP.custom.includes(bareKey)) return;
 
       const canonicalKey = `custom.${bareKey}`;
@@ -796,6 +888,22 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
         approvalsForProduct["native_seo_title"] = repairPlan["custom.seo_title"];
       }
     });
+
+    // Preserve native_image_alt media repairs if present in live manifest
+    if (liveProductManifest?.nativeTargets?.media?.edges) {
+      liveProductManifest.nativeTargets.media.edges.forEach(({ node }) => {
+        if (!node?.id) return;
+        const mediaAltKey = `native_image_alts_${node.id}`;
+        if (currentState[mediaAltKey] !== undefined && editedKeysRef.current.has(mediaAltKey)) {
+          const cleanAlt = String(currentState[mediaAltKey]).trim();
+          if (cleanAlt && cleanAlt !== String(node.alt ?? "").trim()) {
+            repairPlan[mediaAltKey] = cleanAlt;
+            metadata[mediaAltKey] = { source: "Manual", stage: "Tab2Review" };
+            approvalsForProduct[mediaAltKey] = cleanAlt;
+          }
+        }
+      });
+    }
 
     const manifestForBuild = {
       ...(liveProductManifest || {}),
@@ -839,7 +947,11 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
         setErrorMessage("Save blocked: Variant details are still loading or product has multiple variants. Wait a moment for live product data to finish loading and click Inject Metafields again.");
         return;
       }
-      setWarningMessage("No modified or new fields to save. Edit a field or run Auto-Fill before clicking Inject Metafields.");
+      if (editedKeysRef.current.has("origin_story") && editedKeysRef.current.size === 1) {
+        setWarningMessage("Origin Story is a read-only source-context draft used to inform AI description generation; direct metafield persistence for custom.origin_story is held by domain policy. Edit Native Description or another supported canonical field before clicking Inject Metafields.");
+        return;
+      }
+      setWarningMessage("No modified or new fields to save. Edit a supported canonical field or run Auto-Fill before clicking Inject Metafields.");
       return;
     }
 
@@ -963,6 +1075,7 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
           Object.entries(parsed).forEach(([k, v]) => {
             if (k === "weight_grams" || k === "shipping_weight_oz" || k === "piece_name") return;
             if (RETIRED_TAB2_KEYS.has(k)) return;
+            if (k === "origin_story" && editedKeysRef.current.has("origin_story") && updated.origin_story) return;
             if (v !== undefined && v !== null && String(v).trim() !== "") {
               updated[k] = v;
               markKeyEdited(k);
@@ -1000,19 +1113,34 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
       if (Object.keys(tab2Data).length > 0) {
         const applyAiUpdates = (prev) => {
           const updatedState = { ...prev };
+          const isProtectedStory = isManualStoryProtectedPiece(
+            updatedState.shopify_title || updatedState.native_title,
+            updatedState.piece_name
+          );
+
           const ALWAYS_OVERWRITE = [
             "mohs_hardness", "moh_hardness", "luster", "fracture_pattern", "cleavage", "specific_gravity", 
             "diaphaneity", "mineral_class", "crystal_system", "rock_composition", 
             "rock_formation", "geological_era", "geological_age", "generated_description", 
-            "seo_title", "origin_story", "stone_story", "bail_included", 
+            "seo_title", "bail_included", 
             "setting_ready", "primary_medium", "alt_text", "found_object", 
             "secondary_medium", "surface_finish", "material", "treated", 
-            "jewelry_type", "jewelry_finding_type", "wire_material"
+            "jewelry_type", "jewelry_finding_type", "wire_material",
+            "color", "cut_and_shape", "stone_shape"
           ];
 
           Object.entries(tab2Data).forEach(([key, val]) => {
             if (key === "weight_grams" || key === "shipping_weight_oz" || key === "piece_name" || key === "shopify_title" || key === "canonical_title" || key === "product_title") return;
-            if (RETIRED_TAB2_KEYS.has(key) && key !== "color") return;
+            if (RETIRED_TAB2_KEYS.has(key)) return;
+            if (key === "tenacity" || key === "secondary_colors" || key === "custom_product") return;
+
+            // Preserve manual origin_story edits and protected manual-story descriptions
+            if (key === "origin_story" && (editedKeysRef.current.has("origin_story") || (updatedState.origin_story && String(updatedState.origin_story).trim() !== ""))) {
+              return;
+            }
+            if ((key === "generated_description" || key === "native_description") && isProtectedStory && (updatedState.generated_description || updatedState.native_description)) {
+              return;
+            }
 
             const hasNewValue = val !== undefined && val !== null && val.toString().trim() !== "" && val !== "See Shopify metaobject";
             const currentlyEmpty = !updatedState[key] || updatedState[key].toString().trim() === "";
@@ -1026,10 +1154,11 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
                 else if (lowerVal === "false" || lowerVal === "no") normalizedVal = "No";
               }
               
-              if (key === "color") {
-                if (!updatedState.primary_color || updatedState.primary_color.trim() === "") {
-                  updatedState.primary_color = normalizedVal;
-                  markKeyEdited("primary_color");
+              if (key === "cut_type") {
+                updatedState.cut_type = normalizedVal;
+                if (!updatedState.cut_and_shape || String(updatedState.cut_and_shape).trim() === "") {
+                  updatedState.cut_and_shape = normalizedVal;
+                  markKeyEdited("cut_and_shape");
                 }
               } else if (key === "is_ooak" || key === "is_one_of_a_kind") {
                 updatedState.is_one_of_a_kind = normalizedVal;
@@ -1043,6 +1172,10 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
                 updatedState.origin_page_handle = normalizedVal;
                 updatedState.origin_handle = normalizedVal;
                 markKeyEdited("origin_page_handle");
+              } else if (key === "generated_description") {
+                updatedState.generated_description = normalizedVal;
+                updatedState.native_description = normalizedVal;
+                markKeyEdited("generated_description");
               } else if (key === "poetic_hook") {
                 updatedState.native_seo_description = String(normalizedVal).trim();
                 markKeyEdited("native_seo_description");
@@ -1117,109 +1250,226 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
     }
   }, [pendingFixFields, currentFixIndex]);
 
-  const renderTemplateField = (field) => {
+  const renderSingleCapabilityControl = (field, overrideKey = null, overrideLabel = null) => {
+    const resolvedDest = overrideKey || resolveConfigFieldDestination(field);
+    const bareKey = (field.metaKey || field.key || "").replace(/^custom\./, "");
+
+    const evalMeta = evaluateFieldMetadata({
+      key: resolvedDest,
+      data: liveProductManifest || { currentMetafields: {}, nativeTargets: {} },
+      productId: selectedProductId,
+      currentApprovals: {},
+      configFields: allTemplateFields,
+      standardizedCandidatesByProduct: {},
+      getStandardizedEvaluationForField: null
+    });
+
+    const isHeldReadOnly = Boolean(
+      evalMeta.isPendingReadOnly ||
+      evalMeta.hasExplicitStorageHold ||
+      evalMeta.hasExplicitProducerHold ||
+      evalMeta.isChannelFlagReadOnly ||
+      evalMeta.isVariantMetafieldHold ||
+      field.mappingStatus === "pending_read_only" ||
+      field.storageVerified === false ||
+      field.writerVerified === false ||
+      field.producerAlignmentPending === true ||
+      field.owner === "variant_metafield" ||
+      resolvedDest === "mm-google-shopping.custom_product" ||
+      field.namespace === "shopify"
+    );
+
     const nativeEditableKeys = [
       "shopify_title", "native_title",
       "price", "native_price",
       "weight_grams", "shipping_weight_oz", "native_shipping_weight",
-      "native_description", "native_seo_title", "native_seo_description"
+      "native_description", "native_seo_title", "native_seo_description",
+      "native_image_alt"
     ];
-    const isKnownKey = NAMESPACE_MAP.custom.includes(field.key) || nativeEditableKeys.includes(field.key);
-    const isSupported = isKnownKey && !RETIRED_TAB2_KEYS.has(field.key) && field.namespace !== "shopify" && field.mappingStatus !== "pending_read_only";
+
+    const isKnownKey =
+      Boolean(evalMeta.isSupported) ||
+      NAMESPACE_MAP.custom.includes(bareKey) ||
+      nativeEditableKeys.includes(field.key) ||
+      resolvedDest.startsWith("native_image_alts_");
+
+    const isSupported = isKnownKey && !RETIRED_TAB2_KEYS.has(bareKey);
+    const canEdit = isSupported && !isHeldReadOnly && !evalMeta.isManualOnly && field.key !== "native_image_alt";
 
     const stateKey =
+      resolvedDest.startsWith("native_image_alts_") ? resolvedDest :
       field.key === "native_title" ? "shopify_title" :
       field.key === "native_description" ? "generated_description" :
       field.key === "native_seo_title" ? "seo_title" :
       field.key === "native_price" ? "price" :
       field.key === "native_shipping_weight" ? "shipping_weight_oz" :
-      field.key;
+      (field.namespace && field.namespace !== "custom" && field.namespace !== "native"
+        ? resolvedDest
+        : bareKey);
 
     let val = fullMetaState[stateKey] !== undefined && fullMetaState[stateKey] !== null
       ? fullMetaState[stateKey]
-      : (fullMetaState[field.key] ?? "");
+      : (fullMetaState[resolvedDest] ?? fullMetaState[field.key] ?? evalMeta.currentVal ?? "");
     
-    if (field.key === "is_one_of_a_kind" && (val === "" || val === undefined) && fullMetaState.is_ooak) {
+    if (bareKey === "is_one_of_a_kind" && (val === "" || val === undefined) && fullMetaState.is_ooak) {
       val = fullMetaState.is_ooak;
     }
-    if (field.key === "material" && (val === "" || val === undefined) && (fullMetaState.stone_family || fullMetaState.primary_medium)) {
+    if (bareKey === "material" && (val === "" || val === undefined) && (fullMetaState.stone_family || fullMetaState.primary_medium)) {
       val = fullMetaState.stone_family || fullMetaState.primary_medium;
     }
-    if (field.key === "origin_page_handle" && (val === "" || val === undefined) && fullMetaState.origin_handle) {
+    if (bareKey === "origin_page_handle" && (val === "" || val === undefined) && fullMetaState.origin_handle) {
       val = fullMetaState.origin_handle;
     }
+    if (bareKey === "cut_and_shape" && (val === "" || val === undefined) && fullMetaState.cut_type) {
+      val = fullMetaState.cut_type;
+    }
 
-    if (typeof val === 'string' && val.startsWith('[')) {
+    if (typeof val === "string" && val.startsWith("[")) {
       try {
         const arr = JSON.parse(val);
-        val = Array.isArray(arr) ? arr[0] : val;
+        val = Array.isArray(arr) ? arr.join(", ") : val;
       } catch(e) {}
-    } else if (typeof val === 'string' && val.startsWith('{')) {
+    } else if (typeof val === "string" && val.startsWith("{")) {
       try {
         const obj = JSON.parse(val);
         val = JSON.stringify(obj);
       } catch(e) {}
     } else if (Array.isArray(val)) {
-      val = val[0];
-    } else if (typeof val === 'object' && val !== null) {
+      val = val.join(", ");
+    } else if (typeof val === "object" && val !== null) {
       val = JSON.stringify(val);
     }
 
-    if (field.key === "rescued_by" && typeof val === 'string') {
-      if (val.includes("Bob & Janyce") || val.includes("Rockhound Studio")) val = "Bob and Janyce";
+    let holdReasonText = "";
+    let holdBadgeLabel = "";
+    if (!isSupported) {
+      holdReasonText = "Connection pending.";
+    } else if (field.key === "native_image_alt" && !overrideKey) {
+      holdBadgeLabel = "Media Expansion";
+      holdReasonText = "Read-only summary: individual media alt controls appear once live product media finishes loading.";
+    } else if (evalMeta.isStandardizedAttribute || field.namespace === "shopify") {
+      holdBadgeLabel = "Read-Only (Standardized)";
+      holdReasonText = "Standardized attribute (pending_read_only). Use Tab 3 for reference-matched writes.";
+    } else if (evalMeta.hasExplicitStorageHold || field.storageVerified === false || field.writerVerified === false) {
+      holdBadgeLabel = "Read-Only (Storage Unverified)";
+      holdReasonText = "Proposed measurement capability: storage/writer contract unverified (writes disabled).";
+    } else if (evalMeta.hasExplicitProducerHold || field.producerAlignmentPending === true) {
+      holdBadgeLabel = "Read-Only (Producer Alignment Pending)";
+      holdReasonText = "Producer/writer definition alignment pending verification (writes disabled).";
+    } else if (evalMeta.isChannelFlagReadOnly || resolvedDest === "mm-google-shopping.custom_product") {
+      holdBadgeLabel = "Read-Only (Channel Rule Pending)";
+      holdReasonText = "Channel boolean flag read-only pending verified rules (writes disabled).";
+    } else if (evalMeta.isVariantMetafieldHold || field.owner === "variant_metafield") {
+      holdBadgeLabel = "Read-Only (Variant Owner Hold)";
+      holdReasonText = "Variant-owned metafield (PRODUCTVARIANT) held: product-level writer route not applicable.";
+    } else if (isHeldReadOnly) {
+      holdBadgeLabel = "Read-Only (Held)";
+      holdReasonText = "Field contract held read-only (writes disabled).";
     }
-    if (field.key === "primary_medium" && val === "Stone") val = "";
 
-    const reqKeys = ["shopify_title", "native_title", "piece_name", "price", "native_price", "weight_grams", "shipping_weight_oz", "native_shipping_weight", "material", "stone_family", "collection_name", "origin_page_handle", "origin_handle", "rescued_by", "treatment_status", "origin_story", "seo_title"];
-    const isFilled = val !== undefined && val !== null && String(val).trim() !== "" && String(val).trim() !== "false" && !(field.key === "collection_date" && /^(n\/a|none|unknown)$/i.test(String(val).trim()));
-    const isRequiredEmpty = !isFilled && reqKeys.includes(field.key);
+    const reqKeys = [
+      "shopify_title", "native_title", "piece_name", "price", "native_price",
+      "weight_grams", "shipping_weight_oz", "native_shipping_weight",
+      "material", "collection_name", "origin_page_handle", "treatment_status", "seo_title", "native_seo_title"
+    ];
+    const isFilled =
+      val !== undefined &&
+      val !== null &&
+      String(val).trim() !== "" &&
+      String(val).trim() !== "false" &&
+      !(bareKey === "collection_date" && /^(n\/a|none|unknown)$/i.test(String(val).trim()));
+    const isRequiredEmpty = !isFilled && canEdit && reqKeys.includes(field.key);
     const isEmpty = !isFilled;
     
-    let dotFillColor = "#eab308";
+    let dotFillColor = isHeldReadOnly ? "#6b7280" : "#eab308";
     if (isFilled) dotFillColor = "#22c55e"; 
     if (isRequiredEmpty) dotFillColor = "#ef4444"; 
 
+    const effectiveLabel = overrideLabel || field.label;
+
     const labelNode = (
-      <div style={{ display: 'flex', alignItems: 'center' }}>
-        <svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg" style={{ minWidth: '18px', marginRight: '8px' }}>
-          <circle cx="9" cy="9" r="9" fill={dotFillColor} />
-        </svg>
-        <span style={{ fontSize: '14px', fontWeight: '500' }}>
-          {field.label}
-        </span>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px", flexWrap: "wrap" }}>
+        <div style={{ display: "flex", alignItems: "center" }}>
+          <svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg" style={{ minWidth: "18px", marginRight: "8px" }}>
+            <circle cx="9" cy="9" r="9" fill={dotFillColor} />
+          </svg>
+          <span style={{ fontSize: "14px", fontWeight: "500" }}>
+            {effectiveLabel}
+          </span>
+        </div>
+        {holdBadgeLabel && <Badge tone="info">{holdBadgeLabel}</Badge>}
       </div>
     );
 
-    const displayVal = isSupported ? (field.key === "collection_date" && !isFilled ? "N/A" : val) : "Connection pending.";
-    const isDisabled = !isSupported || (!isEmpty && val === "See Shopify metaobject" && field.key !== "shopify_title");
-    const isMultiline = field.control === "multiline" || field.key.includes("story") || field.key.includes("notes") || field.key.includes("flaws") || field.key.includes("character") || field.key === "generated_description" || field.key === "native_description" || field.key === "native_seo_description";
-    const optionsKey = field.optionsKey || field.key;
+    const displayVal = isSupported
+      ? (bareKey === "collection_date" && !isFilled ? "" : String(val ?? ""))
+      : "Connection pending.";
+    const isDisabled = !canEdit || (!isEmpty && val === "See Shopify metaobject" && field.key !== "shopify_title");
+    const isMultiline =
+      field.control === "multiline" ||
+      field.key.includes("story") ||
+      field.key.includes("notes") ||
+      field.key.includes("flaws") ||
+      field.key.includes("character") ||
+      field.key === "generated_description" ||
+      field.key === "native_description" ||
+      field.key === "native_seo_description";
+    const optionsKey = field.optionsKey || bareKey;
 
     return (
-      <div key={field.key}>
-        <div style={{ backgroundColor: isEmpty && isSupported ? "#FFF5F5" : "transparent", minHeight: "48px", padding: "8px", borderRadius: "4px" }}>
-          {isSupported && DROPDOWN_OPTIONS && DROPDOWN_OPTIONS[optionsKey] && DROPDOWN_OPTIONS[optionsKey].length > 0 ? (
+      <div key={overrideKey || field.key}>
+        <div style={{ backgroundColor: isEmpty && canEdit ? "#FFF5F5" : (isHeldReadOnly ? "#f8f9fa" : "transparent"), minHeight: "48px", padding: "8px", borderRadius: "4px", border: isHeldReadOnly ? "1px dashed #d2d5d8" : "none" }}>
+          {canEdit && DROPDOWN_OPTIONS && DROPDOWN_OPTIONS[optionsKey] && DROPDOWN_OPTIONS[optionsKey].length > 0 ? (
             <Select 
               label={labelNode} 
               options={[{ label: "Select...", value: "" }, ...(DROPDOWN_OPTIONS[optionsKey] || [])]} 
               value={displayVal} 
-              onChange={(v) => updateFullMetaState(stateKey, v)} 
+              onChange={(v) => {
+                if (!canEdit) return;
+                updateFullMetaState(stateKey, v);
+              }} 
               disabled={isDisabled} 
             />
           ) : (
             <TextField 
               label={labelNode} 
               value={displayVal} 
-              onChange={(v) => { if (isSupported) updateFullMetaState(stateKey, v) }} 
+              onChange={(v) => {
+                if (!canEdit) return;
+                updateFullMetaState(stateKey, v);
+              }} 
               multiline={isMultiline ? true : false} 
               autoComplete="off" 
+              placeholder={isHeldReadOnly ? holdReasonText : (bareKey === "collection_date" ? "Blank (unknown)" : "")}
+              helpText={holdReasonText || undefined}
               disabled={isDisabled} 
-              readOnly={!isSupported} 
+              readOnly={!canEdit} 
             />
           )}
         </div>
       </div>
     );
+  };
+
+  const renderTemplateField = (field) => {
+    if (field.key === "native_image_alt") {
+      const mediaEdges = liveProductManifest?.nativeTargets?.media?.edges || [];
+      if (mediaEdges.length > 0) {
+        return mediaEdges
+          .filter(e => e?.node?.id)
+          .map(e => {
+            const mediaId = e.node.id;
+            const shortId = mediaId.split("/").pop();
+            const mediaKey = `native_image_alts_${mediaId}`;
+            return renderSingleCapabilityControl(
+              field,
+              mediaKey,
+              `Native Image Alt (${shortId})`
+            );
+          });
+      }
+    }
+    return renderSingleCapabilityControl(field);
   };
 
   const safeProducts = products || [];
@@ -1355,11 +1605,51 @@ export function IntakeBenchTab({ products, injectFetcher, tab2Fetcher }) {
         <div style={{ marginTop: "32px" }}>
           <Card padding="400">
             <BlockStack gap="400">
+              <InlineStack align="space-between" blockAlign="center">
+                <Text as="h3" variant="headingLg">Origin Story & Long-Text Repair Workbench</Text>
+                <Badge tone="info">Source Context + Canonical Long-Text</Badge>
+              </InlineStack>
+              <Text as="p" variant="bodySm" tone="subdued">
+                Origin Story Draft provides protected source context for RUN / Full Rescan generation and is preserved across rescans. Direct metafield writes to custom.origin_story are held by domain policy (source context is not a saved canonical metafield). Native Description and Native SEO Description save directly via verified native/staging routes when Inject Metafields is clicked.
+              </Text>
+              <TextField
+                label="Origin Story Source Context (Used by RUN / Full Rescan — Not Written as a Metafield)"
+                value={fullMetaState.origin_story ?? formState.origin_story ?? ""}
+                onChange={(val) => updateFullMetaState("origin_story", val)}
+                multiline={4}
+                autoComplete="off"
+                helpText="Stored origin_story and manual edits here are preserved across rescans and passed to AI generation, without triggering automatic saves."
+              />
+              <TextField
+                label="Native Product Description (Canonical Long-Text — Saved on Inject Metafields)"
+                value={fullMetaState.generated_description ?? fullMetaState.native_description ?? ""}
+                onChange={(val) => updateFullMetaState("generated_description", val)}
+                multiline={6}
+                autoComplete="off"
+                helpText="Stages both custom.generated_description and native descriptionHtml for verified write on Inject Metafields."
+              />
+              <TextField
+                label="Native SEO Description (Meta Description — Under 160 Characters)"
+                value={fullMetaState.native_seo_description ?? ""}
+                onChange={(val) => updateFullMetaState("native_seo_description", val)}
+                multiline={2}
+                autoComplete="off"
+                helpText={`Current length: ${String(fullMetaState.native_seo_description ?? "").length}/160 characters.`}
+              />
+            </BlockStack>
+          </Card>
+        </div>
+      )}
+
+      {selectedProductId !== "" && (
+        <div style={{ marginTop: "32px" }}>
+          <Card padding="400">
+            <BlockStack gap="400">
               {tab2StatusMessage !== "" && <Banner title="Operation Successful" tone="success"><Text as="p">{tab2StatusMessage}</Text></Banner>}
               {tab2ErrorMessage !== "" && <Banner title="Operation Failed" tone="critical"><Text as="p">{tab2ErrorMessage}</Text></Banner>}
               {injectFetcher.state === "idle" && injectFetcher.data?.message?.includes("Cleaned") && <Banner title="Ghosts Cleaned" tone="success"><Text as="p">{injectFetcher.data.message}</Text></Banner>}
 
-              <Text as="h3" variant="headingLg">Full Meta Report — Standard 60+ Fields</Text>
+              <Text as="h3" variant="headingLg">Universal Product Capability Template (62 Canonical Capabilities)</Text>
 
               {PRODUCT_TEMPLATE_GROUPS.map((group, groupIdx) => (
                 <BlockStack gap="300" key={groupIdx}>
