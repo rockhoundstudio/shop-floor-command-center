@@ -1,0 +1,4 @@
+{
+  "name": "Meta Injector Test Reports",
+  "description": "Search and read captured Meta Injector test reports, field holds, and UI measurements where recorded. Read-only; does not generate reports or change products."
+}

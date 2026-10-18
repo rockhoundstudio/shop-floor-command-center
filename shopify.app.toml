@@ -39,3 +39,6 @@ redirect_urls = [
   "https://shop-floor-command-center.onrender.com/auth/callback",
   "https://shop-floor-command-center.onrender.com/auth/shopify/callback"
 ]
+
+[sidekick]
+extensions_summary = "Search and read captured Meta Injector test reports by product, including report chunks, field holds, and UI measurements where recorded. Read-only; no report generation or product changes."

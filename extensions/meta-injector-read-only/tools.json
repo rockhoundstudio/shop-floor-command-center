@@ -1,0 +1,96 @@
+[
+  {
+    "$schema": "https://extensions.shopifycdn.com/shopifycloud/schemas/v1/tool.json",
+    "name": "list_meta_injector_reports",
+    "description": "Lists already captured temporary Meta Injector telemetry reports in volatile server memory, returning product/run/capture identities, pagination, and measured UI-audit availability. Unavailable reports are not successful tests and do not establish absence of errors.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "productId": {
+          "type": "string",
+          "pattern": "^gid://shopify/Product/\\d+$",
+          "description": "Optional Shopify Product GID filter matching gid://shopify/Product/<digits>."
+        },
+        "mode": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "Optional nonempty capture mode filter (up to 120 characters)."
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5,
+          "default": 3,
+          "description": "Optional maximum number of report metadata entries to return (integer 1-5, default 3)."
+        },
+        "afterReportId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional pagination cursor (reportId) to return reports after."
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "description": "Whether the list operation completed without a request or server error."
+        },
+        "status": {
+          "type": "string",
+          "description": "Response status such as ok, unavailable, invalid_request, invalid_cursor, or error."
+        }
+      },
+      "required": ["ok", "status"],
+      "additionalProperties": true
+    }
+  },
+  {
+    "$schema": "https://extensions.shopifycdn.com/shopifycloud/schemas/v1/tool.json",
+    "name": "read_meta_injector_report",
+    "description": "Reads one lossless UTF-8 server chunk of a specific captured Meta Injector report or its measured UI audit by reportId. Server chunkIndex values are 0-based and distinct from clipboard part numbers. UI-audit data is measured only when recorded; never equate 67 telemetry targets with visible UI rows.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "reportId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Required identifier of the captured report (e.g., srep_<sha256>)."
+        },
+        "section": {
+          "type": "string",
+          "enum": ["report", "ui_audit"],
+          "default": "report",
+          "description": "Optional section to read: 'report' or 'ui_audit' (default 'report')."
+        },
+        "chunkIndex": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0,
+          "description": "Optional 0-based server chunk index to read (nonnegative integer, default 0). Distinct from clipboard part numbers."
+        }
+      },
+      "required": ["reportId"],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "description": "Whether the read operation completed without a request, not_found, or server error."
+        },
+        "status": {
+          "type": "string",
+          "description": "Response status such as ok, not_measured, not_found, invalid_request, or error."
+        }
+      },
+      "required": ["ok", "status"],
+      "additionalProperties": true
+    }
+  }
+]

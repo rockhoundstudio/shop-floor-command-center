@@ -67,6 +67,10 @@ const EMPTY_DEV_PREVIEW_MANIFEST = Object.freeze({
   verifiedGeoValues: {}
 });
 
+const TELEMETRY_PUBLISH_ENDPOINT = "/api/meta-injector-telemetry";
+const TELEMETRY_PUBLISH_TIMEOUT_MS = 8000;
+const MAX_PUBLISHED_CAPTURE_SIGNATURES = 64;
+
 const isExactProductGid = (val) =>
   typeof val === "string" && /^gid:\/\/shopify\/Product\/[0-9]+$/.test(val.trim());
 
@@ -81,6 +85,161 @@ const isValidTelemetryPacketForProduct = (packet, targetProductId) =>
     Array.isArray(packet.parts) &&
     packet.parts.length > 0
   );
+
+function computeQuickTextDigest(text) {
+  const str = typeof text === "string" ? text : "";
+  let h1 = 0x811c9dc5;
+  let h2 = 0x01000193;
+  for (let i = 0; i < str.length; i += 1) {
+    const code = str.charCodeAt(i);
+    h1 ^= code;
+    h1 = Math.imul(h1, 0x01000193) >>> 0;
+    h2 ^= code + (i & 0xff);
+    h2 = Math.imul(h2, 0x85ebca6b) >>> 0;
+  }
+  return `${str.length}:${h1.toString(16)}:${h2.toString(16)}`;
+}
+
+function buildImmutableCaptureSignature(packet) {
+  if (!packet || typeof packet !== "object") return "";
+  return [
+    typeof packet.productId === "string" ? packet.productId.trim() : "",
+    typeof packet.capturedAt === "string" ? packet.capturedAt.trim() : "",
+    typeof packet.mode === "string" ? packet.mode.trim() : "",
+    typeof packet.sectionKey === "string" ? packet.sectionKey.trim() : "",
+    typeof packet.sectionLabel === "string" ? packet.sectionLabel.trim() : "",
+    typeof packet.runIdentity === "string" ? packet.runIdentity.trim() : "",
+    typeof packet.runTimestamp === "string" ? packet.runTimestamp.trim() : "",
+    computeQuickTextDigest(packet.fullText)
+  ].join("|");
+}
+
+function sanitizeSafePublishMessage(rawMsg, fallbackMsg) {
+  if (typeof rawMsg !== "string") return fallbackMsg;
+  const trimmed = rawMsg.trim();
+  if (!trimmed) return fallbackMsg;
+  if (/<[a-z!/][\s\S]*>/i.test(trimmed)) return fallbackMsg;
+  const singleLine = trimmed.replace(/\s+/g, " ");
+  return singleLine.length > 220 ? `${singleLine.slice(0, 220)}...` : singleLine;
+}
+
+function buildMeasuredUiAuditSnapshot(productId, measurementsState) {
+  if (
+    !productId ||
+    !isExactProductGid(productId) ||
+    !measurementsState ||
+    typeof measurementsState !== "object" ||
+    measurementsState.productId !== productId ||
+    !measurementsState.bySection ||
+    typeof measurementsState.bySection !== "object"
+  ) {
+    return null;
+  }
+
+  const bySection = measurementsState.bySection;
+  const measuredEntries = {};
+  let measuredSectionCount = 0;
+
+  for (const [secTitle, rec] of Object.entries(bySection)) {
+    if (
+      !rec ||
+      typeof rec !== "object" ||
+      typeof rec.renderedCount !== "number" ||
+      !Number.isFinite(rec.renderedCount) ||
+      !Array.isArray(rec.renderedKeys)
+    ) {
+      continue;
+    }
+
+    const safeRenderedKeys = rec.renderedKeys.filter(
+      (k) => typeof k === "string" && k.length > 0 && k.length <= 200
+    );
+
+    measuredEntries[secTitle] = {
+      measurementStatus: "measured",
+      logicalCount:
+        typeof rec.logicalCount === "number" && Number.isFinite(rec.logicalCount)
+          ? rec.logicalCount
+          : null,
+      renderedCount: rec.renderedCount,
+      renderedKeys: safeRenderedKeys,
+      mediaControlCount:
+        typeof rec.mediaControlCount === "number" && Number.isFinite(rec.mediaControlCount)
+          ? rec.mediaControlCount
+          : 0,
+      hasZeroImagePlaceholder: Boolean(rec.hasZeroImagePlaceholder)
+    };
+    measuredSectionCount += 1;
+  }
+
+  if (measuredSectionCount === 0) {
+    return null;
+  }
+
+  const expectedSectionHeadings = PRODUCT_TEMPLATE_GROUPS.map((g) => g.heading).filter(
+    (h) => typeof h === "string" && h.trim().length > 0
+  );
+
+  const sectionsReport = {};
+  const unmeasuredSectionHeadings = [];
+  let totalMeasuredRenderedRows = 0;
+  let totalMeasuredMediaControls = 0;
+  let anyZeroImagePlaceholder = false;
+
+  for (let i = 0; i < expectedSectionHeadings.length; i += 1) {
+    const heading = expectedSectionHeadings[i];
+    if (Object.prototype.hasOwnProperty.call(measuredEntries, heading)) {
+      const entry = measuredEntries[heading];
+      sectionsReport[heading] = entry;
+      totalMeasuredRenderedRows += entry.renderedCount;
+      totalMeasuredMediaControls += entry.mediaControlCount;
+      if (entry.hasZeroImagePlaceholder) {
+        anyZeroImagePlaceholder = true;
+      }
+    } else {
+      sectionsReport[heading] = {
+        measurementStatus: "not_measured",
+        renderedCount: null,
+        renderedKeys: null,
+        mediaControlCount: null,
+        hasZeroImagePlaceholder: null
+      };
+      unmeasuredSectionHeadings.push(heading);
+    }
+  }
+
+  for (const [secTitle, entry] of Object.entries(measuredEntries)) {
+    if (!Object.prototype.hasOwnProperty.call(sectionsReport, secTitle)) {
+      sectionsReport[secTitle] = entry;
+      totalMeasuredRenderedRows += entry.renderedCount;
+      totalMeasuredMediaControls += entry.mediaControlCount;
+      if (entry.hasZeroImagePlaceholder) {
+        anyZeroImagePlaceholder = true;
+      }
+    }
+  }
+
+  const totalKnownGroups = expectedSectionHeadings.length;
+  const isComplete =
+    totalKnownGroups > 0 &&
+    unmeasuredSectionHeadings.length === 0 &&
+    measuredSectionCount >= totalKnownGroups;
+
+  return {
+    productId,
+    measurementCoverage: isComplete ? "complete" : "partial",
+    measuredSectionCount,
+    totalKnownTemplateGroups: totalKnownGroups,
+    unmeasuredSectionCount: unmeasuredSectionHeadings.length,
+    unmeasuredSections: unmeasuredSectionHeadings,
+    totalRenderedRows: isComplete ? totalMeasuredRenderedRows : null,
+    measuredRenderedRowsSubtotal: totalMeasuredRenderedRows,
+    mediaControlCount: totalMeasuredMediaControls,
+    hasZeroImagePlaceholder: anyZeroImagePlaceholder,
+    devShowAllTemplateFieldsActive: Boolean(DEV_SHOW_ALL_TEMPLATE_FIELDS),
+    sections: sectionsReport
+  };
+}
 
 export function OperationsMatrixTab({ products }) {
   const safeProducts = products || [];
@@ -126,6 +285,7 @@ export function OperationsMatrixTab({ products }) {
   });
   const [safetyMessage, setSafetyMessage] = useState("");
   const [safetyError, setSafetyError] = useState("");
+  const [telemetryPublishNotice, setTelemetryPublishNotice] = useState(null);
 
   const [activeFilter, setActiveFilter] = useState("All");
   const [expandedBays, setExpandedBays] = useState(INITIAL_EXPANDED_BAYS);
@@ -134,6 +294,27 @@ export function OperationsMatrixTab({ products }) {
   useEffect(() => {
     activeBenchIdRef.current = selectedBenchId;
   }, [selectedBenchId]);
+
+  const sectionAuditMeasurementsRef = useRef(sectionAuditMeasurements);
+  useEffect(() => {
+    sectionAuditMeasurementsRef.current = sectionAuditMeasurements;
+  }, [sectionAuditMeasurements]);
+
+  const publishDedupMapRef = useRef(new Map());
+  const activePublishAbortRef = useRef(null);
+
+  useEffect(() => {
+    return () => {
+      if (activePublishAbortRef.current) {
+        try {
+          activePublishAbortRef.current.abort();
+        } catch {
+          // Ignore unmount abort errors
+        }
+        activePublishAbortRef.current = null;
+      }
+    };
+  }, []);
 
   const batchFetcher = useFetcher();
   const referenceMatchFetcher = useFetcher();
@@ -156,8 +337,17 @@ export function OperationsMatrixTab({ products }) {
   const handleSelectBenchItem = useCallback((id) => {
     setSelectedBenchId((prevId) => {
       if (prevId !== id) {
+        if (activePublishAbortRef.current) {
+          try {
+            activePublishAbortRef.current.abort();
+          } catch {
+            // Ignore abort errors on product switch
+          }
+          activePublishAbortRef.current = null;
+        }
         setExpandedBays(INITIAL_EXPANDED_BAYS);
         setTelemetryPacket(null);
+        setTelemetryPublishNotice(null);
         setSectionAuditMeasurements({ productId: id || null, bySection: {} });
       }
       return id;
@@ -173,6 +363,7 @@ export function OperationsMatrixTab({ products }) {
   useEffect(() => {
     if (isLoadingData || isExecuting) {
       setTelemetryPacket(null);
+      setTelemetryPublishNotice(null);
     }
   }, [isLoadingData, isExecuting]);
 
@@ -184,6 +375,7 @@ export function OperationsMatrixTab({ products }) {
       }
       return null;
     });
+    setTelemetryPublishNotice(null);
   }, [selectedBenchId, activeProductHistoryRef, activeProductMatchTimeRef]);
 
   const handleSectionRenderedCountChange = useCallback((payload) => {
@@ -258,6 +450,16 @@ export function OperationsMatrixTab({ products }) {
   }, [allFilteredSelected, filteredProducts, isLoadingData, isExecuting]);
 
   const clearBench = useCallback(() => {
+    if (activePublishAbortRef.current) {
+      try {
+        activePublishAbortRef.current.abort();
+      } catch {
+        // Ignore abort errors on clearBench
+      }
+      activePublishAbortRef.current = null;
+    }
+    publishDedupMapRef.current.clear();
+
     if (pendingReferenceMatch) {
       const activeRel = pendingReferenceMatch;
       setReleasedReferenceMatchRequest({
@@ -289,6 +491,7 @@ export function OperationsMatrixTab({ products }) {
     setRepairHistory({});
     setSelectedBenchId(null);
     setTelemetryPacket(null);
+    setTelemetryPublishNotice(null);
     setSectionAuditMeasurements({ productId: null, bySection: {} });
     setExpandedBays(INITIAL_EXPANDED_BAYS);
     setIsLoadingData(false);
@@ -981,7 +1184,7 @@ export function OperationsMatrixTab({ products }) {
       let detailSummary = " Technically verified and category-eligible proposals are staged for review and exact-value approval below.";
       if (categoryBlockedDestinations.length > 0 || blockedDestList.length > 0) {
         const blockedDisplay = blockedDestList.length > 0 ? blockedDestList : categoryBlockedDestinations;
-        detailSummary = ` ${readinessCheck.eligibleDestinationKeys.length} proposal(s) unlocked; ${blockedDisplay.length} blocked by category or entry resolution (${blockedDisplay.join(", ")} — candidate evidence and matched entries preserved).`;
+        detailSummary = ` ${readinessCheck.eligibleDestinationKeys.length} proposal(s) unlocked; ${blockedDisplay.length} blocked by category or entry resolution (${blockedDisplay.join(", ")} â€” candidate evidence and matched entries preserved).`;
       }
       setReferenceMatchStatusByProduct((prev) => ({
         ...prev,
@@ -1232,6 +1435,184 @@ export function OperationsMatrixTab({ products }) {
       getFieldMetadata
     });
 
+  const publishCapturedPacketToSidekickCache = useCallback((capturedPacket, expectedProductId) => {
+    if (!expectedProductId || activeBenchIdRef.current !== expectedProductId) {
+      return;
+    }
+    if (!isValidTelemetryPacketForProduct(capturedPacket, expectedProductId)) {
+      return;
+    }
+
+    const captureSignature = buildImmutableCaptureSignature(capturedPacket);
+    if (!captureSignature) {
+      return;
+    }
+
+    const dedupMap = publishDedupMapRef.current;
+    const existingStatus = dedupMap.get(captureSignature);
+    if (existingStatus === "inflight" || existingStatus === "stored") {
+      return;
+    }
+
+    if (dedupMap.size >= MAX_PUBLISHED_CAPTURE_SIGNATURES) {
+      for (const [k, v] of dedupMap.entries()) {
+        if (v !== "inflight") {
+          dedupMap.delete(k);
+          if (dedupMap.size < MAX_PUBLISHED_CAPTURE_SIGNATURES) {
+            break;
+          }
+        }
+      }
+      if (dedupMap.size >= MAX_PUBLISHED_CAPTURE_SIGNATURES) {
+        const oldestKey = dedupMap.keys().next().value;
+        if (oldestKey !== undefined) {
+          dedupMap.delete(oldestKey);
+        }
+      }
+    }
+
+    dedupMap.set(captureSignature, "inflight");
+
+    const measuredUiAudit = buildMeasuredUiAuditSnapshot(
+      expectedProductId,
+      sectionAuditMeasurementsRef.current
+    );
+
+    const requestBody = measuredUiAudit !== null
+      ? { packet: capturedPacket, uiAudit: measuredUiAudit }
+      : { packet: capturedPacket };
+
+    if (activePublishAbortRef.current) {
+      try {
+        activePublishAbortRef.current.abort();
+      } catch {
+        // Ignore abort error on superseding manual capture
+      }
+      activePublishAbortRef.current = null;
+    }
+
+    const controller = new AbortController();
+    activePublishAbortRef.current = controller;
+    let timedOut = false;
+
+    const timeoutId = setTimeout(() => {
+      timedOut = true;
+      try {
+        controller.abort();
+      } catch {
+        // Ignore timeout abort error
+      }
+    }, TELEMETRY_PUBLISH_TIMEOUT_MS);
+
+    if (activeBenchIdRef.current === expectedProductId) {
+      setTelemetryPublishNotice({
+        productId: expectedProductId,
+        capturedAt: capturedPacket.capturedAt || null,
+        tone: "info",
+        message: "Publishing captured telemetry report to temporary Sidekick memory cache..."
+      });
+    }
+
+    (async () => {
+      try {
+        const response = await fetch(TELEMETRY_PUBLISH_ENDPOINT, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json"
+          },
+          body: JSON.stringify(requestBody),
+          signal: controller.signal
+        });
+
+        const rawText = await response.text();
+        let parsed = null;
+        if (rawText && rawText.trim().length > 0) {
+          try {
+            parsed = JSON.parse(rawText);
+          } catch {
+            parsed = null;
+          }
+        }
+
+        const returnedReport =
+          parsed && typeof parsed === "object" && parsed.report && typeof parsed.report === "object"
+            ? parsed.report
+            : null;
+
+        const isVerifiedStored = Boolean(
+          response.ok &&
+          parsed &&
+          parsed.ok === true &&
+          parsed.status === "stored" &&
+          returnedReport &&
+          typeof returnedReport.reportId === "string" &&
+          returnedReport.reportId.trim().length > 0 &&
+          returnedReport.productId === capturedPacket.productId &&
+          returnedReport.capturedAt === capturedPacket.capturedAt
+        );
+
+        if (isVerifiedStored) {
+          dedupMap.set(captureSignature, "stored");
+          if (activeBenchIdRef.current === expectedProductId) {
+            const confirmedReportId = returnedReport.reportId.trim();
+            const auditStateLabel =
+              returnedReport.uiAuditState === "measured"
+                ? "measured"
+                : "not_measured";
+            setTelemetryPublishNotice({
+              productId: expectedProductId,
+              capturedAt: returnedReport.capturedAt,
+              reportId: confirmedReportId,
+              tone: "success",
+              message: `Sidekick report published (${confirmedReportId}) for ${returnedReport.productId} at ${returnedReport.capturedAt} [UI audit: ${auditStateLabel}].`
+            });
+          }
+          return;
+        }
+
+        dedupMap.delete(captureSignature);
+        if (activeBenchIdRef.current === expectedProductId) {
+          const backendCode =
+            parsed && typeof parsed.code === "string" && parsed.code.trim()
+              ? parsed.code.trim()
+              : `http_${response.status}`;
+          const backendMessage = sanitizeSafePublishMessage(
+            parsed?.message,
+            `Telemetry cache endpoint rejected publication (HTTP ${response.status}).`
+          );
+          setTelemetryPublishNotice({
+            productId: expectedProductId,
+            capturedAt: capturedPacket.capturedAt || null,
+            tone: "warning",
+            message: `Local capture succeeded, but Sidekick report cache publication failed (${backendCode}): ${backendMessage}`
+          });
+        }
+      } catch (err) {
+        dedupMap.delete(captureSignature);
+        if (!timedOut && controller.signal.aborted) {
+          return;
+        }
+        if (activeBenchIdRef.current === expectedProductId) {
+          const errSummary = timedOut
+            ? `Request timed out after ${TELEMETRY_PUBLISH_TIMEOUT_MS}ms.`
+            : "Network or authentication error while contacting /api/meta-injector-telemetry.";
+          setTelemetryPublishNotice({
+            productId: expectedProductId,
+            capturedAt: capturedPacket.capturedAt || null,
+            tone: "warning",
+            message: `Local capture succeeded, but Sidekick report cache publication failed: ${errSummary}`
+          });
+        }
+      } finally {
+        clearTimeout(timeoutId);
+        if (activePublishAbortRef.current === controller) {
+          activePublishAbortRef.current = null;
+        }
+      }
+    })();
+  }, []);
+
   const handleCollectTelemetry = useCallback((modeArg = "full", rawOptions = {}) => {
     const cleanMode = typeof modeArg === "string" && modeArg.trim() !== "" ? modeArg.trim() : "full";
     const safeOptions = validObj(rawOptions);
@@ -1243,20 +1624,25 @@ export function OperationsMatrixTab({ products }) {
       return null;
     }
 
+    const hasExplicitPartRequest = Boolean(
+      safeOptions.partIndex !== undefined &&
+      safeOptions.existingPacket &&
+      isValidTelemetryPacketForProduct(safeOptions.existingPacket, captureBenchId)
+    );
+    const isFreshManualCapture = !hasExplicitPartRequest && !safeOptions.existingPacket;
+
     const commitCapturedPacket = (candidatePacket) => {
       if (!candidatePacket) return;
       // Guard against a late callback from a previous product overwriting the current bench product's packet
       if (activeBenchIdRef.current !== captureBenchId) return;
       if (!isValidTelemetryPacketForProduct(candidatePacket, captureBenchId)) return;
       setTelemetryPacket(candidatePacket);
+      if (isFreshManualCapture) {
+        publishCapturedPacketToSidekickCache(candidatePacket, captureBenchId);
+      }
     };
 
     try {
-      const hasExplicitPartRequest =
-        safeOptions.partIndex !== undefined &&
-        safeOptions.existingPacket &&
-        isValidTelemetryPacketForProduct(safeOptions.existingPacket, captureBenchId);
-
       const maybeResult = buildAndCopyMatrixTelemetry({
         mode: cleanMode,
         options: safeOptions,
@@ -1321,7 +1707,8 @@ export function OperationsMatrixTab({ products }) {
     aiStep,
     executionMode,
     getSystemStatus,
-    getFieldMetadata
+    getFieldMetadata,
+    publishCapturedPacketToSidekickCache
   ]);
 
   const handleCopyTelemetryPart = useCallback((partArrayIndex) => {
@@ -1415,7 +1802,7 @@ export function OperationsMatrixTab({ products }) {
       isApproved: false,
       isContentPreApproved: false,
       reasons: [
-        "DEV Preview Mode (No product loaded/selected on bench — read-only template audit view)",
+        "DEV Preview Mode (No product loaded/selected on bench â€” read-only template audit view)",
         ...(Array.isArray(baseMeta.reasons) ? baseMeta.reasons : [])
       ]
     };
@@ -1446,7 +1833,7 @@ export function OperationsMatrixTab({ products }) {
     <BlockStack gap="600">
       <BlockStack gap="200">
         <Text variant="headingXl" as="h1">Meta Injector</Text>
-        <Text variant="headingMd" tone="subdued">Data Integrity & Operations Hub — Accessible Diagnostic View</Text>
+        <Text variant="headingMd" tone="subdued">Data Integrity & Operations Hub â€” Accessible Diagnostic View</Text>
       </BlockStack>
 
       <div style={{ display: "grid", gridTemplateColumns: "280px minmax(0, 1fr)", gap: "24px", alignItems: "start", boxSizing: "border-box", maxWidth: "100%" }}>
@@ -1484,6 +1871,16 @@ export function OperationsMatrixTab({ products }) {
             {safetyError && (
               <Banner tone="critical" onDismiss={() => setSafetyError("")}>
                 <Text as="p" variant="bodyLg" fontWeight="medium">{safetyError}</Text>
+              </Banner>
+            )}
+            {telemetryPublishNotice && telemetryPublishNotice.productId === selectedBenchId && (
+              <Banner
+                tone={telemetryPublishNotice.tone || "info"}
+                onDismiss={() => setTelemetryPublishNotice(null)}
+              >
+                <Text as="p" variant="bodyMd" fontWeight="medium">
+                  {telemetryPublishNotice.message}
+                </Text>
               </Banner>
             )}
 
@@ -1764,7 +2161,7 @@ export function OperationsMatrixTab({ products }) {
                     </InlineStack>
                     {DEV_SHOW_ALL_TEMPLATE_FIELDS && activeFilter !== "All" && (
                       <Text as="p" variant="bodySm" tone="caution">
-                        DEV: Show All Template Fields override is active — filter selection (<code>{activeFilter}</code>) is bypassed so no canonical template rows or sections are hidden during audit.
+                        DEV: Show All Template Fields override is active â€” filter selection (<code>{activeFilter}</code>) is bypassed so no canonical template rows or sections are hidden during audit.
                       </Text>
                     )}
                   </BlockStack>
