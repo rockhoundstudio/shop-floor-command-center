@@ -22,6 +22,72 @@ import {
 
 const SENSITIVE_DIAG_KEY_REGEX = /token|secret|password|authorization|cookie|header|credential|api[_-]?key|session/i;
 
+const CANONICAL_INCOMING_ALIAS_MAP = Object.freeze({
+  stone_family: "custom.material",
+  "custom.stone_family": "custom.material",
+  primary_medium: "custom.material",
+  "custom.primary_medium": "custom.material",
+  is_ooak: "custom.is_one_of_a_kind",
+  "custom.is_ooak": "custom.is_one_of_a_kind",
+  origin_handle: "custom.origin_page_handle",
+  "custom.origin_handle": "custom.origin_page_handle",
+  canonical_title: "shopify_title",
+  "custom.canonical_title": "shopify_title",
+  product_title: "shopify_title",
+  "custom.product_title": "shopify_title"
+});
+
+const ALIAS_COMPANION_LOOKUP = Object.freeze({
+  "custom.material": ["stone_family", "custom.stone_family", "primary_medium", "custom.primary_medium"],
+  "custom.is_one_of_a_kind": ["is_ooak", "custom.is_ooak"],
+  "custom.origin_page_handle": ["origin_handle", "custom.origin_handle"],
+  "shopify_title": ["native_title", "canonical_title", "product_title"],
+  "custom.generated_description": ["native_description", "generated_description"],
+  "custom.seo_title": ["native_seo_title", "seo_title"],
+  "custom.shipping_weight_oz": ["native_shipping_weight", "shipping_weight_oz"],
+  "price": ["native_price"]
+});
+
+const OPERATOR_AUTHORITATIVE_DESTINATIONS = new Set([
+  "price",
+  "custom.weight_grams",
+  "custom.dimensions_mm",
+  "custom.shipping_weight_oz",
+  "native_shipping_weight"
+]);
+
+const isEffectiveRetiredKey = (key) => {
+  if (key === "wire_material" || key === "custom.wire_material") return false;
+  return RETIRED_KEYS.includes(key);
+};
+
+const normalizeOoakEquivalentValue = (rawVal, expectedType = "single_line_text_field") => {
+  if (rawVal === undefined || rawVal === null) return "";
+  if (typeof rawVal === "boolean") {
+    if (expectedType === "boolean") return rawVal ? "true" : "false";
+    return rawVal ? "Yes" : "No";
+  }
+  const trimmed = String(rawVal).trim();
+  if (!trimmed) return "";
+  const lower = trimmed.toLowerCase();
+  if (
+    lower === "true" ||
+    lower === "yes" ||
+    lower === "1" ||
+    lower === "one-of-a-kind" ||
+    lower === "one of a kind" ||
+    lower.startsWith("yes —") ||
+    lower.startsWith("yes -") ||
+    lower.startsWith("yes â€”")
+  ) {
+    return expectedType === "boolean" ? "true" : "Yes";
+  }
+  if (lower === "false" || lower === "no" || lower === "0") {
+    return expectedType === "boolean" ? "false" : "No";
+  }
+  return trimmed;
+};
+
 const sanitizeDiagString = (val) => {
   if (typeof val !== "string") return "";
   const trimmed = val.trim();
@@ -149,6 +215,219 @@ const extractNormalizedErrors = (rawErrors, singleError) => {
   return list;
 };
 
+const hasNonBlankValue = (val) => {
+  if (val === undefined || val === null) return false;
+  if (Array.isArray(val)) {
+    return val.some(item => item !== undefined && item !== null && String(item).trim() !== "");
+  }
+  const str = typeof val === "object" ? JSON.stringify(val) : String(val);
+  const trimmed = str.trim();
+  return trimmed !== "" && trimmed !== "[]" && trimmed !== "{}";
+};
+
+const formatComparableValue = (val, expectedType, targetKey = "") => {
+  if (val === undefined || val === null) return "";
+  if (targetKey === "custom.is_one_of_a_kind" || targetKey === "custom.is_ooak") {
+    return normalizeOoakEquivalentValue(val, expectedType);
+  }
+  if (expectedType === "list.single_line_text_field") {
+    if (Array.isArray(val)) {
+      const cleaned = val
+        .map(item => (item !== undefined && item !== null ? String(item).trim() : ""))
+        .filter(Boolean);
+      return cleaned.length > 0 ? JSON.stringify(cleaned) : "";
+    }
+    const str = typeof val === "object" ? JSON.stringify(val) : String(val);
+    const trimmed = str.trim();
+    if (!trimmed || trimmed === "[]") return "";
+    if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) {
+          const cleaned = parsed
+            .map(item => (item !== undefined && item !== null ? String(item).trim() : ""))
+            .filter(Boolean);
+          return cleaned.length > 0 ? JSON.stringify(cleaned) : "";
+        }
+      } catch (e) {
+        // Keep raw string when not a valid JSON array
+      }
+    }
+    return trimmed;
+  }
+  if (Array.isArray(val)) {
+    return val.length > 0 ? JSON.stringify(val) : "";
+  }
+  if (typeof val === "object") {
+    return JSON.stringify(val);
+  }
+  return String(val).trim();
+};
+
+const normalizeIncomingTargetKey = (rawKey) => {
+  if (typeof rawKey !== "string") return "";
+  const trimmed = rawKey.trim();
+  if (!trimmed) return "";
+  if (Object.prototype.hasOwnProperty.call(CANONICAL_INCOMING_ALIAS_MAP, trimmed)) {
+    return CANONICAL_INCOMING_ALIAS_MAP[trimmed];
+  }
+  if (Object.prototype.hasOwnProperty.call(NATIVE_ALIAS_MAP, trimmed)) {
+    return NATIVE_ALIAS_MAP[trimmed];
+  }
+  if (trimmed.startsWith("native_image_alts_")) {
+    return trimmed;
+  }
+  if (NATIVE_FIELDS.includes(trimmed) || trimmed.includes(".") || trimmed.startsWith("native_")) {
+    return trimmed;
+  }
+  const prefixed = `custom.${trimmed}`;
+  if (Object.prototype.hasOwnProperty.call(CANONICAL_INCOMING_ALIAS_MAP, prefixed)) {
+    return CANONICAL_INCOMING_ALIAS_MAP[prefixed];
+  }
+  return prefixed;
+};
+
+const extractPieceNameOnly = (rawPieceName, fullTitleCandidate) => {
+  if (typeof rawPieceName !== "string") return "";
+  const trimmed = rawPieceName.trim();
+  if (!trimmed) return "";
+  const segments = trimmed.split(/\s+[—–-]\s+/);
+  if (segments.length >= 3) {
+    return segments[segments.length - 1].trim();
+  }
+  if (typeof fullTitleCandidate === "string" && fullTitleCandidate.trim() === trimmed) {
+    const titleSegs = fullTitleCandidate.trim().split(/\s+[—–-]\s+/);
+    if (titleSegs.length >= 3) {
+      return titleSegs[titleSegs.length - 1].trim();
+    }
+  }
+  return trimmed;
+};
+
+const normalizeLoadedPlanAndAliases = (rawPlan, currentMetafields = {}, manualProductEdits = {}, productApprovals = {}, allConfigFields = []) => {
+  const incomingPlan = validObj(rawPlan);
+  const cleanedPlan = {};
+  const aliasConflicts = {};
+
+  const getFieldExpectedType = (destKey) => {
+    const cfg = allConfigFields.find(f => resolveConfigFieldDestination(f) === destKey || f.key === destKey);
+    if (cfg?.type) return cfg.type;
+    if (destKey === "custom.character_marks" || destKey === "custom.stone_story") return "list.single_line_text_field";
+    if (destKey === "custom.weight_grams" || destKey === "custom.shipping_weight_oz") return "number_decimal";
+    if (destKey === "custom.honest_flaws_and_character" || destKey === "custom.origin_story" || destKey === "custom.generated_description") return "multi_line_text_field";
+    return "single_line_text_field";
+  };
+
+  const isKeyManuallyLocked = (destKey) => {
+    const companions = ALIAS_COMPANION_LOOKUP[destKey] || [];
+    if (manualProductEdits?.[destKey] === true || productApprovals?.[destKey] !== undefined) return true;
+    return companions.some(aliasKey => manualProductEdits?.[aliasKey] === true || productApprovals?.[aliasKey] !== undefined);
+  };
+
+  const canonicalCandidatesFromPlan = {};
+
+  Object.entries(incomingPlan).forEach(([rawKey, rawVal]) => {
+    if (rawKey === "standardized_candidates" || rawKey === "custom.standardized_candidates") return;
+    if (isEffectiveRetiredKey(rawKey)) return;
+
+    const canonicalKey = normalizeIncomingTargetKey(rawKey);
+    if (!canonicalKey || isEffectiveRetiredKey(canonicalKey)) return;
+
+    const isDirectCanonical = rawKey === canonicalKey;
+    if (!canonicalCandidatesFromPlan[canonicalKey]) {
+      canonicalCandidatesFromPlan[canonicalKey] = {
+        canonicalRaw: undefined,
+        hasCanonicalKey: false,
+        aliasEntries: []
+      };
+    }
+
+    if (isDirectCanonical) {
+      canonicalCandidatesFromPlan[canonicalKey].canonicalRaw = rawVal;
+      canonicalCandidatesFromPlan[canonicalKey].hasCanonicalKey = true;
+    } else {
+      canonicalCandidatesFromPlan[canonicalKey].aliasEntries.push({ aliasKey: rawKey, value: rawVal });
+    }
+  });
+
+  // Also check stored metafields for canonical vs alias values when loading
+  Object.entries(ALIAS_COMPANION_LOOKUP).forEach(([canonicalKey, aliasKeys]) => {
+    if (!canonicalKey.startsWith("custom.")) return;
+    const storedCanonical = currentMetafields?.[canonicalKey];
+    aliasKeys.forEach(aliasKey => {
+      const fullAliasKey = aliasKey.includes(".") ? aliasKey : `custom.${aliasKey}`;
+      const storedAlias = currentMetafields?.[fullAliasKey] ?? currentMetafields?.[aliasKey];
+      if (hasNonBlankValue(storedAlias)) {
+        if (!canonicalCandidatesFromPlan[canonicalKey]) {
+          canonicalCandidatesFromPlan[canonicalKey] = {
+            canonicalRaw: storedCanonical,
+            hasCanonicalKey: storedCanonical !== undefined,
+            aliasEntries: []
+          };
+        }
+        const alreadyRecorded = canonicalCandidatesFromPlan[canonicalKey].aliasEntries.some(
+          e => e.aliasKey === fullAliasKey || e.aliasKey === aliasKey
+        );
+        if (!alreadyRecorded) {
+          canonicalCandidatesFromPlan[canonicalKey].aliasEntries.push({
+            aliasKey: fullAliasKey,
+            value: storedAlias
+          });
+        }
+      }
+    });
+  });
+
+  Object.entries(canonicalCandidatesFromPlan).forEach(([canonicalKey, group]) => {
+    const expectedType = getFieldExpectedType(canonicalKey);
+    const canonicalFormatted = group.hasCanonicalKey
+      ? formatComparableValue(group.canonicalRaw, expectedType, canonicalKey)
+      : "";
+    const nonBlankAliases = group.aliasEntries
+      .map(e => ({
+        aliasKey: e.aliasKey,
+        raw: e.value,
+        formatted: formatComparableValue(e.value, expectedType, canonicalKey)
+      }))
+      .filter(e => e.formatted !== "");
+
+    if (isKeyManuallyLocked(canonicalKey)) {
+      if (manualProductEdits?.[canonicalKey] === true && incomingPlan[canonicalKey] !== undefined) {
+        cleanedPlan[canonicalKey] = formatComparableValue(incomingPlan[canonicalKey], expectedType, canonicalKey);
+        return;
+      }
+      if (productApprovals?.[canonicalKey] !== undefined) {
+        cleanedPlan[canonicalKey] = formatComparableValue(productApprovals[canonicalKey], expectedType, canonicalKey);
+        return;
+      }
+    }
+
+    if (canonicalFormatted !== "") {
+      cleanedPlan[canonicalKey] = canonicalFormatted;
+      const conflictingAlias = nonBlankAliases.find(a => a.formatted !== canonicalFormatted);
+      if (conflictingAlias) {
+        aliasConflicts[canonicalKey] = {
+          expected: canonicalFormatted,
+          actual: `${conflictingAlias.aliasKey}: ${conflictingAlias.formatted}`
+        };
+      }
+    } else if (nonBlankAliases.length > 0) {
+      const distinctAliasVals = Array.from(new Set(nonBlankAliases.map(a => a.formatted)));
+      cleanedPlan[canonicalKey] = nonBlankAliases[0].formatted;
+      if (distinctAliasVals.length > 1) {
+        aliasConflicts[canonicalKey] = {
+          expected: nonBlankAliases[0].formatted,
+          actual: nonBlankAliases.slice(1).map(a => `${a.aliasKey}: ${a.formatted}`).join(" | ")
+        };
+      }
+    } else if (group.hasCanonicalKey) {
+      cleanedPlan[canonicalKey] = "";
+    }
+  });
+
+  return { cleanedPlan, aliasConflicts };
+};
+
 const mergeReadBackNativeTargets = (existingNativeTargets, rbNativeTargets) => {
   const prev = validObj(existingNativeTargets);
   if (!rbNativeTargets || typeof rbNativeTargets !== "object" || Array.isArray(rbNativeTargets)) {
@@ -260,6 +539,9 @@ const prepareAndSubmitRepairPlan = ({
 
   const snapshot = { ...safePlan };
   if (nativeChanges.title !== undefined) snapshot.shopify_title = nativeChanges.title;
+  if (nativeChanges.shippingWeight?.value !== undefined) {
+    snapshot.native_shipping_weight = `${nativeChanges.shippingWeight.value} ${nativeChanges.shippingWeight.unit || "OUNCES"}`;
+  }
   (nativeChanges.imageAlts || []).forEach(alt => {
     snapshot[`native_image_alts_${alt.imageId}`] = alt.altText;
   });
@@ -581,7 +863,11 @@ export function useMetaInjectorExecution({
         setPendingOperation({ id: currentId, intent: "titleParse", token });
         updateProductState(currentId, STATUS.SCANNING, ["Stage 1: Parsing Title & Origin (Gemini + Render DB)..."]);
 
-        const titleToParse = manifest.canonicalFields?.shopify_title || product.title;
+        const titleToParse =
+          (manualEdits[currentId]?.shopify_title === true && manifest.repairPlan?.shopify_title) ||
+          manifest.nativeTargets?.productTitle ||
+          manifest.canonicalFields?.shopify_title ||
+          product.title;
         const fd = new FormData();
         fd.append("intent", "titleParse");
         fd.append("pieceName", titleToParse);
@@ -593,7 +879,11 @@ export function useMetaInjectorExecution({
         setPendingOperation({ id: currentId, intent: "tab3FullRescan", token });
         updateProductState(currentId, STATUS.SCANNING, ["Stage 2: Vision API Deep Scan (Gemini)..."]);
 
-        const titleToParse = manifest.canonicalFields?.shopify_title || product.title;
+        const titleToParse =
+          (manualEdits[currentId]?.shopify_title === true && manifest.repairPlan?.shopify_title) ||
+          manifest.nativeTargets?.productTitle ||
+          manifest.canonicalFields?.shopify_title ||
+          product.title;
         const fd = new FormData();
         fd.append("intent", "tab3FullRescan");
         fd.append("pieceId", currentId);
@@ -612,12 +902,41 @@ export function useMetaInjectorExecution({
           fd.append("imageUrl", imageUrl);
         }
 
-        fd.append("stone_family", pieceAi.titleParse?.stone_family || "");
-        const currentOriginStory = manifest.currentMetafields["custom.origin_story"] || manifest.canonicalFields["custom.origin_story"] || "";
+        const resolvedStoneFamily =
+          (manualEdits[currentId]?.["custom.material"] === true ? manifest.repairPlan?.["custom.material"] : undefined) ||
+          approvals[currentId]?.["custom.material"] ||
+          manifest.currentMetafields?.["custom.material"] ||
+          manifest.currentMetafields?.["custom.stone_family"] ||
+          manifest.currentMetafields?.["custom.primary_medium"] ||
+          pieceAi.titleParse?.material ||
+          pieceAi.titleParse?.stone_family ||
+          pieceAi.titleParse?.primary_medium ||
+          "";
+        fd.append("stone_family", resolvedStoneFamily);
+
+        const currentOriginStory =
+          manifest.currentMetafields?.["custom.origin_story"] ||
+          manifest.canonicalFields?.["custom.origin_story"] ||
+          "";
         fd.append("origin_story", currentOriginStory || pieceAi.titleParse?.origin_story || "");
-        fd.append("honest_flaws_and_character", manifest.currentMetafields["custom.honest_flaws_and_character"] || "");
-        fd.append("weight_grams", manifest.currentMetafields["custom.weight_grams"] || "");
-        fd.append("dimensions_mm", manifest.currentMetafields["custom.dimensions_mm"] || "");
+        fd.append(
+          "honest_flaws_and_character",
+          (manualEdits[currentId]?.["custom.honest_flaws_and_character"] === true
+            ? manifest.repairPlan?.["custom.honest_flaws_and_character"]
+            : manifest.currentMetafields?.["custom.honest_flaws_and_character"]) || ""
+        );
+        fd.append(
+          "weight_grams",
+          (manualEdits[currentId]?.["custom.weight_grams"] === true
+            ? manifest.repairPlan?.["custom.weight_grams"]
+            : manifest.currentMetafields?.["custom.weight_grams"]) || ""
+        );
+        fd.append(
+          "dimensions_mm",
+          (manualEdits[currentId]?.["custom.dimensions_mm"] === true
+            ? manifest.repairPlan?.["custom.dimensions_mm"]
+            : manifest.currentMetafields?.["custom.dimensions_mm"]) || ""
+        );
 
         const allConfigFields = PRODUCT_TEMPLATE_GROUPS.flatMap(g => g.fields || []);
         allConfigFields.forEach(f => {
@@ -634,8 +953,8 @@ export function useMetaInjectorExecution({
         const hardwareKeys = [
           "bail_included", "secondary_medium", "jewelry_finding_type",
           "primary_use", "jewelry_type", "setting_ready",
-          "chain_material", "chain_link_type", "character_marks",
-          "primary_color", "color_pattern", "surface_finish",
+          "chain_material", "chain_link_type", "wire_material", "character_marks",
+          "primary_color", "secondary_colors", "color_pattern", "cut_type", "surface_finish",
           "treatment_status", "treated", "necklace_design"
         ];
         hardwareKeys.forEach(k => {
@@ -665,38 +984,66 @@ export function useMetaInjectorExecution({
         fd.append("intent", "generateDescription");
         fd.append("pieceId", currentId);
         const descriptionFacts = {};
-        const mergeDescriptionFacts = (source) => {
+        const mergeDescriptionFacts = (source, isAuthoritative = false) => {
           Object.entries(source || {}).forEach(([key, value]) => {
             if (key === "standardized_candidates" || key === "custom.standardized_candidates") return;
+            if (key === "canonical_title" || key === "custom.canonical_title" || key === "product_title") return;
             if (key.includes(".") && !key.startsWith("custom.")) return;
-            const factKey = key.startsWith("custom.") ? key.slice(7) : key;
-            if (["intent", "success", "error", "errors", "logs", "debug_origin", "standardized_candidates"].includes(factKey)) return;
+
+            const canonicalTarget = normalizeIncomingTargetKey(key);
+            const factKey = canonicalTarget.startsWith("custom.") ? canonicalTarget.slice(7) : (key.startsWith("custom.") ? key.slice(7) : key);
+            if (["intent", "success", "error", "errors", "logs", "debug_origin", "standardized_candidates", "shopify_title"].includes(factKey)) return;
+
             if (value !== undefined && value !== null && typeof value !== "object" && String(value).trim() !== "") {
-              descriptionFacts[factKey] = value;
+              let cleanVal = String(value).trim();
+              if (factKey === "piece_name") {
+                cleanVal = extractPieceNameOnly(cleanVal, manifest.nativeTargets?.productTitle || product.title);
+              }
+              if (isAuthoritative || !hasNonBlankValue(descriptionFacts[factKey])) {
+                descriptionFacts[factKey] = cleanVal;
+              }
+              if (factKey === "material" && (isAuthoritative || !hasNonBlankValue(descriptionFacts.stone_family))) {
+                descriptionFacts.stone_family = cleanVal;
+              }
+              if (factKey === "material" && (isAuthoritative || !hasNonBlankValue(descriptionFacts.primary_medium))) {
+                descriptionFacts.primary_medium = cleanVal;
+              }
             }
           });
         };
 
-        mergeDescriptionFacts(manifest.currentMetafields);
-        mergeDescriptionFacts(pieceAi.titleParse);
-        mergeDescriptionFacts(pieceAi.tab3Data);
+        // Merge in order so stored merchant facts and explicit edits/approvals take precedence over AI draft outputs
+        mergeDescriptionFacts(pieceAi.titleParse, false);
+        mergeDescriptionFacts(pieceAi.tab3Data, false);
+        mergeDescriptionFacts(manifest.currentMetafields, true);
+
+        Object.entries(approvals[currentId] || {}).forEach(([key, value]) => {
+          if (key.startsWith("custom.") && key !== "custom.standardized_candidates" && manualEdits[currentId]?.[key] !== true) {
+            const fk = key.slice(7);
+            descriptionFacts[fk] = fk === "piece_name" ? extractPieceNameOnly(String(value ?? ""), manifest.nativeTargets?.productTitle || product.title) : value;
+            if (fk === "material") {
+              descriptionFacts.stone_family = value;
+              descriptionFacts.primary_medium = value;
+            }
+          }
+        });
 
         Object.entries(manualEdits[currentId] || {}).forEach(([key, edited]) => {
           if (edited === true && key.startsWith("custom.") && key !== "custom.standardized_candidates" &&
               manifest.repairPlan?.[key] !== undefined) {
-            descriptionFacts[key.slice(7)] = manifest.repairPlan[key];
-          }
-        });
-
-        Object.entries(approvals[currentId] || {}).forEach(([key, value]) => {
-          if (key.startsWith("custom.") && key !== "custom.standardized_candidates" && manualEdits[currentId]?.[key] !== true) {
-            descriptionFacts[key.slice(7)] = value;
+            const fk = key.slice(7);
+            const editVal = manifest.repairPlan[key];
+            descriptionFacts[fk] = fk === "piece_name" ? extractPieceNameOnly(String(editVal ?? ""), manifest.nativeTargets?.productTitle || product.title) : editVal;
+            if (fk === "material") {
+              descriptionFacts.stone_family = editVal;
+              descriptionFacts.primary_medium = editVal;
+            }
           }
         });
 
         descriptionFacts.pieceId = currentId;
         fd.append("sharedFields", JSON.stringify({
-          stone_family: descriptionFacts.stone_family || descriptionFacts.material || "",
+          stone_family: descriptionFacts.material || descriptionFacts.stone_family || "",
           origin_location: descriptionFacts.origin_location || ""
         }));
         fd.append("pieceData", JSON.stringify(descriptionFacts));
@@ -1018,14 +1365,34 @@ export function useMetaInjectorExecution({
 
           setManifestData(prev => {
             const prevDiag = prev[targetId]?.diagnostics || {};
-            const cleanedRepairPlan = { ...(data.repairPlan || {}) };
-            delete cleanedRepairPlan.standardized_candidates;
-            delete cleanedRepairPlan["custom.standardized_candidates"];
+            const allConfigFields = PRODUCT_TEMPLATE_GROUPS.flatMap(g => g.fields || []);
+            const { cleanedPlan, aliasConflicts } = normalizeLoadedPlanAndAliases(
+              data.repairPlan || {},
+              data.currentMetafields || {},
+              manualEdits[targetId] || {},
+              approvals[targetId] || {},
+              allConfigFields
+            );
+
+            // Ensure piece_name in repairPlan holds only the piece name if it was seeded with a 3-part title
+            if (hasNonBlankValue(cleanedPlan["custom.piece_name"])) {
+              cleanedPlan["custom.piece_name"] = extractPieceNameOnly(
+                cleanedPlan["custom.piece_name"],
+                data.nativeTargets?.productTitle || data.productTitle || ""
+              );
+            }
+
+            const mergedConflicts = {
+              ...validObj(data.conflicts),
+              ...aliasConflicts
+            };
+
             return {
               ...prev,
               [targetId]: {
                 ...data,
-                repairPlan: cleanedRepairPlan,
+                repairPlan: cleanedPlan,
+                conflicts: mergedConflicts,
                 diagnostics: {
                   shopifyRead: success ? "Success" : "Failed",
                   gemini: prevDiag.gemini === "Success" ? "Success" : "Not called",
@@ -1045,42 +1412,72 @@ export function useMetaInjectorExecution({
 
       if ((intent === "executeRepairPlan" || intent === "batchAuditItem" || intent === "saveMetafields") && targetId && (!pendingOperation || pendingOperation.intent === intent)) {
 
-        if (intent === "executeRepairPlan") {
+        const hasExplicitConfirmationEvidence =
+          intent === "executeRepairPlan" &&
+          (typeof readBackVerified === "boolean" ||
+            verifiedDestinations.length > 0 ||
+            attemptedDestinations.length > 0 ||
+            status === "NO_CHANGES_REQUIRED" ||
+            status === "REPAIRED" ||
+            status === "PARTIAL_SUCCESS" ||
+            status === "REPAIR_BLOCKED" ||
+            status === "REPAIR_FAILED");
+
+        const isUnverifiedNoOpResponse =
+          intent === "saveMetafields" ||
+          (intent === "executeRepairPlan" && !hasExplicitConfirmationEvidence);
+
+        if (intent === "executeRepairPlan" || intent === "saveMetafields") {
           const ts = new Date().toISOString();
-          const isFailedOrPartial = !success || status === "REPAIR_FAILED" || status === "REPAIR_BLOCKED" || status === "PARTIAL_SUCCESS" || finalStatus === "PARTIAL_SUCCESS" || readBackVerified === false;
+          const isFailedOrPartial =
+            !success ||
+            isUnverifiedNoOpResponse ||
+            status === "REPAIR_FAILED" ||
+            status === "REPAIR_BLOCKED" ||
+            status === "PARTIAL_SUCCESS" ||
+            finalStatus === "PARTIAL_SUCCESS" ||
+            readBackVerified === false;
 
           setRepairHistory(prev => {
             const priorHistory = prev[targetId] || {};
+            const unverifiedMsg = isUnverifiedNoOpResponse
+              ? `Missing persistence confirmation: Backend returned generic response for '${intent}' without verified destinations or read-back evidence.`
+              : null;
             const preservedErrors = normalizedErrorObjects.length > 0
               ? normalizedErrorObjects
-              : (isFailedOrPartial ? validArray(priorHistory.errors) : []);
+              : (unverifiedMsg
+                  ? [{ message: unverifiedMsg, field: null, code: "UNVERIFIED_PERSISTENCE", destination: null, formatted: unverifiedMsg }]
+                  : (isFailedOrPartial ? validArray(priorHistory.errors) : []));
             const preservedErrorStrings = formattedErrorStrings.length > 0
               ? formattedErrorStrings
-              : (isFailedOrPartial ? validArray(priorHistory.errorMessages) : []);
-            const effectiveMessage = specificErrorSummary
-              ? (safeGenericMessage && safeGenericMessage !== specificErrorSummary
-                  ? `${specificErrorSummary} (${safeGenericMessage})`
-                  : specificErrorSummary)
-              : (safeGenericMessage || priorHistory.message || null);
+              : (unverifiedMsg
+                  ? [unverifiedMsg]
+                  : (isFailedOrPartial ? validArray(priorHistory.errorMessages) : []));
+            const effectiveMessage = unverifiedMsg
+              || (specificErrorSummary
+                ? (safeGenericMessage && safeGenericMessage !== specificErrorSummary
+                    ? `${specificErrorSummary} (${safeGenericMessage})`
+                    : specificErrorSummary)
+                : (safeGenericMessage || priorHistory.message || null));
 
             return {
               ...prev,
               [targetId]: {
-                status,
-                success,
+                status: isUnverifiedNoOpResponse ? "UNVERIFIED_RESPONSE" : status,
+                success: isUnverifiedNoOpResponse ? false : success,
                 message: effectiveMessage,
                 rawMessage: safeGenericMessage || null,
                 errors: preservedErrors,
                 errorMessages: preservedErrorStrings,
-                fieldsUpdated: !success ? (fieldsUpdated !== undefined ? fieldsUpdated : null) : fieldsUpdated,
-                legacyKeysRemoved: !success ? (legacyKeysRemoved !== undefined ? legacyKeysRemoved : null) : legacyKeysRemoved,
+                fieldsUpdated: (!success || isUnverifiedNoOpResponse) ? (fieldsUpdated !== undefined ? fieldsUpdated : 0) : fieldsUpdated,
+                legacyKeysRemoved: (!success || isUnverifiedNoOpResponse) ? (legacyKeysRemoved !== undefined ? legacyKeysRemoved : 0) : legacyKeysRemoved,
                 unsupportedKeys,
                 attemptedDestinations,
                 verifiedDestinations,
                 unresolvedChanges,
                 blockedFields,
                 conflicts,
-                readBackVerified: !success ? false : readBackVerified,
+                readBackVerified: (!success || isUnverifiedNoOpResponse) ? false : Boolean(readBackVerified),
                 proposedChanges,
                 completedAt: ts,
                 variantTarget: variantTarget || null
@@ -1108,13 +1505,19 @@ export function useMetaInjectorExecution({
                 }
               }
 
+              const unverifiedMsg = isUnverifiedNoOpResponse
+                ? `Missing persistence confirmation for '${intent}': No verified destinations or read-back evidence returned.`
+                : null;
               const preservedDiagErrors = normalizedErrorObjects.length > 0
                 ? normalizedErrorObjects
-                : (isFailedOrPartial ? validArray(existingDiag.errors) : []);
-              const preservedDiagErrorText = specificErrorSummary
+                : (unverifiedMsg
+                    ? [{ message: unverifiedMsg, field: null, code: "UNVERIFIED_PERSISTENCE", destination: null, formatted: unverifiedMsg }]
+                    : (isFailedOrPartial ? validArray(existingDiag.errors) : []));
+              const preservedDiagErrorText = unverifiedMsg
+                || specificErrorSummary
                 || (isFailedOrPartial ? (safeGenericMessage || existingDiag.error || null) : null);
 
-              const readBackDiagStatus = !success
+              const readBackDiagStatus = (!success || isUnverifiedNoOpResponse)
                 ? (returnedNativeTargets ? "Failed" : "Not called")
                 : (data.readBackVerified === true ? "Success" : (data.readBackVerified === false ? "Failed" : "Not called"));
 
@@ -1122,7 +1525,7 @@ export function useMetaInjectorExecution({
                 ...prev,
                 [targetId]: {
                   ...existing,
-                  currentMetafields: (success && data.currentMetafields) ? data.currentMetafields : existing.currentMetafields,
+                  currentMetafields: (success && !isUnverifiedNoOpResponse && data.currentMetafields) ? data.currentMetafields : existing.currentMetafields,
                   nativeTargets: updatedNativeTargets,
                   canonicalFields: updatedCanonicalFields,
                   productTitle:
@@ -1137,15 +1540,15 @@ export function useMetaInjectorExecution({
                     returnedNativeTargets && returnedNativeTargets.seo && typeof returnedNativeTargets.seo === "object"
                       ? returnedNativeTargets.seo
                       : existing.seo,
-                  fieldsUpdated: success && data.fieldsUpdated !== undefined ? data.fieldsUpdated : existing.fieldsUpdated,
-                  legacyKeysRemoved: success && data.legacyKeysRemoved !== undefined ? data.legacyKeysRemoved : existing.legacyKeysRemoved,
+                  fieldsUpdated: (success && !isUnverifiedNoOpResponse && data.fieldsUpdated !== undefined) ? data.fieldsUpdated : existing.fieldsUpdated,
+                  legacyKeysRemoved: (success && !isUnverifiedNoOpResponse && data.legacyKeysRemoved !== undefined) ? data.legacyKeysRemoved : existing.legacyKeysRemoved,
                   blockedFields: blockedFields,
-                  conflicts: conflicts,
+                  conflicts: { ...(existing.conflicts || {}), ...conflicts },
                   diagnostics: {
                     ...existingDiag,
                     shopifyRead: existingDiag.shopifyRead || "Success",
                     readBack: readBackDiagStatus,
-                    stage: "executeRepairPlan",
+                    stage: intent,
                     error: preservedDiagErrorText,
                     errors: preservedDiagErrors
                   }
@@ -1155,13 +1558,17 @@ export function useMetaInjectorExecution({
           }
         }
 
-        if (!success) {
-          console.error("Execute Error from Backend:", data);
-          const primaryErrorDisplay = specificErrorSummary
-            ? (safeGenericMessage && safeGenericMessage !== specificErrorSummary
-                ? `${specificErrorSummary} (${safeGenericMessage})`
-                : specificErrorSummary)
-            : (safeGenericMessage || "Unknown Error");
+        if (!success || isUnverifiedNoOpResponse) {
+          console.error("Execute Error or Unverified Persistence from Backend:", data);
+          const unverifiedMsg = isUnverifiedNoOpResponse
+            ? `Missing persistence confirmation for '${intent}': No verified destinations or read-back evidence returned.`
+            : null;
+          const primaryErrorDisplay = unverifiedMsg
+            || (specificErrorSummary
+              ? (safeGenericMessage && safeGenericMessage !== specificErrorSummary
+                  ? `${specificErrorSummary} (${safeGenericMessage})`
+                  : specificErrorSummary)
+              : (safeGenericMessage || "Unknown Error"));
           setSafetyError(`Engine halted on ${targetId}. Error: ${primaryErrorDisplay}`);
           const failureLogs = formattedErrorStrings.length > 0
             ? formattedErrorStrings
@@ -1215,8 +1622,11 @@ export function useMetaInjectorExecution({
           if (status === "NO_CHANGES_REQUIRED" || safeGenericMessage === "No changes required." || (fieldsUpdated === 0 && Object.keys(blockedFields).length === 0 && formattedErrorStrings.length === 0 && Object.keys(unresolvedChanges).length === 0)) {
             statusToSet = STATUS.SKIPPED;
             successLogs.push("No changes required.");
-          } else if (finalStatus === "Needs Review" || status === "REPAIR_FAILED" || readBackVerified === false) {
+          } else if (finalStatus === "Needs Review" || status === "REPAIR_FAILED" || status === "REPAIR_BLOCKED" || readBackVerified !== true) {
             statusToSet = STATUS.FAILED;
+            if (readBackVerified !== true && !successLogs.some(l => l.includes("Read-back"))) {
+              successLogs.push("Missing read-back confirmation from backend.");
+            }
           }
 
           if (Object.keys(blockedFields).length > 0) successLogs.push(`Partial API block: ${Object.keys(blockedFields).length} fields rejected by Shopify.`);
@@ -1326,19 +1736,35 @@ export function useMetaInjectorExecution({
               setManifestData(prevMan => {
                 const existing = prevMan[targetId];
                 if (!existing) return prevMan;
-                const newPlan = { ...existing.repairPlan };
+                const newPlan = { ...(existing.repairPlan || {}) };
+                const newMetadata = { ...(existing.metadata || {}) };
+                const newConflicts = { ...(existing.conflicts || {}) };
                 delete newPlan.standardized_candidates;
                 delete newPlan["custom.standardized_candidates"];
+                delete newPlan["custom.stone_family"];
+                delete newPlan["stone_family"];
+                delete newPlan["custom.primary_medium"];
+                delete newPlan["primary_medium"];
+                delete newPlan["custom.is_ooak"];
+                delete newPlan["is_ooak"];
+                delete newPlan["custom.origin_handle"];
+                delete newPlan["origin_handle"];
+                delete newPlan["custom.canonical_title"];
+                delete newPlan["canonical_title"];
                 const diagnostics = { ...(existing.diagnostics || {}) };
 
-                const titleData = updatedPieceAi.titleParse || {};
-                const visionData = updatedPieceAi.tab3Data || {};
+                const titleData = validObj(updatedPieceAi.titleParse);
+                const visionData = validObj(updatedPieceAi.tab3Data);
                 const descData = updatedPieceAi.generated_description || "";
-                const verifiedGeo = updatedPieceAi.verifiedGeoValues || {};
+                const rawVerifiedGeo = validObj(updatedPieceAi.verifiedGeoValues);
+
+                const geoSourceName = titleData?.geoSource || visionData?.geoSource || null;
+                const isVerifiedDbOrLibraryGeo =
+                  geoSourceName === "library" || geoSourceName === "database" || geoSourceName === "cache";
 
                 if (updatedPieceAi.titleParseRequested) {
                   diagnostics.gemini = "Success";
-                  diagnostics.geoLibrary = titleData?.geoSource === "library" ? "Success" : (titleData?.geoSource || "Not reported");
+                  diagnostics.geoLibrary = geoSourceName === "library" ? "Success" : (geoSourceName || "Not reported");
                   diagnostics.stage = "titleParse";
                 }
                 if (updatedPieceAi.fullRescanRequested) {
@@ -1350,71 +1776,288 @@ export function useMetaInjectorExecution({
 
                 const allConfigFields = PRODUCT_TEMPLATE_GROUPS.flatMap(g => g.fields || []);
 
-                const safeApply = (keyName, aiValue) => {
-                  const targetKey = NATIVE_ALIAS_MAP[keyName] || keyName;
-                  if (targetKey === "standardized_candidates" || targetKey === "custom.standardized_candidates") return;
-                  if (RETIRED_KEYS.includes(targetKey)) return;
-                  if (targetKey.startsWith("custom.std_") || targetKey.startsWith("std_")) return;
+                // Build sanitized verifiedGeoValues: never label generated defaults or copied era-as-age as verified database facts
+                const sanitizedVerifiedGeo = {};
+                Object.entries(rawVerifiedGeo).forEach(([gk, gv]) => {
+                  if (!hasNonBlankValue(gv)) return;
+                  const cleanGeoKey = gk.replace(/^custom\./, "");
+                  if (cleanGeoKey === "geological_age") {
+                    const eraVal = rawVerifiedGeo.geological_era ?? titleData.geological_era ?? visionData.geological_era;
+                    if (eraVal !== undefined && String(gv).trim() === String(eraVal).trim()) {
+                      return;
+                    }
+                  }
+                  sanitizedVerifiedGeo[cleanGeoKey] = gv;
+                });
+
+                const getExpectedFieldType = (destKey) => {
+                  const cfg = allConfigFields.find(f => resolveConfigFieldDestination(f) === destKey || f.key === destKey);
+                  if (cfg?.type) return cfg.type;
+                  if (destKey === "custom.character_marks" || destKey === "custom.stone_story") return "list.single_line_text_field";
+                  if (destKey === "custom.weight_grams" || destKey === "custom.shipping_weight_oz") return "number_decimal";
+                  if (destKey === "custom.honest_flaws_and_character" || destKey === "custom.origin_story" || destKey === "custom.generated_description") return "multi_line_text_field";
+                  return "single_line_text_field";
+                };
+
+                const isLockedByOperator = (destKey) => {
+                  if (manualEdits[targetId]?.[destKey] === true) return true;
+                  if (approvals[targetId]?.[destKey] !== undefined) return true;
+                  const companions = ALIAS_COMPANION_LOOKUP[destKey] || [];
+                  return companions.some(ak => manualEdits[targetId]?.[ak] === true || approvals[targetId]?.[ak] !== undefined);
+                };
+
+                const hasExistingMerchantValue = (destKey) => {
+                  if (destKey === "shopify_title" || destKey === "native_title") {
+                    return hasNonBlankValue(existing.nativeTargets?.productTitle);
+                  }
+                  if (destKey === "price" || destKey === "native_price") {
+                    return hasNonBlankValue(existing.nativeTargets?.variants?.edges?.[0]?.node?.price);
+                  }
+                  if (destKey === "custom.shipping_weight_oz" || destKey === "native_shipping_weight") {
+                    const w = existing.nativeTargets?.variants?.edges?.[0]?.node?.inventoryItem?.measurement?.weight;
+                    return (w?.value !== undefined && w?.value !== null && Number(w.value) > 0) ||
+                           hasNonBlankValue(existing.currentMetafields?.["custom.shipping_weight_oz"]);
+                  }
+                  if (hasNonBlankValue(existing.currentMetafields?.[destKey])) return true;
+                  const companions = ALIAS_COMPANION_LOOKUP[destKey] || [];
+                  return companions.some(ak => {
+                    const fullAk = ak.includes(".") ? ak : `custom.${ak}`;
+                    return hasNonBlankValue(existing.currentMetafields?.[fullAk]) || hasNonBlankValue(existing.currentMetafields?.[ak]);
+                  });
+                };
+
+                const hasStoredConflictForCanonical = (destKey) => {
+                  return Boolean(newConflicts?.[destKey]);
+                };
+
+                const stagedByCanonicalInThisPass = {};
+
+                const safeApply = (rawKeyName, rawAiValue, sourceMeta = { source: "Gemini", stage: "AI_PIPELINE" }) => {
+                  if (!hasNonBlankValue(rawAiValue)) return;
+                  if (rawKeyName === "origin_story" || rawKeyName === "custom.origin_story") return;
+                  if (rawKeyName === "standardized_candidates" || rawKeyName === "custom.standardized_candidates") return;
+                  if (rawKeyName.startsWith("custom.std_") || rawKeyName.startsWith("std_")) return;
+                  if (rawKeyName === "canonical_title" || rawKeyName === "custom.canonical_title" || rawKeyName === "product_title" || rawKeyName === "custom.product_title" || rawKeyName === "shopify_title" || rawKeyName === "native_title") {
+                    return;
+                  }
+
+                  const targetKey = normalizeIncomingTargetKey(rawKeyName);
+                  if (!targetKey || isEffectiveRetiredKey(targetKey) || isEffectiveRetiredKey(rawKeyName)) return;
+                  if (targetKey === "custom.origin_story" || targetKey === "shopify_title" || targetKey === "native_title") return;
                   if (targetKey.startsWith("shopify.") && !isVerifiedStandardizedDestination(targetKey)) return;
+
+                  // Never allow generated drafts to overwrite operator manual edits or explicit approvals
+                  if (isLockedByOperator(targetKey)) return;
+
+                  // Never silently overwrite an unresolved canonical/alias conflict
+                  if (hasStoredConflictForCanonical(targetKey)) return;
+
+                  // Never allow generated drafts to overwrite existing merchant measurements, price, or shipping weights
+                  if (OPERATOR_AUTHORITATIVE_DESTINATIONS.has(targetKey) && hasExistingMerchantValue(targetKey)) {
+                    return;
+                  }
 
                   const matchedConfig = allConfigFields.find(f => resolveConfigFieldDestination(f) === targetKey || f.key === targetKey);
                   if (isVerifiedStandardizedDestination(targetKey)) {
                     const stdEval = getStandardizedEvaluationForField(targetId, targetKey, existing);
-                    const valCheck = validateProposedStandardizedGidList(aiValue, stdEval);
+                    const valCheck = validateProposedStandardizedGidList(rawAiValue, stdEval);
                     if (!valCheck.valid) return;
-                    if (manualEdits[targetId] && manualEdits[targetId][targetKey] === true) return;
                     newPlan[targetKey] = JSON.stringify(valCheck.gids);
+                    newMetadata[targetKey] = {
+                      source: sourceMeta.source || "Vision",
+                      stage: sourceMeta.stage || "resolveStandardizedCandidates"
+                    };
                     return;
                   }
 
-                  if (matchedConfig?.mappingStatus === "pending_read_only" || matchedConfig?.role === "standardized_attribute") return;
-                  if (manualEdits[targetId] && manualEdits[targetId][targetKey] === true) return;
-                  newPlan[targetKey] = aiValue;
+                  if (matchedConfig?.mappingStatus === "pending_read_only" || matchedConfig?.role === "standardized_attribute" || matchedConfig?.namespace === "shopify") {
+                    return;
+                  }
+
+                  // Enforce piece_name contains only the piece name segment, never the 3-part canonical title
+                  let normalizedValue = rawAiValue;
+                  if (targetKey === "custom.piece_name") {
+                    normalizedValue = extractPieceNameOnly(
+                      String(rawAiValue),
+                      titleData.canonical_title || existing.nativeTargets?.productTitle || ""
+                    );
+                    if (!hasNonBlankValue(normalizedValue)) return;
+                  }
+
+                  // Do not substitute geological_era for geological_age when an independent age was not provided
+                  if (targetKey === "custom.geological_age") {
+                    const eraCandidate =
+                      visionData.geological_era ??
+                      visionData["custom.geological_era"] ??
+                      titleData.geological_era ??
+                      titleData["custom.geological_era"] ??
+                      existing.currentMetafields?.["custom.geological_era"];
+                    const existingAge = existing.currentMetafields?.["custom.geological_age"];
+                    if (
+                      eraCandidate !== undefined &&
+                      String(normalizedValue).trim() === String(eraCandidate).trim() &&
+                      (!hasNonBlankValue(existingAge) || String(existingAge).trim() !== String(normalizedValue).trim())
+                    ) {
+                      return;
+                    }
+                  }
+
+                  const expectedType = getExpectedFieldType(targetKey);
+                  const formattedVal = formatComparableValue(normalizedValue, expectedType, targetKey);
+                  if (!formattedVal) return;
+
+                  const isDirectCanonicalKey =
+                    rawKeyName === targetKey ||
+                    `custom.${rawKeyName}` === targetKey ||
+                    NATIVE_ALIAS_MAP[rawKeyName] === targetKey;
+
+                  // Detect alias vs canonical conflicts within the incoming AI payloads
+                  if (stagedByCanonicalInThisPass[targetKey] !== undefined) {
+                    const priorStaged = stagedByCanonicalInThisPass[targetKey];
+                    if (priorStaged.value !== formattedVal) {
+                      if (isDirectCanonicalKey && !priorStaged.isDirectCanonical) {
+                        newConflicts[targetKey] = {
+                          expected: formattedVal,
+                          actual: `${priorStaged.rawKey}: ${priorStaged.value}`
+                        };
+                        stagedByCanonicalInThisPass[targetKey] = {
+                          value: formattedVal,
+                          rawKey: rawKeyName,
+                          isDirectCanonical: true
+                        };
+                        newPlan[targetKey] = formattedVal;
+                        newMetadata[targetKey] = {
+                          source: sourceMeta.source || "Not reported",
+                          stage: sourceMeta.stage || "Not reported"
+                        };
+                      } else {
+                        newConflicts[targetKey] = {
+                          expected: priorStaged.value,
+                          actual: `${rawKeyName}: ${formattedVal}`
+                        };
+                      }
+                    }
+                    return;
+                  }
+
+                  stagedByCanonicalInThisPass[targetKey] = {
+                    value: formattedVal,
+                    rawKey: rawKeyName,
+                    isDirectCanonical: isDirectCanonicalKey
+                  };
+
+                  newPlan[targetKey] = formattedVal;
+                  newMetadata[targetKey] = {
+                    source: sourceMeta.source || "Not reported",
+                    stage: sourceMeta.stage || "Not reported"
+                  };
                 };
 
-                Object.keys(visionData).forEach(k => {
-                  if (k !== "generated_description" && k !== "pieceId" && k !== "debug_origin" && k !== "intent" && k !== "success" && k !== "origin_story" && k !== "standardized_candidates" && k !== "custom.standardized_candidates") {
+                // Order keys so canonical keys (e.g. material, is_one_of_a_kind, origin_page_handle) are processed before legacy aliases
+                const sortCanonicalFirst = (keys) =>
+                  [...keys].sort((a, b) => {
+                    const aIsAlias = Object.prototype.hasOwnProperty.call(CANONICAL_INCOMING_ALIAS_MAP, a) ? 1 : 0;
+                    const bIsAlias = Object.prototype.hasOwnProperty.call(CANONICAL_INCOMING_ALIAS_MAP, b) ? 1 : 0;
+                    return aIsAlias - bIsAlias;
+                  });
+
+                const GEOLOGY_FIELD_KEYS = new Set([
+                  "mohs_hardness", "specific_gravity", "crystal_system", "luster",
+                  "cleavage", "fracture_pattern", "diaphaneity", "mineral_class",
+                  "rock_composition", "rock_formation", "geological_era", "geological_age", "tenacity"
+                ]);
+
+                const resolveFieldSourceMeta = (rawKey, defaultSource, defaultStage) => {
+                  const bare = rawKey.replace(/^custom\./, "");
+                  if (GEOLOGY_FIELD_KEYS.has(bare)) {
+                    if (isVerifiedDbOrLibraryGeo && Object.prototype.hasOwnProperty.call(sanitizedVerifiedGeo, bare)) {
+                      return { source: geoSourceName === "library" ? "Geo Library" : "Database", stage: defaultStage };
+                    }
+                    return { source: geoSourceName === "mindat" ? "Mindat" : defaultSource, stage: defaultStage };
+                  }
+                  return { source: defaultSource, stage: defaultStage };
+                };
+
+                sortCanonicalFirst(Object.keys(visionData)).forEach(k => {
+                  if (
+                    k !== "generated_description" &&
+                    k !== "pieceId" &&
+                    k !== "debug_origin" &&
+                    k !== "intent" &&
+                    k !== "success" &&
+                    k !== "geoSource" &&
+                    k !== "origin_story" &&
+                    k !== "standardized_candidates" &&
+                    k !== "custom.standardized_candidates" &&
+                    k !== "poetic_hook"
+                  ) {
                     if (k.startsWith("std_") || k.startsWith("custom.std_") || k.startsWith("shopify.")) return;
-                    safeApply(NATIVE_FIELDS.includes(k) || k.includes('.') || k.startsWith('native_') ? k : `custom.${k}`, visionData[k]);
+                    safeApply(k, visionData[k], resolveFieldSourceMeta(k, "Vision", "tab3FullRescan"));
                   }
                 });
 
-                Object.keys(titleData).forEach(k => {
-                  if (k !== "pieceId" && k !== "intent" && k !== "success" && k !== "geoSource" && k !== "origin_story" && k !== "standardized_candidates" && k !== "custom.standardized_candidates") {
+                sortCanonicalFirst(Object.keys(titleData)).forEach(k => {
+                  if (
+                    k !== "pieceId" &&
+                    k !== "intent" &&
+                    k !== "success" &&
+                    k !== "geoSource" &&
+                    k !== "origin_story" &&
+                    k !== "standardized_candidates" &&
+                    k !== "custom.standardized_candidates"
+                  ) {
                     if (k.startsWith("std_") || k.startsWith("custom.std_") || k.startsWith("shopify.")) return;
-                    const targetKey = NATIVE_FIELDS.includes(k) || k.includes('.') || k.startsWith('native_') ? k : `custom.${k}`;
-                    const bareKey = targetKey.startsWith("custom.") ? targetKey.slice(7) : k;
-                    const visionHasValue = [k, targetKey, bareKey].some(candidate =>
-                      Object.prototype.hasOwnProperty.call(visionData, candidate) &&
-                      visionData[candidate] !== undefined &&
-                      visionData[candidate] !== null &&
-                      String(visionData[candidate]).trim() !== ""
-                    );
-                    if (!visionHasValue) safeApply(targetKey, titleData[k]);
+                    const targetKey = normalizeIncomingTargetKey(k);
+                    if (stagedByCanonicalInThisPass[targetKey] === undefined) {
+                      safeApply(k, titleData[k], resolveFieldSourceMeta(k, "Gemini", "titleParse"));
+                    }
                   }
                 });
 
                 const enrichedSeo = visionData.seo_title || visionData["custom.seo_title"] || titleData.seo_title || "";
-                if (enrichedSeo.trim() !== "") safeApply("custom.seo_title", enrichedSeo.trim());
-                if (descData) safeApply("custom.generated_description", descData);
-
-                const stoneGrams = parseFloat(existing.currentMetafields?.["custom.weight_grams"]) || 0;
-                if (stoneGrams > 0) {
-                  safeApply("custom.shipping_weight_oz", String(Math.ceil((stoneGrams / 28.3495) + 0.5)));
+                if (enrichedSeo.trim() !== "") {
+                  safeApply("custom.seo_title", enrichedSeo.trim(), {
+                    source: visionData.seo_title || visionData["custom.seo_title"] ? "Vision" : "Gemini",
+                    stage: visionData.seo_title || visionData["custom.seo_title"] ? "tab3FullRescan" : "titleParse"
+                  });
+                }
+                if (descData) {
+                  safeApply("custom.generated_description", descData, {
+                    source: "Gemini",
+                    stage: "generateDescription"
+                  });
                 }
 
                 if (visionData.poetic_hook) {
-                  safeApply("native_seo_description", visionData.poetic_hook);
+                  safeApply("native_seo_description", visionData.poetic_hook, {
+                    source: "Vision",
+                    stage: "tab3FullRescan"
+                  });
                 }
 
                 if (updatedPieceAi.imageAlts) {
                   updatedPieceAi.imageAlts.forEach(altObj => {
-                    if (altObj.imageId && altObj.altText) safeApply(`native_image_alts_${altObj.imageId}`, altObj.altText);
+                    if (altObj.imageId && altObj.altText) {
+                      safeApply(`native_image_alts_${altObj.imageId}`, altObj.altText, {
+                        source: "Vision",
+                        stage: "tab3FullRescan"
+                      });
+                    }
                   });
                 }
                 if (updatedPieceAi.altValidationErrors) diagnostics.altValidationErrors = updatedPieceAi.altValidationErrors;
 
-                return { ...prevMan, [targetId]: { ...existing, repairPlan: newPlan, diagnostics, verifiedGeoValues: verifiedGeo } };
+                return {
+                  ...prevMan,
+                  [targetId]: {
+                    ...existing,
+                    repairPlan: newPlan,
+                    metadata: newMetadata,
+                    conflicts: newConflicts,
+                    diagnostics,
+                    verifiedGeoValues: isVerifiedDbOrLibraryGeo ? sanitizedVerifiedGeo : {}
+                  }
+                };
               });
               return { ...prevAi, [targetId]: updatedPieceAi };
             });
@@ -1452,7 +2095,7 @@ export function useMetaInjectorExecution({
         }
       }
     }
-  }, [batchFetcher.state, batchFetcher.data, lastProcessedData, pendingOperation, executionMode, isLoadingData, isExecuting, manualEdits, updateProductState, getStandardizedEvaluationForField]);
+  }, [batchFetcher.state, batchFetcher.data, lastProcessedData, pendingOperation, executionMode, isLoadingData, isExecuting, manualEdits, approvals, updateProductState, getStandardizedEvaluationForField]);
 
   const handleExecuteSingleRepair = useCallback(() => {
     if (!selectedBenchId) return;

@@ -16,6 +16,28 @@ function getDerivedMaterial(stoneFam) {
   return stoneFam.replace(/^(Dragon's Eye|Green|Blue|Fire|Rufus|Rainbow|Yellow|Red|Black|Oregon)\s+/i, "").trim();
 }
 
+function isSegmentedMarketingTitle(val) {
+  if (typeof val !== "string") return false;
+  return val.trim().split(/\s+[-—–]\s+/).length >= 3;
+}
+
+function resolveIdentifierToPreserve(currentPieceName, parsedPieceName) {
+  const existing = typeof currentPieceName === "string" ? currentPieceName.trim() : "";
+  if (existing && !isSegmentedMarketingTitle(existing)) {
+    return existing;
+  }
+  if (isSegmentedMarketingTitle(existing)) {
+    const segs = existing.split(/\s+[-—–]\s+/);
+    const tail = segs[segs.length - 1]?.trim() || "";
+    if (tail) return tail;
+  }
+  const candidate = typeof parsedPieceName === "string" ? parsedPieceName.trim() : "";
+  if (candidate && !isSegmentedMarketingTitle(candidate)) {
+    return candidate;
+  }
+  return existing;
+}
+
 export function NewProductIntakeTab({ fetcher }) {
   const stageFetcher = useFetcher();
   const autoFillFetcher = useFetcher();
@@ -27,6 +49,7 @@ export function NewProductIntakeTab({ fetcher }) {
     stone_family: "",
     collection_name: "",
     collection_location: "",
+    collection_date: "",
     origin_location: "",
     origin_handle: "", 
     rescued_by: "Bob and Janyce",
@@ -35,6 +58,7 @@ export function NewProductIntakeTab({ fetcher }) {
     stone_story: "",
     primary_use: "",
     is_ooak: "Yes",
+    is_one_of_a_kind: "Yes",
     treated: "Untreated — Natural",
     found_object: "true",
     condition: "new",
@@ -46,6 +70,8 @@ export function NewProductIntakeTab({ fetcher }) {
     setting_ready: "",
     bail_included: "",
     jewelry_finding_type: "",
+    wire_material: "",
+    chain_material: "",
     chain_link_type: "",
     necklace_design: "",
     jewelry_type: "",
@@ -70,6 +96,7 @@ export function NewProductIntakeTab({ fetcher }) {
   const initialPieceState = {
     id: Date.now().toString(),
     piece_name: "",
+    canonical_title: "",
     official_name: "",
     dimensions_mm: "",
     cut_type: "",
@@ -139,9 +166,8 @@ export function NewProductIntakeTab({ fetcher }) {
     fd.append("pieceId", productId);
     fd.append("newStatus", newStatus);
     
-    // We update UI optimistically, fetcher will confirm
     setPieces(prev => prev.map(p => 
-      p.id === pieceId ? { ...p, status: newStatus } : p
+      p.id === pieceId ? { ...p, previousStatus: currentStatus, status: newStatus } : p
     ));
 
     statusFetcher.submit(fd, { method: "post", action: "/app/meta-injector-api" });
@@ -149,14 +175,34 @@ export function NewProductIntakeTab({ fetcher }) {
 
   useEffect(() => {
     if (statusFetcher.state === "idle" && statusFetcher.data) {
-      if (!statusFetcher.data.success) {
-        setErrorMessage(statusFetcher.data.error || "Status toggle failed.");
+      const sData = statusFetcher.data;
+      if (!sData.success || sData.status === "UNSUPPORTED_INTENT" || !sData.newStatus) {
+        const targetProdId = sData.pieceId || sData.productId;
+        setPieces(prev => prev.map(p =>
+          (!targetProdId || p.productId === targetProdId) && p.previousStatus
+            ? { ...p, status: p.previousStatus, previousStatus: undefined }
+            : p
+        ));
+        setErrorMessage(sData.error || sData.message || "Status toggle failed: operation is not supported on this route.");
         if (window.shopify?.toast) window.shopify.toast.show("Status update failed", { isError: true });
       } else {
-        if (window.shopify?.toast) window.shopify.toast.show(`Status changed to ${statusFetcher.data.newStatus}`);
+        if (window.shopify?.toast) window.shopify.toast.show(`Status changed to ${sData.newStatus}`);
       }
     }
   }, [statusFetcher.state, statusFetcher.data]);
+
+  const handlePieceChange = useCallback((id, key, value) => {
+    setPieces(prev => prev.map(p => {
+      if (p.id !== id) return p;
+      const updated = { ...p, [key]: value };
+      if (key === "is_ooak" || key === "is_one_of_a_kind") {
+        updated.is_ooak = value;
+        updated.is_one_of_a_kind = value;
+      }
+      // Stone-only weight (weight_grams) must never populate or overwrite shipping_weight_oz
+      return updated;
+    }));
+  }, []);
 
   const handleScanGeminiPhotos = useCallback((piece) => {
     if (piece?.imageBase64) {
@@ -164,7 +210,8 @@ export function NewProductIntakeTab({ fetcher }) {
         piece,
         updatePiece: handlePieceChange,
         visionFetcher,
-        setErrorMessage
+        setErrorMessage,
+        sharedFields: latestShared.current
       });
       return;
     }
@@ -180,7 +227,7 @@ export function NewProductIntakeTab({ fetcher }) {
         encType: "multipart/form-data"
       });
     })();
-  }, [stageFetcher, visionFetcher]);
+  }, [stageFetcher, visionFetcher, handlePieceChange]);
 
   const handleFullRescan = useCallback((piece) => {
     if (!piece.imageBase64 && !(piece.stagedResourceUrls && piece.stagedResourceUrls.length > 0)) {
@@ -190,15 +237,38 @@ export function NewProductIntakeTab({ fetcher }) {
       return;
     }
     
-    const pName = piece.piece_name || "";
-    const cName = latestShared.current.collection_name || "";
+    const currentShared = latestShared.current || {};
+    const rawPieceName = (piece.piece_name || "").trim();
+    const rawCanonical = (piece.canonical_title || "").trim();
+    const cleanHumanId = resolveIdentifierToPreserve(rawPieceName, "");
+    const cName = piece.collection_name || currentShared.collection_name || "";
+    const sFamily = piece.stone_family || currentShared.stone_family || "";
+    const oLocation = piece.origin_location || currentShared.origin_location || "";
+    const oHandle = piece.origin_handle || piece.origin_page_handle || currentShared.origin_handle || currentShared.origin_page_handle || "";
+    const oStory = piece.origin_story || currentShared.origin_story || "";
+
+    let segmentedTitle = "";
+    if (isSegmentedMarketingTitle(rawCanonical)) {
+      segmentedTitle = rawCanonical;
+    } else if (isSegmentedMarketingTitle(rawPieceName)) {
+      segmentedTitle = rawPieceName;
+    } else if (sFamily && oLocation && cleanHumanId) {
+      segmentedTitle = `${sFamily} — ${oLocation} — ${cleanHumanId}`;
+    }
 
     const formData = new FormData();
     formData.append("intent", "fullRescan");
     formData.append("pieceId", piece.id);
     formData.append("imageUrl", piece.stagedResourceUrls?.[0] || "");
-    formData.append("pieceName", pName);
+    formData.append("pieceName", segmentedTitle || cleanHumanId);
+    if (segmentedTitle) formData.append("productTitle", segmentedTitle);
+    if (cleanHumanId) formData.append("humanPieceId", cleanHumanId);
+    if (sFamily) formData.append("stone_family", sFamily);
+    if (oLocation) formData.append("origin_location", oLocation);
+    if (oHandle) formData.append("origin_handle", oHandle);
+    if (oStory) formData.append("origin_story", oStory);
     formData.append("collectionName", cName);
+    if (cName) formData.append("collection_name", cName);
     formData.append("imageBase64", piece.imageBase64 || "");
     formData.append("imageMimeType", piece.imageMimeType || "image/jpeg");
 
@@ -209,24 +279,25 @@ export function NewProductIntakeTab({ fetcher }) {
   }, [visionFetcher]);
 
   const handleSharedFieldChange = useCallback((key, value) => {
-    setSharedFields(prev => ({ ...prev, [key]: value }));
+    setSharedFields(prev => {
+      const next = { ...prev, [key]: value };
+      if (key === "is_ooak" || key === "is_one_of_a_kind") {
+        next.is_ooak = value;
+        next.is_one_of_a_kind = value;
+      }
+      if (key === "origin_handle" || key === "origin_page_handle") {
+        next.origin_handle = value;
+        next.origin_page_handle = value;
+      }
+      return next;
+    });
   }, []);
 
   const handleStoneFamilyChange = useCallback((value) => {
-    setSharedFields(prev => ({ ...prev, stone_family: value }));
-  }, []);
-
-  const handlePieceChange = useCallback((id, key, value) => {
-    setPieces(prev => prev.map(p => {
-      let updated = { ...p };
-      if (p.id === id) { updated[key] = value; }
-      if (p.id === id && key === "weight_grams" && value !== "") {
-        const grams = parseFloat(value);
-        if (!isNaN(grams)) {
-          updated.shipping_weight_oz = String(Math.ceil((grams / 28.3495) + 0.5));
-        }
-      }
-      return updated;
+    setSharedFields(prev => ({
+      ...prev,
+      stone_family: value,
+      material: prev.material || getDerivedMaterial(value)
     }));
   }, []);
 
@@ -235,11 +306,22 @@ export function NewProductIntakeTab({ fetcher }) {
     const segments = value.split(/\s+[-—–]\s+/);
     
     if (segments.length === 3 && value !== lastAutofilledTitle.current) {
+      const extractedIdentifier = segments[2].trim();
+      setPieces(prev => prev.map(p =>
+        p.id === id
+          ? {
+              ...p,
+              canonical_title: value.trim(),
+              piece_name: extractedIdentifier || p.piece_name
+            }
+          : p
+      ));
       setLastScannedPieceId(id);
       lastAutofilledTitle.current = value; 
       
       const formData = new FormData();
       formData.append("intent", "titleParse");
+      formData.append("pieceId", id);
       formData.append("pieceName", value);
 
       autoFillFetcher.submit(
@@ -342,6 +424,7 @@ export function NewProductIntakeTab({ fetcher }) {
     const p = pieces[0] || {};
     const report = `=== TAB 1 FIELD REPORT ===
 piece_name: ${p.piece_name || "EMPTY"}
+canonical_title: ${p.canonical_title || "EMPTY"}
 generated_description: ${p.generated_description || "EMPTY"}
 debug_origin: ${p.debug_origin || "EMPTY"}
 seo_title: ${p.seo_title || "EMPTY"}
@@ -374,7 +457,9 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
     let productType = "Wearable Art";
     (currentShared.primary_use && currentShared.primary_use !== "") && (productType = currentShared.primary_use);
 
-    const derivedMaterial = getDerivedMaterial(currentShared.stone_family || "");
+    const derivedMaterial = currentShared.material || getDerivedMaterial(currentShared.stone_family || "");
+    const cleanPieceIdentifier = resolveIdentifierToPreserve(currentPiece.piece_name, "");
+    const pieceForBuild = { ...currentPiece, piece_name: cleanPieceIdentifier };
     
     // Explicitly exclude primary_use from the JSON payload injected into custom metafields
     const { primary_use, ...sharedForPayload } = currentShared;
@@ -382,19 +467,19 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
     const payload = {
       intent: "createProduct",
       ...sharedForPayload,
-      ...currentPiece,
+      ...pieceForBuild,
       material: derivedMaterial,
-      piece_name: currentPiece.piece_name,
+      piece_name: cleanPieceIdentifier,
       dimensions_mm: currentPiece.dimensions_mm,
       surface_finish: currentPiece.surface_finish,
       price: currentPiece.price,
       weight_grams: currentPiece.weight_grams,
       seo_title: currentPiece.seo_title,
-      title: currentPiece.canonical_title || buildTitle(currentShared, currentPiece),
+      title: currentPiece.canonical_title || buildTitle(currentShared, pieceForBuild),
       descriptionHtml: currentPiece.generated_description,
       productType: productType,
       status: "DRAFT",
-      metafieldsJson: buildMetafieldsJson(sharedForPayload, currentPiece),
+      metafieldsJson: buildMetafieldsJson(sharedForPayload, pieceForBuild),
       mediaUrlsJson: JSON.stringify(currentPiece.stagedResourceUrls.filter(u => u !== undefined && u !== ""))
     };
 
@@ -423,27 +508,34 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
 
     (isIdle && hasData) && (() => {
       const isCreate = fetcher.data.intent === "createProduct";
-      const isSuccess = fetcher.data.success === true;
-      const isError = fetcher.data.success === false;
+      const hasVerifiedCreateEvidence =
+        Boolean(fetcher.data.productId) ||
+        (typeof fetcher.data.createdCount === "number" && fetcher.data.createdCount > 0);
+      const isSuccess =
+        fetcher.data.success === true &&
+        fetcher.data.status !== "UNSUPPORTED_INTENT" &&
+        hasVerifiedCreateEvidence;
+      const isError = !isSuccess;
 
       (isCreate && isSuccess) && (() => {
-        let count = 0;
-        fetcher.data.createdCount && (count = fetcher.data.createdCount);
-        
-        // Capture created product ID so we can toggle status later
         if (fetcher.data.productId && pieces.length > 0) {
           setPieces(prev => prev.map((p, i) => 
             i === 0 ? { ...p, productId: fetcher.data.productId, status: "DRAFT" } : p
           ));
         }
-
         setStatusMessage(`Successfully created pieces.`);
+        setErrorMessage("");
       })();
 
       (isCreate && isError) && (() => {
-        let errStr = "An error occurred during product creation.";
-        fetcher.data.error && (errStr = fetcher.data.error);
+        const errStr =
+          fetcher.data.error ||
+          fetcher.data.message ||
+          ( !hasVerifiedCreateEvidence
+              ? "Product creation did not complete: backend returned no created product ID."
+              : "An error occurred during product creation." );
         setErrorMessage(errStr);
+        setStatusMessage("");
       })();
     })();
   }, [fetcher.state, fetcher.data, pieces.length]);
@@ -455,17 +547,22 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
     (isIdle && hasData) && (() => {
       const data = stageFetcher.data;
       const isStaged = data.intent === "stagedUpload";
-      const isSuccess = data.success === true;
-      const isError = data.success === false;
-      const pid = data.pieceId;
       const resourceUrl = data.resourceUrl;
+      const isSuccess = data.success === true && data.status !== "UNSUPPORTED_INTENT" && Boolean(resourceUrl);
+      const isError = !isSuccess;
+      const pid = data.pieceId || stageFetcher.formData?.get("pieceId");
 
       (isStaged && isError) && (() => {
-        handlePieceChange(pid, "scanError", data.error || "Stage failed");
+        if (pid) {
+          handlePieceChange(pid, "scanError", data.error || data.message || "Staged upload is not supported or failed.");
+        } else {
+          setErrorMessage(data.error || data.message || "Staged upload failed.");
+        }
       })();
 
-      (isStaged && isSuccess && resourceUrl) && (() => {
+      (isStaged && isSuccess && resourceUrl && pid) && (() => {
         const currentPiece = latestPieces.current.find(p => p.id === pid);
+        if (!currentPiece) return;
         const currentIndex = currentPiece?.stagedUploadIndex || 0;
 
         setPieces(prev => prev.map(p =>
@@ -479,15 +576,38 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
         if (currentIndex === 0) {
           const executeVisionScan = (finalBase64, finalMime) => {
             const latestP = latestPieces.current.find(p => p.id === pid);
-            const pName = latestP?.piece_name || document.querySelector(`[data-piece-id="${pid}"][data-field="piece_name"]`)?.value || "";
-            const cName = latestShared.current.collection_name || "";
+            const currentShared = latestShared.current || {};
+            const rawPieceName = (latestP?.piece_name || document.querySelector(`[data-piece-id="${pid}"][data-field="piece_name"]`)?.value || "").trim();
+            const rawCanonical = (latestP?.canonical_title || "").trim();
+            const cleanHumanId = resolveIdentifierToPreserve(rawPieceName, "");
+            const cName = latestP?.collection_name || currentShared.collection_name || "";
+            const sFamily = latestP?.stone_family || currentShared.stone_family || "";
+            const oLocation = latestP?.origin_location || currentShared.origin_location || "";
+            const oHandle = latestP?.origin_handle || latestP?.origin_page_handle || currentShared.origin_handle || currentShared.origin_page_handle || "";
+            const oStory = latestP?.origin_story || currentShared.origin_story || "";
+
+            let segmentedTitle = "";
+            if (isSegmentedMarketingTitle(rawCanonical)) {
+              segmentedTitle = rawCanonical;
+            } else if (isSegmentedMarketingTitle(rawPieceName)) {
+              segmentedTitle = rawPieceName;
+            } else if (sFamily && oLocation && cleanHumanId) {
+              segmentedTitle = `${sFamily} — ${oLocation} — ${cleanHumanId}`;
+            }
 
             const formData = new FormData();
             formData.append("intent", "visionScan");
             formData.append("pieceId", pid);
             formData.append("imageUrl", resourceUrl);
-            formData.append("pieceName", pName);
+            formData.append("pieceName", segmentedTitle || cleanHumanId);
+            if (segmentedTitle) formData.append("productTitle", segmentedTitle);
+            if (cleanHumanId) formData.append("humanPieceId", cleanHumanId);
+            if (sFamily) formData.append("stone_family", sFamily);
+            if (oLocation) formData.append("origin_location", oLocation);
+            if (oHandle) formData.append("origin_handle", oHandle);
+            if (oStory) formData.append("origin_story", oStory);
             formData.append("collectionName", cName);
+            if (cName) formData.append("collection_name", cName);
             formData.append("imageBase64", finalBase64);
             formData.append("imageMimeType", finalMime);
 
@@ -545,6 +665,7 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
       const isScan = data.intent === "visionScan" || data.intent === "fullRescan";
       const isSuccess = data.success === true;
       const isError = data.success === false;
+      const pId = data.tab2Data?.pieceId || data.pieceId || visionFetcher.formData?.get("pieceId");
 
       (isScan && isSuccess) && (() => {
         setSharedFields(prev => {
@@ -560,55 +681,60 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
             setting_ready: data.tab2Data?.setting_ready || data.setting_ready || prev.setting_ready,
             bail_included: data.tab2Data?.bail_included || data.bail_included || prev.bail_included,
             jewelry_finding_type: data.tab2Data?.jewelry_finding_type || data.jewelry_finding_type || prev.jewelry_finding_type,
+            wire_material: data.tab2Data?.wire_material || data.wire_material || prev.wire_material,
+            chain_material: data.tab2Data?.chain_material || data.chain_material || prev.chain_material,
             chain_link_type: data.tab2Data?.chain_link_type || data.chain_link_type || prev.chain_link_type,
             necklace_design: data.tab2Data?.necklace_design || data.necklace_design || prev.necklace_design,
             jewelry_type: data.tab2Data?.jewelry_type || data.jewelry_type || prev.jewelry_type
           };
         });
 
-        setPieces(prev => prev.map(p => {
-          let updated = { ...p };
-          const pId = data.tab2Data?.pieceId || data.pieceId;
-          (p.id === pId) && (() => {
-            const desc = data.tab2Data?.generated_description || data.generated_description || data.description;
-            const tColor = data.tab2Data?.primary_color || data.primary_color || updated.primary_color;
-            const tFinish = data.tab2Data?.surface_finish || data.surface_finish;
-            const tDims = data.tab2Data?.dimensions_mm || data.dimensions_mm;
-            const tSeo = data.tab2Data?.seo_title || data.seo_title;
-            const tPattern = data.tab2Data?.color_pattern || data.color_pattern;
-            const tFlaws = data.tab2Data?.honest_flaws_and_character || data.honest_flaws_and_character;
+        if (!pId) return;
 
-            (desc !== undefined && desc !== "") && (updated.generated_description = desc);
-            (tColor !== undefined && tColor !== "") && (updated.primary_color = tColor);
-            (tFinish !== undefined && tFinish !== "") && (updated.surface_finish = tFinish);
-            (tDims !== undefined && tDims !== "") && (updated.dimensions_mm = tDims);
-            (tSeo !== undefined && tSeo !== "") && (updated.seo_title = tSeo);
-            (tPattern !== undefined && tPattern !== "") && (updated.color_pattern = tPattern);
-            (tFlaws !== undefined && tFlaws !== "") && (updated.honest_flaws_and_character = tFlaws);
-            
-            updated.scanError = "";
-            updated.debug_origin = data.tab2Data?.debug_origin || data.debug_origin || "";
-            updated.rarity = data.tab2Data?.rarity || "";
-            if (updated.is_ooak === "Yes" || updated.is_ooak === "true" || updated.is_ooak === true) {
-              updated.rarity = "One-of-a-Kind";
-            }
-            updated.authenticity = data.tab2Data?.authenticity || "";
-            window.shopify?.toast?.show("Scan complete — fields loaded");
-          })();
+        setPieces(prev => prev.map(p => {
+          if (p.id !== pId) return p;
+          const updated = { ...p };
+          const desc = data.tab2Data?.generated_description || data.generated_description || data.description;
+          const tColor = data.tab2Data?.primary_color || data.primary_color || updated.primary_color;
+          const tSecColor = data.tab2Data?.secondary_colors || data.secondary_colors || updated.secondary_colors;
+          const tCutType = data.tab2Data?.cut_type || data.cut_type || updated.cut_type;
+          const tFinish = data.tab2Data?.surface_finish || data.surface_finish;
+          const tDims = data.tab2Data?.dimensions_mm || data.dimensions_mm;
+          const tSeo = data.tab2Data?.seo_title || data.seo_title;
+          const tPattern = data.tab2Data?.color_pattern || data.color_pattern;
+          const tFlaws = data.tab2Data?.honest_flaws_and_character || data.honest_flaws_and_character;
+          const tCharMarks = data.tab2Data?.character_marks || data.character_marks;
+          const tAltText = data.tab2Data?.alt_text || data.alt_text;
+
+          (desc !== undefined && desc !== "") && (updated.generated_description = desc);
+          (tColor !== undefined && tColor !== "") && (updated.primary_color = tColor);
+          (tSecColor !== undefined && tSecColor !== "") && (updated.secondary_colors = tSecColor);
+          (tCutType !== undefined && tCutType !== "") && (updated.cut_type = tCutType);
+          (tFinish !== undefined && tFinish !== "") && (updated.surface_finish = tFinish);
+          (tDims !== undefined && tDims !== "") && (updated.dimensions_mm = tDims);
+          (tSeo !== undefined && tSeo !== "") && (updated.seo_title = tSeo);
+          (tPattern !== undefined && tPattern !== "") && (updated.color_pattern = tPattern);
+          (tFlaws !== undefined && tFlaws !== "") && (updated.honest_flaws_and_character = tFlaws);
+          (tCharMarks !== undefined && tCharMarks !== "") && (updated.character_marks = tCharMarks);
+          (tAltText !== undefined && tAltText !== "") && (updated.alt_text = tAltText);
+          
+          // Never overwrite or rename the human piece_name identifier on visionScan / fullRescan
+          updated.piece_name = resolveIdentifierToPreserve(p.piece_name, "");
+
+          updated.scanError = "";
+          updated.debug_origin = data.tab2Data?.debug_origin || data.debug_origin || "";
+          window.shopify?.toast?.show("Scan complete — fields loaded");
           return updated;
         }));
       })();
 
-      (isScan && isError) && (() => {
+      (isScan && isError && pId) && (() => {
         setPieces(prev => prev.map(p => {
-          let updated = { ...p };
-          const targetId = data.pieceId || latestPieces.current[0]?.id;
-          (p.id === targetId) && (() => {
-            let errStr = "Scan failed";
-            data.error && (errStr = data.error);
-            updated.scanError = errStr;
-          })();
-          return updated;
+          if (p.id !== pId) return p;
+          return {
+            ...p,
+            scanError: data.error || data.message || "Scan failed"
+          };
         }));
       })();
     })();
@@ -647,12 +773,13 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
   useEffect(() => {
     if (!autoFillFetcher.data?.titleParse) return;
     const parsed = autoFillFetcher.data.titleParse;
+    const responsePieceId = autoFillFetcher.data.pieceId || autoFillFetcher.formData?.get("pieceId") || lastScannedPieceId;
 
     setSharedFields(prev => {
       let resolvedCollectionLoc = parsed.collection_location || prev.collection_location;
 
       const nextStoneFamily = normalizeDropdownValue("stone_family", parsed.stone_family?.trim()) || prev.stone_family || "";
-      const derivedMaterial = getDerivedMaterial(nextStoneFamily);
+      const derivedMaterial = parsed.material || getDerivedMaterial(nextStoneFamily) || prev.material;
 
       return {
         ...prev,
@@ -695,13 +822,23 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
       };
     });
 
-    if (parsed.canonical_title || parsed.product_title || parsed.seo_title) {
-      const pieceTitleVal = parsed.canonical_title || parsed.product_title;
-      setPieces(prev => prev.map((p, i) =>
-        p.id === lastScannedPieceId || (!lastScannedPieceId && i === 0)
-          ? { ...p, piece_name: pieceTitleVal, seo_title: parsed.seo_title, handle: parsed.handle, canonical_title: parsed.canonical_title }
-          : p
-      ));
+    if (parsed.canonical_title || parsed.product_title || parsed.seo_title || parsed.piece_name) {
+      const fullCustomerTitle = parsed.canonical_title || parsed.product_title || "";
+      setPieces(prev => prev.map((p, i) => {
+        const isTargetRow = responsePieceId ? p.id === responsePieceId : i === 0;
+        if (!isTargetRow) return p;
+
+        // Keep human internal identifier (e.g. BQH-1, BQH-2, bob) separate from canonical_title
+        const preservedIdentifier = resolveIdentifierToPreserve(p.piece_name, parsed.piece_name);
+
+        return {
+          ...p,
+          piece_name: preservedIdentifier,
+          canonical_title: fullCustomerTitle || p.canonical_title,
+          seo_title: parsed.seo_title || p.seo_title,
+          handle: parsed.handle || p.handle
+        };
+      }));
     }
 
     if (parsed.needs_new_origin_page) {
@@ -728,8 +865,9 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
       (isDesc && isSuccess) && (() => {
         let descStr = "";
         data.generated_description && (descStr = data.generated_description);
+        const targetId = data.pieceId || descriptionFetcher.formData?.get("pieceId");
         setPieces(prev => prev.map((p, i) =>
-          p.id === data.pieceId || (!data.pieceId && i === 0)
+          (targetId ? p.id === targetId : i === 0)
             ? { ...p, generated_description: descStr, seo_title: data.seo_title || p.seo_title }
             : p
         ));

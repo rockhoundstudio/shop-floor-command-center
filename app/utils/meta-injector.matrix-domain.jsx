@@ -13,12 +13,11 @@ export const STATUS = {
   SKIPPED: "Skipped"
 };
 
-export const BLOCKED_UNVERIFIED_PINS = [
-  "custom.jewelry_type"
-];
+export const BLOCKED_UNVERIFIED_PINS = [];
 
 export const FIELD_LIMITS = {
   "custom.seo_title": 70,
+  "native_seo_description": 160,
   "shopify_title": 255,
   "custom.piece_name": 255,
   "custom.alt_text": 100000,
@@ -26,7 +25,7 @@ export const FIELD_LIMITS = {
 };
 
 export const PROTECTED_FIELDS = [
-  "custom.stone_family", "custom.surface_finish",
+  "custom.material", "custom.stone_family", "custom.surface_finish",
   "custom.color_pattern", "custom.google_product_category", "custom.setting_ready",
   "custom.bail_included", "custom.chain_material", "custom.jewelry_finding_type",
   "shopify_title"
@@ -34,13 +33,14 @@ export const PROTECTED_FIELDS = [
 
 export const HARDWARE_FIELDS = [
   "custom.setting_ready", "custom.bail_included", "custom.chain_material",
-  "custom.jewelry_finding_type"
+  "custom.jewelry_finding_type", "custom.wire_material"
 ];
 
 export const POLICY_PRE_APPROVED_FIELDS = [
   "custom.rarity",
   "custom.authenticity",
   "custom.alt_text",
+  "custom.material",
   "custom.stone_family",
   "custom.surface_finish",
   "custom.primary_color",
@@ -65,6 +65,12 @@ export const NATIVE_ALIAS_MAP = {
   "native_price": "price"
 };
 
+const CANONICAL_READ_COMPANIONS = Object.freeze({
+  "custom.material": ["custom.stone_family", "stone_family", "custom.primary_medium", "primary_medium"],
+  "custom.is_one_of_a_kind": ["custom.is_ooak", "is_ooak"],
+  "custom.origin_page_handle": ["custom.origin_handle", "origin_handle"]
+});
+
 export const DESCRIPTION_REVIEW_EXCLUDED_KEYS = ["native_description", "custom.generated_description"];
 
 // Used strictly for global telemetry tracking to preserve 45-count. Do not render.
@@ -72,9 +78,9 @@ export const HIDDEN_CONTEXT_FIELDS = ["custom.origin_story"];
 
 export const RETIRED_KEYS = [
   "artist_notes", "bench_notes", "handcrafted_by", "color",
-  "cut_and_shape", "stone_shape", "wire_material", "primary_use",
+  "cut_and_shape", "stone_shape", "primary_use",
   "custom.artist_notes", "custom.bench_notes", "custom.handcrafted_by", "custom.color",
-  "custom.cut_and_shape", "custom.stone_shape", "custom.wire_material", "custom.primary_use"
+  "custom.cut_and_shape", "custom.stone_shape", "custom.primary_use"
 ];
 
 export const FILTER_OPTIONS = [
@@ -99,16 +105,170 @@ export const formatLabel = (key) => {
 
 export const resolveConfigFieldDestination = (f) => {
   if (!f) return "";
-  if (f.role === "standardized_attribute" && f.namespace && f.metaKey) {
-    return `${f.namespace}.${f.metaKey}`;
-  }
-  if (f.namespace && f.metaKey && !f.key?.startsWith("native_") && !NATIVE_FIELDS.includes(f.key)) {
-    return `${f.namespace}.${f.metaKey}`;
-  }
-  if (NATIVE_FIELDS.includes(f.key) || f.key.includes('.') || f.key.startsWith('native_')) {
+  if (f.owner === "native" || f.namespace === "native" || f.role === "native_control" || f.key?.startsWith("native_")) {
     return f.key;
   }
-  return `custom.${f.key}`;
+  if (NATIVE_FIELDS.includes(f.key)) {
+    return f.key;
+  }
+  if (f.role === "standardized_attribute" || f.namespace === "shopify") {
+    const mk = f.metaKey || (typeof f.key === "string" ? f.key.replace(/^std_/, "").replace(/_/g, "-") : "");
+    return `shopify.${mk}`;
+  }
+  if (f.namespace && f.metaKey) {
+    return `${f.namespace}.${f.metaKey}`;
+  }
+  if (typeof f.key === "string" && f.key.includes(".")) {
+    return f.key;
+  }
+  const ns = f.namespace || "custom";
+  return `${ns}.${f.metaKey || f.key}`;
+};
+
+const normalizeOoakComparable = (rawVal, expectedType = "single_line_text_field") => {
+  if (rawVal === undefined || rawVal === null) return "";
+  if (typeof rawVal === "boolean") {
+    if (expectedType === "boolean") return rawVal ? "true" : "false";
+    return rawVal ? "Yes" : "No";
+  }
+  const trimmed = String(rawVal).trim();
+  if (!trimmed) return "";
+  const lower = trimmed.toLowerCase();
+  if (
+    lower === "true" ||
+    lower === "yes" ||
+    lower === "1" ||
+    lower === "one-of-a-kind" ||
+    lower === "one of a kind" ||
+    lower.startsWith("yes —") ||
+    lower.startsWith("yes -") ||
+    lower.startsWith("yes â€”")
+  ) {
+    return expectedType === "boolean" ? "true" : "Yes";
+  }
+  if (lower === "false" || lower === "no" || lower === "0") {
+    return expectedType === "boolean" ? "false" : "No";
+  }
+  return trimmed;
+};
+
+const serializeFieldValueByType = (rawVal, expectedType, targetKey = "") => {
+  if (rawVal === undefined || rawVal === null) return "";
+
+  if (targetKey === "custom.is_one_of_a_kind" || targetKey === "custom.is_ooak") {
+    return normalizeOoakComparable(rawVal, expectedType);
+  }
+
+  if (expectedType === "list.single_line_text_field") {
+    if (Array.isArray(rawVal)) {
+      const cleaned = rawVal
+        .map(item => (item !== undefined && item !== null ? String(item).trim() : ""))
+        .filter(Boolean);
+      return cleaned.length > 0 ? JSON.stringify(cleaned) : "";
+    }
+    const str = typeof rawVal === "object" ? JSON.stringify(rawVal) : String(rawVal);
+    const trimmed = str.trim();
+    if (!trimmed || trimmed === "[]") return "";
+    if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) {
+          const cleaned = parsed
+            .map(item => (item !== undefined && item !== null ? String(item).trim() : ""))
+            .filter(Boolean);
+          return cleaned.length > 0 ? JSON.stringify(cleaned) : "";
+        }
+      } catch (e) {
+        // Preserve raw string if not valid JSON array
+      }
+    }
+    return trimmed;
+  }
+
+  if (Array.isArray(rawVal)) {
+    return rawVal.length > 0 ? JSON.stringify(rawVal) : "";
+  }
+  if (typeof rawVal === "object") {
+    return JSON.stringify(rawVal);
+  }
+  return String(rawVal);
+};
+
+const resolveShippingProposalState = (data) => {
+  const repairPlan = data?.repairPlan;
+  let rawExplicit = undefined;
+
+  if (repairPlan && typeof repairPlan === "object") {
+    if (
+      Object.prototype.hasOwnProperty.call(repairPlan, "native_shipping_weight") &&
+      String(repairPlan["native_shipping_weight"] ?? "").trim() !== ""
+    ) {
+      rawExplicit = repairPlan["native_shipping_weight"];
+    } else if (
+      Object.prototype.hasOwnProperty.call(repairPlan, "custom.shipping_weight_oz") &&
+      String(repairPlan["custom.shipping_weight_oz"] ?? "").trim() !== ""
+    ) {
+      rawExplicit = repairPlan["custom.shipping_weight_oz"];
+    }
+  }
+
+  if (rawExplicit !== undefined) {
+    const explicitStr = String(rawExplicit)
+      .replace(/\s*OUNCES$/i, "")
+      .trim();
+    return {
+      isProposed: explicitStr !== "",
+      propVal: explicitStr,
+      isDerived: false
+    };
+  }
+
+  // Only derive shipping weight from an evidenced complete-product weight (distinct from stone-only custom.weight_grams)
+  // that does not already include the 0.5 oz packaging allowance. Never use Math.ceil or stone-only grams.
+  const completeOzRaw =
+    (repairPlan &&
+      typeof repairPlan === "object" &&
+      (repairPlan["complete_product_weight_oz"] ?? repairPlan["custom.complete_product_weight_oz"])) ??
+    data?.currentMetafields?.["custom.complete_product_weight_oz"];
+
+  if (completeOzRaw !== undefined && completeOzRaw !== null && String(completeOzRaw).trim() !== "") {
+    const completeOz = Number(String(completeOzRaw).trim());
+    if (!Number.isNaN(completeOz) && completeOz > 0) {
+      return {
+        isProposed: true,
+        propVal: String(Number((completeOz + 0.5).toFixed(4))),
+        isDerived: true
+      };
+    }
+  }
+
+  const completeGramsRaw =
+    (repairPlan &&
+      typeof repairPlan === "object" &&
+      (repairPlan["complete_product_weight_grams"] ?? repairPlan["custom.complete_product_weight_grams"])) ??
+    data?.currentMetafields?.["custom.complete_product_weight_grams"];
+
+  if (completeGramsRaw !== undefined && completeGramsRaw !== null && String(completeGramsRaw).trim() !== "") {
+    const completeGrams = Number(String(completeGramsRaw).trim());
+    if (!Number.isNaN(completeGrams) && completeGrams > 0) {
+      return {
+        isProposed: true,
+        propVal: String(Number(((completeGrams / 28.3495) + 0.5).toFixed(4))),
+        isDerived: true
+      };
+    }
+  }
+
+  const hasEmptySeed =
+    Boolean(repairPlan && typeof repairPlan === "object") &&
+    (Object.prototype.hasOwnProperty.call(repairPlan, "native_shipping_weight") ||
+      Object.prototype.hasOwnProperty.call(repairPlan, "custom.shipping_weight_oz"));
+
+  return {
+    isProposed: hasEmptySeed,
+    propVal: "",
+    isDerived: false
+  };
 };
 
 export const getDynamicSections = (manifest) => {
@@ -116,22 +276,25 @@ export const getDynamicSections = (manifest) => {
     let keys = [];
     group.fields.forEach(f => {
       if (RETIRED_KEYS.includes(f.key) || RETIRED_KEYS.includes(`custom.${f.key}`)) return;
+      if (f.key === "is_ooak" || f.key === "custom.is_ooak") return;
       
       if (f.key === "native_image_alt") {
         if (manifest?.nativeTargets?.media?.edges) {
-          const mediaKeys = manifest.nativeTargets.media.edges.map(e => `native_image_alts_${e.node.id}`);
+          const mediaKeys = manifest.nativeTargets.media.edges
+            .filter(e => e?.node?.id)
+            .map(e => `native_image_alts_${e.node.id}`);
           keys.push(...mediaKeys);
         }
         return;
       }
       
       const resolvedKey = resolveConfigFieldDestination(f);
-      if (resolvedKey && !RETIRED_KEYS.includes(resolvedKey)) {
+      if (resolvedKey && !RETIRED_KEYS.includes(resolvedKey) && resolvedKey !== "custom.is_ooak") {
         keys.push(resolvedKey);
       }
     });
     
-    if (group.heading === "3. Origin, Story, and Collection") {
+    if (group.heading === "3. Origin, Story, and Collection" || group.heading === "Origin and collection") {
         if (!keys.includes("custom.origin_story")) keys.push("custom.origin_story");
     }
 
@@ -153,7 +316,7 @@ export const getStatusTone = (status) => {
 export const isMultilineKey = (k, control) => control === "multiline" || [
   "custom.generated_description", "custom.stone_story", 
   "custom.bench_notes", "custom.character_marks", "custom.honest_flaws_and_character", 
-  "custom.artist_notes", "custom.origin_story"
+  "custom.artist_notes", "custom.origin_story", "native_seo_description"
 ].includes(k);
 
 export const evaluateFieldMetadata = ({
@@ -165,22 +328,54 @@ export const evaluateFieldMetadata = ({
   standardizedCandidatesByProduct = {},
   getStandardizedEvaluationForField
 }) => {
+  const safeData = data || {};
   const targetKeyForProposal = NATIVE_ALIAS_MAP[key] || key;
   const isNativeImageAlt = key.startsWith("native_image_alts_");
+  const isShippingWeightField = key === "native_shipping_weight" || key === "custom.shipping_weight_oz";
+  const isCollectionDateField = key === "custom.collection_date" || key === "collection_date";
   
   const unprefixedKey = targetKeyForProposal.replace(/^custom\./, '');
-  const templateConfig = configFields.find(f => {
+  const allTemplateFields =
+    Array.isArray(configFields) && configFields.length > 0
+      ? configFields
+      : PRODUCT_TEMPLATE_GROUPS.flatMap(g => g.fields || []);
+
+  const templateConfig = allTemplateFields.find(f => {
+    if (!f) return false;
     const resolvedDest = resolveConfigFieldDestination(f);
-    return (
-      resolvedDest === key ||
-      resolvedDest === targetKeyForProposal ||
-      f.key === key ||
-      f.key === targetKeyForProposal ||
-      (f.role !== "standardized_attribute" && f.key === unprefixedKey)
-    );
+    if (resolvedDest === key || resolvedDest === targetKeyForProposal) return true;
+    if (f.key === key || f.key === targetKeyForProposal) return true;
+    if (
+      f.role !== "standardized_attribute" &&
+      f.namespace !== "shopify" &&
+      f.owner !== "native" &&
+      f.namespace !== "native" &&
+      !key.startsWith("shopify.") &&
+      f.key === unprefixedKey
+    ) {
+      return true;
+    }
+    return false;
   });
 
-  const isStandardizedAttribute = templateConfig?.role === "standardized_attribute" || key.startsWith("shopify.");
+  const expectedType =
+    templateConfig?.type ||
+    (isNativeImageAlt || key.startsWith("native_") || NATIVE_FIELDS.includes(key)
+      ? "native"
+      : key.startsWith("shopify.")
+        ? "list.metaobject_reference"
+        : key === "custom.character_marks" || key === "custom.stone_story"
+          ? "list.single_line_text_field"
+          : key === "custom.weight_grams" || key === "custom.shipping_weight_oz"
+            ? "number_decimal"
+            : key === "custom.honest_flaws_and_character" || key === "custom.origin_story" || key === "custom.generated_description"
+              ? "multi_line_text_field"
+              : "single_line_text_field");
+
+  const isStandardizedAttribute =
+    templateConfig?.role === "standardized_attribute" ||
+    templateConfig?.namespace === "shopify" ||
+    key.startsWith("shopify.");
   const isVerifiedStdDest = isVerifiedStandardizedDestination(targetKeyForProposal);
 
   const standardizedDestKey = isStandardizedAttribute
@@ -191,7 +386,7 @@ export const evaluateFieldMetadata = ({
 
   // Evaluate technical and category eligibility for ALL 21 standardized attributes
   const stdEvaluation = isStandardizedAttribute && typeof getStandardizedEvaluationForField === "function"
-    ? getStandardizedEvaluationForField(productId, standardizedDestKey, data)
+    ? getStandardizedEvaluationForField(productId, standardizedDestKey, safeData)
     : null;
 
   const isCategoryEligible = Boolean(stdEvaluation?.isCategoryEligible);
@@ -204,51 +399,51 @@ export const evaluateFieldMetadata = ({
     : (isStandardizedAttribute ? true : templateConfig?.mappingStatus === "pending_read_only");
 
   let currentVal = "";
-  const variants = data.nativeTargets?.variants?.edges || [];
+  const variants = safeData.nativeTargets?.variants?.edges || [];
   const isSingleVariant = variants.length === 1 && 
-                          data.nativeTargets?.variants?.pageInfo?.hasNextPage === false && 
-                          data.nativeTargets?.isComplete === true && 
-                          !data.nativeTargets?.loadError;
+                          safeData.nativeTargets?.variants?.pageInfo?.hasNextPage === false && 
+                          safeData.nativeTargets?.isComplete === true && 
+                          !safeData.nativeTargets?.loadError;
 
   if (isNativeImageAlt) {
       const imageId = key.replace("native_image_alts_", "");
-      const match = data.nativeTargets?.media?.edges?.find(e => e.node?.id === imageId);
+      const match = safeData.nativeTargets?.media?.edges?.find(e => e.node?.id === imageId);
       currentVal = match?.node?.alt ?? "";
   } else if (key === "native_title" || key === "shopify_title") {
-      currentVal = data.nativeTargets?.productTitle ?? data.canonicalFields?.shopify_title ?? "";
+      currentVal = safeData.nativeTargets?.productTitle ?? safeData.canonicalFields?.shopify_title ?? "";
   } else if (key === "native_description" || key === "custom.generated_description") {
       currentVal = key === "native_description" 
-        ? (data.nativeTargets?.descriptionHtml ?? "")
-        : (data.currentMetafields?.["custom.generated_description"] ?? "");
+        ? (safeData.nativeTargets?.descriptionHtml ?? "")
+        : (safeData.currentMetafields?.["custom.generated_description"] ?? "");
   } else if (key === "native_seo_title" || key === "custom.seo_title") {
       currentVal = key === "native_seo_title"
-        ? (data.nativeTargets?.seo?.title ?? "")
-        : (data.currentMetafields?.["custom.seo_title"] ?? "");
+        ? (safeData.nativeTargets?.seo?.title ?? "")
+        : (safeData.currentMetafields?.["custom.seo_title"] ?? "");
   } else if (key === "native_seo_description") {
-      currentVal = data.nativeTargets?.seo?.description ?? "";
+      currentVal = safeData.nativeTargets?.seo?.description ?? "";
   } else if (key === "native_price" || key === "price") {
       if (isSingleVariant) {
           currentVal = variants[0].node?.price ?? "";
-      } else if (variants.length !== 1 || data.nativeTargets?.variants?.pageInfo?.hasNextPage !== false || !data.nativeTargets?.isComplete || data.nativeTargets?.loadError) {
+      } else if (variants.length !== 1 || safeData.nativeTargets?.variants?.pageInfo?.hasNextPage !== false || !safeData.nativeTargets?.isComplete || safeData.nativeTargets?.loadError) {
           currentVal = "Multiple variants / Incomplete data - review manually";
       }
-  } else if (key === "native_shipping_weight" || key === "custom.shipping_weight_oz") {
+  } else if (isShippingWeightField) {
       if (key === "native_shipping_weight") {
           if (isSingleVariant) {
               const w = variants[0].node?.inventoryItem?.measurement?.weight;
               currentVal = (w?.value !== undefined && w?.value !== null) ? `${w.value} ${w.unit}` : "";
-          } else if (variants.length !== 1 || data.nativeTargets?.variants?.pageInfo?.hasNextPage !== false || !data.nativeTargets?.isComplete || data.nativeTargets?.loadError) {
+          } else if (variants.length !== 1 || safeData.nativeTargets?.variants?.pageInfo?.hasNextPage !== false || !safeData.nativeTargets?.isComplete || safeData.nativeTargets?.loadError) {
               currentVal = "Multiple variants / Incomplete data - review manually";
           }
       } else {
-          currentVal = data.currentMetafields?.["custom.shipping_weight_oz"] ?? "";
+          currentVal = safeData.currentMetafields?.["custom.shipping_weight_oz"] ?? "";
       }
   } else if (isStandardizedAttribute && stdEvaluation) {
       if (stdEvaluation.existingGids.length > 0) {
           currentVal = JSON.stringify(stdEvaluation.existingGids);
       } else {
-          const hasCurrent = data.currentMetafields?.hasOwnProperty(key);
-          const rawCurrent = hasCurrent ? data.currentMetafields[key] : "";
+          const hasCurrent = safeData.currentMetafields?.hasOwnProperty(standardizedDestKey) || safeData.currentMetafields?.hasOwnProperty(key);
+          const rawCurrent = safeData.currentMetafields?.[standardizedDestKey] ?? safeData.currentMetafields?.[key] ?? "";
           if (Array.isArray(rawCurrent)) {
               currentVal = rawCurrent.length > 0 ? JSON.stringify(rawCurrent) : "";
           } else if (typeof rawCurrent === "object" && rawCurrent !== null) {
@@ -258,57 +453,75 @@ export const evaluateFieldMetadata = ({
           }
       }
   } else {
-      const hasCurrent = data.currentMetafields?.hasOwnProperty(key);
-      const rawCurrent = hasCurrent ? data.currentMetafields[key] : "";
-      if (Array.isArray(rawCurrent)) {
-          currentVal = JSON.stringify(rawCurrent);
-      } else if (typeof rawCurrent === "object" && rawCurrent !== null) {
-          currentVal = JSON.stringify(rawCurrent);
-      } else {
-          currentVal = hasCurrent ? String(rawCurrent ?? "") : "";
+      const hasCurrent = safeData.currentMetafields?.hasOwnProperty(key);
+      let rawCurrent = hasCurrent ? safeData.currentMetafields[key] : "";
+      if ((!hasCurrent || String(rawCurrent ?? "").trim() === "") && CANONICAL_READ_COMPANIONS[key]) {
+          for (const companionKey of CANONICAL_READ_COMPANIONS[key]) {
+              const compVal = safeData.currentMetafields?.[companionKey];
+              if (compVal !== undefined && compVal !== null && String(compVal).trim() !== "") {
+                  rawCurrent = compVal;
+                  break;
+              }
+          }
       }
+      currentVal = rawCurrent !== undefined && rawCurrent !== null && String(rawCurrent).trim() !== ""
+        ? serializeFieldValueByType(rawCurrent, expectedType, key)
+        : (isCollectionDateField ? "N/A" : "");
   }
 
   let isProposed = false;
   let propVal = "";
+  let shippingProposalState = null;
 
   if (isVerifiedStdDest) {
       if (stdEvaluation?.isTechnicallyEligible && isCategoryEligible) {
-          if (data.repairPlan !== undefined && data.repairPlan.hasOwnProperty(targetKeyForProposal)) {
+          if (safeData.repairPlan !== undefined && safeData.repairPlan.hasOwnProperty(targetKeyForProposal)) {
               isProposed = true;
-              const rawProp = data.repairPlan[targetKeyForProposal];
+              const rawProp = safeData.repairPlan[targetKeyForProposal];
               propVal = Array.isArray(rawProp) ? JSON.stringify(rawProp) : String(rawProp ?? "");
           } else if (stdEvaluation.autoProposalSerialized) {
               isProposed = true;
               propVal = stdEvaluation.autoProposalSerialized;
           }
       }
-  } else if (data.repairPlan !== undefined && !isPendingReadOnly && !isStandardizedAttribute) {
-      if (data.repairPlan.hasOwnProperty(targetKeyForProposal)) {
+  } else if (isShippingWeightField && !isPendingReadOnly) {
+      shippingProposalState = resolveShippingProposalState(safeData);
+      isProposed = shippingProposalState.isProposed;
+      propVal = shippingProposalState.propVal;
+  } else if (key === "native_seo_description") {
+      if (safeData.repairPlan !== undefined && safeData.repairPlan.hasOwnProperty("native_seo_description")) {
           isProposed = true;
-          const rawProp = data.repairPlan[targetKeyForProposal];
-          if (Array.isArray(rawProp)) {
-              propVal = JSON.stringify(rawProp);
-          } else if (typeof rawProp === "object" && rawProp !== null) {
-              propVal = JSON.stringify(rawProp);
-          } else {
-              propVal = String(rawProp ?? "");
-          }
-      } else if (key === "native_shipping_weight" || key === "custom.shipping_weight_oz") {
-          const stoneGrams = parseFloat(data.currentMetafields?.["custom.weight_grams"] || data.repairPlan?.["custom.weight_grams"]) || 0;
-          if (stoneGrams > 0) {
-              isProposed = true;
-              propVal = String(Math.ceil((stoneGrams / 28.3495) + 0.5));
-          }
-      } else if (key === "native_seo_description" && data.repairPlan.hasOwnProperty("native_seo_description")) {
+          propVal = String(safeData.repairPlan["native_seo_description"] ?? "");
+      }
+  } else if (safeData.repairPlan !== undefined && !isPendingReadOnly && !isStandardizedAttribute) {
+      if (safeData.repairPlan.hasOwnProperty(key)) {
           isProposed = true;
-          propVal = String(data.repairPlan["native_seo_description"]);
+          propVal = serializeFieldValueByType(safeData.repairPlan[key], expectedType, key);
+      } else if (targetKeyForProposal !== key && safeData.repairPlan.hasOwnProperty(targetKeyForProposal)) {
+          isProposed = true;
+          propVal = serializeFieldValueByType(safeData.repairPlan[targetKeyForProposal], expectedType, targetKeyForProposal);
+      }
+      if (isCollectionDateField && GENERIC_VALUES.includes(propVal.trim())) {
+          isProposed = false;
+          propVal = "";
       }
   }
 
-  let fieldMeta = data.metadata?.[key] || data.metadata?.[targetKeyForProposal] || {};
-  let source = fieldMeta.source || (isVerifiedStdDest && isProposed ? "Vision" : "Not reported");
-  let stage = fieldMeta.stage || (isVerifiedStdDest && isProposed ? "resolveStandardizedCandidates" : "Not reported");
+  let fieldMeta = safeData.metadata?.[key] || safeData.metadata?.[targetKeyForProposal] || {};
+  let source =
+    fieldMeta.source ||
+    (isVerifiedStdDest && isProposed
+      ? "Vision"
+      : shippingProposalState?.isDerived
+        ? "Derived"
+        : "Not reported");
+  let stage =
+    fieldMeta.stage ||
+    (isVerifiedStdDest && isProposed
+      ? "resolveStandardizedCandidates"
+      : shippingProposalState?.isDerived
+        ? "complete_product_weight_calculation"
+        : "Not reported");
 
   let fieldStatus = "Unchanged";
   let proposalStatus = isProposed ? (propVal.trim() !== "" ? "Provided" : "Empty") : "Not provided";
@@ -318,10 +531,40 @@ export const evaluateFieldMetadata = ({
   let isContentPreApproved = false;
   let preApprovalReason = "";
 
-  const currentExists = currentVal.trim() !== "" && currentVal.trim() !== "[]";
-  const proposalExists = isProposed && propVal.trim() !== "" && propVal.trim() !== "[]";
+  const currentExists =
+    currentVal.trim() !== "" &&
+    currentVal.trim() !== "[]" &&
+    !(isCollectionDateField && GENERIC_VALUES.includes(currentVal.trim()));
+  const proposalExists =
+    isProposed &&
+    propVal.trim() !== "" &&
+    propVal.trim() !== "[]" &&
+    !(isCollectionDateField && GENERIC_VALUES.includes(propVal.trim()));
 
-  const isKnownKey = templateConfig !== undefined || NATIVE_FIELDS.includes(key) || isNativeImageAlt || HIDDEN_CONTEXT_FIELDS.includes(key) || key.startsWith('native_');
+  const isEqualToCurrent = (() => {
+    if (!currentExists || !proposalExists) return false;
+    if (key === "native_shipping_weight" && isSingleVariant) {
+      const w = variants[0]?.node?.inventoryItem?.measurement?.weight;
+      const propNum = Number(propVal);
+      if (
+        w &&
+        w.value !== undefined &&
+        w.value !== null &&
+        !Number.isNaN(propNum) &&
+        propNum > 0
+      ) {
+        return Number(w.value) === propNum && w.unit === "OUNCES";
+      }
+    }
+    return currentVal === propVal;
+  })();
+
+  const isKnownKey =
+    templateConfig !== undefined ||
+    NATIVE_FIELDS.includes(key) ||
+    isNativeImageAlt ||
+    HIDDEN_CONTEXT_FIELDS.includes(key) ||
+    key.startsWith("native_");
 
   // Never auto-preapprove the six standardized reference proposals; Bob's meaning approval is not technical list approval
   if (!isPendingReadOnly && !isVerifiedStdDest) {
@@ -329,9 +572,9 @@ export const evaluateFieldMetadata = ({
           isContentPreApproved = true;
           preApprovalReason = "Category pre-approved";
       } else if (
-          data.verifiedGeoValues && 
-          data.verifiedGeoValues[unprefixedKey] !== undefined && 
-          String(data.verifiedGeoValues[unprefixedKey]) === propVal && 
+          safeData.verifiedGeoValues && 
+          safeData.verifiedGeoValues[unprefixedKey] !== undefined && 
+          String(safeData.verifiedGeoValues[unprefixedKey]) === propVal && 
           proposalExists
       ) {
           isContentPreApproved = true;
@@ -346,31 +589,53 @@ export const evaluateFieldMetadata = ({
   }
 
   const isRequired = REQUIRED_FIELDS.includes(targetKeyForProposal);
-  const isProtected = PROTECTED_FIELDS.includes(targetKeyForProposal);
-  const isHardware = HARDWARE_FIELDS.includes(targetKeyForProposal);
+  const isProtected = PROTECTED_FIELDS.includes(targetKeyForProposal) || PROTECTED_FIELDS.includes(key);
+  const isHardware = HARDWARE_FIELDS.includes(targetKeyForProposal) || HARDWARE_FIELDS.includes(key);
   const isIntegration = INTEGRATION_PREFIXES.some(prefix => targetKeyForProposal.startsWith(prefix));
 
-  const currentCount = currentVal.length;
+  const currentCount = currentExists ? currentVal.length : 0;
   const propCount = propVal.length;
-  const limit = FIELD_LIMITS[targetKeyForProposal] || null;
+  const limit = FIELD_LIMITS[targetKeyForProposal] || FIELD_LIMITS[key] || null;
 
   const isManualOnly = false;
   const isOperatorOwned = (targetKeyForProposal === "price" || targetKeyForProposal === "custom.weight_grams" || targetKeyForProposal === "custom.dimensions_mm");
   
-  const exactApprovalVal = currentApprovals?.[productId]?.[targetKeyForProposal];
+  const exactApprovalVal =
+    currentApprovals?.[productId]?.[key] !== undefined
+      ? currentApprovals[productId][key]
+      : currentApprovals?.[productId]?.[targetKeyForProposal];
   const isApproved =
     !isPendingReadOnly &&
     (!isVerifiedStdDest || (Boolean(stdEvaluation?.isTechnicallyEligible) && isCategoryEligible)) &&
     exactApprovalVal !== undefined &&
-    exactApprovalVal === propVal &&
+    String(exactApprovalVal) === propVal &&
     propVal.trim() !== "";
 
   if (HIDDEN_CONTEXT_FIELDS.includes(key)) {
-      return { currentVal, propVal, isProposed, fieldStatus: "Hidden Source", proposalStatus, source, stage, isBlockedAction: true, reasons: ["Hidden Context"], currentExists, proposalExists, isApproved: false, hasTechnicalBlock: true, contentNeedsReview: false, isContentPreApproved: false, preApprovalReason: "", isManualOnly: false, isActualBlockedProposal: false, isOperatorOwned: false, isSupported: true, isPendingReadOnly: false, isStandardizedAttribute: false };
+      return {
+        currentVal, propVal, isProposed, fieldStatus: "Hidden Source", proposalStatus, source, stage,
+        isBlockedAction: true, reasons: ["Hidden Context"], currentExists, proposalExists, isApproved: false,
+        hasTechnicalBlock: true, contentNeedsReview: false, isContentPreApproved: false, preApprovalReason: "",
+        isManualOnly: false, isActualBlockedProposal: false, isOperatorOwned: false, isSupported: true,
+        isPendingReadOnly: false, isStandardizedAttribute: false,
+        type: expectedType, owner: templateConfig?.owner || "metafield", namespace: templateConfig?.namespace || "custom",
+        metaKey: templateConfig?.metaKey || unprefixedKey, label: templateConfig?.label || formatLabel(key),
+        control: templateConfig?.control || "multiline"
+      };
   }
 
   let hasTechnicalBlock = false;
   let contentNeedsReview = false;
+
+  // Require explicit operator approval for custom.jewelry_type, custom.wire_material, and native_seo_description proposals
+  if (
+    (targetKeyForProposal === "custom.jewelry_type" ||
+      targetKeyForProposal === "custom.wire_material" ||
+      key === "native_seo_description") &&
+    proposalExists
+  ) {
+      contentNeedsReview = true;
+  }
 
   // Technical Verification Layer
   const isOverLimit = limit !== null && !isNativeImageAlt && (currentCount > limit || (isProposed && propCount > limit));
@@ -416,7 +681,7 @@ export const evaluateFieldMetadata = ({
       reasons.push("Standardized attribute read-only (pending_read_only)");
   }
 
-  if (BLOCKED_UNVERIFIED_PINS.includes(targetKeyForProposal) && proposalExists) {
+  if ((BLOCKED_UNVERIFIED_PINS.includes(targetKeyForProposal) || BLOCKED_UNVERIFIED_PINS.includes(key)) && proposalExists) {
       hasTechnicalBlock = true;
       reasons.push("Type/destination unverified");
   }
@@ -426,29 +691,41 @@ export const evaluateFieldMetadata = ({
       reasons.push("Generic hardware fill into blank");
   }
 
-  if (isNativeImageAlt) {
-      if (data.nativeTargets?.isComplete === false || data.nativeTargets?.loadError) {
+  if (isShippingWeightField && proposalExists) {
+      const parsedShipping = Number(propVal);
+      if (Number.isNaN(parsedShipping) || parsedShipping <= 0) {
           hasTechnicalBlock = true;
-          reasons.push(`Media targets incomplete/failed. Retry load. Error: ${data.nativeTargets?.loadError || 'Pagination failed'}`);
+          reasons.push("Shipping weight must be a positive number in OUNCES.");
+      } else if (!isSingleVariant) {
+          hasTechnicalBlock = true;
+          reasons.push("Shipping weight requires a single complete variant.");
       }
   }
-  
-  if (key === "native_seo_description") {
-      hasTechnicalBlock = true;
-      reasons.push("SEO description save connection pending.");
+
+  if (isNativeImageAlt) {
+      if (safeData.nativeTargets?.isComplete === false || safeData.nativeTargets?.loadError) {
+          hasTechnicalBlock = true;
+          reasons.push(`Media targets incomplete/failed. Retry load. Error: ${safeData.nativeTargets?.loadError || 'Pagination failed'}`);
+      }
   }
 
   // New Backend Technical Blockers
-  const apiBlockReason = data.blockedFields?.[targetKeyForProposal] || data.blockedFields?.[unprefixedKey];
+  const apiBlockReason =
+    safeData.blockedFields?.[key] ||
+    safeData.blockedFields?.[targetKeyForProposal] ||
+    safeData.blockedFields?.[unprefixedKey];
   if (apiBlockReason) {
       reasons.push(`Backend Blocked: ${apiBlockReason}`);
   }
 
-  let conflictData = data.conflicts?.[targetKeyForProposal] || data.conflicts?.[unprefixedKey];
+  let conflictData =
+    safeData.conflicts?.[key] ||
+    safeData.conflicts?.[targetKeyForProposal] ||
+    safeData.conflicts?.[unprefixedKey];
   let nativeDescConflictData = null;
   
-  if (targetKeyForProposal === "custom.generated_description" && data.conflicts?.["native_description"]) {
-      nativeDescConflictData = data.conflicts["native_description"];
+  if (targetKeyForProposal === "custom.generated_description" && safeData.conflicts?.["native_description"]) {
+      nativeDescConflictData = safeData.conflicts["native_description"];
       const expLen = String(nativeDescConflictData.expected || "").length;
       const actLen = String(nativeDescConflictData.actual || "").length;
       reasons.push(`Read-back Mismatch [Native descriptionHtml]: Expected (${expLen} chars) != Actual (${actLen} chars)`);
@@ -468,7 +745,7 @@ export const evaluateFieldMetadata = ({
   if (currentExists) {
       if (!proposalExists) {
           fieldStatus = "Unchanged";
-      } else if (currentVal === propVal) {
+      } else if (isEqualToCurrent) {
           fieldStatus = "Unchanged";
       } else {
           if (isVerifiedStdDest) {
@@ -527,7 +804,7 @@ export const evaluateFieldMetadata = ({
   }
 
   // React to Approvals & Pre-Approvals
-  if (proposalExists && currentVal !== propVal && !isManualOnly && !isPendingReadOnly && !apiBlockReason && !conflictData && !nativeDescConflictData) {
+  if (proposalExists && !isEqualToCurrent && !isManualOnly && !isPendingReadOnly && !apiBlockReason && !conflictData && !nativeDescConflictData) {
       if (isContentPreApproved) {
           if (hasTechnicalBlock) {
               fieldStatus = "Pre-approved, blocked";
@@ -559,7 +836,7 @@ export const evaluateFieldMetadata = ({
 
   if (isManualOnly) {
       isBlockedAction = true;
-      if (proposalExists && currentVal !== propVal) {
+      if (proposalExists && !isEqualToCurrent) {
           fieldStatus = "Manual only";
           if (!reasons.includes("Manual only")) reasons.push("Manual only");
       }
@@ -574,7 +851,7 @@ export const evaluateFieldMetadata = ({
                                   (!isPendingReadOnly || (isVerifiedStdDest && hasStagedCandidateForRow)) &&
                                   (!isStandardizedAttribute || isVerifiedStdDest) &&
                                   !HIDDEN_CONTEXT_FIELDS.includes(key) && 
-                                  ((proposalExists && currentVal !== propVal) || (isVerifiedStdDest && hasStagedCandidateForRow && hasTechnicalBlock));
+                                  ((proposalExists && !isEqualToCurrent) || (isVerifiedStdDest && hasStagedCandidateForRow && hasTechnicalBlock));
 
   return { 
     currentVal, propVal, isProposed, fieldStatus, proposalStatus, source, stage, 
@@ -588,7 +865,10 @@ export const evaluateFieldMetadata = ({
     isCategoryEligible,
     categoryEligibility,
     stdEvaluation,
-    metaKey: templateConfig?.metaKey || (key.startsWith("shopify.") ? key.slice(8) : ""),
+    type: expectedType,
+    owner: templateConfig?.owner || (isNativeImageAlt || key.startsWith("native_") || NATIVE_FIELDS.includes(key) ? "native" : "metafield"),
+    namespace: templateConfig?.namespace || (key.startsWith("shopify.") ? "shopify" : (isNativeImageAlt || key.startsWith("native_") ? "native" : "custom")),
+    metaKey: templateConfig?.metaKey || (key.startsWith("shopify.") ? key.slice(8) : unprefixedKey),
     label: templateConfig?.label || formatLabel(key),
     control: templateConfig?.control
   };
@@ -831,12 +1111,41 @@ export const buildRepairPayload = (manifest, product, currentId, currentApproval
   const dynamicSections = getDynamicSections(manifest);
   const allConfigFields = dynamicSections.flatMap(sec => sec.configFields || []);
 
-  Object.keys(manifest.repairPlan || {}).forEach(key => {
-      if (key.startsWith("native_image_alts_")) return; 
-      if (key === "native_seo_description") return;
+  const candidateKeys = new Set(Object.keys(manifest.repairPlan || {}));
+  dynamicSections.forEach(sec => {
+    (sec.keys || []).forEach(k => candidateKeys.add(k));
+  });
+  candidateKeys.add("native_title");
+  candidateKeys.add("native_description");
+  candidateKeys.add("native_seo_title");
+  candidateKeys.add("native_seo_description");
+  candidateKeys.add("native_price");
+  candidateKeys.add("native_shipping_weight");
+
+  let handledTitle = false;
+  let handledShippingWeight = false;
+  let handledDescription = false;
+  let handledSeoTitle = false;
+  let handledSeoDescription = false;
+  let handledPrice = false;
+
+  candidateKeys.forEach(key => {
+      if (key.startsWith("native_image_alts_") || key === "native_image_alt") return; 
       if (key === "standardized_candidates" || key === "custom.standardized_candidates") return;
       if (key.startsWith("custom.std_") || key.startsWith("std_")) return;
       if (key.startsWith("shopify.") && !isVerifiedStandardizedDestination(key)) return;
+      if (
+        key === "is_ooak" ||
+        key === "custom.is_ooak" ||
+        key === "stone_family" ||
+        key === "custom.stone_family" ||
+        key === "primary_medium" ||
+        key === "custom.primary_medium" ||
+        key === "origin_handle" ||
+        key === "custom.origin_handle"
+      ) {
+          return;
+      }
       
       const meta = getFieldMetadata(key, manifest, currentId, currentApprovals, allConfigFields);
 
@@ -856,12 +1165,9 @@ export const buildRepairPayload = (manifest, product, currentId, currentApproval
           return;
       }
 
-      if (meta.isPendingReadOnly || meta.isStandardizedAttribute) return;
-      if (!meta.isSupported || meta.isManualOnly || meta.hasTechnicalBlock || meta.isBlockedAction) return;
-      if (HIDDEN_CONTEXT_FIELDS.includes(key) || RETIRED_KEYS.includes(key)) return;
-      if (!meta.proposalExists) return;
-
       if (key === "shopify_title" || key === "native_title") {
+          if (handledTitle) return;
+          handledTitle = true;
           const titleMeta = getFieldMetadata("native_title", manifest, currentId, currentApprovals, allConfigFields);
           const hasTitleBaseline = typeof manifest.nativeTargets?.productTitle === "string";
           if (
@@ -870,12 +1176,30 @@ export const buildRepairPayload = (manifest, product, currentId, currentApproval
               titleMeta.proposalExists &&
               (!hasTitleBaseline || titleMeta.propVal !== titleMeta.currentVal)
           ) {
-              nativeChanges.title = manifest.repairPlan[key];
+              nativeChanges.title = titleMeta.propVal;
+          }
+          return;
+      }
+
+      if (key === "native_seo_description") {
+          if (handledSeoDescription) return;
+          handledSeoDescription = true;
+          const seoDescMeta = getFieldMetadata("native_seo_description", manifest, currentId, currentApprovals, allConfigFields);
+          const hasSeoDescBaseline = typeof manifest.nativeTargets?.seo?.description === "string";
+          if (
+              !seoDescMeta.isBlockedAction &&
+              !seoDescMeta.hasTechnicalBlock &&
+              seoDescMeta.proposalExists &&
+              (!hasSeoDescBaseline || seoDescMeta.propVal !== seoDescMeta.currentVal)
+          ) {
+              nativeChanges.seoDescription = seoDescMeta.propVal;
           }
           return;
       }
 
       if (key === "custom.shipping_weight_oz" || key === "native_shipping_weight") {
+          if (handledShippingWeight) return;
+          handledShippingWeight = true;
           const variantsConn = manifest.nativeTargets?.variants;
           if (
               variantsConn?.edges?.length === 1 &&
@@ -887,8 +1211,11 @@ export const buildRepairPayload = (manifest, product, currentId, currentApproval
               const variantId = variantNode?.id;
               const nativeWeightMeta = getFieldMetadata("native_shipping_weight", manifest, currentId, currentApprovals, allConfigFields);
               if (variantId && !nativeWeightMeta.isBlockedAction && !nativeWeightMeta.hasTechnicalBlock && nativeWeightMeta.proposalExists) {
-                  const rawProposedWeight = manifest.repairPlan[key] !== undefined ? manifest.repairPlan[key] : nativeWeightMeta.propVal;
-                  const proposedNum = Number(rawProposedWeight);
+                  const effectiveWeightStr = String(nativeWeightMeta.propVal ?? "").trim();
+                  const proposedNum = Number(effectiveWeightStr);
+                  if (!effectiveWeightStr || Number.isNaN(proposedNum) || proposedNum <= 0) {
+                      return;
+                  }
                   const w = variantNode?.inventoryItem?.measurement?.weight;
                   const hasWeightBaseline =
                       w !== null &&
@@ -899,13 +1226,12 @@ export const buildRepairPayload = (manifest, product, currentId, currentApproval
                       typeof w.unit === "string";
                   const isWeightEqual =
                       hasWeightBaseline &&
-                      !Number.isNaN(proposedNum) &&
                       Number(w.value) === proposedNum &&
                       w.unit === "OUNCES";
                   if (!isWeightEqual) {
                       nativeChanges.shippingWeight = {
                           variantId: variantId,
-                          value: rawProposedWeight,
+                          value: effectiveWeightStr,
                           unit: "OUNCES"
                       };
                   }
@@ -914,37 +1240,61 @@ export const buildRepairPayload = (manifest, product, currentId, currentApproval
           return;
       }
 
-      if (key === "custom.generated_description") {
+      if (key === "custom.generated_description" || key === "native_description") {
+          if (handledDescription) return;
+          handledDescription = true;
+          const customDescMeta = getFieldMetadata("custom.generated_description", manifest, currentId, currentApprovals, allConfigFields);
           const nativeDescMeta = getFieldMetadata("native_description", manifest, currentId, currentApprovals, allConfigFields);
+          if (
+              customDescMeta.isBlockedAction ||
+              customDescMeta.hasTechnicalBlock ||
+              !customDescMeta.proposalExists
+          ) return;
           const hasMetafieldBaseline = Object.prototype.hasOwnProperty.call(manifest.currentMetafields || {}, "custom.generated_description");
           const hasNativeDescBaseline = typeof manifest.nativeTargets?.descriptionHtml === "string";
-          const metafieldDiffers = !hasMetafieldBaseline || meta.propVal !== meta.currentVal;
+          const metafieldDiffers = !hasMetafieldBaseline || customDescMeta.propVal !== customDescMeta.currentVal;
           const nativeDescDiffers =
               !nativeDescMeta.isBlockedAction &&
               !nativeDescMeta.hasTechnicalBlock &&
               (!hasNativeDescBaseline || nativeDescMeta.propVal !== nativeDescMeta.currentVal);
           if (metafieldDiffers || nativeDescDiffers) {
-              safePlan[key] = manifest.repairPlan[key];
+              safePlan["custom.generated_description"] = customDescMeta.propVal;
           }
           return;
       }
 
-      if (key === "custom.seo_title") {
+      if (key === "custom.seo_title" || key === "native_seo_title") {
+          if (handledSeoTitle) return;
+          handledSeoTitle = true;
+          const customSeoMeta = getFieldMetadata("custom.seo_title", manifest, currentId, currentApprovals, allConfigFields);
           const nativeSeoMeta = getFieldMetadata("native_seo_title", manifest, currentId, currentApprovals, allConfigFields);
+          if (
+              customSeoMeta.isBlockedAction ||
+              customSeoMeta.hasTechnicalBlock ||
+              !customSeoMeta.proposalExists
+          ) return;
           const hasMetafieldBaseline = Object.prototype.hasOwnProperty.call(manifest.currentMetafields || {}, "custom.seo_title");
           const hasNativeSeoBaseline = typeof manifest.nativeTargets?.seo?.title === "string";
-          const metafieldDiffers = !hasMetafieldBaseline || meta.propVal !== meta.currentVal;
+          const metafieldDiffers = !hasMetafieldBaseline || customSeoMeta.propVal !== customSeoMeta.currentVal;
           const nativeSeoDiffers =
               !nativeSeoMeta.isBlockedAction &&
               !nativeSeoMeta.hasTechnicalBlock &&
               (!hasNativeSeoBaseline || nativeSeoMeta.propVal !== nativeSeoMeta.currentVal);
           if (metafieldDiffers || nativeSeoDiffers) {
-              safePlan[key] = manifest.repairPlan[key];
+              safePlan["custom.seo_title"] = customSeoMeta.propVal;
           }
           return;
       }
 
       if (key === "price" || key === "native_price") {
+          if (handledPrice) return;
+          handledPrice = true;
+          const priceMeta = getFieldMetadata("native_price", manifest, currentId, currentApprovals, allConfigFields);
+          if (
+              priceMeta.isBlockedAction ||
+              priceMeta.hasTechnicalBlock ||
+              !priceMeta.proposalExists
+          ) return;
           const variantsConn = manifest.nativeTargets?.variants;
           const hasSingleVariantBaseline =
               variantsConn?.edges?.length === 1 &&
@@ -953,15 +1303,27 @@ export const buildRepairPayload = (manifest, product, currentId, currentApproval
               !manifest.nativeTargets?.loadError &&
               typeof variantsConn.edges[0]?.node?.price === "string";
           if (!hasSingleVariantBaseline) return;
-          if (meta.propVal !== meta.currentVal) {
-              safePlan["price"] = manifest.repairPlan[key];
+          if (priceMeta.propVal !== priceMeta.currentVal) {
+              safePlan["price"] = priceMeta.propVal;
           }
           return;
       }
 
-      const hasMetafieldBaseline = Object.prototype.hasOwnProperty.call(manifest.currentMetafields || {}, key);
+      if (key.startsWith("native_") || meta.owner === "native" || meta.namespace === "native") return;
+      if (meta.isPendingReadOnly || meta.isStandardizedAttribute) return;
+      if (!meta.isSupported || meta.isManualOnly || meta.hasTechnicalBlock || meta.isBlockedAction) return;
+      if (HIDDEN_CONTEXT_FIELDS.includes(key) || RETIRED_KEYS.includes(key)) return;
+      if (!meta.proposalExists) return;
+
+      const canonicalKey = key.includes(".") ? key : `custom.${key}`;
+      if (HIDDEN_CONTEXT_FIELDS.includes(canonicalKey) || RETIRED_KEYS.includes(canonicalKey)) return;
+      if (canonicalKey === "custom.collection_date" && GENERIC_VALUES.includes(String(meta.propVal ?? "").trim())) {
+          return;
+      }
+
+      const hasMetafieldBaseline = Object.prototype.hasOwnProperty.call(manifest.currentMetafields || {}, canonicalKey);
       if (!hasMetafieldBaseline || meta.propVal !== meta.currentVal) {
-          safePlan[key] = manifest.repairPlan[key];
+          safePlan[canonicalKey] = serializeFieldValueByType(meta.propVal, meta.type, canonicalKey);
       }
   });
 
@@ -973,7 +1335,7 @@ export const buildRepairPayload = (manifest, product, currentId, currentApproval
       (manifest.nativeTargets?.media?.edges || []).forEach(({ node }) => {
           if (node?.id) {
               const key = `native_image_alts_${node.id}`;
-              if (manifest.repairPlan[key] !== undefined) {
+              if (manifest.repairPlan && manifest.repairPlan[key] !== undefined) {
                   const meta = getFieldMetadata(key, manifest, currentId, currentApprovals, allConfigFields);
                   const hasMediaAltBaseline = typeof node.alt === "string";
                   if (

@@ -1,3 +1,4 @@
+// FILE: app/routes/app.meta-injector.matrix.jsx
 import React, { useState, useCallback, useEffect } from "react";
 import { BlockStack, Card, Text, Banner, Button, InlineStack, Box, ProgressBar, Select } from "@shopify/polaris";
 import { MagicIcon, ClipboardIcon, SaveIcon } from "@shopify/polaris-icons";
@@ -43,15 +44,10 @@ import {
 } from "../components/meta-injector.bench-chrome.jsx";
 import { ManifestSectionCard } from "../components/meta-injector.manifest-section.jsx";
 
-const INITIAL_EXPANDED_BAYS = {
+const INITIAL_EXPANDED_BAYS = Object.freeze({
   "Description Review": false,
-  "1. Identity and Merchandising": false,
-  "2. Stone Facts and Physical Details": false,
-  "3. Origin, Story, and Collection": false,
-  "4. Jewelry and Setting": false,
-  "5. Search, Sales, and Media": false,
-  "6. Standardized Attributes (Read-Only)": false
-};
+  ...Object.fromEntries(PRODUCT_TEMPLATE_GROUPS.map((g) => [g.heading, false]))
+});
 
 const isExactProductGid = (val) =>
   typeof val === "string" && /^gid:\/\/shopify\/Product\/[0-9]+$/.test(val.trim());

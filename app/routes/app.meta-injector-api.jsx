@@ -1,5 +1,6 @@
 import { authenticate } from "../shopify.server";
 import { executeAutofill } from "../utils/meta-injector.autofill.server.jsx";
+import { action as loaderAction } from "../utils/meta-injector.loader.jsx";
 import { FIELD_CATALOG } from "../utils/meta-injector.constants.jsx";
 
 // 🟢 Structural Engine — No Prisma Import Here
@@ -8,7 +9,7 @@ const ALLOWED_TAB3_KEYS = [
   "shopify_title", "piece_name", "stone_family", "price", "weight_grams", 
   "shipping_weight_oz", "is_ooak", "dimensions_mm", 
   "surface_finish", "primary_color", "color_pattern", "honest_flaws_and_character", 
-  "jewelry_type", 
+  "jewelry_type", "wire_material",
   "primary_medium", "secondary_medium", "setting_ready", "bail_included", 
   "chain_material", "jewelry_finding_type", "mohs_hardness", "specific_gravity", 
   "crystal_system", "fracture_pattern", "cleavage", "luster", "diaphaneity", 
@@ -21,12 +22,15 @@ const ALLOWED_TAB3_KEYS = [
   "is_one_of_a_kind", "origin_page_handle", "rescued_by", "character_marks",
   "treatment_status", "treated", "necklace_design", "chain_link_type",
   "rock_composition", "geological_age", "target_gender",
+  "official_name", "stone_story", "cut_type", "secondary_colors",
+  "tenacity", "age_group", "condition", "custom_product",
+  "found_object", "collection_date",
   "custom.official_name", "custom.stone_story", "custom.cut_type", "custom.secondary_colors",
   "custom.tenacity", "custom.age_group", "custom.condition", "custom.custom_product",
-  "custom.found_object", "custom.collection_date",
+  "custom.found_object", "custom.collection_date", "custom.wire_material", "custom.jewelry_type",
 
   // NATIVE CONTRACT TARGETS (ACCEPTED FOR ROUTING, EXCLUDED FROM CUSTOM NAMESPACE)
-  "native_title", "native_shipping_weight", "native_image_alts",
+  "native_title", "native_shipping_weight", "native_image_alts", "native_seo_description",
 
   // STANDARDIZED TAXONOMY LIST
   "age-group", "chain-link-type", "color-pattern", "condition", "construction", "crystal-system", 
@@ -43,12 +47,14 @@ const STRICT_CUSTOM_KEYS = [
   "rock_composition", "geological_age", "target_gender",
   "official_name", "stone_story", "cut_type", "secondary_colors",
   "tenacity", "age_group", "condition", "custom_product",
-  "found_object", "collection_date"
+  "found_object", "collection_date", "wire_material"
 ];
 
 const RETIRED_KEYS = [
   "artist_notes", "bench_notes", "handcrafted_by", "color",
-  "cut_and_shape", "stone_shape", "wire_material", "primary_use"
+  "cut_and_shape", "stone_shape", "primary_use",
+  "custom.artist_notes", "custom.bench_notes", "custom.handcrafted_by", "custom.color",
+  "custom.cut_and_shape", "custom.stone_shape", "custom.primary_use"
 ];
 
 // Narrow, explicit reviewed destination type contracts (never generic fallbacks or inferred mappings)
@@ -57,7 +63,13 @@ const REVIEWED_EXACT_DESTINATION_TYPE_CONTRACTS = Object.freeze({
   "custom.crystal_system": "single_line_text_field",
   "custom.mineral_class": "single_line_text_field",
   "custom.rock_formation": "single_line_text_field",
-  "custom.geological_era": "single_line_text_field"
+  "custom.geological_era": "single_line_text_field",
+  "custom.is_one_of_a_kind": "single_line_text_field",
+  "custom.collection_date": "single_line_text_field",
+  "custom.cut_type": "single_line_text_field",
+  "custom.secondary_colors": "single_line_text_field",
+  "custom.wire_material": "single_line_text_field",
+  "custom.jewelry_type": "single_line_text_field"
 });
 
 const MASTER_TYPE_MAP = {
@@ -70,14 +82,15 @@ const MASTER_TYPE_MAP = {
   base_stone_type: "single_line_text_field", hardness: "single_line_text_field", primary_medium: "single_line_text_field",
   piece_name: "single_line_text_field", stone_family: "single_line_text_field", collection_name: "single_line_text_field",
   collection_location: "single_line_text_field", origin_handle: "single_line_text_field", origin_page_handle: "single_line_text_field",
-  alt_text: "single_line_text_field", is_ooak: "single_line_text_field", found_object: "single_line_text_field",
+  alt_text: "single_line_text_field", is_ooak: "single_line_text_field", is_one_of_a_kind: "single_line_text_field",
+  found_object: "single_line_text_field", collection_date: "single_line_text_field", wire_material: "single_line_text_field",
   custom_product: "single_line_text_field", setting_ready: "single_line_text_field", bail_included: "single_line_text_field",
   chain_material: "single_line_text_field", seo_title: "single_line_text_field", secondary_medium: "single_line_text_field",
   treated: "single_line_text_field", weight_grams: "number_decimal", shipping_weight_oz: "number_decimal", price: "number_decimal",
   origin_story: "multi_line_text_field", honest_flaws: "single_line_text_field", honest_flaws_and_character: "multi_line_text_field",
   generated_description: "multi_line_text_field", color_pattern: "list.metaobject_reference", "color-pattern": "list.metaobject_reference",
   material: "metaobject_reference", jewelry_material: "metaobject_reference", "jewelry-material": "metaobject_reference",
-  age_group: "metaobject_reference", "age-group": "metaobject_reference", jewelry_type: "metaobject_reference",
+  age_group: "metaobject_reference", "age-group": "metaobject_reference", jewelry_type: "single_line_text_field",
   "jewelry-type": "metaobject_reference", target_gender: "metaobject_reference", "target-gender": "metaobject_reference",
   necklace_design: "metaobject_reference", "necklace-design": "metaobject_reference", authenticity: "metaobject_reference",
   rarity: "metaobject_reference", condition: "metaobject_reference", crystal_system: "metaobject_reference",
@@ -97,7 +110,7 @@ const MASTER_TYPE_MAP = {
 const EXPLICIT_METAOBJECT_KEYS = [
   "material", "color-pattern", "color_pattern", "jewelry-material", "jewelry_material",
   "target-gender", "age-group", "age_group", "condition", "rarity", 
-  "authenticity", "jewelry-type", "jewelry_type", "necklace-design", "necklace_design", 
+  "authenticity", "jewelry-type", "necklace-design", "necklace_design", 
   "crystal-system", "geological-era", "geological_era", 
   "mineral-class", "mineral_class", "rock-composition", "rock_composition", 
   "rock-formation", "rock_formation", "chain-link-type", "chain_link_type",
@@ -143,7 +156,7 @@ const CATALOG_METAFIELD_DESTINATIONS = Array.from(
 
 const CATALOG_READ_ONLY_DESTINATIONS = new Set(
   FIELD_CATALOG
-    .filter(f => f.mappingStatus === "pending_read_only")
+    .filter(f => f.mappingStatus === "pending_read_only" || f.key === "is_ooak")
     .map(f => {
       const ns = f.namespace || f.metaConfig?.namespace || "custom";
       const mk = f.metaKey || f.key;
@@ -756,6 +769,7 @@ function attachChunkDestinationToUserErrors(userErrors, chunkItems, rootFieldNam
 export const action = async ({ request }) => {
   let matchingContext = null;
   try {
+    const unconsumedRequestClone = request.clone();
     const { admin } = await authenticate.admin(request);
     const body = await request.formData();
     const intent = body.get("intent");
@@ -912,7 +926,11 @@ export const action = async ({ request }) => {
         "global.description_tag",
         "custom.base_stone_type",
         "custom.hardness",
-        "custom.honest_flaws"
+        "custom.honest_flaws",
+        "custom.is_ooak",
+        "custom.stone_family",
+        "custom.primary_medium",
+        "custom.origin_handle"
       ];
       INSPECTION_ONLY_KEYS.forEach(k => {
           if (currentMetafields[k] !== undefined) {
@@ -924,6 +942,10 @@ export const action = async ({ request }) => {
       repairPlan["shopify_title"] = product.title;
       canonicalFields["price"] = uniqueVariants[0]?.node?.price || "0.00";
       repairPlan["price"] = canonicalFields["price"];
+
+      if (typeof product.seo?.description === "string" && product.seo.description.trim() !== "") {
+          canonicalFields["native_seo_description"] = product.seo.description;
+      }
 
       // Removed mapping is_one_of_a_kind -> is_ooak per requirement
       const LEGACY_MAP_LOCAL = {
@@ -1675,6 +1697,7 @@ export const action = async ({ request }) => {
       const currentNativeTitle = productNode?.title || "";
       const currentNativeBodyHtml = productNode?.descriptionHtml || "";
       const currentNativeSeoTitle = productNode?.seo?.title || "";
+      const currentNativeSeoDescription = productNode?.seo?.description || "";
       const currentMetaList = productNode?.metafields?.edges || [];
       
       const currentMetafields = {};
@@ -1720,6 +1743,25 @@ export const action = async ({ request }) => {
              attemptedDestinations.push("native_title");
          } else {
              unchanged.push("native_title");
+         }
+      }
+
+      let nativeSeoDescriptionUpdated = false;
+      if (nativeChanges.seoDescription !== undefined) {
+         const seoDescStr = String(nativeChanges.seoDescription ?? "").trim();
+         if (seoDescStr !== "") {
+            if (seoDescStr.length > 160) {
+               blockedFields["native_seo_description"] = "SEO description exceeds 160 characters limit.";
+            } else if (seoDescStr !== currentNativeSeoDescription) {
+               nativeInput.seo = nativeInput.seo || {};
+               nativeInput.seo.description = seoDescStr;
+               doNativeUpdate = true;
+               nativeSeoDescriptionUpdated = true;
+               proposedChanges["native_seo_description"] = { from: currentNativeSeoDescription, to: seoDescStr };
+               attemptedDestinations.push("native_seo_description");
+            } else {
+               unchanged.push("native_seo_description");
+            }
          }
       }
       
@@ -1823,6 +1865,27 @@ export const action = async ({ request }) => {
            continue;
         }
 
+        if (fullKey === "native_seo_description") {
+           const valStr = String(val !== null && val !== undefined ? val : "").trim();
+           if (!nativeSeoDescriptionUpdated && nativeChanges.seoDescription === undefined && valStr !== "") {
+              if (valStr.length > 160) {
+                 blockedFields["native_seo_description"] = "SEO description exceeds 160 characters limit.";
+              } else if (valStr !== currentNativeSeoDescription) {
+                 nativeInput.seo = nativeInput.seo || {};
+                 nativeInput.seo.description = valStr;
+                 doNativeUpdate = true;
+                 nativeSeoDescriptionUpdated = true;
+                 proposedChanges["native_seo_description"] = { from: currentNativeSeoDescription, to: valStr };
+                 attemptedDestinations.push("native_seo_description");
+              } else {
+                 unchanged.push("native_seo_description");
+              }
+           } else if (!nativeSeoDescriptionUpdated) {
+              skippedKeys.push(fullKey);
+           }
+           continue;
+        }
+
         if (fullKey === "price") {
            const valStr = String(val !== null && val !== undefined ? val : "").trim();
            if (valStr === "") continue;
@@ -1889,7 +1952,14 @@ export const action = async ({ request }) => {
         const canonicalDestinationKey = `${ns}.${key}`;
 
         // 🟢 RETIREMENT GUARD
-        if (RETIRED_KEYS.includes(key) || RETIRED_KEYS.includes(fullKey)) {
+        if (RETIRED_KEYS.includes(key) || RETIRED_KEYS.includes(fullKey) || RETIRED_KEYS.includes(canonicalDestinationKey)) {
+            skippedKeys.push(fullKey);
+            continue;
+        }
+
+        // 🟢 SINGLE CANONICAL OOAK & IDENTITY COMPANION WRITE GUARD
+        // Retain legacy reads without dual writes: custom.is_one_of_a_kind, custom.material, and custom.origin_page_handle are the sole editable targets.
+        if (ns === "custom" && (key === "is_ooak" || key === "stone_family" || key === "primary_medium" || key === "origin_handle")) {
             skippedKeys.push(fullKey);
             continue;
         }
@@ -1911,7 +1981,7 @@ export const action = async ({ request }) => {
         }
 
         // 🟢 STRICT ALLOWLIST ENFORCEMENT
-        if (!ALLOWED_TAB3_KEYS.includes(key) && !ALLOWED_TAB3_KEYS.includes(fullKey)) {
+        if (!ALLOWED_TAB3_KEYS.includes(key) && !ALLOWED_TAB3_KEYS.includes(fullKey) && !ALLOWED_TAB3_KEYS.includes(canonicalDestinationKey)) {
             unsupportedKeys.push(fullKey);
             continue;
         }
@@ -1932,15 +2002,9 @@ export const action = async ({ request }) => {
             }
             continue;
         }
-
-        // 🟢 BLOCKED KEYS UNTIL VERIFIED
-        if (key === "jewelry_type") {
-            blockedFields[fullKey] = "Safety block active on jewelry_type taxonomy destination.";
-            continue;
-        }
         
-        // Blank strings must not implicitly delete. 
-        if (valStr === "") {
+        // Blank strings and N/A collection_date placeholders must not implicitly delete or publish as dates.
+        if (valStr === "" || (ns === "custom" && key === "collection_date" && /^(n\/a|none|unknown)$/i.test(valStr))) {
             if (!currentVal) unchanged.push(fullKey);
             else skippedKeys.push(fullKey);
             continue; 
@@ -2163,8 +2227,10 @@ export const action = async ({ request }) => {
             key = parts.slice(1).join(".");
         }
 
+        const canonicalDestinationKey = `${ns}.${key}`;
+
         // 🟢 RETIREMENT GUARD
-        if (RETIRED_KEYS.includes(key) || RETIRED_KEYS.includes(fullKey)) {
+        if (RETIRED_KEYS.includes(key) || RETIRED_KEYS.includes(fullKey) || RETIRED_KEYS.includes(canonicalDestinationKey)) {
             skippedKeys.push(fullKey);
             return;
         }
@@ -2176,7 +2242,7 @@ export const action = async ({ request }) => {
         }
 
         // 🟢 STRICT ALLOWLIST ENFORCEMENT FOR DELETES
-        if (!ALLOWED_TAB3_KEYS.includes(key) && !ALLOWED_TAB3_KEYS.includes(fullKey)) {
+        if (!ALLOWED_TAB3_KEYS.includes(key) && !ALLOWED_TAB3_KEYS.includes(fullKey) && !ALLOWED_TAB3_KEYS.includes(canonicalDestinationKey)) {
             unsupportedKeys.push(fullKey);
             return;
         }
@@ -2521,6 +2587,7 @@ export const action = async ({ request }) => {
               readBackVerified = false;
               if (nativeInput.descriptionHtml !== undefined) unresolvedChanges["native_description"] = { reason: "API mutation failed", expected: nativeInput.descriptionHtml, actual: "Unchanged" };
               if (nativeInput.seo?.title !== undefined) unresolvedChanges["native_seo_title"] = { reason: "API mutation failed", expected: nativeInput.seo.title, actual: "Unchanged" };
+              if (nativeInput.seo?.description !== undefined) unresolvedChanges["native_seo_description"] = { reason: "API mutation failed", expected: nativeInput.seo.description, actual: "Unchanged" };
               if (nativeInput.title !== undefined) unresolvedChanges["native_title"] = { reason: "API mutation failed", expected: nativeInput.title, actual: "Unchanged" };
           } else {
               if (nativeInput.descriptionHtml !== undefined) {
@@ -2547,6 +2614,19 @@ export const action = async ({ request }) => {
                      conflicts["native_seo_title"] = { expected: nativeInput.seo.title, actual: actualSeoTitle };
                  } else {
                      verifiedDestinations.push("native_seo_title");
+                 }
+              }
+              if (nativeInput.seo?.description !== undefined) {
+                 if (actualSeoDescription === undefined) {
+                     readBackVerified = false;
+                     unresolvedChanges["native_seo_description"] = { reason: "Unverified native read-back (seo.description missing)", expected: nativeInput.seo.description, actual: "Unverified" };
+                     conflicts["native_seo_description"] = { expected: nativeInput.seo.description, actual: "Unverified (missing from read-back)" };
+                 } else if (nativeInput.seo.description !== actualSeoDescription) {
+                     readBackVerified = false;
+                     unresolvedChanges["native_seo_description"] = { reason: "Read-back mismatch", expected: nativeInput.seo.description, actual: actualSeoDescription };
+                     conflicts["native_seo_description"] = { expected: nativeInput.seo.description, actual: actualSeoDescription };
+                 } else {
+                     verifiedDestinations.push("native_seo_description");
                  }
               }
               if (nativeInput.title !== undefined) {
@@ -2660,8 +2740,9 @@ export const action = async ({ request }) => {
       const verifiedSetCount = setToShopify.filter(m => verifiedDestinations.includes(`${m.namespace}.${m.key}`)).length;
       const verifiedImageAltCount = imageAltInputs.filter(img => verifiedDestinations.includes(`native_image_alts_${img.id}`)).length;
       const verifiedNativeTitleCount = verifiedDestinations.includes("native_title") ? 1 : 0;
+      const verifiedNativeSeoDescCount = verifiedDestinations.includes("native_seo_description") ? 1 : 0;
       const verifiedShippingWeightCount = verifiedDestinations.includes("native_shipping_weight") ? 1 : 0;
-      const totalFieldsUpdated = verifiedSetCount + (priceReadBackVerified ? 1 : 0) + verifiedNativeTitleCount + verifiedShippingWeightCount + verifiedImageAltCount;
+      const totalFieldsUpdated = verifiedSetCount + (priceReadBackVerified ? 1 : 0) + verifiedNativeTitleCount + verifiedNativeSeoDescCount + verifiedShippingWeightCount + verifiedImageAltCount;
 
       const hasUnresolved = Object.keys(unresolvedChanges).length > 0;
       const hasExcluded = Object.keys(blockedFields).length > 0 || unsupportedKeys.length > 0;
@@ -2690,11 +2771,34 @@ export const action = async ({ request }) => {
       });
     }
 
-    if (intent === "saveMetafields" || intent === "cleanMalformedKeys" || intent === "cleanAllCamelKeys" || intent === "stagedUpload" || intent === "createProduct" || intent === "cleanGhostNamespaces" || intent === "cleanAllGhostNamespaces" || intent === "toggleStatus" || intent === "batchAuditItem") {
-       return await executeAutofill(intent, body, admin);
+    if (intent === "saveMetafields" || intent === "saveProduct") {
+      const loaderRes = await loaderAction({ request: unconsumedRequestClone });
+      if (loaderRes instanceof Response) {
+        return loaderRes;
+      }
+      return Response.json(loaderRes);
     }
 
-    return Response.json({ success: true, intent: intent || "unknown" });
+    if (intent === "geoLookup" || intent === "tab2AutoFill" || intent === "titleParse" || intent === "visionScan" || intent === "fullRescan" || intent === "generateDescription") {
+      const autofillRes = await executeAutofill(intent, body, admin);
+      if (autofillRes instanceof Response) {
+        return autofillRes;
+      }
+      return Response.json(autofillRes);
+    }
+
+    const targetId = body.get("pieceId") || body.get("productId") || null;
+    const unsupportedErrMsg = `Unsupported action intent "${intent || "unknown"}" on /app/meta-injector-api: no writer handler is implemented for this operation.`;
+    return Response.json({
+      intent: intent || "unknown",
+      pieceId: targetId,
+      productId: targetId,
+      success: false,
+      status: "UNSUPPORTED_INTENT",
+      message: unsupportedErrMsg,
+      error: unsupportedErrMsg,
+      errors: [{ message: unsupportedErrMsg }]
+    });
   } catch (error) {
     if (error instanceof Response) {
       throw error;

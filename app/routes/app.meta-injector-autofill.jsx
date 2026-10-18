@@ -1,5 +1,5 @@
 import { authenticate } from "../shopify.server";
-import { DROPDOWN_OPTIONS } from "../utils/meta-injector.constants.jsx";
+import { DROPDOWN_OPTIONS, normalizeDropdownValue } from "../utils/meta-injector.constants.jsx";
 
 // 🟢 AI Engine — No Prisma Import Here
 
@@ -136,9 +136,26 @@ async function getLiveStoreDirectory(admin) {
   return { pagesList, collectionsList };
 }
 
+function splitSegmentedTitle(val) {
+  if (typeof val !== "string") return [];
+  const normalized = val
+    .replace(/ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â/g, "—")
+    .replace(/Ã¢â‚¬â€/g, "—")
+    .replace(/â€”/g, "—")
+    .trim();
+  if (!normalized) return [];
+  return normalized.split(/\s+[—–-]\s+/).map(s => s.trim()).filter(Boolean);
+}
+
 function extractStoneName(title) {
   if (!title) return "Unknown";
-  let sectionOne = title.split(/[—–-]/)[0].trim();
+  const normalized = String(title)
+    .replace(/ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â/g, "—")
+    .replace(/Ã¢â‚¬â€/g, "—")
+    .replace(/â€”/g, "—")
+    .trim();
+  const segs = splitSegmentedTitle(normalized);
+  const sectionOne = segs.length >= 2 ? segs[0] : normalized.split(/[—–-]/)[0].trim();
   const adjectives = ["Green", "Blue", "Red", "Yellow", "Orange", "Purple", "Pink", "Black", "White", "Grey", "Gray", "Brown", "Brecciated", "Picture", "Ocean", "Crazy Lace", "Plume", "Moss", "Dendritic", "Banded", "Polychrome", "Imperial", "Royal", "Dark", "Light", "Clear", "Opaque", "Translucent", "Raw", "Rough", "Tumbled", "Polished", "Natural", "Fossil", "Petrified", "Mookaite", "Kambaba", "Bumblebee", "Dalmatian", "Dragon Blood"];
   let words = sectionOne.split(/\s+/);
   words = words.filter(word => !adjectives.some(adj => adj.toLowerCase() === word.toLowerCase()));
@@ -149,7 +166,42 @@ function extractStoneName(title) {
   return "Unknown";
 }
 
-function resolveOriginHandle(locationSegment, pagesList) {
+function resolvePicklistStoneFamily(rawFamily) {
+  const cleaned = cleanStoneFamilyShape(String(rawFamily || "").trim());
+  if (!cleaned || cleaned.toLowerCase() === "unknown stone" || cleaned.toLowerCase() === "unknown") {
+    return "";
+  }
+  if (typeof normalizeDropdownValue === "function") {
+    const normalized = normalizeDropdownValue("stone_family", cleaned);
+    if (normalized) return normalized;
+  }
+  const options = DROPDOWN_OPTIONS?.stone_family || [];
+  const lower = cleaned.toLowerCase();
+  for (const opt of options) {
+    const val = typeof opt === "object" ? (opt.value || opt.label || "") : String(opt);
+    if (val.toLowerCase() === lower) return val;
+  }
+  return cleaned;
+}
+
+function resolveEvidencedOriginLocation(rawOrigin) {
+  const raw = String(rawOrigin || "").trim();
+  if (!raw || raw.toLowerCase() === "unknown origin" || raw.toLowerCase() === "unknown") {
+    return "";
+  }
+  if (typeof normalizeDropdownValue === "function") {
+    const normalized = normalizeDropdownValue("origin_location", raw) || normalizeDropdownValue("collection_location", raw);
+    if (normalized) return enforceOriginOverrides(normalized);
+  }
+  return enforceOriginOverrides(raw);
+}
+
+function resolveOriginHandle(locationSegment, pagesList, explicitHandle = "") {
+  const cleanExplicit = String(explicitHandle || "").replace(/^\/pages\//i, "").trim();
+  if (cleanExplicit && pagesList.some(p => p.handle === cleanExplicit)) {
+    return cleanExplicit;
+  }
+
   const cleanLoc = (locationSegment || "").toLowerCase().trim();
   if (!cleanLoc || cleanLoc === "unknown origin") return "";
   
@@ -157,34 +209,48 @@ function resolveOriginHandle(locationSegment, pagesList) {
   if (cleanLoc.includes("richardson")) targetHandle = "the-richardson-strike";
   else if (cleanLoc.includes("irv")) targetHandle = ""; 
   else if (cleanLoc.includes("spokane")) targetHandle = ""; 
-  else if (cleanLoc.includes("north fork") || cleanLoc.includes("cda")) targetHandle = "the-north-fork-strike";
-  else if (cleanLoc.includes("yakima") || cleanLoc.includes("chert")) targetHandle = "the-shop-lore-chert-road-detour-yakima-river-jasper";
+  else if (cleanLoc.includes("north fork") || cleanLoc.includes("north-fork") || cleanLoc.includes("cda") || cleanLoc === "nor" || cleanLoc.startsWith("nor ")) targetHandle = "the-north-fork-strike";
+  else if (cleanLoc.includes("yakima") || cleanLoc.includes("chert") || cleanLoc === "yak" || cleanLoc.startsWith("yak ")) targetHandle = "the-shop-lore-chert-road-detour-yakima-river-jasper";
   else {
     const match = pagesList.find(p => p.title.toLowerCase().includes(cleanLoc) || p.url.includes(cleanLoc));
-    targetHandle = match ? match.handle : cleanLoc.replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, "-");
+    targetHandle = match ? match.handle : "";
   }
 
   if (targetHandle && pagesList.some(p => p.handle === targetHandle)) {
-      return targetHandle;
+    return targetHandle;
   }
   return "";
 }
 
-function resolveCollectionData(locationSegment, defaultOriginSlug, collectionsList = []) {
+function resolveCollectionData(locationSegment, defaultOriginSlug, collectionsList = [], explicitCollectionName = "") {
+  const cleanExplicitName = String(explicitCollectionName || "").trim();
+  if (cleanExplicitName) {
+    const exactCol = collectionsList.find(c =>
+      c.title.toLowerCase() === cleanExplicitName.toLowerCase() ||
+      c.handle.toLowerCase() === cleanExplicitName.toLowerCase()
+    );
+    if (exactCol) {
+      return {
+        slug: exactCol.handle,
+        name: exactCol.title
+      };
+    }
+  }
+
   const cleanLoc = (locationSegment || "").toLowerCase().trim();
   
   let targetSlug = "";
   let targetName = "";
 
   if (!cleanLoc || cleanLoc === "unknown origin") {
-    return { slug: "", name: "" };
+    return { slug: "", name: cleanExplicitName || "" };
   }
 
-  if (cleanLoc.includes("yakima") || cleanLoc.includes("chert")) { targetSlug = "yakima-canyon"; targetName = "Yakima River Canyon"; }
+  if (cleanLoc.includes("yakima") || cleanLoc.includes("chert") || cleanLoc === "yak" || cleanLoc.startsWith("yak ")) { targetSlug = "yakima-canyon"; targetName = "Yakima River Canyon"; }
   else if (cleanLoc.includes("richardson")) { targetSlug = "richardsons-rock-ranch"; targetName = "Richardson's Rock Ranch Collection"; }
   else if (cleanLoc.includes("spokane")) { targetSlug = "the-spokane-river-collection"; targetName = "Spokane River Stones and Stories"; }
   else if (cleanLoc.includes("irv")) { targetSlug = ""; targetName = ""; } 
-  else if (cleanLoc.includes("north fork") || cleanLoc.includes("cda")) { targetSlug = "north-fork-cda-collection"; targetName = "North Fork CdA Collection"; }
+  else if (cleanLoc.includes("north fork") || cleanLoc.includes("north-fork") || cleanLoc.includes("cda") || cleanLoc === "nor" || cleanLoc.startsWith("nor ")) { targetSlug = "north-fork-cda-collection"; targetName = "North Fork CdA Collection"; }
   else {
     const matchedCol = collectionsList.find(c => 
       (defaultOriginSlug && c.url.includes(defaultOriginSlug)) || 
@@ -194,21 +260,116 @@ function resolveCollectionData(locationSegment, defaultOriginSlug, collectionsLi
       targetSlug = matchedCol.handle;
       targetName = matchedCol.title.endsWith("Collection") ? matchedCol.title : `${matchedCol.title} Collection`;
     } else {
-      targetSlug = defaultOriginSlug;
-      targetName = `${locationSegment.trim()} Collection`;
+      targetSlug = "";
+      targetName = cleanExplicitName || "";
     }
   }
 
   if (targetSlug && collectionsList.some(c => c.handle === targetSlug)) {
-      return { slug: targetSlug, name: targetName };
+    return { slug: targetSlug, name: targetName };
   }
   return { slug: "", name: targetName };
 }
 
+function normalizeOoakToken(val) {
+  if (val === undefined || val === null) return "";
+  if (typeof val === "boolean") return val ? "Yes" : "No";
+  const str = String(val).trim();
+  if (!str) return "";
+  const lower = str.toLowerCase();
+  if (lower === "yes" || lower === "true" || lower === "1" || lower === "ooak" || lower === "one-of-a-kind") {
+    return "Yes";
+  }
+  if (lower === "no" || lower === "false" || lower === "0") {
+    return "No";
+  }
+  return str;
+}
+
+function resolveCanonicalOoakFromInputs(inputs = {}, aiProposal = undefined) {
+  const explicitCanonical = normalizeOoakToken(inputs.is_one_of_a_kind ?? inputs["custom.is_one_of_a_kind"]);
+  const explicitLegacy = normalizeOoakToken(inputs.is_ooak ?? inputs["custom.is_ooak"]);
+
+  if (explicitCanonical && explicitLegacy && explicitCanonical !== explicitLegacy) {
+    return { value: "", conflict: true };
+  }
+  if (explicitCanonical || explicitLegacy) {
+    return { value: explicitCanonical || explicitLegacy, conflict: false };
+  }
+
+  const proposed = normalizeOoakToken(
+    aiProposal?.is_one_of_a_kind ?? aiProposal?.is_ooak
+  );
+  if (proposed) {
+    return { value: proposed, conflict: false };
+  }
+  return { value: "", conflict: false };
+}
+
+function parseIdentityAndOriginInputs(body) {
+  const rawProductTitle = (body.get("productTitle") || "").trim();
+  const rawPieceName = (body.get("pieceName") || body.get("piece_name") || "").trim();
+  const rawHumanId = (body.get("humanPieceId") || "").trim();
+  const explicitStoneFamily = (body.get("stone_family") || "").trim();
+  const explicitOriginLocation = (body.get("origin_location") || "").trim();
+  const explicitOriginHandle = (body.get("origin_handle") || body.get("origin_page_handle") || "").trim();
+  const explicitCollectionName = (body.get("collection_name") || body.get("collectionName") || "").trim();
+
+  const productTitleSegments = splitSegmentedTitle(rawProductTitle);
+  const pieceNameSegments = splitSegmentedTitle(rawPieceName);
+
+  const hasSegmentedProductTitle = productTitleSegments.length >= 3;
+  const hasSegmentedPieceName = pieceNameSegments.length >= 3;
+
+  // Preserve exact human identifiers (including hyphenated codes like BQH-1).
+  // Never treat a 1-segment human ID as stone_family.
+  let preservedPieceName = "";
+  if (rawHumanId) {
+    preservedPieceName = rawHumanId;
+  } else if (rawPieceName && !hasSegmentedPieceName) {
+    preservedPieceName = rawPieceName;
+  } else if (hasSegmentedPieceName) {
+    preservedPieceName = pieceNameSegments[pieceNameSegments.length - 1];
+  } else if (hasSegmentedProductTitle) {
+    preservedPieceName = productTitleSegments[productTitleSegments.length - 1];
+  } else if (rawProductTitle && !hasSegmentedProductTitle) {
+    preservedPieceName = rawProductTitle;
+  }
+
+  const titleFamilyCandidate = hasSegmentedProductTitle
+    ? productTitleSegments[0]
+    : (hasSegmentedPieceName ? pieceNameSegments[0] : "");
+
+  const titleOriginCandidate = hasSegmentedProductTitle
+    ? productTitleSegments[1]
+    : (hasSegmentedPieceName ? pieceNameSegments[1] : "");
+
+  const rawFamilySource = explicitStoneFamily || titleFamilyCandidate || "";
+  const derivedFamily = resolvePicklistStoneFamily(rawFamilySource);
+  const derivedShape = extractShapeFromString(rawFamilySource);
+
+  const rawOriginSource = explicitOriginLocation || titleOriginCandidate || "";
+  const originSegment = resolveEvidencedOriginLocation(rawOriginSource);
+
+  return {
+    rawTitleInput: rawProductTitle || rawPieceName,
+    hasSegmentedTitle: hasSegmentedProductTitle || hasSegmentedPieceName,
+    preservedPieceName,
+    derivedFamily,
+    derivedShape,
+    originSegment,
+    explicitStoneFamily: Boolean(explicitStoneFamily),
+    explicitOriginLocation: Boolean(explicitOriginLocation),
+    explicitOriginHandle,
+    explicitCollectionName
+  };
+}
+
 async function getGeoData(admin, stoneFamily) {
   const emptyGeo = { mohs_hardness: "", luster: "", fracture_pattern: "", cleavage: "", specific_gravity: "", diaphaneity: "", crystal_system: "", geological_era: "", mineral_class: "", rock_composition: "", rock_formation: "", geological_age: "", geoSource: "none" };
-  if (!stoneFamily || !admin) return emptyGeo;
+  if (!stoneFamily || stoneFamily === "Unknown Stone" || !admin) return emptyGeo;
   const cleanStoneName = extractStoneName(stoneFamily);
+  if (!cleanStoneName || cleanStoneName === "Unknown") return emptyGeo;
   const search = cleanStoneName.toLowerCase().trim();
 
   try {
@@ -294,7 +455,7 @@ const INVALID_CANDIDATE_FILLERS = new Set(["none", "unknown", "n/a", "null", "un
 function sanitizeCandidateString(str) {
   if (typeof str !== "string") return "";
   if (str.includes("See Shopify")) return "";
-  return str.replace(/Ã¢â‚¬"/g, "—").replace(/â€”/g, "—").trim();
+  return str.replace(/ÃƒÂ¢Ã¢â€šÂ¬"/g, "—").replace(/Ã¢â‚¬"/g, "—").replace(/â€”/g, "—").trim();
 }
 
 function isCleanCandidateLabel(label) {
@@ -402,7 +563,7 @@ function sanitizeObject(obj) {
   for (let key in obj) {
     if (typeof obj[key] === "string") {
       if (obj[key].includes("See Shopify")) obj[key] = "";
-      else obj[key] = obj[key].replace(/Ã¢â‚¬"/g, "—").replace(/â€”/g, "—");
+      else obj[key] = obj[key].replace(/ÃƒÂ¢Ã¢â€šÂ¬"/g, "—").replace(/Ã¢â‚¬"/g, "—").replace(/â€”/g, "—");
     }
   }
   return obj;
@@ -425,10 +586,11 @@ function extractShapeFromString(str) {
 
 function enforceOriginOverrides(loc) {
   if (!loc) return loc;
-  const lower = loc.toLowerCase();
-  if (lower.includes("yakima") || lower.includes("chert")) return "Yakima River Canyon";
+  const lower = loc.toLowerCase().trim();
+  if (lower.includes("yakima") || lower.includes("chert") || lower === "yak" || lower.startsWith("yak ")) return "Yakima River Canyon";
   if (lower.includes("spokane")) return "Spokane River";
   if (lower.includes("richardson")) return "Richardson's Rock Ranch";
+  if (lower.includes("north fork") || lower.includes("north-fork") || lower.includes("cda") || lower === "nor" || lower.startsWith("nor ")) return "North Fork CdA";
   return loc;
 }
 
@@ -438,10 +600,12 @@ function cleanStoneFamilyShape(familyStr) {
 }
 
 function mapCollectionLocation(rawLocation) {
-  const loc = (rawLocation || "").toLowerCase();
+  const loc = (rawLocation || "").toLowerCase().trim();
+  if (!loc) return "";
   if (loc.includes("spokane river")) return "Spokane River";
-  if (loc.includes("yakima") || loc.includes("chert")) return "Yakima River Canyon";
+  if (loc.includes("yakima") || loc.includes("chert") || loc === "yak") return "Yakima River Canyon";
   if (loc.includes("richardson")) return "Richardson's Rock Ranch";
+  if (loc.includes("north fork") || loc.includes("cda") || loc === "nor") return "North Fork CdA";
   return rawLocation.replace(/\s*Collection$/i, "").trim();
 }
 
@@ -456,8 +620,8 @@ function getDerivedMaterial(stoneFam) {
 const getSharedFactualContract = () => `
 --- SHARED FACTUAL CONTRACT ---
 1. PRIORITY: Explicit operator corrections > established product facts > resolved origin/collection source context > supported visible observations.
-​2. UNKNOWN FACTS: Unknown facts MUST remain omitted. Do NOT invent defaults.
-3. NO VISUAL INFERENCE: Do not infer treatment, provenance, authenticity, plating, or mineral rarity from appearance alone.
+2. UNKNOWN FACTS: Unknown facts MUST remain omitted. Do NOT invent defaults.
+3. NO VISUAL INFERENCE: Do not infer treatment, provenance, plating, or mineral rarity from appearance alone.
 4. SUPPORTED VOCABULARY: Do not force an unsupported title into a guessed "closest" mineral. Ensure chosen facts match the supported definitions.
 5. HARDWARE & CONSTRUCTION: Preserve existing hardware inventory choices and supplied construction details. Do not replace them with a newly invented dictionary.
 -------------------------------
@@ -495,11 +659,10 @@ STRICT RULES FOR standardized_candidates:
 `;
 
 // ==========================================
-// PROMPT 1: TITLE PARSE
+// PROMPT 1: DESCRIPTION GENERATION
 // ==========================================
-// Kept for legacy reference/potential use; active logic is built inline in the action block.
 function buildDescriptionPrompt(derivedFamily, originSegment, extractedStory, fullCollectionTitle, pieceData, collectionStory = "") {
-
+  const ooakResolved = resolveCanonicalOoakFromInputs(pieceData);
   return `You are writing a product description for Rockhound Studio, a lapidary art studio run by Bob and Janyce, married 34 years, both artists, both rockhounds. They cut and polish every stone themselves in Spokane Valley WA.
 ${getSharedFactualContract()}
 
@@ -515,6 +678,7 @@ DETAILS:
 - Finding/Setting Type: ${pieceData.jewelry_finding_type || "N/A"}
 - Setting Ready: ${pieceData.setting_ready || "N/A"}
 - Bail Included: ${pieceData.bail_included || "N/A"}
+- Wire Material: ${pieceData.wire_material || "N/A"}
 - Chain/Cord: ${pieceData.chain_material || "N/A"}
 - Secondary Medium (Metal): ${pieceData.secondary_medium || "N/A"}
 - Surface Finish: ${pieceData.surface_finish || ""}
@@ -523,13 +687,13 @@ DETAILS:
 - Shipping Weight: ${pieceData.shipping_weight_oz ? pieceData.shipping_weight_oz + " oz" : "N/A"}
 - Geology display: Geological facts are already presented in the product-page geology drawer table. Do not repeat geology in this description.
 - Preserve geological data unchanged outside this description; this output does not replace the geology table.
-- Rarity: ${pieceData.rarity || ""}
+- One-of-a-Kind (is_one_of_a_kind): ${ooakResolved.value || ""}
 - Primary Color: ${pieceData.primary_color || ""}
 - Color Pattern: ${pieceData.color_pattern || ""}
 - Character Marks: ${pieceData.character_marks || ""}
 - Honest Flaws and Character: ${pieceData.honest_flaws_and_character || ""}
 - Chain Type: ${pieceData.chain_link_type || ""}
-- Piece Name: ${pieceData.piece_name || "None"}
+- Human Identifier (Internal only, do not rename): ${pieceData.piece_name || "None"}
 
 VOICE RULES (CRITICAL):
 - Use Bob's plain, honest voice: short sentences, one idea at a time.
@@ -544,7 +708,7 @@ VOICE RULES (CRITICAL):
 - Counts, dates, and trip details require source support.
 - If context is insufficient, flag it for review rather than invent.
 - Weave physical facts naturally into the physical description. Never output labels or missing-value placeholders.
-- Preserve explicitly supplied rarity or one-of-a-kind wording once as a plain factual spec, without sales language. Never invent rarity, default it from a blank field, or equate individual uniqueness with mineral rarity.
+- Preserve explicitly supplied one-of-a-kind status once as a plain factual spec when provided, without sales language. Never invent rarity or default it from a blank field.
 - Signature always: — Bob and Janyce, Rockhound Studio, Spokane Valley WA
 
 DESCRIPTION STRUCTURE — follow this order exactly:
@@ -564,13 +728,12 @@ Stone: [stone_family]
 Dimensions: [dimensions_mm]
 Weight: [Stone Weight - do not use Shipping Weight. Omit if N/A]
 Finish: [surface_finish]
-Setting/Format: [List product_format and any relevant finding/setting data. DO NOT write "Loose stone, undrilled" if finding/bail/chain/pendant data is present.]
+Setting/Format: [List product_format and any relevant finding/setting/wire_material data. DO NOT write "Loose stone, undrilled" if finding/bail/wire/chain/pendant data is present.]
 Includes: [List bail/chain/cord. If none exist AND it is confirmed loose, state "Loose stone, undrilled".]
 
-5. CHARACTER AND SUPPLIED RARITY
+5. CHARACTER
 Geology: Do not output a geology row or geological properties; these belong in the existing product-page geology table.
 Do not repeat hardness, age, era, composition, formation, crystal system, mineral class, specific gravity, luster, cleavage, fracture or diaphaneity in the description.
-Rarity: [Include the exact supplied rarity when nonblank, once as a factual spec. Omit when missing; do not invent a replacement.]
 Character: [Include supported character_marks and honest_flaws_and_character distinctly; omit missing facts.]
 
 6. ARTIST CALLOUT — only if loose stone or setting ready
@@ -589,42 +752,47 @@ ORIGIN PAGE DATE RULE:
 If the provided origin-page story contains an explicit collection date, trip date, month, year, or date range, use it only when it is factually present and relevant to the story. Never invent or infer a date. If no explicit date is present, do not mention one.`;
 }
 
-function buildMasterVisionPrompt({ pagesMenu, collectionsMenu, stoneFamily, derivedShape, originStory, originSegment, targetUrlPath, fullCollectionTitle, collectionUrlPath, pagesList = [], collectionStory = "" }) {
+function buildMasterVisionPrompt({ pagesMenu, collectionsMenu, stoneFamily, derivedShape, originStory, originSegment, targetUrlPath, fullCollectionTitle, collectionUrlPath, pagesList = [], collectionStory = "", operatorFacts = {} }) {
   let dwellButtonsHTML = `<br><br>`;
   
   let displayOriginName = fullCollectionTitle || originSegment;
   let displayColName = fullCollectionTitle || originSegment;
   
   if (originSegment === "Yakima River Canyon" || (targetUrlPath && targetUrlPath.includes("chert-road-detour-yakima-river-jasper"))) {
-      displayOriginName = "Chert Road Detour";
-      displayColName = "Yakima River Canyon";
+    displayOriginName = "Chert Road Detour";
+    displayColName = "Yakima River Canyon";
   }
   
   if (targetUrlPath && targetUrlPath !== "/pages/") {
-      dwellButtonsHTML += `<a href="${targetUrlPath}">${displayOriginName} Story</a>\n`;
+    dwellButtonsHTML += `<a href="${targetUrlPath}">${displayOriginName} Story</a>\n`;
   }
   
   if (collectionUrlPath && collectionUrlPath !== "/collections/") {
-      if (targetUrlPath && targetUrlPath !== "/pages/") dwellButtonsHTML += `<br>`;
-      let colLabel = displayColName;
-      if (!/collection/i.test(colLabel)) colLabel += " Collection";
-      dwellButtonsHTML += `<a href="${collectionUrlPath}">${colLabel}</a>`;
+    if (targetUrlPath && targetUrlPath !== "/pages/") dwellButtonsHTML += `<br>`;
+    let colLabel = displayColName;
+    if (!/collection/i.test(colLabel)) colLabel += " Collection";
+    dwellButtonsHTML += `<a href="${collectionUrlPath}">${colLabel}</a>`;
   }
 
   if (originSegment === "Richardson's Rock Ranch" || (targetUrlPath && targetUrlPath.includes("the-richardson-strike"))) {
     dwellButtonsHTML = `<br><br>`;
     if (pagesList.some(p => p.handle === "the-richardson-strike")) {
-        dwellButtonsHTML += `<a href="/pages/the-richardson-strike">Richardson's Rock Ranch Story</a>\n`;
+      dwellButtonsHTML += `<a href="/pages/the-richardson-strike">Richardson's Rock Ranch Story</a>\n`;
     }
     dwellButtonsHTML += `<br><a href="/collections/richardsons-rock-ranch">Richardson's Rock Ranch Collection</a>`;
     
     if (pagesList.some(p => p.handle === "the-3-000-mile-run")) {
-        dwellButtonsHTML += `\n<br><a href="/pages/the-3-000-mile-run">The 3,000-Mile Run Story</a>`;
+      dwellButtonsHTML += `\n<br><a href="/pages/the-3-000-mile-run">The 3,000-Mile Run Story</a>`;
     }
     dwellButtonsHTML += `\n<br><a href="/collections/the-3-000-mile-run-1">The 3,000-Mile Run Collection</a>`;
   }
 
   if (dwellButtonsHTML === `<br><br>`) dwellButtonsHTML = "";
+
+  const operatorFactsStr = Object.entries(operatorFacts || {})
+    .filter(([k, v]) => v !== undefined && v !== null && v !== "")
+    .map(([k, v]) => `- ${k}: ${v}`)
+    .join("\n");
   
   return `You are a lapidary artist for Rockhound Studio. Analyze this photo and return a JSON object.
 ${getSharedFactualContract()}
@@ -633,6 +801,9 @@ ${getSharedFactualContract()}
   VALID PAGES IN STORE: ${pagesMenu || "No live pages"}
   VALID COLLECTIONS: ${collectionsMenu || "No live collections"}
 
+SUPPLIED HUMAN / BENCH FACTS (Authoritative when nonblank; do not contradict or invent replacements):
+${operatorFactsStr || "- No explicit operator overrides supplied."}
+
 REQUIRED JSON KEYS:
 - primary_color
 - color_pattern: Select EXACTLY one: Green, Black, Blue flash, Red, White, Multicolor, Gold, Pink, Yellow, Silver, Purple, Striped, Clear, Yellow veins, None
@@ -640,21 +811,21 @@ REQUIRED JSON KEYS:
 - honest_flaws_and_character
 - character_marks
 - secondary_medium
+- wire_material: Plain text description of wire material if visibly wire-wrapped or supplied in bench facts; omit if not applicable.
 - setting_ready: "Bezel Setting - Ready to Wear", "Wire Wrapped - Ready to Wear", "None".
 - bail_included: e.g., "Silver Plated Pinch Bail", "Integrated Bezel Bail", "None".
 - chain_material: Identify the visible chain or cord. INVENTORY OPTIONS: "Cord", "Silver Plated Snake Chain", "Gold Plated Snake Chain". Distinguish clearly absent hardware from hardware out of view.
 - chain_link_type: Cord or Snake Chain (when applicable). Never turn Cord into Snake Chain.
 - jewelry_finding_type: INVENTORY OPTIONS: "Silver Plated Pinch Bail", "Glue-On Bail", "Assorted Glue-In Setting". Preserve explicitly supplied construction descriptions. Compatible with bail_included. Do not invent details if unknown.
 - jewelry_type: Select EXACTLY one: Pendant, Necklace, Artisan jewelry, Fine jewelry, Accessories, N/A.
-- rarity: Select EXACTLY one: Common, Uncommon, Rare, One-of-a-Kind
-- authenticity: Select EXACTLY one: Authentic, Lab-Created, Unknown
 - google_product_category: "Apparel & Accessories > Jewelry"
-- origin_location: Cross-reference "${originSegment}" with LIVE STORE DIRECTORY. Return geographic name ONLY.
+- origin_location: Cross-reference "${originSegment}" with LIVE STORE DIRECTORY. Return geographic name ONLY. Do not invent an origin if unknown.
 - primary_use: "Pendant (Finished Jewelry)", "Necklace", "Ring / Bezel Setting", "Cabochon", "Wire Wrap (Finished Jewelry)", "Loose Stone".
 - primary_medium: Must match stone mineral name.
-- alt_text: Descriptive, max 125 chars.
+- alt_text: Descriptive for THIS single photo only, max 125 chars.
 - found_object: Yes/No
-- seo_title: Max 70 chars. Natural, descriptive wording based on supported facts. No generic guessing. Include "Handcrafted" only when supported by supplied facts identifying work by Bob and Janyce ("Ground out the miles" describes travel, not stone grinding; never cite it as craftsmanship evidence).
+- seo_title: Max 70 chars. Customer-facing title/pitch based on Vision, origin-page content, and supplied human facts. Never use or overwrite the internal human piece_name ID. Include "Handcrafted" only when supported by supplied facts identifying work by Bob and Janyce ("Ground out the miles" describes travel, not stone grinding; never cite it as craftsmanship evidence).
+- poetic_hook: Optional short, plain customer-facing hook (under 160 chars) grounded in the photo, origin page, and human facts. Never replace the internal piece_name ID.
 - standardized_candidates: Object containing supported review candidates among ["chain-link-type", "construction", "jewelry-finding-type", "material-origin", "product-classification", "product-use"] following the exact verified field meanings below.
 - generated_description: Write in Bob's plain, honest voice (past tense). No salesy language, poetic geology, or grand claims. Short sentences. 7-BLOCK FORMAT:
   1. Stone Description: Honest flaws, finish, flash. Lead with specific observations.
@@ -687,7 +858,7 @@ function buildTab3VisionPrompt({ pagesMenu, collectionsMenu, stoneFamily, derive
 
   const imageAltInstructions = hasMultipleImages ? 
   `- imageAlts: Array of objects [{ "imageId": "exact-id-from-input", "altText": "description" }]. Describe EACH supplied image individually. Use only visible, truthful detail. Max 125 chars per alt text. Use mineral name. Do not reuse generic captions across images. You MUST copy the exact imageId from the input. Reject unknown or duplicate IDs.` : 
-  `- alt_text: Descriptive alt text (max 125 chars). Use mineral name. No visual guessing.`;
+  `- alt_text: Descriptive alt text for the single supplied image (max 125 chars). Use mineral name. No visual guessing.`;
 
   return `You are a lapidary artist for Rockhound Studio. Analyze the provided photo(s) and return a JSON object.
 ${getSharedFactualContract()}
@@ -701,22 +872,21 @@ ${currentDataStr || "- No explicit data provided."}
 
 CRITICAL RULES FOR TAB 3:
 1. Explicit operator-provided corrections take priority over image inference and stale product data.
-​2. If no explicit correction is supplied, preserve a nonblank current value exactly. Preserve finding details exactly.
-3. Never generate or propose a shopify_title or price. These are manual.
+2. If no explicit correction is supplied, preserve a nonblank current value exactly. Preserve finding details exactly.
+3. Never generate, rename, or propose a shopify_title, piece_name, or price during repair/rescan.
 4. Do not infer jewelry, chain material, cord, bail, wire wrapping, or readiness from an image when the source data doesn't explicitly establish it. Leave uncertain values unresolved.
 5. Treat origin_story as hidden, read-only context from the existing origin page. Do not generate or save an origin story. Use the page only for supported metadata.
 6. Never write "None" or "Unknown" as filler.
-7. Do not invent details. Leave unknown fields entirely unset.
+7. Do not invent details or lived history. Leave unknown fields entirely unset.
 8. If the current data establishes the piece is a pendant or finished jewelry, the product_format MUST be "Pendant" or similar finished form.
 
-Return ONLY a JSON object. OMIT any keys if you cannot determine the value supported by evidence. DO NOT include "jewelry_type", "origin_story", "price", "shopify_title", "weight_grams", "shipping_weight_oz", "generated_description", or "necklace_design".
+Return ONLY a JSON object. OMIT any keys if you cannot determine the value supported by evidence. DO NOT include "piece_name", "origin_story", "price", "shopify_title", "weight_grams", "shipping_weight_oz", "generated_description", "rarity", or "authenticity".
 
 Potential JSON Keys to evaluate and propose if blank:
-- piece_name
-- is_ooak: "Yes"
+- is_one_of_a_kind: Propose "Yes" only when supported by existing product facts; do not overwrite an explicit operator value.
 - product_format: Describe the evidenced physical form (e.g., Cabochon, Pendant, Specimen, Loose Stone).
 - craftsmanship: Propose exactly "Handcrafted" only when supplied product facts identify the work as handcrafted by Bob & Janyce. ("Ground out the miles" describes travel, not stone grinding; never cite that idiom as craftsmanship evidence. Do not place "Handcrafted" in standardized construction candidates.)
-- poetic_hook: Write one short, plain, factual hook based on the origin page (under 160 characters).
+- poetic_hook: Write one short, plain, factual hook based on the origin page (under 160 characters) when origin page context is present.
 - seo_title: Max 70 chars. Natural, descriptive wording based on supported facts. Include "Handcrafted" only when supported by supplied facts identifying work by Bob and Janyce.
 - dimensions_mm: Leave unchanged if provided.
 - surface_finish: High Polish, Matte, Satin, Natural/Raw, Tumbled.
@@ -734,7 +904,7 @@ Potential JSON Keys to evaluate and propose if blank:
 - mineral_class
 - geological_era
 - rock_formation
-- stone_family: Derived family.
+- stone_family: Derived family from supported picklist only.
 - origin_location: Geographic name ONLY based on "${originSegment}".
 - origin_handle
 - collection_name
@@ -742,14 +912,14 @@ Potential JSON Keys to evaluate and propose if blank:
 - primary_use: Keep current nonblank value unless explicitly corrected.
 - primary_medium
 - secondary_medium
+- wire_material: Plain text wire material when supported by facts/visible wire wrap.
 - setting_ready
 - bail_included
 - chain_material
 - chain_link_type: Cord or Snake Chain (when applicable). Never turn Cord into Snake Chain.
 - jewelry_finding_type: Preserve explicitly provided construction details if available. Do not silently leave blank if clearly supported by image.
+- jewelry_type: Select from Pendant, Necklace, Artisan jewelry, Fine jewelry, Accessories, N/A when supported by facts.
 - google_product_category
-- authenticity
-- rarity
 - standardized_candidates: Object containing supported review candidates among ["chain-link-type", "construction", "jewelry-finding-type", "material-origin", "product-classification", "product-use"] following the exact verified field meanings below.
 ${imageAltInstructions}
 
@@ -776,27 +946,39 @@ export const action = async ({ request }) => {
     }
 
     if (intent === "titleParse") {
-      const pieceNameInput = (body.get("pieceName") || "").replace(/Ã¢â‚¬â€/g, "—").replace(/â€”/g, "—");
-      const segments = pieceNameInput.split(/\s+[—–-]\s+/);
-      const segment1 = cleanStoneFamilyShape(segments[0]?.trim() || "");
-      const segment2 = enforceOriginOverrides(segments[1]?.trim() || "");
-      const segment3 = segments.length >= 3 ? segments[2].trim() : "";
+      const pieceNameInput = (body.get("pieceName") || "").replace(/ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â/g, "—").replace(/Ã¢â‚¬â€/g, "—").replace(/â€”/g, "—").trim();
+      const segments = splitSegmentedTitle(pieceNameInput);
+
+      // Only parse a segmented title when it actually contains 3 title segments.
+      // A standalone human identifier (e.g. "BQH-1") must never be parsed as stone_family.
+      if (segments.length < 3) {
+        return Response.json({
+          success: false,
+          intent: "titleParse",
+          pieceId: body.get("pieceId"),
+          error: "Title parse requires a 3-segment title (Stone Family — Origin — Piece Name). Standalone human identifiers are preserved as piece_name."
+        }, { status: 400 });
+      }
+
+      const segment1 = resolvePicklistStoneFamily(segments[0] || "");
+      const segment2 = resolveEvidencedOriginLocation(segments[1] || "");
+      const segment3 = segments[segments.length - 1] || "";
 
       const { pagesList, collectionsList } = await getLiveStoreDirectory(admin);
       const resolvedHandle = resolveOriginHandle(segment2, pagesList);
       const collectionData = resolveCollectionData(segment2, resolvedHandle, collectionsList);
 
-      const matchedPage = pagesList.find(p => p.url.includes(resolvedHandle));
+      const matchedPage = resolvedHandle ? pagesList.find(p => p.handle === resolvedHandle || p.url.includes(resolvedHandle)) : null;
       const extractedStory = matchedPage ? matchedPage.excerpt : "";
 
-      const validFamilies = DROPDOWN_OPTIONS?.stone_family || [];
+      const validFamilies = (DROPDOWN_OPTIONS?.stone_family || []).map(o => typeof o === "object" ? (o.value || o.label) : o);
       const promptText = `
 ${getSharedFactualContract()}
 
 Analyze these segments:
 - Family: "${segment1}"
 - Origin: "${segment2}"
-- Title: "${segment3}"
+- Human Identifier (preserve exact, do not alter): "${segment3}"
 
 LIVE STORE DIRECTORY:
 PAGES: ${pagesList.map(p => p.handle).join(", ")}
@@ -804,8 +986,9 @@ COLLECTIONS: ${collectionsList.map(c => c.handle).join(", ")}
 
 INSTRUCTIONS:
 1. Keep title parsing focused on identity. SEO must use supported facts and must not compete with later factual SEO generation.
-​2. Origin ("${segment2}") is the AUTHORITY. Set 'origin_location' to the clean geographic name. Match 'collection_name' and 'collection_location' to the live store entry.
-3. 'stone_family' must match an entry exactly from the supported list: ${validFamilies.join(", ")}. Do not force unsupported titles into guessed minerals.
+2. Origin ("${segment2}") is the AUTHORITY. Set 'origin_location' to the clean geographic name. Match 'collection_name' and 'collection_location' to the live store entry when evidenced; do not invent collection names or handles.
+3. 'stone_family' must match an entry from the supported list: ${validFamilies.join(", ")}. Do not force unsupported titles into guessed minerals.
+4. Never alter or replace 'piece_name'; it must remain "${segment3}".
 
 Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_location, collection_name, collection_location, seo_title.
       `.trim();
@@ -818,28 +1001,43 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
       if (geminiRes.ok) {
         const data = await geminiRes.json();
         let cleanJson = (data.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
-        const parsed = JSON.parse(cleanJson.slice(cleanJson.indexOf("{"), cleanJson.lastIndexOf("}") + 1));
-        
-        const dbGeoData = await getGeoData(admin, parsed.stone_family || segment1);
-        const correctedOriginLoc = enforceOriginOverrides(parsed.origin_location || segment2);
+        let parsed;
+        try {
+          parsed = JSON.parse(cleanJson.slice(cleanJson.indexOf("{"), cleanJson.lastIndexOf("}") + 1));
+        } catch (parseErr) {
+          return Response.json({ success: false, intent: "titleParse", pieceId: body.get("pieceId"), error: "Invalid JSON from titleParse model." }, { status: 500 });
+        }
+
+        const verifiedFamily = resolvePicklistStoneFamily(parsed.stone_family || segment1) || segment1;
+        const dbGeoData = await getGeoData(admin, verifiedFamily);
+        const correctedOriginLoc = resolveEvidencedOriginLocation(segment2 || parsed.origin_location);
+        const finalCollectionName = collectionData.name || (collectionsList.some(c => c.title === parsed.collection_name) ? parsed.collection_name : "");
+
+        const explicitOoak = resolveCanonicalOoakFromInputs(Object.fromEntries(body.entries()));
 
         const finalParse = sanitizeObject({
           ...parsed,
+          stone_family: verifiedFamily,
           piece_name: segment3,
           origin_handle: resolvedHandle,
+          ...(resolvedHandle ? { origin_page_handle: resolvedHandle } : {}),
           origin_story: extractedStory,
           origin_location: correctedOriginLoc,
-          collection_name: parsed.collection_name || collectionData.name,
-          collection_location: mapCollectionLocation(collectionData.name),
-          canonical_title: parsed.stone_family + " — " + correctedOriginLoc + " — " + segment3,
-          seo_title: parsed.seo_title || `${parsed.stone_family} — Found at ${correctedOriginLoc} — Rockhound Studio`,
+          collection_name: finalCollectionName,
+          collection_location: mapCollectionLocation(finalCollectionName || correctedOriginLoc),
+          canonical_title: [verifiedFamily, correctedOriginLoc, segment3].filter(Boolean).join(" — "),
+          seo_title: parsed.seo_title || (verifiedFamily && correctedOriginLoc ? `${verifiedFamily} — Found at ${correctedOriginLoc} — Rockhound Studio` : ""),
           ...dbGeoData,
-          is_ooak: "Yes",
+          ...(explicitOoak.value ? { is_one_of_a_kind: explicitOoak.value } : {}),
           age_group: "adult",
           target_gender: "Unisex",
           condition: "new",
           google_product_category: "Apparel & Accessories > Jewelry"
         });
+        delete finalParse.is_ooak;
+        delete finalParse.rarity;
+        delete finalParse.authenticity;
+
         return Response.json({ success: true, intent: "titleParse", pieceId: body.get("pieceId"), titleParse: finalParse });
       }
       return Response.json({ success: false, intent: "titleParse", pieceId: body.get("pieceId"), error: `Title parse error: ${geminiRes.status}` }, { status: 500 });
@@ -847,41 +1045,62 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
 
     if (intent === "visionScan" || intent === "fullRescan" || intent === "tab2AutoFill") {
       const pieceId = body.get("pieceId") || body.get("productId") || "NEW";
-      const rawTitleInput = body.get("productTitle") || body.get("pieceName") || body.get("piece_name") || "";
-      const segments = rawTitleInput.split(/\s+[—–-]\s+/);
-      const derivedFamily = cleanStoneFamilyShape(segments[0]?.trim() || body.get("stone_family") || "Unknown Stone");
-      const derivedShape = extractShapeFromString(segments[0]?.trim() || "");
-      const originSegment = enforceOriginOverrides(segments[1]?.trim() || "Unknown Origin");
+      const idOrigin = parseIdentityAndOriginInputs(body);
 
-      const geoFields = await getGeoData(admin, derivedFamily);
       const { pagesList, collectionsList } = await getLiveStoreDirectory(admin);
-      const defaultOriginSlug = resolveOriginHandle(originSegment, pagesList);
-      const defaultCollection = resolveCollectionData(originSegment, defaultOriginSlug, collectionsList);
+      const defaultOriginSlug = resolveOriginHandle(idOrigin.originSegment, pagesList, idOrigin.explicitOriginHandle);
+      const defaultCollection = resolveCollectionData(idOrigin.originSegment, defaultOriginSlug, collectionsList, idOrigin.explicitCollectionName);
 
-      const matchedPage = pagesList.find(p => p.url.includes(defaultOriginSlug));
+      const matchedPage = defaultOriginSlug
+        ? pagesList.find(p => p.handle === defaultOriginSlug || p.url.includes(defaultOriginSlug))
+        : null;
       
       let extractedStory = matchedPage && matchedPage.excerpt ? matchedPage.excerpt : "";
       if (!extractedStory) {
-        extractedStory = body.get("origin_story") || "";
+        extractedStory = (body.get("origin_story") || "").trim();
       }
-      
-      const pagesMenu = pagesList.map(p => `- Title: "${p.title}" | URL: ${p.url} | Excerpt: "${p.excerpt}"`).join("\n");
-      const collectionsMenu = collectionsList.map(c => `- Title: "${c.title}" | URL: ${c.url} | Excerpt: "${c.excerpt}"`).join("\n");
 
-      let imageBase64 = body.get("imageBase64") || "";
+      const geoFields = await getGeoData(admin, idOrigin.derivedFamily);
+
+      let imageBase64 = (body.get("imageBase64") || "").trim();
       let imageMimeType = body.get("imageMimeType") || "image/jpeg";
+      if (imageBase64.includes(",")) {
+        imageBase64 = imageBase64.slice(imageBase64.indexOf(",") + 1);
+      }
       if (!imageBase64 && body.get("imageUrl")) {
         const imageRes = await fetch(body.get("imageUrl"));
+        if (!imageRes.ok) {
+          return Response.json({ success: false, intent, pieceId, error: `Failed to fetch image (${imageRes.status})` }, { status: 400 });
+        }
         imageBase64 = Buffer.from(await imageRes.arrayBuffer()).toString("base64");
       }
+      if (!imageBase64) {
+        return Response.json({ success: false, intent, pieceId, error: "No image data supplied for Vision scan." }, { status: 400 });
+      }
+
+      const currentInputFacts = Object.fromEntries(
+        Array.from(body.entries())
+          .filter(([key, value]) => value && typeof value === "string" && value.trim() !== "" && !["intent", "pieceId", "productId", "productTitle", "pieceName", "imageBase64", "imageMimeType", "imageUrl", "mediaInputs"].includes(key))
+          .map(([k, v]) => [k, v.trim()])
+      );
+
+      const matchedCollectionObj = defaultCollection.slug
+        ? collectionsList.find(c => c.handle === defaultCollection.slug)
+        : null;
 
       const promptText = buildMasterVisionPrompt({
-        pagesMenu: pagesList.map(p => `- Title: "${p.title}"`).join("\n"),
-        collectionsMenu: collectionsList.map(c => `- Title: "${c.title}"`).join("\n"),
-        stoneFamily: derivedFamily, derivedShape, originStory: extractedStory, collectionStory: collectionsList.find(c => c.handle === defaultCollection.slug)?.excerpt || "",
-        originSegment, targetUrlPath: defaultOriginSlug ? `/pages/${defaultOriginSlug}` : "",
-        fullCollectionTitle: defaultCollection.name, collectionUrlPath: defaultCollection.slug ? `/collections/${defaultCollection.slug}` : "",
-        pagesList 
+        pagesMenu: pagesList.map(p => `- Title: "${p.title}" | Handle: ${p.handle}`).join("\n"),
+        collectionsMenu: collectionsList.map(c => `- Title: "${c.title}" | Handle: ${c.handle}`).join("\n"),
+        stoneFamily: idOrigin.derivedFamily || "Unspecified Stone",
+        derivedShape: idOrigin.derivedShape,
+        originStory: extractedStory,
+        collectionStory: matchedCollectionObj?.excerpt || "",
+        originSegment: idOrigin.originSegment || "Unspecified Origin",
+        targetUrlPath: defaultOriginSlug ? `/pages/${defaultOriginSlug}` : "",
+        fullCollectionTitle: defaultCollection.name,
+        collectionUrlPath: defaultCollection.slug ? `/collections/${defaultCollection.slug}` : "",
+        pagesList,
+        operatorFacts: currentInputFacts
       });
 
       const geminiRes = await fetchWithRetry("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY, {
@@ -892,13 +1111,13 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
       if (geminiRes.ok) {
         const data = await geminiRes.json();
         let cleanJson = (data.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
-        const parsedVision = JSON.parse(cleanJson.slice(cleanJson.indexOf("{"), cleanJson.lastIndexOf("}") + 1));
-        
-        const currentInputFacts = Object.fromEntries(
-          Array.from(body.entries())
-            .filter(([key, value]) => value && typeof value === "string" && value.trim() !== "" && !["intent", "pieceId", "productId", "productTitle", "imageBase64", "imageMimeType", "imageUrl", "mediaInputs"].includes(key))
-            .map(([k, v]) => [k, v.trim()])
-        );
+        let parsedVision;
+        try {
+          parsedVision = JSON.parse(cleanJson.slice(cleanJson.indexOf("{"), cleanJson.lastIndexOf("}") + 1));
+        } catch (parseErr) {
+          return Response.json({ success: false, intent, pieceId, error: "Vision response failed JSON parsing." }, { status: 500 });
+        }
+
         const validatedCandidates = validateStandardizedCandidates(parsedVision.standardized_candidates, {
           ...parsedVision,
           ...currentInputFacts
@@ -911,82 +1130,164 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
           delete parsedVision[`custom.std_${k.replace(/-/g, "_")}`];
         });
 
+        // Never allow Vision to replace the human identifier or inject retired rarity/authenticity fields
+        delete parsedVision.piece_name;
+        delete parsedVision.rarity;
+        delete parsedVision.authenticity;
+        delete parsedVision.weight_grams;
+        delete parsedVision.shipping_weight_oz;
+        delete parsedVision.price;
+
         parsedVision.generated_description = formatDyslexiaText(parsedVision.generated_description);
-        
+
+        // Preserve explicit operator inputs field-by-field; if Vision disagrees with an explicit operator value, keep operator value and record proposal for review.
+        const reviewProposals = {};
+        const explicitOperatorKeys = [
+          "dimensions_mm", "weight_grams", "shipping_weight_oz", "price",
+          "honest_flaws_and_character", "character_marks", "wire_material",
+          "surface_finish", "primary_color", "color_pattern", "primary_use",
+          "primary_medium", "secondary_medium", "setting_ready", "bail_included",
+          "jewelry_finding_type", "chain_material", "chain_link_type",
+          "necklace_design", "jewelry_type"
+        ];
+        for (const key of explicitOperatorKeys) {
+          if (currentInputFacts[key] !== undefined && currentInputFacts[key] !== "") {
+            if (parsedVision[key] && parsedVision[key] !== currentInputFacts[key]) {
+              reviewProposals[key] = parsedVision[key];
+            }
+            parsedVision[key] = currentInputFacts[key];
+          }
+        }
+
+        const resolvedFamily = idOrigin.derivedFamily || resolvePicklistStoneFamily(parsedVision.stone_family) || "";
+        const resolvedOriginLoc = idOrigin.originSegment || resolveEvidencedOriginLocation(parsedVision.origin_location) || "";
+        const finalOriginSlug = defaultOriginSlug || resolveOriginHandle(resolvedOriginLoc, pagesList);
+        const finalCollection = defaultCollection.name
+          ? defaultCollection
+          : resolveCollectionData(resolvedOriginLoc, finalOriginSlug, collectionsList);
+
+        const ooakResult = resolveCanonicalOoakFromInputs(currentInputFacts, parsedVision);
+        delete parsedVision.is_ooak;
+        delete parsedVision.is_one_of_a_kind;
+
+        // Single-photo alt text stays associated with the single scanned photo only
+        const singleImageId = (body.get("imageId") || "").trim();
+        const singleAltText = (currentInputFacts.alt_text || parsedVision.alt_text || "").trim();
+
         const payload = sanitizeObject({
           pieceId,
           ...parsedVision,
-          stone_family: derivedFamily,
-          origin_location: originSegment,
-          origin_handle: defaultOriginSlug,
-          collection_name: defaultCollection.name,
-          collection_location: mapCollectionLocation(defaultCollection.name),
-          material: getDerivedMaterial(derivedFamily),
+          ...(idOrigin.preservedPieceName ? { piece_name: idOrigin.preservedPieceName } : {}),
+          ...(resolvedFamily ? { stone_family: resolvedFamily } : {}),
+          ...(resolvedOriginLoc ? { origin_location: resolvedOriginLoc } : {}),
+          ...(finalOriginSlug ? { origin_handle: finalOriginSlug, origin_page_handle: finalOriginSlug } : {}),
+          ...(finalCollection.name ? { collection_name: finalCollection.name } : {}),
+          ...(finalCollection.name || resolvedOriginLoc
+            ? { collection_location: mapCollectionLocation(finalCollection.name || resolvedOriginLoc) }
+            : {}),
+          ...(extractedStory ? { origin_story: extractedStory } : {}),
+          ...(resolvedFamily ? { material: currentInputFacts.material || getDerivedMaterial(resolvedFamily) } : {}),
           ...geoFields,
-          is_ooak: "Yes", age_group: "adult", target_gender: "Unisex", condition: "new",
-          google_product_category: "Apparel & Accessories > Jewelry"
+          ...(ooakResult.value ? { is_one_of_a_kind: ooakResult.value } : {}),
+          ...(ooakResult.conflict ? { ooak_conflict: "Conflicting OOAK values supplied; verify before saving." } : {}),
+          ...(singleAltText ? { alt_text: singleAltText } : {}),
+          ...(singleImageId && singleAltText ? { imageAlts: [{ imageId: singleImageId, altText: singleAltText }] } : {}),
+          age_group: currentInputFacts.age_group || "adult",
+          target_gender: currentInputFacts.target_gender || "Unisex",
+          condition: currentInputFacts.condition || "new",
+          google_product_category: currentInputFacts.google_product_category || parsedVision.google_product_category || "Apparel & Accessories > Jewelry"
         });
+
+        delete payload.is_ooak;
+        delete payload.rarity;
+        delete payload.authenticity;
+
         if (validatedCandidates) {
           payload.standardized_candidates = validatedCandidates;
         }
+        if (Object.keys(reviewProposals).length > 0) {
+          payload.review_proposals = reviewProposals;
+        }
+
         return Response.json({
           success: true,
           intent,
           pieceId,
           tab2Data: payload,
-          ...(validatedCandidates ? { standardized_candidates: validatedCandidates } : {})
+          ...(validatedCandidates ? { standardized_candidates: validatedCandidates } : {}),
+          ...(Object.keys(reviewProposals).length > 0 ? { review_proposals: reviewProposals } : {})
         });
       }
-      return Response.json({ success: false, intent, pieceId, error: "Vision API Failure" });
+      return Response.json({ success: false, intent, pieceId, error: `Vision API Failure (${geminiRes.status})` }, { status: 500 });
     }
 
     if (intent === "tab3FullRescan") {
       const pieceId = body.get("pieceId") || body.get("productId") || "NEW";
-      const rawTitleInput = body.get("productTitle") || body.get("pieceName") || body.get("piece_name") || "";
-      const segments = rawTitleInput.split(/\s+[—–-]\s+/);
-      const derivedFamily = cleanStoneFamilyShape(segments[0]?.trim() || body.get("stone_family") || "Unknown Stone");
-      const derivedShape = extractShapeFromString(segments[0]?.trim() || "");
-      const originSegment = enforceOriginOverrides(segments[1]?.trim() || "Unknown Origin");
-      const pieceNameInput = segments.length >= 3 ? segments[2].trim() : "";
+      const idOrigin = parseIdentityAndOriginInputs(body);
 
-      const geoFields = await getGeoData(admin, derivedFamily);
+      const currentData = Object.fromEntries(
+        Array.from(body.entries())
+          .filter(([key, value]) => value && typeof value === "string" && value.trim() !== "" && !["intent", "pieceId", "productId", "productTitle", "pieceName", "imageBase64", "imageMimeType", "imageUrl", "mediaInputs"].includes(key))
+          .map(([k, v]) => [k, v.trim()])
+      );
+
+      const effectiveFamily = idOrigin.derivedFamily || resolvePicklistStoneFamily(currentData.stone_family) || "";
+      const effectiveOriginLoc = idOrigin.originSegment || resolveEvidencedOriginLocation(currentData.origin_location) || "";
+
+      const geoFields = await getGeoData(admin, effectiveFamily);
       const { pagesList, collectionsList } = await getLiveStoreDirectory(admin);
-      const defaultOriginSlug = resolveOriginHandle(originSegment, pagesList);
-      const defaultCollection = resolveCollectionData(originSegment, defaultOriginSlug, collectionsList);
+      const defaultOriginSlug = resolveOriginHandle(
+        effectiveOriginLoc,
+        pagesList,
+        idOrigin.explicitOriginHandle || currentData.origin_handle || currentData.origin_page_handle
+      );
+      const defaultCollection = resolveCollectionData(
+        effectiveOriginLoc,
+        defaultOriginSlug,
+        collectionsList,
+        idOrigin.explicitCollectionName || currentData.collection_name
+      );
 
-      const matchedPage = pagesList.find(p => p.url.includes(defaultOriginSlug));
+      const matchedPage = defaultOriginSlug
+        ? pagesList.find(p => p.handle === defaultOriginSlug || p.url.includes(defaultOriginSlug))
+        : null;
       
       let extractedStory = matchedPage && matchedPage.excerpt ? matchedPage.excerpt : "";
       if (!extractedStory) {
-        extractedStory = body.get("origin_story") || "";
+        extractedStory = (body.get("origin_story") || "").trim();
       }
       
       let mediaInputs = [];
       try {
         const rawMedia = body.get("mediaInputs");
         if (rawMedia) mediaInputs = JSON.parse(rawMedia);
-      } catch(e) {
+      } catch (e) {
         console.error("Failed to parse mediaInputs:", e);
       }
 
       const contents = [];
-      const hasMultipleImages = mediaInputs && mediaInputs.length > 0;
+      const hasMultipleImages = Array.isArray(mediaInputs) && mediaInputs.length > 0;
+      const matchedCollectionObj = defaultCollection.slug
+        ? collectionsList.find(c => c.handle === defaultCollection.slug)
+        : null;
       
       const promptText = buildTab3VisionPrompt({
-        pagesMenu: pagesList.map(p => `- Title: "${p.title}"`).join("\n"),
-        collectionsMenu: collectionsList.map(c => `- Title: "${c.title}"`).join("\n"),
-        stoneFamily: derivedFamily, derivedShape, originStory: extractedStory, collectionStory: collectionsList.find(c => c.handle === defaultCollection.slug)?.excerpt || "",
-        originSegment, targetUrlPath: defaultOriginSlug ? `/pages/${defaultOriginSlug}` : "",
-        fullCollectionTitle: defaultCollection.name, collectionUrlPath: defaultCollection.slug ? `/collections/${defaultCollection.slug}` : "",
-        currentData: Object.fromEntries(
-            Array.from(body.entries())
-            .filter(([key, value]) => value && typeof value === 'string' && value.trim() !== "" && !["intent", "pieceId", "productId", "productTitle", "imageBase64", "imageMimeType", "imageUrl", "mediaInputs"].includes(key))
-            .map(([k, v]) => [k, v.trim()])
-        ),
+        pagesMenu: pagesList.map(p => `- Title: "${p.title}" | Handle: ${p.handle}`).join("\n"),
+        collectionsMenu: collectionsList.map(c => `- Title: "${c.title}" | Handle: ${c.handle}`).join("\n"),
+        stoneFamily: effectiveFamily || "Unspecified Stone",
+        derivedShape: idOrigin.derivedShape,
+        originStory: extractedStory,
+        collectionStory: matchedCollectionObj?.excerpt || "",
+        originSegment: effectiveOriginLoc || "Unspecified Origin",
+        targetUrlPath: defaultOriginSlug ? `/pages/${defaultOriginSlug}` : "",
+        fullCollectionTitle: defaultCollection.name,
+        collectionUrlPath: defaultCollection.slug ? `/collections/${defaultCollection.slug}` : "",
+        currentData,
         hasMultipleImages
       });
       contents.push({ text: promptText });
 
+      let loadedImageCount = 0;
       if (hasMultipleImages) {
         const MAX_IMAGES = 15;
         if (mediaInputs.length > MAX_IMAGES) {
@@ -998,26 +1299,37 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
             try {
               const imageRes = await fetch(input.url);
               if (imageRes.ok) {
-                 const buffer = await imageRes.arrayBuffer();
-                 const base64Data = Buffer.from(buffer).toString("base64");
-                 contents.push({ text: `Image ID: ${input.imageId}` });
-                 contents.push({ inlineData: { mimeType: "image/jpeg", data: base64Data } });
+                const buffer = await imageRes.arrayBuffer();
+                const base64Data = Buffer.from(buffer).toString("base64");
+                contents.push({ text: `Image ID: ${input.imageId}` });
+                contents.push({ inlineData: { mimeType: "image/jpeg", data: base64Data } });
+                loadedImageCount++;
               }
-            } catch(err) {
+            } catch (err) {
               console.error(`Failed to fetch image ${input.imageId} from ${input.url}`, err);
             }
           }
         }
       } else {
-        let imageBase64 = body.get("imageBase64") || "";
+        let imageBase64 = (body.get("imageBase64") || "").trim();
         let imageMimeType = body.get("imageMimeType") || "image/jpeg";
+        if (imageBase64.includes(",")) {
+          imageBase64 = imageBase64.slice(imageBase64.indexOf(",") + 1);
+        }
         if (!imageBase64 && body.get("imageUrl")) {
           const imageRes = await fetch(body.get("imageUrl"));
-          imageBase64 = Buffer.from(await imageRes.arrayBuffer()).toString("base64");
+          if (imageRes.ok) {
+            imageBase64 = Buffer.from(await imageRes.arrayBuffer()).toString("base64");
+          }
         }
         if (imageBase64) {
-             contents.push({ inlineData: { mimeType: imageMimeType, data: imageBase64 } });
+          contents.push({ inlineData: { mimeType: imageMimeType, data: imageBase64 } });
+          loadedImageCount++;
         }
+      }
+
+      if (loadedImageCount === 0) {
+        return Response.json({ success: false, intent, pieceId, error: "No valid images could be loaded for Tab 3 Vision Rescan." }, { status: 400 });
       }
 
       const geminiRes = await fetchWithRetry("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY, {
@@ -1028,59 +1340,76 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
       if (geminiRes.ok) {
         const data = await geminiRes.json();
         let cleanJson = (data.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
-        const parsedVision = JSON.parse(cleanJson.slice(cleanJson.indexOf("{"), cleanJson.lastIndexOf("}") + 1));
+        let parsedVision;
+        try {
+          parsedVision = JSON.parse(cleanJson.slice(cleanJson.indexOf("{"), cleanJson.lastIndexOf("}") + 1));
+        } catch (parseErr) {
+          return Response.json({ success: false, intent, pieceId, error: "Tab 3 Vision response failed JSON parsing." }, { status: 500 });
+        }
         
         let validatedImageAlts = [];
         let altValidationErrors = [];
 
-        if (hasMultipleImages && Array.isArray(parsedVision.imageAlts)) {
+        if (hasMultipleImages) {
+          // Never copy a single alt_text across multiple images
+          delete parsedVision.alt_text;
+          if (Array.isArray(parsedVision.imageAlts)) {
             const inputIdSet = new Set(mediaInputs.map(m => m.imageId));
             const processedIdSet = new Set();
             
             for (const altObj of parsedVision.imageAlts) {
-                if (!altObj.imageId || !altObj.altText) {
-                    altValidationErrors.push(`Malformed alt object: missing ID or text.`);
-                    continue;
-                }
-                if (!inputIdSet.has(altObj.imageId)) {
-                    altValidationErrors.push(`Unknown image ID returned: ${altObj.imageId}`);
-                    continue;
-                }
-                if (processedIdSet.has(altObj.imageId)) {
-                    altValidationErrors.push(`Duplicate image ID returned: ${altObj.imageId}`);
-                    continue;
-                }
-                validatedImageAlts.push({
-                    imageId: altObj.imageId,
-                    altText: altObj.altText
-                });
-                processedIdSet.add(altObj.imageId);
+              if (!altObj.imageId || !altObj.altText) {
+                altValidationErrors.push(`Malformed alt object: missing ID or text.`);
+                continue;
+              }
+              if (!inputIdSet.has(altObj.imageId)) {
+                altValidationErrors.push(`Unknown image ID returned: ${altObj.imageId}`);
+                continue;
+              }
+              if (processedIdSet.has(altObj.imageId)) {
+                altValidationErrors.push(`Duplicate image ID returned: ${altObj.imageId}`);
+                continue;
+              }
+              validatedImageAlts.push({
+                imageId: altObj.imageId,
+                altText: String(altObj.altText).trim()
+              });
+              processedIdSet.add(altObj.imageId);
             }
             
             for (const inputId of inputIdSet) {
-                if (!processedIdSet.has(inputId)) {
-                    altValidationErrors.push(`Missing target image ID: ${inputId}`);
-                }
+              if (!processedIdSet.has(inputId)) {
+                altValidationErrors.push(`Missing target image ID: ${inputId}`);
+              }
             }
-            delete parsedVision.imageAlts; 
+          }
+          delete parsedVision.imageAlts;
+        } else {
+          const singleImageId = (body.get("imageId") || "").trim();
+          const singleAlt = (currentData.alt_text || parsedVision.alt_text || "").trim();
+          if (singleImageId && singleAlt) {
+            validatedImageAlts.push({ imageId: singleImageId, altText: singleAlt });
+          }
+          delete parsedVision.imageAlts;
         }
 
+        // Preserve explicit human/stored fields field-by-field; retain conflicting AI proposals in review_proposals
         const protectedKeys = [
-          "color_pattern", "dimensions_mm", "honest_flaws_and_character", "surface_finish", 
-          "jewelry_finding_type", "bail_included", "chain_material", 
-          "secondary_medium", "primary_use", "product_format", "jewelry_type", "necklace_design",
-          "chain_link_type", "character_marks"
+          "color_pattern", "primary_color", "dimensions_mm", "honest_flaws_and_character",
+          "surface_finish", "jewelry_finding_type", "bail_included", "chain_material",
+          "wire_material", "secondary_medium", "primary_medium", "primary_use",
+          "product_format", "jewelry_type", "necklace_design", "chain_link_type",
+          "character_marks", "setting_ready", "craftsmanship", "poetic_hook",
+          "seo_title", "google_product_category"
         ];
 
-        const currentData = Object.fromEntries(
-            Array.from(body.entries())
-            .filter(([key, value]) => value && typeof value === 'string' && value.trim() !== "" && !["intent", "pieceId", "productId", "productTitle", "imageBase64", "imageMimeType", "imageUrl", "mediaInputs"].includes(key))
-            .map(([k, v]) => [k, v.trim()])
-        );
-
+        const reviewProposals = {};
         protectedKeys.forEach(k => {
-          if (currentData[k] !== undefined) {
-             parsedVision[k] = currentData[k];
+          if (currentData[k] !== undefined && currentData[k] !== "") {
+            if (parsedVision[k] !== undefined && parsedVision[k] !== "" && parsedVision[k] !== currentData[k]) {
+              reviewProposals[k] = parsedVision[k];
+            }
+            parsedVision[k] = currentData[k];
           }
         });
 
@@ -1096,54 +1425,65 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
           delete parsedVision[`custom.std_${k.replace(/-/g, "_")}`];
         });
 
+        const geoKeys = [
+          "mohs_hardness", "luster", "fracture_pattern", "cleavage", 
+          "specific_gravity", "diaphaneity", "crystal_system", 
+          "geological_era", "mineral_class", "rock_composition", "rock_formation", "geological_age"
+        ];
         const verifiedGeoValues = {};
-        if (geoFields.geoSource === "library") {
-            const geoKeys = [
-                "mohs_hardness", "luster", "fracture_pattern", "cleavage", 
-                "specific_gravity", "diaphaneity", "crystal_system", 
-                "geological_era", "mineral_class", "rock_formation", "geological_age"
-            ];
-            geoKeys.forEach(key => {
-                if (currentData[key] !== undefined) {
-                    verifiedGeoValues[key] = currentData[key];
-                    parsedVision[key] = currentData[key];
-                } else if (geoFields[key] !== undefined && geoFields[key] !== null && geoFields[key] !== "") {
-                    verifiedGeoValues[key] = geoFields[key];
-                    parsedVision[key] = geoFields[key];
-                }
-            });
-        }
+        geoKeys.forEach(key => {
+          if (currentData[key] !== undefined && currentData[key] !== "") {
+            verifiedGeoValues[key] = currentData[key];
+            parsedVision[key] = currentData[key];
+          } else if (geoFields[key] !== undefined && geoFields[key] !== null && geoFields[key] !== "") {
+            verifiedGeoValues[key] = geoFields[key];
+            parsedVision[key] = geoFields[key];
+          }
+        });
 
+        // Never regenerate or overwrite titles, human IDs, weights, prices, or retired rarity/authenticity during repair
+        delete parsedVision.piece_name;
         delete parsedVision.origin_story;
         delete parsedVision.price;
         delete parsedVision.shopify_title;
         delete parsedVision.weight_grams;
         delete parsedVision.shipping_weight_oz;
         delete parsedVision.generated_description;
+        delete parsedVision.rarity;
+        delete parsedVision.authenticity;
+
+        const ooakResult = resolveCanonicalOoakFromInputs(currentData, parsedVision);
+        delete parsedVision.is_ooak;
+        delete parsedVision.is_one_of_a_kind;
+
+        const finalFamily = effectiveFamily || resolvePicklistStoneFamily(parsedVision.stone_family) || "";
+        const finalOriginLoc = effectiveOriginLoc || resolveEvidencedOriginLocation(parsedVision.origin_location) || "";
+        const finalOriginSlug = defaultOriginSlug || resolveOriginHandle(finalOriginLoc, pagesList);
+        const finalCollection = defaultCollection.name
+          ? defaultCollection
+          : resolveCollectionData(finalOriginLoc, finalOriginSlug, collectionsList);
 
         const payload = sanitizeObject({
           pieceId,
-          shopify_title: rawTitleInput,
-          piece_name: parsedVision.piece_name || pieceNameInput,
-          stone_family: derivedFamily,
-          origin_location: parsedVision.origin_location || originSegment,
-          origin_handle: defaultOriginSlug,
-          collection_name: defaultCollection.name,
-          collection_location: mapCollectionLocation(defaultCollection.name),
-          origin_story: extractedStory,
-          is_ooak: "Yes", 
           ...geoFields,
           ...parsedVision,
-          pieceId,
-          shopify_title: rawTitleInput,
-          piece_name: pieceNameInput || parsedVision.piece_name,
-          stone_family: derivedFamily,
-          origin_location: originSegment,
-          origin_handle: defaultOriginSlug,
-          collection_name: defaultCollection.name,
-          collection_location: mapCollectionLocation(defaultCollection.name),
-          origin_story: extractedStory
+          ...(idOrigin.rawTitleInput ? { shopify_title: idOrigin.rawTitleInput } : {}),
+          ...(idOrigin.preservedPieceName ? { piece_name: idOrigin.preservedPieceName } : {}),
+          ...(finalFamily ? { stone_family: finalFamily } : {}),
+          ...(finalOriginLoc ? { origin_location: finalOriginLoc } : {}),
+          ...(finalOriginSlug ? { origin_handle: finalOriginSlug, origin_page_handle: finalOriginSlug } : {}),
+          ...(finalCollection.name ? { collection_name: finalCollection.name } : {}),
+          ...(finalCollection.name || finalOriginLoc
+            ? { collection_location: currentData.collection_location || mapCollectionLocation(finalCollection.name || finalOriginLoc) }
+            : {}),
+          ...(extractedStory ? { origin_story: extractedStory } : {}),
+          ...(ooakResult.value ? { is_one_of_a_kind: ooakResult.value } : {}),
+          ...(ooakResult.conflict ? { ooak_conflict: "Conflicting OOAK values supplied; verify before saving." } : {})
         });
+
+        delete payload.is_ooak;
+        delete payload.rarity;
+        delete payload.authenticity;
 
         if (currentData.price) payload.price = currentData.price;
         if (currentData.weight_grams) payload.weight_grams = currentData.weight_grams;
@@ -1158,19 +1498,23 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
         if (validatedCandidates) {
           finalPayload.standardized_candidates = validatedCandidates;
         }
+        if (Object.keys(reviewProposals).length > 0) {
+          finalPayload.review_proposals = reviewProposals;
+        }
         
         return Response.json({ 
-            success: true, 
-            intent, 
-            pieceId,
-            tab3Data: finalPayload, 
-            ...(validatedCandidates ? { standardized_candidates: validatedCandidates } : {}),
-            verifiedGeoValues,
-            imageAlts: validatedImageAlts,
-            altValidationErrors: altValidationErrors.length > 0 ? altValidationErrors : undefined
+          success: true, 
+          intent, 
+          pieceId,
+          tab3Data: finalPayload, 
+          ...(validatedCandidates ? { standardized_candidates: validatedCandidates } : {}),
+          ...(Object.keys(reviewProposals).length > 0 ? { review_proposals: reviewProposals } : {}),
+          verifiedGeoValues,
+          imageAlts: validatedImageAlts,
+          altValidationErrors: altValidationErrors.length > 0 ? altValidationErrors : undefined
         });
       }
-      return Response.json({ success: false, intent, pieceId, error: "Vision API Failure (Tab 3)" });
+      return Response.json({ success: false, intent, pieceId, error: `Vision API Failure (Tab 3: ${geminiRes.status})` }, { status: 500 });
     }
 
     if (intent === "generateDescription") {
@@ -1198,65 +1542,77 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
       if (pieceDataStr) {
         try {
           const pieceData = JSON.parse(pieceDataStr);
-          diagPieceId = pieceData.pieceId || pieceData.id || "Unknown_GID";
+          diagPieceId = pieceData.pieceId || pieceData.id || pieceId || "Unknown_GID";
           diagPieceName = pieceData.piece_name || pieceData.shopify_title || "Unknown_Name";
 
-          const derivedFamily = sharedFields.stone_family || pieceData.stone_family || "";
+          const derivedFamily = resolvePicklistStoneFamily(sharedFields.stone_family || pieceData.stone_family || "");
           
           const validPieceOrigin = pieceData.origin_location && pieceData.origin_location !== "Unknown Origin" && pieceData.origin_location.trim() !== "";
           const isSharedOriginDerived = !sharedFields.origin_location || sharedFields.origin_location === "Unknown Origin" || sharedFields.origin_location.trim() === "";
           
-          const originSegment = (isSharedOriginDerived && validPieceOrigin) ? pieceData.origin_location : (sharedFields.origin_location || pieceData.origin_location || "");
+          const rawOriginSegment = (isSharedOriginDerived && validPieceOrigin) ? pieceData.origin_location : (sharedFields.origin_location || pieceData.origin_location || "");
+          const originSegment = resolveEvidencedOriginLocation(rawOriginSegment);
           
-          const carriedOriginStory = typeof pieceData.origin_story === "string" ? pieceData.origin_story : "";
-          const fallbackOriginHandle = resolveOriginHandle(originSegment, pagesList);
-          const fallbackOriginPage = fallbackOriginHandle
-            ? pagesList.find(p => p.handle === fallbackOriginHandle)
+          const explicitOriginHandle = sharedFields.origin_handle || sharedFields.origin_page_handle || pieceData.origin_handle || pieceData.origin_page_handle || "";
+          const targetOriginHandle = resolveOriginHandle(originSegment, pagesList, explicitOriginHandle);
+          diagTargetOriginHandle = targetOriginHandle || "None";
+
+          const matchedPage = targetOriginHandle
+            ? pagesList.find(p => p.handle === targetOriginHandle)
             : undefined;
+
+          const carriedOriginStory = typeof pieceData.origin_story === "string" && pieceData.origin_story.trim()
+            ? pieceData.origin_story
+            : (typeof sharedFields.origin_story === "string" ? sharedFields.origin_story : "");
+
           const extractedStory = carriedOriginStory.trim()
             ? carriedOriginStory
-            : (fallbackOriginPage?.excerpt || "");
+            : (matchedPage?.excerpt || "");
           diagExtractedStory = extractedStory;
           diagOriginExtractedLength = extractedStory.length;
           diagOriginSource = carriedOriginStory.trim()
-            ? "Carried pieceData"
+            ? "Carried pieceData/sharedFields"
             : (extractedStory ? "Matched origin page" : "Empty");
 
-          let canonicalCollectionName = pieceData.collection_name || "";
+          let canonicalCollectionName = pieceData.collection_name || sharedFields.collection_name || "";
           if (originSegment === "Yakima River Canyon" || canonicalCollectionName === "The Yakima Canyon Collection") {
-              canonicalCollectionName = "Yakima River Canyon";
+            canonicalCollectionName = "Yakima River Canyon";
           }
-          
-          const targetOriginHandle = resolveOriginHandle(originSegment, pagesList);
-          diagTargetOriginHandle = targetOriginHandle;
 
-          const collectionData = resolveCollectionData(originSegment, targetOriginHandle, collectionsList);
-          diagCollectionSlug = collectionData.slug;
+          const collectionData = resolveCollectionData(originSegment, targetOriginHandle, collectionsList, canonicalCollectionName);
+          diagCollectionSlug = collectionData.slug || "None";
+          if (!canonicalCollectionName && collectionData.name) {
+            canonicalCollectionName = collectionData.name;
+          }
           
           if (!targetOriginHandle && originSegment !== "Unknown Origin" && originSegment !== "") {
-              console.warn(`[ROUTING WARNING] Piece ${diagPieceName}: Could not resolve Origin Handle for location "${originSegment}"`);
+            console.warn(`[ROUTING WARNING] Piece ${diagPieceName}: Could not resolve Origin Handle for location "${originSegment}"`);
           }
           if (!collectionData.slug && originSegment !== "Unknown Origin" && originSegment !== "") {
-              console.warn(`[ROUTING WARNING] Piece ${diagPieceName}: Could not resolve Collection Slug for location "${originSegment}" and default handle "${targetOriginHandle}"`);
+            console.warn(`[ROUTING WARNING] Piece ${diagPieceName}: Could not resolve Collection Slug for location "${originSegment}" and default handle "${targetOriginHandle}"`);
           }
 
-          const matchedPage = pagesList.find(p => p.handle === targetOriginHandle);
           diagOriginRawLength = matchedPage ? matchedPage.rawExcerptLength : diagOriginExtractedLength;
           diagOriginTruncated = diagOriginRawLength > 10000;
 
-          const matchedCollection = collectionsList.find(c => c.handle === collectionData.slug);
+          const matchedCollection = collectionData.slug ? collectionsList.find(c => c.handle === collectionData.slug) : undefined;
           const collectionStory = matchedCollection ? matchedCollection.excerpt : "";
           diagCollectionStory = collectionStory;
           diagCollectionExtractedLength = collectionStory.length;
           diagCollectionRawLength = matchedCollection ? matchedCollection.rawExcerptLength : 0;
           diagCollectionTruncated = diagCollectionRawLength > 5000;
 
+          const mergedPieceForPrompt = {
+            ...sharedFields,
+            ...pieceData
+          };
+
           promptText = buildDescriptionPrompt(
             derivedFamily,
             originSegment,
             extractedStory,
             canonicalCollectionName,
-            pieceData,
+            mergedPieceForPrompt,
             collectionStory
           );
         } catch (e) {
@@ -1294,83 +1650,85 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
         let generatedDescription = "";
         
         try {
-            const parsed = JSON.parse(cleanJson.slice(cleanJson.indexOf("{"), cleanJson.lastIndexOf("}") + 1));
-            
-            if (!parsed.generated_description || typeof parsed.generated_description !== "string" || parsed.generated_description.trim() === "") {
-               return Response.json({ success: false, intent, pieceId, error: "AI failed to return the expected generated_description string property." });
-            }
-            
-            generatedDescription = parsed.generated_description;
+          const parsed = JSON.parse(cleanJson.slice(cleanJson.indexOf("{"), cleanJson.lastIndexOf("}") + 1));
+          
+          if (!parsed.generated_description || typeof parsed.generated_description !== "string" || parsed.generated_description.trim() === "") {
+            return Response.json({ success: false, intent, pieceId, error: "AI failed to return the expected generated_description string property." });
+          }
+          
+          generatedDescription = parsed.generated_description;
         } catch (e) {
-             return Response.json({ success: false, intent, pieceId, error: "AI response failed strict JSON parsing or wrapper validation." });
+          return Response.json({ success: false, intent, pieceId, error: "AI response failed strict JSON parsing or wrapper validation." });
         }
         
         if (pieceDataStr) {
-            const pieceData = JSON.parse(pieceDataStr);
-            const validPieceOrigin = pieceData.origin_location && pieceData.origin_location !== "Unknown Origin" && pieceData.origin_location.trim() !== "";
-            const isSharedOriginDerived = !sharedFields.origin_location || sharedFields.origin_location === "Unknown Origin" || sharedFields.origin_location.trim() === "";
-            
-            const originSegment = (isSharedOriginDerived && validPieceOrigin) ? pieceData.origin_location : (sharedFields.origin_location || pieceData.origin_location || "");
-            
-            let fullCollectionTitle = pieceData.collection_name || "";
-            if (originSegment === "Yakima River Canyon" || fullCollectionTitle === "The Yakima Canyon Collection") {
-                fullCollectionTitle = "Yakima River Canyon";
+          const pieceData = JSON.parse(pieceDataStr);
+          const validPieceOrigin = pieceData.origin_location && pieceData.origin_location !== "Unknown Origin" && pieceData.origin_location.trim() !== "";
+          const isSharedOriginDerived = !sharedFields.origin_location || sharedFields.origin_location === "Unknown Origin" || sharedFields.origin_location.trim() === "";
+          
+          const rawOriginSegment = (isSharedOriginDerived && validPieceOrigin) ? pieceData.origin_location : (sharedFields.origin_location || pieceData.origin_location || "");
+          const originSegment = resolveEvidencedOriginLocation(rawOriginSegment);
+          
+          let fullCollectionTitle = pieceData.collection_name || sharedFields.collection_name || "";
+          if (originSegment === "Yakima River Canyon" || fullCollectionTitle === "The Yakima Canyon Collection") {
+            fullCollectionTitle = "Yakima River Canyon";
+          }
+          
+          const explicitOriginHandle = sharedFields.origin_handle || sharedFields.origin_page_handle || pieceData.origin_handle || pieceData.origin_page_handle || "";
+          const targetOriginHandle = resolveOriginHandle(originSegment, pagesList, explicitOriginHandle);
+          const collectionData = resolveCollectionData(originSegment, targetOriginHandle, collectionsList, fullCollectionTitle);
+          
+          let dwellButtonsHTML = `<br><br>`;
+          
+          let displayOriginName = fullCollectionTitle || originSegment;
+          let displayColName = fullCollectionTitle || originSegment;
+          
+          if (originSegment === "Yakima River Canyon" || targetOriginHandle === "the-shop-lore-chert-road-detour-yakima-river-jasper") {
+            displayOriginName = "Chert Road Detour";
+            displayColName = "Yakima River Canyon";
+          }
+          
+          if (targetOriginHandle) {
+            dwellButtonsHTML += `<a href="/pages/${targetOriginHandle}">${displayOriginName} Story</a>\n`;
+          }
+          
+          if (collectionData.slug) {
+            if (targetOriginHandle) dwellButtonsHTML += `<br>`;
+            let colLabel = displayColName;
+            if (!/collection/i.test(colLabel)) colLabel += " Collection";
+            dwellButtonsHTML += `<a href="/collections/${collectionData.slug}">${colLabel}</a>`;
+          }
+          
+          if (originSegment === "Richardson's Rock Ranch" || targetOriginHandle === "the-richardson-strike") {
+            dwellButtonsHTML = `<br><br>`;
+            if (pagesList.some(p => p.handle === "the-richardson-strike")) {
+              dwellButtonsHTML += `<a href="/pages/the-richardson-strike">Richardson's Rock Ranch Story</a>\n`;
             }
             
-            const targetOriginHandle = resolveOriginHandle(originSegment, pagesList);
-            const collectionData = resolveCollectionData(originSegment, targetOriginHandle, collectionsList);
-            
-            let dwellButtonsHTML = `<br><br>`;
-            
-            let displayOriginName = fullCollectionTitle || originSegment;
-            let displayColName = fullCollectionTitle || originSegment;
-            
-            if (originSegment === "Yakima River Canyon" || targetOriginHandle === "the-shop-lore-chert-road-detour-yakima-river-jasper") {
-                displayOriginName = "Chert Road Detour";
-                displayColName = "Yakima River Canyon";
+            if (collectionsList.some(c => c.handle === "richardsons-rock-ranch")) {
+              dwellButtonsHTML += `<br><a href="/collections/richardsons-rock-ranch">Richardson's Rock Ranch Collection</a>`;
             }
             
-            if (targetOriginHandle) {
-                dwellButtonsHTML += `<a href="/pages/${targetOriginHandle}">${displayOriginName} Story</a>\n`;
+            if (pagesList.some(p => p.handle === "the-3-000-mile-run")) {
+              dwellButtonsHTML += `\n<br><a href="/pages/the-3-000-mile-run">The 3,000-Mile Run Story</a>`;
             }
             
-            if (collectionData.slug) {
-                if (targetOriginHandle) dwellButtonsHTML += `<br>`;
-                let colLabel = displayColName;
-                if (!/collection/i.test(colLabel)) colLabel += " Collection";
-                dwellButtonsHTML += `<a href="/collections/${collectionData.slug}">${colLabel}</a>`;
+            if (collectionsList.some(c => c.handle === "the-3-000-mile-run-1")) {
+              dwellButtonsHTML += `\n<br><a href="/collections/the-3-000-mile-run-1">The 3,000-Mile Run Collection</a>`;
             }
-            
-            if (originSegment === "Richardson's Rock Ranch" || targetOriginHandle === "the-richardson-strike") {
-                dwellButtonsHTML = `<br><br>`;
-                if (pagesList.some(p => p.handle === "the-richardson-strike")) {
-                    dwellButtonsHTML += `<a href="/pages/the-richardson-strike">Richardson's Rock Ranch Story</a>\n`;
-                }
-                
-                if (collectionsList.some(c => c.handle === "richardsons-rock-ranch")) {
-                    dwellButtonsHTML += `<br><a href="/collections/richardsons-rock-ranch">Richardson's Rock Ranch Collection</a>`;
-                }
-                
-                if (pagesList.some(p => p.handle === "the-3-000-mile-run")) {
-                    dwellButtonsHTML += `\n<br><a href="/pages/the-3-000-mile-run">The 3,000-Mile Run Story</a>`;
-                }
-                
-                if (collectionsList.some(c => c.handle === "the-3-000-mile-run-1")) {
-                    dwellButtonsHTML += `\n<br><a href="/collections/the-3-000-mile-run-1">The 3,000-Mile Run Collection</a>`;
-                }
-            }
+          }
 
-            if (dwellButtonsHTML !== `<br><br>`) {
-                generatedDescription += `\n${dwellButtonsHTML}`;
-            }
+          if (dwellButtonsHTML !== `<br><br>`) {
+            generatedDescription += `\n${dwellButtonsHTML}`;
+          }
         }
 
         return Response.json({ success: true, intent, pieceId, generated_description: formatDyslexiaText(generatedDescription) });
       }
-      return Response.json({ success: false, intent, pieceId, error: "Description failed" });
+      return Response.json({ success: false, intent, pieceId, error: `Description failed (${geminiRes.status})` }, { status: 500 });
     }
 
-    return Response.json({ success: false, intent, error: "Unhandled Autofiil Intent" });
+    return Response.json({ success: false, intent, error: "Unhandled Autofill Intent" }, { status: 400 });
   } catch (error) {
     return Response.json({ success: false, intent: "unknown", error: error.message }, { status: 500 });
   }
