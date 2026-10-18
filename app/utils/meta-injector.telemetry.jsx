@@ -13,6 +13,7 @@ import {
   INTEGRATION_PREFIXES,
   PROTECTED_FIELDS,
   REQUIRED_FIELDS,
+  resolveConfigFieldDestination,
   getDynamicSections
 } from "./meta-injector.matrix-domain.jsx";
 
@@ -435,6 +436,150 @@ export function buildAndCopyMatrixTelemetry({
     return `${str.substring(0, limit)}...`;
   };
 
+  const isExplicitlyLooseOrUnmountedProduct = () => {
+    const checkLoose = (v) => {
+      if (v === undefined || v === null) return false;
+      const s = String(v).trim().toLowerCase();
+      return (
+        s === "loose stone" ||
+        s === "cabochon" ||
+        s === "cabochon — setting ready" ||
+        s === "cabochon - setting ready" ||
+        s === "display specimen" ||
+        s === "display piece" ||
+        s === "collector specimen" ||
+        s === "collector piece" ||
+        s === "loose/unmounted"
+      );
+    };
+    const primaryUseVal =
+      data.repairPlan?.["custom.primary_use"] ??
+      data.currentMetafields?.["custom.primary_use"] ??
+      data.currentMetafields?.["primary_use"] ??
+      product.productType ??
+      "";
+    const productFormatVal =
+      data.repairPlan?.["custom.product_format"] ??
+      data.currentMetafields?.["custom.product_format"] ??
+      "";
+    const settingReadyVal = String(
+      data.repairPlan?.["custom.setting_ready"] ??
+      data.currentMetafields?.["custom.setting_ready"] ??
+      ""
+    ).trim().toLowerCase();
+
+    return (
+      checkLoose(primaryUseVal) ||
+      checkLoose(productFormatVal) ||
+      settingReadyVal === "none" ||
+      settingReadyVal === "no"
+    );
+  };
+
+  const productIsLooseOrUnmounted = isExplicitlyLooseOrUnmountedProduct();
+
+  const resolveCoverageRow = (key, meta, sectionConfigFields = []) => {
+    const unprefixed = key.replace(/^custom\./, "");
+    const cfg =
+      (sectionConfigFields || []).find(f => resolveConfigFieldDestination(f) === key || f.key === key || f.key === unprefixed) ||
+      allConfigFields.find(f => resolveConfigFieldDestination(f) === key || f.key === key || f.key === unprefixed) ||
+      null;
+
+    let displayLabel = meta.label || cfg?.label || key;
+    if (key.startsWith("native_image_alts_")) {
+      const mediaId = key.replace("native_image_alts_", "");
+      displayLabel = `Native Image Alt (${mediaId.split("/").pop()})`;
+    }
+
+    if (HIDDEN_CONTEXT_FIELDS.includes(key)) {
+      const hasSourceVal = meta.currentExists || meta.proposalExists;
+      return {
+        label: displayLabel,
+        key,
+        status: "Hidden Context",
+        reason: hasSourceVal ? "Read-only source context (populated)" : "Read-only source context (not filled)"
+      };
+    }
+
+    const rawCurr = String(meta.currentVal ?? "").trim();
+    const rawProp = String(meta.propVal ?? "").trim();
+    const isExplicitNaToken = (val) => /^(n\/a|none|not applicable)$/i.test(val);
+
+    const catElig = meta.categoryEligibility;
+    const isCatConfirmedIneligible = Boolean(
+      (catElig && catElig.isComplete === true && catElig.isEligible === false) ||
+      meta.stdEvaluation?.status === "category_ineligible"
+    );
+
+    const isConditionalHardwareField = cfg?.applicability === "optional_when_inapplicable";
+
+    const hasExplicitNaEvidence =
+      isCatConfirmedIneligible ||
+      (meta.currentExists && isExplicitNaToken(rawCurr) && !meta.proposalExists) ||
+      (meta.proposalExists && isExplicitNaToken(rawProp)) ||
+      (!meta.currentExists && !meta.proposalExists && isConditionalHardwareField && productIsLooseOrUnmounted);
+
+    if (meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing") {
+      if (hasExplicitNaEvidence) {
+        let naRsn = "Inapplicable to current product form";
+        if (isCatConfirmedIneligible) {
+          naRsn = truncateForTelemetry(catElig?.reason || meta.stdEvaluation?.blockReason || "Ineligible for product category", 70);
+        } else if (isConditionalHardwareField && productIsLooseOrUnmounted) {
+          naRsn = "Conditional hardware/setting field (loose/unmounted form)";
+        }
+        return {
+          label: displayLabel,
+          key,
+          status: "N/A",
+          reason: naRsn
+        };
+      }
+
+      const blankRsn =
+        meta.fieldStatus === "Required missing"
+          ? "Required field missing"
+          : meta.isPendingReadOnly
+            ? (meta.isVerifiedStdDest
+                ? truncateForTelemetry(meta.stdEvaluation?.blockReason || "Standardized target awaiting reference match", 70)
+                : "Read-only standardized target (not filled)")
+            : "Not filled";
+
+      return {
+        label: displayLabel,
+        key,
+        status: meta.fieldStatus === "Required missing" ? "Required missing" : "Not filled",
+        reason: blankRsn
+      };
+    }
+
+    if (meta.currentExists && isExplicitNaToken(rawCurr) && (!meta.proposalExists || isExplicitNaToken(rawProp))) {
+      return {
+        label: displayLabel,
+        key,
+        status: "N/A",
+        reason: `Explicitly set to ${rawCurr}`
+      };
+    }
+
+    let primaryReason = "";
+    if (Array.isArray(meta.reasons) && meta.reasons.length > 0) {
+      primaryReason = truncateForTelemetry(meta.reasons[0], 70);
+    } else if (meta.fieldStatus === "Unchanged") {
+      primaryReason = "Populated in Shopify; unchanged";
+    } else if (meta.preApprovalReason) {
+      primaryReason = truncateForTelemetry(meta.preApprovalReason, 70);
+    } else {
+      primaryReason = `Source: ${meta.source || "Not reported"}`;
+    }
+
+    return {
+      label: displayLabel,
+      key,
+      status: meta.fieldStatus,
+      reason: primaryReason
+    };
+  };
+
   let reviewCandidates = [];
   const evaluatedEligibleKeys = new Set();
 
@@ -687,13 +832,30 @@ export function buildAndCopyMatrixTelemetry({
     telemetryBody += `\n[VERIFIED DESTINATIONS]\nNot recorded\n`;
   }
 
+  const otherOmissionItems = [];
+  const coverageLines = [];
+
   dynamicSections.forEach(sec => {
     sec.keys.forEach(key => {
       const meta = getFieldMetadata(key, data, selectedBenchId, approvals, allConfigFields);
+      const cov = resolveCoverageRow(key, meta, sec.configFields);
+      let enteredOtherOmissions = false;
+
       if (!reviewKeys.has(key) && !blockedFields[key] && !conflicts[key] && !unresolvedChanges[key] && !unsupportedKeys.includes(key)) {
-        if (meta.fieldStatus === "Unchanged" && meta.currentVal !== "") unchangedCount++;
-        else if (meta.fieldStatus === "Optional blank") optionalBlankCount++;
-        else omissionsCount++;
+        if (meta.fieldStatus === "Unchanged" && meta.currentVal !== "") {
+          unchangedCount++;
+        } else if (meta.fieldStatus === "Optional blank") {
+          optionalBlankCount++;
+        } else {
+          omissionsCount++;
+          enteredOtherOmissions = true;
+          otherOmissionItems.push(`${cov.key} (${cov.status})`);
+        }
+      }
+
+      if (mode === "full") {
+        const omitTag = enteredOtherOmissions ? " [Other Omission]" : "";
+        coverageLines.push(`${cov.label} | ${cov.key} | ${cov.status}${omitTag} | ${cov.reason}`);
       }
     });
   });
@@ -702,10 +864,14 @@ export function buildAndCopyMatrixTelemetry({
   if (lastSubmitted) telemetryBody += `Verified Matches (Submitted vs Read-Back): ${verifiedMatchesCount} fields\n`;
   telemetryBody += `Unchanged Comparisons: ${unchangedCount} fields intact\n`;
   telemetryBody += `Optional Blanks: ${optionalBlankCount} fields\n`;
-  telemetryBody += `Other Omissions: ${omissionsCount} fields\n`;
+  telemetryBody += `Other Omissions: ${omissionsCount} fields${otherOmissionItems.length > 0 ? ` [${otherOmissionItems.join(", ")}]` : ""}\n`;
   telemetryBody += `Detail Excluded (Geo/Narrative/Protected): ${detailExcludedCount} fields`;
 
   reportBlocks.push(telemetryBody);
+
+  if (mode === "full" && coverageLines.length > 0) {
+    reportBlocks.push(`--- FIELD COVERAGE (${coverageLines.length} Active Pool Targets) ---\nFormat: Label | Key | Status | Reason\n${coverageLines.join("\n")}`);
+  }
 
   const hasMissingRequiredField = failures.some(f => f.includes("Required missing"));
   const recommendations = [];
@@ -774,7 +940,7 @@ export function buildAndCopyMatrixTelemetry({
   reportBlocks.push(`--- RECOMMENDATIONS ---\n${recommendations.join("\n")}\n=========================================`);
 
   let finalReport = "";
-  let maxLimit = mode === 'review' ? 6000 : 10000;
+  let maxLimit = mode === 'review' ? 6000 : 18000;
 
   for (let i = 0; i < reportBlocks.length; i++) {
     if (finalReport.length + reportBlocks[i].length + 2 > maxLimit) {
