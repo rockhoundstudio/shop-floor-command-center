@@ -105,28 +105,113 @@ export function InventorySelectionColumn({
 }
 
 export function BenchDiagnosticHeader({
+  selectedBenchId,
   data,
   stats,
   statusObj,
   history,
-  onCollectTelemetry
+  telemetryPacket = null,
+  onCollectTelemetry,
+  onCopyTelemetryPart,
+  onDownloadTelemetry
 }) {
   if (!data) return null;
+
+  const activeProductId = selectedBenchId || data?.nativeTargets?.productId || data?.productId || null;
+  const hasMatchingCapturedPacket = Boolean(
+    telemetryPacket &&
+    typeof telemetryPacket === "object" &&
+    Array.isArray(telemetryPacket.parts) &&
+    telemetryPacket.parts.length > 0 &&
+    (!activeProductId || telemetryPacket.productId === activeProductId)
+  );
+
+  const capturedParts = hasMatchingCapturedPacket ? telemetryPacket.parts : [];
+  const totalCapturedParts = capturedParts.length;
+  const canCopyCapturedParts = hasMatchingCapturedPacket && typeof onCopyTelemetryPart === "function";
+  const canDownloadCapturedReport =
+    hasMatchingCapturedPacket &&
+    typeof telemetryPacket.fullText === "string" &&
+    telemetryPacket.fullText.length > 0 &&
+    typeof onDownloadTelemetry === "function";
 
   return (
     <Card padding="400">
       <BlockStack gap="400">
-        <InlineStack align="space-between" blockAlign="center">
-          <Text variant="headingLg" as="h3">Diagnostic Header</Text>
-          <InlineStack gap="300">
-            <Button size="large" onClick={() => onCollectTelemetry('review')}>
-              Copy review telemetry
-            </Button>
-            <Button size="large" variant="primary" icon={ClipboardIcon} onClick={() => onCollectTelemetry('full')}>
-              Copy full report
-            </Button>
+        <BlockStack gap="200">
+          <InlineStack align="space-between" blockAlign="center">
+            <Text variant="headingLg" as="h3">Diagnostic Header</Text>
+            <InlineStack gap="300">
+              <Button
+                size="large"
+                onClick={() => onCollectTelemetry && onCollectTelemetry("review")}
+                aria-label="Capture Review Report snapshot and copy Part 1 to clipboard"
+              >
+                Capture Review Report
+              </Button>
+              <Button
+                size="large"
+                variant="primary"
+                icon={ClipboardIcon}
+                onClick={() => onCollectTelemetry && onCollectTelemetry("full")}
+                aria-label="Capture Full Report snapshot and copy Part 1 to clipboard"
+              >
+                Capture Full Report
+              </Button>
+            </InlineStack>
           </InlineStack>
-        </InlineStack>
+          <Text as="p" variant="bodySm" tone="subdued">
+            Capturing creates a frozen report snapshot for this product and copies Part 1 to your clipboard. When a report spans multiple parts, use the numbered Copy Part X of N buttons below to copy the remaining parts from that same snapshot without rebuilding it.
+          </Text>
+        </BlockStack>
+
+        {hasMatchingCapturedPacket && (
+          <Box padding="300" background="bg-surface-secondary" borderRadius="200" borderColor="border" borderWidth="1">
+            <BlockStack gap="300">
+              <InlineStack align="space-between" blockAlign="center">
+                <div style={{ minWidth: 0, wordBreak: "break-word", overflowWrap: "anywhere" }}>
+                  <Text as="h4" variant="headingSm" fontWeight="bold">
+                    Captured Telemetry Snapshot: {telemetryPacket.sectionLabel || "Telemetry Report"} ({totalCapturedParts} {totalCapturedParts === 1 ? "Part" : "Parts"})
+                  </Text>
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    Captured: {telemetryPacket.capturedAt || "Recorded"} | Run: {telemetryPacket.runIdentity || "Not recorded"} | Part 1 was copied on capture; use the buttons below to copy any part from this exact snapshot without regenerating.
+                  </Text>
+                </div>
+                {canDownloadCapturedReport && (
+                  <Button
+                    size="large"
+                    variant="secondary"
+                    onClick={() => onDownloadTelemetry(telemetryPacket)}
+                    aria-label="Download the existing captured report snapshot as a text file"
+                  >
+                    Download Captured Report
+                  </Button>
+                )}
+              </InlineStack>
+
+              {canCopyCapturedParts && (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "12px", minWidth: 0 }}>
+                  {capturedParts.map((part, arrayIdx) => {
+                    const partNum = arrayIdx + 1;
+                    const isActivePart = telemetryPacket.activePartIndex === arrayIdx;
+                    return (
+                      <Button
+                        key={`telemetry-part-${arrayIdx}`}
+                        size="large"
+                        variant={isActivePart ? "primary" : "secondary"}
+                        icon={ClipboardIcon}
+                        onClick={() => onCopyTelemetryPart(arrayIdx)}
+                        aria-label={`Copy Part ${partNum} of ${totalCapturedParts} from captured snapshot${typeof part?.charCount === "number" ? ` (${part.charCount} characters)` : ""}`}
+                      >
+                        {`Copy Part ${partNum} of ${totalCapturedParts}`}
+                      </Button>
+                    );
+                  })}
+                </div>
+              )}
+            </BlockStack>
+          </Box>
+        )}
         
         {data.diagnostics?.altValidationErrors && data.diagnostics.altValidationErrors.length > 0 && (
             <Banner tone="warning" title="Vision Alt Validation Errors">

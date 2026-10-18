@@ -1,5 +1,5 @@
 // FILE: app/routes/app.meta-injector.matrix.jsx
-import React, { useState, useCallback, useEffect } from "react";
+import React, { useState, useCallback, useEffect, useRef } from "react";
 import { BlockStack, Card, Text, Banner, Button, InlineStack, Box, ProgressBar, Select } from "@shopify/polaris";
 import { MagicIcon, ClipboardIcon, SaveIcon } from "@shopify/polaris-icons";
 import { useFetcher } from "react-router";
@@ -35,7 +35,11 @@ import {
   computeDiagnosticsStats,
   buildRepairPayload
 } from "../utils/meta-injector.matrix-domain.jsx";
-import { buildAndCopyMatrixTelemetry } from "../utils/meta-injector.telemetry.jsx";
+import {
+  buildAndCopyMatrixTelemetry,
+  copyCapturedTelemetryPart,
+  downloadCapturedTelemetryReport
+} from "../utils/meta-injector.telemetry.jsx";
 import { useMetaInjectorExecution } from "../utils/meta-injector.execution-hook.jsx";
 import {
   InventorySelectionColumn,
@@ -51,6 +55,18 @@ const INITIAL_EXPANDED_BAYS = Object.freeze({
 
 const isExactProductGid = (val) =>
   typeof val === "string" && /^gid:\/\/shopify\/Product\/[0-9]+$/.test(val.trim());
+
+const isValidTelemetryPacketForProduct = (packet, targetProductId) =>
+  Boolean(
+    packet &&
+    typeof packet === "object" &&
+    typeof packet.productId === "string" &&
+    (!targetProductId || packet.productId === targetProductId) &&
+    typeof packet.fullText === "string" &&
+    packet.fullText.length > 0 &&
+    Array.isArray(packet.parts) &&
+    packet.parts.length > 0
+  );
 
 export function OperationsMatrixTab({ products }) {
   const safeProducts = products || [];
@@ -89,11 +105,17 @@ export function OperationsMatrixTab({ products }) {
   const [repairHistory, setRepairHistory] = useState({});
 
   const [selectedBenchId, setSelectedBenchId] = useState(null);
+  const [telemetryPacket, setTelemetryPacket] = useState(null);
   const [safetyMessage, setSafetyMessage] = useState("");
   const [safetyError, setSafetyError] = useState("");
 
   const [activeFilter, setActiveFilter] = useState("All");
   const [expandedBays, setExpandedBays] = useState(INITIAL_EXPANDED_BAYS);
+
+  const activeBenchIdRef = useRef(selectedBenchId);
+  useEffect(() => {
+    activeBenchIdRef.current = selectedBenchId;
+  }, [selectedBenchId]);
 
   const batchFetcher = useFetcher();
   const referenceMatchFetcher = useFetcher();
@@ -117,10 +139,33 @@ export function OperationsMatrixTab({ products }) {
     setSelectedBenchId((prevId) => {
       if (prevId !== id) {
         setExpandedBays(INITIAL_EXPANDED_BAYS);
+        setTelemetryPacket(null);
       }
       return id;
     });
   }, []);
+
+  // Invalidate captured telemetry snapshot when a new load, AI pipeline, or repair execution starts,
+  // or when the active product's repair history or reference match result changes, without clearing
+  // the snapshot during ordinary part-copy notifications.
+  const activeProductHistoryRef = selectedBenchId ? repairHistory[selectedBenchId]?.completedAt : null;
+  const activeProductMatchTimeRef = selectedBenchId ? referenceMatchResultsByProduct[selectedBenchId]?.matchedAt : null;
+
+  useEffect(() => {
+    if (isLoadingData || isExecuting) {
+      setTelemetryPacket(null);
+    }
+  }, [isLoadingData, isExecuting]);
+
+  useEffect(() => {
+    setTelemetryPacket((prev) => {
+      if (!prev) return null;
+      if (!selectedBenchId || prev.productId !== selectedBenchId) {
+        return null;
+      }
+      return null;
+    });
+  }, [selectedBenchId, activeProductHistoryRef, activeProductMatchTimeRef]);
 
   const handleToggleProductSelection = useCallback((id) => {
     if (isLoadingData || isExecuting) return; 
@@ -184,6 +229,7 @@ export function OperationsMatrixTab({ products }) {
     setSubmittedPayloads({});
     setRepairHistory({});
     setSelectedBenchId(null);
+    setTelemetryPacket(null);
     setExpandedBays(INITIAL_EXPANDED_BAYS);
     setIsLoadingData(false);
     setIsExecuting(false);
@@ -258,7 +304,14 @@ export function OperationsMatrixTab({ products }) {
       const stdEval = getStandardizedEvaluationForField(pieceId, targetKey);
       const valCheck = validateProposedStandardizedGidList(propVal, stdEval);
       if (!valCheck.valid) return;
-    } else if (matchedConfig?.mappingStatus === "pending_read_only") {
+    } else if (
+      matchedConfig?.mappingStatus === "pending_read_only" ||
+      matchedConfig?.storageVerified === false ||
+      matchedConfig?.writerVerified === false ||
+      matchedConfig?.producerAlignmentPending === true ||
+      matchedConfig?.owner === "variant_metafield" ||
+      targetKey === "mm-google-shopping.custom_product"
+    ) {
       return;
     }
 
@@ -987,7 +1040,14 @@ export function OperationsMatrixTab({ products }) {
       const stdEval = getStandardizedEvaluationForField(selectedBenchId, targetKey);
       const valCheck = validateProposedStandardizedGidList(value, stdEval);
       if (!valCheck.valid) return;
-    } else if (matchedConfig?.mappingStatus === "pending_read_only") {
+    } else if (
+      matchedConfig?.mappingStatus === "pending_read_only" ||
+      matchedConfig?.storageVerified === false ||
+      matchedConfig?.writerVerified === false ||
+      matchedConfig?.producerAlignmentPending === true ||
+      matchedConfig?.owner === "variant_metafield" ||
+      targetKey === "mm-google-shopping.custom_product"
+    ) {
       return;
     }
     
@@ -1110,23 +1170,76 @@ export function OperationsMatrixTab({ products }) {
       getFieldMetadata
     });
 
-  const handleCollectTelemetry = useCallback((mode = 'full') => {
-    buildAndCopyMatrixTelemetry({
-      mode,
-      selectedBenchId,
-      manifestData,
-      repairHistory,
-      safeProducts,
-      approvals,
-      submittedPayloads,
-      standardizedCandidatesByProduct,
-      referenceMatchResultsByProduct,
-      referenceMatchStatusByProduct,
-      getSystemStatus,
-      getFieldMetadata,
-      setSafetyError,
-      setSafetyMessage
-    });
+  const handleCollectTelemetry = useCallback((modeArg = "full", rawOptions = {}) => {
+    const cleanMode = typeof modeArg === "string" && modeArg.trim() !== "" ? modeArg.trim() : "full";
+    const safeOptions = validObj(rawOptions);
+    const captureBenchId = selectedBenchId;
+
+    if (!captureBenchId || !manifestData?.[captureBenchId]) {
+      setTelemetryPacket(null);
+      setSafetyError("Cannot capture telemetry: No active bench item is loaded.");
+      return null;
+    }
+
+    const commitCapturedPacket = (candidatePacket) => {
+      if (!candidatePacket) return;
+      // Guard against a late callback from a previous product overwriting the current bench product's packet
+      if (activeBenchIdRef.current !== captureBenchId) return;
+      if (!isValidTelemetryPacketForProduct(candidatePacket, captureBenchId)) return;
+      setTelemetryPacket(candidatePacket);
+    };
+
+    try {
+      const hasExplicitPartRequest =
+        safeOptions.partIndex !== undefined &&
+        safeOptions.existingPacket &&
+        isValidTelemetryPacketForProduct(safeOptions.existingPacket, captureBenchId);
+
+      const maybeResult = buildAndCopyMatrixTelemetry({
+        mode: cleanMode,
+        options: safeOptions,
+        sectionTitle: safeOptions.sectionTitle,
+        partIndex: hasExplicitPartRequest ? safeOptions.partIndex : undefined,
+        existingPacket: hasExplicitPartRequest ? safeOptions.existingPacket : undefined,
+        onTelemetryPacketReady: commitCapturedPacket,
+        selectedBenchId: captureBenchId,
+        manifestData,
+        repairHistory,
+        safeProducts,
+        approvals,
+        submittedPayloads,
+        standardizedCandidatesByProduct,
+        referenceMatchResultsByProduct,
+        referenceMatchStatusByProduct,
+        getSystemStatus,
+        getFieldMetadata,
+        setSafetyError,
+        setSafetyMessage
+      });
+
+      if (maybeResult && typeof maybeResult.then === "function") {
+        maybeResult
+          .then((resolvedPacket) => {
+            if (resolvedPacket) {
+              commitCapturedPacket(resolvedPacket);
+            }
+          })
+          .catch((err) => {
+            setSafetyError(`Failed to capture telemetry report: ${err?.message || "Unknown telemetry error"}`);
+          });
+        return maybeResult;
+      }
+
+      if (maybeResult && isValidTelemetryPacketForProduct(maybeResult, captureBenchId)) {
+        commitCapturedPacket(maybeResult);
+        return maybeResult;
+      }
+
+      return null;
+    } catch (err) {
+      setSafetyError(`Failed to capture telemetry report: ${err?.message || "Unknown telemetry error"}`);
+      return null;
+    }
   }, [
     selectedBenchId,
     manifestData,
@@ -1148,6 +1261,51 @@ export function OperationsMatrixTab({ products }) {
     getSystemStatus,
     getFieldMetadata
   ]);
+
+  const handleCopyTelemetryPart = useCallback((partArrayIndex) => {
+    if (!selectedBenchId) {
+      setSafetyError("Cannot copy telemetry part: No active product selected on the bench.");
+      return;
+    }
+    if (!isValidTelemetryPacketForProduct(telemetryPacket, selectedBenchId)) {
+      setSafetyError("Cannot copy telemetry part: No valid captured report snapshot exists for the active product. Click 'Capture Full Report' or 'Capture Review Report' first.");
+      return;
+    }
+
+    const numericIndex = Number(partArrayIndex);
+    if (!Number.isInteger(numericIndex) || numericIndex < 0 || numericIndex >= telemetryPacket.parts.length) {
+      setSafetyError(`Cannot copy telemetry part: Invalid part index (${String(partArrayIndex)}).`);
+      return;
+    }
+
+    const updatedPacket = copyCapturedTelemetryPart({
+      packet: telemetryPacket,
+      partIndex: numericIndex,
+      setSafetyError,
+      setSafetyMessage
+    });
+
+    if (updatedPacket && isValidTelemetryPacketForProduct(updatedPacket, selectedBenchId)) {
+      setTelemetryPacket(updatedPacket);
+    }
+  }, [selectedBenchId, telemetryPacket]);
+
+  const handleDownloadTelemetry = useCallback((packetArg) => {
+    const targetPacket = packetArg && isValidTelemetryPacketForProduct(packetArg, selectedBenchId)
+      ? packetArg
+      : telemetryPacket;
+
+    if (!selectedBenchId || !isValidTelemetryPacketForProduct(targetPacket, selectedBenchId)) {
+      setSafetyError("Cannot download captured report: No valid captured report snapshot exists for the active product. Click 'Capture Full Report' or 'Capture Review Report' first.");
+      return false;
+    }
+
+    return downloadCapturedTelemetryReport({
+      packet: targetPacket,
+      setSafetyError,
+      setSafetyMessage
+    });
+  }, [selectedBenchId, telemetryPacket]);
 
   const toggleBay = (title) => {
     setExpandedBays(prev => ({ ...prev, [title]: !prev[title] }));
@@ -1273,8 +1431,13 @@ export function OperationsMatrixTab({ products }) {
                 <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", marginTop: "12px", minWidth: 0 }}>
                   <Button size="large" tone="critical" onClick={clearBench} disabled={isExecuting || isLoadingData}>Clear Rack & Reset Bench</Button>
                   
-                  <Button size="large" icon={ClipboardIcon} onClick={() => handleCollectTelemetry('full')}>
-                    Global Telemetry Dump
+                  <Button
+                    size="large"
+                    icon={ClipboardIcon}
+                    onClick={() => handleCollectTelemetry("full")}
+                    aria-label="Capture Full Report snapshot and copy Part 1 to clipboard"
+                  >
+                    Capture Full Report
                   </Button>
                 </div>
               </BlockStack>
@@ -1316,11 +1479,15 @@ export function OperationsMatrixTab({ products }) {
                 </div>
 
                 <BenchDiagnosticHeader
+                  selectedBenchId={selectedBenchId}
                   data={activeBenchData}
                   stats={activeBenchStats}
                   statusObj={activeBenchStatusObj}
                   history={activeBenchHistory}
+                  telemetryPacket={telemetryPacket}
                   onCollectTelemetry={handleCollectTelemetry}
+                  onCopyTelemetryPart={handleCopyTelemetryPart}
+                  onDownloadTelemetry={handleDownloadTelemetry}
                 />
 
                 <Card padding="400">
