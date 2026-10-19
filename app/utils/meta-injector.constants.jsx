@@ -7,7 +7,7 @@
 // 🟢 TEMPORARY DEVELOPMENT AUDIT OVERRIDE
 // Ensures every approved canonical template capability remains visible in UI audit views
 // without unlocking writes, fabricating applicability, or exposing hidden compatibility adapters.
-export const DEV_SHOW_ALL_TEMPLATE_FIELDS = true;
+export const DEV_SHOW_ALL_TEMPLATE_FIELDS = false;
 
 export const STUDIO_DEFAULTS = {
   rescued_by: "Bob and Janyce",
