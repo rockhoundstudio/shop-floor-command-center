@@ -8,6 +8,8 @@ import {
 
 const MAX_POST_BODY_BYTES = 1024 * 1024;
 const MAX_RESPONSE_UTF8_BYTES = 3500;
+const LIVE_BENCH_MODE = "live_bench_state";
+
 const ALLOWED_QUERY_KEYS_LIST = new Set([
   "op",
   "productId",
@@ -15,13 +17,25 @@ const ALLOWED_QUERY_KEYS_LIST = new Set([
   "limit",
   "afterReportId",
 ]);
+
 const ALLOWED_QUERY_KEYS_READ = new Set([
   "op",
   "reportId",
   "section",
   "chunkIndex",
 ]);
-const ALLOWED_POST_KEYS = new Set(["packet", "uiAudit"]);
+
+const ALLOWED_POST_KEYS = new Set(["packet", "uiAudit", "liveState"]);
+
+const ALLOWED_LIVE_STATE_KEYS = new Set([
+  "mode",
+  "benchSessionId",
+  "benchRevision",
+  "selectionState",
+  "productId",
+  "clientStateChangedAt",
+  "baselineLoadedAt",
+]);
 
 function isResponseInstance(err) {
   return (
@@ -96,6 +110,9 @@ function mapCacheResultToHttpStatus(result, isWrite = false) {
         result.code === "report_exceeds_cache_budget"
       ) {
         return 413;
+      }
+      if (result.code === "stale_bench_revision") {
+        return 409;
       }
       return 400;
     case "not_found":
@@ -316,6 +333,183 @@ function isPlainObject(value) {
   }
   const proto = Object.getPrototypeOf(value);
   return proto === Object.prototype || proto === null;
+}
+
+function validatePostEnvelopeAndLiveIdentity(parsedBody) {
+  const hasPacketKey = Object.prototype.hasOwnProperty.call(parsedBody, "packet");
+  const hasLiveStateKey = Object.prototype.hasOwnProperty.call(parsedBody, "liveState");
+  const hasUiAuditKey = Object.prototype.hasOwnProperty.call(parsedBody, "uiAudit");
+
+  const rawPacket = hasPacketKey ? parsedBody.packet : null;
+  const rawLiveState = hasLiveStateKey ? parsedBody.liveState : null;
+  const rawUiAudit = hasUiAuditKey ? parsedBody.uiAudit : null;
+
+  if (hasPacketKey && rawPacket !== null && !isPlainObject(rawPacket)) {
+    return {
+      ok: false,
+      code: "invalid_packet",
+      message: '"packet" must be a plain JSON object or null.',
+    };
+  }
+
+  if (isPlainObject(rawPacket) && Object.prototype.hasOwnProperty.call(rawPacket, "shop")) {
+    return {
+      ok: false,
+      code: "shop_override_forbidden",
+      message:
+        "shop field is forbidden inside packet; shop is derived exclusively from the authenticated session.",
+    };
+  }
+
+  if (hasLiveStateKey && rawLiveState !== null && !isPlainObject(rawLiveState)) {
+    return {
+      ok: false,
+      code: "invalid_live_state",
+      message: '"liveState" must be a plain JSON object or null.',
+    };
+  }
+
+  if (isPlainObject(rawLiveState)) {
+    if (Object.prototype.hasOwnProperty.call(rawLiveState, "shop")) {
+      return {
+        ok: false,
+        code: "shop_override_forbidden",
+        message:
+          "shop field is forbidden inside liveState; shop is derived exclusively from the authenticated session.",
+      };
+    }
+
+    const liveKeys = Object.keys(rawLiveState);
+    for (let i = 0; i < liveKeys.length; i += 1) {
+      const k = liveKeys[i];
+      if (!ALLOWED_LIVE_STATE_KEYS.has(k)) {
+        return {
+          ok: false,
+          code: "unexpected_live_state_field",
+          message: `Unsupported field "${k}" inside liveState.`,
+        };
+      }
+    }
+
+    if (
+      rawLiveState.mode !== undefined &&
+      rawLiveState.mode !== null &&
+      String(rawLiveState.mode).trim() !== LIVE_BENCH_MODE
+    ) {
+      return {
+        ok: false,
+        code: "invalid_live_state_mode",
+        message: `liveState.mode must be "${LIVE_BENCH_MODE}" when provided.`,
+      };
+    }
+  }
+
+  if (!isPlainObject(rawPacket) && !isPlainObject(rawLiveState)) {
+    return {
+      ok: false,
+      code: "missing_packet",
+      message:
+        'Request body must include a "packet" object or a "liveState" object for live bench deselection.',
+    };
+  }
+
+  // Cross-check packet vs. liveState identity fields when both are supplied
+  if (isPlainObject(rawPacket) && isPlainObject(rawLiveState)) {
+    if (
+      rawPacket.mode !== undefined &&
+      rawPacket.mode !== null &&
+      String(rawPacket.mode).trim() !== LIVE_BENCH_MODE
+    ) {
+      return {
+        ok: false,
+        code: "inconsistent_live_state_mode",
+        message: `packet.mode must be "${LIVE_BENCH_MODE}" when liveState is provided.`,
+      };
+    }
+
+    if (
+      rawPacket.benchSessionId !== undefined &&
+      rawLiveState.benchSessionId !== undefined &&
+      String(rawPacket.benchSessionId).trim() !== String(rawLiveState.benchSessionId).trim()
+    ) {
+      return {
+        ok: false,
+        code: "inconsistent_bench_session_id",
+        message: "packet.benchSessionId and liveState.benchSessionId must match.",
+      };
+    }
+
+    if (
+      rawPacket.benchRevision !== undefined &&
+      rawLiveState.benchRevision !== undefined &&
+      rawPacket.benchRevision !== rawLiveState.benchRevision
+    ) {
+      return {
+        ok: false,
+        code: "inconsistent_bench_revision",
+        message: "packet.benchRevision and liveState.benchRevision must match.",
+      };
+    }
+
+    if (
+      rawPacket.selectionState !== undefined &&
+      rawLiveState.selectionState !== undefined &&
+      rawPacket.selectionState !== rawLiveState.selectionState
+    ) {
+      return {
+        ok: false,
+        code: "inconsistent_selection_state",
+        message: "packet.selectionState and liveState.selectionState must match.",
+      };
+    }
+
+    if (
+      rawLiveState.productId !== undefined &&
+      rawLiveState.productId !== null &&
+      rawPacket.productId !== undefined &&
+      rawPacket.productId !== null &&
+      String(rawLiveState.productId).trim() !== String(rawPacket.productId).trim()
+    ) {
+      return {
+        ok: false,
+        code: "inconsistent_product_id",
+        message: "packet.productId and liveState.productId must match.",
+      };
+    }
+
+    if (
+      rawLiveState.clientStateChangedAt !== undefined &&
+      rawLiveState.clientStateChangedAt !== null &&
+      rawPacket.capturedAt !== undefined &&
+      rawPacket.capturedAt !== null &&
+      String(rawLiveState.clientStateChangedAt).trim() !== String(rawPacket.capturedAt).trim()
+    ) {
+      return {
+        ok: false,
+        code: "inconsistent_captured_at",
+        message: "liveState.clientStateChangedAt and packet.capturedAt must match.",
+      };
+    }
+  }
+
+  const effectiveSelectionState =
+    (isPlainObject(rawLiveState) ? rawLiveState.selectionState : undefined) ??
+    (isPlainObject(rawPacket) ? rawPacket.selectionState : undefined);
+
+  if (effectiveSelectionState === "none" && rawUiAudit !== null && rawUiAudit !== undefined) {
+    return {
+      ok: false,
+      code: "inconsistent_deselection_ui_audit",
+      message: 'uiAudit must be null or omitted when selectionState is "none".',
+    };
+  }
+
+  return {
+    ok: true,
+    packet: rawPacket,
+    uiAudit: rawUiAudit,
+    liveState: rawLiveState,
+  };
 }
 
 export async function loader({ request }) {
@@ -677,6 +871,18 @@ export async function action({ request }) {
     );
   }
 
+  if (Array.from(url.searchParams.keys()).length > 0) {
+    return buildJsonResponse(
+      {
+        ok: false,
+        status: "invalid_request",
+        code: "unsupported_query_parameter",
+        message: "Query parameters are not accepted on POST /api/meta-injector-telemetry.",
+      },
+      400
+    );
+  }
+
   if (!hasJsonContentType(request)) {
     return buildJsonResponse(
       {
@@ -751,20 +957,21 @@ export async function action({ request }) {
           ok: false,
           status: "invalid_request",
           code: "unexpected_body_field",
-          message: `Unexpected top-level field "${key}". Only "packet" and optional "uiAudit" are accepted.`,
+          message: `Unexpected top-level field "${key}". Only "packet", optional "uiAudit", and optional "liveState" are accepted.`,
         },
         400
       );
     }
   }
 
-  if (!Object.prototype.hasOwnProperty.call(parsedBody, "packet")) {
+  const envelopeCheck = validatePostEnvelopeAndLiveIdentity(parsedBody);
+  if (!envelopeCheck.ok) {
     return buildJsonResponse(
       {
         ok: false,
         status: "invalid_request",
-        code: "missing_packet",
-        message: 'Request body must include a "packet" object.',
+        code: envelopeCheck.code,
+        message: envelopeCheck.message,
       },
       400
     );
@@ -773,10 +980,9 @@ export async function action({ request }) {
   try {
     const storeResult = storeTelemetryReport({
       shop: authenticatedShop,
-      packet: parsedBody.packet,
-      uiAudit: Object.prototype.hasOwnProperty.call(parsedBody, "uiAudit")
-        ? parsedBody.uiAudit
-        : null,
+      packet: envelopeCheck.packet,
+      uiAudit: envelopeCheck.uiAudit,
+      liveState: envelopeCheck.liveState,
     });
 
     const httpStatus = mapCacheResultToHttpStatus(storeResult, true);

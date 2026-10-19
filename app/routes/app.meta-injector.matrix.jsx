@@ -69,7 +69,16 @@ const EMPTY_DEV_PREVIEW_MANIFEST = Object.freeze({
 
 const TELEMETRY_PUBLISH_ENDPOINT = "/api/meta-injector-telemetry";
 const TELEMETRY_PUBLISH_TIMEOUT_MS = 8000;
+const LIVE_BENCH_SYNC_DEBOUNCE_MS = 380;
+const LIVE_BENCH_MODE = "live_bench_state";
 const MAX_PUBLISHED_CAPTURE_SIGNATURES = 64;
+
+const RAW_COMPANION_LOOKUP_KEYS = Object.freeze({
+  "custom.material": ["custom.stone_family", "stone_family", "custom.primary_medium", "primary_medium"],
+  "custom.is_one_of_a_kind": ["custom.is_ooak", "is_ooak"],
+  "custom.origin_page_handle": ["custom.origin_handle", "origin_handle"],
+  "custom.cut_and_shape": ["custom.cut_type", "cut_type"]
+});
 
 const isExactProductGid = (val) =>
   typeof val === "string" && /^gid:\/\/shopify\/Product\/[0-9]+$/.test(val.trim());
@@ -85,6 +94,23 @@ const isValidTelemetryPacketForProduct = (packet, targetProductId) =>
     Array.isArray(packet.parts) &&
     packet.parts.length > 0
   );
+
+function generateStableBenchSessionId() {
+  const randA = Math.random().toString(36).slice(2, 10);
+  const randB = Math.random().toString(36).slice(2, 10);
+  return `bsess_${Date.now().toString(36)}_${randA}${randB}`;
+}
+
+function redactRecognizableCredentialStrings(val) {
+  if (typeof val !== "string" || val.length === 0) return val;
+  return val
+    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]{20,}/gi, "Bearer [REDACTED]")
+    .replace(/\bshpat_[a-fA-F0-9]{32,}\b/g, "shpat_[REDACTED]")
+    .replace(/\bshpca_[a-fA-F0-9]{32,}\b/g, "shpca_[REDACTED]")
+    .replace(/\bshpss_[a-fA-F0-9]{32,}\b/g, "shpss_[REDACTED]")
+    .replace(/\bshpua_[a-fA-F0-9]{32,}\b/g, "shpua_[REDACTED]")
+    .replace(/\bshprt_[a-fA-F0-9]{32,}\b/g, "shprt_[REDACTED]");
+}
 
 function computeQuickTextDigest(text) {
   const str = typeof text === "string" ? text : "";
@@ -121,6 +147,283 @@ function sanitizeSafePublishMessage(rawMsg, fallbackMsg) {
   if (/<[a-z!/][\s\S]*>/i.test(trimmed)) return fallbackMsg;
   const singleLine = trimmed.replace(/\s+/g, " ");
   return singleLine.length > 220 ? `${singleLine.slice(0, 220)}...` : singleLine;
+}
+
+function inspectRawStoredFieldBaseline(key, data) {
+  const safeData = data || {};
+  const currentMetafields = validObj(safeData.currentMetafields);
+  const nativeTargets = safeData.nativeTargets || null;
+  const variants = Array.isArray(nativeTargets?.variants?.edges)
+    ? nativeTargets.variants.edges
+    : [];
+  const isSingleVariantComplete =
+    variants.length === 1 &&
+    nativeTargets?.variants?.pageInfo?.hasNextPage === false &&
+    nativeTargets?.isComplete === true &&
+    !nativeTargets?.loadError;
+
+  if (key === "native_image_alt") {
+    return {
+      rawEvidenceAvailable: false,
+      rawStoredExists: false,
+      rawStoredValue: null,
+      rawSourceKey: null,
+      rawNote: "Zero-image capability placeholder; not a stored Shopify field."
+    };
+  }
+
+  if (key.startsWith("native_image_alts_")) {
+    const imageId = key.replace("native_image_alts_", "");
+    const mediaEdges = Array.isArray(nativeTargets?.media?.edges)
+      ? nativeTargets.media.edges
+      : null;
+    if (!mediaEdges) {
+      return {
+        rawEvidenceAvailable: false,
+        rawStoredExists: false,
+        rawStoredValue: null,
+        rawSourceKey: imageId,
+        rawNote: "nativeTargets.media.edges unavailable."
+      };
+    }
+    const matchedEdge = mediaEdges.find((e) => e?.node?.id === imageId);
+    if (!matchedEdge || !matchedEdge.node) {
+      return {
+        rawEvidenceAvailable: false,
+        rawStoredExists: false,
+        rawStoredValue: null,
+        rawSourceKey: imageId,
+        rawNote: "MediaImage node not found in loaded nativeTargets."
+      };
+    }
+    const rawAlt =
+      typeof matchedEdge.node.alt === "string"
+        ? redactRecognizableCredentialStrings(matchedEdge.node.alt)
+        : null;
+    return {
+      rawEvidenceAvailable: true,
+      rawStoredExists: Boolean(rawAlt && rawAlt.trim() !== ""),
+      rawStoredValue: rawAlt,
+      rawSourceKey: imageId,
+      rawNote: null
+    };
+  }
+
+  if (key === "native_title" || key === "shopify_title") {
+    if (typeof nativeTargets?.productTitle === "string") {
+      const cleanVal = redactRecognizableCredentialStrings(nativeTargets.productTitle);
+      return {
+        rawEvidenceAvailable: true,
+        rawStoredExists: cleanVal.trim() !== "",
+        rawStoredValue: cleanVal,
+        rawSourceKey: "nativeTargets.productTitle",
+        rawNote: null
+      };
+    }
+    if (typeof safeData.canonicalFields?.shopify_title === "string") {
+      const cleanVal = redactRecognizableCredentialStrings(safeData.canonicalFields.shopify_title);
+      return {
+        rawEvidenceAvailable: true,
+        rawStoredExists: cleanVal.trim() !== "",
+        rawStoredValue: cleanVal,
+        rawSourceKey: "canonicalFields.shopify_title",
+        rawNote: null
+      };
+    }
+    return {
+      rawEvidenceAvailable: false,
+      rawStoredExists: false,
+      rawStoredValue: null,
+      rawSourceKey: "nativeTargets.productTitle",
+      rawNote: "Product title baseline not present on manifest."
+    };
+  }
+
+  if (key === "native_description") {
+    if (typeof nativeTargets?.descriptionHtml === "string") {
+      const cleanVal = redactRecognizableCredentialStrings(nativeTargets.descriptionHtml);
+      return {
+        rawEvidenceAvailable: true,
+        rawStoredExists: cleanVal.trim() !== "",
+        rawStoredValue: cleanVal,
+        rawSourceKey: "nativeTargets.descriptionHtml",
+        rawNote: null
+      };
+    }
+    return {
+      rawEvidenceAvailable: false,
+      rawStoredExists: false,
+      rawStoredValue: null,
+      rawSourceKey: "nativeTargets.descriptionHtml",
+      rawNote: "nativeTargets.descriptionHtml not present on manifest."
+    };
+  }
+
+  if (key === "native_seo_title") {
+    if (nativeTargets?.seo && typeof nativeTargets.seo.title === "string") {
+      const cleanVal = redactRecognizableCredentialStrings(nativeTargets.seo.title);
+      return {
+        rawEvidenceAvailable: true,
+        rawStoredExists: cleanVal.trim() !== "",
+        rawStoredValue: cleanVal,
+        rawSourceKey: "nativeTargets.seo.title",
+        rawNote: null
+      };
+    }
+    return {
+      rawEvidenceAvailable: Boolean(nativeTargets?.seo),
+      rawStoredExists: false,
+      rawStoredValue: null,
+      rawSourceKey: "nativeTargets.seo.title",
+      rawNote: nativeTargets?.seo ? null : "nativeTargets.seo not present on manifest."
+    };
+  }
+
+  if (key === "native_seo_description") {
+    if (nativeTargets?.seo && typeof nativeTargets.seo.description === "string") {
+      const cleanVal = redactRecognizableCredentialStrings(nativeTargets.seo.description);
+      return {
+        rawEvidenceAvailable: true,
+        rawStoredExists: cleanVal.trim() !== "",
+        rawStoredValue: cleanVal,
+        rawSourceKey: "nativeTargets.seo.description",
+        rawNote: null
+      };
+    }
+    return {
+      rawEvidenceAvailable: Boolean(nativeTargets?.seo),
+      rawStoredExists: false,
+      rawStoredValue: null,
+      rawSourceKey: "nativeTargets.seo.description",
+      rawNote: nativeTargets?.seo ? null : "nativeTargets.seo not present on manifest."
+    };
+  }
+
+  if (key === "native_price" || key === "price") {
+    if (isSingleVariantComplete) {
+      const rawPrice = variants[0]?.node?.price ?? null;
+      const cleanPrice =
+        rawPrice !== null && rawPrice !== undefined
+          ? redactRecognizableCredentialStrings(String(rawPrice))
+          : null;
+      return {
+        rawEvidenceAvailable: true,
+        rawStoredExists: Boolean(cleanPrice && cleanPrice.trim() !== ""),
+        rawStoredValue: cleanPrice,
+        rawSourceKey: "nativeTargets.variants[0].price",
+        rawNote: null
+      };
+    }
+    return {
+      rawEvidenceAvailable: false,
+      rawStoredExists: false,
+      rawStoredValue: null,
+      rawSourceKey: "nativeTargets.variants[0].price",
+      rawNote: "Single complete variant baseline unavailable."
+    };
+  }
+
+  if (key === "native_shipping_weight") {
+    if (isSingleVariantComplete) {
+      const w = variants[0]?.node?.inventoryItem?.measurement?.weight;
+      if (w && w.value !== undefined && w.value !== null) {
+        return {
+          rawEvidenceAvailable: true,
+          rawStoredExists: true,
+          rawStoredValue: { value: w.value, unit: w.unit || null },
+          rawSourceKey: "nativeTargets.variants[0].inventoryItem.measurement.weight",
+          rawNote: null
+        };
+      }
+      return {
+        rawEvidenceAvailable: true,
+        rawStoredExists: false,
+        rawStoredValue: null,
+        rawSourceKey: "nativeTargets.variants[0].inventoryItem.measurement.weight",
+        rawNote: null
+      };
+    }
+    return {
+      rawEvidenceAvailable: false,
+      rawStoredExists: false,
+      rawStoredValue: null,
+      rawSourceKey: "nativeTargets.variants[0].inventoryItem.measurement.weight",
+      rawNote: "Single complete variant weight baseline unavailable."
+    };
+  }
+
+  const hasCurrentMetafieldsMap = Boolean(
+    safeData.currentMetafields && typeof safeData.currentMetafields === "object"
+  );
+  if (!hasCurrentMetafieldsMap) {
+    return {
+      rawEvidenceAvailable: false,
+      rawStoredExists: false,
+      rawStoredValue: null,
+      rawSourceKey: key,
+      rawNote: "currentMetafields map unavailable on manifest."
+    };
+  }
+
+  let matchedKey = null;
+  let rawVal = undefined;
+
+  if (Object.prototype.hasOwnProperty.call(currentMetafields, key)) {
+    matchedKey = key;
+    rawVal = currentMetafields[key];
+  }
+
+  const rawStringTrimmed =
+    rawVal === undefined || rawVal === null
+      ? ""
+      : typeof rawVal === "string"
+        ? rawVal.trim()
+        : JSON.stringify(rawVal);
+
+  if ((!matchedKey || rawStringTrimmed === "" || rawStringTrimmed === "[]") && RAW_COMPANION_LOOKUP_KEYS[key]) {
+    for (const compKey of RAW_COMPANION_LOOKUP_KEYS[key]) {
+      if (Object.prototype.hasOwnProperty.call(currentMetafields, compKey)) {
+        const compVal = currentMetafields[compKey];
+        if (compVal !== undefined && compVal !== null && String(compVal).trim() !== "") {
+          matchedKey = compKey;
+          rawVal = compVal;
+          break;
+        }
+      }
+    }
+  }
+
+  if (rawVal === undefined || rawVal === null) {
+    return {
+      rawEvidenceAvailable: true,
+      rawStoredExists: false,
+      rawStoredValue: null,
+      rawSourceKey: matchedKey,
+      rawNote:
+        key === "custom.collection_date"
+          ? 'No stored metafield value in Shopify (UI displays "N/A" as a display convention, not a stored string).'
+          : null
+    };
+  }
+
+  const sanitizedRaw =
+    typeof rawVal === "string"
+      ? redactRecognizableCredentialStrings(rawVal)
+      : rawVal;
+  const nonBlank =
+    typeof sanitizedRaw === "string"
+      ? sanitizedRaw.trim() !== "" && sanitizedRaw.trim() !== "[]"
+      : Array.isArray(sanitizedRaw)
+        ? sanitizedRaw.length > 0
+        : true;
+
+  return {
+    rawEvidenceAvailable: true,
+    rawStoredExists: nonBlank,
+    rawStoredValue: sanitizedRaw,
+    rawSourceKey: matchedKey,
+    rawNote: null
+  };
 }
 
 function buildMeasuredUiAuditSnapshot(productId, measurementsState) {
@@ -241,6 +544,321 @@ function buildMeasuredUiAuditSnapshot(productId, measurementsState) {
   };
 }
 
+function buildPureLiveBenchPayload({
+  benchSessionId,
+  benchRevision,
+  clientStateChangedAt,
+  baselineLoadedAt,
+  baselineEventKind,
+  productId,
+  productTitle,
+  data,
+  approvals,
+  manualEdits,
+  repairHistory,
+  submittedPayloads,
+  standardizedCandidatesByProduct,
+  referenceMatchResultsByProduct,
+  referenceMatchStatusByProduct,
+  pendingReferenceMatch,
+  getFieldMetadata,
+  getSystemStatus,
+  getDiagnosticsStats
+}) {
+  const safeData = data || {};
+  const dynamicSections = getDynamicSections(safeData);
+  const allConfigFields = dynamicSections.flatMap((sec) => sec.configFields || []);
+  const productManualEdits = validObj(manualEdits?.[productId]);
+  const productApprovals = validObj(approvals?.[productId]);
+  const history = repairHistory?.[productId] || null;
+  const lastSubmitted = submittedPayloads?.[productId] || null;
+  const diag = validObj(safeData.diagnostics);
+
+  const rawCandidates = standardizedCandidatesByProduct?.[productId] || {};
+  const candidateBundle = buildCanonicalCandidateBundle(rawCandidates);
+  const refMatchResult = referenceMatchResultsByProduct?.[productId] || null;
+  const refMatchStatus = referenceMatchStatusByProduct?.[productId] || null;
+  const refReadiness = evaluateProductReferenceMatchReadiness({
+    productId,
+    data: safeData,
+    rawCandidates,
+    refMatchResult,
+    refMatchStatus,
+    pendingReferenceMatch
+  });
+
+  const runIdentity =
+    refMatchResult?.workflowRunId ||
+    refMatchStatus?.workflowRunId ||
+    refMatchResult?.requestId ||
+    refMatchStatus?.requestId ||
+    (history?.status ? `repair:${history.status}` : null) ||
+    (diag.stage && diag.stage !== "Not reported" ? `stage:${diag.stage}` : "manifest_loaded");
+
+  const runTimestamp =
+    history?.completedAt ||
+    refMatchResult?.matchedAt ||
+    refMatchStatus?.updatedAt ||
+    "No repair/match timestamp recorded";
+
+  const serializeSingleFieldRow = (key, sectionHeading, sectionConfigFields = []) => {
+    const meta = getFieldMetadata(
+      key,
+      safeData,
+      productId,
+      approvals,
+      sectionConfigFields.length > 0 ? sectionConfigFields : allConfigFields
+    );
+    const targetKey = NATIVE_ALIAS_MAP[key] || key;
+    const rawBaseline = inspectRawStoredFieldBaseline(key, safeData);
+    const isManualEdited = Boolean(
+      productManualEdits[key] === true || productManualEdits[targetKey] === true
+    );
+    const isCollectionDateDisplayNa =
+      (key === "custom.collection_date" || key === "collection_date") &&
+      !rawBaseline.rawStoredExists &&
+      meta.currentVal === "N/A";
+
+    const verifiedMap = meta.stdEvaluation?.verifiedEntriesMap || null;
+    let resolvedStandardizedLabels = null;
+    if (meta.isStandardizedAttribute && verifiedMap instanceof Map && verifiedMap.size > 0) {
+      const currentGids = parseMetaobjectGidArray(meta.currentVal);
+      const proposedGids = parseMetaobjectGidArray(meta.propVal);
+      resolvedStandardizedLabels = {
+        currentEntries: currentGids.map((gid) => ({
+          gid,
+          label: verifiedMap.get(gid)?.displayName || verifiedMap.get(gid)?.label || null
+        })),
+        proposedEntries: proposedGids.map((gid) => ({
+          gid,
+          label: verifiedMap.get(gid)?.displayName || verifiedMap.get(gid)?.label || null
+        }))
+      };
+    }
+
+    const wasSubmittedInLastSave = Boolean(
+      lastSubmitted &&
+        (Object.prototype.hasOwnProperty.call(lastSubmitted, key) ||
+          Object.prototype.hasOwnProperty.call(lastSubmitted, targetKey))
+    );
+    const lastSubmittedValue = wasSubmittedInLastSave
+      ? redactRecognizableCredentialStrings(
+          String(
+            Object.prototype.hasOwnProperty.call(lastSubmitted, key)
+              ? lastSubmitted[key]
+              : lastSubmitted[targetKey]
+          )
+        )
+      : null;
+
+    return {
+      key,
+      targetKey,
+      section: sectionHeading,
+      label: meta.label,
+      type: meta.type,
+      owner: meta.owner,
+      namespace: meta.namespace,
+      metaKey: meta.metaKey,
+      control: meta.control || null,
+      rawStoredBaseline: {
+        evidenceAvailable: rawBaseline.rawEvidenceAvailable,
+        exists: rawBaseline.rawStoredExists,
+        value: rawBaseline.rawStoredValue,
+        sourceKey: rawBaseline.rawSourceKey,
+        note: rawBaseline.rawNote
+      },
+      evaluatedBaseline: {
+        currentExists: Boolean(meta.currentExists),
+        value: redactRecognizableCredentialStrings(meta.currentVal ?? ""),
+        isDisplayOnlyPlaceholderOrNa: Boolean(
+          meta.isImageAltCapabilityPlaceholder || isCollectionDateDisplayNa
+        )
+      },
+      workingState: {
+        isProposed: Boolean(meta.isProposed),
+        proposalExists: Boolean(meta.proposalExists),
+        proposalStatus: meta.proposalStatus,
+        proposedValue: redactRecognizableCredentialStrings(meta.propVal ?? ""),
+        isManualEdit: isManualEdited,
+        isApproved: Boolean(meta.isApproved),
+        isContentPreApproved: Boolean(meta.isContentPreApproved),
+        preApprovalReason: meta.preApprovalReason || null,
+        contentNeedsReview: Boolean(meta.contentNeedsReview),
+        source: meta.source || "Not reported",
+        stage: meta.stage || "Not reported"
+      },
+      statusAndHolds: {
+        fieldStatus: meta.fieldStatus,
+        isSupported: Boolean(meta.isSupported),
+        isBlockedAction: Boolean(meta.isBlockedAction),
+        hasTechnicalBlock: Boolean(meta.hasTechnicalBlock),
+        isActualBlockedProposal: Boolean(meta.isActualBlockedProposal),
+        isManualOnly: Boolean(meta.isManualOnly),
+        isOperatorOwned: Boolean(meta.isOperatorOwned),
+        isPendingReadOnly: Boolean(meta.isPendingReadOnly),
+        isStandardizedAttribute: Boolean(meta.isStandardizedAttribute),
+        isVerifiedStdDest: Boolean(meta.isVerifiedStdDest),
+        isCategoryEligible: Boolean(meta.isCategoryEligible),
+        hasContractOrOwnerHold: Boolean(meta.hasContractOrOwnerHold),
+        hasExplicitStorageHold: Boolean(meta.hasExplicitStorageHold),
+        hasExplicitProducerHold: Boolean(meta.hasExplicitProducerHold),
+        isChannelFlagReadOnly: Boolean(meta.isChannelFlagReadOnly),
+        isVariantMetafieldHold: Boolean(meta.isVariantMetafieldHold),
+        isImageAltCapabilityPlaceholder: Boolean(meta.isImageAltCapabilityPlaceholder),
+        imageAltPlaceholderReason: meta.imageAltPlaceholderReason || null,
+        applicability: meta.applicabilityState || null,
+        reasons: Array.isArray(meta.reasons)
+          ? meta.reasons.map((r) => redactRecognizableCredentialStrings(String(r)))
+          : []
+      },
+      conflictsAndSaveEvidence: {
+        conflictData: meta.conflictData || null,
+        nativeDescConflictData: meta.nativeDescConflictData || null,
+        wasSubmittedInLastRepair: wasSubmittedInLastSave,
+        lastSubmittedValue
+      },
+      ...(resolvedStandardizedLabels ? { standardizedEntryLabels: resolvedStandardizedLabels } : {})
+    };
+  };
+
+  const fieldsByKey = {};
+  const sectionOrder = [];
+
+  // Dedicated Description Review companion row (custom.generated_description) + native_description
+  const customDescRow = serializeSingleFieldRow(
+    "custom.generated_description",
+    "Description Review",
+    allConfigFields
+  );
+  fieldsByKey["custom.generated_description"] = customDescRow;
+
+  for (let i = 0; i < dynamicSections.length; i += 1) {
+    const sec = dynamicSections[i];
+    const secKeys = Array.isArray(sec.keys) ? sec.keys : [];
+    sectionOrder.push({
+      sectionTitle: sec.title,
+      fieldKeys: secKeys
+    });
+    for (let j = 0; j < secKeys.length; j += 1) {
+      const k = secKeys[j];
+      fieldsByKey[k] = serializeSingleFieldRow(k, sec.title, sec.configFields || []);
+    }
+  }
+
+  if (!Object.prototype.hasOwnProperty.call(fieldsByKey, "native_description")) {
+    fieldsByKey["native_description"] = serializeSingleFieldRow(
+      "native_description",
+      "Description Review",
+      allConfigFields
+    );
+  }
+
+  const systemStatus = getSystemStatus();
+  const diagnosticsStats = getDiagnosticsStats(safeData);
+
+  const standardizedSummary = {
+    readinessState: refReadiness.state,
+    readinessReason: refReadiness.reason || null,
+    stagedCandidateCount: candidateBundle.count,
+    stagedCandidates: candidateBundle.ordered,
+    eligibleDestinationKeys: refReadiness.eligibleDestinationKeys || [],
+    blockedDestinationKeys: refReadiness.blockedDestinationKeys || [],
+    lastMatchRequestId: refMatchResult?.requestId || refMatchStatus?.requestId || null,
+    lastMatchedAt: refMatchResult?.matchedAt || null,
+    lastMatchSuccess: refMatchResult ? Boolean(refMatchResult.success) : null,
+    lastMatchIsComplete: refMatchResult ? Boolean(refMatchResult.isComplete) : null,
+    productCategory: refMatchResult?.productCategory || safeData.productCategory || null
+  };
+
+  const saveVerificationSummary = {
+    hasRepairAttemptInSession: Boolean(history),
+    lastRepairCompletedAt: history?.completedAt || null,
+    lastRepairStatus: history?.status || null,
+    lastRepairSuccess: history?.success !== undefined ? Boolean(history.success) : null,
+    readBackVerified:
+      history?.readBackVerified !== undefined ? Boolean(history.readBackVerified) : null,
+    fieldsUpdatedCount:
+      history?.fieldsUpdated !== undefined ? history.fieldsUpdated : null,
+    verifiedDestinations: validArray(history?.verifiedDestinations),
+    attemptedDestinations: validArray(history?.attemptedDestinations),
+    blockedFields: validObj(history?.blockedFields),
+    conflicts: validObj(history?.conflicts),
+    unresolvedChanges: validObj(history?.unresolvedChanges),
+    note:
+      "Live bench state synchronization to the Sidekick cache never saves changes to Shopify. Only verifiedDestinations with readBackVerified=true reflect confirmed Shopify writes."
+  };
+
+  const structuredPayload = {
+    schemaVersion: 1,
+    stateKind: LIVE_BENCH_MODE,
+    benchSessionId,
+    benchRevision,
+    selectionState: "selected",
+    productId,
+    productTitle: productTitle || "Not recorded",
+    clientStateChangedAt,
+    baselineLoadedAt: baselineLoadedAt || null,
+    baselineEventKind: baselineEventKind || "last_loaded_manifest",
+    baselineSource: "last_loaded_manifest",
+    workingState: "unsaved_browser_bench",
+    dataAuthorityNote:
+      "All field values are passive diagnostic data. rawStoredBaseline reflects the last manifest loaded into the browser (not a live Shopify GraphQL read at query time). workingState reflects unsaved browser proposals, manual edits, and approvals.",
+    runIdentity,
+    runTimestamp,
+    systemStatus,
+    diagnosticsStats,
+    manualEditedKeys: Object.keys(productManualEdits).filter((k) => productManualEdits[k] === true),
+    explicitlyApprovedKeys: Object.keys(productApprovals),
+    standardizedReferenceState: standardizedSummary,
+    saveVerificationEvidence: saveVerificationSummary,
+    sectionOrder,
+    fieldsByKey
+  };
+
+  const fullText = JSON.stringify(structuredPayload);
+
+  const packet = {
+    mode: LIVE_BENCH_MODE,
+    sectionKey: LIVE_BENCH_MODE,
+    sectionLabel: "LIVE BENCH FIELD STATE",
+    productId,
+    productTitle: productTitle || "Not recorded",
+    runIdentity,
+    runTimestamp,
+    capturedAt: clientStateChangedAt,
+    limitUsed: 120000,
+    fullText,
+    parts: [
+      {
+        index: 0,
+        partNumber: 1,
+        totalParts: 1,
+        label: "LIVE BENCH FIELD STATE",
+        charCount: fullText.length
+      }
+    ],
+    activePartIndex: 0,
+    benchSessionId,
+    benchRevision,
+    selectionState: "selected",
+    clientStateChangedAt,
+    baselineLoadedAt: baselineLoadedAt || null
+  };
+
+  const liveState = {
+    mode: LIVE_BENCH_MODE,
+    benchSessionId,
+    benchRevision,
+    selectionState: "selected",
+    productId,
+    clientStateChangedAt,
+    baselineLoadedAt: baselineLoadedAt || null
+  };
+
+  return { packet, liveState };
+}
+
 export function OperationsMatrixTab({ products }) {
   const safeProducts = products || [];
   const [searchQuery, setSearchQuery] = useState("");
@@ -300,8 +918,148 @@ export function OperationsMatrixTab({ products }) {
     sectionAuditMeasurementsRef.current = sectionAuditMeasurements;
   }, [sectionAuditMeasurements]);
 
+  // Manual capture deduplication and abort refs
   const publishDedupMapRef = useRef(new Map());
   const activePublishAbortRef = useRef(null);
+
+  // Live bench session identity, monotonic revision counter, baseline timestamp tracker, and sync refs
+  const benchSessionIdRef = useRef(null);
+  if (!benchSessionIdRef.current) {
+    benchSessionIdRef.current = generateStableBenchSessionId();
+  }
+  const benchRevisionRef = useRef(0);
+  const nextBenchRevision = useCallback(() => {
+    benchRevisionRef.current += 1;
+    return benchRevisionRef.current;
+  }, []);
+
+  const baselineMetaByProductRef = useRef({});
+  const prevMetafieldsRefByProduct = useRef({});
+  const prevNativeTargetsRefByProduct = useRef({});
+  const prevRepairCompletedAtByProduct = useRef({});
+
+  const liveSyncAbortRef = useRef(null);
+  const liveSyncDebounceTimerRef = useRef(null);
+  const lastLiveStateDigestRef = useRef("");
+  const lastLiveSyncedDigestRef = useRef("");
+  const lastLiveStateChangedAtRef = useRef(null);
+  const lastLiveStateRevisionRef = useRef(0);
+  const lastNotifiedSelectionClearRef = useRef(true);
+
+  const batchFetcher = useFetcher();
+  const referenceMatchFetcher = useFetcher();
+
+  // Track actual baseline load and verified read-back timestamps when manifestData or repairHistory updates
+  useEffect(() => {
+    const nowIso = new Date().toISOString();
+    const productIds = Object.keys(manifestData || {});
+    for (let i = 0; i < productIds.length; i += 1) {
+      const pid = productIds[i];
+      const entry = manifestData[pid];
+      if (!entry || typeof entry !== "object") continue;
+
+      const prevMf = prevMetafieldsRefByProduct.current[pid];
+      const prevNt = prevNativeTargetsRefByProduct.current[pid];
+      const histCompletedAt = repairHistory?.[pid]?.completedAt || null;
+      const prevHistCompletedAt = prevRepairCompletedAtByProduct.current[pid] || null;
+
+      if (!baselineMetaByProductRef.current[pid]) {
+        baselineMetaByProductRef.current[pid] = {
+          loadedAt: histCompletedAt || nowIso,
+          eventKind: histCompletedAt ? "repair_execution_response" : "manifest_loaded"
+        };
+      } else if (histCompletedAt && histCompletedAt !== prevHistCompletedAt) {
+        baselineMetaByProductRef.current[pid] = {
+          loadedAt: histCompletedAt,
+          eventKind:
+            repairHistory?.[pid]?.readBackVerified === true
+              ? "verified_repair_readback"
+              : "repair_execution_response"
+        };
+      } else if (
+        (entry.currentMetafields && entry.currentMetafields !== prevMf) ||
+        (entry.nativeTargets && entry.nativeTargets !== prevNt)
+      ) {
+        baselineMetaByProductRef.current[pid] = {
+          loadedAt: nowIso,
+          eventKind: "manifest_reloaded"
+        };
+      }
+
+      prevMetafieldsRefByProduct.current[pid] = entry.currentMetafields;
+      prevNativeTargetsRefByProduct.current[pid] = entry.nativeTargets;
+      prevRepairCompletedAtByProduct.current[pid] = histCompletedAt;
+    }
+  }, [manifestData, repairHistory]);
+
+  const sendLiveBenchSelectionClear = useCallback(
+    (options = {}) => {
+      const { useKeepalive = false } = options;
+      if (liveSyncDebounceTimerRef.current) {
+        clearTimeout(liveSyncDebounceTimerRef.current);
+        liveSyncDebounceTimerRef.current = null;
+      }
+      if (liveSyncAbortRef.current) {
+        try {
+          liveSyncAbortRef.current.abort();
+        } catch {
+          // Ignore abort errors
+        }
+        liveSyncAbortRef.current = null;
+      }
+
+      const revision = nextBenchRevision();
+      const clientStateChangedAt = new Date().toISOString();
+      lastLiveStateDigestRef.current = `none:${revision}`;
+      lastLiveSyncedDigestRef.current = "";
+      lastLiveStateRevisionRef.current = revision;
+      lastLiveStateChangedAtRef.current = clientStateChangedAt;
+      lastNotifiedSelectionClearRef.current = true;
+
+      const bodyStr = JSON.stringify({
+        liveState: {
+          mode: LIVE_BENCH_MODE,
+          benchSessionId: benchSessionIdRef.current,
+          benchRevision: revision,
+          selectionState: "none",
+          clientStateChangedAt
+        }
+      });
+
+      const controller = new AbortController();
+      if (!useKeepalive) {
+        liveSyncAbortRef.current = controller;
+      }
+      const timerId = setTimeout(() => {
+        try {
+          controller.abort();
+        } catch {
+          // Ignore abort timeout error
+        }
+      }, TELEMETRY_PUBLISH_TIMEOUT_MS);
+
+      fetch(TELEMETRY_PUBLISH_ENDPOINT, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json"
+        },
+        body: bodyStr,
+        keepalive: Boolean(useKeepalive),
+        signal: controller.signal
+      })
+        .catch(() => {
+          // Best-effort clear; server TTL and revision high-water guard remain authoritative
+        })
+        .finally(() => {
+          clearTimeout(timerId);
+          if (liveSyncAbortRef.current === controller) {
+            liveSyncAbortRef.current = null;
+          }
+        });
+    },
+    [nextBenchRevision]
+  );
 
   useEffect(() => {
     return () => {
@@ -313,11 +1071,15 @@ export function OperationsMatrixTab({ products }) {
         }
         activePublishAbortRef.current = null;
       }
+      if (liveSyncDebounceTimerRef.current) {
+        clearTimeout(liveSyncDebounceTimerRef.current);
+        liveSyncDebounceTimerRef.current = null;
+      }
+      if (!lastNotifiedSelectionClearRef.current) {
+        sendLiveBenchSelectionClear({ useKeepalive: true });
+      }
     };
-  }, []);
-
-  const batchFetcher = useFetcher();
-  const referenceMatchFetcher = useFetcher();
+  }, [sendLiveBenchSelectionClear]);
 
   const handleSearchChange = useCallback((value) => setSearchQuery(value), []);
   const handleClearSearch = useCallback(() => setSearchQuery(""), []);
@@ -345,6 +1107,24 @@ export function OperationsMatrixTab({ products }) {
           }
           activePublishAbortRef.current = null;
         }
+        if (liveSyncDebounceTimerRef.current) {
+          clearTimeout(liveSyncDebounceTimerRef.current);
+          liveSyncDebounceTimerRef.current = null;
+        }
+        if (liveSyncAbortRef.current) {
+          try {
+            liveSyncAbortRef.current.abort();
+          } catch {
+            // Ignore live sync abort on switch
+          }
+          liveSyncAbortRef.current = null;
+        }
+        // Immediately invalidate previous stone on switch or deselection so old stone is never exposed as current
+        if (!id || !manifestData?.[id]) {
+          sendLiveBenchSelectionClear();
+        } else if (prevId && prevId !== id) {
+          sendLiveBenchSelectionClear();
+        }
         setExpandedBays(INITIAL_EXPANDED_BAYS);
         setTelemetryPacket(null);
         setTelemetryPublishNotice(null);
@@ -352,7 +1132,7 @@ export function OperationsMatrixTab({ products }) {
       }
       return id;
     });
-  }, []);
+  }, [manifestData, sendLiveBenchSelectionClear]);
 
   // Invalidate captured telemetry snapshot when a new load, AI pipeline, or repair execution starts,
   // or when the active product's repair history or reference match result changes, without clearing
@@ -365,7 +1145,10 @@ export function OperationsMatrixTab({ products }) {
       setTelemetryPacket(null);
       setTelemetryPublishNotice(null);
     }
-  }, [isLoadingData, isExecuting]);
+    if (isLoadingData && !lastNotifiedSelectionClearRef.current) {
+      sendLiveBenchSelectionClear();
+    }
+  }, [isLoadingData, isExecuting, sendLiveBenchSelectionClear]);
 
   useEffect(() => {
     setTelemetryPacket((prev) => {
@@ -459,6 +1242,11 @@ export function OperationsMatrixTab({ products }) {
       activePublishAbortRef.current = null;
     }
     publishDedupMapRef.current.clear();
+    baselineMetaByProductRef.current = {};
+    prevMetafieldsRefByProduct.current = {};
+    prevNativeTargetsRefByProduct.current = {};
+    prevRepairCompletedAtByProduct.current = {};
+    sendLiveBenchSelectionClear();
 
     if (pendingReferenceMatch) {
       const activeRel = pendingReferenceMatch;
@@ -509,7 +1297,7 @@ export function OperationsMatrixTab({ products }) {
     setPendingOperation(null);
     setSafetyMessage("Rack and Bench cleared. Repair history reset.");
     setSafetyError("");
-  }, [pendingReferenceMatch, referenceMatchFetcher.state]);
+  }, [pendingReferenceMatch, referenceMatchFetcher.state, sendLiveBenchSelectionClear]);
 
   const getStandardizedEvaluationForField = useCallback((productId, targetKey, dataOverride = null) => {
     if (!productId || typeof targetKey !== "string" || !targetKey.startsWith("shopify.")) return null;
@@ -1434,6 +2222,232 @@ export function OperationsMatrixTab({ products }) {
       approvals,
       getFieldMetadata
     });
+
+  // Automatic debounced live-bench-state synchronization (no clipboard/download/AI/write side effects)
+  const activeProductDataForLiveSync = selectedBenchId ? manifestData[selectedBenchId] : null;
+  const activeProductApprovalsForLiveSync = selectedBenchId ? approvals[selectedBenchId] : null;
+  const activeProductManualEditsForLiveSync = selectedBenchId ? manualEdits[selectedBenchId] : null;
+  const activeProductHistoryForLiveSync = selectedBenchId ? repairHistory[selectedBenchId] : null;
+  const activeProductSubmittedForLiveSync = selectedBenchId ? submittedPayloads[selectedBenchId] : null;
+  const activeProductCandidatesForLiveSync = selectedBenchId ? standardizedCandidatesByProduct[selectedBenchId] : null;
+  const activeProductRefMatchForLiveSync = selectedBenchId ? referenceMatchResultsByProduct[selectedBenchId] : null;
+  const activeProductRefStatusForLiveSync = selectedBenchId ? referenceMatchStatusByProduct[selectedBenchId] : null;
+  const activeMeasurementsForLiveSync =
+    sectionAuditMeasurements.productId === selectedBenchId
+      ? sectionAuditMeasurements
+      : null;
+
+  useEffect(() => {
+    if (!selectedBenchId || !isExactProductGid(selectedBenchId) || !activeProductDataForLiveSync) {
+      if (!lastNotifiedSelectionClearRef.current) {
+        sendLiveBenchSelectionClear();
+      }
+      return;
+    }
+
+    if (isLoadingData) {
+      return;
+    }
+
+    const measuredUiAudit = buildMeasuredUiAuditSnapshot(
+      selectedBenchId,
+      activeMeasurementsForLiveSync
+    );
+
+    const contentChangeDigest = computeQuickTextDigest(
+      JSON.stringify({
+        productId: selectedBenchId,
+        currentMetafields: activeProductDataForLiveSync.currentMetafields || null,
+        nativeTargets: activeProductDataForLiveSync.nativeTargets || null,
+        repairPlan: activeProductDataForLiveSync.repairPlan || null,
+        metadata: activeProductDataForLiveSync.metadata || null,
+        diagnostics: activeProductDataForLiveSync.diagnostics || null,
+        approvals: activeProductApprovalsForLiveSync || null,
+        manualEdits: activeProductManualEditsForLiveSync || null,
+        historyCompletedAt: activeProductHistoryForLiveSync?.completedAt || null,
+        historyStatus: activeProductHistoryForLiveSync?.status || null,
+        submitted: activeProductSubmittedForLiveSync || null,
+        candidates: activeProductCandidatesForLiveSync || null,
+        refMatchAt: activeProductRefMatchForLiveSync?.matchedAt || null,
+        refStatusAt: activeProductRefStatusForLiveSync?.updatedAt || null,
+        refStatusState: activeProductRefStatusForLiveSync?.state || null,
+        uiAudit: measuredUiAudit
+      })
+    );
+
+    // If working state and measurements have not changed and are already synced, do nothing
+    if (
+      contentChangeDigest === lastLiveStateDigestRef.current &&
+      contentChangeDigest === lastLiveSyncedDigestRef.current
+    ) {
+      return;
+    }
+
+    let stateRevision = lastLiveStateRevisionRef.current;
+    let clientStateChangedAt = lastLiveStateChangedAtRef.current;
+
+    if (contentChangeDigest !== lastLiveStateDigestRef.current || !clientStateChangedAt || stateRevision < 1) {
+      stateRevision = nextBenchRevision();
+      clientStateChangedAt = new Date().toISOString();
+      lastLiveStateDigestRef.current = contentChangeDigest;
+      lastLiveStateRevisionRef.current = stateRevision;
+      lastLiveStateChangedAtRef.current = clientStateChangedAt;
+      lastNotifiedSelectionClearRef.current = false;
+    }
+
+    if (liveSyncDebounceTimerRef.current) {
+      clearTimeout(liveSyncDebounceTimerRef.current);
+      liveSyncDebounceTimerRef.current = null;
+    }
+
+    const targetProductId = selectedBenchId;
+    const targetRevision = stateRevision;
+    const targetChangedAt = clientStateChangedAt;
+    const targetDigest = contentChangeDigest;
+
+    liveSyncDebounceTimerRef.current = setTimeout(() => {
+      liveSyncDebounceTimerRef.current = null;
+      if (activeBenchIdRef.current !== targetProductId) {
+        return;
+      }
+
+      const productRecord = safeProducts.find((p) => p.id === targetProductId) || {};
+      const productTitle =
+        productRecord.title ||
+        activeProductDataForLiveSync?.nativeTargets?.productTitle ||
+        "Not recorded";
+
+      const baselineInfo = baselineMetaByProductRef.current[targetProductId] || null;
+      const baselineLoadedAt = baselineInfo?.loadedAt || null;
+      const baselineEventKind = baselineInfo?.eventKind || "last_loaded_manifest";
+
+      const { packet, liveState } = buildPureLiveBenchPayload({
+        benchSessionId: benchSessionIdRef.current,
+        benchRevision: targetRevision,
+        clientStateChangedAt: targetChangedAt,
+        baselineLoadedAt,
+        baselineEventKind,
+        productId: targetProductId,
+        productTitle,
+        data: activeProductDataForLiveSync,
+        approvals,
+        manualEdits,
+        repairHistory,
+        submittedPayloads,
+        standardizedCandidatesByProduct,
+        referenceMatchResultsByProduct,
+        referenceMatchStatusByProduct,
+        pendingReferenceMatch,
+        getFieldMetadata,
+        getSystemStatus,
+        getDiagnosticsStats
+      });
+
+      const latestUiAudit = buildMeasuredUiAuditSnapshot(
+        targetProductId,
+        sectionAuditMeasurementsRef.current
+      );
+
+      const postBody =
+        latestUiAudit !== null
+          ? { packet, liveState, uiAudit: latestUiAudit }
+          : { packet, liveState };
+
+      if (liveSyncAbortRef.current) {
+        try {
+          liveSyncAbortRef.current.abort();
+        } catch {
+          // Ignore superseding abort
+        }
+        liveSyncAbortRef.current = null;
+      }
+
+      const controller = new AbortController();
+      liveSyncAbortRef.current = controller;
+      const timeoutId = setTimeout(() => {
+        try {
+          controller.abort();
+        } catch {
+          // Ignore timeout abort
+        }
+      }, TELEMETRY_PUBLISH_TIMEOUT_MS);
+
+      (async () => {
+        try {
+          const response = await fetch(TELEMETRY_PUBLISH_ENDPOINT, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Accept: "application/json"
+            },
+            body: JSON.stringify(postBody),
+            signal: controller.signal
+          });
+
+          const rawText = await response.text();
+          let parsed = null;
+          if (rawText && rawText.trim().length > 0) {
+            try {
+              parsed = JSON.parse(rawText);
+            } catch {
+              parsed = null;
+            }
+          }
+
+          if (
+            response.ok &&
+            parsed &&
+            parsed.ok === true &&
+            parsed.status === "stored" &&
+            parsed.report &&
+            parsed.report.productId === targetProductId &&
+            parsed.report.benchRevision === targetRevision
+          ) {
+            lastLiveSyncedDigestRef.current = targetDigest;
+            return;
+          }
+
+          if (
+            parsed &&
+            parsed.code === "stale_bench_revision" &&
+            typeof parsed.highestRevision === "number" &&
+            Number.isSafeInteger(parsed.highestRevision) &&
+            parsed.highestRevision > benchRevisionRef.current
+          ) {
+            benchRevisionRef.current = parsed.highestRevision;
+          }
+        } catch {
+          // Keep lastLiveSyncedDigestRef unset for this digest so a subsequent state update can sync cleanly
+        } finally {
+          clearTimeout(timeoutId);
+          if (liveSyncAbortRef.current === controller) {
+            liveSyncAbortRef.current = null;
+          }
+        }
+      })();
+    }, LIVE_BENCH_SYNC_DEBOUNCE_MS);
+
+    return () => {
+      if (liveSyncDebounceTimerRef.current) {
+        clearTimeout(liveSyncDebounceTimerRef.current);
+        liveSyncDebounceTimerRef.current = null;
+      }
+    };
+  }, [
+    selectedBenchId,
+    isLoadingData,
+    activeProductDataForLiveSync,
+    activeProductApprovalsForLiveSync,
+    activeProductManualEditsForLiveSync,
+    activeProductHistoryForLiveSync,
+    activeProductSubmittedForLiveSync,
+    activeProductCandidatesForLiveSync,
+    activeProductRefMatchForLiveSync,
+    activeProductRefStatusForLiveSync,
+    activeMeasurementsForLiveSync,
+    nextBenchRevision,
+    sendLiveBenchSelectionClear
+  ]);
 
   const publishCapturedPacketToSidekickCache = useCallback((capturedPacket, expectedProductId) => {
     if (!expectedProductId || activeBenchIdRef.current !== expectedProductId) {

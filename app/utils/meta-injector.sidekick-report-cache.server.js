@@ -2,13 +2,15 @@ import { createHash } from "node:crypto";
 import { Buffer } from "node:buffer";
 
 const CACHE_GLOBAL_KEY = "__ROCKHOUND_META_INJECTOR_SIDEKICK_REPORT_CACHE_V1__";
-const CACHE_SCHEMA_VERSION = 1;
+const CACHE_SCHEMA_VERSION = 2;
 
 const TTL_MS = 30 * 60 * 1000;
 const MAX_FUTURE_SKEW_MS = 2 * 60 * 1000;
 
 const MAX_REPORTS_PER_SHOP = 20;
 const MAX_REPORTS_GLOBAL = 200;
+const MAX_LIVE_SESSIONS_PER_SHOP = 8;
+const MAX_LIVE_SESSIONS_GLOBAL = 64;
 const MAX_TOTAL_BYTES = 20 * 1024 * 1024;
 
 const MAX_FULL_TEXT_CODE_UNITS = 120000;
@@ -22,7 +24,10 @@ const MIN_LIST_LIMIT = 1;
 const DEFAULT_LIST_LIMIT = 3;
 const MAX_LIST_LIMIT = 5;
 
+const LIVE_BENCH_MODE = "live_bench_state";
+
 const PRODUCT_GID_REGEX = /^gid:\/\/shopify\/Product\/\d+$/;
+const BENCH_SESSION_ID_REGEX = /^[A-Za-z0-9._:-]{6,120}$/;
 
 const CREDENTIAL_PATTERNS = [
   /-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----/i,
@@ -51,6 +56,8 @@ function getCacheState() {
     existing.version === CACHE_SCHEMA_VERSION &&
     existing.recordsById instanceof Map &&
     existing.shopIndex instanceof Map &&
+    existing.liveSessionsByKey instanceof Map &&
+    existing.shopLiveSessions instanceof Map &&
     existing.shopStats instanceof Map &&
     typeof existing.totalBytes === "number"
   ) {
@@ -65,6 +72,8 @@ function getCacheState() {
     totalEvictedCount: 0,
     recordsById: new Map(),
     shopIndex: new Map(),
+    liveSessionsByKey: new Map(),
+    shopLiveSessions: new Map(),
     shopStats: new Map(),
   };
 
@@ -86,6 +95,9 @@ function getShopStats(state, shop) {
       expiredCount: 0,
       evictedCount: 0,
       lastCapturedAtMs: null,
+      liveSyncCount: 0,
+      liveClearedCount: 0,
+      liveExpiredCount: 0,
     };
     state.shopStats.set(shop, stats);
   }
@@ -518,6 +530,10 @@ function computeReportId({
   fullText,
   uiAuditState,
   uiAuditCanonicalJson,
+  benchSessionId = null,
+  benchRevision = null,
+  selectionState = null,
+  baselineLoadedAt = null,
 }) {
   const hash = createHash("sha256");
   const updateField = (tag, val) => {
@@ -539,7 +555,18 @@ function computeReportId({
   updateField("uiAuditState", uiAuditState);
   updateField("uiAuditJson", uiAuditCanonicalJson);
 
+  if (mode === LIVE_BENCH_MODE) {
+    updateField("benchSessionId", benchSessionId);
+    updateField("benchRevision", benchRevision);
+    updateField("selectionState", selectionState);
+    updateField("baselineLoadedAt", baselineLoadedAt);
+  }
+
   return `srep_${hash.digest("hex")}`;
+}
+
+function buildLiveSessionCompositeKey(shop, benchSessionId) {
+  return `${shop}::${benchSessionId}`;
 }
 
 function removeRecordFromState(state, record, reason = "evicted") {
@@ -561,15 +588,70 @@ function removeRecordFromState(state, record, reason = "evicted") {
   const stats = getShopStats(state, record.shop);
   if (reason === "expired") {
     stats.expiredCount += 1;
+  } else if (reason === "replaced_live" || reason === "cleared_live") {
+    // In-place live session update or explicit deselection; not an eviction
   } else {
     stats.evictedCount += 1;
     state.totalEvictedCount += 1;
   }
 }
 
+function removeLiveSessionSlot(state, sessionEntry, reason = "expired") {
+  if (!sessionEntry) {
+    return;
+  }
+  const compositeKey = buildLiveSessionCompositeKey(
+    sessionEntry.shop,
+    sessionEntry.benchSessionId
+  );
+
+  if (sessionEntry.activeReportId) {
+    const activeRecord = state.recordsById.get(sessionEntry.activeReportId);
+    if (activeRecord) {
+      removeRecordFromState(
+        state,
+        activeRecord,
+        reason === "expired" ? "expired" : "evicted"
+      );
+    }
+  }
+
+  if (state.liveSessionsByKey.has(compositeKey)) {
+    state.liveSessionsByKey.delete(compositeKey);
+    state.totalBytes = Math.max(0, state.totalBytes - (sessionEntry.slotOverheadBytes || 0));
+  }
+
+  const shopSessionSet = state.shopLiveSessions.get(sessionEntry.shop);
+  if (shopSessionSet) {
+    shopSessionSet.delete(sessionEntry.benchSessionId);
+    if (shopSessionSet.size === 0) {
+      state.shopLiveSessions.delete(sessionEntry.shop);
+    }
+  }
+
+  const stats = getShopStats(state, sessionEntry.shop);
+  if (reason === "expired") {
+    stats.liveExpiredCount += 1;
+  }
+}
+
 function purgeExpiredRecords(state, nowMs) {
+  for (const sessionEntry of state.liveSessionsByKey.values()) {
+    if (sessionEntry.expiresAtMs <= nowMs) {
+      removeLiveSessionSlot(state, sessionEntry, "expired");
+    }
+  }
+
   for (const record of state.recordsById.values()) {
     if (record.expiresAtMs <= nowMs) {
+      if (record.isLiveBenchState && record.benchSessionId) {
+        const compositeKey = buildLiveSessionCompositeKey(record.shop, record.benchSessionId);
+        const sessionEntry = state.liveSessionsByKey.get(compositeKey);
+        if (sessionEntry && sessionEntry.activeReportId === record.reportId) {
+          removeLiveSessionSlot(state, sessionEntry, "expired");
+          continue;
+        }
+      }
       removeRecordFromState(state, record, "expired");
     }
   }
@@ -595,44 +677,137 @@ function compareNewestFirst(a, b) {
   return a.reportId.localeCompare(b.reportId);
 }
 
-function enforceCapacityLimits(state, targetShop, incomingBytes) {
+function compareLiveSessionsOldestFirst(a, b) {
+  if (a.updatedAtMs !== b.updatedAtMs) {
+    return a.updatedAtMs - b.updatedAtMs;
+  }
+  return a.benchSessionId.localeCompare(b.benchSessionId);
+}
+
+function compareLiveSessionsNewestFirst(a, b) {
+  if (a.updatedAtMs !== b.updatedAtMs) {
+    return b.updatedAtMs - a.updatedAtMs;
+  }
+  return a.benchSessionId.localeCompare(b.benchSessionId);
+}
+
+function enforceManualCapacityLimits(state, targetShop, incomingBytes) {
   const shopSet = state.shopIndex.get(targetShop);
-  if (shopSet && shopSet.size >= MAX_REPORTS_PER_SHOP) {
-    const shopRecords = [];
+  if (shopSet) {
+    const manualShopRecords = [];
     for (const id of shopSet) {
       const rec = state.recordsById.get(id);
-      if (rec) {
-        shopRecords.push(rec);
+      if (rec && !rec.isLiveBenchState) {
+        manualShopRecords.push(rec);
       }
     }
-    shopRecords.sort(compareOldestFirst);
-    const removeCount = shopRecords.length - MAX_REPORTS_PER_SHOP + 1;
-    for (let i = 0; i < removeCount && i < shopRecords.length; i += 1) {
-      removeRecordFromState(state, shopRecords[i], "evicted");
+    if (manualShopRecords.length >= MAX_REPORTS_PER_SHOP) {
+      manualShopRecords.sort(compareOldestFirst);
+      const removeCount = manualShopRecords.length - MAX_REPORTS_PER_SHOP + 1;
+      for (let i = 0; i < removeCount && i < manualShopRecords.length; i += 1) {
+        removeRecordFromState(state, manualShopRecords[i], "evicted");
+      }
     }
   }
 
-  if (state.recordsById.size >= MAX_REPORTS_GLOBAL) {
-    const allRecords = Array.from(state.recordsById.values()).sort(compareOldestFirst);
-    const removeCount = allRecords.length - MAX_REPORTS_GLOBAL + 1;
-    for (let i = 0; i < removeCount && i < allRecords.length; i += 1) {
-      removeRecordFromState(state, allRecords[i], "evicted");
+  const allManualRecords = Array.from(state.recordsById.values()).filter(
+    (rec) => !rec.isLiveBenchState
+  );
+  if (allManualRecords.length >= MAX_REPORTS_GLOBAL) {
+    allManualRecords.sort(compareOldestFirst);
+    const removeCount = allManualRecords.length - MAX_REPORTS_GLOBAL + 1;
+    for (let i = 0; i < removeCount && i < allManualRecords.length; i += 1) {
+      removeRecordFromState(state, allManualRecords[i], "evicted");
     }
   }
 
   if (state.totalBytes + incomingBytes > MAX_TOTAL_BYTES) {
-    const allRecords = Array.from(state.recordsById.values()).sort(compareOldestFirst);
-    for (let i = 0; i < allRecords.length; i += 1) {
+    const evictableManual = Array.from(state.recordsById.values())
+      .filter((rec) => !rec.isLiveBenchState)
+      .sort(compareOldestFirst);
+    for (let i = 0; i < evictableManual.length; i += 1) {
       if (state.totalBytes + incomingBytes <= MAX_TOTAL_BYTES) {
         break;
       }
-      removeRecordFromState(state, allRecords[i], "evicted");
+      removeRecordFromState(state, evictableManual[i], "evicted");
+    }
+  }
+
+  if (state.totalBytes + incomingBytes > MAX_TOTAL_BYTES) {
+    const evictableSessions = Array.from(state.liveSessionsByKey.values()).sort(
+      compareLiveSessionsOldestFirst
+    );
+    for (let i = 0; i < evictableSessions.length; i += 1) {
+      if (state.totalBytes + incomingBytes <= MAX_TOTAL_BYTES) {
+        break;
+      }
+      removeLiveSessionSlot(state, evictableSessions[i], "evicted");
+    }
+  }
+}
+
+function enforceLiveSessionCapacityLimits(state, targetShop, targetSessionId, incomingBytes) {
+  const shopSessionsSet = state.shopLiveSessions.get(targetShop);
+  if (
+    shopSessionsSet &&
+    !shopSessionsSet.has(targetSessionId) &&
+    shopSessionsSet.size >= MAX_LIVE_SESSIONS_PER_SHOP
+  ) {
+    const entries = [];
+    for (const sid of shopSessionsSet) {
+      const entry = state.liveSessionsByKey.get(buildLiveSessionCompositeKey(targetShop, sid));
+      if (entry) {
+        entries.push(entry);
+      }
+    }
+    entries.sort(compareLiveSessionsOldestFirst);
+    const removeCount = entries.length - MAX_LIVE_SESSIONS_PER_SHOP + 1;
+    for (let i = 0; i < removeCount && i < entries.length; i += 1) {
+      removeLiveSessionSlot(state, entries[i], "evicted");
+    }
+  }
+
+  const targetCompositeKey = buildLiveSessionCompositeKey(targetShop, targetSessionId);
+  if (
+    !state.liveSessionsByKey.has(targetCompositeKey) &&
+    state.liveSessionsByKey.size >= MAX_LIVE_SESSIONS_GLOBAL
+  ) {
+    const allSessions = Array.from(state.liveSessionsByKey.values()).sort(
+      compareLiveSessionsOldestFirst
+    );
+    const removeCount = allSessions.length - MAX_LIVE_SESSIONS_GLOBAL + 1;
+    for (let i = 0; i < removeCount && i < allSessions.length; i += 1) {
+      removeLiveSessionSlot(state, allSessions[i], "evicted");
+    }
+  }
+
+  if (state.totalBytes + incomingBytes > MAX_TOTAL_BYTES) {
+    const otherSessions = Array.from(state.liveSessionsByKey.values())
+      .filter((s) => !(s.shop === targetShop && s.benchSessionId === targetSessionId))
+      .sort(compareLiveSessionsOldestFirst);
+    for (let i = 0; i < otherSessions.length; i += 1) {
+      if (state.totalBytes + incomingBytes <= MAX_TOTAL_BYTES) {
+        break;
+      }
+      removeLiveSessionSlot(state, otherSessions[i], "evicted");
+    }
+  }
+
+  if (state.totalBytes + incomingBytes > MAX_TOTAL_BYTES) {
+    const manualRecords = Array.from(state.recordsById.values())
+      .filter((rec) => !rec.isLiveBenchState)
+      .sort(compareOldestFirst);
+    for (let i = 0; i < manualRecords.length; i += 1) {
+      if (state.totalBytes + incomingBytes <= MAX_TOTAL_BYTES) {
+        break;
+      }
+      removeRecordFromState(state, manualRecords[i], "evicted");
     }
   }
 }
 
 function formatRecordMetadata(record) {
-  return {
+  const base = {
     reportId: record.reportId,
     productId: record.productId,
     productTitle: record.productTitle,
@@ -642,6 +817,7 @@ function formatRecordMetadata(record) {
     runIdentity: record.runIdentity,
     runTimestamp: record.runTimestamp,
     capturedAt: record.capturedAt,
+    storedAt: record.storedAt,
     expiresAt: record.expiresAt,
     limitUsed: record.limitUsed,
     clipboardPartCount: record.clipboardPartCount,
@@ -652,6 +828,690 @@ function formatRecordMetadata(record) {
     uiAuditUtf8Bytes: record.uiAuditUtf8Bytes,
     uiAuditChunkCount: record.uiAuditChunks.length,
   };
+
+  if (record.isLiveBenchState) {
+    base.benchSessionId = record.benchSessionId;
+    base.benchRevision = record.benchRevision;
+    base.selectionState = record.selectionState;
+    base.clientStateChangedAt = record.capturedAt;
+    base.baselineLoadedAt = record.baselineLoadedAt;
+    base.serverReceivedAt = record.storedAt;
+    base.baselineSource = record.baselineSource;
+    base.workingState = record.workingState;
+    base.freshnessNote =
+      "Snapshot reflects browser working state at clientStateChangedAt over last-loaded baseline (baselineLoadedAt). Server receipt time (serverReceivedAt) does not prove a fresh Shopify GraphQL read or currently active screen.";
+  }
+
+  return base;
+}
+
+function formatLiveSessionSlotSummary(sessionEntry) {
+  return {
+    benchSessionId: sessionEntry.benchSessionId,
+    benchRevision: sessionEntry.highestRevision,
+    selectionState: sessionEntry.selectionState,
+    activeReportId: sessionEntry.activeReportId,
+    activeProductId: sessionEntry.activeProductId,
+    previousProductId: sessionEntry.previousProductId,
+    clientStateChangedAt: sessionEntry.clientStateChangedAt,
+    baselineLoadedAt: sessionEntry.baselineLoadedAt,
+    serverReceivedAt: sessionEntry.updatedAt,
+    expiresAt: sessionEntry.expiresAt,
+    baselineSource: sessionEntry.baselineSource,
+    workingState: sessionEntry.workingState,
+  };
+}
+
+function validateAndExtractLiveBenchMetadata(packet, rawLiveState) {
+  const candidateMeta = isPlainObject(rawLiveState)
+    ? rawLiveState
+    : isPlainObject(packet) && isPlainObject(packet.liveState)
+      ? packet.liveState
+      : null;
+
+  let parsedFullTextObj = null;
+  if (packet && typeof packet.fullText === "string" && packet.fullText.trim().startsWith("{")) {
+    try {
+      const parsed = JSON.parse(packet.fullText);
+      if (isPlainObject(parsed)) {
+        parsedFullTextObj = parsed;
+      }
+    } catch {
+      parsedFullTextObj = null;
+    }
+  }
+
+  const pickField = (key) => {
+    if (candidateMeta && candidateMeta[key] !== undefined) {
+      return candidateMeta[key];
+    }
+    if (isPlainObject(packet) && packet[key] !== undefined) {
+      return packet[key];
+    }
+    if (parsedFullTextObj && parsedFullTextObj[key] !== undefined) {
+      return parsedFullTextObj[key];
+    }
+    return undefined;
+  };
+
+  const rawSessionId = pickField("benchSessionId");
+  if (typeof rawSessionId !== "string" || !BENCH_SESSION_ID_REGEX.test(rawSessionId.trim())) {
+    return {
+      ok: false,
+      code: "invalid_bench_session_id",
+      message:
+        "live_bench_state requires a valid benchSessionId string (6-120 alphanumeric/._:- characters).",
+    };
+  }
+  const benchSessionId = rawSessionId.trim();
+  if (containsRecognizableCredentials(benchSessionId)) {
+    return {
+      ok: false,
+      code: "credential_material_rejected",
+      message: "benchSessionId contains recognizable credential material.",
+    };
+  }
+
+  const rawRevision = pickField("benchRevision");
+  if (
+    typeof rawRevision !== "number" ||
+    !Number.isSafeInteger(rawRevision) ||
+    rawRevision < 1
+  ) {
+    return {
+      ok: false,
+      code: "invalid_bench_revision",
+      message: "live_bench_state requires benchRevision as a positive safe integer (>= 1).",
+    };
+  }
+  const benchRevision = rawRevision;
+
+  const rawSelectionState = pickField("selectionState") ?? "selected";
+  if (rawSelectionState !== "selected" && rawSelectionState !== "none") {
+    return {
+      ok: false,
+      code: "invalid_selection_state",
+      message: 'selectionState must be either "selected" or "none".',
+    };
+  }
+  const selectionState = rawSelectionState;
+
+  if (
+    parsedFullTextObj &&
+    parsedFullTextObj.benchSessionId !== undefined &&
+    String(parsedFullTextObj.benchSessionId).trim() !== benchSessionId
+  ) {
+    return {
+      ok: false,
+      code: "inconsistent_bench_session_id",
+      message: "benchSessionId in packet/liveState does not match serialized fullText JSON.",
+    };
+  }
+
+  if (
+    parsedFullTextObj &&
+    parsedFullTextObj.benchRevision !== undefined &&
+    parsedFullTextObj.benchRevision !== benchRevision
+  ) {
+    return {
+      ok: false,
+      code: "inconsistent_bench_revision",
+      message: "benchRevision in packet/liveState does not match serialized fullText JSON.",
+    };
+  }
+
+  if (
+    parsedFullTextObj &&
+    parsedFullTextObj.selectionState !== undefined &&
+    parsedFullTextObj.selectionState !== selectionState
+  ) {
+    return {
+      ok: false,
+      code: "inconsistent_selection_state",
+      message: "selectionState in packet/liveState does not match serialized fullText JSON.",
+    };
+  }
+
+  const rawBaselineLoadedAt = pickField("baselineLoadedAt");
+  let baselineLoadedAt = null;
+  if (rawBaselineLoadedAt !== null && rawBaselineLoadedAt !== undefined && rawBaselineLoadedAt !== "") {
+    const parsedBaseline = parseStrictIsoTimestamp(rawBaselineLoadedAt);
+    if (!parsedBaseline) {
+      return {
+        ok: false,
+        code: "invalid_baseline_loaded_at",
+        message: "baselineLoadedAt must be a valid ISO-8601 timestamp string or null.",
+      };
+    }
+    baselineLoadedAt = parsedBaseline.raw;
+  }
+
+  const rawClientStateChangedAt =
+    pickField("clientStateChangedAt") ??
+    (isPlainObject(packet) ? packet.capturedAt : undefined);
+  const parsedClientTime = parseStrictIsoTimestamp(rawClientStateChangedAt);
+  if (!parsedClientTime) {
+    return {
+      ok: false,
+      code: "invalid_captured_at",
+      message:
+        "live_bench_state requires a valid ISO-8601 clientStateChangedAt / packet.capturedAt timestamp.",
+    };
+  }
+
+  return {
+    ok: true,
+    benchSessionId,
+    benchRevision,
+    selectionState,
+    baselineLoadedAt,
+    clientTime: parsedClientTime,
+    parsedFullTextObj,
+  };
+}
+
+function storeLiveBenchStateInternal({
+  state,
+  shop,
+  packet,
+  uiAudit,
+  liveState,
+  nowMs,
+}) {
+  const liveMeta = validateAndExtractLiveBenchMetadata(packet, liveState);
+  if (!liveMeta.ok) {
+    return finalizeResponse({
+      ok: false,
+      status: "invalid_request",
+      code: liveMeta.code,
+      message: liveMeta.message,
+    });
+  }
+
+  const {
+    benchSessionId,
+    benchRevision,
+    selectionState,
+    baselineLoadedAt,
+    clientTime,
+    parsedFullTextObj,
+  } = liveMeta;
+
+  const ageMs = nowMs - clientTime.ms;
+  if (ageMs > TTL_MS) {
+    return finalizeResponse({
+      ok: false,
+      status: "invalid_request",
+      code: "capture_expired",
+      message: "clientStateChangedAt / capturedAt is older than the 30-minute TTL.",
+    });
+  }
+
+  if (clientTime.ms - nowMs > MAX_FUTURE_SKEW_MS) {
+    return finalizeResponse({
+      ok: false,
+      status: "invalid_request",
+      code: "capture_in_future",
+      message: "clientStateChangedAt / capturedAt cannot be more than 2 minutes in the future.",
+    });
+  }
+
+  const compositeKey = buildLiveSessionCompositeKey(shop, benchSessionId);
+  const existingSession = state.liveSessionsByKey.get(compositeKey);
+
+  // Monotonic high-water revision guard across product switches and deselections
+  if (existingSession && benchRevision <= existingSession.highestRevision) {
+    if (
+      benchRevision === existingSession.highestRevision &&
+      existingSession.selectionState === selectionState
+    ) {
+      if (selectionState === "none") {
+        return finalizeResponse({
+          ok: true,
+          status: "stored",
+          deduplicated: true,
+          selectionState: "none",
+          liveSession: formatLiveSessionSlotSummary(existingSession),
+        });
+      }
+      const existingRec = existingSession.activeReportId
+        ? state.recordsById.get(existingSession.activeReportId)
+        : null;
+      const incomingProdId =
+        typeof packet?.productId === "string" ? packet.productId.trim() : null;
+      if (existingRec && existingRec.productId === incomingProdId) {
+        return finalizeResponse({
+          ok: true,
+          status: "stored",
+          deduplicated: true,
+          report: formatRecordMetadata(existingRec),
+          liveSession: formatLiveSessionSlotSummary(existingSession),
+        });
+      }
+    }
+
+    return finalizeResponse({
+      ok: false,
+      status: "invalid_request",
+      code: "stale_bench_revision",
+      benchSessionId,
+      benchRevision,
+      highestRevision: existingSession.highestRevision,
+      activeProductId: existingSession.activeProductId,
+      selectionState: existingSession.selectionState,
+      message: `Rejected stale or out-of-order live_bench_state revision ${benchRevision} for session ${benchSessionId} (current high-water revision is ${existingSession.highestRevision}).`,
+    });
+  }
+
+  // Handle explicit selection clear / deselection tombstone
+  if (selectionState === "none") {
+    const packetProdId =
+      isPlainObject(packet) && packet.productId !== undefined && packet.productId !== null
+        ? String(packet.productId).trim()
+        : "";
+    if (packetProdId !== "") {
+      return finalizeResponse({
+        ok: false,
+        status: "invalid_request",
+        code: "inconsistent_deselection_product_id",
+        message: 'When selectionState is "none", productId must be null or omitted.',
+      });
+    }
+
+    const previousActiveProductId = existingSession?.activeProductId || null;
+    if (existingSession && existingSession.activeReportId) {
+      const oldRec = state.recordsById.get(existingSession.activeReportId);
+      if (oldRec) {
+        removeRecordFromState(state, oldRec, "cleared_live");
+      }
+    }
+
+    const slotOverheadBytes = 384 + utf8ByteLength(shop) + utf8ByteLength(benchSessionId);
+    enforceLiveSessionCapacityLimits(state, shop, benchSessionId, slotOverheadBytes);
+
+    if (existingSession) {
+      state.totalBytes = Math.max(
+        0,
+        state.totalBytes - (existingSession.slotOverheadBytes || 0)
+      );
+    }
+
+    const storedAtIso = new Date(nowMs).toISOString();
+    const expiresAtMs = clientTime.ms + TTL_MS;
+    const expiresAtIso = new Date(expiresAtMs).toISOString();
+
+    const updatedSession = Object.freeze({
+      shop,
+      benchSessionId,
+      highestRevision: benchRevision,
+      selectionState: "none",
+      activeReportId: null,
+      activeProductId: null,
+      previousProductId: previousActiveProductId,
+      clientStateChangedAt: clientTime.raw,
+      clientStateChangedAtMs: clientTime.ms,
+      baselineLoadedAt: null,
+      updatedAt: storedAtIso,
+      updatedAtMs: nowMs,
+      expiresAt: expiresAtIso,
+      expiresAtMs,
+      baselineSource: "none_selected",
+      workingState: "bench_deselected",
+      slotOverheadBytes,
+    });
+
+    state.liveSessionsByKey.set(compositeKey, updatedSession);
+    state.totalBytes += slotOverheadBytes;
+
+    let shopSessionSet = state.shopLiveSessions.get(shop);
+    if (!shopSessionSet) {
+      shopSessionSet = new Set();
+      state.shopLiveSessions.set(shop, shopSessionSet);
+    }
+    shopSessionSet.add(benchSessionId);
+
+    const shopStats = getShopStats(state, shop);
+    shopStats.liveClearedCount += 1;
+
+    return finalizeResponse({
+      ok: true,
+      status: "stored",
+      deduplicated: false,
+      selectionState: "none",
+      liveSession: formatLiveSessionSlotSummary(updatedSession),
+    });
+  }
+
+  // selectionState === "selected"
+  if (!isPlainObject(packet)) {
+    return finalizeResponse({
+      ok: false,
+      status: "invalid_request",
+      code: "invalid_packet",
+      message: 'A valid packet object is required when selectionState is "selected".',
+    });
+  }
+
+  const productId = typeof packet.productId === "string" ? packet.productId.trim() : "";
+  if (!PRODUCT_GID_REGEX.test(productId)) {
+    return finalizeResponse({
+      ok: false,
+      status: "invalid_request",
+      code: "invalid_product_id",
+      message: "packet.productId must match gid://shopify/Product/<digits>.",
+    });
+  }
+
+  if (
+    parsedFullTextObj &&
+    parsedFullTextObj.productId !== undefined &&
+    String(parsedFullTextObj.productId).trim() !== productId
+  ) {
+    return finalizeResponse({
+      ok: false,
+      status: "invalid_request",
+      code: "inconsistent_product_id",
+      message: "packet.productId does not match productId inside serialized fullText JSON.",
+    });
+  }
+
+  if (
+    isPlainObject(uiAudit) &&
+    uiAudit.productId !== undefined &&
+    String(uiAudit.productId).trim() !== productId
+  ) {
+    return finalizeResponse({
+      ok: false,
+      status: "invalid_request",
+      code: "inconsistent_ui_audit_product_id",
+      message: "uiAudit.productId does not match packet.productId.",
+    });
+  }
+
+  if (typeof packet.fullText !== "string" || packet.fullText.trim().length === 0) {
+    return finalizeResponse({
+      ok: false,
+      status: "invalid_request",
+      code: "empty_full_text",
+      message: "packet.fullText must be a nonempty string.",
+    });
+  }
+
+  const fullText = packet.fullText;
+  if (fullText.length > MAX_FULL_TEXT_CODE_UNITS) {
+    return finalizeResponse({
+      ok: false,
+      status: "invalid_request",
+      code: "full_text_too_large",
+      message: `packet.fullText exceeds maximum ${MAX_FULL_TEXT_CODE_UNITS} UTF-16 code units.`,
+    });
+  }
+
+  const reportUtf8Bytes = utf8ByteLength(fullText);
+  if (reportUtf8Bytes > MAX_FULL_TEXT_UTF8_BYTES) {
+    return finalizeResponse({
+      ok: false,
+      status: "invalid_request",
+      code: "full_text_too_large",
+      message: `packet.fullText exceeds maximum ${MAX_FULL_TEXT_UTF8_BYTES} UTF-8 bytes.`,
+    });
+  }
+
+  if (containsRecognizableCredentials(fullText)) {
+    return finalizeResponse({
+      ok: false,
+      status: "invalid_request",
+      code: "credential_material_rejected",
+      message: "packet.fullText contains recognizable credential or private-key material.",
+    });
+  }
+
+  const sectionKeyCheck = sanitizeOptionalShortString(
+    packet.sectionKey ?? LIVE_BENCH_MODE,
+    120
+  );
+  const sectionLabelCheck = sanitizeOptionalShortString(
+    packet.sectionLabel ?? "LIVE BENCH FIELD STATE",
+    200
+  );
+  const productTitleCheck = sanitizeOptionalShortString(packet.productTitle, 300);
+  const runIdentityCheck = sanitizeOptionalShortString(packet.runIdentity, 240);
+  const runTimestampCheck = sanitizeOptionalShortString(packet.runTimestamp, 120);
+
+  const fieldChecks = [
+    sectionKeyCheck,
+    sectionLabelCheck,
+    productTitleCheck,
+    runIdentityCheck,
+    runTimestampCheck,
+  ];
+  for (let i = 0; i < fieldChecks.length; i += 1) {
+    const check = fieldChecks[i];
+    if (check && typeof check === "object" && check.rejected) {
+      return finalizeResponse({
+        ok: false,
+        status: "invalid_request",
+        code: "credential_material_rejected",
+        message: "Packet metadata contains recognizable credential or private-key material.",
+      });
+    }
+  }
+
+  const partsCheck = sanitizePartsMetadata(packet.parts, packet.activePartIndex);
+  if (!partsCheck.ok) {
+    return finalizeResponse({
+      ok: false,
+      status: "invalid_request",
+      code: partsCheck.code,
+      message: partsCheck.message,
+    });
+  }
+
+  const auditResult = normalizeUiAudit(uiAudit);
+  if (!auditResult.ok) {
+    return finalizeResponse({
+      ok: false,
+      status: "invalid_request",
+      code: auditResult.code,
+      message: auditResult.message,
+    });
+  }
+
+  const sectionKey =
+    typeof sectionKeyCheck === "string" && sectionKeyCheck.trim()
+      ? sectionKeyCheck.trim()
+      : LIVE_BENCH_MODE;
+  const sectionLabel =
+    typeof sectionLabelCheck === "string" && sectionLabelCheck.trim()
+      ? sectionLabelCheck.trim()
+      : "LIVE BENCH FIELD STATE";
+  const productTitle =
+    typeof productTitleCheck === "string" && productTitleCheck.trim()
+      ? productTitleCheck.trim()
+      : null;
+  const runIdentity =
+    typeof runIdentityCheck === "string" && runIdentityCheck.trim()
+      ? runIdentityCheck.trim()
+      : null;
+  const runTimestamp =
+    typeof runTimestampCheck === "string" && runTimestampCheck.trim()
+      ? runTimestampCheck.trim()
+      : null;
+  const limitUsed = sanitizeOptionalNumber(packet.limitUsed);
+
+  const reportChunks = splitUtf8CodePoints(fullText, MAX_CHUNK_UTF8_BYTES);
+  if (reportChunks.join("") !== fullText) {
+    return finalizeResponse({
+      ok: false,
+      status: "error",
+      code: "chunk_integrity_failure",
+      message: "Failed lossless UTF-8 code-point chunk verification.",
+    });
+  }
+
+  const reportId = computeReportId({
+    shop,
+    productId,
+    mode: LIVE_BENCH_MODE,
+    sectionKey,
+    sectionLabel,
+    productTitle,
+    runIdentity,
+    runTimestamp,
+    capturedAt: clientTime.raw,
+    limitUsed,
+    fullText,
+    uiAuditState: auditResult.state,
+    uiAuditCanonicalJson: auditResult.canonicalJson,
+    benchSessionId,
+    benchRevision,
+    selectionState: "selected",
+    baselineLoadedAt,
+  });
+
+  const metadataOverheadBytes =
+    640 +
+    utf8ByteLength(shop) +
+    utf8ByteLength(productId) +
+    utf8ByteLength(benchSessionId) +
+    utf8ByteLength(sectionKey) +
+    utf8ByteLength(sectionLabel) +
+    utf8ByteLength(productTitle || "") +
+    utf8ByteLength(runIdentity || "") +
+    utf8ByteLength(runTimestamp || "") +
+    utf8ByteLength(baselineLoadedAt || "");
+
+  const estimatedBytes =
+    reportUtf8Bytes * 2 + auditResult.utf8Bytes * 2 + metadataOverheadBytes;
+  const slotOverheadBytes = 384 + utf8ByteLength(shop) + utf8ByteLength(benchSessionId);
+
+  if (estimatedBytes + slotOverheadBytes > MAX_TOTAL_BYTES) {
+    return finalizeResponse({
+      ok: false,
+      status: "invalid_request",
+      code: "report_exceeds_cache_budget",
+      message: "Live bench state size exceeds total cache memory budget.",
+    });
+  }
+
+  // Replace previous active live record for this exact (shop, benchSessionId) slot in-place
+  // so repeated field edits never accumulate reports or evict manual captures.
+  const previousActiveProductId = existingSession?.activeProductId || null;
+  if (existingSession && existingSession.activeReportId) {
+    const oldRec = state.recordsById.get(existingSession.activeReportId);
+    if (oldRec) {
+      removeRecordFromState(state, oldRec, "replaced_live");
+    }
+  }
+  if (existingSession) {
+    state.totalBytes = Math.max(
+      0,
+      state.totalBytes - (existingSession.slotOverheadBytes || 0)
+    );
+  }
+
+  enforceLiveSessionCapacityLimits(
+    state,
+    shop,
+    benchSessionId,
+    estimatedBytes + slotOverheadBytes
+  );
+
+  const storedAtIso = new Date(nowMs).toISOString();
+  const expiresAtMs = clientTime.ms + TTL_MS;
+  const expiresAtIso = new Date(expiresAtMs).toISOString();
+
+  const newRecord = Object.freeze({
+    reportId,
+    shop,
+    productId,
+    productTitle,
+    mode: LIVE_BENCH_MODE,
+    sectionKey,
+    sectionLabel,
+    runIdentity,
+    runTimestamp,
+    capturedAt: clientTime.raw,
+    capturedAtMs: clientTime.ms,
+    storedAt: storedAtIso,
+    storedAtMs: nowMs,
+    expiresAt: expiresAtIso,
+    expiresAtMs,
+    limitUsed,
+    clipboardPartCount: partsCheck.partCount,
+    activePartIndex: partsCheck.activePartIndex,
+    partsMeta: partsCheck.partsMeta,
+    fullText,
+    reportUtf8Bytes,
+    reportChunks,
+    uiAuditState: auditResult.state,
+    uiAuditCanonicalJson: auditResult.canonicalJson,
+    uiAuditUtf8Bytes: auditResult.utf8Bytes,
+    uiAuditChunks: auditResult.chunks,
+    estimatedBytes,
+    isLiveBenchState: true,
+    benchSessionId,
+    benchRevision,
+    selectionState: "selected",
+    baselineLoadedAt,
+    baselineSource: "last_loaded_manifest",
+    workingState: "unsaved_browser_bench",
+  });
+
+  const updatedSession = Object.freeze({
+    shop,
+    benchSessionId,
+    highestRevision: benchRevision,
+    selectionState: "selected",
+    activeReportId: reportId,
+    activeProductId: productId,
+    previousProductId:
+      previousActiveProductId && previousActiveProductId !== productId
+        ? previousActiveProductId
+        : existingSession?.previousProductId || null,
+    clientStateChangedAt: clientTime.raw,
+    clientStateChangedAtMs: clientTime.ms,
+    baselineLoadedAt,
+    updatedAt: storedAtIso,
+    updatedAtMs: nowMs,
+    expiresAt: expiresAtIso,
+    expiresAtMs,
+    baselineSource: "last_loaded_manifest",
+    workingState: "unsaved_browser_bench",
+    slotOverheadBytes,
+  });
+
+  state.recordsById.set(reportId, newRecord);
+  state.liveSessionsByKey.set(compositeKey, updatedSession);
+  state.totalBytes += estimatedBytes + slotOverheadBytes;
+  state.totalStoredCount += 1;
+
+  let shopSet = state.shopIndex.get(shop);
+  if (!shopSet) {
+    shopSet = new Set();
+    state.shopIndex.set(shop, shopSet);
+  }
+  shopSet.add(reportId);
+
+  let shopSessionSet = state.shopLiveSessions.get(shop);
+  if (!shopSessionSet) {
+    shopSessionSet = new Set();
+    state.shopLiveSessions.set(shop, shopSessionSet);
+  }
+  shopSessionSet.add(benchSessionId);
+
+  const shopStats = getShopStats(state, shop);
+  shopStats.storedCount += 1;
+  shopStats.liveSyncCount += 1;
+  shopStats.lastCapturedAtMs = clientTime.ms;
+
+  return finalizeResponse({
+    ok: true,
+    status: "stored",
+    deduplicated: false,
+    report: formatRecordMetadata(newRecord),
+    liveSession: formatLiveSessionSlotSummary(updatedSession),
+  });
 }
 
 export function storeTelemetryReport(options = {}) {
@@ -664,7 +1524,7 @@ export function storeTelemetryReport(options = {}) {
     });
   }
 
-  const { shop: rawShop, packet, uiAudit = null } = options;
+  const { shop: rawShop, packet, uiAudit = null, liveState = null } = options;
   const shopCheck = validateShop(rawShop);
   if (!shopCheck.ok) {
     return finalizeResponse({
@@ -675,6 +1535,32 @@ export function storeTelemetryReport(options = {}) {
     });
   }
   const shop = shopCheck.shop;
+
+  const nowMs = Date.now();
+  const state = getCacheState();
+  purgeExpiredRecords(state, nowMs);
+
+  const packetMode =
+    isPlainObject(packet) && typeof packet.mode === "string"
+      ? packet.mode.trim()
+      : "";
+  const isLiveBenchCall =
+    packetMode === LIVE_BENCH_MODE ||
+    (isPlainObject(liveState) &&
+      (liveState.mode === LIVE_BENCH_MODE ||
+        liveState.selectionState !== undefined ||
+        liveState.benchSessionId !== undefined));
+
+  if (isLiveBenchCall) {
+    return storeLiveBenchStateInternal({
+      state,
+      shop,
+      packet,
+      uiAudit,
+      liveState,
+      nowMs,
+    });
+  }
 
   if (!packet || typeof packet !== "object" || Array.isArray(packet)) {
     return finalizeResponse({
@@ -742,10 +1628,6 @@ export function storeTelemetryReport(options = {}) {
       message: "packet.capturedAt must be a valid ISO-8601 timestamp string.",
     });
   }
-
-  const nowMs = Date.now();
-  const state = getCacheState();
-  purgeExpiredRecords(state, nowMs);
 
   const ageMs = nowMs - parsedCapturedAt.ms;
   if (ageMs > TTL_MS) {
@@ -895,7 +1777,7 @@ export function storeTelemetryReport(options = {}) {
     });
   }
 
-  enforceCapacityLimits(state, shop, estimatedBytes);
+  enforceManualCapacityLimits(state, shop, estimatedBytes);
 
   const expiresAtMs = parsedCapturedAt.ms + TTL_MS;
   const expiresAt = new Date(expiresAtMs).toISOString();
@@ -928,6 +1810,13 @@ export function storeTelemetryReport(options = {}) {
     uiAuditUtf8Bytes: auditResult.utf8Bytes,
     uiAuditChunks: auditResult.chunks,
     estimatedBytes,
+    isLiveBenchState: false,
+    benchSessionId: null,
+    benchRevision: null,
+    selectionState: null,
+    baselineLoadedAt: null,
+    baselineSource: null,
+    workingState: null,
   });
 
   state.recordsById.set(reportId, newRecord);
@@ -951,6 +1840,22 @@ export function storeTelemetryReport(options = {}) {
     deduplicated: false,
     report: formatRecordMetadata(newRecord),
   });
+}
+
+function getShopLiveSessionSummaries(state, shop, maxItems = 3) {
+  const shopSessionSet = state.shopLiveSessions.get(shop);
+  if (!shopSessionSet || shopSessionSet.size === 0) {
+    return [];
+  }
+  const entries = [];
+  for (const sid of shopSessionSet) {
+    const entry = state.liveSessionsByKey.get(buildLiveSessionCompositeKey(shop, sid));
+    if (entry && entry.shop === shop) {
+      entries.push(entry);
+    }
+  }
+  entries.sort(compareLiveSessionsNewestFirst);
+  return entries.slice(0, maxItems).map(formatLiveSessionSlotSummary);
 }
 
 export function listTelemetryReports(options = {}) {
@@ -1037,6 +1942,7 @@ export function listTelemetryReports(options = {}) {
 
   const shopSet = state.shopIndex.get(shop);
   const shopStats = getShopStats(state, shop);
+  const liveSessions = getShopLiveSessionSummaries(state, shop, 3);
 
   const matchingRecords = [];
   if (shopSet) {
@@ -1079,16 +1985,41 @@ export function listTelemetryReports(options = {}) {
     const hadPriorShopActivity =
       shopStats.storedCount > 0 ||
       shopStats.expiredCount > 0 ||
-      shopStats.evictedCount > 0;
+      shopStats.evictedCount > 0 ||
+      shopStats.liveSyncCount > 0 ||
+      shopStats.liveClearedCount > 0 ||
+      shopStats.liveExpiredCount > 0;
 
-    return finalizeResponse({
+    const allSessionsDeselected =
+      liveSessions.length > 0 &&
+      liveSessions.every((s) => s.selectionState === "none");
+
+    let unavailableReason = hadPriorShopActivity
+      ? "no_matching_active_reports_in_memory"
+      : "cache_empty_or_process_restarted";
+    let unavailableMessage =
+      "No matching captured Meta Injector reports or live bench states are currently held in this process memory cache. Cache is volatile and does not persist across restarts or separate workers.";
+
+    if (allSessionsDeselected && (!normalizedMode || normalizedMode === LIVE_BENCH_MODE)) {
+      unavailableReason = "bench_selection_cleared";
+      unavailableMessage =
+        "Active browser session has selectionState=\"none\" (no product currently selected on the bench). Do not substitute a previous product.";
+    } else if (
+      normalizedProductId &&
+      liveSessions.some(
+        (s) => s.selectionState === "selected" && s.activeProductId !== normalizedProductId
+      )
+    ) {
+      unavailableReason = "requested_product_not_active_on_bench";
+      unavailableMessage =
+        "No matching report for the requested productId. Another product is currently selected in the active browser session; never substitute another product.";
+    }
+
+    const baseUnavailable = {
       ok: true,
       status: "unavailable",
-      reason: hadPriorShopActivity
-        ? "no_matching_active_reports_in_memory"
-        : "cache_empty_or_process_restarted",
-      message:
-        "No matching captured Meta Injector reports are currently held in this process memory cache. Reports are volatile and do not persist across restarts or separate workers.",
+      reason: unavailableReason,
+      message: unavailableMessage,
       reports: [],
       pagination: {
         requestedLimit: boundedLimit,
@@ -1097,7 +2028,16 @@ export function listTelemetryReports(options = {}) {
         hasNextPage: false,
         nextAfterReportId: null,
       },
-    });
+    };
+
+    if (liveSessions.length > 0) {
+      const withSessions = { ...baseUnavailable, liveSessions };
+      if (utf8ByteLength(JSON.stringify(withSessions)) <= MAX_RESPONSE_UTF8_BYTES) {
+        return finalizeResponse(withSessions);
+      }
+    }
+
+    return finalizeResponse(baseUnavailable);
   }
 
   const candidateSlice = matchingRecords.slice(
@@ -1125,6 +2065,7 @@ export function listTelemetryReports(options = {}) {
         hasNextPage: hasMore,
         nextAfterReportId: nextCursor,
       },
+      ...(liveSessions.length > 0 ? { liveSessions } : {}),
     };
 
     if (utf8ByteLength(JSON.stringify(testEnvelope)) <= MAX_RESPONSE_UTF8_BYTES) {
@@ -1135,6 +2076,24 @@ export function listTelemetryReports(options = {}) {
   }
 
   if (candidateSlice.length > 0 && selectedItems.length === 0) {
+    const singleFormatted = formatRecordMetadata(candidateSlice[0]);
+    const hasMoreSingle = startIndex + 1 < matchingRecords.length;
+    const fallbackEnvelope = {
+      ok: true,
+      status: "ok",
+      reports: [singleFormatted],
+      pagination: {
+        requestedLimit: boundedLimit,
+        returnedCount: 1,
+        totalMatching: matchingRecords.length,
+        hasNextPage: hasMoreSingle,
+        nextAfterReportId: hasMoreSingle ? singleFormatted.reportId : null,
+      },
+    };
+    if (utf8ByteLength(JSON.stringify(fallbackEnvelope)) <= MAX_RESPONSE_UTF8_BYTES) {
+      return finalizeResponse(fallbackEnvelope);
+    }
+
     return finalizeResponse({
       ok: false,
       status: "error",
@@ -1150,7 +2109,7 @@ export function listTelemetryReports(options = {}) {
       ? selectedItems[selectedItems.length - 1].reportId
       : null;
 
-  return finalizeResponse({
+  const finalPayload = {
     ok: true,
     status: "ok",
     reports: selectedItems,
@@ -1161,7 +2120,16 @@ export function listTelemetryReports(options = {}) {
       hasNextPage,
       nextAfterReportId,
     },
-  });
+  };
+
+  if (liveSessions.length > 0) {
+    const candidateWithSessions = { ...finalPayload, liveSessions };
+    if (utf8ByteLength(JSON.stringify(candidateWithSessions)) <= MAX_RESPONSE_UTF8_BYTES) {
+      return finalizeResponse(candidateWithSessions);
+    }
+  }
+
+  return finalizeResponse(finalPayload);
 }
 
 export function readTelemetryReport(options = {}) {
@@ -1227,21 +2195,43 @@ export function readTelemetryReport(options = {}) {
   const record = state.recordsById.get(reportId);
   if (!record || record.shop !== shop) {
     const shopStats = getShopStats(state, shop);
+    const liveSessions = getShopLiveSessionSummaries(state, shop, 2);
     const hadPriorShopActivity =
       shopStats.storedCount > 0 ||
       shopStats.expiredCount > 0 ||
-      shopStats.evictedCount > 0;
+      shopStats.evictedCount > 0 ||
+      shopStats.liveSyncCount > 0 ||
+      shopStats.liveClearedCount > 0 ||
+      shopStats.liveExpiredCount > 0;
 
-    return finalizeResponse({
+    const notFoundPayload = {
       ok: false,
       status: "not_found",
-      code: hadPriorShopActivity ? "expired_or_not_found" : "cache_unavailable_or_not_found",
+      code: hadPriorShopActivity
+        ? "expired_superseded_or_not_found"
+        : "cache_unavailable_or_not_found",
       reportId,
       section,
       message:
-        "The requested reportId was not found for this shop. It may have expired after 30 minutes, been evicted, or been lost due to a server restart or separate worker process.",
-    });
+        "The requested reportId was not found for this shop. It may have been superseded by a newer live bench revision, cleared on product switch/deselection, expired after 30 minutes, or lost due to a server restart or separate worker process.",
+      ...(liveSessions.length > 0 ? { liveSessions } : {}),
+    };
+
+    return finalizeResponse(notFoundPayload);
   }
+
+  const liveMetaFields = record.isLiveBenchState
+    ? {
+        benchSessionId: record.benchSessionId,
+        benchRevision: record.benchRevision,
+        selectionState: record.selectionState,
+        clientStateChangedAt: record.capturedAt,
+        baselineLoadedAt: record.baselineLoadedAt,
+        serverReceivedAt: record.storedAt,
+        baselineSource: record.baselineSource,
+        workingState: record.workingState,
+      }
+    : {};
 
   if (section === "ui_audit") {
     if (record.uiAuditState !== "measured" || !record.uiAuditCanonicalJson) {
@@ -1254,9 +2244,11 @@ export function readTelemetryReport(options = {}) {
         section: "ui_audit",
         uiAuditState: "not_measured",
         capturedAt: record.capturedAt,
+        storedAt: record.storedAt,
         expiresAt: record.expiresAt,
         runIdentity: record.runIdentity,
         runTimestamp: record.runTimestamp,
+        ...liveMetaFields,
         chunkIndex: 0,
         chunkCount: 0,
         hasMoreChunks: false,
@@ -1293,9 +2285,11 @@ export function readTelemetryReport(options = {}) {
       section: "ui_audit",
       uiAuditState: "measured",
       capturedAt: record.capturedAt,
+      storedAt: record.storedAt,
       expiresAt: record.expiresAt,
       runIdentity: record.runIdentity,
       runTimestamp: record.runTimestamp,
+      ...liveMetaFields,
       chunkIndex,
       chunkCount: chunks.length,
       chunkUtf8Bytes: utf8ByteLength(chunkText),
@@ -1335,9 +2329,11 @@ export function readTelemetryReport(options = {}) {
     section: "report",
     uiAuditState: record.uiAuditState,
     capturedAt: record.capturedAt,
+    storedAt: record.storedAt,
     expiresAt: record.expiresAt,
     runIdentity: record.runIdentity,
     runTimestamp: record.runTimestamp,
+    ...liveMetaFields,
     limitUsed: record.limitUsed,
     clipboardPartCount: record.clipboardPartCount,
     activePartIndex: record.activePartIndex,
