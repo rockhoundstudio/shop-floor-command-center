@@ -20,15 +20,11 @@ api_version = "2026-07"
   uri = "/webhooks/app/uninstalled"
 
   [[webhooks.subscriptions]]
-  topics = [ "pages/create", "pages/update" ]
-  uri = "/webhooks"
-
-  [[webhooks.subscriptions]]
   topics = [ "collections/create" ]
   uri = "/webhooks"
 
   [[webhooks.subscriptions]]
-  topics = [ "customers/data_request", "customers/redact", "shop/redact" ]
+  compliance_topics = [ "customers/data_request", "customers/redact", "shop/redact" ]
   uri = "/webhooks"
 
 [access_scopes]
