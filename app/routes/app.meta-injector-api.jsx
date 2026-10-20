@@ -69,7 +69,12 @@ const REVIEWED_EXACT_DESTINATION_TYPE_CONTRACTS = Object.freeze({
   "custom.cut_type": "single_line_text_field",
   "custom.secondary_colors": "single_line_text_field",
   "custom.wire_material": "single_line_text_field",
-  "custom.jewelry_type": "single_line_text_field"
+  "custom.jewelry_type": "single_line_text_field",
+  "custom.seo_title": "single_line_text_field",
+  "custom.chain_material": "single_line_text_field",
+  "custom.chain_link_type": "single_line_text_field",
+  "custom.jewelry_finding_type": "single_line_text_field",
+  "custom.google_product_category": "single_line_text_field"
 });
 
 const MASTER_TYPE_MAP = {
@@ -1800,18 +1805,18 @@ export const action = async ({ request }) => {
                      const currentUnit = invItem.measurement?.weight?.unit;
                      
                      if (parseFloat(currentWeight) !== parsedNum || currentUnit !== sw.unit) {
-                         doShippingWeightUpdate = true;
-                         shippingWeightInput = {
-                            id: invItem.id,
-                            measurement: { weight: { value: parsedNum, unit: sw.unit } }
-                         };
-                         proposedChanges["native_shipping_weight"] = { 
-                            from: `${currentWeight} ${currentUnit}`, 
-                            to: `${parsedNum} ${sw.unit}` 
-                         };
-                         attemptedDestinations.push("native_shipping_weight");
+                        doShippingWeightUpdate = true;
+                        shippingWeightInput = {
+                           id: invItem.id,
+                           measurement: { weight: { value: parsedNum, unit: sw.unit } }
+                        };
+                        proposedChanges["native_shipping_weight"] = { 
+                           from: `${currentWeight} ${currentUnit}`, 
+                           to: `${parsedNum} ${sw.unit}` 
+                        };
+                        attemptedDestinations.push("native_shipping_weight");
                      } else {
-                         unchanged.push("native_shipping_weight");
+                        unchanged.push("native_shipping_weight");
                      }
                   }
                } catch (e) {
