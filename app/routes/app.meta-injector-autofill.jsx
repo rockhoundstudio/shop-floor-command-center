@@ -620,7 +620,7 @@ function getDerivedMaterial(stoneFam) {
 const getSharedFactualContract = () => `
 --- SHARED FACTUAL CONTRACT ---
 1. PRIORITY: Explicit operator corrections > established product facts > resolved origin/collection source context > supported visible observations.
-2. UNKNOWN FACTS: Unknown facts MUST remain omitted. Do NOT invent defaults.
+​2. UNKNOWN FACTS: Unknown facts MUST remain omitted. Do NOT invent defaults.
 3. NO VISUAL INFERENCE: Do not infer treatment, provenance, plating, or mineral rarity from appearance alone.
 4. SUPPORTED VOCABULARY: Do not force an unsupported title into a guessed "closest" mineral. Ensure chosen facts match the supported definitions.
 5. HARDWARE & CONSTRUCTION: Preserve existing hardware inventory choices and supplied construction details. Do not replace them with a newly invented dictionary.
@@ -804,6 +804,11 @@ ${getSharedFactualContract()}
 SUPPLIED HUMAN / BENCH FACTS (Authoritative when nonblank; do not contradict or invent replacements):
 ${operatorFactsStr || "- No explicit operator overrides supplied."}
 
+TREATMENT & YES/NO TEXT PRESERVATION RULES:
+- Preserve actual supplied Yes/No TEXT metafield values (such as treated and is_one_of_a_kind) as exact "Yes" or "No" strings, never boolean true/false or text "true"/"false".
+- Preserve supplied treatment and hardware phrases verbatim.
+- Do not infer treatment from photographs or replace unknown/blank treatment with a guess.
+
 REQUIRED JSON KEYS:
 - primary_color
 - color_pattern: Select EXACTLY one: Green, Black, Blue flash, Red, White, Multicolor, Gold, Pink, Yellow, Silver, Purple, Striped, Clear, Yellow veins, None
@@ -872,13 +877,14 @@ ${currentDataStr || "- No explicit data provided."}
 
 CRITICAL RULES FOR TAB 3:
 1. Explicit operator-provided corrections take priority over image inference and stale product data.
-2. If no explicit correction is supplied, preserve a nonblank current value exactly. Preserve finding details exactly.
+​2. If no explicit correction is supplied, preserve a nonblank current value exactly. Preserve finding details exactly.
 3. Never generate, rename, or propose a shopify_title, piece_name, or price during repair/rescan.
 4. Do not infer jewelry, chain material, cord, bail, wire wrapping, or readiness from an image when the source data doesn't explicitly establish it. Leave uncertain values unresolved.
 5. Treat origin_story as hidden, read-only context from the existing origin page. Do not generate or save an origin story. Use the page only for supported metadata.
 6. Never write "None" or "Unknown" as filler.
 7. Do not invent details or lived history. Leave unknown fields entirely unset.
 8. If the current data establishes the piece is a pendant or finished jewelry, the product_format MUST be "Pendant" or similar finished form.
+9. Preserve actual supplied Yes/No TEXT metafield values (such as treated and is_one_of_a_kind) as exact "Yes" or "No" strings, never boolean true/false or text "true"/"false". Preserve supplied treatment and hardware phrases verbatim. Do not infer treatment from photographs or replace unknown/blank treatment with a guess.
 
 Return ONLY a JSON object. OMIT any keys if you cannot determine the value supported by evidence. DO NOT include "piece_name", "origin_story", "price", "shopify_title", "weight_grams", "shipping_weight_oz", "generated_description", "rarity", or "authenticity".
 
@@ -986,7 +992,7 @@ COLLECTIONS: ${collectionsList.map(c => c.handle).join(", ")}
 
 INSTRUCTIONS:
 1. Keep title parsing focused on identity. SEO must use supported facts and must not compete with later factual SEO generation.
-2. Origin ("${segment2}") is the AUTHORITY. Set 'origin_location' to the clean geographic name. Match 'collection_name' and 'collection_location' to the live store entry when evidenced; do not invent collection names or handles.
+​2. Origin ("${segment2}") is the AUTHORITY. Set 'origin_location' to the clean geographic name. Match 'collection_name' and 'collection_location' to the live store entry when evidenced; do not invent collection names or handles.
 3. 'stone_family' must match an entry from the supported list: ${validFamilies.join(", ")}. Do not force unsupported titles into guessed minerals.
 4. Never alter or replace 'piece_name'; it must remain "${segment3}".
 
@@ -1148,7 +1154,7 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
           "surface_finish", "primary_color", "color_pattern", "primary_use",
           "primary_medium", "secondary_medium", "setting_ready", "bail_included",
           "jewelry_finding_type", "chain_material", "chain_link_type",
-          "necklace_design", "jewelry_type"
+          "necklace_design", "jewelry_type", "treated", "treatment_status"
         ];
         for (const key of explicitOperatorKeys) {
           if (currentInputFacts[key] !== undefined && currentInputFacts[key] !== "") {
@@ -1400,7 +1406,7 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
           "wire_material", "secondary_medium", "primary_medium", "primary_use",
           "product_format", "jewelry_type", "necklace_design", "chain_link_type",
           "character_marks", "setting_ready", "craftsmanship", "poetic_hook",
-          "seo_title", "google_product_category"
+          "seo_title", "google_product_category", "treated", "treatment_status"
         ];
 
         const reviewProposals = {};

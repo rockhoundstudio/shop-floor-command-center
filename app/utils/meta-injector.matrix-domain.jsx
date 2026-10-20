@@ -213,6 +213,18 @@ const serializeFieldValueByType = (rawVal, expectedType, targetKey = "") => {
     return normalizeOoakComparable(rawVal, expectedType);
   }
 
+  if (targetKey === "custom.treated" && expectedType === "single_line_text_field") {
+    if (typeof rawVal === "boolean") {
+      return rawVal ? "Yes" : "No";
+    }
+    const trimmed = String(rawVal).trim();
+    if (!trimmed) return "";
+    const lower = trimmed.toLowerCase();
+    if (lower === "true") return "Yes";
+    if (lower === "false") return "No";
+    return String(rawVal);
+  }
+
   if (expectedType === "list.single_line_text_field") {
     if (Array.isArray(rawVal)) {
       const cleaned = rawVal

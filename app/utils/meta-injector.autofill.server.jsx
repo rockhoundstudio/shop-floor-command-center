@@ -903,6 +903,11 @@ ${getSharedFactualContract()}
 SUPPLIED HUMAN / BENCH FACTS (Authoritative when nonblank; do not contradict or invent replacements):
 ${operatorFactsStr || "- No explicit operator overrides supplied."}
 
+TREATMENT & YES/NO TEXT PRESERVATION RULES:
+- Preserve actual supplied Yes/No TEXT metafield values (such as treated and is_one_of_a_kind) as exact "Yes" or "No" strings, never boolean true/false or text "true"/"false".
+- Preserve supplied treatment and hardware phrases verbatim.
+- Do not infer treatment from photographs or replace unknown/blank treatment with a guess.
+
 REQUIRED JSON KEYS:
 - primary_color
 - color_pattern: Select EXACTLY one: Green, Black, Blue flash, Red, White, Multicolor, Gold, Pink, Yellow, Silver, Purple, Striped, Clear, Yellow veins, None
@@ -988,6 +993,7 @@ CRITICAL RULES FOR TAB 3:
 6. Never write "None" or "Unknown" as filler.
 7. Do not invent details or lived history. Leave unknown fields entirely unset.
 8. If the current data establishes the piece is a pendant or finished jewelry, the product_format MUST be "Pendant" or similar finished form.
+9. Preserve actual supplied Yes/No TEXT metafield values (such as treated and is_one_of_a_kind) as exact "Yes" or "No" strings, never boolean true/false or text "true"/"false". Preserve supplied treatment and hardware phrases verbatim. Do not infer treatment from photographs or replace unknown/blank treatment with a guess.
 
 Return ONLY a JSON object. OMIT any keys if you cannot determine the value supported by evidence. DO NOT include "piece_name", "origin_story", "price", "shopify_title", "weight_grams", "shipping_weight_oz", "generated_description", "rarity", or "authenticity".
 
@@ -1371,7 +1377,7 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
         "surface_finish", "primary_color", "color_pattern", "primary_use",
         "primary_medium", "secondary_medium", "setting_ready", "bail_included",
         "jewelry_finding_type", "chain_material", "chain_link_type",
-        "necklace_design", "jewelry_type"
+        "necklace_design", "jewelry_type", "treated", "treatment_status"
       ];
       for (const key of explicitOperatorKeys) {
         if (currentInputFacts[key] !== undefined && currentInputFacts[key] !== "") {
@@ -1658,7 +1664,7 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
         "wire_material", "secondary_medium", "primary_medium", "primary_use",
         "product_format", "jewelry_type", "necklace_design", "chain_link_type",
         "character_marks", "setting_ready", "craftsmanship", "poetic_hook",
-        "seo_title", "google_product_category"
+        "seo_title", "google_product_category", "treated", "treatment_status"
       ];
 
       const reviewProposals = {};

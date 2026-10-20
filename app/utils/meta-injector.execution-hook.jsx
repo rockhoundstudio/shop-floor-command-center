@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { PRODUCT_TEMPLATE_GROUPS } from "./meta-injector.constants.jsx";
 import {
   VERIFIED_STANDARDIZED_DESTINATIONS,
@@ -21,6 +21,7 @@ import {
 } from "./meta-injector.matrix-domain.jsx";
 
 const SENSITIVE_DIAG_KEY_REGEX = /token|secret|password|authorization|cookie|header|credential|api[_-]?key|session/i;
+const EXACT_PRODUCT_GID_REGEX = /^gid:\/\/shopify\/Product\/\d+$/;
 
 const CANONICAL_INCOMING_ALIAS_MAP = Object.freeze({
   stone_family: "custom.material",
@@ -53,7 +54,9 @@ const OPERATOR_AUTHORITATIVE_DESTINATIONS = new Set([
   "custom.weight_grams",
   "custom.dimensions_mm",
   "custom.shipping_weight_oz",
-  "native_shipping_weight"
+  "native_shipping_weight",
+  "custom.treated",
+  "custom.treatment_status"
 ]);
 
 const isEffectiveRetiredKey = (key) => {
@@ -229,6 +232,17 @@ const formatComparableValue = (val, expectedType, targetKey = "") => {
   if (val === undefined || val === null) return "";
   if (targetKey === "custom.is_one_of_a_kind" || targetKey === "custom.is_ooak") {
     return normalizeOoakEquivalentValue(val, expectedType);
+  }
+  if (targetKey === "custom.treated" && expectedType === "single_line_text_field") {
+    if (typeof val === "boolean") {
+      return val ? "Yes" : "No";
+    }
+    const trimmed = String(val).trim();
+    if (!trimmed) return "";
+    const lower = trimmed.toLowerCase();
+    if (lower === "true") return "Yes";
+    if (lower === "false") return "No";
+    return trimmed;
   }
   if (expectedType === "list.single_line_text_field") {
     if (Array.isArray(val)) {
@@ -599,11 +613,71 @@ export function useMetaInjectorExecution({
   getStandardizedEvaluationForField,
   getFieldMetadata
 }) {
+  // Per-product automatic read-only selection-load tracker (isolated from manual batch Generate Repair Plan)
+  // Shape per GID: { status: "inflight" | "loaded" | "failed", token: string, error?: string }
+  const autoSelectionLoadGuardRef = useRef({});
+  const activeOperationCycleRef = useRef(null);
+
+  // Reset per-product automatic load guards when Clear Rack & Reset Bench clears all state
+  useEffect(() => {
+    if (
+      selectedBenchId === null &&
+      queueIds.length === 0 &&
+      Object.keys(manifestData || {}).length === 0 &&
+      !isLoadingData &&
+      !isExecuting &&
+      pendingOperation === null
+    ) {
+      autoSelectionLoadGuardRef.current = {};
+      activeOperationCycleRef.current = null;
+    }
+  }, [selectedBenchId, queueIds.length, manifestData, isLoadingData, isExecuting, pendingOperation]);
+
+  // Mark any product that already has a loaded manifest as "loaded" so it is never re-fetched on incidental renders
+  useEffect(() => {
+    const loadedIds = Object.keys(manifestData || {});
+    for (let i = 0; i < loadedIds.length; i += 1) {
+      const pid = loadedIds[i];
+      if (manifestData[pid]) {
+        autoSelectionLoadGuardRef.current[pid] = {
+          status: "loaded",
+          token: autoSelectionLoadGuardRef.current[pid]?.token || "manifest_present"
+        };
+      }
+    }
+  }, [manifestData]);
+
+  // Track batchFetcher lifecycle transitions for the active pendingOperation so retained fetcher.data is never misconsumed
+  useEffect(() => {
+    if (!pendingOperation) {
+      activeOperationCycleRef.current = null;
+      return;
+    }
+    if (
+      !activeOperationCycleRef.current ||
+      activeOperationCycleRef.current.token !== pendingOperation.token
+    ) {
+      activeOperationCycleRef.current = {
+        id: pendingOperation.id,
+        intent: pendingOperation.intent,
+        token: pendingOperation.token,
+        source: pendingOperation.source || "manual_or_batch",
+        baselineData: batchFetcher.data,
+        sawNonIdle: batchFetcher.state !== "idle"
+      };
+      return;
+    }
+    if (batchFetcher.state !== "idle" && !activeOperationCycleRef.current.sawNonIdle) {
+      activeOperationCycleRef.current.sawNonIdle = true;
+    }
+  }, [pendingOperation, batchFetcher.state, batchFetcher.data]);
+
   const generateRepairPlan = useCallback(() => {
     if (queueIds.length === 0) {
       setSafetyError("Cannot generate plan: No inventory selected. Please check items in the left column first.");
       return;
     }
+    autoSelectionLoadGuardRef.current = {};
     setApprovals({});
     setManualEdits({});
     setIsLoadingData(true);
@@ -695,6 +769,97 @@ export function useMetaInjectorExecution({
     setAiStep(1);
   }, [queueIds, manifestData]);
 
+  // Automatic Read-Only Selection Baseline Loader
+  // Triggers when a valid Product GID is selected on Tab 3 and its manifest baseline is not yet loaded in browser state.
+  // Never calls generateRepairPlan, never touches queueIds/loadIndex/isLoadingData, and never clears approvals or manualEdits.
+  useEffect(() => {
+    const cleanSelectedId = typeof selectedBenchId === "string" ? selectedBenchId.trim() : "";
+    if (!cleanSelectedId || !EXACT_PRODUCT_GID_REGEX.test(cleanSelectedId)) {
+      return;
+    }
+
+    // Do not overwrite an already-loaded manifest on incidental renders
+    if (manifestData && manifestData[cleanSelectedId]) {
+      autoSelectionLoadGuardRef.current[cleanSelectedId] = {
+        status: "loaded",
+        token: autoSelectionLoadGuardRef.current[cleanSelectedId]?.token || "manifest_present"
+      };
+      return;
+    }
+
+    // Serialize safely against batch/manual operations and busy fetcher state
+    if (isLoadingData || isExecuting || pendingOperation !== null || batchFetcher.state !== "idle") {
+      return;
+    }
+
+    // Per-product in-flight / attempt / failure guard prevents duplicate submits and infinite retry loops
+    const existingGuard = autoSelectionLoadGuardRef.current[cleanSelectedId];
+    if (
+      existingGuard &&
+      (existingGuard.status === "inflight" ||
+        existingGuard.status === "loaded" ||
+        existingGuard.status === "failed")
+    ) {
+      return;
+    }
+
+    const token = `autoload_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+    autoSelectionLoadGuardRef.current[cleanSelectedId] = {
+      status: "inflight",
+      token
+    };
+    activeOperationCycleRef.current = {
+      id: cleanSelectedId,
+      intent: "loadProductData",
+      token,
+      source: "auto_selection_load",
+      baselineData: batchFetcher.data,
+      sawNonIdle: false
+    };
+
+    setPendingOperation({
+      id: cleanSelectedId,
+      intent: "loadProductData",
+      token,
+      source: "auto_selection_load"
+    });
+    updateProductState(cleanSelectedId, STATUS.SCANNING, [
+      "Auto-loading read-only product baseline for selected bench item..."
+    ]);
+
+    try {
+      const fd = new FormData();
+      fd.append("intent", "loadProductData");
+      fd.append("pieceId", cleanSelectedId);
+      batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-api" });
+    } catch (submitErr) {
+      const errMsg = sanitizeDiagString(
+        submitErr?.message || String(submitErr || "Failed to submit automatic baseline load.")
+      ) || "Failed to submit automatic baseline load.";
+      autoSelectionLoadGuardRef.current[cleanSelectedId] = {
+        status: "failed",
+        token,
+        error: errMsg
+      };
+      activeOperationCycleRef.current = null;
+      setPendingOperation(null);
+      updateProductState(cleanSelectedId, STATUS.FAILED, [errMsg]);
+      setSafetyError(`Automatic baseline load failed for ${cleanSelectedId}: ${errMsg}`);
+    }
+  }, [
+    selectedBenchId,
+    manifestData,
+    isLoadingData,
+    isExecuting,
+    pendingOperation,
+    batchFetcher,
+    batchFetcher.state,
+    batchFetcher.data,
+    updateProductState,
+    setPendingOperation,
+    setSafetyError
+  ]);
+
   // Unified Dispatch Loop Driver
   useEffect(() => {
     const isProcessing = isLoadingData || isExecuting;
@@ -747,7 +912,11 @@ export function useMetaInjectorExecution({
     const token = Date.now().toString() + Math.random().toString(36).substring(2, 7);
 
     if (isLoadingData) {
-      setPendingOperation({ id: currentId, intent: "loadProductData", token });
+      autoSelectionLoadGuardRef.current[currentId] = {
+        status: "inflight",
+        token
+      };
+      setPendingOperation({ id: currentId, intent: "loadProductData", token, source: "batch_load" });
       updateProductState(currentId, STATUS.SCANNING, ["Fetching live metafields by GID..."]);
       const fd = new FormData();
       fd.append("intent", "loadProductData");
@@ -1269,13 +1438,52 @@ export function useMetaInjectorExecution({
 
   // Unified Response Receiver
   useEffect(() => {
-    if (batchFetcher.state === "idle" && batchFetcher.data && batchFetcher.data !== lastProcessedData) {
+    if (batchFetcher.state !== "idle") {
+      return;
+    }
+
+    // Handle fetcher returning to idle without delivering new data after a non-idle submission cycle
+    if (
+      pendingOperation &&
+      activeOperationCycleRef.current &&
+      activeOperationCycleRef.current.token === pendingOperation.token &&
+      activeOperationCycleRef.current.sawNonIdle &&
+      batchFetcher.data === activeOperationCycleRef.current.baselineData
+    ) {
+      const stalledOp = pendingOperation;
+      const isAutoSelectionOp = stalledOp.source === "auto_selection_load";
+      const emptyPayloadMsg = `Request [${stalledOp.intent}] for ${stalledOp.id} returned to idle without delivering a response payload.`;
+      if (stalledOp.intent === "loadProductData" && stalledOp.id) {
+        autoSelectionLoadGuardRef.current[stalledOp.id] = {
+          status: "failed",
+          token: stalledOp.token,
+          error: emptyPayloadMsg
+        };
+      }
+      activeOperationCycleRef.current = null;
+      setPendingOperation(null);
+      updateProductState(stalledOp.id, STATUS.FAILED, [emptyPayloadMsg]);
+      setSafetyError(emptyPayloadMsg);
+      if (!isAutoSelectionOp) {
+        setIsExecuting(false);
+        setIsLoadingData(false);
+      }
+      return;
+    }
+
+    if (batchFetcher.data && batchFetcher.data !== lastProcessedData) {
       const data = batchFetcher.data;
       setLastProcessedData(data);
 
       const targetId = data.pieceId || data.productId;
       const intent = data.intent;
       const success = data.success;
+      const isAutoSelectionOp = pendingOperation?.source === "auto_selection_load";
+      const pendingStageLabel = isAutoSelectionOp
+        ? "Auto Selection Load"
+        : isLoadingData
+          ? "Manifest Load"
+          : "AI/Repair";
 
       if (intent === "resolveStandardizedCandidates") {
         return;
@@ -1285,15 +1493,48 @@ export function useMetaInjectorExecution({
         const productIntents = ["loadProductData", "executeRepairPlan", "batchAuditItem", "saveMetafields", "titleParse", "tab3FullRescan", "generateDescription"];
         if (productIntents.includes(intent)) {
           if (!targetId || targetId !== pendingOperation.id) {
-            setSafetyError(`Identity Guard Failed. Response intent: [${intent}], returned ID: [${targetId || 'None'}], expected ID: [${pendingOperation.id}], pending stage: [${isLoadingData ? 'Manifest Load' : 'AI/Repair'}], processed state: [${success ? 'Success' : 'Failed'}]. Result discarded.`);
-            setIsExecuting(false);
-            setIsLoadingData(false);
+            if (pendingOperation.intent === "loadProductData" && pendingOperation.id) {
+              const idErr = !success
+                ? (sanitizeDiagString(typeof data.message === "string" ? data.message : "") ||
+                   sanitizeDiagString(typeof data.error === "string" ? data.error : "") ||
+                   "Load request failed without matching productId.")
+                : `Identity Guard Failed: expected [${pendingOperation.id}], received [${targetId || "None"}].`;
+              autoSelectionLoadGuardRef.current[pendingOperation.id] = {
+                status: "failed",
+                token: pendingOperation.token,
+                error: idErr
+              };
+              updateProductState(pendingOperation.id, STATUS.FAILED, [idErr]);
+            }
+            const backendErrDetail = !success
+              ? (sanitizeDiagString(typeof data.message === "string" ? data.message : "") ||
+                 sanitizeDiagString(typeof data.error === "string" ? data.error : ""))
+              : "";
+            setSafetyError(
+              `Identity Guard Failed. Response intent: [${intent}], returned ID: [${targetId || "None"}], expected ID: [${pendingOperation.id}], pending stage: [${pendingStageLabel}], processed state: [${success ? "Success" : "Failed"}]${backendErrDetail ? ` (${backendErrDetail})` : ""}. Result discarded.`
+            );
+            if (!isAutoSelectionOp) {
+              setIsExecuting(false);
+              setIsLoadingData(false);
+            }
+            activeOperationCycleRef.current = null;
             setPendingOperation(null);
             return;
           }
         }
         if (intent !== pendingOperation.intent) {
           if (!productIntents.includes(intent)) {
+            if (pendingOperation.intent === "loadProductData" && pendingOperation.id) {
+              autoSelectionLoadGuardRef.current[pendingOperation.id] = {
+                status: "failed",
+                token: pendingOperation.token,
+                error: `Unexpected response intent [${intent || "unknown"}].`
+              };
+              updateProductState(pendingOperation.id, STATUS.FAILED, [
+                `Unexpected response intent [${intent || "unknown"}] while loading product data.`
+              ]);
+            }
+            activeOperationCycleRef.current = null;
             setPendingOperation(null);
           } else {
             return;
@@ -1303,9 +1544,22 @@ export function useMetaInjectorExecution({
 
       if (!intent) {
         if (pendingOperation) {
-          setSafetyError(`Unrecognized Response. No intent provided by backend. Expected ID: [${pendingOperation.id}], pending stage: [${isLoadingData ? 'Manifest Load' : 'AI/Repair'}]. Result discarded.`);
-          setIsExecuting(false);
-          setIsLoadingData(false);
+          if (pendingOperation.intent === "loadProductData" && pendingOperation.id) {
+            autoSelectionLoadGuardRef.current[pendingOperation.id] = {
+              status: "failed",
+              token: pendingOperation.token,
+              error: "Unrecognized response (no intent provided by backend)."
+            };
+            updateProductState(pendingOperation.id, STATUS.FAILED, [
+              "Unrecognized response: no intent provided by backend."
+            ]);
+          }
+          setSafetyError(`Unrecognized Response. No intent provided by backend. Expected ID: [${pendingOperation.id}], pending stage: [${pendingStageLabel}]. Result discarded.`);
+          if (!isAutoSelectionOp) {
+            setIsExecuting(false);
+            setIsLoadingData(false);
+          }
+          activeOperationCycleRef.current = null;
           setPendingOperation(null);
         }
         return;
@@ -1338,10 +1592,24 @@ export function useMetaInjectorExecution({
       if (intent === "loadProductData" && targetId) {
         if (!success) {
           const loadErrText = specificErrorSummary || safeGenericMessage || "Failed to load data";
+          autoSelectionLoadGuardRef.current[targetId] = {
+            status: "failed",
+            token: pendingOperation?.token || "load_failed",
+            error: loadErrText
+          };
           updateProductState(targetId, STATUS.FAILED, formattedErrorStrings.length > 0 ? formattedErrorStrings : [loadErrText]);
-          setApprovals(prev => { const n = {...prev}; delete n[targetId]; return n; });
-          setManualEdits(prev => { const n = {...prev}; delete n[targetId]; return n; });
+          if (isAutoSelectionOp) {
+            setSafetyError(`Failed to load baseline for ${targetId}: ${loadErrText}`);
+          } else {
+            setApprovals(prev => { const n = {...prev}; delete n[targetId]; return n; });
+            setManualEdits(prev => { const n = {...prev}; delete n[targetId]; return n; });
+          }
         } else {
+          autoSelectionLoadGuardRef.current[targetId] = {
+            status: "loaded",
+            token: pendingOperation?.token || "load_succeeded"
+          };
+
           setManualEdits(prev => {
             const n = {...prev};
             if (n[targetId]) {
@@ -1364,15 +1632,45 @@ export function useMetaInjectorExecution({
           });
 
           setManifestData(prev => {
-            const prevDiag = prev[targetId]?.diagnostics || {};
+            const existingManifest = prev[targetId];
+            // If automatic selection load resolves after a manifest was already populated for this product, preserve existing manifest & unsaved state
+            if (isAutoSelectionOp && existingManifest) {
+              return prev;
+            }
+
+            const prevDiag = existingManifest?.diagnostics || {};
             const allConfigFields = PRODUCT_TEMPLATE_GROUPS.flatMap(g => g.fields || []);
+            const productManualEdits = manualEdits[targetId] || {};
+            const productApprovals = approvals[targetId] || {};
+
             const { cleanedPlan, aliasConflicts } = normalizeLoadedPlanAndAliases(
               data.repairPlan || {},
               data.currentMetafields || {},
-              manualEdits[targetId] || {},
-              approvals[targetId] || {},
+              productManualEdits,
+              productApprovals,
               allConfigFields
             );
+
+            // Preserve any existing unsaved manual edits or explicit approvals in repairPlan
+            if (existingManifest?.repairPlan && typeof existingManifest.repairPlan === "object") {
+              Object.keys(productManualEdits).forEach(editedKey => {
+                if (
+                  productManualEdits[editedKey] === true &&
+                  existingManifest.repairPlan[editedKey] !== undefined
+                ) {
+                  cleanedPlan[editedKey] = existingManifest.repairPlan[editedKey];
+                }
+              });
+            }
+            Object.entries(productApprovals).forEach(([approvedKey, approvedVal]) => {
+              if (
+                approvedVal !== undefined &&
+                productManualEdits[approvedKey] !== true &&
+                cleanedPlan[approvedKey] === undefined
+              ) {
+                cleanedPlan[approvedKey] = approvedVal;
+              }
+            });
 
             // Ensure piece_name in repairPlan holds only the piece name if it was seeded with a 3-part title
             if (hasNonBlankValue(cleanedPlan["custom.piece_name"])) {
@@ -1391,6 +1689,8 @@ export function useMetaInjectorExecution({
               ...prev,
               [targetId]: {
                 ...data,
+                ...(existingManifest?.metadata ? { metadata: existingManifest.metadata } : {}),
+                ...(existingManifest?.verifiedGeoValues ? { verifiedGeoValues: existingManifest.verifiedGeoValues } : {}),
                 repairPlan: cleanedPlan,
                 conflicts: mergedConflicts,
                 diagnostics: {
@@ -1852,6 +2152,15 @@ export function useMetaInjectorExecution({
                   // Never silently overwrite an unresolved canonical/alias conflict
                   if (hasStoredConflictForCanonical(targetKey)) return;
 
+                  // Preserve existing nonblank custom.treated and custom.treatment_status verbatim
+                  if (
+                    (targetKey === "custom.treated" || targetKey === "custom.treatment_status") &&
+                    hasExistingMerchantValue(targetKey)
+                  ) {
+                    newPlan[targetKey] = String(existing.currentMetafields[targetKey]);
+                    return;
+                  }
+
                   // Never allow generated drafts to overwrite existing merchant measurements, price, or shipping weights
                   if (OPERATOR_AUTHORITATIVE_DESTINATIONS.has(targetKey) && hasExistingMerchantValue(targetKey)) {
                     return;
@@ -2070,7 +2379,13 @@ export function useMetaInjectorExecution({
 
       if (pendingOperation) {
         const op = pendingOperation;
+        const wasAutoSelectionLoad = op.source === "auto_selection_load";
+        activeOperationCycleRef.current = null;
         setPendingOperation(null);
+
+        if (wasAutoSelectionLoad) {
+          return;
+        }
 
         if (!success) {
           setIsExecuting(false);
