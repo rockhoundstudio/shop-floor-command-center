@@ -13,8 +13,8 @@ const MAX_LIVE_SESSIONS_PER_SHOP = 8;
 const MAX_LIVE_SESSIONS_GLOBAL = 64;
 const MAX_TOTAL_BYTES = 20 * 1024 * 1024;
 
-const MAX_FULL_TEXT_CODE_UNITS = 120000;
-const MAX_FULL_TEXT_UTF8_BYTES = 512 * 1024;
+const MAX_FULL_TEXT_CODE_UNITS = 400000;
+const MAX_FULL_TEXT_UTF8_BYTES = 1024 * 1024;
 const MAX_UI_AUDIT_UTF8_BYTES = 32 * 1024;
 
 const MAX_CHUNK_UTF8_BYTES = 2000;
@@ -41,7 +41,7 @@ const CREDENTIAL_PATTERNS = [
   /\bAIza[0-9A-Za-z_-]{35}\b/,
   /\bAKIA[0-9A-Z]{16}\b/,
   /\bxox[baprs]-[0-9A-Za-z-]{10,}\b/,
-  /\bBearer\s+[A-Za-z0-9._~+/=-]{20,}\b/i,
+  /\bBearer\s+[A-Za-z0-9._~+/=-]{20,}/i,
   /\b(?:access_token|refresh_token|client_secret|private_key|api_key|authorization)\b\s*[:=]\s*["']?[A-Za-z0-9._~+/=-]{16,}/i,
 ];
 
@@ -1243,7 +1243,7 @@ function storeLiveBenchStateInternal({
       ok: false,
       status: "invalid_request",
       code: "full_text_too_large",
-      message: `packet.fullText exceeds maximum ${MAX_FULL_TEXT_CODE_UNITS} UTF-16 code units.`,
+      message: `packet.fullText (${fullText.length} UTF-16 code units) exceeds maximum ${MAX_FULL_TEXT_CODE_UNITS} UTF-16 code units.`,
     });
   }
 
@@ -1253,7 +1253,7 @@ function storeLiveBenchStateInternal({
       ok: false,
       status: "invalid_request",
       code: "full_text_too_large",
-      message: `packet.fullText exceeds maximum ${MAX_FULL_TEXT_UTF8_BYTES} UTF-8 bytes.`,
+      message: `packet.fullText (${reportUtf8Bytes} UTF-8 bytes) exceeds maximum ${MAX_FULL_TEXT_UTF8_BYTES} UTF-8 bytes.`,
     });
   }
 
@@ -1596,7 +1596,7 @@ export function storeTelemetryReport(options = {}) {
       ok: false,
       status: "invalid_request",
       code: "full_text_too_large",
-      message: `packet.fullText exceeds maximum ${MAX_FULL_TEXT_CODE_UNITS} UTF-16 code units.`,
+      message: `packet.fullText (${fullText.length} UTF-16 code units) exceeds maximum ${MAX_FULL_TEXT_CODE_UNITS} UTF-16 code units.`,
     });
   }
 
@@ -1606,7 +1606,7 @@ export function storeTelemetryReport(options = {}) {
       ok: false,
       status: "invalid_request",
       code: "full_text_too_large",
-      message: `packet.fullText exceeds maximum ${MAX_FULL_TEXT_UTF8_BYTES} UTF-8 bytes.`,
+      message: `packet.fullText (${reportUtf8Bytes} UTF-8 bytes) exceeds maximum ${MAX_FULL_TEXT_UTF8_BYTES} UTF-8 bytes.`,
     });
   }
 

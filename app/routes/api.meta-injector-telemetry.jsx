@@ -6,7 +6,7 @@ import {
   readTelemetryReport,
 } from "../utils/meta-injector.sidekick-report-cache.server.js";
 
-const MAX_POST_BODY_BYTES = 1024 * 1024;
+const MAX_POST_BODY_BYTES = 2 * 1024 * 1024;
 const MAX_RESPONSE_UTF8_BYTES = 3500;
 const LIVE_BENCH_MODE = "live_bench_state";
 

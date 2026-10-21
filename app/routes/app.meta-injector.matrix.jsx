@@ -632,7 +632,7 @@ function buildSelectedUnloadedLiveBenchPayload({
     runIdentity,
     runTimestamp,
     capturedAt: clientStateChangedAt,
-    limitUsed: 120000,
+    limitUsed: 400000,
     fullText,
     parts: [
       {
@@ -951,7 +951,7 @@ function buildPureLiveBenchPayload({
     runIdentity,
     runTimestamp,
     capturedAt: clientStateChangedAt,
-    limitUsed: 120000,
+    limitUsed: 400000,
     fullText,
     parts: [
       {
