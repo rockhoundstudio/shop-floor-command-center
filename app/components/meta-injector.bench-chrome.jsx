@@ -86,10 +86,10 @@ export function InventorySelectionColumn({
                     size="medium" 
                     fullWidth
                     variant={isSelectedForBench ? "primary" : "secondary"}
+                    disabled={isLoadingData || isExecuting}
                     onClick={(e) => { 
                       e.stopPropagation(); 
-                      if (manifestData[p.id]) onSelectBenchItem(p.id);
-                      else alert("Hit GENERATE REPAIR PLAN (Load Data) first to fetch this item's live data.");
+                      if (!isLoadingData && !isExecuting) onSelectBenchItem(p.id);
                     }}
                   >
                     View Manifest on Bench

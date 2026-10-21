@@ -145,7 +145,8 @@ function sanitizeSafePublishMessage(rawMsg, fallbackMsg) {
   const trimmed = rawMsg.trim();
   if (!trimmed) return fallbackMsg;
   if (/<[a-z!/][\s\S]*>/i.test(trimmed)) return fallbackMsg;
-  const singleLine = trimmed.replace(/\s+/g, " ");
+  const redacted = redactRecognizableCredentialStrings(trimmed);
+  const singleLine = redacted.replace(/\s+/g, " ");
   return singleLine.length > 220 ? `${singleLine.slice(0, 220)}...` : singleLine;
 }
 
@@ -544,6 +545,125 @@ function buildMeasuredUiAuditSnapshot(productId, measurementsState) {
   };
 }
 
+function buildSelectedUnloadedLiveBenchPayload({
+  benchSessionId,
+  benchRevision,
+  clientStateChangedAt,
+  productId,
+  productTitle,
+  productQueueStatus
+}) {
+  const cleanTitle = redactRecognizableCredentialStrings(productTitle || "Not recorded") || "Not recorded";
+  const runIdentity = "selected_manifest_not_loaded";
+  const runTimestamp = "Manifest not loaded in browser";
+
+  const structuredPayload = {
+    schemaVersion: 1,
+    stateKind: LIVE_BENCH_MODE,
+    benchSessionId,
+    benchRevision,
+    selectionState: "selected",
+    productId,
+    productTitle: cleanTitle,
+    clientStateChangedAt,
+    baselineLoadedAt: null,
+    baselineEventKind: "manifest_not_loaded",
+    baselineState: "unavailable_not_loaded",
+    manifestLoaded: false,
+    productQueueStatus: productQueueStatus || null,
+    dataAuthorityNote:
+      "Product is selected on the Tab 3 bench, but its Shopify manifest baseline has NOT been loaded into browser state yet. No field values, proposals, or baseline timestamps exist for this product in the current browser session.",
+    runIdentity,
+    runTimestamp,
+    systemStatus: {
+      shopifyReadStatus: "Not loaded",
+      geminiStatus: "Not called",
+      visionStatus: "Not called",
+      geoLibraryStatus: "Not called",
+      readBackStatus: "Not called",
+      currentStage: "manifest_not_loaded",
+      finalStageDisplay: "Selected (Manifest Not Loaded)",
+      fetcherStateDisplay: "idle",
+      loadingStateDisplay: "Idle",
+      errorMessageDisplay: "None"
+    },
+    diagnosticsStats: null,
+    manualEditedKeys: [],
+    explicitlyApprovedKeys: [],
+    standardizedReferenceState: {
+      readinessState: "manifest_not_loaded",
+      readinessReason: "Product manifest baseline has not been loaded yet.",
+      stagedCandidateCount: 0,
+      stagedCandidates: {},
+      eligibleDestinationKeys: [],
+      blockedDestinationKeys: [],
+      lastMatchRequestId: null,
+      lastMatchedAt: null,
+      lastMatchSuccess: null,
+      lastMatchIsComplete: null,
+      productCategory: null
+    },
+    saveVerificationEvidence: {
+      hasRepairAttemptInSession: false,
+      lastRepairCompletedAt: null,
+      lastRepairStatus: null,
+      lastRepairSuccess: null,
+      readBackVerified: null,
+      fieldsUpdatedCount: null,
+      verifiedDestinations: [],
+      attemptedDestinations: [],
+      blockedFields: {},
+      conflicts: {},
+      unresolvedChanges: {},
+      note: "Product manifest is not loaded; no baseline or working field values are available."
+    },
+    sectionOrder: [],
+    fieldsByKey: {}
+  };
+
+  const fullText = JSON.stringify(structuredPayload);
+
+  const packet = {
+    mode: LIVE_BENCH_MODE,
+    sectionKey: LIVE_BENCH_MODE,
+    sectionLabel: "LIVE BENCH FIELD STATE (MANIFEST NOT LOADED)",
+    productId,
+    productTitle: cleanTitle,
+    runIdentity,
+    runTimestamp,
+    capturedAt: clientStateChangedAt,
+    limitUsed: 120000,
+    fullText,
+    parts: [
+      {
+        index: 0,
+        partNumber: 1,
+        totalParts: 1,
+        label: "LIVE BENCH FIELD STATE (MANIFEST NOT LOADED)",
+        charCount: fullText.length
+      }
+    ],
+    activePartIndex: 0,
+    benchSessionId,
+    benchRevision,
+    selectionState: "selected",
+    clientStateChangedAt,
+    baselineLoadedAt: null
+  };
+
+  const liveState = {
+    mode: LIVE_BENCH_MODE,
+    benchSessionId,
+    benchRevision,
+    selectionState: "selected",
+    productId,
+    clientStateChangedAt,
+    baselineLoadedAt: null
+  };
+
+  return { packet, liveState };
+}
+
 function buildPureLiveBenchPayload({
   benchSessionId,
   benchRevision,
@@ -789,6 +909,8 @@ function buildPureLiveBenchPayload({
       "Live bench state synchronization to the Sidekick cache never saves changes to Shopify. Only verifiedDestinations with readBackVerified=true reflect confirmed Shopify writes."
   };
 
+  const cleanTitle = redactRecognizableCredentialStrings(productTitle || "Not recorded") || "Not recorded";
+
   const structuredPayload = {
     schemaVersion: 1,
     stateKind: LIVE_BENCH_MODE,
@@ -796,10 +918,12 @@ function buildPureLiveBenchPayload({
     benchRevision,
     selectionState: "selected",
     productId,
-    productTitle: productTitle || "Not recorded",
+    productTitle: cleanTitle,
     clientStateChangedAt,
     baselineLoadedAt: baselineLoadedAt || null,
     baselineEventKind: baselineEventKind || "last_loaded_manifest",
+    baselineState: "loaded_in_browser",
+    manifestLoaded: true,
     baselineSource: "last_loaded_manifest",
     workingState: "unsaved_browser_bench",
     dataAuthorityNote:
@@ -823,7 +947,7 @@ function buildPureLiveBenchPayload({
     sectionKey: LIVE_BENCH_MODE,
     sectionLabel: "LIVE BENCH FIELD STATE",
     productId,
-    productTitle: productTitle || "Not recorded",
+    productTitle: cleanTitle,
     runIdentity,
     runTimestamp,
     capturedAt: clientStateChangedAt,
@@ -933,6 +1057,20 @@ export function OperationsMatrixTab({ products }) {
     return benchRevisionRef.current;
   }, []);
 
+  const [liveBenchSyncStatus, setLiveBenchSyncStatus] = useState(() => ({
+    lifecycle: "unavailable",
+    benchSessionId: benchSessionIdRef.current,
+    benchRevision: null,
+    selectionState: "none",
+    productId: null,
+    reportId: null,
+    clientStateChangedAt: null,
+    baselineLoadedAt: null,
+    serverReceivedAt: null,
+    errorCode: null,
+    errorMessage: null
+  }));
+
   const baselineMetaByProductRef = useRef({});
   const prevMetafieldsRefByProduct = useRef({});
   const prevNativeTargetsRefByProduct = useRef({});
@@ -1008,6 +1146,7 @@ export function OperationsMatrixTab({ products }) {
         liveSyncAbortRef.current = null;
       }
 
+      const sessionId = benchSessionIdRef.current;
       const revision = nextBenchRevision();
       const clientStateChangedAt = new Date().toISOString();
       lastLiveStateDigestRef.current = `none:${revision}`;
@@ -1016,10 +1155,26 @@ export function OperationsMatrixTab({ products }) {
       lastLiveStateChangedAtRef.current = clientStateChangedAt;
       lastNotifiedSelectionClearRef.current = true;
 
+      if (!useKeepalive) {
+        setLiveBenchSyncStatus({
+          lifecycle: "pending",
+          benchSessionId: sessionId,
+          benchRevision: revision,
+          selectionState: "none",
+          productId: null,
+          reportId: null,
+          clientStateChangedAt,
+          baselineLoadedAt: null,
+          serverReceivedAt: null,
+          errorCode: null,
+          errorMessage: null
+        });
+      }
+
       const bodyStr = JSON.stringify({
         liveState: {
           mode: LIVE_BENCH_MODE,
-          benchSessionId: benchSessionIdRef.current,
+          benchSessionId: sessionId,
           benchRevision: revision,
           selectionState: "none",
           clientStateChangedAt
@@ -1030,7 +1185,9 @@ export function OperationsMatrixTab({ products }) {
       if (!useKeepalive) {
         liveSyncAbortRef.current = controller;
       }
+      let timedOut = false;
       const timerId = setTimeout(() => {
+        timedOut = true;
         try {
           controller.abort();
         } catch {
@@ -1048,8 +1205,124 @@ export function OperationsMatrixTab({ products }) {
         keepalive: Boolean(useKeepalive),
         signal: controller.signal
       })
+        .then(async (response) => {
+          if (useKeepalive) return;
+          const rawText = await response.text();
+          let parsed = null;
+          if (rawText && rawText.trim().length > 0) {
+            try {
+              parsed = JSON.parse(rawText);
+            } catch {
+              parsed = null;
+            }
+          }
+
+          if (
+            benchSessionIdRef.current !== sessionId ||
+            benchRevisionRef.current !== revision
+          ) {
+            return;
+          }
+
+          const liveSession =
+            parsed && typeof parsed === "object" && parsed.liveSession && typeof parsed.liveSession === "object"
+              ? parsed.liveSession
+              : null;
+
+          if (
+            response.ok &&
+            parsed &&
+            parsed.ok === true &&
+            parsed.status === "stored" &&
+            parsed.selectionState === "none" &&
+            liveSession &&
+            liveSession.benchSessionId === sessionId &&
+            liveSession.benchRevision === revision &&
+            liveSession.selectionState === "none"
+          ) {
+            setLiveBenchSyncStatus({
+              lifecycle: "cleared",
+              benchSessionId: liveSession.benchSessionId,
+              benchRevision: liveSession.benchRevision,
+              selectionState: "none",
+              productId: null,
+              reportId: null,
+              clientStateChangedAt:
+                typeof liveSession.clientStateChangedAt === "string"
+                  ? liveSession.clientStateChangedAt
+                  : clientStateChangedAt,
+              baselineLoadedAt: null,
+              serverReceivedAt:
+                typeof liveSession.serverReceivedAt === "string"
+                  ? liveSession.serverReceivedAt
+                  : null,
+              errorCode: null,
+              errorMessage: null
+            });
+            return;
+          }
+
+          if (
+            parsed &&
+            parsed.code === "stale_bench_revision" &&
+            typeof parsed.highestRevision === "number" &&
+            Number.isSafeInteger(parsed.highestRevision) &&
+            parsed.highestRevision > benchRevisionRef.current
+          ) {
+            benchRevisionRef.current = parsed.highestRevision;
+          }
+
+          const backendCode =
+            parsed && typeof parsed.code === "string" && parsed.code.trim()
+              ? parsed.code.trim()
+              : `http_${response.status}`;
+          const backendMsg = sanitizeSafePublishMessage(
+            parsed?.message,
+            `Selection clear rejected (HTTP ${response.status}).`
+          );
+
+          setLiveBenchSyncStatus({
+            lifecycle: "error",
+            benchSessionId: sessionId,
+            benchRevision: revision,
+            selectionState: "none",
+            productId: null,
+            reportId: null,
+            clientStateChangedAt,
+            baselineLoadedAt: null,
+            serverReceivedAt: null,
+            errorCode: backendCode,
+            errorMessage: backendMsg
+          });
+        })
         .catch(() => {
-          // Best-effort clear; server TTL and revision high-water guard remain authoritative
+          if (useKeepalive) return;
+          if (!timedOut && controller.signal.aborted) {
+            return;
+          }
+          if (
+            benchSessionIdRef.current !== sessionId ||
+            benchRevisionRef.current !== revision
+          ) {
+            return;
+          }
+          const errCode = timedOut ? "request_timeout" : "network_error";
+          const errMsg = timedOut
+            ? `Selection clear timed out after ${TELEMETRY_PUBLISH_TIMEOUT_MS}ms.`
+            : "Network or authentication error while clearing live bench state.";
+          setLiveBenchSyncStatus({
+            lifecycle: "error",
+            benchSessionId: sessionId,
+            benchRevision: revision,
+            selectionState: "none",
+            productId: null,
+            reportId: null,
+            clientStateChangedAt,
+            baselineLoadedAt: null,
+            serverReceivedAt: null,
+            errorCode: errCode,
+            errorMessage: errMsg
+          });
         })
         .finally(() => {
           clearTimeout(timerId);
@@ -1120,7 +1393,7 @@ export function OperationsMatrixTab({ products }) {
           liveSyncAbortRef.current = null;
         }
         // Immediately invalidate previous stone on switch or deselection so old stone is never exposed as current
-        if (!id || !manifestData?.[id]) {
+        if (!id) {
           sendLiveBenchSelectionClear();
         } else if (prevId && prevId !== id) {
           sendLiveBenchSelectionClear();
@@ -1132,7 +1405,7 @@ export function OperationsMatrixTab({ products }) {
       }
       return id;
     });
-  }, [manifestData, sendLiveBenchSelectionClear]);
+  }, [sendLiveBenchSelectionClear]);
 
   // Invalidate captured telemetry snapshot when a new load, AI pipeline, or repair execution starts,
   // or when the active product's repair history or reference match result changes, without clearing
@@ -2223,7 +2496,7 @@ export function OperationsMatrixTab({ products }) {
       getFieldMetadata
     });
 
-  // Automatic debounced live-bench-state synchronization (no clipboard/download/AI/write side effects)
+  // Automatic debounced live-bench-state synchronization (publishes both loaded and selected-unloaded states; surfaces non-aborted errors)
   const activeProductDataForLiveSync = selectedBenchId ? manifestData[selectedBenchId] : null;
   const activeProductApprovalsForLiveSync = selectedBenchId ? approvals[selectedBenchId] : null;
   const activeProductManualEditsForLiveSync = selectedBenchId ? manualEdits[selectedBenchId] : null;
@@ -2232,13 +2505,14 @@ export function OperationsMatrixTab({ products }) {
   const activeProductCandidatesForLiveSync = selectedBenchId ? standardizedCandidatesByProduct[selectedBenchId] : null;
   const activeProductRefMatchForLiveSync = selectedBenchId ? referenceMatchResultsByProduct[selectedBenchId] : null;
   const activeProductRefStatusForLiveSync = selectedBenchId ? referenceMatchStatusByProduct[selectedBenchId] : null;
+  const activeProductQueueStateStatus = selectedBenchId ? (productStates[selectedBenchId]?.status || null) : null;
   const activeMeasurementsForLiveSync =
     sectionAuditMeasurements.productId === selectedBenchId
       ? sectionAuditMeasurements
       : null;
 
   useEffect(() => {
-    if (!selectedBenchId || !isExactProductGid(selectedBenchId) || !activeProductDataForLiveSync) {
+    if (!selectedBenchId || !isExactProductGid(selectedBenchId)) {
       if (!lastNotifiedSelectionClearRef.current) {
         sendLiveBenchSelectionClear();
       }
@@ -2249,19 +2523,21 @@ export function OperationsMatrixTab({ products }) {
       return;
     }
 
-    const measuredUiAudit = buildMeasuredUiAuditSnapshot(
-      selectedBenchId,
-      activeMeasurementsForLiveSync
-    );
+    const isManifestLoadedForSelected = Boolean(activeProductDataForLiveSync);
+    const measuredUiAudit = isManifestLoadedForSelected
+      ? buildMeasuredUiAuditSnapshot(selectedBenchId, activeMeasurementsForLiveSync)
+      : null;
 
     const contentChangeDigest = computeQuickTextDigest(
       JSON.stringify({
         productId: selectedBenchId,
-        currentMetafields: activeProductDataForLiveSync.currentMetafields || null,
-        nativeTargets: activeProductDataForLiveSync.nativeTargets || null,
-        repairPlan: activeProductDataForLiveSync.repairPlan || null,
-        metadata: activeProductDataForLiveSync.metadata || null,
-        diagnostics: activeProductDataForLiveSync.diagnostics || null,
+        manifestLoaded: isManifestLoadedForSelected,
+        queueStatus: activeProductQueueStateStatus,
+        currentMetafields: activeProductDataForLiveSync?.currentMetafields || null,
+        nativeTargets: activeProductDataForLiveSync?.nativeTargets || null,
+        repairPlan: activeProductDataForLiveSync?.repairPlan || null,
+        metadata: activeProductDataForLiveSync?.metadata || null,
+        diagnostics: activeProductDataForLiveSync?.diagnostics || null,
         approvals: activeProductApprovalsForLiveSync || null,
         manualEdits: activeProductManualEditsForLiveSync || null,
         historyCompletedAt: activeProductHistoryForLiveSync?.completedAt || null,
@@ -2295,6 +2571,25 @@ export function OperationsMatrixTab({ products }) {
       lastNotifiedSelectionClearRef.current = false;
     }
 
+    const currentSessionId = benchSessionIdRef.current;
+    const candidateBaselineLoadedAt = isManifestLoadedForSelected
+      ? (baselineMetaByProductRef.current[selectedBenchId]?.loadedAt || null)
+      : null;
+
+    setLiveBenchSyncStatus({
+      lifecycle: "pending",
+      benchSessionId: currentSessionId,
+      benchRevision: stateRevision,
+      selectionState: "selected",
+      productId: selectedBenchId,
+      reportId: null,
+      clientStateChangedAt,
+      baselineLoadedAt: candidateBaselineLoadedAt,
+      serverReceivedAt: null,
+      errorCode: null,
+      errorMessage: null
+    });
+
     if (liveSyncDebounceTimerRef.current) {
       clearTimeout(liveSyncDebounceTimerRef.current);
       liveSyncDebounceTimerRef.current = null;
@@ -2307,7 +2602,11 @@ export function OperationsMatrixTab({ products }) {
 
     liveSyncDebounceTimerRef.current = setTimeout(() => {
       liveSyncDebounceTimerRef.current = null;
-      if (activeBenchIdRef.current !== targetProductId) {
+      if (
+        activeBenchIdRef.current !== targetProductId ||
+        benchSessionIdRef.current !== currentSessionId ||
+        benchRevisionRef.current !== targetRevision
+      ) {
         return;
       }
 
@@ -2317,36 +2616,58 @@ export function OperationsMatrixTab({ products }) {
         activeProductDataForLiveSync?.nativeTargets?.productTitle ||
         "Not recorded";
 
-      const baselineInfo = baselineMetaByProductRef.current[targetProductId] || null;
-      const baselineLoadedAt = baselineInfo?.loadedAt || null;
-      const baselineEventKind = baselineInfo?.eventKind || "last_loaded_manifest";
+      let packet;
+      let liveState;
+      let latestUiAudit = null;
+      let effectiveBaselineLoadedAt = null;
 
-      const { packet, liveState } = buildPureLiveBenchPayload({
-        benchSessionId: benchSessionIdRef.current,
-        benchRevision: targetRevision,
-        clientStateChangedAt: targetChangedAt,
-        baselineLoadedAt,
-        baselineEventKind,
-        productId: targetProductId,
-        productTitle,
-        data: activeProductDataForLiveSync,
-        approvals,
-        manualEdits,
-        repairHistory,
-        submittedPayloads,
-        standardizedCandidatesByProduct,
-        referenceMatchResultsByProduct,
-        referenceMatchStatusByProduct,
-        pendingReferenceMatch,
-        getFieldMetadata,
-        getSystemStatus,
-        getDiagnosticsStats
-      });
+      if (activeProductDataForLiveSync) {
+        const baselineInfo = baselineMetaByProductRef.current[targetProductId] || null;
+        const baselineLoadedAt = baselineInfo?.loadedAt || null;
+        const baselineEventKind = baselineInfo?.eventKind || "last_loaded_manifest";
+        effectiveBaselineLoadedAt = baselineLoadedAt;
 
-      const latestUiAudit = buildMeasuredUiAuditSnapshot(
-        targetProductId,
-        sectionAuditMeasurementsRef.current
-      );
+        const built = buildPureLiveBenchPayload({
+          benchSessionId: currentSessionId,
+          benchRevision: targetRevision,
+          clientStateChangedAt: targetChangedAt,
+          baselineLoadedAt,
+          baselineEventKind,
+          productId: targetProductId,
+          productTitle,
+          data: activeProductDataForLiveSync,
+          approvals,
+          manualEdits,
+          repairHistory,
+          submittedPayloads,
+          standardizedCandidatesByProduct,
+          referenceMatchResultsByProduct,
+          referenceMatchStatusByProduct,
+          pendingReferenceMatch,
+          getFieldMetadata,
+          getSystemStatus,
+          getDiagnosticsStats
+        });
+        packet = built.packet;
+        liveState = built.liveState;
+        latestUiAudit = buildMeasuredUiAuditSnapshot(
+          targetProductId,
+          sectionAuditMeasurementsRef.current
+        );
+      } else {
+        const builtUnloaded = buildSelectedUnloadedLiveBenchPayload({
+          benchSessionId: currentSessionId,
+          benchRevision: targetRevision,
+          clientStateChangedAt: targetChangedAt,
+          productId: targetProductId,
+          productTitle,
+          productQueueStatus: activeProductQueueStateStatus
+        });
+        packet = builtUnloaded.packet;
+        liveState = builtUnloaded.liveState;
+        latestUiAudit = null;
+        effectiveBaselineLoadedAt = null;
+      }
 
       const postBody =
         latestUiAudit !== null
@@ -2364,7 +2685,9 @@ export function OperationsMatrixTab({ products }) {
 
       const controller = new AbortController();
       liveSyncAbortRef.current = controller;
+      let timedOut = false;
       const timeoutId = setTimeout(() => {
+        timedOut = true;
         try {
           controller.abort();
         } catch {
@@ -2395,15 +2718,63 @@ export function OperationsMatrixTab({ products }) {
           }
 
           if (
+            activeBenchIdRef.current !== targetProductId ||
+            benchSessionIdRef.current !== currentSessionId ||
+            benchRevisionRef.current !== targetRevision
+          ) {
+            return;
+          }
+
+          const returnedReport =
+            parsed && typeof parsed === "object" && parsed.report && typeof parsed.report === "object"
+              ? parsed.report
+              : null;
+          const returnedSession =
+            parsed && typeof parsed === "object" && parsed.liveSession && typeof parsed.liveSession === "object"
+              ? parsed.liveSession
+              : null;
+
+          if (
             response.ok &&
             parsed &&
             parsed.ok === true &&
             parsed.status === "stored" &&
-            parsed.report &&
-            parsed.report.productId === targetProductId &&
-            parsed.report.benchRevision === targetRevision
+            returnedReport &&
+            typeof returnedReport.reportId === "string" &&
+            returnedReport.reportId.trim().length > 0 &&
+            returnedReport.productId === targetProductId &&
+            returnedReport.benchSessionId === currentSessionId &&
+            returnedReport.benchRevision === targetRevision &&
+            returnedReport.selectionState === "selected"
           ) {
             lastLiveSyncedDigestRef.current = targetDigest;
+            setLiveBenchSyncStatus({
+              lifecycle: "acknowledged",
+              benchSessionId: returnedReport.benchSessionId,
+              benchRevision: returnedReport.benchRevision,
+              selectionState: returnedReport.selectionState,
+              productId: returnedReport.productId,
+              reportId: returnedReport.reportId.trim(),
+              clientStateChangedAt:
+                typeof returnedReport.clientStateChangedAt === "string"
+                  ? returnedReport.clientStateChangedAt
+                  : (typeof returnedReport.capturedAt === "string" ? returnedReport.capturedAt : targetChangedAt),
+              baselineLoadedAt:
+                typeof returnedReport.baselineLoadedAt === "string"
+                  ? returnedReport.baselineLoadedAt
+                  : effectiveBaselineLoadedAt,
+              serverReceivedAt:
+                typeof returnedReport.serverReceivedAt === "string"
+                  ? returnedReport.serverReceivedAt
+                  : (typeof returnedReport.storedAt === "string"
+                      ? returnedReport.storedAt
+                      : (typeof returnedSession?.serverReceivedAt === "string" ? returnedSession.serverReceivedAt : null)),
+              errorCode: null,
+              errorMessage: null
+            });
+            setTelemetryPublishNotice((prev) =>
+              prev && prev.source === "live_sync_error" ? null : prev
+            );
             return;
           }
 
@@ -2415,9 +2786,89 @@ export function OperationsMatrixTab({ products }) {
             parsed.highestRevision > benchRevisionRef.current
           ) {
             benchRevisionRef.current = parsed.highestRevision;
+            setLiveBenchSyncStatus({
+              lifecycle: "error",
+              benchSessionId: currentSessionId,
+              benchRevision: targetRevision,
+              selectionState: "selected",
+              productId: targetProductId,
+              reportId: null,
+              clientStateChangedAt: targetChangedAt,
+              baselineLoadedAt: effectiveBaselineLoadedAt,
+              serverReceivedAt: null,
+              errorCode: "stale_bench_revision",
+              errorMessage: sanitizeSafePublishMessage(
+                parsed?.message,
+                `Revision ${targetRevision} superseded by server high-water revision ${parsed.highestRevision}.`
+              )
+            });
+            return;
           }
+
+          const backendCode =
+            parsed && typeof parsed.code === "string" && parsed.code.trim()
+              ? parsed.code.trim()
+              : `http_${response.status}`;
+          const backendMsg = sanitizeSafePublishMessage(
+            parsed?.message,
+            `Sidekick live bench sync rejected (HTTP ${response.status}).`
+          );
+
+          setLiveBenchSyncStatus({
+            lifecycle: "error",
+            benchSessionId: currentSessionId,
+            benchRevision: targetRevision,
+            selectionState: "selected",
+            productId: targetProductId,
+            reportId: null,
+            clientStateChangedAt: targetChangedAt,
+            baselineLoadedAt: effectiveBaselineLoadedAt,
+            serverReceivedAt: null,
+            errorCode: backendCode,
+            errorMessage: backendMsg
+          });
+          setTelemetryPublishNotice({
+            source: "live_sync_error",
+            productId: targetProductId,
+            capturedAt: targetChangedAt,
+            tone: "warning",
+            message: `Sidekick live bench sync failed (${backendCode}): ${backendMsg}`
+          });
         } catch {
-          // Keep lastLiveSyncedDigestRef unset for this digest so a subsequent state update can sync cleanly
+          if (!timedOut && controller.signal.aborted) {
+            return;
+          }
+          if (
+            activeBenchIdRef.current !== targetProductId ||
+            benchSessionIdRef.current !== currentSessionId ||
+            benchRevisionRef.current !== targetRevision
+          ) {
+            return;
+          }
+          const errCode = timedOut ? "request_timeout" : "network_error";
+          const errDetail = timedOut
+            ? `Request timed out after ${TELEMETRY_PUBLISH_TIMEOUT_MS}ms.`
+            : "Network or authentication error while contacting /api/meta-injector-telemetry.";
+          setLiveBenchSyncStatus({
+            lifecycle: "error",
+            benchSessionId: currentSessionId,
+            benchRevision: targetRevision,
+            selectionState: "selected",
+            productId: targetProductId,
+            reportId: null,
+            clientStateChangedAt: targetChangedAt,
+            baselineLoadedAt: effectiveBaselineLoadedAt,
+            serverReceivedAt: null,
+            errorCode: errCode,
+            errorMessage: errDetail
+          });
+          setTelemetryPublishNotice({
+            source: "live_sync_error",
+            productId: targetProductId,
+            capturedAt: targetChangedAt,
+            tone: "warning",
+            message: `Sidekick live bench sync failed: ${errDetail}`
+          });
         } finally {
           clearTimeout(timeoutId);
           if (liveSyncAbortRef.current === controller) {
@@ -2436,6 +2887,7 @@ export function OperationsMatrixTab({ products }) {
   }, [
     selectedBenchId,
     isLoadingData,
+    activeProductQueueStateStatus,
     activeProductDataForLiveSync,
     activeProductApprovalsForLiveSync,
     activeProductManualEditsForLiveSync,
@@ -2520,6 +2972,7 @@ export function OperationsMatrixTab({ products }) {
 
     if (activeBenchIdRef.current === expectedProductId) {
       setTelemetryPublishNotice({
+        source: "manual_capture",
         productId: expectedProductId,
         capturedAt: capturedPacket.capturedAt || null,
         tone: "info",
@@ -2575,6 +3028,7 @@ export function OperationsMatrixTab({ products }) {
                 ? "measured"
                 : "not_measured";
             setTelemetryPublishNotice({
+              source: "manual_capture",
               productId: expectedProductId,
               capturedAt: returnedReport.capturedAt,
               reportId: confirmedReportId,
@@ -2596,6 +3050,7 @@ export function OperationsMatrixTab({ products }) {
             `Telemetry cache endpoint rejected publication (HTTP ${response.status}).`
           );
           setTelemetryPublishNotice({
+            source: "manual_capture",
             productId: expectedProductId,
             capturedAt: capturedPacket.capturedAt || null,
             tone: "warning",
@@ -2612,6 +3067,7 @@ export function OperationsMatrixTab({ products }) {
             ? `Request timed out after ${TELEMETRY_PUBLISH_TIMEOUT_MS}ms.`
             : "Network or authentication error while contacting /api/meta-injector-telemetry.";
           setTelemetryPublishNotice({
+            source: "manual_capture",
             productId: expectedProductId,
             capturedAt: capturedPacket.capturedAt || null,
             tone: "warning",
@@ -2787,6 +3243,105 @@ export function OperationsMatrixTab({ products }) {
   const activeBenchStats = activeBenchData ? getDiagnosticsStats(activeBenchData) : null;
   const activeBenchStatusObj = activeBenchData ? getSystemStatus() : null;
   const activeBenchHistory = selectedBenchId ? repairHistory[selectedBenchId] : null;
+
+  // Compute read-only monitoring status for the orchestrator panel
+  const isBenchSelectedBool = Boolean(selectedBenchId && isExactProductGid(selectedBenchId));
+  const isBaselineLoadedBool = Boolean(isBenchSelectedBool && activeBenchData);
+  const activeBaselineMeta = isBaselineLoadedBool ? (baselineMetaByProductRef.current[selectedBenchId] || null) : null;
+  const activeManualEditsMap = isBenchSelectedBool ? validObj(manualEdits[selectedBenchId]) : {};
+  const activeManualEditCount = Object.keys(activeManualEditsMap).filter((k) => activeManualEditsMap[k] === true).length;
+  const activeExplicitApprovalCount = isBenchSelectedBool ? Object.keys(validObj(approvals[selectedBenchId])).length : 0;
+  const activeProposedCount = typeof activeBenchStats?.proposed === "number" ? activeBenchStats.proposed : 0;
+  const activeApprovedWriteCount = typeof activeBenchStats?.approvedWrite === "number" ? activeBenchStats.approvedWrite : 0;
+
+  let unsavedWorkingChangesWord = "Not available";
+  let unsavedWorkingChangesDetail = "No baseline loaded";
+  if (isBaselineLoadedBool && activeBenchStats) {
+    const hasUnsavedWorking =
+      activeProposedCount > 0 ||
+      activeManualEditCount > 0 ||
+      activeExplicitApprovalCount > 0;
+    unsavedWorkingChangesWord = hasUnsavedWorking ? "Yes" : "No";
+    unsavedWorkingChangesDetail = `Proposals: ${activeProposedCount} | Manual edits: ${activeManualEditCount} | Explicit approvals: ${activeExplicitApprovalCount} | Approved for write: ${activeApprovedWriteCount}`;
+  }
+
+  let verifiedSavedWord = "No";
+  let verifiedSavedDetail = isBenchSelectedBool ? "No repair executed in session" : "No product selected";
+  if (isBenchSelectedBool && activeBenchHistory) {
+    const verifiedDestCount = validArray(activeBenchHistory.verifiedDestinations).length;
+    const attemptedDestCount = validArray(activeBenchHistory.attemptedDestinations).length;
+    const blockedDestCount = Object.keys(validObj(activeBenchHistory.blockedFields)).length;
+    const conflictDestCount = Object.keys(validObj(activeBenchHistory.conflicts)).length;
+    const unresolvedDestCount = Object.keys(validObj(activeBenchHistory.unresolvedChanges)).length;
+    const hasPartialOrUnresolved =
+      activeBenchHistory.status === "PARTIAL_SUCCESS" ||
+      blockedDestCount > 0 ||
+      conflictDestCount > 0 ||
+      unresolvedDestCount > 0 ||
+      (attemptedDestCount > 0 && verifiedDestCount < attemptedDestCount);
+
+    if (activeBenchHistory.readBackVerified === true && verifiedDestCount > 0) {
+      verifiedSavedWord = "Yes";
+      verifiedSavedDetail = hasPartialOrUnresolved
+        ? `Partial (${verifiedDestCount}/${attemptedDestCount || verifiedDestCount} destinations verified at ${activeBenchHistory.completedAt || "Unknown"})`
+        : `${verifiedDestCount} destination(s) verified at ${activeBenchHistory.completedAt || "Unknown"}`;
+    } else if (activeBenchHistory.readBackVerified === false) {
+      verifiedSavedWord = "No";
+      verifiedSavedDetail = `Read-back not verified (${activeBenchHistory.status || "Unknown"} at ${activeBenchHistory.completedAt || "Unknown"})`;
+    } else {
+      verifiedSavedWord = "Unknown";
+      verifiedSavedDetail = `Status: ${activeBenchHistory.status || "Unknown"} at ${activeBenchHistory.completedAt || "Unknown"}`;
+    }
+  }
+
+  const isCurrentProductAckSynced = Boolean(
+    isBenchSelectedBool &&
+    liveBenchSyncStatus.lifecycle === "acknowledged" &&
+    liveBenchSyncStatus.selectionState === "selected" &&
+    liveBenchSyncStatus.productId === selectedBenchId &&
+    liveBenchSyncStatus.benchSessionId === benchSessionIdRef.current &&
+    liveBenchSyncStatus.benchRevision === lastLiveStateRevisionRef.current &&
+    lastLiveStateDigestRef.current !== "" &&
+    lastLiveSyncedDigestRef.current === lastLiveStateDigestRef.current
+  );
+
+  const isClearedAckSynced = Boolean(
+    !isBenchSelectedBool &&
+    liveBenchSyncStatus.lifecycle === "cleared" &&
+    liveBenchSyncStatus.selectionState === "none" &&
+    liveBenchSyncStatus.benchSessionId === benchSessionIdRef.current &&
+    liveBenchSyncStatus.benchRevision === lastLiveStateRevisionRef.current
+  );
+
+  let sidekickLiveSyncWord = "Unknown";
+  let sidekickLiveSyncTone = "info";
+  let sidekickLiveSyncLifecycleLabel = liveBenchSyncStatus.lifecycle || "unavailable";
+
+  if (isCurrentProductAckSynced) {
+    sidekickLiveSyncWord = "Yes";
+    sidekickLiveSyncTone = "success";
+    sidekickLiveSyncLifecycleLabel = "acknowledged";
+  } else if (isClearedAckSynced) {
+    sidekickLiveSyncWord = "No";
+    sidekickLiveSyncTone = "info";
+    sidekickLiveSyncLifecycleLabel = "cleared (no product selected)";
+  } else if (liveBenchSyncStatus.lifecycle === "pending") {
+    sidekickLiveSyncWord = "No";
+    sidekickLiveSyncTone = "attention";
+    sidekickLiveSyncLifecycleLabel = "pending";
+  } else if (liveBenchSyncStatus.lifecycle === "error") {
+    sidekickLiveSyncWord = "No";
+    sidekickLiveSyncTone = "critical";
+    sidekickLiveSyncLifecycleLabel = `error (${liveBenchSyncStatus.errorCode || "unknown"})`;
+  } else if (liveBenchSyncStatus.lifecycle === "unavailable") {
+    sidekickLiveSyncWord = "No";
+    sidekickLiveSyncTone = "info";
+    sidekickLiveSyncLifecycleLabel = "unavailable";
+  } else {
+    sidekickLiveSyncWord = "No";
+    sidekickLiveSyncTone = "attention";
+    sidekickLiveSyncLifecycleLabel = "superseded / awaiting sync";
+  }
 
   const nativeDescriptionMeta = activeBenchData
     ? getFieldMetadata("native_description", activeBenchData, selectedBenchId, approvals, allDynamicConfigFields)
@@ -2967,6 +3522,42 @@ export function OperationsMatrixTab({ products }) {
                     Capture Full Report
                   </Button>
                 </div>
+
+                <Box padding="300" background="bg-surface-secondary" borderRadius="200" borderColor="border" borderWidth="1">
+                  <BlockStack gap="150">
+                    <InlineStack align="space-between" blockAlign="center">
+                      <Text as="h4" variant="headingSm" fontWeight="bold">
+                        Read-Only Sidekick Live Bench Monitoring Status
+                      </Text>
+                      <Badge tone={sidekickLiveSyncTone}>
+                        {`Sidekick Live Sync: ${sidekickLiveSyncWord} (${sidekickLiveSyncLifecycleLabel})`}
+                      </Badge>
+                    </InlineStack>
+
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "8px 16px", fontSize: "13px", wordBreak: "break-word", overflowWrap: "anywhere" }}>
+                      <div>
+                        <strong>Bench Selected:</strong> {isBenchSelectedBool ? "Yes" : "No"} ({isBenchSelectedBool ? selectedBenchId : "None"})
+                      </div>
+                      <div>
+                        <strong>Baseline Loaded:</strong> {isBaselineLoadedBool ? "Yes" : "No"} ({activeBaselineMeta?.loadedAt || "Not available"})
+                      </div>
+                      <div>
+                        <strong>Unsaved Working Changes:</strong> {unsavedWorkingChangesWord} ({unsavedWorkingChangesDetail})
+                      </div>
+                      <div>
+                        <strong>Verified Saved in Session:</strong> {verifiedSavedWord} ({verifiedSavedDetail})
+                      </div>
+                    </div>
+
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      <strong>Session:</strong> {liveBenchSyncStatus.benchSessionId || benchSessionIdRef.current || "Not available"} | <strong>Revision:</strong> {liveBenchSyncStatus.benchRevision !== null ? liveBenchSyncStatus.benchRevision : "Not available"} | <strong>Selection State:</strong> {liveBenchSyncStatus.selectionState || "Not available"} | <strong>Synced Product:</strong> {liveBenchSyncStatus.productId || "Not available"} | <strong>Report ID:</strong> {liveBenchSyncStatus.reportId || "Not available"}
+                    </Text>
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      <strong>Client State Changed:</strong> {liveBenchSyncStatus.clientStateChangedAt || "Not available"} | <strong>Baseline Loaded At:</strong> {liveBenchSyncStatus.baselineLoadedAt || activeBaselineMeta?.loadedAt || "Not available"} | <strong>Server Received At:</strong> {liveBenchSyncStatus.serverReceivedAt || "Not available"}
+                      {liveBenchSyncStatus.errorMessage ? ` | Error: ${liveBenchSyncStatus.errorMessage}` : ""}
+                    </Text>
+                  </BlockStack>
+                </Box>
               </BlockStack>
             </Card>
 
