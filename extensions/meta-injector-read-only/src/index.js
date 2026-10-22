@@ -1,6 +1,6 @@
 const TELEMETRY_ENDPOINT =
   "https://shop-floor-command-center.onrender.com/api/meta-injector-telemetry";
-const REQUEST_TIMEOUT_MS = 900;
+const REQUEST_TIMEOUT_MS = 4500;
 const MAX_RESPONSE_UTF8_BYTES = 3500;
 const PRODUCT_GID_REGEX = /^gid:\/\/shopify\/Product\/\d+$/;
 

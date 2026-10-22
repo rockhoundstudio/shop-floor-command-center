@@ -2,10 +2,15 @@ import { createHash } from "node:crypto";
 import { Buffer } from "node:buffer";
 
 const CACHE_GLOBAL_KEY = "__ROCKHOUND_META_INJECTOR_SIDEKICK_REPORT_CACHE_V1__";
-const CACHE_SCHEMA_VERSION = 2;
+const CACHE_SCHEMA_VERSION = 3;
 
 const TTL_MS = 30 * 60 * 1000;
 const MAX_FUTURE_SKEW_MS = 2 * 60 * 1000;
+
+const READ_PIN_IDLE_EXTENSION_MS = 3 * 60 * 1000;
+const READ_PIN_MAX_LIFETIME_MS = 10 * 60 * 1000;
+const MAX_PINNED_DETACHED_PER_SESSION = 2;
+const MAX_PINNED_DETACHED_PER_SHOP = 4;
 
 const MAX_REPORTS_PER_SHOP = 20;
 const MAX_REPORTS_GLOBAL = 200;
@@ -55,6 +60,7 @@ function getCacheState() {
     typeof existing === "object" &&
     existing.version === CACHE_SCHEMA_VERSION &&
     existing.recordsById instanceof Map &&
+    existing.recordMetaById instanceof Map &&
     existing.shopIndex instanceof Map &&
     existing.liveSessionsByKey instanceof Map &&
     existing.shopLiveSessions instanceof Map &&
@@ -71,6 +77,7 @@ function getCacheState() {
     totalStoredCount: 0,
     totalEvictedCount: 0,
     recordsById: new Map(),
+    recordMetaById: new Map(),
     shopIndex: new Map(),
     liveSessionsByKey: new Map(),
     shopLiveSessions: new Map(),
@@ -102,6 +109,185 @@ function getShopStats(state, shop) {
     state.shopStats.set(shop, stats);
   }
   return stats;
+}
+
+function createInitialRecordMeta() {
+  return {
+    isSuperseded: false,
+    supersededAt: null,
+    supersededReason: null,
+    supersededByRevision: null,
+    pinnedAtMs: null,
+    pinHardExpiresAtMs: null,
+    pinIdleExpiresAtMs: null,
+  };
+}
+
+function getOrCreateRecordMeta(state, reportId) {
+  let meta = state.recordMetaById.get(reportId);
+  if (!meta) {
+    meta = createInitialRecordMeta();
+    state.recordMetaById.set(reportId, meta);
+  }
+  return meta;
+}
+
+function getEffectivePinExpiresAtMs(meta) {
+  if (
+    !meta ||
+    typeof meta.pinnedAtMs !== "number" ||
+    typeof meta.pinIdleExpiresAtMs !== "number" ||
+    typeof meta.pinHardExpiresAtMs !== "number"
+  ) {
+    return null;
+  }
+  return Math.min(meta.pinIdleExpiresAtMs, meta.pinHardExpiresAtMs);
+}
+
+function hasActiveReadPin(meta, nowMs) {
+  const effectivePinExp = getEffectivePinExpiresAtMs(meta);
+  if (effectivePinExp === null) {
+    return false;
+  }
+  return nowMs < effectivePinExp;
+}
+
+function isRecordSuperseded(state, record) {
+  if (!record) {
+    return false;
+  }
+  const meta = state.recordMetaById.get(record.reportId);
+  return Boolean(meta && meta.isSuperseded === true);
+}
+
+function activateOrRenewLiveReadPin(state, record, section, chunkIndex, nowMs) {
+  if (!record || !record.isLiveBenchState) {
+    return null;
+  }
+  const meta = getOrCreateRecordMeta(state, record.reportId);
+
+  if (hasActiveReadPin(meta, nowMs)) {
+    meta.pinIdleExpiresAtMs = Math.min(
+      nowMs + READ_PIN_IDLE_EXTENSION_MS,
+      meta.pinHardExpiresAtMs
+    );
+    return meta;
+  }
+
+  // Expired pins are never revived; a new pin can only start on an active (non-superseded)
+  // report within its base 30-minute TTL when reading section="report" at chunkIndex=0.
+  if (
+    meta.pinnedAtMs === null &&
+    !meta.isSuperseded &&
+    nowMs < record.expiresAtMs &&
+    section === "report" &&
+    chunkIndex === 0
+  ) {
+    meta.pinnedAtMs = nowMs;
+    meta.pinHardExpiresAtMs = nowMs + READ_PIN_MAX_LIFETIME_MS;
+    meta.pinIdleExpiresAtMs = Math.min(
+      nowMs + READ_PIN_IDLE_EXTENSION_MS,
+      meta.pinHardExpiresAtMs
+    );
+  }
+
+  return meta;
+}
+
+function compareDetachedPinnedOldestFirst(state, a, b) {
+  const metaA = state.recordMetaById.get(a.reportId);
+  const metaB = state.recordMetaById.get(b.reportId);
+  const pinA = typeof metaA?.pinnedAtMs === "number" ? metaA.pinnedAtMs : a.storedAtMs;
+  const pinB = typeof metaB?.pinnedAtMs === "number" ? metaB.pinnedAtMs : b.storedAtMs;
+  if (pinA !== pinB) {
+    return pinA - pinB;
+  }
+  return compareOldestFirst(a, b);
+}
+
+function enforceDetachedPinCaps(state, shop, benchSessionId, nowMs) {
+  const shopSet = state.shopIndex.get(shop);
+  if (!shopSet || shopSet.size === 0) {
+    return;
+  }
+
+  const sessionDetached = [];
+  for (const id of shopSet) {
+    const rec = state.recordsById.get(id);
+    if (!rec || !rec.isLiveBenchState) {
+      continue;
+    }
+    const meta = state.recordMetaById.get(id);
+    if (!meta || !meta.isSuperseded) {
+      continue;
+    }
+    if (!hasActiveReadPin(meta, nowMs)) {
+      removeRecordFromState(state, rec, "expired");
+      continue;
+    }
+    if (benchSessionId && rec.benchSessionId === benchSessionId) {
+      sessionDetached.push(rec);
+    }
+  }
+
+  if (sessionDetached.length > MAX_PINNED_DETACHED_PER_SESSION) {
+    sessionDetached.sort((a, b) => compareDetachedPinnedOldestFirst(state, a, b));
+    const removeCount = sessionDetached.length - MAX_PINNED_DETACHED_PER_SESSION;
+    for (let i = 0; i < removeCount && i < sessionDetached.length; i += 1) {
+      removeRecordFromState(state, sessionDetached[i], "evicted");
+    }
+  }
+
+  const remainingShopSet = state.shopIndex.get(shop);
+  if (!remainingShopSet || remainingShopSet.size === 0) {
+    return;
+  }
+
+  const shopDetached = [];
+  for (const id of remainingShopSet) {
+    const rec = state.recordsById.get(id);
+    if (!rec || !rec.isLiveBenchState) {
+      continue;
+    }
+    const meta = state.recordMetaById.get(id);
+    if (meta && meta.isSuperseded && hasActiveReadPin(meta, nowMs)) {
+      shopDetached.push(rec);
+    }
+  }
+
+  if (shopDetached.length > MAX_PINNED_DETACHED_PER_SHOP) {
+    shopDetached.sort((a, b) => compareDetachedPinnedOldestFirst(state, a, b));
+    const removeCount = shopDetached.length - MAX_PINNED_DETACHED_PER_SHOP;
+    for (let i = 0; i < removeCount && i < shopDetached.length; i += 1) {
+      removeRecordFromState(state, shopDetached[i], "evicted");
+    }
+  }
+}
+
+function detachOrRemoveLiveRecord(
+  state,
+  record,
+  reason,
+  nowMs,
+  supersededByRevision = null
+) {
+  if (!record || !state.recordsById.has(record.reportId)) {
+    return;
+  }
+  const meta = state.recordMetaById.get(record.reportId);
+  if (record.isLiveBenchState && hasActiveReadPin(meta, nowMs)) {
+    meta.isSuperseded = true;
+    meta.supersededAt = new Date(nowMs).toISOString();
+    meta.supersededReason = reason;
+    meta.supersededByRevision =
+      typeof supersededByRevision === "number" &&
+      Number.isSafeInteger(supersededByRevision)
+        ? supersededByRevision
+        : null;
+    enforceDetachedPinCaps(state, record.shop, record.benchSessionId, nowMs);
+    return;
+  }
+  removeRecordFromState(state, record, reason);
 }
 
 function utf8ByteLength(str) {
@@ -571,10 +757,12 @@ function buildLiveSessionCompositeKey(shop, benchSessionId) {
 
 function removeRecordFromState(state, record, reason = "evicted") {
   if (!record || !state.recordsById.has(record.reportId)) {
+    state.recordMetaById.delete(record?.reportId);
     return;
   }
 
   state.recordsById.delete(record.reportId);
+  state.recordMetaById.delete(record.reportId);
   state.totalBytes = Math.max(0, state.totalBytes - record.estimatedBytes);
 
   const shopSet = state.shopIndex.get(record.shop);
@@ -596,7 +784,7 @@ function removeRecordFromState(state, record, reason = "evicted") {
   }
 }
 
-function removeLiveSessionSlot(state, sessionEntry, reason = "expired") {
+function removeLiveSessionSlot(state, sessionEntry, reason = "expired", nowMs = Date.now()) {
   if (!sessionEntry) {
     return;
   }
@@ -608,11 +796,11 @@ function removeLiveSessionSlot(state, sessionEntry, reason = "expired") {
   if (sessionEntry.activeReportId) {
     const activeRecord = state.recordsById.get(sessionEntry.activeReportId);
     if (activeRecord) {
-      removeRecordFromState(
-        state,
-        activeRecord,
-        reason === "expired" ? "expired" : "evicted"
-      );
+      if (reason === "expired") {
+        detachOrRemoveLiveRecord(state, activeRecord, "expired", nowMs, null);
+      } else {
+        removeRecordFromState(state, activeRecord, "evicted");
+      }
     }
   }
 
@@ -638,19 +826,37 @@ function removeLiveSessionSlot(state, sessionEntry, reason = "expired") {
 function purgeExpiredRecords(state, nowMs) {
   for (const sessionEntry of state.liveSessionsByKey.values()) {
     if (sessionEntry.expiresAtMs <= nowMs) {
-      removeLiveSessionSlot(state, sessionEntry, "expired");
+      removeLiveSessionSlot(state, sessionEntry, "expired", nowMs);
     }
   }
 
   for (const record of state.recordsById.values()) {
+    const meta = state.recordMetaById.get(record.reportId);
+    const pinActive = record.isLiveBenchState && hasActiveReadPin(meta, nowMs);
+
+    if (meta && meta.isSuperseded) {
+      if (!pinActive) {
+        removeRecordFromState(state, record, "expired");
+      }
+      continue;
+    }
+
     if (record.expiresAtMs <= nowMs) {
       if (record.isLiveBenchState && record.benchSessionId) {
         const compositeKey = buildLiveSessionCompositeKey(record.shop, record.benchSessionId);
         const sessionEntry = state.liveSessionsByKey.get(compositeKey);
         if (sessionEntry && sessionEntry.activeReportId === record.reportId) {
-          removeLiveSessionSlot(state, sessionEntry, "expired");
+          removeLiveSessionSlot(state, sessionEntry, "expired", nowMs);
           continue;
         }
+      }
+      if (pinActive) {
+        meta.isSuperseded = true;
+        meta.supersededAt = new Date(nowMs).toISOString();
+        meta.supersededReason = "expired";
+        meta.supersededByRevision = null;
+        enforceDetachedPinCaps(state, record.shop, record.benchSessionId, nowMs);
+        continue;
       }
       removeRecordFromState(state, record, "expired");
     }
@@ -691,7 +897,7 @@ function compareLiveSessionsNewestFirst(a, b) {
   return a.benchSessionId.localeCompare(b.benchSessionId);
 }
 
-function enforceManualCapacityLimits(state, targetShop, incomingBytes) {
+function enforceManualCapacityLimits(state, targetShop, incomingBytes, nowMs = Date.now()) {
   const shopSet = state.shopIndex.get(targetShop);
   if (shopSet) {
     const manualShopRecords = [];
@@ -734,6 +940,18 @@ function enforceManualCapacityLimits(state, targetShop, incomingBytes) {
   }
 
   if (state.totalBytes + incomingBytes > MAX_TOTAL_BYTES) {
+    const detachedPinned = Array.from(state.recordsById.values())
+      .filter((rec) => rec.isLiveBenchState && isRecordSuperseded(state, rec))
+      .sort((a, b) => compareDetachedPinnedOldestFirst(state, a, b));
+    for (let i = 0; i < detachedPinned.length; i += 1) {
+      if (state.totalBytes + incomingBytes <= MAX_TOTAL_BYTES) {
+        break;
+      }
+      removeRecordFromState(state, detachedPinned[i], "evicted");
+    }
+  }
+
+  if (state.totalBytes + incomingBytes > MAX_TOTAL_BYTES) {
     const evictableSessions = Array.from(state.liveSessionsByKey.values()).sort(
       compareLiveSessionsOldestFirst
     );
@@ -741,12 +959,18 @@ function enforceManualCapacityLimits(state, targetShop, incomingBytes) {
       if (state.totalBytes + incomingBytes <= MAX_TOTAL_BYTES) {
         break;
       }
-      removeLiveSessionSlot(state, evictableSessions[i], "evicted");
+      removeLiveSessionSlot(state, evictableSessions[i], "evicted", nowMs);
     }
   }
 }
 
-function enforceLiveSessionCapacityLimits(state, targetShop, targetSessionId, incomingBytes) {
+function enforceLiveSessionCapacityLimits(
+  state,
+  targetShop,
+  targetSessionId,
+  incomingBytes,
+  nowMs = Date.now()
+) {
   const shopSessionsSet = state.shopLiveSessions.get(targetShop);
   if (
     shopSessionsSet &&
@@ -763,7 +987,7 @@ function enforceLiveSessionCapacityLimits(state, targetShop, targetSessionId, in
     entries.sort(compareLiveSessionsOldestFirst);
     const removeCount = entries.length - MAX_LIVE_SESSIONS_PER_SHOP + 1;
     for (let i = 0; i < removeCount && i < entries.length; i += 1) {
-      removeLiveSessionSlot(state, entries[i], "evicted");
+      removeLiveSessionSlot(state, entries[i], "evicted", nowMs);
     }
   }
 
@@ -777,7 +1001,19 @@ function enforceLiveSessionCapacityLimits(state, targetShop, targetSessionId, in
     );
     const removeCount = allSessions.length - MAX_LIVE_SESSIONS_GLOBAL + 1;
     for (let i = 0; i < removeCount && i < allSessions.length; i += 1) {
-      removeLiveSessionSlot(state, allSessions[i], "evicted");
+      removeLiveSessionSlot(state, allSessions[i], "evicted", nowMs);
+    }
+  }
+
+  if (state.totalBytes + incomingBytes > MAX_TOTAL_BYTES) {
+    const detachedPinned = Array.from(state.recordsById.values())
+      .filter((rec) => rec.isLiveBenchState && isRecordSuperseded(state, rec))
+      .sort((a, b) => compareDetachedPinnedOldestFirst(state, a, b));
+    for (let i = 0; i < detachedPinned.length; i += 1) {
+      if (state.totalBytes + incomingBytes <= MAX_TOTAL_BYTES) {
+        break;
+      }
+      removeRecordFromState(state, detachedPinned[i], "evicted");
     }
   }
 
@@ -789,7 +1025,7 @@ function enforceLiveSessionCapacityLimits(state, targetShop, targetSessionId, in
       if (state.totalBytes + incomingBytes <= MAX_TOTAL_BYTES) {
         break;
       }
-      removeLiveSessionSlot(state, otherSessions[i], "evicted");
+      removeLiveSessionSlot(state, otherSessions[i], "evicted", nowMs);
     }
   }
 
@@ -1079,7 +1315,11 @@ function storeLiveBenchStateInternal({
         : null;
       const incomingProdId =
         typeof packet?.productId === "string" ? packet.productId.trim() : null;
-      if (existingRec && existingRec.productId === incomingProdId) {
+      if (
+        existingRec &&
+        !isRecordSuperseded(state, existingRec) &&
+        existingRec.productId === incomingProdId
+      ) {
         return finalizeResponse({
           ok: true,
           status: "stored",
@@ -1122,18 +1362,27 @@ function storeLiveBenchStateInternal({
     if (existingSession && existingSession.activeReportId) {
       const oldRec = state.recordsById.get(existingSession.activeReportId);
       if (oldRec) {
-        removeRecordFromState(state, oldRec, "cleared_live");
+        detachOrRemoveLiveRecord(state, oldRec, "cleared_live", nowMs, null);
       }
     }
 
     const slotOverheadBytes = 384 + utf8ByteLength(shop) + utf8ByteLength(benchSessionId);
-    enforceLiveSessionCapacityLimits(state, shop, benchSessionId, slotOverheadBytes);
+    enforceLiveSessionCapacityLimits(state, shop, benchSessionId, slotOverheadBytes, nowMs);
 
     if (existingSession) {
       state.totalBytes = Math.max(
         0,
         state.totalBytes - (existingSession.slotOverheadBytes || 0)
       );
+    }
+
+    if (state.totalBytes + slotOverheadBytes > MAX_TOTAL_BYTES) {
+      return finalizeResponse({
+        ok: false,
+        status: "invalid_request",
+        code: "report_exceeds_cache_budget",
+        message: "Live bench session state exceeds total cache memory budget.",
+      });
     }
 
     const storedAtIso = new Date(nowMs).toISOString();
@@ -1394,12 +1643,14 @@ function storeLiveBenchStateInternal({
     });
   }
 
-  // Replace previous active live record for this exact (shop, benchSessionId) slot in-place
-  // so repeated field edits never accumulate reports or evict manual captures.
+  // Replace or detach previous active live record for this exact (shop, benchSessionId) slot
+  // so repeated field edits never accumulate unpinned reports or evict manual captures.
   const previousActiveProductId = existingSession?.activeProductId || null;
   if (existingSession && existingSession.activeReportId) {
     const oldRec = state.recordsById.get(existingSession.activeReportId);
-    if (oldRec) {
+    if (oldRec && oldRec.reportId !== reportId) {
+      detachOrRemoveLiveRecord(state, oldRec, "replaced_live", nowMs, benchRevision);
+    } else if (oldRec && oldRec.reportId === reportId) {
       removeRecordFromState(state, oldRec, "replaced_live");
     }
   }
@@ -1414,8 +1665,18 @@ function storeLiveBenchStateInternal({
     state,
     shop,
     benchSessionId,
-    estimatedBytes + slotOverheadBytes
+    estimatedBytes + slotOverheadBytes,
+    nowMs
   );
+
+  if (state.totalBytes + estimatedBytes + slotOverheadBytes > MAX_TOTAL_BYTES) {
+    return finalizeResponse({
+      ok: false,
+      status: "invalid_request",
+      code: "report_exceeds_cache_budget",
+      message: "Live bench state size exceeds total cache memory budget.",
+    });
+  }
 
   const storedAtIso = new Date(nowMs).toISOString();
   const expiresAtMs = clientTime.ms + TTL_MS;
@@ -1482,6 +1743,7 @@ function storeLiveBenchStateInternal({
   });
 
   state.recordsById.set(reportId, newRecord);
+  state.recordMetaById.set(reportId, createInitialRecordMeta());
   state.liveSessionsByKey.set(compositeKey, updatedSession);
   state.totalBytes += estimatedBytes + slotOverheadBytes;
   state.totalStoredCount += 1;
@@ -1735,7 +1997,11 @@ export function storeTelemetryReport(options = {}) {
   });
 
   const existingRecord = state.recordsById.get(reportId);
-  if (existingRecord && existingRecord.shop === shop) {
+  if (
+    existingRecord &&
+    existingRecord.shop === shop &&
+    !isRecordSuperseded(state, existingRecord)
+  ) {
     return finalizeResponse({
       ok: true,
       status: "stored",
@@ -1777,7 +2043,16 @@ export function storeTelemetryReport(options = {}) {
     });
   }
 
-  enforceManualCapacityLimits(state, shop, estimatedBytes);
+  enforceManualCapacityLimits(state, shop, estimatedBytes, nowMs);
+
+  if (state.totalBytes + estimatedBytes > MAX_TOTAL_BYTES) {
+    return finalizeResponse({
+      ok: false,
+      status: "invalid_request",
+      code: "report_exceeds_cache_budget",
+      message: "Report size exceeds total cache memory budget.",
+    });
+  }
 
   const expiresAtMs = parsedCapturedAt.ms + TTL_MS;
   const expiresAt = new Date(expiresAtMs).toISOString();
@@ -1820,6 +2095,7 @@ export function storeTelemetryReport(options = {}) {
   });
 
   state.recordsById.set(reportId, newRecord);
+  state.recordMetaById.set(reportId, createInitialRecordMeta());
   state.totalBytes += estimatedBytes;
   state.totalStoredCount += 1;
 
@@ -1949,6 +2225,10 @@ export function listTelemetryReports(options = {}) {
     for (const id of shopSet) {
       const rec = state.recordsById.get(id);
       if (!rec || rec.shop !== shop) {
+        continue;
+      }
+      // Never list detached/historical superseded snapshots as active reports
+      if (isRecordSuperseded(state, rec)) {
         continue;
       }
       if (normalizedProductId && rec.productId !== normalizedProductId) {
@@ -2220,21 +2500,34 @@ export function readTelemetryReport(options = {}) {
     return finalizeResponse(notFoundPayload);
   }
 
-  const liveMetaFields = record.isLiveBenchState
-    ? {
-        benchSessionId: record.benchSessionId,
-        benchRevision: record.benchRevision,
-        selectionState: record.selectionState,
-        clientStateChangedAt: record.capturedAt,
-        baselineLoadedAt: record.baselineLoadedAt,
-        serverReceivedAt: record.storedAt,
-        baselineSource: record.baselineSource,
-        workingState: record.workingState,
-      }
-    : {};
+  const buildLiveReadMetadata = (metaObj) => {
+    if (!record.isLiveBenchState) {
+      return {};
+    }
+    const effectivePinExpMs = getEffectivePinExpiresAtMs(metaObj);
+    const pinExpiresAt =
+      effectivePinExpMs !== null && nowMs < effectivePinExpMs
+        ? new Date(effectivePinExpMs).toISOString()
+        : null;
+    return {
+      benchSessionId: record.benchSessionId,
+      benchRevision: record.benchRevision,
+      selectionState: record.selectionState,
+      clientStateChangedAt: record.capturedAt,
+      baselineLoadedAt: record.baselineLoadedAt,
+      serverReceivedAt: record.storedAt,
+      baselineSource: record.baselineSource,
+      workingState: record.workingState,
+      isHistoricalSuperseded: Boolean(metaObj?.isSuperseded),
+      supersededByRevision: metaObj?.supersededByRevision ?? null,
+      pinExpiresAt,
+    };
+  };
 
   if (section === "ui_audit") {
     if (record.uiAuditState !== "measured" || !record.uiAuditCanonicalJson) {
+      const existingMeta = state.recordMetaById.get(record.reportId) || null;
+      const liveMetaFields = buildLiveReadMetadata(existingMeta);
       return finalizeResponse({
         ok: true,
         status: "not_measured",
@@ -2271,6 +2564,16 @@ export function readTelemetryReport(options = {}) {
         message: `chunkIndex ${chunkIndex} is out of bounds for ui_audit with ${chunks.length} chunk(s).`,
       });
     }
+
+    // Valid ui_audit chunk bounds confirmed: renew an already active pin without starting a new pin
+    const updatedMeta = activateOrRenewLiveReadPin(
+      state,
+      record,
+      "ui_audit",
+      chunkIndex,
+      nowMs
+    );
+    const liveMetaFields = buildLiveReadMetadata(updatedMeta);
 
     const chunkText = chunks[chunkIndex];
     const hasMoreChunks = chunkIndex + 1 < chunks.length;
@@ -2313,6 +2616,16 @@ export function readTelemetryReport(options = {}) {
       message: `chunkIndex ${chunkIndex} is out of bounds for report with ${chunks.length} chunk(s).`,
     });
   }
+
+  // Valid report chunk bounds confirmed: start pin on chunkIndex=0 or renew active pin
+  const updatedMeta = activateOrRenewLiveReadPin(
+    state,
+    record,
+    "report",
+    chunkIndex,
+    nowMs
+  );
+  const liveMetaFields = buildLiveReadMetadata(updatedMeta);
 
   const chunkText = chunks[chunkIndex];
   const hasMoreChunks = chunkIndex + 1 < chunks.length;
