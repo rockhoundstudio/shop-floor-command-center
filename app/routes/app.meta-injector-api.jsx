@@ -2420,16 +2420,16 @@ export const action = async ({ request }) => {
                
                if (imgData?.userErrors?.length) {
                   allErrors.push(...imgData.userErrors.map(uErr => ({
-                    ...uErr,
-                    destination: `native_image_alts_${imgInput.id}`
+                     ...uErr,
+                     destination: `native_image_alts_${imgInput.id}`
                   })));
                } else {
                   imageAltUpdatesSucceeded++;
                }
             } catch (imgErr) {
                allErrors.push({
-                 destination: `native_image_alts_${imgInput.id}`,
-                 message: `API Error on Image Alt Update for ${imgInput.id}: ${imgErr.message}`
+                  destination: `native_image_alts_${imgInput.id}`,
+                  message: `API Error on Image Alt Update for ${imgInput.id}: ${imgErr.message}`
                });
             }
          }
@@ -2784,7 +2784,7 @@ export const action = async ({ request }) => {
       return Response.json(loaderRes);
     }
 
-    if (intent === "geoLookup" || intent === "tab2AutoFill" || intent === "titleParse" || intent === "visionScan" || intent === "fullRescan" || intent === "generateDescription") {
+    if (intent === "geoLookup" || intent === "tab2AutoFill" || intent === "titleParse" || intent === "visionScan" || intent === "fullRescan" || intent === "tab3FullRescan" || intent === "generateDescription") {
       const autofillRes = await executeAutofill(intent, body, admin);
       if (autofillRes instanceof Response) {
         return autofillRes;

@@ -59,6 +59,13 @@ const OPERATOR_AUTHORITATIVE_DESTINATIONS = new Set([
   "custom.treatment_status"
 ]);
 
+const CLASSIFICATION_PRECEDENCE_KEYS = new Set([
+  "primary_use",
+  "jewelry_type",
+  "product_format",
+  "necklace_design"
+]);
+
 const isEffectiveRetiredKey = (key) => {
   if (key === "wire_material" || key === "custom.wire_material") return false;
   return RETIRED_KEYS.includes(key);
@@ -1126,21 +1133,59 @@ export function useMetaInjectorExecution({
           "primary_color", "secondary_colors", "color_pattern", "cut_type", "surface_finish",
           "treatment_status", "treated", "necklace_design"
         ];
+        const operatorLockedKeys = [];
+        const passiveStoredKeys = [];
+
         hardwareKeys.forEach(k => {
           const fullKey = `custom.${k}`;
           let val = "";
-          if (manualEdits[currentId]?.[fullKey] === true &&
-              manifest.repairPlan?.[fullKey] !== undefined) {
-            val = manifest.repairPlan[fullKey];
-          } else if (approvals[currentId]?.[fullKey] !== undefined) {
-            val = approvals[currentId][fullKey];
+          let chosenSource = null;
+
+          const hasManualEditFlag =
+            manualEdits[currentId]?.[fullKey] === true ||
+            manualEdits[currentId]?.[k] === true;
+          const manualPlanVal =
+            manifest.repairPlan?.[fullKey] !== undefined
+              ? manifest.repairPlan[fullKey]
+              : manifest.repairPlan?.[k];
+
+          const approvalVal =
+            approvals[currentId]?.[fullKey] !== undefined
+              ? approvals[currentId][fullKey]
+              : approvals[currentId]?.[k];
+
+          if (hasManualEditFlag && manualPlanVal !== undefined) {
+            val = manualPlanVal;
+            if (val !== undefined && val !== null && String(val).trim() !== "") {
+              chosenSource = "operator_locked";
+            }
+          } else if (approvalVal !== undefined) {
+            val = approvalVal;
+            if (val !== undefined && val !== null && String(val).trim() !== "") {
+              chosenSource = "operator_locked";
+            }
           } else if (manifest.currentMetafields?.[fullKey] !== undefined) {
             val = manifest.currentMetafields[fullKey];
+            if (val !== undefined && val !== null && String(val).trim() !== "") {
+              // If an unusable manual edit marker or approval marker exists without a usable value, keep conservative operator lock rather than marking passive
+              chosenSource = (hasManualEditFlag || approvalVal !== undefined)
+                ? "operator_locked"
+                : "passive_stored";
+            }
           }
+
           if (val !== undefined && val !== null && String(val).trim() !== "") {
             fd.set(k, String(val));
+            if (chosenSource === "operator_locked") {
+              operatorLockedKeys.push(k);
+            } else if (chosenSource === "passive_stored") {
+              passiveStoredKeys.push(k);
+            }
           }
         });
+
+        fd.append("operator_locked_fields", JSON.stringify(operatorLockedKeys));
+        fd.append("passive_stored_fields", JSON.stringify(passiveStoredKeys));
 
         batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-autofill" });
       }
@@ -1153,20 +1198,55 @@ export function useMetaInjectorExecution({
         fd.append("intent", "generateDescription");
         fd.append("pieceId", currentId);
         const descriptionFacts = {};
-        const mergeDescriptionFacts = (source, isAuthoritative = false) => {
+        const tab3DataObj = validObj(pieceAi.tab3Data);
+
+        const isFactKeyOperatorLocked = (factKey) => {
+          const fullKey = `custom.${factKey}`;
+          if (manualEdits[currentId]?.[fullKey] === true && manifest.repairPlan?.[fullKey] !== undefined && hasNonBlankValue(manifest.repairPlan[fullKey])) {
+            return true;
+          }
+          if (manualEdits[currentId]?.[factKey] === true && manifest.repairPlan?.[factKey] !== undefined && hasNonBlankValue(manifest.repairPlan[factKey])) {
+            return true;
+          }
+          if (approvals[currentId]?.[fullKey] !== undefined && hasNonBlankValue(approvals[currentId][fullKey])) {
+            return true;
+          }
+          if (approvals[currentId]?.[factKey] !== undefined && hasNonBlankValue(approvals[currentId][factKey])) {
+            return true;
+          }
+          return false;
+        };
+
+        const hasFreshTab3Classification = (factKey) => {
+          if (!CLASSIFICATION_PRECEDENCE_KEYS.has(factKey)) return false;
+          const rawTab3Val = tab3DataObj[factKey] ?? tab3DataObj[`custom.${factKey}`];
+          return hasNonBlankValue(rawTab3Val);
+        };
+
+        const mergeDescriptionFacts = (source, isAuthoritative = false, isPassiveStoredSource = false) => {
           Object.entries(source || {}).forEach(([key, value]) => {
             if (key === "standardized_candidates" || key === "custom.standardized_candidates") return;
+            if (key === "operator_locked_fields" || key === "passive_stored_fields") return;
             if (key === "canonical_title" || key === "custom.canonical_title" || key === "product_title") return;
             if (key.includes(".") && !key.startsWith("custom.")) return;
 
             const canonicalTarget = normalizeIncomingTargetKey(key);
             const factKey = canonicalTarget.startsWith("custom.") ? canonicalTarget.slice(7) : (key.startsWith("custom.") ? key.slice(7) : key);
-            if (["intent", "success", "error", "errors", "logs", "debug_origin", "standardized_candidates", "shopify_title"].includes(factKey)) return;
+            if (["intent", "success", "error", "errors", "logs", "debug_origin", "standardized_candidates", "shopify_title", "operator_locked_fields", "passive_stored_fields"].includes(factKey)) return;
 
             if (value !== undefined && value !== null && typeof value !== "object" && String(value).trim() !== "") {
               let cleanVal = String(value).trim();
               if (factKey === "piece_name") {
                 cleanVal = extractPieceNameOnly(cleanVal, manifest.nativeTargets?.productTitle || product.title);
+              }
+              if (
+                isPassiveStoredSource &&
+                CLASSIFICATION_PRECEDENCE_KEYS.has(factKey) &&
+                hasFreshTab3Classification(factKey) &&
+                !isFactKeyOperatorLocked(factKey) &&
+                hasNonBlankValue(descriptionFacts[factKey])
+              ) {
+                return;
               }
               if (isAuthoritative || !hasNonBlankValue(descriptionFacts[factKey])) {
                 descriptionFacts[factKey] = cleanVal;
@@ -1181,14 +1261,17 @@ export function useMetaInjectorExecution({
           });
         };
 
-        // Merge in order so stored merchant facts and explicit edits/approvals take precedence over AI draft outputs
-        mergeDescriptionFacts(pieceAi.titleParse, false);
-        mergeDescriptionFacts(pieceAi.tab3Data, false);
-        mergeDescriptionFacts(manifest.currentMetafields, true);
+        // Merge in order so stored merchant facts and explicit edits/approvals take precedence over AI draft outputs,
+        // while preserving freshly evidenced tab3Data classification values over passive stored classification labels
+        mergeDescriptionFacts(pieceAi.titleParse, false, false);
+        mergeDescriptionFacts(pieceAi.tab3Data, false, false);
+        mergeDescriptionFacts(manifest.currentMetafields, true, true);
 
         Object.entries(approvals[currentId] || {}).forEach(([key, value]) => {
           if (key.startsWith("custom.") && key !== "custom.standardized_candidates" && manualEdits[currentId]?.[key] !== true) {
             const fk = key.slice(7);
+            if (fk === "operator_locked_fields" || fk === "passive_stored_fields") return;
+            if (!hasNonBlankValue(value)) return;
             descriptionFacts[fk] = fk === "piece_name" ? extractPieceNameOnly(String(value ?? ""), manifest.nativeTargets?.productTitle || product.title) : value;
             if (fk === "material") {
               descriptionFacts.stone_family = value;
@@ -1201,7 +1284,9 @@ export function useMetaInjectorExecution({
           if (edited === true && key.startsWith("custom.") && key !== "custom.standardized_candidates" &&
               manifest.repairPlan?.[key] !== undefined) {
             const fk = key.slice(7);
+            if (fk === "operator_locked_fields" || fk === "passive_stored_fields") return;
             const editVal = manifest.repairPlan[key];
+            if (!hasNonBlankValue(editVal)) return;
             descriptionFacts[fk] = fk === "piece_name" ? extractPieceNameOnly(String(editVal ?? ""), manifest.nativeTargets?.productTitle || product.title) : editVal;
             if (fk === "material") {
               descriptionFacts.stone_family = editVal;
@@ -2017,6 +2102,10 @@ export function useMetaInjectorExecution({
             const cleanedTab3Data = validObj(tab3Data) ? { ...tab3Data } : {};
             delete cleanedTab3Data.standardized_candidates;
             delete cleanedTab3Data["custom.standardized_candidates"];
+            delete cleanedTab3Data.operator_locked_fields;
+            delete cleanedTab3Data.passive_stored_fields;
+            delete cleanedTab3Data["custom.operator_locked_fields"];
+            delete cleanedTab3Data["custom.passive_stored_fields"];
 
             setAiData(prev => ({
               ...prev,
@@ -2041,6 +2130,10 @@ export function useMetaInjectorExecution({
                 const newConflicts = { ...(existing.conflicts || {}) };
                 delete newPlan.standardized_candidates;
                 delete newPlan["custom.standardized_candidates"];
+                delete newPlan.operator_locked_fields;
+                delete newPlan.passive_stored_fields;
+                delete newPlan["custom.operator_locked_fields"];
+                delete newPlan["custom.passive_stored_fields"];
                 delete newPlan["custom.stone_family"];
                 delete newPlan["stone_family"];
                 delete newPlan["custom.primary_medium"];
@@ -2136,6 +2229,7 @@ export function useMetaInjectorExecution({
                   if (!hasNonBlankValue(rawAiValue)) return;
                   if (rawKeyName === "origin_story" || rawKeyName === "custom.origin_story") return;
                   if (rawKeyName === "standardized_candidates" || rawKeyName === "custom.standardized_candidates") return;
+                  if (rawKeyName === "operator_locked_fields" || rawKeyName === "passive_stored_fields" || rawKeyName === "custom.operator_locked_fields" || rawKeyName === "custom.passive_stored_fields") return;
                   if (rawKeyName.startsWith("custom.std_") || rawKeyName.startsWith("std_")) return;
                   if (rawKeyName === "canonical_title" || rawKeyName === "custom.canonical_title" || rawKeyName === "product_title" || rawKeyName === "custom.product_title" || rawKeyName === "shopify_title" || rawKeyName === "native_title") {
                     return;
@@ -2144,6 +2238,7 @@ export function useMetaInjectorExecution({
                   const targetKey = normalizeIncomingTargetKey(rawKeyName);
                   if (!targetKey || isEffectiveRetiredKey(targetKey) || isEffectiveRetiredKey(rawKeyName)) return;
                   if (targetKey === "custom.origin_story" || targetKey === "shopify_title" || targetKey === "native_title") return;
+                  if (targetKey === "custom.operator_locked_fields" || targetKey === "custom.passive_stored_fields") return;
                   if (targetKey.startsWith("shopify.") && !isVerifiedStandardizedDestination(targetKey)) return;
 
                   // Never allow generated drafts to overwrite operator manual edits or explicit approvals
@@ -2298,6 +2393,8 @@ export function useMetaInjectorExecution({
                     k !== "origin_story" &&
                     k !== "standardized_candidates" &&
                     k !== "custom.standardized_candidates" &&
+                    k !== "operator_locked_fields" &&
+                    k !== "passive_stored_fields" &&
                     k !== "poetic_hook"
                   ) {
                     if (k.startsWith("std_") || k.startsWith("custom.std_") || k.startsWith("shopify.")) return;
@@ -2313,7 +2410,9 @@ export function useMetaInjectorExecution({
                     k !== "geoSource" &&
                     k !== "origin_story" &&
                     k !== "standardized_candidates" &&
-                    k !== "custom.standardized_candidates"
+                    k !== "custom.standardized_candidates" &&
+                    k !== "operator_locked_fields" &&
+                    k !== "passive_stored_fields"
                   ) {
                     if (k.startsWith("std_") || k.startsWith("custom.std_") || k.startsWith("shopify.")) return;
                     const targetKey = normalizeIncomingTargetKey(k);
