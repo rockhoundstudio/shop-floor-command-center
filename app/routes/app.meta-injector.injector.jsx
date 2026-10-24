@@ -25,43 +25,16 @@ import {
   computeTemplateAuditCounts
 } from "../utils/meta-injector.constants.jsx";
 import { resolveConfigFieldDestination } from "../utils/meta-injector.matrix-domain.jsx";
+import {
+  hasMeaningfulValue,
+  getDerivedMaterial,
+  isSegmentedMarketingTitle,
+  resolveIdentifierToPreserve,
+  evaluateThreePartSeedBlur,
+  buildTitleParseFormData,
+  mergeTitleParseIntoTab1State
+} from "../utils/meta-injector.intake-draft.jsx";
 import { handleScanPhoto, handleGenerateDescription, buildMetafieldsJson, buildTitle } from "./app.meta-injector.intake-helpers.jsx";
-
-function getDerivedMaterial(stoneFam) {
-  if (!stoneFam) return "";
-  return stoneFam.replace(/^(Dragon's Eye|Green|Blue|Fire|Rufus|Rainbow|Yellow|Red|Black|Oregon)\s+/i, "").trim();
-}
-
-function isSegmentedMarketingTitle(val) {
-  if (typeof val !== "string") return false;
-  return val.trim().split(/\s+[-—–]\s+/).length >= 3;
-}
-
-function hasMeaningfulValue(val) {
-  if (val === undefined || val === null) return false;
-  if (typeof val === "boolean") return true;
-  if (typeof val === "number") return !Number.isNaN(val);
-  if (Array.isArray(val)) return val.length > 0;
-  if (typeof val === "object") return false;
-  return String(val).trim() !== "";
-}
-
-function resolveIdentifierToPreserve(currentPieceName, parsedPieceName) {
-  const existing = typeof currentPieceName === "string" ? currentPieceName.trim() : "";
-  if (existing && !isSegmentedMarketingTitle(existing)) {
-    return existing;
-  }
-  if (isSegmentedMarketingTitle(existing)) {
-    const segs = existing.split(/\s+[-—–]\s+/);
-    const tail = segs[segs.length - 1]?.trim() || "";
-    if (tail) return tail;
-  }
-  const candidate = typeof parsedPieceName === "string" ? parsedPieceName.trim() : "";
-  if (candidate && !isSegmentedMarketingTitle(candidate)) {
-    return candidate;
-  }
-  return existing;
-}
 
 const PROTECTED_MANUAL_STORY_TITLES = [
   "the creek find",
@@ -281,9 +254,13 @@ export function NewProductIntakeTab({ fetcher }) {
   const [activePieceId, setActivePieceId] = useState("");
 
   const sharedRecordedSourcesRef = useRef({});
+  const manualSharedEditsRef = useRef({});
   const latestPieces = useRef(pieces);
   const latestShared = useRef(sharedFields);
   const lastAutofilledTitle = useRef("");
+  const titleParseRevisionRef = useRef(0);
+  const pendingTitleParseRef = useRef(null);
+  const lastProcessedTitleParseDataRef = useRef(null);
 
   useEffect(() => { latestPieces.current = pieces; }, [pieces]);
   useEffect(() => { latestShared.current = sharedFields; }, [sharedFields]);
@@ -336,6 +313,29 @@ export function NewProductIntakeTab({ fetcher }) {
       sharedRecordedSourcesRef.current.stone_family = entry;
       sharedRecordedSourcesRef.current.material = entry;
       sharedRecordedSourcesRef.current["custom.material"] = entry;
+    }
+  }, []);
+
+  const recordManualSharedEdit = useCallback((key) => {
+    if (!key) return;
+    manualSharedEditsRef.current[key] = true;
+    const bare = key.replace(/^custom\./, "");
+    manualSharedEditsRef.current[bare] = true;
+    manualSharedEditsRef.current[`custom.${bare}`] = true;
+    if (key === "is_ooak" || key === "is_one_of_a_kind") {
+      manualSharedEditsRef.current.is_ooak = true;
+      manualSharedEditsRef.current.is_one_of_a_kind = true;
+      manualSharedEditsRef.current["custom.is_one_of_a_kind"] = true;
+    }
+    if (key === "origin_handle" || key === "origin_page_handle") {
+      manualSharedEditsRef.current.origin_handle = true;
+      manualSharedEditsRef.current.origin_page_handle = true;
+      manualSharedEditsRef.current["custom.origin_page_handle"] = true;
+    }
+    if (key === "stone_family" || key === "material") {
+      manualSharedEditsRef.current.stone_family = true;
+      manualSharedEditsRef.current.material = true;
+      manualSharedEditsRef.current["custom.material"] = true;
     }
   }, []);
 
@@ -467,6 +467,16 @@ export function NewProductIntakeTab({ fetcher }) {
     const sourceLabel = sourceOverride || (isManual ? "Manual" : "System");
     const stageLabel = stageOverride || (isManual ? "Tab1BenchEdit" : "Tab1Intake");
 
+    if (
+      isManual &&
+      key === "piece_name" &&
+      pendingTitleParseRef.current &&
+      pendingTitleParseRef.current.pieceId === id
+    ) {
+      titleParseRevisionRef.current += 1;
+      pendingTitleParseRef.current = null;
+    }
+
     setPieces(prev => prev.map(p => {
       if (p.id !== id) return p;
       const nextManualEdits = isManual
@@ -579,6 +589,9 @@ export function NewProductIntakeTab({ fetcher }) {
       return;
     }
 
+    if (sourceOverride === "Manual") {
+      recordManualSharedEdit(key);
+    }
     recordSharedSource(key, sourceOverride, stageOverride);
 
     setSharedFields(prev => {
@@ -601,16 +614,18 @@ export function NewProductIntakeTab({ fetcher }) {
       // Never copy primary_medium (metal/hardware) into material
       return next;
     });
-  }, [isCapabilityHeldReadOnly, recordSharedSource]);
+  }, [isCapabilityHeldReadOnly, recordManualSharedEdit, recordSharedSource]);
 
   const handleStoneFamilyChange = useCallback((value) => {
+    recordManualSharedEdit("material");
+    recordManualSharedEdit("stone_family");
     recordSharedSource("material", "Manual", "QuickStoneFamilySelector");
     setSharedFields(prev => ({
       ...prev,
       stone_family: value,
       material: value || prev.material
     }));
-  }, [recordSharedSource]);
+  }, [recordManualSharedEdit, recordSharedSource]);
 
   const handleScanGeminiPhotos = useCallback((piece) => {
     if (piece?.imageBase64) {
@@ -693,40 +708,63 @@ export function NewProductIntakeTab({ fetcher }) {
   }, [visionFetcher]);
 
   const handlePieceNameBlur = useCallback((id, value) => {
-    if (!value) return;
-    const segments = value.split(/\s+[-—–]\s+/);
-    
-    if (segments.length === 3 && value !== lastAutofilledTitle.current) {
-      const extractedIdentifier = segments[2].trim();
-      setPieces(prev => prev.map(p =>
-        p.id === id
-          ? {
-              ...p,
-              canonical_title: value.trim(),
-              native_title: value.trim(),
-              piece_name: extractedIdentifier || p.piece_name,
-              recordedSources: {
-                ...(p.recordedSources || {}),
-                canonical_title: { source: "Derived (3-Part Seed)", stage: "handlePieceNameBlur" },
-                native_title: { source: "Derived (3-Part Seed)", stage: "handlePieceNameBlur" },
-                piece_name: { source: "Derived (3-Part Seed)", stage: "handlePieceNameBlur" }
-              }
-            }
-          : p
-      ));
-      setLastScannedPieceId(id);
-      lastAutofilledTitle.current = value; 
-      
-      const formData = new FormData();
-      formData.append("intent", "titleParse");
-      formData.append("pieceId", id);
-      formData.append("pieceName", value);
+    const evalResult = evaluateThreePartSeedBlur(value, lastAutofilledTitle.current);
+    if (!evalResult.shouldTrigger) return;
 
-      autoFillFetcher.submit(
-        formData,
-        { method: "post", action: "/app/meta-injector-autofill" }
-      );
-    }
+    const { normalizedSeed, extractedPieceId } = evalResult;
+    titleParseRevisionRef.current += 1;
+    const nextRevision = titleParseRevisionRef.current;
+    const requestId = `t1parse_${Date.now()}_${nextRevision}`;
+
+    pendingTitleParseRef.current = {
+      requestId,
+      draftRevision: nextRevision,
+      pieceId: id,
+      seedString: normalizedSeed,
+      extractedPieceId
+    };
+
+    setPieces(prev => prev.map(p => {
+      if (p.id !== id) return p;
+      const manualEdits = p.manualPieceEdits || {};
+      const hasExplicitTitleLock = Boolean(manualEdits.canonical_title || manualEdits.native_title);
+      const nextCanonical = hasExplicitTitleLock
+        ? (p.canonical_title || p.native_title || normalizedSeed)
+        : normalizedSeed;
+      const nextNative = hasExplicitTitleLock
+        ? (p.native_title || p.canonical_title || normalizedSeed)
+        : normalizedSeed;
+      const nextSources = {
+        ...(p.recordedSources || {}),
+        piece_name: { source: "Derived (3-Part Seed)", stage: "handlePieceNameBlur" }
+      };
+      if (!hasExplicitTitleLock) {
+        nextSources.canonical_title = { source: "Derived (3-Part Seed)", stage: "handlePieceNameBlur" };
+        nextSources.native_title = { source: "Derived (3-Part Seed)", stage: "handlePieceNameBlur" };
+      }
+      return {
+        ...p,
+        canonical_title: nextCanonical,
+        native_title: nextNative,
+        piece_name: extractedPieceId || p.piece_name,
+        recordedSources: nextSources
+      };
+    }));
+
+    setLastScannedPieceId(id);
+    lastAutofilledTitle.current = normalizedSeed;
+
+    const formData = buildTitleParseFormData({
+      pieceId: id,
+      seedString: normalizedSeed,
+      requestId,
+      draftRevision: nextRevision
+    });
+
+    autoFillFetcher.submit(
+      formData,
+      { method: "post", action: "/app/meta-injector-autofill" }
+    );
   }, [autoFillFetcher]);
 
   const handleTopDropZoneDrop = useCallback((dropFiles) => {
@@ -814,6 +852,10 @@ export function NewProductIntakeTab({ fetcher }) {
   }, []);
 
   const handleRemoveRow = useCallback((id) => {
+    if (pendingTitleParseRef.current && pendingTitleParseRef.current.pieceId === id) {
+      titleParseRevisionRef.current += 1;
+      pendingTitleParseRef.current = null;
+    }
     setPieces(prev => prev.filter(p => p.id !== id));
   }, []);
 
@@ -946,6 +988,8 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
   const handleStartNewBatch = useCallback(() => {
     setStatusMessage("");
     setErrorMessage("");
+    titleParseRevisionRef.current += 1;
+    pendingTitleParseRef.current = null;
     const freshPiece = makeInitialPieceState();
     setPieces([freshPiece]);
     setActivePieceId(freshPiece.id);
@@ -1322,88 +1366,75 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
   }, [autoFillFetcher.state, autoFillFetcher.data, recordSharedSource]);
 
   useEffect(() => {
-    if (!autoFillFetcher.data?.titleParse) return;
+    if (autoFillFetcher.state !== "idle" || !autoFillFetcher.data?.titleParse) return;
+    if (lastProcessedTitleParseDataRef.current === autoFillFetcher.data) return;
+    lastProcessedTitleParseDataRef.current = autoFillFetcher.data;
+
+    const pendingReq = pendingTitleParseRef.current;
+    // Reject stale responses if batch was reset, piece was removed, or piece_name was edited after blur
+    if (!pendingReq || pendingReq.draftRevision !== titleParseRevisionRef.current) {
+      return;
+    }
+
     const parsed = autoFillFetcher.data.titleParse;
-    const responsePieceId = autoFillFetcher.data.pieceId || autoFillFetcher.formData?.get("pieceId") || lastScannedPieceId;
+    const responsePieceId =
+      autoFillFetcher.data.pieceId ||
+      pendingReq.pieceId ||
+      lastScannedPieceId;
 
-    setSharedFields(prev => {
-      const resolvedCollectionLoc = parsed.collection_location || prev.collection_location;
-      const nextStoneFamily = normalizeDropdownValue("stone_family", parsed.stone_family?.trim()) || prev.stone_family || "";
-      const derivedMaterial = prev.material || parsed.material || getDerivedMaterial(nextStoneFamily);
+    if (responsePieceId && pendingReq.pieceId && responsePieceId !== pendingReq.pieceId) {
+      return;
+    }
 
-      if (!prev.material && derivedMaterial) recordSharedSource("material", "Gemini / Geo Library", "titleParse");
-      if (parsed.collection_name && !prev.collection_name) recordSharedSource("collection_name", "Gemini / Dwell Web", "titleParse");
-      if (parsed.collection_location && !prev.collection_location) recordSharedSource("collection_location", "Gemini / Dwell Web", "titleParse");
-      if (parsed.origin_location && !prev.origin_location) recordSharedSource("origin_location", "Gemini / Dwell Web", "titleParse");
-      if ((parsed.origin_page_handle || parsed.origin_handle) && !prev.origin_page_handle) recordSharedSource("origin_page_handle", "Gemini / Dwell Web", "titleParse");
+    const currentTargetPiece =
+      latestPieces.current.find((p, i) => (responsePieceId ? p.id === responsePieceId : i === 0)) ||
+      null;
+    if (!currentTargetPiece) {
+      return;
+    }
 
-      const geoKeysFromParse = [
-        "specific_gravity", "diaphaneity", "crystal_system", "geological_era",
-        "mineral_class", "rock_composition", "rock_formation", "geological_age",
-        "fracture_pattern", "mohs_hardness", "luster", "cleavage"
-      ];
-      geoKeysFromParse.forEach((gk) => {
-        const incoming = gk === "fracture_pattern" ? (parsed.fracture_pattern || parsed.fracture) : parsed[gk];
-        if (incoming && !prev[gk]) {
-          recordSharedSource(gk, "Geo Library", "titleParse");
-        }
-      });
+    const currentPieceManualEdits = currentTargetPiece.manualPieceEdits || {};
+    const explicitTitleOverride =
+      currentPieceManualEdits.canonical_title || currentPieceManualEdits.native_title
+        ? (currentTargetPiece.canonical_title || currentTargetPiece.native_title || "")
+        : "";
 
-      return {
-        ...prev,
-        material: derivedMaterial, 
-        stone_family: nextStoneFamily,
-        collection_name: parsed.collection_name || prev.collection_name,
-        collection_location: resolvedCollectionLoc,
-        origin_location: parsed.origin_location || prev.origin_location,
-        origin_handle: parsed.origin_handle || prev.origin_handle, 
-        origin_page_handle: parsed.origin_page_handle || parsed.origin_handle || prev.origin_page_handle, 
-        origin_story: prev.origin_story || parsed.origin_story || "",
-        specific_gravity: parsed.specific_gravity || prev.specific_gravity,
-        diaphaneity: parsed.diaphaneity || prev.diaphaneity,
-        crystal_system: parsed.crystal_system || prev.crystal_system,
-        geological_era: parsed.geological_era || prev.geological_era,
-        mineral_class: parsed.mineral_class || prev.mineral_class,
-        rock_composition: parsed.rock_composition || prev.rock_composition,
-        rock_formation: parsed.rock_formation || prev.rock_formation,
-        geological_age: parsed.geological_age || prev.geological_age,
-        fracture_pattern: parsed.fracture_pattern || parsed.fracture || prev.fracture_pattern,
-        mohs_hardness: parsed.mohs_hardness || prev.mohs_hardness,
-        luster: parsed.luster || prev.luster,
-        cleavage: parsed.cleavage || prev.cleavage,
-        ...(parsed.google_product_category && { google_product_category: parsed.google_product_category })
-      };
+    const { nextSharedFields, sharedSourceUpdates } = mergeTitleParseIntoTab1State({
+      parsed,
+      sharedFields: latestShared.current,
+      piece: currentTargetPiece,
+      manualSharedEdits: manualSharedEditsRef.current,
+      manualPieceEdits: currentPieceManualEdits,
+      explicitTitleOverride
     });
 
+    sharedSourceUpdates.forEach(({ key, source, stage }) => {
+      recordSharedSource(key, source, stage);
+    });
+
+    setSharedFields(nextSharedFields);
+
     if (parsed.canonical_title || parsed.product_title || parsed.seo_title || parsed.piece_name) {
-      const fullCustomerTitle = parsed.canonical_title || parsed.product_title || "";
       setPieces(prev => prev.map((p, i) => {
         const isTargetRow = responsePieceId ? p.id === responsePieceId : i === 0;
         if (!isTargetRow) return p;
 
-        // Keep human internal identifier (e.g. BQH-1, BQH-2, bob) separate from canonical_title
-        const preservedIdentifier = resolveIdentifierToPreserve(p.piece_name, parsed.piece_name);
-        const resolvedTitle = fullCustomerTitle || p.canonical_title || p.native_title;
-        const nextSources = { ...(p.recordedSources || {}) };
-        if (fullCustomerTitle) {
-          nextSources.canonical_title = { source: "Gemini", stage: "titleParse" };
-          nextSources.native_title = { source: "Gemini", stage: "titleParse" };
-        }
-        if (parsed.seo_title) {
-          nextSources.seo_title = { source: "Gemini", stage: "titleParse" };
-          nextSources.native_seo_title = { source: "Gemini", stage: "titleParse" };
-        }
+        const rowManualEdits = p.manualPieceEdits || {};
+        const rowExplicitTitleOverride =
+          rowManualEdits.canonical_title || rowManualEdits.native_title
+            ? (p.canonical_title || p.native_title || "")
+            : "";
 
-        return {
-          ...p,
-          piece_name: preservedIdentifier,
-          canonical_title: resolvedTitle,
-          native_title: resolvedTitle,
-          seo_title: parsed.seo_title || p.seo_title,
-          native_seo_title: parsed.seo_title || p.native_seo_title || p.seo_title,
-          handle: parsed.handle || p.handle,
-          recordedSources: nextSources
-        };
+        const mergedForRow = mergeTitleParseIntoTab1State({
+          parsed,
+          sharedFields: nextSharedFields,
+          piece: p,
+          manualSharedEdits: manualSharedEditsRef.current,
+          manualPieceEdits: rowManualEdits,
+          explicitTitleOverride: rowExplicitTitleOverride
+        });
+
+        return mergedForRow.nextPiece;
       }));
     }
 
@@ -1417,7 +1448,7 @@ stagedResourceUrls: ${(p.stagedResourceUrls && p.stagedResourceUrls.length > 0) 
       setTitleToastActive(true); setTimeout(() => setTitleToastActive(false), 3000);
     }
 
-  }, [autoFillFetcher, autoFillFetcher.data, lastScannedPieceId, recordSharedSource]);
+  }, [autoFillFetcher.state, autoFillFetcher.data, lastScannedPieceId, recordSharedSource]);
 
   useEffect(() => {
     const isIdle = descriptionFetcher.state === "idle";

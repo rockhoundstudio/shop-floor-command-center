@@ -51,6 +51,12 @@ import {
   buildRepairPayload
 } from "../utils/meta-injector.matrix-domain.jsx";
 import {
+  hasMeaningfulValue,
+  isSegmentedMarketingTitle,
+  resolveIdentifierToPreserve,
+  applyTitleParseToTab3Draft
+} from "../utils/meta-injector.intake-draft.jsx";
+import {
   buildAndCopyMatrixTelemetry,
   copyCapturedTelemetryPart,
   downloadCapturedTelemetryReport
@@ -62,6 +68,7 @@ import {
   DescriptionReviewSection
 } from "../components/meta-injector.bench-chrome.jsx";
 import { ManifestSectionCard } from "../components/meta-injector.manifest-section.jsx";
+import { UnselectedDraftSeedIntakeCard } from "../components/meta-injector.draft-intake.jsx";
 
 // Every drawer (including Description Review and the 11th Parked / Excluded drawer) starts collapsed (false).
 const INITIAL_EXPANDED_BAYS = Object.freeze({
@@ -87,6 +94,16 @@ function createInitialUnselectedDraftManifest() {
     repairPlan: {},
     metadata: {},
     verifiedGeoValues: {}
+  };
+}
+
+function createInitialDraftSourceContext() {
+  return {
+    rawSeedInput: "",
+    explicitTitleOverride: "",
+    primary_use: "",
+    origin_story: "",
+    honest_flaws_and_character: ""
   };
 }
 
@@ -903,6 +920,7 @@ function buildUnselectedPreviewLiveBenchPayload({
   benchRevision,
   clientStateChangedAt,
   draftManifest,
+  draftSourceContext = null,
   approvals,
   manualEdits,
   getFieldMetadata,
@@ -912,6 +930,10 @@ function buildUnselectedPreviewLiveBenchPayload({
     draftManifest && typeof draftManifest === "object"
       ? draftManifest
       : createInitialUnselectedDraftManifest();
+  const safeSourceContext =
+    draftSourceContext && typeof draftSourceContext === "object"
+      ? draftSourceContext
+      : createInitialDraftSourceContext();
   const draftApprovalsMap = validObj(approvals?.[UNSELECTED_DRAFT_STORAGE_KEY]);
   const draftManualEditsMap = validObj(manualEdits?.[UNSELECTED_DRAFT_STORAGE_KEY]);
   const dynamicSections = getDynamicSections(previewData, { includeTab3InspectableInventory: true });
@@ -1071,9 +1093,32 @@ function buildUnselectedPreviewLiveBenchPayload({
     (k) => draftManualEditsMap[k] === true
   );
   const explicitlyApprovedKeysList = Object.keys(draftApprovalsMap);
+  const cleanRawSeedInput = redactRecognizableCredentialStrings(
+    typeof safeSourceContext.rawSeedInput === "string" ? safeSourceContext.rawSeedInput : ""
+  );
+  const cleanExplicitTitleOverride = redactRecognizableCredentialStrings(
+    typeof safeSourceContext.explicitTitleOverride === "string"
+      ? safeSourceContext.explicitTitleOverride
+      : ""
+  );
+  const cleanOriginStoryContext = redactRecognizableCredentialStrings(
+    typeof safeSourceContext.origin_story === "string" ? safeSourceContext.origin_story : ""
+  );
+  const cleanFlawsContext = redactRecognizableCredentialStrings(
+    typeof safeSourceContext.honest_flaws_and_character === "string"
+      ? safeSourceContext.honest_flaws_and_character
+      : ""
+  );
+  const hasSourceContextInput =
+    cleanRawSeedInput.trim() !== "" ||
+    cleanExplicitTitleOverride.trim() !== "" ||
+    cleanOriginStoryContext.trim() !== "" ||
+    cleanFlawsContext.trim() !== "";
+
   const hasUnsavedDraftChanges =
     manualEditedKeysList.length > 0 ||
     explicitlyApprovedKeysList.length > 0 ||
+    hasSourceContextInput ||
     (diagnosticsStats && diagnosticsStats.proposed > 0);
 
   const runIdentity = hasUnsavedDraftChanges
@@ -1086,6 +1131,7 @@ function buildUnselectedPreviewLiveBenchPayload({
   const rawDraftTitle =
     previewData.repairPlan?.["shopify_title"] ||
     previewData.repairPlan?.["native_title"] ||
+    cleanExplicitTitleOverride ||
     null;
   const cleanDraftTitle = rawDraftTitle
     ? redactRecognizableCredentialStrings(String(rawDraftTitle))
@@ -1110,9 +1156,25 @@ function buildUnselectedPreviewLiveBenchPayload({
       : "unselected_draft_template_preview",
     productQueueStatus: null,
     dataAuthorityNote:
-      'Unselected new-product draft / template preview (DEV_SHOW_ALL_TEMPLATE_FIELDS=true, selectionState="unselected_preview", productId=null). No product is selected or loaded from Shopify. All 11 Tab 3 inspectable drawers and 93 logical slots (62 canonical working slots + 31 parked/excluded read-only entries, plus custom.generated_description in Description Review) are inspectable. Working capabilities without technical/owner/reference holds accept unsaved starting data and suggestion approvals in browser state, while rawStoredBaseline.exists is strictly false and no values are saved to Shopify.',
+      'Unselected new-product draft / template preview (DEV_SHOW_ALL_TEMPLATE_FIELDS=true, selectionState="unselected_preview", productId=null). No product is selected or loaded from Shopify. All 11 Tab 3 inspectable drawers and 93 logical slots (62 canonical working slots + 31 parked/excluded read-only entries, plus custom.generated_description in Description Review) are inspectable. Working capabilities without technical/owner/reference holds accept unsaved starting data, 3-part seed titleParse suggestions, and suggestion approvals in browser state, while rawStoredBaseline.exists is strictly false and no values are saved to Shopify.',
     runIdentity,
     runTimestamp,
+    draftIntakeContext: {
+      rawSeedInput: cleanRawSeedInput,
+      explicitTitleOverride: cleanExplicitTitleOverride,
+      stagedPieceIdentifier: redactRecognizableCredentialStrings(
+        previewData.repairPlan?.["custom.piece_name"] || ""
+      ),
+      stagedNativeTitleProposal: cleanDraftTitle || "",
+      originStorySourceContextPresent: Boolean(cleanOriginStoryContext.trim() !== ""),
+      originStorySourceContextLength: cleanOriginStoryContext.length,
+      originStorySourceContextPreview:
+        cleanOriginStoryContext.length > 240
+          ? `${cleanOriginStoryContext.slice(0, 240)}... (${cleanOriginStoryContext.length} chars)`
+          : cleanOriginStoryContext,
+      benchFlawsContextPresent: Boolean(cleanFlawsContext.trim() !== ""),
+      note: "origin_story and bench flaw notes are isolated AI source context only and are never placed in repairPlan or treated as save candidates."
+    },
     systemStatus: {
       shopifyReadStatus: "Unselected Draft (No Product Loaded)",
       geminiStatus: "Not called",
@@ -1594,6 +1656,10 @@ export function OperationsMatrixTab({ products }) {
   const [unselectedDraftManifest, setUnselectedDraftManifest] = useState(() =>
     createInitialUnselectedDraftManifest()
   );
+  const [draftSourceContext, setDraftSourceContext] = useState(() =>
+    createInitialDraftSourceContext()
+  );
+  const [draftEpoch, setDraftEpoch] = useState(0);
   const [lastProcessedData, setLastProcessedData] = useState(null);
   
   const [approvals, setApprovals] = useState({});
@@ -1628,6 +1694,28 @@ export function OperationsMatrixTab({ products }) {
   useEffect(() => {
     activeBenchIdRef.current = selectedBenchId;
   }, [selectedBenchId]);
+
+  const unselectedDraftManifestRef = useRef(unselectedDraftManifest);
+  useEffect(() => {
+    unselectedDraftManifestRef.current = unselectedDraftManifest;
+  }, [unselectedDraftManifest]);
+
+  const draftSourceContextRef = useRef(draftSourceContext);
+  useEffect(() => {
+    draftSourceContextRef.current = draftSourceContext;
+  }, [draftSourceContext]);
+
+  const draftEpochRef = useRef(draftEpoch);
+  useEffect(() => {
+    draftEpochRef.current = draftEpoch;
+  }, [draftEpoch]);
+
+  const activeDraftSeedRequestIdRef = useRef(null);
+
+  const manualEditsRef = useRef(manualEdits);
+  useEffect(() => {
+    manualEditsRef.current = manualEdits;
+  }, [manualEdits]);
 
   const sectionAuditMeasurementsRef = useRef(sectionAuditMeasurements);
   useEffect(() => {
@@ -2029,6 +2117,7 @@ export function OperationsMatrixTab({ products }) {
   const handleSelectBenchItem = useCallback((id) => {
     setSelectedBenchId((prevId) => {
       if (prevId !== id) {
+        activeDraftSeedRequestIdRef.current = null;
         if (activePublishAbortRef.current) {
           try {
             activePublishAbortRef.current.abort();
@@ -2275,6 +2364,7 @@ export function OperationsMatrixTab({ products }) {
     prevMetafieldsRefByProduct.current = {};
     prevNativeTargetsRefByProduct.current = {};
     prevRepairCompletedAtByProduct.current = {};
+    activeDraftSeedRequestIdRef.current = null;
     sendLiveBenchSelectionClear();
 
     if (pendingReferenceMatch) {
@@ -2303,6 +2393,8 @@ export function OperationsMatrixTab({ products }) {
     setProductStates({});
     setManifestData({});
     setUnselectedDraftManifest(createInitialUnselectedDraftManifest());
+    setDraftSourceContext(createInitialDraftSourceContext());
+    setDraftEpoch((prev) => prev + 1);
     setApprovals({});
     setKeepOriginalDecisions({});
     setManualEdits({});
@@ -3233,7 +3325,7 @@ export function OperationsMatrixTab({ products }) {
           source: activePending.source,
           workflowRunId: activePending.workflowRunId,
           message: `Reference matching returned partial/incomplete read diagnostics (success: ${String(isSuccess)}, isComplete: ${String(isComplete)}, ${resolutionCount} attribute resolution(s), ${topErrors.length} top-level error(s)).${incReason} Incomplete enumeration remains blocked and is never treated as missing_entry or save-ready. Review read errors/continuation below or click 'Match Reference Choices' to retry.`,
-          updatedAt: matchedAtIso
+          updatedAt: new Date().toISOString()
         }
       }));
     }
@@ -3502,6 +3594,318 @@ export function OperationsMatrixTab({ products }) {
     }
   };
 
+  // Thin connectors for UnselectedDraftSeedIntakeCard
+  const handleDraftSeedInputChange = useCallback((rawVal) => {
+    if (activeBenchIdRef.current !== null) return;
+    const cleanVal = typeof rawVal === "string" ? rawVal : "";
+    activeDraftSeedRequestIdRef.current = null;
+
+    setDraftSourceContext((prev) => ({
+      ...(prev || createInitialDraftSourceContext()),
+      rawSeedInput: cleanVal
+    }));
+
+    const trimmed = cleanVal.trim();
+    const isThreePart = isSegmentedMarketingTitle(trimmed);
+    const currentManualMap = validObj(manualEditsRef.current?.[UNSELECTED_DRAFT_STORAGE_KEY]);
+    const isPieceNameManuallyLocked =
+      currentManualMap["custom.piece_name"] === true ||
+      currentManualMap.piece_name === true;
+
+    // When typing a standalone 1-segment human ID (not a 3-part seed) and custom.piece_name
+    // was not separately locked in the drawer, keep custom.piece_name synchronized in the draft
+    // without locking out 3-part seed blur parsing.
+    if (!isThreePart && !isPieceNameManuallyLocked) {
+      setUnselectedDraftManifest((prevDraft) => {
+        const baseDraft =
+          prevDraft && typeof prevDraft === "object"
+            ? prevDraft
+            : createInitialUnselectedDraftManifest();
+        const prevPieceId = baseDraft.repairPlan?.["custom.piece_name"] ?? "";
+        if (prevPieceId === trimmed) return baseDraft;
+
+        const nextRepairPlan = {
+          ...(baseDraft.repairPlan || {}),
+          "custom.piece_name": trimmed
+        };
+        const nextMetadata = {
+          ...(baseDraft.metadata || {}),
+          "custom.piece_name": {
+            source: "Manual",
+            stage: "Tab3DraftSeedInput"
+          }
+        };
+        return {
+          ...baseDraft,
+          isUnselectedDraft: true,
+          repairPlan: nextRepairPlan,
+          metadata: nextMetadata
+        };
+      });
+
+      setApprovals((prevApp) => {
+        const draftApp = prevApp?.[UNSELECTED_DRAFT_STORAGE_KEY];
+        if (!draftApp || draftApp["custom.piece_name"] === undefined) return prevApp;
+        const nextDraftApp = { ...draftApp };
+        delete nextDraftApp["custom.piece_name"];
+        const next = { ...prevApp };
+        if (Object.keys(nextDraftApp).length === 0) {
+          delete next[UNSELECTED_DRAFT_STORAGE_KEY];
+        } else {
+          next[UNSELECTED_DRAFT_STORAGE_KEY] = nextDraftApp;
+        }
+        return next;
+      });
+    }
+  }, []);
+
+  const handleDraftExplicitTitleOverrideChange = useCallback((rawVal) => {
+    if (activeBenchIdRef.current !== null) return;
+    const cleanVal = typeof rawVal === "string" ? rawVal : "";
+    const trimmed = cleanVal.trim();
+
+    setDraftSourceContext((prev) => ({
+      ...(prev || createInitialDraftSourceContext()),
+      explicitTitleOverride: cleanVal
+    }));
+
+    if (trimmed !== "") {
+      setManualEdits((prev) => {
+        const next = { ...prev };
+        const draftEdits = { ...(next[UNSELECTED_DRAFT_STORAGE_KEY] || {}) };
+        draftEdits.shopify_title = true;
+        draftEdits.native_title = true;
+        next[UNSELECTED_DRAFT_STORAGE_KEY] = draftEdits;
+        return next;
+      });
+
+      setApprovals((prev) => {
+        const draftApp = prev?.[UNSELECTED_DRAFT_STORAGE_KEY];
+        if (!draftApp) return prev;
+        if (draftApp.shopify_title === undefined && draftApp.native_title === undefined) {
+          return prev;
+        }
+        const nextDraftApp = { ...draftApp };
+        delete nextDraftApp.shopify_title;
+        delete nextDraftApp.native_title;
+        const next = { ...prev };
+        if (Object.keys(nextDraftApp).length === 0) {
+          delete next[UNSELECTED_DRAFT_STORAGE_KEY];
+        } else {
+          next[UNSELECTED_DRAFT_STORAGE_KEY] = nextDraftApp;
+        }
+        return next;
+      });
+
+      setUnselectedDraftManifest((prevDraft) => {
+        const baseDraft =
+          prevDraft && typeof prevDraft === "object"
+            ? prevDraft
+            : createInitialUnselectedDraftManifest();
+        const nextRepairPlan = {
+          ...(baseDraft.repairPlan || {}),
+          shopify_title: cleanVal
+        };
+        if (Object.prototype.hasOwnProperty.call(nextRepairPlan, "native_title")) {
+          nextRepairPlan.native_title = cleanVal;
+        }
+        const overrideMeta = { source: "Manual", stage: "Tab3ExplicitTitleOverride" };
+        const nextMetadata = {
+          ...(baseDraft.metadata || {}),
+          shopify_title: overrideMeta,
+          native_title: overrideMeta
+        };
+        return {
+          ...baseDraft,
+          isUnselectedDraft: true,
+          repairPlan: nextRepairPlan,
+          metadata: nextMetadata
+        };
+      });
+    } else {
+      // Clearing the explicit title override unlocks title for subsequent 3-part seed parses
+      setManualEdits((prev) => {
+        const draftEdits = prev?.[UNSELECTED_DRAFT_STORAGE_KEY];
+        if (!draftEdits) return prev;
+        if (!draftEdits.shopify_title && !draftEdits.native_title) return prev;
+        const nextDraftEdits = { ...draftEdits };
+        delete nextDraftEdits.shopify_title;
+        delete nextDraftEdits.native_title;
+        const next = { ...prev };
+        if (Object.keys(nextDraftEdits).length === 0) {
+          delete next[UNSELECTED_DRAFT_STORAGE_KEY];
+        } else {
+          next[UNSELECTED_DRAFT_STORAGE_KEY] = nextDraftEdits;
+        }
+        return next;
+      });
+    }
+  }, []);
+
+  const handleDraftSeedBlurCommit = useCallback(
+    ({ normalizedSeed, extractedPieceId, requestCorrelation } = {}) => {
+      if (activeBenchIdRef.current !== null) return;
+      if (
+        requestCorrelation &&
+        requestCorrelation.draftEpoch !== undefined &&
+        requestCorrelation.draftEpoch !== draftEpochRef.current
+      ) {
+        return;
+      }
+
+      if (requestCorrelation?.requestId) {
+        activeDraftSeedRequestIdRef.current = requestCorrelation.requestId;
+      }
+
+      const cleanSeed = typeof normalizedSeed === "string" ? normalizedSeed.trim() : "";
+      const cleanId =
+        typeof extractedPieceId === "string" && extractedPieceId.trim()
+          ? extractedPieceId.trim()
+          : resolveIdentifierToPreserve(cleanSeed, "");
+
+      setDraftSourceContext((prev) => ({
+        ...(prev || createInitialDraftSourceContext()),
+        rawSeedInput: cleanSeed
+      }));
+
+      const currentManualMap = validObj(manualEditsRef.current?.[UNSELECTED_DRAFT_STORAGE_KEY]);
+      const isPieceNameLocked =
+        currentManualMap["custom.piece_name"] === true ||
+        currentManualMap.piece_name === true;
+      const explicitOverrideStr =
+        typeof draftSourceContextRef.current?.explicitTitleOverride === "string"
+          ? draftSourceContextRef.current.explicitTitleOverride.trim()
+          : "";
+      const isTitleLocked =
+        hasMeaningfulValue(explicitOverrideStr) ||
+        currentManualMap.shopify_title === true ||
+        currentManualMap.native_title === true;
+
+      const invalidatedKeys = new Set();
+
+      setUnselectedDraftManifest((prevDraft) => {
+        const baseDraft =
+          prevDraft && typeof prevDraft === "object"
+            ? prevDraft
+            : createInitialUnselectedDraftManifest();
+        const nextRepairPlan = { ...(baseDraft.repairPlan || {}) };
+        const nextMetadata = { ...(baseDraft.metadata || {}) };
+        const blurMeta = {
+          source: "Derived (3-Part Seed)",
+          stage: "handlePieceNameBlur"
+        };
+
+        if (cleanId && !isPieceNameLocked) {
+          if (nextRepairPlan["custom.piece_name"] !== cleanId) {
+            invalidatedKeys.add("custom.piece_name");
+          }
+          nextRepairPlan["custom.piece_name"] = cleanId;
+          nextMetadata["custom.piece_name"] = blurMeta;
+        }
+
+        if (cleanSeed && !isTitleLocked) {
+          if (nextRepairPlan.shopify_title !== cleanSeed) {
+            invalidatedKeys.add("shopify_title");
+            invalidatedKeys.add("native_title");
+          }
+          nextRepairPlan.shopify_title = cleanSeed;
+          if (Object.prototype.hasOwnProperty.call(nextRepairPlan, "native_title")) {
+            nextRepairPlan.native_title = cleanSeed;
+          }
+          nextMetadata.shopify_title = blurMeta;
+          nextMetadata.native_title = blurMeta;
+        }
+
+        return {
+          ...baseDraft,
+          isUnselectedDraft: true,
+          repairPlan: nextRepairPlan,
+          metadata: nextMetadata
+        };
+      });
+
+      if (invalidatedKeys.size > 0) {
+        setApprovals((prevApp) => {
+          const draftApp = prevApp?.[UNSELECTED_DRAFT_STORAGE_KEY];
+          if (!draftApp) return prevApp;
+          let mutated = false;
+          const nextDraftApp = { ...draftApp };
+          invalidatedKeys.forEach((k) => {
+            if (nextDraftApp[k] !== undefined) {
+              delete nextDraftApp[k];
+              mutated = true;
+            }
+          });
+          if (!mutated) return prevApp;
+          const next = { ...prevApp };
+          if (Object.keys(nextDraftApp).length === 0) {
+            delete next[UNSELECTED_DRAFT_STORAGE_KEY];
+          } else {
+            next[UNSELECTED_DRAFT_STORAGE_KEY] = nextDraftApp;
+          }
+          return next;
+        });
+      }
+    },
+    []
+  );
+
+  const handleApplyDraftTitleParseResult = useCallback((parsed, requestCorrelation) => {
+    const currentCorrelation = {
+      selectedBenchId: activeBenchIdRef.current,
+      activeRequestId: activeDraftSeedRequestIdRef.current,
+      draftEpoch: draftEpochRef.current,
+      currentSeedInput:
+        typeof draftSourceContextRef.current?.rawSeedInput === "string"
+          ? draftSourceContextRef.current.rawSeedInput
+          : ""
+    };
+
+    const currentManualMap = validObj(manualEditsRef.current?.[UNSELECTED_DRAFT_STORAGE_KEY]);
+
+    const mergeResult = applyTitleParseToTab3Draft({
+      parsed,
+      requestCorrelation,
+      currentCorrelation,
+      draftManifest: unselectedDraftManifestRef.current,
+      manualEditsMap: currentManualMap,
+      sourceContext: draftSourceContextRef.current
+    });
+
+    if (mergeResult.staleRejected) {
+      return;
+    }
+
+    setUnselectedDraftManifest(mergeResult.nextDraftManifest);
+    setDraftSourceContext(mergeResult.nextSourceContext);
+
+    if (
+      Array.isArray(mergeResult.invalidatedApprovalKeys) &&
+      mergeResult.invalidatedApprovalKeys.length > 0
+    ) {
+      setApprovals((prevApp) => {
+        const draftApp = prevApp?.[UNSELECTED_DRAFT_STORAGE_KEY];
+        if (!draftApp) return prevApp;
+        let changed = false;
+        const nextDraftApp = { ...draftApp };
+        mergeResult.invalidatedApprovalKeys.forEach((k) => {
+          if (nextDraftApp[k] !== undefined) {
+            delete nextDraftApp[k];
+            changed = true;
+          }
+        });
+        if (!changed) return prevApp;
+        const next = { ...prevApp };
+        if (Object.keys(nextDraftApp).length === 0) {
+          delete next[UNSELECTED_DRAFT_STORAGE_KEY];
+        } else {
+          next[UNSELECTED_DRAFT_STORAGE_KEY] = nextDraftApp;
+        }
+        return next;
+      });
+    }
+  }, []);
+
   const handleStandardizedEntrySelectionChange = (destinationKey, currentPropVal, stdEval, replaceOrAddGid, previousSlotGid = null) => {
     if (!selectedBenchId || !manifestData[selectedBenchId] || !stdEval?.isTechnicallyEligible) return;
     if (!isExactMetaobjectGid(replaceOrAddGid) || !stdEval.verifiedEntriesMap.has(replaceOrAddGid)) return;
@@ -3715,6 +4119,7 @@ export function OperationsMatrixTab({ products }) {
         metadata: isSelectedBenchProductValid
           ? (activeProductDataForLiveSync?.metadata || null)
           : (unselectedDraftManifest?.metadata || null),
+        draftSourceContext: isSelectedBenchProductValid ? null : draftSourceContext,
         diagnostics: activeProductDataForLiveSync?.diagnostics || null,
         approvals: activeProductApprovalsForLiveSync || null,
         keepOriginal: activeProductKeepOriginalForLiveSync || null,
@@ -3803,6 +4208,7 @@ export function OperationsMatrixTab({ products }) {
           benchRevision: targetRevision,
           clientStateChangedAt: targetChangedAt,
           draftManifest: unselectedDraftManifest,
+          draftSourceContext,
           approvals,
           manualEdits,
           getFieldMetadata,
@@ -4099,6 +4505,7 @@ export function OperationsMatrixTab({ products }) {
     activeProductQueueStateStatus,
     activeProductDataForLiveSync,
     unselectedDraftManifest,
+    draftSourceContext,
     activeProductApprovalsForLiveSync,
     activeProductKeepOriginalForLiveSync,
     activeProductManualEditsForLiveSync,
@@ -4447,7 +4854,11 @@ export function OperationsMatrixTab({ products }) {
   const progressPercentage = queueIds.length > 0 ? Math.round(((isLoadingData ? loadIndex : executeIndex) / queueIds.length) * 100) : 0;
   const activeBenchData = selectedBenchId ? manifestData[selectedBenchId] : null;
   const isSelectedProductUnloaded = Boolean(selectedBenchId && !activeBenchData);
-  const isDevUnselectedPreview = Boolean(DEV_SHOW_ALL_TEMPLATE_FIELDS && !selectedBenchId);
+  const isDevUnselectedPreview = Boolean(
+    DEV_SHOW_ALL_TEMPLATE_FIELDS &&
+    selectedBenchId === null &&
+    unselectedDraftManifest?.isUnselectedDraft === true
+  );
   const effectiveManifestForSections = activeBenchData || (isDevUnselectedPreview ? unselectedDraftManifest : null);
 
   const dynamicSections = effectiveManifestForSections
@@ -4487,10 +4898,15 @@ export function OperationsMatrixTab({ products }) {
     unsavedWorkingChangesWord = hasUnsavedWorking ? "Yes" : "No";
     unsavedWorkingChangesDetail = `Proposals: ${activeProposedCount} | Manual edits: ${activeManualEditCount} | Explicit approvals: ${activeExplicitApprovalCount} | Keep original: ${activeKeepOriginalCount} | Approved for write: ${activeApprovedWriteCount}`;
   } else if (isUnselectedBlankPreviewActive && unselectedDraftStats) {
+    const hasSeedOrContext =
+      hasMeaningfulValue(draftSourceContext?.rawSeedInput) ||
+      hasMeaningfulValue(draftSourceContext?.explicitTitleOverride) ||
+      hasMeaningfulValue(draftSourceContext?.origin_story);
     const hasUnsavedDraftWorking =
       activeProposedCount > 0 ||
       activeManualEditCount > 0 ||
-      activeExplicitApprovalCount > 0;
+      activeExplicitApprovalCount > 0 ||
+      hasSeedOrContext;
     unsavedWorkingChangesWord = hasUnsavedDraftWorking ? "Yes (Unsaved Draft)" : "No";
     unsavedWorkingChangesDetail = `Draft proposals: ${activeProposedCount} | Draft manual edits: ${activeManualEditCount} | Draft approvals: ${activeExplicitApprovalCount} (No product selected or saved)`;
   }
@@ -5003,11 +5419,11 @@ export function OperationsMatrixTab({ products }) {
                     ) : (
                       <>
                         <Text as="p" variant="headingLg" alignment="center" tone="subdued">
-                          Load inventory, hit GENERATE REPAIR PLAN, then click &quot;View Manifest on Bench&quot; to repair an existing product, or expand the drawers below to enter unsaved starting data in New-Product Draft mode.
+                          Load inventory, hit GENERATE REPAIR PLAN, then click &quot;View Manifest on Bench&quot; to repair an existing product, or enter a 3-part seed / starting data below in New-Product Draft mode.
                         </Text>
                         {DEV_SHOW_ALL_TEMPLATE_FIELDS && (
                           <Text as="p" variant="bodyMd" alignment="center" tone="subdued">
-                            <strong>Unselected New-Product Draft Mode:</strong> All 11 Tab 3 inspectable drawers (93 logical slots = 62 working + 31 parked/excluded, starting collapsed) plus Description Review are available below. Eligible working fields accept unsaved starting data and suggestion approvals in browser state while preserving all parked, storage, producer, variant-owner, standardized-reference, and zero-image placeholder holds. Draft inputs are never treated as saved Shopify baselines.
+                            <strong>Unselected New-Product Draft Mode:</strong> Enter a human ID or 3-part seed in the intake card below, or expand any of the 11 Tab 3 inspectable drawers (93 logical slots = 62 working + 31 parked/excluded, starting collapsed) plus Description Review. Eligible working fields accept unsaved starting data and suggestion approvals in browser state while preserving all parked, storage, producer, variant-owner, standardized-reference, and zero-image placeholder holds. Draft inputs are never treated as saved Shopify baselines.
                           </Text>
                         )}
                       </>
@@ -5017,6 +5433,18 @@ export function OperationsMatrixTab({ products }) {
 
                 {isDevUnselectedPreview && (
                   <>
+                    <UnselectedDraftSeedIntakeCard
+                      selectedBenchId={selectedBenchId}
+                      draftEpoch={draftEpoch}
+                      draftManifest={unselectedDraftManifest}
+                      manualEditsMap={validObj(manualEdits[UNSELECTED_DRAFT_STORAGE_KEY])}
+                      sourceContext={draftSourceContext}
+                      onSeedInputChange={handleDraftSeedInputChange}
+                      onExplicitTitleOverrideChange={handleDraftExplicitTitleOverrideChange}
+                      onSeedBlurCommit={handleDraftSeedBlurCommit}
+                      onApplyTitleParseResult={handleApplyDraftTitleParseResult}
+                    />
+
                     <Card padding="400">
                       <BlockStack gap="200">
                         <InlineStack align="space-between" blockAlign="center">
