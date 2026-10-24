@@ -1598,7 +1598,7 @@ export function OperationsMatrixTab({ products }) {
     const targetKeyForProposal = NATIVE_ALIAS_MAP[key] || key;
     const approvalStorageKey = resolveApprovalStorageKey(key);
     if (
-      isParkedExcludedKey(approvalStorageKey) ||
+      (isParkedExcludedKey(approvalStorageKey) && !(key === "native_price" && approvalStorageKey === "price")) ||
       targetKeyForProposal === "standardized_candidates" ||
       targetKeyForProposal === "custom.standardized_candidates" ||
       targetKeyForProposal === "native_image_alt" ||
