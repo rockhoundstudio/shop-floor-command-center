@@ -52,7 +52,7 @@
   {
     "$schema": "https://extensions.shopifycdn.com/shopifycloud/schemas/v1/tool.json",
     "name": "read_meta_injector_report",
-    "description": "Reads one lossless UTF-8 server chunk of a specific captured Meta Injector report or its measured UI audit by reportId. Server chunkIndex values are 0-based and distinct from clipboard part numbers. UI-audit data is measured only when recorded; never equate 67 telemetry targets with visible UI rows.",
+    "description": "Reads bounded views or lossless UTF-8 server chunks of a captured Meta Injector report by reportId. For live_bench_state reports, prefer organized views (view='index' for drawer/field directory and counts, 'header' for diagnostics and save verification, 'review' for actionable changes/conflicts/holds, 'drawer' for one drawer including 'Description Review', or 'field' for one complete field) instead of downloading all raw chunks. Follow hasMoreChunks and nextChunkIndex when a view or report spans multiple chunks. UI-audit data is measured only when section='ui_audit' is recorded.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -65,13 +65,31 @@
           "type": "string",
           "enum": ["report", "ui_audit"],
           "default": "report",
-          "description": "Optional section to read: 'report' or 'ui_audit' (default 'report')."
+          "description": "Optional section to read: 'report' or 'ui_audit' (default 'report'). When section is 'ui_audit', view must be 'chunk' or omitted."
+        },
+        "view": {
+          "type": "string",
+          "enum": ["chunk", "index", "header", "review", "drawer", "field"],
+          "default": "chunk",
+          "description": "Optional read mode for section='report' (default 'chunk' for raw report chunks). Organized views ('index', 'header', 'review', 'drawer', 'field') require a live_bench_state snapshot."
+        },
+        "drawer": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "description": "Required when view='drawer' (and omitted for other views): exact drawer title from index (e.g., 'Description Review' or a manifest section heading)."
+        },
+        "fieldKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "description": "Required when view='field' (and omitted for other views): exact field key, targetKey, or approvalKey (e.g., 'native_description', 'custom.generated_description')."
         },
         "chunkIndex": {
           "type": "integer",
           "minimum": 0,
           "default": 0,
-          "description": "Optional 0-based server chunk index to read (nonnegative integer, default 0). Distinct from clipboard part numbers."
+          "description": "Optional 0-based server chunk index to read (nonnegative integer, default 0). Used for raw report/ui_audit chunks and any organized view where hasMoreChunks is true."
         }
       },
       "required": ["reportId"],

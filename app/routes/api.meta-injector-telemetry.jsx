@@ -1,9 +1,12 @@
+// FILE: app/routes/api.meta-injector-telemetry.jsx
 import { Buffer } from "node:buffer";
 import { authenticate } from "../shopify.server";
 import {
   storeTelemetryReport,
   listTelemetryReports,
   readTelemetryReport,
+  ALLOWED_READ_SECTIONS,
+  ALLOWED_READ_VIEWS,
 } from "../utils/meta-injector.sidekick-report-cache.server.js";
 
 const MAX_POST_BODY_BYTES = 2 * 1024 * 1024;
@@ -22,8 +25,14 @@ const ALLOWED_QUERY_KEYS_READ = new Set([
   "op",
   "reportId",
   "section",
+  "view",
+  "drawer",
+  "fieldKey",
   "chunkIndex",
 ]);
+
+const ALLOWED_READ_SECTIONS_SET = new Set(ALLOWED_READ_SECTIONS);
+const ALLOWED_READ_VIEWS_SET = new Set(ALLOWED_READ_VIEWS);
 
 const ALLOWED_POST_KEYS = new Set(["packet", "uiAudit", "liveState"]);
 
@@ -732,8 +741,150 @@ export async function loader({ request }) {
       );
     }
 
-    const reportId = params.get("reportId");
-    const section = params.has("section") ? params.get("section") : "report";
+    const rawReportId = params.get("reportId");
+    const reportId = typeof rawReportId === "string" ? rawReportId.trim() : "";
+    if (!reportId) {
+      return buildJsonResponse(
+        {
+          ok: false,
+          status: "invalid_request",
+          code: "invalid_report_id",
+          message: "A nonempty reportId string is required.",
+        },
+        400,
+        cors
+      );
+    }
+
+    const rawSection = params.has("section") ? params.get("section") : "report";
+    const section = typeof rawSection === "string" ? rawSection.trim() : "";
+    if (!ALLOWED_READ_SECTIONS_SET.has(section)) {
+      return buildJsonResponse(
+        {
+          ok: false,
+          status: "invalid_request",
+          code: "invalid_section",
+          message: 'section must be either "report" or "ui_audit".',
+        },
+        400,
+        cors
+      );
+    }
+
+    const rawView = params.has("view") ? params.get("view") : "chunk";
+    const view = typeof rawView === "string" ? rawView.trim() : "";
+    if (!ALLOWED_READ_VIEWS_SET.has(view)) {
+      return buildJsonResponse(
+        {
+          ok: false,
+          status: "invalid_request",
+          code: "invalid_view",
+          message:
+            'view must be one of "chunk", "index", "header", "review", "drawer", or "field".',
+        },
+        400,
+        cors
+      );
+    }
+
+    if (section === "ui_audit" && view !== "chunk") {
+      return buildJsonResponse(
+        {
+          ok: false,
+          status: "invalid_request",
+          code: "incompatible_section_and_view",
+          message: 'When section is "ui_audit", view must be "chunk" (or omitted).',
+        },
+        400,
+        cors
+      );
+    }
+
+    const hasDrawerParam = params.has("drawer");
+    const hasFieldKeyParam = params.has("fieldKey");
+    const rawDrawer = hasDrawerParam ? params.get("drawer") : null;
+    const rawFieldKey = hasFieldKeyParam ? params.get("fieldKey") : null;
+    const drawer = typeof rawDrawer === "string" ? rawDrawer.trim() : null;
+    const fieldKey = typeof rawFieldKey === "string" ? rawFieldKey.trim() : null;
+
+    if (view === "drawer") {
+      if (!drawer || drawer.length > 200) {
+        return buildJsonResponse(
+          {
+            ok: false,
+            status: "invalid_request",
+            code: "missing_drawer",
+            message:
+              'A nonempty "drawer" string (up to 200 characters) is required when view="drawer".',
+          },
+          400,
+          cors
+        );
+      }
+      if (hasFieldKeyParam) {
+        return buildJsonResponse(
+          {
+            ok: false,
+            status: "invalid_request",
+            code: "unexpected_field_key",
+            message: 'fieldKey is not accepted when view="drawer".',
+          },
+          400,
+          cors
+        );
+      }
+    } else if (view === "field") {
+      if (!fieldKey || fieldKey.length > 200) {
+        return buildJsonResponse(
+          {
+            ok: false,
+            status: "invalid_request",
+            code: "missing_field_key",
+            message:
+              'A nonempty "fieldKey" string (up to 200 characters) is required when view="field".',
+          },
+          400,
+          cors
+        );
+      }
+      if (hasDrawerParam) {
+        return buildJsonResponse(
+          {
+            ok: false,
+            status: "invalid_request",
+            code: "unexpected_drawer",
+            message: 'drawer is not accepted when view="field".',
+          },
+          400,
+          cors
+        );
+      }
+    } else {
+      if (hasDrawerParam) {
+        return buildJsonResponse(
+          {
+            ok: false,
+            status: "invalid_request",
+            code: "unexpected_drawer",
+            message: `drawer parameter is only supported when view="drawer" (received view="${view}").`,
+          },
+          400,
+          cors
+        );
+      }
+      if (hasFieldKeyParam) {
+        return buildJsonResponse(
+          {
+            ok: false,
+            status: "invalid_request",
+            code: "unexpected_field_key",
+            message: `fieldKey parameter is only supported when view="field" (received view="${view}").`,
+          },
+          400,
+          cors
+        );
+      }
+    }
 
     let chunkIndex = 0;
     if (params.has("chunkIndex")) {
@@ -757,6 +908,9 @@ export async function loader({ request }) {
       shop: authenticatedShop,
       reportId,
       section,
+      view,
+      drawer,
+      fieldKey,
       chunkIndex,
     });
 

@@ -14,7 +14,21 @@ const ALLOWED_LIST_KEYS = new Set([
 const ALLOWED_READ_KEYS = new Set([
   "reportId",
   "section",
+  "view",
+  "drawer",
+  "fieldKey",
   "chunkIndex",
+]);
+
+const ALLOWED_READ_SECTIONS = new Set(["report", "ui_audit"]);
+
+const ALLOWED_READ_VIEWS = new Set([
+  "chunk",
+  "index",
+  "header",
+  "review",
+  "drawer",
+  "field",
 ]);
 
 function isPlainObject(value) {
@@ -287,8 +301,9 @@ function buildReadSearchParams(rawInput) {
   params.set("op", "read");
   params.set("reportId", rawInput.reportId.trim());
 
+  let effectiveSection = "report";
   if (rawInput.section !== undefined && rawInput.section !== null) {
-    if (rawInput.section !== "report" && rawInput.section !== "ui_audit") {
+    if (typeof rawInput.section !== "string") {
       return {
         ok: false,
         error: buildErrorResult(
@@ -298,7 +313,152 @@ function buildReadSearchParams(rawInput) {
         ),
       };
     }
-    params.set("section", rawInput.section);
+    const trimmedSection = rawInput.section.trim();
+    if (!ALLOWED_READ_SECTIONS.has(trimmedSection)) {
+      return {
+        ok: false,
+        error: buildErrorResult(
+          "invalid_request",
+          "invalid_section",
+          'section must be either "report" or "ui_audit".'
+        ),
+      };
+    }
+    effectiveSection = trimmedSection;
+    params.set("section", effectiveSection);
+  }
+
+  let effectiveView = "chunk";
+  if (rawInput.view !== undefined && rawInput.view !== null) {
+    if (typeof rawInput.view !== "string") {
+      return {
+        ok: false,
+        error: buildErrorResult(
+          "invalid_request",
+          "invalid_view",
+          'view must be one of "chunk", "index", "header", "review", "drawer", or "field".'
+        ),
+      };
+    }
+    const trimmedView = rawInput.view.trim();
+    if (!ALLOWED_READ_VIEWS.has(trimmedView)) {
+      return {
+        ok: false,
+        error: buildErrorResult(
+          "invalid_request",
+          "invalid_view",
+          'view must be one of "chunk", "index", "header", "review", "drawer", or "field".'
+        ),
+      };
+    }
+    effectiveView = trimmedView;
+    params.set("view", effectiveView);
+  }
+
+  if (effectiveSection === "ui_audit" && effectiveView !== "chunk") {
+    return {
+      ok: false,
+      error: buildErrorResult(
+        "invalid_request",
+        "incompatible_section_and_view",
+        'When section is "ui_audit", view must be "chunk" (or omitted).'
+      ),
+    };
+  }
+
+  const hasDrawer = rawInput.drawer !== undefined && rawInput.drawer !== null;
+  const hasFieldKey = rawInput.fieldKey !== undefined && rawInput.fieldKey !== null;
+
+  if (hasDrawer && typeof rawInput.drawer !== "string") {
+    return {
+      ok: false,
+      error: buildErrorResult(
+        "invalid_request",
+        "invalid_drawer",
+        "drawer must be a string when provided."
+      ),
+    };
+  }
+
+  if (hasFieldKey && typeof rawInput.fieldKey !== "string") {
+    return {
+      ok: false,
+      error: buildErrorResult(
+        "invalid_request",
+        "invalid_field_key",
+        "fieldKey must be a string when provided."
+      ),
+    };
+  }
+
+  const trimmedDrawer = hasDrawer ? rawInput.drawer.trim() : null;
+  const trimmedFieldKey = hasFieldKey ? rawInput.fieldKey.trim() : null;
+
+  if (effectiveView === "drawer") {
+    if (!trimmedDrawer || trimmedDrawer.length > 200) {
+      return {
+        ok: false,
+        error: buildErrorResult(
+          "invalid_request",
+          "missing_drawer",
+          'A nonempty "drawer" string (up to 200 characters) is required when view="drawer".'
+        ),
+      };
+    }
+    if (hasFieldKey) {
+      return {
+        ok: false,
+        error: buildErrorResult(
+          "invalid_request",
+          "unexpected_field_key",
+          'fieldKey is not accepted when view="drawer".'
+        ),
+      };
+    }
+    params.set("drawer", trimmedDrawer);
+  } else if (effectiveView === "field") {
+    if (!trimmedFieldKey || trimmedFieldKey.length > 200) {
+      return {
+        ok: false,
+        error: buildErrorResult(
+          "invalid_request",
+          "missing_field_key",
+          'A nonempty "fieldKey" string (up to 200 characters) is required when view="field".'
+        ),
+      };
+    }
+    if (hasDrawer) {
+      return {
+        ok: false,
+        error: buildErrorResult(
+          "invalid_request",
+          "unexpected_drawer",
+          'drawer is not accepted when view="field".'
+        ),
+      };
+    }
+    params.set("fieldKey", trimmedFieldKey);
+  } else {
+    if (hasDrawer) {
+      return {
+        ok: false,
+        error: buildErrorResult(
+          "invalid_request",
+          "unexpected_drawer",
+          `drawer parameter is only supported when view="drawer" (received view="${effectiveView}").`
+        ),
+      };
+    }
+    if (hasFieldKey) {
+      return {
+        ok: false,
+        error: buildErrorResult(
+          "invalid_request",
+          "unexpected_field_key",
+          `fieldKey parameter is only supported when view="field" (received view="${effectiveView}").`
+        ),
+      };
+    }
   }
 
   if (rawInput.chunkIndex !== undefined && rawInput.chunkIndex !== null) {

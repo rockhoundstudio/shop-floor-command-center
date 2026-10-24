@@ -1,3 +1,4 @@
+// FILE: app/utils/meta-injector.sidekick-report-cache.server.js
 import { createHash } from "node:crypto";
 import { Buffer } from "node:buffer";
 
@@ -23,6 +24,7 @@ const MAX_FULL_TEXT_UTF8_BYTES = 1024 * 1024;
 const MAX_UI_AUDIT_UTF8_BYTES = 32 * 1024;
 
 const MAX_CHUNK_UTF8_BYTES = 2000;
+const MAX_ORGANIZED_VIEW_CHUNK_UTF8_BYTES = 1550;
 const MAX_RESPONSE_UTF8_BYTES = 3500;
 
 const MIN_LIST_LIMIT = 1;
@@ -30,6 +32,24 @@ const DEFAULT_LIST_LIMIT = 3;
 const MAX_LIST_LIMIT = 5;
 
 const LIVE_BENCH_MODE = "live_bench_state";
+const DESCRIPTION_REVIEW_DRAWER_TITLE = "Description Review";
+const DESCRIPTION_REVIEW_KEYS = Object.freeze([
+  "native_description",
+  "custom.generated_description",
+]);
+
+export const ALLOWED_READ_SECTIONS = Object.freeze(["report", "ui_audit"]);
+export const ALLOWED_READ_VIEWS = Object.freeze([
+  "chunk",
+  "index",
+  "header",
+  "review",
+  "drawer",
+  "field",
+]);
+
+const ALLOWED_READ_SECTIONS_SET = new Set(ALLOWED_READ_SECTIONS);
+const ALLOWED_READ_VIEWS_SET = new Set(ALLOWED_READ_VIEWS);
 
 const PRODUCT_GID_REGEX = /^gid:\/\/shopify\/Product\/\d+$/;
 const BENCH_SESSION_ID_REGEX = /^[A-Za-z0-9._:-]{6,120}$/;
@@ -175,7 +195,8 @@ function activateOrRenewLiveReadPin(state, record, section, chunkIndex, nowMs) {
   }
 
   // Expired pins are never revived; a new pin can only start on an active (non-superseded)
-  // report within its base 30-minute TTL when reading section="report" at chunkIndex=0.
+  // report within its base 30-minute TTL when reading section="report" at chunkIndex=0
+  // (including valid organized views at chunkIndex=0).
   if (
     meta.pinnedAtMs === null &&
     !meta.isSuperseded &&
@@ -1682,6 +1703,15 @@ function storeLiveBenchStateInternal({
   const expiresAtMs = clientTime.ms + TTL_MS;
   const expiresAtIso = new Date(expiresAtMs).toISOString();
 
+  const effectiveBaselineSource =
+    parsedFullTextObj && parsedFullTextObj.manifestLoaded === false
+      ? "manifest_not_loaded"
+      : "last_loaded_manifest";
+  const effectiveWorkingState =
+    parsedFullTextObj && parsedFullTextObj.manifestLoaded === false
+      ? "unavailable_not_loaded"
+      : "unsaved_browser_bench";
+
   const newRecord = Object.freeze({
     reportId,
     shop,
@@ -1715,8 +1745,8 @@ function storeLiveBenchStateInternal({
     benchRevision,
     selectionState: "selected",
     baselineLoadedAt,
-    baselineSource: "last_loaded_manifest",
-    workingState: "unsaved_browser_bench",
+    baselineSource: effectiveBaselineSource,
+    workingState: effectiveWorkingState,
   });
 
   const updatedSession = Object.freeze({
@@ -1737,8 +1767,8 @@ function storeLiveBenchStateInternal({
     updatedAtMs: nowMs,
     expiresAt: expiresAtIso,
     expiresAtMs,
-    baselineSource: "last_loaded_manifest",
-    workingState: "unsaved_browser_bench",
+    baselineSource: effectiveBaselineSource,
+    workingState: effectiveWorkingState,
     slotOverheadBytes,
   });
 
@@ -2412,6 +2442,887 @@ export function listTelemetryReports(options = {}) {
   return finalizeResponse(finalPayload);
 }
 
+function parseVerifiedLiveBenchSnapshot(record) {
+  if (!record || !record.isLiveBenchState || record.mode !== LIVE_BENCH_MODE) {
+    return {
+      ok: false,
+      status: "invalid_request",
+      code: "organized_view_requires_live_bench_state",
+      message:
+        'Organized views (index, header, review, drawer, field) are only supported for mode="live_bench_state" snapshots. Use view="chunk" (default) for manual captures.',
+    };
+  }
+
+  if (typeof record.fullText !== "string" || !record.fullText.trim().startsWith("{")) {
+    return {
+      ok: false,
+      status: "invalid_request",
+      code: "unsupported_live_bench_schema",
+      message: "Snapshot fullText is not a JSON object.",
+    };
+  }
+
+  let parsed = null;
+  try {
+    parsed = JSON.parse(record.fullText);
+  } catch {
+    return {
+      ok: false,
+      status: "invalid_request",
+      code: "unsupported_live_bench_schema",
+      message: "Snapshot fullText could not be parsed as valid JSON.",
+    };
+  }
+
+  if (
+    !isPlainObject(parsed) ||
+    parsed.schemaVersion !== 1 ||
+    parsed.stateKind !== LIVE_BENCH_MODE ||
+    !Array.isArray(parsed.sectionOrder) ||
+    !isPlainObject(parsed.fieldsByKey)
+  ) {
+    return {
+      ok: false,
+      status: "invalid_request",
+      code: "unsupported_live_bench_schema",
+      message:
+        'Snapshot does not match verified schemaVersion=1, stateKind="live_bench_state" with sectionOrder array and fieldsByKey object.',
+    };
+  }
+
+  return {
+    ok: true,
+    snapshot: parsed,
+  };
+}
+
+function normalizeComparableFieldValue(val) {
+  if (val === null || val === undefined) {
+    return "";
+  }
+  if (typeof val === "string") {
+    return val.trim();
+  }
+  try {
+    return JSON.stringify(val);
+  } catch {
+    return String(val);
+  }
+}
+
+function hasNonEmptyConflictValue(val) {
+  if (val === null || val === undefined || val === false) {
+    return false;
+  }
+  if (typeof val === "string") {
+    return val.trim().length > 0;
+  }
+  if (Array.isArray(val)) {
+    return val.length > 0;
+  }
+  if (isPlainObject(val)) {
+    return Object.keys(val).length > 0;
+  }
+  return true;
+}
+
+function evaluateFieldAttentionFlags(key, fieldObj, saveEvidence) {
+  const rawBase = isPlainObject(fieldObj?.rawStoredBaseline)
+    ? fieldObj.rawStoredBaseline
+    : {};
+  const evalBase = isPlainObject(fieldObj?.evaluatedBaseline)
+    ? fieldObj.evaluatedBaseline
+    : {};
+  const working = isPlainObject(fieldObj?.workingState)
+    ? fieldObj.workingState
+    : {};
+  const statusHolds = isPlainObject(fieldObj?.statusAndHolds)
+    ? fieldObj.statusAndHolds
+    : {};
+  const conflictsObj = isPlainObject(fieldObj?.conflictsAndSaveEvidence)
+    ? fieldObj.conflictsAndSaveEvidence
+    : {};
+
+  const targetKey =
+    typeof fieldObj?.targetKey === "string" && fieldObj.targetKey.trim()
+      ? fieldObj.targetKey.trim()
+      : key;
+  const approvalKey =
+    typeof fieldObj?.approvalKey === "string" && fieldObj.approvalKey.trim()
+      ? fieldObj.approvalKey.trim()
+      : key;
+
+  const isDisplayPlaceholder = Boolean(
+    evalBase.isDisplayOnlyPlaceholderOrNa || statusHolds.isImageAltCapabilityPlaceholder
+  );
+
+  let baselineComparable = "";
+  if (!isDisplayPlaceholder) {
+    if (evalBase.currentExists && evalBase.value !== null && evalBase.value !== undefined) {
+      baselineComparable = normalizeComparableFieldValue(evalBase.value);
+    } else if (rawBase.exists && rawBase.value !== null && rawBase.value !== undefined) {
+      baselineComparable = normalizeComparableFieldValue(rawBase.value);
+    }
+  }
+
+  const proposedComparable = normalizeComparableFieldValue(working.proposedValue);
+  const hasNonEmptyProposal = proposedComparable !== "" && proposedComparable !== "[]";
+  const hasActualValueDiff =
+    hasNonEmptyProposal && proposedComparable !== baselineComparable;
+
+  const fieldStatus =
+    typeof statusHolds.fieldStatus === "string" ? statusHolds.fieldStatus.trim() : "";
+  const proposalStatus =
+    typeof working.proposalStatus === "string" ? working.proposalStatus.trim() : "";
+
+  const isExplicitlyApproved = Boolean(working.isApproved);
+  const isManualEdit = Boolean(working.isManualEdit);
+  const isPreApprovedChanged = Boolean(working.isContentPreApproved && hasActualValueDiff);
+
+  const isProposedStatus =
+    fieldStatus === "Proposed" ||
+    fieldStatus === "Approved, not saved" ||
+    fieldStatus === "Approved, blocked" ||
+    fieldStatus === "Pre-approved, not saved" ||
+    fieldStatus === "Pre-approved, blocked" ||
+    fieldStatus === "Unverified proposal";
+
+  const isEffectiveProposedChange =
+    hasActualValueDiff ||
+    isManualEdit ||
+    isExplicitlyApproved ||
+    isPreApprovedChanged ||
+    isProposedStatus;
+
+  const blockedSaveMap = isPlainObject(saveEvidence?.blockedFields)
+    ? saveEvidence.blockedFields
+    : {};
+  const conflictsSaveMap = isPlainObject(saveEvidence?.conflicts)
+    ? saveEvidence.conflicts
+    : {};
+  const unresolvedSaveMap = isPlainObject(saveEvidence?.unresolvedChanges)
+    ? saveEvidence.unresolvedChanges
+    : {};
+
+  const matchesKeyInMap = (mapObj) =>
+    Boolean(
+      Object.prototype.hasOwnProperty.call(mapObj, key) ||
+        Object.prototype.hasOwnProperty.call(mapObj, targetKey) ||
+        Object.prototype.hasOwnProperty.call(mapObj, approvalKey)
+    );
+
+  const inSaveBlocked = matchesKeyInMap(blockedSaveMap);
+  const inSaveConflicts = matchesKeyInMap(conflictsSaveMap);
+  const inSaveUnresolved = matchesKeyInMap(unresolvedSaveMap);
+
+  const hasFieldConflictData =
+    hasNonEmptyConflictValue(conflictsObj.conflictData) ||
+    hasNonEmptyConflictValue(conflictsObj.nativeDescConflictData);
+
+  const isConflictStatus =
+    fieldStatus === "Conflict" ||
+    fieldStatus === "Degrade" ||
+    fieldStatus === "Save Conflict" ||
+    proposalStatus === "conflict" ||
+    proposalStatus === "degrade";
+
+  const hasConflict = Boolean(
+    hasFieldConflictData || inSaveConflicts || inSaveUnresolved || isConflictStatus
+  );
+
+  const hasHoldFlag = Boolean(
+    statusHolds.isActualBlockedProposal ||
+      statusHolds.hasTechnicalBlock ||
+      statusHolds.hasContractOrOwnerHold ||
+      statusHolds.hasExplicitStorageHold ||
+      statusHolds.hasExplicitProducerHold ||
+      statusHolds.isVariantMetafieldHold ||
+      statusHolds.isPendingReadOnly ||
+      statusHolds.isChannelFlagReadOnly ||
+      inSaveBlocked ||
+      fieldStatus === "API Error / Blocked" ||
+      fieldStatus === "Approved, blocked" ||
+      fieldStatus === "Pre-approved, blocked"
+  );
+
+  const isBlockedWhenRelevant = Boolean(
+    statusHolds.isActualBlockedProposal ||
+      inSaveBlocked ||
+      fieldStatus === "API Error / Blocked" ||
+      fieldStatus === "Approved, blocked" ||
+      fieldStatus === "Pre-approved, blocked" ||
+      (hasHoldFlag &&
+        (hasActualValueDiff ||
+          isManualEdit ||
+          isExplicitlyApproved ||
+          Boolean(working.isProposed) ||
+          Boolean(working.proposalExists)))
+  );
+
+  const isRequiredMissing = fieldStatus === "Required missing";
+  const isUnverifiedProposal = fieldStatus === "Unverified proposal";
+
+  const needsReview = Boolean(
+    isRequiredMissing ||
+      isUnverifiedProposal ||
+      hasConflict ||
+      isBlockedWhenRelevant ||
+      (Boolean(working.contentNeedsReview) &&
+        (hasActualValueDiff || isManualEdit || isProposedStatus))
+  );
+
+  const isActionableForReview = Boolean(
+    isEffectiveProposedChange ||
+      isManualEdit ||
+      isExplicitlyApproved ||
+      hasConflict ||
+      isBlockedWhenRelevant ||
+      hasHoldFlag ||
+      needsReview ||
+      Boolean(conflictsObj.wasSubmittedInLastRepair)
+  );
+
+  return {
+    hasActualValueDiff,
+    isEffectiveProposedChange,
+    isExplicitlyApproved,
+    isManualEdit,
+    hasConflict,
+    hasHoldFlag,
+    isBlockedWhenRelevant,
+    needsReview,
+    isActionableForReview,
+    inSaveBlocked,
+    inSaveConflicts,
+    inSaveUnresolved,
+  };
+}
+
+function buildOrderedDrawersList(snapshot) {
+  const fieldsByKey = isPlainObject(snapshot?.fieldsByKey) ? snapshot.fieldsByKey : {};
+  const sectionOrder = Array.isArray(snapshot?.sectionOrder) ? snapshot.sectionOrder : [];
+  const drawers = [];
+  const seenDrawerTitles = new Set();
+
+  const descKeys = DESCRIPTION_REVIEW_KEYS.filter((k) =>
+    Object.prototype.hasOwnProperty.call(fieldsByKey, k)
+  );
+  if (descKeys.length > 0) {
+    drawers.push({
+      drawer: DESCRIPTION_REVIEW_DRAWER_TITLE,
+      fieldKeys: descKeys,
+    });
+    seenDrawerTitles.add(DESCRIPTION_REVIEW_DRAWER_TITLE);
+  }
+
+  for (let i = 0; i < sectionOrder.length; i += 1) {
+    const entry = sectionOrder[i];
+    if (!isPlainObject(entry) || typeof entry.sectionTitle !== "string") {
+      continue;
+    }
+    const title = entry.sectionTitle.trim();
+    if (!title || seenDrawerTitles.has(title)) {
+      continue;
+    }
+    const rawKeys = Array.isArray(entry.fieldKeys) ? entry.fieldKeys : [];
+    const validKeys = [];
+    const seenKeys = new Set();
+    for (let j = 0; j < rawKeys.length; j += 1) {
+      const k = rawKeys[j];
+      if (
+        typeof k === "string" &&
+        k.trim().length > 0 &&
+        !seenKeys.has(k) &&
+        Object.prototype.hasOwnProperty.call(fieldsByKey, k)
+      ) {
+        seenKeys.add(k);
+        validKeys.push(k);
+      }
+    }
+    drawers.push({
+      drawer: title,
+      fieldKeys: validKeys,
+    });
+    seenDrawerTitles.add(title);
+  }
+
+  return drawers;
+}
+
+function buildIndexViewData(record, snapshot) {
+  const fieldsByKey = isPlainObject(snapshot.fieldsByKey) ? snapshot.fieldsByKey : {};
+  const saveEvidence = isPlainObject(snapshot.saveVerificationEvidence)
+    ? snapshot.saveVerificationEvidence
+    : {};
+  const orderedDrawers = buildOrderedDrawersList(snapshot);
+
+  const drawerSummaries = orderedDrawers.map((d) => {
+    let proposed = 0;
+    let approved = 0;
+    let manualEdit = 0;
+    let blocked = 0;
+    let conflicts = 0;
+    let needsReview = 0;
+
+    for (let i = 0; i < d.fieldKeys.length; i += 1) {
+      const k = d.fieldKeys[i];
+      const fieldObj = fieldsByKey[k];
+      if (!isPlainObject(fieldObj)) {
+        continue;
+      }
+      const flags = evaluateFieldAttentionFlags(k, fieldObj, saveEvidence);
+      if (flags.isEffectiveProposedChange) proposed += 1;
+      if (flags.isExplicitlyApproved) approved += 1;
+      if (flags.isManualEdit) manualEdit += 1;
+      if (flags.isBlockedWhenRelevant || flags.hasHoldFlag) blocked += 1;
+      if (flags.hasConflict) conflicts += 1;
+      if (flags.needsReview) needsReview += 1;
+    }
+
+    return {
+      drawer: d.drawer,
+      fieldKeys: d.fieldKeys,
+      counts: {
+        total: d.fieldKeys.length,
+        proposed,
+        approved,
+        manualEdit,
+        blocked,
+        conflicts,
+        needsReview,
+      },
+    };
+  });
+
+  const allFieldKeys = Object.keys(fieldsByKey);
+  let totalProposed = 0;
+  let totalApproved = 0;
+  let totalManualEdit = 0;
+  let totalBlocked = 0;
+  let totalConflicts = 0;
+  let totalNeedsReview = 0;
+
+  for (let i = 0; i < allFieldKeys.length; i += 1) {
+    const k = allFieldKeys[i];
+    const fieldObj = fieldsByKey[k];
+    if (!isPlainObject(fieldObj)) {
+      continue;
+    }
+    const flags = evaluateFieldAttentionFlags(k, fieldObj, saveEvidence);
+    if (flags.isEffectiveProposedChange) totalProposed += 1;
+    if (flags.isExplicitlyApproved) totalApproved += 1;
+    if (flags.isManualEdit) totalManualEdit += 1;
+    if (flags.isBlockedWhenRelevant || flags.hasHoldFlag) totalBlocked += 1;
+    if (flags.hasConflict) totalConflicts += 1;
+    if (flags.needsReview) totalNeedsReview += 1;
+  }
+
+  return {
+    schemaVersion: snapshot.schemaVersion,
+    stateKind: snapshot.stateKind,
+    manifestLoaded: Boolean(snapshot.manifestLoaded),
+    baselineState: snapshot.baselineState || null,
+    baselineEventKind: snapshot.baselineEventKind || null,
+    productQueueStatus: snapshot.productQueueStatus || null,
+    uiAuditState: record.uiAuditState,
+    uiAuditChunkCount: record.uiAuditChunks.length,
+    totalFieldsInMap: allFieldKeys.length,
+    totals: {
+      drawers: drawerSummaries.length,
+      fields: allFieldKeys.length,
+      proposed: totalProposed,
+      approved: totalApproved,
+      manualEdit: totalManualEdit,
+      blocked: totalBlocked,
+      conflicts: totalConflicts,
+      needsReview: totalNeedsReview,
+    },
+    drawers: drawerSummaries,
+  };
+}
+
+function buildHeaderViewData(record, snapshot) {
+  const stdState = isPlainObject(snapshot.standardizedReferenceState)
+    ? snapshot.standardizedReferenceState
+    : null;
+  const stagedCandidatesObj = isPlainObject(stdState?.stagedCandidates)
+    ? stdState.stagedCandidates
+    : {};
+
+  const compactStdState = stdState
+    ? {
+        readinessState: stdState.readinessState ?? null,
+        readinessReason: stdState.readinessReason ?? null,
+        stagedCandidateCount:
+          typeof stdState.stagedCandidateCount === "number"
+            ? stdState.stagedCandidateCount
+            : Object.keys(stagedCandidatesObj).length,
+        stagedCandidateKeys: Object.keys(stagedCandidatesObj),
+        eligibleDestinationKeys: Array.isArray(stdState.eligibleDestinationKeys)
+          ? stdState.eligibleDestinationKeys
+          : [],
+        blockedDestinationKeys: Array.isArray(stdState.blockedDestinationKeys)
+          ? stdState.blockedDestinationKeys
+          : [],
+        lastMatchRequestId: stdState.lastMatchRequestId ?? null,
+        lastMatchedAt: stdState.lastMatchedAt ?? null,
+        lastMatchSuccess: stdState.lastMatchSuccess ?? null,
+        lastMatchIsComplete: stdState.lastMatchIsComplete ?? null,
+        productCategory: stdState.productCategory ?? null,
+      }
+    : null;
+
+  return {
+    schemaVersion: snapshot.schemaVersion,
+    stateKind: snapshot.stateKind,
+    manifestLoaded: Boolean(snapshot.manifestLoaded),
+    baselineState: snapshot.baselineState || null,
+    baselineEventKind: snapshot.baselineEventKind || null,
+    productQueueStatus: snapshot.productQueueStatus || null,
+    dataAuthorityNote: snapshot.dataAuthorityNote || null,
+    runIdentity: snapshot.runIdentity ?? record.runIdentity ?? null,
+    runTimestamp: snapshot.runTimestamp ?? record.runTimestamp ?? null,
+    uiAuditState: record.uiAuditState,
+    uiAuditChunkCount: record.uiAuditChunks.length,
+    systemStatus: snapshot.systemStatus || null,
+    diagnosticsStats: snapshot.diagnosticsStats || null,
+    manualEditedKeys: Array.isArray(snapshot.manualEditedKeys)
+      ? snapshot.manualEditedKeys
+      : [],
+    explicitlyApprovedKeys: Array.isArray(snapshot.explicitlyApprovedKeys)
+      ? snapshot.explicitlyApprovedKeys
+      : [],
+    standardizedReferenceState: compactStdState,
+    saveVerificationEvidence: snapshot.saveVerificationEvidence || null,
+  };
+}
+
+function buildReviewViewData(snapshot) {
+  const fieldsByKey = isPlainObject(snapshot.fieldsByKey) ? snapshot.fieldsByKey : {};
+  const saveEvidence = isPlainObject(snapshot.saveVerificationEvidence)
+    ? snapshot.saveVerificationEvidence
+    : {};
+  const orderedDrawers = buildOrderedDrawersList(snapshot);
+
+  const keyToDrawersMap = new Map();
+  for (let i = 0; i < orderedDrawers.length; i += 1) {
+    const d = orderedDrawers[i];
+    for (let j = 0; j < d.fieldKeys.length; j += 1) {
+      const k = d.fieldKeys[j];
+      let list = keyToDrawersMap.get(k);
+      if (!list) {
+        list = [];
+        keyToDrawersMap.set(k, list);
+      }
+      if (!list.includes(d.drawer)) {
+        list.push(d.drawer);
+      }
+    }
+  }
+
+  const orderedKeys = [];
+  const visitedKeys = new Set();
+  for (let i = 0; i < orderedDrawers.length; i += 1) {
+    const d = orderedDrawers[i];
+    for (let j = 0; j < d.fieldKeys.length; j += 1) {
+      const k = d.fieldKeys[j];
+      if (!visitedKeys.has(k) && Object.prototype.hasOwnProperty.call(fieldsByKey, k)) {
+        visitedKeys.add(k);
+        orderedKeys.push(k);
+      }
+    }
+  }
+
+  const allMapKeys = Object.keys(fieldsByKey);
+  for (let i = 0; i < allMapKeys.length; i += 1) {
+    const k = allMapKeys[i];
+    if (!visitedKeys.has(k)) {
+      visitedKeys.add(k);
+      orderedKeys.push(k);
+    }
+  }
+
+  const items = [];
+  let proposedDiffCount = 0;
+  let approvedCount = 0;
+  let manualEditCount = 0;
+  let conflictCount = 0;
+  let blockedOrHoldCount = 0;
+  let needsReviewCount = 0;
+
+  for (let i = 0; i < orderedKeys.length; i += 1) {
+    const k = orderedKeys[i];
+    const fieldObj = fieldsByKey[k];
+    if (!isPlainObject(fieldObj)) {
+      continue;
+    }
+
+    const flags = evaluateFieldAttentionFlags(k, fieldObj, saveEvidence);
+    if (!flags.isActionableForReview) {
+      continue;
+    }
+
+    if (flags.isEffectiveProposedChange) proposedDiffCount += 1;
+    if (flags.isExplicitlyApproved) approvedCount += 1;
+    if (flags.isManualEdit) manualEditCount += 1;
+    if (flags.hasConflict) conflictCount += 1;
+    if (flags.isBlockedWhenRelevant || flags.hasHoldFlag) blockedOrHoldCount += 1;
+    if (flags.needsReview) needsReviewCount += 1;
+
+    const rawBase = isPlainObject(fieldObj.rawStoredBaseline)
+      ? fieldObj.rawStoredBaseline
+      : {};
+    const evalBase = isPlainObject(fieldObj.evaluatedBaseline)
+      ? fieldObj.evaluatedBaseline
+      : {};
+    const working = isPlainObject(fieldObj.workingState)
+      ? fieldObj.workingState
+      : {};
+    const statusHolds = isPlainObject(fieldObj.statusAndHolds)
+      ? fieldObj.statusAndHolds
+      : {};
+    const conflictsObj = isPlainObject(fieldObj.conflictsAndSaveEvidence)
+      ? fieldObj.conflictsAndSaveEvidence
+      : {};
+
+    const drawersForField = keyToDrawersMap.get(k) || [
+      typeof fieldObj.section === "string" && fieldObj.section.trim()
+        ? fieldObj.section.trim()
+        : "Unassigned",
+    ];
+
+    const holdFlags = [];
+    if (statusHolds.isActualBlockedProposal) holdFlags.push("actualBlockedProposal");
+    if (statusHolds.hasTechnicalBlock) holdFlags.push("technicalBlock");
+    if (statusHolds.hasContractOrOwnerHold) holdFlags.push("contractOrOwnerHold");
+    if (statusHolds.hasExplicitStorageHold) holdFlags.push("explicitStorageHold");
+    if (statusHolds.hasExplicitProducerHold) holdFlags.push("explicitProducerHold");
+    if (statusHolds.isVariantMetafieldHold) holdFlags.push("variantMetafieldHold");
+    if (statusHolds.isPendingReadOnly) holdFlags.push("pendingReadOnly");
+    if (statusHolds.isChannelFlagReadOnly) holdFlags.push("channelFlagReadOnly");
+    if (flags.inSaveBlocked) holdFlags.push("blockedInLastRepair");
+
+    items.push({
+      key: k,
+      targetKey: fieldObj.targetKey || k,
+      approvalKey: fieldObj.approvalKey || k,
+      drawer: drawersForField[0],
+       ...(drawersForField.length > 1 ? { drawers: drawersForField } : {}),
+      label: fieldObj.label || k,
+      fieldStatus: statusHolds.fieldStatus || null,
+      applicability: statusHolds.applicability || null,
+      rawBaselineEvidenceAvailable: Boolean(rawBase.evidenceAvailable),
+      rawBaselineExists: Boolean(rawBase.exists),
+      evaluatedBaselineExists: Boolean(evalBase.currentExists),
+      isDisplayOnlyPlaceholderOrNa: Boolean(evalBase.isDisplayOnlyPlaceholderOrNa),
+      hasActualValueDiff: flags.hasActualValueDiff,
+      proposalStatus: working.proposalStatus || null,
+      isManualEdit: flags.isManualEdit,
+      isApproved: flags.isExplicitlyApproved,
+      isContentPreApproved: Boolean(working.isContentPreApproved),
+      preApprovalReason: working.preApprovalReason || null,
+      contentNeedsReview: flags.needsReview,
+      source: working.source || null,
+      stage: working.stage || null,
+      isBlocked: flags.isBlockedWhenRelevant,
+      holdFlags,
+      reasons: Array.isArray(statusHolds.reasons) ? statusHolds.reasons : [],
+      hasConflict: flags.hasConflict,
+      conflictData: conflictsObj.conflictData || null,
+      nativeDescConflictData: conflictsObj.nativeDescConflictData || null,
+      wasSubmittedInLastRepair: Boolean(conflictsObj.wasSubmittedInLastRepair),
+      inSaveConflicts: flags.inSaveConflicts,
+      inSaveUnresolved: flags.inSaveUnresolved,
+    });
+  }
+
+  return {
+    manifestLoaded: Boolean(snapshot.manifestLoaded),
+    baselineState: snapshot.baselineState || null,
+    summaryCounts: {
+      totalFieldsEvaluated: orderedKeys.length,
+      actionableItemCount: items.length,
+      proposedWithDiff: proposedDiffCount,
+      explicitlyApproved: approvedCount,
+      manualEdits: manualEditCount,
+      conflicts: conflictCount,
+      blockedOrHeld: blockedOrHoldCount,
+      needsReview: needsReviewCount,
+    },
+    saveVerificationSummary: {
+      hasRepairAttemptInSession: Boolean(saveEvidence.hasRepairAttemptInSession),
+      lastRepairCompletedAt: saveEvidence.lastRepairCompletedAt || null,
+      lastRepairStatus: saveEvidence.lastRepairStatus || null,
+      lastRepairSuccess:
+        saveEvidence.lastRepairSuccess !== undefined
+          ? saveEvidence.lastRepairSuccess
+          : null,
+      readBackVerified:
+        saveEvidence.readBackVerified !== undefined
+          ? saveEvidence.readBackVerified
+          : null,
+      verifiedDestinations: Array.isArray(saveEvidence.verifiedDestinations)
+        ? saveEvidence.verifiedDestinations
+        : [],
+      attemptedDestinations: Array.isArray(saveEvidence.attemptedDestinations)
+        ? saveEvidence.attemptedDestinations
+        : [],
+      blockedFields: isPlainObject(saveEvidence.blockedFields)
+        ? saveEvidence.blockedFields
+        : {},
+      conflicts: isPlainObject(saveEvidence.conflicts) ? saveEvidence.conflicts : {},
+      unresolvedChanges: isPlainObject(saveEvidence.unresolvedChanges)
+        ? saveEvidence.unresolvedChanges
+        : {},
+    },
+    items,
+  };
+}
+
+function resolveDrawerTarget(snapshot, rawDrawerTitle) {
+  const requested = typeof rawDrawerTitle === "string" ? rawDrawerTitle.trim() : "";
+  const orderedDrawers = buildOrderedDrawersList(snapshot);
+  const availableDrawers = orderedDrawers.map((d) => d.drawer);
+
+  if (!requested) {
+    return {
+      ok: false,
+      code: "missing_drawer",
+      message: 'A nonempty "drawer" name is required when view="drawer".',
+      availableDrawers,
+    };
+  }
+
+  let matched = orderedDrawers.find((d) => d.drawer === requested);
+  if (!matched) {
+    const lowerReq = requested.toLowerCase();
+    if (
+      lowerReq === "description review" ||
+      lowerReq === "description_review" ||
+      lowerReq === "description"
+    ) {
+      matched = orderedDrawers.find(
+        (d) => d.drawer === DESCRIPTION_REVIEW_DRAWER_TITLE
+      );
+    } else {
+      matched = orderedDrawers.find((d) => d.drawer.toLowerCase() === lowerReq);
+    }
+  }
+
+  if (!matched) {
+    if (
+      snapshot.manifestLoaded === false &&
+      (requested === DESCRIPTION_REVIEW_DRAWER_TITLE ||
+        requested.toLowerCase() === "description review" ||
+        requested.toLowerCase() === "description_review")
+    ) {
+      return {
+        ok: true,
+        drawerTitle: DESCRIPTION_REVIEW_DRAWER_TITLE,
+        fieldKeys: [],
+        fields: {},
+      };
+    }
+
+    return {
+      ok: false,
+      code: "drawer_not_found",
+      message: `Drawer "${requested}" was not found in this snapshot.`,
+      availableDrawers,
+    };
+  }
+
+  const fieldsByKey = isPlainObject(snapshot.fieldsByKey) ? snapshot.fieldsByKey : {};
+  const fields = {};
+  for (let i = 0; i < matched.fieldKeys.length; i += 1) {
+    const k = matched.fieldKeys[i];
+    if (Object.prototype.hasOwnProperty.call(fieldsByKey, k)) {
+      fields[k] = fieldsByKey[k];
+    }
+  }
+
+  return {
+    ok: true,
+    drawerTitle: matched.drawer,
+    fieldKeys: matched.fieldKeys,
+    fields,
+  };
+}
+
+function resolveFieldTarget(snapshot, rawFieldKey) {
+  const requested = typeof rawFieldKey === "string" ? rawFieldKey.trim() : "";
+  const fieldsByKey = isPlainObject(snapshot.fieldsByKey) ? snapshot.fieldsByKey : {};
+
+  if (!requested) {
+    return {
+      ok: false,
+      code: "missing_field_key",
+      message: 'A nonempty "fieldKey" is required when view="field".',
+    };
+  }
+
+  if (Object.prototype.hasOwnProperty.call(fieldsByKey, requested)) {
+    return {
+      ok: true,
+      fieldKey: requested,
+      field: fieldsByKey[requested],
+    };
+  }
+
+  const allKeys = Object.keys(fieldsByKey);
+  for (let i = 0; i < allKeys.length; i += 1) {
+    const k = allKeys[i];
+    const candidate = fieldsByKey[k];
+    if (
+      isPlainObject(candidate) &&
+      (candidate.targetKey === requested || candidate.approvalKey === requested)
+    ) {
+      return {
+        ok: true,
+        fieldKey: k,
+        requestedAlias: requested,
+        field: candidate,
+      };
+    }
+  }
+
+  return {
+    ok: false,
+    code: snapshot.manifestLoaded === false ? "manifest_not_loaded_for_field" : "field_not_found",
+    message:
+      snapshot.manifestLoaded === false
+        ? `Field "${requested}" is unavailable because manifestLoaded=false for this selected product.`
+        : `Field "${requested}" was not found in snapshot fieldsByKey.`,
+  };
+}
+
+function buildBoundedOrganizedViewEnvelope({
+  record,
+  snapshot,
+  view,
+  drawer = null,
+  fieldKey = null,
+  chunkIndex,
+  viewPayloadObj,
+  state,
+  nowMs,
+}) {
+  const canonicalText = JSON.stringify(viewPayloadObj);
+  const totalUtf8Bytes = utf8ByteLength(canonicalText);
+
+  let chunks = splitUtf8CodePoints(
+    canonicalText,
+    MAX_ORGANIZED_VIEW_CHUNK_UTF8_BYTES
+  );
+  if (chunks.length === 0) {
+    chunks = Object.freeze([canonicalText]);
+  }
+
+  if (chunks.join("") !== canonicalText) {
+    return finalizeResponse({
+      ok: false,
+      status: "error",
+      code: "view_chunk_integrity_failure",
+      message: "Failed lossless UTF-8 code-point chunk verification for organized view.",
+    });
+  }
+
+  if (chunkIndex >= chunks.length) {
+    return finalizeResponse({
+      ok: false,
+      status: "invalid_request",
+      code: "chunk_index_out_of_range",
+      reportId: record.reportId,
+      section: "report",
+      view,
+      ...(drawer !== null ? { drawer } : {}),
+      ...(fieldKey !== null ? { fieldKey } : {}),
+      chunkIndex,
+      chunkCount: chunks.length,
+      message: `chunkIndex ${chunkIndex} is out of bounds for view="${view}" with ${chunks.length} chunk(s).`,
+    });
+  }
+
+  // All inputs, target existence, and chunk bounds are verified: activate or renew read pin
+  const updatedMeta = activateOrRenewLiveReadPin(
+    state,
+    record,
+    "report",
+    chunkIndex,
+    nowMs
+  );
+
+  const effectivePinExpMs = getEffectivePinExpiresAtMs(updatedMeta);
+  const pinExpiresAt =
+    effectivePinExpMs !== null && nowMs < effectivePinExpMs
+      ? new Date(effectivePinExpMs).toISOString()
+      : null;
+
+  const chunkText = chunks[chunkIndex];
+  const hasMoreChunks = chunkIndex + 1 < chunks.length;
+
+  const baseEnvelope = {
+    ok: true,
+    status: "ok",
+    reportId: record.reportId,
+    productId: record.productId,
+    productTitle: record.productTitle,
+    mode: record.mode,
+    section: "report",
+    view,
+    ...(drawer !== null ? { drawer } : {}),
+    ...(fieldKey !== null ? { fieldKey } : {}),
+    benchSessionId: record.benchSessionId,
+    benchRevision: record.benchRevision,
+    selectionState: record.selectionState,
+    manifestLoaded: Boolean(snapshot.manifestLoaded),
+    baselineState: snapshot.baselineState || null,
+    clientStateChangedAt: record.capturedAt,
+    baselineLoadedAt: record.baselineLoadedAt,
+    serverReceivedAt: record.storedAt,
+    expiresAt: record.expiresAt,
+    baselineSource: record.baselineSource,
+    workingState: record.workingState,
+    isHistoricalSuperseded: Boolean(updatedMeta?.isSuperseded),
+    supersededByRevision: updatedMeta?.supersededByRevision ?? null,
+    pinExpiresAt,
+    uiAuditState: record.uiAuditState,
+    chunkIndex,
+    chunkCount: chunks.length,
+    chunkUtf8Bytes: utf8ByteLength(chunkText),
+    totalUtf8Bytes,
+    hasMoreChunks,
+    nextChunkIndex: hasMoreChunks ? chunkIndex + 1 : null,
+  };
+
+  if (chunks.length === 1) {
+    const withInlineData = {
+      ...baseEnvelope,
+      data: viewPayloadObj,
+      text: chunkText,
+    };
+    if (utf8ByteLength(JSON.stringify(withInlineData)) <= MAX_RESPONSE_UTF8_BYTES) {
+      return finalizeResponse(withInlineData);
+    }
+
+    const withStructuredDataOnly = {
+      ...baseEnvelope,
+      data: viewPayloadObj,
+    };
+    if (
+      utf8ByteLength(JSON.stringify(withStructuredDataOnly)) <= MAX_RESPONSE_UTF8_BYTES
+    ) {
+      return finalizeResponse(withStructuredDataOnly);
+    }
+  }
+
+  const withTextChunk = {
+    ...baseEnvelope,
+    text: chunkText,
+  };
+  return finalizeResponse(withTextChunk);
+}
+
 export function readTelemetryReport(options = {}) {
   if (!options || typeof options !== "object" || Array.isArray(options)) {
     return finalizeResponse({
@@ -2425,7 +3336,10 @@ export function readTelemetryReport(options = {}) {
   const {
     shop: rawShop,
     reportId: rawReportId,
-    section = "report",
+    section: rawSection = "report",
+    view: rawView = "chunk",
+    drawer: rawDrawer = null,
+    fieldKey: rawFieldKey = null,
     chunkIndex = 0,
   } = options;
 
@@ -2450,13 +3364,125 @@ export function readTelemetryReport(options = {}) {
   }
   const reportId = rawReportId.trim();
 
-  if (section !== "report" && section !== "ui_audit") {
+  const section =
+    rawSection === null || rawSection === undefined
+      ? "report"
+      : typeof rawSection === "string"
+        ? rawSection.trim()
+        : "";
+
+  if (!ALLOWED_READ_SECTIONS_SET.has(section)) {
     return finalizeResponse({
       ok: false,
       status: "invalid_request",
       code: "invalid_section",
       message: 'section must be either "report" or "ui_audit".',
     });
+  }
+
+  const view =
+    rawView === null || rawView === undefined
+      ? "chunk"
+      : typeof rawView === "string"
+        ? rawView.trim()
+        : "";
+
+  if (!ALLOWED_READ_VIEWS_SET.has(view)) {
+    return finalizeResponse({
+      ok: false,
+      status: "invalid_request",
+      code: "invalid_view",
+      message:
+        'view must be one of "chunk", "index", "header", "review", "drawer", or "field".',
+    });
+  }
+
+  if (section === "ui_audit" && view !== "chunk") {
+    return finalizeResponse({
+      ok: false,
+      status: "invalid_request",
+      code: "incompatible_section_and_view",
+      message: 'When section is "ui_audit", view must be "chunk" (or omitted).',
+    });
+  }
+
+  const hasDrawerArg = rawDrawer !== null && rawDrawer !== undefined;
+  const hasFieldKeyArg = rawFieldKey !== null && rawFieldKey !== undefined;
+
+  if (hasDrawerArg && typeof rawDrawer !== "string") {
+    return finalizeResponse({
+      ok: false,
+      status: "invalid_request",
+      code: "invalid_drawer",
+      message: "drawer must be a string when provided.",
+    });
+  }
+
+  if (hasFieldKeyArg && typeof rawFieldKey !== "string") {
+    return finalizeResponse({
+      ok: false,
+      status: "invalid_request",
+      code: "invalid_field_key",
+      message: "fieldKey must be a string when provided.",
+    });
+  }
+
+  const trimmedDrawer = hasDrawerArg ? rawDrawer.trim() : null;
+  const trimmedFieldKey = hasFieldKeyArg ? rawFieldKey.trim() : null;
+
+  if (view === "drawer") {
+    if (!trimmedDrawer || trimmedDrawer.length > 200) {
+      return finalizeResponse({
+        ok: false,
+        status: "invalid_request",
+        code: "missing_drawer",
+        message:
+          'A nonempty "drawer" string (up to 200 characters) is required when view="drawer".',
+      });
+    }
+    if (trimmedFieldKey !== null && trimmedFieldKey !== "") {
+      return finalizeResponse({
+        ok: false,
+        status: "invalid_request",
+        code: "unexpected_field_key",
+        message: 'fieldKey is not accepted when view="drawer".',
+      });
+    }
+  } else if (view === "field") {
+    if (!trimmedFieldKey || trimmedFieldKey.length > 200) {
+      return finalizeResponse({
+        ok: false,
+        status: "invalid_request",
+        code: "missing_field_key",
+        message:
+          'A nonempty "fieldKey" string (up to 200 characters) is required when view="field".',
+      });
+    }
+    if (trimmedDrawer !== null && trimmedDrawer !== "") {
+      return finalizeResponse({
+        ok: false,
+        status: "invalid_request",
+        code: "unexpected_drawer",
+        message: 'drawer is not accepted when view="field".',
+      });
+    }
+  } else {
+    if (trimmedDrawer !== null) {
+      return finalizeResponse({
+        ok: false,
+        status: "invalid_request",
+        code: "unexpected_drawer",
+        message: `drawer parameter is only supported when view="drawer" (received view="${view}").`,
+      });
+    }
+    if (trimmedFieldKey !== null) {
+      return finalizeResponse({
+        ok: false,
+        status: "invalid_request",
+        code: "unexpected_field_key",
+        message: `fieldKey parameter is only supported when view="field" (received view="${view}").`,
+      });
+    }
   }
 
   if (typeof chunkIndex !== "number" || !Number.isInteger(chunkIndex) || chunkIndex < 0) {
@@ -2492,6 +3518,7 @@ export function readTelemetryReport(options = {}) {
         : "cache_unavailable_or_not_found",
       reportId,
       section,
+      ...(view !== "chunk" ? { view } : {}),
       message:
         "The requested reportId was not found for this shop. It may have been superseded by a newer live bench revision, cleared on product switch/deselection, expired after 30 minutes, or lost due to a server restart or separate worker process.",
       ...(liveSessions.length > 0 ? { liveSessions } : {}),
@@ -2603,6 +3630,139 @@ export function readTelemetryReport(options = {}) {
     });
   }
 
+  // Handle organized views on verified schemaVersion=1 live_bench_state reports
+  if (view !== "chunk") {
+    const parsedCheck = parseVerifiedLiveBenchSnapshot(record);
+    if (!parsedCheck.ok) {
+      return finalizeResponse({
+        ok: false,
+        status: parsedCheck.status,
+        code: parsedCheck.code,
+        reportId: record.reportId,
+        productId: record.productId,
+        mode: record.mode,
+        view,
+        message: parsedCheck.message,
+      });
+    }
+
+    const snapshot = parsedCheck.snapshot;
+
+    if (view === "index") {
+      const indexPayload = buildIndexViewData(record, snapshot);
+      return buildBoundedOrganizedViewEnvelope({
+        record,
+        snapshot,
+        view: "index",
+        chunkIndex,
+        viewPayloadObj: indexPayload,
+        state,
+        nowMs,
+      });
+    }
+
+    if (view === "header") {
+      const headerPayload = buildHeaderViewData(record, snapshot);
+      return buildBoundedOrganizedViewEnvelope({
+        record,
+        snapshot,
+        view: "header",
+        chunkIndex,
+        viewPayloadObj: headerPayload,
+        state,
+        nowMs,
+      });
+    }
+
+    if (view === "review") {
+      const reviewPayload = buildReviewViewData(snapshot);
+      return buildBoundedOrganizedViewEnvelope({
+        record,
+        snapshot,
+        view: "review",
+        chunkIndex,
+        viewPayloadObj: reviewPayload,
+        state,
+        nowMs,
+      });
+    }
+
+    if (view === "drawer") {
+      const drawerRes = resolveDrawerTarget(snapshot, trimmedDrawer);
+      if (!drawerRes.ok) {
+        return finalizeResponse({
+          ok: false,
+          status: "invalid_request",
+          code: drawerRes.code,
+          reportId: record.reportId,
+          productId: record.productId,
+          benchSessionId: record.benchSessionId,
+          benchRevision: record.benchRevision,
+          view: "drawer",
+          drawer: trimmedDrawer,
+          availableDrawers: drawerRes.availableDrawers || [],
+          message: drawerRes.message,
+        });
+      }
+
+      const drawerPayload = {
+        drawer: drawerRes.drawerTitle,
+        manifestLoaded: Boolean(snapshot.manifestLoaded),
+        fieldCount: drawerRes.fieldKeys.length,
+        fieldKeys: drawerRes.fieldKeys,
+        fields: drawerRes.fields,
+      };
+
+      return buildBoundedOrganizedViewEnvelope({
+        record,
+        snapshot,
+        view: "drawer",
+        drawer: drawerRes.drawerTitle,
+        chunkIndex,
+        viewPayloadObj: drawerPayload,
+        state,
+        nowMs,
+      });
+    }
+
+    if (view === "field") {
+      const fieldRes = resolveFieldTarget(snapshot, trimmedFieldKey);
+      if (!fieldRes.ok) {
+        return finalizeResponse({
+          ok: false,
+          status: "invalid_request",
+          code: fieldRes.code,
+          reportId: record.reportId,
+          productId: record.productId,
+          benchSessionId: record.benchSessionId,
+          benchRevision: record.benchRevision,
+          view: "field",
+          fieldKey: trimmedFieldKey,
+          message: fieldRes.message,
+        });
+      }
+
+      const fieldPayload = {
+        fieldKey: fieldRes.fieldKey,
+        ...(fieldRes.requestedAlias ? { requestedAlias: fieldRes.requestedAlias } : {}),
+        manifestLoaded: Boolean(snapshot.manifestLoaded),
+        field: fieldRes.field,
+      };
+
+      return buildBoundedOrganizedViewEnvelope({
+        record,
+        snapshot,
+        view: "field",
+        fieldKey: fieldRes.fieldKey,
+        chunkIndex,
+        viewPayloadObj: fieldPayload,
+        state,
+        nowMs,
+      });
+    }
+  }
+
+  // Default legacy chunk read (section === "report", view === "chunk")
   const chunks = record.reportChunks;
   if (chunkIndex >= chunks.length) {
     return finalizeResponse({
