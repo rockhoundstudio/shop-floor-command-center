@@ -1,3 +1,4 @@
+import { UnselectedDraftManualInputs } from "../components/meta-injector.manual-intake.jsx";
 // FILE: app/routes/app.meta-injector.matrix.jsx
 import React, { useState, useCallback, useEffect, useRef } from "react";
 import { BlockStack, Card, Text, Banner, Button, InlineStack, Box, ProgressBar, Select, Badge } from "@shopify/polaris";
@@ -2946,6 +2947,15 @@ export function OperationsMatrixTab({ products }) {
                       onExplicitTitleOverrideChange={handleDraftExplicitTitleOverrideChange}
                       onSeedBlurCommit={handleDraftSeedBlurCommit}
                       onApplyTitleParseResult={handleApplyDraftTitleParseResult}
+                    />
+
+                    <UnselectedDraftManualInputs
+                      selectedBenchId={selectedBenchId}
+                      draftManifest={unselectedDraftManifest}
+                      currentApprovals={approvals}
+                      configFields={TAB3_INSPECTABLE_TEMPLATE_GROUPS.flatMap(g => g.fields || [])}
+                      getFieldMetadata={getFieldMetadata}
+                      onRepairPlanChange={handleRepairPlanChange}
                     />
 
                     <Card padding="400">
