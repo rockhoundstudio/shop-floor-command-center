@@ -22,6 +22,8 @@ export const STATUS = {
   SKIPPED: "Skipped"
 };
 
+export const UNSELECTED_DRAFT_STORAGE_KEY = "__UNSELECTED_NEW_PRODUCT_DRAFT__";
+
 export const BLOCKED_UNVERIFIED_PINS = [];
 
 export const FIELD_LIMITS = {
@@ -322,7 +324,7 @@ const normalizeOoakComparable = (rawVal, expectedType = "single_line_text_field"
     lower === "one of a kind" ||
     lower.startsWith("yes —") ||
     lower.startsWith("yes -") ||
-    lower.startsWith("yes â€”")
+    lower.startsWith("yes Ã¢â‚¬â€")
   ) {
     return expectedType === "boolean" ? "true" : "Yes";
   }
@@ -412,16 +414,21 @@ const serializeExactStoredValueToken = (val) => {
  */
 export function inspectFieldBaselineDescriptor(key, data, expectedProductId = null, templateConfig = null) {
   const safeData = data && typeof data === "object" ? data : {};
+  const isExplicitUnselectedDraft = Boolean(
+    expectedProductId === null && safeData.isUnselectedDraft === true
+  );
   const hasMatchingProductId =
-    !expectedProductId ||
-    !isExactProductGidString(expectedProductId) ||
-    ((typeof safeData.nativeTargets?.productId === "string" &&
-      safeData.nativeTargets.productId.trim() === expectedProductId.trim()) ||
-      (typeof safeData.productId === "string" &&
-        safeData.productId.trim() === expectedProductId.trim()));
+    !isExplicitUnselectedDraft &&
+    (!expectedProductId ||
+      (isExactProductGidString(expectedProductId) &&
+        ((typeof safeData.nativeTargets?.productId === "string" &&
+          safeData.nativeTargets.productId.trim() === expectedProductId.trim()) ||
+          (typeof safeData.productId === "string" &&
+            safeData.productId.trim() === expectedProductId.trim()))));
 
   const hasLoadedProductManifest = Boolean(
-    hasMatchingProductId &&
+    !isExplicitUnselectedDraft &&
+      hasMatchingProductId &&
       safeData.readBackVerified !== false &&
       (safeData.intent === "loadProductData" ||
         safeData.intent === "executeRepairPlan" ||
@@ -443,6 +450,19 @@ export function inspectFieldBaselineDescriptor(key, data, expectedProductId = nu
       owner: "MEDIAIMAGE",
       signature: "placeholder:native_image_alt",
       note: "Zero-image capability placeholder; not a stored Shopify field."
+    };
+  }
+
+  if (isExplicitUnselectedDraft) {
+    return {
+      evidenceAvailable: false,
+      propertyPresent: false,
+      valueType: "unavailable",
+      rawValue: undefined,
+      sourceKey: null,
+      owner: templateConfig?.registryOwner || "PRODUCT",
+      signature: "unavailable:unselected_draft",
+      note: "Unsaved new-product draft (no product selected or saved in Shopify)."
     };
   }
 
@@ -1097,6 +1117,12 @@ export const evaluateFieldMetadata = ({
   includeTab3InspectableInventory = false
 }) => {
   const safeData = data || {};
+  const isUnselectedDraftMode = Boolean(
+    productId === null && safeData.isUnselectedDraft === true
+  );
+  const effectiveApprovalLookupId = isUnselectedDraftMode
+    ? UNSELECTED_DRAFT_STORAGE_KEY
+    : productId;
   const isParkedEntryFromCatalog = isParkedExcludedKey(key);
   const targetKeyForProposal = isParkedEntryFromCatalog ? key : (NATIVE_ALIAS_MAP[key] || key);
   const approvalStorageKey = isParkedEntryFromCatalog ? key : resolveApprovalStorageKey(key);
@@ -1192,9 +1218,10 @@ export const evaluateFieldMetadata = ({
     : targetKeyForProposal;
 
   // Evaluate technical and category eligibility for ALL standardized attributes
-  const stdEvaluation = isStandardizedAttribute && typeof getStandardizedEvaluationForField === "function"
-    ? getStandardizedEvaluationForField(productId, standardizedDestKey, safeData)
-    : null;
+  const stdEvaluation =
+    !isUnselectedDraftMode && isStandardizedAttribute && typeof getStandardizedEvaluationForField === "function"
+      ? getStandardizedEvaluationForField(productId, standardizedDestKey, safeData)
+      : null;
 
   const isCategoryEligible = Boolean(stdEvaluation?.isCategoryEligible);
   const categoryEligibility = stdEvaluation?.categoryEligibility || null;
@@ -1294,14 +1321,18 @@ export const evaluateFieldMetadata = ({
   } else if (key === "native_seo_description") {
       currentVal = typeof safeData.nativeTargets?.seo?.description === "string" ? safeData.nativeTargets.seo.description : "";
   } else if (key === "native_price" || key === "price") {
-      if (isSingleVariant) {
+      if (isUnselectedDraftMode) {
+          currentVal = "";
+      } else if (isSingleVariant) {
           currentVal = variants[0].node?.price ?? "";
       } else if (variants.length !== 1 || safeData.nativeTargets?.variants?.pageInfo?.hasNextPage !== false || !safeData.nativeTargets?.isComplete || safeData.nativeTargets?.loadError) {
           currentVal = "Multiple variants / Incomplete data - review manually";
       }
   } else if (isShippingWeightField) {
       if (key === "native_shipping_weight") {
-          if (isSingleVariant) {
+          if (isUnselectedDraftMode) {
+              currentVal = "";
+          } else if (isSingleVariant) {
               const w = variants[0].node?.inventoryItem?.measurement?.weight;
               currentVal = (w?.value !== undefined && w?.value !== null) ? `${w.value} ${w.unit}` : "";
           } else if (variants.length !== 1 || safeData.nativeTargets?.variants?.pageInfo?.hasNextPage !== false || !safeData.nativeTargets?.isComplete || safeData.nativeTargets?.loadError) {
@@ -1453,15 +1484,17 @@ export const evaluateFieldMetadata = ({
     HIDDEN_CONTEXT_FIELDS.includes(key) ||
     key.startsWith("native_");
 
-  const hasLoadedBaseline = isParkedExcluded
-    ? Boolean(baselineDescriptor.evidenceAvailable)
-    : (isDescriptionDestination || isSeoTitleDestination || key === "native_seo_description" || key === "native_title" || key === "shopify_title")
-      ? hasVerifiedLoadedDestinationBaseline(approvalStorageKey, safeData, productId)
-      : Boolean(baselineDescriptor.evidenceAvailable);
+  const hasLoadedBaseline = isUnselectedDraftMode
+    ? false
+    : isParkedExcluded
+      ? Boolean(baselineDescriptor.evidenceAvailable)
+      : (isDescriptionDestination || isSeoTitleDestination || key === "native_seo_description" || key === "native_title" || key === "shopify_title")
+        ? hasVerifiedLoadedDestinationBaseline(approvalStorageKey, safeData, productId)
+        : Boolean(baselineDescriptor.evidenceAvailable);
 
   // Evaluate Keep-Original decision for this exact product and destination before pre-approval/approval
   const rawKeepOriginalDecision =
-    !isParkedExcluded && productId && currentKeepOriginal && typeof currentKeepOriginal === "object"
+    !isUnselectedDraftMode && !isParkedExcluded && productId && currentKeepOriginal && typeof currentKeepOriginal === "object"
       ? (isDestinationSpecificApprovalField
           ? currentKeepOriginal?.[productId]?.[approvalStorageKey]
           : (currentKeepOriginal?.[productId]?.[approvalStorageKey] !== undefined
@@ -1472,6 +1505,7 @@ export const evaluateFieldMetadata = ({
       : null;
 
   const isKeepOriginalSelected =
+    !isUnselectedDraftMode &&
     !isImageAltCapabilityPlaceholder &&
     !isParkedExcluded &&
     !hasContractOrOwnerHold &&
@@ -1527,20 +1561,22 @@ export const evaluateFieldMetadata = ({
   );
   
   // Destination-specific approval lookup: mutually exclusive with a valid Keep-Original decision
-  const exactApprovalVal = isDestinationSpecificApprovalField
-    ? currentApprovals?.[productId]?.[approvalStorageKey]
-    : (currentApprovals?.[productId]?.[approvalStorageKey] !== undefined
-        ? currentApprovals[productId][approvalStorageKey]
-        : (currentApprovals?.[productId]?.[key] !== undefined
-            ? currentApprovals[productId][key]
-            : currentApprovals?.[productId]?.[targetKeyForProposal]));
+  const exactApprovalVal = effectiveApprovalLookupId
+    ? (isDestinationSpecificApprovalField
+        ? currentApprovals?.[effectiveApprovalLookupId]?.[approvalStorageKey]
+        : (currentApprovals?.[effectiveApprovalLookupId]?.[approvalStorageKey] !== undefined
+            ? currentApprovals[effectiveApprovalLookupId][approvalStorageKey]
+            : (currentApprovals?.[effectiveApprovalLookupId]?.[key] !== undefined
+                ? currentApprovals[effectiveApprovalLookupId][key]
+                : currentApprovals?.[effectiveApprovalLookupId]?.[targetKeyForProposal])))
+    : undefined;
 
   const isApproved =
     !isKeepOriginalSelected &&
     !isParkedExcluded &&
     !isImageAltCapabilityPlaceholder &&
     !hasContractOrOwnerHold &&
-    hasLoadedBaseline &&
+    (hasLoadedBaseline || isUnselectedDraftMode) &&
     (!isVerifiedStdDest || (Boolean(stdEvaluation?.isTechnicallyEligible) && isCategoryEligible)) &&
     exactApprovalVal !== undefined &&
     String(exactApprovalVal) === propVal &&
@@ -1558,6 +1594,7 @@ export const evaluateFieldMetadata = ({
         hasTechnicalBlock: true, contentNeedsReview: false, isContentPreApproved: false, preApprovalReason: "",
         isManualOnly: false, isActualBlockedProposal: false, isOperatorOwned: false, isSupported: true,
         isPendingReadOnly: true, isStandardizedAttribute: false, hasLoadedBaseline: Boolean(baselineDescriptor.evidenceAvailable),
+        isUnselectedDraftMode,
         approvalStorageKey,
         type: expectedType, owner: templateConfig?.owner || "metafield", namespace: templateConfig?.namespace || "custom",
         metaKey: templateConfig?.metaKey || unprefixedKey, label: templateConfig?.label || formatLabel(key),
@@ -1581,8 +1618,13 @@ export const evaluateFieldMetadata = ({
       contentNeedsReview = true;
   }
 
-  // Require demonstrably loaded baseline for the exact product and destination before authorizing any write
-  if (!isParkedExcluded && !hasLoadedBaseline && (isDescriptionDestination || isSeoTitleDestination || key === "native_seo_description" || key === "native_title" || key === "shopify_title")) {
+  // Require demonstrably loaded baseline for the exact product and destination before authorizing any loaded-product write
+  if (
+    !isUnselectedDraftMode &&
+    !isParkedExcluded &&
+    !hasLoadedBaseline &&
+    (isDescriptionDestination || isSeoTitleDestination || key === "native_seo_description" || key === "native_title" || key === "shopify_title")
+  ) {
       hasTechnicalBlock = true;
       reasons.push(`Baseline not loaded or unverified for ${approvalStorageKey} — reload product data before saving`);
   }
@@ -1676,7 +1718,7 @@ export const evaluateFieldMetadata = ({
       if (Number.isNaN(parsedShipping) || parsedShipping <= 0) {
           hasTechnicalBlock = true;
           reasons.push("Shipping weight must be a positive number in OUNCES.");
-      } else if (!isSingleVariant) {
+      } else if (!isUnselectedDraftMode && !isSingleVariant) {
           hasTechnicalBlock = true;
           reasons.push("Shipping weight requires a single complete variant.");
       }
@@ -1789,6 +1831,7 @@ export const evaluateFieldMetadata = ({
 
   const candidateMetaKeyForCheck = templateConfig?.metaKey || (key.startsWith("shopify.") ? key.slice(8) : "");
   const hasStagedCandidateForRow =
+    !isUnselectedDraftMode &&
     isVerifiedStdDest &&
     Boolean(standardizedCandidatesByProduct[productId]?.[candidateMetaKeyForCheck]);
 
@@ -1874,6 +1917,7 @@ export const evaluateFieldMetadata = ({
   }
 
   const canKeepOriginal = Boolean(
+    !isUnselectedDraftMode &&
     !isParkedExcluded &&
     !isImageAltCapabilityPlaceholder &&
     !hasContractOrOwnerHold &&
@@ -1940,6 +1984,7 @@ export const evaluateFieldMetadata = ({
     conflictData, nativeDescConflictData,
     isSupported: isKnownKey,
     hasLoadedBaseline,
+    isUnselectedDraftMode,
     approvalStorageKey,
     isPendingReadOnly,
     isStandardizedAttribute,

@@ -29,6 +29,7 @@ import {
 } from "../utils/meta-injector.standardized.jsx";
 import {
   STATUS,
+  UNSELECTED_DRAFT_STORAGE_KEY,
   NATIVE_FIELDS,
   NATIVE_ALIAS_MAP,
   DESTINATION_SPECIFIC_APPROVAL_KEYS,
@@ -77,6 +78,17 @@ const EMPTY_DEV_PREVIEW_MANIFEST = Object.freeze({
   metadata: {},
   verifiedGeoValues: {}
 });
+
+function createInitialUnselectedDraftManifest() {
+  return {
+    isUnselectedDraft: true,
+    currentMetafields: {},
+    nativeTargets: null,
+    repairPlan: {},
+    metadata: {},
+    verifiedGeoValues: {}
+  };
+}
 
 const TELEMETRY_PUBLISH_ENDPOINT = "/api/meta-injector-telemetry";
 const TELEMETRY_PUBLISH_TIMEOUT_MS = 8000;
@@ -890,25 +902,38 @@ function buildUnselectedPreviewLiveBenchPayload({
   benchSessionId,
   benchRevision,
   clientStateChangedAt,
-  getPreviewFieldMetadata
+  draftManifest,
+  approvals,
+  manualEdits,
+  getFieldMetadata,
+  getDiagnosticsStats
 }) {
-  const previewData = EMPTY_DEV_PREVIEW_MANIFEST;
+  const previewData =
+    draftManifest && typeof draftManifest === "object"
+      ? draftManifest
+      : createInitialUnselectedDraftManifest();
+  const draftApprovalsMap = validObj(approvals?.[UNSELECTED_DRAFT_STORAGE_KEY]);
+  const draftManualEditsMap = validObj(manualEdits?.[UNSELECTED_DRAFT_STORAGE_KEY]);
   const dynamicSections = getDynamicSections(previewData, { includeTab3InspectableInventory: true });
   const allConfigFields = dynamicSections.flatMap((sec) => sec.configFields || []);
-  const runIdentity = "unselected_blank_template_preview";
-  const runTimestamp = "Read-only blank template preview (no product selected)";
 
   const serializePreviewFieldRow = (key, sectionHeading, sectionConfigFields = []) => {
-    const meta = getPreviewFieldMetadata(
+    const meta = getFieldMetadata(
       key,
       previewData,
       null,
-      {},
+      approvals,
       sectionConfigFields.length > 0 ? sectionConfigFields : allConfigFields
     );
     const isParked = Boolean(meta.isParkedExcluded || meta.registryRole === "EXCLUDED_INPUT");
     const targetKey = isParked ? key : (NATIVE_ALIAS_MAP[key] || key);
     const approvalStorageKey = isParked ? key : resolveApprovalStorageKey(key);
+    const isManualEdited = Boolean(
+      !isParked &&
+        (draftManualEditsMap[key] === true ||
+          draftManualEditsMap[targetKey] === true ||
+          draftManualEditsMap[approvalStorageKey] === true)
+    );
     const isCollectionDateDisplayNa =
       (key === "custom.collection_date" || key === "collection_date") &&
       meta.currentVal === "N/A";
@@ -933,7 +958,7 @@ function buildUnselectedPreviewLiveBenchPayload({
         exists: false,
         value: null,
         sourceKey: null,
-        note: "Unselected blank template preview (no product selected or loaded; not a stored Shopify baseline)."
+        note: "Unsaved new-product draft / unselected template preview (no product selected or saved in Shopify; not a stored Shopify baseline)."
       },
       evaluatedBaseline: {
         currentExists: false,
@@ -943,31 +968,31 @@ function buildUnselectedPreviewLiveBenchPayload({
         )
       },
       workingState: {
-        isProposed: false,
-        proposalExists: false,
+        isProposed: Boolean(meta.isProposed),
+        proposalExists: Boolean(meta.proposalExists),
         proposalStatus: meta.proposalStatus || "Not provided",
-        proposedValue: "",
-        isManualEdit: false,
-        isApproved: false,
+        proposedValue: redactRecognizableCredentialStrings(meta.propVal ?? ""),
+        isManualEdit: isManualEdited,
+        isApproved: Boolean(meta.isApproved),
         isKeepOriginal: false,
         keepOriginalDecision: null,
         canKeepOriginal: false,
-        isContentPreApproved: false,
-        preApprovalReason: null,
-        contentNeedsReview: false,
-        source: "Not reported",
-        stage: "unselected_preview"
+        isContentPreApproved: Boolean(meta.isContentPreApproved),
+        preApprovalReason: meta.preApprovalReason || null,
+        contentNeedsReview: Boolean(meta.contentNeedsReview),
+        source: meta.source && meta.source !== "Not reported" ? meta.source : "Not reported",
+        stage: meta.stage && meta.stage !== "Not reported" ? meta.stage : "unselected_draft"
       },
       statusAndHolds: {
         fieldStatus: meta.fieldStatus,
         isSupported: Boolean(meta.isSupported),
         hasLoadedBaseline: false,
-        isBlockedAction: true,
+        isBlockedAction: Boolean(meta.isBlockedAction),
         hasTechnicalBlock: Boolean(meta.hasTechnicalBlock),
-        isActualBlockedProposal: false,
+        isActualBlockedProposal: Boolean(meta.isActualBlockedProposal),
         isManualOnly: Boolean(meta.isManualOnly),
         isOperatorOwned: Boolean(meta.isOperatorOwned),
-        isPendingReadOnly: true,
+        isPendingReadOnly: Boolean(meta.isPendingReadOnly),
         isParkedExcluded: isParked,
         registryRole: meta.registryRole || (isParked ? "EXCLUDED_INPUT" : "PRIMARY_CANDIDATE_DESTINATION"),
         registryOwner: meta.registryOwner || "PRODUCT",
@@ -975,7 +1000,7 @@ function buildUnselectedPreviewLiveBenchPayload({
         isStandardizedAttribute: Boolean(meta.isStandardizedAttribute),
         isVerifiedStdDest: Boolean(meta.isVerifiedStdDest),
         isCategoryEligible: false,
-        hasContractOrOwnerHold: true,
+        hasContractOrOwnerHold: Boolean(meta.hasContractOrOwnerHold),
         hasExplicitStorageHold: Boolean(meta.hasExplicitStorageHold),
         hasExplicitProducerHold: Boolean(meta.hasExplicitProducerHold),
         isChannelFlagReadOnly: Boolean(meta.isChannelFlagReadOnly),
@@ -999,13 +1024,20 @@ function buildUnselectedPreviewLiveBenchPayload({
   const fieldsByKey = {};
   const sectionOrder = [];
 
+  // Dedicated Description Review companion row (custom.generated_description) + native_description
+  fieldsByKey["custom.generated_description"] = serializePreviewFieldRow(
+    "custom.generated_description",
+    "Description Review",
+    allConfigFields
+  );
+
   for (let i = 0; i < dynamicSections.length; i += 1) {
     const sec = dynamicSections[i];
     const isParkedSection = Boolean(
       sec.isParkedGroup === true || sec.title === TAB3_PARKED_DRAWER_HEADING
     );
     const rawKeys = Array.isArray(sec.keys) ? sec.keys : [];
-    // Keep compatibility custom.generated_description out of the 93-slot preview inventory,
+    // Keep compatibility custom.generated_description out of the 93-slot sectionOrder inventory,
     // while keeping custom.origin_story once inside the Parked / Excluded drawer.
     const secKeys = rawKeys.filter(
       (k) =>
@@ -1022,21 +1054,42 @@ function buildUnselectedPreviewLiveBenchPayload({
     }
   }
 
-  const allPreviewFieldKeys = Object.keys(fieldsByKey);
-  let requiredMissingCount = 0;
-  let optionalBlanksCount = 0;
-  let parkedExcludedCount = 0;
-  for (let i = 0; i < allPreviewFieldKeys.length; i += 1) {
-    const fRow = fieldsByKey[allPreviewFieldKeys[i]];
-    if (fRow?.isParkedExcluded) {
-      parkedExcludedCount += 1;
-    }
-    if (fRow?.statusAndHolds?.fieldStatus === "Required missing") {
-      requiredMissingCount += 1;
-    } else {
-      optionalBlanksCount += 1;
-    }
+  if (!Object.prototype.hasOwnProperty.call(fieldsByKey, "native_description")) {
+    fieldsByKey["native_description"] = serializePreviewFieldRow(
+      "native_description",
+      "Description Review",
+      allConfigFields
+    );
   }
+
+  const diagnosticsStats =
+    typeof getDiagnosticsStats === "function"
+      ? getDiagnosticsStats(previewData)
+      : null;
+
+  const manualEditedKeysList = Object.keys(draftManualEditsMap).filter(
+    (k) => draftManualEditsMap[k] === true
+  );
+  const explicitlyApprovedKeysList = Object.keys(draftApprovalsMap);
+  const hasUnsavedDraftChanges =
+    manualEditedKeysList.length > 0 ||
+    explicitlyApprovedKeysList.length > 0 ||
+    (diagnosticsStats && diagnosticsStats.proposed > 0);
+
+  const runIdentity = hasUnsavedDraftChanges
+    ? "unselected_new_product_draft"
+    : "unselected_blank_template_preview";
+  const runTimestamp = hasUnsavedDraftChanges
+    ? "Unsaved new-product draft in browser (no product selected or saved)"
+    : "Unselected new-product draft / template preview (no product selected)";
+
+  const rawDraftTitle =
+    previewData.repairPlan?.["shopify_title"] ||
+    previewData.repairPlan?.["native_title"] ||
+    null;
+  const cleanDraftTitle = rawDraftTitle
+    ? redactRecognizableCredentialStrings(String(rawDraftTitle))
+    : null;
 
   const structuredPayload = {
     schemaVersion: 1,
@@ -1045,55 +1098,43 @@ function buildUnselectedPreviewLiveBenchPayload({
     benchRevision,
     selectionState: "unselected_preview",
     productId: null,
-    productTitle: null,
+    productTitle: cleanDraftTitle,
     clientStateChangedAt,
     baselineLoadedAt: null,
     baselineEventKind: "unselected_blank_preview",
     baselineState: "unselected_blank_preview",
     manifestLoaded: false,
     baselineSource: "unselected_blank_preview",
-    workingState: "read_only_template_preview",
+    workingState: hasUnsavedDraftChanges
+      ? "unsaved_unselected_draft_bench"
+      : "unselected_draft_template_preview",
     productQueueStatus: null,
     dataAuthorityNote:
-      'Read-only unselected blank template preview (DEV_SHOW_ALL_TEMPLATE_FIELDS=true, selectionState="unselected_preview", productId=null). No product is selected or loaded. All 11 Tab 3 inspectable drawers and 93 logical slots (62 canonical working slots + 31 parked/excluded entries, including the read-only zero-image native_image_alt placeholder and native_description audit mirror) are exposed in read-only preview mode. Preview values are never treated as saved Shopify baselines.',
+      'Unselected new-product draft / template preview (DEV_SHOW_ALL_TEMPLATE_FIELDS=true, selectionState="unselected_preview", productId=null). No product is selected or loaded from Shopify. All 11 Tab 3 inspectable drawers and 93 logical slots (62 canonical working slots + 31 parked/excluded read-only entries, plus custom.generated_description in Description Review) are inspectable. Working capabilities without technical/owner/reference holds accept unsaved starting data and suggestion approvals in browser state, while rawStoredBaseline.exists is strictly false and no values are saved to Shopify.',
     runIdentity,
     runTimestamp,
     systemStatus: {
-      shopifyReadStatus: "Unselected Preview (No Product Loaded)",
+      shopifyReadStatus: "Unselected Draft (No Product Loaded)",
       geminiStatus: "Not called",
       visionStatus: "Not called",
       geoLibraryStatus: "Not called",
       readBackStatus: "Not called",
-      currentStage: "unselected_preview",
-      finalStageDisplay: "Read-Only Blank Template Preview",
+      currentStage: hasUnsavedDraftChanges ? "unselected_draft_editing" : "unselected_preview",
+      finalStageDisplay: hasUnsavedDraftChanges
+        ? "Unsaved New-Product Draft (Not Saved to Shopify)"
+        : "Unselected New-Product Draft / Template Preview",
       fetcherStateDisplay: "idle",
       loadingStateDisplay: "Idle",
       errorMessageDisplay: "None"
     },
-    diagnosticsStats: {
-      proposed: 0,
-      blocked: 0,
-      degraded: 0,
-      conflicts: 0,
-      unverified: 0,
-      optionalBlanks: optionalBlanksCount,
-      requiredMissing: requiredMissingCount,
-      approvedWrite: 0,
-      keepOriginal: 0,
-      parkedExcluded: parkedExcludedCount,
-      total: allPreviewFieldKeys.length,
-      filled: 0,
-      blank: allPreviewFieldKeys.length,
-      manualOnly: 0,
-      unchangedFlagged: 0
-    },
-    manualEditedKeys: [],
-    explicitlyApprovedKeys: [],
+    diagnosticsStats,
+    manualEditedKeys: manualEditedKeysList,
+    explicitlyApprovedKeys: explicitlyApprovedKeysList,
     keepOriginalKeys: [],
     standardizedReferenceState: {
       readinessState: "unselected_preview",
       readinessReason:
-        "No product is selected; standardized attributes are displayed in read-only template preview mode.",
+        "No product is selected; standardized attributes require a saved product GID and category match and remain held read-only in unselected draft mode.",
       stagedCandidateCount: 0,
       stagedCandidates: {},
       eligibleDestinationKeys: [],
@@ -1116,7 +1157,7 @@ function buildUnselectedPreviewLiveBenchPayload({
       blockedFields: {},
       conflicts: {},
       unresolvedChanges: {},
-      note: "Unselected blank template preview is strictly read-only; no product is selected and no writes can occur."
+      note: "Unselected draft state is unsaved browser working data only (productId=null); no Shopify product exists or has been written."
     },
     sectionOrder,
     fieldsByKey
@@ -1127,9 +1168,11 @@ function buildUnselectedPreviewLiveBenchPayload({
   const packet = {
     mode: LIVE_BENCH_MODE,
     sectionKey: LIVE_BENCH_MODE,
-    sectionLabel: "LIVE BENCH BLANK TEMPLATE PREVIEW (NO PRODUCT SELECTED)",
+    sectionLabel: hasUnsavedDraftChanges
+      ? "LIVE BENCH UNSAVED NEW-PRODUCT DRAFT (NO PRODUCT SELECTED)"
+      : "LIVE BENCH BLANK TEMPLATE PREVIEW (NO PRODUCT SELECTED)",
     productId: null,
-    productTitle: null,
+    productTitle: cleanDraftTitle,
     runIdentity,
     runTimestamp,
     capturedAt: clientStateChangedAt,
@@ -1140,7 +1183,9 @@ function buildUnselectedPreviewLiveBenchPayload({
         index: 0,
         partNumber: 1,
         totalParts: 1,
-        label: "LIVE BENCH BLANK TEMPLATE PREVIEW (NO PRODUCT SELECTED)",
+        label: hasUnsavedDraftChanges
+          ? "LIVE BENCH UNSAVED NEW-PRODUCT DRAFT (NO PRODUCT SELECTED)"
+          : "LIVE BENCH BLANK TEMPLATE PREVIEW (NO PRODUCT SELECTED)",
         charCount: fullText.length
       }
     ],
@@ -1512,7 +1557,7 @@ function buildPureLiveBenchPayload({
     selectionState: "selected",
     productId,
     clientStateChangedAt,
-    baselineLoadedAt: baselineLoadedAt || null
+    baselineLoadedAt: null
   };
 
   return { packet, liveState };
@@ -1546,6 +1591,9 @@ export function OperationsMatrixTab({ products }) {
   const [queueIds, setQueueIds] = useState([]);
   const [productStates, setProductStates] = useState({}); 
   const [manifestData, setManifestData] = useState({}); 
+  const [unselectedDraftManifest, setUnselectedDraftManifest] = useState(() =>
+    createInitialUnselectedDraftManifest()
+  );
   const [lastProcessedData, setLastProcessedData] = useState(null);
   
   const [approvals, setApprovals] = useState({});
@@ -1631,37 +1679,8 @@ export function OperationsMatrixTab({ products }) {
   const batchFetcher = useFetcher();
   const referenceMatchFetcher = useFetcher();
 
-  // Guarded no-op callbacks for unselected DEV preview mode so preview controls can never mutate state or trigger requests
+  // Guarded no-op callbacks for operations not available in unselected draft mode (e.g. reference matching, keep-original)
   const noopPreviewCallback = useCallback(() => {}, []);
-
-  const getPreviewFieldMetadata = useCallback((key, data, productId, currentApprovals, configFields = []) => {
-    const baseMeta = evaluateFieldMetadata({
-      key,
-      data: data || EMPTY_DEV_PREVIEW_MANIFEST,
-      productId: null,
-      currentApprovals: {},
-      currentKeepOriginal: {},
-      configFields,
-      standardizedCandidatesByProduct: {},
-      getStandardizedEvaluationForField: null,
-      includeTab3InspectableInventory: true
-    });
-    return {
-      ...baseMeta,
-      isPendingReadOnly: true,
-      hasContractOrOwnerHold: true,
-      isBlockedAction: true,
-      isApproved: false,
-      isKeepOriginalSelected: false,
-      keepOriginalDecision: null,
-      canKeepOriginal: false,
-      isContentPreApproved: false,
-      reasons: [
-        "DEV Preview Mode (No product loaded/selected on bench — read-only template audit view)",
-        ...(Array.isArray(baseMeta.reasons) ? baseMeta.reasons : [])
-      ]
-    };
-  }, []);
 
   // Track actual baseline load and verified read-back timestamps when manifestData or repairHistory updates
   useEffect(() => {
@@ -2283,6 +2302,7 @@ export function OperationsMatrixTab({ products }) {
     setQueueIds([]);
     setProductStates({});
     setManifestData({});
+    setUnselectedDraftManifest(createInitialUnselectedDraftManifest());
     setApprovals({});
     setKeepOriginalDecisions({});
     setManualEdits({});
@@ -2306,7 +2326,7 @@ export function OperationsMatrixTab({ products }) {
     setLoadIndex(0);
     setLastProcessedData(null);
     setPendingOperation(null);
-    setSafetyMessage("Rack and Bench cleared. Repair history reset.");
+    setSafetyMessage("Rack and Bench cleared. Repair history and draft inputs reset.");
     setSafetyError("");
   }, [pendingReferenceMatch, referenceMatchFetcher.state, sendLiveBenchSelectionClear]);
 
@@ -2358,7 +2378,15 @@ export function OperationsMatrixTab({ products }) {
   ]);
 
   const handleToggleApproval = useCallback((pieceId, key, propVal, isChecked) => {
-    if (!pieceId || !isExactProductGid(pieceId) || !manifestData[pieceId]) return;
+    const isUnselectedDraftTarget =
+      pieceId === null &&
+      selectedBenchId === null &&
+      Boolean(unselectedDraftManifest && unselectedDraftManifest.isUnselectedDraft === true);
+
+    if (!isUnselectedDraftTarget) {
+      if (!pieceId || !isExactProductGid(pieceId) || !manifestData[pieceId]) return;
+    }
+
     if (typeof key !== "string" || !key.trim()) return;
     if (isParkedExcludedKey(key)) return;
 
@@ -2393,6 +2421,7 @@ export function OperationsMatrixTab({ products }) {
     }
 
     if (isVerifiedStandardizedDestination(targetKeyForProposal)) {
+      if (isUnselectedDraftTarget) return;
       const stdEval = getStandardizedEvaluationForField(pieceId, targetKeyForProposal);
       const valCheck = validateProposedStandardizedGidList(propVal, stdEval);
       if (!valCheck.valid) return;
@@ -2402,35 +2431,41 @@ export function OperationsMatrixTab({ products }) {
       matchedConfig?.writerVerified === false ||
       matchedConfig?.producerAlignmentPending === true ||
       matchedConfig?.owner === "variant_metafield" ||
+      matchedConfig?.namespace === "shopify" ||
+      targetKeyForProposal.startsWith("shopify.") ||
       targetKeyForProposal === "mm-google-shopping.custom_product" ||
       approvalStorageKey === "mm-google-shopping.custom_product"
     ) {
       return;
     }
 
+    const storageOwnerKey = isUnselectedDraftTarget ? UNSELECTED_DRAFT_STORAGE_KEY : pieceId;
+
     if (isChecked) {
       if (propVal === undefined || propVal === null || String(propVal).trim() === "") {
         return;
       }
-      // Mutual exclusivity: checking Approve clears any Keep-Original decision on this exact destination key
-      setKeepOriginalDecisions((prevKeep) => {
-        const prodKeep = prevKeep?.[pieceId];
-        if (!prodKeep || prodKeep[approvalStorageKey] === undefined) return prevKeep;
-        const nextProdKeep = { ...prodKeep };
-        delete nextProdKeep[approvalStorageKey];
-        const nextKeep = { ...prevKeep };
-        if (Object.keys(nextProdKeep).length === 0) {
-          delete nextKeep[pieceId];
-        } else {
-          nextKeep[pieceId] = nextProdKeep;
-        }
-        return nextKeep;
-      });
+      if (!isUnselectedDraftTarget) {
+        // Mutual exclusivity: checking Approve clears any Keep-Original decision on this exact destination key
+        setKeepOriginalDecisions((prevKeep) => {
+          const prodKeep = prevKeep?.[pieceId];
+          if (!prodKeep || prodKeep[approvalStorageKey] === undefined) return prevKeep;
+          const nextProdKeep = { ...prodKeep };
+          delete nextProdKeep[approvalStorageKey];
+          const nextKeep = { ...prevKeep };
+          if (Object.keys(nextProdKeep).length === 0) {
+            delete nextKeep[pieceId];
+          } else {
+            nextKeep[pieceId] = nextProdKeep;
+          }
+          return nextKeep;
+        });
+      }
     }
 
     setApprovals(prev => {
       const next = { ...prev };
-      const prodApp = { ...(next[pieceId] || {}) };
+      const prodApp = { ...(next[storageOwnerKey] || {}) };
       if (isChecked) {
         // Store approval strictly under the destination-specific approval key (e.g. native_description stays native_description,
         // never auto-approving custom.generated_description or vice versa).
@@ -2438,10 +2473,14 @@ export function OperationsMatrixTab({ products }) {
       } else {
         delete prodApp[approvalStorageKey];
       }
-      next[pieceId] = prodApp;
+      if (Object.keys(prodApp).length === 0) {
+        delete next[storageOwnerKey];
+      } else {
+        next[storageOwnerKey] = prodApp;
+      }
       return next;
     });
-  }, [getStandardizedEvaluationForField, manifestData]);
+  }, [getStandardizedEvaluationForField, manifestData, selectedBenchId, unselectedDraftManifest]);
 
   const handleToggleKeepOriginal = useCallback((pieceId, key, propVal, isChecked) => {
     if (!pieceId || !isExactProductGid(pieceId) || !manifestData[pieceId]) return;
@@ -3276,7 +3315,14 @@ export function OperationsMatrixTab({ products }) {
   });
 
   const handleRepairPlanChange = (key, value) => {
-    if (!selectedBenchId || !isExactProductGid(selectedBenchId) || !manifestData[selectedBenchId]) return;
+    const isUnselectedDraftTarget =
+      selectedBenchId === null &&
+      Boolean(unselectedDraftManifest && unselectedDraftManifest.isUnselectedDraft === true);
+
+    if (!isUnselectedDraftTarget) {
+      if (!selectedBenchId || !isExactProductGid(selectedBenchId) || !manifestData[selectedBenchId]) return;
+    }
+
     if (typeof key !== "string" || !key.trim()) return;
     if (isParkedExcludedKey(key)) return;
 
@@ -3310,6 +3356,7 @@ export function OperationsMatrixTab({ products }) {
     }
 
     if (isVerifiedStandardizedDestination(targetKeyForProposal)) {
+      if (isUnselectedDraftTarget) return;
       const stdEval = getStandardizedEvaluationForField(selectedBenchId, targetKeyForProposal);
       const valCheck = validateProposedStandardizedGidList(value, stdEval);
       if (!valCheck.valid) return;
@@ -3319,22 +3366,26 @@ export function OperationsMatrixTab({ products }) {
       matchedConfig?.writerVerified === false ||
       matchedConfig?.producerAlignmentPending === true ||
       matchedConfig?.owner === "variant_metafield" ||
+      matchedConfig?.namespace === "shopify" ||
+      targetKeyForProposal.startsWith("shopify.") ||
       targetKeyForProposal === "mm-google-shopping.custom_product" ||
       approvalStorageKey === "mm-google-shopping.custom_product"
     ) {
       return;
     }
 
+    const storageOwnerKey = isUnselectedDraftTarget ? UNSELECTED_DRAFT_STORAGE_KEY : selectedBenchId;
+
     // Record manual edit on the shared proposal-source key (so AI/load locking in execution-hook works)
     // as well as the specific destination key when distinct, without creating disconnected proposal keys.
     setManualEdits(prev => {
       const next = { ...prev };
-      const prodEdits = { ...(next[selectedBenchId] || {}) };
+      const prodEdits = { ...(next[storageOwnerKey] || {}) };
       prodEdits[targetKeyForProposal] = true;
       if (approvalStorageKey && approvalStorageKey !== targetKeyForProposal) {
         prodEdits[approvalStorageKey] = true;
       }
-      next[selectedBenchId] = prodEdits;
+      next[storageOwnerKey] = prodEdits;
       return next;
     });
 
@@ -3349,7 +3400,7 @@ export function OperationsMatrixTab({ products }) {
     ].filter(Boolean));
 
     setApprovals(prev => {
-      const prodApp = prev[selectedBenchId];
+      const prodApp = prev[storageOwnerKey];
       if (!prodApp) return prev;
       let changed = false;
       const nextProdApp = { ...prodApp };
@@ -3360,57 +3411,95 @@ export function OperationsMatrixTab({ products }) {
         }
       });
       if (!changed) return prev;
-      return {
-        ...prev,
-        [selectedBenchId]: nextProdApp
-      };
-    });
-
-    setKeepOriginalDecisions(prevKeep => {
-      const prodKeep = prevKeep[selectedBenchId];
-      if (!prodKeep) return prevKeep;
-      let changed = false;
-      const nextProdKeep = { ...prodKeep };
-      keysToInvalidate.forEach(kToDel => {
-        if (nextProdKeep[kToDel] !== undefined) {
-          delete nextProdKeep[kToDel];
-          changed = true;
-        }
-      });
-      if (!changed) return prevKeep;
-      const nextKeep = { ...prevKeep };
-      if (Object.keys(nextProdKeep).length === 0) {
-        delete nextKeep[selectedBenchId];
+      const next = { ...prev };
+      if (Object.keys(nextProdApp).length === 0) {
+        delete next[storageOwnerKey];
       } else {
-        nextKeep[selectedBenchId] = nextProdKeep;
+        next[storageOwnerKey] = nextProdApp;
       }
-      return nextKeep;
+      return next;
     });
 
-    // Update the single canonical proposal-source entry in repairPlan and synchronize any existing
-    // destination-specific key if present so native and custom never read stale diverging proposal strings.
-    setManifestData(prev => {
-      const existingManifest = prev[selectedBenchId];
-      if (!existingManifest) return prev;
-      const nextRepairPlan = {
-        ...(existingManifest.repairPlan || {}),
-        [targetKeyForProposal]: value
-      };
-      if (
-        approvalStorageKey &&
-        approvalStorageKey !== targetKeyForProposal &&
-        Object.prototype.hasOwnProperty.call(nextRepairPlan, approvalStorageKey)
-      ) {
-        nextRepairPlan[approvalStorageKey] = value;
-      }
-      return {
-        ...prev,
-        [selectedBenchId]: {
-          ...existingManifest,
-          repairPlan: nextRepairPlan
+    if (!isUnselectedDraftTarget) {
+      setKeepOriginalDecisions(prevKeep => {
+        const prodKeep = prevKeep[selectedBenchId];
+        if (!prodKeep) return prevKeep;
+        let changed = false;
+        const nextProdKeep = { ...prodKeep };
+        keysToInvalidate.forEach(kToDel => {
+          if (nextProdKeep[kToDel] !== undefined) {
+            delete nextProdKeep[kToDel];
+            changed = true;
+          }
+        });
+        if (!changed) return prevKeep;
+        const nextKeep = { ...prevKeep };
+        if (Object.keys(nextProdKeep).length === 0) {
+          delete nextKeep[selectedBenchId];
+        } else {
+          nextKeep[selectedBenchId] = nextProdKeep;
         }
-      };
-    });
+        return nextKeep;
+      });
+
+      // Update the single canonical proposal-source entry in repairPlan and synchronize any existing
+      // destination-specific key if present so native and custom never read stale diverging proposal strings.
+      setManifestData(prev => {
+        const existingManifest = prev[selectedBenchId];
+        if (!existingManifest) return prev;
+        const nextRepairPlan = {
+          ...(existingManifest.repairPlan || {}),
+          [targetKeyForProposal]: value
+        };
+        if (
+          approvalStorageKey &&
+          approvalStorageKey !== targetKeyForProposal &&
+          Object.prototype.hasOwnProperty.call(nextRepairPlan, approvalStorageKey)
+        ) {
+          nextRepairPlan[approvalStorageKey] = value;
+        }
+        return {
+          ...prev,
+          [selectedBenchId]: {
+            ...existingManifest,
+            repairPlan: nextRepairPlan
+          }
+        };
+      });
+    } else {
+      setUnselectedDraftManifest(prevDraft => {
+        const baseDraft =
+          prevDraft && typeof prevDraft === "object"
+            ? prevDraft
+            : createInitialUnselectedDraftManifest();
+        const nextRepairPlan = {
+          ...(baseDraft.repairPlan || {}),
+          [targetKeyForProposal]: value
+        };
+        if (
+          approvalStorageKey &&
+          approvalStorageKey !== targetKeyForProposal &&
+          Object.prototype.hasOwnProperty.call(nextRepairPlan, approvalStorageKey)
+        ) {
+          nextRepairPlan[approvalStorageKey] = value;
+        }
+        const manualMetaEntry = { source: "Manual", stage: "Tab3UnselectedDraft" };
+        const nextMetadata = {
+          ...(baseDraft.metadata || {}),
+          [targetKeyForProposal]: manualMetaEntry,
+          ...(key !== targetKeyForProposal ? { [key]: manualMetaEntry } : {}),
+          ...(approvalStorageKey && approvalStorageKey !== targetKeyForProposal
+            ? { [approvalStorageKey]: manualMetaEntry }
+            : {})
+        };
+        return {
+          ...baseDraft,
+          isUnselectedDraft: true,
+          repairPlan: nextRepairPlan,
+          metadata: nextMetadata
+        };
+      });
+    }
   };
 
   const handleStandardizedEntrySelectionChange = (destinationKey, currentPropVal, stdEval, replaceOrAddGid, previousSlotGid = null) => {
@@ -3553,22 +3642,26 @@ export function OperationsMatrixTab({ products }) {
       safetyError
     });
 
-  const getDiagnosticsStats = (data) =>
+  const getDiagnosticsStats = (data, benchIdOverride = selectedBenchId) =>
     computeDiagnosticsStats({
       data,
-      selectedBenchId,
+      selectedBenchId: benchIdOverride,
       approvals,
       getFieldMetadata,
       includeTab3InspectableInventory: true
     });
 
-  // Automatic debounced live-bench-state synchronization (publishes unselected blank preview, selected-unloaded, and selected-loaded states)
+  // Automatic debounced live-bench-state synchronization (publishes unselected draft preview, selected-unloaded, and selected-loaded states)
   const isSelectedBenchProductValid = Boolean(selectedBenchId && isExactProductGid(selectedBenchId));
-  const isUnselectedBlankPreviewActive = Boolean(!isSelectedBenchProductValid && DEV_SHOW_ALL_TEMPLATE_FIELDS);
+  const isUnselectedBlankPreviewActive = Boolean(!selectedBenchId && DEV_SHOW_ALL_TEMPLATE_FIELDS);
   const activeProductDataForLiveSync = isSelectedBenchProductValid ? manifestData[selectedBenchId] : null;
-  const activeProductApprovalsForLiveSync = isSelectedBenchProductValid ? approvals[selectedBenchId] : null;
+  const activeProductApprovalsForLiveSync = isSelectedBenchProductValid
+    ? approvals[selectedBenchId]
+    : (isUnselectedBlankPreviewActive ? approvals[UNSELECTED_DRAFT_STORAGE_KEY] : null);
   const activeProductKeepOriginalForLiveSync = isSelectedBenchProductValid ? keepOriginalDecisions[selectedBenchId] : null;
-  const activeProductManualEditsForLiveSync = isSelectedBenchProductValid ? manualEdits[selectedBenchId] : null;
+  const activeProductManualEditsForLiveSync = isSelectedBenchProductValid
+    ? manualEdits[selectedBenchId]
+    : (isUnselectedBlankPreviewActive ? manualEdits[UNSELECTED_DRAFT_STORAGE_KEY] : null);
   const activeProductHistoryForLiveSync = isSelectedBenchProductValid ? repairHistory[selectedBenchId] : null;
   const activeProductSubmittedForLiveSync = isSelectedBenchProductValid ? submittedPayloads[selectedBenchId] : null;
   const activeProductCandidatesForLiveSync = isSelectedBenchProductValid ? standardizedCandidatesByProduct[selectedBenchId] : null;
@@ -3616,8 +3709,12 @@ export function OperationsMatrixTab({ products }) {
         queueStatus: activeProductQueueStateStatus,
         currentMetafields: activeProductDataForLiveSync?.currentMetafields || null,
         nativeTargets: activeProductDataForLiveSync?.nativeTargets || null,
-        repairPlan: activeProductDataForLiveSync?.repairPlan || null,
-        metadata: activeProductDataForLiveSync?.metadata || null,
+        repairPlan: isSelectedBenchProductValid
+          ? (activeProductDataForLiveSync?.repairPlan || null)
+          : (unselectedDraftManifest?.repairPlan || null),
+        metadata: isSelectedBenchProductValid
+          ? (activeProductDataForLiveSync?.metadata || null)
+          : (unselectedDraftManifest?.metadata || null),
         diagnostics: activeProductDataForLiveSync?.diagnostics || null,
         approvals: activeProductApprovalsForLiveSync || null,
         keepOriginal: activeProductKeepOriginalForLiveSync || null,
@@ -3705,7 +3802,11 @@ export function OperationsMatrixTab({ products }) {
           benchSessionId: currentSessionId,
           benchRevision: targetRevision,
           clientStateChangedAt: targetChangedAt,
-          getPreviewFieldMetadata
+          draftManifest: unselectedDraftManifest,
+          approvals,
+          manualEdits,
+          getFieldMetadata,
+          getDiagnosticsStats: (d) => getDiagnosticsStats(d, null)
         });
         packet = builtPreview.packet;
         liveState = builtPreview.liveState;
@@ -3997,6 +4098,7 @@ export function OperationsMatrixTab({ products }) {
     isLoadingData,
     activeProductQueueStateStatus,
     activeProductDataForLiveSync,
+    unselectedDraftManifest,
     activeProductApprovalsForLiveSync,
     activeProductKeepOriginalForLiveSync,
     activeProductManualEditsForLiveSync,
@@ -4007,8 +4109,7 @@ export function OperationsMatrixTab({ products }) {
     activeProductRefStatusForLiveSync,
     activeMeasurementsForLiveSync,
     nextBenchRevision,
-    sendLiveBenchSelectionClear,
-    getPreviewFieldMetadata
+    sendLiveBenchSelectionClear
   ]);
 
   const publishCapturedPacketToSidekickCache = useCallback((capturedPacket, expectedProductId) => {
@@ -4345,15 +4446,17 @@ export function OperationsMatrixTab({ products }) {
 
   const progressPercentage = queueIds.length > 0 ? Math.round(((isLoadingData ? loadIndex : executeIndex) / queueIds.length) * 100) : 0;
   const activeBenchData = selectedBenchId ? manifestData[selectedBenchId] : null;
-  const isDevUnselectedPreview = Boolean(DEV_SHOW_ALL_TEMPLATE_FIELDS && (!selectedBenchId || !activeBenchData));
-  const effectiveManifestForSections = activeBenchData || (DEV_SHOW_ALL_TEMPLATE_FIELDS ? EMPTY_DEV_PREVIEW_MANIFEST : null);
+  const isSelectedProductUnloaded = Boolean(selectedBenchId && !activeBenchData);
+  const isDevUnselectedPreview = Boolean(DEV_SHOW_ALL_TEMPLATE_FIELDS && !selectedBenchId);
+  const effectiveManifestForSections = activeBenchData || (isDevUnselectedPreview ? unselectedDraftManifest : null);
 
   const dynamicSections = effectiveManifestForSections
     ? getDynamicSections(effectiveManifestForSections, { includeTab3InspectableInventory: true })
     : getDynamicSections(null, { includeTab3InspectableInventory: true });
   const allDynamicConfigFields = dynamicSections.flatMap(sec => sec.configFields || []);
 
-  const activeBenchStats = activeBenchData ? getDiagnosticsStats(activeBenchData) : null;
+  const activeBenchStats = activeBenchData ? getDiagnosticsStats(activeBenchData, selectedBenchId) : null;
+  const unselectedDraftStats = isDevUnselectedPreview ? getDiagnosticsStats(unselectedDraftManifest, null) : null;
   const activeBenchStatusObj = activeBenchData ? getSystemStatus() : null;
   const activeBenchHistory = selectedBenchId ? repairHistory[selectedBenchId] : null;
 
@@ -4361,17 +4464,20 @@ export function OperationsMatrixTab({ products }) {
   const isBenchSelectedBool = Boolean(selectedBenchId && isExactProductGid(selectedBenchId));
   const isBaselineLoadedBool = Boolean(isBenchSelectedBool && activeBenchData);
   const activeBaselineMeta = isBaselineLoadedBool ? (baselineMetaByProductRef.current[selectedBenchId] || null) : null;
-  const activeManualEditsMap = isBenchSelectedBool ? validObj(manualEdits[selectedBenchId]) : {};
+  const activeManualEditsMap = isBenchSelectedBool
+    ? validObj(manualEdits[selectedBenchId])
+    : (isUnselectedBlankPreviewActive ? validObj(manualEdits[UNSELECTED_DRAFT_STORAGE_KEY]) : {});
   const activeManualEditCount = Object.keys(activeManualEditsMap).filter((k) => activeManualEditsMap[k] === true).length;
-  const activeExplicitApprovalCount = isBenchSelectedBool ? Object.keys(validObj(approvals[selectedBenchId])).length : 0;
-  const activeKeepOriginalCount = typeof activeBenchStats?.keepOriginal === "number" ? activeBenchStats.keepOriginal : 0;
-  const activeProposedCount = typeof activeBenchStats?.proposed === "number" ? activeBenchStats.proposed : 0;
-  const activeApprovedWriteCount = typeof activeBenchStats?.approvedWrite === "number" ? activeBenchStats.approvedWrite : 0;
+  const activeExplicitApprovalCount = isBenchSelectedBool
+    ? Object.keys(validObj(approvals[selectedBenchId])).length
+    : (isUnselectedBlankPreviewActive ? Object.keys(validObj(approvals[UNSELECTED_DRAFT_STORAGE_KEY])).length : 0);
+  const effectiveStatsForSummary = isBaselineLoadedBool ? activeBenchStats : unselectedDraftStats;
+  const activeKeepOriginalCount = typeof effectiveStatsForSummary?.keepOriginal === "number" ? effectiveStatsForSummary.keepOriginal : 0;
+  const activeProposedCount = typeof effectiveStatsForSummary?.proposed === "number" ? effectiveStatsForSummary.proposed : 0;
+  const activeApprovedWriteCount = typeof effectiveStatsForSummary?.approvedWrite === "number" ? effectiveStatsForSummary.approvedWrite : 0;
 
   let unsavedWorkingChangesWord = "Not available";
-  let unsavedWorkingChangesDetail = isUnselectedBlankPreviewActive
-    ? "Read-only blank template preview (no product selected)"
-    : "No baseline loaded";
+  let unsavedWorkingChangesDetail = "No baseline loaded";
   if (isBaselineLoadedBool && activeBenchStats) {
     const hasUnsavedWorking =
       activeProposedCount > 0 ||
@@ -4380,13 +4486,20 @@ export function OperationsMatrixTab({ products }) {
       activeKeepOriginalCount > 0;
     unsavedWorkingChangesWord = hasUnsavedWorking ? "Yes" : "No";
     unsavedWorkingChangesDetail = `Proposals: ${activeProposedCount} | Manual edits: ${activeManualEditCount} | Explicit approvals: ${activeExplicitApprovalCount} | Keep original: ${activeKeepOriginalCount} | Approved for write: ${activeApprovedWriteCount}`;
+  } else if (isUnselectedBlankPreviewActive && unselectedDraftStats) {
+    const hasUnsavedDraftWorking =
+      activeProposedCount > 0 ||
+      activeManualEditCount > 0 ||
+      activeExplicitApprovalCount > 0;
+    unsavedWorkingChangesWord = hasUnsavedDraftWorking ? "Yes (Unsaved Draft)" : "No";
+    unsavedWorkingChangesDetail = `Draft proposals: ${activeProposedCount} | Draft manual edits: ${activeManualEditCount} | Draft approvals: ${activeExplicitApprovalCount} (No product selected or saved)`;
   }
 
   let verifiedSavedWord = "No";
   let verifiedSavedDetail = isBenchSelectedBool
     ? "No repair executed in session"
     : isUnselectedBlankPreviewActive
-      ? "Read-only blank template preview (writes disabled)"
+      ? "Unsaved new-product draft (no product selected or saved)"
       : "No product selected";
   if (isBenchSelectedBool && activeBenchHistory) {
     const verifiedDestCount = validArray(activeBenchHistory.verifiedDestinations).length;
@@ -4457,7 +4570,7 @@ export function OperationsMatrixTab({ products }) {
   } else if (isUnselectedPreviewAckSynced) {
     sidekickLiveSyncWord = "Yes";
     sidekickLiveSyncTone = "success";
-    sidekickLiveSyncLifecycleLabel = "acknowledged (unselected blank preview)";
+    sidekickLiveSyncLifecycleLabel = "acknowledged (unselected draft/preview)";
   } else if (isClearedAckSynced) {
     sidekickLiveSyncWord = "No";
     sidekickLiveSyncTone = "info";
@@ -4482,12 +4595,16 @@ export function OperationsMatrixTab({ products }) {
 
   const nativeDescriptionMeta = activeBenchData
     ? getFieldMetadata("native_description", activeBenchData, selectedBenchId, approvals, allDynamicConfigFields)
-    : null;
+    : (isDevUnselectedPreview
+        ? getFieldMetadata("native_description", unselectedDraftManifest, null, approvals, allDynamicConfigFields)
+        : null);
   const customDescriptionMeta = activeBenchData
     ? getFieldMetadata("custom.generated_description", activeBenchData, selectedBenchId, approvals, allDynamicConfigFields)
-    : null;
+    : (isDevUnselectedPreview
+        ? getFieldMetadata("custom.generated_description", unselectedDraftManifest, null, approvals, allDynamicConfigFields)
+        : null);
 
-  // Build audit count summary from reported section measurements for the current product (or null in preview),
+  // Build audit count summary from reported section measurements for the current product (or null in unselected draft),
   // keeping full 93-slot inventory counts distinct from filtered descriptor counts and mounted DOM rows.
   const currentAuditOwnerId = isDevUnselectedPreview ? null : (selectedBenchId || null);
   const activeSectionMeasurementsMap =
@@ -4674,7 +4791,7 @@ export function OperationsMatrixTab({ products }) {
                         {isBenchSelectedBool
                           ? `Yes (${selectedBenchId})`
                           : isUnselectedBlankPreviewActive
-                            ? "No (Unselected Blank Template Preview)"
+                            ? "No (Unselected New-Product Draft / Preview)"
                             : "No (None)"}
                       </div>
                       <div>
@@ -4689,7 +4806,7 @@ export function OperationsMatrixTab({ products }) {
                     </div>
 
                     <Text as="p" variant="bodySm" tone="subdued">
-                      <strong>Session:</strong> {liveBenchSyncStatus.benchSessionId || benchSessionIdRef.current || "Not available"} | <strong>Revision:</strong> {liveBenchSyncStatus.benchRevision !== null ? liveBenchSyncStatus.benchRevision : "Not available"} | <strong>Selection State:</strong> {liveBenchSyncStatus.selectionState || "Not available"} | <strong>Synced Product:</strong> {liveBenchSyncStatus.productId || (liveBenchSyncStatus.selectionState === "unselected_preview" ? "None (Unselected Preview)" : "Not available")} | <strong>Report ID:</strong> {liveBenchSyncStatus.reportId || "Not available"}
+                      <strong>Session:</strong> {liveBenchSyncStatus.benchSessionId || benchSessionIdRef.current || "Not available"} | <strong>Revision:</strong> {liveBenchSyncStatus.benchRevision !== null ? liveBenchSyncStatus.benchRevision : "Not available"} | <strong>Selection State:</strong> {liveBenchSyncStatus.selectionState || "Not available"} | <strong>Synced Product:</strong> {liveBenchSyncStatus.productId || (liveBenchSyncStatus.selectionState === "unselected_preview" ? "None (Unselected Draft)" : "Not available")} | <strong>Report ID:</strong> {liveBenchSyncStatus.reportId || "Not available"}
                     </Text>
                     <Text as="p" variant="bodySm" tone="subdued">
                       <strong>Client State Changed:</strong> {liveBenchSyncStatus.clientStateChangedAt || "Not available"} | <strong>Baseline Loaded At:</strong> {liveBenchSyncStatus.baselineLoadedAt || activeBaselineMeta?.loadedAt || "Not available"} | <strong>Server Received At:</strong> {liveBenchSyncStatus.serverReceivedAt || "Not available"}
@@ -4700,14 +4817,14 @@ export function OperationsMatrixTab({ products }) {
               </BlockStack>
             </Card>
 
-            {DEV_SHOW_ALL_TEMPLATE_FIELDS && (
+            {DEV_SHOW_ALL_TEMPLATE_FIELDS && (isDevUnselectedPreview || Boolean(activeBenchData)) && (
               <Card padding="400">
                 <BlockStack gap="300">
                   <InlineStack align="space-between" blockAlign="center">
                     <InlineStack gap="200" blockAlign="center">
                       <Badge tone="warning">DEV: Show All Template Fields</Badge>
                       <Text as="h3" variant="headingMd" fontWeight="bold">
-                        Tab 3 Inspectable Inventory &amp; Rendered Row Audit ({isDevUnselectedPreview ? "Unselected Read-Only Preview" : `Active Product: ${selectedBenchId}`} | Filter: {activeFilter})
+                        Tab 3 Inspectable Inventory &amp; Rendered Row Audit ({isDevUnselectedPreview ? "Unselected New-Product Draft" : `Active Product: ${selectedBenchId}`} | Filter: {activeFilter})
                       </Text>
                     </InlineStack>
                     <Badge tone={templateAuditSummary.measurementStatus === "complete" ? "success" : "attention"}>
@@ -4872,60 +4989,98 @@ export function OperationsMatrixTab({ products }) {
               <BlockStack gap="600">
                 <Box padding="600" background="bg-surface-secondary" borderRadius="200" borderColor="border" borderWidth="1">
                   <BlockStack gap="200">
-                    <Text as="p" variant="headingLg" alignment="center" tone="subdued">
-                      Load inventory, hit GENERATE REPAIR PLAN, then click "View Manifest on Bench" to unlock product diagnostics and editing.
-                    </Text>
-                    {DEV_SHOW_ALL_TEMPLATE_FIELDS && (
-                      <Text as="p" variant="bodyMd" alignment="center" tone="subdued">
-                        <strong>DEV Show-All Unselected Preview:</strong> All 11 Tab 3 inspectable drawers (93 logical slots = 62 working + 31 parked/excluded, starting collapsed) are available below in read-only preview mode so the complete UI inventory can be inspected before selecting a product.
-                      </Text>
+                    {isSelectedProductUnloaded ? (
+                      <>
+                        <Text as="p" variant="headingLg" alignment="center" tone="subdued">
+                          Selected product ({selectedBenchId}) is not loaded into browser state yet. Hit GENERATE REPAIR PLAN (LOAD DATA) to load its live Shopify baseline before editing or saving.
+                        </Text>
+                        <div style={{ display: "flex", justifyContent: "center", marginTop: "8px" }}>
+                          <Button size="medium" onClick={() => handleSelectBenchItem(null)}>
+                            Deselect Product &amp; Return to Unselected Draft
+                          </Button>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <Text as="p" variant="headingLg" alignment="center" tone="subdued">
+                          Load inventory, hit GENERATE REPAIR PLAN, then click &quot;View Manifest on Bench&quot; to repair an existing product, or expand the drawers below to enter unsaved starting data in New-Product Draft mode.
+                        </Text>
+                        {DEV_SHOW_ALL_TEMPLATE_FIELDS && (
+                          <Text as="p" variant="bodyMd" alignment="center" tone="subdued">
+                            <strong>Unselected New-Product Draft Mode:</strong> All 11 Tab 3 inspectable drawers (93 logical slots = 62 working + 31 parked/excluded, starting collapsed) plus Description Review are available below. Eligible working fields accept unsaved starting data and suggestion approvals in browser state while preserving all parked, storage, producer, variant-owner, standardized-reference, and zero-image placeholder holds. Draft inputs are never treated as saved Shopify baselines.
+                          </Text>
+                        )}
+                      </>
                     )}
                   </BlockStack>
                 </Box>
 
-                {DEV_SHOW_ALL_TEMPLATE_FIELDS && (
-                  <Card padding="400">
-                    <InlineStack align="space-between" blockAlign="center">
-                      <Text variant="headingLg" as="h3">Preview Filter Controls</Text>
-                      <Select
-                        label="Filter Fields"
-                        labelInline
-                        options={FILTER_OPTIONS}
-                        onChange={(val) => setActiveFilter(val)}
-                        value={activeFilter}
-                      />
-                    </InlineStack>
-                  </Card>
-                )}
+                {isDevUnselectedPreview && (
+                  <>
+                    <Card padding="400">
+                      <BlockStack gap="200">
+                        <InlineStack align="space-between" blockAlign="center">
+                          <Text variant="headingLg" as="h3">Unselected Draft Filter Controls</Text>
+                          <Select
+                            label="Filter Fields"
+                            labelInline
+                            options={FILTER_OPTIONS}
+                            onChange={(val) => setActiveFilter(val)}
+                            value={activeFilter}
+                          />
+                        </InlineStack>
+                        <Text as="p" variant="bodySm" tone="subdued">
+                          Filtering changes which rows are displayed in open drawers without clearing draft inputs or approvals. Select <code>All</code> to inspect all 93 logical slots (62 working + 31 parked/excluded). Use &quot;Clear Rack &amp; Reset Bench&quot; above to reset draft inputs.
+                        </Text>
+                      </BlockStack>
+                    </Card>
 
-                {DEV_SHOW_ALL_TEMPLATE_FIELDS && dynamicSections.map(sec => (
-                  <ManifestSectionCard
-                    key={sec.title}
-                    section={sec}
-                    selectedBenchId={null}
-                    data={EMPTY_DEV_PREVIEW_MANIFEST}
-                    approvals={{}}
-                    keepOriginal={{}}
-                    activeFilter={activeFilter}
-                    expandedBays={expandedBays}
-                    standardizedCandidatesByProduct={{}}
-                    referenceMatchResultsByProduct={{}}
-                    referenceMatchStatusByProduct={{}}
-                    referenceMatchFetcherState="idle"
-                    pendingReferenceMatch={null}
-                    getFieldMetadata={getPreviewFieldMetadata}
-                    matchesFilter={matchesFilter}
-                    onToggleBay={toggleBay}
-                    onReleasePendingReferenceMatch={noopPreviewCallback}
-                    onMatchReferenceChoices={noopPreviewCallback}
-                    onStandardizedEntrySelectionChange={noopPreviewCallback}
-                    onToggleVerifiedStandardizedEntry={noopPreviewCallback}
-                    onRepairPlanChange={noopPreviewCallback}
-                    onToggleApproval={noopPreviewCallback}
-                    onToggleKeepOriginal={noopPreviewCallback}
-                    onSectionRenderedCountChange={handleSectionRenderedCountChange}
-                  />
-                ))}
+                    <DescriptionReviewSection
+                      selectedBenchId={null}
+                      data={unselectedDraftManifest}
+                      meta={nativeDescriptionMeta}
+                      customDescMeta={customDescriptionMeta}
+                      keepOriginal={{}}
+                      activeFilter={activeFilter}
+                      expandedBays={expandedBays}
+                      matchesFilter={matchesFilter}
+                      isMultilineKey={isMultilineKey}
+                      onToggleBay={toggleBay}
+                      onRepairPlanChange={handleRepairPlanChange}
+                      onToggleApproval={handleToggleApproval}
+                      onToggleKeepOriginal={noopPreviewCallback}
+                    />
+
+                    {dynamicSections.map(sec => (
+                      <ManifestSectionCard
+                        key={sec.title}
+                        section={sec}
+                        selectedBenchId={null}
+                        data={unselectedDraftManifest}
+                        approvals={approvals}
+                        keepOriginal={{}}
+                        activeFilter={activeFilter}
+                        expandedBays={expandedBays}
+                        standardizedCandidatesByProduct={{}}
+                        referenceMatchResultsByProduct={{}}
+                        referenceMatchStatusByProduct={{}}
+                        referenceMatchFetcherState="idle"
+                        pendingReferenceMatch={null}
+                        getFieldMetadata={getFieldMetadata}
+                        matchesFilter={matchesFilter}
+                        onToggleBay={toggleBay}
+                        onReleasePendingReferenceMatch={noopPreviewCallback}
+                        onMatchReferenceChoices={noopPreviewCallback}
+                        onStandardizedEntrySelectionChange={noopPreviewCallback}
+                        onToggleVerifiedStandardizedEntry={noopPreviewCallback}
+                        onRepairPlanChange={handleRepairPlanChange}
+                        onToggleApproval={handleToggleApproval}
+                        onToggleKeepOriginal={noopPreviewCallback}
+                        onSectionRenderedCountChange={handleSectionRenderedCountChange}
+                      />
+                    ))}
+                  </>
+                )}
               </BlockStack>
             ) : (
               <BlockStack gap="600">
