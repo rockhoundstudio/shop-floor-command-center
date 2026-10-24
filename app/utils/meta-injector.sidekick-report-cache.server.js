@@ -2417,7 +2417,7 @@ export function listTelemetryReports(options = {}) {
     if (allSessionsDeselected && (!normalizedMode || normalizedMode === LIVE_BENCH_MODE)) {
       unavailableReason = "bench_selection_cleared";
       unavailableMessage =
-        "Active browser session has selectionState=\"none\" (no product currently selected on the bench). Do not substitute a previous product.";
+        'Active browser session has selectionState="none" (no product currently selected on the bench). Do not substitute a previous product.';
     } else if (
       normalizedProductId &&
       hasUnselectedPreviewSession &&
@@ -2425,7 +2425,7 @@ export function listTelemetryReports(options = {}) {
     ) {
       unavailableReason = "unselected_preview_active_no_product_selected";
       unavailableMessage =
-        "No matching report for the requested productId. Active browser session is in read-only unselected blank template preview mode (selectionState=\"unselected_preview\", productId=null); never substitute the blank preview for a specific product.";
+        'No matching report for the requested productId. Active browser session is in read-only unselected blank template preview mode (selectionState="unselected_preview", productId=null); never substitute the blank preview for a specific product.';
     } else if (
       normalizedProductId &&
       liveSessions.some(
@@ -2664,6 +2664,13 @@ function evaluateFieldAttentionFlags(key, fieldObj, saveEvidence) {
       ? fieldObj.approvalKey.trim()
       : key;
 
+  const isParkedExcluded = Boolean(
+    fieldObj?.isParkedExcluded ||
+      statusHolds.isParkedExcluded ||
+      fieldObj?.registryRole === "EXCLUDED_INPUT" ||
+      statusHolds.registryRole === "EXCLUDED_INPUT"
+  );
+
   const isDisplayPlaceholder = Boolean(
     evalBase.isDisplayOnlyPlaceholderOrNa || statusHolds.isImageAltCapabilityPlaceholder
   );
@@ -2678,33 +2685,56 @@ function evaluateFieldAttentionFlags(key, fieldObj, saveEvidence) {
   }
 
   const proposedComparable = normalizeComparableFieldValue(working.proposedValue);
-  const hasNonEmptyProposal = proposedComparable !== "" && proposedComparable !== "[]";
+  const hasNonEmptyProposal =
+    !isParkedExcluded && proposedComparable !== "" && proposedComparable !== "[]";
   const hasActualValueDiff =
-    hasNonEmptyProposal && proposedComparable !== baselineComparable;
+    !isParkedExcluded &&
+    hasNonEmptyProposal &&
+    proposedComparable !== baselineComparable;
 
   const fieldStatus =
     typeof statusHolds.fieldStatus === "string" ? statusHolds.fieldStatus.trim() : "";
   const proposalStatus =
     typeof working.proposalStatus === "string" ? working.proposalStatus.trim() : "";
 
-  const isExplicitlyApproved = Boolean(working.isApproved);
-  const isManualEdit = Boolean(working.isManualEdit);
-  const isPreApprovedChanged = Boolean(working.isContentPreApproved && hasActualValueDiff);
+  const isKeepOriginal = Boolean(
+    !isParkedExcluded &&
+      (working.isKeepOriginal === true ||
+        fieldStatus === "Keep original (suggestion rejected)")
+  );
+  const keepOriginalDecision = isPlainObject(working.keepOriginalDecision)
+    ? working.keepOriginalDecision
+    : null;
+  const canKeepOriginal = Boolean(!isParkedExcluded && working.canKeepOriginal);
+
+  const isExplicitlyApproved = Boolean(
+    !isParkedExcluded && !isKeepOriginal && working.isApproved
+  );
+  const isManualEdit = Boolean(!isParkedExcluded && working.isManualEdit);
+  const isContentPreApproved = Boolean(
+    !isParkedExcluded && !isKeepOriginal && working.isContentPreApproved
+  );
+  const isPreApprovedChanged = Boolean(isContentPreApproved && hasActualValueDiff);
 
   const isProposedStatus =
-    fieldStatus === "Proposed" ||
-    fieldStatus === "Approved, not saved" ||
-    fieldStatus === "Approved, blocked" ||
-    fieldStatus === "Pre-approved, not saved" ||
-    fieldStatus === "Pre-approved, blocked" ||
-    fieldStatus === "Unverified proposal";
+    !isParkedExcluded &&
+    !isKeepOriginal &&
+    (fieldStatus === "Proposed" ||
+      fieldStatus === "Approved, not saved" ||
+      fieldStatus === "Approved, blocked" ||
+      fieldStatus === "Pre-approved, not saved" ||
+      fieldStatus === "Pre-approved, blocked" ||
+      fieldStatus === "Unverified proposal");
 
+  // Active proposed change excludes rejected suggestions where Keep-Original is selected
   const isEffectiveProposedChange =
-    hasActualValueDiff ||
-    isManualEdit ||
-    isExplicitlyApproved ||
-    isPreApprovedChanged ||
-    isProposedStatus;
+    !isParkedExcluded &&
+    !isKeepOriginal &&
+    (hasActualValueDiff ||
+      isManualEdit ||
+      isExplicitlyApproved ||
+      isPreApprovedChanged ||
+      isProposedStatus);
 
   const blockedSaveMap = isPlainObject(saveEvidence?.blockedFields)
     ? saveEvidence.blockedFields
@@ -2731,18 +2761,37 @@ function evaluateFieldAttentionFlags(key, fieldObj, saveEvidence) {
     hasNonEmptyConflictValue(conflictsObj.conflictData) ||
     hasNonEmptyConflictValue(conflictsObj.nativeDescConflictData);
 
-  const isConflictStatus =
-    fieldStatus === "Conflict" ||
-    fieldStatus === "Degrade" ||
-    fieldStatus === "Save Conflict" ||
-    proposalStatus === "conflict" ||
-    proposalStatus === "degrade";
-
-  const hasConflict = Boolean(
-    hasFieldConflictData || inSaveConflicts || inSaveUnresolved || isConflictStatus
+  // Genuine save/read-back conflicts or API blocks remain visible even if a decision was recorded
+  const hasGenuineSaveOrApiError = Boolean(
+    hasFieldConflictData ||
+      inSaveConflicts ||
+      inSaveUnresolved ||
+      inSaveBlocked ||
+      fieldStatus === "Save Conflict" ||
+      fieldStatus === "API Error / Blocked"
   );
 
-  const hasHoldFlag = Boolean(
+  // Content-level Conflict/Degrade status is resolved when Keep-Original or Content Pre-Approval is active without a technical block
+  const isUnresolvedContentConflictStatus =
+    !isParkedExcluded &&
+    !isKeepOriginal &&
+    !isContentPreApproved &&
+    !isExplicitlyApproved &&
+    (fieldStatus === "Conflict" ||
+      fieldStatus === "Degrade" ||
+      proposalStatus === "conflict" ||
+      proposalStatus === "degrade");
+
+  const hasConflict = Boolean(
+    hasFieldConflictData ||
+      inSaveConflicts ||
+      inSaveUnresolved ||
+      fieldStatus === "Save Conflict" ||
+      isUnresolvedContentConflictStatus
+  );
+
+  // Passive contract/owner holds on parked rows or untouched read-only rows are not actionable proposal blocks
+  const hasTechnicalOrContractHoldFlag = Boolean(
     statusHolds.isActualBlockedProposal ||
       statusHolds.hasTechnicalBlock ||
       statusHolds.hasContractOrOwnerHold ||
@@ -2757,50 +2806,68 @@ function evaluateFieldAttentionFlags(key, fieldObj, saveEvidence) {
       fieldStatus === "Pre-approved, blocked"
   );
 
+  // A retained (keep-original) field's write-prohibition alone is not an unresolved block or review error
   const isBlockedWhenRelevant = Boolean(
-    statusHolds.isActualBlockedProposal ||
-      inSaveBlocked ||
-      fieldStatus === "API Error / Blocked" ||
-      fieldStatus === "Approved, blocked" ||
-      fieldStatus === "Pre-approved, blocked" ||
-      (hasHoldFlag &&
-        (hasActualValueDiff ||
-          isManualEdit ||
-          isExplicitlyApproved ||
-          Boolean(working.isProposed) ||
-          Boolean(working.proposalExists)))
+    hasGenuineSaveOrApiError ||
+      (!isParkedExcluded &&
+        !isKeepOriginal &&
+        (Boolean(statusHolds.isActualBlockedProposal) ||
+          fieldStatus === "Approved, blocked" ||
+          fieldStatus === "Pre-approved, blocked" ||
+          fieldStatus === "Over limit" ||
+          (Boolean(statusHolds.hasTechnicalBlock) &&
+            (hasActualValueDiff ||
+              isManualEdit ||
+              isExplicitlyApproved ||
+              Boolean(working.isProposed) ||
+              Boolean(working.proposalExists)))))
   );
 
-  const isRequiredMissing = fieldStatus === "Required missing";
-  const isUnverifiedProposal = fieldStatus === "Unverified proposal";
+  const isRequiredMissing = !isParkedExcluded && fieldStatus === "Required missing";
+  const isUnverifiedProposal =
+    !isParkedExcluded && !isKeepOriginal && fieldStatus === "Unverified proposal";
 
+  // Clean Keep-Original, clean Approved, clean Content-Pre-Approved, and clean Parked rows do NOT need review
   const needsReview = Boolean(
-    isRequiredMissing ||
-      isUnverifiedProposal ||
-      hasConflict ||
-      isBlockedWhenRelevant ||
-      (Boolean(working.contentNeedsReview) &&
-        (hasActualValueDiff || isManualEdit || isProposedStatus))
+    hasGenuineSaveOrApiError ||
+      (!isParkedExcluded &&
+        !isKeepOriginal &&
+        (isRequiredMissing ||
+          isUnverifiedProposal ||
+          hasConflict ||
+          isBlockedWhenRelevant ||
+          (!isExplicitlyApproved &&
+            !isContentPreApproved &&
+            Boolean(working.contentNeedsReview) &&
+            (hasActualValueDiff || isManualEdit || isProposedStatus))))
   );
 
+  // Actionable for the review view: includes active proposals, approved/pre-approved writes,
+  // keep-original decisions (so rejected suggestions and retained baselines remain inspectable),
+  // manual edits, genuine conflicts/blocks, and submitted items, while excluding clean untouched parked/blank rows.
   const isActionableForReview = Boolean(
     isEffectiveProposedChange ||
+      isKeepOriginal ||
       isManualEdit ||
       isExplicitlyApproved ||
       hasConflict ||
       isBlockedWhenRelevant ||
-      hasHoldFlag ||
       needsReview ||
       Boolean(conflictsObj.wasSubmittedInLastRepair)
   );
 
   return {
+    isParkedExcluded,
     hasActualValueDiff,
     isEffectiveProposedChange,
     isExplicitlyApproved,
+    isContentPreApproved,
+    isKeepOriginal,
+    keepOriginalDecision,
+    canKeepOriginal,
     isManualEdit,
     hasConflict,
-    hasHoldFlag,
+    hasHoldFlag: hasTechnicalOrContractHoldFlag,
     isBlockedWhenRelevant,
     needsReview,
     isActionableForReview,
@@ -2824,7 +2891,7 @@ function buildOrderedDrawersList(snapshot, record = null) {
   const seenDrawerTitles = new Set();
   const isPreview = isUnselectedPreviewSnapshot(snapshot, record);
 
-  // In unselected blank-template preview mode, preserve the exact 10 canonical template groups
+  // In unselected blank-template preview mode, preserve the exact 11 Tab 3 inspectable drawers (93 logical slots)
   // without prepending a separate Description Review bay (native_description is already inside
   // Native and Staging Roles, and DescriptionReviewSection is not mounted when no product is loaded).
   if (!isPreview) {
@@ -2884,6 +2951,7 @@ function extractCompactUiAuditSummary(record) {
       return null;
     }
     return {
+      activeFilter: typeof parsed.activeFilter === "string" ? parsed.activeFilter : null,
       measurementCoverage: parsed.measurementCoverage ?? null,
       measuredSectionCount:
         typeof parsed.measuredSectionCount === "number" ? parsed.measuredSectionCount : null,
@@ -2897,10 +2965,26 @@ function extractCompactUiAuditSummary(record) {
         typeof parsed.expandedSectionCount === "number" ? parsed.expandedSectionCount : null,
       collapsedSectionCount:
         typeof parsed.collapsedSectionCount === "number" ? parsed.collapsedSectionCount : null,
+      totalFullInventoryRows:
+        typeof parsed.totalFullInventoryRows === "number"
+          ? parsed.totalFullInventoryRows
+          : (typeof parsed.totalRenderedRows === "number" ? parsed.totalRenderedRows : null),
       totalDescriptorRows:
-        typeof parsed.totalRenderedRows === "number" ? parsed.totalRenderedRows : null,
+        typeof parsed.totalDescriptorRows === "number"
+          ? parsed.totalDescriptorRows
+          : (typeof parsed.totalRenderedRows === "number" ? parsed.totalRenderedRows : null),
       totalMountedDomRows:
         typeof parsed.totalMountedDomRows === "number" ? parsed.totalMountedDomRows : null,
+      fullInventoryMediaControlCount:
+        typeof parsed.fullInventoryMediaControlCount === "number"
+          ? parsed.fullInventoryMediaControlCount
+          : (typeof parsed.mediaControlCount === "number" ? parsed.mediaControlCount : null),
+      fullInventoryHasZeroImagePlaceholder:
+        typeof parsed.fullInventoryHasZeroImagePlaceholder === "boolean"
+          ? parsed.fullInventoryHasZeroImagePlaceholder
+          : (typeof parsed.hasZeroImagePlaceholder === "boolean"
+              ? parsed.hasZeroImagePlaceholder
+              : null),
       mediaControlCount:
         typeof parsed.mediaControlCount === "number" ? parsed.mediaControlCount : null,
       hasZeroImagePlaceholder:
@@ -2928,10 +3012,12 @@ function buildIndexViewData(record, snapshot) {
   const drawerSummaries = orderedDrawers.map((d) => {
     let proposed = 0;
     let approved = 0;
+    let keepOriginal = 0;
     let manualEdit = 0;
     let blocked = 0;
     let conflicts = 0;
     let needsReview = 0;
+    let parkedExcluded = 0;
 
     for (let i = 0; i < d.fieldKeys.length; i += 1) {
       const k = d.fieldKeys[i];
@@ -2940,10 +3026,12 @@ function buildIndexViewData(record, snapshot) {
         continue;
       }
       const flags = evaluateFieldAttentionFlags(k, fieldObj, saveEvidence);
+      if (flags.isParkedExcluded) parkedExcluded += 1;
       if (flags.isEffectiveProposedChange) proposed += 1;
       if (flags.isExplicitlyApproved) approved += 1;
+      if (flags.isKeepOriginal) keepOriginal += 1;
       if (flags.isManualEdit) manualEdit += 1;
-      if (flags.isBlockedWhenRelevant || flags.hasHoldFlag) blocked += 1;
+      if (flags.isBlockedWhenRelevant) blocked += 1;
       if (flags.hasConflict) conflicts += 1;
       if (flags.needsReview) needsReview += 1;
     }
@@ -2955,10 +3043,12 @@ function buildIndexViewData(record, snapshot) {
         total: d.fieldKeys.length,
         proposed,
         approved,
+        keepOriginal,
         manualEdit,
         blocked,
         conflicts,
         needsReview,
+        ...(parkedExcluded > 0 ? { parkedExcluded } : {}),
       },
     };
   });
@@ -2966,10 +3056,12 @@ function buildIndexViewData(record, snapshot) {
   const allFieldKeys = Object.keys(fieldsByKey);
   let totalProposed = 0;
   let totalApproved = 0;
+  let totalKeepOriginal = 0;
   let totalManualEdit = 0;
   let totalBlocked = 0;
   let totalConflicts = 0;
   let totalNeedsReview = 0;
+  let totalParkedExcluded = 0;
 
   for (let i = 0; i < allFieldKeys.length; i += 1) {
     const k = allFieldKeys[i];
@@ -2978,10 +3070,12 @@ function buildIndexViewData(record, snapshot) {
       continue;
     }
     const flags = evaluateFieldAttentionFlags(k, fieldObj, saveEvidence);
+    if (flags.isParkedExcluded) totalParkedExcluded += 1;
     if (flags.isEffectiveProposedChange) totalProposed += 1;
     if (flags.isExplicitlyApproved) totalApproved += 1;
+    if (flags.isKeepOriginal) totalKeepOriginal += 1;
     if (flags.isManualEdit) totalManualEdit += 1;
-    if (flags.isBlockedWhenRelevant || flags.hasHoldFlag) totalBlocked += 1;
+    if (flags.isBlockedWhenRelevant) totalBlocked += 1;
     if (flags.hasConflict) totalConflicts += 1;
     if (flags.needsReview) totalNeedsReview += 1;
   }
@@ -3001,8 +3095,10 @@ function buildIndexViewData(record, snapshot) {
     totals: {
       drawers: drawerSummaries.length,
       fields: allFieldKeys.length,
+      parkedExcluded: totalParkedExcluded,
       proposed: totalProposed,
       approved: totalApproved,
+      keepOriginal: totalKeepOriginal,
       manualEdit: totalManualEdit,
       blocked: totalBlocked,
       conflicts: totalConflicts,
@@ -3066,6 +3162,9 @@ function buildHeaderViewData(record, snapshot) {
     explicitlyApprovedKeys: Array.isArray(snapshot.explicitlyApprovedKeys)
       ? snapshot.explicitlyApprovedKeys
       : [],
+    keepOriginalKeys: Array.isArray(snapshot.keepOriginalKeys)
+      ? snapshot.keepOriginalKeys
+      : [],
     standardizedReferenceState: compactStdState,
     saveVerificationEvidence: snapshot.saveVerificationEvidence || null,
   };
@@ -3119,10 +3218,12 @@ function buildReviewViewData(snapshot, record = null) {
   const items = [];
   let proposedDiffCount = 0;
   let approvedCount = 0;
+  let keepOriginalCount = 0;
   let manualEditCount = 0;
   let conflictCount = 0;
   let blockedOrHoldCount = 0;
   let needsReviewCount = 0;
+  let parkedExcludedTotalCount = 0;
 
   for (let i = 0; i < orderedKeys.length; i += 1) {
     const k = orderedKeys[i];
@@ -3132,15 +3233,19 @@ function buildReviewViewData(snapshot, record = null) {
     }
 
     const flags = evaluateFieldAttentionFlags(k, fieldObj, saveEvidence);
+    if (flags.isParkedExcluded) {
+      parkedExcludedTotalCount += 1;
+    }
     if (!flags.isActionableForReview) {
       continue;
     }
 
     if (flags.isEffectiveProposedChange) proposedDiffCount += 1;
     if (flags.isExplicitlyApproved) approvedCount += 1;
+    if (flags.isKeepOriginal) keepOriginalCount += 1;
     if (flags.isManualEdit) manualEditCount += 1;
     if (flags.hasConflict) conflictCount += 1;
-    if (flags.isBlockedWhenRelevant || flags.hasHoldFlag) blockedOrHoldCount += 1;
+    if (flags.isBlockedWhenRelevant) blockedOrHoldCount += 1;
     if (flags.needsReview) needsReviewCount += 1;
 
     const rawBase = isPlainObject(fieldObj.rawStoredBaseline)
@@ -3166,6 +3271,7 @@ function buildReviewViewData(snapshot, record = null) {
     ];
 
     const holdFlags = [];
+    if (statusHolds.isParkedExcluded || flags.isParkedExcluded) holdFlags.push("parkedExcluded");
     if (statusHolds.isActualBlockedProposal) holdFlags.push("actualBlockedProposal");
     if (statusHolds.hasTechnicalBlock) holdFlags.push("technicalBlock");
     if (statusHolds.hasContractOrOwnerHold) holdFlags.push("contractOrOwnerHold");
@@ -3181,8 +3287,15 @@ function buildReviewViewData(snapshot, record = null) {
       targetKey: fieldObj.targetKey || k,
       approvalKey: fieldObj.approvalKey || k,
       drawer: drawersForField[0],
-       ...(drawersForField.length > 1 ? { drawers: drawersForField } : {}),
+      ...(drawersForField.length > 1 ? { drawers: drawersForField } : {}),
       label: fieldObj.label || k,
+      registryOwner: fieldObj.registryOwner || statusHolds.registryOwner || "PRODUCT",
+      registryIdentity: fieldObj.registryIdentity || statusHolds.registryIdentity || k,
+      registryRole:
+        fieldObj.registryRole ||
+        statusHolds.registryRole ||
+        (flags.isParkedExcluded ? "EXCLUDED_INPUT" : "PRIMARY_CANDIDATE_DESTINATION"),
+      isParkedExcluded: flags.isParkedExcluded,
       fieldStatus: statusHolds.fieldStatus || null,
       applicability: statusHolds.applicability || null,
       rawBaselineEvidenceAvailable: Boolean(rawBase.evidenceAvailable),
@@ -3193,6 +3306,9 @@ function buildReviewViewData(snapshot, record = null) {
       proposalStatus: working.proposalStatus || null,
       isManualEdit: flags.isManualEdit,
       isApproved: flags.isExplicitlyApproved,
+      isKeepOriginal: flags.isKeepOriginal,
+      keepOriginalDecision: flags.keepOriginalDecision,
+      canKeepOriginal: flags.canKeepOriginal,
       isContentPreApproved: Boolean(working.isContentPreApproved),
       preApprovalReason: working.preApprovalReason || null,
       contentNeedsReview: flags.needsReview,
@@ -3216,9 +3332,11 @@ function buildReviewViewData(snapshot, record = null) {
     baselineState: snapshot.baselineState || null,
     summaryCounts: {
       totalFieldsEvaluated: orderedKeys.length,
+      parkedExcludedCount: parkedExcludedTotalCount,
       actionableItemCount: items.length,
       proposedWithDiff: proposedDiffCount,
       explicitlyApproved: approvedCount,
+      keepOriginal: keepOriginalCount,
       manualEdits: manualEditCount,
       conflicts: conflictCount,
       blockedOrHeld: blockedOrHoldCount,
@@ -3279,6 +3397,16 @@ function resolveDrawerTarget(snapshot, rawDrawerTitle, record = null) {
     ) {
       matched = orderedDrawers.find(
         (d) => d.drawer === DESCRIPTION_REVIEW_DRAWER_TITLE
+      );
+    } else if (
+      lowerReq === "parked" ||
+      lowerReq === "parked / excluded" ||
+      lowerReq === "parked_excluded" ||
+      lowerReq === "excluded" ||
+      lowerReq === "parked / excluded inventory (read-only)"
+    ) {
+      matched = orderedDrawers.find((d) =>
+        d.drawer.toLowerCase().startsWith("parked / excluded")
       );
     } else {
       matched = orderedDrawers.find((d) => d.drawer.toLowerCase() === lowerReq);
@@ -3352,7 +3480,10 @@ function resolveFieldTarget(snapshot, rawFieldKey, record = null) {
     const candidate = fieldsByKey[k];
     if (
       isPlainObject(candidate) &&
-      (candidate.targetKey === requested || candidate.approvalKey === requested)
+      (candidate.targetKey === requested ||
+        candidate.approvalKey === requested ||
+        candidate.registryIdentity === requested ||
+        `${candidate.registryOwner}:${candidate.registryIdentity}` === requested)
     ) {
       return {
         ok: true,
@@ -3991,8 +4122,8 @@ export function readTelemetryReport(options = {}) {
     runTimestamp: record.runTimestamp,
     ...liveMetaFields,
     limitUsed: record.limitUsed,
-    clipboardPartCount: partsCheck.partCount,
-    activePartIndex: partsCheck.activePartIndex,
+    clipboardPartCount: record.clipboardPartCount,
+    activePartIndex: record.activePartIndex,
     chunkIndex,
     chunkCount: chunks.length,
     chunkUtf8Bytes: utf8ByteLength(chunkText),

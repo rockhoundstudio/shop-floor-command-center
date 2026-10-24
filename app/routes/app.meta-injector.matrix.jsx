@@ -6,6 +6,8 @@ import { useFetcher } from "react-router";
 import {
   DEV_SHOW_ALL_TEMPLATE_FIELDS,
   PRODUCT_TEMPLATE_GROUPS,
+  TAB3_PARKED_DRAWER_HEADING,
+  TAB3_INSPECTABLE_TEMPLATE_GROUPS,
   COMPATIBILITY_ADAPTER_FIELDS,
   computeTemplateAuditCounts
 } from "../utils/meta-injector.constants.jsx";
@@ -35,6 +37,10 @@ import {
   FILTER_OPTIONS,
   resolveApprovalStorageKey,
   resolveConfigFieldDestination,
+  isParkedExcludedKey,
+  inspectFieldBaselineDescriptor,
+  createKeepOriginalDecisionRecord,
+  isKeepOriginalDecisionValid,
   getDynamicSections,
   getStatusTone,
   isMultilineKey,
@@ -56,10 +62,11 @@ import {
 } from "../components/meta-injector.bench-chrome.jsx";
 import { ManifestSectionCard } from "../components/meta-injector.manifest-section.jsx";
 
+// Every drawer (including Description Review and the 11th Parked / Excluded drawer) starts collapsed (false).
 const INITIAL_EXPANDED_BAYS = Object.freeze({
-  "Description Review": Boolean(DEV_SHOW_ALL_TEMPLATE_FIELDS),
+  "Description Review": false,
   ...Object.fromEntries(
-    PRODUCT_TEMPLATE_GROUPS.map((g) => [g.heading, Boolean(DEV_SHOW_ALL_TEMPLATE_FIELDS)])
+    TAB3_INSPECTABLE_TEMPLATE_GROUPS.map((g) => [g.heading, false])
   )
 });
 
@@ -79,7 +86,7 @@ const MAX_PUBLISHED_CAPTURE_SIGNATURES = 64;
 
 const RAW_COMPANION_LOOKUP_KEYS = Object.freeze({
   "custom.material": ["custom.stone_family", "stone_family", "custom.primary_medium", "primary_medium"],
-  "custom.is_one_of_a_kind": ["custom.is_ooak", "is_ooak"],
+  "custom.is_one_of_a_kind": ["custom.is_ooak", "custom.is_ooak"],
   "custom.origin_page_handle": ["custom.origin_handle", "origin_handle"],
   "custom.cut_and_shape": ["custom.cut_type", "cut_type"]
 });
@@ -161,7 +168,7 @@ function sanitizeSafePublishMessage(rawMsg, fallbackMsg) {
   return singleLine.length > 220 ? `${singleLine.slice(0, 220)}...` : singleLine;
 }
 
-function inspectRawStoredFieldBaseline(key, data) {
+function inspectRawStoredFieldBaseline(key, data, meta = null) {
   const safeData = data || {};
   const currentMetafields = validObj(safeData.currentMetafields);
   const nativeTargets = safeData.nativeTargets || null;
@@ -368,6 +375,51 @@ function inspectRawStoredFieldBaseline(key, data) {
     };
   }
 
+  // Variant-owned metafields (PRODUCTVARIANT): never flatten into product-level currentMetafields
+  const isVariantOwnedMetafield = Boolean(
+    meta?.isVariantMetafieldHold ||
+      meta?.owner === "variant_metafield" ||
+      (meta?.registryOwner === "PRODUCTVARIANT" &&
+        meta?.owner !== "native" &&
+        meta?.namespace !== "native" &&
+        !key.startsWith("native_") &&
+        !NATIVE_FIELDS.includes(key))
+  );
+
+  if (isVariantOwnedMetafield) {
+    const bd = meta?.baselineDescriptor || null;
+    if (bd && bd.evidenceAvailable) {
+      const sanitizedVarRaw =
+        typeof bd.rawValue === "string"
+          ? redactRecognizableCredentialStrings(bd.rawValue)
+          : (bd.rawValue !== undefined ? bd.rawValue : null);
+      const varNonBlank =
+        sanitizedVarRaw !== null &&
+        sanitizedVarRaw !== undefined &&
+        (typeof sanitizedVarRaw === "string"
+          ? sanitizedVarRaw.trim() !== "" && sanitizedVarRaw.trim() !== "[]"
+          : Array.isArray(sanitizedVarRaw)
+            ? sanitizedVarRaw.length > 0
+            : true);
+      return {
+        rawEvidenceAvailable: true,
+        rawStoredExists: varNonBlank,
+        rawStoredValue: sanitizedVarRaw,
+        rawSourceKey: bd.sourceKey || key,
+        rawNote: bd.note || null
+      };
+    }
+    return {
+      rawEvidenceAvailable: false,
+      rawStoredExists: false,
+      rawStoredValue: null,
+      rawSourceKey: key,
+      rawNote:
+        bd?.note ||
+        "Variant-owned metafield (PRODUCTVARIANT) baseline is not loaded in product-level currentMetafields."
+    };
+  }
+
   const hasCurrentMetafieldsMap = Boolean(
     safeData.currentMetafields && typeof safeData.currentMetafields === "object"
   );
@@ -381,12 +433,21 @@ function inspectRawStoredFieldBaseline(key, data) {
     };
   }
 
+  const isParkedEntry = Boolean(
+    meta?.isParkedExcluded ||
+      meta?.registryRole === "EXCLUDED_INPUT" ||
+      isParkedExcludedKey(key)
+  );
+
   let matchedKey = null;
   let rawVal = undefined;
 
   if (Object.prototype.hasOwnProperty.call(currentMetafields, key)) {
     matchedKey = key;
     rawVal = currentMetafields[key];
+  } else if (!key.includes(".") && Object.prototype.hasOwnProperty.call(currentMetafields, `custom.${key}`)) {
+    matchedKey = `custom.${key}`;
+    rawVal = currentMetafields[`custom.${key}`];
   }
 
   const rawStringTrimmed =
@@ -396,7 +457,12 @@ function inspectRawStoredFieldBaseline(key, data) {
         ? rawVal.trim()
         : JSON.stringify(rawVal);
 
-  if ((!matchedKey || rawStringTrimmed === "" || rawStringTrimmed === "[]") && RAW_COMPANION_LOOKUP_KEYS[key]) {
+  // Never consult canonical read companions for parked/excluded entries
+  if (
+    !isParkedEntry &&
+    (!matchedKey || rawStringTrimmed === "" || rawStringTrimmed === "[]") &&
+    RAW_COMPANION_LOOKUP_KEYS[key]
+  ) {
     for (const compKey of RAW_COMPANION_LOOKUP_KEYS[key]) {
       if (Object.prototype.hasOwnProperty.call(currentMetafields, compKey)) {
         const compVal = currentMetafields[compKey];
@@ -484,6 +550,15 @@ function buildMeasuredUiAuditSnapshot(productId, measurementsState, options = {}
     const safeDescriptorKeys = rawDescKeys.filter(
       (k) => typeof k === "string" && k.length > 0 && k.length <= 200
     );
+    const safeFullInventoryKeys = Array.isArray(rec.fullInventoryKeys)
+      ? rec.fullInventoryKeys.filter(
+          (k) => typeof k === "string" && k.length > 0 && k.length <= 200
+        )
+      : safeDescriptorKeys;
+    const rawFullInventoryCount =
+      typeof rec.fullInventoryRowCount === "number" && Number.isFinite(rec.fullInventoryRowCount)
+        ? rec.fullInventoryRowCount
+        : safeFullInventoryKeys.length;
     const hasMountedDomCount =
       typeof rec.mountedDomRowCount === "number" && Number.isFinite(rec.mountedDomRowCount);
     const safeMountedDomKeys = Array.isArray(rec.mountedDomKeys)
@@ -498,6 +573,8 @@ function buildMeasuredUiAuditSnapshot(productId, measurementsState, options = {}
         typeof rec.measurementKind === "string"
           ? rec.measurementKind
           : "scoped_dom_ref_and_descriptor_audit",
+      isParkedGroup: Boolean(rec.isParkedGroup),
+      activeFilter: typeof rec.activeFilter === "string" ? rec.activeFilter : "All",
       isExpanded: typeof rec.isExpanded === "boolean" ? rec.isExpanded : null,
       sectionDomMounted:
         typeof rec.sectionDomMounted === "boolean" ? rec.sectionDomMounted : null,
@@ -509,6 +586,14 @@ function buildMeasuredUiAuditSnapshot(productId, measurementsState, options = {}
         typeof rec.logicalCount === "number" && Number.isFinite(rec.logicalCount)
           ? rec.logicalCount
           : null,
+      fullInventoryRowCount: rawFullInventoryCount,
+      fullInventoryKeys: safeFullInventoryKeys,
+      fullInventoryMediaControlCount:
+        typeof rec.fullInventoryMediaControlCount === "number" &&
+        Number.isFinite(rec.fullInventoryMediaControlCount)
+          ? rec.fullInventoryMediaControlCount
+          : 0,
+      fullInventoryHasZeroImagePlaceholder: Boolean(rec.fullInventoryHasZeroImagePlaceholder),
       renderedCount: rawDescCount,
       renderedKeys: safeDescriptorKeys,
       descriptorCount: rawDescCount,
@@ -539,23 +624,31 @@ function buildMeasuredUiAuditSnapshot(productId, measurementsState, options = {}
     return null;
   }
 
-  const expectedSectionHeadings = PRODUCT_TEMPLATE_GROUPS.map((g) => g.heading).filter(
+  const expectedSectionHeadings = TAB3_INSPECTABLE_TEMPLATE_GROUPS.map((g) => g.heading).filter(
     (h) => typeof h === "string" && h.trim().length > 0
   );
 
   const sectionsReport = {};
   const unmeasuredSectionHeadings = [];
+  let totalMeasuredFullInventoryRows = 0;
   let totalMeasuredDescriptorRows = 0;
   let totalMeasuredMountedDomRows = 0;
   let allMeasuredHaveMountedDomCount = true;
   let expandedSectionCount = 0;
   let collapsedSectionCount = 0;
+  let totalMeasuredFullMediaControls = 0;
+  let anyFullZeroImagePlaceholder = false;
   let totalMeasuredMediaControls = 0;
   let anyZeroImagePlaceholder = false;
   let totalMountedDomMediaControls = 0;
   let anyMountedDomZeroImagePlaceholder = false;
+  let observedActiveFilter = "All";
 
   const accumulateSectionEntry = (entry) => {
+    if (typeof entry.activeFilter === "string" && entry.activeFilter) {
+      observedActiveFilter = entry.activeFilter;
+    }
+    totalMeasuredFullInventoryRows += entry.fullInventoryRowCount;
     totalMeasuredDescriptorRows += entry.descriptorCount;
     if (typeof entry.mountedDomRowCount === "number") {
       totalMeasuredMountedDomRows += entry.mountedDomRowCount;
@@ -566,6 +659,10 @@ function buildMeasuredUiAuditSnapshot(productId, measurementsState, options = {}
       expandedSectionCount += 1;
     } else if (entry.isExpanded === false) {
       collapsedSectionCount += 1;
+    }
+    totalMeasuredFullMediaControls += entry.fullInventoryMediaControlCount;
+    if (entry.fullInventoryHasZeroImagePlaceholder) {
+      anyFullZeroImagePlaceholder = true;
     }
     totalMeasuredMediaControls += entry.mediaControlCount;
     if (entry.hasZeroImagePlaceholder) {
@@ -589,10 +686,16 @@ function buildMeasuredUiAuditSnapshot(productId, measurementsState, options = {}
       sectionsReport[heading] = {
         measurementStatus: "not_measured",
         measurementKind: null,
+        isParkedGroup: heading === TAB3_PARKED_DRAWER_HEADING,
+        activeFilter: null,
         isExpanded: null,
         sectionDomMounted: null,
         rowsContainerDomMounted: null,
         logicalCount: null,
+        fullInventoryRowCount: null,
+        fullInventoryKeys: null,
+        fullInventoryMediaControlCount: null,
+        fullInventoryHasZeroImagePlaceholder: null,
         renderedCount: null,
         renderedKeys: null,
         descriptorCount: null,
@@ -626,6 +729,7 @@ function buildMeasuredUiAuditSnapshot(productId, measurementsState, options = {}
   return {
     productId: isUnselectedPreviewTarget ? null : productId,
     selectionState: isUnselectedPreviewTarget ? "unselected_preview" : "selected",
+    activeFilter: observedActiveFilter,
     measurementKind: "scoped_dom_ref_and_descriptor_audit",
     cssVisibilityMeasured: false,
     viewportVisibilityMeasured: false,
@@ -636,6 +740,8 @@ function buildMeasuredUiAuditSnapshot(productId, measurementsState, options = {}
     unmeasuredSections: unmeasuredSectionHeadings,
     expandedSectionCount,
     collapsedSectionCount,
+    totalFullInventoryRows: isComplete ? totalMeasuredFullInventoryRows : null,
+    measuredFullInventoryRowsSubtotal: totalMeasuredFullInventoryRows,
     totalRenderedRows: isComplete ? totalMeasuredDescriptorRows : null,
     measuredRenderedRowsSubtotal: totalMeasuredDescriptorRows,
     totalDescriptorRows: isComplete ? totalMeasuredDescriptorRows : null,
@@ -645,6 +751,8 @@ function buildMeasuredUiAuditSnapshot(productId, measurementsState, options = {}
     measuredMountedDomRowsSubtotal: allMeasuredHaveMountedDomCount
       ? totalMeasuredMountedDomRows
       : null,
+    fullInventoryMediaControlCount: totalMeasuredFullMediaControls,
+    fullInventoryHasZeroImagePlaceholder: anyFullZeroImagePlaceholder,
     mediaControlCount: totalMeasuredMediaControls,
     hasZeroImagePlaceholder: anyZeroImagePlaceholder,
     mountedDomMediaControlCount: allMeasuredHaveMountedDomCount
@@ -703,6 +811,7 @@ function buildSelectedUnloadedLiveBenchPayload({
     diagnosticsStats: null,
     manualEditedKeys: [],
     explicitlyApprovedKeys: [],
+    keepOriginalKeys: [],
     standardizedReferenceState: {
       readinessState: "manifest_not_loaded",
       readinessReason: "Product manifest baseline has not been loaded yet.",
@@ -784,7 +893,7 @@ function buildUnselectedPreviewLiveBenchPayload({
   getPreviewFieldMetadata
 }) {
   const previewData = EMPTY_DEV_PREVIEW_MANIFEST;
-  const dynamicSections = getDynamicSections(previewData);
+  const dynamicSections = getDynamicSections(previewData, { includeTab3InspectableInventory: true });
   const allConfigFields = dynamicSections.flatMap((sec) => sec.configFields || []);
   const runIdentity = "unselected_blank_template_preview";
   const runTimestamp = "Read-only blank template preview (no product selected)";
@@ -797,8 +906,9 @@ function buildUnselectedPreviewLiveBenchPayload({
       {},
       sectionConfigFields.length > 0 ? sectionConfigFields : allConfigFields
     );
-    const targetKey = NATIVE_ALIAS_MAP[key] || key;
-    const approvalStorageKey = resolveApprovalStorageKey(key);
+    const isParked = Boolean(meta.isParkedExcluded || meta.registryRole === "EXCLUDED_INPUT");
+    const targetKey = isParked ? key : (NATIVE_ALIAS_MAP[key] || key);
+    const approvalStorageKey = isParked ? key : resolveApprovalStorageKey(key);
     const isCollectionDateDisplayNa =
       (key === "custom.collection_date" || key === "collection_date") &&
       meta.currentVal === "N/A";
@@ -814,6 +924,10 @@ function buildUnselectedPreviewLiveBenchPayload({
       namespace: meta.namespace,
       metaKey: meta.metaKey,
       control: meta.control || null,
+      registryOwner: meta.registryOwner || "PRODUCT",
+      registryIdentity: meta.registryIdentity || key,
+      registryRole: meta.registryRole || (isParked ? "EXCLUDED_INPUT" : "PRIMARY_CANDIDATE_DESTINATION"),
+      isParkedExcluded: isParked,
       rawStoredBaseline: {
         evidenceAvailable: false,
         exists: false,
@@ -835,6 +949,9 @@ function buildUnselectedPreviewLiveBenchPayload({
         proposedValue: "",
         isManualEdit: false,
         isApproved: false,
+        isKeepOriginal: false,
+        keepOriginalDecision: null,
+        canKeepOriginal: false,
         isContentPreApproved: false,
         preApprovalReason: null,
         contentNeedsReview: false,
@@ -851,6 +968,10 @@ function buildUnselectedPreviewLiveBenchPayload({
         isManualOnly: Boolean(meta.isManualOnly),
         isOperatorOwned: Boolean(meta.isOperatorOwned),
         isPendingReadOnly: true,
+        isParkedExcluded: isParked,
+        registryRole: meta.registryRole || (isParked ? "EXCLUDED_INPUT" : "PRIMARY_CANDIDATE_DESTINATION"),
+        registryOwner: meta.registryOwner || "PRODUCT",
+        registryIdentity: meta.registryIdentity || key,
         isStandardizedAttribute: Boolean(meta.isStandardizedAttribute),
         isVerifiedStdDest: Boolean(meta.isVerifiedStdDest),
         isCategoryEligible: false,
@@ -880,11 +1001,16 @@ function buildUnselectedPreviewLiveBenchPayload({
 
   for (let i = 0; i < dynamicSections.length; i += 1) {
     const sec = dynamicSections[i];
+    const isParkedSection = Boolean(
+      sec.isParkedGroup === true || sec.title === TAB3_PARKED_DRAWER_HEADING
+    );
     const rawKeys = Array.isArray(sec.keys) ? sec.keys : [];
-    // Keep excluded source context (custom.origin_story) and compatibility custom.generated_description
-    // out of normal preview template rows, matching ManifestSectionCard's exact filter.
+    // Keep compatibility custom.generated_description out of the 93-slot preview inventory,
+    // while keeping custom.origin_story once inside the Parked / Excluded drawer.
     const secKeys = rawKeys.filter(
-      (k) => !HIDDEN_CONTEXT_FIELDS.includes(k) && k !== "custom.generated_description"
+      (k) =>
+        k !== "custom.generated_description" &&
+        (isParkedSection || !HIDDEN_CONTEXT_FIELDS.includes(k))
     );
     sectionOrder.push({
       sectionTitle: sec.title,
@@ -899,8 +1025,12 @@ function buildUnselectedPreviewLiveBenchPayload({
   const allPreviewFieldKeys = Object.keys(fieldsByKey);
   let requiredMissingCount = 0;
   let optionalBlanksCount = 0;
+  let parkedExcludedCount = 0;
   for (let i = 0; i < allPreviewFieldKeys.length; i += 1) {
     const fRow = fieldsByKey[allPreviewFieldKeys[i]];
+    if (fRow?.isParkedExcluded) {
+      parkedExcludedCount += 1;
+    }
     if (fRow?.statusAndHolds?.fieldStatus === "Required missing") {
       requiredMissingCount += 1;
     } else {
@@ -925,7 +1055,7 @@ function buildUnselectedPreviewLiveBenchPayload({
     workingState: "read_only_template_preview",
     productQueueStatus: null,
     dataAuthorityNote:
-      "Read-only unselected blank template preview (DEV_SHOW_ALL_TEMPLATE_FIELDS=true, selectionState=\"unselected_preview\", productId=null). No product is selected or loaded. All 10 canonical template drawers and 62 canonical field slots (including the read-only zero-image native_image_alt placeholder and native_description audit mirror) are exposed in read-only preview mode. Preview values are never treated as saved Shopify baselines.",
+      'Read-only unselected blank template preview (DEV_SHOW_ALL_TEMPLATE_FIELDS=true, selectionState="unselected_preview", productId=null). No product is selected or loaded. All 11 Tab 3 inspectable drawers and 93 logical slots (62 canonical working slots + 31 parked/excluded entries, including the read-only zero-image native_image_alt placeholder and native_description audit mirror) are exposed in read-only preview mode. Preview values are never treated as saved Shopify baselines.',
     runIdentity,
     runTimestamp,
     systemStatus: {
@@ -949,6 +1079,8 @@ function buildUnselectedPreviewLiveBenchPayload({
       optionalBlanks: optionalBlanksCount,
       requiredMissing: requiredMissingCount,
       approvedWrite: 0,
+      keepOriginal: 0,
+      parkedExcluded: parkedExcludedCount,
       total: allPreviewFieldKeys.length,
       filled: 0,
       blank: allPreviewFieldKeys.length,
@@ -957,6 +1089,7 @@ function buildUnselectedPreviewLiveBenchPayload({
     },
     manualEditedKeys: [],
     explicitlyApprovedKeys: [],
+    keepOriginalKeys: [],
     standardizedReferenceState: {
       readinessState: "unselected_preview",
       readinessReason:
@@ -1042,6 +1175,7 @@ function buildPureLiveBenchPayload({
   productTitle,
   data,
   approvals,
+  keepOriginalDecisions,
   manualEdits,
   repairHistory,
   submittedPayloads,
@@ -1054,7 +1188,7 @@ function buildPureLiveBenchPayload({
   getDiagnosticsStats
 }) {
   const safeData = data || {};
-  const dynamicSections = getDynamicSections(safeData);
+  const dynamicSections = getDynamicSections(safeData, { includeTab3InspectableInventory: true });
   const allConfigFields = dynamicSections.flatMap((sec) => sec.configFields || []);
   const productManualEdits = validObj(manualEdits?.[productId]);
   const productApprovals = validObj(approvals?.[productId]);
@@ -1089,6 +1223,8 @@ function buildPureLiveBenchPayload({
     refMatchStatus?.updatedAt ||
     "No repair/match timestamp recorded";
 
+  const activeKeepOriginalKeysSet = new Set();
+
   const serializeSingleFieldRow = (key, sectionHeading, sectionConfigFields = []) => {
     const meta = getFieldMetadata(
       key,
@@ -1097,17 +1233,23 @@ function buildPureLiveBenchPayload({
       approvals,
       sectionConfigFields.length > 0 ? sectionConfigFields : allConfigFields
     );
-    const targetKey = NATIVE_ALIAS_MAP[key] || key;
-    const approvalStorageKey = resolveApprovalStorageKey(key);
+    const isParked = Boolean(meta.isParkedExcluded || meta.registryRole === "EXCLUDED_INPUT");
+    const targetKey = isParked ? key : (NATIVE_ALIAS_MAP[key] || key);
+    const approvalStorageKey = isParked ? key : resolveApprovalStorageKey(key);
     const isDestSpecificApproval = DESTINATION_SPECIFIC_APPROVAL_KEYS.has(approvalStorageKey);
-    const rawBaseline = inspectRawStoredFieldBaseline(key, safeData);
+    const rawBaseline = inspectRawStoredFieldBaseline(key, safeData, meta);
     const isManualEdited = Boolean(
-      productManualEdits[key] === true || productManualEdits[targetKey] === true
+      !isParked &&
+        (productManualEdits[key] === true || productManualEdits[targetKey] === true)
     );
     const isCollectionDateDisplayNa =
       (key === "custom.collection_date" || key === "collection_date") &&
       !rawBaseline.rawStoredExists &&
       meta.currentVal === "N/A";
+
+    if (meta.isKeepOriginalSelected && approvalStorageKey) {
+      activeKeepOriginalKeysSet.add(approvalStorageKey);
+    }
 
     const verifiedMap = meta.stdEvaluation?.verifiedEntriesMap || null;
     let resolvedStandardizedLabels = null;
@@ -1127,7 +1269,8 @@ function buildPureLiveBenchPayload({
     }
 
     const wasSubmittedInLastSave = Boolean(
-      lastSubmitted &&
+      !isParked &&
+        lastSubmitted &&
         (Object.prototype.hasOwnProperty.call(lastSubmitted, key) ||
           (!isDestSpecificApproval && Object.prototype.hasOwnProperty.call(lastSubmitted, targetKey)))
     );
@@ -1152,6 +1295,10 @@ function buildPureLiveBenchPayload({
       namespace: meta.namespace,
       metaKey: meta.metaKey,
       control: meta.control || null,
+      registryOwner: meta.registryOwner || "PRODUCT",
+      registryIdentity: meta.registryIdentity || key,
+      registryRole: meta.registryRole || (isParked ? "EXCLUDED_INPUT" : "PRIMARY_CANDIDATE_DESTINATION"),
+      isParkedExcluded: isParked,
       rawStoredBaseline: {
         evidenceAvailable: rawBaseline.rawEvidenceAvailable,
         exists: rawBaseline.rawStoredExists,
@@ -1173,6 +1320,9 @@ function buildPureLiveBenchPayload({
         proposedValue: redactRecognizableCredentialStrings(meta.propVal ?? ""),
         isManualEdit: isManualEdited,
         isApproved: Boolean(meta.isApproved),
+        isKeepOriginal: Boolean(meta.isKeepOriginalSelected),
+        keepOriginalDecision: meta.keepOriginalDecision || null,
+        canKeepOriginal: Boolean(meta.canKeepOriginal),
         isContentPreApproved: Boolean(meta.isContentPreApproved),
         preApprovalReason: meta.preApprovalReason || null,
         contentNeedsReview: Boolean(meta.contentNeedsReview),
@@ -1189,6 +1339,10 @@ function buildPureLiveBenchPayload({
         isManualOnly: Boolean(meta.isManualOnly),
         isOperatorOwned: Boolean(meta.isOperatorOwned),
         isPendingReadOnly: Boolean(meta.isPendingReadOnly),
+        isParkedExcluded: isParked,
+        registryRole: meta.registryRole || (isParked ? "EXCLUDED_INPUT" : "PRIMARY_CANDIDATE_DESTINATION"),
+        registryOwner: meta.registryOwner || "PRODUCT",
+        registryIdentity: meta.registryIdentity || key,
         isStandardizedAttribute: Boolean(meta.isStandardizedAttribute),
         isVerifiedStdDest: Boolean(meta.isVerifiedStdDest),
         isCategoryEligible: Boolean(meta.isCategoryEligible),
@@ -1227,7 +1381,15 @@ function buildPureLiveBenchPayload({
 
   for (let i = 0; i < dynamicSections.length; i += 1) {
     const sec = dynamicSections[i];
-    const secKeys = Array.isArray(sec.keys) ? sec.keys : [];
+    const isParkedSection = Boolean(
+      sec.isParkedGroup === true || sec.title === TAB3_PARKED_DRAWER_HEADING
+    );
+    const rawKeys = Array.isArray(sec.keys) ? sec.keys : [];
+    const secKeys = rawKeys.filter(
+      (k) =>
+        k !== "custom.generated_description" &&
+        (isParkedSection || !HIDDEN_CONTEXT_FIELDS.includes(k))
+    );
     sectionOrder.push({
       sectionTitle: sec.title,
       fieldKeys: secKeys
@@ -1299,13 +1461,14 @@ function buildPureLiveBenchPayload({
     baselineSource: "last_loaded_manifest",
     workingState: "unsaved_browser_bench",
     dataAuthorityNote:
-      "All field values are passive diagnostic data. rawStoredBaseline reflects the last manifest loaded into the browser (not a live Shopify GraphQL read at query time). workingState reflects unsaved browser proposals, manual edits, and approvals.",
+      "All field values are passive diagnostic data. rawStoredBaseline reflects the last manifest loaded into the browser (not a live Shopify GraphQL read at query time). workingState reflects unsaved browser proposals, manual edits, approvals, and keep-original decisions across all 93 logical Tab 3 slots (plus custom.generated_description in Description Review).",
     runIdentity,
     runTimestamp,
     systemStatus,
     diagnosticsStats,
     manualEditedKeys: Object.keys(productManualEdits).filter((k) => productManualEdits[k] === true),
     explicitlyApprovedKeys: Object.keys(productApprovals),
+    keepOriginalKeys: Array.from(activeKeepOriginalKeysSet),
     standardizedReferenceState: standardizedSummary,
     saveVerificationEvidence: saveVerificationSummary,
     sectionOrder,
@@ -1386,6 +1549,7 @@ export function OperationsMatrixTab({ products }) {
   const [lastProcessedData, setLastProcessedData] = useState(null);
   
   const [approvals, setApprovals] = useState({});
+  const [keepOriginalDecisions, setKeepOriginalDecisions] = useState({});
   const [manualEdits, setManualEdits] = useState({}); 
   const [submittedPayloads, setSubmittedPayloads] = useState({}); 
   
@@ -1476,9 +1640,11 @@ export function OperationsMatrixTab({ products }) {
       data: data || EMPTY_DEV_PREVIEW_MANIFEST,
       productId: null,
       currentApprovals: {},
+      currentKeepOriginal: {},
       configFields,
       standardizedCandidatesByProduct: {},
-      getStandardizedEvaluationForField: null
+      getStandardizedEvaluationForField: null,
+      includeTab3InspectableInventory: true
     });
     return {
       ...baseMeta,
@@ -1486,6 +1652,9 @@ export function OperationsMatrixTab({ products }) {
       hasContractOrOwnerHold: true,
       isBlockedAction: true,
       isApproved: false,
+      isKeepOriginalSelected: false,
+      keepOriginalDecision: null,
+      canKeepOriginal: false,
       isContentPreApproved: false,
       reasons: [
         "DEV Preview Mode (No product loaded/selected on bench — read-only template audit view)",
@@ -1536,6 +1705,67 @@ export function OperationsMatrixTab({ products }) {
       prevRepairCompletedAtByProduct.current[pid] = histCompletedAt;
     }
   }, [manifestData, repairHistory]);
+
+  // Prune any stale keep-original decisions when a product's baseline or proposal materially changes
+  useEffect(() => {
+    setKeepOriginalDecisions((prev) => {
+      const productIds = Object.keys(prev || {});
+      if (productIds.length === 0) return prev;
+      let anyMutated = false;
+      const next = { ...prev };
+      const allConfigFields = [
+        ...TAB3_INSPECTABLE_TEMPLATE_GROUPS.flatMap((g) => g.fields || []),
+        ...(COMPATIBILITY_ADAPTER_FIELDS || [])
+      ];
+
+      for (let i = 0; i < productIds.length; i += 1) {
+        const pid = productIds[i];
+        const prodMap = prev[pid];
+        if (!prodMap || typeof prodMap !== "object") continue;
+        const manifest = manifestData?.[pid];
+        if (!manifest) {
+          delete next[pid];
+          anyMutated = true;
+          continue;
+        }
+        const destKeys = Object.keys(prodMap);
+        if (destKeys.length === 0) continue;
+        let prodMutated = false;
+        const nextProdMap = { ...prodMap };
+
+        for (let j = 0; j < destKeys.length; j += 1) {
+          const destKey = destKeys[j];
+          const rec = prodMap[destKey];
+          const evalMeta = evaluateFieldMetadata({
+            key: rec?.fieldKey || destKey,
+            data: manifest,
+            productId: pid,
+            currentApprovals: approvals,
+            currentKeepOriginal: prev,
+            configFields: allConfigFields,
+            standardizedCandidatesByProduct,
+            getStandardizedEvaluationForField: null,
+            includeTab3InspectableInventory: true
+          });
+          if (!evalMeta.isKeepOriginalSelected) {
+            delete nextProdMap[destKey];
+            prodMutated = true;
+          }
+        }
+
+        if (prodMutated) {
+          anyMutated = true;
+          if (Object.keys(nextProdMap).length === 0) {
+            delete next[pid];
+          } else {
+            next[pid] = nextProdMap;
+          }
+        }
+      }
+
+      return anyMutated ? next : prev;
+    });
+  }, [manifestData, approvals, standardizedCandidatesByProduct]);
 
   const sendLiveBenchSelectionClear = useCallback(
     (options = {}) => {
@@ -1816,8 +2046,7 @@ export function OperationsMatrixTab({ products }) {
   }, [sendLiveBenchSelectionClear]);
 
   // Invalidate captured telemetry snapshot when a new load, AI pipeline, or repair execution starts,
-  // or when the active product's repair history or reference match result changes, without clearing
-  // the snapshot during ordinary part-copy notifications.
+  // or when the active product's repair history or reference match result changes.
   const activeProductHistoryRef = selectedBenchId ? repairHistory[selectedBenchId]?.completedAt : null;
   const activeProductMatchTimeRef = selectedBenchId ? referenceMatchResultsByProduct[selectedBenchId]?.matchedAt : null;
 
@@ -1825,6 +2054,9 @@ export function OperationsMatrixTab({ products }) {
     if (isLoadingData || isExecuting) {
       setTelemetryPacket(null);
       setTelemetryPublishNotice(null);
+    }
+    if (isLoadingData) {
+      setKeepOriginalDecisions({});
     }
     if (isLoadingData && !lastNotifiedSelectionClearRef.current) {
       sendLiveBenchSelectionClear();
@@ -1862,6 +2094,22 @@ export function OperationsMatrixTab({ products }) {
           : typeof payload.renderedCount === "number" && Number.isFinite(payload.renderedCount)
             ? payload.renderedCount
             : nextDescriptorKeys.length;
+      const nextFullInventoryKeys = Array.isArray(payload.fullInventoryKeys)
+        ? payload.fullInventoryKeys
+        : nextDescriptorKeys;
+      const nextFullInventoryRowCount =
+        typeof payload.fullInventoryRowCount === "number" && Number.isFinite(payload.fullInventoryRowCount)
+          ? payload.fullInventoryRowCount
+          : nextFullInventoryKeys.length;
+      const nextFullInventoryMediaCount =
+        typeof payload.fullInventoryMediaControlCount === "number" &&
+        Number.isFinite(payload.fullInventoryMediaControlCount)
+          ? payload.fullInventoryMediaControlCount
+          : (typeof payload.mediaControlCount === "number" ? payload.mediaControlCount : 0);
+      const nextFullInventoryHasZeroPlaceholder =
+        typeof payload.fullInventoryHasZeroImagePlaceholder === "boolean"
+          ? payload.fullInventoryHasZeroImagePlaceholder
+          : Boolean(payload.hasZeroImagePlaceholder);
       const nextMountedDomKeys = Array.isArray(payload.mountedDomKeys)
         ? payload.mountedDomKeys
         : [];
@@ -1871,6 +2119,8 @@ export function OperationsMatrixTab({ products }) {
           : null;
       const nextIsExpanded =
         typeof payload.isExpanded === "boolean" ? payload.isExpanded : null;
+      const nextIsParkedGroup = Boolean(payload.isParkedGroup);
+      const nextActiveFilter = typeof payload.activeFilter === "string" ? payload.activeFilter : "All";
       const nextSectionDomMounted =
         typeof payload.sectionDomMounted === "boolean" ? payload.sectionDomMounted : null;
       const nextRowsContainerDomMounted =
@@ -1896,6 +2146,11 @@ export function OperationsMatrixTab({ products }) {
       if (
         existing &&
         existing.logicalCount === payload.logicalCount &&
+        existing.isParkedGroup === nextIsParkedGroup &&
+        existing.activeFilter === nextActiveFilter &&
+        existing.fullInventoryRowCount === nextFullInventoryRowCount &&
+        existing.fullInventoryMediaControlCount === nextFullInventoryMediaCount &&
+        existing.fullInventoryHasZeroImagePlaceholder === nextFullInventoryHasZeroPlaceholder &&
         existing.descriptorCount === nextDescriptorCount &&
         existing.renderedCount === nextDescriptorCount &&
         existing.mountedDomRowCount === nextMountedDomRowCount &&
@@ -1909,6 +2164,9 @@ export function OperationsMatrixTab({ products }) {
         existing.measurementKind === nextMeasurementKind &&
         existing.cssVisibilityMeasured === nextCssVisibilityMeasured &&
         existing.viewportVisibilityMeasured === nextViewportVisibilityMeasured &&
+        Array.isArray(existing.fullInventoryKeys) &&
+        existing.fullInventoryKeys.length === nextFullInventoryKeys.length &&
+        existing.fullInventoryKeys.every((k, idx) => k === nextFullInventoryKeys[idx]) &&
         Array.isArray(existing.descriptorKeys) &&
         existing.descriptorKeys.length === nextDescriptorKeys.length &&
         existing.descriptorKeys.every((k, idx) => k === nextDescriptorKeys[idx]) &&
@@ -1924,7 +2182,13 @@ export function OperationsMatrixTab({ products }) {
         bySection: {
           ...baseBySection,
           [payload.sectionTitle]: {
+            isParkedGroup: nextIsParkedGroup,
+            activeFilter: nextActiveFilter,
             logicalCount: payload.logicalCount,
+            fullInventoryRowCount: nextFullInventoryRowCount,
+            fullInventoryKeys: nextFullInventoryKeys,
+            fullInventoryMediaControlCount: nextFullInventoryMediaCount,
+            fullInventoryHasZeroImagePlaceholder: nextFullInventoryHasZeroPlaceholder,
             renderedCount: nextDescriptorCount,
             renderedKeys: nextDescriptorKeys,
             descriptorCount: nextDescriptorCount,
@@ -2020,6 +2284,7 @@ export function OperationsMatrixTab({ products }) {
     setProductStates({});
     setManifestData({});
     setApprovals({});
+    setKeepOriginalDecisions({});
     setManualEdits({});
     setSubmittedPayloads({});
     setRepairHistory({});
@@ -2047,6 +2312,7 @@ export function OperationsMatrixTab({ products }) {
 
   const getStandardizedEvaluationForField = useCallback((productId, targetKey, dataOverride = null) => {
     if (!productId || typeof targetKey !== "string" || !targetKey.startsWith("shopify.")) return null;
+    if (isParkedExcludedKey(targetKey)) return null;
     const data = dataOverride || manifestData[productId];
     const candidateBundle = buildCanonicalCandidateBundle(standardizedCandidatesByProduct[productId] || {});
     const rawRefMatchResult = referenceMatchResultsByProduct[productId] || null;
@@ -2094,11 +2360,13 @@ export function OperationsMatrixTab({ products }) {
   const handleToggleApproval = useCallback((pieceId, key, propVal, isChecked) => {
     if (!pieceId || !isExactProductGid(pieceId) || !manifestData[pieceId]) return;
     if (typeof key !== "string" || !key.trim()) return;
+    if (isParkedExcludedKey(key)) return;
 
     const targetKeyForProposal = NATIVE_ALIAS_MAP[key] || key;
     const approvalStorageKey = resolveApprovalStorageKey(key);
     if (
       !approvalStorageKey ||
+      isParkedExcludedKey(approvalStorageKey) ||
       targetKeyForProposal === "standardized_candidates" ||
       targetKeyForProposal === "custom.standardized_candidates" ||
       targetKeyForProposal === "native_image_alt" ||
@@ -2108,7 +2376,7 @@ export function OperationsMatrixTab({ products }) {
     }
 
     const allConfigFields = [
-      ...PRODUCT_TEMPLATE_GROUPS.flatMap(g => g.fields || []),
+      ...TAB3_INSPECTABLE_TEMPLATE_GROUPS.flatMap(g => g.fields || []),
       ...(COMPATIBILITY_ADAPTER_FIELDS || [])
     ];
     const matchedConfig = allConfigFields.find(
@@ -2119,6 +2387,10 @@ export function OperationsMatrixTab({ products }) {
         f?.registryIdentity === approvalStorageKey ||
         f?.registryIdentity === key
     );
+
+    if (matchedConfig?.registryRole === "EXCLUDED_INPUT" || matchedConfig?.isParkedExcluded === true) {
+      return;
+    }
 
     if (isVerifiedStandardizedDestination(targetKeyForProposal)) {
       const stdEval = getStandardizedEvaluationForField(pieceId, targetKeyForProposal);
@@ -2136,13 +2408,30 @@ export function OperationsMatrixTab({ products }) {
       return;
     }
 
+    if (isChecked) {
+      if (propVal === undefined || propVal === null || String(propVal).trim() === "") {
+        return;
+      }
+      // Mutual exclusivity: checking Approve clears any Keep-Original decision on this exact destination key
+      setKeepOriginalDecisions((prevKeep) => {
+        const prodKeep = prevKeep?.[pieceId];
+        if (!prodKeep || prodKeep[approvalStorageKey] === undefined) return prevKeep;
+        const nextProdKeep = { ...prodKeep };
+        delete nextProdKeep[approvalStorageKey];
+        const nextKeep = { ...prevKeep };
+        if (Object.keys(nextProdKeep).length === 0) {
+          delete nextKeep[pieceId];
+        } else {
+          nextKeep[pieceId] = nextProdKeep;
+        }
+        return nextKeep;
+      });
+    }
+
     setApprovals(prev => {
       const next = { ...prev };
       const prodApp = { ...(next[pieceId] || {}) };
       if (isChecked) {
-        if (propVal === undefined || propVal === null || String(propVal).trim() === "") {
-          return prev;
-        }
         // Store approval strictly under the destination-specific approval key (e.g. native_description stays native_description,
         // never auto-approving custom.generated_description or vice versa).
         prodApp[approvalStorageKey] = String(propVal);
@@ -2153,6 +2442,114 @@ export function OperationsMatrixTab({ products }) {
       return next;
     });
   }, [getStandardizedEvaluationForField, manifestData]);
+
+  const handleToggleKeepOriginal = useCallback((pieceId, key, propVal, isChecked) => {
+    if (!pieceId || !isExactProductGid(pieceId) || !manifestData[pieceId]) return;
+    if (typeof key !== "string" || !key.trim()) return;
+    if (isParkedExcludedKey(key)) return;
+
+    const targetKeyForProposal = NATIVE_ALIAS_MAP[key] || key;
+    const approvalStorageKey = resolveApprovalStorageKey(key);
+    if (
+      !approvalStorageKey ||
+      isParkedExcludedKey(approvalStorageKey) ||
+      targetKeyForProposal === "standardized_candidates" ||
+      targetKeyForProposal === "custom.standardized_candidates" ||
+      targetKeyForProposal === "native_image_alt" ||
+      approvalStorageKey === "native_image_alt"
+    ) {
+      return;
+    }
+
+    const allConfigFields = [
+      ...TAB3_INSPECTABLE_TEMPLATE_GROUPS.flatMap((g) => g.fields || []),
+      ...(COMPATIBILITY_ADAPTER_FIELDS || [])
+    ];
+    const matchedConfig = allConfigFields.find(
+      (f) =>
+        resolveConfigFieldDestination(f) === approvalStorageKey ||
+        resolveConfigFieldDestination(f) === key ||
+        resolveConfigFieldDestination(f) === targetKeyForProposal ||
+        f?.registryIdentity === approvalStorageKey ||
+        f?.registryIdentity === key
+    );
+
+    if (matchedConfig?.registryRole === "EXCLUDED_INPUT" || matchedConfig?.isParkedExcluded === true) {
+      return;
+    }
+
+    if (!isChecked) {
+      // Unchecking returns the destination to undecided without auto-selecting Approve
+      setKeepOriginalDecisions((prev) => {
+        const prodKeep = prev?.[pieceId];
+        if (!prodKeep || prodKeep[approvalStorageKey] === undefined) return prev;
+        const nextProdKeep = { ...prodKeep };
+        delete nextProdKeep[approvalStorageKey];
+        const next = { ...prev };
+        if (Object.keys(nextProdKeep).length === 0) {
+          delete next[pieceId];
+        } else {
+          next[pieceId] = nextProdKeep;
+        }
+        return next;
+      });
+      return;
+    }
+
+    const currentMeta = evaluateFieldMetadata({
+      key,
+      data: manifestData[pieceId],
+      productId: pieceId,
+      currentApprovals: approvals,
+      currentKeepOriginal: keepOriginalDecisions,
+      configFields: allConfigFields,
+      standardizedCandidatesByProduct,
+      getStandardizedEvaluationForField,
+      includeTab3InspectableInventory: true
+    });
+
+    if (!currentMeta.canKeepOriginal) {
+      return;
+    }
+
+    const decisionRecord = createKeepOriginalDecisionRecord({
+      productId: pieceId,
+      key,
+      data: manifestData[pieceId],
+      propVal: currentMeta.propVal,
+      templateConfig: matchedConfig || null
+    });
+
+    if (!decisionRecord) {
+      return;
+    }
+
+    // Mutual exclusivity: checking Keep-Original clears any Approval on this exact destination key
+    setApprovals((prevApp) => {
+      const prodApp = prevApp?.[pieceId];
+      if (!prodApp || prodApp[approvalStorageKey] === undefined) return prevApp;
+      const nextProdApp = { ...prodApp };
+      delete nextProdApp[approvalStorageKey];
+      return {
+        ...prevApp,
+        [pieceId]: nextProdApp
+      };
+    });
+
+    setKeepOriginalDecisions((prevKeep) => ({
+      ...prevKeep,
+      [pieceId]: {
+        ...(prevKeep[pieceId] || {}),
+        [approvalStorageKey]: decisionRecord
+      }
+    }));
+  }, [
+    manifestData,
+    approvals,
+    keepOriginalDecisions,
+    standardizedCandidatesByProduct,
+    getStandardizedEvaluationForField
+  ]);
 
   const handleReleasePendingReferenceMatch = useCallback(() => {
     if (!pendingReferenceMatch) {
@@ -2727,7 +3124,7 @@ export function OperationsMatrixTab({ products }) {
       };
     });
 
-    // Clear any prior approvals on standardized destinations that no longer match
+    // Clear any prior approvals or keep-original decisions on standardized destinations when new reference matches arrive
     setApprovals((prevApp) => {
       if (!prevApp[targetProductId]) return prevApp;
       const nextProdApp = { ...prevApp[targetProductId] };
@@ -2740,6 +3137,26 @@ export function OperationsMatrixTab({ products }) {
       });
       if (!changed) return prevApp;
       return { ...prevApp, [targetProductId]: nextProdApp };
+    });
+
+    setKeepOriginalDecisions((prevKeep) => {
+      if (!prevKeep[targetProductId]) return prevKeep;
+      const nextProdKeep = { ...prevKeep[targetProductId] };
+      let changed = false;
+      VERIFIED_STANDARDIZED_DESTINATIONS.forEach((destKey) => {
+        if (nextProdKeep[destKey] !== undefined) {
+          delete nextProdKeep[destKey];
+          changed = true;
+        }
+      });
+      if (!changed) return prevKeep;
+      const nextKeep = { ...prevKeep };
+      if (Object.keys(nextProdKeep).length === 0) {
+        delete nextKeep[targetProductId];
+      } else {
+        nextKeep[targetProductId] = nextProdKeep;
+      }
+      return nextKeep;
     });
 
     if (isCleanCompleteOutcome) {
@@ -2798,9 +3215,11 @@ export function OperationsMatrixTab({ products }) {
       data,
       productId,
       currentApprovals,
+      currentKeepOriginal: keepOriginalDecisions,
       configFields,
       standardizedCandidatesByProduct,
-      getStandardizedEvaluationForField
+      getStandardizedEvaluationForField,
+      includeTab3InspectableInventory: true
     });
 
   const {
@@ -2859,10 +3278,12 @@ export function OperationsMatrixTab({ products }) {
   const handleRepairPlanChange = (key, value) => {
     if (!selectedBenchId || !isExactProductGid(selectedBenchId) || !manifestData[selectedBenchId]) return;
     if (typeof key !== "string" || !key.trim()) return;
+    if (isParkedExcludedKey(key)) return;
 
     const targetKeyForProposal = NATIVE_ALIAS_MAP[key] || key;
     const approvalStorageKey = resolveApprovalStorageKey(key);
     if (
+      isParkedExcludedKey(approvalStorageKey) ||
       targetKeyForProposal === "standardized_candidates" ||
       targetKeyForProposal === "custom.standardized_candidates" ||
       targetKeyForProposal === "native_image_alt" ||
@@ -2872,7 +3293,7 @@ export function OperationsMatrixTab({ products }) {
     }
 
     const allConfigFields = [
-      ...PRODUCT_TEMPLATE_GROUPS.flatMap(g => g.fields || []),
+      ...TAB3_INSPECTABLE_TEMPLATE_GROUPS.flatMap(g => g.fields || []),
       ...(COMPATIBILITY_ADAPTER_FIELDS || [])
     ];
     const matchedConfig = allConfigFields.find(
@@ -2883,6 +3304,10 @@ export function OperationsMatrixTab({ products }) {
         f?.registryIdentity === approvalStorageKey ||
         f?.registryIdentity === key
     );
+
+    if (matchedConfig?.registryRole === "EXCLUDED_INPUT" || matchedConfig?.isParkedExcluded === true) {
+      return;
+    }
 
     if (isVerifiedStandardizedDestination(targetKeyForProposal)) {
       const stdEval = getStandardizedEvaluationForField(selectedBenchId, targetKeyForProposal);
@@ -2913,7 +3338,7 @@ export function OperationsMatrixTab({ products }) {
       return next;
     });
 
-    // Invalidate approvals for all destinations whose proposal value is affected by this edit
+    // Invalidate approvals AND keep-original decisions for all destinations whose proposal value is affected by this edit
     const keysToInvalidate = new Set([
       key,
       targetKeyForProposal,
@@ -2939,6 +3364,27 @@ export function OperationsMatrixTab({ products }) {
         ...prev,
         [selectedBenchId]: nextProdApp
       };
+    });
+
+    setKeepOriginalDecisions(prevKeep => {
+      const prodKeep = prevKeep[selectedBenchId];
+      if (!prodKeep) return prevKeep;
+      let changed = false;
+      const nextProdKeep = { ...prodKeep };
+      keysToInvalidate.forEach(kToDel => {
+        if (nextProdKeep[kToDel] !== undefined) {
+          delete nextProdKeep[kToDel];
+          changed = true;
+        }
+      });
+      if (!changed) return prevKeep;
+      const nextKeep = { ...prevKeep };
+      if (Object.keys(nextProdKeep).length === 0) {
+        delete nextKeep[selectedBenchId];
+      } else {
+        nextKeep[selectedBenchId] = nextProdKeep;
+      }
+      return nextKeep;
     });
 
     // Update the single canonical proposal-source entry in repairPlan and synchronize any existing
@@ -3021,12 +3467,68 @@ export function OperationsMatrixTab({ products }) {
   };
 
   const matchesFilter = useCallback((m) => {
-    if (DEV_SHOW_ALL_TEMPLATE_FIELDS) return true;
+    if (!m || typeof m !== "object") return false;
     if (activeFilter === "All") return true;
-    if (activeFilter === "Blank" && (m.fieldStatus === "Optional blank" || m.fieldStatus === "Required missing")) return true;
-    if (activeFilter === "Proposed changes" && (m.fieldStatus === "Proposed" || m.fieldStatus === "Approved, not saved" || m.fieldStatus === "Approved, blocked" || m.fieldStatus === "Pre-approved, not saved" || m.fieldStatus === "Pre-approved, blocked")) return true;
-    if (activeFilter === "Conflicts" && (m.fieldStatus === "Conflict" || m.fieldStatus === "Degrade" || m.fieldStatus === "Save Conflict")) return true;
-    if (activeFilter === "Needs review" && (m.fieldStatus === "Required missing" || m.fieldStatus === "Unverified proposal" || (m.contentNeedsReview && !m.isApproved && !m.isContentPreApproved) || m.fieldStatus === "API Error / Blocked")) return true;
+    if (activeFilter === "Blank") {
+      return m.fieldStatus === "Optional blank" || m.fieldStatus === "Required missing";
+    }
+    if (activeFilter === "Proposed changes") {
+      return (
+        m.fieldStatus === "Proposed" ||
+        m.fieldStatus === "Approved, not saved" ||
+        m.fieldStatus === "Approved, blocked" ||
+        m.fieldStatus === "Pre-approved, not saved" ||
+        m.fieldStatus === "Pre-approved, blocked" ||
+        m.fieldStatus === "Keep original (suggestion rejected)"
+      );
+    }
+    if (activeFilter === "Conflicts") {
+      return (
+        m.fieldStatus === "Conflict" ||
+        m.fieldStatus === "Degrade" ||
+        m.fieldStatus === "Save Conflict" ||
+        Boolean(m.conflictData) ||
+        Boolean(m.nativeDescConflictData)
+      );
+    }
+    if (activeFilter === "Needs review") {
+      // Genuine save conflicts or backend API errors always stay visible in Needs review
+      const hasRealConflictOrApiError = Boolean(
+        m.conflictData ||
+          m.nativeDescConflictData ||
+          m.fieldStatus === "Save Conflict" ||
+          m.fieldStatus === "API Error / Blocked"
+      );
+      if (hasRealConflictOrApiError) return true;
+
+      // Parked/excluded inventory rows without a real conflict/API error do not require review
+      if (m.isParkedExcluded) return false;
+
+      // Required missing fields always need operator attention
+      if (m.fieldStatus === "Required missing") return true;
+
+      // Clean Keep-Original decisions leave Needs review (their write-prohibition is intentional retention, not an error)
+      if (m.isKeepOriginalSelected) return false;
+
+      // Clean explicitly approved or content-pre-approved items without technical blocks leave Needs review
+      if ((m.isApproved || m.isContentPreApproved) && !m.hasTechnicalBlock) {
+        return false;
+      }
+
+      // Actionable blocked proposals, over-limit fields, unverified proposals, and unapproved review-required proposals stay in Needs review
+      if (
+        m.isActualBlockedProposal ||
+        m.fieldStatus === "Unverified proposal" ||
+        m.fieldStatus === "Over limit" ||
+        m.fieldStatus === "Approved, blocked" ||
+        m.fieldStatus === "Pre-approved, blocked" ||
+        (m.contentNeedsReview && !m.isApproved && !m.isContentPreApproved)
+      ) {
+        return true;
+      }
+
+      return false;
+    }
     if (activeFilter === m.source) return true;
     return false;
   }, [activeFilter]);
@@ -3056,7 +3558,8 @@ export function OperationsMatrixTab({ products }) {
       data,
       selectedBenchId,
       approvals,
-      getFieldMetadata
+      getFieldMetadata,
+      includeTab3InspectableInventory: true
     });
 
   // Automatic debounced live-bench-state synchronization (publishes unselected blank preview, selected-unloaded, and selected-loaded states)
@@ -3064,6 +3567,7 @@ export function OperationsMatrixTab({ products }) {
   const isUnselectedBlankPreviewActive = Boolean(!isSelectedBenchProductValid && DEV_SHOW_ALL_TEMPLATE_FIELDS);
   const activeProductDataForLiveSync = isSelectedBenchProductValid ? manifestData[selectedBenchId] : null;
   const activeProductApprovalsForLiveSync = isSelectedBenchProductValid ? approvals[selectedBenchId] : null;
+  const activeProductKeepOriginalForLiveSync = isSelectedBenchProductValid ? keepOriginalDecisions[selectedBenchId] : null;
   const activeProductManualEditsForLiveSync = isSelectedBenchProductValid ? manualEdits[selectedBenchId] : null;
   const activeProductHistoryForLiveSync = isSelectedBenchProductValid ? repairHistory[selectedBenchId] : null;
   const activeProductSubmittedForLiveSync = isSelectedBenchProductValid ? submittedPayloads[selectedBenchId] : null;
@@ -3116,6 +3620,7 @@ export function OperationsMatrixTab({ products }) {
         metadata: activeProductDataForLiveSync?.metadata || null,
         diagnostics: activeProductDataForLiveSync?.diagnostics || null,
         approvals: activeProductApprovalsForLiveSync || null,
+        keepOriginal: activeProductKeepOriginalForLiveSync || null,
         manualEdits: activeProductManualEditsForLiveSync || null,
         historyCompletedAt: activeProductHistoryForLiveSync?.completedAt || null,
         historyStatus: activeProductHistoryForLiveSync?.status || null,
@@ -3231,6 +3736,7 @@ export function OperationsMatrixTab({ products }) {
           productTitle,
           data: activeProductDataForLiveSync,
           approvals,
+          keepOriginalDecisions,
           manualEdits,
           repairHistory,
           submittedPayloads,
@@ -3492,6 +3998,7 @@ export function OperationsMatrixTab({ products }) {
     activeProductQueueStateStatus,
     activeProductDataForLiveSync,
     activeProductApprovalsForLiveSync,
+    activeProductKeepOriginalForLiveSync,
     activeProductManualEditsForLiveSync,
     activeProductHistoryForLiveSync,
     activeProductSubmittedForLiveSync,
@@ -3769,6 +4276,7 @@ export function OperationsMatrixTab({ products }) {
     repairHistory,
     safeProducts,
     approvals,
+    keepOriginalDecisions,
     submittedPayloads,
     standardizedCandidatesByProduct,
     referenceMatchResultsByProduct,
@@ -3841,8 +4349,8 @@ export function OperationsMatrixTab({ products }) {
   const effectiveManifestForSections = activeBenchData || (DEV_SHOW_ALL_TEMPLATE_FIELDS ? EMPTY_DEV_PREVIEW_MANIFEST : null);
 
   const dynamicSections = effectiveManifestForSections
-    ? getDynamicSections(effectiveManifestForSections)
-    : getDynamicSections();
+    ? getDynamicSections(effectiveManifestForSections, { includeTab3InspectableInventory: true })
+    : getDynamicSections(null, { includeTab3InspectableInventory: true });
   const allDynamicConfigFields = dynamicSections.flatMap(sec => sec.configFields || []);
 
   const activeBenchStats = activeBenchData ? getDiagnosticsStats(activeBenchData) : null;
@@ -3856,6 +4364,7 @@ export function OperationsMatrixTab({ products }) {
   const activeManualEditsMap = isBenchSelectedBool ? validObj(manualEdits[selectedBenchId]) : {};
   const activeManualEditCount = Object.keys(activeManualEditsMap).filter((k) => activeManualEditsMap[k] === true).length;
   const activeExplicitApprovalCount = isBenchSelectedBool ? Object.keys(validObj(approvals[selectedBenchId])).length : 0;
+  const activeKeepOriginalCount = typeof activeBenchStats?.keepOriginal === "number" ? activeBenchStats.keepOriginal : 0;
   const activeProposedCount = typeof activeBenchStats?.proposed === "number" ? activeBenchStats.proposed : 0;
   const activeApprovedWriteCount = typeof activeBenchStats?.approvedWrite === "number" ? activeBenchStats.approvedWrite : 0;
 
@@ -3867,9 +4376,10 @@ export function OperationsMatrixTab({ products }) {
     const hasUnsavedWorking =
       activeProposedCount > 0 ||
       activeManualEditCount > 0 ||
-      activeExplicitApprovalCount > 0;
+      activeExplicitApprovalCount > 0 ||
+      activeKeepOriginalCount > 0;
     unsavedWorkingChangesWord = hasUnsavedWorking ? "Yes" : "No";
-    unsavedWorkingChangesDetail = `Proposals: ${activeProposedCount} | Manual edits: ${activeManualEditCount} | Explicit approvals: ${activeExplicitApprovalCount} | Approved for write: ${activeApprovedWriteCount}`;
+    unsavedWorkingChangesDetail = `Proposals: ${activeProposedCount} | Manual edits: ${activeManualEditCount} | Explicit approvals: ${activeExplicitApprovalCount} | Keep original: ${activeKeepOriginalCount} | Approved for write: ${activeApprovedWriteCount}`;
   }
 
   let verifiedSavedWord = "No";
@@ -3977,15 +4487,27 @@ export function OperationsMatrixTab({ products }) {
     ? getFieldMetadata("custom.generated_description", activeBenchData, selectedBenchId, approvals, allDynamicConfigFields)
     : null;
 
-  // Build audit count summary strictly from reported section measurements for the current product (or null in preview)
+  // Build audit count summary from reported section measurements for the current product (or null in preview),
+  // keeping full 93-slot inventory counts distinct from filtered descriptor counts and mounted DOM rows.
   const currentAuditOwnerId = isDevUnselectedPreview ? null : (selectedBenchId || null);
   const activeSectionMeasurementsMap =
     sectionAuditMeasurements.productId === currentAuditOwnerId
       ? sectionAuditMeasurements.bySection
       : {};
 
+  const fullInventoryKeysByGroupForAudit = {};
   const renderedKeysByGroupForAudit = {};
   Object.entries(activeSectionMeasurementsMap).forEach(([secTitle, rec]) => {
+    const fullKeys = Array.isArray(rec?.fullInventoryKeys)
+      ? rec.fullInventoryKeys
+      : Array.isArray(rec?.descriptorKeys)
+        ? rec.descriptorKeys
+        : Array.isArray(rec?.renderedKeys)
+          ? rec.renderedKeys
+          : null;
+    if (fullKeys) {
+      fullInventoryKeysByGroupForAudit[secTitle] = fullKeys;
+    }
     const descKeys = Array.isArray(rec?.descriptorKeys)
       ? rec.descriptorKeys
       : Array.isArray(rec?.renderedKeys)
@@ -3997,7 +4519,14 @@ export function OperationsMatrixTab({ products }) {
   });
 
   const templateAuditSummary = computeTemplateAuditCounts(
-    PRODUCT_TEMPLATE_GROUPS,
+    TAB3_INSPECTABLE_TEMPLATE_GROUPS,
+    Object.keys(fullInventoryKeysByGroupForAudit).length > 0
+      ? { renderedKeysByGroup: fullInventoryKeysByGroupForAudit }
+      : null
+  );
+
+  const filteredDescriptorAuditSummary = computeTemplateAuditCounts(
+    TAB3_INSPECTABLE_TEMPLATE_GROUPS,
     Object.keys(renderedKeysByGroupForAudit).length > 0
       ? { renderedKeysByGroup: renderedKeysByGroupForAudit }
       : null
@@ -4178,7 +4707,7 @@ export function OperationsMatrixTab({ products }) {
                     <InlineStack gap="200" blockAlign="center">
                       <Badge tone="warning">DEV: Show All Template Fields</Badge>
                       <Text as="h3" variant="headingMd" fontWeight="bold">
-                        Template Capability & Rendered Row Audit ({isDevUnselectedPreview ? "Unselected Read-Only Preview" : `Active Product: ${selectedBenchId}`})
+                        Tab 3 Inspectable Inventory &amp; Rendered Row Audit ({isDevUnselectedPreview ? "Unselected Read-Only Preview" : `Active Product: ${selectedBenchId}`} | Filter: {activeFilter})
                       </Text>
                     </InlineStack>
                     <Badge tone={templateAuditSummary.measurementStatus === "complete" ? "success" : "attention"}>
@@ -4189,7 +4718,7 @@ export function OperationsMatrixTab({ products }) {
                   </InlineStack>
 
                   <Text as="p" variant="bodySm" tone="subdued">
-                    <strong>Scope:</strong> Counts below distinguish logical capabilities, filtered row descriptors, bay expansion state, and scoped post-commit mounted DOM row elements inside the 10 <code>ManifestSectionCard</code> groups (excluding hidden <code>custom.origin_story</code> diagnostic context and compatibility adapters). CSS/viewport visibility is not claimed.
+                    <strong>Scope:</strong> Counts below distinguish the complete 93-slot logical inventory (62 working capabilities + 31 parked/excluded entries across 11 drawers), full inventory rows (including per-image media expansion), filtered row descriptors matching <code>{activeFilter}</code>, bay expansion state, and scoped post-commit mounted DOM row elements. Collapsed drawers mount 0 DOM rows while preserving their full logical inventory.
                   </Text>
 
                   <div style={{ overflowX: "auto" }}>
@@ -4197,9 +4726,10 @@ export function OperationsMatrixTab({ products }) {
                       <thead>
                         <tr style={{ backgroundColor: "#f1f5f9", borderBottom: "2px solid #cbd5e1", textAlign: "left" }}>
                           <th style={{ padding: "8px 10px" }}>Template Group</th>
-                          <th style={{ padding: "8px 10px" }}>Logical Capabilities</th>
+                          <th style={{ padding: "8px 10px" }}>Logical Slots</th>
                           <th style={{ padding: "8px 10px" }}>Running Logical Subtotal</th>
-                          <th style={{ padding: "8px 10px" }}>Descriptor Rows</th>
+                          <th style={{ padding: "8px 10px" }}>Full Inventory Rows</th>
+                          <th style={{ padding: "8px 10px" }}>Filtered Descriptors ({activeFilter})</th>
                           <th style={{ padding: "8px 10px" }}>Bay State</th>
                           <th style={{ padding: "8px 10px" }}>Mounted DOM Rows</th>
                           <th style={{ padding: "8px 10px" }}>Running Mounted DOM Subtotal</th>
@@ -4212,10 +4742,12 @@ export function OperationsMatrixTab({ products }) {
                           let runningMountedDom = 0;
                           let allDomMeasuredSoFar = true;
 
-                          return templateAuditSummary.groupSubtotals.map((grp) => {
+                          return templateAuditSummary.groupSubtotals.map((grp, idx) => {
                             runningLogical += grp.logicalCount;
                             const rawSecRec = activeSectionMeasurementsMap[grp.heading] || null;
+                            const filteredGrp = filteredDescriptorAuditSummary.groupSubtotals[idx] || null;
                             const isGrpMeasured = grp.measurementStatus === "measured" && typeof grp.renderedCount === "number";
+                            const isFilteredMeasured = filteredGrp && filteredGrp.measurementStatus === "measured" && typeof filteredGrp.renderedCount === "number";
                             const hasDomCount =
                               rawSecRec &&
                               typeof rawSecRec.mountedDomRowCount === "number" &&
@@ -4234,7 +4766,9 @@ export function OperationsMatrixTab({ products }) {
                                   ? "Expanded"
                                   : "Collapsed";
 
-                            let rowNote = "1:1 canonical rows";
+                            let rowNote = grp.heading === TAB3_PARKED_DRAWER_HEADING
+                              ? "31 parked/excluded read-only registry slots"
+                              : "1:1 canonical working rows";
                             if (!isGrpMeasured) {
                               rowNote = "Not measured";
                             } else if (grp.logicalImageAltCount > 0) {
@@ -4254,6 +4788,9 @@ export function OperationsMatrixTab({ products }) {
                                 <td style={{ padding: "6px 10px", fontFamily: "monospace", color: "#475569" }}>{runningLogical}</td>
                                 <td style={{ padding: "6px 10px", fontFamily: "monospace", fontWeight: "600" }}>
                                   {isGrpMeasured ? grp.renderedCount : "Not measured"}
+                                </td>
+                                <td style={{ padding: "6px 10px", fontFamily: "monospace", fontWeight: "600" }}>
+                                  {isFilteredMeasured ? filteredGrp.renderedCount : "Not measured"}
                                 </td>
                                 <td style={{ padding: "6px 10px", color: "#475569" }}>
                                   {bayStateLabel}
@@ -4302,6 +4839,11 @@ export function OperationsMatrixTab({ products }) {
                                   ? templateAuditSummary.totalRenderedRows
                                   : `Not measured (${templateAuditSummary.measuredGroupCount}/${templateAuditSummary.totalGroupCount} groups reported)`}
                               </td>
+                              <td style={{ padding: "8px 10px", fontFamily: "monospace" }}>
+                                {filteredDescriptorAuditSummary.totalRenderedRows !== null
+                                  ? filteredDescriptorAuditSummary.totalRenderedRows
+                                  : `Not measured (${filteredDescriptorAuditSummary.measuredGroupCount}/${filteredDescriptorAuditSummary.totalGroupCount} groups reported)`}
+                              </td>
                               <td style={{ padding: "8px 10px" }}>
                                 {templateAuditSummary.measurementStatus === "complete" ? "Measured" : "Incomplete"}
                               </td>
@@ -4335,11 +4877,26 @@ export function OperationsMatrixTab({ products }) {
                     </Text>
                     {DEV_SHOW_ALL_TEMPLATE_FIELDS && (
                       <Text as="p" variant="bodyMd" alignment="center" tone="subdued">
-                        <strong>DEV Show-All Unselected Preview:</strong> All approved template groups and rows are rendered below in read-only preview mode (with the zero-image <code>native_image_alt</code> placeholder) so the complete UI template can be inspected before selecting a product.
+                        <strong>DEV Show-All Unselected Preview:</strong> All 11 Tab 3 inspectable drawers (93 logical slots = 62 working + 31 parked/excluded, starting collapsed) are available below in read-only preview mode so the complete UI inventory can be inspected before selecting a product.
                       </Text>
                     )}
                   </BlockStack>
                 </Box>
+
+                {DEV_SHOW_ALL_TEMPLATE_FIELDS && (
+                  <Card padding="400">
+                    <InlineStack align="space-between" blockAlign="center">
+                      <Text variant="headingLg" as="h3">Preview Filter Controls</Text>
+                      <Select
+                        label="Filter Fields"
+                        labelInline
+                        options={FILTER_OPTIONS}
+                        onChange={(val) => setActiveFilter(val)}
+                        value={activeFilter}
+                      />
+                    </InlineStack>
+                  </Card>
+                )}
 
                 {DEV_SHOW_ALL_TEMPLATE_FIELDS && dynamicSections.map(sec => (
                   <ManifestSectionCard
@@ -4348,7 +4905,8 @@ export function OperationsMatrixTab({ products }) {
                     selectedBenchId={null}
                     data={EMPTY_DEV_PREVIEW_MANIFEST}
                     approvals={{}}
-                    activeFilter="All"
+                    keepOriginal={{}}
+                    activeFilter={activeFilter}
                     expandedBays={expandedBays}
                     standardizedCandidatesByProduct={{}}
                     referenceMatchResultsByProduct={{}}
@@ -4364,6 +4922,7 @@ export function OperationsMatrixTab({ products }) {
                     onToggleVerifiedStandardizedEntry={noopPreviewCallback}
                     onRepairPlanChange={noopPreviewCallback}
                     onToggleApproval={noopPreviewCallback}
+                    onToggleKeepOriginal={noopPreviewCallback}
                     onSectionRenderedCountChange={handleSectionRenderedCountChange}
                   />
                 ))}
@@ -4423,11 +4982,9 @@ export function OperationsMatrixTab({ products }) {
                             value={activeFilter}
                         />
                     </InlineStack>
-                    {DEV_SHOW_ALL_TEMPLATE_FIELDS && activeFilter !== "All" && (
-                      <Text as="p" variant="bodySm" tone="caution">
-                        DEV: Show All Template Fields override is active — filter selection (<code>{activeFilter}</code>) is bypassed so no canonical template rows or sections are hidden during audit.
-                      </Text>
-                    )}
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      Filtering changes which rows are displayed in open drawers without clearing approvals, keep-original decisions, or save eligibility. Select <code>All</code> to inspect all 93 logical slots (62 working + 31 parked/excluded).
+                    </Text>
                   </BlockStack>
                 </Card>
 
@@ -4436,12 +4993,15 @@ export function OperationsMatrixTab({ products }) {
                   data={activeBenchData}
                   meta={nativeDescriptionMeta}
                   customDescMeta={customDescriptionMeta}
+                  keepOriginal={keepOriginalDecisions}
+                  activeFilter={activeFilter}
                   expandedBays={expandedBays}
                   matchesFilter={matchesFilter}
                   isMultilineKey={isMultilineKey}
                   onToggleBay={toggleBay}
                   onRepairPlanChange={handleRepairPlanChange}
                   onToggleApproval={handleToggleApproval}
+                  onToggleKeepOriginal={handleToggleKeepOriginal}
                 />
 
                 {dynamicSections.map(sec => (
@@ -4451,7 +5011,8 @@ export function OperationsMatrixTab({ products }) {
                     selectedBenchId={selectedBenchId}
                     data={activeBenchData}
                     approvals={approvals}
-                    activeFilter={DEV_SHOW_ALL_TEMPLATE_FIELDS ? "All" : activeFilter}
+                    keepOriginal={keepOriginalDecisions}
+                    activeFilter={activeFilter}
                     expandedBays={expandedBays}
                     standardizedCandidatesByProduct={standardizedCandidatesByProduct}
                     referenceMatchResultsByProduct={referenceMatchResultsByProduct}
@@ -4467,6 +5028,7 @@ export function OperationsMatrixTab({ products }) {
                     onToggleVerifiedStandardizedEntry={handleToggleVerifiedStandardizedEntry}
                     onRepairPlanChange={handleRepairPlanChange}
                     onToggleApproval={handleToggleApproval}
+                    onToggleKeepOriginal={handleToggleKeepOriginal}
                     onSectionRenderedCountChange={handleSectionRenderedCountChange}
                   />
                 ))}

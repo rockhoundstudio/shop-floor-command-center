@@ -249,6 +249,9 @@ export function BenchDiagnosticHeader({
                 <Text as="p" fontWeight="bold" color="attention">Unverified proposals: {stats.unverified}</Text>
                 <Text as="p" fontWeight="bold" tone="subdued">Manual exclusions: {stats.manualOnly}</Text>
                 <Text as="p" fontWeight="bold" tone="subdued">Unchanged w/ flags: {stats.unchangedFlagged}</Text>
+                {stats.keepOriginal !== undefined && (
+                  <Text as="p" fontWeight="bold" tone="subdued">Keep original (rejected): {stats.keepOriginal}</Text>
+                )}
                 <Text as="p" fontWeight="bold" color="success">Fields approved for write: {stats.approvedWrite}</Text>
               </BlockStack>
             </div>
@@ -304,35 +307,130 @@ export function DescriptionReviewSection({
   data,
   meta,
   customDescMeta,
+  keepOriginal = {},
+  activeFilter = "All",
   expandedBays,
   matchesFilter,
   isMultilineKey,
   onToggleBay,
   onRepairPlanChange,
-  onToggleApproval
+  onToggleApproval,
+  onToggleKeepOriginal
 }) {
   const [diagOpen, setDiagOpen] = useState(false);
 
   if (!data || !meta || !customDescMeta) return null;
 
   const key = "native_description";
+  const customKey = "custom.generated_description";
 
-  if (!matchesFilter(meta) && !matchesFilter(customDescMeta)) return null;
+  // Honor activeFilter / matchesFilter for both native_description and custom.generated_description
+  // while keeping All always visible so original and rejected suggestions can be inspected.
+  if (
+    activeFilter !== "All" &&
+    typeof matchesFilter === "function" &&
+    !matchesFilter(meta) &&
+    !matchesFilter(customDescMeta)
+  ) {
+    return null;
+  }
 
   const sectionTitle = "Description Review";
-  const isExpanded = expandedBays[sectionTitle] ?? false;
+  // Collapsed by default unless explicitly opened in expandedBays
+  const isExpanded = Boolean(expandedBays?.[sectionTitle]);
   const isBlank = meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing";
 
-  let statusTone = undefined;
-  if (meta.fieldStatus === "Optional blank") statusTone = "attention";
-  if (["Required missing", "Conflict", "Degrade", "Blocked", "API Error / Blocked", "Over limit", "Failed", "Unverified proposal", "Save Conflict"].includes(meta.fieldStatus)) statusTone = "critical";
-  if (meta.fieldStatus === "Manual only") statusTone = "info";
-  if (meta.fieldStatus === "Proposed" || meta.fieldStatus === "Approved, not saved" || meta.fieldStatus === "Pre-approved, not saved") statusTone = "success";
-  if (meta.fieldStatus === "Unchanged") statusTone = "new";
-  if (meta.fieldStatus === "Approved, blocked" || meta.fieldStatus === "Pre-approved, blocked") statusTone = "warning";
+  const getStatusBadgeTone = (fieldStatus) => {
+    if (fieldStatus === "Optional blank") return "attention";
+    if (
+      [
+        "Required missing",
+        "Conflict",
+        "Degrade",
+        "Blocked",
+        "API Error / Blocked",
+        "Over limit",
+        "Failed",
+        "Unverified proposal",
+        "Save Conflict"
+      ].includes(fieldStatus)
+    ) {
+      return "critical";
+    }
+    if (fieldStatus === "Manual only" || fieldStatus === "Keep original (suggestion rejected)") {
+      return "info";
+    }
+    if (
+      fieldStatus === "Proposed" ||
+      fieldStatus === "Approved, not saved" ||
+      fieldStatus === "Pre-approved, not saved"
+    ) {
+      return "success";
+    }
+    if (fieldStatus === "Unchanged") return "new";
+    if (fieldStatus === "Approved, blocked" || fieldStatus === "Pre-approved, blocked") {
+      return "warning";
+    }
+    return undefined;
+  };
 
-  const canApprove = meta.proposalExists && meta.currentVal !== meta.propVal && !meta.isManualOnly && !meta.isPendingReadOnly && !meta.isContentPreApproved && meta.fieldStatus !== "API Error / Blocked" && meta.fieldStatus !== "Save Conflict" && meta.isSupported;
-  const isPreApprovedDisplay = meta.isContentPreApproved && meta.proposalExists && meta.currentVal !== meta.propVal;
+  const statusTone = getStatusBadgeTone(meta.fieldStatus);
+  const customStatusTone = getStatusBadgeTone(customDescMeta.fieldStatus);
+
+  const isHeldReadOnly = Boolean(
+    meta.isPendingReadOnly ||
+    meta.hasContractOrOwnerHold ||
+    meta.hasExplicitStorageHold ||
+    meta.hasExplicitProducerHold ||
+    meta.isChannelFlagReadOnly ||
+    meta.isVariantMetafieldHold
+  );
+
+  const canApprove =
+    meta.proposalExists &&
+    meta.currentVal !== meta.propVal &&
+    !meta.isManualOnly &&
+    !isHeldReadOnly &&
+    !meta.isContentPreApproved &&
+    meta.fieldStatus !== "API Error / Blocked" &&
+    meta.fieldStatus !== "Save Conflict" &&
+    meta.isSupported;
+
+  const canKeepOriginal = Boolean(meta.canKeepOriginal);
+  const showNativeDecisionBox = canApprove || canKeepOriginal;
+
+  const isPreApprovedDisplay =
+    !meta.isKeepOriginalSelected &&
+    meta.isContentPreApproved &&
+    meta.proposalExists &&
+    meta.currentVal !== meta.propVal;
+
+  // Destination-isolated companion controls for custom.generated_description (compatibility metafield)
+  const isCustomHeldReadOnly = Boolean(
+    customDescMeta.isPendingReadOnly ||
+    customDescMeta.hasContractOrOwnerHold ||
+    customDescMeta.hasExplicitStorageHold ||
+    customDescMeta.hasExplicitProducerHold ||
+    customDescMeta.isChannelFlagReadOnly ||
+    customDescMeta.isVariantMetafieldHold
+  );
+
+  const canApproveCustom =
+    customDescMeta.proposalExists &&
+    customDescMeta.currentVal !== customDescMeta.propVal &&
+    !customDescMeta.isManualOnly &&
+    !isCustomHeldReadOnly &&
+    !customDescMeta.isContentPreApproved &&
+    customDescMeta.fieldStatus !== "API Error / Blocked" &&
+    customDescMeta.fieldStatus !== "Save Conflict" &&
+    customDescMeta.isSupported;
+
+  const canKeepOriginalCustom = Boolean(customDescMeta.canKeepOriginal);
+  const showCustomDecisionControls =
+    canApproveCustom ||
+    canKeepOriginalCustom ||
+    Boolean(customDescMeta.isApproved) ||
+    Boolean(customDescMeta.isKeepOriginalSelected);
 
   let boxBg = "#f8f9fa";
   let boxBorder = "#dee2e6";
@@ -342,9 +440,9 @@ export function DescriptionReviewSection({
   if (!meta.isSupported) {
       boxBg = "#f8f9fa"; boxBorder = "#dee2e6"; textColor = "#41464c";
       statusText = "Connection pending.";
-  } else if (meta.isPendingReadOnly) {
+  } else if (isHeldReadOnly) {
       boxBg = "#f8f9fa"; boxBorder = "#dee2e6"; textColor = "#41464c";
-      statusText = "Standardized attribute (pending_read_only). Read-only display; writes disabled.";
+      statusText = "Read-only display; writes disabled.";
   } else if (meta.reasons.includes("SEO description save connection pending.")) {
       boxBg = "#fff3cd"; boxBorder = "#ffecb5"; textColor = "#664d03";
       statusText = "SEO description save connection pending. Draft is staged but write is disabled.";
@@ -354,6 +452,9 @@ export function DescriptionReviewSection({
   } else if (meta.fieldStatus === "API Error / Blocked" || meta.fieldStatus === "Save Conflict") {
       boxBg = "#f8d7da"; boxBorder = "#f5c2c7"; textColor = "#842029";
       statusText = "Previous save attempt failed API validation or read-back. Review specific error.";
+  } else if (meta.isKeepOriginalSelected) {
+      boxBg = "#cff4fc"; boxBorder = "#9eeaf9"; textColor = "#055160";
+      statusText = "Original saved native_description retained. Suggestion is rejected as non-submitted review data and omitted from the save payload.";
   } else if (meta.isContentPreApproved && !meta.hasTechnicalBlock) {
       boxBg = "#d1e7dd"; boxBorder = "#badbcc"; textColor = "#0f5132";
       statusText = "Pre-approved, not saved.";
@@ -363,7 +464,7 @@ export function DescriptionReviewSection({
       statusText = `Pre-approved. Cannot save until field destination/type is verified or limits resolved. (${technicalBlockers})`;
   } else if (meta.isApproved && !meta.hasTechnicalBlock) {
       boxBg = "#d1e7dd"; boxBorder = "#badbcc"; textColor = "#0f5132";
-      statusText = "Approved and technically eligible.";
+      statusText = "Approved for native_description and technically eligible. Not yet saved to Shopify.";
   } else if (meta.isApproved && meta.hasTechnicalBlock) {
       boxBg = "#fff3cd"; boxBorder = "#ffecb5"; textColor = "#664d03";
       statusText = "Suggestion approved. Cannot save until field destination/type is verified or limits resolved.";
@@ -372,14 +473,25 @@ export function DescriptionReviewSection({
       statusText = "Blocked by technical error. Review needed.";
   } else if (!meta.isApproved && meta.contentNeedsReview) {
       boxBg = "#fff3cd"; boxBorder = "#ffecb5"; textColor = "#664d03";
-      statusText = "Review needed to verify content explicitly before write can occur.";
+      statusText = "Review needed: approve description proposal to write to native_description, or select 'Use original saved value' to keep the current stored baseline.";
   } else if (!meta.isApproved && meta.fieldStatus === "Proposed") {
       boxBg = "#e2e3e5"; boxBorder = "#d3d6d8"; textColor = "#41464c";
-      statusText = "Safe suggestion. Approval optional but recorded if checked.";
+      statusText = "Safe suggestion. Approval optional, or select 'Use original saved value' to reject suggestion.";
   }
 
   const displayCurrentVal = formatDisplayFieldValue(meta.currentVal, meta.isStandardizedAttribute, data);
   const displayPropVal = formatDisplayFieldValue(meta.propVal, meta.isStandardizedAttribute, data);
+
+  const buildBaselineOriginalSummary = (targetMeta) => {
+    const bd = targetMeta?.baselineDescriptor;
+    if (!bd || !bd.evidenceAvailable) return "Unavailable";
+    if (!bd.propertyPresent) return "Absent / Blank in Shopify (no write will be sent)";
+    if (bd.rawValue === "") return 'Empty string "" (retained without write)';
+    return `${targetMeta.currentVal.length} chars stored (retained without write)`;
+  };
+
+  const nativeBaselineSummaryLabel = buildBaselineOriginalSummary(meta);
+  const customBaselineSummaryLabel = buildBaselineOriginalSummary(customDescMeta);
 
   return (
     <Card padding="0" key={sectionTitle}>
@@ -387,8 +499,9 @@ export function DescriptionReviewSection({
           onClick={() => onToggleBay(sectionTitle)} 
           style={{ padding: "16px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center", backgroundColor: "#f9fafb", borderBottom: isExpanded ? "1px solid #e1e3e5" : "none", minWidth: 0, boxSizing: "border-box" }}
       >
-        <div style={{ minWidth: 0 }}>
+        <div style={{ minWidth: 0, display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
           <Text as="h3" variant="headingLg" fontWeight="bold">{sectionTitle}</Text>
+          <Badge tone={statusTone}>{meta.fieldStatus}</Badge>
         </div>
         <Button variant="plain" icon={isExpanded ? ChevronUpIcon : ChevronDownIcon} />
       </div>
@@ -411,10 +524,17 @@ export function DescriptionReviewSection({
                   <div style={{ marginTop: "12px", display: "flex", flexDirection: "column", gap: "6px", wordBreak: "break-word", overflowWrap: "anywhere" }}>
                       {meta.isSupported ? (
                         <>
-                          <Text as="p" variant="bodyMd" fontWeight="bold">Status: <Badge tone={statusTone}>{meta.fieldStatus}</Badge></Text>
+                          <Text as="p" variant="bodyMd" fontWeight="bold">Native Status: <Badge tone={statusTone}>{meta.fieldStatus}</Badge></Text>
                           <Text as="p" variant="bodyMd" fontWeight="bold">Source: <Text as="span" fontWeight="regular">{meta.source}</Text></Text>
                           <Text as="p" variant="bodyMd" fontWeight="bold">Stage: <Text as="span" fontWeight="regular">{meta.stage}</Text></Text>
-                          <Text as="p" variant="bodySm" tone="subdued">Metafield Status: {customDescMeta.fieldStatus} ({customDescMeta.currentVal.length} chars)</Text>
+                          <Text as="p" variant="bodySm" tone="subdued">
+                            Metafield Status (<code>custom.generated_description</code>): <Badge tone={customStatusTone}>{customDescMeta.fieldStatus}</Badge> ({customDescMeta.currentVal.length} chars)
+                          </Text>
+                          {Array.isArray(meta.reasons) && meta.reasons.length > 0 && (
+                            <Text as="p" variant="bodySm" tone="subdued">
+                              <strong>Reason:</strong> {meta.reasons.join(" | ")}
+                            </Text>
+                          )}
                         </>
                       ) : (
                         <Text as="p" variant="bodyMd" fontWeight="bold">Status: <Badge tone="info">Connection pending.</Badge></Text>
@@ -436,12 +556,12 @@ export function DescriptionReviewSection({
                       <Text as="p" variant="headingSm" tone="subdued" fontWeight="bold" style={{ marginBottom: "6px" }}>Bench Proposal Value</Text>
                       <TextField
                           value={meta.isSupported ? displayPropVal : "Connection pending."}
-                          onChange={(val) => { if (meta.isSupported && !meta.isPendingReadOnly) onRepairPlanChange(key, val) }}
+                          onChange={(val) => { if (meta.isSupported && !isHeldReadOnly && !meta.isManualOnly) onRepairPlanChange(key, val); }}
                           autoComplete="off"
                           multiline={isMultilineKey("custom.generated_description", meta.control) ? 6 : 3}
                           placeholder={meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing" ? "Blank" : (meta.fieldStatus === "Proposal not provided" ? "Not provided" : "")}
-                          disabled={!meta.isSupported || meta.isPendingReadOnly}
-                          readOnly={!meta.isSupported || meta.isPendingReadOnly}
+                          disabled={!meta.isSupported || isHeldReadOnly || meta.isManualOnly}
+                          readOnly={!meta.isSupported || isHeldReadOnly || meta.isManualOnly}
                       />
                   </div>
 
@@ -449,41 +569,126 @@ export function DescriptionReviewSection({
                       <div style={{ marginTop: "12px", backgroundColor: "#f8d7da", border: "1px solid #f5c2c7", borderRadius: "8px", padding: "12px", minWidth: 0, boxSizing: "border-box" }}>
                           <Text as="p" variant="headingSm" tone="critical" fontWeight="bold" style={{ marginBottom: "6px" }}>Read-Back Mismatch: Native product descriptionHtml</Text>
                           <div style={{ display: "flex", flexDirection: "column", gap: "4px", minWidth: 0, wordBreak: "break-word", overflowWrap: "anywhere", fontSize: "13px", color: "#842029" }}>
-                              <div><strong>Status:</strong> {meta.fieldStatus} | <strong>Approved:</strong> {meta.isApproved ? "Yes" : "No"}</div>
+                              <div><strong>Status:</strong> {meta.fieldStatus} | <strong>Approved:</strong> {meta.isApproved ? "Yes" : "No"} | <strong>Keep Original:</strong> {meta.isKeepOriginalSelected ? "Yes" : "No"}</div>
                               <div><strong>Expected Length:</strong> {String(meta.nativeDescConflictData.expected || "").length} chars | <strong>Actual Read-Back Length:</strong> {String(meta.nativeDescConflictData.actual || "").length} chars</div>
                           </div>
                       </div>
                   )}
 
-                  {meta.conflictData && (
-                      <div style={{ marginTop: "12px", backgroundColor: "#f8d7da", border: "1px solid #f5c2c7", borderRadius: "8px", padding: "12px", minWidth: 0, boxSizing: "border-box" }}>
-                          <Text as="p" variant="headingSm" tone="critical" fontWeight="bold" style={{ marginBottom: "6px" }}>Read-Back Mismatch: custom.generated_description Metafield</Text>
-                          <div style={{ display: "flex", flexDirection: "column", gap: "4px", minWidth: 0, wordBreak: "break-word", overflowWrap: "anywhere", fontSize: "13px", color: "#842029" }}>
-                              <div><strong>Status:</strong> {customDescMeta.fieldStatus} | <strong>Approved:</strong> {meta.isApproved ? "Yes" : "No"}</div>
-                              <div><strong>Expected Length:</strong> {String(meta.conflictData.expected || "").length} chars | <strong>Actual Read-Back Length:</strong> {String(meta.conflictData.actual || "").length} chars</div>
+                  {(meta.conflictData || customDescMeta.conflictData) && (() => {
+                      const customConflictObj = customDescMeta.conflictData || meta.conflictData;
+                      return (
+                        <div style={{ marginTop: "12px", backgroundColor: "#f8d7da", border: "1px solid #f5c2c7", borderRadius: "8px", padding: "12px", minWidth: 0, boxSizing: "border-box" }}>
+                            <Text as="p" variant="headingSm" tone="critical" fontWeight="bold" style={{ marginBottom: "6px" }}>Read-Back Mismatch: custom.generated_description Metafield</Text>
+                            <div style={{ display: "flex", flexDirection: "column", gap: "4px", minWidth: 0, wordBreak: "break-word", overflowWrap: "anywhere", fontSize: "13px", color: "#842029" }}>
+                                <div><strong>Status:</strong> {customDescMeta.fieldStatus} | <strong>Approved:</strong> {customDescMeta.isApproved ? "Yes" : "No"} | <strong>Keep Original:</strong> {customDescMeta.isKeepOriginalSelected ? "Yes" : "No"}</div>
+                                <div><strong>Expected Length:</strong> {String(customConflictObj.expected || "").length} chars | <strong>Actual Read-Back Length:</strong> {String(customConflictObj.actual || "").length} chars</div>
+                            </div>
+                        </div>
+                      );
+                  })()}
+
+                  {showNativeDecisionBox && (
+                      <div style={{ marginTop: "12px", backgroundColor: boxBg, border: `1px solid ${boxBorder}`, borderRadius: "8px", padding: "12px", minWidth: 0, boxSizing: "border-box" }}>
+                          <div style={{ display: "flex", flexDirection: "column", gap: "10px", minWidth: 0, boxSizing: "border-box" }}>
+                              {canApprove && (
+                                  <div style={{ display: "flex", alignItems: "flex-start", gap: "12px", minWidth: 0, boxSizing: "border-box" }}>
+                                      <input
+                                          type="checkbox"
+                                          id="approve-native_description"
+                                          checked={Boolean(meta.isApproved)}
+                                          disabled={!canApprove || isHeldReadOnly || meta.isManualOnly}
+                                          onChange={(e) => {
+                                            if (!canApprove || isHeldReadOnly || meta.isManualOnly || !meta.isSupported) return;
+                                            onToggleApproval(selectedBenchId, key, meta.propVal, e.target.checked);
+                                          }}
+                                          style={{ width: "24px", height: "24px", flexShrink: 0, cursor: "pointer", accentColor: textColor, marginTop: "2px" }}
+                                          aria-label={`Approve description proposal for native_description (${meta.propVal.length} characters)`}
+                                      />
+                                      <label htmlFor="approve-native_description" style={{ fontWeight: "bold", fontSize: "16px", cursor: "pointer", color: textColor, display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px", flex: 1, minWidth: 0, wordBreak: "break-word", overflowWrap: "anywhere" }}>
+                                          Approve description proposal (<code>native_description</code>) <span style={{ fontWeight: "normal" }}>(Status: {meta.fieldStatus} | Approval: {meta.isApproved ? "Approved" : "Pending"} | Current: {meta.currentVal.length} chars → Proposed: {meta.propVal.length} chars)</span>
+                                      </label>
+                                  </div>
+                              )}
+
+                              {canKeepOriginal && (
+                                  <div style={{ display: "flex", alignItems: "flex-start", gap: "12px", minWidth: 0, boxSizing: "border-box", borderTop: canApprove ? `1px dashed ${boxBorder}` : "none", paddingTop: canApprove ? "10px" : "0" }}>
+                                      <input
+                                          type="checkbox"
+                                          id="keep-original-native_description"
+                                          checked={Boolean(meta.isKeepOriginalSelected)}
+                                          disabled={!canKeepOriginal || isHeldReadOnly || meta.isManualOnly || typeof onToggleKeepOriginal !== "function"}
+                                          onChange={(e) => {
+                                            if (!canKeepOriginal || isHeldReadOnly || meta.isManualOnly || !meta.isSupported) return;
+                                            if (typeof onToggleKeepOriginal === "function") {
+                                              onToggleKeepOriginal(selectedBenchId, key, meta.propVal, e.target.checked);
+                                            }
+                                          }}
+                                          style={{ width: "24px", height: "24px", flexShrink: 0, cursor: "pointer", accentColor: "#055160", marginTop: "2px" }}
+                                          aria-label="Use original saved value for native_description and reject description proposal"
+                                      />
+                                      <label htmlFor="keep-original-native_description" style={{ fontWeight: "bold", fontSize: "16px", cursor: "pointer", color: textColor, display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px", flex: 1, minWidth: 0, wordBreak: "break-word", overflowWrap: "anywhere" }}>
+                                          Use original saved value (<code>native_description</code>): <span style={{ fontWeight: "normal" }}>{nativeBaselineSummaryLabel} (reject suggestion &amp; omit from save)</span>
+                                      </label>
+                                  </div>
+                              )}
+                          </div>
+                          <div style={{ marginTop: "8px", marginLeft: "36px", minWidth: 0, wordBreak: "break-word", overflowWrap: "anywhere" }}>
+                              <Text as="p" tone={(!meta.isKeepOriginalSelected && ((!meta.isApproved && meta.hasTechnicalBlock) || (meta.isApproved && meta.hasTechnicalBlock))) ? "critical" : "subdued"} fontWeight="medium" style={{ color: textColor }}>
+                                  {statusText}
+                              </Text>
                           </div>
                       </div>
                   )}
 
-                  {canApprove && (
-                      <div style={{ marginTop: "12px", backgroundColor: boxBg, border: `1px solid ${boxBorder}`, borderRadius: "8px", padding: "12px", minWidth: 0, boxSizing: "border-box" }}>
-                          <div style={{ display: "flex", alignItems: "flex-start", gap: "12px", minWidth: 0, boxSizing: "border-box" }}>
-                              <input
-                                  type="checkbox"
-                                  id="approve-custom.generated_description"
-                                  checked={meta.isApproved || false}
-                                  onChange={(e) => onToggleApproval(selectedBenchId, key, meta.propVal, e.target.checked)}
-                                  style={{ width: "24px", height: "24px", flexShrink: 0, cursor: "pointer", accentColor: textColor, marginTop: "2px" }}
-                                  aria-label={`Approve description proposal (${meta.propVal.length} characters)`}
-                              />
-                              <label htmlFor="approve-custom.generated_description" style={{ fontWeight: "bold", fontSize: "16px", cursor: "pointer", color: textColor, display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px", flex: 1, minWidth: 0, wordBreak: "break-word", overflowWrap: "anywhere" }}>
-                                  Approve description proposal <span style={{ fontWeight: "normal" }}>(Status: {meta.fieldStatus} | Approval: {meta.isApproved ? "Approved" : "Pending"} | Current: {meta.currentVal.length} chars → Proposed: {meta.propVal.length} chars)</span>
-                              </label>
-                          </div>
-                          <div style={{ marginTop: "8px", marginLeft: "36px", minWidth: 0, wordBreak: "break-word", overflowWrap: "anywhere" }}>
-                              <Text as="p" tone={(!meta.isApproved && meta.hasTechnicalBlock) || (meta.isApproved && meta.hasTechnicalBlock) ? "critical" : "subdued"} fontWeight="medium" style={{ color: textColor }}>
-                                  {statusText}
-                              </Text>
+                  {/* Destination-Isolated Companion Decision Block for custom.generated_description */}
+                  {showCustomDecisionControls && (
+                      <div style={{ marginTop: "8px", backgroundColor: "#f8f9fa", border: "1px solid #dee2e6", borderRadius: "8px", padding: "12px", minWidth: 0, boxSizing: "border-box" }}>
+                          <Text as="p" variant="bodySm" fontWeight="bold" style={{ marginBottom: "8px", color: "#334155" }}>
+                            Companion Metafield Decision (<code>custom.generated_description</code> — Isolated Destination | Status: {customDescMeta.fieldStatus} | Current: {customDescMeta.currentVal.length} chars)
+                          </Text>
+                          <div style={{ display: "flex", flexDirection: "column", gap: "8px", minWidth: 0, boxSizing: "border-box" }}>
+                              {canApproveCustom && (
+                                  <div style={{ display: "flex", alignItems: "flex-start", gap: "10px", minWidth: 0, boxSizing: "border-box" }}>
+                                      <input
+                                          type="checkbox"
+                                          id="approve-custom.generated_description"
+                                          checked={Boolean(customDescMeta.isApproved)}
+                                          disabled={!canApproveCustom || isCustomHeldReadOnly || customDescMeta.isManualOnly}
+                                          onChange={(e) => {
+                                            if (!canApproveCustom || isCustomHeldReadOnly || customDescMeta.isManualOnly || !customDescMeta.isSupported) return;
+                                            onToggleApproval(selectedBenchId, customKey, customDescMeta.propVal, e.target.checked);
+                                          }}
+                                          style={{ width: "20px", height: "20px", flexShrink: 0, cursor: "pointer", marginTop: "2px" }}
+                                          aria-label={`Approve description proposal for custom.generated_description (${customDescMeta.propVal.length} characters)`}
+                                      />
+                                      <label htmlFor="approve-custom.generated_description" style={{ fontWeight: "bold", fontSize: "14px", cursor: "pointer", color: "#1e293b", flex: 1, minWidth: 0, wordBreak: "break-word", overflowWrap: "anywhere" }}>
+                                          Approve for <code>custom.generated_description</code> metafield <span style={{ fontWeight: "normal" }}>(Approval: {customDescMeta.isApproved ? "Approved" : "Pending"} | Current: {customDescMeta.currentVal.length} chars → Proposed: {customDescMeta.propVal.length} chars)</span>
+                                      </label>
+                                  </div>
+                              )}
+
+                              {canKeepOriginalCustom && (
+                                  <div style={{ display: "flex", alignItems: "flex-start", gap: "10px", minWidth: 0, boxSizing: "border-box", borderTop: canApproveCustom ? "1px dashed #cbd5e1" : "none", paddingTop: canApproveCustom ? "8px" : "0" }}>
+                                      <input
+                                          type="checkbox"
+                                          id="keep-original-custom.generated_description"
+                                          checked={Boolean(customDescMeta.isKeepOriginalSelected)}
+                                          disabled={!canKeepOriginalCustom || isCustomHeldReadOnly || customDescMeta.isManualOnly || typeof onToggleKeepOriginal !== "function"}
+                                          onChange={(e) => {
+                                            if (!canKeepOriginalCustom || isCustomHeldReadOnly || customDescMeta.isManualOnly || !customDescMeta.isSupported) return;
+                                            if (typeof onToggleKeepOriginal === "function") {
+                                              onToggleKeepOriginal(selectedBenchId, customKey, customDescMeta.propVal, e.target.checked);
+                                            }
+                                          }}
+                                          style={{ width: "20px", height: "20px", flexShrink: 0, cursor: "pointer", accentColor: "#055160", marginTop: "2px" }}
+                                          aria-label="Use original saved value for custom.generated_description and reject suggestion"
+                                      />
+                                      <label htmlFor="keep-original-custom.generated_description" style={{ fontWeight: "bold", fontSize: "14px", cursor: "pointer", color: "#1e293b", flex: 1, minWidth: 0, wordBreak: "break-word", overflowWrap: "anywhere" }}>
+                                          Use original saved value (<code>custom.generated_description</code>): <span style={{ fontWeight: "normal" }}>{customBaselineSummaryLabel} (reject suggestion &amp; omit from save)</span>
+                                      </label>
+                                  </div>
+                              )}
                           </div>
                       </div>
                   )}
@@ -503,7 +708,23 @@ export function DescriptionReviewSection({
 
                   {/* APPROVAL DIAGNOSTIC BLOCK (Behind Keyboard-Accessible Disclosure, Closed by Default) */}
                   {(() => {
-                      const blockReason = !meta.proposalExists ? "No proposal" : (meta.currentVal === meta.propVal) ? "Values match" : meta.isManualOnly ? "Manual only" : meta.isContentPreApproved ? "Pre-approved" : (meta.fieldStatus === "API Error / Blocked") ? "API Blocked" : (meta.fieldStatus === "Save Conflict") ? "Save Conflict" : "None";
+                      const blockReason = !meta.proposalExists
+                        ? "No proposal"
+                        : (meta.currentVal === meta.propVal)
+                          ? "Values match"
+                          : meta.isManualOnly
+                            ? "Manual only"
+                            : isHeldReadOnly
+                              ? "Held read-only"
+                              : meta.isKeepOriginalSelected
+                                ? "Keep original selected"
+                                : meta.isContentPreApproved
+                                  ? "Pre-approved"
+                                  : (meta.fieldStatus === "API Error / Blocked")
+                                    ? "API Blocked"
+                                    : (meta.fieldStatus === "Save Conflict")
+                                      ? "Save Conflict"
+                                      : "None";
                       return (
                           <div style={{ marginTop: "8px" }}>
                               <Button
@@ -517,13 +738,14 @@ export function DescriptionReviewSection({
                               {diagOpen && (
                                   <div style={{ marginTop: "8px", backgroundColor: "#000", border: "2px solid #0f0", borderRadius: "4px", padding: "10px", color: "#0f0", fontFamily: "monospace", fontSize: "11px", wordBreak: "break-all", userSelect: "all" }}>
                                       <strong style={{fontSize:"13px", color:"#fff"}}>APPROVAL DIAGNOSTIC</strong><br/>
-                                      Key: custom.generated_description (Native Baseline: native_description) | ID: {selectedBenchId}<br/>
+                                      Key: native_description (Companion Metafield: custom.generated_description) | ID: {selectedBenchId}<br/>
                                       fieldStatus: {meta.fieldStatus} | metafieldStatus: {customDescMeta.fieldStatus}<br/>
                                       proposalExists: {String(meta.proposalExists)} | isDiff: {String(meta.currentVal !== meta.propVal)}<br/>
-                                      isManualOnly: {String(meta.isManualOnly)} | isContentPreApproved: {String(meta.isContentPreApproved)} | isApproved: {String(meta.isApproved)}<br/>
+                                      isManualOnly: {String(meta.isManualOnly)} | isContentPreApproved: {String(meta.isContentPreApproved)} | nativeApproved: {String(Boolean(meta.isApproved))} | nativeKeepOriginal: {String(Boolean(meta.isKeepOriginalSelected))}<br/>
+                                      customApproved: {String(Boolean(customDescMeta.isApproved))} | customKeepOriginal: {String(Boolean(customDescMeta.isKeepOriginalSelected))}<br/>
                                       hasTechnicalBlock: {String(meta.hasTechnicalBlock)} | apiBlockReason: {String(meta.reasons.some(r => r.includes("Backend Blocked")))}<br/>
                                       conflictData: {String(!!meta.conflictData)} | nativeDescConflictData: {String(!!meta.nativeDescConflictData)}<br/>
-                                      canApprove: {String(canApprove)} | Blocker: {blockReason}<br/>
+                                      canApprove: {String(canApprove)} | canKeepOriginal: {String(canKeepOriginal)} | Blocker: {blockReason}<br/>
                                       Chars: NativeCurrent({meta.currentVal.length}) / MetafieldCurrent({customDescMeta.currentVal.length}) / Proposed({meta.propVal.length})
                                   </div>
                               )}

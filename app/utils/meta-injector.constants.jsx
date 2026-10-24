@@ -500,8 +500,11 @@ const STANDARDIZED_CAPABILITY_NOTES = {
   "product-use": "Specific product use (distinct from product-classification)."
 };
 
+export const TAB3_PARKED_DRAWER_HEADING = "Parked / Excluded Inventory (Read-Only)";
+
 // 🟢 MASTER FIELD CATALOG
-// Single source of truth driving Target Keys, Rockhound Fields, UI Groups, Metafield Configs, and the 62-Capability Projection.
+// Single source of truth driving Target Keys, Rockhound Fields, UI Groups, Metafield Configs,
+// the 62-Capability Projection, and the 93-Slot Tab 3 Inspectable Inventory.
 export const FIELD_CATALOG = [
   // 🟢 CORE IGNITION & LORE
   {
@@ -1983,7 +1986,195 @@ export const FIELD_CATALOG = [
       ...(STANDARDIZED_CAPABILITY_NOTES[k] ? { capabilityNote: STANDARDIZED_CAPABILITY_NOTES[k] } : {}),
       metaConfig: { type: "list.metaobject_reference", namespace: "shopify" }
     };
-  })
+  }),
+
+  // ⚪ RECONCILED PARKED / EXCLUDED REGISTRY ENTRIES (14 Additional EXCLUDED_INPUT Rows for Complete 31-Entry Tab 3 Inventory)
+  {
+    key: "artist_notes",
+    metaKey: "artist_notes",
+    label: "Artist Notes (Parked)",
+    role: "parked_excluded",
+    namespace: "custom",
+    owner: "metafield",
+    registryOwner: "PRODUCT",
+    registryIdentity: "custom.artist_notes",
+    registryRole: "EXCLUDED_INPUT",
+    applicability: "parked_excluded",
+    mappingStatus: "excluded",
+    control: "multiline"
+  },
+  {
+    key: "bench_notes",
+    metaKey: "bench_notes",
+    label: "Bench Notes (Parked)",
+    role: "parked_excluded",
+    namespace: "custom",
+    owner: "metafield",
+    registryOwner: "PRODUCT",
+    registryIdentity: "custom.bench_notes",
+    registryRole: "EXCLUDED_INPUT",
+    applicability: "parked_excluded",
+    mappingStatus: "excluded",
+    control: "multiline"
+  },
+  {
+    key: "handcrafted_by",
+    metaKey: "handcrafted_by",
+    label: "Handcrafted By (Parked)",
+    role: "parked_excluded",
+    namespace: "custom",
+    owner: "metafield",
+    registryOwner: "PRODUCT",
+    registryIdentity: "custom.handcrafted_by",
+    registryRole: "EXCLUDED_INPUT",
+    applicability: "parked_excluded",
+    mappingStatus: "excluded"
+  },
+  {
+    key: "story_theme",
+    metaKey: "story_theme",
+    label: "Story Theme (Parked)",
+    role: "parked_excluded",
+    namespace: "custom",
+    owner: "metafield",
+    registryOwner: "PRODUCT",
+    registryIdentity: "custom.story_theme",
+    registryRole: "EXCLUDED_INPUT",
+    applicability: "parked_excluded",
+    mappingStatus: "excluded"
+  },
+  {
+    key: "app--3026047.conversation_starters",
+    metaKey: "conversation_starters",
+    label: "Conversation Starters (Parked App Metafield)",
+    role: "parked_excluded",
+    namespace: "app--3026047",
+    owner: "metafield",
+    registryOwner: "PRODUCT",
+    registryIdentity: "app--3026047.conversation_starters",
+    registryRole: "EXCLUDED_INPUT",
+    applicability: "parked_excluded",
+    mappingStatus: "excluded"
+  },
+  {
+    key: "global.harmonized_system_code",
+    metaKey: "harmonized_system_code",
+    label: "Harmonized System Code (Parked Variant Customs Code)",
+    role: "parked_excluded",
+    namespace: "global",
+    owner: "variant_metafield",
+    registryOwner: "PRODUCTVARIANT",
+    registryIdentity: "global.harmonized_system_code",
+    registryRole: "EXCLUDED_INPUT",
+    applicability: "parked_excluded",
+    mappingStatus: "excluded",
+    capabilityNote: "Parked customs code (customsCodePolicy: parked_no_deletion). Variant-owned (PRODUCTVARIANT); read-only."
+  },
+  {
+    key: "mm-google-shopping.mpn",
+    metaKey: "mpn",
+    label: "Google Shopping MPN (Excluded Variant Field)",
+    role: "parked_excluded",
+    namespace: "mm-google-shopping",
+    owner: "variant_metafield",
+    registryOwner: "PRODUCTVARIANT",
+    registryIdentity: "mm-google-shopping.mpn",
+    registryRole: "EXCLUDED_INPUT",
+    applicability: "parked_excluded",
+    mappingStatus: "excluded",
+    capabilityNote: "Excluded for all products (mpnPolicy: excluded_for_all_products). Variant-owned (PRODUCTVARIANT); read-only."
+  },
+  {
+    key: "mm-google-shopping.custom_label_0",
+    metaKey: "custom_label_0",
+    label: "Google Shopping Custom Label 0 (Parked Variant Field)",
+    role: "parked_excluded",
+    namespace: "mm-google-shopping",
+    owner: "variant_metafield",
+    registryOwner: "PRODUCTVARIANT",
+    registryIdentity: "mm-google-shopping.custom_label_0",
+    registryRole: "EXCLUDED_INPUT",
+    applicability: "parked_excluded",
+    mappingStatus: "excluded"
+  },
+  {
+    key: "mm-google-shopping.custom_label_1",
+    metaKey: "custom_label_1",
+    label: "Google Shopping Custom Label 1 (Parked Variant Field)",
+    role: "parked_excluded",
+    namespace: "mm-google-shopping",
+    owner: "variant_metafield",
+    registryOwner: "PRODUCTVARIANT",
+    registryIdentity: "mm-google-shopping.custom_label_1",
+    registryRole: "EXCLUDED_INPUT",
+    applicability: "parked_excluded",
+    mappingStatus: "excluded"
+  },
+  {
+    key: "mm-google-shopping.custom_label_2",
+    metaKey: "custom_label_2",
+    label: "Google Shopping Custom Label 2 (Parked Variant Field)",
+    role: "parked_excluded",
+    namespace: "mm-google-shopping",
+    owner: "variant_metafield",
+    registryOwner: "PRODUCTVARIANT",
+    registryIdentity: "mm-google-shopping.custom_label_2",
+    registryRole: "EXCLUDED_INPUT",
+    applicability: "parked_excluded",
+    mappingStatus: "excluded"
+  },
+  {
+    key: "mm-google-shopping.custom_label_3",
+    metaKey: "custom_label_3",
+    label: "Google Shopping Custom Label 3 (Parked Variant Field)",
+    role: "parked_excluded",
+    namespace: "mm-google-shopping",
+    owner: "variant_metafield",
+    registryOwner: "PRODUCTVARIANT",
+    registryIdentity: "mm-google-shopping.custom_label_3",
+    registryRole: "EXCLUDED_INPUT",
+    applicability: "parked_excluded",
+    mappingStatus: "excluded"
+  },
+  {
+    key: "mm-google-shopping.custom_label_4",
+    metaKey: "custom_label_4",
+    label: "Google Shopping Custom Label 4 (Parked Variant Field)",
+    role: "parked_excluded",
+    namespace: "mm-google-shopping",
+    owner: "variant_metafield",
+    registryOwner: "PRODUCTVARIANT",
+    registryIdentity: "mm-google-shopping.custom_label_4",
+    registryRole: "EXCLUDED_INPUT",
+    applicability: "parked_excluded",
+    mappingStatus: "excluded"
+  },
+  {
+    key: "mm-google-shopping.size_system",
+    metaKey: "size_system",
+    label: "Google Shopping Size System (Parked Variant Field)",
+    role: "parked_excluded",
+    namespace: "mm-google-shopping",
+    owner: "variant_metafield",
+    registryOwner: "PRODUCTVARIANT",
+    registryIdentity: "mm-google-shopping.size_system",
+    registryRole: "EXCLUDED_INPUT",
+    applicability: "parked_excluded",
+    mappingStatus: "excluded"
+  },
+  {
+    key: "mm-google-shopping.size_type",
+    metaKey: "size_type",
+    label: "Google Shopping Size Type (Parked Variant Field)",
+    role: "parked_excluded",
+    namespace: "mm-google-shopping",
+    owner: "variant_metafield",
+    registryOwner: "PRODUCTVARIANT",
+    registryIdentity: "mm-google-shopping.size_type",
+    registryRole: "EXCLUDED_INPUT",
+    applicability: "parked_excluded",
+    mappingStatus: "excluded"
+  }
 ];
 
 // ==========================================================================
@@ -2084,47 +2275,117 @@ const TEMPLATE_GROUP_DEFINITIONS = [
   { heading: "Native and Staging Roles", color: "#37474F" }
 ];
 
+function projectCatalogFieldForTemplateGroup(f) {
+  const isVariantOwned =
+    f.owner === "variant_metafield" ||
+    (f.registryOwner === "PRODUCTVARIANT" && f.owner !== "native" && f.namespace !== "native");
+  const resolvedNamespace =
+    f.namespace ||
+    (typeof f.registryIdentity === "string" && f.registryIdentity.includes(".")
+      ? f.registryIdentity.split(".")[0]
+      : "custom");
+  const resolvedMetaKey =
+    f.metaKey ||
+    (typeof f.registryIdentity === "string" && f.registryIdentity.includes(".")
+      ? f.registryIdentity.split(".").slice(1).join(".")
+      : f.key);
+  const resolvedOwner =
+    f.owner || (isVariantOwned ? "variant_metafield" : "metafield");
+  const resolvedType =
+    resolvedOwner === "native" || resolvedNamespace === "native"
+      ? (f.type || "native")
+      : (f.metaConfig?.type || f.type || "single_line_text_field");
+
+  return {
+    key: f.key,
+    label: f.label,
+    namespace: resolvedNamespace,
+    owner: resolvedOwner,
+    role: f.role || "custom_fact",
+    applicability: f.applicability || "all",
+    mappingStatus: f.mappingStatus || "active",
+    metaKey: resolvedMetaKey,
+    type: resolvedType,
+    registryOwner: f.registryOwner || "PRODUCT",
+    registryIdentity: f.registryIdentity || `${resolvedNamespace}.${resolvedMetaKey}`,
+    registryRole: f.registryRole || "PRIMARY_CANDIDATE_DESTINATION",
+    ...(f.capabilityNumber !== undefined ? { capabilityNumber: f.capabilityNumber } : {}),
+    ...(f.unit !== undefined ? { unit: f.unit } : {}),
+    ...(f.storageVerified !== undefined ? { storageVerified: f.storageVerified } : {}),
+    ...(f.writerVerified !== undefined ? { writerVerified: f.writerVerified } : {}),
+    ...(f.producerAlignmentPending !== undefined ? { producerAlignmentPending: f.producerAlignmentPending } : {}),
+    ...(f.capabilityNote ? { capabilityNote: f.capabilityNote } : {}),
+    ...(f.expandsToMediaControls ? { expandsToMediaControls: true } : {}),
+    ...(f.control ? { control: f.control } : {}),
+    ...(f.optionsKey ? { optionsKey: f.optionsKey } : {}),
+    ...(f.canonicalTarget ? { canonicalTarget: f.canonicalTarget } : {})
+  };
+}
+
 // Normal template projection built strictly from the 62 canonical capabilities (57 core + 5 measurement additions),
 // excluding compatibility adapters, source-context, staging, protected, and retired copies.
 export const PRODUCT_TEMPLATE_GROUPS = TEMPLATE_GROUP_DEFINITIONS.map(groupDef => {
   const groupFields = FIELD_CATALOG
     .filter(f => f.templateGroup === groupDef.heading && isCanonicalCapabilityField(f))
-    .map(f => {
-      const resolvedType =
-        f.owner === "native" || f.namespace === "native"
-          ? (f.type || "native")
-          : (f.metaConfig?.type || f.type || "single_line_text_field");
-
-      return {
-        key: f.key,
-        label: f.label,
-        namespace: f.namespace || "custom",
-        owner: f.owner || "metafield",
-        role: f.role || "custom_fact",
-        applicability: f.applicability || "all",
-        mappingStatus: f.mappingStatus || "active",
-        metaKey: f.metaKey || f.key,
-        type: resolvedType,
-        registryOwner: f.registryOwner || "PRODUCT",
-        registryIdentity: f.registryIdentity || `${f.namespace || "custom"}.${f.metaKey || f.key}`,
-        registryRole: f.registryRole || "PRIMARY_CANDIDATE_DESTINATION",
-        ...(f.capabilityNumber !== undefined ? { capabilityNumber: f.capabilityNumber } : {}),
-        ...(f.unit !== undefined ? { unit: f.unit } : {}),
-        ...(f.storageVerified !== undefined ? { storageVerified: f.storageVerified } : {}),
-        ...(f.writerVerified !== undefined ? { writerVerified: f.writerVerified } : {}),
-        ...(f.producerAlignmentPending !== undefined ? { producerAlignmentPending: f.producerAlignmentPending } : {}),
-        ...(f.capabilityNote ? { capabilityNote: f.capabilityNote } : {}),
-        ...(f.expandsToMediaControls ? { expandsToMediaControls: true } : {}),
-        ...(f.control ? { control: f.control } : {}),
-        ...(f.optionsKey ? { optionsKey: f.optionsKey } : {})
-      };
-    });
+    .map(projectCatalogFieldForTemplateGroup);
   return {
     heading: groupDef.heading,
     color: groupDef.color,
     fields: groupFields
   };
 });
+
+// Tab 3 Complete Inspectable Inventory (93 logical slots = 62 canonical working slots + 31 parked/excluded entries).
+// Reconciled directly from EXCLUDED_INPUT_ENTRIES in registry order so all 31 parked entries are owner-aware and unique.
+const TAB3_PARKED_TEMPLATE_FIELDS = Object.freeze(
+  EXCLUDED_INPUT_ENTRIES.map(regEntry => {
+    const matchedCatalogEntry = FIELD_CATALOG.find(
+      f =>
+        f.registryRole === "EXCLUDED_INPUT" &&
+        f.registryOwner === regEntry.owner &&
+        f.registryIdentity === regEntry.identity
+    );
+    if (matchedCatalogEntry) {
+      return Object.freeze({
+        ...projectCatalogFieldForTemplateGroup(matchedCatalogEntry),
+        templateGroup: TAB3_PARKED_DRAWER_HEADING,
+        mappingStatus: "pending_read_only",
+        isParkedExcluded: true
+      });
+    }
+    const dotIndex = regEntry.identity.indexOf(".");
+    const fallbackNamespace = dotIndex > 0 ? regEntry.identity.slice(0, dotIndex) : "custom";
+    const fallbackMetaKey = dotIndex > 0 ? regEntry.identity.slice(dotIndex + 1) : regEntry.identity;
+    return Object.freeze({
+      key: regEntry.identity,
+      label: fallbackMetaKey
+        .replace(/[_-]/g, " ")
+        .replace(/\b\w/g, c => c.toUpperCase()),
+      namespace: fallbackNamespace,
+      owner: regEntry.owner === "PRODUCTVARIANT" ? "variant_metafield" : "metafield",
+      role: "parked_excluded",
+      applicability: "parked_excluded",
+      mappingStatus: "pending_read_only",
+      metaKey: fallbackMetaKey,
+      type: "single_line_text_field",
+      registryOwner: regEntry.owner,
+      registryIdentity: regEntry.identity,
+      registryRole: "EXCLUDED_INPUT",
+      templateGroup: TAB3_PARKED_DRAWER_HEADING,
+      isParkedExcluded: true
+    });
+  })
+);
+
+export const TAB3_INSPECTABLE_TEMPLATE_GROUPS = Object.freeze([
+  ...PRODUCT_TEMPLATE_GROUPS,
+  Object.freeze({
+    heading: TAB3_PARKED_DRAWER_HEADING,
+    color: "#616161",
+    isParkedGroup: true,
+    fields: TAB3_PARKED_TEMPLATE_FIELDS
+  })
+]);
 
 // ==========================================================================
 // PURE TEMPLATE AUDIT COUNT & EXPLICIT APPLICABILITY HELPERS
